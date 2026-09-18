@@ -1,0 +1,27 @@
+# Python
+**/__pycache__/
+*.py[cod]
+backend/.venv/
+backend/.venv-*/
+backend/.pytest_cache/
+backend/.ruff_cache/
+
+# Environment variables
+**/.env
+**/.env.local
+**/.env.*
+!**/.env.example
+
+# Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/*.tsbuildinfo
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
