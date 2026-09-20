@@ -25,3 +25,5 @@ Thumbs.db
 
 # Archives
 *.zip
+# Agent outputs
+agent/out/

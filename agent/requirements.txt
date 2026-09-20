@@ -1,0 +1,18 @@
+# 콘텐츠 크리에이팅 에이전트 공통 의존성
+# pip install -r requirements.txt
+
+# 공통
+pydantic-ai-slim[openai]
+python-dotenv
+requests
+
+# movie/ — 기사 본문 추출
+trafilatura
+
+# music/ — 평론 검색 · 본문 파싱 · 관점 묶기
+beautifulsoup4
+lxml
+ddgs
+feedparser
+sentence-transformers
+scikit-learn
