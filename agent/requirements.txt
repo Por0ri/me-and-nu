@@ -5,6 +5,7 @@
 pydantic-ai-slim[openai]
 python-dotenv
 requests
+nest_asyncio          # 콜랩 · 주피터처럼 루프가 이미 도는 곳에서 run_sync 를 쓰기 위해
 
 # movie/ — 기사 본문 추출
 trafilatura

@@ -7,11 +7,12 @@
 agent/
 ├── requirements.txt        공통 의존성
 ├── .env.example            키 이름 (LLM_KEY, TMDB_KEY)
+├── py2ipynb.py             .py → 콜랩 노트북(.ipynb). 노트북은 여기서 뽑는다. 손으로 안 고친다
 ├── movie/
 │   ├── movie_info_agent.py     영화 · 정보 전달 (V2.3)
 │   └── movie_review_agent.py   영화 · 리뷰 (V1.8)
 ├── music/
-│   └── music_review_agent.py   음악 · 리뷰 (v2.5)
+│   └── music_review_agent.py   음악 · 리뷰 (v2.7)
 └── out/                    결과물 (git에 안 올라간다)
 ```
 
@@ -21,7 +22,7 @@ agent/
 |---|---|---|
 | `movie/movie_info_agent.py` | 영화 · 정보 전달 | 재료 모으기(TMDB + 위키백과 + 기사) → 재료 판정 → 재료 정리 → 글쓰기 → 편집국장 → 형태 검사 → 판정관 → 업로드 규칙 → 고치기 |
 | `movie/movie_review_agent.py` | 영화 · 리뷰 | 재료 모으기(TMDB + 위키백과) → 글쓰기 → 형태 검사 → 판정관 → 업로드 규칙 |
-| `music/music_review_agent.py` | 음악 · 리뷰 | 앨범 뽑기(MusicBrainz · 매체 목록) → 위키백과 맥락 → 평론 링크 검색 → 본문 읽기 → 코드로 거르기 → 재료 판정 → 관점 묶기 → 기획자 → 작가 → 교정자 → 형태 검사 → 편집국장 |
+| `music/music_review_agent.py` | 음악 · 리뷰 | 앨범 뽑기(이즘 API · 아이돌로지 API · 해외 매체 → MusicBrainz → 위키백과 유명도) → 평론 모으기(뽑은 리뷰 본문 + 이즘 검색 + 아이돌로지 검색 + DuckDuckGo + RSS + 위키 평가 절) → 코드로 거르기 → 재료 판정 → 관점 묶기 → 기획자 → 작가 → 교정자 → 형태 검사 → 편집국장 |
 
 세 에이전트 모두 마디(node)가 상태 하나를 받아 자기 칸만 채우고 돌려주는 구조다.
 갈림길 함수가 다음 마디를 고른다. 한 편에 도는 마디 수와 모델 요청 수에 상한이 있다.
@@ -56,14 +57,26 @@ python movie/movie_review_agent.py list                 # 테스트 목록 다�
 python movie/movie_review_agent.py random 5 --seed 1
 
 # 음악 · 리뷰
-python music/music_review_agent.py check                # 검색 엔진 · 매체 · RSS 점검
-python music/music_review_agent.py run --n 5            # 올린 글이 5편 될 때까지
+python music/music_review_agent.py check                # 이즘 · 아이돌로지 API, 검색 엔진, 해외 매체, RSS 점검. 모델 안 부른다
+python music/music_review_agent.py pick --kr --n 3      # 앨범 뽑기 + 재료 모으기까지만. 모델 안 부른다 (--world 는 해외)
+python music/music_review_agent.py run --n 5            # 올린 글이 5편 될 때까지 (한국 3 · 해외 2)
+python music/music_review_agent.py run --n 3 --kr       # 한국만
 python music/music_review_agent.py zip
 ```
 
 결과는 `agent/out/<이름>/`에 마크다운으로 쌓인다. 여러 편 돌리면 끝에 zip으로도 묶는다.
 
-## 콜랩에서 돌릴 때
+## 콜랩 노트북
+
+노트북은 `.py`에서 뽑는다. `.py`를 고친 뒤 다시 뽑는다.
+
+```bash
+python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.7.ipynb
+```
+
+첫 셀이 pip 설치와 보안 비밀(`LLM_KEY`) 읽기다. 마지막 셀들이 `점검()` · `뽑기만()` · `run()` · zip 내려받기다.
+
+## 콜랩에서 .py 를 그대로 돌릴 때
 
 ```
 !pip -q install -r agent/requirements.txt
