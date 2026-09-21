@@ -3,7 +3,7 @@
 # .py 가 정본이다. 노트북은 여기서 만든다. 노트북을 손으로 고치지 않는다.
 #
 #   python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.9.ipynb
-#   python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.1.ipynb     # 애니는 glossary.json 을 노트북 안에 같이 넣는다
+#   python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.2.ipynb     # 애니는 glossary.json 을 노트북 안에 같이 넣는다
 #
 # 자르는 규칙
 # - 파일 맨 위 주석 덩어리 → 마크다운 셀
@@ -109,7 +109,7 @@ print("LLM_KEY 길이:", len(os.environ["LLM_KEY"]))
     ("code", ["용어집점검()"]),
     ("code", ["뽑기만(\"감상순서\", 2)"]),
     ("code", ["결과 = run(\"감상순서\", 목표편수=2)", "# 결과 = run(\"사람\", 목표편수=3)", "# 결과 = run(\"제작이야기\", 목표편수=2)"]),
-    ("code", ["st = run_one(\"장송의 프리렌\", \"감상순서\")", "# st = run_one(\"진격의 거인\", \"사람\", 사람=\"Hiroshi Kamiya\")"]),
+    ("code", ["st = run_one(\"나루토\", \"감상순서\")      # 프리렌은 순서에 갈림이 없어 안 뽑힌다", "# st = run_one(\"진격의 거인\", \"사람\", 사람=\"Hiroshi Kamiya\")"]),
     ("code", ["z = zip_outputs()", "from google.colab import files", "files.download(str(z))"]),
 ]
 

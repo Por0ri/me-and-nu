@@ -1,4 +1,4 @@
-# # anime_agent v0.2 — 애니 콘텐츠 크리에이팅 에이전트
+# # anime_agent v0.1 — 애니 콘텐츠 크리에이팅 에이전트
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY`에서 읽는다. 결과는 `agent/out/anime/올림|탈락/`에 쌓인다.
 #
@@ -26,16 +26,6 @@
 #   용어집에 없는 이름은 "임시"다. 임시 표기 이름은 글에 못 쓴다. 로마자 · 가나 이름이 본문에 나오면 형태검사에 걸린다.
 # - 첫 판은 용어집에 있는 시리즈(블리치 · 진격의 거인 · 나루토 · 장송의 프리렌 · 원피스)만 뽑는다.
 # - 편집국장이 걸면 기획자부터 다시 쓴다. 세 번까지다. 올림 · 탈락은 코드가 정한다.
-#
-# v0.2에서 바뀐 것 — "1기 다음 2기" 같은 글이 나오던 원인을 고쳤다
-# - 정보형 재료에 이야기를 넣는다. 라프텔 회차 목록 API의 회차 제목 · 줄거리(자막 표기 그대로), 위키백과 ko 줄거리 · 등장인물 절, 용어집 편 항목의 "어디서 어디까지".
-#   사실표만으로는 "차례로 보면 된다"밖에 안 나왔다.
-# - 감상순서는 순서에 갈림이 있는 시리즈만 뽑는다. 표기 있는 본편 밖 작품 둘 이상, 또는 필러 열 화 이상, 또는 편 셋 이상. 프리렌(1기 → 2기 → 3기)은 안 뽑힌다.
-# - 정보형은 고유 사실이 열둘 아래거나 이야기가 없으면 글을 안 쓰고 주제를 버린다. "여덟 개 채우라"는 규칙을 뺐다.
-# - 기획자 뼈대: 감상순서는 편 · 시즌마다 문단 하나(어디서 어디까지 + 기억할 인물 · 사건). 문단 다섯에서 일곱.
-# - 형태검사에 되풀이(문단 간 14자 겹침 · 같은 숫자 다섯 번 · "~하면 된다" 넷) · 재료 옮겨 적기 · 재료 표시("←" · "[") 검사.
-# - 필러 0이면 사실표에 줄을 안 넣는다. 라프텔 줄은 링크를 빼고 제목만.
-# - 분량은 유형 다섯 다 1800자 기준, 1500~2000자.
 
 # ## 1. 설정
 #
@@ -79,9 +69,6 @@ MIN_PAGES     = 2      # 심층형. 쓸 만한 글이 이만큼 안 모이면 �
 발췌글자      = 1800   # 기획자에게 주는 원문 발췌. 글마다 이만큼
 REWRITE_LIMIT = 3      # 다시 쓰기 상한
 PASS_SCORE    = 70     # 편집국장 점수가 이 아래면 다시 쓴다
-분량기준      = 1800   # 글 길이. 유형 다섯 다 같다 (PM 결정 2026-09-21)
-분량상한      = 2000   # 이 위는 형태검사에 걸린다
-분량하한      = 1500   # 이 아래도 걸린다 (PM 결정)
 LLM_CALL_CAP  = 40     # 주제 하나에 허용할 모델 요청 수 (판정 10 + 보강 6 + 한 바퀴 4 × 세 번 + 여유)
 ANILIST_GAP   = 2.0    # AniList 요청 사이 간격(초). 분당 30회 제한
 JIKAN_GAP     = 1.2    # Jikan 요청 사이 간격(초)
@@ -90,10 +77,6 @@ JIKAN_PAGES   = 15     # Jikan 회차 목록을 최대 몇 쪽까지 (100화씩.
 표기조회상한  = 30     # 위키백과 ko로 표기를 찾아볼 이름 수 상한 (한 주제)
 라프텔조회상한 = 12    # 라프텔로 작품 제목 표기를 찾아볼 작품 수 상한 (한 주제)
 필러없어도진행 = True  # Jikan이 죽었을 때 필러 표시 없이 감상순서를 만들지. 본편이 하나뿐인 긴 작품(원피스)은 예외로 멈춘다
-최소사실      = 12     # 정보형. 사실표 고유 사실이 이만큼 안 되면 글을 안 쓴다
-회차재료글자  = 9000   # 라프텔 회차 줄거리를 기획자에게 주는 상한 (글자)
-회차항목상한  = 8      # 라프텔 항목(시즌 · 기)을 이만큼까지만 읽는다
-회차쪽수     = 2      # 라프텔 항목 하나에 회차 목록 쪽수 (100화씩)
 CONTACT       = "menu-project@example.com"
 # ─────────────────────────────────────────────────────────────
 
@@ -215,13 +198,14 @@ def 용어집_편목록(series):
     g = GLOSSARIES.get(series)
     out = []
     for fixed, wrong, alias, kind, meaning in (g["항목"] if g else []):
-        if kind != "편" or fixed == series:
+        if kind != "편":
             continue
-        m = re.match(r"^\s*(?:[가-힣A-Za-z0-9 ]{1,12}\s)?(\d+)\s*~\s*(\d+)\s*화", meaning) or re.match(r"^\s*(?:[가-힣A-Za-z0-9 ]{1,12}\s)?(\d+)\s*화부터", meaning)
+        m = re.search(r"(\d+)\s*~\s*(\d+)\s*화", meaning) or re.search(r"(\d+)\s*화부터", meaning)
         if m:
             a = int(m.group(1)); b = int(m.group(2)) if m.lastindex and m.lastindex >= 2 else None
             out.append((fixed, a, b, meaning))
-    return out            # 용어집에 적힌 순서 그대로. 시리즈마다 화수 번호가 따로 시작해서(나루토 · 질풍전) 숫자로 정렬하지 않는다
+    out.sort(key=lambda x: x[1])
+    return out
 
 def glossary_text(series, kinds=None, with_meaning=True):
     """기획자 · 작가 · 편집국장에게 붙일 표기표."""
@@ -666,90 +650,13 @@ def 라프텔_표기(w):
     _cache_put(key, found or "")
     return found
 
-def laftel_episodes(item_id, 쪽수=회차쪽수):
-    """라프텔 항목의 회차 목록. [{번호, 제목, 줄거리}]. 자막 표기 그대로다. 사람 · 캐릭터 표기의 근거로도 쓴다."""
-    key = f"laftel_eps_{item_id}"
-    c = _cache_get(key)
-    if c is not None:
-        return c
-    out, offset = [], 0
-    for _ in range(쪽수):
-        _site_wait(LAFTEL)
-        try:
-            r = requests.get(f"{LAFTEL}/episodes/v2/list/", params={"item_id": item_id, "sort": "oldest", "offset": offset, "limit": 100},
-                             headers={**HEADERS, "Accept": "application/json"}, timeout=15)
-            if r.status_code != 200:
-                break
-            d = r.json()
-        except Exception:
-            break
-        for e in d.get("results", []):
-            try:
-                n = int(str(e.get("episode_num") or "").strip())
-            except ValueError:
-                n = None
-            out.append({"번호": n, "제목": (e.get("subject") or "").strip(), "줄거리": (e.get("description") or "").strip()})
-        if not d.get("next"):
-            break
-        offset += 100
-    _cache_put(key, out)
-    return out
-
-def _라프텔이름정리(name):
-    n = re.sub(r"\((자막|더빙)\)|\[.*?\]|\bHD\b", "", name)
-    n = re.sub(r"시즌\s*(\d+)", r"\1기", n)
-    n = re.sub(r"[Pp]art\s*(\d+)|파트\s*(\d+)", lambda m: "파트" + (m.group(1) or m.group(2)), n)
-    n = re.sub(r"[Tt]he\s+FINAL|[Tt]he\s+[Ff]inal|파이널\s*시즌|FINAL|Final", "파이널", n)
-    n = re.sub(r"\(.*?\)", "", n)                       # "(완결편 후편)" 같은 꼬리
-    return _norm(n)
-
-def 라프텔_항목찾기(이름, items):
-    """순서표의 한국 제목과 맞는 라프텔 항목. 자막판을 먼저 고른다. 없으면 None."""
-    k = _라프텔이름정리(이름)
-    후보 = [it for it in items if not it["더빙"] and not re.search(r"극장판|총집편|스페셜|SPECIAL|OVA", it["이름"])] or items
-    for it in 후보:
-        if _라프텔이름정리(it["이름"]) == k:
-            return it
-    # "장송의 프리렌" 처럼 시리즈 이름만인 것은 "1기" 가 붙은 항목과 같다
-    for it in 후보:
-        if _라프텔이름정리(it["이름"]) in (k + "1기", k):
-            return it
-    # 한쪽이 다른 쪽을 품으면(“파이널파트1” ⊂ “파이널파트1완결편”) 가장 짧은 것
-    품음 = sorted([it for it in 후보 if k in _라프텔이름정리(it["이름"]) and len(k) >= 6], key=lambda it: len(it["이름"]))
-    return 품음[0] if 품음 else None
-
-def 회차재료_text(eps, 이름, 상한=회차재료글자):
-    """회차 제목은 다 주고 줄거리는 처음 셋 · 끝 둘 · 그 사이 넷째마다. 글자 상한 안에서."""
-    if not eps:
-        return ""
-    줄 = [f"[{이름} — 회차 제목 · 줄거리. 라프텔 자막 표기. 사건과 이름은 여기 있는 것만]"]
-    n = len(eps)
-    골라 = set(range(min(3, n))) | set(range(max(0, n - 2), n)) | set(range(3, n, 4))
-    for i, e in enumerate(eps):
-        head = f"{e['번호']}화 {e['제목']}" if e.get("번호") else e["제목"]
-        if i in 골라 and e["줄거리"]:
-            줄.append(f"- {head}: {e['줄거리'][:160]}")
-        else:
-            줄.append(f"- {head}")
-    text = "\n".join(줄)
-    return text[:상한]
-
 def 라프텔_시리즈(series):
-    """시리즈 이름으로 라프텔에 있는 항목들. 한국에서 볼 수 있는 것 목록이 된다.
-    라프텔 검색은 이름만 넣으면 몇 개만 준다. "1기" · "극장판" · "시즌"을 붙여 여러 번 찾아 합친다."""
+    """시리즈 이름으로 라프텔에 있는 항목들. 한국에서 볼 수 있는 것 목록이 된다."""
     key = f"laftel_{_norm(series)}"
     c = _cache_get(key)
     if c is not None:
         return c
-    seen, items = set(), []
-    for q in (series, f"{series} 1기", f"{series} 2기", f"{series} 극장판", f"{series} 시즌", f"{series} 편"):
-        for x in laftel_search(q, n=20):
-            if x["id"] in seen:
-                continue                                  # 19세 등급(진격의 거인)도 받는다. 타겟이 20~60대다
-            # 검색어와 상관없는 것이 섞여 온다. 시리즈 이름의 앞 두 글자가 들어 있는 것만
-            if _norm(series)[:2] not in _norm(x["이름"]):
-                continue
-            seen.add(x["id"]); items.append(x)
+    items = [x for x in laftel_search(series, n=20) if not x["성인"]]
     _cache_put(key, items)
     return items
 
@@ -814,31 +721,6 @@ def 위키_작품문서(작품, series=None):
             if 애니낱말.search(snip) or 애니낱말.search(title):
                 return _wiki_extract("ko", title)
     return None
-
-줄거리절제목 = ["줄거리", "개요", "이야기", "스토리", "배경"]
-
-def 위키_절들(작품, series=None):
-    """ko 작품 문서의 줄거리 절과 등장인물 절. {'줄거리': 글, '등장인물': 글, '링크': url}. 없으면 빈 값."""
-    out = {"줄거리": "", "등장인물": "", "링크": None}
-    for q in [작품.get("한국제목"), series]:
-        if not q:
-            continue
-        for title, snip in _wiki_search(q, "ko", 4):
-            if not (애니낱말.search(snip) or 애니낱말.search(title)):
-                continue
-            줄 = _wiki_section("ko", title, 줄거리절제목, n=5000)
-            인 = _wiki_section("ko", title, 등장인물절제목, n=5000)
-            if not 인:
-                # 등장인물이 따로 목록 문서로 있을 때
-                for t2, sn2 in _wiki_search(f"{q}의 등장인물 목록", "ko", 3):
-                    if "등장인물" in t2 and _norm(q)[:2] in _norm(t2):
-                        w2 = _wiki_extract("ko", t2, n=5000)
-                        if w2:
-                            인 = w2["본문"]; break
-            if 줄 or 인:
-                out.update({"줄거리": 줄 or "", "등장인물": 인 or "", "링크": f"https://ko.wikipedia.org/wiki/{urllib.parse.quote(title)}"})
-                return out
-    return out
 
 def 위키_평가절(작품, series=None, lang="ko"):
     q = 작품.get("한국제목") or series if lang == "ko" else (작품.get("english") or 작품.get("romaji"))
@@ -1276,29 +1158,11 @@ def 재료_사람(st):
         st.이유 = f"한국 표기 있는 참여작 {len(작품수)}개. {최소참여작}개 미만"; return False
     dob = d.get("dob") or {}
     직업 = " · ".join(dict.fromkeys(역할표기(x) if x != "Voice Actor" else "성우" for x in d["직업"])) or "모름"
-    배역표기_ = 표.사람(p["배역"], p.get("배역native"))["표기"] if p.get("배역") else None
-    배역뜻 = 용어집_뜻(st.주제["시리즈"], 배역표기_) if 배역표기_ else ""
     사실 = [f"[사람] {이름['표기']} — {p.get('역할')}  (표기 출처: {이름['출처']})",
             f"- 하는 일: {직업}  ← AniList",
             (f"- 태어난 해: {dob['year']}년  ← AniList" if dob.get("year") else "- 태어난 해: 모름"),
-            f"- 이 시리즈에서: {st.주제['시리즈']}" + (f" {배역표기_ or ''} 역" if p.get("배역") else "") + (f" — {배역뜻}  ← 용어집" if 배역뜻 else ""),
+            f"- 이 시리즈에서: {st.주제['시리즈']}" + (f" {표.사람(p['배역'], p.get('배역native'))['표기'] or ''} 역" if p.get("배역") else ""),
             "", f"[참여작 — 한국 표기가 있는 것만. {len(작품수)}개]"] + 줄[:30]
-    # 배역이 나오는 회차 — 라프텔 회차 줄거리
-    이야기 = []
-    if 배역표기_:
-        라 = 시리즈(st.주제["시리즈"])["라프텔"]
-        it = 라프텔_항목찾기(st.주제["시리즈"], 라)
-        eps = laftel_episodes(it["id"]) if it else []
-        줄들 = 이야기_줄(eps, 배역표기_)
-        if 줄들:
-            이야기.append(f"[{배역표기_}이(가) 나오는 회차 — 라프텔 회차 줄거리. 사건은 여기 있는 것만]\n" + "\n".join(줄들))
-            st.맥락링크.append(it["링크"])
-    절 = 위키_절들({"한국제목": st.주제["시리즈"]}, st.주제["시리즈"])
-    if 절["등장인물"] and 배역표기_ and 배역표기_.split()[-1] in 절["등장인물"]:
-        이야기.append("[등장인물 — 위키백과 ko]\n" + 절["등장인물"][:2000])
-        if 절["링크"]:
-            st.맥락링크.append(절["링크"])
-    st.이야기 = "\n\n".join(이야기)
     w = 위키_작품문서({"한국제목": 이름["표기"]}) if 이름["출처"] == "용어집" else None
     if w and 애니낱말.search(w["본문"][:800]):
         st.맥락 = w["본문"][:3000]; st.맥락링크.append(w["링크"])
@@ -1351,38 +1215,14 @@ def 재료_기념일(st):
         사실 += ["", "[같은 시리즈의 다른 작품 — AniList]"] + 다른[:12]
     라 = s["라프텔"]
     if 라:
-        사실 += ["", "[라프텔에 있는 것 — 한국에서 볼 수 있다]"] + [f"  - {x['이름']}{' (더빙)' if x['더빙'] else ''}" for x in 라[:8]]
+        사실 += ["", "[라프텔에 있는 것 — 한국에서 볼 수 있다]"] + [f"  - {x['이름']}{' (더빙)' if x['더빙'] else ''}  ← {x['링크']}" for x in 라[:8]]
     wk = 위키_작품문서({"한국제목": 이름}, st.주제["시리즈"])
     if wk:
         st.맥락 = wk["본문"][:4000]; st.맥락링크.append(wk["링크"])
         rec = 위키_평가절({"한국제목": 이름}, st.주제["시리즈"], "ko")
         if rec:
-            사실 += ["", "[당시 반응 — 위키백과 ko 평가 절. 여기 적힌 것만 반응으로 쓴다]", rec["본문"][:2500]]
+            사실 += ["", "[당시 반응 — 위키백과 ko 평가 절. 여기 적힌 것만 반응으로 쓴다]", rec["본문"][:2500], f"  ← {rec['url']}"]
             st.맥락링크.append(rec["url"])
-    이야기 = []
-    라 = s["라프텔"]
-    it = 라프텔_항목찾기(이름, 라) or 라프텔_항목찾기(st.주제["시리즈"], 라)
-    eps = laftel_episodes(it["id"]) if it else []
-    if k["종류"] == "생일":
-        ct = 표.사람(k["캐릭터"]["full"], k["캐릭터"].get("native"))
-        뜻 = 용어집_뜻(st.주제["시리즈"], ct["표기"])
-        if 뜻:
-            사실.insert(1, f"- {ct['표기']}: {뜻}  ← 용어집")
-        줄들 = 이야기_줄(eps, ct["표기"])
-        if 줄들:
-            이야기.append(f"[{ct['표기']}이(가) 나오는 회차 — 라프텔 회차 줄거리. 사건은 여기 있는 것만]\n" + "\n".join(줄들))
-    elif eps:
-        이야기.append(회차재료_text(eps, 이름, 상한=4000))
-    if it:
-        st.맥락링크.append(it["링크"])
-    절 = 위키_절들({"한국제목": 이름}, st.주제["시리즈"])
-    if 절["줄거리"]:
-        이야기.append("[줄거리 — 위키백과 ko]\n" + 절["줄거리"][:3000])
-    if 절["등장인물"]:
-        이야기.append("[등장인물 — 위키백과 ko. 이름 표기는 표기표를 따른다]\n" + 절["등장인물"][:2000])
-    if 절["링크"]:
-        st.맥락링크.append(절["링크"])
-    st.이야기 = "\n\n".join(이야기)
     st.사실표 = "\n".join(사실)
     st.사실링크 = [w.get("siteUrl")]
     return True
@@ -1405,112 +1245,51 @@ def 순서표_만들기(st):
             갈래 = "외전 (본편 밖)"
         if not 이름:
             뺀것.append(w.get("romaji")); continue
-        if any(r["이름"] == 이름 for r in 줄):
-            continue                                    # 라프텔 묶음 이름("극장판 블리치 1~4기")이 여러 작품에 붙을 수 있다
         줄.append({"번호": len(줄) + 1, "이름": 이름, "갈래": 갈래, "연도": (w.get("start") or {}).get("y"), "화수": w.get("episodes"), "idMal": w.get("idMal"), "한줄": 한줄})
     return 줄, 뺀것, 본편수
-
-def 용어집_뜻(series, 이름):
-    g = GLOSSARIES.get(series)
-    for fixed, wrong, alias, kind, meaning in (g["항목"] if g else []):
-        if fixed == 이름:
-            return meaning
-    return ""
-
-def 이야기_줄(eps, 이름, 최대=8):
-    """회차 줄거리 가운데 이 이름이 나오는 줄. 캐릭터 · 배역이 어느 회차에 무엇을 했는지."""
-    if not 이름 or not eps:
-        return []
-    성 = 이름.split()[-1] if " " in 이름 else 이름
-    out = []
-    for e in eps:
-        if 성 in e["줄거리"] or 성 in e["제목"]:
-            out.append(f"- {e['번호']}화 {e['제목']}: {e['줄거리'][:140]}")
-        if len(out) >= 최대:
-            break
-    return out
 
 def 재료_감상순서(st):
     s, 표 = 시리즈(st.주제["시리즈"]), st.용어표
     순서, 뺀것, 본편수 = 순서표_만들기(st)
     편 = 용어집_편목록(st.주제["시리즈"])
-    본편밖 = [r for r in 순서 if r["갈래"] != "본편"]
+    if 본편수 < 2 and len(편) < 3:
+        st.이유 = f"본편 {본편수}개 · 편 {len(편)}개. 순서를 만들 것이 없다"; return False
     필러, 죽음 = {}, False
     for r in 순서:
         if r["갈래"] == "본편" and r.get("idMal"):
             eps = jikan_episodes(r["idMal"])
             if eps is None:
-                st.log(f"  Jikan 회차 못 받음: {r['이름']} (mal {r['idMal']})")
                 죽음 = True; continue
             필러[r["이름"]] = ([e["번호"] for e in eps if e["필러"]], [e["번호"] for e in eps if e["총집편"]], len(eps))
-    필러수 = sum(len(f) for f, _, _ in 필러.values())
-    # 순서에 갈림이 있어야 글이 된다. 1기 → 2기 → 3기뿐이면 쓸 것이 없다
-    if len(본편밖) < 2 and 필러수 < 10 and len(편) < 3:
-        st.이유 = f"순서에 갈림이 없다. 본편 밖 {len(본편밖)}개 · 필러 {필러수}화 · 편 {len(편)}개"; return False
     if 죽음 and (본편수 <= 1 or not 필러없어도진행):
         st.이유 = "Jikan이 죽어서 필러 표시를 못 받았다. 본편이 하나뿐인 작품은 필러 없이 못 만든다"; return False
-    사실 = ["[감상 순서 — 코드가 관계도로 계산했다. 이 순서와 갈래를 바꾸지 않는다]"]
+    사실 = [f"[감상 순서 — 코드가 관계도로 계산했다. 이 순서와 갈래를 바꾸지 않는다]"]
     for r in 순서:
-        뜻 = 용어집_뜻(st.주제["시리즈"], r["이름"].replace(st.주제["시리즈"] + " ", "", 1)) or 용어집_뜻(st.주제["시리즈"], r["이름"])
-        사실.append(f"{r['번호']}. [{r['갈래']}] {r['한줄']}" + (f" — {뜻}" if 뜻 else "") + "  ← AniList")
+        사실.append(f"{r['번호']}. [{r['갈래']}] {r['한줄']}  ← AniList")
     if 편:
-        사실 += ["", "[편 — 용어집. 본편 한 덩어리 안에서 편 순서로 본다. 뜻에 적힌 것이 그 편의 이야기 범위다]"] + [f"- {n}: {m}" for n, a, b, m in 편]
-    필러줄 = []
-    for 이름, (f, rc, n) in 필러.items():
-        if f or rc:
-            필러줄.append(f"- {이름}: 전체 {n}화. 필러 {len(f)}화" + (f" ({', '.join(구간묶기(f)[:25])})" if f else "") + (f". 총집편 {', '.join(구간묶기(rc)[:8])}" if rc else ""))
-    if 필러줄:
-        사실 += ["", "[필러 · 총집편 — Jikan(MyAnimeList) 회차 표시. 여기 없는 화수를 필러라고 하지 않는다]"] + 필러줄
+        사실 += ["", "[편 — 용어집. 본편 한 덩어리 안에서 편 순서로 본다]"] + [f"- {n}: {m}" for n, a, b, m in 편]
+    if 필러:
+        사실.append("")
+        사실.append("[필러 · 총집편 — Jikan(MyAnimeList) 회차 표시. 여기 없는 화수를 필러라고 하지 않는다]")
+        for 이름, (f, rc, n) in 필러.items():
+            사실.append(f"- {이름}: 전체 {n}화. 필러 {len(f)}화" + (f" ({', '.join(구간묶기(f)[:25])})" if f else "") + (f". 총집편 {', '.join(구간묶기(rc)[:8])}" if rc else ""))
+    elif 죽음:
+        사실 += ["", "[필러] 회차 표시를 못 받았다. 필러 이야기는 안 쓴다"]
     if 뺀것:
         사실 += ["", f"[한국 표기가 없어 순서에서 뺀 작품 {len(뺀것)}개 — 글에 안 쓴다] " + " / ".join(뺀것[:8])]
     라 = s["라프텔"]
     if 라:
-        사실 += ["", "[라프텔에 있는 것 — 한국에서 볼 수 있다. 제목은 라프텔 표기]"] + [f"- {x['이름']}{' (더빙)' if x['더빙'] else ''}" for x in 라[:12]]
-        st.맥락링크 += [x["링크"] for x in 라[:12]]
+        사실 += ["", "[라프텔에 있는 것 — 한국에서 볼 수 있다. 제목은 라프텔 표기]"] + [f"- {x['이름']}{' (더빙)' if x['더빙'] else ''}  ← {x['링크']}" for x in 라[:12]]
     root = s["root"] or {}
     if root.get("원작"):
         사실.append(f"- 원작: {root['원작'].get('format') or ''} {root['원작'].get('year') or ''}년부터  ← AniList")
     st.순서표 = [{"번호": r["번호"], "이름": r["이름"], "갈래": r["갈래"]} for r in 순서]
-    # 이야기 — 라프텔 회차 줄거리(본편마다) + 위키 줄거리 · 등장인물 절
-    이야기 = []
-    본편들 = [r for r in 순서 if r["갈래"] == "본편"]
-    for r in 본편들[:회차항목상한]:
-        it = 라프텔_항목찾기(r["이름"], 라)
-        if not it:
-            continue
-        eps = laftel_episodes(it["id"])
-        if eps:
-            이야기.append(회차재료_text(eps, r["이름"], 상한=회차재료글자 // max(1, min(len(본편들), 회차항목상한))))
-            st.맥락링크.append(it["링크"])
-    if len(본편들) == 1 and len(라) > 1:                      # 원피스처럼 라프텔이 "N기"로 나눈 것. 고르게 몇 개만
-        기들 = sorted([x for x in 라 if not x["더빙"] and re.search(r"\d+기", x["이름"]) and "극장판" not in x["이름"]],
-                     key=lambda x: int(re.search(r"(\d+)기", x["이름"]).group(1)))
-        step = max(1, len(기들) // 회차항목상한)
-        for it in 기들[::step][:회차항목상한]:
-            eps = laftel_episodes(it["id"], 쪽수=1)
-            if eps:
-                이야기.append(회차재료_text(eps, it["이름"], 상한=회차재료글자 // 회차항목상한))
-    절 = 위키_절들({"한국제목": st.주제["시리즈"]}, st.주제["시리즈"])
-    if 절["줄거리"]:
-        이야기.append("[줄거리 — 위키백과 ko]\n" + 절["줄거리"][:3000])
-    if 절["등장인물"]:
-        이야기.append("[등장인물 — 위키백과 ko. 이름 표기는 표기표를 따른다]\n" + 절["등장인물"][:2500])
-    if 절["링크"]:
-        st.맥락링크.append(절["링크"])
-    st.이야기 = "\n\n".join(이야기)
     wk = 위키_작품문서({"한국제목": st.주제["시리즈"]}, st.주제["시리즈"])
     if wk:
         st.맥락 = wk["본문"][:3000]; st.맥락링크.append(wk["링크"])
     st.사실표 = "\n".join(사실)
     st.사실링크 = [root.get("siteUrl")] if root else []
     return True
-
-def 사실_세기(사실표, 이야기):
-    """사실표의 줄 수 + 이야기의 줄거리 줄 수. 고유 사실이 얼마나 있는지 어림한다."""
-    n = len([l for l in 사실표.splitlines() if re.match(r"^\s*(-|\d+\.)\s", l)])
-    n += len([l for l in 이야기.splitlines() if l.startswith("- ") and ": " in l])
-    n += min(6, len(이야기) // 800)
-    return n
 
 print("정보형 재료 준비 끝")
 
@@ -1711,7 +1490,6 @@ class 기획주문(BaseModel):
     작품정보: str
     표기표: str
     사실표: str = ""
-    이야기: str = ""
     관점표: str = ""
     발췌: str = ""
     발언: str = ""
@@ -1736,7 +1514,7 @@ class 문단계획(BaseModel):
 class 개요(BaseModel):
     주제: str = Field(description="이 글이 하려는 말 한 줄")
     인용둘: List[인용계획] = Field(default_factory=list, max_length=2)
-    문단들: List[문단계획] = Field(min_length=4, max_length=7)
+    문단들: List[문단계획] = Field(min_length=3, max_length=6)
     사실목록: List[str] = Field(description="글 전체에 쓸 사실 전부. '사실 ← 출처' 꼴. 출처는 사실표 / 관점표 / 발췌 / 발언 / 맥락 중 하나. 여기 없는 사실은 작가가 못 쓴다")
 
 기획자 = Agent(MODEL, deps_type=기획주문, output_type=개요)
@@ -1746,16 +1524,9 @@ def _기획프롬프트(ctx) -> str:
     d = ctx.deps
     지난 = f"\n[지난 글에서 편집국장이 건 것]\n{d.지난문제}\n이 문제가 안 나게 뼈대를 새로 짠다. 지난 글은 안 본다." if d.지난문제 else ""
     if d.모양 == "정보":
-        감상 = ("- 감상순서 뼈대: 본편 · 편마다 문단 하나. 그 편이 어디서 시작해 어디까지 가는지(편 뜻 · 회차 줄거리), 다음 편 전에 기억할 인물 · 사건 둘. 순서만 읽어 주는 문단은 만들지 않는다.\n"
-                "  본편 밖 작품(극장판 · 외전)은 어느 본편 뒤에 보면 되는지 한 문단에 모은다. 필러는 사실표에 있을 때만 한 문단, 없으면 안 쓴다. 마지막 문단은 라프텔에 무엇이 있는지로 닫는다.\n"
-                "  ‘1기 다음 2기를 본다’처럼 독자가 이미 아는 말로 문단을 시작하지 않는다.") if d.유형 == "감상순서" else ""
-        재료칸 = (f"[사실표 — 이 글의 사실은 여기 있는 것뿐이다. 날짜 · 숫자 · 이름을 그대로 쓴다]\n{d.사실표}\n\n"
-                  f"[이야기 — 회차 줄거리 · 줄거리 절 · 등장인물 절. 사건과 인물은 여기서 캐낸다. 이 글의 살이다]\n{d.이야기 or '(없음)'}\n\n"
-                  f"[맥락 — 위키백과. 지금 상태의 정보다. 연도가 같이 적힌 것만 당시 사실로 쓴다]\n{d.맥락 or '(없음)'}")
+        재료칸 = f"[사실표 — 이 글의 사실은 여기 있는 것뿐이다. 날짜 · 숫자 · 이름을 그대로 쓴다]\n{d.사실표}\n\n[맥락 — 위키백과. 지금 상태의 정보다. 연도가 같이 적힌 것만 당시 사실로 쓴다]\n{d.맥락 or '(없음)'}"
         규칙 = f"""[규칙 — 정보형]
-- 사실목록은 사실표 · 이야기 · 맥락에 있는 것만. 기억으로 아는 것을 넣지 않는다. "사실 ← 사실표" / "사실 ← 이야기" / "사실 ← 맥락" 꼴로 출처를 적는다.
-- 사실을 채우려고 같은 것을 다른 말로 두 번 적지 않는다. 사실 하나는 사실목록에 한 번, 글에 한 번이다. "28화다"를 다섯 문단에서 되풀이하면 글이 아니다.
-- 문단마다 이야기 사건이 하나 이상이다. 누가 어디서 무엇을 했는지. 회차 줄거리 · 줄거리 절에서 가져온다. 순서 · 연도 · 화수만으로 채운 문단은 만들지 않는다. 그런 문단은 독자가 이미 안다.
+- 사실목록은 여덟 개를 넘긴다. 사실표 · 맥락에 있는 것만. 기억으로 아는 것을 넣지 않는다. "사실 ← 사실표" / "사실 ← 맥락" 꼴로 출처를 적는다.
 - 판단을 넣지 않는다. "좋다", "명작이다", "볼 만하다"는 이 글에 없다. 사실을 고르고 놓는 순서로만 말한다.
 - 이름은 표기표 · 사실표에 적힌 한국 표기 그대로. "(표기 없음)" · "배역 표기 없음" · "임시"라고 된 이름은 쓸이름에 넣지 않는다. 그 이름이 필요한 문단은 만들지 않는다.
 - 문단마다 구체가 하나 이상이다. 연도, 화수, 사람 이름, 작품 이름.
@@ -1763,9 +1534,9 @@ def _기획프롬프트(ctx) -> str:
 - 재료가 없다 · 확인되지 않는다는 말은 어느 문단에도 넣지 않는다. 모르는 것은 안 쓴다.
 - 마지막 문단은 독자가 다음에 무엇을 보면 되는지로 닫는다. 부추기지 않는다. "~를 보면 된다" 정도다.
 {'- 순서표의 번호와 갈래를 그대로 따른다. 본편 밖 작품을 본편 사이에 끼워 넣지 않는다. "본편 밖"은 "본편 이야기에 들어가지 않는다"로 쓴다. "정사"라는 말은 재료에 있을 때만 쓴다.' if d.순서표 else ''}
-{감상}
-{'- 참여작은 사실표에 있는 것만. 배역 표기가 없는 작품은 작품 이름만 쓰고 배역을 지어내지 않는다. 참여작 목록을 읽어 주는 문단이 둘을 넘지 않는다. 이 시리즈의 배역이 어느 회차에 무엇을 했는지(이야기)가 글의 가운데다.' if d.유형 == '사람' else ''}
-{'- 기념일 글이다. 첫 문단에 무엇의 몇 주년(또는 누구의 생일)인지가 나온다. "당시 반응"은 사실표의 평가 절에 있는 것만 쓴다. 생일 글이면 그 캐릭터가 회차에서 무엇을 했는지(이야기)가 가운데다. 주년 글이면 그 작품이 어디서 시작해 어디까지 갔는지(줄거리)가 가운데다.' if d.유형 == '기념일' else ''}"""
+{'- 필러는 사실표의 화수만 쓴다. 사실표에 필러가 없으면 필러 이야기를 안 한다.' if d.유형 == '감상순서' else ''}
+{'- 참여작은 사실표에 있는 것만. 배역 표기가 없는 작품은 작품 이름만 쓰고 배역을 지어내지 않는다.' if d.유형 == '사람' else ''}
+{'- 기념일 글이다. 첫 문단에 무엇의 몇 주년(또는 누구의 생일)인지가 나온다. "당시 반응"은 사실표의 평가 절에 있는 것만 쓴다.' if d.유형 == '기념일' else ''}"""
     else:
         재료칸 = (f"[관점표 — 남의 평은 여기 있는 것만. \"발언:\" 줄이 제작진의 말, \"장면:\" 줄이 장면메모다]\n{d.관점표 or '(없음)'}\n\n"
                   f"[원문 발췌 — 사실과 장면 · 발언을 여기서 캐낸다. 판단은 글쓴이 것이고 사실은 가져다 쓴다]\n{d.발췌 or '(없음)'}\n\n"
@@ -1801,7 +1572,7 @@ def _기획프롬프트(ctx) -> str:
 
 [이번 글]
 온도: {d.온도} / 시작점: {d.시작점}
-문단은 다섯에서 일곱이다. 문단마다 할 말 하나다. 글은 {분량기준}자 안팎이라 문단마다 250자쯤 쓸 거리가 있어야 한다.
+문단은 셋에서 여섯이다. 문단마다 할 말 하나다.
 
 {규칙}{지난}"""
 
@@ -1836,7 +1607,9 @@ def _작가프롬프트(ctx) -> str:
     문단 = "\n".join(f"{i+1}. {p.할말}\n   이름: {', '.join(p.쓸이름) or '없음'}\n   사실: {'; '.join(_사실만(x) for x in p.쓸사실) or '없음'}\n   관점: {'; '.join(p.쓸관점) or '없음'}"
                     for i, p in enumerate(o.문단들))
     인용 = "\n".join(f"- {q.매체}: {q.옮긴문장}" for q in o.인용둘) or "없음"
-    분량 = f"{분량기준}자 안팎. {분량하한}자보다 짧거나 {분량상한}자보다 길면 안 된다"
+    분량 = "800자에서 1400자 사이" if d.모양 == "정보" else "1200자에서 2000자 사이"
+    if d.유형 == "감상순서":
+        분량 = "1000자에서 1800자 사이"
     모양규칙 = ("- 판단을 쓰지 않는다. \"좋다\", \"명작\", \"볼 만하다\", \"추천한다\"는 없다. 사실만 놓는다. \"~로 보인다\", \"~일 것이다\"도 쓰지 않는다.\n"
                "- 날짜 · 숫자 · 화수는 사실 목록에 적힌 그대로다. 어림하지 않는다."
                if d.모양 == "정보" else
@@ -1867,11 +1640,7 @@ def _작가프롬프트(ctx) -> str:
 {모양규칙}
 - 문단 계획 순서를 지킨다. 문단마다 할 말 하나다. 문단 계획에 적힌 이름과 사실을 그 문단에서 실제로 쓴다.
 - 구체로 쓴다. 어느 작품 몇 년, 몇 화, 누가 무엇을. "감동적이다", "긴장감이 있다" 같은 말만으로 문단을 채우지 않는다.
-- 같은 말을 되풀이하지 않는다. 한 문단에서 한 말은 다른 문단에서 다시 하지 않는다. 주제는 한 번만 말한다.
-  같은 숫자(화수 · 연도)를 두 번 넘게 적지 않는다. 앞 문단이 말한 사실을 뒤 문단이 다시 확인하지 않는다("따라서 1~28화가 첫 범위다" 같은 문장).
-- 독자가 이미 아는 말로 문단을 채우지 않는다. "1기 다음에 2기를 본다", "차례로 보면 된다", "건너뛸 필요 없다"는 쓸 거리가 아니다. 그 편에서 무슨 일이 일어나는지를 쓴다.
-- 재료의 표시("←", "[", "라프텔:")를 옮겨 적지 않는다. 재료 문장을 그대로 옮기지 않는다. 내 문장으로 다시 쓴다.
-- "~하면 된다", "~보면 된다"로 문단을 닫는 것은 한 편에 한 번이다.
+- 같은 말을 되풀이하지 않는다. 주제는 한 번만 말한다.
 - 재료가 없다 · 정보가 제한된다 · 확인할 수 없다는 말을 쓰지 않는다. 아는 것만 쓴다.
 - 이름은 한국 표기다. 로마자 이름 · 일본어 이름을 쓰지 않는다. 영어 제목을 쓰지 않는다. 작품 이름은 《 》로 감싼다. 편 · 시즌 이름은 그대로 쓴다.
 - 캐릭터 · 사람 이름은 표기표의 정식 표기를 첫 등장에 쓰고, 그 뒤로는 별칭이 있으면 별칭을 써도 된다.
@@ -1934,26 +1703,6 @@ print("교정자 준비 끝")
 로마자이름 = re.compile(r"\b[A-Z][a-z]{2,}(?: [A-Z][a-z]{2,})+\b")
 일본어 = re.compile(r"[぀-ヿ一-鿿]{2,}")
 
-def _세기(xs):
-    d = {}
-    for x in xs:
-        k = re.sub(r"\s", "", x)
-        d[k] = d.get(k, 0) + 1
-    return d
-
-def _문단겹침(문단, n=14):
-    """두 문단이 n자를 그대로 나눠 가지면 그 조각을 돌려준다. 이름 · 제목 하나만 겹치는 것은 안 잡는다."""
-    조각들 = []
-    for p in 문단:
-        조각들.append({p[i:i+n] for i in range(max(0, len(p)-n+1))})
-    for i in range(len(조각들)):
-        for j in range(i+1, len(조각들)):
-            공통 = [c for c in (조각들[i] & 조각들[j]) if not re.fullmatch(r"[《》\s가-힣A-Za-z0-9:·]*[》\s]?", c) or "》" not in c]
-            공통 = [c for c in 공통 if not re.search(r"《[^》]*》?$", c)]      # 《제목》만 겹치는 것은 넘긴다
-            if 공통:
-                return sorted(공통)[0]
-    return ""
-
 def _겹침(a, b, n=12):
     A = {a[i:i+n] for i in range(max(0, len(a)-n+1))}
     B = {b[i:i+n] for i in range(max(0, len(b)-n+1))}
@@ -1994,21 +1743,6 @@ def 형태검사(본문, st):
         걸림.append(f"추상어 {len(추)}개: " + ", ".join(dict.fromkeys(추)))
     if 재료사정.search(t):
         걸림.append("재료 사정 언급: " + 재료사정.search(t).group(0))
-    if re.search(r"[←\[\]]|라프텔:", t):
-        걸림.append("재료 표시가 글에 있다")
-    # 되풀이 — 같은 숫자, 같은 끝맺음, 문단 간 겹침
-    for tok, cnt in _세기(re.findall(r"\d+\s*화|(?:19|20)\d{2}년", t)).items():
-        if cnt >= 5:
-            걸림.append(f"같은 숫자 되풀이: {tok} {cnt}번"); break
-    if len(re.findall(r"(보|하|가|되)면 된다", t)) >= 4:
-        걸림.append("'~하면 된다' 되풀이")
-    if _문단겹침(문단):
-        걸림.append("문단 사이 되풀이: " + _문단겹침(문단))
-    if 모양 == "정보":
-        재료줄 = [re.sub(r"\s*←.*$", "", l).strip("- ").strip() for l in (st.사실표 or "").splitlines()]
-        for l in 재료줄:
-            if len(l) >= 24 and l[:24] in t:
-                걸림.append("사실표 옮겨 적기: " + l[:24]); break
     if 괄호인용.search(t):
         걸림.append("괄호 인용 표기")
     for q in 따옴표안.findall(t):
@@ -2055,7 +1789,10 @@ def 형태검사(본문, st):
         if 유형 == "제작이야기" and not re.search(r"(라고|고) (했다|말했다|밝혔다)", t):
             걸림.append("제작진 발언이 없다")
     # 분량
-    if not (분량하한 <= len(t) <= 분량상한):
+    하한, 상한 = (800, 1600) if 모양 == "정보" else (1000, 2400)
+    if 유형 == "감상순서":
+        하한, 상한 = 900, 2000
+    if not (하한 <= len(t) <= 상한):
         걸림.append(f"분량 {len(t)}자")
     return list(dict.fromkeys(걸림))
 
@@ -2095,10 +1832,6 @@ class 편집판정(BaseModel):
 
 [구조] 시작과 끝이 맞물리는지, 문단마다 할 말이 하나인지, 같은 말이 되풀이되는지, 구체 없이 "감동적이다" 같은 말로만 채운 문단이 있는지. 종류 "구조".
 - 글이 자기 재료 사정을 말하면("확인할 수 없다", "표기가 없다") "구조"로 잡는다.
-- 같은 사실(화수 · 연도 · 제목)이 세 번 넘게 나오거나, 앞 문단의 말을 뒤 문단이 다시 확인만 하면 "구조"로 잡는다. 글이 얇아서 늘린 것이다.
-- 독자가 이미 아는 말("1기 다음 2기를 본다", "차례로 보면 된다")로 채운 문단, 이야기 사건이 하나도 없는 문단은 "구조"로 잡는다.
-- 재료 줄을 그대로 옮긴 문장("라프텔: 장송의 프리렌 2기로 표시돼 있다")은 "문장"으로 잡는다.
-- 하나 마나 한 문장("숫자가 0이라고 숨은 화수가 생기지 않는다", "방영 전 작품을 먼저 보지만 않으면")은 "문장"으로 잡는다.
 - 인용 앞에 매체 이름을 괄호로 붙인 것은 "문장"으로 잡는다.
 - 부추기는 말("꼭 봐야 한다")은 "구조"로 잡는다.
 
@@ -2109,7 +1842,7 @@ def 편집국장_읽기(st, budget):
     if budget["남은콜"] <= 0:
         return None
     if st.모양 == "정보":
-        재료 = f"[사실표]\n{st.사실표}\n\n[이야기]\n{(st.이야기 or '(없음)')[:9000]}\n\n[맥락]\n{(st.맥락 or '(없음)')[:3000]}"
+        재료 = f"[사실표]\n{st.사실표}\n\n[맥락]\n{(st.맥락 or '(없음)')[:3000]}"
     else:
         원문들 = "\n\n".join(f"### ({r['매체']}) {r['링크']}\n{r['원문'][:4000]}" for r in st.재료) or "(없음)"
         원문들 += "".join(f"\n\n### (발언 · {m['매체']}) {m['링크']}\n" + "\n".join("- " + x for x in m["말"]) for m in st.발언들)
@@ -2169,8 +1902,6 @@ class RunState(BaseModel):
     # 재료
     사실표: str = ""
     사실링크: list = []
-    이야기: str = ""             # 정보형. 회차 줄거리 · 위키 줄거리 · 등장인물 절
-    사실수: int = 0
     순서표: list = []
     links: list = []
     pages: list = []
@@ -2220,7 +1951,6 @@ def n_주제뽑기(st: RunState) -> RunState:
         st.후보목록 = 주제_후보목록(st.유형)
         st.log(f"  후보 {len(st.후보목록)}개 [{st.유형}]")
     st.주제 = None
-    st.사실표, st.이야기, st.순서표, st.맥락, st.맥락링크, st.사실링크, st.pages, st.links, st.blocked = "", "", [], "", [], [], [], [], []
     while st.후보번호 < len(st.후보목록):
         c = st.후보목록[st.후보번호]
         st.후보번호 += 1
@@ -2281,9 +2011,8 @@ def n_미리거르기(st: RunState) -> RunState:
 
 def n_재료판정(st: RunState) -> RunState:
     if st.모양 == "정보":
-        # 코드만 본다. 사실이 몇 개인지, 이야기가 있는지
-        st.사실수 = 사실_세기(st.사실표, st.이야기)
-        st.log(f"  사실표 {len(st.사실표)}자 · 이야기 {len(st.이야기)}자 · 맥락 {len(st.맥락)}자 · 고유 사실 {st.사실수}개" + (f" · 순서 {len(st.순서표)}개" if st.순서표 else ""))
+        # 코드만 본다. 재료모으기가 이미 충분성을 봤다
+        st.log(f"  사실표 {len(st.사실표)}자 · 맥락 {len(st.맥락)}자" + (f" · 순서 {len(st.순서표)}개" if st.순서표 else ""))
         return st
     b = {"남은콜": st.남은콜}
     st.판정원본 = judge_pages(st.pages, st.주제, b)
@@ -2333,7 +2062,7 @@ def n_기획자(st: RunState) -> RunState:
     st.바퀴 += 1
     순서 = "\n".join(f"{r['번호']}. [{r['갈래']}] {r['이름']}" for r in st.순서표) if st.순서표 else ""
     st.주문 = 기획주문(유형=st.유형, 모양=st.모양, 주제한줄=st.주제["한줄"], 작품정보=작품_text(st.주제, st.용어표),
-                     표기표=st.용어표.text(), 사실표=st.사실표, 이야기=st.이야기[:회차재료글자 + 6000], 관점표=st.관점표, 발췌=발췌_text(st.재료), 발언=말_text(st.발언들),
+                     표기표=st.용어표.text(), 사실표=st.사실표, 관점표=st.관점표, 발췌=발췌_text(st.재료), 발언=말_text(st.발언들),
                      맥락=st.맥락[:5000], 순서표=순서, 온도=random.choice(온도들), 시작점=random.choice(시작점들[st.모양]),
                      평개수=len(set(r["매체"] for r in st.재료)), 지난문제=st.지난문제)
     st.개요_ = st.글 = st.판정 = None
@@ -2347,8 +2076,8 @@ def n_기획자(st: RunState) -> RunState:
     if st.개요_:
         o = st.개요_
         st.log(f"  문단 {len(o.문단들)}개 / 사실 {len(o.사실목록)}개 / 인용 {len(o.인용둘)}개")
-        if len(o.사실목록) < 10:
-            st.log("  사실목록이 열 개도 안 된다. 글이 빌 것이다")
+        if len(o.사실목록) < (6 if st.모양 == "정보" else 8):
+            st.log("  사실목록이 적다. 글이 빌 것이다")
     return st
 
 def n_작가(st: RunState) -> RunState:
@@ -2421,9 +2150,6 @@ def after_재료모으기(st):
 
 def after_재료판정(st):
     if st.모양 == "정보":
-        if st.사실수 < 최소사실 or not st.이야기:
-            st.log(f"  재료가 얇다 (고유 사실 {st.사실수}개 · 이야기 {len(st.이야기)}자). 이 주제는 버리고 다음 후보로 간다")
-            return "주제뽑기"
         return "기획자"
     if not st.보강됨 and st.남은콜 >= 보강페이지 + 4:
         발언수 = sum(len(m["말"]) for m in st.발언들)
@@ -2623,8 +2349,6 @@ def 뽑기만(유형, n=2):
             print("쓸 만한 주제를 못 찾았다"); continue
         if st.모양 == "정보":
             print(st.사실표[:2500] if st.사실표 else f"  재료 없음: {st.이유}")
-            if st.이야기:
-                print(f"\n  [이야기 {len(st.이야기)}자 · 고유 사실 {사실_세기(st.사실표, st.이야기)}개] 앞부분:\n" + st.이야기[:1200])
         else:
             print(f"  재료 후보 페이지 {len(st.pages)}개 (검색 링크 {len(st.links)}, robots 막힘 {len(st.blocked)}):")
             for p in st.pages:
