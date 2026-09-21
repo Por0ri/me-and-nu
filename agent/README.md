@@ -13,6 +13,9 @@ agent/
 │   └── movie_review_agent.py   영화 · 리뷰 (V1.8)
 ├── music/
 │   └── music_review_agent.py   음악 · 리뷰 (v2.9)
+├── anime/
+│   ├── anime_agent.py          애니 · 유형 다섯 (v0.1)
+│   └── glossary.json           애니 용어집 — 시리즈 다섯, 라프텔 자막 기준 (초안)
 └── out/                    결과물 (git에 안 올라간다)
 ```
 
@@ -23,8 +26,9 @@ agent/
 | `movie/movie_info_agent.py` | 영화 · 정보 전달 | 재료 모으기(TMDB + 위키백과 + 기사) → 재료 판정 → 재료 정리 → 글쓰기 → 편집국장 → 형태 검사 → 판정관 → 업로드 규칙 → 고치기 |
 | `movie/movie_review_agent.py` | 영화 · 리뷰 | 재료 모으기(TMDB + 위키백과) → 글쓰기 → 형태 검사 → 판정관 → 업로드 규칙 |
 | `music/music_review_agent.py` | 음악 · 리뷰 | 앨범 뽑기(이즘 API · 아이돌로지 API · 해외 매체 → MusicBrainz → 위키백과 유명도) → 평론 모으기(뽑은 리뷰 본문 + 이즘 검색 + 아이돌로지 검색 + DuckDuckGo + RSS + 위키 평가 절) → 코드로 거르기 → 재료 판정 → 관점 묶기 → 기획자 → 작가 → 교정자 → 형태 검사 → 편집국장 |
+| `anime/anime_agent.py` | 애니 · 유형 다섯 | 주제 뽑기(용어집 시리즈 → AniList 관계도) → 재료 모으기(정보형: AniList · Jikan · 라프텔 · 위키백과 / 심층형: DuckDuckGo 검색 + 위키 평가 절) → 표기 맞추기(코드) → 재료 판정(심층형만 모델) → (관점 묶기) → 기획자 → 작가 → 교정자 → 형태 검사 → 편집국장 |
 
-세 에이전트 모두 마디(node)가 상태 하나를 받아 자기 칸만 채우고 돌려주는 구조다.
+네 에이전트 모두 마디(node)가 상태 하나를 받아 자기 칸만 채우고 돌려주는 구조다.
 갈림길 함수가 다음 마디를 고른다. 한 편에 도는 마디 수와 모델 요청 수에 상한이 있다.
 
 ## 구조 그림
@@ -164,7 +168,74 @@ flowchart TD
 모델을 부르는 마디는 다섯이다. 재료 판정 · 기획자 · 작가 · 교정자 · 편집국장. 앨범 후보 목록을 만들 때 매체 글 제목에서 아티스트 · 앨범을 뽑는 제목파서도 모델을 쓴다.
 한국 앨범은 평 1개(`한국최소평`), 해외 앨범은 2개(`MIN_REVIEWS`)가 안 모이면 그 앨범을 버리고 다음 후보로 간다.
 
-### 셋의 공통 뼈대
+### 애니 · 유형 다섯 (`anime/anime_agent.py`, v0.1)
+
+유형은 주문 칸 하나다. 글 모양이 둘로 갈린다. 정보형은 남의 글이 없고 판단을 안 쓴다. 심층형은 인터뷰 · 평론을 재료로 쓴다(음악 v2.9와 같다).
+
+| 유형 | 글 모양 | 재료 | 뽑기 |
+|---|---|---|---|
+| 사람 — 성우 · 제작진의 참여작 | 정보 | AniList | 용어집에 있는 사람 → 한국 표기 있는 참여작 둘 이상 |
+| 기념일 — 방영 N주년 · 캐릭터 생일 | 정보 | AniList + 위키백과 ko 평가 절 | 오늘 ±7일 |
+| 감상순서 — 순서 · 본편 연결 · 필러 | 정보 | AniList 관계도 + Jikan 회차 표시 + 용어집 편 | 시리즈 작품 셋 이상 (원피스는 편이 대신한다) |
+| 제작이야기 — 감독 · 원작자 인터뷰 | 심층 | 검색(animeanime.jp · ANN 등) + 위키백과 | 시리즈의 최근 TV 작품 |
+| 작품리뷰 — 평론 | 심층 | 검색 + 위키백과 ko · en 평가 절 | 시리즈의 최근 TV 작품 |
+
+```mermaid
+flowchart TD
+    classDef llm  fill:#dbeafe,stroke:#1d4ed8,color:#111
+    classDef code fill:#f3f4f6,stroke:#6b7280,color:#111
+    classDef src  fill:#fef3c7,stroke:#d97706,color:#111
+    classDef ok   fill:#dcfce7,stroke:#15803d,color:#111
+    classDef drop fill:#fee2e2,stroke:#b91c1c,color:#111
+
+    GL[("용어집 glossary.json<br/>시리즈 5 · 라프텔 자막 기준")]:::src
+    AL[("AniList<br/>작품 · 관계도 · 캐릭터 · 성우 · 제작진")]:::src
+    JK[("Jikan<br/>회차 필러 표시")]:::src
+    LF[("라프텔 공개 JSON<br/>한국 제목 · 방영 여부")]:::src
+    WK[("위키백과 ko · en")]:::src
+    DDG[("DuckDuckGo 검색<br/>인터뷰 · 리뷰")]:::src
+
+    GL --> P
+    AL --> P
+    P["주제뽑기 (코드)<br/>유형별 후보. 용어집 시리즈만"]:::code
+    P -->|후보 다 씀| X0[주제없음]:::drop
+    P --> M["재료모으기 (코드)<br/>정보형: 사실표 / 심층형: 페이지"]:::code
+    AL --> M
+    JK --> M
+    LF --> M
+    WK --> M
+    DDG --> M
+    M -->|재료 없음 · 표기 없음| P
+    M --> T["표기맞추기 (코드)<br/>용어집 → AniList 한글 → 라프텔(제작사 · 연도 대조) → 위키(임시)"]:::code
+    GL --> T
+    T --> F["미리거르기 (코드)"]:::code
+    F --> J{"재료판정"}
+    J -->|정보형 · 코드만| PL
+    J -->|심층형| MJ("재료판정관<br/>발언메모 · 장면메모"):::llm
+    MJ -->|얇음 · 한 번| RB["재료보강 (검색)"]:::code
+    RB --> MJ
+    MJ -->|글 모자람| P
+    MJ --> CL["관점묶기 (코드)"]:::code
+    CL --> PL("기획자<br/>사실표 · 순서표 · 표기표"):::llm
+    PL --> WR("작가"):::llm
+    WR --> PR("교정자"):::llm
+    PR --> SH["형태검사 (코드)<br/>로마자 · 일본어 이름 · 틀린 표기 · 임시 표기<br/>정보형: 판단 없음 · 연도 · 화수 · 순서 대조"]:::code
+    SH --> ED("편집국장<br/>점수와 문제 목록"):::llm
+    ED -->|70점 이상| OK["저장<br/>out/anime/올림"]:::ok
+    ED -->|걸림 · 3바퀴까지| PL
+    ED -->|3바퀴 다 씀| X2["저장<br/>out/anime/탈락"]:::drop
+```
+
+상한: 마디 60개(`MAX_STEPS`), 다시 쓰기 3바퀴(`REWRITE_LIMIT`), 주제 하나에 모델 요청 40회(`LLM_CALL_CAP`), 편집국장 통과선 70점(`PASS_SCORE`), 한 번 돌 때 같은 시리즈 2편(`작품당상한`).
+모델을 부르는 마디는 정보형 넷(기획자 · 작가 · 교정자 · 편집국장), 심층형 다섯(+ 재료판정관).
+
+표기 규칙
+• `glossary.json`이 첫 번째다. 영화 용어집과 같은 다섯 칸 `[정식 표기, [틀린 표기], [별칭], 종류, 뜻]`. 종류에 기술 · 편 · 제작진을 더했다. 시리즈는 `anilist_root`에서 관계도로 묶는다
+• 용어집에 없는 작품 제목은 AniList 한글 별칭 → 라프텔(방영 연도 · 제작사가 AniList와 맞을 때만) 순으로 채운다
+• 사람 · 캐릭터 이름은 용어집에 없으면 위키백과 ko로 찾되 "임시"다. 임시 표기와 표기 없는 이름은 글에 못 쓴다. 로마자 · 일본어 이름이 본문에 나오면 형태검사에 걸린다
+• 저장 파일 머리에 표기 출처(용어집 / AniList / 라프텔 / 위키 / 없음)를 남긴다. 임시 표기가 쌓이면 사람이 자막과 대조해 용어집에 올린다
+
+### 넷의 공통 뼈대
 
 ```mermaid
 flowchart LR
@@ -184,6 +255,7 @@ flowchart LR
 • 다시 쓰기는 늘 글쓰기(또는 고치기)로 돌아가고, 횟수 상한이 있다.
 • 마디 하나는 상태(`RunState`) 하나를 받아 자기 칸만 채우고 돌려준다. 갈림길 함수가 다음 마디 이름을 돌려준다.
 • 토픽마다 다른 것은 재료 출처 · 프롬프트 · 통과선 · 마디 개수다. 뼈대는 같다.
+• 애니는 유형이 주문 칸으로 들어가고, 갈림길이 글 모양(정보 / 심층)을 보고 관점묶기를 건너뛴다.
 
 
 ## 준비
@@ -222,6 +294,15 @@ python music/music_review_agent.py run --n 5            # 올린 글이 5편 될
 python music/music_review_agent.py run --n 3 --kr       # 한국만
 python music/music_review_agent.py one 우즈 OO-LI --song Drowning   # 앨범 지정. 곡을 주면 그 곡이 가운데
 python music/music_review_agent.py zip
+
+# 애니 · 유형 다섯
+python anime/anime_agent.py check                        # AniList · Jikan · 라프텔 · 위키백과 · 검색 점검. 모델 안 부른다
+python anime/anime_agent.py glossary                     # 용어집 점검 — 시리즈마다 관계도 · 표기 매칭. 모델 안 부른다
+python anime/anime_agent.py pick --type 감상순서 --n 2    # 주제 뽑기 + 재료 모으기까지만. 모델 안 부른다
+python anime/anime_agent.py run --type 사람 --n 3         # 올린 글이 3편 될 때까지. 유형: 사람 · 기념일 · 감상순서 · 제작이야기 · 작품리뷰
+python anime/anime_agent.py one 블리치 --type 제작이야기   # 시리즈 지정
+python anime/anime_agent.py one "진격의 거인" --type 사람 --person "Hiroshi Kamiya"
+python anime/anime_agent.py zip
 ```
 
 결과는 `agent/out/<이름>/`에 마크다운으로 쌓인다. 여러 편 돌리면 끝에 zip으로도 묶는다.
@@ -232,6 +313,7 @@ python music/music_review_agent.py zip
 
 ```bash
 python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.9.ipynb
+python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.1.ipynb     # 용어집이 노트북 안에 같이 들어간다
 ```
 
 첫 셀이 pip 설치와 보안 비밀(`LLM_KEY`) 읽기다. 마지막 셀들이 `점검()` · `뽑기만()` · `run()` · zip 내려받기다.
