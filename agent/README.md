@@ -27,6 +27,165 @@ agent/
 세 에이전트 모두 마디(node)가 상태 하나를 받아 자기 칸만 채우고 돌려주는 구조다.
 갈림길 함수가 다음 마디를 고른다. 한 편에 도는 마디 수와 모델 요청 수에 상한이 있다.
 
+## 구조 그림
+
+세 에이전트의 마디와 갈림길을 코드(`GRAPH` 표 · `produce` 함수)에서 그대로 옮긴 것이다.
+읽는 법: 둥근 상자 = 모델을 부르는 마디, 각진 상자 = 코드만 도는 마디, 원통 = 바깥에서 가져오는 재료.
+초록 = 올림, 빨강 = 탈락.
+
+### 영화 · 정보 전달 (`movie/movie_info_agent.py`, V2.3)
+
+```mermaid
+flowchart TD
+    classDef llm  fill:#dbeafe,stroke:#1d4ed8,color:#111
+    classDef code fill:#f3f4f6,stroke:#6b7280,color:#111
+    classDef src  fill:#fef3c7,stroke:#d97706,color:#111
+    classDef ok   fill:#dcfce7,stroke:#15803d,color:#111
+    classDef drop fill:#fee2e2,stroke:#b91c1c,color:#111
+
+    TMDB[("TMDB")]:::src
+    WIKI[("위키백과 · 주변 이야기 절")]:::src
+    NEWS[("기사 · 허용 도메인만")]:::src
+    TMDB --> M
+    WIKI --> M
+    NEWS --> M
+    M["재료 모으기<br/>fetch_material"]:::code
+    M --> G["거르기<br/>장르 · 개봉일 · 재료량 (코드)"]:::code
+    G -->|걸림| X1["대상아님 · 재료부족"]:::drop
+    G --> S("재료 판정<br/>screener — 이 영화를 다룰지"):::llm
+    S -->|안 다룸| X1
+    S --> P("재료 정리<br/>prep — 갈래 · 인물 · 개봉일 · 기사"):::llm
+    P --> W("글쓰기<br/>writer"):::llm
+    W --> E("편집국장<br/>editor — 통과 · 반려만 정한다"):::llm
+    E -->|반려 · 사유와 앞 글을 주고 다시| W
+    E -->|반려 3회 초과| X2[탈락보관]:::drop
+    E -->|통과| SH["형태 검사 (코드)<br/>길이 · 출처 · 제목 · 감독 · 별점 표시 · 부추기는 말"]:::code
+    SH -->|문장 문제| F("고치기<br/>fixer — 걸린 곳만"):::llm
+    SH -->|구조 문제 2회째| RW("형태 다시쓰기<br/>writer"):::llm
+    F --> SH
+    RW --> SH
+    SH -->|3회 초과| X2
+    SH -->|통과| J("판정관<br/>judge — 점수만 낸다"):::llm
+    J --> V["업로드 규칙 (코드)<br/>점수표로 올림 · 탈락 · 다시 쓰기"]:::code
+    V -->|올림| OK[올림]:::ok
+    V -->|탈락| X2
+    V -->|다시 쓰기 · 3회까지| F
+    V -->|다시 쓰기 초과| X2
+```
+
+상한: 한 편에 마디 40개(`MAX_STEPS`), 편집국장 반려 3회, 형태 검사 · 판정관 다시 쓰기 각 3회, 모델 요청은 마디마다 3회.
+모델을 부르는 마디는 여섯이다. 재료 판정 · 재료 정리 · 글쓰기 · 편집국장 · 판정관 · 고치기.
+
+### 영화 · 리뷰 (`movie/movie_review_agent.py`, V1.8)
+
+```mermaid
+flowchart TD
+    classDef llm  fill:#dbeafe,stroke:#1d4ed8,color:#111
+    classDef code fill:#f3f4f6,stroke:#6b7280,color:#111
+    classDef src  fill:#fef3c7,stroke:#d97706,color:#111
+    classDef ok   fill:#dcfce7,stroke:#15803d,color:#111
+    classDef drop fill:#fee2e2,stroke:#b91c1c,color:#111
+
+    TMDB[("TMDB")]:::src
+    WIKI[("위키백과")]:::src
+    TMDB --> M
+    WIKI --> M
+    M["재료 모으기<br/>fetch_material"]:::code
+    M --> G["거르기<br/>장르 · 재료량 (코드)"]:::code
+    G -->|걸림| X1["대상아님 · 재료부족"]:::drop
+    G --> O["주문 만들기 (코드)<br/>접근 · 온도 · 시작점 · 배치를 무작위로 뽑는다"]:::code
+    O --> W("글쓰기<br/>writer"):::llm
+    W --> SH["형태 검사 (코드)<br/>길이 · 출처 · 제목 · 감독 · 별점 표시 · 부추기는 말"]:::code
+    SH -->|걸림 · 검사 결과를 메모로 붙여| W
+    SH -->|통과| J("판정관<br/>judge — 점수만 낸다"):::llm
+    J --> V["업로드 규칙 (코드)<br/>점수표로 올림 · 탈락 · 다시 쓰기"]:::code
+    V -->|올림| OK[올림]:::ok
+    V -->|탈락| X2[탈락보관]:::drop
+    V -->|다시 쓰기 · 사유를 메모로 붙여| W
+    W -.->|시도 4회 다 쓰면| X2
+```
+
+상한: 글쓰기 시도 4회(`MAX_REWRITE` 3 + 첫 번째). 형태 검사에 걸려도 시도 한 번을 쓴다.
+모델을 부르는 마디는 둘이다. 글쓰기 · 판정관. 편집국장 · 고치기가 없고, 다시 쓰기는 늘 글쓰기로 돌아간다.
+
+### 음악 · 리뷰 (`music/music_review_agent.py`, v2.7)
+
+```mermaid
+flowchart TD
+    classDef llm  fill:#dbeafe,stroke:#1d4ed8,color:#111
+    classDef code fill:#f3f4f6,stroke:#6b7280,color:#111
+    classDef src  fill:#fef3c7,stroke:#d97706,color:#111
+    classDef ok   fill:#dcfce7,stroke:#15803d,color:#111
+    classDef drop fill:#fee2e2,stroke:#b91c1c,color:#111
+
+    subgraph S1["앨범 후보를 주는 곳"]
+        IZM[("이즘 API<br/>앨범 리뷰 · 명반")]:::src
+        IDO[("아이돌로지 API")]:::src
+        FOR[("해외 매체 리뷰 목록")]:::src
+    end
+    subgraph S2["확인하는 곳"]
+        MB[("MusicBrainz")]:::src
+        WK[("위키백과 아티스트 문서")]:::src
+    end
+    subgraph S3["평론을 더 찾는 곳"]
+        DDG[("DuckDuckGo 검색")]:::src
+        RSS[("막힌 매체의 RSS")]:::src
+        WR2[("위키백과 평가 절")]:::src
+    end
+
+    IZM --> A
+    IDO --> A
+    FOR --> A
+    MB --> A
+    WK --> A
+    A["앨범 뽑기 (코드)<br/>후보 목록 → MusicBrainz 확인 → 위키 유명도<br/>MusicBrainz에 없으면 매체 정보로 간다"]:::code
+    A -->|후보 다 씀| X0[앨범없음]:::drop
+    A --> C["평론 모으기 (코드)<br/>뽑을 때 쓴 리뷰 본문이 첫 번째<br/>+ 이즘 같은 앨범 글 + 아이돌로지 + 검색 + RSS + 위키 평가 절"]:::code
+    DDG --> C
+    RSS --> C
+    WR2 --> C
+    C --> PF["미리 거르기 (코드)<br/>모델 부르기 전에 싸게 거른다"]:::code
+    PF --> MJ("재료 판정<br/>재료판정관 — 이 글이 이 앨범의 평론인지"):::llm
+    MJ -->|평이 모자람 · 다음 후보로| A
+    MJ --> CL["관점 묶기 (코드)<br/>문장 임베딩으로 비슷한 평을 묶는다"]:::code
+    CL --> PL("기획자<br/>주제 · 곡 · 뼈대"):::llm
+    PL -->|못 짬| X1[탈락]:::drop
+    PL --> WR("작가"):::llm
+    WR -->|못 씀| X1
+    WR --> PR("교정자<br/>번역투 · 문장 짜임만. 뜻 · 사실 · 판단은 안 바꾼다"):::llm
+    PR --> SH["형태 검사 (코드)<br/>존댓말 · 길이 · 별점 표시"]:::code
+    SH --> ED("편집국장<br/>점수와 문제 목록"):::llm
+    ED -->|70점 이상| OK["저장<br/>out/music/올림"]:::ok
+    ED -->|70점 미만 · 3바퀴까지| PL
+    ED -->|3바퀴 다 씀 · 모델 요청 상한| X2["저장<br/>out/music/탈락"]:::drop
+```
+
+상한: 한 편에 마디 60개(`MAX_STEPS`), 다시 쓰기 3바퀴(`REWRITE_LIMIT`), 앨범 하나에 모델 요청 30회(`LLM_CALL_CAP`), 편집국장 통과선 70점(`PASS_SCORE`).
+모델을 부르는 마디는 다섯이다. 재료 판정 · 기획자 · 작가 · 교정자 · 편집국장. 앨범 후보 목록을 만들 때 매체 글 제목에서 아티스트 · 앨범을 뽑는 제목파서도 모델을 쓴다.
+한국 앨범은 평 1개(`한국최소평`), 해외 앨범은 2개(`MIN_REVIEWS`)가 안 모이면 그 앨범을 버리고 다음 후보로 간다.
+
+### 셋의 공통 뼈대
+
+```mermaid
+flowchart LR
+    classDef llm  fill:#dbeafe,stroke:#1d4ed8,color:#111
+    classDef code fill:#f3f4f6,stroke:#6b7280,color:#111
+
+    A["재료 모으기<br/>(코드 · 바깥 API)"]:::code --> B["거르기<br/>(코드)"]:::code
+    B --> C("재료 판정<br/>(모델)"):::llm
+    C --> D("글쓰기<br/>(모델)"):::llm
+    D --> E["형태 검사<br/>(코드)"]:::code
+    E --> F("판정 · 편집국장<br/>(모델)"):::llm
+    F -->|다시| D
+    F --> G["규칙으로 올림 · 탈락<br/>(코드)"]:::code
+```
+
+• 판정하는 모델은 점수나 통과 · 반려만 낸다. 올림 · 탈락은 코드가 정한다.
+• 다시 쓰기는 늘 글쓰기(또는 고치기)로 돌아가고, 횟수 상한이 있다.
+• 마디 하나는 상태(`RunState`) 하나를 받아 자기 칸만 채우고 돌려준다. 갈림길 함수가 다음 마디 이름을 돌려준다.
+• 토픽마다 다른 것은 재료 출처 · 프롬프트 · 통과선 · 마디 개수다. 뼈대는 같다.
+
+
 ## 준비
 
 ```bash
