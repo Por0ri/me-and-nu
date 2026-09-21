@@ -3,7 +3,7 @@
 # .py 가 정본이다. 노트북은 여기서 만든다. 노트북을 손으로 고치지 않는다.
 #
 #   python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.9.ipynb
-#   python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.2.ipynb     # 애니는 glossary.json 을 노트북 안에 같이 넣는다
+#   python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.3.ipynb     # 애니는 glossary.json 을 노트북 안에 같이 넣는다
 #
 # 자르는 규칙
 # - 파일 맨 위 주석 덩어리 → 마크다운 셀
@@ -102,13 +102,13 @@ print("LLM_KEY 길이:", len(os.environ["LLM_KEY"]))
                   "- `점검()` — AniList · Jikan · 라프텔 · 위키백과 · 검색. 모델 안 부른다",
                   "- `용어집점검()` — 시리즈마다 관계도와 표기 매칭. 모델 안 부른다",
                   "- `뽑기만(\"감상순서\", 2)` — 주제 뽑기 + 재료 모으기까지. 모델 안 부른다",
-                  "- `run(\"사람\", 목표편수=3)` — 올린 글이 세 편 될 때까지. 유형: 사람 · 기념일 · 감상순서 · 제작이야기 · 작품리뷰",
+                  "- `run(목표편수=5)` — 유형 다섯을 섞어 다섯 편. `run(\"사람\", 목표편수=3)` 처럼 하나만도 된다. 유형: 사람 · 기념일 · 감상순서 · 제작이야기 · 작품리뷰",
                   "- `run_one(\"블리치\", \"제작이야기\")` — 시리즈 지정. 사람 유형은 `사람=\"Hiroshi Kamiya\"`",
                   "- 결과는 `out/anime/올림|탈락/` 에 마크다운으로 쌓인다. 마지막 셀이 zip 으로 묶어 내려준다"]),
     ("code", ["점검()"]),
     ("code", ["용어집점검()"]),
     ("code", ["뽑기만(\"감상순서\", 2)"]),
-    ("code", ["결과 = run(\"감상순서\", 목표편수=2)", "# 결과 = run(\"사람\", 목표편수=3)", "# 결과 = run(\"제작이야기\", 목표편수=2)"]),
+    ("code", ["결과 = run(목표편수=5)                  # 유형 다섯을 섞는다", "# 결과 = run(\"사람\", 목표편수=3)      # 하나만"]),
     ("code", ["st = run_one(\"나루토\", \"감상순서\")      # 프리렌은 순서에 갈림이 없어 안 뽑힌다", "# st = run_one(\"진격의 거인\", \"사람\", 사람=\"Hiroshi Kamiya\")"]),
     ("code", ["z = zip_outputs()", "from google.colab import files", "files.download(str(z))"]),
 ]
