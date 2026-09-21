@@ -12,7 +12,7 @@ agent/
 │   ├── movie_info_agent.py     영화 · 정보 전달 (V2.3)
 │   └── movie_review_agent.py   영화 · 리뷰 (V1.8)
 ├── music/
-│   └── music_review_agent.py   음악 · 리뷰 (v2.7)
+│   └── music_review_agent.py   음악 · 리뷰 (v2.9)
 └── out/                    결과물 (git에 안 올라간다)
 ```
 
@@ -220,6 +220,7 @@ python music/music_review_agent.py check                # 이즘 · 아이돌로
 python music/music_review_agent.py pick --kr --n 3      # 앨범 뽑기 + 재료 모으기까지만. 모델 안 부른다 (--world 는 해외)
 python music/music_review_agent.py run --n 5            # 올린 글이 5편 될 때까지 (한국 3 · 해외 2)
 python music/music_review_agent.py run --n 3 --kr       # 한국만
+python music/music_review_agent.py one 우즈 OO-LI --song Drowning   # 앨범 지정. 곡을 주면 그 곡이 가운데
 python music/music_review_agent.py zip
 ```
 
@@ -230,7 +231,7 @@ python music/music_review_agent.py zip
 노트북은 `.py`에서 뽑는다. `.py`를 고친 뒤 다시 뽑는다.
 
 ```bash
-python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.7.ipynb
+python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.9.ipynb
 ```
 
 첫 셀이 pip 설치와 보안 비밀(`LLM_KEY`) 읽기다. 마지막 셀들이 `점검()` · `뽑기만()` · `run()` · zip 내려받기다.

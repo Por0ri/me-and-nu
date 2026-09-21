@@ -1,4 +1,4 @@
-# # music_review_agent_v2.9 — 음악 리뷰 에이전트
+# # music_review_agent_v2.7 — 음악 리뷰 에이전트
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY`에서 읽는다. 결과는 `agent/out/music/올림|탈락/`에 쌓인다.
 #
@@ -33,22 +33,6 @@
 # - 재료 판정 동시 요청을 스레드에서 같은 루프의 asyncio.gather로 바꿨다. "bound to a different event loop"가 나던 원인이다.
 # - 기획 · 집필 · 교정 실패 이유를 로그에 찍는다. 검색 결과 0건은 실패로 안 찍는다.
 # - 이즘 후보도 1970년 앞 앨범은 뺀다. MusicBrainz는 제목이 꼭 같고 연도가 가까운 것을 먼저 고른다.
-#
-# v2.8에서 바뀐 것
-# - 배치에 "곡 순서를 따라간다"를 더했다. 기획자가 재료를 보고 배치를 고른다(무작위 아님).
-#   이 배치는 곡 상한이 없다. 대신 곡마다 무슨 일이 있고 다음 곡으로 어떻게 넘어가는지를 재료에서 가져와 붙인다.
-#   에이전트는 음악을 안 듣는다. 곡 사이 이어짐은 평론이 적어 놓은 것만 쓴다.
-# - 앨범을 지정해서 돌리는 run_one을 넣었다. 중심에 둘 곡도 줄 수 있다. 예: run_one("우즈", "OO-LI", 곡="Drowning")
-#
-# v2.9에서 바뀐 것 — 글이 비어 있던 원인을 고쳤다
-# - 작가가 재료를 못 봤다. 관점 한 줄 + 인용 하나 + 사실 대여섯 개로 글을 쓰니 추상어로 채웠다.
-#   재료 판정관이 페이지마다 곡메모("곡 이름 — 무슨 말")와 아티스트 말을 같이 뽑고, 기획자가 관점표 + 곡메모 + 평론 원문 발췌를 본다.
-#   기획자는 사실을 열 개 넘게, 곡을 둘 이상, 문단마다 구체(곡 · 소리 · 가사)를 하나 이상 넣어야 한다.
-# - 재료가 모자라면(평 셋 미만, 중심 곡 이야기 없음) 재료 보강 마디가 돈다. 곡 이름 검색 · 인터뷰 검색 · 이즘 싱글 리뷰 · 위키백과 수록곡 표.
-# - 인터뷰는 평이 아니라 아티스트 말로 맥락에 넣는다.
-# - 앨범 정보 칸에서 지시문을 뺐다. 판종을 모르면 "앨범"이라고만 쓴다. 맥락은 지금 상태라 당시 사실로 못 쓴다.
-# - 형태 검사: 곡 없음 · 중심 곡 없음 · 재료 사정 언급 · 괄호 인용 표기 · 번역틀 추가. 편집국장: 구체 없는 문단 · 되풀이 · 자기 사정 언급.
-# - 매체 이름은 페이지의 og:site_name을 읽는다. 없을 때만 "한 매체".
 
 # ## 1. 설정
 #
@@ -83,7 +67,7 @@ MIN_REVIEWS   = 2      # 해외 앨범. 이만큼 안 모이면 그 앨범을 �
 최대후보앨범  = 12     # 한 편 만들 때 훑어볼 앨범 후보 수
 REWRITE_LIMIT = 3      # 다시 쓰기 상한
 PASS_SCORE    = 70     # 편집국장 점수가 이 아래면 다시 쓴다
-LLM_CALL_CAP  = 40     # 앨범 하나에 허용할 모델 요청 수 (재료 10 + 보강 8 + 한 바퀴 4 × 세 번 + 여유)
+LLM_CALL_CAP  = 30     # 앨범 하나에 허용할 모델 요청 수 (재료 10 + 한 바퀴 4 × 세 번)
 CONTACT       = "menu-project@example.com"   # MusicBrainz가 요구하는 연락처. 실제 주소로 바꾼다
 
 # v2.6
@@ -92,10 +76,6 @@ CONTACT       = "menu-project@example.com"   # MusicBrainz가 요구하는 연�
 MB없어도진행   = True   # MusicBrainz에서 못 찾아도 이즘 앨범 리뷰가 있으면 매체 정보로 간다
 한국EP허용     = True   # 한국은 미니앨범(EP)도 앨범으로 친다
 유명도기준     = {"KR": "아티스트", "기타": "앨범"}   # 위키백과에 이 문서가 있어야 통과
-# v2.9
-보강목표       = 3      # 평론이 이만큼 안 모이면 재료 보강 마디가 한 번 더 찾는다
-보강페이지     = 8      # 보강에서 더 읽어볼 페이지 수
-발췌글자       = 1800   # 기획자에게 주는 평론 원문 발췌. 평론마다 이만큼
 # ─────────────────────────────────────────────────────────────
 
 def _secret(name):
@@ -195,7 +175,7 @@ MEDIA_BY_DOMAIN = {m["domain"]: m for m in MEDIA + 막힌매체}
     "youtube.com", "youtu.be", "tiktok.com", "instagram.com", "facebook.com", "x.com", "twitter.com",
     "music.bugs.co.kr", "bugs.co.kr", "genie.co.kr", "melon.com", "flo.co.kr", "vibe.naver.com",
     "spotify.com", "music.apple.com", "soundcloud.com", "bandcamp.com",
-    "genius.com", "azlyrics.com", "lyrics.co.kr", "klyrics.net", "musixmatch.com", "colorcodedlyrics.com", "kprofiles.com", "maniadb.com",
+    "genius.com", "azlyrics.com", "lyrics.co.kr", "klyrics.net", "musixmatch.com",
     "amazon.com", "coupang.com", "aladin.co.kr", "yes24.com", "discogs.com",
 ]
 
@@ -328,9 +308,9 @@ print("robots 확인 준비 끝")
 # 한국 아티스트는 한글 이름과 영문 이름이 같이 쓰인다. 어디서 온 이름이든 같은 것으로 보게 한다.
 
 def _norm(s):
-    # 글자와 숫자만 남긴다. 띄어쓰기 · 기호 · 대소문자 · 하이픈 종류(- – — ‐)를 다 무시한다
     s = htmlmod.unescape(s or "").lower()
-    return re.sub(r"[\W_]+", "", s)
+    s = re.sub(r"[\s\-_–—·.,:;!?'\"“”‘’()\[\]<>《》〈〉/&+*]", "", s)
+    return s
 
 def 같은이름(a, b, 느슨=False):
     # 기본은 완전 일치(띄어쓰기 · 기호 · 대소문자 무시). 느슨=True면 한쪽이 다른 쪽에 들어 있어도 같다고 본다
@@ -544,47 +524,8 @@ def _credit_names(g):
             out.append(c["artist"]["name"])
     return out
 
-def mb_아티스트(name, want_kr):
-    # 이름이나 별칭이 꼭 같은 아티스트. 한글 이름으로 영문 이름을, 영문 이름으로 한글 이름을 찾는다
-    try:
-        arts = mb_get("artist", query=f'artist:"{_lucene(name)}" OR alias:"{_lucene(name)}"', limit=6).get("artists", [])
-    except Exception:
-        return None
-    후보 = []
-    for a in arts:
-        전부 = [a.get("name")] + [x.get("name") for x in a.get("aliases", []) if x.get("name")]
-        if any(같은이름(name, x) for x in 전부):
-            후보.append((0 if (a.get("country") == "KR") == want_kr else 1, -(a.get("score") or 0), a, 전부))
-    if not 후보:
-        return None
-    후보.sort(key=lambda x: (x[0], x[1]))
-    a, 전부 = 후보[0][2], 후보[0][3]
-    return {"name": a.get("name"), "aliases": list(dict.fromkeys(x for x in 전부 if x))}
-
-def _영문(names):
-    return next((x for x in names if re.fullmatch(r"[A-Za-z0-9 .'&!\-]+", x or "")), None)
-
-def _한글(names):
-    return next((x for x in names if re.search(r"[가-힣]", x or "")), None)
-
-def 표기_채우기(cand, want_kr):
-    # 한글 · 영문 중 한쪽만 있으면 MusicBrainz 별칭으로 다른 쪽을 채운다. "우즈" → "WOODZ"
-    if cand.get("artist_kr") and cand.get("artist_en"):
-        return False
-    ma = mb_아티스트(cand.get("artist_kr") or cand.get("artist_en") or cand.get("artist"), want_kr)
-    if not ma:
-        return False
-    전부 = [ma["name"]] + ma["aliases"]
-    if not cand.get("artist_en") and _영문(전부):
-        cand["artist_en"] = _영문(전부)
-        cand["영문MB"] = True            # MusicBrainz 별칭은 표기가 거칠 수 있다("Jaoorimm"). 찾는 데만 쓰고 글에는 안 쓴다
-    cand["artist_kr"] = cand.get("artist_kr") or _한글(전부)
-    return True
-
 def mb_찾기(cand, want_kr):
     # cand: {"artist", "artist_en", "artist_kr", "title", ...}
-    if not (cand.get("artist_kr") and cand.get("artist_en")):
-        표기_채우기(cand, want_kr)
     names = [n for n in dict.fromkeys([cand.get("artist_kr"), cand.get("artist_en"), cand.get("artist")]) if n]
     title = cand["title"]
     types = "(album OR ep)" if (want_kr and 한국EP허용) else "album"
@@ -665,7 +606,7 @@ def 매체정보로_앨범(cand):
     if re.search(r"remix|리믹스", low): 판종.append("리믹스")
     if re.search(r"\bep\b|미니", low): 판종.append("EP·미니앨범")
     return {"mbid": None, "title": t, "artist": cand["artist"], "year": cand.get("year"),
-            "판종": " / ".join(판종) if 판종 else "모름",
+            "판종": " / ".join(판종) if 판종 else "정규 앨범 (판종은 매체 표기로만 봤다)",
             "판설명": "", "발매일": str(cand["year"]) if cand.get("year") else None,
             "레이블": [], "참여자": [cand["artist"]], "수록곡": []}
 
@@ -802,45 +743,6 @@ def wiki_reception(album):
         pass
     return None
 
-수록곡절제목 = ["수록곡", "트랙", "Track listing", "Tracklist", "Track list"]
-
-def wiki_tracklist(album):
-    # 앨범 문서의 수록곡 표. MusicBrainz에 없는 앨범의 곡 이름을 여기서 채운다
-    doc = 위키_앨범문서(album)
-    if not doc or doc.get("아티스트문서"):
-        return []
-    lang, title = doc["lang"], doc["제목"]
-    try:
-        api = f"https://{lang}.wikipedia.org/w/api.php"
-        secs = requests.get(api, params={"action": "parse", "page": title, "prop": "sections", "format": "json"},
-                            headers=HEADERS, timeout=15).json()
-        idx = None
-        for sec in secs.get("parse", {}).get("sections", []):
-            if any(k.lower() in sec["line"].lower() for k in 수록곡절제목):
-                idx = sec["index"]; break
-        if idx is None:
-            return []
-        html = requests.get(api, params={"action": "parse", "page": title, "section": idx, "prop": "text", "format": "json"},
-                            headers=HEADERS, timeout=15).json()["parse"]["text"]["*"]
-        soup = BeautifulSoup(html, "lxml")
-        out = []
-        def _제목(t):
-            return re.sub(r'^[\s"“「《〈\']+|[\s"”」》〉\']+$', "", t).strip()
-        for tr in soup.select("table.tracklist tr"):
-            # 첫 칸은 번호("1.")다. 번호 · 시간이 아닌 첫 칸이 제목이다
-            for td in tr.find_all("td"):
-                t = _제목(td.get_text(" ", strip=True))
-                if t and not re.fullmatch(r"[\d:.\s]+", t):
-                    out.append(t); break
-        if not out:
-            for li in soup.select("ol li"):
-                t = _제목(re.sub(r"\s*[–—-]\s*\d+:\d+\s*$", "", li.get_text(" ", strip=True)))
-                if t:
-                    out.append(t)
-        return list(dict.fromkeys(out))[:30]
-    except Exception:
-        return []
-
 print("위키백과 준비 끝")
 
 # ## 9. 평론 링크 모으기 — 검색 엔진
@@ -925,21 +827,12 @@ def robots_batch(links, workers=10):
 
 def _parse_page(url, html):
     soup = BeautifulSoup(html, "lxml")
-    # 사이트가 스스로 부르는 이름. 매체 목록에 없는 곳은 이걸로 부른다
-    site = None
-    tag = soup.find("meta", attrs={"property": "og:site_name"}) or soup.find("meta", attrs={"name": "application-name"})
-    if tag and tag.get("content"):
-        site = htmlmod.unescape(tag["content"]).strip()
-        site = re.split(r"\s+[-|–—:]\s+", site)[0].strip()[:24]      # "TheKMeal - The Best of ..." → "TheKMeal"
     for t in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
         t.decompose()
     title = (soup.title.get_text(strip=True) if soup.title else "")
     body = soup.select_one("article") or soup.select_one("main") or soup.body or soup
     text = re.sub(r"\n{3,}", "\n\n", body.get_text("\n", strip=True))
-    이름 = 매체이름(url)
-    if 이름 == "한 매체" and site and not re.search(r"^(home|blog|news)$", site, re.I):
-        이름 = site
-    return {"url": url, "막힘": False, "본문": text[:12000], "제목": title, "매체": 이름}
+    return {"url": url, "막힘": False, "본문": text[:12000], "제목": title, "매체": 매체이름(url)}
 
 def read_pages(links, 한도, workers=10):
     allowed, blocked = robots_batch(links)
@@ -1042,9 +935,8 @@ print("미리 거르기 준비 끝")
 
 # ## 12. 재료 판정
 #
-# 페이지마다 모델을 한 번 부른다. 여섯 값에 곡메모와 아티스트 말을 더해 낸다. 쓸지 버릴지는 코드가 정한다.
-# 곡메모는 그 글이 곡 이름을 들어 말한 것이다. 기획자가 여기서 곡 이야기를 가져간다. 호출 수는 안 는다.
-# 원문은 재료에 같이 붙여 둔다. 기획자 발췌와 편집국장 대조에 쓴다. 저장할 때는 뺀다.
+# 페이지마다 모델을 한 번 부른다. 여섯 값을 낸다. 쓸지 버릴지는 코드가 정한다.
+# 원문은 재료에 같이 붙여 둔다. 편집국장이 대조할 때 쓴다. 저장할 때는 뺀다.
 
 from typing import Literal, List, Optional
 from pydantic import BaseModel, Field
@@ -1052,24 +944,21 @@ from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 
 class 재료판정(BaseModel):
-    다루는_정도: Literal["앨범 평", "아티스트 이야기", "인터뷰", "스치듯 언급", "관계없음"]
+    다루는_정도: Literal["앨범 평", "아티스트 이야기", "스치듯 언급", "관계없음"]
     평가있음: bool
     홍보문: bool
     관점: str = Field(description="글쓴이가 이 앨범에서 무엇을 근거로 무엇을 봤는지 한 줄. 좋다 나쁘다만 적지 않는다")
     근거: List[Literal["곡", "가사", "사운드", "아티스트 이력", "장르 맥락"]]
     인용: str = Field(description="원문에서 그대로 옮긴 한 문장. 원문 언어 그대로. 없으면 빈 문자열")
-    곡메모: List[str] = Field(default_factory=list, description="이 글이 곡 이름을 들어 말한 것. '곡 이름 — 무슨 말' 꼴. 곡 이름은 원문 표기 그대로. 없으면 빈 목록")
-    아티스트말: List[str] = Field(default_factory=list, description="아티스트 본인이 이 앨범이나 곡에 대해 한 말. 원문 표현대로 짧게. 없으면 빈 목록")
 
 재료판정관 = Agent(
     MODEL,
     output_type=재료판정,
-    system_prompt="""너는 음악 글 한 편을 읽고 아래 값을 낸다. 쓸지 버릴지는 네가 정하지 않는다. 값만 낸다.
+    system_prompt="""너는 음악 글 한 편을 읽고 여섯 가지를 판정한다. 쓸지 버릴지는 네가 정하지 않는다. 값만 낸다.
 
 [다루는_정도]
-- "앨범 평": 이 앨범을 놓고 쓴 글이다. 앨범 리뷰, 앨범을 다시 꺼내 본 글, 앨범의 곡 하나를 놓고 쓴 리뷰.
+- "앨범 평": 이 앨범을 놓고 쓴 글이다. 앨범 리뷰, 앨범을 다시 꺼내 본 글.
 - "아티스트 이야기": 아티스트 전체를 다루면서 이 앨범을 한 대목 이상 말한다.
-- "인터뷰": 아티스트가 직접 말한 글이다. 인터뷰, 기자회견, 라이너 노트, 아티스트 코멘트. 평가가 없어도 이걸로 둔다.
 - "스치듯 언급": 이름만 나온다.
 - "관계없음": 이 앨범 이야기가 아니다. 이름이 같은 다른 앨범이나 곡이면 관계없음이다.
 여러 앨범을 한 글에서 다루는 모음글(월간 결산, 주간 리뷰, 1st Listen)이면 이 앨범을 다룬 대목만 놓고 판정한다.
@@ -1079,24 +968,16 @@ class 재료판정(BaseModel):
 
 [홍보문] 발매일 · 참여자 · 수록곡 · 활동 계획만 나열하고 글쓴이 판단이 없으면 참이다.
 보도자료를 옮긴 기사, 음원 사이트 소개문이 그렇다. 별점이나 점수가 붙어 있어도 판단 문장이 없으면 홍보문이다.
-인터뷰는 홍보문이 아니다. 아티스트 말이 있으면 거짓으로 둔다.
 
 [관점] 글쓴이가 이 앨범에서 무엇을 근거로 무엇을 봤는지 한 줄로 적는다.
 "좋다", "완성도가 높다"처럼 판단만 적지 않는다. 무엇을 보고 그렇게 봤는지까지 적는다.
 예: "앞 앨범의 밴드 연주를 걷어내고 신시사이저로 채웠는데, 그래서 목소리가 더 또렷하게 들린다고 봤다"
+예: "가사가 자기 이야기에서 남 이야기로 옮겨 갔고, 그 때문에 앞 앨범보다 힘이 빠졌다고 봤다"
 
 [근거] 관점이 기대는 것. 곡 / 가사 / 사운드 / 아티스트 이력 / 장르 맥락 중에서 고른다. 여럿 골라도 된다.
 
 [인용] 관점을 가장 잘 보여주는 원문 문장 하나. 원문 언어 그대로, 한 글자도 고치지 않는다. 문장 하나만 옮긴다.
 마땅한 문장이 없으면 빈 문자열로 둔다.
-
-[곡메모] 이 글이 곡 이름을 들어 말한 것을 곡마다 한 줄씩 적는다. "곡 이름 — 무슨 말" 꼴이다.
-- 곡 이름은 원문 표기 그대로 적는다. 영어 곡을 한국어로 옮기지 않는다. 'Abyss'를 '심연'으로 적지 않는다.
-- 무슨 말에는 글이 그 곡에 대해 적은 것을 넣는다. 소리(악기 · 목소리 · 빠르기 · 편곡), 가사 내용, 곡의 자리(여는 곡 · 끝 곡 · 타이틀), 앞뒤 곡과 이어지는 말, 글쓴이 판단.
-- 글에 없는 말을 붙이지 않는다. 곡 이름만 나열된 수록곡 목록은 곡메모가 아니다.
-- 열 곡이 넘으면 글이 길게 말한 곡부터 열 개까지.
-
-[아티스트말] 아티스트 본인이 이 앨범이나 곡에 대해 한 말. 인터뷰 답변, 코멘트. 원문 표현대로 한 줄씩. 없으면 빈 목록.
 
 주의
 - 페이지에 점수 · 필자 이름 · 수록곡 목록 · 다른 글 제목이 같이 붙어 있어도 본문만 본다.
@@ -1104,57 +985,46 @@ class 재료판정(BaseModel):
 - 글이 아티스트를 오래 다루다 이 앨범 이야기로 넘어가면 "아티스트 이야기"다. 앨범 대목이 글의 중심이면 "앨범 평"이다.""",
 )
 
-def _judge_ask(p, album):
-    return (f"앨범: {표기(album)} - {album['title']} ({album.get('year')})\n"
-            f"아티스트의 다른 표기: {', '.join(이름들(album))}\n"
-            f"수록곡(알면): {', '.join((album.get('수록곡') or [])[:20]) or '모름'}\n"
-            f"페이지 제목: {p['제목']}\n주소: {p['url']}\n\n본문:\n{p['본문'][:8000]}")
-
-async def _judge_all(pages, album):
-    # 같은 루프 안에서 동시에 보낸다. 스레드로 보내면 루프가 갈려서 모델 클라이언트가 실패한다
+async def _judge_many(pages, album):
+    # 페이지 여러 장을 한 루프 안에서 동시에 보낸다. 스레드를 쓰면 모델 클라이언트가 루프에 묶여서 안 된다
     sem = asyncio.Semaphore(동시판정)
     async def one(p):
+        ask = (f"앨범: {표기(album)} - {album['title']} ({album.get('year')})\n"
+               f"아티스트의 다른 표기: {', '.join(이름들(album))}\n"
+               f"페이지 제목: {p['제목']}\n주소: {p['url']}\n\n본문:\n{p['본문'][:8000]}")
         async with sem:
             try:
-                r = await 재료판정관.run(_judge_ask(p, album), usage_limits=UsageLimits(request_limit=2))
+                r = await 재료판정관.run(ask, usage_limits=UsageLimits(request_limit=2))
             except Exception as e:
                 print("   판정 실패:", e)
                 return None
-            return {"매체": p.get("매체") or 매체이름(p["url"]), "도메인": _host(p["url"]),
-                    "url": p["url"], "판정": r.output, "원문": p["본문"]}
+        return {"매체": p.get("매체") or 매체이름(p["url"]), "도메인": _host(p["url"]),
+                "url": p["url"], "판정": r.output, "원문": p["본문"]}
     return await asyncio.gather(*(one(p) for p in pages))
 
 def judge_pages(pages, album, budget):
-    # 페이지 여러 장을 동시에 보낸다. 판정 하나하나는 그대로다
     pages = pages[: max(0, budget["남은콜"])]
     if not pages:
         return []
-    got = _run_async(_judge_all(pages, album))
+    got = _run_async(_judge_many(pages, album))
     budget["남은콜"] -= len(pages)
     return [g for g in got if g]
 
-def keep_rules(판정들):
-    # 평론과 아티스트 말을 나눈다. 평론은 매체당 두 개까지
-    평론, 말 = [], []
-    per = {}
-    for r in 판정들:
-        j = r["판정"]
-        if j.다루는_정도 == "인터뷰" or (j.아티스트말 and j.다루는_정도 != "관계없음"):
-            말.append({"매체": r["매체"], "말": [x.strip() for x in j.아티스트말 if x.strip()][:6], "링크": r["url"], "원문": r["원문"]})
-        if j.다루는_정도 not in ("앨범 평", "아티스트 이야기") or not j.평가있음 or j.홍보문 or len(j.관점.strip()) < 10:
-            continue
+def keep_rules(재료):
+    쓸것 = [r for r in 재료
+            if r["판정"].다루는_정도 in ("앨범 평", "아티스트 이야기")
+            and r["판정"].평가있음 and not r["판정"].홍보문
+            and len(r["판정"].관점.strip()) >= 10]
+    per, out = {}, []
+    for r in 쓸것:
         c = per.get(r["도메인"], 0)
-        if c >= PER_MEDIA:
+        if c >= PER_MEDIA:          # 같은 매체는 두 개까지
             continue
         per[r["도메인"]] = c + 1
-        평론.append({"매체": r["매체"], "관점": j.관점.strip(), "인용": j.인용.strip(), "근거": j.근거,
-                    "곡메모": [x.strip() for x in j.곡메모 if x.strip()][:10],
+        out.append({"매체": r["매체"], "관점": r["판정"].관점.strip(),
+                    "인용": r["판정"].인용.strip(), "근거": r["판정"].근거,
                     "링크": r["url"], "원문": r["원문"]})
-    return 평론, [m for m in 말 if m["말"]]
-
-def 곡_언급됐나(재료, 곡):
-    k = _norm(곡)
-    return bool(k) and any(k in _norm(" ".join(r["곡메모"]) + " " + r["관점"] + " " + r["원문"][:6000]) for r in 재료)
+    return out
 
 print("재료 판정 준비 끝")
 
@@ -1198,36 +1068,22 @@ def views_text(묶음):
             줄.append(f"  - ({r['매체']}) {r['관점']}")
             if r["인용"]:
                 줄.append(f'    인용: "{r["인용"]}"  ← {r["링크"]}')
-            for m in r.get("곡메모") or []:
-                줄.append(f"    곡: {m}  ({r['매체']})")
-    return "\n".join(줄)
-
-def 발췌_text(재료, n=발췌글자):
-    # 기획자에게 주는 원문 발췌. 평론마다 앞부분
-    return "\n\n".join(f"### ({r['매체']}) {r['링크']}\n{r['원문'][:n]}" for r in 재료[:6])
-
-def 말_text(말들):
-    줄 = []
-    for m in 말들:
-        for x in m["말"]:
-            줄.append(f"- ({m['매체']}) {x}  ← {m['링크']}")
     return "\n".join(줄)
 
 def album_text(a):
     return (f"아티스트: {표기(a)}  (다른 표기: {', '.join(이름들(a))})\n"
             f"앨범: {a['title']} ({a.get('year')})\n"
-            f"판종: {a.get('판종') or '모름'}{(' — ' + a['판설명']) if a.get('판설명') else ''}\n"
+            f"판종: {a.get('판종', '정규 앨범')}{(' — ' + a['판설명']) if a.get('판설명') else ''}\n"
             f"발매일: {a.get('발매일') or '모름'}\n"
             f"레이블: {', '.join(a.get('레이블') or []) or '모름'}\n"
-            f"수록곡: {', '.join((a.get('수록곡') or [])[:25]) or '모름'}")
+            f"수록곡: {', '.join((a.get('수록곡') or [])[:20]) or '모름 (MusicBrainz에 없다. 곡 이름은 관점표 · 맥락에 나온 것만 쓴다)'}")
 
 print("관점 묶기 준비 끝")
 
 # ## 14. 기획자
 #
-# 관점표 · 곡메모 · 평론 발췌 · 맥락 · 아티스트 말 · 앨범 정보를 받아 뼈대를 짠다. 문장은 안 쓴다.
-# 사실을 열 개 넘게, 곡을 둘 이상, 문단마다 구체를 하나 이상 넣어야 한다. 그래야 작가가 쓸 것이 생긴다.
-# 접근 · 온도 · 시작점은 무작위로 받고 배치는 기획자가 고른다.
+# 관점표 · 맥락 · 앨범 정보 · 판종을 받아 뼈대를 짠다. 문체는 모른다.
+# 접근 · 온도 · 시작점 · 배치는 여기서 받는다.
 # 두 번째부터는 지난 번 편집국장 문제 목록을 받는다. 지난 개요와 지난 글은 안 받는다.
 
 접근들 = ["분석", "해석", "평가"]
@@ -1236,24 +1092,20 @@ print("관점 묶기 준비 끝")
     "곡 하나의 특정 대목", "앨범이 나온 때의 자리", "아티스트의 앞 앨범",
     "평이 갈린 지점", "소리의 한 요소", "앨범 제목이나 표지", "듣는 사람이 서는 자리",
 ]
-곡순서 = "곡 순서를 따라간다"
-배치들 = [                         # 여섯. PM이 고친다. 기획자가 재료를 보고 하나 고른다
+배치들 = [                         # 다섯. PM이 고친다
     "시간 순으로 따라간다", "곡 하나를 파고든 다음 앨범 전체로 넓힌다",
     "평이 갈린 지점에서 시작해 양쪽을 본다", "소리 요소별로 나눠 본다",
-    "앨범 전체 인상을 먼저 말하고 근거를 댄다", 곡순서,
+    "앨범 전체 인상을 먼저 말하고 근거를 댄다",
 ]
 
 class 기획주문(BaseModel):
     앨범정보: str
     관점표: str
-    발췌: str
     맥락: str
-    아티스트말: str
     접근: str
     온도: str
     시작점: str
-    배치후보: str
-    중심곡: str = ""
+    배치: str
     평개수: int = 0
     지난문제: str = ""
 
@@ -1264,24 +1116,16 @@ class 인용계획(BaseModel):
 
 class 문단계획(BaseModel):
     할말: str = Field(description="이 문단이 말하는 것 한 줄")
-    쓸곡: List[str] = Field(default_factory=list, description="이 문단에서 다루는 곡. 원문 표기 그대로")
-    쓸사실: List[str] = Field(description="이 문단에서 쓸 사실. 앨범 정보 · 맥락 · 관점표 · 발췌에 있는 것만. 구체(곡 · 소리 · 가사 · 연도)가 하나 이상")
+    쓸사실: List[str] = Field(description="이 문단에서 쓸 사실. 앨범 정보·맥락·관점표에 있는 것만")
     쓸관점: List[str] = Field(description="이 문단에서 기대는 평론 관점. 관점표에서 그대로")
-
-class 곡흐름항목(BaseModel):
-    곡: str
-    무슨일: str = Field(description="이 곡에서 무슨 일이 있는지 한 줄. 곡메모 · 발췌에 있는 것만")
-    다음곡으로: str = Field(description="다음 곡으로 어떻게 넘어가는지. 재료에 있으면 적고 없으면 빈 문자열")
 
 class 개요(BaseModel):
     주제: str = Field(description="이 글이 하려는 말 한 줄")
-    배치: str = Field(description="배치 후보 중 하나. 이름 그대로")
-    판종처리: str = Field(description="판종이 정규 앨범이 아니면 어떻게 다룰지 한 줄. 정규면 빈 문자열. 모르면 '앨범이라고만 부른다'")
-    곡셋: List[str] = Field(description="다룰 곡. 둘 이상. 곡 순서 배치가 아니면 세 개까지. 곡메모 · 수록곡에 있는 곡에서. 원문 표기 그대로")
-    곡흐름: List[곡흐름항목] = Field(default_factory=list, description="곡 순서 배치일 때만. 곡셋의 곡마다 하나")
+    판종처리: str = Field(description="판종이 정규 앨범이 아니면 어떻게 다룰지 한 줄. 정규면 빈 문자열")
+    곡셋: List[str] = Field(max_length=3, description="다룰 곡. 세 개까지. 수록곡에서. 수록곡을 모르면 관점표·맥락에 이름이 나온 곡에서만")
     인용둘: List[인용계획] = Field(max_length=2)
     문단들: List[문단계획] = Field(min_length=4, max_length=6)
-    사실목록: List[str] = Field(description="글 전체에 쓸 사실 전부. 열 개 넘게. '사실 ← 출처' 꼴. 출처는 앨범 정보 / 맥락 / 관점표 / 발췌 / 아티스트 말 중 하나. 여기 없는 사실은 작가가 못 쓴다")
+    사실목록: List[str] = Field(description="글 전체에 쓸 사실 전부. '사실 ← 출처' 꼴. 출처는 앨범 정보 / 맥락 / 관점표 중 하나. 여기 없는 사실은 작가가 못 쓴다")
 
 기획자 = Agent(MODEL, deps_type=기획주문, output_type=개요)
 
@@ -1291,49 +1135,29 @@ def _기획프롬프트(ctx) -> str:
     지난 = f"\n[지난 글에서 편집국장이 건 것]\n{d.지난문제}\n이 문제가 안 나게 뼈대를 새로 짠다. 지난 글은 안 본다." if d.지난문제 else ""
     평하나 = """
 - 관점표에 매체가 하나뿐이다. 그 매체의 판단을 이 글의 결론으로 삼지 않는다. 그 관점은 한 문단에서 한 번만 기댄다.
-  나머지 문단은 곡메모 · 발췌 · 앨범 정보 · 맥락에 있는 사실과 글쓴이 자신의 판단으로 채운다.
+  나머지 문단은 앨범 정보 · 맥락에 있는 사실과 글쓴이 자신의 판단으로 채운다.
   "평론가들은", "평단은"처럼 여럿의 평인 것처럼 적지 않는다. 매체 이름을 밝히고 그 매체가 봤다고 적는다.""" if d.평개수 <= 1 else ""
-    중심 = f"\n중심 곡: {d.중심곡} — 이 곡을 곡셋 첫 번째에 두고 글의 가운데에 놓는다. 이 곡의 곡메모 · 발췌를 가장 많이 쓴다. 앨범은 이 곡을 둘러싼 자리로 다룬다." if d.중심곡 else ""
-    return f"""너는 앨범 리뷰의 뼈대를 짠다. 문장은 안 쓴다. 무엇을 어떤 순서로 말할지, 어떤 곡과 어떤 사실로 말할지를 정한다.
-작가는 네가 적어 준 사실과 곡만 쓸 수 있다. 네가 적게 주면 글이 비고 추상어로 찬다. 많이, 구체적으로 준다.
+    return f"""너는 앨범 리뷰의 뼈대를 짠다. 문장은 안 쓴다. 무엇을 어떤 순서로 말할지만 정한다.
 
 [앨범]
 {d.앨범정보}
 
-[관점표 — 남의 평은 여기 있는 것만. "곡:" 줄이 곡메모다]
+[관점표 — 남의 평은 여기 있는 것만]
 {d.관점표 or "(없음)"}
 
-[평론 발췌 — 사실과 곡 이야기를 여기서 캐낸다. 판단은 글쓴이 것이고 사실은 가져다 쓴다]
-{d.발췌 or "(없음)"}
-
-[아티스트 말 — 아티스트 본인이 한 말. "아티스트는 ~라고 했다"로 쓸 수 있다]
-{d.아티스트말 or "(없음)"}
-
-[맥락 — 지금 상태의 백과 정보다. 멤버 수 · 활동 상황은 앨범 당시와 다를 수 있다. 연도가 같이 적힌 것만 당시 사실로 쓴다]
+[맥락 — 사실은 여기와 앨범 정보에 있는 것만]
 {d.맥락 or "(없음)"}
 
 [이번 글]
 접근: {d.접근} / 온도: {d.온도}
 시작점: {d.시작점}에서 연다
-배치 후보: {d.배치후보}{중심}
-
-[배치 고르기]
-- 배치 후보 중 하나를 고른다. 이름 그대로 적는다.
-- 재료가 앨범을 하나의 흐름으로 말하면(곡 순서, 앞뒤 곡의 이어짐, 앨범 전체의 이야기를 평론이 적어 놓았으면) "{곡순서}"를 고른다.
-- 재료가 곡 하나하나를 안 다루면 "{곡순서}"는 고르지 않는다. 이어짐을 지어낼 수 없다.
+배치: {d.배치}
 
 [규칙]
-- 사실목록은 열 개를 넘긴다. 앨범 정보 · 맥락 · 관점표 · 발췌 · 아티스트 말에 있는 것만. 기억으로 아는 것을 넣지 않는다.
-  사실마다 "사실 ← 앨범 정보" / "사실 ← 맥락" / "사실 ← 관점표" / "사실 ← 발췌" / "사실 ← 아티스트 말" 꼴로 출처를 적는다.
-  곡 이야기(이 곡은 어떤 소리다, 가사가 무엇을 말한다, 어디에 놓였다)를 사실목록에 곡 이름과 함께 넣는다. 이게 제일 중요하다.
-- 곡셋은 둘 이상이다. 곡메모나 수록곡에 있는 곡에서 고른다. 곡메모가 있는 곡을 먼저 고른다. 곡 이름은 원문 표기 그대로. 영어 곡을 한국어로 옮기지 않는다.
-  "{곡순서}" 배치가 아니면 세 개까지다. "{곡순서}" 배치일 때만 상한이 없고, 대신 곡셋의 곡마다 곡흐름을 하나씩 적는다.
-  무슨일은 곡메모 · 발췌에 있는 것만. 다음곡으로는 재료에 그 이어짐이 적혀 있을 때만 적고 없으면 빈 문자열이다.
-- 문단마다 구체가 하나 이상이다. 곡 이름, 소리(악기 · 목소리 · 빠르기 · 편곡), 가사 내용, 연도 · 사람 이름 같은 것. 쓸곡 · 쓸사실에 적는다. 구체가 없는 문단은 만들지 않는다.
-- 같은 말을 문단마다 되풀이하지 않는다. 주제는 한 번 말한다. 문단마다 할 말이 다르다.
-- 재료가 없다 · 정보가 제한된다 · 확인할 수 없다는 말은 어느 문단에도 넣지 않는다. 모르는 것은 안 쓴다. 아는 것만 쓴다.
-- 판종은 앨범 정보대로다. "모름"이면 판종처리에 "앨범이라고만 부른다"라고 적는다. 정규라고 확인되지 않은 것을 정규 앨범이라 하지 않는다.
-- 아티스트 · 앨범 이름은 앨범 정보에 적힌 표기를 쓴다.
+- 사실목록에는 앨범 정보 · 맥락 · 관점표에 있는 것만 넣는다. 기억으로 아는 것을 넣지 않는다.
+  사실마다 어디서 왔는지 "사실 ← 앨범 정보" / "사실 ← 맥락" / "사실 ← 관점표" 꼴로 적는다.
+- 아티스트 · 앨범 · 곡 이름은 앨범 정보에 적힌 표기를 쓴다. 곡 이름은 관점표나 맥락에 적힌 표기 그대로다.
+- 곡은 세 개까지다. 수록곡에서 고른다. 수록곡을 모르면 관점표 · 맥락에 이름이 나온 곡에서만 고른다. 거기에도 없으면 곡셋은 비운다.
 - 인용은 두 개까지다. 관점표의 인용 중에서 고른다. 영어면 한국어로 옮기고, 한국어면 그대로 둔다. 한 문장이다. 두 문장 넘는 것은 고르지 않는다.
 - 인용의 매체는 관점표에 적힌 이름 그대로 쓴다. "한 매체"라고 돼 있으면 그대로 "한 매체"다. 도메인을 적지 않는다.
 - 판종이 정규 앨범이 아니면 그 판을 다루는 글이다. 관점표의 평이 원판 이야기면 그렇다고 적는다.
@@ -1347,7 +1171,7 @@ print("기획자 준비 끝")
 # ## 15. 작가
 #
 # 개요만 받아 문장으로 쓴다. 재료 원문은 안 본다. 개요에 없는 사실은 못 쓴다.
-# 문체 규칙은 둘만 준다. 존댓말 금지, 판단은 "~다"로 끝낸다. 표기와 구체 규칙은 문체가 아니라 내용이라 같이 준다.
+# 문체 규칙은 둘만 준다. 존댓말 금지, 판단은 "~다"로 끝낸다. 표기 규칙은 문체가 아니라 사실이라 같이 준다.
 
 class 집필주문(BaseModel):
     앨범한줄: str
@@ -1368,13 +1192,9 @@ def _사실만(s):
 def _작가프롬프트(ctx) -> str:
     d = ctx.deps
     o = d.개요
-    문단 = "\n".join(f"{i+1}. {p.할말}\n   곡: {', '.join(p.쓸곡) or '없음'}\n   사실: {'; '.join(_사실만(x) for x in p.쓸사실) or '없음'}\n   관점: {'; '.join(p.쓸관점) or '없음'}"
+    문단 = "\n".join(f"{i+1}. {p.할말}\n   사실: {'; '.join(_사실만(x) for x in p.쓸사실) or '없음'}\n   관점: {'; '.join(p.쓸관점) or '없음'}"
                     for i, p in enumerate(o.문단들))
-    인용 = "\n".join(f"- {q.매체}: {q.옮긴문장}" for q in o.인용둘) or "없음"
-    흐름 = ""
-    if o.배치 == 곡순서 and o.곡흐름:
-        흐름 = "\n[곡 흐름 — 이 순서대로 따라간다. 곡마다 무슨 일이 있는지 적고, 다음 곡으로 넘어가는 말이 있으면 그것으로 잇는다. 없으면 잇는 말을 지어내지 않는다]\n" + \
-               "\n".join(f"{i+1}. '{x.곡}' — {x.무슨일}" + (f" → {x.다음곡으로}" if x.다음곡으로 else "") for i, x in enumerate(o.곡흐름)) + "\n"
+    인용 = "\n".join(f"- ({q.매체}) {q.옮긴문장}" for q in o.인용둘) or "없음"
     return f"""너는 앨범 리뷰를 쓴다. 뼈대는 이미 짜여 있다. 그것을 문장으로 옮긴다.
 
 [앨범] {d.앨범한줄}
@@ -1382,13 +1202,12 @@ def _작가프롬프트(ctx) -> str:
 [주제] {o.주제}
 [판종] {o.판종처리 or "정규 앨범이다"}
 [온도] {d.온도}
-[배치] {o.배치}
 [다룰 곡] {", ".join(o.곡셋) or "정하지 않았다. 곡 이름을 새로 꺼내지 않는다"}
-{흐름}
+
 [문단 계획]
 {문단}
 
-[쓸 수 있는 인용 — 이 문장 그대로]
+[쓸 수 있는 인용 — 이 문장 그대로, 매체 이름과 함께]
 {인용}
 
 [쓸 수 있는 사실 — 이 밖의 사실은 쓰지 않는다]
@@ -1398,15 +1217,9 @@ def _작가프롬프트(ctx) -> str:
 - 존댓말을 쓰지 않는다.
 - 판단은 "~다"로 끝낸다.
 - 위 사실 목록과 인용 밖의 사실이나 남의 평을 넣지 않는다. 네 판단은 넣어도 된다.
-- 문단 계획 순서를 지킨다. 문단마다 할 말 하나다. 문단 계획에 적힌 곡과 사실을 그 문단에서 실제로 쓴다. 곡 이름을 빼먹지 않는다.
-- 구체로 쓴다. 어떤 곡에서 무슨 소리가 나는지, 가사가 무엇을 말하는지, 누가 언제 무엇을 했는지. "감정이 오르내린다", "긴장이 있다" 같은 말만으로 문단을 채우지 않는다.
-- 같은 말을 되풀이하지 않는다. 한 문단에서 한 말은 다른 문단에서 다시 하지 않는다. 주제는 한 번만 말한다.
-- 재료가 없다 · 정보가 제한된다 · 확인할 수 없다 · 단정할 수 없다는 말을 쓰지 않는다. 아는 것만 쓴다.
-- 인용은 "이즘은 “…”라고 썼다" 꼴로 매체 이름을 문장 안에 넣는다. 매체 이름을 괄호로 앞에 붙이지 않는다.
-- 표기: 아티스트는 [아티스트 표기]대로 첫 등장에 한 번 적고 그 뒤로는 앞 이름만 쓴다. 앨범 이름은 《 》, 곡 이름은 ' '로 감싼다. 이름 철자는 개요에 적힌 그대로다. 영어 곡 이름을 옮기지 않는다.
-- 판종: [판종]에 적힌 대로 부른다. "앨범이라고만 부른다"면 정규 · 미니를 붙이지 않는다.
-- 곡 흐름이 있으면 곡 이름만 적고 지나가지 않는다. 곡마다 무슨 일이 있는지 한 문장 이상 적는다.
-- 분량은 1200자에서 2000자 사이다. 곡 흐름이 있으면 2400자까지 된다."""
+- 문단 계획 순서를 지킨다. 문단마다 할 말 하나다.
+- 표기: 아티스트는 [아티스트 표기]대로 첫 등장에 한 번 적고 그 뒤로는 앞 이름만 쓴다. 앨범 이름은 《 》, 곡 이름은 ' '로 감싼다. 이름 철자는 개요에 적힌 그대로다.
+- 분량은 1200자에서 2000자 사이다."""
 
 print("작가 준비 끝")
 
@@ -1432,7 +1245,6 @@ class 교정본(BaseModel):
 5. "~에 그치지 않는다", "~에 머물지 않는다", "단순히 ~가 아니다". 영어 not only다. 뒤에 오는 말만 남긴다.
 6. "가장 먼저 ~하는 것은 ~다", "~을 만드는 것은 ~다" 강조 틀. 주어를 앞으로 빼서 보통 문장으로 만든다. "기타 리프가 먼저 나선다".
 7. 물건이 주어가 되어 비유를 하는 것. "후크가 어둠의 표면에 균열을 낸다". 실제로 들리는 것으로 바꾼다. "후크가 나오면 분위기가 가벼워진다".
-8. "~라기보다 ~으로 보는 편이 맞다", "~라는 데 있다", "~라는 데서 생긴다", "~을 제시한다", "설득력을 얻는다", "유효하다". 판단을 동사로 바로 말한다. "~다".
 
 같이 본다.
 - 한자어 동사(작동한다, 기능한다, 구축한다, 형성한다)는 일상어로. 한다, 된다, 만든다, 낸다.
@@ -1455,11 +1267,9 @@ print("교정자 준비 끝")
 흐림 = re.compile(r"(인 듯하다|인 듯싶다|일 수도 있다|라고 할 수 있다|인 것 같다|일지도 모른다|라고 볼 수 있다|아닐까)")
 부추김 = re.compile(r"(꼭 들어|들어봐야|필청|강력히|추천한다|놓치지 마)")
 번역틀 = re.compile(r"(것이 아니라|라기보다|에 가깝다|하는 방식이다|하는 이유다|하는 지점|에 있어|을 통해|를 통해|에 의해"
-                    r"|그치지 않|머물지 않|단순히 .{1,12}가 아니|는 것은 .{1,20}다\.|편이 맞다|데 있다|데서 생긴다|을 제시한다|를 제시한다|설득력을 얻|유효하다)")
-추상어 = re.compile(r"(서사|정체성|육체성|즉각성|응집력|접근성|타격감|미학|밀도|층위|텍스처|낙차|긴장감|다채로움|보편성)")
+                    r"|그치지 않|머물지 않|단순히 .{1,12}가 아니|는 것은 .{1,20}다\.)")
+추상어 = re.compile(r"(서사|정체성|육체성|즉각성|응집력|접근성|타격감|미학|밀도|층위|텍스처)")
 다수평 = re.compile(r"(평론가들은|평단은|비평가들은|많은 이들이|대체로 .{0,6}평가|호평이 이어|평이 갈렸)")
-재료사정 = re.compile(r"(확인할 수 있는 정보|확인할 수 없|알 수 없다는 점|정보(는|가) .{0,12}제한|MusicBrainz|자료가 (없|부족)|단정할 수는 없|판단의 범위)")
-괄호인용 = re.compile(r"\(\s*[가-힣A-Za-z .!'’]{2,20}\s*\)\s*[“\"]")
 따옴표안 = re.compile(r"[“\"]([^”\"]{10,})[”\"]")
 영문덩어리 = re.compile(r"[A-Za-z][A-Za-z ,.'’\-]{25,}")
 
@@ -1468,7 +1278,7 @@ def _겹침(a, b, n=12):
     B = {b[i:i+n] for i in range(max(0, len(b)-n+1))}
     return len(A & B) / len(A) if A and B else 0.0
 
-def 형태검사(본문, 재료, 맥락, album, 배치="", 곡셋=None, 중심곡=None):
+def 형태검사(본문, 재료, 맥락, album):
     걸림 = []
     t = 본문
     if 존댓말.search(t):
@@ -1489,7 +1299,7 @@ def 형태검사(본문, 재료, 맥락, album, 배치="", 곡셋=None, 중심�
         걸림.append("번역투 틀: " + ", ".join(dict.fromkeys(틀)))
     # 이름은 영어여도 된다. 이름을 지운 뒤에 영어 덩어리를 본다
     t_이름뺌 = t
-    for x in 이름들(album) + 제목들(album) + list(album.get("수록곡") or []) + list(곡셋 or []):
+    for x in 이름들(album) + 제목들(album) + list(album.get("수록곡") or []):
         if x and len(x) >= 3:
             t_이름뺌 = t_이름뺌.replace(x, "")
     if 영문덩어리.search(t_이름뺌):
@@ -1499,10 +1309,6 @@ def 형태검사(본문, 재료, 맥락, album, 배치="", 곡셋=None, 중심�
         걸림.append("추상어 " + str(len(추)) + "개: " + ", ".join(dict.fromkeys(추)))
     if len(set(r["매체"] for r in 재료)) <= 1 and 다수평.search(t):
         걸림.append("없는 다수 평: " + 다수평.search(t).group(0))
-    if 재료사정.search(t):
-        걸림.append("재료 사정 언급: " + 재료사정.search(t).group(0))
-    if 괄호인용.search(t):
-        걸림.append("괄호 인용 표기")
     for q in 따옴표안.findall(t):
         if len(re.findall(r"[.!?]", q)) >= 2 or len(q) > 120:
             걸림.append("인용이 길다")
@@ -1513,20 +1319,11 @@ def 형태검사(본문, 재료, 맥락, album, 배치="", 곡셋=None, 중심�
         걸림.append("느낌표")
     if 부추김.search(t):
         걸림.append("부추기는 말")
-    # 곡 — 정한 곡이 글에 있어야 한다. 수록곡을 알면 하나는 나와야 한다
-    low = _norm(t)
-    정한곡 = [c for c in (곡셋 or []) if _norm(c)]
-    if 정한곡 and not any(_norm(c) in low for c in 정한곡):
-        걸림.append("정한 곡이 글에 없다")
-    if 중심곡 and _norm(중심곡) not in low:
-        걸림.append(f"중심 곡 없음: {중심곡}")
     곡들 = [c for c in (album.get("수록곡") or []) if len(c) >= 3]
-    나온곡 = [c for c in 곡들 if _norm(c) in low]
-    if 곡들 and not 나온곡 and not 정한곡:
-        걸림.append("곡 이름 없음")
-    if len(나온곡) > 3 and 배치 != 곡순서:          # 곡 순서 배치는 곡을 다 다룬다
+    나온곡 = [c for c in 곡들 if c.lower() in t.lower()]
+    if len(나온곡) > 3:
         걸림.append(f"곡 나열 {len(나온곡)}개")
-    if not (1000 <= len(t) <= (2800 if 배치 == 곡순서 else 2400)):
+    if not (1000 <= len(t) <= 2400):
         걸림.append("분량")
     return list(dict.fromkeys(걸림))
 
@@ -1561,22 +1358,13 @@ class 편집판정(BaseModel):
 - 원문이 하나뿐인데 "평론가들은", "평단은"처럼 여럿의 평으로 적었으면 "사실"로 잡는다.
 - 아티스트 · 앨범 이름의 한글 표기와 영문 표기, 대소문자, 띄어쓰기 차이는 사실 문제가 아니다.
 - 원문이 여러 앨범을 다룬 모음글이면 이 앨범을 다룬 대목만 원문으로 본다.
-- 맥락(백과 정보)은 지금 상태다. 지금 멤버 수 · 지금 활동 상황을 앨범 당시 사실처럼 적었으면("1997년 3인조 밴드는") "사실"로 잡는다. 연도가 같이 적힌 것만 당시 사실이다.
-- 판종을 모르는 앨범을 "정규 앨범"이라고 적었으면 "사실"로 잡는다.
-- 곡 이름을 옮겨 적은 것('Abyss'를 '심연')은 "사실"로 잡고 원래 표기를 적는다.
 
 [문장] 뜻이 안 잡히는 문장, 앞뒤가 안 맞는 문장, 고치다 망가진 문장, 영어를 그대로 옮긴 듯한 문장. 종류 "문장".
 
-[구조] 판종에 맞게 썼는지, 시작과 끝이 맞물리는지, 곡 셋 안에서 갔는지(곡 순서 배치는 예외), 문단마다 할 말이 하나인지. 종류 "구조".
+[구조] 판종에 맞게 썼는지, 시작과 끝이 맞물리는지, 곡 셋 안에서 갔는지, 문단마다 할 말이 하나인지. 종류 "구조".
 - 마지막 문단이 글쓴이 판단이 아니라 여러 평을 합친 요약("가장 ~한 앨범 중 하나다")이면 "구조"로 잡는다.
 - 결성 연도 · 발매일 · 레이블이 한 문장에 몰려 백과사전처럼 읽히면 "구조"로 잡는다.
 - 첫 문단과 마지막 문단이 같은 말을 되풀이하면 "구조"로 잡는다.
-- 곡 순서 배치 글에서 곡 이름만 나열하고 그 곡에서 무슨 일이 있는지 없으면 "구조"로 잡는다.
-- 곡 · 소리 · 가사 · 연도 같은 구체가 하나도 없이 "감정이 오르내린다", "긴장이 있다" 같은 말로만 채운 문단은 "구조"로 잡는다.
-- 같은 뜻의 말("개인적인 이야기가 보편으로 넓어진다")이 세 번 넘게 되풀이되면 "구조"로 잡는다.
-- 글이 자기 재료 사정을 말하면("확인할 수 있는 정보가 제한된다", "수록곡을 알 수 없다", "단정할 수는 없다") "구조"로 잡는다. 독자는 그걸 알 필요가 없다.
-- 인용 앞에 매체 이름을 괄호로 붙인 것("(이즘) “…”")은 "문장"으로 잡는다. "이즘은 “…”라고 썼다" 꼴이어야 한다.
-- 곡 사이 이어짐("A가 끝나면 B로 넘어간다", "A의 잔향 위로 B가 시작한다")을 적었는데 평론 원문 · 관점표 · 맥락 어디에도 없으면 "사실"로 잡는다. 에이전트는 음악을 못 듣는다.
 
 [낱말] 오타, 없는 말, 장르 · 밴드 · 사람 이름을 틀리게 적은 것. "스톤더 둠", "프로토고스" 같은 것. 종류 "문장"으로 잡고 바른 말을 설명에 적는다.
 
@@ -1584,11 +1372,10 @@ class 편집판정(BaseModel):
 문제마다 어느 문장인지 그대로 옮겨 적는다.""",
 )
 
-def 편집국장_읽기(글: Article, 개요_: 개요, 재료, 관점표, 맥락, album, budget, 아티스트말=None):
+def 편집국장_읽기(글: Article, 개요_: 개요, 재료, 관점표, 맥락, album, budget):
     if budget["남은콜"] <= 0:
         return None
     원문들 = "\n\n".join(f"### ({r['매체']}) {r['링크']}\n{r['원문'][:4000]}" for r in 재료) or "(없음)"
-    원문들 += "".join(f"\n\n### (아티스트 말 · {m['매체']}) {m['링크']}\n" + "\n".join("- " + x for x in m["말"]) for m in (아티스트말 or []))
     ask = (f"[앨범 정보]\n{album_text(album)}\n\n"
            f"[개요]\n주제: {개요_.주제}\n사실목록:\n" + "\n".join("- " + f for f in 개요_.사실목록) + "\n\n"
            f"[관점표]\n{관점표 or '(없음)'}\n\n"
@@ -1792,8 +1579,6 @@ class RunState(BaseModel):
 
     # 입력
     want_kr: bool
-    지정후보: Optional[dict] = None   # run_one으로 앨범을 지정했을 때
-    중심곡: Optional[str] = None      # 글의 가운데에 둘 곡
     # 앨범 뽑기
     후보목록: list = []
     후보번호: int = 0
@@ -1807,9 +1592,6 @@ class RunState(BaseModel):
     pages: list = []
     blocked: list = []
     재료: list = []              # 원문 포함
-    판정원본: list = []          # 판정한 것 전부. 보강 뒤에 다시 거른다
-    아티스트말: list = []        # 인터뷰에서 나온 아티스트 본인의 말
-    보강됨: bool = False
     관점표: str = ""
     맥락: str = ""
     맥락링크: list = []
@@ -1845,8 +1627,6 @@ print("상태 준비 끝")
 # 모델을 부르는 마디는 `남은콜`을 하나씩 깎는다.
 
 def n_앨범뽑기(st: RunState) -> RunState:
-    if not st.후보목록 and st.지정후보:
-        st.후보목록 = [st.지정후보]
     if not st.후보목록:
         b = {"남은콜": st.남은콜}
         st.후보목록 = 앨범_후보목록(st.want_kr, b)
@@ -1871,22 +1651,14 @@ def n_앨범뽑기(st: RunState) -> RunState:
         got["country"] = "KR" if st.want_kr else "기타"
         got["별칭"] = {"아티스트": [x for x in (cand.get("artist_kr"), cand.get("artist_en"), cand.get("artist"), got.get("artist")) if x],
                      "앨범": [x for x in (cand["title"], cand.get("title_원래"), got.get("title")) if x],
-                     "한글": cand.get("artist_kr"), "영문": None if cand.get("영문MB") else cand.get("artist_en")}
-        if cand["src"] == "지정":
-            ok, 근거 = True, "지정 앨범"                 # 사람이 고른 앨범은 유명도를 안 본다
-        else:
-            ok, 근거 = 알만한가(got)
+                     "한글": cand.get("artist_kr"), "영문": cand.get("artist_en")}
+        ok, 근거 = 알만한가(got)
         if not ok:
             st.log(f"  - {이름}: 위키백과 문서 없음  [{cand['src']}]")
             continue
         st.album = album_detail(got) if got.get("mbid") else got
         st.album["별칭"] = got["별칭"]
         st.album["country"] = got["country"]
-        if not st.album.get("수록곡"):
-            곡 = wiki_tracklist(st.album)                    # MusicBrainz에 없으면 위키백과 수록곡 표
-            if 곡:
-                st.album["수록곡"] = 곡
-                st.log(f"  수록곡 {len(곡)}곡은 위키백과에서")
         st.뽑기출처, st.뽑기url, st.뽑기page, st.유명도 = cand["src"], cand["url"], cand.get("page"), 근거
         st.log(f"■ {표기(st.album)} - {st.album['title']} ({st.album.get('year')}) · {st.album.get('판종')}  [{cand['src']} · 조회 {cand.get('views') or 0} · 위키 {근거}]")
         break
@@ -1926,77 +1698,10 @@ def n_미리거르기(st: RunState) -> RunState:
 
 def n_재료판정(st: RunState) -> RunState:
     b = {"남은콜": st.남은콜}
-    st.판정원본 = judge_pages(st.pages, st.album, b)
+    st.재료 = keep_rules(judge_pages(st.pages, st.album, b))
     st.남은콜 = b["남은콜"]
-    st.재료, st.아티스트말 = keep_rules(st.판정원본)
     매체들 = ", ".join(dict.fromkeys(r["매체"] for r in st.재료)) or "-"
-    곡메모수 = sum(len(r["곡메모"]) for r in st.재료)
-    st.log(f"  검색 링크 {len(st.links)} / 읽은 페이지 {len(st.pages)} / robots 막힘 {len(st.blocked)} / 남은 평론 {len(st.재료)} ({매체들}) / 곡메모 {곡메모수} / 아티스트 말 {sum(len(m['말']) for m in st.아티스트말)}")
-    return st
-
-def 보강_링크(album, 중심곡):
-    # 곡 이름 · 인터뷰 · 곡별 리뷰로 다시 찾는다
-    곡들 = [중심곡] if 중심곡 else []
-    곡들 += [c for c in (album.get("수록곡") or [])[:4] if c not in 곡들]
-    KR = album["country"] == "KR"
-    말 = []
-    for name in 이름들(album)[:2]:
-        t = album["title"]
-        말 += ([f"{name} {t} 인터뷰", f"{name} {t} 앨범 소개 수록곡", f"{name} {t} 트랙 리뷰"] if KR
-               else [f"{name} {t} interview", f"{name} {t} track by track", f"{name} {t} 앨범 리뷰"])
-        for c in 곡들[:3]:
-            말 += ([f"{name} {c} 리뷰", f"{name} {c} 가사 해석"] if KR else [f"{name} {c} review", f"{name} {c} lyrics meaning"])
-    out = []
-    for q in dict.fromkeys(말):
-        out += 검색(q, n=10)
-    seen, uniq = set(), []
-    for u in out:
-        u = u.split("#")[0]
-        if u in seen or 차단됐나(u) or (media_of(u) and media_of(u).get("api")):
-            continue
-        seen.add(u); uniq.append(u)
-    return uniq
-
-def izm_싱글리뷰(album):
-    # 이 앨범 곡의 이즘 싱글 리뷰
-    out, seen = [], set()
-    for c in (album.get("수록곡") or [])[:6]:
-        j = api_get(f"{IZM_API}/content/search/", {"keyword": c})
-        for it in ((j or {}).get("contents") or {}).get("single_review_contents") or []:
-            if it.get("id") in seen:
-                continue
-            kr, en = izm_이름(it)
-            if not any(같은이름(n, a, 느슨=True) for n in 이름들(album) for a in (kr, en) if a):
-                continue
-            if not 같은이름(it.get("title"), c, 느슨=True):
-                continue
-            seen.add(it["id"])
-            pg = izm_page(it)
-            pg["제목"] = f"{kr or en} - {it.get('title')} (이즘 싱글 리뷰)"
-            out.append(pg)
-    return out
-
-def n_재료보강(st: RunState) -> RunState:
-    st.보강됨 = True
-    a = st.album
-    있던 = {p["url"] for p in st.pages}
-    새페이지 = [p for p in izm_싱글리뷰(a) if p["url"] not in 있던]
-    링크 = [u for u in 보강_링크(a, st.중심곡) if u not in 있던]
-    읽음, 막힘 = read_pages(링크, 보강페이지)
-    st.blocked += 막힘
-    새페이지 += [p for p in 읽음 if p["url"] not in 있던]
-    새페이지 = pre_filter(새페이지, a)[:보강페이지]
-    if not 새페이지:
-        st.log("  보강: 더 찾은 것이 없다")
-        return st
-    b = {"남은콜": st.남은콜}
-    더 = judge_pages(새페이지, a, b)
-    st.남은콜 = b["남은콜"]
-    st.pages += 새페이지
-    st.판정원본 += 더
-    st.재료, st.아티스트말 = keep_rules(st.판정원본)
-    매체들 = ", ".join(dict.fromkeys(r["매체"] for r in st.재료)) or "-"
-    st.log(f"  보강: 페이지 {len(새페이지)}장 더 읽음 → 평론 {len(st.재료)} ({매체들}) / 곡메모 {sum(len(r['곡메모']) for r in st.재료)} / 아티스트 말 {sum(len(m['말']) for m in st.아티스트말)}")
+    st.log(f"  검색 링크 {len(st.links)} / 읽은 페이지 {len(st.pages)} / robots 막힘 {len(st.blocked)} / 남은 평론 {len(st.재료)} ({매체들})")
     return st
 
 def n_관점묶기(st: RunState) -> RunState:
@@ -2005,16 +1710,13 @@ def n_관점묶기(st: RunState) -> RunState:
     if w:
         st.맥락 = (w["본문"] + ("\n\n[이즘 아티스트 소개]\n" + st.맥락 if st.맥락 else ""))
         st.맥락링크 = [w["링크"]] + st.맥락링크
-    st.맥락링크 += [m["링크"] for m in st.아티스트말 if m["링크"] not in st.맥락링크]
     return st
 
 def n_기획자(st: RunState) -> RunState:
     st.바퀴 += 1
     st.주문 = 기획주문(앨범정보=album_text(st.album), 관점표=st.관점표, 맥락=st.맥락[:5000],
-                     발췌=발췌_text(st.재료), 아티스트말=말_text(st.아티스트말),
                      접근=random.choice(접근들), 온도=random.choice(온도들),
-                     시작점=random.choice(시작점들), 배치후보=" / ".join(배치들),
-                     중심곡=st.중심곡 or "",
+                     시작점=random.choice(시작점들), 배치=random.choice(배치들),
                      평개수=len(set(r["매체"] for r in st.재료)), 지난문제=st.지난문제)
     st.개요_ = st.글 = st.판정 = None
     st.고친곳, st.걸림 = [], []
@@ -2024,22 +1726,6 @@ def n_기획자(st: RunState) -> RunState:
         st.이유 = f"기획 실패: {e}"
         st.log(f"  {st.이유}")
     st.남은콜 -= 1
-    if st.개요_:
-        o = st.개요_
-        if o.배치 not in 배치들:                       # 이름을 틀리게 적었으면 무작위로
-            o.배치 = random.choice([b for b in 배치들 if b != 곡순서])
-        if o.배치 != 곡순서 and len(o.곡셋) > 3:
-            st.log(f"  기획자가 곡을 {len(o.곡셋)}개 골랐다. 셋으로 자른다")
-            o.곡셋 = o.곡셋[:3]
-        if o.배치 == 곡순서 and not o.곡흐름:
-            st.log("  곡 순서 배치인데 곡 흐름이 없다. 다른 배치로 바꾼다")
-            o.배치 = random.choice([b for b in 배치들 if b != 곡순서])
-            o.곡셋 = o.곡셋[:3]
-        if st.중심곡 and not any(같은이름(c, st.중심곡, 느슨=True) for c in o.곡셋):
-            o.곡셋 = [st.중심곡] + o.곡셋[:2]
-        st.log(f"  배치: {o.배치} / 곡 {len(o.곡셋)}개 ({', '.join(o.곡셋[:5])}) / 사실 {len(o.사실목록)}개" + (f" / 곡 흐름 {len(o.곡흐름)}개" if o.곡흐름 else ""))
-        if len(o.사실목록) < 8:
-            st.log("  사실목록이 여덟 개도 안 된다. 글이 빌 것이다")
     return st
 
 def n_작가(st: RunState) -> RunState:
@@ -2067,19 +1753,18 @@ def n_교정자(st: RunState) -> RunState:
     return st
 
 def n_형태검사(st: RunState) -> RunState:
-    st.걸림 = 형태검사(st.글.본문, st.재료, st.맥락, st.album, 배치=st.개요_.배치 if st.개요_ else "",
-                       곡셋=st.개요_.곡셋 if st.개요_ else None, 중심곡=st.중심곡)
+    st.걸림 = 형태검사(st.글.본문, st.재료, st.맥락, st.album)
     return st
 
 def n_편집국장(st: RunState) -> RunState:
     b = {"남은콜": st.남은콜}
-    st.판정 = 편집국장_읽기(st.글, st.개요_, st.재료, st.관점표, st.맥락, st.album, b, 아티스트말=st.아티스트말)
+    st.판정 = 편집국장_읽기(st.글, st.개요_, st.재료, st.관점표, st.맥락, st.album, b)
     st.남은콜 = b["남은콜"]
     st.올림, st.이유 = 올릴까(st.걸림, st.판정)
     문제수 = len(st.판정.문제들) if st.판정 else 0
     st.기록.append({"차례": st.바퀴, "개요": st.개요_, "글": st.글, "고친곳": st.고친곳,
                    "걸림": st.걸림, "판정": st.판정, "올림": st.올림, "이유": st.이유,
-                   "조건": (st.주문.접근, st.주문.온도, st.주문.시작점, st.개요_.배치 if st.개요_ else "")})
+                   "조건": (st.주문.접근, st.주문.온도, st.주문.시작점, st.주문.배치)})
     st.log(f"  {st.바퀴}차: {'올림' if st.올림 else '탈락'} / {st.이유} / 교정 {len(st.고친곳)}곳 / 편집국장 문제 {문제수}건")
     if not st.올림:
         st.지난문제 = 문제목록_글(st.걸림, st.판정)   # 다음 바퀴는 이것만 들고 처음부터
@@ -2107,12 +1792,6 @@ def after_앨범뽑기(st):
 
 def after_재료판정(st):
     최소 = 한국최소평 if st.want_kr else MIN_REVIEWS
-    # 모자라면 한 번은 더 찾는다. 평이 셋 미만이거나, 중심 곡 이야기가 없거나, 곡메모가 하나도 없을 때
-    if not st.보강됨 and st.남은콜 >= 보강페이지 + 4:
-        곡메모수 = sum(len(r["곡메모"]) for r in st.재료)
-        if len(st.재료) < 보강목표 or 곡메모수 == 0 or (st.중심곡 and not 곡_언급됐나(st.재료, st.중심곡)):
-            st.log("  재료가 얇다. 곡 이름 · 인터뷰 · 싱글 리뷰로 더 찾는다")
-            return "재료보강"
     if len(st.재료) < 최소 and not 맥락만쓰기:
         st.log("  평이 모자란다. 이 앨범은 버리고 다음 후보로 간다")
         return "앨범뽑기"
@@ -2151,7 +1830,6 @@ GRAPH = {
     "평론모으기": (n_평론모으기, 그냥("미리거르기")),
     "미리거르기": (n_미리거르기, 그냥("재료판정")),
     "재료판정":   (n_재료판정,   after_재료판정),
-    "재료보강":   (n_재료보강,   after_재료판정),
     "관점묶기":   (n_관점묶기,   그냥("기획자")),
     "기획자":     (n_기획자,     after_기획자),
     "작가":       (n_작가,       after_작가),
@@ -2193,12 +1871,11 @@ def 저장(st: RunState):
     a, r = st.album, st.기록[-1]
     g = r["글"]
     폴더 = OUT / ("올림" if st.올림 else "탈락")
-    이름 = re.sub(r"[^\w가-힣ㄱ-ㅎ -]", "", f"{a.get('별칭', {}).get('한글') or a['artist']} - {a['title']}")[:60].strip()
+    이름 = re.sub(r"[^\w가-힣ㄱ-ㅎ -]", "", f"{a['artist']} - {a['title']}")[:60].strip()
     stamp = datetime.datetime.now().strftime("%m%d_%H%M%S")
     path = 폴더 / f"{이름}_{stamp}.md"
 
     출처줄 = [f"- {x['매체']} — {x['링크']}" for x in st.재료]
-    출처줄 += [f"- (아티스트 말) {m['매체']} — {m['링크']}" for m in st.아티스트말]
     출처줄 += [f"- 맥락 — {u}" for u in st.맥락링크]
     출처줄 += [f"- (본문 안 읽음, 링크만) {u}" for u in st.blocked]
 
@@ -2248,7 +1925,6 @@ print("저장 준비 끝")
 #   python music_review_agent.py check              # 점검 — 이즘 · 아이돌로지 API, 검색 엔진, 해외 매체, RSS. 모델 안 부른다
 #   python music_review_agent.py pick [--kr|--world] [--n 3]   # 앨범 뽑기 + 재료 모으기까지만. 모델 안 부른다
 #   python music_review_agent.py run [--n 5]        # 돌리기 — 올린 글이 n편 될 때까지
-#   python music_review_agent.py one 우즈 OO-LI --song Drowning   # 앨범 지정. 곡을 주면 그 곡이 가운데
 #   python music_review_agent.py zip                # out/music 폴더를 zip으로
 # ======================================================================
 
@@ -2336,30 +2012,6 @@ def run(목표편수=목표편수, 시도상한=시도상한, 쪽만=None):
     return 결과
 
 
-# ## 26-1. 앨범을 지정해서 한 편
-#
-# 무작위로 안 뽑고 사람이 고른 앨범으로 쓴다. 유명도는 안 본다. 곡을 주면 그 곡을 글의 가운데에 둔다.
-# 이즘에서 아티스트를 찾아 한글 · 영문 이름을 채운다. MusicBrainz에 없으면 매체 정보로 간다.
-
-def run_one(artist, title, 곡=None, artist_en=None, want_kr=True):
-    kr, en = artist, artist_en
-    _, arts = izm_검색(artist)
-    for a in arts:
-        if any(같은이름(artist, x, 느슨=True) for x in (a.get("kr_name"), a.get("en_name")) if x):
-            kr, en = a.get("kr_name") or kr, a.get("en_name") or en
-            break
-    cand = {"artist": kr or en, "artist_kr": kr, "artist_en": en, "title": title,
-            "src": "지정", "url": None, "page": None, "views": 0, "year": None, "앨범확실": True}
-    if 표기_채우기(cand, want_kr):
-        print(f"  표기: {cand['artist_kr']} / {cand['artist_en']}  (MusicBrainz 별칭)")
-    print(f"\n===== 지정: {cand['artist_kr'] or cand['artist']}{(' (' + cand['artist_en'] + ')') if cand.get('artist_en') and cand['artist_en'] != cand.get('artist_kr') else ''} - {title}" + (f" · 중심 곡 {곡}" if 곡 else "") + " =====")
-    st = run_graph(RunState(want_kr=want_kr, 지정후보=cand, 중심곡=곡))
-    if st.상태 == "앨범없음":
-        print("앨범을 못 잡았다. 이름을 확인한다")
-    print(f"\n끝. {st.상태} / {st.이유} / 모델 요청 {LLM_CALL_CAP - st.남은콜}회")
-    return st
-
-
 # ## 27. zip으로 묶기
 
 def zip_outputs():
@@ -2388,12 +2040,6 @@ def main(argv=None):
     a.add_argument("--tries", type=int, default=시도상한)
     a.add_argument("--kr", action="store_true", help="한국 앨범만")
     a.add_argument("--world", action="store_true", help="해외 앨범만")
-    o = sub.add_parser("one", help="앨범을 지정해서 한 편. 예: one 우즈 OO-LI --song Drowning")
-    o.add_argument("artist")
-    o.add_argument("title")
-    o.add_argument("--song", default=None, help="글의 가운데에 둘 곡")
-    o.add_argument("--en", default=None, help="아티스트 영문 이름 (이즘에 없을 때)")
-    o.add_argument("--world", action="store_true", help="해외 앨범")
     sub.add_parser("zip", help="out/music 폴더를 zip으로 묶는다")
 
     args = ap.parse_args(argv)
@@ -2405,8 +2051,6 @@ def main(argv=None):
         쪽만 = "KR" if args.kr else ("기타" if args.world else None)
         run(목표편수=args.n, 시도상한=args.tries, 쪽만=쪽만)
         zip_outputs()
-    elif args.cmd == "one":
-        run_one(args.artist, args.title, 곡=args.song, artist_en=args.en, want_kr=not args.world)
     elif args.cmd == "zip":
         zip_outputs()
 

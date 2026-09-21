@@ -2,7 +2,7 @@
 #
 # .py 가 정본이다. 노트북은 여기서 만든다. 노트북을 손으로 고치지 않는다.
 #
-#   python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.7.ipynb
+#   python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.9.ipynb
 #
 # 자르는 규칙
 # - 파일 맨 위 주석 덩어리 → 마크다운 셀
@@ -86,10 +86,12 @@ print("LLM_KEY 길이:", len(os.environ["LLM_KEY"]))
                   "- `점검()` — 이즘 · 아이돌로지 API, 검색 엔진, 해외 매체, RSS. 모델 안 부른다",
                   "- `뽑기만(True, 3)` — 한국 앨범 뽑기 + 재료 모으기까지. 모델 안 부른다",
                   "- `run(목표편수=5)` — 올린 글이 다섯 편 될 때까지. `쪽만=\"KR\"` 이면 한국만",
+                  "- `run_one(\"우즈\", \"OO-LI\", 곡=\"Drowning\")` — 앨범 지정. 유명도 안 본다",
                   "- 결과는 `out/music/올림|탈락/` 에 마크다운으로 쌓인다. 마지막 셀이 zip 으로 묶어 내려준다"]),
     ("code", ["점검()"]),
     ("code", ["뽑기만(True, 3)      # 한국. 해외는 뽑기만(False, 3)"]),
     ("code", ["결과 = run(목표편수=5)                 # 한국 3 · 해외 2", "# 결과 = run(목표편수=3, 쪽만=\"KR\")   # 한국만"]),
+    ("code", ["st = run_one(\"우즈\", \"OO-LI\", 곡=\"Drowning\")      # 앨범 지정. 곡을 주면 그 곡이 글의 가운데", "# st = run_one(\"염따\", \"살아숨셔 4\")"]),
     ("code", ["z = zip_outputs()", "from google.colab import files", "files.download(str(z))"]),
 ]
 
