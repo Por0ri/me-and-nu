@@ -318,7 +318,7 @@ python music/music_review_agent.py zip
 python anime/anime_agent.py check                        # AniList · Jikan · 라프텔 · 위키백과 · 검색 점검. 모델 안 부른다
 python anime/anime_agent.py glossary                     # 용어집 점검 — 시리즈마다 관계도 · 표기 매칭. 모델 안 부른다
 python anime/anime_agent.py pick --type 감상순서 --n 2    # 주제 뽑기 + 재료 모으기까지만. 모델 안 부른다
-python anime/anime_agent.py run --n 5                    # 유형 다섯을 섞어 5편. --type 사람 처럼 하나만도 된다. 유형: 사람 · 기념일 · 감상순서 · 제작이야기 · 작품리뷰
+python anime/anime_agent.py run --n 6                    # 유형 다섯을 섞어 6편. --type 사람 처럼 하나만도 된다. 유형: 사람 · 기념일 · 감상순서 · 제작이야기 · 작품리뷰
 python anime/anime_agent.py one 블리치 --type 제작이야기   # 시리즈 지정
 python anime/anime_agent.py one "진격의 거인" --type 사람 --person "Hiroshi Kamiya"
 python anime/anime_agent.py zip
