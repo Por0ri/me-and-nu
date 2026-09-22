@@ -14,7 +14,7 @@ agent/
 ├── music/
 │   └── music_review_agent.py   음악 · 리뷰 (v3.3)
 ├── anime/
-│   ├── anime_agent.py          애니 · 유형 다섯 (v0.3)
+│   ├── anime_agent.py          애니 · 유형 다섯 (v0.4. 기념일은 run에서 뺌)
 │   └── glossary.json           애니 용어집 — 시리즈 다섯, 라프텔 자막 기준 (초안)
 └── out/                    결과물 (git에 안 올라간다)
 ```
