@@ -1,4 +1,4 @@
-# # Movie Review agent V1.9 — 영화 리뷰 에이전트
+# # Movie Review agent V1.8 — 영화 리뷰 에이전트
 #
 # 콜랩 노트북(Review_agent_V1.8.ipynb)을 스크립트로 옮긴 것이다.
 # 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_review/`에 쌓인다.
@@ -20,19 +20,6 @@
 # - 재료부족 — 줄거리가 짧다
 # - 올림 — 다 통과했다
 # - 탈락보관 — 세 번 다시 써도 못 넘겼거나 탈락 점수가 나왔다
-#
-# **V1.9에서 바뀐 것 — 판정관이 앞 판을 기억한다** (음악 v3.4 · 애니 v0.6 · 영화 정보 V2.4와 같은 방식)
-#
-# - 판정관이 다시 채점하는 글에는 앞 판 점수 여섯 항목 · 어긋난 문장 수 · 이유와 앞 판 글 본문이 같이 간다(REMEMBER_PREVIOUS).
-#   항목마다 앞 점수에서 출발한다. 고쳐진 게 있고 새 문제가 없으면 앞 점수 아래로 안 내린다. 내리면 `score_note`에 왜인지 적는다.
-#   전에는 판마다 처음 보는 것처럼 채점해서 같은 글을 고쳐도 점수가 흔들렸다. 올랐는지 내렸는지 판단할 근거가 없었다.
-# - [앞 판 글]과 [이번 글]을 나란히 준다. 이번 글 머리에 판 종류를 적는다.
-#   첫 판 / 고침(작가가 앞 글을 받아 손본 것) / 새로 씀(형태검사 구조 문제 → 앞 글 없이 처음부터).
-# - 앞 판이 깎은 자리마다 고쳐짐 / 남음 / 새로 생김 / 앞 판에서 못 봄을 `compared`에 적는다.
-#   "못 봄"은 앞 판 글에도 있었는데 앞 판이 안 잡은 것이다. 글이 나빠진 것(새로 생김)과 가른다. 못 봄만으로는 점수를 안 내린다.
-# - 저장 파일 로그에 종류 · 앞 판 대비(합계) · 대조 줄이 붙는다.
-# - 탈락보관이면 판정관 기록 중 합계가 제일 높은 판(최고 판)의 글을 남긴다(KEEP_BEST_ROUND). 다시 쓰다 나빠진 글이 남지 않게 한다.
-#   합계 = 토픽 + 유형 + 요소 + 균형 + 완성도 + (6 − 홍보) − 어긋난 문장 수.
 
 # ## 셀 1 — 설치
 #
@@ -65,7 +52,7 @@ TMDB_KEY = _secret("TMDB_KEY")
 os.environ["OPENAI_API_KEY"] = _secret("LLM_KEY")   # 보안 비밀 이름은 LLM_KEY다
 print("키 읽음. 길이:", len(os.environ["OPENAI_API_KEY"]))
 
-VERSION = "V1.9"
+VERSION = "V1.8"
 
 # ── 모델 ──────────────────────────────────────────────────
 WRITER_MODEL = "openai:gpt-5.6-luna"
@@ -76,10 +63,6 @@ REASONING_EFFORT = "low"
 # ── 상한 ──────────────────────────────────────────────────
 MAX_REWRITE = 3                  # 다시 쓰기 횟수 상한
 REQUEST_LIMIT_PER_RUN = 3        # 한 번 부를 때 모델 요청 횟수 상한
-
-# ── 앞 판 기억 (V1.9) ─────────────────────────────────────
-REMEMBER_PREVIOUS = True         # 판정관이 앞 판 점수와 앞 판 글을 받는다. 깎은 자리마다 고쳐짐 / 남음 / 새로 생김 / 못 봄. False면 판마다 처음 보는 것처럼 본다
-KEEP_BEST_ROUND   = True         # 탈락보관이면 판정관 합계가 제일 높은 판의 글을 남긴다. False면 마지막 판을 남긴다
 
 # ── 재료 조건 ─────────────────────────────────────────────
 MIN_SYNOPSIS_CHARS = 150
@@ -205,13 +188,6 @@ class JudgeScore(BaseModel):
         description="재료에 없는 주변 이야기 문장. 틀린 게 아니라 사람이 확인할 것")
     spoiler: bool
     reason: str
-    compared: list[str] = Field(
-        default_factory=list,
-        description="앞 판 판정이 있을 때만. 앞 판이 깎은 자리마다 한 줄. '고쳐짐 — 무엇' / '남음 — 무엇'. "
-                    "이번 글에서 새로 생긴 문제는 '새로 생김 — 무엇'. 앞 판 글에도 있었는데 앞 판에서 안 잡은 문제는 '앞 판에서 못 봄 — 무엇'")
-    score_note: str = Field(
-        default="",
-        description="앞 판 판정이 있을 때만. 앞 점수를 기준으로 항목마다 왜 올랐는지 · 내렸는지 한 줄")
 
 # ## 셀 4 — 프롬프트
 
@@ -1063,16 +1039,6 @@ JUDGE_SYSTEM = """
 
 [이유]
   점수를 깎은 자리를 문장으로 적는다. 무엇을 고쳐야 하는지 적는다.
-
-[앞 판이 있으면]
-  [앞 판 판정]과 [앞 판 글]이 붙어 오면 [이번 글]은 그 판정을 받고 다시 쓴 글이다. 처음 보는 것처럼 채점하지 않는다. 채점하는 것은 [이번 글]이다. [앞 판 글]은 대조하려고 주는 것이다.
-  - [이번 글] 머리에 판 종류가 적혀 있다. "고침"이면 작가가 앞 글을 받아 지적된 자리만 손본 것이다. 두 글을 문단 단위로 나란히 놓고 바뀐 자리를 본다. "새로 씀"이면 앞 글 없이 처음부터 다시 쓴 것이다. 앞 판이 깎은 이유가 다른 문장으로 옮겨 와 남았는지 본다.
-  - 앞 판 이유에 적힌 자리마다 이번 글에서 고쳐졌는지 본다. compared에 한 줄씩 적는다. "고쳐짐 — 무엇", "남음 — 무엇".
-  - 이번 글에서 새로 생긴 문제는 "새로 생김 — 무엇"으로 적는다. 앞 판 글에도 그대로 있었는데 앞 판 이유에 없는 문제면 "앞 판에서 못 봄 — 무엇"으로 적는다. 둘을 섞지 않는다. 새로 생김은 글이 나빠진 것이고, 못 봄은 앞 판 채점이 놓친 것이다.
-  - 점수는 항목마다 앞 점수에서 출발한다. 그 항목에서 고쳐진 것이 있고 새로 생긴 문제가 없으면 앞 점수보다 낮게 주지 않는다. 새 문제가 생겼거나 고친 자리가 다른 자리를 망가뜨렸으면 내릴 수 있다. 내리면 score_note에 어느 항목이 어느 문제 때문인지 적는다. 못 봄만 있고 새로 생김이 없으면 내리지 않는다. 그 문제는 앞 점수에 이미 들어 있었어야 했다.
-  - 어긋난 문장 개수도 같다. 앞 판이 센 문장이 고쳐졌으면 빼고, 새로 어긋난 문장만 더한다.
-  - score_note는 한 줄이다. "앞 판 균형 3 · 완성도 3. 아쉬운 점 들어감 → 균형 4, 되풀이 남음 → 완성도 3, 새 문제 없음"처럼.
-  앞 판이 없으면 compared와 score_note는 비워 둔다.
 """
 
 judge = Agent(
@@ -1084,65 +1050,18 @@ judge = Agent(
 )
 
 
-def prev_text(k: dict | None) -> str:
-    """V1.9: 앞 판 기록 하나를 판정관에게 줄 글로. 점수 · 이유 + 앞 판 글 본문."""
-    if not k:
-        return ""
-    v = k.get("판정")
-    lines = [f"[앞 판 판정 — {k.get('차례', '?')}차]"]
-    if v is not None:
-        lines.append(f"토픽 적합도 {v.topic_fit} · 유형 일치 {v.form_fit} · 요소 포함 {v.element_fit} · 균형 {v.balance} · "
-                     f"홍보성 {v.promo} · 글 완성도 {v.completeness} · 어긋난 문장 {v.unsourced_claims}개 · 스포일러 {'있음' if v.spoiler else '없음'}")
-        lines.append(f"이유: {v.reason}")
-    a = k.get("글")
-    if a is not None:                                   # 앞 판 글 본문. 대조용
-        lines += ["", f"[앞 판 글 — {k.get('차례', '?')}차]", f"제목: {a.title}", "", a.body]
-    return "\n".join(lines)
-
-
-KIND_MEANING = {"고침": "앞 글을 받아 지적된 자리만 손본 것",
-                "새로 씀": "앞 글 없이 처음부터 다시 쓴 것"}
-
-
-def this_head(default: str, round_no: int, kind: str, prev: dict | None) -> str:
-    """V1.9: [이번 글] 머리. 앞 판이 있을 때만 차례와 판 종류를 붙인다."""
-    if not (REMEMBER_PREVIOUS and prev):
-        return default
-    meaning = KIND_MEANING.get(kind, "")
-    return f"[이번 글 — {round_no}차 · {kind}" + (f" · {meaning}" if meaning else "") + "]"
-
-
-async def score(article: Article, order: WriteOrder,
-                prev: dict | None = None, round_no: int = 1, kind: str = "첫 판") -> JudgeScore:
-    before = (prev_text(prev) + "\n\n") if (REMEMBER_PREVIOUS and prev) else ""
+async def score(article: Article, order: WriteOrder) -> JudgeScore:
     user = (
-        f"{before}[배정 토픽] {order.topic}\n"
+        f"[배정 토픽] {order.topic}\n"
         f"[배정 유형] 리뷰\n"
         f"[배정 접근] {order.approach}\n\n"
         f"[재료]\n{material_to_text(order.material)}\n\n"
-        f"{this_head('[이번 글]', round_no, kind, prev)}\n제목: {article.title}\n\n{article.body}\n\n"
+        f"[제목]\n{article.title}\n\n"
+        f"[본문]\n{article.body}\n\n"
         f"[붙은 출처]\n" + "\n".join(article.sources)
     )
     result = await judge.run(user, usage_limits=_usage_limits)
     return result.output
-
-
-def judge_total(s: JudgeScore) -> int:
-    """V1.9: 최고 판을 고를 때 쓰는 합계. 통과 방향으로 더한다. 홍보성은 낮을수록 좋아서 뒤집는다."""
-    return s.topic_fit + s.form_fit + s.element_fit + s.balance + s.completeness + (6 - s.promo) - s.unsourced_claims
-
-
-def best_round(history: list[dict]) -> tuple[dict | None, str]:
-    """V1.9: 판정관 기록 중 합계가 제일 높은 판. 마지막 판이 최고면 (None, "")이다."""
-    rows = [k for k in history if k.get("판정") is not None and k.get("글") is not None]
-    if not KEEP_BEST_ROUND or len(rows) < 2:
-        return None, ""
-    best = max(rows, key=lambda k: (judge_total(k["판정"]), k["차례"]))
-    last = rows[-1]
-    if best is last:
-        return None, ""
-    return best, (f"최고 판 {best['차례']}차(합계 {judge_total(best['판정'])}) 글을 남겼다. "
-                  f"마지막 판은 {last['차례']}차(합계 {judge_total(last['판정'])})")
 
 # ## 셀 9 — 업로드 규칙 (LLM 없이 코드로)
 
@@ -1202,57 +1121,39 @@ async def produce(material: Material, topic="영화", tag_topic=None,
     )
 
     log, article, unverified = [], None, []
-    history = []                                   # V1.9: 판정관 기록. {"차례", "종류", "글", "판정"} 판마다 하나
-
-    def dropped():
-        # V1.9: 탈락보관이면 합계가 제일 높은 판 글을 남긴다
-        best, note = best_round(history)
-        a, u = (best["글"], best["판정"].unverified_context) if best else (article, unverified)
-        if note:
-            log.append({"회차": len(history), "단계": "최고판", "결과": note})
-        return {"상태": "탈락보관", "글": a, "주문": order, "확인필요": u, "로그": log, "최고판": note}
-
     for attempt in range(MAX_REWRITE + 1):
-        # V1.9: 판 종류. 앞 글을 받아 고쳤으면 고침, 사유만 받고 다시 썼으면 새로 씀
-        kind = "첫 판" if attempt == 0 else ("고침" if order.previous_body else "새로 씀")
         article = await write(order)
 
         bad = shape_check(article, order)
         if bad:
-            log.append({"회차": attempt, "단계": "형태검사", "종류": kind, "결과": bad})
+            log.append({"회차": attempt, "단계": "형태검사", "결과": bad})
             order.rewrite_note = " / ".join(bad)
             order.previous_body = None if is_structure_problem(bad) else article.body
             continue
 
-        prev = history[-1] if history else None
-        round_no = len(history) + 1
-        s = await score(article, order, prev=prev, round_no=round_no, kind=kind)
+        s = await score(article, order)
         result, reason = verdict(s)
         unverified = s.unverified_context
-        row = {"회차": attempt, "단계": "판정관", "종류": kind,
-               "접근": order.approach, "온도": order.temperature,
-               "시작점": order.persona, "배치": order.layout,
-               "분량": [order.min_chars, order.max_chars],
-               "점수": s.model_dump(exclude={"unverified_context", "reason", "compared", "score_note"}),
-               "확인 필요한 주변 이야기": s.unverified_context,
-               "결과": result, "이유": reason}
-        if prev is not None:
-            row["앞 판 대비"] = f"합계 {judge_total(prev['판정'])} → {judge_total(s)}" + (f" / {s.score_note}" if s.score_note else "")
-            if s.compared:
-                row["앞 판 대조"] = s.compared
-        log.append(row)
-        history.append({"차례": round_no, "종류": kind, "글": article, "판정": s})
+        log.append({"회차": attempt, "단계": "판정관",
+                    "접근": order.approach, "온도": order.temperature,
+                    "시작점": order.persona, "배치": order.layout,
+                    "분량": [order.min_chars, order.max_chars],
+                    "점수": s.model_dump(exclude={"unverified_context", "reason"}),
+                    "확인 필요한 주변 이야기": s.unverified_context,
+                    "결과": result, "이유": reason})
 
         if result == "올림":
             return {"상태": "올림", "글": article, "주문": order,
                     "확인필요": unverified, "로그": log}
         if result == "탈락":
-            return dropped()
+            return {"상태": "탈락보관", "글": article, "주문": order,
+                    "확인필요": unverified, "로그": log}
 
         order.rewrite_note = reason
         order.previous_body = article.body
 
-    return dropped()
+    return {"상태": "탈락보관", "글": article, "주문": order,
+            "확인필요": unverified, "로그": log}
 
 
 def show(out: dict):
@@ -1302,8 +1203,6 @@ def to_markdown(out: dict, today: str | None = None) -> str:
     lines += [f"**상태** {out['상태']} · **버전** {VERSION}"]
     if out.get("이유"):
         lines += [f"**이유** {out['이유']}"]
-    if out.get("최고판"):
-        lines += [f"**최고 판** {out['최고판']}"]
     if o:
         lines += [f"**접근** {o.approach} · **온도** {o.temperature} · **시작점** {o.persona} · "
                   f"**배치** {o.layout} · **분량** {o.min_chars}~{o.max_chars}자"]
@@ -1324,15 +1223,11 @@ def to_markdown(out: dict, today: str | None = None) -> str:
 
     lines += ["## 로그", ""]
     for row in out["로그"]:
-        lines += [f"- 회차 {row['회차']} · {row['단계']}" + (f" ({row['종류']})" if row.get("종류") else "") + f" · 결과 {row.get('결과')}"]
+        lines += [f"- 회차 {row['회차']} · {row['단계']} · 결과 {row.get('결과')}"]
         if row.get("이유"):
             lines += [f"  - 이유: {row['이유']}"]
         if row.get("점수"):
             lines += [f"  - 점수: `{json.dumps(row['점수'], ensure_ascii=False)}`"]
-        if row.get("앞 판 대비"):
-            lines += [f"  - 앞 판 대비: {row['앞 판 대비']}"]
-        for x in row.get("앞 판 대조") or []:
-            lines += [f"  - (앞 판) {x}"]
     return "\n".join(lines)
 
 
