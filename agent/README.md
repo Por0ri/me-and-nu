@@ -12,7 +12,7 @@ agent/
 │   ├── movie_info_agent.py     영화 · 정보 전달 (V2.4)
 │   └── movie_review_agent.py   영화 · 리뷰 (V1.9)
 ├── music/
-│   └── music_review_agent.py   음악 · 리뷰 (v3.4)
+│   └── music_review_agent.py   음악 · 리뷰 (v3.5)
 ├── anime/
 │   ├── anime_agent.py          애니 · 유형 다섯 (v0.6. 기념일은 run에서 뺌)
 │   └── glossary.json           애니 용어집 — 시리즈 다섯, 라프텔 자막 기준 (초안)
@@ -44,6 +44,17 @@ agent/
 - 로그: `앞 판 62점 → 71점 / 고쳐짐 2 · 남음 1 · 새로 생김 0 · 못 봄 0`. 저장 파일의 판정 기록에 판마다 종류 · 점수 · 앞 판 대비 · 대조 줄이 남는다.
 - 최고 판 저장: 마지막 판이 탈락이면 기록 중 점수(영화는 합계)가 제일 높은 판의 글을 저장한다. 다시 쓰다 나빠진 글이 남지 않게 한다.
 - 설정값: 음악 · 애니 `앞판기억` · `최고판저장`, 영화 `REMEMBER_PREVIOUS` · `KEEP_BEST_ROUND`. False면 전과 같다.
+
+## 글의 꼴 — 음악 v3.5 (2026-09-22)
+
+글이 단조롭다는 지적에 애니 v0.3에서 고친 방식을 음악에 옮겼다. 영화 둘은 아직이다.
+
+- 온도 · 시작점 · 배치 · 접근을 낱말이 아니라 뜻글로 준다(`온도글` · `시작점글` · `배치글` · `접근글` · `주문_text`). 기획자 · 작가 · 편집국장이 같은 [주문]을 받는다.
+- 작가가 `작가_공통`(쓰는 사람 · 문체 · 글이 이어지게 · 문단 여는 법 · 네 판단 · 숫자)을 받는다. 비유는 허용한다.
+- 편집국장이 [주문대로 갔는가] · [되풀이 — 글의 꼴](같은 꼴 문단 · 같은 길이 문장 · 같은 방식으로 문단 열기)을 본다.
+- 형태검사(코드) `꼴검사`: 문장 길이 단조 · 곡 이름으로 문단 열기 3번 · 아티스트 표기 섞임 · 곡 표기 병기 없음.
+- 표기표: 아티스트 대표 표기는 앨범 정보의 이름(MusicBrainz 이름)이고 다른 표기는 첫 등장에 괄호로 한 번(`WOODZ(우즈)`). 곡은 MusicBrainz 릴리즈 여럿의 제목을 모아 짝을 만든다(`곡짝`: `심연(ABYSS)`). 편집국장은 짝 안의 표기를 사실 문제로 안 잡는다.
+- `run`은 편마다 접근 · 온도 · 시작점을 돌려 쓰고(`조건돌려쓰기`), 기획자에게 앞 두 편의 배치를 피하라고 알려 준다. 같은 앨범을 다시 쓸 때는 조건을 안 바꾼다.
 
 ## 구조 그림
 
@@ -126,7 +137,7 @@ flowchart TD
 상한: 글쓰기 시도 4회(`MAX_REWRITE` 3 + 첫 번째). 형태 검사에 걸려도 시도 한 번을 쓴다.
 모델을 부르는 마디는 둘이다. 글쓰기 · 판정관. 편집국장 · 고치기가 없고, 다시 쓰기는 늘 글쓰기로 돌아간다.
 
-### 음악 · 리뷰 (`music/music_review_agent.py`, v3.4)
+### 음악 · 리뷰 (`music/music_review_agent.py`, v3.5)
 
 ```mermaid
 flowchart TD
@@ -345,7 +356,7 @@ python anime/anime_agent.py zip
 노트북은 `.py`에서 뽑는다. `.py`를 고친 뒤 다시 뽑는다.
 
 ```bash
-python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v3.4.ipynb
+python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v3.5.ipynb
 python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.6.ipynb              # 용어집이 노트북 안에 같이 들어간다
 python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.4.ipynb     # 영화 둘은 V2.4 · V1.9부터 뽑는다
 python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V1.9.ipynb
