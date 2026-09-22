@@ -92,8 +92,6 @@
 #   곡 제목 하나에도 걸려 글이 계속 떨어졌다. 잡는 기준도 26자에서 40자로 올렸다.
 # - 앨범을 여러 편 같이 돌릴 수 있다. 동시앨범을 2나 3으로 올린다. 기본값은 1이라 지금과 같다.
 #   같은 앨범을 두 번 뽑지 않게 후보 뽑는 자리에 자물쇠를 걸었다.
-# - (9/22) 콜랩에서는 run · run_one 이 끝나면 out/music 을 zip 으로 묶어 브라우저로 내려준다.
-#   설정값 콜랩_끝나면zip. False 로 두면 전과 같다. 로컬 스크립트에서는 아무 일도 안 한다.
 
 
 # ## 1. 설정
@@ -154,7 +152,6 @@ MB없어도진행   = True   # MusicBrainz에서 못 찾아도 이즘 앨범 리
                        # 쓰는 모델에 따라 실패할 수 있다. 1로 두고 돌려 본 뒤 올린다.
 보강페이지     = 8      # 보강에서 더 읽어볼 페이지 수
 발췌글자       = 1800   # 기획자에게 주는 평론 원문 발췌. 평론마다 이만큼
-콜랩_끝나면zip = True   # 콜랩이면 run · run_one 이 끝날 때 out/music 을 zip 으로 묶어 브라우저로 내려준다. 로컬에서는 아무 일 없다
 # ─────────────────────────────────────────────────────────────
 
 def _secret(name):
@@ -2950,7 +2947,6 @@ def run(목표편수=목표편수, 시도상한=시도상한, 쪽만=None, 동�
         print("  떨어진 곳: " + ", ".join(f"{k} {v}건" for k, v in sorted(떨어진곳.items(), key=lambda x: -x[1])))
     if 올림수 < 목표편수:
         print(f"목표 {목표편수}편에 {목표편수 - 올림수}편 모자란다.")
-    끝나면zip()
     return 결과
 
 
@@ -2975,7 +2971,6 @@ def run_one(artist, title, 곡=None, artist_en=None, want_kr=True):
     if st.상태 == "앨범없음":
         print("앨범을 못 잡았다. 이름을 확인한다")
     print(f"\n끝. {st.상태} / {st.이유} / 모델 요청 {LLM_CALL_CAP - st.남은콜}회 · {jev_현황()}")
-    끝나면zip()
     return st
 
 
@@ -2988,26 +2983,6 @@ def zip_outputs():
             z.write(p, p.relative_to(OUT))
     print("zip:", zip_path)
     return zip_path
-
-
-def 콜랩_내려받기(path) -> bool:
-    """콜랩이면 브라우저로 내려준다. 로컬 스크립트에서는 아무 일도 안 하고 False 를 돌려준다."""
-    if "google.colab" not in sys.modules:
-        return False
-    from google.colab import files
-    files.download(str(path))
-    return True
-
-
-def 끝나면zip():
-    """run · run_one 이 끝날 때 부른다. 콜랩 + 설정이 켜져 있을 때만 zip 을 묶어 내려준다.
-    zip 에는 이번 세션에서 쌓인 out/music 의 글이 전부 들어간다."""
-    if not 콜랩_끝나면zip or "google.colab" not in sys.modules:
-        return
-    if not any(OUT.rglob("*.md")):
-        print("내려받을 글이 없다")
-        return
-    콜랩_내려받기(zip_outputs())
 
 
 def main(argv=None):

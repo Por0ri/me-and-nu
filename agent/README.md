@@ -12,7 +12,7 @@ agent/
 │   ├── movie_info_agent.py     영화 · 정보 전달 (V2.3)
 │   └── movie_review_agent.py   영화 · 리뷰 (V1.8)
 ├── music/
-│   └── music_review_agent.py   음악 · 리뷰 (v2.9)
+│   └── music_review_agent.py   음악 · 리뷰 (v3.3)
 ├── anime/
 │   ├── anime_agent.py          애니 · 유형 다섯 (v0.3)
 │   └── glossary.json           애니 용어집 — 시리즈 다섯, 라프텔 자막 기준 (초안)
