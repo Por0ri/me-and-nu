@@ -20,14 +20,14 @@ from app.db.base import Base
 from app.models.types import Vector
 
 
-class Domain(Base):
-    __tablename__ = "domain"
+class Topic(Base):
+    __tablename__ = "topic"
 
-    domain_id: Mapped[int] = mapped_column(
+    topic_id: Mapped[int] = mapped_column(
         BigInteger, primary_key=True, autoincrement=True
     )
-    domain_code: Mapped[str] = mapped_column(String(50), nullable=False)
-    domain_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    topic_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    topic_name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500))
     sort_order: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
@@ -39,8 +39,8 @@ class Domain(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "domain_code",
-            name="uq_domain_domain_code",
+            "topic_code",
+            name="uq_topic_topic_code",
         ),
     )
 
@@ -51,8 +51,8 @@ class Subtopic(Base):
     subtopic_id: Mapped[int] = mapped_column(
         BigInteger, primary_key=True, autoincrement=True
     )
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domain.domain_id"), nullable=False
+    topic_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("topic.topic_id"), nullable=False
     )
     parent_subtopic_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("subtopic.subtopic_id")
@@ -77,8 +77,8 @@ class SourceSite(Base):
     collect_method: Mapped[str] = mapped_column(String(20), nullable=False)
     site_url: Mapped[str | None] = mapped_column(String(500))
     feed_url: Mapped[str | None] = mapped_column(String(500))
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domain.domain_id"), nullable=False
+    topic_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("topic.topic_id"), nullable=False
     )
     source_grade: Mapped[str] = mapped_column(
         String(20), nullable=False, default="없음", server_default="없음"
@@ -121,8 +121,8 @@ class CreatorChannel(Base):
     )
     channel_name: Mapped[str] = mapped_column(String(100), nullable=False)
     channel_intro: Mapped[str | None] = mapped_column(String(1000))
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domain.domain_id"), nullable=False
+    topic_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("topic.topic_id"), nullable=False
     )
     follower_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
@@ -143,8 +143,8 @@ class CreatorChannel(Base):
     __table_args__ = (
         UniqueConstraint(
             "user_id",
-            "domain_id",
-            name="uq_creator_channel_user_id_domain_id",
+            "topic_id",
+            name="uq_creator_channel_user_id_topic_id",
         ),
     )
 

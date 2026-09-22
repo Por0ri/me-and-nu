@@ -34,8 +34,8 @@ class Draft(Base):
     creator_channel_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("creator_channel.creator_channel_id")
     )
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domain.domain_id"), nullable=False
+    topic_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("topic.topic_id"), nullable=False
     )
     production_type: Mapped[str] = mapped_column(
         String(20), nullable=False, default="human", server_default="human"
@@ -69,8 +69,8 @@ class Draft(Base):
             postgresql_where=agent_run_id.is_not(None),
         ),
         Index(
-            "idx_draft_domain_status_updated_at",
-            "domain_id",
+            "idx_draft_topic_status_updated_at",
+            "topic_id",
             "status",
             updated_at.desc(),
         ),
@@ -111,8 +111,8 @@ class Content(Base):
     topic_cluster_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("topic_cluster.topic_cluster_id")
     )
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domain.domain_id"), nullable=False
+    topic_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("topic.topic_id"), nullable=False
     )
     production_type: Mapped[str] = mapped_column(
         String(20), nullable=False, default="human", server_default="human"
@@ -163,8 +163,8 @@ class Content(Base):
             postgresql_where=source_draft_id.is_not(None),
         ),
         Index(
-            "idx_content_domain_status_published_at",
-            "domain_id",
+            "idx_content_topic_status_published_at",
+            "topic_id",
             "status",
             published_at.desc(),
         ),
