@@ -1,4 +1,4 @@
-# # anime_agent v0.6 — 애니 콘텐츠 크리에이팅 에이전트
+# # anime_agent v0.4 — 애니 콘텐츠 크리에이팅 에이전트
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY`에서 읽는다. 결과는 `agent/out/anime/올림|탈락/`에 쌓인다.
 #
@@ -58,28 +58,7 @@
 # - 작가: 줄거리 문장 뒤에 그 장면이 하는 일이 온다. 문단마다 해석 문장 하나 이상. 편집국장: 줄거리에 판단 한 줄만 붙은 문단은 "구조", 근거 장면이 붙은 해석은 "사실"로 안 잡는다.
 # - 제작이야기는 발언이 셋 미만이면 기획자 앞에서 버린다(심층최소발언). 장면메모 0 · 발언 7로 세 바퀴를 다 돌고 떨어지던 것.
 # - 형태검사에 같은 종류로 두 바퀴 연속 걸리면 세 번째를 안 돈다(같은걸림중단). 1차 · 2차 · 3차가 같은 자리(화수 되풀이)에서 걸리던 것.
-#
-# v0.5에서 바뀐 것 — 여섯 편에 77분 걸리던 것을 동시에 돌린다 (PM: 통과율 · 글쓰기 · 판정 전부 같이 돌려도 된다)
-# - run(동시=N): 주제 N개를 스레드로 같이 돈다. 음악 v3.3의 동시앨범과 같다. 스레드마다 이벤트 루프 · 모델 · HTTP 클라이언트를 따로 둔다.
-#   같은 주제 · 같은 시리즈를 겹쳐 잡지 않게 주제뽑기 · 저장에 자물쇠. 로그 앞에 [유형 번호]가 붙는다.
-# - 첫 바퀴에 작가가 초안 셋을 온도를 달리해 동시에 쓴다(초안수). 형태검사(코드)로 거르고, 남은 것만 편집국장이 동시에 읽는다. 올림 · 점수 순으로 하나를 고른다.
-#   세 바퀴 직렬(작가 → 떨어짐 → 다시)이 한 바퀴 병렬이 된다. 다시 쓰기는 한 번(REWRITE_LIMIT 2).
-# - 교정자를 작가에 합쳤다(교정자쓰기 False). 교정 규칙이 작가 프롬프트 끝에 붙는다. 바퀴마다 호출 하나가 준다.
-# - 재료 모으기에서 호스트가 다른 것은 같이 받는다. 검색 페이지 읽기 ∥ 위키 평가 절 ko · en ∥ 위키 작품 문서 ∥ 라프텔 회차. 감상순서는 Jikan ∥ 라프텔 ∥ 위키.
-#   같은 호스트는 그대로 줄을 선다(호스트별 간격 자물쇠). AniList 2초 · 라프텔 · 위키 1초.
-# - 캐시 파일은 임시 파일에 쓰고 바꿔 넣는다. 두 스레드가 같은 파일을 동시에 쓰던 것.
 # - 회차 줄거리 한 줄을 140자에서 300자로 늘렸다(줄거리글자). 콜랩에서는 run · run_one이 끝나면 zip으로 묶어 내려준다(콜랩_끝나면zip).
-#
-# v0.6에서 바뀐 것 — 편집국장이 앞 판을 기억한다 (음악 v3.4와 같은 방식. 영화 정보 V2.4 · 영화 리뷰 V1.9도 같다)
-# - 편집국장이 앞 판 판정(점수 · 문제 목록 · 형태검사 걸림 · 한줄평)과 앞 판 글 본문을 받는다(앞판기억).
-#   전에는 판마다 처음 보는 것처럼 채점해서 같은 글을 고쳐도 점수가 흔들렸다. 올랐는지 내렸는지 판단할 근거가 없었다.
-# - [앞 판 글]과 [이번 글]을 나란히 준다. 이번 글 머리에 판 종류를 적는다.
-#   첫 판 / 고침(문장 · 구조 문제 → 작가가 앞 글을 받아 손본 것) / 새로 씀(사실 문제 → 기획자부터 다시 쓴 것).
-# - 편집국장 출력에 앞판대조(앞 문제마다 고쳐짐 / 남음 / 새로 생김 / 앞 판에서 못 봄)와 점수설명 한 줄이 붙는다.
-#   점수는 앞 점수에서 출발한다. 고쳐진 게 있고 새 문제가 없으면 앞 점수 아래로 안 내린다. 내리면 점수설명에 왜인지 적는다.
-#   "못 봄"은 앞 판 글에도 있었는데 앞 판이 안 잡은 것이다. 글이 나빠진 것(새로 생김)과 가른다. 못 봄만으로는 점수를 안 내린다.
-# - 기록마다 판 종류를 남긴다. 저장 파일의 판정 기록에 판마다 점수 · 앞 판 대비 · 대조 줄이 남는다.
-# - 마지막 판이 탈락이면 기록 중 점수가 제일 높은 판(최고 판)의 글을 저장한다(최고판저장). 다시 쓰다 나빠진 글이 남지 않게 한다.
 
 # ## 1. 설정
 #
@@ -122,12 +101,12 @@ MIN_PAGES     = 2      # 심층형. 쓸 만한 글이 이만큼 안 모이면 �
 보강페이지    = 6
 동시판정      = 5      # 재료 판정을 한 번에 몇 페이지씩 모델에 보낼지
 발췌글자      = 1800   # 기획자에게 주는 원문 발췌. 글마다 이만큼
-REWRITE_LIMIT = 2      # 바퀴 상한. v0.5: 1차는 초안 셋을 동시에, 2차는 앞 글 고치기 (v0.4는 3)
+REWRITE_LIMIT = 3      # 다시 쓰기 상한
 PASS_SCORE    = 70     # 편집국장 점수가 이 아래면 다시 쓴다
 분량기준      = 1800   # 글 길이. 유형 다섯 다 같다 (PM 결정 2026-09-21)
 분량상한      = 2000   # 이 위는 형태검사에 걸린다
 분량하한      = 1500   # 이 아래도 걸린다 (PM 결정)
-LLM_CALL_CAP  = 48     # 주제 하나에 허용할 모델 요청 수 (판정 10 + 보강 6 + 기획자 2 + 초안 3 + 편집국장 3 + 고치기 2 + 여유)
+LLM_CALL_CAP  = 40     # 주제 하나에 허용할 모델 요청 수 (판정 10 + 보강 6 + 한 바퀴 4 × 세 번 + 여유)
 ANILIST_GAP   = 2.0    # AniList 요청 사이 간격(초). 분당 30회 제한
 JIKAN_GAP     = 1.2    # Jikan 요청 사이 간격(초)
 JIKAN_PAGES   = 15     # Jikan 회차 목록을 최대 몇 쪽까지 (100화씩. 원피스 12쪽)
@@ -147,14 +126,6 @@ JIKAN_PAGES   = 15     # Jikan 회차 목록을 최대 몇 쪽까지 (100화씩.
 같은걸림개수   = 3      # 앞 바퀴와 겹치는 걸림 종류가 이만큼이면 "같은 데서 걸렸다"로 본다
 줄거리글자     = 300    # 회차 줄거리 한 줄을 이만큼까지 준다 (v0.3은 140)
 콜랩_끝나면zip = True   # 콜랩이면 run · run_one 이 끝날 때 out/anime 을 zip 으로 묶어 브라우저로 내려준다. 로컬에서는 아무 일 없다
-# v0.5
-동시주제       = 3      # run 에서 주제를 몇 개씩 같이 돌릴지. 1이면 v0.4처럼 한 줄로 돈다. AniList · 라프텔 · 위키는 호스트별 간격 자물쇠라 그만큼은 줄을 선다
-초안수         = 3      # 첫 바퀴에 작가가 온도를 달리해 동시에 쓰는 초안 수. 형태검사(코드)로 거르고 남은 것만 편집국장이 읽는다. 1이면 v0.4와 같다
-교정자쓰기     = False  # True면 v0.4처럼 교정자 마디를 따로 부른다. False면 교정 규칙을 작가 프롬프트 끝에 넣고 마디를 건너뛴다 (바퀴마다 호출 하나가 준다)
-스레드별모델   = True   # 동시주제 > 1 이면 스레드마다 모델 · HTTP 클라이언트를 따로 만든다. 한 클라이언트를 여러 이벤트 루프가 나눠 쓰면 "bound to a different event loop"가 난다
-# v0.6
-앞판기억       = True   # 편집국장이 앞 판 점수 · 문제 목록 · 앞 판 글을 받는다. 문제마다 고쳐짐 / 남음 / 새로 생김 / 못 봄. False면 판마다 처음 보는 것처럼 본다
-최고판저장     = True   # 마지막 판이 탈락이면 기록 중 편집국장 점수가 제일 높은 판의 글을 저장한다. False면 마지막 판을 저장한다
 CONTACT       = "menu-project@example.com"
 # ─────────────────────────────────────────────────────────────
 
@@ -407,17 +378,10 @@ def _cache_get(name):
     return None
 
 def _cache_put(name, data):
-    # v0.5: 스레드 둘이 같은 파일을 동시에 쓰면 반쪽짜리가 남는다. 임시 파일에 쓰고 바꿔 넣는다
-    p = OUT / "_cache" / f"{name}.json"
-    tmp = p.with_name(f"{p.name}.{threading.get_ident()}.tmp")
     try:
-        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, p)
+        (OUT / "_cache" / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
-        try:
-            tmp.unlink()
-        except Exception:
-            pass
+        pass
 
 print("요청 준비 끝")
 
@@ -1283,18 +1247,6 @@ def 주제_후보목록(유형):
     return c
 
 _쓴주제 = set()
-_주제잠금 = threading.Lock()     # v0.5: 동시에 돌 때 _쓴주제 · _올린시리즈 · _진행시리즈를 지킨다
-_진행시리즈 = {}                 # v0.5: 지금 돌고 있는 주제의 시리즈. 작품당상한을 올린 것 + 진행 중으로 센다
-
-def _진행놓기(st):
-    """이 상태가 잡고 있던 시리즈 진행 수를 놓는다. 여러 번 불러도 한 번만 놓는다."""
-    if not getattr(st, "진행잡음", False) or not st.주제:
-        return
-    with _주제잠금:
-        s = st.주제["시리즈"]
-        if _진행시리즈.get(s, 0) > 0:
-            _진행시리즈[s] -= 1
-    st.진행잡음 = False
 _올린시리즈 = {}
 
 def _주제키(c):
@@ -1552,37 +1504,11 @@ def 이야기_모으기(st, 이름):
         st.맥락링크.append(절["링크"])
     return "\n\n".join(이야기)
 
-def _감상순서_회차(순서, 라):
-    """라프텔 회차 줄거리(본편마다). [(글, 링크)]. v0.5: Jikan · 위키와 같이 받으려고 떼어냈다. st는 안 건드린다."""
-    out = []
-    본편들 = [r for r in 순서 if r["갈래"] == "본편"]
-    for r in 본편들[:회차항목상한]:
-        it = 라프텔_항목찾기(r["이름"], 라)
-        if not it:
-            continue
-        eps = laftel_episodes(it["id"])
-        if eps:
-            out.append((회차재료_text(eps, r["이름"], 상한=회차재료글자 // max(1, min(len(본편들), 회차항목상한))), it["링크"]))
-    if len(본편들) == 1 and len(라) > 1:                      # 원피스처럼 라프텔이 "N기"로 나눈 것. 고르게 몇 개만
-        기들 = sorted([x for x in 라 if not x["더빙"] and re.search(r"\d+기", x["이름"]) and "극장판" not in x["이름"]],
-                     key=lambda x: int(re.search(r"(\d+)기", x["이름"]).group(1)))
-        step = max(1, len(기들) // 회차항목상한)
-        for it in 기들[::step][:회차항목상한]:
-            eps = laftel_episodes(it["id"], 쪽수=1)
-            if eps:
-                out.append((회차재료_text(eps, it["이름"], 상한=회차재료글자 // 회차항목상한), None))
-    return out
-
 def 재료_감상순서(st):
     s, 표 = 시리즈(st.주제["시리즈"]), st.용어표
     순서, 뺀것, 본편수 = 순서표_만들기(st)
     편 = 용어집_편목록(st.주제["시리즈"])
     본편밖 = [r for r in 순서 if r["갈래"] != "본편"]
-    # v0.5: 라프텔 회차 · 위키는 호스트가 달라 Jikan과 같이 받는다. 갈림이 없어 버리게 돼도 캐시에는 남는다
-    ex = ThreadPoolExecutor(max_workers=3)
-    f_회차 = ex.submit(_감상순서_회차, 순서, s["라프텔"])
-    f_절 = ex.submit(위키_절들, {"한국제목": st.주제["시리즈"]}, st.주제["시리즈"])
-    f_wk = ex.submit(위키_작품문서, {"한국제목": st.주제["시리즈"]}, st.주제["시리즈"])
     필러, 죽음 = {}, False
     for r in 순서:
         if r["갈래"] == "본편" and r.get("idMal"):
@@ -1594,9 +1520,9 @@ def 재료_감상순서(st):
     필러수 = sum(len(f) for f, _, _ in 필러.values())
     # 순서에 갈림이 있어야 글이 된다. 1기 → 2기 → 3기뿐이면 쓸 것이 없다
     if len(본편밖) < 2 and 필러수 < 10 and len(편) < 3:
-        st.이유 = f"순서에 갈림이 없다. 본편 밖 {len(본편밖)}개 · 필러 {필러수}화 · 편 {len(편)}개"; ex.shutdown(wait=False); return False
+        st.이유 = f"순서에 갈림이 없다. 본편 밖 {len(본편밖)}개 · 필러 {필러수}화 · 편 {len(편)}개"; return False
     if 죽음 and (본편수 <= 1 or not 필러없어도진행):
-        st.이유 = "Jikan이 죽어서 필러 표시를 못 받았다. 본편이 하나뿐인 작품은 필러 없이 못 만든다"; ex.shutdown(wait=False); return False
+        st.이유 = "Jikan이 죽어서 필러 표시를 못 받았다. 본편이 하나뿐인 작품은 필러 없이 못 만든다"; return False
     사실 = ["[감상 순서 — 코드가 관계도로 계산했다. 이 순서와 갈래를 바꾸지 않는다]"]
     for r in 순서:
         뜻 = 용어집_뜻(st.주제["시리즈"], r["이름"].replace(st.주제["시리즈"] + " ", "", 1)) or 용어집_뜻(st.주제["시리즈"], r["이름"])
@@ -1623,13 +1549,24 @@ def 재료_감상순서(st):
     st.순서표 = [{"번호": r["번호"], "이름": r["이름"], "갈래": r["갈래"]} for r in 순서]
     # 이야기 — 라프텔 회차 줄거리(본편마다) + 위키 줄거리 · 등장인물 절
     이야기 = []
-    for 글, 링크 in f_회차.result():
-        이야기.append(글)
-        if 링크:
-            st.맥락링크.append(링크)
-    절 = f_절.result()
-    wk = f_wk.result()
-    ex.shutdown(wait=True)
+    본편들 = [r for r in 순서 if r["갈래"] == "본편"]
+    for r in 본편들[:회차항목상한]:
+        it = 라프텔_항목찾기(r["이름"], 라)
+        if not it:
+            continue
+        eps = laftel_episodes(it["id"])
+        if eps:
+            이야기.append(회차재료_text(eps, r["이름"], 상한=회차재료글자 // max(1, min(len(본편들), 회차항목상한))))
+            st.맥락링크.append(it["링크"])
+    if len(본편들) == 1 and len(라) > 1:                      # 원피스처럼 라프텔이 "N기"로 나눈 것. 고르게 몇 개만
+        기들 = sorted([x for x in 라 if not x["더빙"] and re.search(r"\d+기", x["이름"]) and "극장판" not in x["이름"]],
+                     key=lambda x: int(re.search(r"(\d+)기", x["이름"]).group(1)))
+        step = max(1, len(기들) // 회차항목상한)
+        for it in 기들[::step][:회차항목상한]:
+            eps = laftel_episodes(it["id"], 쪽수=1)
+            if eps:
+                이야기.append(회차재료_text(eps, it["이름"], 상한=회차재료글자 // 회차항목상한))
+    절 = 위키_절들({"한국제목": st.주제["시리즈"]}, st.주제["시리즈"])
     if 절["줄거리"]:
         이야기.append("[줄거리 — 위키백과 ko]\n" + 절["줄거리"][:3000])
     if 절["등장인물"]:
@@ -1637,6 +1574,7 @@ def 재료_감상순서(st):
     if 절["링크"]:
         st.맥락링크.append(절["링크"])
     st.이야기 = "\n\n".join(이야기)
+    wk = 위키_작품문서({"한국제목": st.주제["시리즈"]}, st.주제["시리즈"])
     if wk:
         st.맥락 = wk["본문"][:3000]; st.맥락링크.append(wk["링크"])
     st.사실표 = "\n".join(사실)
@@ -2266,15 +2204,6 @@ print("관점 묶기 준비 끝")
 - 글쓴이의 판단이 글의 중심인 것. 그것이 이 글이다. 정보형에서도 그렇다. 근거가 같은 문단에 있으면 판단은 문제가 아니다. 근거가 없을 때만 "문장"이다
 - 널리 알려진 사실을 재료에 없다고 거는 것. 이야기의 큰 줄기 · 인물 관계 · 시리즈 순서 · 필러가 생긴 까닭은 재료 밖이어도 "사실"로 잡지 않는다. 대신 확인 목록에 문장 그대로 적어 낸다. 점수를 깎지 않는다. 사람이 나중에 본다
 
-[앞 판이 있으면]
-[앞 판 판정]과 [앞 판 글]이 붙어 오면 [이번 글]은 그 판정을 받고 다시 쓴 글이다. 처음 보는 것처럼 채점하지 않는다. 채점하는 것은 [이번 글]이다. [앞 판 글]은 대조하려고 주는 것이다.
-- [이번 글] 머리에 판 종류가 적혀 있다. "고침"이면 작가가 앞 글을 받아 지적된 자리만 손본 것이다. 두 글을 문단 단위로 나란히 놓고 바뀐 자리를 본다. "새로 씀"이면 앞 판 문제 목록만 받고 기획자부터 다시 쓴 것이다. 앞 판 문제가 다른 문장으로 옮겨 와 남았는지 본다.
-- 앞 판 문제마다 이번 글에서 고쳐졌는지 본다. 앞판대조에 한 줄씩 적는다. "고쳐짐 — 무엇", "남음 — 무엇". 남은 것은 문제들에 다시 넣는다. 고쳐진 것은 다시 잡지 않는다.
-- 이번 글에서 새로 생긴 문제는 "새로 생김 — 무엇"으로 적고 문제들에 넣는다. 앞 판 글에도 그대로 있었는데 앞 판 판정에 없는 문제면 "앞 판에서 못 봄 — 무엇"으로 적고 문제들에 넣는다. 둘을 섞지 않는다. 새로 생김은 글이 나빠진 것이고, 못 봄은 앞 판 채점이 놓친 것이다.
-- 점수는 앞 점수에서 출발한다. 고쳐진 것이 있고 새로 생긴 문제가 없으면 앞 점수보다 낮게 주지 않는다. 새 문제가 생겼거나 고친 자리가 다른 자리를 망가뜨렸으면 내릴 수 있다. 내리면 점수설명에 어느 문제 때문인지 적는다. 못 봄만 있고 새로 생김이 없으면 내리지 않는다. 그 문제는 앞 판 점수에 이미 들어 있었어야 했다.
-- 점수설명은 한 줄이다. "앞 판 62점. 구조 둘 고쳐짐, 되풀이 남음, 새 문제 없음. 71점"처럼.
-앞 판이 없으면 앞판대조와 점수설명은 비워 둔다.
-
 [정하는 법]
 종류는 사실 · 문장 · 구조 셋이고, 그 밖에 확인 목록과 읽을 이유 한 줄을 낸다.
 사소한 것 하나로 반려하지 않는다. 읽는 사람이 걸려 넘어질 것만 적는다.
@@ -2462,9 +2391,6 @@ def _작가프롬프트(ctx) -> str:
 
 [분량]
 {분량기준}자 안팎. {분량하한}자보다 짧거나 {분량상한}자보다 길면 안 된다. 문단은 빈 줄로 나눈다. 제목 줄에도 작품 이름은 《 》로 감싼다."""]
-    if not 교정자쓰기:
-        # v0.5: 교정자 마디를 안 부른다. 다 쓴 뒤 스스로 한 번 읽는다
-        parts.append("[마지막 손질 — 교정자가 따로 없다. 다 쓴 뒤 한 번 읽고 아래가 보이면 고쳐서 낸다. 뜻 · 사실 · 판단은 안 바꾼다]\n" + 교정규칙)
     if d.문제목록:
         block = "[다시 쓰기]\n앞 글이 아래 이유로 통과하지 못했다.\n" + d.문제목록
         if d.앞글:
@@ -2484,7 +2410,12 @@ class 교정본(BaseModel):
     본문: str
     고친곳: List[str] = Field(description="무엇을 어떻게 고쳤는지 한 줄씩")
 
-교정규칙 = """번역투는 영어 문장을 그대로 옮긴 것처럼 읽히는 문장이다. 아래가 그것이다. 보이면 고친다.
+교정자 = Agent(
+    MODEL,
+    output_type=교정본,
+    system_prompt="""너는 한국어 문장을 다듬는다. 뜻과 사실과 판단은 하나도 안 바꾼다. 문장 짜임만 고친다. 글쓴이의 농담과 관찰은 그대로 둔다.
+
+번역투는 영어 문장을 그대로 옮긴 것처럼 읽히는 문장이다. 아래가 그것이다. 보이면 고친다.
 1. "~는 것이 아니라 ~다" 틀. 앞을 빼고 뒤만 말하거나, 두 문장으로 나눈다. 한 편에 한 번은 둔다.
 2. 한 문장에 절이 셋 넘게 겹쳐서 끝까지 가야 뜻이 잡히는 것. 뜻 단위로 끊는다.
 3. 물건이 주어로 서서 스스로 무언가를 하는 것. "연출이 놓인다", "작화가 이야기를 밀어간다". 사람이나 화면에서 실제로 일어나는 일로 바꾼다.
@@ -2500,12 +2431,9 @@ class 교정본(BaseModel):
 - "~적", "~에 있어", "~에 대한", "~을 통해", "~에 의해"는 뺀다.
 - 손에 안 잡히는 말(밀도, 결, 층위, 서사, 정체성, 세계관 구축, 몰입감, 완성도, 미학)은 그 문장이 실제로 가리키는 것으로 바꾼다. 가리키는 것이 문장에 없으면 그 말만 뺀다.
 - 사람 · 작품 · 캐릭터 · 편 이름은 손대지 않는다. 다만 잘못 적힌 것은 바로잡고 고친 곳에 적는다.
-- 영어 · 일본어 문장이 그대로 있으면 한국어로 옮긴다. 이름은 옮기지 않는다."""
+- 영어 · 일본어 문장이 그대로 있으면 한국어로 옮긴다. 이름은 옮기지 않는다.
 
-교정자 = Agent(
-    MODEL,
-    output_type=교정본,
-    system_prompt="너는 한국어 문장을 다듬는다. 뜻과 사실과 판단은 하나도 안 바꾼다. 문장 짜임만 고친다. 글쓴이의 농담과 관찰은 그대로 둔다.\n\n" + 교정규칙 + "\n\n문장 길이는 내용이 정한다. 짧은 것을 억지로 늘리거나 긴 것을 억지로 자르지 않는다. 고친 곳마다 한 줄로 적는다.",
+문장 길이는 내용이 정한다. 짧은 것을 억지로 늘리거나 긴 것을 억지로 자르지 않는다. 고친 곳마다 한 줄로 적는다.""",
 )
 
 print("교정자 준비 끝")
@@ -2791,8 +2719,6 @@ class 편집판정(BaseModel):
     확인목록: List[str] = Field(default_factory=list, description="재료 밖이지만 널리 알려진 사실로 보이는 문장. 사람이 나중에 본다. 점수는 안 깎는다")
     읽을이유: str = Field(default="", description="이 글을 끝까지 읽은 사람이 얻어 가는 것 한 줄. 없으면 빈 문자열")
     한줄평: str
-    앞판대조: List[str] = Field(default_factory=list, description="앞 판 판정이 있을 때만. 앞 판 문제마다 한 줄. '고쳐짐 — 무엇' / '남음 — 무엇'. 이번 글에서 새로 생긴 문제는 '새로 생김 — 무엇'. 앞 판 글에도 있었는데 앞 판에서 안 잡은 문제는 '앞 판에서 못 봄 — 무엇'")
-    점수설명: str = Field(default="", description="앞 판 판정이 있을 때만. 앞 점수를 기준으로 왜 올랐는지 · 내렸는지 한 줄")
 
 편집국장 = Agent(
     MODEL,
@@ -2800,30 +2726,9 @@ class 편집판정(BaseModel):
     system_prompt="너는 편집국장이다. 완성된 애니 글을 마지막으로 읽는다.\n\n" + 편집국장_추가,
 )
 
-def 앞판_text(k):
-    """v0.6: 앞 바퀴 기록 하나를 편집국장에게 줄 글로. 점수 · 문제 목록 · 형태 검사 · 한줄평 · 앞 판 글 본문."""
-    if not k:
-        return ""
-    p = k.get("판정")
-    줄 = [f"[앞 판 판정 — {k.get('차례', '?')}차" + (f", {p.점수}점" if p else ", 편집국장 실패") + "]"]
-    if k.get("걸림"):
-        줄.append("코드 검사에 걸린 것: " + ", ".join(k["걸림"]))
-    if p:
-        줄 += [f"- ({x.종류}) {x.어디[:80]} — {x.설명}" for x in p.문제들] or ["- 문제 없음"]
-        줄.append(f"한줄평: {p.한줄평}")
-    g = k.get("글")
-    if g is not None:                                   # 앞 판 글 본문. 대조용
-        줄 += ["", f"[앞 판 글 — {k.get('차례', '?')}차]", g.제목, "", g.본문]
-    return "\n".join(줄)
-
-def 이번글_머리(차례, 종류, 앞판):
-    """v0.6: 편집국장에게 주는 [이번 글] 머리. 앞 판이 있을 때만 차례와 판 종류를 붙인다."""
-    if not (앞판기억 and 앞판):
-        return "[글]"
-    뜻 = {"고침": "작가가 앞 글을 받아 지적된 자리만 손본 것", "새로 씀": "앞 판 문제 목록만 받고 기획자부터 다시 쓴 것"}.get(종류, "")
-    return f"[이번 글 — {차례}차 · {종류}" + (f" · {뜻}" if 뜻 else "") + "]"
-
-def _편집국장_물음(st, 글):
+def 편집국장_읽기(st, budget):
+    if budget["남은콜"] <= 0:
+        return None
     원문들 = "\n\n".join(f"### ({r['매체']}) {r['링크']}\n{r['원문'][:4000]}" for r in st.재료) or "(없음)"
     원문들 += "".join(f"\n\n### (발언 · {m['매체']}) {m['링크']}\n" + "\n".join("- " + x for x in m["말"]) for m in st.발언들)
     if st.모양 == "정보":
@@ -2836,35 +2741,17 @@ def _편집국장_물음(st, 글):
             재료 += f"\n\n[이야기 — 회차 줄거리 · 줄거리 절]\n{st.이야기[:6000]}"
     순서 = ("\n\n[순서표]\n" + "\n".join(f"{r['번호']}. [{r['갈래']}] {r['이름']}" for r in st.순서표)) if st.순서표 else ""
     경고 = ("\n\n[코드 경고 — 반려 사유는 아니다. 읽을 때 같이 본다]\n" + "\n".join("- " + x for x in st.코드경고)) if st.코드경고 else ""
-    앞판 = st.기록[-1] if (앞판기억 and st.기록) else None
-    앞 = (앞판_text(앞판) + "\n\n") if 앞판 else ""
-    ask = (f"{앞}[주문]\n{주문_text(st.주문.온도, st.주문.시작점, st.주문.배치, st.주문.접근)}\n\n"
+    ask = (f"[주문]\n{주문_text(st.주문.온도, st.주문.시작점, st.주문.배치, st.주문.접근)}\n\n"
            f"[유형] {st.유형} ({st.모양}형)\n\n[작품]\n{작품_text(st.주제, st.용어표)}\n\n[표기표]\n{st.용어표.text()}{순서}{경고}\n\n"
            f"[개요]\n주제: {st.개요_.주제}\n답: {st.개요_.답}\n사실목록:\n" + "\n".join("- " + f for f in st.개요_.사실목록) + "\n\n"
-           f"{재료}\n\n{이번글_머리(st.바퀴, st.판종류, 앞판)}\n{글.제목}\n\n{글.본문}")
-    return ask
-
-def 편집국장_읽기(st, budget):
-    if budget["남은콜"] <= 0:
-        return None
+           f"{재료}\n\n[글]\n{st.글.제목}\n\n{st.글.본문}")
     try:
-        r = 편집국장.run_sync(_편집국장_물음(st, st.글), usage_limits=UsageLimits(request_limit=2))
+        r = 편집국장.run_sync(ask, usage_limits=UsageLimits(request_limit=2))
     except Exception as e:
-        st.log(f"   편집국장 실패: {e}")
+        print("   편집국장 실패:", e)
         return None
     budget["남은콜"] -= 1
     return r.output
-
-async def _편집국장_여럿(st, 초안들):
-    """v0.5: 초안 여럿을 한 루프에서 같이 읽는다. 실패한 것은 None."""
-    async def one(g):
-        try:
-            r = await 편집국장.run(_편집국장_물음(st, g["글"]), usage_limits=UsageLimits(request_limit=2))
-            return r.output
-        except Exception as e:
-            st.log(f"   편집국장 실패 ({g['온도']}): {e}")
-            return None
-    return await asyncio.gather(*(one(g) for g in 초안들))
 
 def 올릴까(걸림, p):
     if 걸림:
@@ -2938,7 +2825,6 @@ class RunState(BaseModel):
     올림: bool = False
     이유: str = ""
     지난문제: str = ""
-    판종류: str = "첫 판"        # v0.6: 이번 바퀴 글이 어떻게 나왔는지. 첫 판 / 고침 / 새로 씀. 편집국장에게 알려 준다
     # 세는 것
     바퀴: int = 0
     steps: int = 0
@@ -2948,14 +2834,10 @@ class RunState(BaseModel):
     상태: str = "진행"          # 진행 / 올림 / 탈락 / 주제없음 / 상한
     로그: list = []
     저장경로: Optional[str] = None
-    # v0.5
-    초안들: list = []            # 첫 바퀴 초안들 [{온도, 글, 걸림, 경고, 판정, 올림, 이유}]. 다시 쓰기 바퀴에서는 빈다
-    표식: str = ""               # 동시에 돌 때 로그 앞에 붙는 "[유형] "
-    진행잡음: bool = False       # 이 상태가 시리즈 진행 수(_진행시리즈)를 잡고 있는지
 
     def log(self, s):
         self.로그.append(s)
-        print(self.표식 + s if self.표식 else s)
+        print(s)
 
 print("상태 준비 끝")
 
@@ -2970,20 +2852,16 @@ def n_주제뽑기(st: RunState) -> RunState:
     if not st.후보목록:
         st.후보목록 = 주제_후보목록(st.유형)
         st.log(f"  후보 {len(st.후보목록)}개 [{st.유형}]")
-    _진행놓기(st)
     st.주제 = None
     st.사실표, st.이야기, st.순서표, st.맥락, st.맥락링크, st.사실링크, st.pages, st.links, st.blocked = "", "", [], "", [], [], [], [], []
     while st.후보번호 < len(st.후보목록):
         c = st.후보목록[st.후보번호]
         st.후보번호 += 1
-        with _주제잠금:                                   # v0.5: 동시에 돌 때 같은 주제 · 같은 시리즈를 겹쳐 잡지 않는다
-            if _주제키(c) in _쓴주제 and c.get("src") != "지정":
-                continue
-            if _올린시리즈.get(c["시리즈"], 0) + _진행시리즈.get(c["시리즈"], 0) >= 작품당상한 and c.get("src") != "지정":
-                continue
-            _쓴주제.add(_주제키(c))
-            _진행시리즈[c["시리즈"]] = _진행시리즈.get(c["시리즈"], 0) + 1
-            st.진행잡음 = True
+        if _주제키(c) in _쓴주제 and c.get("src") != "지정":
+            continue
+        if _올린시리즈.get(c["시리즈"], 0) >= 작품당상한 and c.get("src") != "지정":
+            continue
+        _쓴주제.add(_주제키(c))
         st.주제 = c
         st.log(f"■ [{st.유형}] {c['한줄']}  [{c['src']}]")
         break
@@ -3002,34 +2880,26 @@ def n_재료모으기(st: RunState) -> RunState:
         # v0.4: 정보형도 리뷰 · 인터뷰를 읽는다. 장면 · 발언 · 남의 해석이 여기서 온다
         if 정보형검색 and w.get("한국제목") and st.유형 != "기념일":
             st.links = collect_links(st.주제)
-            with ThreadPoolExecutor(max_workers=3) as ex:         # v0.5: 검색 페이지 ∥ 위키 ko ∥ 위키 en. 호스트가 달라 같이 받는다
-                f_pages = ex.submit(read_pages, st.links, 정보형페이지)
-                f_wiki = [ex.submit(위키_평가절, w, st.주제["시리즈"], lang) for lang in ("ko", "en")]
-                st.pages, st.blocked = f_pages.result()
-                for f in f_wiki:
-                    rec = f.result()
-                    if rec:
-                        st.pages.append(rec)
+            st.pages, st.blocked = read_pages(st.links, 정보형페이지)
+            for lang in ("ko", "en"):
+                rec = 위키_평가절(w, st.주제["시리즈"], lang)
+                if rec:
+                    st.pages.append(rec)
         return st
     # 심층형 — 검색해서 읽는다
     if not w["한국제목"]:
         st.이유 = f"작품 표기 없음: {w.get('romaji')}"
         return st
     st.links = collect_links(st.주제)
-    with ThreadPoolExecutor(max_workers=5) as ex:                 # v0.5: 검색 페이지 ∥ 위키 평가 절 ko · en ∥ 위키 작품 문서 ∥ 라프텔 회차 + 위키 줄거리
-        f_pages = ex.submit(read_pages, st.links, PAGE_LIMIT)
-        f_wiki = [ex.submit(위키_평가절, w, st.주제["시리즈"], lang) for lang in ("ko", "en")]
-        f_wk = ex.submit(위키_작품문서, w, st.주제["시리즈"])
-        f_이야기 = ex.submit(이야기_모으기, st, w["한국제목"])   # v0.4: 발언을 붙일 장면
-        st.pages, st.blocked = f_pages.result()
-        for f in f_wiki:
-            rec = f.result()
-            if rec:
-                st.pages.append(rec)
-        wk = f_wk.result()
-        st.이야기 = f_이야기.result()
+    st.pages, st.blocked = read_pages(st.links, PAGE_LIMIT)
+    for lang in ("ko", "en"):
+        rec = 위키_평가절(w, st.주제["시리즈"], lang)
+        if rec:
+            st.pages.append(rec)
+    wk = 위키_작품문서(w, st.주제["시리즈"])
     if wk:
         st.맥락 = wk["본문"][:4000]; st.맥락링크.append(wk["링크"])
+    st.이야기 = 이야기_모으기(st, w["한국제목"])        # v0.4: 발언을 붙일 장면
     return st
 
 def n_표기맞추기(st: RunState) -> RunState:
@@ -3123,7 +2993,6 @@ def _주문뽑기(st):
 
 def n_기획자(st: RunState) -> RunState:
     st.바퀴 += 1
-    st.판종류 = "첫 판" if not st.기록 else "새로 씀"     # v0.6: 사실 문제로 기획자부터 다시 오면 새로 씀
     순서 = "\n".join(f"{r['번호']}. [{r['갈래']}] {r['이름']}" for r in st.순서표) if st.순서표 else ""
     온도 = st.주문.온도 if st.주문 else _주문뽑기(st)
     if not st.시작점:
@@ -3158,49 +3027,20 @@ def n_기획자(st: RunState) -> RunState:
             st.log("  사실목록이 열 개도 안 된다. 글이 빌 것이다")
     return st
 
-def _집필주문(st, 온도, 순서):
-    return 집필주문(유형=st.유형, 모양=st.모양, 주제한줄=st.주제["한줄"], 표기표=st.용어표.text(),
-                  개요=st.개요_, 온도=온도, 시작점=st.주문.시작점, 배치=st.주문.배치, 접근=st.주문.접근,
-                  순서표=순서, 앞글=st.앞글, 문제목록=st.문제목록)
-
-async def _초안들_쓰기(st, 온도목록, 순서):
-    """v0.5: 온도를 달리한 초안 여럿을 한 루프에서 같이 쓴다."""
-    async def one(온도):
-        try:
-            r = await 작가.run("쓴다.", deps=_집필주문(st, 온도, 순서), usage_limits=UsageLimits(request_limit=3))
-            return {"온도": 온도, "글": r.output, "걸림": [], "경고": [], "판정": None, "올림": False, "이유": ""}
-        except Exception as e:
-            st.log(f"  집필 실패 ({온도}): {e}")
-            return None
-    return await asyncio.gather(*(one(t) for t in 온도목록))
-
 def n_작가(st: RunState) -> RunState:
     순서 = "\n".join(f"{r['번호']}. [{r['갈래']}] {r['이름']}" for r in st.순서표) if st.순서표 else ""
-    st.초안들 = []
-    n = 1 if st.문제목록 else max(1, min(초안수, st.남은콜 - 1))   # 다시 쓰기는 앞 글 하나만 고친다. 편집국장 몫 하나는 남긴다
     if st.문제목록:
         st.바퀴 += 1                                   # 앞 글을 고쳐 쓰는 것도 한 바퀴다
-        st.판종류 = "고침"                              # v0.6
         st.log(f"  다시 쓰기 {st.바퀴}차: 앞 글을 받아 지적된 부분만 고친다")
-    if n == 1:
-        try:
-            st.글 = 작가.run_sync("쓴다.", deps=_집필주문(st, st.주문.온도, 순서), usage_limits=UsageLimits(request_limit=3)).output
-        except Exception as e:
-            st.이유 = f"집필 실패: {e}"
-            st.log(f"  {st.이유}")
-        st.남은콜 -= 1
-    else:
-        # v0.5: 첫 바퀴는 초안 n개를 온도를 달리해 동시에. 기획자 온도가 첫째, 나머지 온도가 뒤에
-        온도목록 = ([st.주문.온도] + [t for t in 온도들 if t != st.주문.온도]) * n
-        온도목록 = 온도목록[:n]
-        got = _run_async(_초안들_쓰기(st, 온도목록, 순서))
-        st.남은콜 -= n
-        st.초안들 = [g for g in got if g]
-        st.글 = st.초안들[0]["글"] if st.초안들 else None
-        if not st.초안들:
-            st.이유 = "집필 실패"
-        else:
-            st.log(f"  초안 {len(st.초안들)}개를 같이 썼다: {' · '.join(g['온도'] for g in st.초안들)}")
+    try:
+        st.글 = 작가.run_sync("쓴다.", deps=집필주문(유형=st.유형, 모양=st.모양, 주제한줄=st.주제["한줄"], 표기표=st.용어표.text(),
+                                                   개요=st.개요_, 온도=st.주문.온도, 시작점=st.주문.시작점, 배치=st.주문.배치, 접근=st.주문.접근,
+                                                   순서표=순서, 앞글=st.앞글, 문제목록=st.문제목록),
+                             usage_limits=UsageLimits(request_limit=3)).output
+    except Exception as e:
+        st.이유 = f"집필 실패: {e}"
+        st.log(f"  {st.이유}")
+    st.남은콜 -= 1
     st.앞글, st.문제목록 = "", ""
     return st
 
@@ -3216,56 +3056,19 @@ def n_교정자(st: RunState) -> RunState:
     return st
 
 def n_형태검사(st: RunState) -> RunState:
-    if len(st.초안들) > 1:
-        # v0.5: 초안마다 본다. 덜 걸린 순으로 세운다. 편집국장이 고르기 전까지 첫째가 st.글이다
-        for g in st.초안들:
-            g["걸림"] = 형태검사(g["글"].본문, st, 제목=g["글"].제목)
-            g["경고"] = list(st.코드경고)
-        st.초안들.sort(key=lambda g: len(g["걸림"]))
-        st.log("  형태검사: " + " / ".join(f"{g['온도']} {len(g['걸림'])}개" for g in st.초안들))
-        g = st.초안들[0]
-        st.글, st.걸림, st.코드경고 = g["글"], g["걸림"], g["경고"]
-        return st
     st.걸림 = 형태검사(st.글.본문, st, 제목=st.글.제목)
     if st.코드경고:
         st.log("  코드 경고: " + " / ".join(st.코드경고))
     return st
 
 def n_편집국장(st: RunState) -> RunState:
-    초안요약 = []
-    if len(st.초안들) > 1:
-        # v0.5: 형태검사를 통과한 초안만 편집국장이 같이 읽는다. 다 걸렸으면 가장 덜 걸린 하나만 — 문제 목록을 받으려고
-        통과 = [g for g in st.초안들 if not g["걸림"]]
-        읽을 = (통과 or st.초안들[:1])[:max(1, st.남은콜)]
-        판정들 = _run_async(_편집국장_여럿(st, 읽을)) if st.남은콜 > 0 else [None] * len(읽을)
-        st.남은콜 -= len(읽을) if st.남은콜 > 0 else 0
-        for g, p in zip(읽을, 판정들):
-            g["판정"] = p
-            g["올림"], g["이유"] = 올릴까(g["걸림"], p)
-        # 올림이 먼저, 그다음 형태검사 덜 걸린 것, 점수 높은 것, 문제 적은 것
-        읽을.sort(key=lambda g: (0 if g["올림"] else 1, len(g["걸림"]), -(g["판정"].점수 if g["판정"] else -1), len(g["판정"].문제들) if g["판정"] else 99))
-        g = 읽을[0]
-        st.글, st.걸림, st.코드경고, st.판정 = g["글"], g["걸림"], g["경고"], g["판정"]
-        st.주문 = st.주문.model_copy(update={"온도": g["온도"]})
-        st.올림, st.이유 = g["올림"], g["이유"]
-        초안요약 = [f"{x['온도']}: 형태 {len(x['걸림'])}" + (f" · 편집국장 {x['판정'].점수}점 {len(x['판정'].문제들)}건" if x["판정"] else (" · 안 읽음" if x not in 읽을 else " · 편집국장 실패")) for x in st.초안들]
-        st.log(f"  편집국장이 {len(읽을)}개를 같이 읽었다 → {g['온도']} 고름 / " + " / ".join(초안요약))
-        if st.코드경고:
-            st.log("  코드 경고: " + " / ".join(st.코드경고))
-    else:
-        b = {"남은콜": st.남은콜}
-        st.판정 = 편집국장_읽기(st, b)
-        st.남은콜 = b["남은콜"]
-        st.올림, st.이유 = 올릴까(st.걸림, st.판정)
-    앞판 = st.기록[-1] if (앞판기억 and st.기록) else None
-    if 앞판 and st.판정 and 앞판.get("판정"):
-        대조 = st.판정.앞판대조
-        세기 = lambda 말: sum(1 for x in 대조 if x.strip().startswith(말))
-        st.log(f"  앞 판 {앞판['판정'].점수}점 → {st.판정.점수}점 ({st.판종류}) / 고쳐짐 {세기('고쳐짐')} · 남음 {세기('남음')} · 새로 생김 {세기('새로 생김')} · 못 봄 {세기('앞 판에서 못 봄')}"
-               + (f" / {st.판정.점수설명}" if st.판정.점수설명 else ""))
+    b = {"남은콜": st.남은콜}
+    st.판정 = 편집국장_읽기(st, b)
+    st.남은콜 = b["남은콜"]
+    st.올림, st.이유 = 올릴까(st.걸림, st.판정)
     문제수 = len(st.판정.문제들) if st.판정 else 0
-    st.기록.append({"차례": st.바퀴, "종류": st.판종류, "개요": st.개요_, "글": st.글, "고친곳": st.고친곳, "걸림": st.걸림, "판정": st.판정,
-                   "올림": st.올림, "이유": st.이유, "조건": (st.주문.온도, st.주문.시작점, st.주문.배치, st.주문.접근), "초안들": 초안요약})
+    st.기록.append({"차례": st.바퀴, "개요": st.개요_, "글": st.글, "고친곳": st.고친곳, "걸림": st.걸림, "판정": st.판정,
+                   "올림": st.올림, "이유": st.이유, "조건": (st.주문.온도, st.주문.시작점, st.주문.배치, st.주문.접근)})
     st.log(f"  {st.바퀴}차: {'올림' if st.올림 else '탈락'} / {st.이유} / 교정 {len(st.고친곳)}곳 / 편집국장 문제 {문제수}건"
            + (f" / 읽을 이유: {st.판정.읽을이유[:50]}" if st.판정 and st.판정.읽을이유 else "") + (f" / 확인 목록 {len(st.판정.확인목록)}건" if st.판정 and st.판정.확인목록 else ""))
     if not st.올림:
@@ -3279,10 +3082,8 @@ def n_편집국장(st: RunState) -> RunState:
 
 def n_저장(st: RunState) -> RunState:
     st.상태 = "올림" if st.올림 else "탈락"
-    with _주제잠금:
-        if st.올림:
-            _올린시리즈[st.주제["시리즈"]] = _올린시리즈.get(st.주제["시리즈"], 0) + 1
-    _진행놓기(st)
+    if st.올림:
+        _올린시리즈[st.주제["시리즈"]] = _올린시리즈.get(st.주제["시리즈"], 0) + 1
     p = 저장(st)
     st.저장경로 = str(p) if p else None
     if p:
@@ -3337,7 +3138,7 @@ def after_작가(st):
     if st.글 is None:
         st.상태 = "탈락"
         return END
-    return "교정자" if 교정자쓰기 else "형태검사"          # v0.5: 교정 규칙이 작가 프롬프트에 있으면 마디를 건너뛴다
+    return "교정자"
 
 def _걸림종류(걸림):
     """'같은 숫자 되풀이: 135화 5번' → '같은 숫자 되풀이'. 종류만 남긴다."""
@@ -3411,16 +3212,6 @@ def 저장(st: RunState):
     if not st.기록:
         return None
     r = st.기록[-1]
-    최고줄 = []
-    if 최고판저장 and not st.올림 and len(st.기록) > 1:      # v0.6: 탈락이면 점수 제일 높은 판 글을 남긴다
-        후보 = [k for k in st.기록 if k.get("판정") is not None and k.get("글") is not None]
-        best = max(후보, key=lambda k: (k["판정"].점수, k["차례"])) if 후보 else None
-        if best is not None and best is not r:
-            최고줄 = [f"- 최고 판 {best['차례']}차({best['판정'].점수}점) 글을 저장했다. 마지막 판은 {r['차례']}차"
-                      + (f"({r['판정'].점수}점)" if r.get("판정") else "(편집국장 실패)")]
-            st.log(f"  탈락 — 최고 판 {best['차례']}차({best['판정'].점수}점) 글을 저장한다. 마지막 {r['차례']}차"
-                   + (f"({r['판정'].점수}점)" if r.get("판정") else ""))
-            r = best
     g = r["글"]
     폴더 = OUT / ("올림" if st.올림 else "탈락")
     이름 = re.sub(r"[^\w가-힣ㄱ-ㅎ -]", "", f"{st.유형}_{st.주제['시리즈']}_{st.주제['한줄']}")[:70].strip()
@@ -3439,10 +3230,8 @@ def 저장(st: RunState):
     로그 = []
     for k in st.기록:
         온도, 시작점, 배치, 접근 = (list(k["조건"]) + ["", ""])[:4]
-        로그.append(f"### {k['차례']}차 ({k.get('종류', '')}) — {'올림' if k['올림'] else '탈락'} / {k['이유']}")
+        로그.append(f"### {k['차례']}차 — {'올림' if k['올림'] else '탈락'} / {k['이유']}")
         로그.append(f"- 조건: {온도} · {시작점} · {배치}" + (f" · {접근}" if 접근 else ""))
-        if k.get("초안들"):
-            로그.append("- 초안: " + " / ".join(k["초안들"]))
         if k["걸림"]:
             로그.append(f"- 형태 검사: {', '.join(k['걸림'])}")
         if k["고친곳"]:
@@ -3452,9 +3241,6 @@ def 저장(st: RunState):
             로그.append(f"- 편집국장 {k['판정'].점수}점: {k['판정'].한줄평}")
             if k["판정"].읽을이유:
                 로그.append(f"- 읽을 이유: {k['판정'].읽을이유}")
-            if k["판정"].점수설명:
-                로그.append(f"- 앞 판 대비: {k['판정'].점수설명}")
-            로그 += [f"  - (앞 판) {x}" for x in k["판정"].앞판대조]
             로그 += [f"  - ({x.종류}) {x.어디[:60]} — {x.설명}" for x in k["판정"].문제들]
             if k["판정"].확인목록:
                 로그.append("- 확인 목록 (재료 밖이지만 널리 알려진 것으로 봄. 사람이 본다):")
@@ -3465,7 +3251,7 @@ def 저장(st: RunState):
              f"- 표기 기준: {GLOSSARIES[st.주제['시리즈']]['기준']}",
              "", "## 표기 출처"] + (표기줄 or ["- 없음"]) + \
             ["", "## 출처"] + (출처줄 or ["- 없음"]) + \
-            ["", f"## 개요 ({r['차례']}차)", f"- 질문: {r['개요'].주제}", f"- 답: {r['개요'].답 or '-'}", "", "## 판정 기록"] + 최고줄 + 로그 + \
+            ["", "## 개요 (최종 바퀴)", f"- 질문: {r['개요'].주제}", f"- 답: {r['개요'].답 or '-'}", "", "## 판정 기록"] + 로그 + \
             ["", f"마디 {st.steps}개 · 모델 요청 {LLM_CALL_CAP - st.남은콜}회"]
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
@@ -3481,7 +3267,6 @@ print("저장 준비 끝")
 # - TMDB 회차 점수 · IMDb 회차 평점은 안 붙였다. 회차 · 데이터 유형은 2차다
 # - `PASS_SCORE` 70, 분량 폭, 기념일창 7일 — 돌려보고 맞춘다
 # - `정보형페이지` 8, `심층최소발언` 3, `같은걸림개수` 3 — 돌려보고 맞춘다 (v0.4)
-# - `동시주제` 3, `초안수` 3 — 콜랩에서 돌려보고 맞춘다. 스레드별 모델은 TestModel 흐름만 봤다 (v0.5)
 #
 # 랭그래프로 옮길 때: 마디 함수는 `add_node`에, 갈림길 함수는 `add_conditional_edges`에 그대로 꽂는다. `RunState`가 상태 스키마다.
 
@@ -3491,7 +3276,7 @@ print("저장 준비 끝")
 #   python anime_agent.py check                       # 점검 — AniList · Jikan · 라프텔 · 위키백과 · 검색. 모델 안 부른다
 #   python anime_agent.py glossary                    # 용어집 점검 — 시리즈마다 AniList 대표 작품 · 관계도 · 편 화수
 #   python anime_agent.py pick --type 감상순서 --n 2   # 주제 뽑기 + 재료 모으기까지만. 모델 안 부른다
-#   python anime_agent.py run --n 6 --at-once 3         # 유형을 섞어 n편. 주제 3개씩 같이. --type 사람 처럼 하나만도 된다
+#   python anime_agent.py run --n 5                     # 유형 다섯을 섞어 n편. --type 사람 처럼 하나만도 된다
 #   python anime_agent.py one 블리치 --type 제작이야기  # 시리즈 지정. --person 으로 사람 지정
 #   python anime_agent.py zip
 # ======================================================================
@@ -3557,73 +3342,26 @@ def 뽑기만(유형, n=2):
 
 # ## 26. 돌리기
 
-모델에이전트들 = ("재료판정관", "기획자", "작가", "교정자", "편집국장")   # v0.5: 스레드별 모델을 끼울 자리
-
-def _새모델():
-    """v0.5: 스레드 하나가 혼자 쓸 모델. HTTP 클라이언트를 따로 만든다.
-    pydantic-ai 기본 클라이언트는 프로세스에 하나라 이벤트 루프 여럿이 나눠 쓰면 "bound to a different event loop"가 난다."""
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-    try:
-        import httpx2 as httpx
-    except ImportError:
-        import httpx
-    name = MODEL.split(":", 1)[1]
-    return OpenAIChatModel(name, provider=OpenAIProvider(api_key=os.environ[KEY_ENV], http_client=httpx.AsyncClient(timeout=httpx.Timeout(600.0))))
-
-def _한편(유형, 표식="", 새루프=False):
-    """주제 하나를 끝까지. 스레드에서 부르면 새루프=True — 루프 · 모델을 이 스레드 것으로 둔다."""
-    st = RunState(유형=유형, 표식=표식)
-    if not 새루프:
-        st = run_graph(st)
-    else:
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        import contextlib
-        with contextlib.ExitStack() as es:
-            if 스레드별모델:
-                m = _새모델()
-                for name in 모델에이전트들:
-                    es.enter_context(globals()[name].override(model=m))
-            st = run_graph(st)
-    _진행놓기(st)
-    return st
-
-def run(유형=None, 목표편수=목표편수, 시도상한=시도상한, 동시=None):
+def run(유형=None, 목표편수=목표편수, 시도상한=시도상한):
     """올린 글이 목표 편수가 될 때까지 돈다. 유형을 안 주면 유형비율대로 섞는다.
-    한 유형이 후보를 다 쓰면(주제없음) 그 유형은 빼고 나머지로 계속 간다.
-    v0.5: 동시 개씩 같이 돈다(기본 동시주제). 한 묶음 안에서는 유형이 겹치지 않게 덜 올린 유형부터 고른다.
-    묶음 크기는 모자란 편수의 두 배까지다 — 통과율이 반쯤이라 그만큼 띄워야 한 묶음에 채워진다. 목표를 조금 넘길 수 있다."""
-    import contextvars
-    동시 = max(1, int(동시 or 동시주제))
+    한 유형이 후보를 다 쓰면(주제없음) 그 유형은 빼고 나머지로 계속 간다."""
     남은유형 = {k: v for k, v in 유형비율.items() if v > 0} if 유형 is None else {유형: 1}
     결과, 시도, 올림수, 올린유형 = [], 0, 0, {}
     시작 = time.time()
-    if 동시 > 1:
-        print(f"주제를 {동시}개씩 같이 돈다. 로그 앞의 [유형]으로 가른다")
     while 올림수 < 목표편수 and 시도 < 시도상한 and 남은유형:
-        n = min(동시, 시도상한 - 시도, max(1, 2 * (목표편수 - 올림수)))
-        # 비율 대비 덜 올린 유형부터. 한 묶음 안에서는 고른 것을 센 셈으로 다음을 고른다
-        셈, 이번들 = dict(올린유형), []
-        for _ in range(n):
-            k = min(남은유형, key=lambda k: 셈.get(k, 0) / 남은유형[k])
-            이번들.append(k); 셈[k] = 셈.get(k, 0) + 1
-        시도 += len(이번들)
-        print(f"\n===== 시도 {시도}/{시도상한} · {' · '.join(이번들)} · 올림 {올림수}/{목표편수} · {int((time.time()-시작)/60)}분 =====")
-        if len(이번들) == 1:
-            묶음 = [_한편(이번들[0])]
-        else:
-            with ThreadPoolExecutor(max_workers=len(이번들)) as ex:
-                futs = [ex.submit(contextvars.copy_context().run, _한편, k, f"[{k} {i+1}] ", True) for i, k in enumerate(이번들)]   # 같은 유형이 둘이면 번호로 가른다
-                묶음 = [f.result() for f in futs]
-        for 이번, st in zip(이번들, 묶음):
-            결과.append(st)
-            if st.상태 == "주제없음":
-                print(f"  {이번}: 쓸 만한 주제가 더 없다. 이 유형은 뺀다")
-                남은유형.pop(이번, None)
-                continue
-            if st.올림:
-                올림수 += 1
-                올린유형[이번] = 올린유형.get(이번, 0) + 1
+        시도 += 1
+        # 비율 대비 덜 올린 유형부터
+        이번 = min(남은유형, key=lambda k: 올린유형.get(k, 0) / 남은유형[k])
+        print(f"\n===== 시도 {시도}/{시도상한} · {이번} · 올림 {올림수}/{목표편수} · {int((time.time()-시작)/60)}분 =====")
+        st = run_graph(RunState(유형=이번))
+        결과.append(st)
+        if st.상태 == "주제없음":
+            print(f"  {이번}: 쓸 만한 주제가 더 없다. 이 유형은 뺀다")
+            남은유형.pop(이번, None)
+            continue
+        if st.올림:
+            올림수 += 1
+            올린유형[이번] = 올린유형.get(이번, 0) + 1
     print(f"\n끝. 올림 {올림수}편 ({' · '.join(f'{k} {v}' for k, v in 올린유형.items()) or '-'}) / 탈락 {sum(1 for s_ in 결과 if s_.상태 == '탈락')}편 / 시도 {시도}회 / {int((time.time()-시작)/60)}분")
     if 올림수 < 목표편수:
         print(f"목표 {목표편수}편에 {목표편수 - 올림수}편 모자란다.")
@@ -3648,7 +3386,6 @@ def run_one(시리즈이름, 유형, 사람=None):
         return None
     c = {**후보[0], "src": "지정"}
     st = run_graph(RunState(유형=유형, 지정후보=c))
-    _진행놓기(st)
     print(f"\n끝. {st.상태} / {st.이유} / 모델 요청 {LLM_CALL_CAP - st.남은콜}회")
     끝나면zip()
     return st
@@ -3700,7 +3437,6 @@ def main(argv=None):
     a.add_argument("--type", dest="유형", default=None, choices=list(유형표))
     a.add_argument("--n", type=int, default=목표편수)
     a.add_argument("--tries", type=int, default=시도상한)
-    a.add_argument("--at-once", dest="동시", type=int, default=None, help=f"주제를 몇 개씩 같이 돌릴지 (기본 {동시주제})")
     o = sub.add_parser("one", help="시리즈를 지정해서 한 편. 예: one 블리치 --type 제작이야기")
     o.add_argument("series")
     o.add_argument("--type", dest="유형", default="감상순서", choices=list(유형표))
@@ -3715,7 +3451,7 @@ def main(argv=None):
     elif args.cmd == "pick":
         뽑기만(args.유형, n=args.n)
     elif args.cmd == "run":
-        run(args.유형, 목표편수=args.n, 시도상한=args.tries, 동시=args.동시)
+        run(args.유형, 목표편수=args.n, 시도상한=args.tries)
         zip_outputs()
     elif args.cmd == "one":
         run_one(args.series, args.유형, 사람=args.person)
