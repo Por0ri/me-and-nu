@@ -80,6 +80,9 @@
 #   "못 봄"은 앞 판 글에도 있었는데 앞 판이 안 잡은 것이다. 글이 나빠진 것(새로 생김)과 가른다. 못 봄만으로는 점수를 안 내린다.
 # - 기록마다 판 종류를 남긴다. 저장 파일의 판정 기록에 판마다 점수 · 앞 판 대비 · 대조 줄이 남는다.
 # - 마지막 판이 탈락이면 기록 중 점수가 제일 높은 판(최고 판)의 글을 저장한다(최고판저장). 다시 쓰다 나빠진 글이 남지 않게 한다.
+# - (9/22 밤) `_새모델()`을 OpenAIChatModel → OpenAIResponsesModel로. `"openai:..."` 문자열은 Responses API로 가는데 스레드용 모델만
+#   chat completions로 만들어서, run(동시=N)에서 gpt-5.6-luna가 "Function tools with reasoning_effort ... /v1/chat/completions" 400을 냈다.
+#   동시=1이면 안 나던 이유다. 실제 호출 A(문자열) · C(Responses) 됨, D(_새모델 chat) 실패로 확인했다.
 
 # ## 1. 설정
 #
@@ -3561,15 +3564,18 @@ def 뽑기만(유형, n=2):
 
 def _새모델():
     """v0.5: 스레드 하나가 혼자 쓸 모델. HTTP 클라이언트를 따로 만든다.
-    pydantic-ai 기본 클라이언트는 프로세스에 하나라 이벤트 루프 여럿이 나눠 쓰면 "bound to a different event loop"가 난다."""
-    from pydantic_ai.models.openai import OpenAIChatModel
+    pydantic-ai 기본 클라이언트는 프로세스에 하나라 이벤트 루프 여럿이 나눠 쓰면 "bound to a different event loop"가 난다.
+    v0.6 고침: `"openai:..."` 문자열은 pydantic-ai 2.x에서 Responses API(OpenAIResponsesModel)로 간다. 여기서 OpenAIChatModel을 쓰면
+    chat completions로 가고, gpt-5.6-luna는 거기서 추론 기본 켜짐 + tool 조합을 400으로 막는다
+    ("Function tools with reasoning_effort are not supported ... in /v1/chat/completions"). 같은 길(Responses)로 맞춘다."""
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
     try:
         import httpx2 as httpx
     except ImportError:
         import httpx
     name = MODEL.split(":", 1)[1]
-    return OpenAIChatModel(name, provider=OpenAIProvider(api_key=os.environ[KEY_ENV], http_client=httpx.AsyncClient(timeout=httpx.Timeout(600.0))))
+    return OpenAIResponsesModel(name, provider=OpenAIProvider(api_key=os.environ[KEY_ENV], http_client=httpx.AsyncClient(timeout=httpx.Timeout(600.0))))
 
 def _한편(유형, 표식="", 새루프=False):
     """주제 하나를 끝까지. 스레드에서 부르면 새루프=True — 루프 · 모델을 이 스레드 것으로 둔다."""
