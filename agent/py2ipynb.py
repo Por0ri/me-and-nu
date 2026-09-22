@@ -4,6 +4,8 @@
 #
 #   python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.9.ipynb
 #   python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.5.ipynb     # 애니는 glossary.json 을 노트북 안에 같이 넣는다
+#   python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.4.ipynb
+#   python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V1.9.ipynb
 #
 # 자르는 규칙
 # - 파일 맨 위 주석 덩어리 → 마크다운 셀
@@ -11,6 +13,8 @@
 # - `def main(` 부터 끝까지는 뺀다. 대신 콜랩용 첫 셀과 실행 셀을 붙인다
 # - 음악은 다르다 (v3.2부터). main 이 노트북에서 불려도 안 터지게 되어 있어 남긴다. `if __name__` 덩어리만 뺀다.
 #   첫 셀도 음악 전용(pydantic-ai · openai 판 맞추기, Jev 키, agent/nb 로 이동)을 쓴다
+# - 영화 둘(V2.4 · V1.9부터)은 영화 첫 셀(판 맞추기, LLM_KEY · TMDB_KEY, agent/nb 로 이동)과 영화 실행 셀(cmd_one · cmd_batch · cmd_list · cmd_random)을 쓴다.
+#   `def main(` 부터 뺀다. cmd_* 는 async 라 콜랩 셀에서 `await` 로 부른다
 
 import sys, re, json, pathlib
 
@@ -250,6 +254,151 @@ print("지금 폴더:", pathlib.Path.cwd())
     ("code", ["z = zip_outputs()", "from google.colab import files", "files.download(str(z))"]),
 ]
 
+# 영화 전용 첫 셀 (V2.4 · V1.9~). 음악 첫 셀에서 Jev 를 빼고 TMDB_KEY 를 더한 것이다
+영화_첫셀 = r'''# 콜랩에서 돌리기 전에 이 셀부터 돌린다. 런타임을 새로 시작했으면 다시 돌린다.
+#
+# 콜랩에는 openai가 미리 깔려 있는데 그게 오래된 판이다. pydantic-ai는 openai 3.8 위를 쓴다.
+# 여기서는 둘을 짝으로 묶어 올린다. 판이 바뀌면 런타임을 다시 시작해야 한다. 아래에서 알려 준다.
+import importlib, importlib.metadata as 메타, subprocess, sys, os, pathlib
+
+짝으로올릴것 = ["pydantic-ai-slim[openai]", "openai>=3.8"]        # 이 둘은 판을 맞춰야 한다
+없으면깔것 = {
+    "dotenv":       "python-dotenv",
+    "nest_asyncio": "nest_asyncio",
+    "requests":     "requests",
+    "trafilatura":  "trafilatura",       # 정보 전달 — 기사 본문 추출. 리뷰는 안 쓰지만 깔아도 된다
+}
+
+
+def _판(이름):
+    try:
+        return 메타.version(이름)
+    except Exception:
+        return None
+
+
+def _깔기(것들, 올리기=False):
+    줄 = [sys.executable, "-m", "pip", "install", "-q"] + (["-U"] if 올리기 else []) + list(것들)
+    if subprocess.run(줄).returncode != 0:
+        raise SystemExit("설치가 실패했다. 위에 찍힌 줄을 보고 무엇이 안 깔렸는지 확인한다")
+
+
+볼판 = ("openai", "pydantic-ai-slim")
+전 = {n: _판(n) for n in 볼판}
+print("지금 판:", ", ".join(f"{n} {전[n] or '없음'}" for n in 볼판))
+_깔기(짝으로올릴것, 올리기=True)
+후 = {n: _판(n) for n in 볼판}
+
+없는것 = []
+for 모듈, 이름 in 없으면깔것.items():
+    try:
+        importlib.import_module(모듈)
+    except Exception:
+        없는것.append(이름)
+if 없는것:
+    print("더 깔 것:", ", ".join(없는것))
+    _깔기(없는것)
+importlib.invalidate_caches()
+
+바뀐것 = [n for n in 볼판 if 전[n] != 후[n]]
+if 바뀐것:
+    print("판이 바뀌었다:", ", ".join(f"{n} {전[n] or '없음'} → {후[n]}" for n in 바뀐것))
+    if any(n in sys.modules for n in ("openai", "pydantic_ai")):
+        raise SystemExit(
+            "런타임을 다시 시작하고 이 셀을 한 번 더 돌린다.\n"
+            "  위 메뉴 런타임 → 세션 다시 시작. 콜랩이 띄우는 RESTART SESSION 단추를 눌러도 된다.\n"
+            "  이미 읽어 둔 옛 판이 메모리에 남아 있어 다시 시작하지 않으면 그대로 실패한다."
+        )
+    print("아직 읽어 둔 것이 없어 다시 시작하지 않아도 된다")
+else:
+    print("판이 그대로다. 그냥 간다")
+
+아직없음 = []
+for 모듈 in ["pydantic_ai", "openai", *없으면깔것]:
+    try:
+        importlib.import_module(모듈)
+    except Exception as e:
+        아직없음.append(f"{모듈} ({type(e).__name__})")
+if 아직없음:
+    raise SystemExit(f"아직 안 되는 것: {', '.join(아직없음)}. 런타임을 다시 시작하고 이 셀을 한 번 더 돌린다")
+print("필요한 것이 다 된다")
+
+# ── 키 ─────────────────────────────────────────────────────────
+# 두 가지 중 하나로 넣는다.
+#   (가) 아래 따옴표 안에 키를 그대로 붙인다
+#   (나) 콜랩 왼쪽 열쇠 모양(보안 비밀)에 LLM_KEY · TMDB_KEY 로 넣고 여기는 비워 둔다
+# 비워 두면 이미 들어 있는 값을 지우지 않는다. 보안 비밀에서 찾아본다.
+LLM_KEY_직접  = ""    # 큰 모델 키. 꼭 있어야 한다
+TMDB_KEY_직접 = ""    # TMDB 키. 꼭 있어야 한다
+
+
+def _키넣기(환경변수, 직접, 딴이름=()):
+    if 직접.strip():
+        os.environ[환경변수] = 직접.strip()
+        return "직접 적음"
+    for 이름 in (환경변수, *딴이름):
+        v = (os.environ.get(이름) or "").strip()
+        if v:
+            os.environ[환경변수] = v
+            return f"환경변수 {이름}"
+    try:
+        from google.colab import userdata
+        for 이름 in (환경변수, *딴이름):
+            try:
+                v = userdata.get(이름)
+            except Exception:
+                continue
+            if v and v.strip():
+                os.environ[환경변수] = v.strip()
+                return f"콜랩 보안 비밀 {이름}"
+    except Exception:
+        pass
+    return "없음"
+
+
+print("LLM_KEY :", _키넣기("LLM_KEY", LLM_KEY_직접, ("OPENAI_API_KEY",)))
+print("TMDB_KEY:", _키넣기("TMDB_KEY", TMDB_KEY_직접))
+for 이름 in ("LLM_KEY", "TMDB_KEY"):
+    if not (os.environ.get(이름) or "").strip():
+        raise SystemExit(f"{이름}가 없다. 위 {이름}_직접에 키를 넣고 이 셀을 다시 돌린다")
+
+# 콜랩은 __file__이 없다. 노트북은 지금 폴더를 자기 자리로 본다.
+# 결과는 한 칸 위 out/movie_*에 쌓이므로 agent/nb 안으로 들어간다. 그러면 agent/out/movie_info · movie_review가 된다.
+# 이미 들어와 있으면 또 들어가지 않는다
+if pathlib.Path.cwd().name != "nb":
+    pathlib.Path("agent/nb").mkdir(parents=True, exist_ok=True)
+    os.chdir("agent/nb")
+print("지금 폴더:", pathlib.Path.cwd())
+'''
+
+# 영화 정보 전달용 실행 셀. cmd_* 는 async 라 await 로 부른다
+영화정보_실행셀들 = [
+    ("markdown", ["## 실행", "", "위 셀을 전부 돌린 뒤 아래 중 하나를 돌린다. `cmd_*` 는 async 라 `await` 로 부른다.", "",
+                  "- `cmd_material(\"프로젝트 헤일메리\", 2026)` — 재료(위키 · 기사)가 얼마나 들어오는지. 모델 안 부른다",
+                  "- `await cmd_one(\"프로젝트 헤일메리\", 2026)` — 한 편. 화면에 로그와 글을 찍고 `out/movie_info/` 에 저장한다",
+                  "- `await cmd_batch(pick_released(5), \"뽑힌 영화\")` — 개봉작 무작위 다섯 편. 끝나면 zip 으로 묶는다",
+                  "- `await cmd_batch(pick_upcoming(5), \"뽑힌 개봉 예정작\")` — 개봉 전 무작위 다섯 편",
+                  "- V2.4: 편집국장 · 판정관이 앞 판 판정과 앞 판 글을 받는다. 저장 파일 로그에 판 종류 · 앞 판 대비 · 대조 줄이 붙는다. 탈락보관이면 합계 최고 판 글을 남긴다",
+                  "- 마지막 셀은 `out/movie_info/` 를 zip 으로 묶어 브라우저로 내려준다"]),
+    ("code", ["cmd_material(\"프로젝트 헤일메리\", 2026)"]),
+    ("code", ["await cmd_one(\"프로젝트 헤일메리\", 2026)"]),
+    ("code", ["await cmd_batch(pick_released(5), \"뽑힌 영화\")          # 개봉작 무작위", "# await cmd_batch(pick_upcoming(5), \"뽑힌 개봉 예정작\")   # 개봉 전 무작위"]),
+    ("code", ["z = download_all()", "from google.colab import files", "files.download(str(z))"]),
+]
+
+# 영화 리뷰용 실행 셀
+영화리뷰_실행셀들 = [
+    ("markdown", ["## 실행", "", "위 셀을 전부 돌린 뒤 아래 중 하나를 돌린다. `cmd_*` 는 async 라 `await` 로 부른다.", "",
+                  "- `await cmd_one(\"괴물\", 2006)` — 한 편. 화면에 로그와 글을 찍고 `out/movie_review/` 에 저장한다",
+                  "- `await cmd_list()` — 테스트 목록 다섯 편(`TEST_TITLES`). 끝나면 zip 으로 묶는다",
+                  "- `await cmd_random(5)` — 무작위 다섯 편. `seed=` 로 고정할 수 있다",
+                  "- V1.9: 판정관이 앞 판 점수와 앞 판 글을 받는다. 저장 파일 로그에 판 종류 · 앞 판 대비 · 대조 줄이 붙는다. 탈락보관이면 합계 최고 판 글을 남긴다",
+                  "- 마지막 셀은 `out/movie_review/` 를 zip 으로 묶어 브라우저로 내려준다"]),
+    ("code", ["await cmd_one(\"괴물\", 2006)"]),
+    ("code", ["await cmd_list()                 # 테스트 목록 다섯 편", "# await cmd_random(5, seed=1)    # 무작위 다섯 편"]),
+    ("code", ["z = download_all()", "from google.colab import files", "files.download(str(z))"]),
+]
+
 # 애니 에이전트용 실행 셀. 파일 이름에 anime 가 들어 있으면 이것을 붙인다
 애니_실행셀들 = [
     ("markdown", ["## 실행", "", "위 셀을 전부 돌린 뒤 아래 중 하나를 돌린다.", "",
@@ -272,8 +421,18 @@ def main():
     src_path, out_path = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
     src = src_path.read_text(encoding="utf-8")
     음악 = "music" in src_path.name
-    실행 = 애니_실행셀들 if "anime" in src_path.name else (음악_실행셀들 if 음악 else 실행셀들)
-    cells = [("code", (음악_첫셀 if 음악 else 콜랩_첫셀).splitlines())]
+    영화 = "movie" in src_path.name
+    if "anime" in src_path.name:
+        실행 = 애니_실행셀들
+    elif 음악:
+        실행 = 음악_실행셀들
+    elif "movie_info" in src_path.name:
+        실행 = 영화정보_실행셀들
+    elif "movie_review" in src_path.name:
+        실행 = 영화리뷰_실행셀들
+    else:
+        실행 = 실행셀들
+    cells = [("code", (음악_첫셀 if 음악 else 영화_첫셀 if 영화 else 콜랩_첫셀).splitlines())]
     용어집 = src_path.parent / "glossary.json"
     if "anime" in src_path.name and 용어집.exists():
         # 용어집을 노트북 안에 넣는다. 콜랩에서 파일을 따로 올리지 않아도 된다. 정본은 glossary.json 이다

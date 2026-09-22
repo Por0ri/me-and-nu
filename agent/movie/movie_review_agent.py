@@ -46,7 +46,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # agent/.env → 이 파일 옆 .env 순서로 읽는다. 이미 있는 환경변수는 덮어쓰지 않는다
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()   # 노트북에서는 지금 폴더 (agent/nb)
 load_dotenv(HERE.parent / ".env")
 load_dotenv(HERE / ".env")
 

@@ -345,11 +345,15 @@ python anime/anime_agent.py zip
 노트북은 `.py`에서 뽑는다. `.py`를 고친 뒤 다시 뽑는다.
 
 ```bash
-python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.9.ipynb
-python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.3.ipynb     # 용어집이 노트북 안에 같이 들어간다
+python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v3.4.ipynb
+python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.6.ipynb              # 용어집이 노트북 안에 같이 들어간다
+python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.4.ipynb     # 영화 둘은 V2.4 · V1.9부터 뽑는다
+python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V1.9.ipynb
 ```
 
-첫 셀이 pip 설치와 보안 비밀(`LLM_KEY`) 읽기다. 마지막 셀들이 `점검()` · `뽑기만()` · `run()` · zip 내려받기다.
+첫 셀이 pip 설치(pydantic-ai · openai 판 맞추기)와 키 읽기(`LLM_KEY`, 영화는 `TMDB_KEY`도)다. `agent/nb` 폴더로 들어가서 결과가 `agent/out/<토픽>/`에 쌓인다.
+마지막 셀들이 실행이다. 음악 · 애니는 `점검()` · `뽑기만()` · `run()` · `run_one()`, 영화는 `await cmd_one()` · `await cmd_batch()` · `await cmd_list()` · `await cmd_random()`. 끝 셀이 zip 내려받기다.
+노트북은 루트에 판마다 남긴다. git에는 안 올린다(`.git/info/exclude`).
 
 ## 콜랩에서 .py 를 그대로 돌릴 때
 
