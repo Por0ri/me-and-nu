@@ -31,8 +31,8 @@ class AgentRun(Base):
         BigInteger,
         ForeignKey("user_account.user_id", ondelete="SET NULL"),
     )
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domain.domain_id"), nullable=False
+    topic_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("topic.topic_id"), nullable=False
     )
     agent_code: Mapped[str] = mapped_column(String(50), nullable=False)
     agent_version: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -69,8 +69,8 @@ class AgentRun(Base):
             "requested_by_user_id",
         ),
         Index(
-            "idx_agent_run_domain_status_created_at",
-            "domain_id",
+            "idx_agent_run_topic_status_created_at",
+            "topic_id",
             "status",
             created_at.desc(),
         ),
