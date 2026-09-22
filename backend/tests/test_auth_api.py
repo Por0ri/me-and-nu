@@ -8,23 +8,24 @@ from app.api.routes import auth as auth_routes
 from app.db.session import get_db
 from app.main import app
 from app.mocks.session_store import mock_sessions
-from app.models.user import User
+from app.models.user import UserAccount
 from app.services.user_service import EmailAlreadyRegisteredError
 
 
 @pytest.fixture
-def user() -> User:
-    return User(
-        id=1,
+def user() -> UserAccount:
+    return UserAccount(
+        user_id=1,
         email="test@example.com",
         nickname="테스터",
-        role="consumer",
+        signup_channel="consumer",
+        auth_provider="local",
         hashed_password="hashed-password",
     )
 
 
 @pytest.fixture
-def auth_client(monkeypatch: pytest.MonkeyPatch, user: User):
+def auth_client(monkeypatch: pytest.MonkeyPatch, user: UserAccount):
     async def override_get_db():
         yield object()
 
@@ -51,7 +52,7 @@ def auth_client(monkeypatch: pytest.MonkeyPatch, user: User):
 def test_register_success(
     auth_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
-    user: User,
+    user: UserAccount,
 ):
     register_mock = AsyncMock(return_value=user)
     monkeypatch.setattr(auth_routes, "register_user", register_mock)

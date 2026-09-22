@@ -1,6 +1,9 @@
+from io import StringIO
 from pathlib import Path
 
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 
 
@@ -15,6 +18,64 @@ def test_alembic_configuration_is_initialized():
     script = ScriptDirectory.from_config(config)
 
     assert Path(script.dir).resolve() == Path("alembic").resolve()
+
+
+def test_alembic_revision_chain_has_single_v045_head():
+    config = Config("alembic.ini")
+    script = ScriptDirectory.from_config(config)
+
+    assert script.get_heads() == ["9f3d8b2a7c41"]
+    assert script.get_revision("9f3d8b2a7c41").down_revision == (
+        "d1c61ade4657"
+    )
+
+
+def test_v045_migration_compiles_upgrade_and_downgrade_sql(monkeypatch):
+    config = Config("alembic.ini")
+    script = ScriptDirectory.from_config(config)
+    revision = script.get_revision("9f3d8b2a7c41").module
+
+    upgrade_buffer = StringIO()
+    upgrade_context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": upgrade_buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(upgrade_context))
+    revision.upgrade()
+    upgrade_sql = upgrade_buffer.getvalue()
+
+    expected_new_tables = {
+        "domain",
+        "subtopic",
+        "source_site",
+        "creator_channel",
+        "topic_cluster",
+        "agent_run",
+        "agent_run_step",
+        "agent_run_source",
+        "draft",
+        "content",
+        "judgment_log",
+        "content_source",
+    }
+    assert "CREATE EXTENSION IF NOT EXISTS vector" in upgrade_sql
+    assert "ALTER TABLE users RENAME TO user_account" in upgrade_sql
+    assert "VECTOR" in upgrade_sql
+    for table_name in expected_new_tables:
+        assert f"CREATE TABLE {table_name}" in upgrade_sql
+
+    downgrade_buffer = StringIO()
+    downgrade_context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": downgrade_buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(downgrade_context))
+    revision.downgrade()
+    downgrade_sql = downgrade_buffer.getvalue()
+
+    assert "ALTER TABLE user_account RENAME TO users" in downgrade_sql
+    for table_name in expected_new_tables:
+        assert f"DROP TABLE {table_name}" in downgrade_sql
 
 
 def test_alembic_ini_does_not_contain_database_credentials():

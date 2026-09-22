@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import SESSION_COOKIE_NAME
 from app.db.session import get_db
 from app.mocks.session_store import get_session
-from app.models.user import User
+from app.models.user import UserAccount
 from app.repositories.user_repository import get_user_by_id
 
 
@@ -16,7 +16,7 @@ async def get_current_user(
         default=None,
         alias=SESSION_COOKIE_NAME,
     ),
-) -> User:
+) -> UserAccount:
     if session_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

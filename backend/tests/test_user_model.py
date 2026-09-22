@@ -1,26 +1,32 @@
 from app.db.base import Base
-from app.models.user import User
+from app.models.user import UserAccount
 
 
 def test_user_model_is_registered_on_metadata():
-    assert User.__table__.metadata is Base.metadata
-    assert "users" in Base.metadata.tables
+    assert UserAccount.__table__.metadata is Base.metadata
+    assert "user_account" in Base.metadata.tables
 
 
 def test_user_model_columns():
-    columns = User.__table__.columns
+    columns = UserAccount.__table__.columns
 
     assert set(columns.keys()) == {
-        "id",
+        "user_id",
+        "provider_user_id",
         "email",
         "nickname",
-        "role",
+        "signup_channel",
+        "account_status",
+        "birth_date",
+        "auth_provider",
         "hashed_password",
-        "created_at",
-        "updated_at",
+        "profile_image_url",
+        "last_login_at",
+        "joined_at",
+        "withdrawn_at",
+        "withdrawal_reason",
     }
-    assert columns["id"].primary_key is True
-    assert columns["email"].unique is True
-    assert columns["email"].nullable is False
-    assert columns["hashed_password"].nullable is False
+    assert columns["user_id"].primary_key is True
+    assert columns["email"].nullable is True
+    assert columns["hashed_password"].nullable is True
     assert "password" not in columns

@@ -7,7 +7,7 @@ from app.api.dependencies import get_current_user
 from app.core.security import SESSION_COOKIE_NAME, SESSION_EXPIRE_MINUTES
 from app.db.session import get_db
 from app.mocks.session_store import create_session, delete_session
-from app.models.user import User
+from app.models.user import UserAccount
 from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, UserResponse
 from app.services.user_service import (
     EmailAlreadyRegisteredError,
@@ -55,7 +55,7 @@ async def login(
             detail="이메일 또는 비밀번호가 올바르지 않습니다.",
         )
 
-    session_id = create_session(user.id)
+    session_id = create_session(user.user_id)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=session_id,
@@ -74,7 +74,7 @@ async def login(
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[UserAccount, Depends(get_current_user)],
 ) -> UserResponse:
     return UserResponse.model_validate(current_user)
 

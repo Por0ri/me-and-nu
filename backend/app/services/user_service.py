@@ -2,7 +2,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password, verify_password
-from app.models.user import User
+from app.models.user import UserAccount
 from app.repositories.user_repository import (
     create_user,
     get_user_by_email,
@@ -21,7 +21,7 @@ def normalize_email(email: str) -> str:
 async def register_user(
     db: AsyncSession,
     register_request: RegisterRequest,
-) -> User:
+) -> UserAccount:
     email = normalize_email(str(register_request.email))
 
     if await get_user_by_email(db, email) is not None:
@@ -32,7 +32,7 @@ async def register_user(
             db,
             email=email,
             nickname=register_request.nickname.strip(),
-            role=register_request.role,
+            signup_channel=register_request.role,
             hashed_password=hash_password(register_request.password),
         )
         await db.commit()
@@ -52,13 +52,17 @@ async def authenticate_user(
     *,
     email: str,
     password: str,
-) -> User | None:
+) -> UserAccount | None:
     user = await get_user_by_email(
         db,
         normalize_email(email),
     )
 
-    if user is None:
+    if (
+        user is None
+        or user.auth_provider != "local"
+        or user.hashed_password is None
+    ):
         return None
 
     if not verify_password(password, user.hashed_password):
