@@ -9,8 +9,8 @@ agent/
 ├── .env.example            키 이름 (LLM_KEY, TMDB_KEY)
 ├── py2ipynb.py             .py → 콜랩 노트북(.ipynb). 노트북은 여기서 뽑는다. 손으로 안 고친다
 ├── movie/
-│   ├── movie_info_agent.py     영화 · 정보 전달 (V2.4)
-│   └── movie_review_agent.py   영화 · 리뷰 (V1.9)
+│   ├── movie_info_agent.py     영화 · 정보 전달 (V2.5)
+│   └── movie_review_agent.py   영화 · 리뷰 (V2.0)
 ├── music/
 │   └── music_review_agent.py   음악 · 리뷰 (v3.5)
 ├── anime/
@@ -45,9 +45,9 @@ agent/
 - 최고 판 저장: 마지막 판이 탈락이면 기록 중 점수(영화는 합계)가 제일 높은 판의 글을 저장한다. 다시 쓰다 나빠진 글이 남지 않게 한다.
 - 설정값: 음악 · 애니 `앞판기억` · `최고판저장`, 영화 `REMEMBER_PREVIOUS` · `KEEP_BEST_ROUND`. False면 전과 같다.
 
-## 글의 꼴 — 음악 v3.5 (2026-09-22)
+## 글의 꼴 — 음악 v3.5 · 영화 정보 V2.5 · 영화 리뷰 V2.0 (2026-09-22)
 
-글이 단조롭다는 지적에 애니 v0.3에서 고친 방식을 음악에 옮겼다. 영화 둘은 아직이다.
+글이 단조롭다는 지적에 애니 v0.3에서 고친 방식을 음악에 옮기고, 영화 둘에도 같은 방식을 넣었다.
 
 - 온도 · 시작점 · 배치 · 접근을 낱말이 아니라 뜻글로 준다(`온도글` · `시작점글` · `배치글` · `접근글` · `주문_text`). 기획자 · 작가 · 편집국장이 같은 [주문]을 받는다.
 - 작가가 `작가_공통`(쓰는 사람 · 문체 · 글이 이어지게 · 문단 여는 법 · 네 판단 · 숫자)을 받는다. 비유는 허용한다.
@@ -56,13 +56,21 @@ agent/
 - 표기표: 아티스트 대표 표기는 앨범 정보의 이름(MusicBrainz 이름)이고 다른 표기는 첫 등장에 괄호로 한 번(`WOODZ(우즈)`). 곡은 MusicBrainz 릴리즈 여럿의 제목을 모아 짝을 만든다(`곡짝`: `심연(ABYSS)`). 편집국장은 짝 안의 표기를 사실 문제로 안 잡는다.
 - `run`은 편마다 접근 · 온도 · 시작점을 돌려 쓰고(`조건돌려쓰기`), 기획자에게 앞 두 편의 배치를 피하라고 알려 준다. 같은 앨범을 다시 쓸 때는 조건을 안 바꾼다.
 
+영화 둘(V2.5 · V2.0)
+
+- 온도 · 시작점 · 배치(리뷰는 접근도)를 뜻글로. 작가 · 편집국장 · 판정관이 같은 [주문]을 받는다(`order_text`). 작가 규칙에 같은 꼴 문장 금지 · 문단 여는 법 · 비유 허용.
+- 정보 전달: 재료 정리(prep)가 독자의 질문 · 답 · 문단 계획(`question` · `answer` · `plan`)을 낸다. 작가는 첫 문단에 질문, 마지막 문단에 답. 정보 전달은 "요소 넷을 채우는 글"에서 "독자의 정보 질문 하나에 답하면서 넷이 나오는 글"이 됐다. 기획자 마디는 안 만들었다.
+- 리뷰: [하나를 잡는다] — 장면 · 선택 · 인물 하나를 끝까지 끌고 가고 다섯 요소는 그 하나를 지나가며 나온다. 판단을 이름표로 다는 문장("가장 큰 힘이다", "힘은 분명하다")을 안 쓴다.
+- 편집국장(정보)이 [주문대로 갔는가] · [독자의 질문] · [되풀이 — 글의 꼴]을 본다. 판정관(둘 다) "글 완성도"에서 같은 꼴 문단 · 문장 길이 단조 · 주문 어김을 깎는다.
+- 형태검사(코드) `shape_form_check`: 문장 길이 단조 · 영화 제목/"이 영화"로 문단 열기 3번. 정보는 출연진 · 상영시간 · 등급 몰림과 `(목소리: 미상)` 괄호. 리뷰는 문단 길이 단조와 이름표 판단.
+
 ## 구조 그림
 
 세 에이전트의 마디와 갈림길을 코드(`GRAPH` 표 · `produce` 함수)에서 그대로 옮긴 것이다.
 읽는 법: 둥근 상자 = 모델을 부르는 마디, 각진 상자 = 코드만 도는 마디, 원통 = 바깥에서 가져오는 재료.
 초록 = 올림, 빨강 = 탈락.
 
-### 영화 · 정보 전달 (`movie/movie_info_agent.py`, V2.4)
+### 영화 · 정보 전달 (`movie/movie_info_agent.py`, V2.5)
 
 ```mermaid
 flowchart TD
@@ -105,7 +113,7 @@ flowchart TD
 상한: 한 편에 마디 40개(`MAX_STEPS`), 편집국장 반려 3회, 형태 검사 · 판정관 다시 쓰기 각 3회, 모델 요청은 마디마다 3회.
 모델을 부르는 마디는 여섯이다. 재료 판정 · 재료 정리 · 글쓰기 · 편집국장 · 판정관 · 고치기.
 
-### 영화 · 리뷰 (`movie/movie_review_agent.py`, V1.9)
+### 영화 · 리뷰 (`movie/movie_review_agent.py`, V2.0)
 
 ```mermaid
 flowchart TD
@@ -358,8 +366,8 @@ python anime/anime_agent.py zip
 ```bash
 python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v3.5.ipynb
 python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.6.ipynb              # 용어집이 노트북 안에 같이 들어간다
-python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.4.ipynb     # 영화 둘은 V2.4 · V1.9부터 뽑는다
-python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V1.9.ipynb
+python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.5.ipynb     # 영화 둘은 V2.4 · V1.9부터 뽑는다
+python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V2.0.ipynb
 ```
 
 첫 셀이 pip 설치(pydantic-ai · openai 판 맞추기)와 키 읽기(`LLM_KEY`, 영화는 `TMDB_KEY`도)다. `agent/nb` 폴더로 들어가서 결과가 `agent/out/<토픽>/`에 쌓인다.
