@@ -92,6 +92,12 @@
 # - 참고 콘텐츠(Animation Magazine 뉴스 · ANN 리뷰)를 읽고 꼴을 고쳤다.
 #   가져온 것: 한 줄 판단을 앞에 놓기(ANN 리뷰 리드), 좋은 점과 아쉬운 점을 한 문장 안에서 붙이기, 장면 하나를 깊게 파기, 짧은 문단 섞기.
 #   안 가져온 것: 보도자료 옮기기, 제작진 이름 나열, 공식 줄거리 통째 붙이기, 판단 없는 전달문. 형태검사가 앞 둘을 잡는다.
+#
+# 2026-09-24 — 모델을 gpt-6-luna 로 바꿨다. GPT-6 가 나왔고 같은 자리(가장 싼 층) 값이 절반 아래다.
+#   입력 1M당 $0.20 → $0.10, 출력 $1.20 → $0.50, 캐시 입력 $0.02 → $0.01. 지식 기준일 2026-02-16 → 2026-05-18.
+#   맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. `"openai:"` 접두어라 Responses API 로 간다 (chat completions 는
+#   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
+#   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
 
 # ## 1. 설정
 #
@@ -107,7 +113,7 @@ load_dotenv(HERE.parent / ".env")
 load_dotenv(HERE / ".env")
 
 # ───── 여기서 고친다 ─────────────────────────────────────────────
-MODEL       = "openai:gpt-5.6-luna"           # 영화 · 음악 에이전트와 같은 모델
+MODEL       = "openai:gpt-6-luna"             # 영화 · 음악 에이전트와 같은 모델. 2026-09-24에 gpt-5.6-luna 에서 바꿨다
 KEY_ENV     = "OPENAI_API_KEY"
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
