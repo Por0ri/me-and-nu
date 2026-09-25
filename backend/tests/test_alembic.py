@@ -20,11 +20,14 @@ def test_alembic_configuration_is_initialized():
     assert Path(script.dir).resolve() == Path("alembic").resolve()
 
 
-def test_alembic_revision_chain_has_single_v045_head():
+def test_alembic_revision_chain_has_single_topic_rename_head():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["9f3d8b2a7c41"]
+    assert script.get_heads() == ["4e2b1a7c9d30"]
+    assert script.get_revision("4e2b1a7c9d30").down_revision == (
+        "9f3d8b2a7c41"
+    )
     assert script.get_revision("9f3d8b2a7c41").down_revision == (
         "d1c61ade4657"
     )
@@ -83,3 +86,38 @@ def test_alembic_ini_does_not_contain_database_credentials():
 
     assert "driver://user:pass" not in config_text
     assert "DATABASE_URL" in config_text
+
+
+def test_topic_rename_migration_compiles_upgrade_and_downgrade_sql(
+    monkeypatch,
+):
+    config = Config("alembic.ini")
+    script = ScriptDirectory.from_config(config)
+    revision = script.get_revision("4e2b1a7c9d30").module
+
+    upgrade_buffer = StringIO()
+    upgrade_context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": upgrade_buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(upgrade_context))
+    revision.upgrade()
+    upgrade_sql = upgrade_buffer.getvalue()
+
+    assert "ALTER TABLE domain RENAME TO topic" in upgrade_sql
+    assert "RENAME domain_id TO topic_id" in upgrade_sql
+    assert "RENAME domain_code TO topic_code" in upgrade_sql
+    assert "RENAME domain_name TO topic_name" in upgrade_sql
+    assert "idx_agent_run_topic_status_created_at" in upgrade_sql
+
+    downgrade_buffer = StringIO()
+    downgrade_context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": downgrade_buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(downgrade_context))
+    revision.downgrade()
+    downgrade_sql = downgrade_buffer.getvalue()
+
+    assert "ALTER TABLE topic RENAME TO domain" in downgrade_sql
+    assert "RENAME topic_id TO domain_id" in downgrade_sql

@@ -6,9 +6,9 @@ from app.models.agent import (
 )
 from app.models.catalog import (
     CreatorChannel,
-    Domain,
     SourceSite,
     Subtopic,
+    Topic,
     TopicCluster,
 )
 from app.models.content import Content, ContentSource, Draft
@@ -21,11 +21,11 @@ __all__ = [
     "Content",
     "ContentSource",
     "CreatorChannel",
-    "Domain",
     "Draft",
     "JudgmentLog",
     "SourceSite",
     "Subtopic",
+    "Topic",
     "TopicCluster",
     "UserAccount",
 ]

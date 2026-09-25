@@ -1,10 +1,10 @@
 import pytest
 
-from app.models import Domain, SourceSite, Subtopic
+from app.models import SourceSite, Subtopic, Topic
 from app.seeds.movie_catalog import (
-    MOVIE_DOMAIN,
     MOVIE_SOURCE_SITES,
     MOVIE_SUBTOPICS,
+    MOVIE_TOPIC,
     seed_movie_catalog,
 )
 
@@ -26,8 +26,8 @@ class FakeAsyncSession:
     async def flush(self):
         self.flush_count += 1
         for index, instance in enumerate(self.added, start=1):
-            if isinstance(instance, Domain) and instance.domain_id is None:
-                instance.domain_id = 100 + index
+            if isinstance(instance, Topic) and instance.topic_id is None:
+                instance.topic_id = 100 + index
             elif (
                 isinstance(instance, Subtopic)
                 and instance.subtopic_id is None
@@ -46,13 +46,13 @@ async def test_seed_movie_catalog_creates_minimum_reference_data():
 
     result = await seed_movie_catalog(session)
 
-    assert result.created_domains == 1
+    assert result.created_topics == 1
     assert result.created_subtopics == 2
     assert result.created_source_sites == 2
     assert result.created_total == 5
     assert session.flush_count == 5
 
-    domain = next(item for item in session.added if isinstance(item, Domain))
+    topic = next(item for item in session.added if isinstance(item, Topic))
     subtopics = [
         item for item in session.added if isinstance(item, Subtopic)
     ]
@@ -60,29 +60,29 @@ async def test_seed_movie_catalog_creates_minimum_reference_data():
         item for item in session.added if isinstance(item, SourceSite)
     ]
 
-    assert domain.domain_code == MOVIE_DOMAIN["domain_code"]
+    assert topic.topic_code == MOVIE_TOPIC["topic_code"]
     assert {item.subtopic_name for item in subtopics} == {
         values["subtopic_name"] for values in MOVIE_SUBTOPICS
     }
     assert {item.media_name for item in source_sites} == {
         values["media_name"] for values in MOVIE_SOURCE_SITES
     }
-    assert all(item.domain_id == domain.domain_id for item in subtopics)
-    assert all(item.domain_id == domain.domain_id for item in source_sites)
+    assert all(item.topic_id == topic.topic_id for item in subtopics)
+    assert all(item.topic_id == topic.topic_id for item in source_sites)
 
 
 @pytest.mark.asyncio
 async def test_seed_movie_catalog_reuses_existing_reference_data():
-    domain = Domain(domain_id=1, **MOVIE_DOMAIN)
+    topic = Topic(topic_id=1, **MOVIE_TOPIC)
     subtopics = [
-        Subtopic(domain_id=1, parent_subtopic_id=None, **values)
+        Subtopic(topic_id=1, parent_subtopic_id=None, **values)
         for values in MOVIE_SUBTOPICS
     ]
     source_sites = [
-        SourceSite(domain_id=1, **values)
+        SourceSite(topic_id=1, **values)
         for values in MOVIE_SOURCE_SITES
     ]
-    session = FakeAsyncSession([domain, *subtopics, *source_sites])
+    session = FakeAsyncSession([topic, *subtopics, *source_sites])
 
     result = await seed_movie_catalog(session)
 
@@ -90,4 +90,3 @@ async def test_seed_movie_catalog_reuses_existing_reference_data():
     assert session.added == []
     assert session.flush_count == 0
     assert len(session.statements) == 5
-

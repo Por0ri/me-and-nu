@@ -8,3 +8,6 @@ pwdlib[argon2]
 sqlalchemy[asyncio]
 psycopg[binary]
 pydantic-settings
+pydantic-ai-slim[openai]
+python-dotenv
+requests

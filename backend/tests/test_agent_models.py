@@ -9,11 +9,11 @@ from app.models import (
     Content,
     ContentSource,
     CreatorChannel,
-    Domain,
     Draft,
     JudgmentLog,
     SourceSite,
     Subtopic,
+    Topic,
     TopicCluster,
     UserAccount,
 )
@@ -21,7 +21,7 @@ from app.models import (
 
 EXPECTED_COLUMNS = {
     "user_account": 14,
-    "domain": 7,
+    "topic": 7,
     "subtopic": 7,
     "source_site": 12,
     "creator_channel": 12,
@@ -74,7 +74,7 @@ def test_models_compile_for_postgresql():
 
 def test_expected_model_classes_use_their_physical_table_names():
     assert UserAccount.__tablename__ == "user_account"
-    assert Domain.__tablename__ == "domain"
+    assert Topic.__tablename__ == "topic"
     assert Subtopic.__tablename__ == "subtopic"
     assert SourceSite.__tablename__ == "source_site"
     assert CreatorChannel.__tablename__ == "creator_channel"
