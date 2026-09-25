@@ -121,6 +121,12 @@
 # - run에서 편마다 접근 · 온도 · 시작점을 돌려 쓴다(조건돌려쓰기). 전에는 편마다 무작위라 다섯 편 중 셋이 같은 온도로 나올 수 있었다.
 #   배치는 기획자가 고르되 앞 두 편이 쓴 배치를 피하라고 알려 준다. 같은 앨범을 다시 쓸 때는 조건을 안 바꾼다.
 
+#
+# 2026-09-24 — 모델을 gpt-6-luna 로 바꿨다. GPT-6 가 나왔고 같은 자리(가장 싼 층) 값이 절반 아래다.
+#   입력 1M당 $0.20 → $0.10, 출력 $1.20 → $0.50, 캐시 입력 $0.02 → $0.01. 지식 기준일 2026-02-16 → 2026-05-18.
+#   맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. `"openai:"` 접두어라 Responses API 로 간다 (chat completions 는
+#   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
+#   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
 
 # ## 1. 설정
 #
@@ -137,7 +143,7 @@ load_dotenv(HERE.parent / ".env")
 load_dotenv(HERE / ".env")
 
 # ───── 여기서 고친다 ─────────────────────────────────────────────
-MODEL       = "openai:gpt-5.6-luna"           # 영화 에이전트와 같은 모델
+MODEL       = "openai:gpt-6-luna"             # 영화 에이전트와 같은 모델. 2026-09-24에 gpt-5.6-luna 에서 바꿨다
 KEY_ENV     = "OPENAI_API_KEY"
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 

@@ -1,4 +1,4 @@
-# # anime_agent v0.7 — 애니 콘텐츠 크리에이팅 에이전트
+# # anime_agent v0.6 — 애니 콘텐츠 크리에이팅 에이전트
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY`에서 읽는다. 결과는 `agent/out/anime/올림|탈락/`에 쌓인다.
 #
@@ -83,21 +83,6 @@
 # - (9/22 밤) `_새모델()`을 OpenAIChatModel → OpenAIResponsesModel로. `"openai:..."` 문자열은 Responses API로 가는데 스레드용 모델만
 #   chat completions로 만들어서, run(동시=N)에서 gpt-5.6-luna가 "Function tools with reasoning_effort ... /v1/chat/completions" 400을 냈다.
 #   동시=1이면 안 나던 이유다. 실제 호출 A(문자열) · C(Responses) 됨, D(_새모델 chat) 실패로 확인했다.
-#
-# v0.7에서 바뀐 것 — 유형 여섯 번째 "신작소식", 참고 콘텐츠에서 배운 꼴
-# - 신작소식(정보형). 아직 안 나왔거나 막 시작한 작품을 다룬다. 지금까지 다섯 유형은 전부 이미 나온 작품이었다.
-#   재료는 AniList(방영일 · 분기 · 화수 · 제작사 · 제작진 · 원작 · 시리즈 자리) + 전작의 라프텔 회차 · 위키다. 발표된 사실만 쓴다.
-#   전작 표기가 확정된 작품만 뽑는다. 방영 전에는 라프텔에 한국 제목이 없어 신작 자체의 표기가 없을 수 있어서다.
-#   신작 표기가 없으면 글에서 "전작 제목의 다음 시즌"으로 부른다. 로마자 제목을 쓰지 않는다.
-# - 참고 콘텐츠(Animation Magazine 뉴스 · ANN 리뷰)를 읽고 꼴을 고쳤다.
-#   가져온 것: 한 줄 판단을 앞에 놓기(ANN 리뷰 리드), 좋은 점과 아쉬운 점을 한 문장 안에서 붙이기, 장면 하나를 깊게 파기, 짧은 문단 섞기.
-#   안 가져온 것: 보도자료 옮기기, 제작진 이름 나열, 공식 줄거리 통째 붙이기, 판단 없는 전달문. 형태검사가 앞 둘을 잡는다.
-#
-# 2026-09-24 — 모델을 gpt-6-luna 로 바꿨다. GPT-6 가 나왔고 같은 자리(가장 싼 층) 값이 절반 아래다.
-#   입력 1M당 $0.20 → $0.10, 출력 $1.20 → $0.50, 캐시 입력 $0.02 → $0.01. 지식 기준일 2026-02-16 → 2026-05-18.
-#   맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. `"openai:"` 접두어라 Responses API 로 간다 (chat completions 는
-#   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
-#   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
 
 # ## 1. 설정
 #
@@ -113,7 +98,7 @@ load_dotenv(HERE.parent / ".env")
 load_dotenv(HERE / ".env")
 
 # ───── 여기서 고친다 ─────────────────────────────────────────────
-MODEL       = "openai:gpt-6-luna"             # 영화 · 음악 에이전트와 같은 모델. 2026-09-24에 gpt-5.6-luna 에서 바꿨다
+MODEL       = "openai:gpt-5.6-luna"           # 영화 · 음악 에이전트와 같은 모델
 KEY_ENV     = "OPENAI_API_KEY"
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
@@ -121,20 +106,17 @@ EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     "사람":       "정보",
     "기념일":     "정보",
     "감상순서":   "정보",
-    "신작소식":   "정보",
     "제작이야기": "심층",
     "작품리뷰":   "심층",
 }
 목표편수      = 6      # 올린 글이 이만큼 될 때까지 돈다 (PM: 최소 여섯)
-유형비율      = {"감상순서": 1, "사람": 1, "기념일": 0, "신작소식": 1, "제작이야기": 1, "작품리뷰": 1}   # run 에 유형을 안 주면 이 비율로 섞는다. 0이면 안 뽑는다. 기념일은 v0.4에서 뺐다
+유형비율      = {"감상순서": 1, "사람": 1, "기념일": 0, "제작이야기": 1, "작품리뷰": 1}   # run 에 유형을 안 주면 이 비율로 섞는다. 0이면 안 뽑는다. 기념일은 v0.4에서 뺐다
 시도상한      = 18     # 주제를 이만큼 봤는데 못 채우면 멈춘다. 탈락이 섞이니 목표의 세 배
 작품당상한    = 2      # 한 번 돌 때 같은 시리즈에서 올리는 글 상한. 원피스가 피드를 덮지 않게
 기념일창      = 7      # 오늘 앞뒤 며칠까지 기념일로 볼지
 주년들        = (1, 3, 5, 10, 15, 20, 25, 30)
 최소참여작    = 2      # 사람 유형. 한국 표기가 있는 참여작이 이만큼 안 되면 그 사람은 버린다
 최소순서작품  = 3      # 감상순서 유형. 시리즈 안 애니 작품이 이만큼 안 되면 버린다 (원피스는 편이 대신한다)
-신작창앞      = 120    # 신작소식 유형 (v0.7). 방영이 이 날수 안에 시작했으면 아직 소식이다
-신작창뒤      = 300    # 방영 시작이 이 날수 안에 있으면 소식이다. 더 먼 앞날은 정해진 것이 적어 안 뽑는다
 PAGE_LIMIT    = 10     # 심층형. 주제 하나에 재료로 읽어볼 페이지 수
 후보링크배수  = 5      # robots로 막히는 곳이 많아 검색 후보를 넉넉히 모은다
 PER_MEDIA     = 2      # 매체당 남길 글 개수
@@ -640,21 +622,6 @@ def jikan_episodes(mal_id):
         page += 1
     _cache_put(key, out)
     return out
-
-def jikan_themes(mal_id):
-    """v0.7: 주제가. {"op": [...], "ed": [...]}. Jikan이 죽으면 None. 신작소식에서만 쓴다."""
-    key = f"jikan_themes_{mal_id}"
-    c = _cache_get(key)
-    if c is not None:
-        return c
-    d = jikan(f"/anime/{mal_id}")
-    if not d or not d.get("data"):
-        return None
-    t = d["data"].get("theme") or {}
-    out = {"op": t.get("openings") or [], "ed": t.get("endings") or []}
-    _cache_put(key, out)
-    return out
-
 
 def 구간묶기(nums):
     """[1,2,3,7,8] → ['1~3화', '7~8화']"""
@@ -1291,56 +1258,6 @@ def 후보_기념일(창=기념일창):
                         "한줄": f"{name} {표기} 생일", "src": "AniList 생일"})
     return out
 
-def _앞작품(w, s, 표):
-    """v0.7: 관계도에서 이 작품의 전작. 표기가 확정된 것만 돌려준다. 없으면 None."""
-    후보 = []
-    for r in (w.get("relations") or []):
-        if r.get("type") in ("PREQUEL", "PARENT") and r.get("mtype") == "ANIME":
-            후보.append(r)
-    # 관계도에 없으면 같은 시리즈에서 먼저 나온 본편 중 마지막 것
-    if not 후보:
-        내시작 = (w.get("start") or {}).get("y") or 9999
-        앞들 = [x for x in _애니만(s["작품들"])
-                if x["id"] != w["id"] and x.get("본편사슬") and ((x.get("start") or {}).get("y") or 9999) < 내시작]
-        앞들.sort(key=lambda x: -((x.get("start") or {}).get("y") or 0))
-        후보 = 앞들[:2]
-    for r in 후보:
-        전 = next((x for x in s["작품들"] if x["id"] == r["id"]), r)
-        t = 표.작품(전)
-        if t["표기"] and t["출처"] != "위키":
-            return 전
-    return None
-
-
-def 후보_신작소식():
-    """v0.7: 아직 안 나왔거나 막 시작한 작품. 전작 표기가 확정된 것만 뽑는다."""
-    오늘 = datetime.date.today()
-    out = []
-    for name in GLOSSARIES:
-        s = 시리즈(name)
-        표 = 표기표(name)
-        for w in _애니만(s["작품들"]):
-            if w.get("status") not in ("NOT_YET_RELEASED", "RELEASING"):
-                continue
-            d = w.get("start") or {}
-            if not d.get("y"):
-                continue
-            try:
-                날 = datetime.date(d["y"], d.get("m") or 1, d.get("d") or 1)
-            except ValueError:
-                continue
-            if not (오늘 - datetime.timedelta(days=신작창앞) <= 날 <= 오늘 + datetime.timedelta(days=신작창뒤)):
-                continue
-            앞 = _앞작품(w, s, 표)
-            if not 앞:
-                continue
-            이름 = 표.작품(w)
-            부름 = 이름["표기"] if (이름["표기"] and 이름["출처"] != "위키") else f"{표.작품(앞)['표기']} 다음 작품"
-            out.append({"유형": "신작소식", "시리즈": name, "작품": w, "전작": 앞,
-                        "한줄": f"{부름} 소식", "src": "관계도"})
-    return out
-
-
 def 후보_심층(유형):
     out = []
     for name in GLOSSARIES:
@@ -1361,8 +1278,6 @@ def 주제_후보목록(유형):
         c = 후보_감상순서()
     elif 유형 == "사람":
         c = 후보_사람()
-    elif 유형 == "신작소식":
-        c = 후보_신작소식()
     elif 유형 == "기념일":
         c = 후보_기념일()
     else:
@@ -1731,112 +1646,6 @@ def 재료_감상순서(st):
     st.사실링크 = [root.get("siteUrl")] if root else []
     return True
 
-def 재료_신작소식(st):
-    """v0.7: 발표된 사실만 모은다. AniList(날짜 · 제작사 · 제작진 · 원작 · 시리즈 자리) + 전작의 라프텔 회차 · 위키."""
-    s, 표 = 시리즈(st.주제["시리즈"]), st.용어표
-    w, 앞 = st.주제["작품"], st.주제["전작"]
-    full = al_media(w["id"], full=True) or w
-    앞표기 = 표.작품(앞)["표기"]
-    이름 = 표.작품(w)
-    새표기 = 이름["표기"] if (이름["표기"] and 이름["출처"] != "위키") else None
-    d = w.get("start") or {}
-    시작글 = f"{d['y']}년" + (f" {d['m']}월" if d.get("m") else "") + (f" {d['d']}일" if d.get("d") else "")
-    if not d.get("m"):
-        시작글 += " (달까지는 안 정해졌다)"
-    분기 = {1: "겨울", 2: "겨울", 3: "봄", 4: "봄", 5: "봄", 6: "여름", 7: "여름", 8: "여름", 9: "가을", 10: "가을", 11: "가을", 12: "겨울"}.get(d.get("m") or 0)
-    상태글 = "아직 방영 전이다" if w.get("status") == "NOT_YET_RELEASED" else "방영이 시작됐다"
-
-    사실 = ["[신작 — AniList. 발표된 것만 적혀 있다]"]
-    사실.append(f"- 제목: {새표기 or '한국 표기 없음 — 글에서는 \'' + 앞표기 + '의 다음 시즌\'처럼 부른다. 로마자 제목을 쓰지 않는다'}  ← AniList")
-    사실.append(f"- 방영 시작: {시작글}" + (f" · {d['y']}년 {분기} 분기" if 분기 else "") + f". {상태글}  ← AniList")
-    if w.get("format"):
-        사실.append(f"- 종류: {w['format']}  ← AniList")
-    사실.append(f"- 화수: {w['episodes']}화  ← AniList" if w.get("episodes") else "- 화수: 아직 발표 안 됐다  ← AniList")
-    if w.get("studios"):
-        사실.append(f"- 제작사: {', '.join(w['studios'])}  ← AniList")
-    if w.get("source"):
-        사실.append(f"- 원작: {w['source']}  ← AniList")
-
-    역할순 = ("Director", "Series Composition", "Script", "Character Design", "Music", "Original Creator")
-    제작진 = []
-    for 키 in 역할순:
-        for pp in (full.get("staff") or []):
-            if 키.lower() in (pp.get("role") or "").lower():
-                t = 표.사람(pp["full"], pp.get("native"))
-                if t["표기"] and t["출처"] != "위키":
-                    제작진.append((역할표기(pp.get("role")), t["표기"]))
-                break
-    if 제작진:
-        사실 += ["", "[제작진 — AniList. 이름을 한 문장에 늘어놓지 않는다. 필요한 사람만 그 사람 이야기를 할 때 부른다]"]
-        사실 += [f"- {r}: {n}" for r, n in dict.fromkeys(제작진)][:6]
-
-    # 전작 — 이 신작이 어디에서 이어지는지
-    앞d = 앞.get("start") or {}
-    라 = s["라프텔"] or []
-    앞라 = 라프텔_항목찾기(앞표기, 라)
-    사실 += ["", "[전작 — 이 작품이 이어받는 자리]"]
-    사실.append(f"- {앞표기}" + (f" ({앞d['y']}년)" if 앞d.get("y") else "") + (f" · {앞['episodes']}화" if 앞.get("episodes") else "") + "  ← AniList")
-    사실.append(f"- 한국에서 보기: {'라프텔에 있다 — ' + 앞라['이름'] if 앞라 else '라프텔 목록에서 못 찾았다. 어디서 볼 수 있는지 쓰지 않는다'}")
-    본편 = [x for x in _애니만(s["작품들"]) if x.get("본편사슬") and ((x.get("start") or {}).get("y") or 9999) <= (앞d.get("y") or 9999)]
-    if len(본편) >= 2:
-        사실.append(f"- 시리즈에서 몇 번째: 이 작품 앞에 본편이 {len(본편)}개 있다  ← AniList 관계도")
-    편 = 용어집_편목록(st.주제["시리즈"])
-    if 편:
-        사실 += ["", "[편 — 용어집. 전작이 어느 편까지 갔는지 말할 때만 쓴다]"] + [f"- {n}: {m}" for n, a, b, m in 편][:8]
-
-    # 주제가 — Jikan에 있으면. 없으면 그냥 넘어간다
-    노래 = jikan_themes(w.get("idMal")) if w.get("idMal") else None
-    if 노래 and (노래.get("op") or 노래.get("ed")):
-        사실 += ["", "[주제가 — Jikan(MyAnimeList). 곡 이름과 부른 사람만 적혀 있다. 곡이 어떤 소리인지는 쓰지 않는다]"]
-        사실 += [f"- 오프닝: {x}" for x in (노래.get("op") or [])[:2]]
-        사실 += [f"- 엔딩: {x}" for x in (노래.get("ed") or [])[:2]]
-
-    # 이야기 — 전작 회차 줄거리 뒷부분(어디서 이어지는지) + 위키 줄거리
-    이야기 = []
-    ex = ThreadPoolExecutor(max_workers=3)
-    f_회차 = ex.submit(_전작_회차글, 앞라, 앞표기) if 앞라 else None
-    f_절 = ex.submit(위키_절들, {"한국제목": 앞표기}, st.주제["시리즈"])
-    f_wk = ex.submit(위키_작품문서, {"한국제목": 앞표기}, st.주제["시리즈"])
-    if f_회차:
-        글, 링크 = f_회차.result()
-        if 글:
-            이야기.append(글)
-        if 링크:
-            st.맥락링크.append(링크)
-    절 = f_절.result()
-    wk = f_wk.result()
-    ex.shutdown(wait=True)
-    if 절["줄거리"]:
-        이야기.append("[전작 줄거리 — 위키백과 ko. 전작의 결말은 쓰지 않는다]\n" + 절["줄거리"][:2500])
-    if 절["등장인물"]:
-        이야기.append("[등장인물 — 위키백과 ko. 이름 표기는 표기표를 따른다]\n" + 절["등장인물"][:2000])
-    if 절["링크"]:
-        st.맥락링크.append(절["링크"])
-    st.이야기 = "\n\n".join(이야기)
-    if wk:
-        st.맥락 = wk["본문"][:3000]; st.맥락링크.append(wk["링크"])
-    st.사실표 = "\n".join(사실)
-    st.사실링크 = [w.get("siteUrl")] if w.get("siteUrl") else []
-    if len([l for l in 사실 if l.startswith("- ")]) < 6:
-        st.이유 = "발표된 것이 너무 적다. 날짜 말고는 정해진 것이 없다"
-        return False
-    return True
-
-
-def _전작_회차글(앞라, 앞표기):
-    """v0.7: 전작 회차 줄거리. 신작이 어디서 이어지는지 말하는 데 쓴다. 마지막 두 화는 결말이라 뺀다."""
-    eps = laftel_episodes(앞라["id"])
-    if not eps:
-        return "", None
-    # 앞 이야기 전체가 아니라 끝나기 직전 구간만 준다. 신작이 어디서 이어지는지는 거기서 나온다.
-    # 마지막 두 화는 결말이라 뺀다. 전작 전체를 주면 글이 줄거리 옮기기가 되고 결말도 샌다
-    꼬리 = eps[max(0, len(eps) - 8):-2] if len(eps) > 4 else eps
-    글 = 회차재료_text(꼬리, 앞표기, 상한=회차재료글자)
-    if not 글:
-        return "", None
-    return 글.replace("사건과 이름은 여기 있는 것만", "마지막 두 화는 결말이라 뺐다. 사건과 이름은 여기 있는 것만", 1), 앞라.get("링크")
-
-
 def 사실_세기(사실표, 이야기):
     """사실표의 줄 수 + 이야기의 줄거리 줄 수. 고유 사실이 얼마나 있는지 어림한다."""
     n = len([l for l in 사실표.splitlines() if re.match(r"^\s*(-|\d+\.)\s", l)])
@@ -2065,7 +1874,6 @@ print("관점 묶기 준비 끝")
 왜 그런지를 따라갈 때는 길다. 따라가는 동안 끊지 않는다.
   토막: 《강철의 연금술사》는 두 번 만들어졌다. 첫 판은 원작이 끝나기 전에 나왔다.
   이음: 《강철의 연금술사》가 두 번 만들어진 것은 첫 판이 원작이 끝나기 전에 나와서 중간부터 제 이야기를 지어내야 했기 때문이다.
-한 줄짜리 문단을 한 편에 한 번까지 쓸 수 있다. 앞 문단을 받아 세게 끊을 때만이다. 두 번부터는 버릇이다.
 모든 문장을 같은 길이로 쓰지 않는다. 같은 꼴의 문장을 두 번 연달아 쓰지 않는다.
   같은 꼴: 파도의 나라 편은 1~19화로, 7반이 결성된다. 중급 닌자 시험 편은 20~67화로, 시험이 진행된다. (표다. 글이 아니다)
 모든 문장에 "~인데", "~지만"을 붙이지 않는다. "~는데"로 잇는 문장은 한 문단에 한 번이다.
@@ -2244,26 +2052,6 @@ print("관점 묶기 준비 끝")
 축하하지 않는다. 기념일은 글을 쓰는 이유이지 글의 내용이 아니다.
 판매 부수 · 시청률 · 순위는 재료에 있어도 한 번을 넘기지 않는다.
 생일 글에서 캐릭터의 결말을 쓰지 않는다.""",
-
-"신작소식": """[유형 — 신작소식]
-신작소식은 독자의 질문 "이게 뭔데, 지금 무엇이 정해졌나", 또는 "전작을 다시 봐야 하나"에 답하는 글이다. 어느 쪽인지는 [글의 주제 한 줄]과 [개요]에 적혀 있다.
-아직 안 나온 작품이거나 막 시작한 작품이다. 본 것처럼 쓰지 않는다. 화면이 어떻더라, 연출이 어떻더라를 쓰지 않는다.
-
-아래 넷이 들어간다. 칸이 아니다. 답으로 가는 길에 나온다.
-- 언제 나오는지. 첫 문단 안에 방영 시작 시점이 드러난다. 달까지만 정해졌으면 달까지만 쓴다. 날을 지어내지 않는다
-- 이 작품이 시리즈의 어디에 붙는지. 전작의 무엇을 이어받는지. 전작 회차 줄거리나 편 뜻에서 장면 하나를 꺼내 그 자리를 보인다
-- 발표된 것 중 독자가 알아야 할 것. 제작사가 바뀌었는지, 화수가 정해졌는지, 원작 어디까지인지. 재료에 있는 것만이다
-- 답. 전작을 다시 봐야 하는지, 어디부터 보면 되는지, 아니면 그냥 기다리면 되는지
-
-[안 쓰는 것]
-보도자료를 옮기지 않는다. "공개됐다", "밝혀졌다", "예정이다"로 사실을 하나씩 늘어놓는 문단을 만들지 않는다.
-제작진 이름을 한 문장에 늘어놓지 않는다. 감독이 누구인지는 그 사람이 전작에서 무엇을 했는지와 같이 나올 때만 쓴다.
-공식 줄거리를 옮겨 적지 않는다. 전작 줄거리도 통째로 옮기지 않는다.
-주제가는 곡 이름과 부른 사람까지다. 곡이 어떤 소리인지 쓰지 않는다. 아직 안 들었다.
-트레일러 · 키 비주얼에 무엇이 그려져 있는지 쓰지 않는다. 재료에 없다.
-신작의 한국 표기가 재료에 없으면 로마자 제목을 쓰지 않는다. "전작 제목의 다음 시즌"처럼 부른다.
-전작의 결말을 밝히지 않는다. 마지막 화에서 무슨 일이 있었는지는 쓰지 않는다. 신작이 어디서 이어지는지는 결말을 말하지 않고도 쓸 수 있다.
-기대를 부추기지 않는다. "기대된다", "놓치지 마라", "역대급"을 쓰지 않는다. 무엇이 정해졌는지를 적으면 독자가 정한다.""",
 
 "제작이야기": """[유형 — 제작이야기]
 제작이야기는 독자의 질문 "이 장면은 왜 이렇게 만들어졌나"에 답한다. 심층형이다.
@@ -2792,10 +2580,6 @@ def _문단안겹침(p, n=12):
             return a[:30]
     return ""
 
-제작진나열 = re.compile(r"(감독|각본|시리즈 구성|캐릭터 디자인|음악|연출)[은는이가]?\s*[가-힣]{2,10}[,·]\s*[가-힣]{2,10}[,·]")
-발표말투 = re.compile(r"(공개(됐|되었|된다)|발표(됐|되었|된다)|밝(혔|혀졌)|예정이다|확정(됐|되었)|전해졌다)")
-
-
 def 형태검사(본문, st, 제목=""):
     걸림, 경고, t = [], [], 본문
     모양, 유형 = st.모양, st.유형
@@ -2807,15 +2591,6 @@ def 형태검사(본문, st, 제목=""):
         걸림.append("존댓말")
     if not re.search(r"[.!?…\"'》]\s*$", t.strip()):
         걸림.append("문장 끊김")
-    if 유형 == "신작소식":                                   # v0.7
-        if 제작진나열.search(t):
-            걸림.append("제작진 이름 나열: " + 제작진나열.search(t).group(0)[:30])
-        발 = 발표말투.findall(t)
-        if len(발) >= 4:
-            걸림.append(f"보도자료 말투 {len(발)}번 (공개됐다 · 발표됐다 · 예정이다)")
-        d = (st.주제.get("작품") or {}).get("start") or {}
-        if d.get("y") and str(d["y"]) not in t:
-            걸림.append(f"방영 시작 연도가 글에 없다 ({d['y']})")
     # 표기
     if 일본어.search(t):
         걸림.append("일본어 원문: " + 일본어.search(t).group(0))
@@ -3223,12 +2998,12 @@ def n_재료모으기(st: RunState) -> RunState:
     t = st.용어표.작품(w)
     w["한국제목"] = t["표기"] if t and t["표기"] and t["출처"] != "위키" else None
     if st.모양 == "정보":
-        ok = {"사람": 재료_사람, "기념일": 재료_기념일, "감상순서": 재료_감상순서, "신작소식": 재료_신작소식}[st.유형](st)
+        ok = {"사람": 재료_사람, "기념일": 재료_기념일, "감상순서": 재료_감상순서}[st.유형](st)
         if not ok:
             st.사실표 = ""
             return st
         # v0.4: 정보형도 리뷰 · 인터뷰를 읽는다. 장면 · 발언 · 남의 해석이 여기서 온다
-        if 정보형검색 and w.get("한국제목") and st.유형 not in ("기념일", "신작소식"):   # v0.7: 신작은 아직 리뷰가 없다
+        if 정보형검색 and w.get("한국제목") and st.유형 != "기념일":
             st.links = collect_links(st.주제)
             with ThreadPoolExecutor(max_workers=3) as ex:         # v0.5: 검색 페이지 ∥ 위키 ko ∥ 위키 en. 호스트가 달라 같이 받는다
                 f_pages = ex.submit(read_pages, st.links, 정보형페이지)

@@ -14,7 +14,7 @@ agent/
 ├── music/
 │   └── music_review_agent.py   음악 · 리뷰 (v3.5)
 ├── anime/
-│   ├── anime_agent.py          애니 · 유형 다섯 (v0.6. 기념일은 run에서 뺌)
+│   ├── anime_agent.py          애니 · 유형 여섯 (v0.7. 기념일은 run에서 뺌)
 │   └── glossary.json           애니 용어집 — 시리즈 다섯, 라프텔 자막 기준 (초안)
 └── out/                    결과물 (git에 안 올라간다)
 ```
@@ -26,10 +26,24 @@ agent/
 | `movie/movie_info_agent.py` | 영화 · 정보 전달 | 재료 모으기(TMDB + 위키백과 + 기사) → 재료 판정 → 재료 정리 → 글쓰기 → 편집국장 → 형태 검사 → 판정관 → 업로드 규칙 → 고치기 |
 | `movie/movie_review_agent.py` | 영화 · 리뷰 | 재료 모으기(TMDB + 위키백과) → 글쓰기 → 형태 검사 → 판정관 → 업로드 규칙 |
 | `music/music_review_agent.py` | 음악 · 리뷰 | 앨범 뽑기(이즘 API · 아이돌로지 API · 해외 매체 → MusicBrainz → 위키백과 유명도) → 평론 모으기(뽑은 리뷰 본문 + 이즘 검색 + 아이돌로지 검색 + DuckDuckGo + RSS + 위키 평가 절) → 코드로 거르기 → 재료 판정 → 관점 묶기 → 기획자 → 작가 → 교정자 → 형태 검사 → 편집국장 |
-| `anime/anime_agent.py` | 애니 · 유형 다섯 | 주제 뽑기(용어집 시리즈 → AniList 관계도) → 재료 모으기(정보형: AniList · Jikan · 라프텔 · 위키백과 / 심층형: DuckDuckGo 검색 + 위키 평가 절) → 표기 맞추기(코드) → 재료 판정(심층형만 모델) → (관점 묶기) → 기획자 → 작가 → 교정자 → 형태 검사 → 편집국장 |
+| `anime/anime_agent.py` | 애니 · 유형 여섯 | 주제 뽑기(용어집 시리즈 → AniList 관계도) → 재료 모으기(정보형: AniList · Jikan · 라프텔 · 위키백과 / 심층형: DuckDuckGo 검색 + 위키 평가 절) → 표기 맞추기(코드) → 재료 판정(심층형만 모델) → (관점 묶기) → 기획자 → 작가 → 교정자 → 형태 검사 → 편집국장 |
 
 네 에이전트 모두 마디(node)가 상태 하나를 받아 자기 칸만 채우고 돌려주는 구조다.
 갈림길 함수가 다음 마디를 고른다. 한 편에 도는 마디 수와 모델 요청 수에 상한이 있다.
+
+## 모델 — 넷 다 같다 (2026-09-24)
+
+`openai:gpt-6-luna`. GPT-6 가 나오면서 같은 자리(가장 싼 층)를 옮겨 탔다. 앞은 `gpt-5.6-luna` 였다.
+
+| | 입력 1M | 캐시 입력 | 출력 1M | 지식 기준일 |
+|---|---|---|---|---|
+| gpt-5.6-luna (앞) | $0.20 | $0.02 | $1.20 | 2026-02-16 |
+| **gpt-6-luna (지금)** | **$0.10** | **$0.01** | **$0.50** | **2026-05-18** |
+
+- 맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. 한 편 값은 절반 아래로 떨어진다.
+- `"openai:"` 접두어는 pydantic-ai 2.x 에서 Responses API 로 간다. 이 모델은 chat completions 에서 `reasoning_effort` 를 `none` 으로 둘 때만 함수 호출이 된다(OpenAI 문서). 그래서 Responses API 로 가야 한다. 애니 `_새모델()` 도 `OpenAIResponsesModel` 이다.
+- 고치는 곳은 파일마다 `MODEL` 한 줄(영화 리뷰는 `WRITER_MODEL` · `JUDGE_MODEL` 두 줄)이다. 글이 나빠지면 그 줄만 되돌린다.
+- 글 품질이 어떻게 달라지는지는 아직 안 봤다.
 
 ## 앞 판 기억 — 넷이 같은 방식 (2026-09-22)
 
@@ -201,7 +215,7 @@ flowchart TD
 모델을 부르는 마디는 다섯이다. 재료 판정 · 기획자 · 작가 · 교정자 · 편집국장. 앨범 후보 목록을 만들 때 매체 글 제목에서 아티스트 · 앨범을 뽑는 제목파서도 모델을 쓴다.
 한국 앨범은 평 1개(`한국최소평`), 해외 앨범은 2개(`MIN_REVIEWS`)가 안 모이면 그 앨범을 버리고 다음 후보로 간다.
 
-### 애니 · 유형 다섯 (`anime/anime_agent.py`, v0.6)
+### 애니 · 유형 여섯 (`anime/anime_agent.py`, v0.7)
 
 유형은 주문 칸 하나다. 글 모양이 둘로 갈린다. 정보형은 남의 글이 없고 판단을 안 쓴다. 심층형은 인터뷰 · 평론을 재료로 쓴다(음악 v2.9와 같다).
 
@@ -365,7 +379,7 @@ python anime/anime_agent.py zip
 
 ```bash
 python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v3.5.ipynb
-python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.6.ipynb              # 용어집이 노트북 안에 같이 들어간다
+python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.7.ipynb              # 용어집이 노트북 안에 같이 들어간다
 python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.5.ipynb     # 영화 둘은 V2.4 · V1.9부터 뽑는다
 python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V2.0.ipynb
 ```

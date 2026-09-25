@@ -43,6 +43,12 @@
 # - 같은 꼴 문장 · "~가 아니라 ~다" 틀 제한. 비유는 허용(PM).
 # - 판정관 "글 완성도"에서 같은 꼴 문단 · 문장 길이 단조 · 주문 어김 · 이름표 판단을 깎는다.
 # - 형태검사(코드) `shape_form_check`: 문장 길이가 다 비슷함 · 문단 길이가 다 비슷함 · 영화 제목/"이 영화"로 문단 열기 3번 · 이름표 판단.
+#
+# 2026-09-24 — 모델을 gpt-6-luna 로 바꿨다. GPT-6 가 나왔고 같은 자리(가장 싼 층) 값이 절반 아래다.
+#   입력 1M당 $0.20 → $0.10, 출력 $1.20 → $0.50, 캐시 입력 $0.02 → $0.01. 지식 기준일 2026-02-16 → 2026-05-18.
+#   맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. `"openai:"` 접두어라 Responses API 로 간다 (chat completions 는
+#   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
+#   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
 
 # ## 셀 1 — 설치
 #
@@ -78,8 +84,8 @@ print("키 읽음. 길이:", len(os.environ["OPENAI_API_KEY"]))
 VERSION = "V2.0"
 
 # ── 모델 ──────────────────────────────────────────────────
-WRITER_MODEL = "openai:gpt-5.6-luna"
-JUDGE_MODEL  = "openai:gpt-5.6-luna"
+WRITER_MODEL = "openai:gpt-6-luna"   # 2026-09-24: gpt-5.6-luna 에서 바꿨다. 값이 절반 아래다
+JUDGE_MODEL  = "openai:gpt-6-luna"
 USE_REASONING_EFFORT = True      # 추론 모델이 아니면 False로 둔다
 REASONING_EFFORT = "low"
 
