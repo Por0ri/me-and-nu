@@ -22,6 +22,7 @@ def test_user_model_columns():
         "hashed_password",
         "profile_image_url",
         "last_login_at",
+        "onboarding_completed_at",
         "joined_at",
         "withdrawn_at",
         "withdrawal_reason",

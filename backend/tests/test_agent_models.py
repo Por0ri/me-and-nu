@@ -20,7 +20,7 @@ from app.models import (
 
 
 EXPECTED_COLUMNS = {
-    "user_account": 14,
+    "user_account": 15,
     "topic": 7,
     "subtopic": 7,
     "source_site": 12,
@@ -31,7 +31,7 @@ EXPECTED_COLUMNS = {
     "agent_run_source": 9,
     "draft": 16,
     "judgment_log": 14,
-    "content": 24,
+    "content": 25,
     "content_source": 9,
 }
 

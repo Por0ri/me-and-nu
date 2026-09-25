@@ -1,46 +1,36 @@
 import Link from "next/link";
 import ApiHealthCheck from "@/components/ApiHealthCheck";
 import AuthIntegrationTest from "@/components/AuthIntegrationTest";
+import ContentBrowser from "@/components/ContentBrowser";
 
 const checks = [
-  ["Git 연결", "브랜치 Push가 자동으로 배포되는지 확인"],
-  ["환경 분리", "Preview와 Production의 환경변수 구분"],
   ["API 통신", "FastAPI Health API와 CORS 응답 확인"],
-  ["쿠키 인증", "회원가입·로그인·내 정보·로그아웃 확인"],
-  ["동적 경로", "직접 접근과 새로고침 시 라우팅 확인"],
+  ["세션", "개발용 가입·로그인과 CSRF 확인"],
+  ["온보딩", "정책·Topic·Subtopic 선택"],
+  ["피드", "내 관심사와 공개 콘텐츠 조회"],
+  ["반응", "O/X·좋아요·북마크 설정과 취소"],
 ];
 
 export default function Home() {
-  const deployEnvironment = process.env.NEXT_PUBLIC_DEPLOY_ENV ?? "local";
-  const commitSha = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local";
-  const branch = process.env.VERCEL_GIT_COMMIT_REF ?? "local";
-
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl px-5 py-12 sm:px-8 lg:py-20">
       <header className="mb-10">
-        <div className="mb-5 flex flex-wrap gap-2 text-xs font-bold">
-          <span className="rounded-full border border-teal-300/20 bg-teal-300/10 px-3 py-1.5 text-teal-200">
-            환경 · {deployEnvironment}
-          </span>
-          <span className="rounded-full border border-blue-300/20 bg-blue-300/10 px-3 py-1.5 text-blue-200">
-            브랜치 · {branch}
-          </span>
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-slate-300">
-            커밋 · {commitSha}
-          </span>
-        </div>
         <p className="mb-3 text-sm font-bold tracking-[0.24em] text-teal-300">
-          NEXT.JS × VERCEL
+          ME;NU
         </p>
         <h1 className="max-w-3xl text-4xl font-black tracking-tight sm:text-6xl">
-          프론트엔드 배포
-          <span className="block text-slate-400">한 화면에서 점검하기</span>
+          관심사에서 만나는 글
         </h1>
         <p className="mt-5 max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
-          기능 브랜치에서는 Preview URL을, main에서는 Production URL을 확인하세요.
-          화면 상단의 환경·브랜치·커밋 값이 배포마다 달라집니다.
+          공개된 콘텐츠를 Topic과 세부 토픽별로 둘러보세요. Agent가 작성한 글은 AI 생성 표시가 붙습니다.
         </p>
       </header>
+
+      <ContentBrowser />
+
+      <section id="api-test" className="mt-16 border-t border-white/10 pt-10">
+        <h2 className="text-2xl font-bold">개발용 API 점검</h2>
+        <p className="mt-2 mb-6 text-sm text-slate-400">로그인·온보딩과 API 응답을 확인하는 도구입니다. 설정을 마친 뒤 위 피드에서 새로고침을 누르세요.</p>
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {checks.map(([title, description], index) => (
@@ -73,9 +63,10 @@ export default function Home() {
       </div>
 
       <AuthIntegrationTest />
+      </section>
 
       <footer className="mt-10 border-t border-white/10 pt-6 text-sm text-slate-500">
-        Preview에서 검증한 뒤 main에 병합하고 Production 변경을 확인하세요.
+        로컬 Swagger UI는 http://localhost:8000/docs 에서 사용할 수 있습니다.
       </footer>
     </main>
   );

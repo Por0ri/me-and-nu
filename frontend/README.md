@@ -1,15 +1,15 @@
-# Next.js × Vercel 배포 테스트
+# me;nu 공개 콘텐츠 브라우저
 
-GitHub와 Vercel의 자동 배포, Preview/Production 분리, 환경변수, 동적 경로와 API 통신을 확인하는 작은 테스트 프로젝트입니다.
+FastAPI·PostgreSQL V1 API의 공개 피드와 콘텐츠 상세를 브라우저에서 볼 수 있습니다. 개발용 API 점검 화면도 홈 하단에 유지합니다.
 
 ## 포함된 테스트
 
-- Git 브랜치와 커밋 정보 표시
-- Preview/Production 환경변수 구분
+- 홈·Topic·Subtopic별 공개 콘텐츠 피드와 상세 화면
+- AI 생성, 검토 필요, 개발용 미리보기 표시
 - 내부 Next.js Route Handler `/api/health`
 - 외부 FastAPI `/health` 선택 호출
-- FastAPI 회원가입·로그인·현재 사용자·로그아웃 호출
-- `credentials: "include"` 기반 HttpOnly 세션 쿠키 연동
+- 개발용 가입·로그인 → 세션 → 정책·Topic/Subtopic → 온보딩 → 프로필·구독 → 피드·상세 → O/X·좋아요·북마크 → 로그아웃
+- `credentials: "include"` 기반 HttpOnly 세션 쿠키와 메모리의 CSRF 토큰
 - 동적 경로 `/deployments/[id]`
 - 404 및 런타임 오류 화면
 - Tailwind CSS 4 적용
@@ -25,6 +25,15 @@ npm run dev
 ```
 
 브라우저에서 `http://localhost:3000`을 엽니다.
+
+## 공개 콘텐츠 확인
+
+- `http://localhost:3000/`: 내 첫 활성 Topic의 홈 피드. 관심사가 여러 개면 Topic을 선택할 수 있습니다.
+- `http://localhost:3000/topics/{topicId}`: 해당 Topic 전체 피드.
+- `http://localhost:3000/topics/{topicId}/subtopics/{subtopicId}`: 세부 토픽 피드. 영화 Agent 글은 **영화 리뷰** Subtopic에서 확인합니다.
+- 피드 카드를 선택하면 `/contents/{contentId}?topicId={topicId}`로 이동해 AI 글의 본문이나 외부 글의 발췌와 출처 링크를 볼 수 있습니다.
+
+피드와 상세는 현재 로그인 사용자의 활성 Topic을 사용합니다. 로컬 인증 우회가 켜져 있으면 준비된 개발용 사용자로 바로 조회할 수 있습니다. 새 Agent 글을 발행한 뒤 화면의 **새로고침**을 누르세요. 검토가 필요한 미리보기 글에는 배지가 표시됩니다.
 
 배포 전 검증:
 
@@ -52,13 +61,16 @@ npm run dev
 브라우저에서 `http://localhost:3000`을 열고 다음 순서로 확인합니다.
 
 1. `API 호출하기`를 눌러 FastAPI `/health`가 성공하는지 확인합니다.
-2. 인증 통합 테스트에서 회원가입을 실행합니다.
-3. 같은 계정으로 로그인합니다.
-4. `내 정보`에서 로그인한 사용자가 반환되는지 확인합니다.
-5. 로그아웃 후 `내 정보`가 `HTTP 401`인지 확인합니다.
+2. V1 로컬 통합 테스트에서 개발용 회원가입 후 같은 계정으로 로그인합니다. 첫 변경 요청 전 익명 세션과 CSRF 토큰은 자동 조회합니다.
+3. 세션, 정책, Topic·Subtopic을 조회하고 실제 ID와 정책 버전으로 온보딩합니다.
+4. 프로필·내 Topic·구독, 피드·콘텐츠 상세를 조회합니다.
+5. 콘텐츠에 O/X, 좋아요, 북마크를 설정·취소한 뒤 피드와 상세 상태를 확인합니다.
+6. 로그아웃 후 보호 API가 `HTTP 401`인지 확인합니다.
 
 브라우저의 HttpOnly 쿠키가 정상 전달되려면 두 주소 모두 `localhost`를
-사용해야 합니다. `localhost`와 `127.0.0.1`을 섞지 마세요.
+사용해야 합니다. `localhost`와 `127.0.0.1`을 섞지 마세요. 백엔드 실행 전
+`alembic upgrade head`와 `python -m app.seeds.v1_local`도 실행합니다.
+Swagger 수동 절차는 [가이드](../docs/SWAGGER_TEST_GUIDE.md)에 있습니다.
 
 ## Vercel 연결
 
@@ -84,7 +96,7 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
 `NEXT_PUBLIC_API_BASE_URL`을 비워 두면 Health Check는 내부 `/api/health`를
-호출할 수 있지만, 인증 테스트는 기본값인 `http://localhost:8000`의
+호출할 수 있지만, V1 테스트는 기본값인 `http://localhost:8000`의
 FastAPI를 호출합니다.
 
 외부 FastAPI를 연결할 때는 주소에 `/health`를 제외한 Base URL을 입력합니다.

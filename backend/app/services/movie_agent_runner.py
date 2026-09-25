@@ -1,8 +1,13 @@
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.movie_agent_publication import (
+    MovieAgentPublicationError,
+    publish_movie_agent_run,
+)
 from app.services.movie_agent_persistence import (
     MovieAgentPersistenceResult,
     complete_movie_agent_run,
@@ -12,6 +17,7 @@ from app.services.movie_agent_persistence import (
 
 
 MovieProducer = Callable[[Any], Awaitable[Any]]
+logger = logging.getLogger(__name__)
 
 
 class MovieAgentExecutionError(RuntimeError):
@@ -55,7 +61,7 @@ async def run_movie_agent_and_persist(
 
     try:
         output = await producer(material)
-        return await complete_movie_agent_run(
+        persisted = await complete_movie_agent_run(
             db,
             agent_run=agent_run,
             result=output,
@@ -71,3 +77,29 @@ async def run_movie_agent_and_persist(
             agent_run.agent_run_id,
             exc,
         ) from exc
+
+    # Persistence has committed by this point. A later publication failure must
+    # not rewrite a successful AgentRun as a failed Agent execution.
+    draft = persisted.draft
+    factcheck = draft.factcheck_result if draft and isinstance(draft.factcheck_result, dict) else {}
+    if (
+        persisted.agent_run.outcome == "publish_candidate"
+        and draft is not None
+        and draft.status == "approved"
+        and factcheck.get("requires_review") is False
+    ):
+        try:
+            await publish_movie_agent_run(db, persisted.agent_run.agent_run_id)
+        except MovieAgentPublicationError as exc:
+            logger.warning(
+                "Movie Agent run %s was saved but not published (%s): %s",
+                persisted.agent_run.agent_run_id,
+                exc.code,
+                exc.message,
+            )
+        except Exception:
+            logger.exception(
+                "Movie Agent run %s was saved but publication failed",
+                persisted.agent_run.agent_run_id,
+            )
+    return persisted

@@ -2,7 +2,44 @@
 
 AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅 플랫폼입니다.
 
-이 문서는 API 명세서 V1.0을 기준으로 작성했습니다. 기존 모델, Alembic 마이그레이션, 테스트 및 에이전트 코드는 이동하거나 변경하지 않습니다.
+이 문서의 아래 전체 API 표는 V1.0 목표 목록입니다. 현재 구현된 로컬 범위는 다음 절에 따로 표시했습니다. URL 표의 과거 말미 `/` 표기는 원 명세 목록을 보존한 것이며, 현재 구현 경로에는 끝의 `/`를 붙이지 않습니다.
+
+## 현재 구현된 V1 로컬 범위
+
+| 영역 | Endpoint |
+| --- | --- |
+| 개발용 인증 | `POST /api/v1/dev/auth/register`, `POST /api/v1/dev/auth/login` |
+| 개발용 Agent 결과 | `GET /api/v1/dev/agent-runs`, `GET /api/v1/dev/agent-runs/{agentRunId}` |
+| 개발용 Agent 발행 | `POST /api/v1/dev/agent-runs/{agentRunId}/publish`, `POST /api/v1/dev/agent-runs/{agentRunId}/publish-preview` |
+| 세션 | `GET /api/v1/auth/session`, `POST /api/v1/auth/logout` |
+| 정책·온보딩 | `GET /api/v1/policies`, `POST /api/v1/onboarding` |
+| 내 정보 | `GET/PATCH /api/v1/users/me`, `GET/PATCH /api/v1/users/me/consents` |
+| Topic·Subtopic | `GET /api/v1/topics`, `GET /api/v1/topics/{topicId}/subtopics`, `GET /api/v1/subtopics/{subtopicId}` |
+| 내 관심사 | `GET/POST /api/v1/me/topics`, `GET /api/v1/me/topics/{topicId}/subtopics`, `PUT/DELETE /api/v1/me/topics/{topicId}/subtopics/{subtopicId}` |
+| 피드·콘텐츠 | `GET /api/v1/topics/{topicId}/feed`, `GET /api/v1/contents/{contentId}?topicId=...` |
+| 반응·저장 | `PUT/DELETE /api/v1/contents/{contentId}/preference`, `/like`, `/bookmark` |
+
+인증과 데이터는 PostgreSQL을 사용합니다. 개발용 가입·로그인과 Agent 결과 조회는 `ENABLE_DEV_API=true`에서만 등록됩니다. Agent 결과 조회는 로컬 요청과 인증된 개발 사용자로 제한되며 Swagger의 **개발용 Agent 결과**에 표시됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 영화 Agent 실행 결과가 승인되고 사실 확인 항목이 없으면 저장 직후 공개 Content 피드에 자동 발행됩니다. 탈락하거나 사실 확인이 필요한 초안은 자동 발행되지 않습니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
+
+### 환경 변수와 실행
+
+`backend/.env.example`의 `DATABASE_URL`, `FRONTEND_ORIGINS`, `ENABLE_DEV_API`, `ENABLE_DEV_AUTH_BYPASS`, `SESSION_COOKIE_NAME`, `SESSION_EXPIRE_MINUTES`, `SESSION_COOKIE_SECURE`를 참고하세요. 비밀값은 `.env.example`에 넣지 않습니다. 루트 `compose.yaml`의 PostgreSQL과 같은 접속 정보를 사용합니다. Swagger에서 로그인 없이 테스트하려면 `backend/.env`에 두 개발용 설정을 모두 `true`로 지정하고 서버를 `localhost`에만 바인딩하세요.
+
+```powershell
+# 저장소 루트에서 docker compose up -d postgres를 먼저 실행
+cd backend
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m app.seeds.v1_local
+.\.venv\Scripts\python.exe -m app.seeds.dev_user
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host localhost --port 8000
+```
+
+`v1_local` seed는 정책, 영화 Topic·Subtopic, 로컬 공개 콘텐츠를 준비합니다. `dev_user` seed는 인증 우회에 필요한 데모 사용자를 준비합니다. 두 seed 모두 마이그레이션 후에 실행합니다. `/api/v1/contents`의 범용 Mock CRUD와 `mock_contents`는 정식 경로에서 사용하지 않습니다. Agent의 Draft와 내부 AgentRun 저장·조회는 공개 Content와 구분합니다.
+
+조회는 주로 200, 생성은 201, 삭제·로그아웃은 본문 없는 204입니다. 오류는 `code`와 `message`를 포함하고 필요한 경우 `fields`, `requestId`를 포함합니다. 대표 오류는 `AUTH_REQUIRED`(401), `CSRF_INVALID`·`ONBOARDING_REQUIRED`(403), `TOPIC_NOT_FOUND`·`CONTENT_NOT_FOUND`(404), `ONBOARDING_ALREADY_COMPLETED`·`STATE_CONFLICT`(409), `VALIDATION_ERROR`·`INVALID_CURSOR`(422)입니다.
+
+[Swagger 테스트 가이드](../docs/SWAGGER_TEST_GUIDE.md)에서 실제 ID를 조회해 온보딩·피드·반응까지 호출하는 순서를 확인하세요. 추천 알고리즘과 이벤트 로그가 아직 없으므로 추천 이유·노출 상태는 기본값이며, `/chat/*`와 내부 AgentRun 연결은 추후 서비스 계층에서 진행합니다. OAuth 공급자 통신, Celery, Redis, 관리자 전체 API 등은 이번 구현에 포함되지 않습니다. 아래 목표 API 표에서 위 구현 범위를 제외한 항목은 후속 작업 대상입니다.
 
 ## 구조 원칙
 
@@ -15,90 +52,45 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 
 ## 폴더 구조
 
-API 구현과 직접 관련된 소스 폴더 및 파일만 표시합니다. 환경 변수, 의존성, Git 설정, 가상환경 및 캐시 파일은 제외했습니다.
+현재 저장소에 실제 존재하는 V1 관련 파일만 발췌했습니다. 아래 API 명세 목록은 이후 구현 목표까지 포함합니다.
 
 ~~~text
 me_nu/
 ├─ agent/
-│  ├─ movie/
-│  ├─ music/
-│  └─ py2ipynb.py
-│
-└─ backend/
-   ├─ alembic/
-   │  └─ versions/
-   │
-   ├─ app/
-   │  ├─ main.py
-   │  ├─ api/
-   │  │  ├─ deps.py
-   │  │  └─ v1/
-   │  │     ├─ router.py
-   │  │     ├─ auth/
-   │  │     │  └─ router.py
-   │  │     ├─ onboarding/
-   │  │     │  └─ router.py
-   │  │     ├─ policies/
-   │  │     │  └─ router.py
-   │  │     ├─ topics/
-   │  │     │  └─ router.py
-   │  │     ├─ subtopics/
-   │  │     │  └─ router.py
-   │  │     ├─ subtopic_requests/
-   │  │     │  └─ router.py
-   │  │     ├─ me/
-   │  │     │  └─ topics.py
-   │  │     ├─ contents/
-   │  │     │  └─ router.py
-   │  │     ├─ content_clusters/
-   │  │     │  └─ router.py
-   │  │     ├─ users/
-   │  │     │  └─ me/
-   │  │     │     ├─ router.py
-   │  │     │     ├─ consents.py
-   │  │     │     ├─ data.py
-   │  │     │     ├─ data_requests.py
-   │  │     │     ├─ activity_events.py
-   │  │     │     ├─ bookmarks.py
-   │  │     │     ├─ channels.py
-   │  │     │     ├─ hidden_ads.py
-   │  │     │     ├─ notification_settings.py
-   │  │     │     ├─ reports.py
-   │  │     │     ├─ rights_claims.py
-   │  │     │     ├─ operations.py
-   │  │     │     └─ subtopic_requests.py
-   │  │     ├─ channels/
-   │  │     │  └─ router.py
-   │  │     ├─ chat/
-   │  │     │  └─ router.py
-   │  │     ├─ dm/
-   │  │     │  └─ router.py
-   │  │     ├─ ads/
-   │  │     │  └─ router.py
-   │  │     ├─ reports/
-   │  │     │  └─ router.py
-   │  │     ├─ rights_claims/
-   │  │     │  └─ router.py
-   │  │     ├─ profile_images/
-   │  │     │  └─ router.py
-   │  │     └─ admin/
-   │  │        ├─ router.py
-   │  │        ├─ dashboard.py
-   │  │        ├─ users.py
-   │  │        ├─ audit_logs.py
-   │  │        ├─ contents.py
-   │  │        ├─ report_groups.py
-   │  │        ├─ bulk_actions.py
-   │  │        ├─ rights_claims.py
-   │  │        ├─ data_requests.py
-   │  │        └─ privacy_incidents.py
-   │  ├─ core/
-   │  ├─ db/
-   │  ├─ models/
-   │  ├─ schemas/
-   │  └─ services/
-   │
-   └─ tests/
+├─ backend/
+│  ├─ alembic/versions/
+│  │  └─ 7c8e1a9b4d2f_add_v1_persistent_api_tables.py
+│  ├─ app/
+│  │  ├─ main.py
+│  │  ├─ api/
+│  │  │  ├─ deps.py
+│  │  │  ├─ health.py
+│  │  │  ├─ dev/auth.py
+│  │  │  └─ v1/
+│  │  │     ├─ router.py
+│  │  │     ├─ auth/router.py
+│  │  │     ├─ onboarding/router.py
+│  │  │     ├─ policies/router.py
+│  │  │     ├─ topics/router.py
+│  │  │     ├─ subtopics/router.py
+│  │  │     ├─ me/topics.py
+│  │  │     ├─ contents/router.py
+│  │  │     └─ users/me/
+│  │  │        ├─ router.py
+│  │  │        └─ consents.py
+│  │  ├─ core/
+│  │  ├─ db/
+│  │  ├─ models/
+│  │  ├─ schemas/
+│  │  ├─ repositories/
+│  │  ├─ services/
+│  │  └─ seeds/
+│  │     ├─ v1_local.py
+│  │     └─ dev_user.py
+│  └─ tests/
+└─ frontend/
+   ├─ lib/api.ts
+   └─ components/AuthIntegrationTest.tsx
 ~~~
 
 ## API 명세 목록
@@ -257,12 +249,9 @@ me_nu/
 | API-100 | 내 권리침해 요청 상세 | GET | /api/v1/users/me/rights-claims/{claimId}/ | 1차 |
 | API-105 | 개인정보 사고 통지 배치 상태 | GET | /api/v1/admin/privacy-incidents/{incidentId}/notification-batches/{notificationBatchId}/ | 1차 |
 
-## 현재 변경 범위
+## 남은 V1.0 범위
 
-- 이 문서는 API 명세 기준의 목표 파일 위치와 endpoint 목록만 정의합니다.
-- 기존 models/, Alembic 리비전, 테스트 및 에이전트 코드는 이동하지 않습니다.
-- 기존 API 동작과 데이터베이스 스키마를 변경하지 않습니다.
-- 폴더가 비어 있는 상태로 미리 생성하지 않고 해당 API 구현 시 패키지 파일, 라우터, 스키마 및 테스트를 함께 추가합니다.
+위 전체 목록 중 현재 구현 절에 표시되지 않은 endpoint는 후속 범위입니다. 특히 OAuth, 채팅, 추천·검색, 관리자·신고, 개인정보 권리 요청, 광고·알림·DM은 아직 로컬 통합 테스트 대상이 아닙니다. 기존 Agent Adapter와 실행·저장 로직은 유지하며, `/chat/*` 구현 시 내부 서비스에서 연결합니다.
 
 ## API 문서
 

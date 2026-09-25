@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.models import (
@@ -7,6 +9,8 @@ from app.models import (
     Draft,
     JudgmentLog,
 )
+from app.services import movie_agent_runner
+from app.services.movie_agent_publication import MovieAgentPublicationError
 from app.services.movie_agent_runner import (
     MovieAgentExecutionError,
     run_movie_agent_and_persist,
@@ -50,8 +54,10 @@ class FakeAsyncSession:
 
 
 @pytest.mark.asyncio
-async def test_runner_executes_producer_and_persists_success():
+async def test_runner_executes_producer_and_persists_success(monkeypatch):
     session = FakeAsyncSession()
+    publish = AsyncMock()
+    monkeypatch.setattr(movie_agent_runner, "publish_movie_agent_run", publish)
     received_material = None
 
     async def fake_producer(material):
@@ -94,6 +100,7 @@ async def test_runner_executes_producer_and_persists_success():
     assert persisted.draft is not None
     assert persisted.draft.title == "대낮에 나타난 두려움"
     assert session.commit_count == 2
+    publish.assert_awaited_once_with(session, persisted.agent_run.agent_run_id)
 
 
 @pytest.mark.asyncio
@@ -115,4 +122,76 @@ async def test_runner_records_failed_status_when_producer_raises():
     assert run.status == "failed"
     assert run.error_message == "LLM 호출 실패: 괴물"
     assert exc_info.value.agent_run_id == run.agent_run_id
+    assert session.commit_count == 2
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_auto_publish_when_factcheck_requires_review(monkeypatch):
+    session = FakeAsyncSession()
+    publish = AsyncMock()
+    monkeypatch.setattr(movie_agent_runner, "publish_movie_agent_run", publish)
+
+    async def producer(_material):
+        return {
+            "상태": "올림",
+            "글": {"title": "검토할 글", "body": "영화 리뷰 본문", "sources": ["https://example.com/movie"]},
+            "확인필요": ["외부 출처를 확인할 문장"],
+            "로그": [],
+        }
+
+    persisted = await run_movie_agent_and_persist(
+        session, topic_id=1, material={"title": "영화"}, producer=producer
+    )
+
+    assert persisted.agent_run.status == "succeeded"
+    assert persisted.draft.status == "approved"
+    publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_runner_keeps_successful_run_when_publication_is_ineligible(monkeypatch, caplog):
+    session = FakeAsyncSession()
+    publish = AsyncMock(side_effect=MovieAgentPublicationError("AGENT_SOURCE_REQUIRED", "출처 없음"))
+    monkeypatch.setattr(movie_agent_runner, "publish_movie_agent_run", publish)
+
+    async def producer(_material):
+        return {
+            "상태": "올림",
+            "글": {"title": "승인 글", "body": "영화 리뷰 본문", "sources": []},
+            "확인필요": [],
+            "로그": [],
+        }
+
+    persisted = await run_movie_agent_and_persist(
+        session, topic_id=1, material={"title": "영화"}, producer=producer
+    )
+
+    assert persisted.agent_run.status == "succeeded"
+    assert persisted.agent_run.outcome == "publish_candidate"
+    assert persisted.draft.status == "approved"
+    assert "AGENT_SOURCE_REQUIRED" in caplog.text
+    assert session.commit_count == 2
+
+
+@pytest.mark.asyncio
+async def test_runner_keeps_successful_run_when_publication_raises_unexpectedly(monkeypatch, caplog):
+    session = FakeAsyncSession()
+    publish = AsyncMock(side_effect=RuntimeError("database unavailable"))
+    monkeypatch.setattr(movie_agent_runner, "publish_movie_agent_run", publish)
+
+    async def producer(_material):
+        return {
+            "상태": "올림",
+            "글": {"title": "승인 글", "body": "영화 리뷰 본문", "sources": ["https://example.com/movie"]},
+            "확인필요": [],
+            "로그": [],
+        }
+
+    persisted = await run_movie_agent_and_persist(
+        session, topic_id=1, material={"title": "영화"}, producer=producer
+    )
+
+    assert persisted.agent_run.status == "succeeded"
+    assert persisted.draft.status == "approved"
+    assert "publication failed" in caplog.text
     assert session.commit_count == 2

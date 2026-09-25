@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Vercel 배포 점검판",
-  description: "Next.js와 Vercel Git 연동을 확인하는 테스트 프로젝트",
+  title: "me;nu 콘텐츠 피드",
+  description: "관심사별 공개 콘텐츠와 영화 Agent 글을 둘러보세요.",
 };
 
 export default function RootLayout({

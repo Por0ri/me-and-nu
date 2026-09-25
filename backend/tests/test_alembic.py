@@ -20,11 +20,14 @@ def test_alembic_configuration_is_initialized():
     assert Path(script.dir).resolve() == Path("alembic").resolve()
 
 
-def test_alembic_revision_chain_has_single_topic_rename_head():
+def test_alembic_revision_chain_has_single_v1_head():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["4e2b1a7c9d30"]
+    assert script.get_heads() == ["7c8e1a9b4d2f"]
+    assert script.get_revision("7c8e1a9b4d2f").down_revision == (
+        "4e2b1a7c9d30"
+    )
     assert script.get_revision("4e2b1a7c9d30").down_revision == (
         "9f3d8b2a7c41"
     )
@@ -121,3 +124,60 @@ def test_topic_rename_migration_compiles_upgrade_and_downgrade_sql(
 
     assert "ALTER TABLE topic RENAME TO domain" in downgrade_sql
     assert "RENAME topic_id TO domain_id" in downgrade_sql
+
+
+def test_v1_migration_compiles_reversible_postgresql_sql(monkeypatch):
+    config = Config("alembic.ini")
+    script = ScriptDirectory.from_config(config)
+    revision = script.get_revision("7c8e1a9b4d2f").module
+
+    upgrade_buffer = StringIO()
+    upgrade_context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": upgrade_buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(upgrade_context))
+    revision.upgrade()
+    upgrade_sql = upgrade_buffer.getvalue()
+
+    for table in (
+        "auth_session",
+        "policy",
+        "consent_history",
+        "notification_setting",
+        "tap",
+        "tap_topic",
+        "content_tag",
+        "content_reaction",
+        "saved_item",
+    ):
+        assert f"CREATE TABLE {table}" in upgrade_sql
+    assert "onboarding_completed_at" in upgrade_sql
+    assert "image_url" in upgrade_sql
+    assert "uq_tap_active_user_topic" in upgrade_sql
+    assert "fk_content_reaction_tap_owner" in upgrade_sql
+    assert "fk_saved_item_tap_owner" in upgrade_sql
+
+    downgrade_buffer = StringIO()
+    downgrade_context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": downgrade_buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(downgrade_context))
+    revision.downgrade()
+    downgrade_sql = downgrade_buffer.getvalue()
+
+    for table in (
+        "saved_item",
+        "content_reaction",
+        "content_tag",
+        "tap_topic",
+        "tap",
+        "notification_setting",
+        "consent_history",
+        "policy",
+        "auth_session",
+    ):
+        assert f"DROP TABLE {table}" in downgrade_sql
+    assert "DROP COLUMN image_url" in downgrade_sql
+    assert "DROP COLUMN onboarding_completed_at" in downgrade_sql

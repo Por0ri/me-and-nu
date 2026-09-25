@@ -51,6 +51,9 @@ class UserAccount(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -120,6 +120,7 @@ class Content(Base):
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     body: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(String(1000))
     keyword: Mapped[list | dict | None] = mapped_column(JSONB)
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
