@@ -12,7 +12,8 @@ agent/
 │   ├── movie_info_agent.py     영화 · 정보 전달 (V2.5)
 │   └── movie_review_agent.py   영화 · 리뷰 (V2.0)
 ├── music/
-│   └── music_review_agent.py   음악 · 리뷰 (v3.5)
+│   ├── music_review_agent.py   음악 · 리뷰 (v3.5)
+│   └── DESIGN.md               음악 설계도 (흐름 · 에이전트 · 앞판기억 · 올림 판정)
 ├── anime/
 │   ├── anime_agent.py          애니 · 유형 여섯 (v0.7. 기념일은 run에서 뺌)
 │   └── glossary.json           애니 용어집 — 시리즈 다섯, 라프텔 자막 기준 (초안)
