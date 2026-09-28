@@ -42,7 +42,9 @@ async def run_movie_agent_and_persist(
     requested_by_user_id: int | None = None,
     queue_task_id: str | None = None,
     agent_code: str = "movie_review",
-    agent_version: str = "V1.8",
+    # 실제 실행에서는 호출자가 adapter.version(에이전트 모듈의 VERSION)을 넘깁니다.
+    # 이 값은 버전을 넘기지 않았을 때만 쓰는 예비값입니다.
+    agent_version: str = "V2.0",
 ) -> MovieAgentPersistenceResult:
     """영화 에이전트 1회 실행과 DB 저장을 하나의 흐름으로 묶습니다.
 

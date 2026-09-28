@@ -353,7 +353,7 @@ flowchart TD
     classDef db    fill:#fae8ff,stroke:#a21caf,color:#111
     classDef ok    fill:#dcfce7,stroke:#15803d,color:#111
 
-    API["POST /api/v1/dev/agent-runs<br/>backend/app/api/dev"]:::code
+    API["실행 명령<br/>backend/scripts/run_movie_agent_once.py"]:::code
     API --> RUN["러너<br/>services/movie_agent_runner"]:::code
     RUN --> ST["시작 기록<br/>services/movie_agent_persistence"]:::code
     ST --> T1[("agent_run<br/>status=running")]:::db
@@ -367,12 +367,15 @@ flowchart TD
     Q -->|맞으면| PUB["발행<br/>services/movie_agent_publication"]:::code
     PUB --> T4[("content · content_source · content_tag")]:::db
     T4 --> FEED["공개 피드<br/>GET /api/v1/feed"]:::ok
+    T2 -.->|보기| VIEW["GET /api/v1/dev/agent-runs<br/>Swagger에서 실행 기록을 본다"]:::code
+    HOLD -.->|사람이 올린다| PUB
 ```
 
 • 에이전트가 실패하면 `agent_run`이 실패로 남는다. 저장은 됐는데 발행만 실패하면 실행은 성공으로 두고 경고만 남긴다.
 • 지금은 영화 리뷰만 붙어 있다. 음악 · 애니는 아직 마크다운으로만 쌓인다(`agent/out/`).
 • 어댑터가 `fetch_material`을 스레드로 돌린다. 재료 모으기가 requests(동기)라 서버 루프를 막기 때문이다.
-• 러너의 `agent_version` 기본값이 `V1.8`이다. 지금 리뷰 에이전트는 V2.0이다. 붙인 쪽이 고칠 자리다.
+• 돌리는 것은 `backend/scripts/run_movie_agent_once.py`다. Swagger에는 실행 창구가 없다. 조회(`GET /dev/agent-runs`)와 발행 재시도(`POST /dev/agent-runs/{id}/publish`)만 있다.
+• 실행 기록에 남는 판 이름은 에이전트 모듈의 `VERSION`이다. 실행 명령이 `adapter.version`으로 넘긴다.
 
 
 ## 준비
