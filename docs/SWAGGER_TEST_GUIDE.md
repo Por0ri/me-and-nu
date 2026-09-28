@@ -1,5 +1,7 @@
 # Swagger UI에서 V1 로컬 API 테스트
 
+현재 구현된 모든 작업의 Swagger 화면 입력값과 예상 응답은 [Swagger UI 조작법](SWAGGER_UI_OPERATION_GUIDE.md)을 참고하세요.
+
 Swagger에서 로그인 없이 기능을 확인하려면 로컬 개발 전용 인증 우회와 데모 사용자 seed를 사용합니다. PostgreSQL 마이그레이션과 두 seed가 필요합니다.
 
 ## 1. 서버와 데이터 준비
