@@ -12,7 +12,7 @@ agent/
 │   ├── movie_info_agent.py     영화 · 정보 전달 (V2.5)
 │   └── movie_review_agent.py   영화 · 리뷰 (V2.0)
 ├── music/
-│   ├── music_review_agent.py   음악 · 리뷰 (v3.5)
+│   ├── music_review_agent.py   음악 · 리뷰 (v4.0 — LangGraph)
 │   └── DESIGN.md               음악 설계도 (흐름 · 에이전트 · 앞판기억 · 올림 판정)
 ├── anime/
 │   ├── anime_agent.py          애니 · 유형 여섯 (v0.7. 기념일은 run에서 뺌)
@@ -194,7 +194,7 @@ flowchart TD
 • 사람 · 캐릭터 이름은 용어집에 없으면 위키백과 ko로 찾되 "임시"다. 임시 표기와 표기 없는 이름은 글에 못 쓴다. 로마자 · 일본어 이름이 본문에 나오면 형태검사에 걸린다.
 • 저장 파일 머리에 표기 출처(용어집 / AniList / 라프텔 / 위키 / 없음)를 남긴다. 임시 표기가 쌓이면 사람이 자막과 대조해 용어집에 올린다.
 
-### 음악 · 리뷰 (`music/music_review_agent.py`, v3.5)
+### 음악 · 리뷰 (`music/music_review_agent.py`, v4.0)
 
 ```mermaid
 flowchart TD
@@ -252,6 +252,8 @@ flowchart TD
     GT -->|3바퀴까지| PL
     GT -->|3바퀴 다 씀 · 모델 요청 상한| X2["저장<br/>out/music/탈락<br/>점수가 제일 높았던 판을 남긴다"]:::drop
 ```
+
+v4.0에서 마디 · 갈림길 · 프롬프트 · 재료 · 판정 규칙은 그대로다. `run_graph`가 while 루프 대신 LangGraph `StateGraph`를 짓고 돌린다(PM 9/28 결정 — 팀 코드 전부 LangGraph). 그래서 그림은 v3.5와 같다.
 
 상한 — 마디 60개(`MAX_STEPS`), 다시 쓰기 3바퀴(`REWRITE_LIMIT`), 앨범 하나에 모델 요청 40회(`LLM_CALL_CAP`), 통과선 65점(`PASS_SCORE`), 마지막 바퀴는 기준을 낮춘다(`마지막안전점수`).
 한국 앨범은 평 1개(`한국최소평`), 해외 앨범은 2개(`MIN_REVIEWS`)가 안 모이면 그 앨범을 버리고 다음 후보로 간다.
@@ -433,7 +435,7 @@ python anime/anime_agent.py zip
 노트북은 `.py`에서 뽑는다. `.py`를 고친 뒤 다시 뽑는다.
 
 ```bash
-python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v3.5.ipynb
+python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v4.0.ipynb
 python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.7.ipynb              # 용어집이 노트북 안에 같이 들어간다
 python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.5.ipynb     # 영화 둘은 V2.4 · V1.9부터 뽑는다
 python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V2.0.ipynb
