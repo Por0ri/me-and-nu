@@ -11,6 +11,14 @@ from app.models.catalog import (
     Topic,
     TopicCluster,
 )
+from app.models.chat import (
+    ChatFactCache,
+    ChatMessage,
+    ChatSession,
+    ChatUnansweredQuestion,
+    LongTermMemory,
+    UserOperation,
+)
 from app.models.content import Content, ContentSource, Draft
 from app.models.user import UserAccount
 from app.models.v1 import (
@@ -30,6 +38,10 @@ __all__ = [
     "AgentRunSource",
     "AgentRunStep",
     "AuthSession",
+    "ChatFactCache",
+    "ChatMessage",
+    "ChatSession",
+    "ChatUnansweredQuestion",
     "ConsentHistory",
     "Content",
     "ContentReaction",
@@ -38,6 +50,7 @@ __all__ = [
     "CreatorChannel",
     "Draft",
     "JudgmentLog",
+    "LongTermMemory",
     "NotificationSetting",
     "Policy",
     "SavedItem",
@@ -48,4 +61,5 @@ __all__ = [
     "Tap",
     "TapTopic",
     "UserAccount",
+    "UserOperation",
 ]

@@ -24,7 +24,10 @@ def test_alembic_revision_chain_has_single_v1_head():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["7c8e1a9b4d2f"]
+    assert script.get_heads() == ["b5d2c8f1a7e3"]
+    assert script.get_revision("b5d2c8f1a7e3").down_revision == (
+        "7c8e1a9b4d2f"
+    )
     assert script.get_revision("7c8e1a9b4d2f").down_revision == (
         "4e2b1a7c9d30"
     )
@@ -181,3 +184,43 @@ def test_v1_migration_compiles_reversible_postgresql_sql(monkeypatch):
         assert f"DROP TABLE {table}" in downgrade_sql
     assert "DROP COLUMN image_url" in downgrade_sql
     assert "DROP COLUMN onboarding_completed_at" in downgrade_sql
+
+
+def test_chat_migration_compiles_reversible_postgresql_sql(monkeypatch):
+    config = Config("alembic.ini")
+    script = ScriptDirectory.from_config(config)
+    revision = script.get_revision("b5d2c8f1a7e3").module
+    chat_tables = (
+        "chat_session",
+        "chat_message",
+        "long_term_memory",
+        "user_operation",
+        "chat_fact_cache",
+        "chat_unanswered_question",
+    )
+
+    upgrade_buffer = StringIO()
+    upgrade_context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": upgrade_buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(upgrade_context))
+    revision.upgrade()
+    upgrade_sql = upgrade_buffer.getvalue()
+
+    for table_name in chat_tables:
+        assert f"CREATE TABLE {table_name}" in upgrade_sql
+    assert "fk_chat_session_tap_owner" in upgrade_sql
+    assert "WHERE client_message_id IS NOT NULL" in upgrade_sql
+
+    downgrade_buffer = StringIO()
+    downgrade_context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": downgrade_buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(downgrade_context))
+    revision.downgrade()
+    downgrade_sql = downgrade_buffer.getvalue()
+
+    for table_name in chat_tables:
+        assert f"DROP TABLE {table_name}" in downgrade_sql
