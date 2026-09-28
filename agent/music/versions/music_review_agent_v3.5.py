@@ -1,4 +1,4 @@
-# # music_review_agent_v4.0 — 음악 리뷰 에이전트
+# # music_review_agent_v3.5 — 음악 리뷰 에이전트
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY`에서 읽는다. 결과는 `agent/out/music/올림|탈락/`에 쌓인다.
 #
@@ -127,15 +127,6 @@
 #   맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. `"openai:"` 접두어라 Responses API 로 간다 (chat completions 는
 #   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
 #   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
-#
-# v4.0에서 바뀐 것 — LangGraph로 옮겼다 (PM 9/28: 팀 코드 전부 LangGraph)
-# - `GRAPH` 표(마디 이름 → 마디 함수 · 갈림길 함수)는 그대로다. `run_graph`가 while 루프 대신 LangGraph StateGraph를 짓고 돌린다.
-#   마디 · 갈림길 · 프롬프트 · 재료 · 판정 규칙은 한 줄도 안 바뀌었다. 글 결과가 v3.5와 같아야 한다.
-# - 상태 스키마는 `RunState` 그대로다. 마디가 상태를 통째로 고쳐 돌려주면 LangGraph가 받는다.
-# - 마디 수 상한 · 마디가 터졌을 때 · `멈출마디`(뽑기만)는 마디를 감싸는 함수가 맡는다. 상태에 `멈춤` 칸이 하나 늘었다.
-#   `recursion_limit`은 MAX_STEPS + 10으로 두어 뒤를 받친다.
-# - 스레드(동시앨범)에서 불러도 된다. LangGraph는 마디 하나짜리 단계를 부른 스레드에서 돌리고 contextvars도 넘긴다(로컬에서 확인).
-# - 체크포인터는 아직 안 붙였다. 콜랩에 PostgreSQL이 없다. 백엔드에 붙일 때 넣는다.
 
 # ## 1. 설정
 #
@@ -2696,8 +2687,6 @@ class RunState(BaseModel):
     상태: str = "진행"          # 진행 / 올림 / 탈락 / 앨범없음 / 상한
     로그: list = []
     저장경로: Optional[str] = None
-    멈춤: str = ""              # v4.0: 그래프를 여기서 끝낸다는 표시. 마디가 터졌거나("실패") 마디 수 상한("상한")
-    다음: str = ""              # v4.0: 갈림길 함수가 고른 다음 마디. 갈림길은 마디 안에서 돈다 (아래 _마디 설명)
 
     def log(self, s):
         self.로그.append(s)
@@ -3101,54 +3090,25 @@ GRAPH = {
     "저장":       (n_저장,       그냥(END)),
 }
 
-# v4.0: 위 GRAPH 표를 LangGraph StateGraph로 짠다. 마디 · 갈림길 함수는 그대로 꽂는다.
-# 마디는 상태를 통째로 고쳐 돌려주는데 LangGraph가 그대로 받는다. 상한 · 실패 · 멈출마디는 감싸는 함수가 맡는다.
-from langgraph.graph import StateGraph, START as 그래프시작, END as 그래프끝
-
-_앱들 = {}                       # 멈출마디마다 그래프 한 벌. 처음 부를 때 짓는다
-_앱잠금 = threading.Lock()
-
-def _마디(이름, fn, edge, 멈출마디):
-    """마디 함수를 돌리고 이어서 갈림길 함수도 여기서 돌린다.
-    LangGraph는 갈림길(조건 엣지) 함수가 상태에 쓴 것을 버린다. 우리 갈림길은 상태를 쓴다
-    (st.상태 = "앨범없음", st.기획재시도한 += 1, st.log(...)). 그래서 갈림길을 마디 안에서 돌리고 고른 이름을 st.다음에 적는다.
-    그래프의 조건 엣지는 st.다음을 읽기만 한다. while 루프 때와 순서가 같다: 마디 → 갈림길 → 다음 마디."""
-    def 돌기(st: RunState) -> RunState:
+def run_graph(st: RunState, 멈출마디=None) -> RunState:
+    node = START
+    while node != END:
         if st.steps >= MAX_STEPS:
             st.상태 = "상한"
             st.log(f"  마디 수 상한 {MAX_STEPS}. 멈춘다")
-            st.멈춤 = "상한"
-            return st
+            break
         st.steps += 1
+        fn, edge = GRAPH[node]
         try:
             st = fn(st)
         except Exception as e:
-            st.log(f"  마디 [{이름}] 실패: {e}")
+            st.log(f"  마디 [{node}] 실패: {e}")
             st.상태 = "탈락"
-            st.멈춤 = "실패"
-            return st
-        st.다음 = END if (멈출마디 and 이름 == 멈출마디) else edge(st)
-        return st
-    return 돌기
-
-def _고르기(st: RunState):
-    return 그래프끝 if (st.멈춤 or st.다음 == END) else st.다음
-
-def 그래프(멈출마디=None):
-    with _앱잠금:
-        if 멈출마디 not in _앱들:
-            g = StateGraph(RunState)
-            for 이름, (fn, edge) in GRAPH.items():
-                g.add_node(이름, _마디(이름, fn, edge, 멈출마디))
-                g.add_conditional_edges(이름, _고르기)
-            g.add_edge(그래프시작, START)
-            _앱들[멈출마디] = g.compile()
-        return _앱들[멈출마디]
-
-def run_graph(st: RunState, 멈출마디=None) -> RunState:
-    # 마디 수 상한은 감싸는 함수가 먼저 건다. recursion_limit은 그 뒤를 받치는 안전선이다
-    out = 그래프(멈출마디).invoke(st, config={"recursion_limit": MAX_STEPS + 10})
-    return RunState.model_validate(out)
+            break
+        if 멈출마디 and node == 멈출마디:
+            break
+        node = edge(st)
+    return st
 
 print("갈림길 준비 끝. 마디", len(GRAPH), "개")
 

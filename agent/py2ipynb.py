@@ -82,7 +82,7 @@ def _cell(kind, lines):
 
 콜랩_첫셀 = '''# 콜랩에서만 돌리는 셀. 로컬 .py 에는 없다
 # 보안 비밀(🔑)에 LLM_KEY 를 넣어 둔다
-!pip -q install "pydantic-ai-slim[openai]" python-dotenv requests nest_asyncio beautifulsoup4 lxml ddgs feedparser sentence-transformers scikit-learn
+!pip -q install "pydantic-ai-slim[openai]" langgraph python-dotenv requests nest_asyncio beautifulsoup4 lxml ddgs feedparser sentence-transformers scikit-learn
 import os
 from google.colab import userdata
 os.environ["LLM_KEY"] = userdata.get("LLM_KEY")
@@ -108,6 +108,7 @@ import importlib, importlib.metadata as 메타, subprocess, sys, os, pathlib
     "dotenv":                "python-dotenv",
     "nest_asyncio":          "nest_asyncio",
     "requests":              "requests",
+    "langgraph":             "langgraph",
     "langchain_typesafe":    "langchain-typesafe",    # Jev. 이것만 없으면 Jev를 안 쓰고 나머지는 돈다
 }
 
@@ -266,6 +267,7 @@ import importlib, importlib.metadata as 메타, subprocess, sys, os, pathlib
     "dotenv":       "python-dotenv",
     "nest_asyncio": "nest_asyncio",
     "requests":     "requests",
+    "langgraph":    "langgraph",
     "trafilatura":  "trafilatura",       # 정보 전달 — 기사 본문 추출. 리뷰는 안 쓰지만 깔아도 된다
 }
 

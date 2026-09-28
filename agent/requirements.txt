@@ -3,6 +3,7 @@
 
 # 공통
 pydantic-ai-slim[openai]
+langgraph             # 흐름 (2026-09-28 PM: 팀 코드 전부 LangGraph)
 python-dotenv
 requests
 nest_asyncio          # 콜랩 · 주피터처럼 루프가 이미 도는 곳에서 run_sync 를 쓰기 위해
