@@ -10,7 +10,7 @@ agent/
 ├── py2ipynb.py             .py → 콜랩 노트북(.ipynb). 노트북은 여기서 뽑는다. 손으로 안 고친다
 ├── movie/
 │   ├── movie_info_agent.py     영화 · 정보 전달 (V2.5)
-│   └── movie_review_agent.py   영화 · 리뷰 (V2.0)
+│   └── movie_review_agent.py   영화 · 리뷰 (V3.0 — 평론 기반 · LangGraph)
 ├── music/
 │   ├── music_review_agent.py   음악 · 리뷰 (v4.0 — LangGraph)
 │   └── DESIGN.md               음악 설계도 (흐름 · 에이전트 · 앞판기억 · 올림 판정)
@@ -25,7 +25,7 @@ agent/
 | 파일 | 토픽 · 유형 | 흐름 |
 |---|---|---|
 | `movie/movie_info_agent.py` | 영화 · 정보 전달 | 재료 모으기(TMDB + 위키백과 + 기사) → 재료 판정 → 재료 정리 → 글쓰기 → 편집국장 → 형태 검사 → 판정관 → 업로드 규칙 → 고치기 |
-| `movie/movie_review_agent.py` | 영화 · 리뷰 | 재료 모으기(TMDB + 위키백과) → 글쓰기 → 형태 검사 → 판정관 → 업로드 규칙 |
+| `movie/movie_review_agent.py` | 영화 · 리뷰 | 재료 모으기(TMDB + 위키백과 사실표 · 씨네21 한줄평 + 기사 · 검색 매체) → 미리거르기 → 재료 판정 → (재료 보강) → 관점 묶기 → 기획자 → 작가 → 교정자 → 형태 검사 → 편집국장 → 올림 관문 |
 | `music/music_review_agent.py` | 음악 · 리뷰 | 앨범 뽑기(이즘 API · 아이돌로지 API · 해외 매체 → MusicBrainz → 위키백과 유명도) → 평론 모으기(뽑은 리뷰 본문 + 이즘 검색 + 아이돌로지 검색 + 검색 + RSS + 위키 평가 절) → 코드로 거르기 → Jev로 거르기 → 재료 판정 → 관점 묶기 → 기획자 → 작가 → 교정자(걸린 것이 있을 때만) → 형태 검사 → 편집국장 → 올림 관문 |
 | `anime/anime_agent.py` | 애니 · 유형 여섯 | 주제 뽑기(용어집 시리즈 → AniList 관계도) → 재료 모으기(AniList · Jikan · 라프텔 · 위키백과 + 검색) → 표기 맞추기(코드) → 재료 판정 → (관점 묶기) → 기획자 → 작가 초안 셋 → 형태 검사 → 편집국장 → 고르기. 주제 셋을 같이 돈다 |
 
@@ -43,12 +43,12 @@ agent/
 
 - 맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. 한 편 값은 절반 아래로 떨어진다.
 - `"openai:"` 접두어는 pydantic-ai 2.x 에서 Responses API 로 간다. 이 모델은 chat completions 에서 `reasoning_effort` 를 `none` 으로 둘 때만 함수 호출이 된다(OpenAI 문서). 그래서 Responses API 로 가야 한다. 애니 `_새모델()` 도 `OpenAIResponsesModel` 이다.
-- 고치는 곳은 파일마다 `MODEL` 한 줄(영화 리뷰는 `WRITER_MODEL` · `JUDGE_MODEL` 두 줄)이다. 글이 나빠지면 그 줄만 되돌린다.
+- 고치는 곳은 파일마다 `MODEL` 한 줄이다. 글이 나빠지면 그 줄만 되돌린다.
 - 글 품질이 어떻게 달라지는지는 아직 안 봤다.
 
 ## 앞 판 기억 — 넷이 같은 방식 (2026-09-22)
 
-글이 걸려서 다시 쓰면, 점수를 내는 쪽(음악 · 애니는 편집국장, 영화 정보는 편집국장 + 판정관, 영화 리뷰는 판정관)이 앞 판을 받고 채점한다.
+글이 걸려서 다시 쓰면, 점수를 내는 쪽(음악 · 애니 · 영화 리뷰는 편집국장, 영화 정보는 편집국장 + 판정관)이 앞 판을 받고 채점한다.
 전에는 판마다 처음 보는 것처럼 채점해서 같은 글을 고쳐도 점수가 흔들렸다. 올랐는지 내렸는지 판단할 근거가 없었다.
 
 - 받는 것: `[앞 판 판정]`(점수 · 문제 목록 · 형태검사 걸림 · 한줄평) + `[앞 판 글]`(제목 · 본문) + `[이번 글 — N차 · 판 종류]`. 채점하는 것은 이번 글이다. 앞 판 글은 대조용이다.
@@ -58,9 +58,9 @@ agent/
 - 점수 규칙: 앞 점수에서 출발한다. 고쳐진 게 있고 새로 생긴 문제가 없으면 앞 점수 아래로 안 준다. 내리면 점수설명에 어느 문제 때문인지 적는다. 영화 정보 편집국장은 점수가 없어 고쳐짐 / 남음 대조만 한다.
 - 로그: `앞 판 62점 → 71점 / 고쳐짐 2 · 남음 1 · 새로 생김 0 · 못 봄 0`. 저장 파일의 판정 기록에 판마다 종류 · 점수 · 앞 판 대비 · 대조 줄이 남는다.
 - 최고 판 저장: 마지막 판이 탈락이면 기록 중 점수(영화는 합계)가 제일 높은 판의 글을 저장한다. 다시 쓰다 나빠진 글이 남지 않게 한다.
-- 설정값: 음악 · 애니 `앞판기억` · `최고판저장`, 영화 `REMEMBER_PREVIOUS` · `KEEP_BEST_ROUND`. False면 전과 같다.
+- 설정값: 음악 · 애니 · 영화 리뷰 `앞판기억` · `최고판저장`, 영화 정보 `REMEMBER_PREVIOUS` · `KEEP_BEST_ROUND`. False면 전과 같다.
 
-## 글의 꼴 — 음악 v3.5 · 영화 정보 V2.5 · 영화 리뷰 V2.0 (2026-09-22)
+## 글의 꼴 — 음악 v3.5 · 영화 정보 V2.5 · 영화 리뷰 V2.0 (2026-09-22. 리뷰 V3.0도 같은 프롬프트를 들고 갔다)
 
 글이 단조롭다는 지적에 애니 v0.3에서 고친 방식을 음악에 옮기고, 영화 둘에도 같은 방식을 넣었다.
 
@@ -311,7 +311,10 @@ flowchart TD
 기획자 마디는 없다. 재료 정리(prep)가 그 몫을 한다. 독자의 정보 질문 하나를 세우고 답과 문단 계획을 낸다(V2.5).
 탈락보관이면 판정관 합계가 제일 높았던 판의 글을 남긴다(`KEEP_BEST_ROUND`).
 
-### 영화 · 리뷰 (`movie/movie_review_agent.py`, V2.0)
+### 영화 · 리뷰 (`movie/movie_review_agent.py`, V3.0 — 2026-09-28)
+
+V2.0까지는 TMDB 줄거리와 위키 절만 보고 리뷰를 썼다. 평론을 한 편도 안 읽었다. 판단이 어디서 오는지가 없어서 "가장 큰 힘이다" 같은 이름표 판단으로 찼다. 원인은 재료였다.
+V3.0은 음악 v4.0 · 애니 작품리뷰와 같은 심층형 뼈대다. 평론을 모아 관점을 묶고, 기획자가 뼈대를 짜고, 작가가 쓰고, 편집국장이 평론 원문과 대조한다. LangGraph `StateGraph`로 돈다.
 
 ```mermaid
 flowchart TD
@@ -321,28 +324,44 @@ flowchart TD
     classDef ok   fill:#dcfce7,stroke:#15803d,color:#111
     classDef drop fill:#fee2e2,stroke:#b91c1c,color:#111
 
-    TMDB[("TMDB")]:::src
-    WIKI[("위키백과")]:::src
-    TMDB --> M
-    WIKI --> M
-    M["재료 모으기<br/>fetch_material"]:::code
-    M --> G["거르기<br/>장르 · 재료량 (코드)"]:::code
+    TMDB[("TMDB · 위키백과<br/>사실표 (fetch_material)")]:::src
+    C21[("씨네21<br/>영화 페이지 한줄평 · 기사 검색")]:::src
+    WEB[("검색 (DuckDuckGo)<br/>맥스무비 · 무비스트 · 익스트림무비 · LWLies · Screen Daily …")]:::src
+    TMDB --> G["거르기<br/>장르 · 등급 · 줄거리 길이 (코드)"]:::code
     G -->|걸림| X1["대상아님 · 재료부족"]:::drop
-    G --> O["주문 만들기 (코드)<br/>접근 · 온도 · 시작점 · 배치를 뽑는다<br/>낱말이 아니라 뜻글로 준다"]:::code
-    O --> W("글쓰기<br/>writer — 하나를 잡는다<br/>장면 · 선택 · 인물 하나를 끝까지 끌고 간다"):::llm
-    W --> SH["형태 검사 (코드)<br/>길이 · 출처 · 제목 · 감독 · 별점 · 부추기는 말<br/>꼴검사 — 문장 · 문단 길이 단조 · 이름표 판단"]:::code
-    SH -->|걸림 · 검사 결과를 메모로 붙여| W
-    SH -->|통과| J("판정관<br/>judge — 점수만 낸다<br/>앞 판 판정 · 앞 판 글을 받는다"):::llm
-    J --> V["업로드 규칙 (코드)<br/>점수표로 올림 · 탈락 · 다시 쓰기"]:::code
-    V -->|올림| OK[올림]:::ok
-    V -->|탈락| X2["탈락보관<br/>합계가 제일 높았던 판을 남긴다"]:::drop
-    V -->|다시 쓰기 · 사유를 메모로 붙여| W
-    W -.->|시도 4회 다 쓰면| X2
+    G --> M["재료 모으기<br/>같은 제목은 감독 이름으로 가른다<br/>robots.txt + AI 봇 막은 매체는 뺀다"]:::code
+    C21 --> M
+    WEB --> M
+    M --> PF["미리거르기 (코드)<br/>본문 400자 · 제목 · 감독 이름"]:::code
+    PF --> RJ("재료 판정<br/>페이지마다 — 다루는 정도 · 평가 · 홍보문<br/>관점 · 인용 · 장면메모 · 감독 말"):::llm
+    RJ --> KR["남기기 규칙 (코드)<br/>영화 평 · 감독 이야기만 · 매체당 2편<br/>인터뷰는 감독 말로 따로"]:::code
+    KR -->|평 3편 미만 · 장면메모 0| RE["재료 보강<br/>인터뷰 · 제작기 · 해석 글로 더 찾는다"]:::code
+    RE --> RJ
+    KR -->|평 2편 미만| X3["재료부족<br/>한줄평은 평 수에 안 센다"]:::drop
+    KR --> GV["관점 묶기 (코드)<br/>임베딩 · 씨네21 한줄평을 따로 붙인다"]:::code
+    GV --> PL("기획자<br/>주제(잡은 것 하나) · 배치 · 장면셋 · 인용둘<br/>문단 계획 · 사실목록(출처 달림) · 누구에게"):::llm
+    PL --> WR("작가<br/>개요만 받는다. 재료 원문은 안 본다<br/>작가_공통 + [하나를 잡는다] + 접근 · 온도 · 시작점 · 배치 뜻글"):::llm
+    WR --> PR("교정자<br/>형태 검사에 걸린 것이 있을 때만<br/>번역투 · 한자어 · 추상어"):::llm
+    PR --> SH["형태 검사 (코드)<br/>존댓말 · 재료 옮겨 적기 · 없는 다수 평 · 재료 사정 언급<br/>점수 · 부추김 · 숫자 · 이름표 판단 · 문장 · 문단 길이 단조"]:::code
+    SH --> ED("편집국장<br/>사실(평론 원문과 대조) · 문장 · 구조 · 스포일러<br/>주문대로 갔는가 · 되풀이 · 앞 판 대조"):::llm
+    ED --> GT["올림 관문 (코드)<br/>치명 하나라도 있으면 막는다<br/>65점 · 고칠것 3건. 마지막 바퀴는 50점"]:::code
+    GT -->|통과| OK["저장<br/>out/movie_review/올림"]:::ok
+    GT -->|3바퀴까지 · 문제 목록만 들고| PL
+    GT -->|3바퀴 다 씀 · 모델 요청 상한| X2["저장<br/>out/movie_review/탈락<br/>점수가 제일 높았던 판을 남긴다"]:::drop
 ```
 
-상한 — 글쓰기 시도 4회(`MAX_REWRITE` 3 + 첫 번째). 형태 검사에 걸려도 시도 한 번을 쓴다.
-모델을 부르는 마디는 둘이다. 글쓰기 · 판정관. 편집국장 · 고치기가 없고, 다시 쓰기는 늘 글쓰기로 돌아간다.
-판 종류는 코드가 정한다. 앞 글을 들려 보내면 고침, 사유만 들려 보내면 새로 씀이다. 구조 문제면 앞 글을 안 준다.
+상한 — 마디 60개(`MAX_STEPS`), 다시 쓰기 3바퀴(`REWRITE_LIMIT`), 영화 하나에 모델 요청 36회(`LLM_CALL_CAP`), 통과선 65점(`PASS_SCORE`), 마지막 바퀴 50점(`마지막안전점수`).
+모델을 부르는 마디는 다섯이다. 재료 판정(페이지마다) · 기획자 · 작가 · 교정자 · 편집국장. 다시 쓰기는 기획자부터다. 판 종류는 첫 판 · 새로 씀 둘이다.
+
+재료
+• 사실: TMDB(개봉 · 감독 · 출연 · 갈래 · 상영시간 · 등급 · 줄거리) + 위키백과 ko 제작 · 반응 · 영향 절. V2.0의 `fetch_material` 그대로다.
+• 평론: 씨네21이 첫 재료다. robots.txt에 막는 경로가 없다. 영화 페이지(`/movie/info/?movie_id=`)의 전문가 한줄평(이름 · 점수 · 한 줄)과 기사 검색(`/search/news/?query=`)의 리뷰 · 평론 · 대담 · 제작기를 읽는다. 기사 본문 `#news_content`, 필자 `.byline .writer`.
+• 같은 제목이 여럿이다(괴물 2006 봉준호 · 2023 고레에다). 영화 페이지는 감독 칸으로, 기사는 본문에 감독 이름이 있는지로 가른다.
+• 검색으로 찾은 매체는 robots.txt를 본다. AI 봇(GPTBot · ClaudeBot · CCBot …)을 따로 막은 매체는 우리 UA로 열려도 뺀다(PM 9/28). Variety · Guardian · NYT · IndieWire · 한겨레 · 경향 · 중앙 · 한국일보 · 연합 · 매경이 그렇다. 열린 곳은 맥스무비 · 무비스트 · 익스트림무비 · 동아 · 국제 · 한경 · Little White Lies · Screen Daily · The Playlist · BFI · MUBI · Cinema Scope(9/28 확인).
+• 나무위키 · 블로그 · 커뮤니티 · 예매 · OTT · IMDb 계열은 차단 목록이다.
+• 씨네21 한줄평은 평론 수에 안 센다. 관점표 끝에 따로 붙고, 기획자가 인용 둘 중 하나로 고를 수 있다("씨네21 ○○○").
+
+백엔드가 부르는 모양은 V2.0과 같다. `VERSION` · 동기 `fetch_material(title, year)` · `async produce(material)` → dict(상태 · 이유 · 로그 · 글 · 주문 · 확인필요 · 최고판). 로그 줄의 단계 이름도 계약대로 `형태검사` · `판정관`이다(판정관 줄 = 편집국장 판정). 그래프는 동기라 `produce`가 스레드에서 새 루프 · 새 모델 클라이언트로 돌린다(애니 `_새모델`과 같다).
 
 ### 에이전트에서 피드까지 (백엔드 · 영화만)
 
@@ -405,6 +424,8 @@ python movie/movie_info_agent.py released 5                          # 개봉작
 python movie/movie_info_agent.py upcoming 5                          # 개봉 전 무작위 5편
 
 # 영화 · 리뷰
+python movie/movie_review_agent.py check                # 씨네21 · 검색 엔진 · 매체 robots 점검. 모델 안 부른다
+python movie/movie_review_agent.py pick "괴물" 2006      # 재료 모으기까지. 어떤 페이지를 읽는지 본다. 모델 안 부른다
 python movie/movie_review_agent.py one "괴물" 2006
 python movie/movie_review_agent.py list                 # 테스트 목록 다섯 편
 python movie/movie_review_agent.py random 5 --seed 1
@@ -438,7 +459,7 @@ python anime/anime_agent.py zip
 python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v4.0.ipynb
 python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.7.ipynb              # 용어집이 노트북 안에 같이 들어간다
 python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.5.ipynb     # 영화 둘은 V2.4 · V1.9부터 뽑는다
-python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V2.0.ipynb
+python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V3.0.ipynb
 ```
 
 첫 셀이 pip 설치(pydantic-ai · openai 판 맞추기)와 키 읽기(`LLM_KEY`, 영화는 `TMDB_KEY`도)다. `agent/nb` 폴더로 들어가서 결과가 `agent/out/<토픽>/`에 쌓인다.
