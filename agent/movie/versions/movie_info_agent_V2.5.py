@@ -1,4 +1,4 @@
-# # Movie Info agent V3.0 — 영화 정보 전달 에이전트
+# # Movie Info agent V2.5 — 영화 정보 전달 에이전트
 #
 # 콜랩 노트북(Movie_Info_agent_V2.3.ipynb)을 스크립트로 옮긴 것이다.
 # 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_info/`에 쌓인다.
@@ -55,14 +55,6 @@
 #   맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. `"openai:"` 접두어라 Responses API 로 간다 (chat completions 는
 #   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
 #   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
-#
-# **V3.0에서 바뀐 것 — LangGraph로 옮겼다** (PM 9/28 결정 — 팀 코드 전부 LangGraph. 음악 v4.0 · 영화 리뷰 V3.0 · 애니 v0.8과 같은 방식)
-#
-# - 마디 · 갈림길 · 프롬프트 · 재료 · 판정 규칙은 V2.5 그대로다. `run_graph`가 while 루프 대신 LangGraph `StateGraph`를 짓고 `ainvoke`로 돌린다.
-# - LangGraph는 조건 엣지 함수가 상태에 쓴 것을 버린다. 우리 갈림길은 `_finish`로 상태 · 이유를 쓰고 반려 · 되돌린 횟수를 센다.
-#   그래서 갈림길을 마디 안에서 돌리고 고른 이름을 `st.next_node`에 적는다. 조건 엣지는 그것만 읽는다.
-# - 마디 수 상한(`MAX_STEPS`)은 전과 같이 마디에 들어갈 때 센다. 넘으면 탈락보관으로 끝낸다.
-# - 마디 안에서 난 오류는 전처럼 `produce` 밖으로 올라간다. 잡아서 삼키지 않는다.
 
 # ## 셀 1 — 설치
 #
@@ -96,7 +88,7 @@ TMDB_KEY = _secret("TMDB_KEY")
 os.environ["OPENAI_API_KEY"] = _secret("LLM_KEY")
 print("키 읽음. 길이:", len(os.environ["OPENAI_API_KEY"]))
 
-VERSION = "Movie Info V3.0"
+VERSION = "Movie Info V2.5"
 FORM = "정보 전달"
 
 # ── 모델 ──────────────────────────────────────────────────
@@ -311,7 +303,7 @@ class JudgeScore(BaseModel):
 
 class RunState(BaseModel):
     """한 편을 만드는 동안 모든 마디가 같이 읽고 쓰는 꾸러미.
-    V3.0부터 LangGraph StateGraph의 상태다."""
+    LangGraph로 옮기면 이것이 그래프의 상태가 된다."""
     material: Material
     topic: Topic = "영화"
     tag_topic: Topic | None = None
@@ -340,7 +332,6 @@ class RunState(BaseModel):
     status: str = ""             # 대상아님 · 재료부족 · 판단보류 · 올림 · 탈락보관
     reason: str = ""
     log: list[dict] = Field(default_factory=list)
-    next_node: str = ""          # V3.0: 갈림길이 고른 다음 마디 이름. LangGraph 조건 엣지가 이것만 읽는다
 
 # ## 셀 3-2 — 시리즈 용어집 (정식 표기 · 다른 표기 · 뜻)
 
@@ -4122,9 +4113,9 @@ async def fix(article: Article, order: WriteOrder, reasons: list[str]) -> Articl
 # ## 셀 13 — 한 편 돌리기: 상태 하나 · 마디 · 갈림길
 
 # 마디(node)는 상태를 받아 자기 칸만 채우고 돌려준다.
-# 갈림길(edge)은 상태를 보고 다음 마디 이름을 돌려준다. 끝낼 때는 _finish로 상태 · 이유를 적는다.
-# 돌리는 건 맨 아래 run_graph 하나다. V3.0부터 LangGraph StateGraph다.
-# 갈림길이 상태에 쓰는 것이 있어서 마디 안에서 돌리고, 조건 엣지는 st.next_node만 읽는다.
+# 갈림길(edge)은 상태를 보고 다음 마디 이름만 돌려준다.
+# 돌리는 건 맨 아래 run_graph 하나다.
+# LangGraph로 옮길 때는 마디를 add_node, 갈림길을 add_conditional_edges에 그대로 꽂는다.
 
 END = "끝"
 
@@ -4343,49 +4334,16 @@ GRAPH = {
 START = "거르기"
 
 
-# ── LangGraph (V3.0) ─────────────────────────────────────
-# LangGraph는 조건 엣지 함수가 상태에 쓴 것을 버린다. 우리 갈림길은 _finish로 상태를 쓰고 되돌린 횟수를 센다.
-# 그래서 갈림길을 마디 안에서 돌리고 고른 이름을 st.next_node에 적는다. 조건 엣지는 그것만 읽는다.
-import threading
-from langgraph.graph import StateGraph, START as GRAPH_START, END as GRAPH_END
-
-_apps, _apps_lock = {}, threading.Lock()
-
-
-def _node(name, fn, edge):
-    async def run_node(st: RunState) -> RunState:
+async def run_graph(st: RunState) -> RunState:
+    node = START
+    while node != END:
         st.steps += 1
         if st.steps > MAX_STEPS:
-            _finish(st, "탈락보관", f"마디 {MAX_STEPS}개 상한을 넘었다")
-            st.next_node = END
-            return st
+            return _finish(st, "탈락보관", f"마디 {MAX_STEPS}개 상한을 넘었다")
+        fn, edge = GRAPH[node]
         st = await fn(st) if inspect.iscoroutinefunction(fn) else fn(st)
-        st.next_node = edge(st)
-        return st
-    return run_node
-
-
-def _route(st: RunState):
-    return GRAPH_END if st.next_node == END else st.next_node
-
-
-def build_graph():
-    """마디 표로 LangGraph를 한 번 짓고 둔다."""
-    with _apps_lock:
-        if "app" not in _apps:
-            g = StateGraph(RunState)
-            for name, (fn, edge) in GRAPH.items():
-                g.add_node(name, _node(name, fn, edge))
-                g.add_conditional_edges(name, _route)
-            g.add_edge(GRAPH_START, START)
-            _apps["app"] = g.compile()
-        return _apps["app"]
-
-
-async def run_graph(st: RunState) -> RunState:
-    st.next_node = ""
-    out = await build_graph().ainvoke(st, config={"recursion_limit": MAX_STEPS + 10})
-    return RunState.model_validate(out)
+        node = edge(st)
+    return st
 
 
 async def produce(material: Material, topic="영화", tag_topic=None,
