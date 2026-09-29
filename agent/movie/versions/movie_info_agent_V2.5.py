@@ -1,4 +1,4 @@
-# # Movie Info agent V3.3 — 영화 정보 전달 에이전트
+# # Movie Info agent V2.5 — 영화 정보 전달 에이전트
 #
 # 콜랩 노트북(Movie_Info_agent_V2.3.ipynb)을 스크립트로 옮긴 것이다.
 # 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_info/`에 쌓인다.
@@ -55,40 +55,6 @@
 #   맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. `"openai:"` 접두어라 Responses API 로 간다 (chat completions 는
 #   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
 #   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
-#
-# **V3.0에서 바뀐 것 — LangGraph로 옮겼다** (PM 9/28 결정 — 팀 코드 전부 LangGraph. 음악 v4.0 · 영화 리뷰 V3.0 · 애니 v0.8과 같은 방식)
-#
-# - 마디 · 갈림길 · 프롬프트 · 재료 · 판정 규칙은 V2.5 그대로다. `run_graph`가 while 루프 대신 LangGraph `StateGraph`를 짓고 `ainvoke`로 돌린다.
-# - LangGraph는 조건 엣지 함수가 상태에 쓴 것을 버린다. 우리 갈림길은 `_finish`로 상태 · 이유를 쓰고 반려 · 되돌린 횟수를 센다.
-#   그래서 갈림길을 마디 안에서 돌리고 고른 이름을 `st.next_node`에 적는다. 조건 엣지는 그것만 읽는다.
-# - 마디 수 상한(`MAX_STEPS`)은 전과 같이 마디에 들어갈 때 센다. 넘으면 탈락보관으로 끝낸다.
-# - 마디 안에서 난 오류는 전처럼 `produce` 밖으로 올라간다. 잡아서 삼키지 않는다.
-#
-# **V3.1에서 바뀐 것 — 올림이 10편 중 1편이었다 (9/29 실측). PM 9/29 결정**
-#
-# - 편집국장을 치명 · 고칠 것 · 사소 세 단계로 나눴다(음악 v3.0 · 영화 리뷰 V3.0 방식). 편집국장은 문제를 무게별로 적기만 하고,
-#   통과 · 반려는 코드가 정한다. 치명이 있으면 반려다. 고칠 것이 `EDITOR_FIX_LIMIT`보다 많으면 반려다. 마지막 판에서는 치명만 없으면 넘긴다.
-#   V3.0은 "걸리는 것이 하나라도 있으면 반려"였다. 편집국장 39번 판정 중 통과가 1번이었다.
-# - "앞 판에서 못 봄"은 반려 사유가 아니다(PM). `missed` 칸에 따로 적고, 작가에게는 참고로만 넘긴다. 다른 세 에이전트와 같다.
-# - 관람 정보는 마지막 문단에 모은다(PM). 배치는 "정보는 마지막 문단" 하나로 고정했다. 앞 문단은 이야기와 맥락이다.
-#   V3.0은 첫 문단 질문 → 마지막 문단 답이었고, 답이 앞 문단을 되풀이한다는 반려가 가장 많았다. 질문은 이제 글의 방향이고 자리를 정하지 않는다.
-#   형태 검사가 앞 문단에 나온 상영시간 · 등급과 정보가 빠진 마지막 문단을 잡는다. 마지막 문단은 사실이 모여 있어도 몰림으로 안 잡는다.
-# - 형태 검사 버그 고침: 재료의 감독 이름이 영문이면 영문 원문을 찾지 않는다. V3.0은 한글로 옮겨 쓰면 "감독 이름이 없다", 영문으로 두면 "영문 표기가 남았다"로 늘 걸렸다.
-#
-# **V3.2에서 바뀐 것 — PM 9/29**
-#
-# - 주문(온도 · 시작점) 어김은 반려 · 감점 사유가 아니다. 편집국장은 사소에 적고, 판정관은 깎지 않는다. 작가는 주문을 그대로 받는다.
-#   V3.0에서는 서로 부딪치는 주문 조합(상황부터 + 사실 먼저 같은 것)이 나오면 작가가 하나를 어길 수밖에 없었고, 그게 반려로 이어졌다.
-# - 글이 "대중 평가는 갈린다." 같은 딱지로 끝나던 것(V3.1 10편 중 6편)을 고쳤다. 반응은 문장 안에 넣고, 정보 문단의 마지막 문장은
-#   앞 이야기로 돌아가 글을 닫는다. 형태 검사가 반응 문장으로 끝난 글과 "대중 평가는" 딱지를 잡는다.
-# - 형태 검사 버그 고침: FBI · CIA 같은 대문자 약어(2~5자)를 "영문 표기가 남았다"로 잡지 않는다. V3.2 첫 10편에서 플라워 킬링 문이 이것으로 떨어졌다.
-#
-# **V3.3에서 바뀐 것 — PM 9/29: 같은 말 반복과 '걸린다'는 무조건 잡는다**
-#
-# - 같은 말 되풀이를 코드(`되풀이검사`)가 잡는다. 새 말이 없는 문장 · 같은 어절 셋이 세 문장 넘게. 형태 검사라 고쳐지기 전엔 올라가지 않는다.
-# - 이미 개봉한 영화를 '걸린다' · '관객을 만난다' · '개봉된다'로 쓰면 잡는다(전에는 '개봉한다'만 잡았다). 재료에도 '이미 개봉했다. 과거형으로 쓴다'를 적는다.
-# - 재개봉 판정을 고쳤다. 한국 개봉 기록이 그 전에도 있을 때만 재개봉이다. 해외에서 먼저 나오고 몇 해 뒤 한국에 걸린 것은 `late_kr`(늦은 한국 개봉)이다. TMDB 한국 기록이 빠졌을 수 있어 '다시' · '처음' 둘 다 단정하지 않는다.
-#   V3.2에서 2025년 이탈리아 영화의 한국 첫 개봉을 "다시 극장에 걸린다"고 썼다.
 
 # ## 셀 1 — 설치
 #
@@ -122,7 +88,7 @@ TMDB_KEY = _secret("TMDB_KEY")
 os.environ["OPENAI_API_KEY"] = _secret("LLM_KEY")
 print("키 읽음. 길이:", len(os.environ["OPENAI_API_KEY"]))
 
-VERSION = "Movie Info V3.3"
+VERSION = "Movie Info V2.5"
 FORM = "정보 전달"
 
 # ── 모델 ──────────────────────────────────────────────────
@@ -140,7 +106,6 @@ REASONING_EFFORT = "low"
 # ── 상한 ──────────────────────────────────────────────────
 MAX_REWRITE = 3          # 형태 검사 · 판정관 되돌리기 상한
 MAX_EDITOR_RETURN = 3    # 편집국장 반려 상한. 임시값
-EDITOR_FIX_LIMIT  = 3    # V3.1: 고칠 것이 이보다 많으면 반려한다(마지막 판 빼고). 영화 리뷰 `고칠것_상한`과 같은 값
 MAX_STEPS = 40           # 한 편에 도는 마디 수 상한. 어떤 경우에도 이 위로는 안 돈다
 REQUEST_LIMIT_PER_RUN = 3
 
@@ -162,7 +127,7 @@ EXCLUDE_GENRES  = {"다큐멘터리", "가족", "애니메이션", "TV 영화"}
 # ── 글마다 무작위로 뽑는 것 ──────────────────────────────
 TEMPERATURES = ["건조", "따뜻함", "짓궂음"]
 PERSONAS = ["상황부터", "대비", "관객", "맥락", "바꿔 말하기", "질문", "결론부터"]
-LAYOUTS  = ["정보는 마지막 문단"]      # V3.1: 하나로 고정(PM). 앞은 V3.0 이 넷 중 하나를 뽑았다
+LAYOUTS  = ["줄거리 먼저", "사실 먼저", "줄거리 나눠 넣기", "질문에서 출발"]
 
 MIN_CHARS, MAX_CHARS = 900, 1100     # 기준 1000자. 폭은 임시값
 
@@ -221,8 +186,7 @@ class Material(BaseModel):
     rating: str | None = None
     release_date: str | None = None
     upcoming: bool = False              # 아직 개봉 안 한 영화인지
-    rerelease: bool = False             # 옛날 영화가 다시 걸린 것인지 (한국 개봉 기록이 그 전에도 있다)
-    late_kr: bool = False               # V3.3: 해외에서 먼저 나오고 한국에는 몇 해 뒤 처음 걸렸다. 재개봉이 아니다
+    rerelease: bool = False             # 옛날 영화가 다시 걸린 것인지
     first_release: str | None = None    # 처음 개봉일
     adult: bool = False
     collection_id: int | None = None     # TMDB 컬렉션 번호. 시리즈 용어집을 찾는 데 쓴다
@@ -261,7 +225,7 @@ class Brief(BaseModel):
         default="", description="그 질문의 답 한 줄. 재료에 있는 것으로")
     plan: list[str] = Field(
         default_factory=list,
-        description="문단 계획. 문단마다 할 말 한 줄. 넷에서 여섯. 마지막 문단은 늘 관람 정보 문단이다(개봉일 · 상영시간 · 등급 · 출연진 · 반응). 그 앞은 이야기와 맥락이다")
+        description="문단 계획. 문단마다 할 말 한 줄. 셋에서 여섯. 첫 문단에 질문이 드러나고 마지막 문단이 답이다. 출연진 · 상영시간 · 등급을 한 문단에 몰지 않는다")
     dropped: list[str] = Field(
         default_factory=list, description="재료에 있었지만 쓸 수 없다고 본 것과 그 까닭")
 
@@ -304,25 +268,12 @@ class Fix(BaseModel):
 
 
 class Editorial(BaseModel):
-    """편집국장이 낸 것. 고치지 않는다. 문제를 무게별로 적는다. 통과 · 반려는 코드(editor_gate)가 정한다(V3.1)."""
-    fatal: list[str] = Field(
+    """편집국장이 낸 것. 고치지 않는다. 통과인지 반려인지와 반려 사유뿐이다."""
+    decision: Literal["통과", "반려"]
+    issues: list[str] = Field(
         default_factory=list,
-        description="치명. 이대로 나가면 안 되는 것. 재료와 어긋난 사실 · 재료 표시나 출처가 본문에 남음 · 뜻을 알 수 없는 문장 · 관람 정보 문단이 없음. 한 줄에 하나. 어느 문장이 왜")
-    fix: list[str] = Field(
-        default_factory=list,
-        description="고칠 것. 읽는 사람이 걸려 넘어지는 것. 되풀이 · 아무 말 안 한 문장 · 인과 없는 연결 · 되감기 · 같은 꼴 문단 · 반응 딱지로 끝남. 한 줄에 하나. 어느 문장이 왜")
-    minor: list[str] = Field(
-        default_factory=list,
-        description="사소. 고치면 나아지지만 읽는 데 걸리지 않는 것. 주문(온도 · 시작점)대로 안 간 것도 여기다. 한 줄에 하나")
-    missed: list[str] = Field(
-        default_factory=list,
-        description="앞 판이 있을 때만. 앞 판 글에도 그대로 있었는데 앞 판 판정이 안 잡은 문제. 반려 사유가 아니다. 위 세 칸에 넣지 않는다")
+        description="반려 사유. 한 줄에 하나. 어느 문장이 왜 걸리는지. 통과면 비운다")
     why: str = Field(description="한 줄 총평")
-
-    @property
-    def issues(self) -> list[str]:
-        """반려 사유로 치는 것. 치명 + 고칠 것. 사소 · 못 봄은 안 친다."""
-        return [f"(치명) {x}" for x in self.fatal] + list(self.fix)
     compared: list[str] = Field(
         default_factory=list,
         description="앞 판 판정이 있을 때만. 앞 판 반려 사유마다 한 줄. '고쳐짐 — 무엇' / '남음 — 무엇'. "
@@ -352,7 +303,7 @@ class JudgeScore(BaseModel):
 
 class RunState(BaseModel):
     """한 편을 만드는 동안 모든 마디가 같이 읽고 쓰는 꾸러미.
-    V3.0부터 LangGraph StateGraph의 상태다."""
+    LangGraph로 옮기면 이것이 그래프의 상태가 된다."""
     material: Material
     topic: Topic = "영화"
     tag_topic: Topic | None = None
@@ -364,7 +315,6 @@ class RunState(BaseModel):
     order: WriteOrder | None = None
     article: Article | None = None
     editorial: Editorial | None = None
-    editor_pass: bool = False      # V3.1: editor_gate 결과
     shape_bad: list[str] = Field(default_factory=list)
     fix_reasons: list[str] = Field(default_factory=list)   # 고치기가 받을 지적
     judge: JudgeScore | None = None
@@ -382,7 +332,6 @@ class RunState(BaseModel):
     status: str = ""             # 대상아님 · 재료부족 · 판단보류 · 올림 · 탈락보관
     reason: str = ""
     log: list[dict] = Field(default_factory=list)
-    next_node: str = ""          # V3.0: 갈림길이 고른 다음 마디 이름. LangGraph 조건 엣지가 이것만 읽는다
 
 # ## 셀 3-2 — 시리즈 용어집 (정식 표기 · 다른 표기 · 뜻)
 
@@ -2738,25 +2687,18 @@ TAG_LINE_YES = "태그 토픽은 {tag_topic} 하나다. 그 토픽 이야기는 
 TAG_LINE_NO  = "태그 토픽은 없다. 다른 토픽 이야기를 넣지 않는다."
 
 FORM_INFO = """
-정보 전달은 이 영화가 무엇인지를 이야기와 맥락으로 풀고, 언제 나오는지와 관람 정보를 마지막 문단에 모아 알려주는 글이다.
+정보 전달은 이 영화가 무엇이고 언제 나오는지를, 독자의 정보 질문 하나에 답하면서 알려주는 글이다.
 볼지 말지 가려 주는 글이 아니다. 그건 리뷰다.
 무엇을 하려는 작품인지 해석하는 글도 아니다. 그건 평론이다.
 
 [독자의 질문]
-정리된 재료에 독자의 질문 · 답 · 문단 계획이 있다. 질문은 이 글이 무엇을 풀어 줄지다. 첫 문단에 꼭 적지 않아도 된다. 첫 문단은 시작점대로 연다.
-답은 정보 문단 앞 어딘가에서 한 번, 한두 문장으로 쓴다. 앞 문단의 문장을 다시 적지 않는다.
+정리된 재료에 독자의 질문 · 답 · 문단 계획이 있다. 그 질문을 첫 문단에 놓고 마지막 문단에서 답한다.
+시작점이 상황이나 결론이면 첫 문단은 그것으로 열되, 질문이 무엇인지는 첫 문단 안에서 드러난다.
+답 문단은 근거 문단의 문장을 다시 적지 않는다. 답은 한두 문장이고 그 뒤에 붙는 것은 답이 독자에게 무슨 뜻인지다.
+질문 문구는 본문에 두 번까지다. 첫 문단에 한 번, 필요하면 마지막 문단에 한 번.
 답이라고 말하지 않고 답을 쓴다. "답은 이렇다", "그래서 답이다"는 독자가 읽을 문장이 아니다.
 
-[정보 문단 — 마지막 문단]
-마지막 문단은 관람 정보 문단이다. 개봉일(재개봉이면 재개봉일) · 상영시간 · 등급 · 주요 출연진 · 대중 반응을 여기 모은다. 재료에 없는 것은 뺀다.
-앞 문단에서는 상영시간 · 등급 · 대중 반응을 꺼내지 않는다. 이야기 속 인물을 말할 때 배우 이름을 괄호로 붙이는 것은 된다.
-정보 문단은 문장으로 쓴다. 사실이 한 문단에 모이는 것은 괜찮다. 점수 · 인원수는 쓰지 않는다.
-반응은 "대중 평가는 갈린다"처럼 딱지로 붙이지 않는다. [대중 평가 쓰는 법]의 말을 다른 사실과 이어지는 문장 안에 넣는다.
-정보 문단은 사실이나 반응 문장으로 끝내지 않는다. 마지막 문장은 앞 문단의 이야기로 한 번 돌아가 글을 닫는다. 줄거리를 요약하거나 앞 문장을 되풀이하지 않는다.
-  안 됨: …상영시간은 101분이고 15세 이상 관람가다. 대중 평가는 갈린다.
-  됨: …상영시간은 101분이고 15세 이상 관람가다. 평은 갈렸어도, 등대지기가 켜 둔 불은 마지막 장면까지 꺼지지 않는다.
-
-아래 넷이 글 안에 들어가야 한다. 칸이 아니다. 이야기 · 맥락 · 원작은 앞 문단에서, 개봉일 · 반응은 마지막 정보 문단에서 나온다.
+아래 넷이 글 안에 들어가야 한다. 칸이 아니다. 답으로 가는 길에 나온다. 어디에서 시작할지는 배치 지시를 따른다.
 - 무엇이 언제 나오는지. 개봉일과 감독은 반드시 들어간다
 - 이 영화가 무슨 이야기인지. 결말 앞까지
 - 어떤 기대나 반응이 있었는지. 재료에 있을 때만 쓴다. 없으면 이 자리를 비운다
@@ -2765,8 +2707,8 @@ FORM_INFO = """
 [글이 이어지게 쓴다]
 넷은 채워야 할 칸이 아니다. 하나의 글 안에서 서로를 부르며 나온다.
 앞 문장이 다음 문장을 부른다. 앞 문장에서 꺼낸 것을 다음 문장이 받아서 이어 간다.
-  안 됨: 원작은 시리즈 네 번째 책이다. 감독은 마이크 뉴웰이다. (서로 상관없는 사실을 붙였다)
-  됨: 시리즈에서 가장 긴 네 번째 책을 한 편에 눌러 담는 일을 맡은 사람이 마이크 뉴웰이다.
+  안 됨: 상영시간은 157분이다. 감독은 마이크 뉴웰이다. (서로 상관없는 사실을 붙였다)
+  됨: 157분은 시리즈에서 가장 긴 원작을 한 편에 눌러 담은 결과이고, 그 일을 맡은 사람이 마이크 뉴웰이다.
 사실 하나를 말했으면 그 사실이 이 영화에서 무엇을 뜻하는지 이어서 말한다.
   안 됨: 2005년에 나온 작품이다.
   됨: 2005년 작이니, 해리가 열네 살이던 이야기가 이제 스무 해 만에 다시 극장에 걸린 셈이다.
@@ -2829,19 +2771,22 @@ TEMPERATURE = {
 }
 
 PERSONA = {
-"상황부터":    "줄거리에 나온 상황 하나를 먼저 그려 놓고 거기서 시작한다. 그 상황이 누가 언제 만든 영화의 것인지는 그 다음이다. 정보 문단 바로 앞 문단에서 그 상황을 한 번 다시 부르며 닫는다. 줄거리를 차례로 옮기지 않는다. 상황은 첫 문단과 정보 문단 바로 앞 문단에 하나씩이다.",
+"상황부터":    "줄거리에 나온 상황 하나를 먼저 그려 놓고 거기서 시작한다. 그 상황이 누가 언제 만든 영화의 것인지는 그 다음이다. 마지막 문단에서 그 상황을 한 번 다시 부르며 닫는다. 줄거리를 차례로 옮기지 않는다. 상황은 첫 문단과 마지막 문단에 하나씩이다.",
 "대비":        "이 영화 안의 두 가지를 마주 놓고 그 차이로 글을 끌고 간다. 원작과 영화, 감독의 앞 작품과 이 작품, 기대와 실제 반응, 제목과 이야기 같은 것이다. 끝까지 그 둘이 남고, 차이가 답이 된다.",
 "관객":        "이 영화를 보려는 사람이 어디서 막히는지에서 시작한다. 원작을 안 읽었는데 되나, 앞 편을 안 봤는데 되나, 상영시간이 길다는데 같은 것이다. 그 막힘을 풀어 주는 것이 글이고, 풀린 자리가 답이다.",
 "맥락":        "이 영화가 어디에서 나왔는지에서 시작한다. 원작 · 감독의 앞 작품 · 시리즈의 자리 중 하나다. 그 자리가 이 영화의 무엇을 정했는지가 글 전체다. 연혁을 읽어 주지 않는다. 앞 작품은 이 영화와 이어지는 이유가 같은 문장에 있을 때만 부른다.",
-"바꿔 말하기": "이 갈래나 이 영화에 흔히 붙는 말(\"SF는 어렵다\", \"원작보다 못하다\", \"애들 영화\", \"속편은 뻔하다\")을 한 번 뒤집어 놓고 시작한다. 뒤집은 근거가 글 전체이고, 정보 문단 바로 앞 문단에서 뒤집은 말이 답이 된다.",
-"질문":        "독자가 할 법한 질문 하나를 첫 문단에 놓고 글 전체로 답한다. 답은 정보 문단 바로 앞 문단에 나온다. 그 앞은 전부 근거다. 답을 앞에서 흘리지 않는다. 답이라고 말하지 않고 답을 쓴다.",
-"결론부터":    "이 글이 하려는 말(이 영화가 무엇인지 한 줄)을 첫 문장에 놓고 나머지로 받친다. 정보 문단 바로 앞 문단의 끝 문장은 첫 문장으로 돌아오되 같은 문장을 다시 적지 않는다. 첫 문장이 왜 그런지가 글 전체다.",
+"바꿔 말하기": "이 갈래나 이 영화에 흔히 붙는 말(\"SF는 어렵다\", \"원작보다 못하다\", \"애들 영화\", \"속편은 뻔하다\")을 한 번 뒤집어 놓고 시작한다. 뒤집은 근거가 글 전체이고, 마지막 문단에서 뒤집은 말이 답이 된다.",
+"질문":        "독자가 할 법한 질문 하나를 첫 문단에 놓고 글 전체로 답한다. 답은 마지막 문단에 나온다. 그 앞은 전부 근거다. 답을 앞에서 흘리지 않는다. 답이라고 말하지 않고 답을 쓴다.",
+"결론부터":    "이 글이 하려는 말(이 영화가 무엇인지 한 줄)을 첫 문장에 놓고 나머지로 받친다. 마지막 문장은 첫 문장으로 돌아오되 같은 문장을 다시 적지 않는다. 첫 문장이 왜 그런지가 글 전체다.",
 }
 
 LAYOUT = {
-"정보는 마지막 문단": "앞 문단들은 이야기와 맥락이다. 시작점대로 열고 줄거리 · 원작 · 감독의 앞 작품으로 끌고 간다. 개봉일 · 상영시간 · 등급 · 주요 출연진 · 대중 반응 같은 관람 정보는 마지막 문단 하나에 모은다. 앞 문단에서는 상영시간 · 등급 · 대중 반응을 꺼내지 않는다. 감독과 원작은 이야기와 이어질 때 앞 문단에서 불러도 된다. 마지막 문단은 문장으로 쓰고, 앞 이야기를 요약하지 않는다. 반응이나 사실로 끝내지 않고 마지막 문장에서 이야기로 돌아가 닫는다.",
+"줄거리 먼저":     "이야기 속 한 장면에서 시작한다. 그 장면이 누가 언제 만든 것인지로 흘러간다. 장면이 먼저고 개봉일 · 감독은 뒤에 붙는 꼬리표다. 줄거리를 다 옮기고 나서 사실을 붙이는 게 아니다.",
+"사실 먼저":       "언제 누가 만든 무엇인지에서 시작한다. 그 사실이 왜 중요한지를 따라가다 이야기에 닿는다. 사실을 한 문단에 다 몰지 않는다. 하나를 놓고 그 뜻을 말한 뒤 다음 사실이다.",
+"줄거리 나눠 넣기": "이야기를 조금 꺼내고, 사실을 붙이고, 다시 이야기로 돌아온다. 이 걸음을 끝까지 반복한다. 사실만 있는 문단, 이야기만 있는 문단을 만들지 않는다.",
+"질문에서 출발":   "이 영화를 두고 할 만한 질문 하나로 시작한다. 근거를 하나씩 놓고 마지막 문단에서 답한다. 마지막 문단 앞에서 \"그래서\", \"결국\"으로 답을 미리 말하지 않는다.",
 }
-# 배치는 어디에서 시작해 어디로 흘러가는지다. V3.1부터 마지막 문단만 정보 문단으로 정해 둔다.
+# 배치는 어디에서 시작해 어디로 흘러가는지다. 문단 순서가 아니다.
 
 
 def order_text(order: "WriteOrder") -> str:
@@ -3174,9 +3119,7 @@ def fetch_material_by_id(mid: int, fallback_title: str = "") -> Material:
     rd = kr["date"] or ""
     year = int(first[:4]) if first else (int(rd[:4]) if rd else None)
     # 한국 개봉이 최초 개봉보다 한참 뒤면 재개봉으로 본다
-    # V3.3: 재개봉은 한국 극장 개봉 기록이 그 전에도 있을 때만이다. 해외에서 먼저 나오고 한국에 처음 들어온 것은 늦은 한국 개봉이다
-    rerelease = bool(kr.get("rerelease") or (kr["first"] and rd and kr["first"] < rd))
-    late_kr = bool(first and rd and not rerelease and rd[:4] != first[:4] and rd > first)
+    rerelease = bool(first and rd and rd[:4] != first[:4] and rd > first)
     before_works, after_works = (_director_works(director_id, mid, first or rd)
                                  if director_id else ([], []))
     upcoming = bool(rd) and rd > TODAY
@@ -3197,7 +3140,6 @@ def fetch_material_by_id(mid: int, fallback_title: str = "") -> Material:
         release_date=rd or None,
         upcoming=upcoming,
         rerelease=rerelease,
-        late_kr=late_kr,
         first_release=first or None,
         adult=bool(d.get("adult")),
         collection_id=((d.get("belongs_to_collection") or {}).get("id")),
@@ -3254,16 +3196,12 @@ def material_to_text(m: Material) -> str:
     add("제목", m.title)
     if m.first_release:
         rows.append(f"처음 개봉(제작 연도): {m.first_release}")
-    때 = (" — 아직 개봉하지 않았다. 앞으로 개봉한다고 쓴다" if m.upcoming
-          else " — 이미 개봉했다. 과거형으로 쓴다(개봉했다 · 극장에 걸렸다). '걸린다' · '개봉한다'로 쓰지 않는다")   # V3.3
     if m.rerelease:
         rows.append(f"한국 개봉: {m.release_date} — 재개봉이다. "
-                    f"{m.first_release[:4]}년 작품이 {m.release_date[:4]}년에 다시 걸렸다" + 때)
-    elif getattr(m, "late_kr", False):
-        rows.append(f"한국 개봉: {m.release_date} — {m.first_release[:4]}년 작품이 {m.release_date[:4]}년 한국 극장에 걸렸다. "
-                    "전에 한국에서 개봉한 적이 있는지는 재료에 없다. '다시' · '처음'이라고 단정하지 않는다" + 때)
+                    f"{m.first_release[:4]}년 작품이 {m.release_date[:4]}년에 다시 걸렸다")
     else:
-        rows.append(f"한국 개봉: {m.release_date or '정보 없음'}" + (때 if m.release_date else ""))
+        rows.append(f"한국 개봉: {m.release_date or '정보 없음'}"
+                    + (" (아직 개봉하지 않았다)" if m.upcoming else ""))
     add("감독", m.director)
     add("출연", ", ".join(m.cast))
     add("갈래", " · ".join(m.genres))
@@ -3497,10 +3435,8 @@ PREP_SYSTEM = """
   예: 원작을 안 읽어도 되나 / 이 감독이 왜 이 원작을 잡았나 / 개봉 전에 무엇을 알면 되나 / 시리즈 어디에 있는 편인가 / 왜 지금 다시 걸리나
 "볼 만한가", "재미있나"는 리뷰의 질문이다. 적지 않는다.
 답은 한 줄이다. 재료로 답할 수 있는 것만 묻는다. 재료에 답이 없는 질문은 고르지 않는다.
-문단 계획은 넷에서 여섯이다. 문단마다 할 말 한 줄.
-마지막 문단은 늘 관람 정보 문단이다. 개봉일 · 상영시간 · 등급 · 주요 출연진 · 대중 평가 중 재료에 있는 것을 모은다.
-그 앞 문단들은 이야기와 맥락이다. 상영시간 · 등급 · 대중 평가는 앞 문단에 두지 않는다. 감독은 앞 문단 어딘가에 꼭 있다.
-답은 정보 문단 앞 어딘가에 한 번 나온다. 첫 문단이 질문일 필요는 없다.
+문단 계획은 셋에서 여섯이다. 문단마다 할 말 한 줄. 첫 문단에 질문이 드러나고 마지막 문단이 답이다.
+출연진 · 상영시간 · 등급 · 대중 평가를 한 문단에 몰지 않는다. 필요한 문단에 하나씩 나눈다. 안 필요한 것은 뺀다. 개봉일과 감독은 어느 문단엔가 꼭 있다.
 할 말은 문장 하나가 아니라 메모다. 판단 · 장면 · 질문 · 사실을 섞는다. 문단마다 꼴이 다르다.
 
 [이름 표기]
@@ -3585,39 +3521,36 @@ async def write(order: WriteOrder) -> Article:
 # ## 셀 8-2 — 편집국장 (Pydantic AI) — 읽고 통과 · 반려만 정한다
 
 EDITOR_SYSTEM = """
-너는 편집국장이다. 작가가 낸 글을 통째로 읽고 걸리는 자리를 무게별로 적는다.
-통과인지 반려인지는 네가 정하지 않는다. 네가 적은 무게를 보고 코드가 정한다. 그러니 무게를 정확히 단다.
+너는 편집국장이다. 작가가 낸 글을 통째로 읽고 통과인지 반려인지만 정한다.
 글을 고치지 않는다. 고칠 방법을 대신 써 주지 않는다. 어디가 왜 걸리는지만 적는다.
 규칙 검사(글자 수 · 존댓말 · 느낌표 같은 것)는 네 일이 아니다. 코드가 따로 본다.
+네 일은 규칙에 안 걸리는데도 글이 안 읽히는 자리를 잡는 것이다.
 
-[무게 — 셋 중 하나에 넣는다]
-치명(fatal) — 이대로 나가면 안 된다.
-- [정리된 재료]와 어긋난 사실. 재료에 관전이라고 돼 있는데 참가라고 썼다
-- 재료 표시나 출처가 본문에 남았다. "로키(배우 미상)", "TMDB 평점 분포에서도"
-- 무슨 뜻인지 알 수 없는 문장. 문장이 중간에 끊겼다
-- 마지막 문단이 관람 정보 문단이 아니다. 개봉일 · 상영시간 · 등급 · 출연진 · 반응이 마지막 문단에 없다
-고칠 것(fix) — 읽는 사람이 걸려 넘어진다.
+[보는 것]
 - 같은 이야기가 두 번 나온다. 앞 문단에서 말한 장면이나 사실을 뒤 문단이 처음부터 다시 말한다
 - 아무 말도 안 한 문장. 그 영화가 아니라 아무 영화에나 붙여도 되는 문장
 - 앞 문장과 뒤 문장이 안 이어진다. 인과가 없는데 "~라" · "~니" 로 묶었다
 - 앞에서 나온 장면으로 되감는다. 이야기가 앞으로 가다가 처음으로 돌아간다
-- 앞 문단에 상영시간 · 등급 · 대중 반응이 나왔다. 마지막 정보 문단으로 가야 한다
+- 사실이 한 줄씩 나열된 문단. 상영시간 · 등급 · 감독 · 전작이 서로 상관없이 붙어 있다
 - 같은 말이 가까이 두 번 나온다. "모습을 드러낸다"가 두 문장 안에 두 번
-- 같은 꼴 문단이 두 번 이상 이어진다. 문장 길이가 다 비슷하고 "A는 B다"가 이어진다
-- 문단 첫 문장이 같은 방식(영화 제목으로 열기, "이 영화는")으로 두 번 연속이다
-- 정리된 재료의 문단 계획 한 줄이 첫 문장에 그대로 보인다
-사소(minor) — 고치면 나아지지만 읽는 데 걸리지는 않는다. 낱말 하나 · 조사 하나 · 취향에 가까운 것. 주문대로 안 간 것.
+- [정리된 재료]와 어긋난 사실. 재료에 관전이라고 돼 있는데 참가라고 썼다
+- [주문]의 온도 · 시작점 · 배치대로 안 갔다. 장면에서 시작하라고 했는데 사실로 시작했다
 
 [주문대로 갔는가]
-[주문]의 온도 · 시작점과 그 뜻을 받는다. 짓궂음인데 웃긴 대목이 하나도 없다, 상황부터인데 개봉일로 열었다 — 사소에 적는다.
-주문 어김은 반려 사유가 아니다. 주문끼리 서로 부딪쳐 하나를 어길 수밖에 없을 때가 있다. 글이 읽히면 그걸로 된다.
-시작점대로 열었는지는 첫 문단에서 본다. 배치는 늘 같다. 앞 문단은 이야기와 맥락, 마지막 문단은 관람 정보다.
+[주문]의 온도 · 시작점 · 배치와 그 뜻을 받는다. 주문대로 안 갔으면 반려다.
+- 짓궂음인데 웃긴 대목이 하나도 없다. 상황부터 열라고 했는데 개봉일로 열었다. 줄거리 나눠 넣기인데 줄거리가 한 문단에 몰려 있다.
+- 시작점대로 열었는지는 첫 문단에서 본다. 배치대로 갔는지는 문단 순서에서 본다.
 
-[정보 문단 — 마지막 문단]
-마지막 문단에 관람 정보가 모여 있는 것은 걸리지 않는다. 사실이 한 문단에 모인 것이 이 문단의 일이다.
-마지막 문장이 앞 이야기로 돌아가 글을 닫는 한 문장이면 걸지 않는다. 그 문장이 줄거리를 요약하거나 앞 문장을 되풀이했으면 고칠 것이다.
-글이 반응이나 사실 문장("대중 평가는 갈린다.")으로 끝났으면 고칠 것이다. 반응을 "대중 평가는 ~" 딱지로 붙였으면 고칠 것이다.
-질문을 첫 문단에 두지 않았다는 이유로 걸지 않는다. 답이 정보 문단 앞 어딘가에 있으면 된다.
+[독자의 질문]
+[정리된 재료]에 독자의 질문이 있으면, 그 질문이 첫 문단에 드러나는지와 답이 마지막 문단에 있는지 본다. 둘 중 하나가 없으면 반려다.
+답이 근거 문단을 다시 적은 것이면 답이 아니다. 답 문단에 앞에서 안 나온 사람 · 작품이 처음 나오면 반려다.
+
+[되풀이 — 글의 꼴]
+- 같은 꼴 문단이 두 번 이상 이어진다(사실 하나 → 풀이 → 다음 사실). 반려다.
+- 문장 길이가 다 비슷하고 같은 꼴 문장("A는 B다")이 이어진다. 반려다.
+- 문단 첫 문장이 같은 방식(영화 제목으로 열기, "이 영화는")으로 두 번 연속이다. 반려다.
+- 출연진 · 상영시간 · 등급 · 반응이 한 문단에 몰려 목록처럼 읽힌다. 반려다.
+- 정리된 재료의 문단 계획 한 줄이 첫 문장에 그대로 보인다. 반려다.
 
 [안 보는 것]
 - 문체 취향. 네가 다르게 썼을 것 같다는 이유로 걸지 않는다
@@ -3627,18 +3560,20 @@ EDITOR_SYSTEM = """
 [앞 판이 있으면]
 [앞 판 판정]과 [앞 판 글]이 붙어 오면 [이번 글]은 그 판정을 받고 다시 쓴 글이다. 처음 보는 것처럼 읽지 않는다. 판정하는 것은 [이번 글]이다. [앞 판 글]은 대조하려고 주는 것이다.
 - [이번 글] 머리에 판 종류가 적혀 있다. "고침"이면 작가가 앞 글을 받아 지적된 자리만 손본 것이다. 두 글을 문단 단위로 나란히 놓고 바뀐 자리를 본다. "새로 씀"이면 앞 글 없이 처음부터 다시 쓴 것이다. 앞 판 사유가 다른 문장으로 옮겨 와 남았는지 본다.
-- 앞 판 사유마다 이번 글에서 고쳐졌는지 본다. compared에 한 줄씩 적는다. "고쳐짐 — 무엇", "남음 — 무엇". 남은 것은 같은 무게 칸에 다시 넣는다. 고쳐진 것은 다시 잡지 않는다.
-- 이번 글에서 새로 생긴 문제는 "새로 생김 — 무엇"으로 compared에 적고 무게 칸에 넣는다.
-- 앞 판 글에도 그대로 있었는데 앞 판 사유에 없는 문제는 "앞 판에서 못 봄 — 무엇"으로 compared에 적고 missed에 넣는다. 무게 칸에는 넣지 않는다. 못 봄은 반려 사유가 아니다.
-- 앞 판이 없으면 compared와 missed는 비워 둔다.
+- 앞 판 반려 사유마다 이번 글에서 고쳐졌는지 본다. compared에 한 줄씩 적는다. "고쳐짐 — 무엇", "남음 — 무엇". 남은 것은 issues에 다시 넣는다. 고쳐진 것은 다시 잡지 않는다.
+- 이번 글에서 새로 생긴 문제는 "새로 생김 — 무엇"으로 적고 issues에 넣는다. 앞 판 글에도 그대로 있었는데 앞 판 사유에 없는 문제면 "앞 판에서 못 봄 — 무엇"으로 적고 issues에 넣는다. 둘을 섞지 않는다. 새로 생김은 글이 나빠진 것이고, 못 봄은 앞 판이 놓친 것이다.
+- 남음 · 새로 생김 · 못 봄이 하나도 없으면 통과다. 앞 판이 없으면 compared는 비워 둔다.
 
-[적는 법]
-한 줄에 하나씩, 어느 문장이 왜 걸리는지 적는다.
-  예: (고칠 것) 2문단 첫 문장 — 1문단에서 이미 나온 악몽·상처·월드컵을 처음부터 다시 말한다
-  예: (고칠 것) 4문단 "이 작품은 모험을 펼치면서 판타지 세계를 그린 영화다" — 어느 영화에나 맞는 말이다
-  예: (치명) 4문단 "긴 시간은 줄거리를 되풀이하기보다 … 하나의 임무로 묶는 데 쓰인다" — 무슨 뜻인지 알 수 없다
-  예: (치명) 3문단 "로키(배우 미상)" — 재료 표시가 본문에 남았다
-걸리는 것이 없으면 세 칸을 비운다. 무게를 부풀리지 않는다. 치명은 정말 나가면 안 되는 것만이다.
+[정하는 법]
+걸리는 것이 없으면 통과다.
+걸리는 것이 하나라도 있으면 반려다. 사유는 한 줄에 하나씩, 어느 문장이 왜 걸리는지 적는다.
+  예: 2문단 첫 문장 — 1문단에서 이미 나온 악몽·상처·월드컵을 처음부터 다시 말한다
+  예: 4문단 "이 작품은 모험을 펼치면서 판타지 세계를 그린 영화다" — 어느 영화에나 맞는 말이다
+  예: 4문단 "긴 시간은 줄거리를 되풀이하기보다 … 하나의 임무로 묶는 데 쓰인다" — 무슨 뜻인지 알 수 없다
+  예: 5문단 "그 변화가 이 영화가 어디에서 출발했는지를 분명히 한다" — 아무 말도 안 했다
+  예: 3문단 "로키(배우 미상)" — 재료 표시가 본문에 남았다
+  예: 5문단 "TMDB 평점 분포에서도" — 재료 출처가 본문에 들어갔다
+사소한 것 하나로 반려하지 않는다. 읽는 사람이 걸려 넘어질 것만 적는다.
 """
 
 editor = Agent(
@@ -3657,9 +3592,8 @@ def prev_text(k: dict | None) -> str:
     v = k.get("판정")
     lines = [f"[앞 판 판정 — {k.get('차례', '?')}차]"]
     if isinstance(v, Editorial):
-        lines.append(f"결과: {k.get('결과', '?')} — {v.why}")
-        lines += ([f"- (치명) {i}" for i in v.fatal] + [f"- (고칠 것) {i}" for i in v.fix]
-                  + [f"- (사소) {i}" for i in v.minor]) or ["- 걸린 것 없음"]
+        lines.append(f"결과: {v.decision} — {v.why}")
+        lines += [f"- {i}" for i in v.issues] or ["- 걸린 것 없음"]
     elif isinstance(v, JudgeScore):
         lines.append(f"토픽 적합도 {v.topic_fit} · 유형 일치 {v.form_fit} · 요소 포함 {v.element_fit} · "
                      f"홍보성 {v.promo} · 글 완성도 {v.completeness} · 어긋난 문장 {v.unsourced_claims}개 · 스포일러 {'있음' if v.spoiler else '없음'}")
@@ -3726,8 +3660,8 @@ ALLOWED_LATIN = {"SF", "OST", "CG", "VFX", "3D", "4D", "2D", "IMAX", "OTT", "TV"
 META_WORDS = ("재료에", "제시되지 않", "확인되지 않", "알려진 바 없", "정보가 없",
               "공개된 자료", "나와 있지 않", "TMDB", "평점 분포", "평점 기준", "미상")
 UNKNOWN_PAREN = re.compile(r"\((?:배우 |성우 |목소리[:：]?\s*)?(?:미상|알 수 없음|불명|미확인|없음)\)")   # V2.5: "(목소리: 미상)"도 잡는다
-FUTURE_RELEASE = re.compile(r"개봉(?:한다|할 예정|을 앞두|을 기다|된다|될 예정)|(?:극장에|스크린에|관객(?:을|과|에게)?) ?(?:다시 )?(?:걸린다|걸릴|찾아온다|만난다|찾는다)|다시 걸린다|재개봉한다")   # V3.3: 걸린다 · 관객을 만난다도 잡는다
-PAST_RELEASE   = re.compile(r"개봉(?:했다|됐다|되었다)|(?:극장에|관객(?:을|과)?) ?(?:다시 )?(?:걸렸다|찾아왔다|만났다)")
+FUTURE_RELEASE = re.compile(r"개봉(?:한다|할 예정|을 앞두|을 기다)")
+PAST_RELEASE   = re.compile(r"개봉(?:했다|됐다|되었다)")
 CAST_LIST = re.compile(r"(?:[가-힣]{2,5} [가-힣]{2,7}, ){2,}[가-힣]{2,5} [가-힣]{2,7}")
 HEDGE_ENDS = re.compile(r"(에 가깝다|인 셈이다|할 만하다|는 편이다|일 수 있다|로 보인다|로 느껴진다)[.]")
 HEDGE_MAX = 1
@@ -3743,8 +3677,7 @@ COPY_MIN_LEN      = 14
 STRUCTURE_HINTS = ("너무 짧다", "연달아", "끝맺음", "그대로 옮긴", "같은 말로 시작",
                    "접속사", "늘어놓았다", "문단이 많다", "문단이 적다",
                    "예시 문장", "흐리는", "는데",
-                   "다 비슷하다", "번 열었다", "한 문단에 몰렸다",
-                   "마지막 문단", "되풀이")   # V2.5: 꼴 문제는 고치기로 안 되면 다시 쓴다. V3.1: 정보 문단 자리도. V3.3: 되풀이도
+                   "다 비슷하다", "번 열었다", "한 문단에 몰렸다")   # V2.5: 꼴 문제는 고치기로 안 되면 다시 쓴다
 
 
 def _latin_leftovers(body: str) -> list[str]:
@@ -3756,8 +3689,6 @@ def _latin_leftovers(body: str) -> list[str]:
         if len(t.replace(" ", "")) < 2:
             continue
         if all(w in ALLOWED_LATIN for w in t.split()):
-            continue
-        if all(re.fullmatch(r"[A-Z]{2,5}", w) for w in t.split()):   # V3.2: FBI · CIA · NASA 같은 대문자 약어는 한국어에서도 그대로 쓴다
             continue
         out.append(t)
     return out
@@ -3876,13 +3807,8 @@ def shape_check(article: Article, order: WriteOrder) -> list[str]:
         # 감독은 재료가 영문일 수 있어 성(마지막 낱말)만으로도 본다. 둘이면 둘 다 있어야 한다
         for name in [d.strip() for d in m.director.split(",") if d.strip()]:
             last = name.split()[-1]
-            if name in body or last in body:
-                continue
-            # V3.1: 재료가 영문 이름이면 작가는 한글로 옮겨 쓴다(영문이 남으면 _latin_leftovers가 잡는다).
-            # V3.0은 영문 원문을 찾아서, 한글로 쓰면 이 검사에, 영문으로 쓰면 영문 검사에 걸려 늘 탈락했다
-            if not re.search(r"[가-힣]", name) and re.search(r"감독|연출|메가폰", body):
-                continue
-            bad.append(f"감독 이름이 본문에 없다 ({name})")
+            if name not in body and last not in body:
+                bad.append(f"감독 이름이 본문에 없다 ({name})")
 
     for mark in STAR_MARKS:
         if mark in body:
@@ -3938,9 +3864,7 @@ def shape_check(article: Article, order: WriteOrder) -> list[str]:
     if ex:
         bad.append(f"프롬프트 예시 문장을 그대로 옮겼다. 예: '{ex[0][:20]}…'")
 
-    _paras = [x.strip() for x in body.split("\n") if x.strip()]
-    _info_para = _paras[-1] if _paras else ""       # V3.1: 마지막 문단은 정보 문단이라 출연진을 모아도 된다
-    for sent in _sentences(body.replace(_info_para, "") if _info_para else body):
+    for sent in _sentences(body):
         bare = re.sub(r"\([^)]*\)", "", sent)      # 괄호 안 배우 이름은 안 센다
         if sum(1 for c in m.cast if c in bare) >= 3 or CAST_LIST.search(bare):
             bad.append("출연진 이름을 한 문장에 늘어놓았다")
@@ -3950,9 +3874,7 @@ def shape_check(article: Article, order: WriteOrder) -> list[str]:
         bad.append("괄호 안에 '미상' 같은 재료 표시가 남았다. 모르면 괄호를 뺀다")
 
     if not m.upcoming and FUTURE_RELEASE.search(body):
-        bad.append(f"이미 개봉한 영화를 앞으로 개봉할 것처럼 썼다 ('{FUTURE_RELEASE.search(body).group(0)}'). 시제를 과거로 쓴다(개봉했다 · 걸렸다)")
-    if not m.rerelease and re.search(r"다시 (?:극장에 |스크린에 )?걸|재개봉", body):
-        bad.append("재개봉 기록이 없는데 '다시 걸렸다' · '재개봉'이라고 썼다. '한국 극장에 걸렸다'로만 쓴다")   # V3.3
+        bad.append("이미 개봉한 영화를 개봉 예정처럼 썼다. 시제를 과거로 쓴다")
     if m.upcoming and PAST_RELEASE.search(body):
         bad.append("아직 개봉 안 한 영화를 개봉한 것처럼 썼다")
 
@@ -3972,63 +3894,7 @@ def shape_check(article: Article, order: WriteOrder) -> list[str]:
         bad.append("반응을 숫자로 적었다. 말로 바꿔 쓴다")
 
     bad += shape_form_check(body, m)                     # V2.5
-    bad += 되풀이검사(body, [m.title] + list(m.cast or []))   # V3.3: 같은 말 되풀이는 무조건 잡는다(PM)
     return bad
-
-
-
-# ── 같은 말 되풀이 (PM 9/29: 같은 말 반복은 무조건 잡는다) ──────────────
-# 9/29 검수에서 "천인대의 시칠리아 원정과 부르봉 왕조 군대와의 전투"가 한 글에 네 번 나온 글이 올라갔다.
-# 편집국장이 고칠 것 3건까지 넘기면서 생겼다. 그래서 되풀이는 코드가 잡는다. 두 가지를 본다.
-# (1) 새 말이 없는 문장 — 뜻 있는 낱말(앞 두 글자 줄기) 넷 이상 중 80% 넘게가 앞 문장들에 이미 나왔다.
-# (2) 같은 말 세 번 — 고유명사가 아닌 한글 어절 셋이 같은 차례로 세 문장 넘게 나온다.
-# 고유명사(제목 · 괄호 안 이름 · 따옴표 안 곡 이름 · '역' 앞 이름)와 흔한 말은 안 센다. 영문은 안 센다.
-# 9/29 저장된 글 50편에 돌려 봤다. 되풀이가 심한 영화 정보 5편을 다 잡고, 음악 올림 글은 하나도 안 잡았다.
-_되풀이_조사 = re.compile(r"(으로써|으로서|에서는|에게서|으로는|에서|에게|까지|부터|처럼|보다|이며|이고|이라는|라는|이란|으로|은|는|이|가|을|를|의|에|로|와|과|도|만|이다|다)$")
-_되풀이_흔한말 = set("영화 작품 이야기 이번 장면 사람 감독 출연 개봉 한국 상영 시간 관람 앨범 노래 음악 그는 그의 이는 하지 그러 그리 있다 없다 한다 된다 보다 이다 것이 그것 이것 모습 자신 함께 다시 가장 결국 먼저 처음 마지막 앞서 이후 동안 때문 과정 순간".split())
-
-
-def _되풀이_문장들(body):
-    return [s.strip() for s in re.split(r"(?<=[.!?…])\s+|\n+", body) if len(s.strip()) >= 8]
-
-
-def _되풀이_이름(body, 더=()):
-    names = re.findall(r"[『《「‘“]([^』》」’”]{1,40})[』》」’”]", body)
-    names += re.findall(r"'([^']{1,40})'", body)
-    names += re.findall(r"\(([가-힣 ·]{2,20})\)", body)
-    names += re.findall(r"([가-힣]{2,5})(?=\(| 역)", body)
-    out = set()
-    for n in list(names) + [x for x in 더 if x]:
-        for w in re.findall(r"[가-힣]+", str(n)):
-            if len(w) >= 2:
-                out.add(w[:2])
-    return out
-
-
-def _되풀이_줄기(s, 이름):
-    ws = [_되풀이_조사.sub("", w) for w in re.findall(r"[가-힣]+", s)]
-    return {w[:2] for w in ws if len(w) >= 2 and w[:2] not in _되풀이_흔한말 and w[:2] not in 이름}
-
-
-def 되풀이검사(body, 더이름=(), 기준=0.8, 최소줄기=4, 구길이=3, 구횟수=3):
-    이름 = _되풀이_이름(body, 더이름)
-    ss = _되풀이_문장들(body)
-    걸림, 본 = [], set()
-    for s in ss:
-        st = _되풀이_줄기(s, 이름)
-        if len(st) >= 최소줄기 and len(st & 본) / len(st) >= 기준:
-            걸림.append(f"같은 말 되풀이: '{s[:40]}…'는 앞에서 이미 한 말이다. 새 사실을 넣거나 문장을 뺀다")
-        본 |= st
-    세기 = {}
-    for k, s in enumerate(ss):
-        ws = [_되풀이_조사.sub("", w) for w in re.findall(r"[가-힣]+", s)]
-        ws = [w for w in ws if len(w) >= 2 and w[:2] not in 이름 and w[:2] not in _되풀이_흔한말]
-        for i in range(len(ws) - 구길이 + 1):
-            세기.setdefault(tuple(ws[i:i + 구길이]), set()).add(k)
-    for 구, ks in 세기.items():
-        if len(ks) >= 구횟수:
-            걸림.append(f"같은 말 되풀이: '{' '.join(구)}'가 {len(ks)}문장에 나온다. 한 번만 쓴다")
-    return 걸림
 
 
 def shape_form_check(body: str, m: Material) -> list[str]:
@@ -4046,28 +3912,11 @@ def shape_form_check(body: str, m: Material) -> list[str]:
     title_open = sum(1 for x in paras if x.startswith(openers))
     if title_open >= 3:
         bad.append(f"영화 제목이나 '이 영화'로 문단을 {title_open}번 열었다. 두 번까지다")
-    # V3.1: 관람 정보는 마지막 문단에 모은다. 앞 문단에 상영시간 · 등급이 나오거나, 마지막 문단에 정보가 없으면 잡는다
-    if len(paras) >= 2:
-        for i, x in enumerate(paras[:-1], 1):
-            if re.search(r"\d+\s*분(?!기|야|의 ?\d)", x) or re.search(r"관람가|관람 등급|\d+세 이상", x):
-                bad.append(f"{i}문단에 상영시간이나 등급이 나왔다. 관람 정보는 마지막 문단으로 옮긴다")
-                break
-        last = paras[-1]
-        want = {"개봉": bool(m.release_date or m.upcoming or m.rerelease), "상영시간": bool(m.runtime_min),
-                "등급": bool(m.rating), "출연진": bool(m.cast)}
-        got = {"개봉": bool(re.search(r"개봉|\d{4}년\s*\d{1,2}월", last)), "상영시간": bool(re.search(r"\d+\s*분", last)),
-               "등급": bool(re.search(r"관람가|등급|\d+세", last)), "출연진": any(c and c in last for c in (m.cast or [])[:8])}
-        have = [k for k, v in want.items() if v]
-        hit = [k for k in have if got[k]]
-        if have and len(hit) < min(2, len(have)):
-            bad.append("마지막 문단에 관람 정보가 없다. 개봉일 · 상영시간 · 등급 · 출연진 중 재료에 있는 것을 마지막 문단에 모은다")
-    # V3.2: 반응 딱지 · 반응 문장으로 끝난 글
-    if re.search(r"대중\s*평가(는|은|에는|가)\s", body):
-        bad.append("'대중 평가는' 딱지를 붙였다. 평이 갈린다 · 좋게 본 사람이 많다처럼 다른 사실과 이어지는 문장 안에 넣는다")
-    tail = [x for x in re.split(r"(?<=[.!?…])\s+", body.strip()) if x.strip()]
-    last_clause = re.split(r",|지만|어도|는데|으나", tail[-1])[-1] if tail else ""   # "평은 갈렸어도, 불은 꺼지지 않는다"는 된다
-    if last_clause and any(k in last_clause for k in RECEPTION_KEYS + ("대중 평가", "대중의 평가")):
-        bad.append("글이 대중 평가 문장으로 끝났다. 마지막 문장은 앞 이야기로 돌아가 글을 닫는다")
+    for x in paras:
+        n_cast = sum(1 for c in (m.cast or [])[:8] if c and c in x)
+        if re.search(r"\d+\s*분", x) and ("관람가" in x or "등급" in x) and n_cast >= 2:
+            bad.append("출연진 · 상영시간 · 등급이 한 문단에 몰렸다. 필요한 문단에 하나씩 나눈다")
+            break
     return bad
 
 # ## 셀 10 — 판정관 (Pydantic AI)
@@ -4098,7 +3947,7 @@ JUDGE_SYSTEM = """
   (3) 이 영화가 어디에서 나왔는지. 감독 이전 작품이나 원작
   기대와 반응은 재료에 있을 때만 센다. 재료에 없으면 글에 없어도 5점이다.
   5 셋이 다 있다 / 3 하나가 빠졌다 / 1 둘 이상 없다
-  셋이 글 어딘가에 있으면 된다. 개봉일 · 반응은 마지막 정보 문단에 있는 것이 맞다.
+  셋이 글 어딘가에 있으면 된다. 문단으로 나뉘어 있거나 차례대로일 필요는 없다. 한 문단에 목록처럼 몰려 있으면 여기가 아니라 글 완성도에서 깎는다.
 
 홍보성 (1~5, 높을수록 홍보 성격이 강하다)
   1 사실과 반응을 적고 읽는 사람이 판단하게 둔다
@@ -4107,10 +3956,10 @@ JUDGE_SYSTEM = """
 
 글 완성도 (1~5)
   같은 말 반복, 문장 끊김, 앞뒤가 안 맞는 곳을 본다.
-  마지막 문단은 관람 정보 문단이다. 거기 출연진 · 상영시간 · 등급 · 반응이 모인 것은 깎지 않는다. 앞 문단에 상영시간 · 등급 · 반응이 나왔거나 마지막 문단에 관람 정보가 없으면 깎는다.
+  항목을 한 문장에 몰아 적었으면 여기서 깎는다. 출연진 · 상영시간 · 등급 · 반응이 한 문단에 목록처럼 몰려 있어도 여기서 깎는다.
   같은 꼴 문단이 이어지거나 문장 길이가 다 비슷하면 깎는다.
-  [주문]대로 안 간 것은 깎지 않는다(V3.2). 글이 반응 딱지("대중 평가는 갈린다.")로 끝났으면 깎는다.
-  재료에 독자의 질문이 있는데 글 어디에도 답이 없으면 깎는다. 질문이 첫 문단에 없다는 이유로는 깎지 않는다.
+  [주문]의 온도 · 시작점 · 배치대로 안 갔으면 깎는다. 짓궂음인데 웃긴 대목이 없다, 상황부터인데 개봉일로 열었다.
+  재료에 독자의 질문이 있는데 첫 문단에 그 질문이 없거나 마지막 문단에 답이 없으면 깎는다.
 
 [기본 사실이 재료와 어긋난 문장 개수]  → unsourced_claims
   기본 사실은 개봉일 · 감독 · 출연 · 상영시간 · 등급 · 원작 · 인물 이름 · 줄거리 사건이다.
@@ -4227,7 +4076,6 @@ FIXER_SYSTEM = """
 
 지적되지 않은 문장은 한 글자도 건드리지 않는다.
 문단 순서를 바꾸지 않는다. 문단을 합치거나 나누지 않는다.
-관람 정보를 마지막 문단으로 옮기라고 지적됐으면 그 사실만 앞 문단에서 빼서 마지막 문단에 문장으로 넣는다. 마지막 문단이 정보 문단이 아니면 끝에 정보 문단 하나를 붙인다.
 지적을 고치느라 다른 곳이 어긋나면, 그 자리까지만 최소로 손본다.
 
 분량이 지적됐으면 그 문단 안에서 늘리거나 줄인다. 새 문단을 만들지 않는다.
@@ -4265,9 +4113,9 @@ async def fix(article: Article, order: WriteOrder, reasons: list[str]) -> Articl
 # ## 셀 13 — 한 편 돌리기: 상태 하나 · 마디 · 갈림길
 
 # 마디(node)는 상태를 받아 자기 칸만 채우고 돌려준다.
-# 갈림길(edge)은 상태를 보고 다음 마디 이름을 돌려준다. 끝낼 때는 _finish로 상태 · 이유를 적는다.
-# 돌리는 건 맨 아래 run_graph 하나다. V3.0부터 LangGraph StateGraph다.
-# 갈림길이 상태에 쓰는 것이 있어서 마디 안에서 돌리고, 조건 엣지는 st.next_node만 읽는다.
+# 갈림길(edge)은 상태를 보고 다음 마디 이름만 돌려준다.
+# 돌리는 건 맨 아래 run_graph 하나다.
+# LangGraph로 옮길 때는 마디를 add_node, 갈림길을 add_conditional_edges에 그대로 꽂는다.
 
 END = "끝"
 
@@ -4354,31 +4202,17 @@ async def n_editor(st: RunState) -> RunState:
     round_no = st.editor_returns + 1
     ed = await edit_review(st.article, st.order, prev=prev, round_no=round_no, kind=st.write_kind)
     st.editorial = ed
-    st.editor_pass, gate_why = editor_gate(ed, last=st.editor_returns >= MAX_EDITOR_RETURN)
-    decision = "통과" if st.editor_pass else "반려"
     row = {"단계": "편집국장", "회차": st.editor_returns, "종류": st.write_kind,
-           "결과": decision, "이유": f"{gate_why} — {ed.why}", "사유": ed.issues,
-           "무게": {"치명": ed.fatal, "고칠 것": ed.fix, "사소": ed.minor, "못 봄": ed.missed}}
+           "결과": ed.decision, "이유": ed.why, "사유": ed.issues}
     if prev and ed.compared:
         row["앞 판 대조"] = ed.compared
     st.log.append(row)
-    st.history.append({"단계": "편집국장", "차례": round_no, "종류": st.write_kind, "글": st.article, "판정": ed, "결과": decision})
-    if not st.editor_pass:
+    st.history.append({"단계": "편집국장", "차례": round_no, "종류": st.write_kind, "글": st.article, "판정": ed})
+    if ed.decision == "반려":
         st.editor_returns += 1
-        st.order.rewrite_note = "\n".join(
-            [f"- (꼭 고친다) {i}" for i in ed.fatal] + [f"- {i}" for i in ed.fix]
-            + [f"- (참고 · 앞 판이 놓친 것) {i}" for i in ed.missed])
+        st.order.rewrite_note = "\n".join(f"- {i}" for i in ed.issues)
         st.order.previous_body = st.article.body
     return st
-
-
-def editor_gate(ed: Editorial, last: bool) -> tuple[bool, str]:
-    """V3.1: 편집국장이 단 무게로 통과 · 반려를 정한다. 사소 · 못 봄은 안 센다."""
-    if ed.fatal:
-        return False, f"치명 {len(ed.fatal)}건"
-    if not last and len(ed.fix) > EDITOR_FIX_LIMIT:
-        return False, f"고칠 것 {len(ed.fix)}건 (상한 {EDITOR_FIX_LIMIT})"
-    return True, f"치명 0 · 고칠 것 {len(ed.fix)} · 사소 {len(ed.minor)}" + (" (마지막 판)" if last else "")
 
 
 def n_shape(st: RunState) -> RunState:
@@ -4448,7 +4282,7 @@ def after_write(st: RunState) -> str:
     return "편집국장"
 
 def after_editor(st: RunState) -> str:
-    if st.editor_pass:
+    if st.editorial.decision == "통과":
         return "형태검사"
     if st.editor_returns > MAX_EDITOR_RETURN:
         _finish(st, "탈락보관", f"편집국장 반려 {MAX_EDITOR_RETURN}회 초과 — "
@@ -4500,49 +4334,16 @@ GRAPH = {
 START = "거르기"
 
 
-# ── LangGraph (V3.0) ─────────────────────────────────────
-# LangGraph는 조건 엣지 함수가 상태에 쓴 것을 버린다. 우리 갈림길은 _finish로 상태를 쓰고 되돌린 횟수를 센다.
-# 그래서 갈림길을 마디 안에서 돌리고 고른 이름을 st.next_node에 적는다. 조건 엣지는 그것만 읽는다.
-import threading
-from langgraph.graph import StateGraph, START as GRAPH_START, END as GRAPH_END
-
-_apps, _apps_lock = {}, threading.Lock()
-
-
-def _node(name, fn, edge):
-    async def run_node(st: RunState) -> RunState:
+async def run_graph(st: RunState) -> RunState:
+    node = START
+    while node != END:
         st.steps += 1
         if st.steps > MAX_STEPS:
-            _finish(st, "탈락보관", f"마디 {MAX_STEPS}개 상한을 넘었다")
-            st.next_node = END
-            return st
+            return _finish(st, "탈락보관", f"마디 {MAX_STEPS}개 상한을 넘었다")
+        fn, edge = GRAPH[node]
         st = await fn(st) if inspect.iscoroutinefunction(fn) else fn(st)
-        st.next_node = edge(st)
-        return st
-    return run_node
-
-
-def _route(st: RunState):
-    return GRAPH_END if st.next_node == END else st.next_node
-
-
-def build_graph():
-    """마디 표로 LangGraph를 한 번 짓고 둔다."""
-    with _apps_lock:
-        if "app" not in _apps:
-            g = StateGraph(RunState)
-            for name, (fn, edge) in GRAPH.items():
-                g.add_node(name, _node(name, fn, edge))
-                g.add_conditional_edges(name, _route)
-            g.add_edge(GRAPH_START, START)
-            _apps["app"] = g.compile()
-        return _apps["app"]
-
-
-async def run_graph(st: RunState) -> RunState:
-    st.next_node = ""
-    out = await build_graph().ainvoke(st, config={"recursion_limit": MAX_STEPS + 10})
-    return RunState.model_validate(out)
+        node = edge(st)
+    return st
 
 
 async def produce(material: Material, topic="영화", tag_topic=None,

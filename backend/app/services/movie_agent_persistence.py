@@ -125,7 +125,8 @@ async def start_movie_agent_run(
     topic_id: int,
     input_payload: Any,
     agent_code: str = "movie_review",
-    agent_version: str = "V1.8",
+    # 러너가 호출자에게 받은 버전을 그대로 넘깁니다. 이 값은 예비값입니다.
+    agent_version: str = "V2.0",
     requested_by_user_id: int | None = None,
     queue_task_id: str | None = None,
 ) -> AgentRun:

@@ -42,7 +42,9 @@ async def run_movie_agent_and_persist(
     requested_by_user_id: int | None = None,
     queue_task_id: str | None = None,
     agent_code: str = "movie_review",
-    agent_version: str = "V1.8",
+    # 실제 실행에서는 호출자가 adapter.version(에이전트 모듈의 VERSION)을 넘깁니다.
+    # 이 값은 버전을 넘기지 않았을 때만 쓰는 예비값입니다.
+    agent_version: str = "V2.0",
 ) -> MovieAgentPersistenceResult:
     """영화 에이전트 1회 실행과 DB 저장을 하나의 흐름으로 묶습니다.
 
@@ -80,13 +82,12 @@ async def run_movie_agent_and_persist(
 
     # Persistence has committed by this point. A later publication failure must
     # not rewrite a successful AgentRun as a failed Agent execution.
+    # 2026-09-29 PM: 사람 검수 없이 바로 발행한다. 사실 확인 항목이 있어도 막지 않는다.
     draft = persisted.draft
-    factcheck = draft.factcheck_result if draft and isinstance(draft.factcheck_result, dict) else {}
     if (
         persisted.agent_run.outcome == "publish_candidate"
         and draft is not None
         and draft.status == "approved"
-        and factcheck.get("requires_review") is False
     ):
         try:
             await publish_movie_agent_run(db, persisted.agent_run.agent_run_id)

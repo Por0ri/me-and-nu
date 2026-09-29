@@ -111,12 +111,9 @@ async def publish_movie_agent_run(
                 "AGENT_DRAFT_NOT_PUBLISHABLE", "승인된 초안만 발행할 수 있습니다. 탈락 초안은 개발용 미리보기에서만 허용됩니다."
             )
 
+        # 2026-09-29 PM: 사람 검수 없이 바로 발행한다. 사실 확인 항목은 막지 않고 needs_review 표시로만 남긴다.
         factcheck = draft.factcheck_result if isinstance(draft.factcheck_result, dict) else {}
         requires_review = factcheck.get("requires_review") is not False
-        if requires_review and not force_preview:
-            raise MovieAgentPublicationError(
-                "AGENT_DRAFT_REVIEW_REQUIRED", "사실 확인이 필요한 초안은 일반 발행할 수 없습니다."
-            )
 
         title = draft.title.strip() if isinstance(draft.title, str) else ""
         body = draft.body.strip() if isinstance(draft.body, str) else ""

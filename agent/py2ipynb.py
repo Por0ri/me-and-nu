@@ -5,7 +5,7 @@
 #   python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v2.9.ipynb
 #   python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.5.ipynb     # 애니는 glossary.json 을 노트북 안에 같이 넣는다
 #   python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.4.ipynb
-#   python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V1.9.ipynb
+#   python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V3.0.ipynb
 #
 # 자르는 규칙
 # - 파일 맨 위 주석 덩어리 → 마크다운 셀
@@ -82,7 +82,7 @@ def _cell(kind, lines):
 
 콜랩_첫셀 = '''# 콜랩에서만 돌리는 셀. 로컬 .py 에는 없다
 # 보안 비밀(🔑)에 LLM_KEY 를 넣어 둔다
-!pip -q install "pydantic-ai-slim[openai]" python-dotenv requests nest_asyncio beautifulsoup4 lxml ddgs feedparser sentence-transformers scikit-learn
+!pip -q install "pydantic-ai-slim[openai]" langgraph python-dotenv requests nest_asyncio beautifulsoup4 lxml ddgs feedparser sentence-transformers scikit-learn
 import os
 from google.colab import userdata
 os.environ["LLM_KEY"] = userdata.get("LLM_KEY")
@@ -108,6 +108,7 @@ import importlib, importlib.metadata as 메타, subprocess, sys, os, pathlib
     "dotenv":                "python-dotenv",
     "nest_asyncio":          "nest_asyncio",
     "requests":              "requests",
+    "langgraph":             "langgraph",
     "langchain_typesafe":    "langchain-typesafe",    # Jev. 이것만 없으면 Jev를 안 쓰고 나머지는 돈다
 }
 
@@ -266,7 +267,12 @@ import importlib, importlib.metadata as 메타, subprocess, sys, os, pathlib
     "dotenv":       "python-dotenv",
     "nest_asyncio": "nest_asyncio",
     "requests":     "requests",
+    "langgraph":    "langgraph",
     "trafilatura":  "trafilatura",       # 정보 전달 — 기사 본문 추출. 리뷰는 안 쓰지만 깔아도 된다
+    "bs4":          "beautifulsoup4",    # 리뷰 V3.0 — 씨네21 · 검색 페이지 읽기
+    "lxml":         "lxml",
+    "ddgs":         "ddgs",              # 리뷰 V3.0 — 검색 엔진
+    "sentence_transformers": "sentence-transformers",   # 리뷰 V3.0 — 관점 묶기. 없으면 매체별로 나열한다
 }
 
 
@@ -379,6 +385,7 @@ print("지금 폴더:", pathlib.Path.cwd())
                   "- `await cmd_batch(pick_released(5), \"뽑힌 영화\")` — 개봉작 무작위 다섯 편. 끝나면 zip 으로 묶는다",
                   "- `await cmd_batch(pick_upcoming(5), \"뽑힌 개봉 예정작\")` — 개봉 전 무작위 다섯 편",
                   "- V2.4: 편집국장 · 판정관이 앞 판 판정과 앞 판 글을 받는다. 저장 파일 로그에 판 종류 · 앞 판 대비 · 대조 줄이 붙는다. 탈락보관이면 합계 최고 판 글을 남긴다",
+                  "- V3.0: LangGraph로 돈다. 쓰는 법 · 결과는 V2.5와 같다",
                   "- 마지막 셀은 `out/movie_info/` 를 zip 으로 묶어 브라우저로 내려준다"]),
     ("code", ["cmd_material(\"프로젝트 헤일메리\", 2026)"]),
     ("code", ["await cmd_one(\"프로젝트 헤일메리\", 2026)"]),
@@ -389,11 +396,15 @@ print("지금 폴더:", pathlib.Path.cwd())
 # 영화 리뷰용 실행 셀
 영화리뷰_실행셀들 = [
     ("markdown", ["## 실행", "", "위 셀을 전부 돌린 뒤 아래 중 하나를 돌린다. `cmd_*` 는 async 라 `await` 로 부른다.", "",
-                  "- `await cmd_one(\"괴물\", 2006)` — 한 편. 화면에 로그와 글을 찍고 `out/movie_review/` 에 저장한다",
+                  "- `점검()` — 씨네21(영화 찾기 · 한줄평 · 기사 검색) · 검색 엔진 · 매체 robots. 모델 안 부른다",
+                  "- `뽑기만(\"괴물\", 2006)` — TMDB · 위키 · 씨네21 · 검색으로 재료 모으기까지. 어떤 페이지를 읽어 오는지 본다. 모델 안 부른다",
+                  "- `await cmd_one(\"괴물\", 2006)` — 한 편. 화면에 로그와 글을 찍고 `out/movie_review/올림|탈락/` 에 저장한다",
                   "- `await cmd_list()` — 테스트 목록 다섯 편(`TEST_TITLES`). 끝나면 zip 으로 묶는다",
                   "- `await cmd_random(5)` — 무작위 다섯 편. `seed=` 로 고정할 수 있다",
-                  "- V1.9: 판정관이 앞 판 점수와 앞 판 글을 받는다. 저장 파일 로그에 판 종류 · 앞 판 대비 · 대조 줄이 붙는다. 탈락보관이면 합계 최고 판 글을 남긴다",
+                  "- V3.0: 평론(씨네21 기사 · 한줄평 · 검색 매체)을 재료로 쓴다. 재료판정 → 관점묶기 → 기획자 → 작가 → 교정자 → 형태검사 → 편집국장. LangGraph. 저장 파일에 출처 · 개요 · 판정 기록이 붙는다",
                   "- 마지막 셀은 `out/movie_review/` 를 zip 으로 묶어 브라우저로 내려준다"]),
+    ("code", ["점검()"]),
+    ("code", ["뽑기만(\"괴물\", 2006)"]),
     ("code", ["await cmd_one(\"괴물\", 2006)"]),
     ("code", ["await cmd_list()                 # 테스트 목록 다섯 편", "# await cmd_random(5, seed=1)    # 무작위 다섯 편"]),
     ("code", ["z = download_all()", "from google.colab import files", "files.download(str(z))"]),
@@ -408,6 +419,7 @@ print("지금 폴더:", pathlib.Path.cwd())
                   "- `run(목표편수=6)` — 유형 다섯을 섞어 여섯 편. `run(\"사람\", 목표편수=3)` 처럼 하나만도 된다. 유형: 사람 · 감상순서 · 신작소식 · 제작이야기 · 작품리뷰 (기념일은 v0.4에서 뺐다. `run_one`으로는 된다)",
                   "- v0.5: 주제를 `동시주제`(3)개씩 같이 돈다. `run(목표편수=6, 동시=1)` 이면 v0.4처럼 한 줄로. 첫 바퀴는 초안 셋을 온도를 달리해 같이 쓰고 편집국장이 고른다(`초안수`). 로그 앞의 `[유형]`으로 가른다",
                   "- `run_one(\"블리치\", \"제작이야기\")` — 시리즈 지정. 사람 유형은 `사람=\"Hiroshi Kamiya\"`",
+                  "- v0.8: LangGraph로 돈다. 쓰는 법 · 결과는 v0.7과 같다",
                   "- 결과는 `out/anime/올림|탈락/` 에 마크다운으로 쌓인다. `run` · `run_one` 이 끝나면 zip 으로 묶어 브라우저로 내려준다 (`콜랩_끝나면zip`). 마지막 셀은 다시 받고 싶을 때만"]),
     ("code", ["점검()"]),
     ("code", ["용어집점검()"]),

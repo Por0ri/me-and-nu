@@ -1,4 +1,4 @@
-# # anime_agent v0.9 — 애니 콘텐츠 크리에이팅 에이전트
+# # anime_agent v0.7 — 애니 콘텐츠 크리에이팅 에이전트
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY`에서 읽는다. 결과는 `agent/out/anime/올림|탈락/`에 쌓인다.
 #
@@ -98,16 +98,6 @@
 #   맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. `"openai:"` 접두어라 Responses API 로 간다 (chat completions 는
 #   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
 #   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
-#
-# v0.9에서 바뀐 것 — 주문 어김은 반려 · 감점 사유가 아니다(PM 9/29). 편집국장은 종류 "주문"으로 적고, 코드는 사소로 센다. 점수를 깎지 않는다.
-# 주문끼리 부딪쳐(상황부터 + 사실 먼저 같은 것) 작가가 하나를 어길 수밖에 없는 조합이 나온다. 그걸로 글을 떨어뜨리지 않는다.
-# - 감상순서 · 기념일을 뺐다(PM 9/29: 글 형식이 이상하다). 유형비율 0, 명령줄 선택지에서도 뺐다. 코드는 남겨 두었다.
-#
-# v0.8에서 바뀐 것 — LangGraph로 옮겼다 (PM 9/28 결정 — 팀 코드 전부 LangGraph)
-# - 마디 · 갈림길 · 프롬프트 · 재료 · 판정 규칙은 v0.7 그대로다. `run_graph`가 while 루프 대신 LangGraph `StateGraph`를 짓고 돌린다.
-# - 음악 v4.0 · 영화 리뷰 V3.0과 같은 방식이다. LangGraph는 조건 엣지 함수가 상태에 쓴 것을 버린다.
-#   우리 갈림길은 상태(`st.상태` · 로그)를 쓰므로, 갈림길을 마디 안에서 돌리고 고른 이름을 `st.다음`에 적는다. 조건 엣지는 그것만 읽는다.
-# - 마디 수 상한 · 마디 실패 · 멈출마디는 `st.멈춤`에 적고 끝으로 간다. 그래프는 (멈출마디, 시작마디)마다 한 벌 지어 둔다.
 
 # ## 1. 설정
 #
@@ -136,8 +126,7 @@ EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     "작품리뷰":   "심층",
 }
 목표편수      = 6      # 올린 글이 이만큼 될 때까지 돈다 (PM: 최소 여섯)
-유형비율      = {"감상순서": 0, "사람": 1, "기념일": 0, "신작소식": 1, "제작이야기": 1, "작품리뷰": 1}   # run 에 유형을 안 주면 이 비율로 섞는다. 0이면 안 뽑는다. 기념일은 v0.4에서 뺐다
-쓰는유형      = [k for k, v in 유형비율.items() if v]   # v0.9: 비율 0인 유형(감상순서 · 기념일)은 명령줄에서도 못 고른다(PM 9/29)
+유형비율      = {"감상순서": 1, "사람": 1, "기념일": 0, "신작소식": 1, "제작이야기": 1, "작품리뷰": 1}   # run 에 유형을 안 주면 이 비율로 섞는다. 0이면 안 뽑는다. 기념일은 v0.4에서 뺐다
 시도상한      = 18     # 주제를 이만큼 봤는데 못 채우면 멈춘다. 탈락이 섞이니 목표의 세 배
 작품당상한    = 2      # 한 번 돌 때 같은 시리즈에서 올리는 글 상한. 원피스가 피드를 덮지 않게
 기념일창      = 7      # 오늘 앞뒤 며칠까지 기념일로 볼지
@@ -2445,8 +2434,7 @@ print("관점 묶기 준비 끝")
 글을 고치지 않는다. 고칠 방법을 대신 써 주지 않는다. 어디가 왜 걸리는지만 적는다.
 
 [주문대로 갔는가]
-[주문]의 온도 · 시작점 · 배치와 그 뜻을 받는다. 주문대로 안 갔으면 종류를 "주문"으로 적는다. "구조"가 아니다. 점수를 깎지 않는다.
-주문끼리 서로 부딪쳐 하나를 어길 수밖에 없을 때가 있다. 글이 읽히면 그걸로 된다. 주문 어김은 올림을 막지 않는다. 질문에서 시작하라고 했는데 방영 연도로 시작했다. 장면 먼저인데 연도로 시작했다. 짓궂음인데 웃긴 대목이 하나도 없다. 줄거리 나눠 넣기인데 줄거리가 한 문단에 몰려 있다.
+[주문]의 온도 · 시작점 · 배치와 그 뜻을 받는다. 주문대로 안 갔으면 "구조"다. 질문에서 시작하라고 했는데 방영 연도로 시작했다. 장면 먼저인데 연도로 시작했다. 짓궂음인데 웃긴 대목이 하나도 없다. 줄거리 나눠 넣기인데 줄거리가 한 문단에 몰려 있다.
 
 [읽을 이유]
 이 글을 끝까지 읽은 사람이 얻어 가는 것을 한 줄로 적는다. "필러를 빼면 127화다", "질풍전은 라프텔에서 1기까지다" 같은 것이다.
@@ -2503,7 +2491,7 @@ print("관점 묶기 준비 끝")
 앞 판이 없으면 앞판대조와 점수설명은 비워 둔다.
 
 [정하는 법]
-종류는 사실 · 문장 · 구조 · 주문 넷이고(주문은 점수를 안 깎는다), 그 밖에 확인 목록과 읽을 이유 한 줄을 낸다.
+종류는 사실 · 문장 · 구조 셋이고, 그 밖에 확인 목록과 읽을 이유 한 줄을 낸다.
 사소한 것 하나로 반려하지 않는다. 읽는 사람이 걸려 넘어질 것만 적는다.
 문제마다 "어느 문단 어느 문장 — 왜" 꼴로 적는다.
   예: 1문단 "필러 표마다 셈은 조금 다르다" — 독자는 표를 못 봤다. 어느 표가 맞는지가 아니라 어디서 끊을지를 알고 싶다
@@ -3021,7 +3009,7 @@ print("형태 검사 준비 끝")
 # 직접 고치지 않는다. 올릴지도 정하지 않는다. 확인 목록(널리 알려진 사실인데 재료 밖인 것)은 점수를 안 깎고 사람에게 넘긴다.
 
 class 문제(BaseModel):
-    종류: Literal["사실", "문장", "구조", "주문"]   # v0.9: 주문은 점수를 안 깎는다
+    종류: Literal["사실", "문장", "구조"]
     어디: str = Field(description="어느 문단 어느 문장인지. 문장을 그대로")
     설명: str
 
@@ -3192,9 +3180,6 @@ class RunState(BaseModel):
     초안들: list = []            # 첫 바퀴 초안들 [{온도, 글, 걸림, 경고, 판정, 올림, 이유}]. 다시 쓰기 바퀴에서는 빈다
     표식: str = ""               # 동시에 돌 때 로그 앞에 붙는 "[유형] "
     진행잡음: bool = False       # 이 상태가 시리즈 진행 수(_진행시리즈)를 잡고 있는지
-    # v0.8 — LangGraph
-    다음: str = ""               # 갈림길이 고른 다음 마디 이름. 조건 엣지가 이것만 읽는다
-    멈춤: str = ""               # 상한 · 실패 · 멈출마디. 차 있으면 끝으로 간다
 
     def log(self, s):
         self.로그.append(s)
@@ -3622,53 +3607,27 @@ GRAPH = {
     "저장":       (n_저장,       그냥(END)),
 }
 
-# v0.8 — LangGraph. 마디 함수 · 갈림길 함수는 위 GRAPH 표 그대로 쓴다.
-# LangGraph는 조건 엣지 함수가 상태에 쓴 것을 버린다. 우리 갈림길은 st.상태 · 로그를 쓰므로 마디 안에서 돌리고 고른 이름을 st.다음에 적는다.
-from langgraph.graph import StateGraph, START as 그래프시작, END as 그래프끝
-
-_앱들, _앱잠금 = {}, threading.Lock()
-
-def _마디(이름, fn, edge, 멈출마디):
-    def 돌기(st: RunState) -> RunState:
+def run_graph(st: RunState, 멈출마디=None, 시작마디=None) -> RunState:
+    node = 시작마디 or START
+    while node != END:
         if st.steps >= MAX_STEPS:
             st.상태 = "상한"
             st.log(f"  마디 수 상한 {MAX_STEPS}. 멈춘다")
-            st.멈춤 = "상한"
-            return st
+            break
         st.steps += 1
+        fn, edge = GRAPH[node]
         try:
             st = fn(st)
         except Exception as e:
             import traceback
-            st.log(f"  마디 [{이름}] 실패: {e}")
+            st.log(f"  마디 [{node}] 실패: {e}")
             traceback.print_exc()
             st.상태 = "탈락"
-            st.멈춤 = "실패"
-            return st
-        st.다음 = END if (멈출마디 and 이름 == 멈출마디) else edge(st)
-        return st
-    return 돌기
-
-def _고르기(st: RunState):
-    return 그래프끝 if (st.멈춤 or st.다음 == END) else st.다음
-
-def 그래프(멈출마디=None, 시작마디=None):
-    """마디 표로 LangGraph를 짓는다. (멈출마디, 시작마디)마다 한 벌 지어 둔다."""
-    키 = (멈출마디, 시작마디)
-    with _앱잠금:
-        if 키 not in _앱들:
-            g = StateGraph(RunState)
-            for 이름, (fn, edge) in GRAPH.items():
-                g.add_node(이름, _마디(이름, fn, edge, 멈출마디))
-                g.add_conditional_edges(이름, _고르기)
-            g.add_edge(그래프시작, 시작마디 or START)
-            _앱들[키] = g.compile()
-        return _앱들[키]
-
-def run_graph(st: RunState, 멈출마디=None, 시작마디=None) -> RunState:
-    st.다음, st.멈춤 = "", ""
-    out = 그래프(멈출마디, 시작마디).invoke(st, config={"recursion_limit": MAX_STEPS + 10})
-    return RunState.model_validate(out)
+            break
+        if 멈출마디 and node == 멈출마디:
+            break
+        node = edge(st)
+    return st
 
 print("갈림길 준비 끝. 마디", len(GRAPH), "개")
 
@@ -3966,16 +3925,16 @@ def main(argv=None):
     sub.add_parser("check", help="AniList · Jikan · 라프텔 · 위키백과 · 검색 점검. 모델 안 부른다")
     sub.add_parser("glossary", help="용어집 점검. 시리즈마다 관계도 · 표기 매칭을 본다. 모델 안 부른다")
     p = sub.add_parser("pick", help="주제 뽑기 + 재료 모으기까지만. 모델 안 부른다")
-    p.add_argument("--type", dest="유형", default="사람", choices=쓰는유형)
+    p.add_argument("--type", dest="유형", default="감상순서", choices=list(유형표))
     p.add_argument("--n", type=int, default=2)
     a = sub.add_parser("run", help="올린 글이 n편 될 때까지 돌린다. --type 을 안 주면 유형 다섯을 섞는다")
-    a.add_argument("--type", dest="유형", default=None, choices=쓰는유형)
+    a.add_argument("--type", dest="유형", default=None, choices=list(유형표))
     a.add_argument("--n", type=int, default=목표편수)
     a.add_argument("--tries", type=int, default=시도상한)
     a.add_argument("--at-once", dest="동시", type=int, default=None, help=f"주제를 몇 개씩 같이 돌릴지 (기본 {동시주제})")
     o = sub.add_parser("one", help="시리즈를 지정해서 한 편. 예: one 블리치 --type 제작이야기")
     o.add_argument("series")
-    o.add_argument("--type", dest="유형", default="사람", choices=쓰는유형)
+    o.add_argument("--type", dest="유형", default="감상순서", choices=list(유형표))
     o.add_argument("--person", default=None, help="사람 유형에서 사람 이름 (어느 표기든)")
     sub.add_parser("zip", help="out/anime 폴더를 zip으로 묶는다")
 

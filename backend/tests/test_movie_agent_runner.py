@@ -126,7 +126,7 @@ async def test_runner_records_failed_status_when_producer_raises():
 
 
 @pytest.mark.asyncio
-async def test_runner_does_not_auto_publish_when_factcheck_requires_review(monkeypatch):
+async def test_runner_auto_publishes_even_when_factcheck_requires_review(monkeypatch):
     session = FakeAsyncSession()
     publish = AsyncMock()
     monkeypatch.setattr(movie_agent_runner, "publish_movie_agent_run", publish)
@@ -145,7 +145,7 @@ async def test_runner_does_not_auto_publish_when_factcheck_requires_review(monke
 
     assert persisted.agent_run.status == "succeeded"
     assert persisted.draft.status == "approved"
-    publish.assert_not_awaited()
+    publish.assert_awaited_once_with(session, persisted.agent_run.agent_run_id)
 
 
 @pytest.mark.asyncio

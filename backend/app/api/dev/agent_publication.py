@@ -64,7 +64,7 @@ async def _publish(db: AsyncSession, agent_run_id: int, *, force_preview: bool) 
     "/{agentRunId}/publish",
     response_model=PublicationResponse,
     summary="검증 완료된 Agent 초안을 공개 피드에 발행",
-    description="성공·승인 판정이고 사실 확인 항목이 없는 초안만 발행합니다. 같은 실행을 다시 호출해도 기존 콘텐츠를 반환합니다.",
+    description="성공·승인 판정인 초안을 발행합니다. 사실 확인 항목이 있으면 needs_review 표시를 붙여 발행합니다. 같은 실행을 다시 호출해도 기존 콘텐츠를 반환합니다.",
     responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "Agent 실행 없음"}, 409: {"model": ErrorResponse, "description": "발행 조건 미충족"}},
 )
 async def publish_approved_agent_run(
