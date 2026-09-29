@@ -5,6 +5,9 @@ import { consumerRoutes } from "@/lib/consumer-routes";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { ContentCard } from "@/components/home/content-card";
+import { BrandHeader } from "@/components/navigation/brand-header";
+import { ConsumerBottomNav } from "@/components/navigation/consumer-bottom-nav";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
 import { getSavedContents } from "@/lib/consumer-api/contents";
 import { isConsumerApiMode } from "@/lib/consumer-api/mode";
@@ -56,123 +59,97 @@ function SavedContentsLoader({ topicId }: { topicId: string }) {
 
   if (isLoading) {
     return (
-      <p role="status" className="py-12 text-center text-sm text-black/60">
-        저장 목록을 불러오는 중입니다.
-      </p>
+      <>
+        <BrandHeader topicLabel="nu" title="SAVE" />
+        <p role="status" className="va-message va-muted text-center text-sm">
+          저장 목록을 불러오는 중입니다.
+        </p>
+      </>
     );
   }
 
   if (hasError || !data) {
     return (
-      <section className="space-y-4 rounded-xl border border-red-200 bg-white p-6 text-center">
-        <p role="alert" className="text-sm text-red-600">
-          저장 목록을 불러오지 못했습니다. 다시 시도해 주세요.
-        </p>
-        <button
-          type="button"
-          onClick={retry}
-          className="rounded-lg border border-black/20 px-4 py-2 text-sm font-medium text-black"
-        >
-          다시 시도
-        </button>
-      </section>
+      <>
+        <BrandHeader topicLabel="nu" title="SAVE" />
+        <section className="va-message space-y-4 text-center">
+          <p role="alert" className="text-sm text-red-600">
+            저장 목록을 불러오지 못했습니다. 다시 시도해 주세요.
+          </p>
+          <button type="button" onClick={retry} className="va-secondary">
+            다시 시도
+          </button>
+        </section>
+      </>
     );
   }
 
   return (
-    <section className="space-y-4">
-      <h2 className="text-lg font-medium text-black">
-        현재 분야: {data.topic.name}
-      </h2>
+    <>
+      <BrandHeader topicLabel={data.topic.code?.toLowerCase() ?? data.topic.name} title="SAVE" />
+      <p className="sr-only">현재 분야: {data.topic.name}</p>
       {data.contents.length === 0 ? (
-        <p role="status" className="py-12 text-center text-sm text-black/60">
-          현재 분야에 저장한 콘텐츠가 없습니다.
+        <p role="status" className="va-message va-muted text-center text-sm">
+          아직 저장한 콘텐츠가 없어요. 홈에서 마음에 드는 글을 저장해 보세요.
         </p>
       ) : (
-        <ul className="grid gap-4 sm:grid-cols-2">
+        <ul>
           {data.contents.map((content) => (
             <li key={content.id}>
-              <Link
-                href={{
-                  pathname: consumerRoutes.content(content.id),
-                  query: { topicId },
-                }}
-                aria-label={`${content.title} 상세 보기`}
-                className="block space-y-3 rounded-xl border border-black/10 bg-white p-5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-black"
-              >
-                <h3 className="text-lg font-semibold text-black">
-                  {content.title}
-                </h3>
-                <p className="text-sm leading-6 text-black/70">
-                  {content.summary}
-                </p>
-                <p className="text-xs text-black/50">
-                  출처: {content.sourceName}
-                </p>
-              </Link>
+              <ContentCard content={content} topicId={topicId} sectionTitle="" viewMode="list" />
             </li>
           ))}
         </ul>
       )}
-    </section>
+    </>
   );
 }
 
 export function SavedScreen({ topicId }: { topicId: string | null }) {
   const { flowState, isRestoring, restoreError, refreshTopics } = useConsumerFlow();
+  // 주소에 분야가 없으면(탭으로 바로 들어온 경우) 처음 고른 분야를 쓴다.
+  const requestedTopicId = topicId ?? flowState?.initialHomeTopicId ?? null;
   const validatedTopicId =
-    topicId && flowState?.availableTopicIds.includes(topicId) ? topicId : null;
+    requestedTopicId && flowState?.availableTopicIds.includes(requestedTopicId)
+      ? requestedTopicId
+      : null;
 
   if (isConsumerApiMode && isRestoring) return null;
 
   return (
-    <main className="flex flex-1 justify-center bg-zinc-50 px-6 py-12">
-      <div className="w-full max-w-3xl space-y-6">
-        <h1 className="text-3xl font-semibold text-black">저장 목록</h1>
-        <Link
-          href={
-            validatedTopicId
-              ? { pathname: consumerRoutes.home, query: { topicId: validatedTopicId } }
-              : consumerRoutes.home
-          }
-          className="inline-flex rounded-lg border border-black/20 px-4 py-2 text-sm font-medium text-black"
-        >
-          홈으로 돌아가기
-        </Link>
+    <main className="ui-version-a ui-home">
+      <div className="va-shell va-home va-tab-page">
         {isConsumerApiMode && restoreError ? (
-          <section className="space-y-4 rounded-xl border border-red-200 bg-white p-6 text-center">
+          <section className="va-message space-y-4 text-center">
             <p role="alert" className="text-sm text-red-600">{restoreError}</p>
             <button
               type="button"
               onClick={() => void refreshTopics().catch(() => undefined)}
-              className="rounded-lg border border-black/20 px-4 py-2 text-sm font-medium text-black"
+              className="va-secondary"
             >
               다시 시도
             </button>
           </section>
         ) : !flowState ? (
-          <section className="space-y-4 rounded-xl border border-black/10 bg-white p-6 text-center">
-            <p role="status" className="text-sm leading-6 text-black/60">
+          <section className="va-message space-y-4 text-center">
+            <p role="status" className="va-muted text-sm leading-6">
               현재 연결된 분야 정보가 없습니다. 분야를 선택해 주세요.
             </p>
             <Link
               href={isConsumerApiMode ? consumerRoutes.addTopic : consumerRoutes.onboarding}
-              className="inline-flex rounded-lg bg-black px-4 py-3 text-sm font-medium text-white"
+              className="va-primary inline-flex w-full items-center justify-center"
             >
               {isConsumerApiMode ? "분야 추가로 이동" : "온보딩으로 이동"}
             </Link>
           </section>
-        ) : !topicId ? (
-          <p role="status" className="py-12 text-center text-sm text-black/60">
-            저장 목록의 분야 정보를 확인할 수 없습니다. 홈에서 다시 선택해 주세요.
-          </p>
         ) : !validatedTopicId ? (
-          <p role="status" className="py-12 text-center text-sm text-black/60">
+          <p role="status" className="va-message va-muted text-center text-sm">
             현재 연결된 분야의 저장 목록이 아닙니다. 홈에서 다시 선택해 주세요.
           </p>
         ) : (
-          <SavedContentsLoader key={topicId} topicId={topicId} />
+          <SavedContentsLoader key={validatedTopicId} topicId={validatedTopicId} />
         )}
+        <ConsumerBottomNav current="saved" topicId={validatedTopicId} />
       </div>
     </main>
   );

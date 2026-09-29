@@ -62,6 +62,9 @@ async def get_saved_bookmarks(
             summary=content.summary,
             image_url=content.image_url,
             source_name=site.media_name if site else source_row.source_title,
+            production_type=content.production_type,
+            published_at=content.published_at,
+            subtopic_names=await content_repository.list_content_subtopic_names(db, content.content_id),
         ))
     next_cursor = None
     if len(rows) > limit and page:

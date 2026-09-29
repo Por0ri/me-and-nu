@@ -15,6 +15,11 @@ export type Content = {
   saved: boolean;
   recommendationReason?: string;
   liked?: boolean;
+  /** 카드 태그로 보여줄 대표 세부 토픽 이름 */
+  tag?: string;
+  /** AI가 만든 글이면 true */
+  aiGenerated?: boolean;
+  publishedAt?: string;
 };
 
 /** 현재 Mock의 추천 적합도 선택값이며 Backend 최종 Contract가 아니다. */

@@ -4,9 +4,10 @@ import { consumerRoutes } from "@/lib/consumer-routes";
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { ContentAIPanel } from "@/components/content/content-ai-panel";
+import { ContentCardActions } from "@/components/home/content-card-actions";
 import { SourceInfo } from "@/components/content/source-info";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
 import {
@@ -17,6 +18,8 @@ import {
   unsaveContent,
 } from "@/lib/consumer-api/contents";
 import { isConsumerApiMode } from "@/lib/consumer-api/mode";
+import { readContentSavedState, subscribeContentState } from "@/lib/content-state";
+import { formatRelativeTime } from "@/lib/relative-time";
 import type { ContentDetail, ContentFeedback } from "@/types/content";
 
 type ContentDetailScreenProps = {
@@ -42,6 +45,12 @@ function ContentDetailLoader({ contentId, topicId }: ContentDetailLoaderProps) {
   const [failedAction, setFailedAction] = useState<ContentAction | null>(null);
   const actionInFlight = useRef(false);
   const requestGeneration = useRef(0);
+  // 상단 저장 아이콘은 홈 카드와 같은 상태 저장소를 본다.
+  const saved = useSyncExternalStore(
+    subscribeContentState,
+    () => readContentSavedState({ contentId, topicContext: { topicId } }, content?.saved ?? false),
+    () => content?.saved ?? false,
+  );
 
   useEffect(() => {
     requestGeneration.current += 1;
@@ -188,11 +197,11 @@ function ContentDetailLoader({ contentId, topicId }: ContentDetailLoaderProps) {
     );
   }
 
+  const relativeTime = formatRelativeTime(content.publishedAt);
+
   return (
     <article>
-      <header
-        className={`va-detail-header${content.imageUrl ? " va-detail-header-image" : ""}`}
-      >
+      <header className="va-detail-header va-detail-header-image">
         {content.imageUrl ? (
           <Image
             src={content.imageUrl}
@@ -202,10 +211,37 @@ function ContentDetailLoader({ contentId, topicId }: ContentDetailLoaderProps) {
             unoptimized
             className="va-detail-image"
           />
-        ) : null}
+        ) : (
+          <div className="va-detail-image-fallback" aria-hidden="true" />
+        )}
+        <div className="va-detail-topbar">
+          <Link
+            href={{ pathname: consumerRoutes.home, query: { topicId } }}
+            aria-label="홈으로 돌아가기"
+            className="va-detail-back"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M15 5l-7 7 7 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <ContentCardActions
+            contentId={contentId}
+            title={content.title}
+            topicId={topicId}
+            saved={saved}
+            liked={content.liked ?? false}
+          />
+        </div>
         <div className="va-detail-heading">
+          {content.tag ? <p className="va-section-chip">{content.tag}</p> : null}
           <h1>{content.title}</h1>
-          <p className="va-detail-source-name">출처: {content.sourceName}</p>
+          <div className="va-detail-byline">
+            <p>
+              By {content.aiGenerated ? "me;nu" : content.sourceName}
+              {content.aiGenerated ? <span className="block">AI생성 컨텐츠</span> : null}
+            </p>
+            {relativeTime ? <p>{relativeTime}</p> : null}
+          </div>
         </div>
       </header>
       <div className="va-detail-content space-y-8">
@@ -226,40 +262,22 @@ function ContentDetailLoader({ contentId, topicId }: ContentDetailLoaderProps) {
           className="va-detail-actions space-y-4"
         >
           <h2 id="content-feedback-title" className="text-base font-semibold">
-            추천이 내 취향에 맞나요?
+            이런 글, 더 볼래요?
           </h2>
           <div className="flex gap-3">
             {(["O", "X"] as const).map((feedback) => (
               <button
                 key={feedback}
                 type="button"
-                aria-label={
-                  feedback === "O"
-                    ? "O: 추천이 취향에 맞음"
-                    : "X: 추천이 취향에 맞지 않음"
-                }
+                aria-label={feedback === "O" ? "더 볼래요" : "그만 볼래요"}
                 aria-pressed={content.feedback === feedback}
                 disabled={pendingAction !== null}
                 onClick={() => void runAction({ type: "feedback", feedback })}
                 className="va-detail-feedback"
               >
-                {feedback}
+                {feedback === "O" ? "더 볼래요" : "그만 볼래요"}
               </button>
             ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              disabled={pendingAction !== null}
-              onClick={() => void runAction({ type: "save", saved: !content.saved })}
-              aria-pressed={content.saved}
-              className="va-secondary va-detail-save"
-            >
-              {content.saved ? "저장 취소" : "저장"}
-            </button>
-            <p className="va-muted text-sm">
-              {content.saved ? "저장됨" : "미저장"}
-            </p>
           </div>
           {pendingAction ? (
             <p role="status" className="va-muted text-sm leading-6">
@@ -312,10 +330,13 @@ export function ContentDetailScreen({
     topicId && flowState?.availableTopicIds.includes(topicId) ? topicId : null;
 
   if (isConsumerApiMode && isRestoring) return null;
+  // 본문을 보여줄 때는 사진 위 뒤로가기 버튼을 쓰므로 위쪽 글자 메뉴를 숨긴다.
+  const showsArticle = !(isConsumerApiMode && restoreError) && Boolean(flowState) && Boolean(validatedTopicId);
 
   return (
-    <main className="ui-version-a">
+    <main className="ui-version-a ui-home">
       <div className="va-shell va-detail">
+        {showsArticle ? null : (
         <nav aria-label="콘텐츠 탐색" className="va-detail-nav">
           <Link
             href={
@@ -336,6 +357,7 @@ export function ContentDetailScreen({
             </Link>
           ) : null}
         </nav>
+        )}
         {isConsumerApiMode && restoreError ? (
           <section className="va-message space-y-4">
             <p role="alert" className="text-sm text-red-600">{restoreError}</p>

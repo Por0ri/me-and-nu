@@ -5,6 +5,9 @@ export const consumerRoutes = {
   onboarding: "/consumer/onboarding",
   saved: "/consumer/saved",
   addTopic: "/consumer/topics/new",
+  my: "/consumer/my",
+  myTopics: "/consumer/my/topics",
+  mySubscriptions: "/consumer/my/subscriptions",
   content: (contentId: string) =>
     `/consumer/contents/${encodeURIComponent(contentId)}`,
 } as const;

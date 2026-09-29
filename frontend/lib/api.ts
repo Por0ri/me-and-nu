@@ -73,6 +73,7 @@ export type FeedCard = {
   summary: string | null; imageUrl: string | null;
   sourceName: string; sourceUrl: string; publishedAt: string | null;
   saved: boolean; savedItemId: number | null; recommendationReason: string | null;
+  subtopicNames?: string[];
   seen: boolean; isPromotional: boolean; notices: ContentNotice[]; myReaction: MyReaction;
 };
 export type ContentNotice = { code?: string; message?: string; type?: string };
@@ -89,6 +90,7 @@ export type ContentDetail = {
   excerpt: string | null; body: string | null; contentType: string | null;
   imageUrl: string | null;
   subtopicIds: number[];
+  subtopicNames?: string[];
   practicalInfo: { startsAt: string | null; endsAt: string | null; ageLimit: string | null; preparation: string | null; price: string | null };
   notices: ContentNotice[];
   isPromotional: boolean;
@@ -105,6 +107,7 @@ export type SavedBookmark = {
   savedItemId: number; contentId: number; title: string;
   summary: string | null; imageUrl: string | null; sourceName: string | null;
   topicId: number; tags: string[]; resurfaceEnabled: boolean;
+  productionType?: string | null; publishedAt?: string | null; subtopicNames?: string[];
 };
 export type BookmarksResponse = { items: SavedBookmark[]; nextCursor: string | null };
 

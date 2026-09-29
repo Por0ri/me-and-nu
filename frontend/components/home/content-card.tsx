@@ -9,6 +9,7 @@ import { useSyncExternalStore } from "react";
 import { ContentCardActions } from "@/components/home/content-card-actions";
 import { readContentSavedState, subscribeContentState } from "@/lib/content-state";
 import { isConsumerApiMode } from "@/lib/consumer-api/mode";
+import { formatRelativeTime } from "@/lib/relative-time";
 import type { Content } from "@/types/content";
 
 // Figma thumbnails for the existing Movie fixtures, used only in Home presentation.
@@ -48,6 +49,9 @@ export function ContentCard({
   const movieThumbnail =
     !isConsumerApiMode && topicId === "topic-movie" ? movieHomeThumbnails[content.id] : undefined;
   const imageUrl = content.imageUrl ?? movieThumbnail?.src;
+  const chip = content.tag ?? sectionTitle;
+  const byline = content.aiGenerated ? "me;nu" : content.sourceName;
+  const relativeTime = formatRelativeTime(content.publishedAt);
 
   if (viewMode === "card") {
     return (
@@ -76,14 +80,18 @@ export function ContentCard({
                 }
               />
             ) : (
-              <div className="va-card-image-fallback">
-                <span>이미지 없음</span>
-              </div>
+              <div className="va-card-image-fallback" aria-hidden="true" />
             )}
             <div className="va-card-overlay">
-              {sectionTitle ? <p className="va-section-chip">{sectionTitle}</p> : null}
+              {chip ? <p className="va-section-chip">{chip}</p> : null}
               <h3>{content.title}</h3>
-              <p className="va-card-metadata">출처: {content.sourceName}</p>
+              <div className="va-card-metadata">
+                <p>
+                  By {byline}
+                  {content.aiGenerated ? <span className="block">AI생성 컨텐츠</span> : null}
+                </p>
+                {relativeTime ? <p>{relativeTime}</p> : null}
+              </div>
             </div>
           </article>
         </Link>
@@ -110,14 +118,12 @@ export function ContentCard({
     >
       <article className="va-content-row">
         <div className="min-w-0 space-y-2">
-          {sectionTitle ? <p className="va-section-chip">{sectionTitle}</p> : null}
+          {chip ? <p className="va-section-chip">{chip}</p> : null}
           <h3 className="text-base leading-[1.4] tracking-[-0.02em]">
             {content.title}
           </h3>
-          <p className="va-muted text-sm leading-normal">
-            출처: {content.sourceName}
-          </p>
-          {saved ? <p className="va-saved-label">저장됨</p> : null}
+          <p className="va-muted text-sm leading-normal">By {byline}</p>
+          {relativeTime ? <p className="va-row-time">{relativeTime}</p> : null}
         </div>
         <div className="va-thumbnail">
           {imageUrl ? (
@@ -130,16 +136,8 @@ export function ContentCard({
               className="h-full w-full object-cover"
             />
           ) : (
-            <span className="text-xs">이미지 없음</span>
+            <div className="va-card-image-fallback" aria-hidden="true" />
           )}
-        </div>
-        <div className="col-span-2 space-y-2">
-          <p className="va-muted text-sm leading-6">{content.summary}</p>
-          {content.recommendationReason ? (
-            <p className="va-recommendation text-xs leading-5">
-              {content.recommendationReason}
-            </p>
-          ) : null}
         </div>
       </article>
     </Link>

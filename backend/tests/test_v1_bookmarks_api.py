@@ -39,7 +39,7 @@ def _saved(saved_item_id: int, content_id: int, *, status: str = "kept"):
 def _content(content_id: int, *, summary: str | None = None):
     return SimpleNamespace(
         content_id=content_id, topic_id=1, title=f"글 {content_id}",
-        summary=summary, image_url=None,
+        summary=summary, image_url=None, production_type="ai", published_at=None,
     )
 
 
@@ -55,7 +55,7 @@ def test_bookmarks_openapi_has_one_get_route_and_v12_fields():
     item = spec["components"]["schemas"]["SavedBookmarkItem"]
     assert set(item["properties"]) == {
         "savedItemId", "contentId", "title", "topicId", "tags", "resurfaceEnabled",
-        "summary", "imageUrl", "sourceName",
+        "summary", "imageUrl", "sourceName", "productionType", "publishedAt", "subtopicNames",
     }
 
 
@@ -122,6 +122,9 @@ async def test_bookmarks_service_cursor_search_and_actual_saved_ids(monkeypatch)
     monkeypatch.setattr(
         bookmark_service.content_repository, "get_primary_source",
         AsyncMock(return_value=(SimpleNamespace(source_title=None), None)),
+    )
+    monkeypatch.setattr(
+        bookmark_service.content_repository, "list_content_subtopic_names", AsyncMock(return_value=["액션"]),
     )
     first = await bookmark_service.get_saved_bookmarks(
         object(), 11, topic_id=1, q="  영화  ", cursor=None, limit=2

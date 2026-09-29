@@ -108,6 +108,7 @@ async def get_feed(
                 published_at=content.published_at,
                 saved=saved is not None,
                 saved_item_id=saved.saved_item_id if saved else None,
+                subtopic_names=await content_repo.list_content_subtopic_names(db, content.content_id),
                 is_promotional=content.is_sponsored,
                 notices=content_notices(content),
                 my_reaction=MyReaction(
@@ -180,6 +181,7 @@ async def get_content_detail(
         body=content.body if is_original_ai else None,
         content_type=content.content_type,
         subtopic_ids=await content_repo.list_content_subtopic_ids(db, content_id),
+        subtopic_names=await content_repo.list_content_subtopic_names(db, content_id),
         notices=content_notices(content),
         is_promotional=content.is_sponsored,
         share=ShareInfo(url=source[0]),

@@ -26,6 +26,7 @@ class FeedCard(CamelModel):
     saved: bool = False
     saved_item_id: int | None = None
     recommendation_reason: str | None = None
+    subtopic_names: list[str] = Field(default_factory=list)
     seen: bool = False
     is_promotional: bool = False
     notices: list[dict[str, str]] = Field(default_factory=list)
@@ -86,6 +87,7 @@ class ContentDetail(CamelModel):
     body: str | None = None
     content_type: str | None = None
     subtopic_ids: list[int] = Field(default_factory=list)
+    subtopic_names: list[str] = Field(default_factory=list)
     practical_info: PracticalInfo = Field(default_factory=PracticalInfo)
     notices: list[dict[str, str]] = Field(default_factory=list)
     is_promotional: bool = False
