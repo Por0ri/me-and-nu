@@ -26,13 +26,10 @@ async def list_subtopics(
     db: Annotated[AsyncSession, Depends(get_db)],
     topic_id: Annotated[int, Path(alias="topicId", gt=0)],
     q: Annotated[str | None, Query(description="Subtopic 이름 검색어")] = None,
-    parent_subtopic_id: Annotated[int | None, Query(alias="parentSubtopicId", gt=0)] = None,
     cursor: Annotated[str | None, Query(description="이전 응답의 nextCursor")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> SubtopicsResponse:
-    return await catalog_service.subtopics(
-        db, topic_id, q=q, parent_subtopic_id=parent_subtopic_id, cursor=cursor, limit=limit
-    )
+    return await catalog_service.subtopics(db, topic_id, q=q, cursor=cursor, limit=limit)
 
 
 @router.get(

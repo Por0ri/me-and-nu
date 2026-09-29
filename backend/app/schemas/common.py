@@ -12,10 +12,16 @@ class CamelModel(BaseModel):
     )
 
 
+class ErrorField(CamelModel):
+    field: str
+    code: str
+    message: str
+
+
 class ErrorResponse(CamelModel):
     code: str
     message: str
-    fields: list[dict[str, str]] | None = None
+    fields: list[ErrorField] | None = None
     request_id: str | None = None
 
 

@@ -28,7 +28,6 @@ def subtopic_item(subtopic) -> SubtopicItem:
         subtopic_id=subtopic.subtopic_id,
         topic_id=subtopic.topic_id,
         name=subtopic.subtopic_name,
-        parent_subtopic_id=subtopic.parent_subtopic_id,
     )
 
 
@@ -42,14 +41,14 @@ async def subtopics(
     topic_id: int,
     *,
     q: str | None,
-    parent_subtopic_id: int | None,
     cursor: str | None,
     limit: int,
 ) -> SubtopicsResponse:
     if await repo.get_active_topic(db, topic_id) is None:
         raise ApiError(404, "TOPIC_NOT_FOUND", "Topic을 찾을 수 없습니다.")
     normalized_q = q.strip() if q else None
-    context = {"v": 1, "topicId": topic_id, "q": normalized_q, "parent": parent_subtopic_id}
+    normalized_q = normalized_q or None
+    context = {"v": 2, "topicId": topic_id, "q": normalized_q}
     after_id = None
     if cursor is not None:
         payload = decode_cursor(cursor, expected=context)
@@ -60,7 +59,6 @@ async def subtopics(
         db,
         topic_id,
         q=normalized_q,
-        parent_subtopic_id=parent_subtopic_id,
         after_id=after_id,
         limit=limit + 1,
     )

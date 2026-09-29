@@ -1,6 +1,6 @@
 from datetime import date
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel
 
@@ -20,6 +20,11 @@ class ProfilePatchRequest(CamelModel):
 
     nickname: str | None = Field(default=None, min_length=1, max_length=30)
     profile_image_id: int | None = Field(default=None, gt=0)
+
+    @field_validator("nickname", mode="before")
+    @classmethod
+    def trim_nickname(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def validate_changes(self) -> "ProfilePatchRequest":

@@ -17,6 +17,8 @@ from app.db.session import get_db
 from app.main import app
 from app.models.user import UserAccount
 from app.repositories.auth_session_repository import find_auth_session
+from app.schemas.onboarding import OnboardingRequest
+from app.schemas.profile import ProfilePatchRequest
 from app.services.user_service import EmailAlreadyRegisteredError
 
 
@@ -77,7 +79,33 @@ def test_session_issues_anonymous_csrf_cookie(auth_environment):
     assert response.json()["csrfToken"]
     assert settings.session_cookie_name in response.cookies
     assert "HttpOnly" in response.headers["set-cookie"]
-    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Origin": "https://untrusted.example"},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Referer": "https://untrusted.example/page"},
+    ],
+)
+def test_anonymous_session_rejects_untrusted_browser_source(auth_environment, headers):
+    client, _, db, _ = auth_environment
+    response = client.get("/api/v1/auth/session", headers=headers)
+    assert response.status_code == 403
+    assert response.json()["code"] == "CSRF_INVALID"
+    db.commit.assert_not_awaited()
+
+
+def test_anonymous_session_accepts_allowed_frontend_origin(auth_environment):
+    client, _, _, _ = auth_environment
+    response = client.get(
+        "/api/v1/auth/session",
+        headers={"Origin": "http://localhost:3000", "Sec-Fetch-Site": "same-site"},
+    )
+    assert response.status_code == 200
+    assert response.json()["sessionState"] == "anonymous"
 
 
 def test_dev_registration_requires_csrf_and_uses_dev_path(auth_environment, monkeypatch):
@@ -105,6 +133,8 @@ def test_dev_register_duplicate_and_invalid_role(auth_environment, monkeypatch):
     assert duplicate.json()["code"] == "EMAIL_ALREADY_REGISTERED"
     assert invalid.status_code == 422
     assert invalid.json()["code"] == "VALIDATION_ERROR"
+    assert invalid.json()["fields"][0]["code"] == "VALIDATION_ERROR"
+    assert "requestId" not in invalid.json()
 
 
 def test_malformed_json_uses_common_400_error(auth_environment):
@@ -116,8 +146,21 @@ def test_malformed_json_uses_common_400_error(auth_environment):
         headers={"Content-Type": "application/json", "X-CSRF-Token": csrf},
     )
     assert response.status_code == 400
-    assert response.json()["code"] == "VALIDATION_ERROR"
-    assert response.json()["fields"]
+    assert response.json()["code"] == "MALFORMED_JSON"
+    assert response.json()["fields"] == [
+        {"field": "body", "code": "MALFORMED_JSON", "message": "JSON 형식이 올바르지 않습니다."}
+    ]
+
+
+def test_unsupported_content_type_uses_common_415_error(auth_environment):
+    client, _, _, _ = auth_environment
+    response = client.post(
+        "/api/v1/dev/auth/register",
+        content='{"nickname":"테스터"}',
+        headers={"Content-Type": "text/plain"},
+    )
+    assert response.status_code == 415
+    assert response.json()["code"] == "UNSUPPORTED_MEDIA_TYPE"
 
 
 def test_unknown_path_uses_common_error(auth_environment):
@@ -188,6 +231,20 @@ def test_profile_patch_contract(auth_environment):
     assert patched.status_code == 200
     assert patched.json()["nickname"] == "새 이름"
     assert patched.json()["accountType"] == "consumer"
+    assert patched.headers["cache-control"] == "private, no-store"
+
+
+def test_v11_nickname_length_is_checked_after_trimming():
+    nickname = " " + "가" * 30 + " "
+    onboarding = OnboardingRequest.model_validate({
+        "nickname": nickname,
+        "birthDate": "2000-01-01",
+        "accountType": "creator",
+        "consents": [{"type": "terms", "policyVersion": "v1", "agreed": True}],
+    })
+    profile = ProfilePatchRequest.model_validate({"nickname": nickname})
+    assert onboarding.nickname == "가" * 30
+    assert profile.nickname == "가" * 30
 
 
 @pytest.mark.asyncio

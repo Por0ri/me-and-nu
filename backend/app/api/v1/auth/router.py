@@ -1,6 +1,7 @@
 """Public session status and logout endpoints."""
 
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Request, Response, Security
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,21 @@ from app.schemas.common import COMMON_ERRORS
 router = APIRouter(prefix="/auth", tags=["인증·세션"])
 
 
+def _validate_anonymous_session_source(request: Request) -> None:
+    """Reject browser requests from untrusted sites before issuing a new cookie."""
+    allowed = {str(request.base_url).rstrip("/"), *(origin.rstrip("/") for origin in settings.cors_origins)}
+    origin = request.headers.get("origin")
+    if origin and origin.rstrip("/") not in allowed:
+        raise ApiError(403, "CSRF_INVALID", "요청 출처가 허용되지 않습니다.")
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        raise ApiError(403, "CSRF_INVALID", "요청 출처가 허용되지 않습니다.")
+    referer = request.headers.get("referer")
+    if not origin and referer:
+        parsed = urlsplit(referer)
+        if f"{parsed.scheme}://{parsed.netloc}" not in allowed:
+            raise ApiError(403, "CSRF_INVALID", "요청 출처가 허용되지 않습니다.")
+
+
 @router.get(
     "/session",
     response_model=SessionResponse,
@@ -34,12 +50,14 @@ router = APIRouter(prefix="/auth", tags=["인증·세션"])
     responses={200: {"description": "익명 또는 인증 세션의 상태"}},
 )
 async def get_session(
+    request: Request,
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
     context: Annotated[AuthContext | None, Depends(get_optional_auth_context)],
 ) -> SessionResponse:
-    response.headers["Cache-Control"] = "no-store"
+    response.headers["Cache-Control"] = "private, no-store"
     if context is None:
+        _validate_anonymous_session_source(request)
         _, raw_token = await create_auth_session(db, user_id=None, session_state="anonymous")
         await db.commit()
         set_session_cookie(response, raw_token)

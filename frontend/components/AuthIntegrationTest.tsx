@@ -7,7 +7,7 @@ import {
   getSession, getSubtopics, getTopics, likeContent, login, logout, onboard,
   register, setPreference, subscribeSubtopic, unbookmarkContent, unlikeContent,
   unsubscribeSubtopic, updateProfile,
-  type ContentDetail, type FeedResponse, type MyTopicsResponse, type Policy,
+  type ContentDetail, type FeedResponse, type MyTopicsResponse, type OnboardingInput, type Policy,
   type PolicyType, type Profile, type Session, type Subtopic, type Topic,
 } from "@/lib/api";
 
@@ -93,13 +93,15 @@ export default function AuthIntegrationTest() {
     setTopicId(nextTopicId);
     setSelectedSubtopicIds([]);
     setFeed(null);
+    setFeedCursor(null);
+    setFeedSubtopicId(null);
     setDetail(null);
+    setMySubtopicIds([]);
     void run("Subtopic 조회", () => getSubtopics(nextTopicId), (data) => setSubtopics(data.items));
   }
 
   function submitOnboarding() {
-    const input = {
-      accountType: role,
+    const common = {
       birthDate,
       nickname,
       profileImageId: null,
@@ -108,10 +110,17 @@ export default function AuthIntegrationTest() {
         policyVersion: policy.policyVersion,
         agreed: Boolean(consents[policy.type]),
       })),
-      ...(role === "consumer" && topicId !== null
-        ? { topicId, subtopicIds: selectedSubtopicIds }
-        : {}),
     };
+    let input: OnboardingInput;
+    if (role === "consumer") {
+      if (topicId === null || selectedSubtopicIds.length === 0) {
+        setResult({ title: "온보딩", error: "Topic과 Subtopic을 하나 이상 선택해 주세요." });
+        return;
+      }
+      input = { ...common, accountType: "consumer", topicId, subtopicIds: selectedSubtopicIds };
+    } else {
+      input = { ...common, accountType: "creator" };
+    }
     void run("온보딩", async () => {
       const response = await onboard(input);
       setSession(await getSession());
@@ -303,7 +312,12 @@ export default function AuthIntegrationTest() {
         <section className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
           <h3 className="font-bold">4. 피드·콘텐츠 상세</h3>
           <div className="mt-3 flex flex-wrap gap-2">
-            <select className={`${field} max-w-52`} value={feedSubtopicId ?? ""} onChange={(event) => setFeedSubtopicId(event.target.value ? Number(event.target.value) : null)}>
+            <select className={`${field} max-w-52`} value={feedSubtopicId ?? ""} onChange={(event) => {
+              setFeedSubtopicId(event.target.value ? Number(event.target.value) : null);
+              setFeed(null);
+              setFeedCursor(null);
+              setDetail(null);
+            }}>
               <option value="">모든 Subtopic</option>
               {subtopics.map((subtopic) => <option key={subtopic.subtopicId} value={subtopic.subtopicId}>{subtopic.name}</option>)}
             </select>

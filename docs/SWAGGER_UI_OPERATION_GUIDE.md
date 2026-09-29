@@ -1,6 +1,6 @@
 # 현재 구현 API의 Swagger UI 조작법
 
-기준: 2026-09-28, `main`의 `ab9235e`. 현재 코드에 등록된 HTTP 작업은 `ENABLE_DEV_API=true`에서 **32개**(명세 번호 대응 24개, 개발용 6개, 상태 확인 2개)다. API 번호는 [V1 명세 번호 대조표](V1_API_SPEC_IMPLEMENTATION_MAP.md)를 따른다. 이 문서는 **Swagger 화면에서 누를 순서와 입력 방법**을 설명한다. 서버·DB 준비 명령은 [기존 로컬 테스트 가이드](SWAGGER_TEST_GUIDE.md)를 참고한다.
+기준: 2026-09-29, 현재 로컬 코드. 등록된 HTTP 작업은 `ENABLE_DEV_API=true`에서 **32개**(명세 번호 대응 24개, 개발용 6개, 상태 확인 2개)다. 번호별 V1.1 대응과 한계는 [V1.1 로컬 정합화 표](API_V1_1_LOCAL_ALIGNMENT.md)를 따른다. 이 문서는 **Swagger 화면에서 누를 순서와 입력 방법**을 설명한다. 서버·DB 준비 명령은 [기존 로컬 테스트 가이드](SWAGGER_TEST_GUIDE.md)를 참고한다.
 
 > JSON의 숫자 ID와 정책 버전 `v1`은 입력 형식을 보여주는 예시다. 팀원은 **자기 환경에서 GET으로 조회한 값**으로 바꾼다. 현재 서버가 실행 중이지 않으면 `/docs`를 열기 전에 백엔드와 PostgreSQL을 먼저 시작한다.
 
@@ -103,7 +103,7 @@
 | API-012 | 사용자 → `GET /api/v1/users/me/consents` | 없음 | **200** 최신 동의 `items[]` |
 | API-013 | 사용자 → `PATCH /api/v1/users/me/consents` | `{"items":[{"type":"marketing","policyVersion":"v1","agreed":true}]}`; 실제 정책 버전 사용 | **200** `items[].agreed`, `updatedAt`; 필수 동의 철회는 거절 |
 | API-017 | Topic → `GET /api/v1/topics` | 선택 query `q`는 검색할 때만 입력. **모드 B는 로그인 후** | **200** `topics[].id`, `code`, `name` |
-| API-018 | Subtopic → `GET /api/v1/topics/{topicId}/subtopics` | path `topicId`; 선택 query `q`, `parentSubtopicId`, `cursor`, `limit`(1~100) | **200** `items[].subtopicId`, `topicId`, `nextCursor` |
+| API-018 | Subtopic → `GET /api/v1/topics/{topicId}/subtopics` | path `topicId`; 선택 query `q`, `cursor`, `limit`(1~100) | **200** 평면 `items[].subtopicId`, `topicId`, `nextCursor` |
 | API-019 | Subtopic → `GET /api/v1/subtopics/{subtopicId}` | path `subtopicId` | **200** 소속 `topicId`, `name` |
 | API-021 | 내 관심사 → `GET /api/v1/me/topics` | 선택 query `includeDeleted` 기본 `false` | **200** `topics[]`의 `id`, `status`, `subtopicIds` |
 | API-022 | 내 관심사 → `POST /api/v1/me/topics` | `{"topicId":1,"subtopicIds":[2]}`를 **아직 활성화하지 않은 실제 Topic/Subtopic ID**로 교체 | **201** `topic`; 이미 활성화한 Topic이면 409 `TOPIC_ALREADY_ACTIVE` |
@@ -144,7 +144,9 @@ Agent 새 실행을 만드는 Swagger 작업은 없다. 기존 실행이 없으�
 - **401 `AUTH_REQUIRED`**: 모드 B에서 보호 API를 비로그인 호출. `GET /auth/session`으로 상태부터 확인한다.
 - **403 `ONBOARDING_REQUIRED`**: 로그인은 했지만 온보딩 완료 전의 피드·반응·내 정보 요청.
 - **403 `CSRF_INVALID`**: 변경 요청의 토큰 누락·만료 또는 허용되지 않은 Origin. 현재 세션을 다시 조회해 Swagger **Authorize → CsrfToken**을 갱신한다.
+- **400 `MALFORMED_JSON`**: `Request body`의 JSON 문법이 잘못됐다. JSON 형식을 바로잡아 다시 실행한다.
+- **415 `UNSUPPORTED_MEDIA_TYPE`**: 본문을 보내는 변경 요청의 `Content-Type`이 JSON이 아니다. `application/json`으로 실행한다.
 - **404 `CONTENT_NOT_FOUND`**, **422 `INVALID_CURSOR`**: 존재하지 않는 Content ID 또는 잘못된 피드 cursor. 모드 B라면 **로그아웃 전에** 시험해야 401에 가리지 않는다.
 - **204**: DELETE와 로그아웃은 본문이 없는 것이 정상이다.
 
-테스트 기록에는 모드 A/B, 실제 Topic·Subtopic·Content·AgentRun ID, 각 요청의 Code·오류 `code`, 피드/상세 재조회 결과를 남긴다. 현재 구현과 명세 번호의 차이는 [API 번호 대조표](V1_API_SPEC_IMPLEMENTATION_MAP.md)에서 확인한다.
+테스트 기록에는 모드 A/B, 실제 Topic·Subtopic·Content·AgentRun ID, 각 요청의 Code·오류 `code`, 피드/상세 재조회 결과를 남긴다. 현재 구현과 V1.1 계약의 차이는 [로컬 정합화 표](API_V1_1_LOCAL_ALIGNMENT.md)에서 확인한다.

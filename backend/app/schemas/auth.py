@@ -41,7 +41,7 @@ class SessionUser(CamelModel):
 
 class SessionResponse(CamelModel):
     authenticated: bool
-    session_state: Literal["anonymous", "onboarding_pending", "active"]
+    session_state: Literal["anonymous", "onboarding_pending", "restoration_pending", "active"]
     user: SessionUser | None
     onboarding_completed: bool
     csrf_token: str

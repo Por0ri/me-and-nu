@@ -20,11 +20,10 @@ class SubtopicItem(CamelModel):
     subtopic_id: int
     topic_id: int
     name: str
-    parent_subtopic_id: int | None
 
 
 class SubtopicsResponse(CamelModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"items": [{"subtopicId": 12, "topicId": 1, "name": "영화 정보", "parentSubtopicId": None}], "nextCursor": None}})
+    model_config = ConfigDict(json_schema_extra={"example": {"items": [{"subtopicId": 12, "topicId": 1, "name": "영화 정보"}], "nextCursor": None}})
     items: list[SubtopicItem]
     next_cursor: str | None = None
 

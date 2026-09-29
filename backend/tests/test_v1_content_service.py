@@ -22,12 +22,10 @@ async def test_subtopic_cursor_rejects_empty_and_boolean_position(monkeypatch):
     monkeypatch.setattr(catalog_service.repo, "list_subtopics", AsyncMock())
     for cursor in (
         "",
-        encode_cursor({"v": 1, "topicId": 2, "q": None, "parent": None, "after": True}),
+        encode_cursor({"v": 2, "topicId": 2, "q": None, "after": True}),
     ):
         with pytest.raises(ApiError) as exc:
-            await catalog_service.subtopics(
-                object(), 2, q=None, parent_subtopic_id=None, cursor=cursor, limit=20
-            )
+            await catalog_service.subtopics(object(), 2, q=None, cursor=cursor, limit=20)
         assert exc.value.code == "INVALID_CURSOR"
     catalog_service.repo.list_subtopics.assert_not_awaited()
 

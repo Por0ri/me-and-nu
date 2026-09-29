@@ -26,15 +26,12 @@ async def list_subtopics(
     topic_id: int,
     *,
     q: str | None,
-    parent_subtopic_id: int | None,
     after_id: int | None,
     limit: int,
 ) -> list[Subtopic]:
     statement = select(Subtopic).where(Subtopic.topic_id == topic_id)
     if q:
         statement = statement.where(Subtopic.subtopic_name.ilike(f"%{q.strip()}%"))
-    if parent_subtopic_id is not None:
-        statement = statement.where(Subtopic.parent_subtopic_id == parent_subtopic_id)
     if after_id is not None:
         statement = statement.where(Subtopic.subtopic_id > after_id)
     return list(

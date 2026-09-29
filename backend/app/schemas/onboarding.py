@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel
 from app.schemas.policy import ConsentInput
@@ -17,6 +17,11 @@ class OnboardingRequest(CamelModel):
     profile_image_id: int | None = Field(default=None, gt=0)
     topic_id: int | None = Field(default=None, gt=0)
     subtopic_ids: list[int] | None = None
+
+    @field_validator("nickname", mode="before")
+    @classmethod
+    def trim_nickname(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def validate_topic_choice(self) -> "OnboardingRequest":
