@@ -9,6 +9,7 @@ from app.api.v1.onboarding.router import router as onboarding_router
 from app.api.v1.policies.router import router as policies_router
 from app.api.v1.subtopics.router import router as subtopics_router
 from app.api.v1.topics.router import router as topics_router
+from app.api.v1.users.me.bookmarks import router as bookmarks_router
 from app.api.v1.users.me.consents import router as consents_router
 from app.api.v1.users.me.router import router as profile_router
 
@@ -22,3 +23,4 @@ router.include_router(my_topics_router)
 router.include_router(contents_router)
 router.include_router(profile_router)
 router.include_router(consents_router)
+router.include_router(bookmarks_router)

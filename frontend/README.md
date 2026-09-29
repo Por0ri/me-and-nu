@@ -2,6 +2,42 @@
 
 FastAPI·PostgreSQL V1 API의 공개 피드와 콘텐츠 상세를 브라우저에서 볼 수 있습니다. 개발용 API 점검 화면도 홈 하단에 유지합니다.
 
+## Consumer 온보딩 실제 API 연결
+
+최신 `main`의 온보딩 화면을 유지하고, `NEXT_PUBLIC_CONSUMER_DATA_MODE=api`이면 실제 FastAPI·PostgreSQL을 사용합니다.
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_CONSUMER_DATA_MODE=api
+NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true
+```
+
+`frontend/.env.local`에 설정하고 Next.js를 재시작하세요. 백엔드는 `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=false`로 실행합니다.
+
+1. `http://localhost:3000/consumer/login`을 엽니다. 기존 계정의 온보딩 완료 여부와 관계없이 시연용 로그인 화면을 볼 수 있습니다.
+2. **카카오로 시연 시작** 또는 **네이버로 시연 시작**을 누르면 새 로컬 시연 계정으로 로그인하고 온보딩으로 이동합니다. 실제 SNS 인증이나 SNS 개인정보 조회는 수행하지 않습니다. 서버의 현재 약관에 동의한 뒤 소비자 유형·분야·세부 관심사를 선택합니다.
+3. API 모드는 실제 카탈로그의 세부 관심사 **1개 이상**을 선택하면 완료할 수 있습니다. Mock 화면의 최소 5개 선택 규칙은 유지합니다.
+4. 완료하면 선택한 정책 버전·동의·Topic·Subtopic이 서버에 저장되고 `/consumer` 홈으로 이동합니다.
+5. 새로고침 후에도 서버 세션·관심 분야가 복구됩니다. 홈·상세·O/X·좋아요·북마크·저장 목록도 실제 API를 사용합니다. API 오류를 Mock 데이터로 대체하지 않습니다.
+6. 홈 우측 상단 분야 전환 메뉴의 **처음부터 시연하기**를 누르면 로그인 화면으로 돌아갑니다. 다음 시연 시작 버튼에서 새 계정을 생성하며 기존 계정 데이터를 초기화하지 않습니다.
+
+시연 로그인은 `NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true`이고 프론트·API 주소가 모두 루프백일 때만 사용합니다. 기존 개발용 가입·로그인 API를 사용하며, 이메일·비밀번호 입력이 필요 없습니다. 생성한 자격은 메모리에만 보관하며 페이지 새로고침 후 같은 시연 계정의 재로그인은 제공하지 않습니다. 같은 브라우저의 localhost 탭은 세션 쿠키를 공유하므로 새 시연을 시작하면 다른 탭도 새 계정의 세션을 사용합니다. 시연 플래그를 끄면 기존 `/#api-test`의 수동 개발용 로그인으로 API를 확인할 수 있습니다.
+
+**임시 프로필:** 추가 입력 없이 닉네임 `로컬사용자{임의 문자열}`, 생년월일 `2000-01-01`을 생성합니다. 같은 화면에서 제출을 재시도하면 생성된 값을 재사용합니다. 온보딩 전 세션은 `user: null`이므로 사용자 ID에 의존하지 않습니다. 프론트와 API 주소가 모두 루프백(`localhost`, `127.0.0.1`, `[::1]`)일 때만 허용합니다. 구현 위치는 `lib/consumer-api/onboarding.ts`의 `createLocalOnboardingProfile`입니다. 이 값은 실제 SNS 개인정보가 아니며, 향후 소셜 로그인에서 확인된 정보로 교체해야 합니다.
+
+실제 소셜 로그인 연결은 후속 작업입니다. 로컬 시연이 활성화된 API 모드에서 비로그인 상태로 `/consumer`에 진입하면 로그인 화면으로 이동합니다. 자연어 관심사 해석·AI 대화는 아직 연결되지 않았습니다.
+
+**API 시연 데이터 준비:** 기본 정책·데모 사용자 seed에 더해, `backend`에서 다음 명령으로 Agent 콘텐츠와 온보딩 관심사를 적재해야 합니다. 기본 seed만 있는 DB에는 현재 화면의 7개 선택지가 모두 준비되어 있지 않습니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m app.seeds.agent_contents --git-ref f645df0 --apply
+.\.venv\Scripts\python.exe -m app.seeds.agent_interests --git-ref f645df0 --apply
+```
+
+영화·음악·애니메이션별로 현재 콘텐츠에 근거한 임시 관심사 7개를 표시하며, 실제 API에서 조회한 DB ID로 저장합니다. 온보딩과 분야 추가 화면에서 동일한 목록을 사용합니다. [임시 분류 목록·근거·팀 협의 사항](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)을 참고하세요. PostgreSQL 데이터 자체는 Git 커밋에 포함되지 않으므로 다른 환경에서는 위 seed를 실행해야 합니다.
+
+콘텐츠 `imageUrl`이 `/local-content/...`이면 `frontend/public/local-content`의 로컬 이미지를 표시합니다. 포함된 이미지 파일만으로 DB의 콘텐츠 이미지 경로를 자동 변경하지는 않습니다.
+
 ## Consumer Mock
 
 - 시작 URL: `http://localhost:3000/consumer/login`. Mock 로그인과 온보딩을 완료하면 `/consumer` 홈으로 이동합니다.
@@ -57,8 +93,8 @@ npm run build
 백엔드와 프론트엔드를 각각 실행합니다.
 
 ```powershell
-# 터미널 1: me_nu/backend
-python -m uvicorn app.main:app --reload --host localhost --port 8000
+# 터미널 1: me_nu/backend (Windows / psycopg)
+.\.venv\Scripts\python.exe scripts/run_local_api.py
 ```
 
 ```powershell

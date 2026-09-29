@@ -1,4 +1,4 @@
-# # Movie Review agent V3.6 — 영화 리뷰 에이전트 (평론 기반 · LangGraph)
+# # Movie Review agent V3.7 — 영화 리뷰 에이전트 (평론 기반 · LangGraph)
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_review/올림|탈락/`에 쌓인다.
 #
@@ -33,6 +33,12 @@
 # 백엔드(`backend/app/integrations/movie_review_agent.py`)가 부르는 모양은 V2.0과 같다.
 #   `VERSION` · 동기 `fetch_material(title, year)` · `async produce(material)` → dict
 #   {"상태": 대상아님 | 재료부족 | 판단보류 | 올림 | 탈락보관, "이유", "로그": [{"단계", "회차", "결과", ...}], "글": {title, body, sources}, "주문", "확인필요", "최고판"}
+#
+# **V3.7** — 영화를 세 편씩 같이 돌린다 (PM 9/29: 속도가 빨라져야 한다).
+# - `cmd_list` · `cmd_random`이 `동시영화`(3)편씩 같이 돈다. 전에는 한 편씩 차례로 돌았다. `produce`는 V3.0부터 스레드마다 새 루프 · 새 모델로 돌아서 그대로 같이 돌릴 수 있다.
+# - 한 편이 하는 일(호출 · 토큰 · 추론 세기)은 그대로다. 글과 편당 값은 안 바뀐다. 씨네21은 같은 사이트라 1초 간격으로 줄을 서서, 재료 모으기는 덜 빨라진다.
+# - 로그 줄 앞에 `[1]` · `[2]` · `[3]` 표식을 붙여 섞인 로그를 가른다. 저장 파일 로그에는 안 붙는다. `produce(표식=)`는 비워 두면 전과 같다(백엔드 계약 그대로).
+# - 뽑힌 목록에서 같은 영화는 한 번만 돈다. 한 편이 오류로 멈춰도 나머지는 끝까지 돈다.
 #
 # **V3.6** — 깊이를 되찾는다 (PM 9/29: 깊이도 없고 가벼운 줄거리 소개 정도다).
 # V3.3에서 접근을 평가 하나로 좁히자("되는 것 하나, 안 되는 것 하나면 충분하다") 글이 관람 안내가 됐다. V3.0 스모크(분석)는 디졸브 · 줌인 · 인물 배치로
@@ -83,7 +89,7 @@ load_dotenv(HERE.parent / ".env")
 load_dotenv(HERE / ".env")
 
 # ───── 여기서 고친다 ─────────────────────────────────────────────
-VERSION     = "V3.6"
+VERSION     = "V3.7"
 MODEL       = "openai:gpt-6-luna"             # 음악 · 애니와 같은 모델. "openai:" 접두어는 Responses API로 간다
 KEY_ENV     = "OPENAI_API_KEY"
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -96,6 +102,7 @@ MIN_REVIEWS   = 2      # 평론이 이만큼 안 모이면 재료부족이다
 보강목표      = 3      # 평론이 이만큼 안 모이면 재료 보강 마디가 한 번 더 찾는다
 보강페이지    = 6      # 보강에서 더 읽어볼 페이지 수
 동시판정      = 5      # 재료 판정을 한 번에 몇 페이지씩 모델에 보낼지
+동시영화      = 3      # V3.7: cmd_list · cmd_random이 영화를 몇 편씩 같이 돌릴지. 1이면 한 편씩 차례로
 모델판정상한  = 8      # 큰 모델에 보낼 페이지 수 상한
 발췌글자      = 1800   # 기획자에게 주는 평론 원문 발췌. 평론마다 이만큼
 REWRITE_LIMIT = 3      # 다시 쓰기 상한
@@ -1737,10 +1744,11 @@ class RunState(BaseModel):
     저장경로: Optional[str] = None
     멈춤: str = ""
     다음: str = ""
+    표식: str = ""                  # V3.7: 여러 편을 같이 돌 때 화면 로그 앞에 붙는 "[1] ". 저장 로그에는 안 붙는다
 
     def log(self, s):
         self.로그.append(s)
-        print(s)
+        print(self.표식 + s if self.표식 else s)
 
 print("상태 준비 끝")
 
@@ -2237,20 +2245,20 @@ def _결과(st: RunState, 이유=None) -> dict:
                        "topic": "영화", "주제": (o.주제 if o else ""), "장면셋": (o.장면셋 if o else []), "누구에게": (o.누구에게 if o else "")} if st.주문 else None
     return out
 
-def _produce_sync(material: Material, 지정=None, 새루프=False) -> dict:
+def _produce_sync(material: Material, 지정=None, 새루프=False, 표식="") -> dict:
     ok, why = genre_ok(material)
     if not ok:
         return {"상태": "대상아님", "이유": why, "로그": []}
     ok, why = enough_material(material)
     if not ok:
         return {"상태": "재료부족", "이유": why, "로그": []}
-    st = _돌리기(RunState(material=material, 지정=dict(지정 or {})), 새루프=새루프)
+    st = _돌리기(RunState(material=material, 지정=dict(지정 or {}), 표식=표식), 새루프=새루프)
     return _결과(st)
 
-async def produce(material: Material, topic="영화", tag_topic=None, approach=None, temperature=None, persona=None, layout=None) -> dict:
-    """백엔드 · 노트북 · 명령줄이 다 이걸 부른다. 그래프는 스레드에서 새 루프로 돈다."""
+async def produce(material: Material, topic="영화", tag_topic=None, approach=None, temperature=None, persona=None, layout=None, 표식="") -> dict:
+    """백엔드 · 노트북 · 명령줄이 다 이걸 부른다. 그래프는 스레드에서 새 루프로 돈다. 표식은 화면 로그 앞에만 붙는다(V3.7)."""
     지정 = {k: v for k, v in (("approach", approach), ("temperature", temperature), ("persona", persona), ("layout", layout)) if v}
-    return await asyncio.to_thread(_produce_sync, material, 지정, True)
+    return await asyncio.to_thread(_produce_sync, material, 지정, True, 표식)
 
 def show(out: dict):
     print("상태:", out["상태"])
@@ -2348,17 +2356,34 @@ async def cmd_one(title, year, **지정):
     끝나면zip()
     return out
 
-async def cmd_list(titles=TEST_TITLES):
+async def _같이돌기(목록, 재료뽑기, 동시=None):
+    """V3.7: 목록을 동시(기본 동시영화)편씩 같이 돈다. 재료뽑기(항목) → Material 또는 None(동기, 스레드에서 돈다).
+    돌려주는 것은 [(영화 제목, produce 결과)]. 못 찾은 것 · 오류로 멈춘 것은 빠진다."""
+    동시 = max(1, int(동시 or 동시영화))
+    문 = asyncio.Semaphore(동시)
+    if 동시 > 1:
+        print(f"영화를 {동시}편씩 같이 돈다. 로그 앞의 [번호]로 가른다")
+
+    async def 하나(i, x):
+        async with 문:
+            표식 = f"[{i + 1}] " if 동시 > 1 else ""
+            try:
+                m = await asyncio.to_thread(재료뽑기, x)
+                if m is None:
+                    print(f"{표식}{x} — TMDB에서 못 찾았다"); return None
+                print(f"\n{표식}===== {m.title} ({m.year}) · 감독 {m.director} =====")
+                r = await produce(m, 표식=표식)
+            except Exception as e:                     # 한 편이 멈춰도 나머지는 돈다
+                print(f"{표식}{x} — 오류로 멈췄다: {type(e).__name__}: {e}"); return None
+            print(f"{표식}[{m.title}] {r['상태']}" + (f" — {r.get('이유', '')}" if r.get("이유") else ""))
+            return (m.title, r)
+
+    got = await asyncio.gather(*(하나(i, x) for i, x in enumerate(목록)))
+    return [g for g in got if g]
+
+async def cmd_list(titles=TEST_TITLES, 동시=None):
     _조건판_새로()
-    results = []
-    for t, y in titles:
-        m = fetch_material(t, y)
-        if m is None:
-            print(f"[{t}] TMDB에서 못 찾았다"); continue
-        print(f"\n===== {m.title} ({m.year}) · 감독 {m.director} =====")
-        r = await produce(m)
-        results.append((m.title, r))
-        print(f"[{m.title}] {r['상태']}" + (f" — {r.get('이유', '')}" if r.get("이유") else ""))
+    results = await _같이돌기(list(dict.fromkeys(titles)), lambda ty: fetch_material(*ty), 동시)
     끝나면zip()
     return results
 
@@ -2369,18 +2394,16 @@ def _씨네21있나(c, 최소=2):
     except Exception:
         return False
 
-async def cmd_random(n=5, seed=None):
+async def cmd_random(n=5, seed=None, 동시=None):
     _조건판_새로()
     후보 = pick_random_movies(n * 3, seed=seed)
     cands = [c for c in 후보 if _씨네21있나(c)][:n]
     print(f"씨네21 기사로 거름: 후보 {len(후보)}편 → {len(cands)}편")
     print("뽑힌 영화:", [(c["title"], c["year"]) for c in cands])
-    for c in cands:
-        m = fetch_material_by_id(c["id"], fallback_title=c["title"] or "")
-        print(f"\n===== {m.title} ({m.year}) · 감독 {m.director} =====")
-        r = await produce(m)
-        print(f"[{m.title}] {r['상태']}" + (f" — {r.get('이유', '')}" if r.get("이유") else ""))
+    cands = list({c["id"]: c for c in cands}.values())             # 같은 영화는 한 번만
+    results = await _같이돌기(cands, lambda c: fetch_material_by_id(c["id"], fallback_title=c["title"] or ""), 동시)
     끝나면zip()
+    return results
 
 def main(argv=None):
     import argparse
@@ -2398,8 +2421,9 @@ def main(argv=None):
     sub.add_parser("check", help="씨네21 · 검색 · robots 점검. 모델 안 부른다")
     p = sub.add_parser("pick", help="재료 모으기까지. 모델 안 부른다"); p.add_argument("title"); p.add_argument("year", type=int, nargs="?")
     a = sub.add_parser("one", help="한 편"); a.add_argument("title"); a.add_argument("year", type=int)
-    sub.add_parser("list", help="테스트 목록 다섯 편")
+    l = sub.add_parser("list", help="테스트 목록 다섯 편"); l.add_argument("--at-once", type=int, default=동시영화, dest="at_once", help="몇 편씩 같이 돌릴지")
     r = sub.add_parser("random", help="무작위 N편"); r.add_argument("n", type=int, nargs="?", default=5); r.add_argument("--seed", type=int, default=None)
+    r.add_argument("--at-once", type=int, default=동시영화, dest="at_once", help="몇 편씩 같이 돌릴지")
     sub.add_parser("zip", help="out/movie_review 를 zip으로 묶는다")
     args = ap.parse_args(argv)
     if args.cmd == "check":
@@ -2409,9 +2433,9 @@ def main(argv=None):
     elif args.cmd == "one":
         asyncio.run(cmd_one(args.title, args.year))
     elif args.cmd == "list":
-        asyncio.run(cmd_list())
+        asyncio.run(cmd_list(동시=args.at_once))
     elif args.cmd == "random":
-        asyncio.run(cmd_random(args.n, seed=args.seed))
+        asyncio.run(cmd_random(args.n, seed=args.seed, 동시=args.at_once))
     elif args.cmd == "zip":
         zip_outputs()
 

@@ -1,4 +1,4 @@
-# # Movie Info agent V3.4 — 영화 정보 전달 에이전트
+# # Movie Info agent V3.5 — 영화 정보 전달 에이전트
 #
 # 콜랩 노트북(Movie_Info_agent_V2.3.ipynb)을 스크립트로 옮긴 것이다.
 # 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_info/`에 쌓인다.
@@ -90,6 +90,15 @@
 # - 재개봉 판정을 고쳤다. 한국 개봉 기록이 그 전에도 있을 때만 재개봉이다. 해외에서 먼저 나오고 몇 해 뒤 한국에 걸린 것은 `late_kr`(늦은 한국 개봉)이다. TMDB 한국 기록이 빠졌을 수 있어 '다시' · '처음' 둘 다 단정하지 않는다.
 #   V3.2에서 2025년 이탈리아 영화의 한국 첫 개봉을 "다시 극장에 걸린다"고 썼다.
 #
+# **V3.5에서 바뀐 것 — PM 9/29: 속도가 빨라져야 한다. 영화를 세 편씩 같이 돌린다**
+#
+# - `cmd_batch`(released · upcoming)가 `CONCURRENT_MOVIES`(3)편씩 같이 돈다. 전에는 한 편씩 차례로 돌았다.
+#   V3.3 실측이 한 편 54초였다. 모델 호출이 대부분이라 세 편씩이면 세 배 가까이 빨라진다.
+# - 한 편이 하는 일(호출 · 토큰 · 추론 세기)은 그대로다. 글과 편당 값은 안 바뀐다. 같은 돈을 짧은 시간에 쓴다.
+# - 재료 모으기(TMDB · 위키 · 기사)는 동기라 스레드로 돌린다. 모델 호출은 한 이벤트 루프에서 같이 돈다.
+# - 뽑힌 목록에서 같은 영화는 한 번만 돈다. 한 편이 오류로 멈춰도 나머지는 끝까지 돈다. 오류는 그 편 이름과 같이 찍는다.
+# - 명령줄 `released 5 --at-once 1`이면 V3.4처럼 한 편씩이다.
+#
 # **V3.4에서 바뀐 것 — PM 9/29: 같은 정보를 두 번씩 반복한다. 마지막 문장 체크**
 #
 # - 타겟(2023): 판정관이 끝 문장을 재료 밖이라 지적 → 고치기가 지우고 분량을 지키려 출연진을 한 번 더 적음 → 판정관은 '출연진 중복'을 적고도 완성도 4로 올렸다.
@@ -131,7 +140,7 @@ TMDB_KEY = _secret("TMDB_KEY")
 os.environ["OPENAI_API_KEY"] = _secret("LLM_KEY")
 print("키 읽음. 길이:", len(os.environ["OPENAI_API_KEY"]))
 
-VERSION = "Movie Info V3.4"
+VERSION = "Movie Info V3.5"
 FORM = "정보 전달"
 
 # ── 모델 ──────────────────────────────────────────────────
@@ -151,6 +160,7 @@ MAX_REWRITE = 3          # 형태 검사 · 판정관 되돌리기 상한
 MAX_EDITOR_RETURN = 3    # 편집국장 반려 상한. 임시값
 EDITOR_FIX_LIMIT  = 3    # V3.1: 고칠 것이 이보다 많으면 반려한다(마지막 판 빼고). 영화 리뷰 `고칠것_상한`과 같은 값
 MAX_STEPS = 40           # 한 편에 도는 마디 수 상한. 어떤 경우에도 이 위로는 안 돈다
+CONCURRENT_MOVIES = 3    # V3.5: cmd_batch가 영화를 몇 편씩 같이 돌릴지. 1이면 한 편씩 차례로
 REQUEST_LIMIT_PER_RUN = 3
 
 # ── 앞 판 기억 (V2.4) ─────────────────────────────────────
@@ -4801,19 +4811,34 @@ def _print_log(mat, r):
                 print(f"      뺀 것: {row['뺀 것']}")
 
 
-async def cmd_batch(cands, label: str):
-    """셀 17 · 18 — 뽑힌 후보를 차례로 돌리고 저장한다"""
-    print(f"{label}:")
-    for c in cands:
+async def cmd_batch(cands, label: str, at_once: int | None = None):
+    """셀 17 · 18 — 뽑힌 후보를 돌리고 저장한다. V3.5: at_once(기본 CONCURRENT_MOVIES)편씩 같이 돈다"""
+    seen, todo = set(), []
+    for c in cands:                                  # 같은 영화는 한 번만
+        if c["id"] not in seen:
+            seen.add(c["id"]); todo.append(c)
+    at_once = max(1, int(at_once or CONCURRENT_MOVIES))
+    print(f"{label}:" + (f" ({at_once}편씩 같이)" if at_once > 1 else ""))
+    for c in todo:
         print(f" - {c['title']} ({c['year']})  id={c['id']}")
     print()
 
-    for c in cands:
-        mat = fetch_material_by_id(c["id"], fallback_title=c["title"] or "")
-        r = await produce(mat)
-        _print_log(mat, r)
-        if r.get("글"):
-            save_md(r)
+    gate = asyncio.Semaphore(at_once)
+
+    async def one(c):
+        async with gate:
+            try:
+                mat = await asyncio.to_thread(fetch_material_by_id, c["id"], fallback_title=c["title"] or "")
+                r = await produce(mat)
+            except Exception as e:                   # 한 편이 멈춰도 나머지는 돈다
+                print(f"[{c['title']}] 오류로 멈췄다 — {type(e).__name__}: {e}")
+                return None
+            _print_log(mat, r)                       # 한 편 로그는 끝난 뒤 한 번에 찍어서 섞이지 않는다
+            if r.get("글"):
+                save_md(r)
+            return r
+
+    await asyncio.gather(*(one(c) for c in todo))
 
     print("\n저장된 파일:")
     for p in sorted(OUT_DIR.glob("*.md")):
@@ -4837,9 +4862,11 @@ def main(argv=None):
 
     a = sub.add_parser("released", help="개봉작 무작위 N편 (셀 17)")
     a.add_argument("n", type=int, nargs="?", default=5)
+    a.add_argument("--at-once", type=int, default=CONCURRENT_MOVIES, dest="at_once", help="몇 편씩 같이 돌릴지")
 
     a = sub.add_parser("upcoming", help="개봉 전 영화 무작위 N편 (셀 18)")
     a.add_argument("n", type=int, nargs="?", default=5)
+    a.add_argument("--at-once", type=int, default=CONCURRENT_MOVIES, dest="at_once", help="몇 편씩 같이 돌릴지")
 
     args = ap.parse_args(argv)
     if args.cmd == "material":
@@ -4847,9 +4874,9 @@ def main(argv=None):
     elif args.cmd == "one":
         asyncio.run(cmd_one(args.title, args.year))
     elif args.cmd == "released":
-        asyncio.run(cmd_batch(pick_released(args.n), "뽑힌 영화"))
+        asyncio.run(cmd_batch(pick_released(args.n), "뽑힌 영화", at_once=args.at_once))
     elif args.cmd == "upcoming":
-        asyncio.run(cmd_batch(pick_upcoming(args.n), "뽑힌 개봉 예정작"))
+        asyncio.run(cmd_batch(pick_upcoming(args.n), "뽑힌 개봉 예정작", at_once=args.at_once))
 
 
 if __name__ == "__main__":

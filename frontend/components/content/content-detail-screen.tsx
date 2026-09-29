@@ -16,6 +16,7 @@ import {
   setContentFeedback,
   unsaveContent,
 } from "@/lib/consumer-api/contents";
+import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import type { ContentDetail, ContentFeedback } from "@/types/content";
 
 type ContentDetailScreenProps = {
@@ -91,8 +92,8 @@ function ContentDetailLoader({ contentId, topicId }: ContentDetailLoaderProps) {
       return;
     }
 
-    // 현재 Mock에서는 같은 Feedback을 재선택해도 취소하거나 재요청하지 않는다.
-    if (action.type === "feedback" && content.feedback === action.feedback) {
+    // Mock preserves its existing behavior; the API mode clears the same O/X choice.
+    if (!isConsumerApiMode && action.type === "feedback" && content.feedback === action.feedback) {
       return;
     }
 
@@ -107,6 +108,7 @@ function ContentDetailLoader({ contentId, topicId }: ContentDetailLoaderProps) {
         const result = await setContentFeedback({
           ...input,
           feedback: action.feedback,
+          currentFeedback: content.feedback,
         });
 
         if (
@@ -305,9 +307,11 @@ export function ContentDetailScreen({
   contentId,
   topicId,
 }: ContentDetailScreenProps) {
-  const { flowState } = useConsumerFlow();
+  const { flowState, isRestoring, restoreError, refreshTopics } = useConsumerFlow();
   const validatedTopicId =
     topicId && flowState?.availableTopicIds.includes(topicId) ? topicId : null;
+
+  if (isConsumerApiMode && isRestoring) return null;
 
   return (
     <main className="ui-version-a">
@@ -332,17 +336,27 @@ export function ContentDetailScreen({
             </Link>
           ) : null}
         </nav>
-        {!flowState ? (
+        {isConsumerApiMode && restoreError ? (
+          <section className="va-message space-y-4">
+            <p role="alert" className="text-sm text-red-600">{restoreError}</p>
+            <button
+              type="button"
+              onClick={() => void refreshTopics().catch(() => undefined)}
+              className="va-secondary inline-flex"
+            >
+              다시 시도
+            </button>
+          </section>
+        ) : !flowState ? (
           <section className="va-message space-y-4">
             <p role="status" className="va-muted text-sm leading-6">
-              현재 연결된 분야 정보가 없습니다. 온보딩에서 분야를 다시 선택해
-              주세요.
+              현재 연결된 분야 정보가 없습니다. 분야를 선택해 주세요.
             </p>
             <Link
-              href={consumerRoutes.onboarding}
+              href={isConsumerApiMode ? consumerRoutes.addTopic : consumerRoutes.onboarding}
               className="va-primary inline-flex"
             >
-              온보딩으로 이동
+              {isConsumerApiMode ? "분야 추가로 이동" : "온보딩으로 이동"}
             </Link>
           </section>
         ) : !topicId ? (

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
 import { getSavedContents } from "@/lib/consumer-api/contents";
+import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import type { SavedContentsData } from "@/types/content";
 
 function SavedContentsLoader({ topicId }: { topicId: string }) {
@@ -118,9 +119,11 @@ function SavedContentsLoader({ topicId }: { topicId: string }) {
 }
 
 export function SavedScreen({ topicId }: { topicId: string | null }) {
-  const { flowState } = useConsumerFlow();
+  const { flowState, isRestoring, restoreError, refreshTopics } = useConsumerFlow();
   const validatedTopicId =
     topicId && flowState?.availableTopicIds.includes(topicId) ? topicId : null;
+
+  if (isConsumerApiMode && isRestoring) return null;
 
   return (
     <main className="flex flex-1 justify-center bg-zinc-50 px-6 py-12">
@@ -136,17 +139,27 @@ export function SavedScreen({ topicId }: { topicId: string | null }) {
         >
           홈으로 돌아가기
         </Link>
-        {!flowState ? (
+        {isConsumerApiMode && restoreError ? (
+          <section className="space-y-4 rounded-xl border border-red-200 bg-white p-6 text-center">
+            <p role="alert" className="text-sm text-red-600">{restoreError}</p>
+            <button
+              type="button"
+              onClick={() => void refreshTopics().catch(() => undefined)}
+              className="rounded-lg border border-black/20 px-4 py-2 text-sm font-medium text-black"
+            >
+              다시 시도
+            </button>
+          </section>
+        ) : !flowState ? (
           <section className="space-y-4 rounded-xl border border-black/10 bg-white p-6 text-center">
             <p role="status" className="text-sm leading-6 text-black/60">
-              현재 연결된 분야 정보가 없습니다. 온보딩에서 분야를 다시 선택해
-              주세요.
+              현재 연결된 분야 정보가 없습니다. 분야를 선택해 주세요.
             </p>
             <Link
-              href={consumerRoutes.onboarding}
+              href={isConsumerApiMode ? consumerRoutes.addTopic : consumerRoutes.onboarding}
               className="inline-flex rounded-lg bg-black px-4 py-3 text-sm font-medium text-white"
             >
-              온보딩으로 이동
+              {isConsumerApiMode ? "분야 추가로 이동" : "온보딩으로 이동"}
             </Link>
           </section>
         ) : !topicId ? (

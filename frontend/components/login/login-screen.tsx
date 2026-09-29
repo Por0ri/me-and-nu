@@ -12,6 +12,8 @@ import {
   OnboardingIcon,
 } from "@/components/onboarding/onboarding-ui";
 import { getLoginOptions, loginWithProvider } from "@/lib/consumer-api/auth";
+import { isConsumerApiMode } from "@/lib/consumer-api/mode";
+import { isLocalDemoLoginAvailable } from "@/lib/consumer-api/local-demo";
 import type { LoginProviderOption } from "@/types/consumer";
 
 const LOGIN_OPTIONS_ERROR_MESSAGE =
@@ -20,16 +22,19 @@ const LOGIN_ERROR_MESSAGE = "로그인에 실패했습니다. 다시 시도해 �
 
 export function LoginScreen() {
   const router = useRouter();
-  const { setSession } = useConsumerSession();
+  const { setSession, refreshSession } = useConsumerSession();
   const [providers, setProviders] = useState<LoginProviderOption[]>([]);
   const [isLoadingProviders, setIsLoadingProviders] = useState(true);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const isLoginRequestPending = useRef(false);
+  const [isLocalDemo, setIsLocalDemo] = useState(false);
+  const [completedProviderId, setCompletedProviderId] = useState<string | null>(null);
 
   useEffect(() => {
     let isCancelled = false;
+    setIsLocalDemo(isLocalDemoLoginAvailable());
 
     async function loadLoginOptions() {
       try {
@@ -81,9 +86,21 @@ export function LoginScreen() {
     setLoginError(null);
 
     try {
-      const loginResult = await loginWithProvider({ providerId });
-      setSession(loginResult);
-      router.push(consumerRoutes.onboarding);
+      if (isConsumerApiMode) {
+        if (!completedProviderId) {
+          await loginWithProvider({ providerId });
+          setCompletedProviderId(providerId);
+        }
+        const restored = await refreshSession();
+        if (!restored.authenticated || restored.sessionState !== "onboarding_pending") {
+          throw new Error("A new demo onboarding session was not restored.");
+        }
+        router.replace(consumerRoutes.onboarding);
+      } else {
+        const loginResult = await loginWithProvider({ providerId });
+        setSession(loginResult);
+        router.push(consumerRoutes.onboarding);
+      }
     } catch {
       isLoginRequestPending.current = false;
       setLoginError(LOGIN_ERROR_MESSAGE);
@@ -109,6 +126,12 @@ export function LoginScreen() {
             <p>SNS로 간편하게 시작하기</p>
             <OnboardingIcon name="bubble-tip" />
           </div>
+          {isConsumerApiMode && isLocalDemo ? (
+            <p className="mb-3 text-center text-xs leading-5 text-black/60">
+              로컬 시연용입니다. 실제 SNS 인증 없이<br />
+              새 시연 계정으로 로그인 → 온보딩 → 홈을 확인합니다.
+            </p>
+          ) : null}
 
           {isLoadingProviders ? (
             <p role="status" className="text-center text-sm text-black/60">
@@ -137,7 +160,7 @@ export function LoginScreen() {
                 <button
                   key={provider.id}
                   type="button"
-                  disabled={isLoginPending}
+                  disabled={isLoginPending || (completedProviderId !== null && completedProviderId !== provider.id)}
                   onClick={() => void handleLogin(provider.id)}
                   className={`ob-social-button ob-social-${provider.id}`}
                 >
@@ -156,7 +179,7 @@ export function LoginScreen() {
                   <span>
                     {pendingProviderId === provider.id
                       ? "로그인 중..."
-                      : provider.label}
+                      : completedProviderId === provider.id ? "온보딩으로 이동" : provider.label}
                   </span>
                 </button>
               ))}

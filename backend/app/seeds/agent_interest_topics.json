@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "basis": "provisional_content_review",
+  "source_ref": "f645df0dbe738d1223f60e5f28bd15197bdc0f71",
+  "basis_note": "팀 논의 전 로컬 시연을 위한 임시 관심사 분류다. 커밋된 MD의 contents.json 내 제목·본문·subtopic을 읽고 분류했으며, 원문이 확정한 표준 태그나 외부 사실 검증 결과가 아니다. 장르의 일부와 여운·몽환적 같은 분위기는 본문에서 다루는 요소를 기준으로 해석했다. 원문에는 작품 정보 혼동이 있어 분류를 사실 검증으로 사용하지 않는다. 성우는 특정 인물명 대신 목소리와 연기를 다루는 관심사로 artist에 묶었다.",
+  "topics": {
+    "movie": [
+      {"name": "액션", "category": "genre"},
+      {"name": "코미디", "category": "genre"},
+      {"name": "스릴러", "category": "genre"},
+      {"name": "여운", "category": "mood"},
+      {"name": "영화 정보", "category": "content_type"},
+      {"name": "영화 리뷰", "category": "content_type"},
+      {"name": "알프레드 히치콕", "category": "director"}
+    ],
+    "music": [
+      {"name": "알앤비", "category": "genre"},
+      {"name": "힙합", "category": "genre"},
+      {"name": "록", "category": "genre"},
+      {"name": "몽환적", "category": "mood"},
+      {"name": "음악 리뷰", "category": "content_type"},
+      {"name": "태양", "category": "artist"},
+      {"name": "신해철", "category": "artist"}
+    ],
+    "anime": [
+      {"name": "액션", "category": "genre"},
+      {"name": "판타지", "category": "genre"},
+      {"name": "여운", "category": "mood"},
+      {"name": "작품리뷰", "category": "content_type"},
+      {"name": "신작소식", "category": "content_type"},
+      {"name": "제작이야기", "category": "content_type"},
+      {"name": "성우", "category": "artist"}
+    ]
+  },
+  "items": {
+    "anime-a4b1f4e491": {
+      "topic_code": "anime",
+      "tags": ["액션", "작품리뷰"],
+      "evidence": "원문 subtopic은 작품리뷰다. 이치고·우류의 대결과 만해의 시각 연출, 전투를 즐기는 관객의 감상 지점을 중심으로 설명한다."
+    },
+    "anime-5e6c117ae2": {
+      "topic_code": "anime",
+      "tags": ["판타지", "여운", "성우"],
+      "evidence": "오카모토 노부히코의 힘멜 배역을 다루는 사람 유형 글이다. 용사·마왕·마족과 장수하는 프리렌의 모험을 판타지로 묶었다. 동료의 죽음 뒤 떠오르는 작은 기억과 지나친 시간을 되읽는 정서를 근거로 여운을 임시 부여했다."
+    },
+    "anime-e4e4c08633": {
+      "topic_code": "anime",
+      "tags": ["액션", "신작소식"],
+      "evidence": "원문 subtopic은 신작소식이다. 화진담 진입 전에 볼 상극담을 소개하며 켄파치·마유리의 전투와 적의 능력에 대응하는 방식을 설명한다."
+    },
+    "anime-ad2bc126c5": {
+      "topic_code": "anime",
+      "tags": ["액션", "제작이야기"],
+      "evidence": "원문 subtopic은 제작이야기다. 거인 군세와 시조 거인의 움직임, 대치 장면을 영상으로 구현하는 제작 판단 및 반복 녹음을 다룬다."
+    },
+    "anime-41f9ff3bbf": {
+      "topic_code": "anime",
+      "tags": ["액션", "제작이야기"],
+      "evidence": "원문 subtopic은 제작이야기다. 첫 화의 지하 바 액션, 콘티의 얼굴 클로즈업, 표정과 움직임을 수정한 감독·작화진의 선택을 설명한다."
+    },
+    "anime-d985df289c": {
+      "topic_code": "anime",
+      "tags": ["액션", "신작소식"],
+      "evidence": "원문 subtopic은 신작소식이다. 화진담을 보기 전 상극담 7~12화의 전장 배치, 만해와 미완의 대결을 확인하는 순서를 소개한다."
+    },
+    "anime-583695cd16": {
+      "topic_code": "anime",
+      "tags": ["액션", "판타지", "작품리뷰"],
+      "evidence": "원문 subtopic은 작품리뷰다. 마도사 길드와 불의 멸룡마도사의 모험을 판타지로 묶었으며, 길드 습격·마도사 시험·괴물과의 승부 등 전투가 감상의 중심이다."
+    },
+    "anime-7204d7c24c": {
+      "topic_code": "anime",
+      "tags": ["성우"],
+      "evidence": "원문 subtopic은 사람이다. 나카무라 치에가 맡은 사쿠라의 목소리와 죽음의 숲 장면의 연기를 통해 성장과 두려움을 설명한다."
+    },
+    "movie-20ae1b8646": {
+      "topic_code": "movie",
+      "tags": ["여운", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 가족 사이의 거리, 방문과 식사, 떠날 준비를 차분히 따라간다는 본문의 정서를 근거로 여운을 임시 부여했다. 원문의 작품명·줄거리 혼동 여부를 검증한 분류는 아니다."
+    },
+    "movie-bbdaada2af": {
+      "topic_code": "movie",
+      "tags": ["스릴러", "영화 정보", "알프레드 히치콕"],
+      "evidence": "원문 subtopic은 영화 정보다. 레베카를 미스터리·로맨스가 얽힌 불안한 스릴러로 설명하고 알프레드 히치콕이 만든 영화라고 명시한다."
+    },
+    "movie-4c31f4ece4": {
+      "topic_code": "movie",
+      "tags": ["코미디", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 레이니 데이 인 뉴욕을 코미디 영화로 명시하고 엇갈리는 데이트 일정과 우연한 만남의 코미디 연출을 설명한다."
+    },
+    "movie-3aeeb6506f": {
+      "topic_code": "movie",
+      "tags": ["액션", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 메가로돈 2를 액션 중심에 SF와 공포 요소를 포함한 작품으로 명시하고 조나스와 거대 포식자의 대결을 다룬다."
+    },
+    "movie-b35bc43472": {
+      "topic_code": "movie",
+      "tags": ["액션", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 모비우스를 SF와 판타지 요소를 품은 액션 영화로 명시한다."
+    },
+    "movie-4ecb8cd679": {
+      "topic_code": "movie",
+      "tags": ["여운", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 낯선 할머니와 아이들이 함께 보내는 시간 속에서 마음을 열고 가까워지는 가족 정서를 근거로 여운을 임시 부여했다."
+    },
+    "movie-6fc6a65925": {
+      "topic_code": "movie",
+      "tags": ["액션", "코미디", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 보더랜드를 액션·SF·코미디 영화로 명시하며 서로 다른 동료들이 보물을 찾는 모험을 설명한다."
+    },
+    "movie-f3e1743a4b": {
+      "topic_code": "movie",
+      "tags": ["스릴러", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 블랙 데몬을 공포 요소가 더해진 스릴러로 설명하고 가라앉는 시추선에서 탈출 공간이 줄어드는 위기를 다룬다."
+    },
+    "movie-943de1e505": {
+      "topic_code": "movie",
+      "tags": ["코미디", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 사랑할 땐 누구나 최악이 된다를 로맨스와 코미디 요소를 품은 드라마로 명시한다."
+    },
+    "movie-fb2a6c3e46": {
+      "topic_code": "movie",
+      "tags": ["여운", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 모차르트의 재능을 인정하면서도 무너지는 살리에리의 마음이 오래 남는다는 결말을 근거로 여운을 임시 부여했다."
+    },
+    "movie-62c67c5466": {
+      "topic_code": "movie",
+      "tags": ["액션", "스릴러", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 워킹맨을 액션 중심으로 범죄와 스릴러 요소를 담은 작품으로 명시하고 전직 요원의 구출 임무를 설명한다."
+    },
+    "movie-afa77e7ae3": {
+      "topic_code": "movie",
+      "tags": ["코미디", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 위대한 환상을 역사적 사건을 바탕으로 코미디 요소를 더한 드라마로 명시한다."
+    },
+    "movie-b73da5829a": {
+      "topic_code": "movie",
+      "tags": ["스릴러", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 생존자들이 지하철에 갇히고 함정과 제한 시간 속에서 출구를 찾는 공포·긴장을 다루어 스릴러로 임시 분류했다."
+    },
+    "movie-0579284e59": {
+      "topic_code": "movie",
+      "tags": ["코미디", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 조이 라이드를 코미디 영화로 명시하고 가족 찾기가 친구들의 소동으로 이어지는 웃음을 설명한다."
+    },
+    "movie-38ec8a87a7": {
+      "topic_code": "movie",
+      "tags": ["여운", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 두 아이의 우정과 철조망의 경계가 지닌 무게, 친구를 돕는 마음과 전쟁 현실의 충돌을 근거로 여운을 임시 부여했다."
+    },
+    "movie-ffd6132063": {
+      "topic_code": "movie",
+      "tags": ["여운", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 나무 아래 쌓이는 여러 세대의 삶과 고독, 사람은 떠나도 시간이 겹겹이 남는다는 정서를 근거로 여운을 임시 부여했다."
+    },
+    "movie-4edfaa3a65": {
+      "topic_code": "movie",
+      "tags": ["스릴러", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 컬트 시카리오를 미스터리와 스릴러를 바탕으로 범죄·공포 요소가 더해진 작품으로 명시한다."
+    },
+    "movie-8915de6629": {
+      "topic_code": "movie",
+      "tags": ["여운", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 사라진 배우가 타인의 기억에 남는 방식과 부재가 되살아나는 정서를 중심으로 서술하여 여운을 임시 부여했다."
+    },
+    "movie-e2beded475": {
+      "topic_code": "movie",
+      "tags": ["여운", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 적이 나타나지 않는 기다림과 젊음을 요새에 바치는 삶, 고립이 현재를 잠식하는 시간을 근거로 여운을 임시 부여했다."
+    },
+    "movie-1f506b4dc6": {
+      "topic_code": "movie",
+      "tags": ["코미디", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 팜 스프링스의 반복되는 하루를 코미디·로맨스·SF 요소가 함께 움직이는 이야기라고 설명한다."
+    },
+    "movie-ff5d2a84a0": {
+      "topic_code": "movie",
+      "tags": ["스릴러", "영화 정보"],
+      "evidence": "원문 subtopic은 영화 정보다. 힙노틱을 미스터리와 SF 요소를 바탕으로 한 스릴러로 명시한다."
+    },
+    "movie-7794024d08": {
+      "topic_code": "movie",
+      "tags": ["여운", "영화 리뷰"],
+      "evidence": "원문 subtopic은 영화 리뷰다. 사진첩에서 죽은 아내를 발견한 폴의 상실과 오기의 위로, 인물들의 시간이 서로를 비추는 정서를 근거로 여운을 임시 부여했다."
+    },
+    "movie-04bfbfaecb": {
+      "topic_code": "movie",
+      "tags": ["영화 리뷰"],
+      "evidence": "원문 subtopic은 영화 리뷰다. 발명가의 이상과 독선이 가족·공동체에 남기는 대가를 평가한다. 현재 7개 중 다른 장르·분위기를 무리하게 덧붙이지 않았다."
+    },
+    "movie-058238c53e": {
+      "topic_code": "movie",
+      "tags": ["영화 리뷰"],
+      "evidence": "원문 subtopic은 영화 리뷰다. 아나콘다의 괴물 효과와 공포, 인간 사냥꾼의 위협을 평가한다. 현재 7개에 별도 공포 장르가 없어 글 유형만 연결했다."
+    },
+    "movie-54e4215210": {
+      "topic_code": "movie",
+      "tags": ["영화 리뷰"],
+      "evidence": "원문 subtopic은 영화 리뷰다. 레이스의 전술과 피트월 판단, 평범한 인물 갈등에 대한 비평이 중심이다. 스포츠 장르를 다른 장르로 바꾸지 않고 글 유형만 연결했다."
+    },
+    "movie-1a56d044b7": {
+      "topic_code": "movie",
+      "tags": ["액션", "코미디", "영화 리뷰"],
+      "evidence": "원문 subtopic은 영화 리뷰다. 그린 호넷에서 겁먹는 두 영웅의 코미디와 진지한 액션이 맞물리지 않는 간극을 반복해서 평가한다."
+    },
+    "movie-c505da94e4": {
+      "topic_code": "movie",
+      "tags": ["영화 리뷰"],
+      "evidence": "원문 subtopic은 영화 리뷰다. 애스터로이드 시티의 화면 구성과 여러 장르의 충돌을 평가한다. 본문에 이름이 완전하게 명시되지 않은 감독이나 단일 장르를 추정해 덧붙이지 않았다."
+    },
+    "movie-74b668ff8a": {
+      "topic_code": "movie",
+      "tags": ["영화 리뷰"],
+      "evidence": "원문 subtopic은 영화 리뷰다. 알렉산더의 전쟁 연출과 인물의 욕망, 역사 재현의 한계를 비평한다. 전쟁물을 일괄 액션으로 치환하지 않고 글 유형만 연결했다."
+    },
+    "music-f701b2bdfd": {
+      "topic_code": "music",
+      "tags": ["록", "몽환적", "음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. Innuendo를 과장된 록과 화려한 편곡으로 돌아간 앨범이라고 설명한다. These Are the Days of Our Lives의 몽환적인 편곡을 근거로 해당 곡의 분위기를 관심사에 연결했다."
+    },
+    "music-64f71842ef": {
+      "topic_code": "music",
+      "tags": ["록", "음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. 공무도하가의 악기와 협업을 포크·록에서 월드 비트·재즈·현대음악까지 오가는 소리로 설명한다. 록은 여러 요소 중 하나로 연결했다."
+    },
+    "music-dca25b2a1d": {
+      "topic_code": "music",
+      "tags": ["록", "음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. Mellon Collie and the Infinite Sadness가 아트 록·그런지·얼터너티브 록·헤비 메탈을 오간다고 명시하고 기타 리프와 현악 편곡을 분석한다."
+    },
+    "music-87b64dde7a": {
+      "topic_code": "music",
+      "tags": ["알앤비", "음악 리뷰", "태양"],
+      "evidence": "원문 subtopic은 음악 리뷰다. 태양의 첫 솔로 EP HOT을 다루며 알앤비·소울 노래상과 앨범상, 보컬과 클럽·어반 사운드를 설명한다."
+    },
+    "music-fb364f4a6c": {
+      "topic_code": "music",
+      "tags": ["힙합", "음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. Vince Staples의 힘을 뺀 랩, Kenny Beats의 비트와 절제된 프로덕션 및 스킷을 중심으로 분석하여 힙합에 연결했다."
+    },
+    "music-10add09f34": {
+      "topic_code": "music",
+      "tags": ["알앤비", "몽환적", "음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. Ego Death의 얼터너티브 R&B 맥락을 설명하되 그 범주만으로 다양성을 좁힐 수 없다고 명시한다. Syd의 몽롱한 목소리와 흐릿한 트립 합, 나른한 풍경을 근거로 몽환적 분위기를 임시 부여했다."
+    },
+    "music-77baf9794c": {
+      "topic_code": "music",
+      "tags": ["알앤비", "음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. 김건모의 잠 못 드는 밤 비는 내리고에 R&B·랩·샘플링이 담겼다고 명시하고 레게와 R&B 리듬을 받아들인 보컬을 분석한다."
+    },
+    "music-8d30b33f36": {
+      "topic_code": "music",
+      "tags": ["음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. 김창완의 기타가 있는 수필을 차분한 포크 감성으로 설명하며 과거 산울림의 록과 구별한다. 현재 7개에 포크가 없어 글 유형만 연결했다."
+    },
+    "music-7691a19f2a": {
+      "topic_code": "music",
+      "tags": ["알앤비", "몽환적", "음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. In my lotion의 R&B와 Jersey Club, Cotton Candy의 소프트 R&B를 명시한다. 타이틀곡 Glow Up의 몽환적이고 희망찬 코러스 설명을 분위기의 근거로 삼았다."
+    },
+    "music-e4a71b195b": {
+      "topic_code": "music",
+      "tags": ["알앤비", "음악 리뷰", "신해철"],
+      "evidence": "원문 subtopic은 음악 리뷰다. 신해철의 REBOOT MYSELF Part 1과 직접 겹쳐 녹음한 목소리를 다룬다. Princess Maker에 소울·디스코·R&B가 섞인다고 설명하여 알앤비를 여러 요소 중 하나로 연결했다."
+    },
+    "music-5d09952354": {
+      "topic_code": "music",
+      "tags": ["음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. 장덕의 멜로디와 이별·외로움을 분석하며 일부 곡의 트로트 성향을 언급한다. 현재 7개 장르나 몽환적 분위기에 맞춰 무리하게 분류하지 않았다."
+    },
+    "music-4887ede0e6": {
+      "topic_code": "music",
+      "tags": ["힙합", "음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. Tyler, The Creator의 Goblin에서 랩의 짜임새와 비트, 플로·내부 운율·말장난을 중심으로 평가하여 힙합에 연결했다."
+    },
+    "music-48c5e27c6b": {
+      "topic_code": "music",
+      "tags": ["음악 리뷰"],
+      "evidence": "원문 subtopic은 음악 리뷰다. The Smiths의 기타 리프와 보컬, 풍자와 절망을 분석한다. 본문의 명시적 장르 근거가 부족하여 현재 분류에서는 글 유형만 연결했다."
+    }
+  }
+}

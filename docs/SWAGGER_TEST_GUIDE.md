@@ -15,8 +15,10 @@ cd backend
 .\.venv\Scripts\python.exe -m alembic upgrade head
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host localhost --port 8000
+.\.venv\Scripts\python.exe scripts/run_local_api.py
 ```
+
+Windows용 실행 스크립트는 PostgreSQL 비동기 연결에 맞는 이벤트 루프를 사용하며 자동 재시작은 하지 않습니다. 코드 변경 후에는 기존 서버를 종료하고 다시 실행하세요. 이미 `http://localhost:8000/health/db`가 정상 응답하면 추가로 실행할 필요가 없습니다. 같은 포트를 중복 사용하면 `WinError 10013` 또는 `10048`이 발생할 수 있습니다.
 
 의존성이 아직 없다면 먼저 `backend/.venv`를 만들고 `pip install -r requirements.txt`를 실행합니다. Swagger UI는 [http://localhost:8000/docs](http://localhost:8000/docs), OpenAPI 원문은 [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json), ReDoc은 [http://localhost:8000/redoc](http://localhost:8000/redoc)입니다.
 

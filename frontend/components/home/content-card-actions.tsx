@@ -5,11 +5,10 @@ import { consumerRoutes } from "@/lib/consumer-routes";
 import Image from "next/image";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import { saveContent, unsaveContent } from "@/lib/consumer-api/contents";
+import { saveContent, setContentLike, unsaveContent } from "@/lib/consumer-api/contents";
 import {
   readContentLikedState,
   subscribeContentState,
-  toggleContentLikedState,
 } from "@/lib/content-state";
 import { shareContent } from "@/lib/share-content";
 
@@ -18,6 +17,7 @@ type ContentCardActionsProps = {
   title: string;
   topicId: string;
   saved: boolean;
+  liked: boolean;
 };
 
 export function ContentCardActions({
@@ -25,14 +25,15 @@ export function ContentCardActions({
   title,
   topicId,
   saved,
+  liked: initialLiked,
 }: ContentCardActionsProps) {
   const input = { contentId, topicContext: { topicId } };
   const liked = useSyncExternalStore(
     subscribeContentState,
-    () => readContentLikedState(input),
-    () => false,
+    () => readContentLikedState(input, initialLiked),
+    () => initialLiked,
   );
-  const [pendingAction, setPendingAction] = useState<"save" | "share" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"save" | "share" | "like" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const actionInFlight = useRef(false);
   const isMounted = useRef(false);
@@ -44,7 +45,7 @@ export function ContentCardActions({
     };
   }, []);
 
-  async function runAction(action: "save" | "share") {
+  async function runAction(action: "save" | "share" | "like") {
     if (actionInFlight.current) {
       return;
     }
@@ -64,6 +65,9 @@ export function ContentCardActions({
           throw new Error("Save response does not match the card context.");
         }
         nextMessage = result.saved ? "저장했습니다." : "저장을 취소했습니다.";
+      } else if (action === "like") {
+        await setContentLike(input, !liked);
+        nextMessage = null;
       } else {
         const url = new URL(
           consumerRoutes.content(contentId),
@@ -85,7 +89,9 @@ export function ContentCardActions({
         setMessage(
           action === "save"
             ? "저장 상태를 변경하지 못했습니다. 다시 시도해 주세요."
-            : "공유하지 못했습니다. 브라우저 권한을 확인하고 다시 시도해 주세요.",
+            : action === "like"
+              ? "좋아요를 변경하지 못했습니다. 다시 시도해 주세요."
+              : "공유하지 못했습니다. 브라우저 권한을 확인하고 다시 시도해 주세요.",
         );
       }
     } finally {
@@ -93,15 +99,6 @@ export function ContentCardActions({
       if (isMounted.current) {
         setPendingAction(null);
       }
-    }
-  }
-
-  function toggleLike() {
-    setMessage(null);
-    try {
-      toggleContentLikedState(input);
-    } catch {
-      setMessage("좋아요를 변경하지 못했습니다. 다시 시도해 주세요.");
     }
   }
 
@@ -137,7 +134,7 @@ export function ContentCardActions({
           aria-label={liked ? "좋아요 취소" : "좋아요"}
           aria-pressed={liked}
           disabled={pendingAction !== null}
-          onClick={toggleLike}
+          onClick={() => void runAction("like")}
           className="va-card-action"
         >
           <Image

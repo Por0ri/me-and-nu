@@ -8,6 +8,7 @@ import { useSyncExternalStore } from "react";
 
 import { ContentCardActions } from "@/components/home/content-card-actions";
 import { readContentSavedState, subscribeContentState } from "@/lib/content-state";
+import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import type { Content } from "@/types/content";
 
 // Figma thumbnails for the existing Movie fixtures, used only in Home presentation.
@@ -41,11 +42,11 @@ export function ContentCard({
 }: ContentCardProps) {
   const saved = useSyncExternalStore(
     subscribeContentState,
-    () => readContentSavedState({ contentId: content.id, topicContext: { topicId } }),
+    () => readContentSavedState({ contentId: content.id, topicContext: { topicId } }, content.saved),
     () => content.saved,
   );
   const movieThumbnail =
-    topicId === "topic-movie" ? movieHomeThumbnails[content.id] : undefined;
+    !isConsumerApiMode && topicId === "topic-movie" ? movieHomeThumbnails[content.id] : undefined;
   const imageUrl = content.imageUrl ?? movieThumbnail?.src;
 
   if (viewMode === "card") {
@@ -92,6 +93,7 @@ export function ContentCard({
           title={content.title}
           topicId={topicId}
           saved={saved}
+          liked={content.liked ?? false}
         />
       </div>
     );

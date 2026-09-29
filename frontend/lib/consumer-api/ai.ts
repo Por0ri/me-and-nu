@@ -5,6 +5,7 @@ import {
 } from "@/mocks/ai";
 import { mockContentsByTopicId } from "@/mocks/contents";
 import { mockTopics } from "@/mocks/topics";
+import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import type {
   ContentAIRequest,
   ContentAIResponse,
@@ -17,6 +18,9 @@ export async function sendContentAIQuestion({
   question,
   topicContext,
 }: ContentAIRequest): Promise<ContentAIResponse> {
+  if (isConsumerApiMode) {
+    throw new Error("Content AI questions are not connected to the local API.");
+  }
   const trimmedQuestion = question.trim();
 
   if (!trimmedQuestion) {
@@ -54,6 +58,9 @@ export async function sendHomeAIQuestion({
   topicContext,
   question,
 }: HomeAIRequest): Promise<HomeAIResponse> {
+  if (isConsumerApiMode) {
+    throw new Error("Home AI questions are not connected to the local API.");
+  }
   const trimmedQuestion = question.trim();
 
   if (!trimmedQuestion) {

@@ -11,6 +11,8 @@ import { ContentCard } from "@/components/home/content-card";
 import { HomeAIPanel } from "@/components/home/home-ai-panel";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
 import { getHomeContents } from "@/lib/consumer-api/home";
+import { isConsumerApiMode } from "@/lib/consumer-api/mode";
+import { isLocalDemoLoginAvailable } from "@/lib/consumer-api/local-demo";
 import type { HomeData } from "@/types/home";
 
 type HomeViewMode = "list" | "card";
@@ -39,7 +41,7 @@ async function requestHomeData(topicId: string): Promise<HomeData> {
 
 export function HomeScreen({ topicId }: { topicId: string | null }) {
   const searchParams = useSearchParams();
-  const { flowState } = useConsumerFlow();
+  const { flowState, isRestoring, restoreError, refreshTopics } = useConsumerFlow();
   const initialHomeTopicId =
     flowState?.availableTopicIds.includes(flowState.initialHomeTopicId) === true
       ? flowState.initialHomeTopicId
@@ -61,12 +63,25 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
   );
   const [viewMode, setViewMode] = useState<HomeViewMode>("list");
   const [isTopicMenuOpen, setIsTopicMenuOpen] = useState(false);
+  const [canRestartDemo, setCanRestartDemo] = useState(false);
   const topicMenuId = useId();
   const topicMenuRef = useRef<HTMLDivElement>(null);
   const topicMenuButtonRef = useRef<HTMLButtonElement>(null);
   const [homeData, setHomeData] = useState<HomeData | null>(null);
   const [isLoading, setIsLoading] = useState(initialSelectedTopicId !== null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCanRestartDemo(isConsumerApiMode && isLocalDemoLoginAvailable());
+  }, []);
+
+  useEffect(() => {
+    if (isRestoring || !initialSelectedTopicId) return;
+    if (selectedTopicId === initialSelectedTopicId) return;
+    setIsLoading(true);
+    setError(null);
+    setSelectedTopicId(initialSelectedTopicId);
+  }, [flowState, initialSelectedTopicId, isRestoring, selectedTopicId]);
 
   useEffect(() => {
     if (!isTopicMenuOpen) {
@@ -193,20 +208,39 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
     }
   }
 
+  if (isConsumerApiMode && isRestoring) return null;
+
+  if (isConsumerApiMode && restoreError) {
+    return (
+      <main className="ui-version-a ui-home">
+        <section className="va-shell va-recovery space-y-4 text-center">
+          <h1 className="text-2xl font-semibold">홈</h1>
+          <p role="alert" className="va-muted text-sm leading-6">{restoreError}</p>
+          <button
+            type="button"
+            onClick={() => void refreshTopics().catch(() => undefined)}
+            className="va-primary inline-flex w-full items-center justify-center"
+          >
+            다시 시도
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   if (!flowState || !initialHomeTopicId) {
     return (
       <main className="ui-version-a ui-home">
         <section className="va-shell va-recovery space-y-4 text-center">
           <h1 className="text-2xl font-semibold">홈</h1>
           <p role="status" className="va-muted text-sm leading-6">
-            현재 연결된 분야 정보가 없습니다. 온보딩에서 분야를 다시 선택해
-            주세요.
+            현재 연결된 분야 정보가 없습니다. 분야를 선택해 주세요.
           </p>
           <Link
-            href={consumerRoutes.onboarding}
+            href={isConsumerApiMode ? consumerRoutes.addTopic : consumerRoutes.onboarding}
             className="va-primary inline-flex w-full items-center justify-center"
           >
-            온보딩으로 이동
+            {isConsumerApiMode ? "분야 추가로 이동" : "온보딩으로 이동"}
           </Link>
         </section>
       </main>
@@ -238,7 +272,9 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
   );
   const isCurrentTopicData = homeData?.selectedTopicId === selectedTopicId;
   const headerTopicLabel = currentTopic
-    ? HEADER_TOPIC_LABELS.get(currentTopic.id) ?? "nu"
+    ? isConsumerApiMode
+      ? currentTopic.code?.toLowerCase() ?? currentTopic.name
+      : HEADER_TOPIC_LABELS.get(currentTopic.id) ?? "nu"
     : "nu";
 
   return (
@@ -326,6 +362,15 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
                   >
                     분야 추가
                   </Link>
+                  {canRestartDemo ? (
+                    <Link
+                      href={consumerRoutes.login}
+                      onClick={() => setIsTopicMenuOpen(false)}
+                      className="va-topic-menu-option"
+                    >
+                      처음부터 시연하기
+                    </Link>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => {

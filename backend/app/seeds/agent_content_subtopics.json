@@ -1,0 +1,349 @@
+{
+  "version": 1,
+  "basis": "committed_work_metadata_and_article_subject",
+  "items": {
+    "anime-a4b1f4e491": {
+      "topic_code": "anime",
+      "subtopics": [
+        "블리치"
+      ],
+      "evidence": "md title: 《블리치 천년혈전 편 화진담》은 누구에게 먼저 열릴까; body: 블리치 애니메이션과 앞선 천년혈전 편의 연속성을 다룸; series: 블리치"
+    },
+    "anime-5e6c117ae2": {
+      "topic_code": "anime",
+      "subtopics": [
+        "장송의 프리렌"
+      ],
+      "evidence": "md title: 《장송의 프리렌》에서 힘멜의 목소리가 여행을 움직이는 법; body: 《장송의 프리렌》의 힘멜과 성우 오카모토 노부히코를 다룸"
+    },
+    "anime-e4e4c08633": {
+      "topic_code": "anime",
+      "subtopics": [
+        "블리치"
+      ],
+      "evidence": "md title: 《블리치 천년혈전 편 화진담》 전에 볼 작품; body: 화진담에 앞서 《블리치 천년혈전 편 상극담》과 《블리치》 본편을 다룸; series: 블리치"
+    },
+    "anime-ad2bc126c5": {
+      "topic_code": "anime",
+      "subtopics": [
+        "진격의 거인"
+      ],
+      "evidence": "md title: 《진격의 거인 파이널 시즌 파트 2》는 거대한 장면을 어떻게 움직였나; body: 에렌 예거의 연설과 거인 군세의 제작을 다룸; series: 진격의 거인"
+    },
+    "anime-41f9ff3bbf": {
+      "topic_code": "anime",
+      "subtopics": [
+        "BANANA FISH"
+      ],
+      "evidence": "md title: 《BANANA FISH》는 왜 액션과 사적인 장면을 나란히 놓았나; body: 해당 애니메이션의 회차별 제작 연출을 다룸"
+    },
+    "anime-d985df289c": {
+      "topic_code": "anime",
+      "subtopics": [
+        "블리치"
+      ],
+      "evidence": "md title: 《블리치 천년혈전 편 화진담》, 상극담 어디부터 볼까; body: 《블리치 천년혈전 편 화진담》과 직전 작품 《블리치 천년혈전 편 상극담》을 함께 다룸; series: 블리치"
+    },
+    "anime-583695cd16": {
+      "topic_code": "anime",
+      "subtopics": [
+        "페어리 테일"
+      ],
+      "evidence": "md title: 《페어리 테일》의 의뢰는 어떻게 장기 모험이 되는가; body: 페어리 테일 길드의 첫 TV 애니메이션과 장기 모험을 다룸"
+    },
+    "anime-7204d7c24c": {
+      "topic_code": "anime",
+      "subtopics": [
+        "나루토"
+      ],
+      "evidence": "md title: 《나루토》에서 하루노 사쿠라를 잇는 목소리; body: 《나루토》의 하루노 사쿠라와 성우 나카무라 치에를 다룸"
+    },
+    "movie-20ae1b8646": {
+      "topic_code": "movie",
+      "subtopics": [
+        "동경의 황혼 (1957)"
+      ],
+      "evidence": "work: 동경의 황혼 (1957)"
+    },
+    "movie-bbdaada2af": {
+      "topic_code": "movie",
+      "subtopics": [
+        "레베카 (1940)"
+      ],
+      "evidence": "work: 레베카 (1940)"
+    },
+    "movie-4c31f4ece4": {
+      "topic_code": "movie",
+      "subtopics": [
+        "레이니 데이 인 뉴욕 (2019)"
+      ],
+      "evidence": "work: 레이니 데이 인 뉴욕 (2019)"
+    },
+    "movie-3aeeb6506f": {
+      "topic_code": "movie",
+      "subtopics": [
+        "메가로돈 2 (2023)"
+      ],
+      "evidence": "work: 메가로돈 2 (2023)"
+    },
+    "movie-b35bc43472": {
+      "topic_code": "movie",
+      "subtopics": [
+        "모비우스 (2022)"
+      ],
+      "evidence": "work: 모비우스 (2022)"
+    },
+    "movie-4ecb8cd679": {
+      "topic_code": "movie",
+      "subtopics": [
+        "미나리 (2021)"
+      ],
+      "evidence": "work: 미나리 (2021)"
+    },
+    "movie-6fc6a65925": {
+      "topic_code": "movie",
+      "subtopics": [
+        "보더랜드 (2024)"
+      ],
+      "evidence": "work: 보더랜드 (2024)"
+    },
+    "movie-f3e1743a4b": {
+      "topic_code": "movie",
+      "subtopics": [
+        "블랙 데몬 (2023)"
+      ],
+      "evidence": "work: 블랙 데몬 (2023)"
+    },
+    "movie-943de1e505": {
+      "topic_code": "movie",
+      "subtopics": [
+        "사랑할 땐 누구나 최악이 된다 (2021)"
+      ],
+      "evidence": "work: 사랑할 땐 누구나 최악이 된다 (2021)"
+    },
+    "movie-fb2a6c3e46": {
+      "topic_code": "movie",
+      "subtopics": [
+        "아마데우스 (1984)"
+      ],
+      "evidence": "work: 아마데우스 (1984)"
+    },
+    "movie-62c67c5466": {
+      "topic_code": "movie",
+      "subtopics": [
+        "워킹맨 (2025)"
+      ],
+      "evidence": "work: 워킹맨 (2025)"
+    },
+    "movie-afa77e7ae3": {
+      "topic_code": "movie",
+      "subtopics": [
+        "위대한 환상 (2025)"
+      ],
+      "evidence": "work: 위대한 환상 (2025)"
+    },
+    "movie-b73da5829a": {
+      "topic_code": "movie",
+      "subtopics": [
+        "이스케이프 룸 2: 노 웨이 아웃 (2021)"
+      ],
+      "evidence": "work: 이스케이프 룸 2: 노 웨이 아웃 (2021)"
+    },
+    "movie-0579284e59": {
+      "topic_code": "movie",
+      "subtopics": [
+        "조이 라이드 (2023)"
+      ],
+      "evidence": "work: 조이 라이드 (2023)"
+    },
+    "movie-38ec8a87a7": {
+      "topic_code": "movie",
+      "subtopics": [
+        "줄무늬 파자마를 입은 소년 (2008)"
+      ],
+      "evidence": "work: 줄무늬 파자마를 입은 소년 (2008)"
+    },
+    "movie-ffd6132063": {
+      "topic_code": "movie",
+      "subtopics": [
+        "침묵의 친구 (2026)"
+      ],
+      "evidence": "work: 침묵의 친구 (2026)"
+    },
+    "movie-4edfaa3a65": {
+      "topic_code": "movie",
+      "subtopics": [
+        "컬트 시카리오 (2024)"
+      ],
+      "evidence": "work: 컬트 시카리오 (2024)"
+    },
+    "movie-8915de6629": {
+      "topic_code": "movie",
+      "subtopics": [
+        "클로즈 유어 아이즈 (2023)"
+      ],
+      "evidence": "work: 클로즈 유어 아이즈 (2023)"
+    },
+    "movie-e2beded475": {
+      "topic_code": "movie",
+      "subtopics": [
+        "타타르인의 사막 (1976)"
+      ],
+      "evidence": "work: 타타르인의 사막 (1976)"
+    },
+    "movie-1f506b4dc6": {
+      "topic_code": "movie",
+      "subtopics": [
+        "팜 스프링스 (2020)"
+      ],
+      "evidence": "work: 팜 스프링스 (2020)"
+    },
+    "movie-ff5d2a84a0": {
+      "topic_code": "movie",
+      "subtopics": [
+        "힙노틱 (2023)"
+      ],
+      "evidence": "work: 힙노틱 (2023)"
+    },
+    "movie-7794024d08": {
+      "topic_code": "movie",
+      "subtopics": [
+        "스모크 (1995)"
+      ],
+      "evidence": "work: 스모크 (1995)"
+    },
+    "movie-04bfbfaecb": {
+      "topic_code": "movie",
+      "subtopics": [
+        "모스키토 코스트 (1986)"
+      ],
+      "evidence": "work: 모스키토 코스트 (1986)"
+    },
+    "movie-058238c53e": {
+      "topic_code": "movie",
+      "subtopics": [
+        "아나콘다 (1997)"
+      ],
+      "evidence": "work: 아나콘다 (1997)"
+    },
+    "movie-54e4215210": {
+      "topic_code": "movie",
+      "subtopics": [
+        "F1 더 무비 (2025)"
+      ],
+      "evidence": "work: F1 더 무비 (2025)"
+    },
+    "movie-1a56d044b7": {
+      "topic_code": "movie",
+      "subtopics": [
+        "그린 호넷 (2011)"
+      ],
+      "evidence": "work: 그린 호넷 (2011)"
+    },
+    "movie-c505da94e4": {
+      "topic_code": "movie",
+      "subtopics": [
+        "애스터로이드 시티 (2023)"
+      ],
+      "evidence": "work: 애스터로이드 시티 (2023)"
+    },
+    "movie-74b668ff8a": {
+      "topic_code": "movie",
+      "subtopics": [
+        "알렉산더 (2004)"
+      ],
+      "evidence": "work: 알렉산더 (2004)"
+    },
+    "music-f701b2bdfd": {
+      "topic_code": "music",
+      "subtopics": [
+        "Queen(퀸) - Innuendo (1991)"
+      ],
+      "evidence": "work: Queen(퀸) - Innuendo (1991)"
+    },
+    "music-64f71842ef": {
+      "topic_code": "music",
+      "subtopics": [
+        "이상은 - 공무도하가 (1995)"
+      ],
+      "evidence": "work: 이상은 - 공무도하가 (1995)"
+    },
+    "music-dca25b2a1d": {
+      "topic_code": "music",
+      "subtopics": [
+        "The Smashing Pumpkins(스매싱 펌킨스) - Mellon Collie and the Infinite Sadness (1995)"
+      ],
+      "evidence": "work: The Smashing Pumpkins(스매싱 펌킨스) - Mellon Collie and the Infinite Sadness (1995)"
+    },
+    "music-87b64dde7a": {
+      "topic_code": "music",
+      "subtopics": [
+        "태양 - HOT (2008)"
+      ],
+      "evidence": "work: 태양 - HOT (2008)"
+    },
+    "music-fb364f4a6c": {
+      "topic_code": "music",
+      "subtopics": [
+        "Vince Staples(빈스 스테이플스) - Vince Staples (2021)"
+      ],
+      "evidence": "work: Vince Staples(빈스 스테이플스) - Vince Staples (2021)"
+    },
+    "music-10add09f34": {
+      "topic_code": "music",
+      "subtopics": [
+        "The Internet(인터넷) - Ego Death (2015)"
+      ],
+      "evidence": "work: The Internet(인터넷) - Ego Death (2015)"
+    },
+    "music-77baf9794c": {
+      "topic_code": "music",
+      "subtopics": [
+        "김건모 - Kim Gun Mo (1992)"
+      ],
+      "evidence": "work: 김건모 - Kim Gun Mo (1992)"
+    },
+    "music-8d30b33f36": {
+      "topic_code": "music",
+      "subtopics": [
+        "김창완 - 기타가 있는 수필 (1983)"
+      ],
+      "evidence": "work: 김창완 - 기타가 있는 수필 (1983)"
+    },
+    "music-7691a19f2a": {
+      "topic_code": "music",
+      "subtopics": [
+        "RESCENE(리센느) - Glow Up (2025)"
+      ],
+      "evidence": "work: RESCENE(리센느) - Glow Up (2025)"
+    },
+    "music-e4a71b195b": {
+      "topic_code": "music",
+      "subtopics": [
+        "신해철 - Reboot Myself Part 1 (2014)"
+      ],
+      "evidence": "work: 신해철 - Reboot Myself Part 1 (2014)"
+    },
+    "music-5d09952354": {
+      "topic_code": "music",
+      "subtopics": [
+        "장덕 - 님 떠난 후 (1986)"
+      ],
+      "evidence": "work: 장덕 - 님 떠난 후 (1986)"
+    },
+    "music-4887ede0e6": {
+      "topic_code": "music",
+      "subtopics": [
+        "Tyler, The Creator(타일러 더 크리에이터) - Goblin (2011)"
+      ],
+      "evidence": "work: Tyler, The Creator(타일러 더 크리에이터) - Goblin (2011)"
+    },
+    "music-48c5e27c6b": {
+      "topic_code": "music",
+      "subtopics": [
+        "The Smiths(스미스) - The Queen Is Dead (1986)"
+      ],
+      "evidence": "work: The Smiths(스미스) - The Queen Is Dead (1986)"
+    }
+  }
+}

@@ -1,4 +1,7 @@
 import { mockOnboardingOptions } from "@/mocks/consumer";
+import { addMyTopic as createMyTopic } from "@/lib/api";
+import { isConsumerApiMode } from "@/lib/consumer-api/mode";
+import { loadApiTopicOptions, positiveApiId } from "@/lib/onboarding/api-catalog";
 import type {
   AddMyTopicInput,
   AddMyTopicResult,
@@ -6,6 +9,9 @@ import type {
 } from "@/types/consumer";
 
 export async function getTopicOptions(): Promise<TopicOptions> {
+  if (isConsumerApiMode) {
+    return { topics: await loadApiTopicOptions() };
+  }
   return structuredClone({ topics: mockOnboardingOptions.topics });
 }
 
@@ -14,6 +20,18 @@ export async function addMyTopic(
   // Mock 중복 검증용 정보다. 실제 API-022 Payload에는 포함하지 않는다.
   mockContext: { availableTopicIds: readonly string[] },
 ): Promise<AddMyTopicResult> {
+  if (isConsumerApiMode) {
+    const numericTopicId = positiveApiId(topicId);
+    const numericSubtopicIds = subtopicIds.map(positiveApiId);
+    if (!numericSubtopicIds.length || new Set(numericSubtopicIds).size !== numericSubtopicIds.length) {
+      throw new Error("Unique Subtopic IDs are required.");
+    }
+    const response = await createMyTopic(numericTopicId, numericSubtopicIds);
+    return {
+      topicId: String(response.topic.id),
+      subtopicIds: response.topic.subtopicIds.map(String),
+    };
+  }
   const topic = mockOnboardingOptions.topics.find((item) => item.id === topicId);
 
   if (!topic) {

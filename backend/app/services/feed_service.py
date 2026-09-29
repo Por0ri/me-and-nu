@@ -170,6 +170,7 @@ async def get_content_detail(
         content_id=content_id,
         topic_id=topic_id,
         title=content.title,
+        image_url=content.image_url,
         production_type=content.production_type,
         source_url=source[0],
         publisher=source[1],

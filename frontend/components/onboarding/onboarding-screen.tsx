@@ -13,11 +13,15 @@ import {
 } from "@/components/onboarding/onboarding-ui";
 import { ANIME_TOPIC_ID, MOVIE_TOPIC_ID, MUSIC_TOPIC_ID } from "@/mocks/topics";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
+import { useConsumerSession } from "@/components/providers/consumer-session-provider";
+import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import {
+  createLocalOnboardingProfile,
   getOnboardingOptions,
   submitOnboarding,
 } from "@/lib/consumer-api/onboarding";
 import { filterSubtopics } from "@/lib/subtopics/filter-subtopics";
+import { loadApiTopicOptions } from "@/lib/onboarding/api-catalog";
 import type {
   AccountType,
   FinalSubtopic,
@@ -56,8 +60,15 @@ const CONSENT_OPTIONS = [
   { key: "marketing", label: "마케팅 수신 동의", required: false },
 ] as const;
 
+const POLICY_LABELS: Record<string, string> = Object.fromEntries(
+  CONSENT_OPTIONS.map(({ key, label }) => [key, label]),
+);
+const MINIMUM_SUBTOPICS = isConsumerApiMode ? 1 : 5;
+const MAX_VISIBLE_SUBTOPICS = 7;
+
 // Presentation order only; the existing taxonomy and Provider IDs are unchanged.
 const TOPIC_ORDER = [ANIME_TOPIC_ID, MOVIE_TOPIC_ID, MUSIC_TOPIC_ID];
+const API_TOPIC_ORDER = ["anime", "movie", "music"];
 
 const OPTIONS_ERROR_MESSAGE =
   "온보딩 선택지를 불러오지 못했습니다. 다시 시도해 주세요.";
@@ -72,6 +83,7 @@ const secondaryButtonClassName =
 export function OnboardingScreen() {
   const router = useRouter();
   const { setFlowState } = useConsumerFlow();
+  const { apiSession, isRestoring, refreshSession } = useConsumerSession();
   const [options, setOptions] = useState<OnboardingOptions | null>(null);
   const [isLoadingOptions, setIsLoadingOptions] = useState(true);
   const [optionsError, setOptionsError] = useState<string | null>(null);
@@ -97,9 +109,18 @@ export function OnboardingScreen() {
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const requestInFlight = useRef(false);
+  const [onboardingSaved, setOnboardingSaved] = useState(false);
+  const savedOnboarding = useRef<{ selectedTopicId: string; availableTopicIds: string[] } | null>(null);
+  const localProfile = useRef<ReturnType<typeof createLocalOnboardingProfile> | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const previousStep = useRef(currentStep);
+
+  useEffect(() => {
+    if (isConsumerApiMode && !isRestoring && apiSession?.sessionState === "active" && !requestInFlight.current) {
+      router.replace(consumerRoutes.home);
+    }
+  }, [apiSession, isRestoring, router]);
 
   useEffect(() => {
     if (previousStep.current !== currentStep) {
@@ -137,6 +158,28 @@ export function OnboardingScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isConsumerApiMode || currentStep !== "topic") return;
+    let isCancelled = false;
+    setIsLoadingOptions(true);
+    setOptionsError(null);
+
+    void loadApiTopicOptions()
+      .then((topics) => {
+        if (!isCancelled) {
+          setOptions((current) => current ? { ...current, topics } : current);
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) setOptionsError(OPTIONS_ERROR_MESSAGE);
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoadingOptions(false);
+      });
+
+    return () => { isCancelled = true; };
+  }, [currentStep]);
+
   async function retryOnboardingOptions() {
     setIsLoadingOptions(true);
     setOptionsError(null);
@@ -153,6 +196,7 @@ export function OnboardingScreen() {
   }
 
   function moveToStep(step: OnboardingStep) {
+    if (savedOnboarding.current) return;
     setValidationMessage(null);
     setActionError(null);
     setCurrentStep(step);
@@ -161,8 +205,8 @@ export function OnboardingScreen() {
   function handleConsentSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!(consent.terms && consent.privacy)) {
-      setValidationMessage("이용약관과 개인정보 필수 동의가 필요합니다.");
+    if (!requiredConsented) {
+      setValidationMessage("필수 약관에 동의해 주세요.");
       return;
     }
 
@@ -185,7 +229,7 @@ export function OnboardingScreen() {
   }
 
   function toggleSubtopic(subtopicId: string) {
-    if (!selectedTopicId) {
+    if (!selectedTopicId || savedOnboarding.current) {
       return;
     }
 
@@ -239,8 +283,8 @@ export function OnboardingScreen() {
       return;
     }
 
-    if (selectedSubtopics.length < 5) {
-      setValidationMessage("세부 취향을 5개 이상 선택해 주세요.");
+    if (selectedSubtopics.length < MINIMUM_SUBTOPICS) {
+      setValidationMessage(`세부 취향을 ${MINIMUM_SUBTOPICS}개 이상 선택해 주세요.`);
       return;
     }
 
@@ -260,17 +304,20 @@ export function OnboardingScreen() {
   function buildOnboardingData(): OnboardingData | null {
     if (
       !confirmation ||
-      !(consent.terms && consent.privacy) ||
+      !requiredConsented ||
       accountType !== "consumer"
     ) {
       return null;
     }
 
+    if (isConsumerApiMode && !localProfile.current) {
+      localProfile.current = createLocalOnboardingProfile();
+    }
+
     return {
+      ...(localProfile.current ?? { birthdate: "" }),
+      policyItems: options?.policyItems,
       consent: { ...consent },
-      // Final UI collects no birthdate; the current Mock accepts an empty value.
-      // Keep the FE type and helpers without deciding a real Backend DTO policy.
-      birthdate: "",
       accountType,
       selectedTopicId: confirmation.topicId,
       subtopicInput: {
@@ -283,6 +330,7 @@ export function OnboardingScreen() {
   }
 
   function editSubtopics() {
+    if (savedOnboarding.current) return;
     setSearchQuery("");
     setConfirmation(null);
     moveToStep("subtopics");
@@ -295,44 +343,67 @@ export function OnboardingScreen() {
       return;
     }
 
-    const onboardingData = buildOnboardingData();
-
-    if (!onboardingData) {
-      setActionError(SUBMIT_ERROR_MESSAGE);
-      return;
-    }
-
     requestInFlight.current = true;
     setPendingAction("submit");
     setValidationMessage(null);
     setActionError(null);
 
     try {
-      const result = await submitOnboarding(onboardingData);
-
-      if (!result.completed) {
-        throw new Error("Onboarding was not completed.");
-      }
-
-      if (!result.availableTopicIds.includes(onboardingData.selectedTopicId)) {
-        throw new Error("Selected topic is not available after onboarding.");
+      if (!savedOnboarding.current) {
+        const onboardingData = buildOnboardingData();
+        if (!onboardingData) throw new Error("Onboarding details are incomplete.");
+        const result = await submitOnboarding(onboardingData);
+        if (!result.completed || !result.availableTopicIds.includes(onboardingData.selectedTopicId)) {
+          throw new Error("Selected topic is not available after onboarding.");
+        }
+        savedOnboarding.current = {
+          selectedTopicId: onboardingData.selectedTopicId,
+          availableTopicIds: [...result.availableTopicIds],
+        };
+        setOnboardingSaved(true);
       }
 
       setFlowState({
-        initialHomeTopicId: onboardingData.selectedTopicId,
-        availableTopicIds: [...result.availableTopicIds],
+        initialHomeTopicId: savedOnboarding.current.selectedTopicId,
+        availableTopicIds: [...savedOnboarding.current.availableTopicIds],
       });
-
-      router.push(consumerRoutes.home);
-    } catch {
+      if (isConsumerApiMode) {
+        await refreshSession();
+        router.replace(consumerRoutes.home);
+      } else {
+        router.push(consumerRoutes.home);
+      }
+    } catch (error) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Onboarding submission failed:", error instanceof Error ? error.message : "Unknown error");
+      }
       requestInFlight.current = false;
       setPendingAction(null);
-      setActionError(SUBMIT_ERROR_MESSAGE);
+      setActionError(savedOnboarding.current
+        ? "온보딩은 완료되었습니다. 홈 연결을 다시 시도해 주세요."
+        : SUBMIT_ERROR_MESSAGE);
     }
   }
 
-  const allConsented = CONSENT_OPTIONS.every(({ key }) => consent[key]);
-  const requiredConsented = consent.terms && consent.privacy;
+  const consentOptions = isConsumerApiMode
+    ? (options?.policyItems ?? []).map((policy) => ({
+        key: policy.type,
+        label: POLICY_LABELS[policy.type] ?? policy.type,
+        required: policy.required,
+        text: policy.text ?? "",
+      }))
+    : CONSENT_OPTIONS.map((option) => ({ ...option, text: "현재 Mock 동의 화면이며 실제 약관 본문은 제공하지 않습니다." }));
+  const allConsented = consentOptions.length > 0 && consentOptions.every(({ key }) => consent[key]);
+  const requiredConsented = consentOptions.length > 0 && consentOptions.every(({ key, required }) => !required || consent[key]);
+  const topicOptions = isConsumerApiMode
+    ? [...(options?.topics ?? [])].sort((a, b) => {
+        const rank = (code?: string) => {
+          const index = API_TOPIC_ORDER.indexOf(code ?? "");
+          return index < 0 ? API_TOPIC_ORDER.length : index;
+        };
+        return rank(a.code) - rank(b.code);
+      })
+    : TOPIC_ORDER.flatMap((id) => options?.topics.filter((topic) => topic.id === id) ?? []);
   const consumerAvailable = options?.accountTypes.includes("consumer") ?? false;
   const selectedTopic =
     options?.topics.find((topic) => topic.id === selectedTopicId) ?? null;
@@ -343,6 +414,8 @@ export function OnboardingScreen() {
     selectedTopic?.subtopicOptions ?? [],
     searchQuery,
   );
+  // Search the entire catalog before limiting the existing chip layout.
+  const visibleSubtopics = filteredSubtopics.slice(0, MAX_VISIBLE_SUBTOPICS);
   const selectedSubtopics = (selectedTopic?.subtopicOptions ?? []).filter(
     (subtopic) => selectedTopicDraft?.selectedSubtopicIds.includes(subtopic.id),
   );
@@ -401,15 +474,15 @@ export function OnboardingScreen() {
               <label className="ob-consent-all">
                 <input type="checkbox" className="ob-checkbox" checked={allConsented} onChange={(event) => {
                   const checked = event.target.checked;
-                  setConsent({ terms: checked, privacy: checked, advertising: checked, marketing: checked });
+                  setConsent((current) => ({ ...current, ...Object.fromEntries(consentOptions.map(({ key }) => [key, checked])) }));
                   setValidationMessage(null);
                 }} />
                 <span>모두 동의합니다</span>
               </label>
-              {CONSENT_OPTIONS.map(({ key, label, required }) => (
+              {consentOptions.map(({ key, label, required, text }) => (
                 <div className="ob-consent-row" key={key}>
                   <label>
-                    <input type="checkbox" className="ob-checkbox" checked={consent[key]} onChange={(event) => {
+                    <input type="checkbox" className="ob-checkbox" checked={consent[key] ?? false} onChange={(event) => {
                       const checked = event.target.checked;
                       setConsent((current) => ({ ...current, [key]: checked }));
                       setValidationMessage(null);
@@ -419,7 +492,7 @@ export function OnboardingScreen() {
                   </label>
                   <details className="ob-consent-details">
                     <summary aria-label={`${label} 안내`}><OnboardingIcon name="chevron-down" /></summary>
-                    <p>현재 Mock 동의 화면이며 실제 약관 본문은 제공하지 않습니다.</p>
+                    <p className="whitespace-pre-wrap">{text}</p>
                   </details>
                 </div>
               ))}
@@ -452,7 +525,7 @@ export function OnboardingScreen() {
         ) : (
           <>
             {currentStep === "topic" && <div className="ob-topic-art" aria-hidden="true"><OnboardingIcon name="topic-background" /></div>}
-            <OnboardingBack disabled={pendingAction !== null} onBack={() => currentStep === "confirmation" ? editSubtopics() : moveToStep(currentStep === "topic" ? "account-type" : "topic")} />
+            <OnboardingBack disabled={pendingAction !== null || onboardingSaved} onBack={() => currentStep === "confirmation" ? editSubtopics() : moveToStep(currentStep === "topic" ? "account-type" : "topic")} />
             {currentStep === "topic" ? (
               <div className="ob-topic-content">
                 <div className="ob-intro">
@@ -460,7 +533,7 @@ export function OnboardingScreen() {
                   <p>다른 분야는 나중에 언제든 추가할 수 있어요</p>
                 </div>
                 <div className="ob-topic-list">
-                  {TOPIC_ORDER.flatMap((id) => options.topics.filter((topic) => topic.id === id)).map((topic) => (
+                  {topicOptions.map((topic) => (
                     <button type="button" className="ob-topic-button" key={topic.id} aria-pressed={selectedTopicId === topic.id} onClick={() => selectTopic(topic.id)}>
                       <span>{topic.label}</span><OnboardingIcon name="topic-arrow" />
                     </button>
@@ -470,7 +543,7 @@ export function OnboardingScreen() {
             ) : currentStep === "subtopics" && selectedTopic ? (
               <form className="ob-subtopic-form" onSubmit={handleSubtopicSubmit}>
                 <div className="ob-intro">
-                  <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>탐색하고 싶은 세부 토픽을<br />5개 이상 선택하세요.</h1>
+                  <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>탐색하고 싶은 세부 토픽을<br />{MINIMUM_SUBTOPICS}개 이상 선택하세요.</h1>
                 </div>
                 <div className="ob-search">
                   <input ref={searchInputRef} type="search" aria-label={`${selectedTopic.label} 세부 토픽 검색`} placeholder="장르, 스토리, 배경, 분위기로 검색하세요." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
@@ -479,7 +552,7 @@ export function OnboardingScreen() {
                 <fieldset className="ob-subtopic-options">
                   <legend className="sr-only">{selectedTopic.label} 세부 토픽</legend>
                   <div className="ob-chips">
-                    {filteredSubtopics.map((subtopic) => (
+                    {visibleSubtopics.map((subtopic) => (
                       <label className="ob-chip" key={subtopic.id}>
                         <input className="sr-only" type="checkbox" checked={selectedTopicDraft?.selectedSubtopicIds.includes(subtopic.id) ?? false} onChange={() => toggleSubtopic(subtopic.id)} />
                         {subtopic.label}
@@ -488,8 +561,8 @@ export function OnboardingScreen() {
                   </div>
                   {filteredSubtopics.length === 0 && <p role="status" className="ob-empty">검색 결과가 없어요. 다른 키워드로 검색해 주세요.</p>}
                 </fieldset>
-                <p className="ob-selection-count" role="status">{selectedSubtopics.length}개 선택 <span>/ 최소 5개</span></p>
-                <button type="submit" className="ob-primary" disabled={selectedSubtopics.length < 5}>취향 매거진 보러가기</button>
+                <p className="ob-selection-count" role="status">{selectedSubtopics.length}개 선택 <span>/ 최소 {MINIMUM_SUBTOPICS}개</span></p>
+                <button type="submit" className="ob-primary" disabled={selectedSubtopics.length < MINIMUM_SUBTOPICS}>취향 매거진 보러가기</button>
               </form>
             ) : currentStep === "confirmation" && confirmation ? (
               <form className="ob-confirmation-form" onSubmit={handleOnboardingSubmit}>
@@ -503,13 +576,13 @@ export function OnboardingScreen() {
                     {confirmation.finalSubtopics.map((subtopic) => (
                       <li className="ob-confirmed-chip" key={subtopic.id}>
                         {subtopic.label}
-                        <button type="button" disabled={pendingAction !== null} aria-label={`${subtopic.label} 선택 해제`} onClick={() => { toggleSubtopic(subtopic.id); editSubtopics(); }}><OnboardingIcon name="chip-close" /></button>
+                        <button type="button" disabled={pendingAction !== null || onboardingSaved} aria-label={`${subtopic.label} 선택 해제`} onClick={() => { toggleSubtopic(subtopic.id); editSubtopics(); }}><OnboardingIcon name="chip-close" /></button>
                       </li>
                     ))}
                   </ul>
                 </div>
-                <button type="submit" className="ob-primary" disabled={pendingAction !== null}>{pendingAction === "submit" ? "준비 중..." : "취향 매거진 보러가기"}</button>
-                <button type="button" className="ob-edit" onClick={editSubtopics} disabled={pendingAction !== null}>수정하기</button>
+                <button type="submit" className="ob-primary" disabled={pendingAction !== null}>{pendingAction === "submit" ? "준비 중..." : onboardingSaved ? "홈 연결 다시 시도" : "취향 매거진 보러가기"}</button>
+                {!onboardingSaved && <button type="button" className="ob-edit" onClick={editSubtopics} disabled={pendingAction !== null}>수정하기</button>}
               </form>
             ) : null}
           </>

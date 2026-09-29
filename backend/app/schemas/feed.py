@@ -76,6 +76,7 @@ class ContentDetail(CamelModel):
     content_id: int
     topic_id: int
     title: str
+    image_url: str | None = None
     production_type: Literal["human", "ai", "hybrid"]
     source_url: str
     publisher: str

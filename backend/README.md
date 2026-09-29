@@ -18,6 +18,7 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 | 내 관심사 | `GET/POST /api/v1/me/topics`, `GET /api/v1/me/topics/{topicId}/subtopics`, `PUT/DELETE /api/v1/me/topics/{topicId}/subtopics/{subtopicId}` |
 | 피드·콘텐츠 | `GET /api/v1/topics/{topicId}/feed`, `GET /api/v1/contents/{contentId}?topicId=...` |
 | 반응·저장 | `PUT/DELETE /api/v1/contents/{contentId}/preference`, `/like`, `/bookmark` |
+| 저장 목록 (API-041) | `GET /api/v1/users/me/bookmarks?topicId=...&limit=...&cursor=...` |
 
 인증과 데이터는 PostgreSQL을 사용합니다. 개발용 가입·로그인과 Agent 결과 조회는 `ENABLE_DEV_API=true`에서만 등록됩니다. Agent 결과 조회는 로컬 요청과 인증된 개발 사용자로 제한되며 Swagger의 **개발용 Agent 결과**에 표시됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 영화 Agent 실행 결과가 승인되고 사실 확인 항목이 없으면 저장 직후 공개 Content 피드에 자동 발행됩니다. 탈락하거나 사실 확인이 필요한 초안은 자동 발행되지 않습니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
 
@@ -32,7 +33,7 @@ cd backend
 .\.venv\Scripts\python.exe -m alembic upgrade head
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host localhost --port 8000
+.\.venv\Scripts\python.exe scripts/run_local_api.py
 ```
 
 `v1_local` seed는 정책, 영화 Topic·Subtopic, 로컬 공개 콘텐츠를 준비합니다. `dev_user` seed는 인증 우회에 필요한 데모 사용자를 준비합니다. 두 seed 모두 마이그레이션 후에 실행합니다. `/api/v1/contents`의 범용 Mock CRUD와 `mock_contents`는 정식 경로에서 사용하지 않습니다. Agent의 Draft와 내부 AgentRun 저장·조회는 공개 Content와 구분합니다.
@@ -40,6 +41,12 @@ cd backend
 조회는 주로 200, 생성은 201, 삭제·로그아웃은 본문 없는 204입니다. `/api/v1` 응답은 `Cache-Control: private, no-store`를 보냅니다. 오류는 `code`와 `message`를 포함하고 입력 검증 오류의 `fields[]`에는 `field`·`code`·`message`가 붙습니다. `requestId`는 실제 값이 있을 때만 보냅니다. 대표 오류는 `MALFORMED_JSON`(400), `AUTH_REQUIRED`(401), `CSRF_INVALID`·`ONBOARDING_REQUIRED`(403), `TOPIC_NOT_FOUND`·`CONTENT_NOT_FOUND`(404), `ONBOARDING_ALREADY_COMPLETED`·`STATE_CONFLICT`(409), `UNSUPPORTED_MEDIA_TYPE`(415), `VALIDATION_ERROR`·`INVALID_CURSOR`(422)입니다.
 
 [Swagger 테스트 가이드](../docs/SWAGGER_TEST_GUIDE.md)에서 실제 ID를 조회해 온보딩·피드·반응까지 호출하는 순서를 확인하세요. 추천 알고리즘과 이벤트 로그가 아직 없으므로 추천 이유·노출 상태는 기본값이며, `/chat/*`와 내부 AgentRun 연결은 추후 서비스 계층에서 진행합니다. OAuth 공급자 통신, Celery, Redis, 관리자 전체 API 등은 이번 구현에 포함되지 않습니다. 아래 목표 API 표에서 위 구현 범위를 제외한 항목은 후속 작업 대상입니다.
+
+### 커밋된 Agent 콘텐츠 일괄 적재
+
+`backend`에서 `python -m app.seeds.agent_contents --git-ref f645df0`으로 읽기 전용 검사 후, `--apply`를 붙여 적재할 수 있습니다. 원격 커밋의 JSON을 직접 읽으며 현재 브랜치를 변경하지 않습니다. 전체 트랜잭션·중복 방지·원본 추적을 지원합니다. [적재 결과와 실행 안내](../docs/AGENT_CONTENT_IMPORT.md)를 참고하세요.
+
+온보딩의 분야별 임시 관심사 7개는 콘텐츠 적재 후 `python -m app.seeds.agent_interests --git-ref f645df0 --apply`로 등록합니다. 기존 작품 분류를 보존하면서 콘텐츠 연결을 추가합니다. [임시 분류와 실행 안내](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)를 참고하세요.
 
 ## 구조 원칙
 

@@ -36,6 +36,7 @@ export type FinalSubtopic = {
 
 export type OnboardingTopicOption = {
   id: string;
+  code?: string;
   label: string;
   subtopicOptions: SubtopicOption[];
 };
@@ -43,6 +44,12 @@ export type OnboardingTopicOption = {
 export type OnboardingOptions = {
   accountTypes: AccountType[];
   topics: OnboardingTopicOption[];
+  policyItems?: Array<{
+    type: string;
+    policyVersion: string;
+    required: boolean;
+    text?: string;
+  }>;
 };
 
 // 추가 분야 Flow의 FE Mock 모델이며 실제 Backend DTO / ID Contract가 아니다.
@@ -73,10 +80,13 @@ export type OnboardingConsent = {
   privacy: boolean;
   advertising: boolean;
   marketing: boolean;
+  [policyType: string]: boolean;
 };
 
 export type OnboardingData = {
+  nickname?: string;
   consent: OnboardingConsent;
+  policyItems?: NonNullable<OnboardingOptions["policyItems"]>;
   birthdate: string;
   accountType: AccountType;
   selectedTopicId: string;

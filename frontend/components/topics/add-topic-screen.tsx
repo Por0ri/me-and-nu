@@ -9,10 +9,16 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { OnboardingBack, OnboardingIcon } from "@/components/onboarding/onboarding-ui";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
 import { addMyTopic, getTopicOptions } from "@/lib/consumer-api/topics";
+import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import { filterSubtopics } from "@/lib/subtopics/filter-subtopics";
-import type { TopicOptions } from "@/types/consumer";
+import type { AddMyTopicResult, TopicOptions } from "@/types/consumer";
 
-function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
+const MINIMUM_SUBTOPICS = isConsumerApiMode ? 1 : 5;
+
+function AddTopicForm({ targetTopicId, onTopicSaved }: {
+  targetTopicId: string | null;
+  onTopicSaved: () => void;
+}) {
   const router = useRouter();
   const { flowState, addAvailableTopic } = useConsumerFlow();
   const [options, setOptions] = useState<TopicOptions | null>(null);
@@ -27,6 +33,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
   const [actionError, setActionError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createdTopicId, setCreatedTopicId] = useState<string | null>(null);
+  const [savedTopic, setSavedTopic] = useState<AddMyTopicResult | null>(null);
   const inFlight = useRef(false);
   const requestGeneration = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -74,7 +81,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
   }, [createdTopicId, flowState, router]);
 
   function selectTopic(topicId: string) {
-    if (inFlight.current || topicId === selectedTopicId) {
+    if (inFlight.current || savedTopic || topicId === selectedTopicId) {
       return;
     }
     setSelectedTopicId(topicId);
@@ -85,7 +92,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
   }
 
   function toggleSubtopic(subtopicId: string) {
-    if (inFlight.current) {
+    if (inFlight.current || savedTopic) {
       return;
     }
     setSelectedSubtopicIds((current) =>
@@ -99,7 +106,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (inFlight.current || !flowState || !options) {
+    if (inFlight.current || (!isConsumerApiMode && !flowState) || !options) {
       return;
     }
 
@@ -108,12 +115,12 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
       setValidationMessage("추가할 분야를 선택해 주세요.");
       return;
     }
-    if (flowState.availableTopicIds.includes(topic.id)) {
+    if (!savedTopic && flowState?.availableTopicIds.includes(topic.id)) {
       setValidationMessage("이미 생성된 분야입니다. 다른 분야를 선택해 주세요.");
       return;
     }
-    if (selectedSubtopicIds.length < 5) {
-      setValidationMessage("세부 취향을 5개 이상 선택해 주세요.");
+    if (selectedSubtopicIds.length < MINIMUM_SUBTOPICS) {
+      setValidationMessage(`세부 취향을 ${MINIMUM_SUBTOPICS}개 이상 선택해 주세요.`);
       return;
     }
     if (
@@ -133,9 +140,9 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
     setValidationMessage(null);
 
     try {
-      const result = await addMyTopic(
+      const result = savedTopic ?? await addMyTopic(
         { topicId: topic.id, subtopicIds: [...selectedSubtopicIds] },
-        { availableTopicIds: [...flowState.availableTopicIds] },
+        { availableTopicIds: [...(flowState?.availableTopicIds ?? [])] },
       );
       if (requestGeneration.current !== generation) {
         return;
@@ -146,10 +153,13 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
         new Set(result.subtopicIds).size !== result.subtopicIds.length ||
         !result.subtopicIds.every((id) => selectedSubtopicIds.includes(id))
       ) {
-        throw new Error("Added Mock topic does not match the request.");
+        throw new Error("Added topic does not match the request.");
       }
 
-      addAvailableTopic(result.topicId);
+      setSavedTopic(result);
+      onTopicSaved();
+      await addAvailableTopic(result.topicId);
+      if (requestGeneration.current !== generation) return;
       setCreatedTopicId(result.topicId);
     } catch {
       if (requestGeneration.current === generation) {
@@ -198,7 +208,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
       );
     }
 
-    if (flowState?.availableTopicIds.includes(targetTopic.id)) {
+    if (!savedTopic && flowState?.availableTopicIds.includes(targetTopic.id)) {
       return (
         <section className="space-y-4">
           <p role="status" className="text-sm text-black/60">
@@ -216,7 +226,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
   }
 
   const availableOptions = options.topics.filter(
-    (topic) => !flowState?.availableTopicIds.includes(topic.id),
+    (topic) => topic.id === savedTopic?.topicId || !flowState?.availableTopicIds.includes(topic.id),
   );
   const selectedTopic = availableOptions.find(
     (topic) => topic.id === selectedTopicId,
@@ -232,7 +242,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
   const topicPicker = (
     <details className="ob-add-topic-picker" open={!selectedTopic}>
       <summary>{selectedTopic ? `${selectedTopic.label} · 분야 변경` : "추가할 분야"}</summary>
-      <fieldset disabled={isSubmitting}>
+      <fieldset disabled={isSubmitting || savedTopic !== null}>
         <legend className="sr-only">추가할 분야</legend>
         <div className="ob-chips">
           {availableOptions.map((topic) => (
@@ -259,7 +269,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
   return (
     <form onSubmit={submit} className="ob-subtopic-form">
       <div className="ob-intro">
-        <h1>탐색하고 싶은 세부 토픽을<br />5개 이상 선택하세요.</h1>
+        <h1>탐색하고 싶은 세부 토픽을<br />{MINIMUM_SUBTOPICS}개 이상 선택하세요.</h1>
       </div>
       {!selectedTopic ? topicPicker : null}
       {selectedTopic ? (
@@ -270,7 +280,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
               id="add-topic-subtopic-search"
               type="search"
               aria-label={`${selectedTopic.label} 세부 토픽 검색`}
-              disabled={isSubmitting}
+              disabled={isSubmitting || savedTopic !== null}
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               onKeyDown={(event) => {
@@ -280,11 +290,11 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
               }}
               placeholder="장르, 스토리, 배경, 분위기로 검색하세요."
             />
-            <button type="button" aria-label="세부 토픽 검색" disabled={isSubmitting} onClick={() => searchInputRef.current?.focus()}>
+            <button type="button" aria-label="세부 토픽 검색" disabled={isSubmitting || savedTopic !== null} onClick={() => searchInputRef.current?.focus()}>
               <OnboardingIcon name="search-arrow" />
             </button>
           </div>
-          <fieldset disabled={isSubmitting} className="ob-subtopic-options">
+          <fieldset disabled={isSubmitting || savedTopic !== null} className="ob-subtopic-options">
             <legend className="sr-only">{selectedTopic.label} 세부 토픽</legend>
             {selectedTopic.subtopicOptions.length === 0 ? (
               <p role="status" className="ob-empty">선택할 세부주제가 없습니다.</p>
@@ -312,7 +322,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
             )}
           </fieldset>
           <p className="ob-selection-count" role="status">
-            {selectedSubtopicIds.length}개 선택 <span>/ 최소 5개</span>
+            {selectedSubtopicIds.length}개 선택 <span>/ 최소 {MINIMUM_SUBTOPICS}개</span>
           </p>
         </>
       ) : null}
@@ -321,13 +331,13 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
       ) : null}
       {actionError ? (
         <p role="alert" className="text-sm text-red-600">
-          분야를 추가하지 못했습니다. 선택을 유지한 채 다시 시도해 주세요.
+          {savedTopic ? "분야는 저장되었습니다. 홈 연결을 다시 시도해 주세요." : "분야를 추가하지 못했습니다. 선택을 유지한 채 다시 시도해 주세요."}
         </p>
       ) : null}
       {isSubmitting ? <p role="status">분야를 추가하는 중입니다.</p> : null}
       <button
         type="submit"
-        disabled={isSubmitting || !selectedTopic || selectedSubtopicIds.length < 5}
+        disabled={isSubmitting || !selectedTopic || selectedSubtopicIds.length < MINIMUM_SUBTOPICS}
         className="ob-primary"
       >
         {actionError ? "다시 시도" : "분야 추가"}
@@ -345,7 +355,9 @@ export function AddTopicScreen({
   targetTopicId: string | null;
 }) {
   const router = useRouter();
-  const { flowState } = useConsumerFlow();
+  const { flowState, isRestoring, restoreError, refreshTopics } = useConsumerFlow();
+  // Keep the form's successful POST result mounted while its first Topic read retries.
+  const [hasSavedTopic, setHasSavedTopic] = useState(false);
   const invalidReturnTopic =
     returnTopicId !== null &&
     !flowState?.availableTopicIds.includes(returnTopicId);
@@ -358,7 +370,12 @@ export function AddTopicScreen({
     <main className="ui-version-a ui-onboarding">
       <div className="va-shell ob-screen ob-add-topic">
         <OnboardingBack onBack={() => router.push(homeHref)} />
-        {!flowState ? (
+        {isRestoring && !flowState && !hasSavedTopic ? <p role="status">내 분야를 불러오는 중입니다.</p> : restoreError && !flowState && !hasSavedTopic ? (
+          <section className="space-y-4">
+            <p role="alert">{restoreError}</p>
+            <button type="button" className="ob-primary" onClick={() => void refreshTopics().catch(() => undefined)}>다시 시도</button>
+          </section>
+        ) : !flowState && !isConsumerApiMode ? (
           <section className="space-y-4">
             <p role="status" className="text-sm leading-6 text-black/60">
               현재 연결된 분야 정보가 없습니다. 온보딩에서 분야를 다시 선택해
@@ -376,7 +393,7 @@ export function AddTopicScreen({
             돌아갈 분야 정보를 확인할 수 없습니다. 홈에서 다시 선택해 주세요.
           </p>
         ) : (
-          <AddTopicForm targetTopicId={targetTopicId} />
+          <AddTopicForm targetTopicId={targetTopicId} onTopicSaved={() => setHasSavedTopic(true)} />
         )}
         <Link href={homeHref} className="ob-edit ob-add-topic-cancel">
           취소 / 홈으로 돌아가기

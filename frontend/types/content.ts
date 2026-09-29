@@ -14,6 +14,7 @@ export type Content = {
   sourceName: string;
   saved: boolean;
   recommendationReason?: string;
+  liked?: boolean;
 };
 
 /** 현재 Mock의 추천 적합도 선택값이며 Backend 최종 Contract가 아니다. */
@@ -45,10 +46,11 @@ export type SavedContentsData = {
 
 export type SetContentFeedbackInput = GetContentInput & {
   feedback: ContentFeedback;
+  currentFeedback?: ContentFeedback | null;
 };
 
 export type ContentFeedbackResult = GetContentInput & {
-  feedback: ContentFeedback;
+  feedback: ContentFeedback | null;
 };
 
 export type SaveResult = {

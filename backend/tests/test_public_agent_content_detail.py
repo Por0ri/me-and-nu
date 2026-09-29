@@ -48,6 +48,26 @@ async def test_published_original_ai_content_exposes_full_body(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("image_url", [None, "/local-content/the-host-still.jpg"])
+async def test_detail_exposes_same_image_url_as_feed(monkeypatch, image_url):
+    content = _content(production_type="ai", source_draft_id=88)
+    content.image_url = image_url
+    _mock_detail_dependencies(monkeypatch, content)
+    monkeypatch.setattr(feed_service.content_repo, "list_public_contents", AsyncMock(return_value=[content]))
+
+    feed = await feed_service.get_feed(
+        object(), user_id=1, topic_id=1, subtopic_id=None, cursor=None, limit=20
+    )
+    detail = await feed_service.get_content_detail(
+        object(), user_id=1, topic_id=1, content_id=301
+    )
+
+    card = feed.model_dump(by_alias=True)["sections"][0]["contents"][0]
+    assert card["imageUrl"] == image_url
+    assert detail.model_dump(by_alias=True)["imageUrl"] == image_url
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("production_type", "source_draft_id"),
     [("human", None), ("human", 88), ("hybrid", 88), ("ai", None)],

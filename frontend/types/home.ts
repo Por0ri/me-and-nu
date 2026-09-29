@@ -3,6 +3,7 @@ import type { Content } from "@/types/content";
 export type Topic = {
   id: string;
   name: string;
+  code?: string;
 };
 
 /**

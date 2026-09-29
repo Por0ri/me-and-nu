@@ -87,6 +87,7 @@ export type ContentDetail = {
   publisher: string; publishedAt: string | null; displayMode: string;
   productionType: "human" | "ai" | "hybrid";
   excerpt: string | null; body: string | null; contentType: string | null;
+  imageUrl: string | null;
   subtopicIds: number[];
   practicalInfo: { startsAt: string | null; endsAt: string | null; ageLimit: string | null; preparation: string | null; price: string | null };
   notices: ContentNotice[];
@@ -100,6 +101,12 @@ export type BookmarkResponse = {
   savedItemId: number; contentId: number; topicId: number; tags: string[];
   resurfaceEnabled: boolean; savedAt: string;
 };
+export type SavedBookmark = {
+  savedItemId: number; contentId: number; title: string;
+  summary: string | null; imageUrl: string | null; sourceName: string | null;
+  topicId: number; tags: string[]; resurfaceEnabled: boolean;
+};
+export type BookmarksResponse = { items: SavedBookmark[]; nextCursor: string | null };
 
 export type ApiFieldError = { field: string; code: string; message: string };
 type ErrorPayload = { code?: string; message?: string; fields?: ApiFieldError[]; requestId?: string };
@@ -116,6 +123,7 @@ export class ApiError extends Error {
 }
 
 export const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
+export const API_UNAUTHORIZED_EVENT = "api:unauthorized";
 let csrfToken: string | null = null;
 
 function query(params: Record<string, string | number | boolean | undefined | null>): string {
@@ -140,6 +148,9 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     const error = payload as ErrorPayload | null;
     if (response.status === 401 || error?.code === "CSRF_INVALID") csrfToken = null;
+    if (response.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(API_UNAUTHORIZED_EVENT));
+    }
     throw new ApiError(
       error?.message ?? `요청에 실패했습니다. (HTTP ${response.status})`,
       response.status, error?.code ?? "UNKNOWN_ERROR", error?.fields,
@@ -234,4 +245,9 @@ export function bookmarkContent(contentId: number, topicId: number): Promise<Boo
 }
 export function unbookmarkContent(contentId: number, topicId: number): Promise<void> {
   return apiRequest<void>(`/api/v1/contents/${contentId}/bookmark${query({ topicId })}`, { method: "DELETE" });
+}
+export function getBookmarks(
+  options: { q?: string; topicId?: number; cursor?: string; limit?: number } = {},
+): Promise<BookmarksResponse> {
+  return apiRequest(`/api/v1/users/me/bookmarks${query(options)}`);
 }
