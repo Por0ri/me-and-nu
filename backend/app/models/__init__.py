@@ -20,6 +20,7 @@ from app.models.chat import (
     UserOperation,
 )
 from app.models.content import Content, ContentSource, Draft
+from app.models.notification import Notification
 from app.models.user import UserAccount
 from app.models.v1 import (
     AuthSession,
@@ -58,6 +59,7 @@ __all__ = [
     "Subtopic",
     "Topic",
     "TopicCluster",
+    "Notification",
     "Tap",
     "TapTopic",
     "UserAccount",

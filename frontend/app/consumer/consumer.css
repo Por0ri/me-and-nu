@@ -1114,3 +1114,77 @@
 }
 .consumer-mock .ui-version-a .va-my-topic-add { background: #74b3f6; color: var(--va-ink); }
 .consumer-mock .ui-version-a .va-my-topic-remove { background: #c0c0ba; color: var(--va-ink); }
+
+/* 알림 */
+.consumer-mock .ui-version-a .va-noti-bell { position: relative; display: inline-flex; }
+.consumer-mock .ui-version-a .va-noti-dot {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f0503c;
+}
+.consumer-mock .ui-version-a .va-noti-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 24px;
+  background: #f9f9f9;
+}
+.consumer-mock .ui-version-a .va-noti-back { display: inline-flex; align-items: center; min-width: 32px; min-height: 44px; }
+.consumer-mock .ui-version-a .va-noti-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 16px;
+  background: #f0f0ef;
+}
+.consumer-mock .ui-version-a .va-noti-tabs button {
+  /* 탭을 바꿔도 알약 크기가 변하지 않게 폭을 고정한다. */
+  width: 44px;
+  min-height: 26px;
+  border-radius: 13px;
+  color: #75756b;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.consumer-mock .ui-version-a .va-noti-tabs [aria-selected="true"] { background: #d4e7fc; color: var(--va-ink); }
+.consumer-mock .ui-version-a .va-noti-group { padding: 28px 24px 4px; font-size: 16px; font-weight: 700; }
+.consumer-mock .ui-version-a .va-noti-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 14px 24px;
+  border-bottom: 1px solid #ecece8;
+  text-align: left;
+  cursor: pointer;
+}
+.consumer-mock .ui-version-a .va-noti-text { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.consumer-mock .ui-version-a .va-noti-item-body { font-size: 13px; line-height: 1.5; word-break: keep-all; }
+.consumer-mock .ui-version-a .va-noti-item-preview {
+  overflow: hidden;
+  color: #75756b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.consumer-mock .ui-version-a .va-noti-item-time { color: #a3a39b; font-size: 10px; }
+.consumer-mock .ui-version-a .va-noti-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 48px;
+  height: 54px;
+  overflow: hidden;
+  background: #eeede8;
+}
+.consumer-mock .ui-version-a .va-noti-unread { background: #4499f30f; }
+.consumer-mock .ui-version-a .va-noti-empty { padding: 8px 24px 4px; color: #a3a39b; font-size: 12px; }
+
+/* 목록 길이가 달라져 스크롤바가 생기고 사라져도 화면이 옆으로 밀리지 않게 자리를 비워 둔다. */
+html:has(.consumer-mock) { scrollbar-gutter: stable; background: #f8f6f2; }

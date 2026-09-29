@@ -6,6 +6,7 @@ export const consumerRoutes = {
   saved: "/consumer/saved",
   addTopic: "/consumer/topics/new",
   my: "/consumer/my",
+  notifications: "/consumer/notifications",
   myTopics: "/consumer/my/topics",
   mySubscriptions: "/consumer/my/subscriptions",
   content: (contentId: string) =>

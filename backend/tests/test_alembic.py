@@ -24,7 +24,10 @@ def test_alembic_revision_chain_has_single_v1_head():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["b5d2c8f1a7e3"]
+    assert script.get_heads() == ["e7a4c2d9b812"]
+    assert script.get_revision("e7a4c2d9b812").down_revision == (
+        "b5d2c8f1a7e3"
+    )
     assert script.get_revision("b5d2c8f1a7e3").down_revision == (
         "7c8e1a9b4d2f"
     )

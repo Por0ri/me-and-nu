@@ -126,6 +126,12 @@ export type ChatJob = {
   } | null;
   error: { code: string; message: string } | null;
 };
+export type NotificationItem = {
+  notificationId: number; type: string; title: string; body: string;
+  topicId: number | null; contentId: number | null; imageUrl: string | null;
+  isRead: boolean; readAt: string | null; createdAt: string;
+};
+export type NotificationsResponse = { items: NotificationItem[]; nextCursor: string | null };
 export type BookmarksResponse = { items: SavedBookmark[]; nextCursor: string | null };
 
 export type ApiFieldError = { field: string; code: string; message: string };
@@ -279,4 +285,16 @@ export function sendChatMessage(sessionId: number, content: string, clientMessag
 }
 export function getChatJob(jobId: number): Promise<ChatJob> {
   return apiRequest(`/api/v1/chat/jobs/${jobId}`);
+}
+export function getNotifications(options: { cursor?: string; limit?: number } = {}): Promise<NotificationsResponse> {
+  const query = new URLSearchParams();
+  if (options.cursor) query.set("cursor", options.cursor);
+  query.set("limit", String(options.limit ?? 50));
+  return apiRequest(`/api/v1/users/me/notifications?${query}`);
+}
+export function getUnreadNotificationCount(): Promise<{ unreadCount: number }> {
+  return apiRequest("/api/v1/users/me/notifications/unread-count");
+}
+export function markNotificationRead(notificationId: number): Promise<{ notificationId: number; isRead: boolean; readAt: string | null }> {
+  return apiRequest(`/api/v1/users/me/notifications/${notificationId}`, { method: "PATCH", body: JSON.stringify({ isRead: true }) });
 }

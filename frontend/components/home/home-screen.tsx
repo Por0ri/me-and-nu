@@ -11,6 +11,7 @@ import { ContentCard } from "@/components/home/content-card";
 import { HomeAIPanel } from "@/components/home/home-ai-panel";
 import { ConsumerBottomNav } from "@/components/navigation/consumer-bottom-nav";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
+import { getUnreadNotificationCount } from "@/lib/api";
 import { getHomeContents } from "@/lib/consumer-api/home";
 import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import { isLocalDemoLoginAvailable } from "@/lib/consumer-api/local-demo";
@@ -66,6 +67,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
   const [viewMode, setViewMode] = useState<HomeViewMode>("card");
   const [isTopicMenuOpen, setIsTopicMenuOpen] = useState(false);
   const [canRestartDemo, setCanRestartDemo] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const topicMenuId = useId();
   const topicMenuRef = useRef<HTMLDivElement>(null);
   const topicMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -75,6 +77,16 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
 
   useEffect(() => {
     setCanRestartDemo(isConsumerApiMode && isLocalDemoLoginAvailable());
+    if (!isConsumerApiMode) return;
+    let isCancelled = false;
+    getUnreadNotificationCount()
+      .then((result) => {
+        if (!isCancelled) setUnreadCount(result.unreadCount);
+      })
+      .catch(() => undefined);
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -387,9 +399,14 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
                 </div>
               ) : null}
             </div>
-            <span role="img" aria-label="알림 아이콘 (현재 기능 없음)">
+            <Link
+              href={{ pathname: consumerRoutes.notifications, query: { topicId: selectedTopicId } }}
+              aria-label={unreadCount > 0 ? `알림 ${unreadCount}개 안 읽음` : "알림"}
+              className="va-noti-bell"
+            >
               <Image src="/ui-home/notifications.svg" alt="" width={24} height={24} />
-            </span>
+              {unreadCount > 0 ? <span className="va-noti-dot" aria-hidden="true" /> : null}
+            </Link>
           </div>
         </header>
 
