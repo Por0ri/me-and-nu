@@ -1,4 +1,4 @@
-# # anime_agent v1.1 — 애니 콘텐츠 크리에이팅 에이전트
+# # anime_agent v1.0 — 애니 콘텐츠 크리에이팅 에이전트
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY`에서 읽는다. 결과는 `agent/out/anime/올림|탈락/`에 쌓인다.
 #
@@ -99,16 +99,6 @@
 #   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
 #   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
 #
-# v1.1에서 바뀐 것 — 되풀이 예방 · 문장 단위 고치기 · 용어집 밖 일본 애니 (PM 9/29: 전부 적용)
-# - v1.0 실측: 12번 시도에 올림 3편, $0.256. 남은 탈락은 실제 되풀이였다(한 글에 '강인함' 열 번 가까이, '~라고 말했다' 꼴 네 번).
-#   고침 바퀴에서 작가가 글 전체를 다시 써서 되풀이가 새로 생겼고, 최고 판으로 되돌린 것이 9번이었다.
-# - 1 작가 규칙 [되풀이]: 핵심어는 한 편에 세 번까지, '누구는 ~라고 말했다' 꼴은 두 번까지. 코드가 핵심어가 `핵심어상한`보다 많이 나오면 고칠 것으로 잡는다.
-#   되풀이검사는 표기표의 이름(캐릭터 · 성우 · 제작진)을 되풀이로 안 센다.
-# - 2 다시 쓰기는 `고치기` 에이전트가 한다. 지적된 문장만 고치고 나머지는 그대로 둔다(음악 v4.3 방식). 전에는 작가가 앞 글을 받아 글 전체를 다시 썼다.
-# - 3 용어집 밖 일본 애니도 쓴다(`동적시리즈`). AniList 인기 일본 TV 애니(`시리즈풀쪽수` × 50)에서 전편이 없는 첫 작품만 모아 캐시하고,
-#   한 번 돌 때 `동적시리즈수`개를 골라 라프텔 한국 제목이 확인되는 것만 시리즈로 더한다. 용어집 시리즈 다섯은 그대로 쓴다.
-#   동적 시리즈는 용어집이 없어서 위키백과 표기를 확정으로 쓴다(`위키확정`). 사람 유형은 위키 표기가 있는 성우 · 제작진만 후보가 된다.
-#
 # v1.0에서 바뀐 것 — 판정 구조를 다른 세 에이전트와 맞춘다 (PM 9/29: 1~5 다 적용)
 # - 9/29 실측: 주제 15번 시도에 올림 1편, $0.357. 탈락 판정 26번 중 25번이 형태 검사였다. 편집국장 점수는 19번 중 14번이 70점 이상이었다.
 # - 1 형태 검사를 치명 · 고칠 것으로 나눈다(`형태_치명` · `형태무게`). 치명만 올림을 막는다. 고칠 것은 `고칠것_상한`을 넘으면 고치기로 보내고,
@@ -202,10 +192,6 @@ JIKAN_PAGES   = 15     # Jikan 회차 목록을 최대 몇 쪽까지 (100화씩.
 콜랩_끝나면zip = True   # 콜랩이면 run · run_one 이 끝날 때 out/anime 을 zip 으로 묶어 브라우저로 내려준다. 로컬에서는 아무 일 없다
 # v0.5
 동시주제       = 3      # run 에서 주제를 몇 개씩 같이 돌릴지. 1이면 v0.4처럼 한 줄로 돈다. AniList · 라프텔 · 위키는 호스트별 간격 자물쇠라 그만큼은 줄을 선다
-동적시리즈     = True   # v1.1: 용어집 밖 일본 애니도 쓴다. False면 용어집 시리즈 다섯만
-동적시리즈수   = 8      # v1.1: 한 번 돌 때 더하는 동적 시리즈 수. 600편 돌릴 때는 늘린다
-시리즈풀쪽수   = 4      # v1.1: AniList 인기순 50개씩 몇 쪽을 볼지. 결과는 디스크에 캐시한다
-핵심어상한     = 5      # v1.1: 고유명사가 아닌 같은 낱말(앞 두 글자)이 이보다 많이 나오면 고칠 것 '핵심어 되풀이'
 초안수         = 1      # v1.0: 3 → 1. 편집국장이 하나만 읽어서 나머지는 버려졌다. 첫 바퀴에 작가가 온도를 달리해 동시에 쓰는 초안 수. 형태검사(코드)로 거르고 남은 것만 편집국장이 읽는다. 1이면 v0.4와 같다
 교정자쓰기     = False  # True면 v0.4처럼 교정자 마디를 따로 부른다. False면 교정 규칙을 작가 프롬프트 끝에 넣고 마디를 건너뛴다 (바퀴마다 호출 하나가 준다)
 스레드별모델   = True   # 동시주제 > 1 이면 스레드마다 모델 · HTTP 클라이언트를 따로 만든다. 한 클라이언트를 여러 이벤트 루프가 나눠 쓰면 "bound to a different event loop"가 난다
@@ -265,7 +251,6 @@ def _run_async(coro):
 
 GLOSSARY_PATH = HERE / "glossary.json"
 GLOSSARIES = {k: v for k, v in json.loads(GLOSSARY_PATH.read_text(encoding="utf-8")).items() if not k.startswith("_")}
-원래용어집 = list(GLOSSARIES)      # v1.1: 손으로 만든 용어집 시리즈. 동적 시리즈는 GLOSSARIES에 따로 더해진다
 
 def _norm(s):
     return re.sub(r"[\s\-_.'’\"“”:：·,!?()（）\[\]]", "", (s or "").lower())
@@ -1171,8 +1156,6 @@ class 표기표:
         self.라프텔조회 = 0
 
     def _put(self, 원어, 표기, 출처):
-        if 출처 == "위키" and (GLOSSARIES.get(self.series) or {}).get("동적"):
-            출처 = "위키확정"                              # v1.1: 용어집이 없는 동적 시리즈는 위키 표기를 확정으로 쓴다
         if 원어 and 원어 not in self.표:
             self.표[원어] = {"표기": 표기, "출처": 출처}
         return self.표.get(원어)
@@ -1242,79 +1225,8 @@ print("표기맞추기 준비 끝")
 
 # ## 10. 주제 후보 — 뽑기
 #
-# 후보는 `후보시리즈()`에서 나온다. 용어집 시리즈 다섯 + 동적 시리즈(v1.1). 유형마다 후보를 만드는 법이 다르다. 결과 모양은 같다.
+# 후보는 용어집에 있는 시리즈에서만 나온다. 유형마다 후보를 만드는 법이 다르다. 결과 모양은 같다.
 # `{"유형", "시리즈", "작품", "사람"?, "기념일"?, "한줄", "src"}`
-
-
-# ## 10-0. 동적 시리즈 (v1.1, PM 9/29: 용어집 제한을 푼다)
-#
-# AniList 인기 일본 TV 애니에서 전편이 없는 첫 작품만 모은다(풀). 한 번 돌 때 몇 개를 골라
-# 라프텔 한국 제목이 확인되는 것만 시리즈로 더한다. 용어집이 없으니 표기는 위키백과 · 라프텔 · AniList를 쓴다.
-
-_동적잠금 = threading.Lock()
-_동적풀 = None
-_이번동적 = None
-
-
-def _시리즈풀():
-    global _동적풀
-    if _동적풀 is not None:
-        return _동적풀
-    c = _cache_get("동적시리즈풀_v1")
-    if c:
-        _동적풀 = c
-        return c
-    용어집루트 = {g.get("anilist_root") for g in GLOSSARIES.values()}
-    용어집키 = [_norm_roma(k) for g in GLOSSARIES.values() for k in g.get("title_keys", []) if len(_norm_roma(k)) >= 4]
-    풀, 본 = [], set()
-    for 쪽 in range(1, 시리즈풀쪽수 + 1):
-        d = al('query($p:Int){ Page(page:$p, perPage:50){ media(type:ANIME, format_in:[TV], countryOfOrigin:"JP", sort:POPULARITY_DESC, isAdult:false){ id } } }', {"p": 쪽})
-        for m in ((d or {}).get("Page") or {}).get("media", []) or []:
-            mid = (m or {}).get("id")
-            if not mid or mid in 본 or mid in 용어집루트:
-                continue
-            본.add(mid)
-            w = al_media(mid)
-            if not w:
-                continue
-            if any(r.get("type") in ("PREQUEL", "PARENT") and r.get("mtype") == "ANIME" for r in w.get("relations", [])):
-                continue                                  # 첫 작품만. 속편은 첫 작품의 관계도로 들어온다
-            if any(k in _norm_roma(w.get("romaji") or "") for k in 용어집키):
-                continue                                  # 이미 용어집에 있는 시리즈
-            풀.append({"id": mid, "romaji": w.get("romaji")})
-    _동적풀 = 풀
-    _cache_put("동적시리즈풀_v1", 풀)
-    return 풀
-
-
-def 후보시리즈():
-    """용어집 시리즈 + 이번에 고른 동적 시리즈. 한 번 돌 때(프로세스) 한 번 고르고 계속 쓴다."""
-    global _이번동적, GLOSSARIES
-    with _동적잠금:
-        if _이번동적 is None:
-            _이번동적 = []
-            if 동적시리즈:
-                풀 = list(_시리즈풀())
-                random.shuffle(풀)
-                for x in 풀:
-                    if len(_이번동적) >= 동적시리즈수:
-                        break
-                    w = al_media(x["id"])
-                    if not w:
-                        continue
-                    이름 = 라프텔_표기(w)
-                    if not 이름:
-                        continue                          # 라프텔에서 확인 안 되는 작품은 안 쓴다
-                    이름 = re.sub(r"\s*(?:1기|시즌\s*1|제1기|1쿨|1부)$", "", 이름).strip()
-                    if not 이름 or 이름 in GLOSSARIES:
-                        continue
-                    새 = {"anilist_root": x["id"], "title_keys": [t for t in (w.get("romaji"), w.get("english"), w.get("native"), 이름) if t],
-                          "기준": "용어집 없음 — 라프텔 제목 · 위키 표기 (v1.1 동적 시리즈)", "항목": [], "동적": True}
-                    새["_idx"] = _역색인(새)                  # 용어집을 불러올 때 만드는 색인. 용어집_찾기가 쓴다
-                    GLOSSARIES = {**GLOSSARIES, 이름: 새}       # 새 dict로 바꿔 끼운다. 다른 스레드가 돌던 반복은 옛 dict로 끝난다
-                    _이번동적.append(이름)
-            print(f"동적 시리즈 {len(_이번동적)}개: {' · '.join(_이번동적) or '-'}")
-        return list(원래용어집) + list(_이번동적)
 
 _시리즈캐시 = {}
 
@@ -1334,7 +1246,7 @@ def _애니만(작품들):
 
 def 후보_감상순서():
     out = []
-    for name in 후보시리즈():
+    for name in GLOSSARIES:
         s = 시리즈(name)
         애니 = _애니만(s["작품들"])
         편 = 용어집_편목록(name)
@@ -1344,24 +1256,14 @@ def 후보_감상순서():
 
 def 후보_사람():
     out = []
-    for name in 후보시리즈():
+    for name in GLOSSARIES:
         s = 시리즈(name)
         root = al_media(GLOSSARIES[name]["anilist_root"], full=True)
         if not root:
             continue
         seen = set()
-        동적 = bool(GLOSSARIES[name].get("동적"))
-        표 = 표기표(name) if 동적 else None
         def 표기있나(p):
-            if 용어집_찾기(p["full"], name) or 용어집_찾기(p.get("native") or "", name):
-                return True
-            if 동적 and 표.조회 < 8:                       # v1.1: 동적 시리즈는 위키 표기가 있으면 된다. 조회는 시리즈마다 여덟 번까지
-                t = 표.사람(p["full"], p.get("native"))
-                return bool(t and t["표기"])
-            return False
-        def 이름(p):
-            return (용어집_찾기(p["full"], name) or 용어집_찾기(p.get("native") or "", name)
-                    or ((표.사람(p["full"], p.get("native")) or {}).get("표기") if 동적 else None) or p["full"])
+            return bool(용어집_찾기(p["full"], name) or 용어집_찾기(p.get("native") or "", name))
         for c in root["characters"]:
             for v in c["va"]:
                 if v["id"] in seen or not 표기있나(v):
@@ -1369,13 +1271,13 @@ def 후보_사람():
                 seen.add(v["id"])
                 배역 = 용어집_찾기(c["full"], name) or 용어집_찾기(c.get("native") or "", name) or c["full"]
                 out.append({"유형": "사람", "시리즈": name, "작품": s["root"], "사람": {**v, "역할": "성우", "배역": c["full"], "배역native": c.get("native")},
-                            "한줄": f"{name} {배역} 성우 {이름(v)}", "src": "AniList 캐릭터"})
+                            "한줄": f"{name} {배역} 성우 {용어집_찾기(v['full'], name) or 용어집_찾기(v.get('native') or '', name)}", "src": "AniList 캐릭터"})
         for st in root["staff"]:
             if st["id"] in seen or not 표기있나(st):
                 continue
             seen.add(st["id"])
             out.append({"유형": "사람", "시리즈": name, "작품": s["root"], "사람": {**st, "역할": 역할표기(st.get("role"))},
-                        "한줄": f"{name} {역할표기(st.get('role'))} {이름(st)}", "src": "AniList 제작진"})
+                        "한줄": f"{name} {역할표기(st.get('role'))} {용어집_찾기(st['full'], name) or 용어집_찾기(st.get('native') or '', name)}", "src": "AniList 제작진"})
     return out
 
 def _며칠차(m, d):
@@ -1397,7 +1299,7 @@ def _며칠차(m, d):
 
 def 후보_기념일(창=기념일창):
     out = []
-    for name in 후보시리즈():
+    for name in GLOSSARIES:
         s = 시리즈(name)
         for w in _애니만(s["작품들"]):
             st = w.get("start") or {}
@@ -1448,7 +1350,7 @@ def 후보_신작소식():
     """v0.7: 아직 안 나왔거나 막 시작한 작품. 전작 표기가 확정된 것만 뽑는다."""
     오늘 = datetime.date.today()
     out = []
-    for name in 후보시리즈():
+    for name in GLOSSARIES:
         s = 시리즈(name)
         표 = 표기표(name)
         for w in _애니만(s["작품들"]):
@@ -1475,7 +1377,7 @@ def 후보_신작소식():
 
 def 후보_심층(유형):
     out = []
-    for name in 후보시리즈():
+    for name in GLOSSARIES:
         s = 시리즈(name)
         표 = 표기표(name)
         tv = [w for w in _애니만(s["작품들"]) if w.get("format") == "TV" and w["본편사슬"] and w.get("status") != "NOT_YET_RELEASED" and 표.작품(w)["표기"] and 표.작품(w)["출처"] != "위키"]
@@ -2187,12 +2089,6 @@ print("관점 묶기 준비 끝")
 문어체로 쓴다. 존댓말을 쓰지 않는다. "~합니다", "~해요", "~세요"를 쓰지 않는다.
 한 문장에 뜻 하나다. 왜 그런지를 붙이는 것까지가 하나다. 절이 셋 겹치면 두 문장으로 나눈다.
 
-[되풀이 — v1.1]
-글이 붙든 핵심어(예: 강인함 · 기억 · 무게 · 거리)는 한 편에 세 번까지다. 네 번째부터는 그 낱말이 가리키는 장면 · 행동 · 대사로 바꿔 쓴다.
-"누구는 ~라고 말했다" · "~라고 밝혔다" 꼴은 한 편에 두 번까지다. 세 번째 발언부터는 발언을 문장 속에 녹이거나, 발언 없이 장면으로 말한다.
-앞 문단에서 한 말을 뒤 문단 첫머리에서 다시 정리하지 않는다. 문단마다 앞에 없던 사실 · 장면이 하나 이상 있다.
-마지막 문단에서 앞 문단들을 한 줄씩 다시 세지 않는다("이름을 밝히고, 견디고, 만나고" 같은 목록).
-
 한 문단은 한 줄기 생각이다. 문장은 앞 문장이 남긴 것을 받아서 이어진다.
 문장을 끝낼 때 다음 문장이 붙을 자리를 남긴다. 판단을 내렸으면 그 근거나 결과가 다음 문장이 된다.
 문단의 마지막 문장은 그 문단이 말한 것을 한 번 더 밀어 준다. 새 화제를 던지고 끝내지 않는다.
@@ -2856,36 +2752,6 @@ class 교정본(BaseModel):
 - 사람 · 작품 · 캐릭터 · 편 이름은 손대지 않는다. 다만 잘못 적힌 것은 바로잡고 고친 곳에 적는다.
 - 영어 · 일본어 문장이 그대로 있으면 한국어로 옮긴다. 이름은 옮기지 않는다."""
 
-
-고치기 = Agent(
-    MODEL,
-    output_type=교정본,
-    system_prompt="""너는 이미 쓴 애니 글에서 지적된 자리만 고친다. 글을 새로 쓰지 않는다. (v1.1)
-
-[지적된 것]에 적힌 문장과 대목만 손본다. 지적되지 않은 문장은 한 글자도 건드리지 않는다.
-문단 순서와 문단 수를 바꾸지 않는다. 문단을 합치거나 나누지 않는다.
-(형태 검사 · 꼭 고친다)와 (사실)은 반드시 고친다. 사실은 [재료]에 맞게 고치고, 재료에 없으면 그 문장을 뺀다. 지어내서 채우지 않는다.
-'같은 말 되풀이' · '문단 사이 되풀이'가 지적되면 그 문장을 빼거나, 재료에 있는 새 사실 · 새 장면으로 바꾼다. 같은 말을 다른 말로 바꿔 되풀이하지 않는다.
-'핵심어 되풀이'가 지적되면 그 낱말은 세 번만 남기고, 나머지 자리는 그 낱말이 가리키는 장면 · 행동 · 대사로 바꾼다.
-'표기가 틀렸다'면 [표기표]대로 바꾼다. 로마자 · 일본어 · 영어가 남았다면 [표기표]의 한국어로 바꾼다. 표기표에 없으면 그 이름을 빼고 역할로 부른다(감독, 성우).
-'분량'이 모자라다는 지적이면 재료에서 아직 안 쓴 사실 · 장면을 가져와 그 문단 안에 보탠다.
-주문(온도 · 시작점)에 관한 지적은 고치지 않아도 된다.
-고치다가 다른 문장과 어긋나면 그 자리까지만 최소로 손본다.
-문체는 원래 글을 따른다. 존댓말을 쓰지 않는다. 따옴표 안 인용은 그대로 둔다. 느낌표를 쓰지 않는다.
-무엇을 어떻게 고쳤는지 한 줄씩 적는다.""",
-)
-
-
-def _고치기_물음(st):
-    return ("[지적된 것]\n" + (st.문제목록 or "- (없음)") + "\n\n"
-            + "[표기표 — 글에 쓸 수 있는 이름]\n" + (st.용어표.text() if st.용어표 else "") + "\n\n"
-            + "[재료 — 사실표]\n" + (st.사실표 or "")[:5000] + "\n\n"
-            + "[재료 — 이야기]\n" + (st.이야기 or "")[:5000] + "\n\n"
-            + "[재료 — 관점표]\n" + (st.관점표 or "") + "\n\n"
-            + "[재료 — 평론 · 인터뷰 발췌]\n" + 발췌_text(st.재료) + "\n\n"
-            + "[재료 — 발언]\n" + 말_text(st.발언들) + "\n\n"
-            + "[고칠 글]\n" + st.앞글)
-
 교정자 = Agent(
     MODEL,
     output_type=교정본,
@@ -3222,18 +3088,7 @@ def 형태검사(본문, st, 제목=""):
     for x in 문장:
         if x.count(",") >= 3 and len(x) > 60:
             경고.append("절이 많다: " + x[:40]); break
-    _이름들 = [v["표기"] for v in st.용어표.확정().values() if v.get("표기")] if st.용어표 else []
-    걸림 += 되풀이검사(t_제목뺌, _이름들)                     # v1.0: 같은 말 되풀이는 치명. v1.1: 표기표 이름은 안 센다
-    # v1.1: 핵심어 되풀이 — 고유명사가 아닌 같은 낱말(앞 두 글자)이 핵심어상한보다 많이 나오면 고칠 것
-    _이름줄기 = _되풀이_이름(t_제목뺌, _이름들)
-    _세기_핵심 = {}
-    for w in re.findall(r"[가-힣]{2,}", t_제목뺌):
-        w2 = _되풀이_조사.sub("", w)
-        if len(w2) >= 2 and w2[:2] not in _되풀이_흔한말 and w2[:2] not in _이름줄기:
-            _세기_핵심[w2] = _세기_핵심.get(w2, 0) + 1
-    _많은 = sorted(((n, w) for w, n in _세기_핵심.items() if n > 핵심어상한), reverse=True)
-    if _많은:
-        걸림.append("핵심어 되풀이: " + ", ".join(f"'{w}' {n}번" for n, w in _많은[:3]) + ". 세 번까지만 쓰고 나머지는 장면 · 행동으로 바꾼다")
+    걸림 += 되풀이검사(t_제목뺌)                              # v1.0: 같은 말 되풀이는 치명
     if not (분량하한 <= len(t) <= 분량상한):
         걸림.append(f"분량 {len(t)}자")
     st.코드경고 = list(dict.fromkeys(경고))
@@ -3684,20 +3539,7 @@ def n_작가(st: RunState) -> RunState:
     if st.문제목록:
         st.바퀴 += 1                                   # 앞 글을 고쳐 쓰는 것도 한 바퀴다
         st.판종류 = "고침"                              # v0.6
-        # v1.1: 작가가 글 전체를 다시 쓰지 않는다. 고치기 에이전트가 지적된 문장만 고친다
-        기준글 = st.기록[st.고침기준]["글"] if 0 <= st.고침기준 < len(st.기록) and st.기록[st.고침기준].get("글") else st.글
-        st.log(f"  다시 쓰기 {st.바퀴}차: 지적된 문장만 고친다 (고치기)")
-        try:
-            out = 고치기.run_sync(_고치기_물음(st), usage_limits=UsageLimits(request_limit=2)).output
-            st.글 = Article(제목=기준글.제목 if 기준글 else "", 본문=out.본문)
-            st.고친곳 = out.고친곳
-        except Exception as e:
-            st.log(f"  고치기 실패: {e}. 앞 글 그대로 다시 본다")
-            st.글 = Article(제목=기준글.제목 if 기준글 else "", 본문=st.앞글)
-            st.고친곳 = [f"고치기 실패: {e}"]
-        st.남은콜 -= 1
-        st.앞글, st.문제목록 = "", ""
-        return st
+        st.log(f"  다시 쓰기 {st.바퀴}차: 앞 글을 받아 지적된 부분만 고친다")
     if n == 1:
         try:
             st.글 = 작가.run_sync("쓴다.", deps=_집필주문(st, st.주문.온도, 순서), usage_limits=UsageLimits(request_limit=3)).output

@@ -2,6 +2,16 @@
 
 FastAPI·PostgreSQL V1 API의 공개 피드와 콘텐츠 상세를 브라우저에서 볼 수 있습니다. 개발용 API 점검 화면도 홈 하단에 유지합니다.
 
+## Consumer Mock
+
+- 시작 URL: `http://localhost:3000/consumer/login`. Mock 로그인과 온보딩을 완료하면 `/consumer` 홈으로 이동합니다.
+- `/consumer/contents/[contentId]`, `/consumer/saved`, `/consumer/topics/new`에서 상세·저장 목록·분야 추가를 확인합니다.
+- 실제 FastAPI integration이 아닌 presentation Mock입니다. 기존 `/`의 실제 피드·API 점검 화면과 숫자 ID 기반 상세 화면은 유지합니다.
+- Mock 로그인/Session 상태와 Topic flow의 `initialHomeTopicId`·`availableTopicIds`는 `sessionStorage`에 보관하여 같은 탭의 F5에서 복구합니다. 실제 인증이나 Backend persistence를 의미하지 않습니다.
+- Home의 Card/List View preference는 기존대로 `localStorage`에 보관합니다.
+- Bookmark·Like·O/X·AI intent 등 기타 Mock business state는 여전히 메모리 기반이며 F5 시 초기화될 수 있습니다.
+- 원본 baseline: `e8bbf2d8d27f1c01c869ea4eb2053efcae6f24d2`. Home Final `642fbf4`를 적용했으며 Movie 콘텐츠와 thumbnail 각 5개, Topic popover, Card 공유·저장·좋아요를 포함합니다.
+
 ## 포함된 테스트
 
 - 홈·Topic·Subtopic별 공개 콘텐츠 피드와 상세 화면
