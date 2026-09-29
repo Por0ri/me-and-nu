@@ -9,7 +9,7 @@ agent/
 ├── .env.example            키 이름 (LLM_KEY, TMDB_KEY)
 ├── py2ipynb.py             .py → 콜랩 노트북(.ipynb). 노트북은 여기서 뽑는다. 손으로 안 고친다
 ├── movie/
-│   ├── movie_info_agent.py     영화 · 정보 전달 (V3.3 — 되풀이 · 시제 검사)
+│   ├── movie_info_agent.py     영화 · 정보 전달 (V3.4 — 되풀이 · 시제 · 같은 정보 · 끝 문장 검사)
 │   └── movie_review_agent.py   영화 · 리뷰 (V3.6 — 뼈대 여섯 · 접근 셋 · 깊이 규칙 · 구체 묘사/형식 판단 나눔)
 ├── music/
 │   ├── music_review_agent.py   음악 · 리뷰 (v4.4 — 사실 · 옮김 나눔 · 다시 쓰기는 고침 · 되풀이 검사)
@@ -312,7 +312,7 @@ v4.0에서 마디 · 갈림길 · 프롬프트 · 재료 · 판정 규칙은 그
 • 앨범 후보 목록을 만들 때 매체 글 제목에서 아티스트 · 앨범을 뽑는 제목파서도 모델을 쓴다.
 • `동시앨범`은 기본 1이다. 올리면 앨범 여러 편을 스레드로 같이 돈다.
 
-### 영화 · 정보 전달 (`movie/movie_info_agent.py`, V3.3 — 2026-09-29)
+### 영화 · 정보 전달 (`movie/movie_info_agent.py`, V3.4 — 2026-09-29)
 
 ```mermaid
 flowchart TD
