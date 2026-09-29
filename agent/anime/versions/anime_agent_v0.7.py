@@ -1,4 +1,4 @@
-# # anime_agent v0.8 — 애니 콘텐츠 크리에이팅 에이전트
+# # anime_agent v0.7 — 애니 콘텐츠 크리에이팅 에이전트
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY`에서 읽는다. 결과는 `agent/out/anime/올림|탈락/`에 쌓인다.
 #
@@ -98,12 +98,6 @@
 #   맥락 창 105만 토큰 · 함수 호출 · 구조화 출력은 같다. `"openai:"` 접두어라 Responses API 로 간다 (chat completions 는
 #   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
 #   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
-#
-# v0.8에서 바뀐 것 — LangGraph로 옮겼다 (PM 9/28 결정 — 팀 코드 전부 LangGraph)
-# - 마디 · 갈림길 · 프롬프트 · 재료 · 판정 규칙은 v0.7 그대로다. `run_graph`가 while 루프 대신 LangGraph `StateGraph`를 짓고 돌린다.
-# - 음악 v4.0 · 영화 리뷰 V3.0과 같은 방식이다. LangGraph는 조건 엣지 함수가 상태에 쓴 것을 버린다.
-#   우리 갈림길은 상태(`st.상태` · 로그)를 쓰므로, 갈림길을 마디 안에서 돌리고 고른 이름을 `st.다음`에 적는다. 조건 엣지는 그것만 읽는다.
-# - 마디 수 상한 · 마디 실패 · 멈출마디는 `st.멈춤`에 적고 끝으로 간다. 그래프는 (멈출마디, 시작마디)마다 한 벌 지어 둔다.
 
 # ## 1. 설정
 #
@@ -3186,9 +3180,6 @@ class RunState(BaseModel):
     초안들: list = []            # 첫 바퀴 초안들 [{온도, 글, 걸림, 경고, 판정, 올림, 이유}]. 다시 쓰기 바퀴에서는 빈다
     표식: str = ""               # 동시에 돌 때 로그 앞에 붙는 "[유형] "
     진행잡음: bool = False       # 이 상태가 시리즈 진행 수(_진행시리즈)를 잡고 있는지
-    # v0.8 — LangGraph
-    다음: str = ""               # 갈림길이 고른 다음 마디 이름. 조건 엣지가 이것만 읽는다
-    멈춤: str = ""               # 상한 · 실패 · 멈출마디. 차 있으면 끝으로 간다
 
     def log(self, s):
         self.로그.append(s)
@@ -3616,53 +3607,27 @@ GRAPH = {
     "저장":       (n_저장,       그냥(END)),
 }
 
-# v0.8 — LangGraph. 마디 함수 · 갈림길 함수는 위 GRAPH 표 그대로 쓴다.
-# LangGraph는 조건 엣지 함수가 상태에 쓴 것을 버린다. 우리 갈림길은 st.상태 · 로그를 쓰므로 마디 안에서 돌리고 고른 이름을 st.다음에 적는다.
-from langgraph.graph import StateGraph, START as 그래프시작, END as 그래프끝
-
-_앱들, _앱잠금 = {}, threading.Lock()
-
-def _마디(이름, fn, edge, 멈출마디):
-    def 돌기(st: RunState) -> RunState:
+def run_graph(st: RunState, 멈출마디=None, 시작마디=None) -> RunState:
+    node = 시작마디 or START
+    while node != END:
         if st.steps >= MAX_STEPS:
             st.상태 = "상한"
             st.log(f"  마디 수 상한 {MAX_STEPS}. 멈춘다")
-            st.멈춤 = "상한"
-            return st
+            break
         st.steps += 1
+        fn, edge = GRAPH[node]
         try:
             st = fn(st)
         except Exception as e:
             import traceback
-            st.log(f"  마디 [{이름}] 실패: {e}")
+            st.log(f"  마디 [{node}] 실패: {e}")
             traceback.print_exc()
             st.상태 = "탈락"
-            st.멈춤 = "실패"
-            return st
-        st.다음 = END if (멈출마디 and 이름 == 멈출마디) else edge(st)
-        return st
-    return 돌기
-
-def _고르기(st: RunState):
-    return 그래프끝 if (st.멈춤 or st.다음 == END) else st.다음
-
-def 그래프(멈출마디=None, 시작마디=None):
-    """마디 표로 LangGraph를 짓는다. (멈출마디, 시작마디)마다 한 벌 지어 둔다."""
-    키 = (멈출마디, 시작마디)
-    with _앱잠금:
-        if 키 not in _앱들:
-            g = StateGraph(RunState)
-            for 이름, (fn, edge) in GRAPH.items():
-                g.add_node(이름, _마디(이름, fn, edge, 멈출마디))
-                g.add_conditional_edges(이름, _고르기)
-            g.add_edge(그래프시작, 시작마디 or START)
-            _앱들[키] = g.compile()
-        return _앱들[키]
-
-def run_graph(st: RunState, 멈출마디=None, 시작마디=None) -> RunState:
-    st.다음, st.멈춤 = "", ""
-    out = 그래프(멈출마디, 시작마디).invoke(st, config={"recursion_limit": MAX_STEPS + 10})
-    return RunState.model_validate(out)
+            break
+        if 멈출마디 and node == 멈출마디:
+            break
+        node = edge(st)
+    return st
 
 print("갈림길 준비 끝. 마디", len(GRAPH), "개")
 
