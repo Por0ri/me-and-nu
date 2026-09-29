@@ -2004,10 +2004,10 @@ def n_고치기(st: RunState) -> RunState:
             + "[재료 — 영화 정보]\n" + 영화_text(st.material) + "\n\n"
             + "[관점표]\n" + st.관점표 + "\n\n"
             + "[평론 원문 발췌]\n" + 발췌_text(st.재료) + "\n\n"
-            + "[고칠 글]\n" + 글.본문)
+            + "[고칠 글]\n" + 글.body)
     try:
         out = 고치기.run_sync(user, usage_limits=UsageLimits(request_limit=2)).output
-        st.글 = Article(제목=글.제목, 본문=out.본문)
+        st.글 = Article(title=글.title, body=out.본문, sources=글.sources)   # V3.6 고침: 리뷰 Article 칸은 title · body다(V3.2~V3.5는 음악 칸 이름을 써서 고치기가 늘 실패했다)
         st.고친곳 = out.고친곳
         st.log(f"  {st.바퀴}차: {기준['차례']}차 글을 받아 지적된 {len([x for x in 문제.splitlines() if x.strip()])}곳을 고친다 · 고친 곳 {len(out.고친곳)}")
     except Exception as e:
