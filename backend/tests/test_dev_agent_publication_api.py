@@ -72,12 +72,12 @@ def test_dev_preview_publish_requires_local_bypass(monkeypatch):
 def test_approved_publish_maps_unready_draft_to_conflict(monkeypatch):
     publish = AsyncMock(
         side_effect=MovieAgentPublicationError(
-            "AGENT_DRAFT_REVIEW_REQUIRED", "사실 확인이 필요합니다."
+            "AGENT_DRAFT_NOT_PUBLISHABLE", "승인된 초안만 발행할 수 있습니다."
         )
     )
     monkeypatch.setattr(publication_routes, "publish_movie_agent_run", publish)
     with _client(monkeypatch) as client:
         response = client.post("/api/v1/dev/agent-runs/7/publish")
     assert response.status_code == 409
-    assert response.json()["code"] == "AGENT_DRAFT_REVIEW_REQUIRED"
+    assert response.json()["code"] == "AGENT_DRAFT_NOT_PUBLISHABLE"
     assert publish.await_args.kwargs == {"force_preview": False}

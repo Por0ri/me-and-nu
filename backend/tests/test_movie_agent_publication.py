@@ -160,21 +160,14 @@ async def test_preview_cannot_be_relabelled_as_approved_publication():
 
 
 @pytest.mark.asyncio
-async def test_review_required_candidate_needs_explicit_preview():
+async def test_review_required_candidate_publishes_with_needs_review():
     run, draft, sources, subtopic = _fixtures(requires_review=True)
-    db = FakeAsyncSession([run, draft, None])
-    with pytest.raises(MovieAgentPublicationError) as exc:
-        await publish_movie_agent_run(db, run.agent_run_id)
-    assert exc.value.code == "AGENT_DRAFT_REVIEW_REQUIRED"
-    assert db.rollback_count == 1
-    assert db.rows(Content) == []
-
-    preview_db = FakeAsyncSession([run, draft, None, subtopic], sources)
-    content = await publish_movie_agent_run(preview_db, run.agent_run_id, force_preview=True)
+    db = FakeAsyncSession([run, draft, None, subtopic], sources)
+    content = await publish_movie_agent_run(db, run.agent_run_id)
     assert content.judgment_status == "needs_review"
-    assert content.summary.startswith(PREVIEW_MARKER)
-    assert content.ai_judgment_basis["preview"] is True
-    assert draft.status == "approved"
+    assert content.ai_judgment_basis["requires_review"] is True
+    assert content.ai_judgment_basis["preview"] is False
+    assert draft.status == "published"
 
 
 @pytest.mark.asyncio

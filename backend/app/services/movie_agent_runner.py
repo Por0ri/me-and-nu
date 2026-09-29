@@ -82,13 +82,12 @@ async def run_movie_agent_and_persist(
 
     # Persistence has committed by this point. A later publication failure must
     # not rewrite a successful AgentRun as a failed Agent execution.
+    # 2026-09-29 PM: 사람 검수 없이 바로 발행한다. 사실 확인 항목이 있어도 막지 않는다.
     draft = persisted.draft
-    factcheck = draft.factcheck_result if draft and isinstance(draft.factcheck_result, dict) else {}
     if (
         persisted.agent_run.outcome == "publish_candidate"
         and draft is not None
         and draft.status == "approved"
-        and factcheck.get("requires_review") is False
     ):
         try:
             await publish_movie_agent_run(db, persisted.agent_run.agent_run_id)
