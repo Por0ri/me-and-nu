@@ -1,4 +1,4 @@
-# # Movie Review agent V3.4 — 영화 리뷰 에이전트 (평론 기반 · LangGraph)
+# # Movie Review agent V3.3 — 영화 리뷰 에이전트 (평론 기반 · LangGraph)
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_review/올림|탈락/`에 쌓인다.
 #
@@ -34,9 +34,6 @@
 #   `VERSION` · 동기 `fetch_material(title, year)` · `async produce(material)` → dict
 #   {"상태": 대상아님 | 재료부족 | 판단보류 | 올림 | 탈락보관, "이유", "로그": [{"단계", "회차", "결과", ...}], "글": {title, body, sources}, "주문", "확인필요", "최고판"}
 #
-# **V3.4** — TMDB 한국어 줄거리가 짧으면 영어 줄거리를 덧붙인다. V3.3 12편 중 오펜하이머 · 가디언즈 오브 갤럭시 Vol. 3 · 베놈 2가
-# "줄거리가 짧아 리뷰를 못 쓴다"(53~110자)로 재료를 모으기도 전에 떨어졌다. 유명한 최신작일수록 TMDB 한국어 줄거리가 짧다.
-#
 # **V3.3** — 판단 중심 뼈대 여섯을 돌려 쓴다 (PM 9/29: 리뷰가 짧고 영화 정보와 차이가 안 느껴진다. 뼈대 하나로 고정하면 글이 되풀이된다).
 # 뼈대는 판단 먼저 · 장면 하나에서 · 기대와 실제 · 나란히 놓기 · 인물 하나를 따라 · 관객의 질문이다. 기획자가 고르고 앞 두 편의 뼈대는 피한다.
 # 여섯 모두 글쓴이의 판단 문장과 판단마다 장면 근거가 있어야 한다. 이것이 정보 글과 리뷰를 가른다.
@@ -70,7 +67,7 @@ load_dotenv(HERE.parent / ".env")
 load_dotenv(HERE / ".env")
 
 # ───── 여기서 고친다 ─────────────────────────────────────────────
-VERSION     = "V3.4"
+VERSION     = "V3.3"
 MODEL       = "openai:gpt-6-luna"             # 음악 · 애니와 같은 모델. "openai:" 접두어는 Responses API로 간다
 KEY_ENV     = "OPENAI_API_KEY"
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -429,18 +426,6 @@ def fetch_material(title, year=None, today=None):
         return None
     return fetch_material_by_id(mid, today=today, fallback_title=title)
 
-def _줄거리(mid, ko):
-    """V3.4: 한국어 줄거리가 MIN_SYNOPSIS_CHARS보다 짧으면 TMDB 영어 줄거리를 덧붙인다. 작가는 한국어로 옮겨 쓴다."""
-    if len(ko) >= MIN_SYNOPSIS_CHARS:
-        return ko
-    try:
-        en = (_tmdb(f"/movie/{mid}", language="en-US").get("overview") or "").strip()
-    except Exception:
-        en = ""
-    if not en:
-        return ko
-    return (ko + "\n" if ko else "") + "(영어 줄거리 — 한국어로 옮겨 쓴다) " + en
-
 def fetch_material_by_id(mid, today=None, fallback_title=""):
     today = today or datetime.date.today().isoformat()
     d = _tmdb(f"/movie/{mid}", append_to_response="credits")
@@ -458,7 +443,7 @@ def fetch_material_by_id(mid, today=None, fallback_title=""):
         tmdb_id=mid, title=d.get("title") or fallback_title, year=year, director=director,
         cast=[c["name"] for c in credits.get("cast", [])[:5]], genres=[g["name"] for g in d.get("genres", [])],
         runtime_min=d.get("runtime"), rating=_kr_certification(mid), release_date=d.get("release_date"),
-        synopsis=_줄거리(mid, d.get("overview", "") or ""), director_past_works=(_director_past_works(director_id, mid) if director_id else []),
+        synopsis=d.get("overview", "") or "", director_past_works=(_director_past_works(director_id, mid) if director_id else []),
         source_work=None, context=context, context_source=context_url,
         reception=reception, reception_source=(f"TMDB 평점 분포 ({today} 기준)" if reception else None), source_links=links)
 
