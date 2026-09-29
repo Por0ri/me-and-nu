@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.auth.router import router as auth_router
+from app.api.v1.chat.router import router as chat_router
 from app.api.v1.contents.router import router as contents_router
 from app.api.v1.me.topics import router as my_topics_router
 from app.api.v1.onboarding.router import router as onboarding_router
@@ -24,3 +25,4 @@ router.include_router(contents_router)
 router.include_router(profile_router)
 router.include_router(consents_router)
 router.include_router(bookmarks_router)
+router.include_router(chat_router)

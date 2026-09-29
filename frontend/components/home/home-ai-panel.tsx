@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 
+import { SourceInfo } from "@/components/content/source-info";
 import { sendHomeAIQuestion } from "@/lib/consumer-api/ai";
 import type { HomeAIResponse } from "@/types/ai";
 import type { Topic } from "@/types/home";
@@ -251,12 +252,24 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
             ) : null}
             {request.status === "success" ? (
               request.result.type === "answer" ? (
-                <div className="va-ai-answer space-y-2" role="status">
-                  <h3 className="sr-only">AI 답변</h3>
-                  <p className="whitespace-pre-wrap text-sm leading-6">
-                    {request.result.answer}
-                  </p>
-                </div>
+                <>
+                  <div className="va-ai-answer space-y-2" role="status">
+                    <h3 className="sr-only">AI 답변</h3>
+                    <p className="whitespace-pre-wrap text-sm leading-6">
+                      {request.result.answer}
+                    </p>
+                  </div>
+                  {request.result.sources?.length ? (
+                    <div className="va-article-sources">
+                      <SourceInfo
+                        sources={request.result.sources}
+                        headingId={`${inputId}-sources`}
+                        title="AI 답변 근거"
+                        internal
+                      />
+                    </div>
+                  ) : null}
+                </>
               ) : (
                 <div className="va-ai-answer space-y-2" role="status">
                   <h3 className="text-sm font-semibold">

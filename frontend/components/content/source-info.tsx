@@ -1,15 +1,20 @@
+import Link from "next/link";
+
 import type { Source } from "@/types/content";
 
 type SourceInfoProps = {
   sources: Source[];
   headingId?: string;
   title?: string;
+  /** true면 우리 서비스 안의 글로 이동한다(AI 답변 근거). */
+  internal?: boolean;
 };
 
 export function SourceInfo({
   sources,
   headingId = "content-sources-title",
   title = "출처 / 원문",
+  internal = false,
 }: SourceInfoProps) {
   return (
     <section aria-labelledby={headingId} className="space-y-3">
@@ -28,7 +33,14 @@ export function SourceInfo({
               className="space-y-2 rounded-lg border border-black/10 p-4"
             >
               <p className="text-sm font-medium text-black">{source.name}</p>
-              {source.url ? (
+              {source.url && internal ? (
+                <Link
+                  href={source.url}
+                  className="inline-block text-sm text-black/70 underline underline-offset-4"
+                >
+                  이 글 보기
+                </Link>
+              ) : source.url ? (
                 <a
                   href={source.url}
                   target="_blank"

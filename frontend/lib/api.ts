@@ -109,6 +109,23 @@ export type SavedBookmark = {
   topicId: number; tags: string[]; resurfaceEnabled: boolean;
   productionType?: string | null; publishedAt?: string | null; subtopicNames?: string[];
 };
+export type ChatSessionResponse = {
+  sessionId: number; topicId: number; anchorContentId: number | null; aiNotice: string;
+};
+export type ChatJob = {
+  jobId: number;
+  status: "processing" | "completed" | "failed";
+  result: {
+    type: "answer" | "topicSwitchSuggested";
+    messageId: number;
+    content: string;
+    sources: Array<{ contentId: number; title: string; url: string }>;
+    notices: Array<{ code?: string; message?: string }>;
+    contextCoverage: "full" | "partial" | "none";
+    targetTopicId: number | null;
+  } | null;
+  error: { code: string; message: string } | null;
+};
 export type BookmarksResponse = { items: SavedBookmark[]; nextCursor: string | null };
 
 export type ApiFieldError = { field: string; code: string; message: string };
@@ -253,4 +270,13 @@ export function getBookmarks(
   options: { q?: string; topicId?: number; cursor?: string; limit?: number } = {},
 ): Promise<BookmarksResponse> {
   return apiRequest(`/api/v1/users/me/bookmarks${query(options)}`);
+}
+export function createChatSession(topicId: number, anchorContentId?: number): Promise<ChatSessionResponse> {
+  return apiRequest("/api/v1/chat/sessions", { method: "POST", body: JSON.stringify({ topicId, anchorContentId }) });
+}
+export function sendChatMessage(sessionId: number, content: string, clientMessageId: string): Promise<{ userMessageId: number; jobId: number; status: string }> {
+  return apiRequest(`/api/v1/chat/sessions/${sessionId}/messages`, { method: "POST", body: JSON.stringify({ content, clientMessageId }) });
+}
+export function getChatJob(jobId: number): Promise<ChatJob> {
+  return apiRequest(`/api/v1/chat/jobs/${jobId}`);
 }

@@ -265,7 +265,8 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
                   <SourceInfo
                     sources={request.result.sources}
                     headingId={`${inputId}-sources`}
-                    title="AI 답변 참고 출처"
+                    title="AI 답변 근거"
+                    internal
                   />
                 </div>
               </>
