@@ -3865,7 +3865,7 @@ def shape_check(article: Article, order: WriteOrder) -> list[str]:
                 continue
             # V3.1: 재료가 영문 이름이면 작가는 한글로 옮겨 쓴다(영문이 남으면 _latin_leftovers가 잡는다).
             # V3.0은 영문 원문을 찾아서, 한글로 쓰면 이 검사에, 영문으로 쓰면 영문 검사에 걸려 늘 탈락했다
-            if not re.search(r"[가-힣]", name) and "감독" in body:
+            if not re.search(r"[가-힣]", name) and re.search(r"감독|연출|메가폰", body):
                 continue
             bad.append(f"감독 이름이 본문에 없다 ({name})")
 
