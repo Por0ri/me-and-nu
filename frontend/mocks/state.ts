@@ -7,6 +7,7 @@ export type MockTopicRuntimeState = {
   currentIntent?: string;
   sections: HomeSection[];
   savedByContentId: Record<string, boolean>;
+  likedByContentId: Record<string, boolean>;
   feedbackByContentId: Record<string, ContentFeedback | null>;
 };
 
@@ -26,6 +27,12 @@ function createInitialTopicState(): Record<string, MockTopicRuntimeState> {
             section.contents.map((content) => [content.id, content.saved]),
           ),
         ),
+        likedByContentId: Object.fromEntries(
+          (mockContentDetailsByTopicId[topicId] ?? []).map((content) => [
+            content.id,
+            false,
+          ]),
+        ),
         feedbackByContentId: Object.fromEntries(
           (mockContentDetailsByTopicId[topicId] ?? []).map((content) => [
             content.id,
@@ -42,6 +49,18 @@ function createInitialTopicState(): Record<string, MockTopicRuntimeState> {
  * 사용자별 영속 저장소나 실제 Backend 상태로 사용하지 않는다.
  */
 let topicStateById = createInitialTopicState();
+const contentStateListeners = new Set<() => void>();
+
+export function subscribeMockContentState(listener: () => void): () => void {
+  contentStateListeners.add(listener);
+  return () => {
+    contentStateListeners.delete(listener);
+  };
+}
+
+function notifyContentState(): void {
+  contentStateListeners.forEach((listener) => listener());
+}
 
 function requireTopicState(topicId: string): MockTopicRuntimeState {
   const topicState = topicStateById[topicId];
@@ -102,8 +121,25 @@ export function setMockSavedState(
     topicState.sections,
     topicState.savedByContentId,
   );
+  notifyContentState();
 
   return clone(topicState);
+}
+
+/** Like is independent of O/X feedback, Save, and Home recommendations. */
+export function setMockLikedState(
+  topicId: string,
+  contentId: string,
+  liked: boolean,
+): void {
+  const topicState = requireTopicState(topicId);
+
+  if (!Object.hasOwn(topicState.likedByContentId, contentId)) {
+    throw new Error(`Unknown Mock content in ${topicId}: ${contentId}`);
+  }
+
+  topicState.likedByContentId[contentId] = liked;
+  notifyContentState();
 }
 
 /** 최신 선택만 보관한다. Save / Home / 장기 Preference는 변경하지 않는다. */
@@ -131,4 +167,5 @@ export function setMockFeedbackState(
 
 export function resetMockRuntimeState(): void {
   topicStateById = createInitialTopicState();
+  notifyContentState();
 }

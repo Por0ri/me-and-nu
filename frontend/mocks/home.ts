@@ -34,13 +34,28 @@ export const mockHomeDataByTopicId: Record<string, HomeData> = {
     sections: [
       {
         id: "section-movie-directing",
-        title: "영화 연출",
+        title: "괴물",
         contents: [movieContents[0]],
       },
       {
         id: "section-movie-cinematography",
-        title: "촬영 깊이 보기",
+        title: "드라마",
         contents: [movieContents[1]],
+      },
+      {
+        id: "section-movie-adventure",
+        title: "모험",
+        contents: [movieContents[2]],
+      },
+      {
+        id: "section-movie-fantasy",
+        title: "판타지",
+        contents: [movieContents[3]],
+      },
+      {
+        id: "section-movie-sci-fi",
+        title: "SF",
+        contents: [movieContents[4]],
       },
     ],
   },

@@ -5,7 +5,7 @@ import { consumerRoutes } from "@/lib/consumer-routes";
 import Link from "next/link";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { ContentCard } from "@/components/home/content-card";
 import { HomeAIPanel } from "@/components/home/home-ai-panel";
@@ -60,9 +60,42 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
     initialSelectedTopicId,
   );
   const [viewMode, setViewMode] = useState<HomeViewMode>("list");
+  const [isTopicMenuOpen, setIsTopicMenuOpen] = useState(false);
+  const topicMenuId = useId();
+  const topicMenuRef = useRef<HTMLDivElement>(null);
+  const topicMenuButtonRef = useRef<HTMLButtonElement>(null);
   const [homeData, setHomeData] = useState<HomeData | null>(null);
   const [isLoading, setIsLoading] = useState(initialSelectedTopicId !== null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isTopicMenuOpen) {
+      return;
+    }
+
+    function closeOnOutsideClick(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        !topicMenuRef.current?.contains(event.target)
+      ) {
+        setIsTopicMenuOpen(false);
+      }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsTopicMenuOpen(false);
+        topicMenuButtonRef.current?.focus();
+      }
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isTopicMenuOpen]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -162,7 +195,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
 
   if (!flowState || !initialHomeTopicId) {
     return (
-      <main className="ui-version-a">
+      <main className="ui-version-a ui-home">
         <section className="va-shell va-recovery space-y-4 text-center">
           <h1 className="text-2xl font-semibold">홈</h1>
           <p role="status" className="va-muted text-sm leading-6">
@@ -182,7 +215,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
 
   if (!initialSelectedTopicId || !selectedTopicId) {
     return (
-      <main className="ui-version-a">
+      <main className="ui-version-a ui-home">
         <section className="va-shell va-recovery space-y-4 text-center">
           <h1 className="text-2xl font-semibold">홈</h1>
           <p role="status" className="va-muted text-sm leading-6">
@@ -209,7 +242,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
     : "nu";
 
   return (
-    <main className="ui-version-a">
+    <main className="ui-version-a ui-home">
       <div className="va-shell va-home">
         <header className="va-home-header">
           <div className="min-w-0">
@@ -222,74 +255,96 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
             ) : null}
           </div>
           <div className="va-header-icons">
-            <button
-              type="button"
-              onClick={toggleViewMode}
-              aria-label={
-                viewMode === "list" ? "카드 보기로 전환" : "목록 보기로 전환"
-              }
-              className="va-view-toggle"
-            >
-              <Image src="/ui-version-a/swap-horiz.svg" alt="" width={20} height={16} />
-            </button>
+            <div ref={topicMenuRef} className="va-topic-switch">
+              <button
+                ref={topicMenuButtonRef}
+                type="button"
+                onClick={() => setIsTopicMenuOpen((isOpen) => !isOpen)}
+                aria-label="분야 전환 메뉴"
+                aria-expanded={isTopicMenuOpen}
+                aria-controls={isTopicMenuOpen ? topicMenuId : undefined}
+                className="va-topic-switch-trigger"
+              >
+                <Image src="/ui-version-a/swap-horiz.svg" alt="" width={20} height={16} />
+              </button>
+              {isTopicMenuOpen ? (
+                <div id={topicMenuId} className="va-topic-popover">
+                  {allTopics.length > 0 ? (
+                    <nav aria-label="분야 선택" className="va-topic-menu-options">
+                      {allTopics.map((topic) => {
+                        const isActive = flowState.availableTopicIds.includes(topic.id);
+                        const isSelected = topic.id === selectedTopicId;
+
+                        if (!isActive) {
+                          return (
+                            <Link
+                              key={topic.id}
+                              href={{
+                                pathname: consumerRoutes.addTopic,
+                                query: {
+                                  returnTopicId: selectedTopicId,
+                                  targetTopicId: topic.id,
+                                },
+                              }}
+                              onClick={() => setIsTopicMenuOpen(false)}
+                              aria-label={`${topic.name} 분야 추가`}
+                              className="va-topic-menu-option"
+                            >
+                              {topic.name}
+                              <span className="va-muted text-xs">+ 추가</span>
+                            </Link>
+                          );
+                        }
+
+                        return (
+                          <button
+                            key={topic.id}
+                            type="button"
+                            aria-pressed={isSelected}
+                            disabled={isLoading}
+                            onClick={() => {
+                              selectTopic(topic.id);
+                              setIsTopicMenuOpen(false);
+                              topicMenuButtonRef.current?.focus();
+                            }}
+                            className="va-topic-menu-option"
+                          >
+                            {topic.name}
+                            {isSelected ? <span className="text-xs">현재 분야</span> : null}
+                          </button>
+                        );
+                      })}
+                    </nav>
+                  ) : null}
+                  <Link
+                    href={{
+                      pathname: consumerRoutes.addTopic,
+                      query: { returnTopicId: selectedTopicId },
+                    }}
+                    onClick={() => setIsTopicMenuOpen(false)}
+                    className="va-topic-menu-option"
+                  >
+                    분야 추가
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toggleViewMode();
+                      setIsTopicMenuOpen(false);
+                      topicMenuButtonRef.current?.focus();
+                    }}
+                    className="va-topic-menu-view"
+                  >
+                    {viewMode === "list" ? "카드 보기로 전환" : "목록 보기로 전환"}
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <span role="img" aria-label="알림 아이콘 (현재 기능 없음)">
-              <Image src="/ui-version-a/notifications.svg" alt="" width={16} height={20} />
+              <Image src="/ui-home/notifications.svg" alt="" width={24} height={24} />
             </span>
           </div>
         </header>
-
-        <div className="va-topic-toolbar">
-          {allTopics.length > 0 ? (
-            <nav aria-label="분야 선택" className="va-topic-tabs flex flex-wrap gap-2">
-              {allTopics.map((topic) => {
-                const isActive = flowState.availableTopicIds.includes(topic.id);
-                const isSelected = topic.id === selectedTopicId;
-
-                if (!isActive) {
-                  return (
-                    <Link
-                      key={topic.id}
-                      href={{
-                        pathname: consumerRoutes.addTopic,
-                        query: {
-                          returnTopicId: selectedTopicId,
-                          targetTopicId: topic.id,
-                        },
-                      }}
-                      aria-label={`${topic.name} 분야 추가`}
-                      className="va-topic-tab inline-flex items-center gap-2"
-                    >
-                      {topic.name}
-                      <span className="va-muted text-xs">추가</span>
-                    </Link>
-                  );
-                }
-
-                return (
-                  <button
-                    key={topic.id}
-                    type="button"
-                    aria-pressed={isSelected}
-                    disabled={isLoading}
-                    onClick={() => selectTopic(topic.id)}
-                    className="va-topic-tab"
-                  >
-                    {topic.name}
-                  </button>
-                );
-              })}
-            </nav>
-          ) : null}
-          <Link
-            href={{
-              pathname: consumerRoutes.addTopic,
-              query: { returnTopicId: selectedTopicId },
-            }}
-            className="va-add-topic shrink-0"
-          >
-            분야 추가
-          </Link>
-        </div>
 
         {error ? (
           <section className="va-message space-y-4 text-center">
@@ -325,7 +380,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
             현재 분야에 표시할 콘텐츠가 없습니다.
           </p>
         ) : (
-          <div>
+          <div className={viewMode === "card" ? "va-home-feed va-home-feed-card" : "va-home-feed"}>
             {homeData.sections.map((section) => (
               <section key={section.id}>
                 <h2
@@ -334,7 +389,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
                   {section.title}
                 </h2>
                 {section.contents.length > 0 ? (
-                  <div>
+                  <div className="va-home-section-contents">
                     {section.contents.map((content) => (
                       <ContentCard
                         key={content.id}

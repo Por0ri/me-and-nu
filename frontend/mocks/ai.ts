@@ -61,6 +61,24 @@ export const mockContentAIResponsesByTopicId: Record<
       evidenceStatus: "insufficient",
       affectsPreference: false,
     },
+    "content-movie-adventure": {
+      answer: "발표용 고정 Mock 답변입니다. 이 콘텐츠는 귀환을 향한 모험과 인물의 선택을 소개합니다.",
+      sources: [],
+      evidenceStatus: "insufficient",
+      affectsPreference: false,
+    },
+    "content-movie-fantasy": {
+      answer: "발표용 고정 Mock 답변입니다. 이 콘텐츠는 현실과 상상의 경계에 놓인 판타지 표현을 소개합니다.",
+      sources: [],
+      evidenceStatus: "insufficient",
+      affectsPreference: false,
+    },
+    "content-movie-sci-fi": {
+      answer: "발표용 고정 Mock 답변입니다. 이 콘텐츠는 기억과 우주에서의 임무를 소재로 한 SF 서사를 소개합니다.",
+      sources: [],
+      evidenceStatus: "insufficient",
+      affectsPreference: false,
+    },
   },
   [ANIME_TOPIC_ID]: {
     "content-anime-animation": {

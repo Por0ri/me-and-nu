@@ -226,7 +226,7 @@
   width: 24px;
   height: 24px;
 }
-.consumer-mock .ui-version-a .va-view-toggle {
+.consumer-mock .ui-home .va-topic-switch-trigger {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -237,7 +237,8 @@
   border-radius: 50%;
   cursor: pointer;
 }
-.consumer-mock .ui-version-a .va-view-toggle:hover { background: #d4e7fc; }
+.consumer-mock .ui-home .va-topic-switch-trigger:hover,
+.consumer-mock .ui-home .va-topic-switch-trigger[aria-expanded="true"] { background: #d4e7fc; }
 .consumer-mock .ui-version-a .va-topic-toolbar {
   display: flex;
   align-items: center;
@@ -306,29 +307,188 @@
 .consumer-mock .ui-version-a .va-message { padding: 32px 24px; }
 .consumer-mock .ui-version-a .va-empty-section-title { padding: 16px 32px 0; font-size: 16px; font-weight: 600; }
 
-/* Card presentation shares the same content markup and Detail link as List. */
-.consumer-mock .ui-version-a .va-content-card-link {
-  min-width: 0;
-  margin: 16px 24px;
-  border: 1px solid #d8d8d4;
-  border-radius: 12px;
-  background: #f9f9f9;
+/* S-05 Home presentation. Keep other Version A screens and AI dialogs unchanged. */
+.consumer-mock .ui-version-a.ui-home { background: var(--va-paper); }
+.consumer-mock .ui-home .va-home .va-home-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgb(249 249 249 / 80%);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
-.consumer-mock .ui-version-a .va-content-card {
+.consumer-mock .ui-home .va-home-header::after {
+  position: absolute;
+  right: 0;
+  bottom: -16px;
+  left: 0;
+  height: 16px;
+  background: linear-gradient(rgb(249 249 249 / 32%), transparent);
+  pointer-events: none;
+  content: "";
+}
+.consumer-mock .ui-home .va-content-link {
+  scroll-margin-block: 72px calc(160px + env(safe-area-inset-bottom));
+}
+.consumer-mock .ui-home .va-home .va-home-brand { letter-spacing: 0; }
+.consumer-mock .ui-home .va-home .va-header-icons { align-items: center; }
+.consumer-mock .ui-home .va-topic-switch { position: relative; }
+.consumer-mock .ui-home .va-topic-popover {
+  position: absolute;
+  top: calc(100% + 16px);
+  right: -10px;
+  z-index: 30;
+  width: 224px;
+  max-width: calc(100vw - 64px);
+  padding: 8px;
+  border: 1px solid var(--va-line);
+  border-radius: 16px;
+  background: #f9f9f9;
+  box-shadow: 0 8px 24px rgb(37 37 34 / 12%);
+}
+.consumer-mock .ui-home .va-topic-menu-options { display: grid; gap: 4px; }
+.consumer-mock .ui-home .va-topic-menu-option,
+.consumer-mock .ui-home .va-topic-menu-view {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  text-align: left;
+}
+.consumer-mock .ui-home .va-topic-menu-option:hover,
+.consumer-mock .ui-home .va-topic-menu-view:hover { background: #f0f0ef; }
+.consumer-mock .ui-home .va-topic-menu-option[aria-pressed="true"] {
+  background: #d4e7fc;
+  font-weight: 600;
+}
+.consumer-mock .ui-home .va-topic-menu-view {
+  margin-top: 8px;
+  border-top: 1px solid var(--va-line);
+  border-radius: 0 0 10px 10px;
+}
+.consumer-mock .ui-home .va-home .va-content-row { padding-inline: 24px; }
+.consumer-mock .ui-home .va-home .va-content-row h3 { font-weight: 600; }
+.consumer-mock .ui-home .va-home .va-empty-section-title { padding-inline: 24px; }
+.consumer-mock .ui-home .va-home-feed-card {
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  gap: 12px;
-  padding-bottom: 16px;
+  gap: 32px;
+  padding: 16px 24px 0;
 }
-.consumer-mock .ui-version-a .va-content-card > :not(.va-thumbnail) { padding-inline: 16px; }
-.consumer-mock .ui-version-a .va-content-card h3 { font-size: 20px; font-weight: 600; }
-.consumer-mock .ui-version-a .va-content-card .va-thumbnail {
-  order: -1;
+.consumer-mock .ui-home .va-home-feed-card .va-home-section-contents {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+.consumer-mock .ui-home .va-content-card-shell { position: relative; min-width: 0; }
+.consumer-mock .ui-home .va-content-card-link {
+  min-width: 0;
+  border: 0;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.consumer-mock .ui-home .va-content-card-link:focus-visible {
+  outline-offset: 4px;
+}
+.consumer-mock .ui-home .va-content-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-width: 0;
+  min-height: 504px;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #40403b;
+}
+.consumer-mock .ui-home .va-card-image { object-fit: cover; }
+.consumer-mock .ui-home .va-card-image-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 96px 24px 0;
+  background: linear-gradient(160deg, #75756b, #40403b);
+  color: var(--va-line);
+  font-size: 12px;
+}
+.consumer-mock .ui-home .va-card-overlay {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   width: 100%;
-  height: auto;
-  aspect-ratio: 3 / 2;
-  border-radius: 11px 11px 0 0;
+  padding: 16px 24px;
+  background: linear-gradient(180deg, transparent 0%, transparent 20%, rgb(0 0 0 / 40%) 50%, rgb(0 0 0 / 80%) 80%, rgb(0 0 0 / 90%) 100%);
+}
+.consumer-mock .ui-home .va-card-overlay .va-section-chip {
+  min-height: 28px;
+  background: rgb(240 240 239 / 80%);
+  color: var(--va-ink);
+}
+.consumer-mock .ui-home .va-card-overlay h3 {
+  width: 100%;
+  color: var(--va-line);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: keep-all;
+}
+.consumer-mock .ui-home .va-card-metadata {
+  display: flex;
+  align-items: center;
+  min-height: 27px;
+  color: #c0c0ba;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.consumer-mock .ui-home .va-card-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 8px;
+}
+.consumer-mock .ui-home .va-card-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgb(192 192 186 / 48%);
+  border-radius: 50%;
+  background: rgb(192 192 186 / 48%);
+  cursor: pointer;
+}
+.consumer-mock .ui-home .va-card-action-feedback {
+  position: absolute;
+  top: 48px;
+  right: 8px;
+  max-width: calc(100% - 16px);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #f9f9f9;
+  color: var(--va-ink);
+  font-size: 12px;
+  line-height: 18px;
+  pointer-events: none;
+}
+.consumer-mock .ui-home .va-home .va-bottom-nav {
+  bottom: calc(21px + env(safe-area-inset-bottom));
+}
+.consumer-mock .ui-home .va-home .va-bottom-nav > a {
+  color: #40403b;
+  font-weight: 300;
+}
+.consumer-mock .ui-home .va-home .va-ai-jump {
+  right: max(32px, calc((100% - 375px) / 2 + 32px));
 }
 
 .consumer-mock .ui-version-a .va-recovery {
