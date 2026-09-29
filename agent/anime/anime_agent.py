@@ -2893,7 +2893,7 @@ def 형태검사(본문, st, 제목=""):
     문단 = [p.strip() for p in t.split("\n") if p.strip()]
     문장 = [x for p in 문단 for x in _문장들(p)]
     첫문단, 끝문단 = (문단[0] if 문단 else ""), (문단[-1] if 문단 else "")
-    if 존댓말.search(t):
+    if 존댓말.search(re.sub(r"“[^”]*”|\"[^\"]*\"|「[^」]*」", "", t)):   # v1.0: 따옴표 안 인용(제작진 인터뷰 번역)은 존댓말이어도 된다
         걸림.append("존댓말")
     if not re.search(r"[.!?…\"'》]\s*$", t.strip()):
         걸림.append("문장 끊김")
