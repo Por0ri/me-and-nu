@@ -48,6 +48,8 @@ cd backend
 
 온보딩의 분야별 임시 관심사 7개는 콘텐츠 적재 후 `python -m app.seeds.agent_interests --git-ref f645df0 --apply`로 등록합니다. 기존 작품 분류를 보존하면서 콘텐츠 연결을 추가합니다. [임시 분류와 실행 안내](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)를 참고하세요.
 
+콘텐츠 사진은 `backend/.env`에 `TMDB_KEY`를 넣은 뒤 `python -m app.seeds.content_images --apply`로 채웁니다. 영화·애니는 TMDB 장면 사진(없으면 포스터), 음악은 MusicBrainz 앨범 표지를 쓰며 `image_url`이 비어 있는 Agent 콘텐츠만 바꿉니다. 먼저 `--apply` 없이 실행하면 찾은 결과만 미리 볼 수 있습니다.
+
 ## 구조 원칙
 
 - 공개 API의 공통 Base Path는 /api/v1입니다.

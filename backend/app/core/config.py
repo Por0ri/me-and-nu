@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     session_cookie_name: str = "menu_session"
     session_expire_minutes: int = 30
     session_cookie_secure: bool = False
+    # 외부 서비스 키 (없으면 해당 기능만 꺼진다)
+    tmdb_key: str | None = None
+    llm_key: str | None = None
 
     @property
     def cors_origins(self) -> list[str]:

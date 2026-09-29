@@ -406,7 +406,7 @@
   border-radius: 16px;
   background: #40403b;
 }
-.consumer-mock .ui-home .va-card-image { object-fit: cover; }
+.consumer-mock .ui-home .va-card-image { object-fit: cover; filter: brightness(0.88); }
 .consumer-mock .ui-home .va-card-image-fallback {
   position: absolute;
   inset: 0;
@@ -428,8 +428,9 @@
   align-items: flex-start;
   gap: 8px;
   width: 100%;
-  padding: 16px 24px;
-  background: linear-gradient(180deg, transparent 0%, transparent 20%, rgb(0 0 0 / 40%) 50%, rgb(0 0 0 / 80%) 80%, rgb(0 0 0 / 90%) 100%);
+  padding: 96px 24px 16px;
+  /* 밝은 사진 위에서도 흰 제목이 읽히도록 아래로 갈수록 어둡게 덮는다. */
+  background: linear-gradient(180deg, transparent 0%, rgb(0 0 0 / 35%) 25%, rgb(0 0 0 / 72%) 55%, rgb(0 0 0 / 90%) 100%);
 }
 .consumer-mock .ui-home .va-card-overlay .va-section-chip {
   min-height: 28px;
@@ -766,7 +767,7 @@
   padding-top: 120px;
   border: 0;
   color: #f0f0ef;
-  background: linear-gradient(transparent, rgb(0 0 0 / 80%) 70%, rgb(0 0 0 / 90%));
+  background: linear-gradient(transparent, rgb(0 0 0 / 45%) 25%, rgb(0 0 0 / 80%) 65%, rgb(0 0 0 / 92%));
 }
 .consumer-mock .ui-version-a .va-detail-header-image .va-detail-source-name { color: #c0c0ba; }
 .consumer-mock .ui-version-a .va-detail-image-fallback {
