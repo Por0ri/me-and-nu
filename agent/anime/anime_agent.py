@@ -362,8 +362,20 @@ def _glossary_bad_forms(series):
             pairs.append((o, fixed))
     return pairs
 
+_조사머리 = ("은", "는", "이", "가", "을", "를", "의", "에", "도", "만", "와", "과", "로", "으로", "에서", "까지", "부터", "처럼", "보다", "라는", "이라", "다", "랑", "한테")
+
+
 def glossary_check(body, series):
-    return [f"표기가 틀렸다: '{w}' → '{r}'" for w, r in _glossary_bad_forms(series) if w in body]
+    """v1.0: 틀린 표기가 더 긴 낱말의 앞부분이면 안 잡는다. '원피스 애니'가 '원피스 애니메이션' 안에서 걸려 글을 막았다(표기 틀림이 치명이 된 뒤)."""
+    out = []
+    for w, r in _glossary_bad_forms(series):
+        for m in re.finditer(re.escape(w), body):
+            뒤 = body[m.end():m.end() + 2]
+            if 뒤 and re.match(r"[가-힣]", 뒤) and not 뒤.startswith(_조사머리):
+                continue
+            out.append(f"표기가 틀렸다: '{w}' → '{r}'")
+            break
+    return out
 
 print(f"용어집 {len(GLOSSARIES)}개 시리즈: " + " · ".join(f"{k}({len(v['항목'])})" for k, v in GLOSSARIES.items()))
 
@@ -530,13 +542,13 @@ def _작품(m):
             "start": _date(m.get("startDate")), "end": _date(m.get("endDate")),
             "studios": [s["name"] for s in (m.get("studios") or {}).get("nodes", [])],
             "relations": [{"type": e["relationType"], **_작품({**e["node"], "relations": {"edges": []}})}
-                          for e in (m.get("relations") or {}).get("edges", [])],
+                          for e in (m.get("relations") or {}).get("edges", []) if e and e.get("node")],
             "characters": [{"id": e["node"]["id"], "full": e["node"]["name"]["full"], "native": e["node"]["name"].get("native"),
                             "role": e.get("role"), "dob": e["node"].get("dateOfBirth") or {},
-                            "va": [{"id": v["id"], "full": v["name"]["full"], "native": v["name"].get("native")} for v in (e.get("voiceActors") or [])]}
-                           for e in (m.get("characters") or {}).get("edges", [])],
+                            "va": [{"id": v["id"], "full": v["name"]["full"], "native": v["name"].get("native")} for v in (e.get("voiceActors") or []) if v and v.get("name")]}
+                           for e in (m.get("characters") or {}).get("edges", []) if e and e.get("node") and e["node"].get("name")],   # v1.0: AniList 빈 칸을 건너뛴다
             "staff": [{"id": e["node"]["id"], "full": e["node"]["name"]["full"], "native": e["node"]["name"].get("native"), "role": e.get("role")}
-                      for e in (m.get("staff") or {}).get("edges", [])]}
+                      for e in (m.get("staff") or {}).get("edges", []) if e and e.get("node") and e["node"].get("name")]}
 
 def al_media(mid, full=False):
     key = f"al_media_{mid}_{'full' if full else 'light'}"
@@ -573,13 +585,13 @@ def al_staff(sid):
                     "한글별칭": _한글별칭(e["node"].get("synonyms")), "format": e["node"].get("format"), "year": (e["node"].get("startDate") or {}).get("year"),
                     "month": (e["node"].get("startDate") or {}).get("month"), "studios": [x["name"] for x in (e["node"].get("studios") or {}).get("nodes", [])],
                     "popularity": e["node"].get("popularity"), "역할": e.get("characterRole"),
-                    "캐릭터": [{"id": c["id"], "full": c["name"]["full"], "native": c["name"].get("native")} for c in (e.get("characters") or [])]}
-                   for e in (s.get("characterMedia") or {}).get("edges", [])],
+                    "캐릭터": [{"id": c["id"], "full": c["name"]["full"], "native": c["name"].get("native")} for c in (e.get("characters") or []) if c and c.get("name")]}
+                   for e in (s.get("characterMedia") or {}).get("edges", []) if e and e.get("node")],   # v1.0: AniList가 빈 칸(None)을 섞어 보낸다
            "참여": [{"작품id": e["node"]["id"], "romaji": e["node"]["title"]["romaji"], "native": e["node"]["title"].get("native"),
                     "한글별칭": _한글별칭(e["node"].get("synonyms")), "format": e["node"].get("format"), "year": (e["node"].get("startDate") or {}).get("year"),
                     "month": (e["node"].get("startDate") or {}).get("month"), "studios": [x["name"] for x in (e["node"].get("studios") or {}).get("nodes", [])],
                     "popularity": e["node"].get("popularity"), "역할": e.get("staffRole")}
-                   for e in (s.get("staffMedia") or {}).get("edges", [])]}
+                   for e in (s.get("staffMedia") or {}).get("edges", []) if e and e.get("node")]}
     _cache_put(key, out)
     return out
 
