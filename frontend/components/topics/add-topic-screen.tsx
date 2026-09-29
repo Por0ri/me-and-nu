@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { OnboardingBack, OnboardingIcon } from "@/components/onboarding/onboarding-ui";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
 import { addMyTopic, getTopicOptions } from "@/lib/consumer-api/topics";
 import { filterSubtopics } from "@/lib/subtopics/filter-subtopics";
@@ -28,6 +29,7 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
   const [createdTopicId, setCreatedTopicId] = useState<string | null>(null);
   const inFlight = useRef(false);
   const requestGeneration = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     requestGeneration.current += 1;
@@ -223,30 +225,24 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
     selectedTopic?.subtopicOptions ?? [],
     searchQuery,
   );
-  const selectedSubtopics = (selectedTopic?.subtopicOptions ?? []).filter(
-    (subtopic) => selectedSubtopicIds.includes(subtopic.id),
-  );
-
   if (availableOptions.length === 0) {
     return <p role="status">추가할 분야가 없습니다.</p>;
   }
 
-  return (
-    <form onSubmit={submit} className="space-y-6">
-      <p className="text-sm leading-6 text-black/60">
-        분야와 세부주제를 선택해 주세요. 현재는 Mock이며 선택에 따라 홈 콘텐츠를
-        다시 구성하지 않습니다.
-      </p>
-      <fieldset disabled={isSubmitting} className="space-y-3">
-        <legend className="mb-3 font-medium">추가할 분야</legend>
-        <div className="flex flex-wrap gap-3">
+  const topicPicker = (
+    <details className="ob-add-topic-picker" open={!selectedTopic}>
+      <summary>{selectedTopic ? `${selectedTopic.label} · 분야 변경` : "추가할 분야"}</summary>
+      <fieldset disabled={isSubmitting}>
+        <legend className="sr-only">추가할 분야</legend>
+        <div className="ob-chips">
           {availableOptions.map((topic) => (
             <label
               key={topic.id}
-              className="flex items-center gap-2 rounded-lg border border-black/20 px-4 py-2"
+              className="ob-chip"
             >
               <input
                 type="radio"
+                className="sr-only"
                 name="new-topic"
                 value={topic.id}
                 checked={selectedTopicId === topic.id}
@@ -257,19 +253,24 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
           ))}
         </div>
       </fieldset>
+    </details>
+  );
+
+  return (
+    <form onSubmit={submit} className="ob-subtopic-form">
+      <div className="ob-intro">
+        <h1>탐색하고 싶은 세부 토픽을<br />5개 이상 선택하세요.</h1>
+      </div>
+      {!selectedTopic ? topicPicker : null}
       {selectedTopic ? (
-        <fieldset disabled={isSubmitting} className="space-y-3">
-          <legend className="mb-3 font-medium">세부주제 (5개 이상 선택)</legend>
-          <div className="space-y-2">
-            <label
-              htmlFor="add-topic-subtopic-search"
-              className="block text-sm font-medium"
-            >
-              취향 검색
-            </label>
+        <>
+          <div className="ob-search">
             <input
+              ref={searchInputRef}
               id="add-topic-subtopic-search"
               type="search"
+              aria-label={`${selectedTopic.label} 세부 토픽 검색`}
+              disabled={isSubmitting}
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               onKeyDown={(event) => {
@@ -277,57 +278,43 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
                   event.preventDefault();
                 }
               }}
-              placeholder="기존 취향 Chip 검색"
-              className="w-full rounded-lg border border-black/20 px-4 py-3 text-base"
+              placeholder="장르, 스토리, 배경, 분위기로 검색하세요."
             />
+            <button type="button" aria-label="세부 토픽 검색" disabled={isSubmitting} onClick={() => searchInputRef.current?.focus()}>
+              <OnboardingIcon name="search-arrow" />
+            </button>
           </div>
-          <p className="text-sm font-medium">검색 결과</p>
-          {selectedTopic.subtopicOptions.length === 0 ? (
-            <p role="status">선택할 세부주제가 없습니다.</p>
-          ) : filteredSubtopics.length === 0 ? (
-            <p role="status" className="text-sm text-black/60">
-              검색 결과가 없어요. 다른 키워드로 검색해 주세요.
-            </p>
-          ) : (
-            <div className="flex flex-wrap gap-3">
-              {filteredSubtopics.map((subtopic) => (
-                <label
-                  key={subtopic.id}
-                  className="flex items-center gap-2 rounded-full border border-black/20 px-4 py-2"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedSubtopicIds.includes(subtopic.id)}
-                    onChange={() => toggleSubtopic(subtopic.id)}
-                  />
-                  {subtopic.label}
-                </label>
-              ))}
-            </div>
-          )}
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium">현재 선택된 취향 ({selectedSubtopics.length}개)</h3>
-            {selectedSubtopics.length > 0 ? (
-              <div className="flex flex-wrap gap-3">
-                {selectedSubtopics.map((subtopic) => (
-                  <button
+          <fieldset disabled={isSubmitting} className="ob-subtopic-options">
+            <legend className="sr-only">{selectedTopic.label} 세부 토픽</legend>
+            {selectedTopic.subtopicOptions.length === 0 ? (
+              <p role="status" className="ob-empty">선택할 세부주제가 없습니다.</p>
+            ) : filteredSubtopics.length === 0 ? (
+              <p role="status" className="ob-empty">
+                검색 결과가 없어요. 다른 키워드로 검색해 주세요.
+              </p>
+            ) : (
+              <div className="ob-chips">
+                {filteredSubtopics.map((subtopic) => (
+                  <label
                     key={subtopic.id}
-                    type="button"
-                    onClick={() => toggleSubtopic(subtopic.id)}
-                    aria-label={`${subtopic.label} 선택 해제`}
-                    className="rounded-full border border-black/20 px-4 py-2 text-sm"
+                    className="ob-chip"
                   >
-                    {subtopic.label} <span aria-hidden="true">×</span>
-                  </button>
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={selectedSubtopicIds.includes(subtopic.id)}
+                      onChange={() => toggleSubtopic(subtopic.id)}
+                    />
+                    {subtopic.label}
+                  </label>
                 ))}
               </div>
-            ) : (
-              <p className="text-sm text-black/60">
-                선택한 취향이 없습니다. 5개 이상 선택해 주세요.
-              </p>
             )}
-          </div>
-        </fieldset>
+          </fieldset>
+          <p className="ob-selection-count" role="status">
+            {selectedSubtopicIds.length}개 선택 <span>/ 최소 5개</span>
+          </p>
+        </>
       ) : null}
       {validationMessage ? (
         <p role="alert" className="text-sm text-red-600">{validationMessage}</p>
@@ -340,11 +327,12 @@ function AddTopicForm({ targetTopicId }: { targetTopicId: string | null }) {
       {isSubmitting ? <p role="status">분야를 추가하는 중입니다.</p> : null}
       <button
         type="submit"
-        disabled={isSubmitting}
-        className="rounded-lg bg-black px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={isSubmitting || !selectedTopic || selectedSubtopicIds.length < 5}
+        className="ob-primary"
       >
         {actionError ? "다시 시도" : "분야 추가"}
       </button>
+      {selectedTopic ? topicPicker : null}
     </form>
   );
 }
@@ -356,6 +344,7 @@ export function AddTopicScreen({
   returnTopicId: string | null;
   targetTopicId: string | null;
 }) {
+  const router = useRouter();
   const { flowState } = useConsumerFlow();
   const invalidReturnTopic =
     returnTopicId !== null &&
@@ -366,15 +355,9 @@ export function AddTopicScreen({
       : consumerRoutes.home;
 
   return (
-    <main className="flex flex-1 justify-center bg-zinc-50 px-6 py-12">
-      <div className="w-full max-w-3xl space-y-6 text-black">
-        <h1 className="text-3xl font-semibold">분야 추가</h1>
-        <Link
-          href={homeHref}
-          className="inline-flex rounded-lg border border-black/20 px-4 py-2 text-sm font-medium"
-        >
-          취소 / 홈으로 돌아가기
-        </Link>
+    <main className="ui-version-a ui-onboarding">
+      <div className="va-shell ob-screen ob-add-topic">
+        <OnboardingBack onBack={() => router.push(homeHref)} />
         {!flowState ? (
           <section className="space-y-4">
             <p role="status" className="text-sm leading-6 text-black/60">
@@ -395,6 +378,9 @@ export function AddTopicScreen({
         ) : (
           <AddTopicForm targetTopicId={targetTopicId} />
         )}
+        <Link href={homeHref} className="ob-edit ob-add-topic-cancel">
+          취소 / 홈으로 돌아가기
+        </Link>
       </div>
     </main>
   );

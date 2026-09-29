@@ -6,6 +6,11 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useConsumerSession } from "@/components/providers/consumer-session-provider";
+import {
+  OnboardingBackdrop,
+  OnboardingBrand,
+  OnboardingIcon,
+} from "@/components/onboarding/onboarding-ui";
 import { getLoginOptions, loginWithProvider } from "@/lib/consumer-api/auth";
 import type { LoginProviderOption } from "@/types/consumer";
 
@@ -89,64 +94,81 @@ export function LoginScreen() {
   const isLoginPending = pendingProviderId !== null;
 
   return (
-    <main className="flex flex-1 items-center justify-center px-6 py-12">
+    <main className="ui-version-a ui-onboarding">
       <section
         aria-labelledby="login-title"
-        className="w-full max-w-sm space-y-6 rounded-2xl border border-black/10 bg-white p-8 shadow-sm"
+        className="va-shell ob-entry ob-login"
+        aria-busy={isLoginPending}
       >
-        <div className="space-y-2 text-center">
-          <h1 id="login-title" className="text-2xl font-semibold text-black">
-            로그인
-          </h1>
-          <p className="text-sm text-black/60">
-            관심사에 맞춘 콘텐츠를 시작해 보세요.
-          </p>
-        </div>
+        <OnboardingBackdrop />
+        <OnboardingBrand>
+          <h1 id="login-title">나에게 맞는 새로운 소식</h1>
+        </OnboardingBrand>
+        <div className="ob-login-actions">
+          <div className="ob-social-hint">
+            <p>SNS로 간편하게 시작하기</p>
+            <OnboardingIcon name="bubble-tip" />
+          </div>
 
-        {isLoadingProviders ? (
-          <p role="status" className="text-center text-sm text-black/60">
-            로그인 방법을 불러오는 중입니다.
-          </p>
-        ) : providersError ? (
-          <div className="space-y-3 text-center">
-            <p role="alert" className="text-sm text-red-600">
-              {providersError}
+          {isLoadingProviders ? (
+            <p role="status" className="text-center text-sm text-black/60">
+              로그인 방법을 불러오는 중입니다.
             </p>
-            <button
-              type="button"
-              onClick={() => void retryLoginOptions()}
-              className="w-full rounded-lg border border-black/20 px-4 py-3 text-sm font-medium text-black"
-            >
-              다시 시도
-            </button>
-          </div>
-        ) : providers.length === 0 ? (
-          <p role="status" className="text-center text-sm text-black/60">
-            사용 가능한 로그인 방법이 없습니다.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {providers.map((provider) => (
+          ) : providersError ? (
+            <div className="space-y-3 text-center">
+              <p role="alert" className="text-sm text-red-600">
+                {providersError}
+              </p>
               <button
-                key={provider.id}
                 type="button"
-                disabled={isLoginPending}
-                onClick={() => void handleLogin(provider.id)}
-                className="w-full rounded-lg bg-black px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => void retryLoginOptions()}
+                className="w-full rounded-lg border border-black/20 px-4 py-3 text-sm font-medium text-black"
               >
-                {pendingProviderId === provider.id
-                  ? "로그인 중..."
-                  : provider.label}
+                다시 시도
               </button>
-            ))}
-          </div>
-        )}
+            </div>
+          ) : providers.length === 0 ? (
+            <p role="status" className="text-center text-sm text-black/60">
+              사용 가능한 로그인 방법이 없습니다.
+            </p>
+          ) : (
+            <div className="ob-social-buttons">
+              {providers.map((provider) => (
+                <button
+                  key={provider.id}
+                  type="button"
+                  disabled={isLoginPending}
+                  onClick={() => void handleLogin(provider.id)}
+                  className={`ob-social-button ob-social-${provider.id}`}
+                >
+                  {provider.id === "kakao" ? (
+                    <>
+                      <span className="ob-kakao-background">
+                        <OnboardingIcon name="kakao-background" />
+                      </span>
+                      <OnboardingIcon name="kakao-symbol" />
+                    </>
+                  ) : (
+                    <span className="ob-naver-symbol" aria-hidden="true">
+                      <img src="/ui-onboarding/naver-source.png" alt="" />
+                    </span>
+                  )}
+                  <span>
+                    {pendingProviderId === provider.id
+                      ? "로그인 중..."
+                      : provider.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
-        {loginError ? (
-          <p role="alert" className="text-center text-sm text-red-600">
-            {loginError}
-          </p>
-        ) : null}
+          {loginError ? (
+            <p role="alert" className="text-center text-sm text-red-600">
+              {loginError}
+            </p>
+          ) : null}
+        </div>
       </section>
     </main>
   );

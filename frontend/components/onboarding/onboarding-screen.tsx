@@ -5,20 +5,21 @@ import { consumerRoutes } from "@/lib/consumer-routes";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  OnboardingBack,
+  OnboardingBackdrop,
+  OnboardingBrand,
+  OnboardingIcon,
+} from "@/components/onboarding/onboarding-ui";
+import { ANIME_TOPIC_ID, MOVIE_TOPIC_ID, MUSIC_TOPIC_ID } from "@/mocks/topics";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
 import {
-  checkAgeEligibility,
   getOnboardingOptions,
   submitOnboarding,
 } from "@/lib/consumer-api/onboarding";
-import {
-  formatDateInputValue,
-  validateBirthdate,
-} from "@/lib/onboarding/birthdate";
 import { filterSubtopics } from "@/lib/subtopics/filter-subtopics";
 import type {
   AccountType,
-  AgeEligibilityStatus,
   FinalSubtopic,
   OnboardingConsent,
   OnboardingData,
@@ -28,14 +29,12 @@ import type {
 
 type OnboardingStep =
   | "consent"
-  | "birthdate"
-  | "age-result"
   | "account-type"
   | "topic"
   | "subtopics"
   | "confirmation";
 
-type PendingAction = "age-check" | "submit" | null;
+type PendingAction = "submit" | null;
 
 type SubtopicDraft = {
   selectedSubtopicIds: string[];
@@ -50,34 +49,23 @@ type OnboardingConfirmation = {
   finalSubtopics: FinalSubtopic[];
 };
 
-const STEP_ORDER: OnboardingStep[] = [
-  "consent",
-  "birthdate",
-  "age-result",
-  "account-type",
-  "topic",
-  "subtopics",
-  "confirmation",
-];
-
 const CONSENT_OPTIONS = [
-  { key: "terms", label: "이용약관 동의 (필수)" },
-  { key: "privacy", label: "개인정보 동의 (필수)" },
-  { key: "advertising", label: "광고 수신 동의 (선택)" },
-  { key: "marketing", label: "마케팅 수신 동의 (선택)" },
+  { key: "terms", label: "서비스 설명 및 이용약관", required: true },
+  { key: "privacy", label: "개인정보 수집 및 이용동의", required: true },
+  { key: "advertising", label: "광고 수신 동의", required: false },
+  { key: "marketing", label: "마케팅 수신 동의", required: false },
 ] as const;
+
+// Presentation order only; the existing taxonomy and Provider IDs are unchanged.
+const TOPIC_ORDER = [ANIME_TOPIC_ID, MOVIE_TOPIC_ID, MUSIC_TOPIC_ID];
 
 const OPTIONS_ERROR_MESSAGE =
   "온보딩 선택지를 불러오지 못했습니다. 다시 시도해 주세요.";
-const AGE_CHECK_ERROR_MESSAGE =
-  "연령 확인에 실패했습니다. 다시 시도해 주세요.";
 const SUBTOPIC_ERROR_MESSAGE =
   "선택한 분야 정보를 확인할 수 없습니다. 분야를 다시 선택해 주세요.";
 const SUBMIT_ERROR_MESSAGE =
   "온보딩을 완료하지 못했습니다. 다시 시도해 주세요.";
 
-const primaryButtonClassName =
-  "va-primary w-full rounded-lg bg-black px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60";
 const secondaryButtonClassName =
   "va-secondary w-full rounded-lg border border-black/20 px-4 py-3 text-sm font-medium text-black disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -95,9 +83,6 @@ export function OnboardingScreen() {
     advertising: false,
     marketing: false,
   });
-  const [birthdate, setBirthdate] = useState("");
-  const [ageEligibility, setAgeEligibility] =
-    useState<AgeEligibilityStatus | null>(null);
   const [accountType, setAccountType] = useState<AccountType | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [subtopicDraftByTopicId, setSubtopicDraftByTopicId] =
@@ -112,7 +97,17 @@ export function OnboardingScreen() {
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const requestInFlight = useRef(false);
-  const maximumBirthdate = formatDateInputValue();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const previousStep = useRef(currentStep);
+
+  useEffect(() => {
+    if (previousStep.current !== currentStep) {
+      titleRef.current?.focus({ preventScroll: true });
+      window.scrollTo(0, 0);
+      previousStep.current = currentStep;
+    }
+  }, [currentStep]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -171,54 +166,7 @@ export function OnboardingScreen() {
       return;
     }
 
-    moveToStep("birthdate");
-  }
-
-  async function handleAgeCheck(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const birthdateValidation = validateBirthdate(birthdate);
-
-    if (!birthdateValidation.valid) {
-      setActionError(null);
-      setValidationMessage(
-        birthdateValidation.reason === "required"
-          ? "생년월일을 입력해 주세요."
-          : "올바른 생년월일을 입력해 주세요.",
-      );
-      return;
-    }
-
-    if (requestInFlight.current) {
-      return;
-    }
-
-    requestInFlight.current = true;
-    setPendingAction("age-check");
-    setValidationMessage(null);
-    setActionError(null);
-
-    try {
-      const result = await checkAgeEligibility(birthdate);
-      setAgeEligibility(result.status);
-      setCurrentStep("age-result");
-    } catch {
-      setActionError(AGE_CHECK_ERROR_MESSAGE);
-    } finally {
-      requestInFlight.current = false;
-      setPendingAction(null);
-    }
-  }
-
-  function handleAccountTypeSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (accountType !== "consumer") {
-      setValidationMessage("Consumer를 선택해 주세요.");
-      return;
-    }
-
-    moveToStep("topic");
+    moveToStep("account-type");
   }
 
   function selectTopic(topicId: string) {
@@ -233,18 +181,6 @@ export function OnboardingScreen() {
             [topicId]: { selectedSubtopicIds: [] },
           },
     );
-    setValidationMessage(null);
-    setActionError(null);
-  }
-
-  function handleTopicSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!selectedTopicId) {
-      setValidationMessage("분야를 선택해 주세요.");
-      return;
-    }
-
     moveToStep("subtopics");
   }
 
@@ -325,7 +261,6 @@ export function OnboardingScreen() {
     if (
       !confirmation ||
       !(consent.terms && consent.privacy) ||
-      ageEligibility !== "eligible" ||
       accountType !== "consumer"
     ) {
       return null;
@@ -333,7 +268,9 @@ export function OnboardingScreen() {
 
     return {
       consent: { ...consent },
-      birthdate,
+      // Final UI collects no birthdate; the current Mock accepts an empty value.
+      // Keep the FE type and helpers without deciding a real Backend DTO policy.
+      birthdate: "",
       accountType,
       selectedTopicId: confirmation.topicId,
       subtopicInput: {
@@ -394,7 +331,8 @@ export function OnboardingScreen() {
     }
   }
 
-  const currentStepNumber = STEP_ORDER.indexOf(currentStep) + 1;
+  const allConsented = CONSENT_OPTIONS.every(({ key }) => consent[key]);
+  const requiredConsented = consent.terms && consent.privacy;
   const consumerAvailable = options?.accountTypes.includes("consumer") ?? false;
   const selectedTopic =
     options?.topics.find((topic) => topic.id === selectedTopicId) ?? null;
@@ -448,426 +386,136 @@ export function OnboardingScreen() {
     );
   }
 
-  const isVisualStep =
-    currentStep === "account-type" ||
-    currentStep === "topic" ||
-    currentStep === "subtopics" ||
-    currentStep === "confirmation";
-
   return (
-    <main
-      className={isVisualStep ? "ui-version-a" : "flex flex-1 items-center justify-center px-6 py-12"}
-    >
-      <section
-        aria-labelledby="onboarding-title"
-        aria-busy={pendingAction !== null}
-        className={
-          isVisualStep
-            ? "va-shell va-onboarding"
-            : "w-full max-w-md space-y-6 rounded-2xl border border-black/10 bg-white p-8 shadow-sm"
-        }
-      >
-        <header className={isVisualStep ? "va-onboarding-header" : "space-y-2"}>
-          {isVisualStep ? (
-            <p className="text-lg font-extrabold tracking-tight">
-              me;<span className="va-accent">nu</span>
-            </p>
-          ) : null}
-          <p className={isVisualStep ? "va-muted text-xs" : "text-sm text-black/50"}>
-            단계 {currentStepNumber} / {STEP_ORDER.length}
-          </p>
-          <h1
-            id="onboarding-title"
-            className={isVisualStep ? "sr-only" : "text-2xl font-semibold text-black"}
-          >
-            Consumer 온보딩
-          </h1>
-        </header>
-
+    <main className="ui-version-a ui-onboarding">
+      <section className={`va-shell ob-screen ob-${currentStep}`} aria-labelledby="onboarding-title" aria-busy={pendingAction !== null}>
         {currentStep === "consent" ? (
-          <form className="space-y-6" onSubmit={handleConsentSubmit}>
-            <fieldset className="space-y-3">
-              <legend className="text-lg font-medium text-black">약관 동의</legend>
-              <p className="text-sm text-black/50">
-                현재 Mock 동의 화면이며 실제 약관 본문은 제공하지 않습니다.
-              </p>
-              {CONSENT_OPTIONS.map(({ key, label }) => (
-                <label
-                  key={key}
-                  className="flex items-start gap-3 rounded-lg border border-black/10 p-4 text-sm text-black/80"
-                >
-                  <input
-                    type="checkbox"
-                    checked={consent[key]}
-                    onChange={(event) => {
+          <form onSubmit={handleConsentSubmit} className="ob-entry ob-consent-form">
+            <OnboardingBackdrop />
+            <OnboardingBrand>
+              <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>시작하기 전에 확인해주세요</h1>
+              <p className="ob-brand-description">서비스 이용에 필요한 항목입니다</p>
+            </OnboardingBrand>
+            <fieldset className="ob-consents">
+              <legend className="sr-only">약관 동의</legend>
+              <label className="ob-consent-all">
+                <input type="checkbox" className="ob-checkbox" checked={allConsented} onChange={(event) => {
+                  const checked = event.target.checked;
+                  setConsent({ terms: checked, privacy: checked, advertising: checked, marketing: checked });
+                  setValidationMessage(null);
+                }} />
+                <span>모두 동의합니다</span>
+              </label>
+              {CONSENT_OPTIONS.map(({ key, label, required }) => (
+                <div className="ob-consent-row" key={key}>
+                  <label>
+                    <input type="checkbox" className="ob-checkbox" checked={consent[key]} onChange={(event) => {
                       const checked = event.target.checked;
                       setConsent((current) => ({ ...current, [key]: checked }));
                       setValidationMessage(null);
-                    }}
-                    className="mt-0.5 size-4"
-                  />
-                  {label}
-                </label>
+                    }} />
+                    <span>{label}</span>
+                    <span className="ob-consent-kind">{required ? "필수" : "선택"}</span>
+                  </label>
+                  <details className="ob-consent-details">
+                    <summary aria-label={`${label} 안내`}><OnboardingIcon name="chevron-down" /></summary>
+                    <p>현재 Mock 동의 화면이며 실제 약관 본문은 제공하지 않습니다.</p>
+                  </details>
+                </div>
               ))}
             </fieldset>
-            <button type="submit" className={primaryButtonClassName}>
-              다음
+            <div className="ob-consent-action">
+              <button type="submit" className="ob-primary" disabled={!requiredConsented}>시작하기</button>
+            </div>
+          </form>
+        ) : currentStep === "account-type" ? (
+          <div className="ob-start-choice">
+            <div className="ob-choice-art" aria-hidden="true">
+              <div className="ob-choice-top"><OnboardingIcon name="choice-top" /></div>
+              <div className="ob-choice-bottom"><OnboardingIcon name="choice-bottom" /></div>
+            </div>
+            <div className="ob-choice-intro">
+              <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>어떻게 시작할까요?</h1>
+              <p>선택한 유형에 맞는 시작 흐름으로 이동합니다</p>
+            </div>
+            <button className="ob-consumer-choice" type="button" onClick={() => { setAccountType("consumer"); moveToStep("topic"); }}>
+              <span className="ob-choice-heading">컨텐츠 소비자</span>
+              <span className="ob-choice-description">관심사별 매거진 읽기</span>
+              <OnboardingIcon name="choice-chevron" />
             </button>
-          </form>
-        ) : null}
-
-        {currentStep === "birthdate" ? (
-          <form className="space-y-6" onSubmit={handleAgeCheck}>
-            <div className="space-y-3">
-              <label
-                htmlFor="birthdate"
-                className="block text-lg font-medium text-black"
-              >
-                생년월일 입력
-              </label>
-              <input
-                id="birthdate"
-                name="birthdate"
-                type="date"
-                required
-                max={maximumBirthdate}
-                disabled={pendingAction === "age-check"}
-                value={birthdate}
-                onChange={(event) => {
-                  setBirthdate(event.target.value);
-                  setAgeEligibility(null);
-                  setValidationMessage(null);
-                  setActionError(null);
-                }}
-                className="w-full rounded-lg border border-black/20 px-4 py-3 text-black"
-              />
-              <p className="text-sm text-black/50">
-                올바른 생년월일을 입력하면 Mock 연령 확인을 진행합니다.
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => moveToStep("consent")}
-                disabled={pendingAction !== null}
-                className={secondaryButtonClassName}
-              >
-                이전
-              </button>
-              <button
-                type="submit"
-                disabled={pendingAction !== null}
-                className={primaryButtonClassName}
-              >
-                {pendingAction === "age-check" ? "확인 중..." : "연령 확인"}
-              </button>
-            </div>
-          </form>
-        ) : null}
-
-        {currentStep === "age-result" && ageEligibility ? (
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <h2 className="text-lg font-medium text-black">Mock 연령 확인 결과</h2>
-              <p className="text-sm text-black/70">
-                {ageEligibility === "eligible"
-                  ? "만 14세 이상으로 다음 단계로 진행할 수 있습니다."
-                  : "만 14세 미만으로 현재 가입을 계속할 수 없습니다."}
-              </p>
-            </div>
-            {ageEligibility === "eligible" ? (
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => moveToStep("birthdate")}
-                  className={secondaryButtonClassName}
-                >
-                  이전
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveToStep("account-type")}
-                  className={primaryButtonClassName}
-                >
-                  다음
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => moveToStep("birthdate")}
-                className={secondaryButtonClassName}
-              >
-                생년월일 다시 입력
-              </button>
-            )}
+            <button className="ob-creator-choice" type="button" disabled aria-label="컨텐츠 크리에이터, 관심사별 매거진 생성하기 (준비 중)">
+              <span className="ob-choice-heading">컨텐츠<br />크리에이터</span>
+              <span className="ob-choice-description">관심사별 매거진 생성하기</span>
+              <OnboardingIcon name="choice-chevron" />
+            </button>
           </div>
-        ) : null}
-
-        {currentStep === "account-type" ? (
-          <form
-            className="va-onboarding-form va-start-choice"
-            onSubmit={handleAccountTypeSubmit}
-          >
-            <fieldset className="min-w-0">
-              <legend className="sr-only">가입 유형 확인</legend>
-              <div className="va-step-intro">
-                <h2 className="va-step-title">어떻게 시작할까요?</h2>
-                <p className="va-muted mt-3 text-sm leading-6">
-                  관심사별 매거진을 만나보세요.
-                </p>
+        ) : (
+          <>
+            {currentStep === "topic" && <div className="ob-topic-art" aria-hidden="true"><OnboardingIcon name="topic-background" /></div>}
+            <OnboardingBack disabled={pendingAction !== null} onBack={() => currentStep === "confirmation" ? editSubtopics() : moveToStep(currentStep === "topic" ? "account-type" : "topic")} />
+            {currentStep === "topic" ? (
+              <div className="ob-topic-content">
+                <div className="ob-intro">
+                  <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>탐색할 분야를<br />하나만 골라주세요</h1>
+                  <p>다른 분야는 나중에 언제든 추가할 수 있어요</p>
+                </div>
+                <div className="ob-topic-list">
+                  {TOPIC_ORDER.flatMap((id) => options.topics.filter((topic) => topic.id === id)).map((topic) => (
+                    <button type="button" className="ob-topic-button" key={topic.id} aria-pressed={selectedTopicId === topic.id} onClick={() => selectTopic(topic.id)}>
+                      <span>{topic.label}</span><OnboardingIcon name="topic-arrow" />
+                    </button>
+                  ))}
+                </div>
               </div>
-              <label className="va-consumer-choice">
-                <input
-                  type="radio"
-                  name="accountType"
-                  value="consumer"
-                  checked={accountType === "consumer"}
-                  onChange={() => {
-                    setAccountType("consumer");
-                    setValidationMessage(null);
-                  }}
-                  className="size-4 shrink-0 accent-[#252522]"
-                />
-                <span className="space-y-2">
-                  <span className="block text-2xl font-bold">콘텐츠 소비자</span>
-                  <span className="block text-base">관심사별 매거진 읽기</span>
-                  <span className="sr-only">Consumer</span>
-                </span>
-              </label>
-            </fieldset>
-            <div className="va-actions">
-              <button
-                type="button"
-                onClick={() => moveToStep("age-result")}
-                className={secondaryButtonClassName}
-              >
-                이전
-              </button>
-              <button type="submit" className={primaryButtonClassName}>
-                다음
-              </button>
-            </div>
-          </form>
-        ) : null}
-
-        {currentStep === "topic" ? (
-          <form className="va-onboarding-form" onSubmit={handleTopicSubmit}>
-            <fieldset className="min-w-0">
-              <legend className="sr-only">분야 선택</legend>
-              <div className="va-step-intro">
-                <h2 className="va-step-title">
-                  탐색할 분야를<br />하나만 골라주세요.
-                </h2>
-                <p className="va-muted mt-3 text-sm leading-6">
-                  다른 분야는 나중에 언제든 추가할 수 있어요.
-                </p>
-              </div>
-              {options.topics.map((topic, index) => (
-                <label
-                  key={topic.id}
-                  className="va-topic-choice"
-                >
-                  <input
-                    type="radio"
-                    name="topic"
-                    value={topic.id}
-                    checked={selectedTopicId === topic.id}
-                    onChange={() => selectTopic(topic.id)}
-                    className="sr-only"
-                  />
-                  <span aria-hidden="true" className="va-accent text-sm tabular-nums">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <span className="flex-1 text-xl font-medium">{topic.label}</span>
-                  <span aria-hidden="true" className="va-choice-indicator" />
-                </label>
-              ))}
-            </fieldset>
-            <div className="va-actions">
-              <button
-                type="button"
-                onClick={() => moveToStep("account-type")}
-                className={secondaryButtonClassName}
-              >
-                이전
-              </button>
-              <button type="submit" className={primaryButtonClassName}>
-                다음
-              </button>
-            </div>
-          </form>
-        ) : null}
-
-        {currentStep === "subtopics" && selectedTopic ? (
-          <form className="va-onboarding-form" onSubmit={handleSubtopicSubmit}>
-            <div className="space-y-8">
-              <div className="va-step-intro">
-                <h2 className="va-step-title">
-                  {selectedTopic.label}에서는 무엇에<br />관심있나요?
-                </h2>
-                <p className="va-muted mt-3 text-sm leading-6">
-                  기존 취향 Chip을 검색하고 5개 이상 선택해 주세요.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <label
-                  htmlFor="onboarding-subtopic-search"
-                  className="block text-sm font-medium"
-                >
-                  취향 검색
-                </label>
-                <input
-                  id="onboarding-subtopic-search"
-                  type="search"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                    }
-                  }}
-                  placeholder="기존 취향 Chip 검색"
-                  className="w-full rounded-lg border border-black/20 px-4 py-3 text-base"
-                />
-              </div>
-
-              <fieldset className="min-w-0">
-                <legend className="mb-3 text-sm font-medium">검색 결과</legend>
-                <div className="flex flex-wrap justify-center gap-2">
-                  {filteredSubtopics.length > 0 ? (
-                    filteredSubtopics.map((subtopic) => (
-                      <label
-                        key={subtopic.id}
-                        className="va-subtopic-chip"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={
-                            selectedTopicDraft?.selectedSubtopicIds.includes(
-                              subtopic.id,
-                            ) ?? false
-                          }
-                          onChange={() => toggleSubtopic(subtopic.id)}
-                          className="sr-only"
-                        />
+            ) : currentStep === "subtopics" && selectedTopic ? (
+              <form className="ob-subtopic-form" onSubmit={handleSubtopicSubmit}>
+                <div className="ob-intro">
+                  <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>탐색하고 싶은 세부 토픽을<br />5개 이상 선택하세요.</h1>
+                </div>
+                <div className="ob-search">
+                  <input ref={searchInputRef} type="search" aria-label={`${selectedTopic.label} 세부 토픽 검색`} placeholder="장르, 스토리, 배경, 분위기로 검색하세요." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
+                  <button type="button" aria-label="세부 토픽 검색" onClick={() => searchInputRef.current?.focus()}><OnboardingIcon name="search-arrow" /></button>
+                </div>
+                <fieldset className="ob-subtopic-options">
+                  <legend className="sr-only">{selectedTopic.label} 세부 토픽</legend>
+                  <div className="ob-chips">
+                    {filteredSubtopics.map((subtopic) => (
+                      <label className="ob-chip" key={subtopic.id}>
+                        <input className="sr-only" type="checkbox" checked={selectedTopicDraft?.selectedSubtopicIds.includes(subtopic.id) ?? false} onChange={() => toggleSubtopic(subtopic.id)} />
                         {subtopic.label}
                       </label>
-                    ))
-                  ) : (
-                    <p role="status" className="va-muted text-sm">
-                      {selectedTopic.subtopicOptions.length === 0
-                        ? "선택 가능한 취향 Chip이 없습니다."
-                        : "검색 결과가 없어요. 다른 키워드로 검색해 주세요."}
-                    </p>
-                  )}
-                </div>
-              </fieldset>
-
-              <fieldset className="min-w-0">
-                <legend className="mb-3 text-sm font-medium">현재 선택된 취향 ({selectedSubtopics.length}개)</legend>
-                {selectedSubtopics.length > 0 ? (
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {selectedSubtopics.map((subtopic) => (
-                      <button
-                        key={subtopic.id}
-                        type="button"
-                        onClick={() => toggleSubtopic(subtopic.id)}
-                        aria-label={`${subtopic.label} 선택 해제`}
-                        className="va-confirmed-chip"
-                      >
-                        {subtopic.label} <span aria-hidden="true">×</span>
-                      </button>
                     ))}
                   </div>
-                ) : (
-                  <p className="va-muted text-sm">
-                    선택한 취향이 없습니다. 5개 이상 선택해 주세요.
-                  </p>
-                )}
-              </fieldset>
-            </div>
-            <div className="va-actions">
-              <button
-                type="button"
-                onClick={() => moveToStep("topic")}
-                disabled={pendingAction !== null}
-                className={secondaryButtonClassName}
-              >
-                이전
-              </button>
-              <button
-                type="submit"
-                disabled={pendingAction !== null}
-                className={primaryButtonClassName}
-              >
-                취향 확인
-              </button>
-            </div>
-          </form>
-        ) : null}
-
-        {currentStep === "confirmation" && confirmation ? (
-          <form className="va-onboarding-form" onSubmit={handleOnboardingSubmit}>
-            <div className="space-y-8">
-              <div className="va-step-intro">
-                <h2 className="va-step-title">
-                  선택한 취향을 확인해 주세요.
-                </h2>
-                <p className="va-muted mt-3 text-base">
-                  이 주제로 분야를 만들까요?
-                </p>
-              </div>
-              <div className="va-confirmation space-y-4">
-                <div className="space-y-1">
-                  <p className="va-muted text-xs">분야</p>
-                  <p className="font-semibold">{confirmation.topicLabel}</p>
+                  {filteredSubtopics.length === 0 && <p role="status" className="ob-empty">검색 결과가 없어요. 다른 키워드로 검색해 주세요.</p>}
+                </fieldset>
+                <p className="ob-selection-count" role="status">{selectedSubtopics.length}개 선택 <span>/ 최소 5개</span></p>
+                <button type="submit" className="ob-primary" disabled={selectedSubtopics.length < 5}>취향 매거진 보러가기</button>
+              </form>
+            ) : currentStep === "confirmation" && confirmation ? (
+              <form className="ob-confirmation-form" onSubmit={handleOnboardingSubmit}>
+                <div className="ob-intro">
+                  <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>이렇게 이해했어요.</h1>
+                  <p>이 토픽으로 매거진을 보여드릴게요.</p>
                 </div>
-                <p className="sr-only">선택한 취향</p>
-                <ul className="flex flex-wrap justify-center gap-2">
-                  {confirmation.finalSubtopics.map((subtopic) => (
-                    <li
-                      key={subtopic.id}
-                      className="va-confirmed-chip"
-                    >
-                      #{subtopic.label}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-            <div className="va-actions va-confirmation-actions">
-              <button
-                type="submit"
-                disabled={pendingAction !== null}
-                className={primaryButtonClassName}
-              >
-                {pendingAction === "submit" ? "만드는 중..." : "분야 만들기"}
-              </button>
-              <button
-                type="button"
-                onClick={editSubtopics}
-                disabled={pendingAction !== null}
-                className={secondaryButtonClassName}
-              >
-                수정하기
-              </button>
-            </div>
-          </form>
-        ) : null}
-
-        {validationMessage ? (
-          <p role="alert" className="text-sm text-red-600">
-            {validationMessage}
-          </p>
-        ) : null}
-
-        {actionError ? (
-          <p role="alert" className="text-sm text-red-600">
-            {actionError}
-          </p>
-        ) : null}
+                <div className="ob-confirmation-card">
+                  <h2>{confirmation.topicLabel}</h2>
+                  <ul className="ob-chips" aria-label="선택한 세부 토픽">
+                    {confirmation.finalSubtopics.map((subtopic) => (
+                      <li className="ob-confirmed-chip" key={subtopic.id}>
+                        {subtopic.label}
+                        <button type="button" disabled={pendingAction !== null} aria-label={`${subtopic.label} 선택 해제`} onClick={() => { toggleSubtopic(subtopic.id); editSubtopics(); }}><OnboardingIcon name="chip-close" /></button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <button type="submit" className="ob-primary" disabled={pendingAction !== null}>{pendingAction === "submit" ? "준비 중..." : "취향 매거진 보러가기"}</button>
+                <button type="button" className="ob-edit" onClick={editSubtopics} disabled={pendingAction !== null}>수정하기</button>
+              </form>
+            ) : null}
+          </>
+        )}
+        {validationMessage && <p role="alert" className="ob-error">{validationMessage}</p>}
+        {actionError && <p role="alert" className="ob-error">{actionError}</p>}
       </section>
     </main>
   );

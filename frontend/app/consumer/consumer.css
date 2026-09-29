@@ -11,7 +11,7 @@
   font-family: Arial, Helvetica, sans-serif;
 }
 
-/* Version A is limited to Home and the last four Onboarding steps. */
+/* Version A is limited to Consumer screens. Final onboarding has its own scope below. */
 .consumer-mock .ui-version-a {
   --va-paper: #f8f6f2;
   --va-ink: #252522;
@@ -797,3 +797,135 @@
   bottom: calc(24px + env(safe-area-inset-bottom));
 }
 .consumer-mock .ui-version-a .va-article-ai-dialog .va-ai-scroll > * { flex-shrink: 0; }
+
+/* S-01–S-04 and Additional Topic share ob-* presentation; Home keeps va-* styles. */
+@font-face {
+  font-family: "Onboarding Pretendard";
+  src: url("/ui-onboarding/PretendardVariable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 45 920;
+  font-display: swap;
+}
+
+.consumer-mock .ui-onboarding {
+  font-family: "Onboarding Pretendard", "Pretendard", system-ui, sans-serif;
+}
+.consumer-mock .ui-onboarding .ob-screen,
+.consumer-mock .ui-onboarding .ob-entry { isolation: isolate; overflow: clip; }
+.consumer-mock .ui-onboarding img { display: block; max-width: none; flex-shrink: 0; }
+.consumer-mock .ui-onboarding button:not(:disabled),
+.consumer-mock .ui-onboarding summary { cursor: pointer; }
+.consumer-mock .ui-onboarding h1:focus { outline: none; }
+.consumer-mock .ui-onboarding .ob-entry { position: relative; background: #f9f9f9; min-height: 100dvh; }
+.consumer-mock .ui-onboarding .ob-glow {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  top: -108px;
+  left: calc(50% - 363.5px);
+}
+.consumer-mock .ui-onboarding .ob-brand { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+.consumer-mock .ui-onboarding .ob-wordmark { font-size: 36px; font-weight: 800; line-height: 1.5; }
+.consumer-mock .ui-onboarding .ob-brand h1 { font-size: 18px; font-weight: 700; line-height: 1.35; }
+.consumer-mock .ui-onboarding .ob-brand-description { color: #75756b; font-size: 14px; line-height: 1.5; }
+.consumer-mock .ui-onboarding .ob-login { padding: 217px 24px 40px; }
+.consumer-mock .ui-onboarding .ob-login-actions { margin-top: 161px; }
+.consumer-mock .ui-onboarding .ob-social-hint { display: flex; flex-direction: column; align-items: center; margin-bottom: 10px; }
+.consumer-mock .ui-onboarding .ob-social-hint p { padding: 4px 8px; border-radius: 4px; background: #4499f3; color: #f9f9f9; font-size: 12px; font-weight: 500; line-height: 1.35; }
+.consumer-mock .ui-onboarding .ob-social-hint img { transform: rotate(180deg); }
+.consumer-mock .ui-onboarding .ob-social-buttons { display: flex; flex-direction: column; gap: 16px; }
+.consumer-mock .ui-onboarding .ob-social-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  border-radius: 5px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 15px;
+}
+.consumer-mock .ui-onboarding .ob-social-kakao { background: #fee500; color: #191919; }
+.consumer-mock .ui-onboarding .ob-kakao-background { position: absolute; inset: 0; z-index: 0; }
+.consumer-mock .ui-onboarding .ob-social-button > :not(.ob-kakao-background) { position: relative; }
+.consumer-mock .ui-onboarding .ob-social-naver { gap: 6.667px; background: #09a34a; color: #fff; }
+.consumer-mock .ui-onboarding .ob-naver-symbol { width: 25.833px; height: 23.333px; overflow: hidden; }
+.consumer-mock .ui-onboarding .ob-naver-symbol img { position: absolute; width: 306.667px; height: 40px; left: -98.333px; top: -8.35px; }
+.consumer-mock .ui-onboarding .ob-consent-form { padding-top: 201px; padding-bottom: 40px; }
+.consumer-mock .ui-onboarding .ob-consents { margin-top: 56px; min-width: 0; }
+.consumer-mock .ui-onboarding .ob-consent-all { display: flex; align-items: center; gap: 8px; padding: 8px 24px; border-bottom: 1px solid #d8d8d4; font-size: 18px; line-height: 27px; cursor: pointer; }
+.consumer-mock .ui-onboarding .ob-checkbox { appearance: none; flex-shrink: 0; width: 24px; height: 24px; margin: 0; background: url("/ui-onboarding/checkbox-off.svg") center no-repeat; cursor: pointer; }
+.consumer-mock .ui-onboarding .ob-checkbox:checked { background-image: url("/ui-onboarding/checkbox-on.svg"); }
+.consumer-mock .ui-onboarding .ob-consent-row { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; column-gap: 8px; padding: 8px 24px; font-size: 14px; line-height: 21px; }
+.consumer-mock .ui-onboarding .ob-consent-row label { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.consumer-mock .ui-onboarding .ob-consent-kind { margin-left: auto; color: #75756b; flex-shrink: 0; }
+.consumer-mock .ui-onboarding .ob-consent-details { display: contents; }
+.consumer-mock .ui-onboarding .ob-consent-details summary { list-style: none; border-radius: 4px; }
+.consumer-mock .ui-onboarding .ob-consent-details summary::-webkit-details-marker { display: none; }
+.consumer-mock .ui-onboarding .ob-consent-details[open] summary img { transform: rotate(180deg); }
+.consumer-mock .ui-onboarding .ob-consent-details p { grid-column: 1 / -1; padding: 12px 0 4px 32px; color: #75756b; }
+.consumer-mock .ui-onboarding .ob-consent-action { margin: 32px 24px 0; }
+.consumer-mock .ui-onboarding .ob-primary { display: block; width: 100%; min-height: 42px; border-radius: 8px; padding: 10px; background: #74b3f6; color: #252522; text-align: center; font-size: 16px; font-weight: 600; line-height: 1.35; }
+.consumer-mock .ui-onboarding .ob-primary:disabled { opacity: 1; background: #d8d8d4; }
+.consumer-mock .ui-onboarding .ob-primary:hover:not(:disabled) { background: #a4cdf9; }
+.consumer-mock .ui-onboarding .ob-start-choice { position: relative; min-height: max(767px, 100dvh); padding: 94px 24px 100px; background: #f8f6f2; isolation: isolate; }
+.consumer-mock .ui-onboarding .ob-choice-art { position: absolute; z-index: -1; inset: 0; pointer-events: none; }
+.consumer-mock .ui-onboarding .ob-choice-top { position: absolute; top: -45px; left: calc(50% - 187.5px); z-index: 1; }
+.consumer-mock .ui-onboarding .ob-choice-bottom { position: absolute; top: 363.5px; left: calc(50% - 187.5px); }
+.consumer-mock .ui-onboarding .ob-choice-intro { text-align: center; }
+.consumer-mock .ui-onboarding .ob-choice-intro h1 { font-size: 22px; font-weight: 700; line-height: 1.35; }
+.consumer-mock .ui-onboarding .ob-choice-intro p { color: #5a5a53; font-size: 16px; line-height: 1.4; letter-spacing: -0.32px; }
+.consumer-mock .ui-onboarding :is(.ob-consumer-choice, .ob-creator-choice) { position: relative; display: flex; flex-direction: column; gap: 8px; align-items: center; width: 100%; color: #252522; background: transparent; }
+.consumer-mock .ui-onboarding .ob-consumer-choice { margin-top: 89px; }
+.consumer-mock .ui-onboarding .ob-creator-choice { margin-top: 220px; opacity: 1; }
+.consumer-mock .ui-onboarding .ob-choice-heading { font-size: 24px; font-weight: 700; line-height: 1.5; }
+.consumer-mock .ui-onboarding .ob-choice-description { font-size: 16px; font-weight: 300; line-height: 1.5; letter-spacing: -0.64px; white-space: nowrap; }
+.consumer-mock .ui-onboarding :is(.ob-consumer-choice, .ob-creator-choice) > img { position: absolute; left: calc(50% + 64px); top: 3px; transform: rotate(180deg); }
+.consumer-mock .ui-onboarding .ob-creator-choice > img { top: 18px; }
+.consumer-mock .ui-onboarding .ob-topic-art { position: absolute; z-index: -1; top: -261px; left: calc(50% - 187.5px); pointer-events: none; }
+.consumer-mock .ui-onboarding .ob-navigation { position: relative; display: flex; align-items: center; height: 54px; padding: 0 12px; background: #f9f9f9; }
+.consumer-mock .ui-onboarding .ob-navigation button { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 8px; }
+.consumer-mock .ui-onboarding .ob-intro { text-align: center; }
+.consumer-mock .ui-onboarding .ob-intro h1 { font-size: 24px; font-weight: 600; line-height: 1.35; }
+.consumer-mock .ui-onboarding .ob-intro p { margin-top: 4px; color: #75756b; font-size: 16px; line-height: 1.4; letter-spacing: -0.32px; }
+.consumer-mock .ui-onboarding .ob-topic-content { padding: 39px 24px 40px; }
+.consumer-mock .ui-onboarding .ob-topic-list { margin-top: 36px; }
+.consumer-mock .ui-onboarding .ob-topic-button { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 88px; padding: 8px 30px; border-bottom: 1px solid #d8d8d4; text-align: left; font-size: 20px; font-weight: 500; line-height: 1.35; }
+.consumer-mock .ui-onboarding .ob-topic-button[aria-pressed="true"] { background: #d4e7fc60; }
+.consumer-mock .ui-onboarding .ob-subtopic-form { display: flex; flex-direction: column; gap: 28px; padding: 25px 24px 40px; }
+.consumer-mock .ui-onboarding .ob-search { display: flex; align-items: center; gap: 8px; height: 46px; margin-top: 4px; padding: 8px 8px 8px 16px; border: 1px solid #f9f9f9a6; border-radius: 24px; background: #ffffffa3; backdrop-filter: blur(12px); box-shadow: 0 8px 24px #0000001f; }
+.consumer-mock .ui-onboarding .ob-search input { width: 100%; min-width: 0; background: transparent; font-size: 14px; line-height: 1.5; }
+.consumer-mock .ui-onboarding .ob-search input::placeholder { color: #a7a79f; }
+.consumer-mock .ui-onboarding .ob-search button { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; background: #f0f0ef; }
+.consumer-mock .ui-onboarding .ob-search button img { transform: rotate(-90deg); }
+.consumer-mock .ui-onboarding .ob-subtopic-options { min-width: 0; min-height: 62px; margin-top: 4px; }
+.consumer-mock .ui-onboarding .ob-chips { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
+.consumer-mock .ui-onboarding :is(.ob-chip, .ob-confirmed-chip) { display: inline-flex; align-items: center; border: 1px solid #75756b; border-radius: 999px; padding: 2px 4px; color: #75756b; font-size: 14px; line-height: 21px; }
+.consumer-mock .ui-onboarding .ob-chip { cursor: pointer; }
+.consumer-mock .ui-onboarding .ob-chip:has(:checked),
+.consumer-mock .ui-onboarding .ob-confirmed-chip { border-color: #252522; background: #d4e7fc; color: #252522; }
+.consumer-mock .ui-onboarding .ob-chip:has(:focus-visible),
+.consumer-mock .ui-onboarding summary:focus-visible { outline: 2px solid #2567aa; outline-offset: 4px; }
+.consumer-mock .ui-onboarding .ob-selection-count { padding: 4px 0; color: #75756b; font-size: 14px; line-height: 21px; text-align: center; }
+.consumer-mock .ui-onboarding .ob-empty { color: #75756b; font-size: 14px; text-align: center; }
+.consumer-mock .ui-onboarding .ob-confirmation-form { display: flex; flex-direction: column; align-items: stretch; gap: 40px; padding: 39px 24px 40px; }
+.consumer-mock .ui-onboarding .ob-confirmation-form .ob-intro p { font-weight: 600; line-height: 1.5; letter-spacing: 0; }
+.consumer-mock .ui-onboarding .ob-confirmation-card { margin-top: -8px; display: flex; flex-direction: column; gap: 10px; padding: 15px 20px; border: 0.5px solid #d8d8d4; border-radius: 8px; background: #f9f9f9; }
+.consumer-mock .ui-onboarding .ob-confirmation-card h2 { font-size: 16px; font-weight: 600; line-height: 1.35; }
+.consumer-mock .ui-onboarding .ob-confirmed-chip button { display: grid; place-items: center; border-radius: 50%; }
+.consumer-mock .ui-onboarding .ob-edit { align-self: center; font-size: 14px; line-height: 21px; text-decoration: underline; text-underline-offset: 3px; }
+.consumer-mock .ui-onboarding .ob-error { margin: 0 24px 24px; color: #b42318; font-size: 14px; }
+.consumer-mock .ui-onboarding .ob-add-topic-picker { color: #75756b; font-size: 14px; text-align: center; }
+.consumer-mock .ui-onboarding .ob-add-topic-picker summary { width: fit-content; margin-inline: auto; }
+.consumer-mock .ui-onboarding .ob-add-topic-picker fieldset { min-width: 0; margin-top: 16px; }
+.consumer-mock .ui-onboarding .ob-add-topic-cancel { display: block; width: fit-content; margin: 0 auto 40px; }
+.consumer-mock .ui-onboarding .ob-add-topic > :is(p, section) { margin: 25px 24px 40px; }
+@media (max-width: 350px) {
+  .consumer-mock .ui-onboarding .ob-consent-row { padding-inline: 16px; column-gap: 4px; }
+  .consumer-mock .ui-onboarding .ob-consent-row label { gap: 6px; }
+  .consumer-mock .ui-onboarding .ob-intro h1 { letter-spacing: -0.5px; }
+  .consumer-mock .ui-onboarding .ob-intro p { font-size: 14px; }
+}

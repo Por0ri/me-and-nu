@@ -14,8 +14,12 @@ import type {
 
 export const mockLoginProviderOptions: LoginProviderOption[] = [
   {
-    id: "mock-social",
-    label: "Mock Social Login",
+    id: "kakao",
+    label: "카카오 로그인",
+  },
+  {
+    id: "naver",
+    label: "네이버 로그인",
   },
 ];
 
@@ -38,6 +42,8 @@ export const mockSubtopicOptionsByTopicId: Record<
     { id: "topic-music-hiphop", label: "힙합" },
     { id: "topic-music-indie", label: "인디" },
     { id: "topic-music-production", label: "프로덕션" },
+    { id: "topic-music-pop", label: "팝" },
+    { id: "topic-music-jazz", label: "재즈" },
   ],
   [MOVIE_TOPIC_ID]: [
     { id: "topic-movie-directing", label: "연출" },
@@ -45,6 +51,8 @@ export const mockSubtopicOptionsByTopicId: Record<
     { id: "topic-movie-actor", label: "배우" },
     { id: "topic-movie-story", label: "스토리" },
     { id: "topic-movie-mood", label: "분위기" },
+    { id: "topic-movie-sf", label: "SF" },
+    { id: "topic-movie-comedy", label: "코미디" },
   ],
   [ANIME_TOPIC_ID]: [
     { id: "topic-anime-animation", label: "작화" },
@@ -52,6 +60,8 @@ export const mockSubtopicOptionsByTopicId: Record<
     { id: "topic-anime-studio", label: "스튜디오" },
     { id: "topic-anime-worldbuilding", label: "세계관" },
     { id: "topic-anime-action", label: "액션" },
+    { id: "topic-anime-isekai", label: "이세계" },
+    { id: "topic-anime-healing", label: "힐링" },
   ],
 };
 
