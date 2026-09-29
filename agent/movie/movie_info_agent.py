@@ -81,6 +81,7 @@
 #   V3.0에서는 서로 부딪치는 주문 조합(상황부터 + 사실 먼저 같은 것)이 나오면 작가가 하나를 어길 수밖에 없었고, 그게 반려로 이어졌다.
 # - 글이 "대중 평가는 갈린다." 같은 딱지로 끝나던 것(V3.1 10편 중 6편)을 고쳤다. 반응은 문장 안에 넣고, 정보 문단의 마지막 문장은
 #   앞 이야기로 돌아가 글을 닫는다. 형태 검사가 반응 문장으로 끝난 글과 "대중 평가는" 딱지를 잡는다.
+# - 형태 검사 버그 고침: FBI · CIA 같은 대문자 약어(2~5자)를 "영문 표기가 남았다"로 잡지 않는다. V3.2 첫 10편에서 플라워 킬링 문이 이것으로 떨어졌다.
 
 # ## 셀 1 — 설치
 #
@@ -3740,6 +3741,8 @@ def _latin_leftovers(body: str) -> list[str]:
         if len(t.replace(" ", "")) < 2:
             continue
         if all(w in ALLOWED_LATIN for w in t.split()):
+            continue
+        if all(re.fullmatch(r"[A-Z]{2,5}", w) for w in t.split()):   # V3.2: FBI · CIA · NASA 같은 대문자 약어는 한국어에서도 그대로 쓴다
             continue
         out.append(t)
     return out
