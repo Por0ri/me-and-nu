@@ -9,13 +9,13 @@ agent/
 ├── .env.example            키 이름 (LLM_KEY, TMDB_KEY)
 ├── py2ipynb.py             .py → 콜랩 노트북(.ipynb). 노트북은 여기서 뽑는다. 손으로 안 고친다
 ├── movie/
-│   ├── movie_info_agent.py     영화 · 정보 전달 (V2.5)
+│   ├── movie_info_agent.py     영화 · 정보 전달 (V3.0 — LangGraph)
 │   └── movie_review_agent.py   영화 · 리뷰 (V3.0 — 평론 기반 · LangGraph)
 ├── music/
 │   ├── music_review_agent.py   음악 · 리뷰 (v4.0 — LangGraph)
 │   └── DESIGN.md               음악 설계도 (흐름 · 에이전트 · 앞판기억 · 올림 판정)
 ├── anime/
-│   ├── anime_agent.py          애니 · 유형 여섯 (v0.7. 기념일은 run에서 뺌)
+│   ├── anime_agent.py          애니 · 유형 여섯 (v0.8 — LangGraph. 기념일은 run에서 뺌)
 │   └── glossary.json           애니 용어집 — 시리즈 다섯, 라프텔 자막 기준 (초안)
 └── out/                    결과물 (git에 안 올라간다)
 ```
@@ -31,6 +31,18 @@ agent/
 
 네 에이전트 모두 마디(node)가 상태 하나를 받아 자기 칸만 채우고 돌려주는 구조다.
 갈림길 함수가 다음 마디를 고른다. 한 편에 도는 마디 수와 모델 요청 수에 상한이 있다.
+
+## LangGraph — 넷 다 옮겼다 (2026-09-28 ~ 29)
+
+PM 결정(9/28): 팀 코드는 전부 LangGraph로 간다. 음악 v4.0 → 영화 리뷰 V3.0 → 애니 v0.8 → 영화 정보 V3.0 순서로 옮겼다.
+
+- 마디 · 갈림길 · 프롬프트 · 재료 · 판정 규칙은 옮기기 전 판 그대로다. `run_graph`가 while 루프 대신 `StateGraph(RunState)`를 짓고 돌린다. 영화 정보는 마디가 async라 `ainvoke`다.
+- LangGraph는 조건 엣지 함수가 상태에 쓴 것을 버린다. 우리 갈림길은 상태 · 로그 · 재시도 수를 쓴다.
+  그래서 마디 감싸개가 마디 함수 뒤에 갈림길까지 돌리고, 고른 이름을 상태 칸(`다음` · 영화 정보는 `next_node`)에 적는다. 조건 엣지는 그 칸만 읽는다.
+- 마디 수 상한 · 마디 실패 · 멈출마디는 `멈춤` 칸에 적고 끝으로 간다(영화 정보는 상한만 있다. 오류는 전처럼 밖으로 올라간다).
+- LangGraph는 마디마다 `RunState(**값)`으로 상태를 새로 만든다. dict · list 칸은 얕은 복사가 되고, pydantic 모델 칸(글 · 개요 · 주문)은 같은 것이 넘어간다.
+- 옮길 때마다 옛 판(versions/)과 새 판을 같은 경우로 돌려 상태 · 바퀴 · 마디 수 · 기록 · 로그를 비교했다. 음악 9갈래 · 애니 15갈래(스레드 둘 포함) · 영화 정보 15갈래가 전부 같았다. 영화 리뷰는 뼈대를 새로 짜서 비교할 옛 판이 없다. 가짜 모델 9갈래와 `produce()` 모양만 봤다.
+- 실제 모델로는 넷 다 아직 안 돌렸다.
 
 ## 모델 — 넷 다 같다 (2026-09-24)
 
@@ -114,7 +126,7 @@ flowchart LR
 • 최고판저장 — 마지막 판이 탈락이면 점수가 제일 높았던 판의 글을 남긴다.
 • 글이 단조로워지지 않게 온도 · 시작점 · 배치(리뷰는 접근도)를 뜻글로 준다. 글을 쓰는 쪽과 읽는 쪽이 같은 [주문]을 받는다.
 
-### 애니 · 유형 여섯 (`anime/anime_agent.py`, v0.7)
+### 애니 · 유형 여섯 (`anime/anime_agent.py`, v0.8 — LangGraph)
 
 유형은 주문 칸 하나다. 글 모양이 둘로 갈린다. 정보형은 사실표와 이야기로 쓰고, 심층형은 인터뷰 · 평론을 재료로 쓴다.
 
@@ -266,7 +278,7 @@ v4.0에서 마디 · 갈림길 · 프롬프트 · 재료 · 판정 규칙은 그
 • 앨범 후보 목록을 만들 때 매체 글 제목에서 아티스트 · 앨범을 뽑는 제목파서도 모델을 쓴다.
 • `동시앨범`은 기본 1이다. 올리면 앨범 여러 편을 스레드로 같이 돈다.
 
-### 영화 · 정보 전달 (`movie/movie_info_agent.py`, V2.5)
+### 영화 · 정보 전달 (`movie/movie_info_agent.py`, V3.0 — LangGraph)
 
 ```mermaid
 flowchart TD
@@ -457,8 +469,8 @@ python anime/anime_agent.py zip
 
 ```bash
 python agent/py2ipynb.py agent/music/music_review_agent.py music_review_agent_v4.0.ipynb
-python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.7.ipynb              # 용어집이 노트북 안에 같이 들어간다
-python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V2.5.ipynb     # 영화 둘은 V2.4 · V1.9부터 뽑는다
+python agent/py2ipynb.py agent/anime/anime_agent.py anime_agent_v0.8.ipynb              # 용어집이 노트북 안에 같이 들어간다
+python agent/py2ipynb.py agent/movie/movie_info_agent.py movie_info_agent_V3.0.ipynb     # 영화 둘은 V2.4 · V1.9부터 뽑는다
 python agent/py2ipynb.py agent/movie/movie_review_agent.py movie_review_agent_V3.0.ipynb
 ```
 
