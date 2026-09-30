@@ -33,6 +33,7 @@ type ContentCardProps = {
   topicId: string;
   sectionTitle: string;
   viewMode: "list" | "card";
+  eagerImage?: boolean;
 };
 
 export function ContentCard({
@@ -40,6 +41,7 @@ export function ContentCard({
   topicId,
   sectionTitle,
   viewMode,
+  eagerImage = false,
 }: ContentCardProps) {
   const saved = useSyncExternalStore(
     subscribeContentState,
@@ -72,6 +74,7 @@ export function ContentCard({
                 fill
                 sizes="(max-width: 375px) calc(100vw - 48px), 327px"
                 unoptimized
+                loading={eagerImage ? "eager" : "lazy"}
                 className="va-card-image"
                 style={
                   content.imageUrl
@@ -88,7 +91,7 @@ export function ContentCard({
               <div className="va-card-metadata">
                 <p>
                   By {byline}
-                  {content.aiGenerated ? <span className="block">AI생성 컨텐츠</span> : null}
+                  {content.aiGenerated ? <span className="block">AI생성 콘텐츠</span> : null}
                 </p>
                 {relativeTime ? <p>{relativeTime}</p> : null}
               </div>
@@ -117,7 +120,7 @@ export function ContentCard({
       className="va-content-link block"
     >
       <article className="va-content-row">
-        <div className="min-w-0 space-y-2">
+        <div className="va-row-copy min-w-0 space-y-2">
           {chip ? <p className="va-section-chip">{chip}</p> : null}
           <h3 className="text-base leading-[1.4] tracking-[-0.02em]">
             {content.title}
@@ -133,6 +136,7 @@ export function ContentCard({
               width={94}
               height={98}
               unoptimized
+              loading={eagerImage ? "eager" : "lazy"}
               className="h-full w-full object-cover"
             />
           ) : (

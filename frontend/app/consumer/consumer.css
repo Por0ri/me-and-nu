@@ -1146,6 +1146,70 @@ html:has(.consumer-mock :is(.ob-account-type, .ob-topic)) { scrollbar-gutter: au
   .consumer-mock .ui-onboarding .ob-intro p { font-size: 14px; }
 }
 
+/* S04: FE 1380:16006 / 1380:16293 / 1380:15982.
+   Coordinates exclude the 45px native OS status bar. Keep Additional Topic's base styles. */
+html:has(.consumer-mock :is(.ob-subtopics, .ob-confirmation)) { scrollbar-gutter: auto; }
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) button { transition: none; }
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) .ob-primary { height: 42px; }
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) .ob-primary:hover:not(:disabled) { background: #74b3f6; }
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) :is(.ob-chip, .ob-confirmed-chip) {
+  height: 27px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) .ob-confirmed-chip button { width: 12px; height: 12px; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-intro h1 { width: min(100%, 318.662px); height: 64px; margin-inline: auto; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search-group { margin: 4px 1px 0; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search { margin-top: 0; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search input { outline: none; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search-icon { display: grid; place-items: center; width: 24px; height: 24px; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search-group[data-has-selection="true"] .ob-search {
+  border-color: #0000000a;
+  border-radius: 24px 24px 0 0;
+}
+.consumer-mock .ui-onboarding .ob-subtopics .ob-selected-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 8px 8px 8px 16px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  border: 1px solid #0000000a;
+  border-radius: 0 0 24px 24px;
+  background: #ffffffa3;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px #0000001f;
+}
+.consumer-mock .ui-onboarding .ob-subtopics .ob-selected-chips::-webkit-scrollbar { display: none; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-more {
+  align-self: center;
+  width: 53px;
+  height: 29px;
+  padding: 4px 8px;
+  color: #75756b;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 21px;
+  text-decoration: underline;
+  text-underline-position: from-font;
+}
+.consumer-mock .ui-onboarding .ob-confirmation .ob-intro h1 { height: 32px; }
+.consumer-mock .ui-onboarding .ob-confirmation .ob-confirmation-card {
+  /* Preserve the Figma 0.5px border inset even with Windows fractional device scaling. */
+  border: 0;
+  padding: 15.5px 20.5px;
+  box-shadow: inset 0 0 0 0.5px #d8d8d4;
+}
+.consumer-mock .ui-onboarding .ob-confirmation .ob-confirmation-card h2 { height: 22px; }
+.consumer-mock .ui-onboarding .ob-confirmation .ob-confirmation-card .ob-chips { width: min(100%, 280px); }
+.consumer-mock .ui-onboarding .ob-confirmation .ob-review-option .ob-chip { background: #f8f6f2; }
+.consumer-mock .ui-onboarding .ob-confirmation .ob-edit { text-underline-offset: auto; text-underline-position: from-font; }
+
 /* 저장·마이페이지 공통 */
 .consumer-mock .ui-version-a .va-page-title {
   font-size: 22px;
@@ -1342,3 +1406,227 @@ html:has(.consumer-mock :is(.ob-account-type, .ob-topic)) { scrollbar-gutter: au
 
 /* 목록 길이가 달라져 스크롤바가 생기고 사라져도 화면이 옆으로 밀리지 않게 자리를 비워 둔다. */
 html:has(.consumer-mock) { scrollbar-gutter: stable; background: #f8f6f2; }
+
+/* S05 fidelity overrides: ui-home is also used by Detail, Saved and My. */
+html:has(.consumer-mock .ui-home-screen) { scrollbar-width: none; }
+html:has(.consumer-mock .ui-home-screen)::-webkit-scrollbar { display: none; }
+.consumer-mock .ui-home-screen .va-home .va-home-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: #f9f9f9;
+}
+.consumer-mock .ui-home-screen .va-home .va-home-brand {
+  display: block;
+  min-height: 40px;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.consumer-mock .ui-home-screen .va-home .va-noti-bell {
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -10px;
+}
+.consumer-mock .ui-home-screen .va-home .va-noti-dot { top: 10px; right: 10px; }
+.consumer-mock .ui-home-screen .va-topic-popover {
+  position: fixed;
+  inset: 0;
+  width: 317.2px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 48px);
+  margin: auto;
+  padding: 20px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--va-paper);
+  color: var(--va-ink);
+}
+.consumer-mock .ui-home-screen .va-topic-popover::backdrop { background: rgb(0 0 0 / 50%); }
+.consumer-mock .ui-home-screen .va-topic-popover h2 {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+}
+.consumer-mock .ui-home-screen .va-topic-menu-options { display: grid; }
+.consumer-mock .ui-home-screen .va-topic-menu-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 79.2px;
+  padding: 7.2px 18px;
+  border-bottom: 0.9px solid #d8d8d4;
+  font-size: 16.2px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  transition: none;
+}
+.consumer-mock .ui-home-screen .va-topic-menu-option:active { background: #d4e7fc; }
+.consumer-mock .ui-home-screen .va-topic-menu-option[aria-pressed="true"] {
+  color: #a7a79f;
+  font-size: 18px;
+}
+.consumer-mock .ui-home-screen .va-topic-current {
+  padding: 3.6px 10.8px;
+  background: #c0c0ba;
+  color: var(--va-ink);
+  font-size: 12.6px;
+}
+.consumer-mock .ui-home-screen .va-topic-add {
+  padding: 3.6px 10.8px;
+  background: #74b3f6;
+  color: var(--va-ink);
+  font-size: 12.6px;
+}
+.consumer-mock .ui-home-screen .va-home .va-content-row { padding-inline: 24px; align-items: center; }
+.consumer-mock .ui-home-screen .va-home .va-content-row h3 { font-weight: 400; }
+.consumer-mock .ui-home-screen .va-row-copy > * { margin-block: 0; }
+.consumer-mock .ui-home-screen .va-row-copy .va-section-chip { margin-bottom: 8px; background: #f0f0efcc; }
+.consumer-mock .ui-home-screen .va-row-copy h3 { margin-bottom: 4px; }
+.consumer-mock .ui-home-screen .va-row-copy .va-muted { margin-bottom: 4px; color: #75756b; }
+.consumer-mock .ui-home-screen .va-home .va-row-time { color: #a7a79f; font-size: 12px; line-height: 1.5; }
+.consumer-mock .ui-home-screen .va-thumbnail { border-radius: 0; }
+.consumer-mock .ui-home-screen .va-home-feed-card {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding: 0 24px;
+}
+.consumer-mock .ui-home-screen .va-card-image { object-fit: cover; filter: none; }
+.consumer-mock .ui-home-screen .va-card-overlay {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 16px 24px;
+  /* FE(최신) 1380:18641 — the gradient belongs only to the text overlay. */
+  background: linear-gradient(180deg, transparent 0%, transparent 20%, rgb(0 0 0 / 40%) 50%, rgb(0 0 0 / 80%) 80%, rgb(0 0 0 / 90%) 100%);
+}
+.consumer-mock .ui-home-screen .va-card-overlay h3 {
+  width: 100%;
+  color: var(--va-line);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: normal;
+}
+.consumer-mock .ui-home-screen .va-card-metadata {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 27px;
+  color: #c0c0ba;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.consumer-mock .ui-home-screen .va-home .va-bottom-nav {
+  bottom: calc(21px + env(safe-area-inset-bottom));
+  gap: 0;
+  padding-inline: 25px 24px;
+}
+.consumer-mock .ui-home-screen .va-home .va-bottom-nav > * {
+  flex: 0 1 92px;
+}
+.consumer-mock .ui-home-screen .va-home .va-bottom-nav > :not(:last-child) {
+  margin-right: -8px;
+}
+.consumer-mock .ui-home-screen .va-home .va-nav-indicator {
+  width: 92px;
+  line-height: 1.35;
+}
+.consumer-mock .ui-home-screen .va-home .va-bottom-nav > a {
+  color: #40403b;
+  font-weight: 300;
+  line-height: 1.5;
+  letter-spacing: -0.64px;
+}
+.consumer-mock .ui-home-screen .va-home-ai-dock {
+  position: fixed;
+  z-index: 10;
+  right: max(32px, calc((100% - 375px) / 2 + 32px));
+  bottom: calc(89px + env(safe-area-inset-bottom));
+  width: 48px;
+  height: 48px;
+  transition: width 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.consumer-mock .ui-home-screen .va-home-ai-dock[data-expanded="true"] { width: min(calc(100% - 64px), 311px); }
+.consumer-mock .ui-home-screen .va-home .va-home-ai-dock .va-ai-jump {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+}
+.consumer-mock .ui-home-screen .va-home-ai-prompt {
+  width: 100%;
+  height: 48px;
+  overflow: hidden;
+  padding: 8px 56px 8px 8px;
+  border: 1px solid #f9f9f9a6;
+  border-radius: 24px;
+  background: #ffffffa3;
+  box-shadow: 0 8px 24px #0000001f;
+  backdrop-filter: blur(12px);
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.consumer-mock .ui-home-screen .va-home-ai-dialog::backdrop { background: rgb(0 0 0 / 50%); }
+.consumer-mock .ui-home-screen .va-home-ai-dialog[open] { animation: consumer-home-ai-enter 200ms ease-in-out; }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-sheet { max-height: min(calc(100dvh - 24px), 387px); }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-sheet-header {
+  min-height: 28.664px;
+  padding: 0;
+}
+.consumer-mock .ui-home-screen .va-home-ai-close {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 64px;
+  min-height: 28.664px;
+  cursor: pointer;
+}
+.consumer-mock .ui-home-screen .va-home-ai-close .va-ai-grabber { width: 33.582px; height: 4.664px; }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-scroll { flex: 0 1 auto; gap: 8px; padding: 0 24px 12px; }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-title { margin: 0; font-weight: 500; flex-shrink: 0; }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-examples { padding: 0; scrollbar-width: none; }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-examples > li { white-space: nowrap; }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-composer { padding: 0 24px max(8px, env(safe-area-inset-bottom)); }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-input-wrap { align-items: center; gap: 20px; }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-input {
+  height: 28px;
+  min-height: 28px;
+  padding: 3.5px 0;
+  font-size: 14px;
+}
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-input::placeholder { color: #a7a79f; }
+.consumer-mock .ui-home-screen .va-home-ai-dialog .va-ai-send { min-width: 28px; min-height: 28px; }
+@keyframes consumer-home-ai-enter {
+  from { transform: translate(-50%, 100%); }
+  to { transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .consumer-mock .ui-home-screen .va-home-ai-dialog[open] { animation: none; }
+  .consumer-mock .ui-home-screen .va-home-ai-dock { transition: none; }
+}
+
+.consumer-mock .ui-home-screen .va-home-header::after { display: none; }
+.consumer-mock .ui-home-screen .va-home .va-home-header { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.consumer-mock .ui-home-screen .va-topic-switch-trigger:hover { background: transparent; }
+.consumer-mock .ui-home-screen .va-topic-popover { box-shadow: none; }
+.consumer-mock .ui-home-screen .va-topic-menu-options { gap: 0; }
+.consumer-mock .ui-home-screen .va-topic-menu-option { border-radius: 0; }
+.consumer-mock .ui-home-screen .va-topic-menu-option:hover,
+.consumer-mock .ui-home-screen .va-topic-menu-option[aria-pressed="true"] { background: transparent; }
+.consumer-mock .ui-home-screen .va-topic-menu-option:active { background: #d4e7fc; }
+.consumer-mock .ui-home-screen .va-card-metadata { padding-bottom: 0; }

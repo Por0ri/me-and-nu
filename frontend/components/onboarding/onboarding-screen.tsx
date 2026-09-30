@@ -54,6 +54,8 @@ type SubtopicDraftByTopicId = Record<string, SubtopicDraft>;
 type OnboardingConfirmation = {
   topicId: string;
   topicLabel: string;
+  // Keep the review chips mounted when their Figma variant becomes unselected.
+  reviewSubtopics: SubtopicOption[];
   selectedSubtopics: SubtopicOption[];
   finalSubtopics: FinalSubtopic[];
 };
@@ -274,7 +276,7 @@ export function OnboardingScreen() {
   }
 
   function toggleSubtopic(subtopicId: string) {
-    if (!selectedTopicId || savedOnboarding.current) {
+    if (!selectedTopicId || savedOnboarding.current || pendingAction !== null) {
       return;
     }
 
@@ -296,7 +298,19 @@ export function OnboardingScreen() {
         },
       };
     });
-    setConfirmation(null);
+    setConfirmation((current) => {
+      if (currentStep !== "confirmation" || !current) return null;
+
+      const selectedIds = new Set(current.selectedSubtopics.map(({ id }) => id));
+      if (selectedIds.has(subtopicId)) selectedIds.delete(subtopicId);
+      else selectedIds.add(subtopicId);
+      const selectedSubtopics = current.reviewSubtopics.filter(({ id }) => selectedIds.has(id));
+      return {
+        ...current,
+        selectedSubtopics,
+        finalSubtopics: selectedSubtopics.map(({ id, label }) => ({ id, label })),
+      };
+    });
     setValidationMessage(null);
     setActionError(null);
   }
@@ -329,7 +343,7 @@ export function OnboardingScreen() {
     }
 
     if (selectedSubtopics.length < MINIMUM_SUBTOPICS) {
-      setValidationMessage(`세부 취향을 ${MINIMUM_SUBTOPICS}개 이상 선택해 주세요.`);
+      setValidationMessage(`세부 토픽을 ${MINIMUM_SUBTOPICS}개 이상 선택해 주세요.`);
       return;
     }
 
@@ -340,6 +354,7 @@ export function OnboardingScreen() {
     setConfirmation({
       topicId: selectedTopic.id,
       topicLabel: selectedTopic.label,
+      reviewSubtopics: selectedSubtopics,
       selectedSubtopics,
       finalSubtopics: selectedSubtopics.map(({ id, label }) => ({ id, label })),
     });
@@ -383,6 +398,11 @@ export function OnboardingScreen() {
 
   async function handleOnboardingSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!savedOnboarding.current && (!confirmation || confirmation.finalSubtopics.length < MINIMUM_SUBTOPICS)) {
+      setValidationMessage(`세부 토픽을 ${MINIMUM_SUBTOPICS}개 이상 선택해 주세요.`);
+      return;
+    }
 
     if (requestInFlight.current) {
       return;
@@ -595,9 +615,21 @@ export function OnboardingScreen() {
                 <div className="ob-intro">
                   <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>탐색하고 싶은 세부 토픽을<br />{MINIMUM_SUBTOPICS}개 이상 선택하세요.</h1>
                 </div>
-                <div className="ob-search">
-                  <input ref={searchInputRef} type="search" aria-label={`${selectedTopic.label} 세부 토픽 검색`} placeholder="장르, 스토리, 배경, 분위기로 검색하세요." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
-                  <button type="button" aria-label="세부 토픽 검색" onClick={() => searchInputRef.current?.focus()}><OnboardingIcon name="search-arrow" /></button>
+                <div className="ob-search-group" data-has-selection={selectedSubtopics.length > 0}>
+                  <div className="ob-search">
+                    <input ref={searchInputRef} type="search" aria-label={`${selectedTopic.label} 세부 토픽 검색`} placeholder="장르, 스토리, 배경, 분위기로 검색하세요." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
+                    <button type="button" aria-label="세부 토픽 검색" onClick={() => searchInputRef.current?.focus()}><span className="ob-search-icon"><OnboardingIcon name="search-arrow" /></span></button>
+                  </div>
+                  {selectedSubtopics.length > 0 && (
+                    <ul className="ob-selected-chips" aria-label="선택한 세부 토픽" tabIndex={0}>
+                      {selectedSubtopics.map((subtopic) => (
+                        <li className="ob-confirmed-chip" key={subtopic.id}>
+                          {subtopic.label}
+                          <button type="button" aria-label={`${subtopic.label} 선택 해제`} onClick={() => toggleSubtopic(subtopic.id)}><OnboardingIcon name="chip-close" /></button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
                 <fieldset className="ob-subtopic-options">
                   <legend className="sr-only">{selectedTopic.label} 세부 토픽</legend>
@@ -606,12 +638,15 @@ export function OnboardingScreen() {
                       <label className="ob-chip" key={subtopic.id}>
                         <input className="sr-only" type="checkbox" checked={selectedTopicDraft?.selectedSubtopicIds.includes(subtopic.id) ?? false} onChange={() => toggleSubtopic(subtopic.id)} />
                         {subtopic.label}
+                        {selectedTopicDraft?.selectedSubtopicIds.includes(subtopic.id) && <OnboardingIcon name="chip-close" />}
                       </label>
                     ))}
                   </div>
                   {filteredSubtopics.length === 0 && <p role="status" className="ob-empty">검색 결과가 없어요. 다른 키워드로 검색해 주세요.</p>}
                 </fieldset>
-                <p className="ob-selection-count" role="status">{selectedSubtopics.length}개 선택 <span>/ 최소 {MINIMUM_SUBTOPICS}개</span></p>
+                {/* FE 1380:16028 has copy/layout only; no prototype action is defined. */}
+                <p className="ob-more">더보기</p>
+                <p className="sr-only" role="status">{selectedSubtopics.length}개 선택 / 최소 {MINIMUM_SUBTOPICS}개</p>
                 <button type="submit" className="ob-primary" disabled={selectedSubtopics.length < MINIMUM_SUBTOPICS}>취향 매거진 보러가기</button>
               </form>
             ) : currentStep === "confirmation" && confirmation ? (
@@ -621,17 +656,23 @@ export function OnboardingScreen() {
                   <p>이 토픽으로 매거진을 보여드릴게요.</p>
                 </div>
                 <div className="ob-confirmation-card">
-                  <h2>{confirmation.topicLabel}</h2>
-                  <ul className="ob-chips" aria-label="선택한 세부 토픽">
-                    {confirmation.finalSubtopics.map((subtopic) => (
-                      <li className="ob-confirmed-chip" key={subtopic.id}>
-                        {subtopic.label}
-                        <button type="button" disabled={pendingAction !== null || onboardingSaved} aria-label={`${subtopic.label} 선택 해제`} onClick={() => { toggleSubtopic(subtopic.id); editSubtopics(); }}><OnboardingIcon name="chip-close" /></button>
-                      </li>
-                    ))}
+                  <h2>{confirmation.topicId === MOVIE_TOPIC_ID || selectedTopic?.code === "movie" ? "MOVIE" : confirmation.topicLabel}</h2>
+                  <ul className="ob-chips" aria-label="세부 토픽 선택 확인">
+                    {confirmation.reviewSubtopics.map((subtopic) => {
+                      const selected = confirmation.selectedSubtopics.some(({ id }) => id === subtopic.id);
+                      return (
+                        <li key={subtopic.id} className={selected ? "ob-confirmed-chip" : "ob-review-option"}>
+                          {selected ? <>
+                            {subtopic.label}
+                            <button type="button" disabled={pendingAction !== null || onboardingSaved} aria-label={`${subtopic.label} 선택 해제`} onClick={() => toggleSubtopic(subtopic.id)}><OnboardingIcon name="chip-close" /></button>
+                          </> : <button type="button" className="ob-chip" disabled={pendingAction !== null || onboardingSaved} aria-label={`${subtopic.label} 다시 선택`} onClick={() => toggleSubtopic(subtopic.id)}>{subtopic.label}</button>}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
-                <button type="submit" className="ob-primary" disabled={pendingAction !== null}>{pendingAction === "submit" ? "준비 중..." : onboardingSaved ? "홈 연결 다시 시도" : "취향 매거진 보러가기"}</button>
+                <p className="sr-only" role="status">{confirmation.finalSubtopics.length}개 선택 / 최소 {MINIMUM_SUBTOPICS}개</p>
+                <button type="submit" className="ob-primary" disabled={pendingAction !== null || (!onboardingSaved && confirmation.finalSubtopics.length < MINIMUM_SUBTOPICS)}>{pendingAction === "submit" ? "준비 중..." : onboardingSaved ? "홈 연결 다시 시도" : "취향 매거진 보러가기"}</button>
                 {!onboardingSaved && <button type="button" className="ob-edit" onClick={editSubtopics} disabled={pendingAction !== null}>수정하기</button>}
               </form>
             ) : null}
