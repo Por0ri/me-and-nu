@@ -1,4 +1,4 @@
-# # Movie Review agent V3.9 — 영화 리뷰 에이전트 (평론 기반 · LangGraph)
+# # Movie Review agent V3.8 — 영화 리뷰 에이전트 (평론 기반 · LangGraph)
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_review/올림|탈락/`에 쌓인다.
 #
@@ -26,7 +26,6 @@
 #   Little White Lies · Screen Daily · The Playlist · BFI · MUBI · Cinema Scope는 열려 있다(9/28 확인).
 #   나무위키 · 블로그 · 커뮤니티 · 유튜브 · 예매 사이트는 차단 목록이다.
 # - 매체당 평론 두 편까지(PER_MEDIA). 씨네21 한줄평은 평론 수에 안 센다. 관점표에 따로 붙는다.
-# - (V3.9) 영어 위키백과 Production 절은 감독 · 배우 말 재료로, Plot 절은 편집국장 사실 대조에만 쓴다. Eye for Film은 자체 검색으로 읽는다.
 #
 # 마디 · 갈림길 · 상태 이름은 음악 v4.0과 같다. 다른 것은 재료 모으기 마디 하나와 프롬프트의 낱말(곡 → 장면, 앨범 → 영화)이다.
 # 흐름은 LangGraph StateGraph다. 갈림길은 마디 안에서 돌고 고른 이름을 `st.다음`에 적는다(음악 v4.0과 같은 이유).
@@ -34,53 +33,6 @@
 # 백엔드(`backend/app/integrations/movie_review_agent.py`)가 부르는 모양은 V2.0과 같다.
 #   `VERSION` · 동기 `fetch_material(title, year)` · `async produce(material)` → dict
 #   {"상태": 대상아님 | 재료부족 | 판단보류 | 올림 | 탈락보관, "이유", "로그": [{"단계", "회차", "결과", ...}], "글": {title, body, sources}, "주문", "확인필요", "최고판"}
-#
-# **V3.9** — 재료를 넓힌다 (9/30: 무작위 4편이 재료부족이었다 — 오리지날 씬 2001 · 페인티드 베일 2006 · 빠삐용 2017 · 궁둥이에 총을 쏜 남자 1990).
-# - 원인은 감독 이름 하나로 거른 것이다. TMDB ko-KR은 감독 이름을 영어로 주는 일이 많다(John Curran). pre_filter가 그 이름을 한글 본문에서 못 찾아
-#   씨네21 기사를 버렸다(페인티드 베일 12건 중 12건). 감독 이름이 한글이면(웨스 앤더슨) 영어 평론을 버렸다.
-# - `Material`에 원제 · Wikidata id · 영어 감독 이름 · `감독이름들`을 더했다. 감독이름들은 TMDB ko · TMDB en · Wikidata ko 레이블 · 별칭 · 씨네21 영화 탭 이름이다.
-#   · en-US는 감독 이름이 한글이거나 줄거리가 짧을 때만 한 번 부른다. credits까지 받아 영어 감독 이름과 영어 줄거리에 같이 쓴다.
-#   · Wikidata는 영화 · 감독 항목을 한 번에 묶어 묻는다. 감독 항목 id는 TMDB 인물 요청(append_to_response)에서 같이 온다. TMDB 요청 수는 그대로다.
-# - pre_filter: 제목 키는 한글 제목과 원제다. 감독 조건은 감독이름들 중 하나다.
-# - 씨네21 영화 찾기를 통합 검색 `/search/`에서 영화 탭 `/search/movie/`로 바꿨다. 통합 검색 결과 줄에는 표본 여섯 편 중 빠삐용만 있었다.
-#   검색어는 한글 제목 → 원제 → Wikidata ko 레이블 순이다. 감독 이름이 안 맞으면 상영시간 ±8분으로 고른다(빠삐용 1973 151분 · 2017 133분).
-#   찾은 줄의 한글 감독 이름은 감독이름들에 더한다.
-# - 씨네21 기사는 본문을 읽기 전에 목록에서 거른다. 기사 제목에 <제목> · ‘제목’이 있거나, 제목 전체가 같거나, '/' 나열에 들어야 한다.
-#   날짜는 개봉연도 -1년 ~ +3년이다. 한글 감독 이름만으로는 붙이지 않는다. 검색어마다 3쪽까지 본다. n*2 자르기는 거른 뒤에 한다.
-#   통과한 기사는 pre_filter에서 400자 조건만 본다. 비평 · 리뷰 · 평론을 앞에, 표시 없는 기사를 다음에, 프리뷰 · 인터뷰 · 흥행 소식을 뒤에 둔다. 같은 칸에서는 긴 글이 앞이다.
-#   매체당 두 편 자리에 긴 비평이 먼저 들어가게 하려는 것이다.
-# - Eye for Film을 매체에 넣었다. 원제로 자체 검색 1번, 제목의 (연도)가 맞는 평론 1번이다. 검색 엔진 링크보다 먼저 읽는다.
-#   robots.txt에 막는 줄 · AI 봇 줄 · Content-Signal 줄이 없다(9/30 확인).
-# - 영어 위키백과를 읽는다(Wikidata sitelinks + parse). Production 절(Development · Writing · Casting · Filming)은 감독 · 배우 말 재료로 간다.
-#   Plot 절은 편집국장 사실 대조에만 간다. 마지막 막 · 결말은 잘라 낸다. 절마다 3,000자다. Critical response 절은 PM 결정 대기라 안 넣었다.
-# - 본문은 trafilatura로 먼저 뽑는다. 400자가 안 되면 V3.8 방식이다. trafilatura가 감독 · 출연 정보 칸을 빼서, pre_filter는 정보 칸까지 든 V3.8 글로 감독을 본다.
-# - 위키미디어 요청은 전역으로 한 번에 하나, 1초 간격이다. 한국어 위키백과 요청도 이 잠금을 쓴다.
-# - 검색: 엔진을 auto 대신 이름으로 준다(wikipedia · grokipedia를 뺐다). 차단 목록에 grokipedia.com을 더했다. 영어 질의는 원제 · 영어 감독 이름이다.
-#   실패하면 3~5초 뒤 한 번만 다시 부른다. 영화 세 편이 같이 돌아도 검색은 전역 잠금으로 한 번에 하나다.
-# - robots.txt의 Content-Signal 줄에 ai-input=no가 있으면 AI 봇을 막은 곳과 같이 뺀다. 알려진 매체도 뺀다.
-# - `_씨네21있나`는 영화 탭을 한 번 먼저 본다. 기사는 새 목록 규칙으로 세다가 두 건이 되면 멈춘다.
-# - 9/30 표본 다섯 편, 재료 단계만(모델 없음, 검색 엔진은 빈 결과로 바꿔 쟀다). V3.8 → V3.9:
-#   · pre_filter 통과: 애스터로이드 시티 6 → 6 · 페인티드 베일 0 → 2 · 빠삐용 0 → 2 · 알렉산더 0 → 7 · 오리지날 씬 0 → 3.
-#   · 애스터로이드 시티의 V3.8 통과 6건 중 2건은 다른 영화 비평이었다(페니키안 스킴 · 추락하는 영광). V3.9는 그 둘 대신 리뷰 · 기획 기사와 Eye for Film이 들어왔다.
-#   · 재료 글자(통과 본문 + 한국어 위키 + Production): 29,314 · 10,279 · 3,062 · 20,434 · 2,875자. V3.8은 25,796 · 39 · 0 · 0 · 102자였다.
-#   · 씨네21 영화 찾기는 2/5 → 5/5다. Eye for Film은 4/5다(오리지날 씬은 2018년 동명 영화만 있다).
-#   · 요청 수(한 편): 27 → 27 · 24 → 24 · 24 → 22 · 25 → 35 · 20 → 27. 알렉산더는 씨네21 목록 3쪽과 기사 10건을 읽어서 늘었다.
-#   · `_씨네21있나`는 여섯 편 중 둘(애스터로이드 시티 · 알렉산더)만 통과한다. 재료부족이던 네 편은 뽑기에서 빠진다. V3.8은 여섯 편 다 통과시켰다.
-# - 검토에서 고친 것(9/30, 커밋 전). 판은 V3.9 그대로다.
-#   · 편집국장 [스포일러]는 "재료의 줄거리에 적힌 것은 아니다"로 받는다. 영어 줄거리 칸이 "재료 안"이라 앞 3분의 2에 든 반전을 글이 밝혀도 안 잡을 수 있었다.
-#     오리지날 씬은 8문단 중 5문단이 남아 "월터가 줄리아의 옛 연인 빌리다"가 들었고, 알렉산더는 임종 문단이 들었다. 칸 머리에 "스포일러는 [영화 정보]의 줄거리로만 가린다"를 적었다.
-#   · `_결말자르기`: [Epilogue] 같은 결말 막 머리글 문단이 3분의 2 안에 들면 그 앞에서 끊는다. 애스터로이드 시티는 13문단 중 [Epilogue](8번째)까지 남았고 3,000자 자르기로만 빠졌다.
-#   · Production 절은 모델 판정을 안 거친다. ending · climax · twist ending · epilogue 같은 말이 든 문단은 뺀다. 표본 다섯 편에서 빠진 문단은 없었다.
-#   · Production 줄마다 "편집자 요약(본인 말은 따옴표 안뿐이다)" 머리를 단다. 기획자는 이 칸을 "본인이 한 말 — '감독은 ~라고 했다'로 쓸 수 있다"로 받는다.
-#     위키 편집자 문장('둘이 사귄다는 소문이 돌았고 둘은 부인했다' · '주급 4,131달러를 받았다')이 감독 · 배우 말로 옮겨질 수 있었다.
-#   · 3,000자 자르기는 문장 끝 · 문단 경계에서 한다. V3.9는 페인티드 베일 Writing 인용을 'if you we'에서 끊었다. 머리글 줄 끝 주석(==Plot==<!-- -->)을 먼저 지운다.
-#   · 검색이 "No results"면 다시 안 부른다. 다시 부르면 엔진 여섯(DuckDuckGo 포함)을 한 번 더 두드린다. 다른 실패만 3~5초 뒤 한 번 다시 부른다.
-#   · 위키데이터 · 영어 위키 쪽 예외는 fetch_material 안에서 막는다(백엔드 계약). Eye for Film 예외는 재료 모으기 마디 안에서 막는다(마디 예외는 글 전체 탈락이다).
-#     trafilatura 불러오기는 ImportError 말고 다른 오류도 막는다. TMDB 요청(V3.9의 en-US · 인물 요청 포함)에 에이전트 UA를 붙였다.
-#   · `_robots_of`는 `_ai막음`(ai-input=no 포함)을 먼저 적고 `_robots`에 넣는다. 거꾸로면 세 편이 같이 돌 때 다른 스레드가 막힌 곳을 열 틈이 있었다.
-#   · 다시 잰 값(같은 캐시, 표본마다 모듈을 새로 불러 robots.txt까지 센다): 재료 글자 29,314 · 10,207 · 3,062 · 20,434 · 2,875자.
-#     페인티드 베일 Production 3,000 → 2,928자 · Plot 3,000 → 2,817자는 문장 끝 자르기 때문이다. 요청 수 V3.8 → V3.9: 27 → 27 · 25 → 26 · 25 → 24 · 26 → 37 · 21 → 29.
-#     위 요청 수보다 한둘 많은 것은 표본마다 씨네21 · Eye for Film robots.txt를 새로 읽어서다. 페인티드 베일은 캐시 없이 진짜로도 쟀다(고치기 전 39 → 10,279자 · 25 → 26번, 고친 뒤 10,207자 · 26번).
 #
 # **V3.8** — 길게 쓰되 설명으로 채우지 않는다 (PM 9/29: 글이 너무 짧다 · 설명만 늘어놓아 초반에 피로하다).
 # - 애스터로이드 시티 1,188자(약 2분)가 올라갔다. 분량이 1,200~2,000자인데 검사가 하한에서 200자를 봐줬고, 하한 미달은 사소라 고치지 않았다.
@@ -136,7 +88,7 @@
 #
 # 아래 값만 고치면 된다.
 
-import os, re, io, json, time, random, zipfile, datetime, pathlib, urllib.parse, sys, difflib, html as htmlmod
+import os, re, io, json, time, random, zipfile, datetime, pathlib, urllib.parse, sys, html as htmlmod
 import requests
 from dotenv import load_dotenv
 
@@ -150,7 +102,7 @@ load_dotenv(HERE.parent / ".env")
 load_dotenv(HERE / ".env")
 
 # ───── 여기서 고친다 ─────────────────────────────────────────────
-VERSION     = "V3.9"
+VERSION     = "V3.8"
 MODEL       = "openai:gpt-6-luna"             # 음악 · 애니와 같은 모델. "openai:" 접두어는 Responses API로 간다
 KEY_ENV     = "OPENAI_API_KEY"
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -158,10 +110,6 @@ EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 PAGE_LIMIT    = 10     # 영화 하나에 재료로 읽어볼 페이지 수 (씨네21 기사 + 검색으로 찾은 글)
 후보링크배수  = 5      # robots · AI 봇 규칙으로 막히는 곳이 많아 검색 후보를 넉넉히 모은다
 씨네21기사수  = 6      # 씨네21 기사 검색에서 읽어볼 기사 수. 한 쪽에 10건
-씨네21쪽수    = 3      # V3.9: 검색어마다 넘겨볼 쪽 수. 2 → 3 (목록에서 먼저 거르니 더 넘겨야 남는다)
-씨네21연도창  = (-1, 3)   # V3.9: 기사 날짜가 개봉연도 -1년 ~ +3년 안이어야 이 영화 기사로 본다
-상영시간오차  = 8      # V3.9: 씨네21 영화 탭에서 감독 이름이 안 맞을 때 상영시간이 이만큼(분) 안이면 같은 영화로 본다
-위키절글자    = 3000   # V3.9: 영어 위키백과 Production · Plot 절마다 이만큼
 PER_MEDIA     = 2      # 매체당 남길 평론 개수 (지침서 §5-3)
 MIN_REVIEWS   = 2      # 평론이 이만큼 안 모이면 재료부족이다
 보강목표      = 3      # 평론이 이만큼 안 모이면 재료 보강 마디가 한 번 더 찾는다
@@ -262,7 +210,6 @@ MEDIA = [
     {"name": "BFI",               "domain": "bfi.org.uk",         "lang": "en"},
     {"name": "MUBI",              "domain": "mubi.com",           "lang": "en"},
     {"name": "Cinema Scope",      "domain": "cinema-scope.com",   "lang": "en"},
-    {"name": "Eye for Film",      "domain": "eyeforfilm.co.uk",   "lang": "en"},   # V3.9: 9/30 robots 확인. 막는 줄 · Content-Signal 줄이 없다. 자체 검색으로 읽는다(eyeforfilm_평론)
 ]
 # 9/28 확인: AI 봇에 Disallow: / 를 건 곳. 우리 UA로는 열리지만 뜻이 분명해서 뺀다
 AI봇막은매체 = ["variety.com", "theguardian.com", "nytimes.com", "indiewire.com", "hollywoodreporter.com", "slantmagazine.com",
@@ -281,7 +228,6 @@ MEDIA_BY_DOMAIN = {m["domain"]: m for m in MEDIA}
     "watcha.com", "watchapedia.co.kr", "netflix.com", "tving.com", "wavve.com", "coupangplay.com", "disneyplus.com",
     "imdb.com", "themoviedb.org", "letterboxd.com", "rottentomatoes.com", "metacritic.com", "wikipedia.org",
     "amazon.com", "coupang.com", "aladin.co.kr", "yes24.com",
-    "grokipedia.com",   # V3.9: AI가 쓴 백과. 평론이 아니다
 ]
 AI봇들 = ["GPTBot", "ChatGPT-User", "ClaudeBot", "anthropic-ai", "CCBot", "Google-Extended", "PerplexityBot", "Bytespider", "Applebot-Extended", "meta-externalagent"]
 
@@ -323,37 +269,28 @@ print(f"열린 매체 {len(MEDIA)}곳, AI 봇 막은 매체 {len(AI봇막은매�
 
 _robots = {}
 _ai막음 = {}
-_RE_신호 = re.compile(r"^\s*content-signal\s*:\s*(.+)$", re.I | re.M)
-
-def _ai입력거부(text):
-    """V3.9: robots.txt의 Content-Signal 줄에 ai-input=no가 있는지. 주석(#) 줄은 안 본다. AI 봇을 막은 것과 같이 뺀다."""
-    return any(re.search(r"ai-input\s*=\s*no\b", x, re.I) for x in _RE_신호.findall(text or ""))
 
 def _robots_of(url):
     p = urllib.parse.urlparse(url)
     base = f"{p.scheme}://{p.netloc}"
     if base not in _robots:
         rp = RobotFileParser(); rp.set_url(base + "/robots.txt")
-        글 = ""
         try:
             r = requests.get(base + "/robots.txt", headers=HEADERS, timeout=10)
             if r.status_code == 404:
                 rp.parse([])
             elif r.status_code == 200:
-                글 = r.text
-                rp.parse(글.splitlines())
+                rp.parse(r.text.splitlines())
             else:
                 rp = None
         except Exception:
             rp = None
-        if rp is not None and _ai입력거부(글):            # 알려진 매체도 뺀다. 뜻이 분명하다
-            _ai막음[base] = True
-        elif rp is not None and AI봇확인 and not media_of(url):
+        _robots[base] = rp
+        if rp is not None and AI봇확인 and not media_of(url):
             try:
                 _ai막음[base] = any(not rp.can_fetch(b, base + "/") for b in AI봇들)
             except Exception:
                 _ai막음[base] = False
-        _robots[base] = rp        # 검토: _ai막음을 먼저 적고 나서 넣는다. 다른 스레드가 _robots만 보고 _ai막음이 비었을 때 읽으면 막힌 곳을 연다
     return base, _robots[base]
 
 def robots_ok(url):
@@ -441,27 +378,16 @@ class Material(BaseModel):
     reception: Reception | None = None
     reception_source: str | None = None
     source_links: list[str] = []
-    # V3.9: 재료를 찾는 데 쓰는 이름들. material_to_text에는 안 들어간다(작가가 안 받는다)
-    original_title: str | None = None
-    wikidata_id: str | None = None
-    director_en: str | None = None
-    감독이름들: list[str] = []            # TMDB ko · TMDB en · Wikidata ko 레이블 · 별칭 · 씨네21 영화 탭. pre_filter 감독 조건은 이 중 하나다
-    위키ko제목: str | None = None         # Wikidata ko 레이블. 씨네21 영화 찾기의 셋째 검색어
-    제작_en: str = ""                     # 영어 위키백과 Production 절. 감독 · 배우 말 재료(st.감독말 꼴)로 간다
-    줄거리_en: str = ""                   # 영어 위키백과 Plot 절. 마지막 막을 잘랐다. 편집국장 사실 대조에만 쓴다
-    enwiki_url: str | None = None
 
 TMDB = "https://api.themoviedb.org/3"
 WIKI_API = "https://ko.wikipedia.org/w/api.php"
-ENWIKI_API = "https://en.wikipedia.org/w/api.php"
-WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 CONTEXT_SECTIONS = ("제작", "개봉", "반응", "평가", "흥행", "영향", "여담", "기타", "논란", "패러디", "수상")
 CONTEXT_MAX_CHARS = 3000
 
 def _tmdb(path, **params):
     params["api_key"] = TMDB_KEY
     params.setdefault("language", "ko-KR")
-    r = requests.get(f"{TMDB}{path}", params=params, headers=HEADERS, timeout=20)     # 검토: V3.9가 더한 en-US · 인물 요청도 에이전트 UA로 간다
+    r = requests.get(f"{TMDB}{path}", params=params, timeout=20)
     r.raise_for_status()
     return r.json()
 
@@ -483,15 +409,11 @@ def _kr_certification(movie_id):
                     return rel["certification"]
     return None
 
-def _감독정보(person_id, exclude_id, limit=4):
-    """V3.9: 감독 이전 작품과 감독의 Wikidata id를 TMDB 한 번으로 받는다(append_to_response). 요청 수는 V3.8과 같다."""
-    data = _tmdb(f"/person/{person_id}", append_to_response="movie_credits,external_ids")
-    works = [c for c in (data.get("movie_credits") or {}).get("crew", []) if c.get("job") == "Director" and c.get("id") != exclude_id]
-    works.sort(key=lambda c: c.get("release_date") or "", reverse=True)
-    return [c["title"] for c in works[:limit]], (data.get("external_ids") or {}).get("wikidata_id")
-
 def _director_past_works(person_id, exclude_id, limit=4):
-    return _감독정보(person_id, exclude_id, limit)[0]
+    data = _tmdb(f"/person/{person_id}/movie_credits")
+    works = [c for c in data.get("crew", []) if c.get("job") == "Director" and c.get("id") != exclude_id]
+    works.sort(key=lambda c: c.get("release_date") or "", reverse=True)
+    return [c["title"] for c in works[:limit]]
 
 def decide_reception(avg, votes):
     if avg is None or votes is None or votes < MIN_VOTES:
@@ -505,33 +427,16 @@ def decide_reception(avg, votes):
 _RE_REF, _RE_TEMPLATE = re.compile(r"<ref[^>]*/>|<ref.*?</ref>", re.S), re.compile(r"\{\{[^{}]*\}\}")
 _RE_LINK, _RE_BOLD, _RE_HEAD = re.compile(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]"), re.compile(r"'{2,}"), re.compile(r"^==+ ?(.+?) ?==+", re.M)
 
-# V3.9: 위키미디어(위키백과 ko · en · Wikidata) 요청은 전역으로 한 번에 하나, 1초 간격이다. 영화 세 편이 같이 돌아도 줄을 선다
-_위키잠금, _위키마지막 = threading.Lock(), [0.0]
-
-def _위키(url, params, timeout=20):
-    """위키미디어 Action API 한 번. JSON을 돌려준다. 실패하면 None이다."""
-    with _위키잠금:
-        gap = 1.0 - (time.time() - _위키마지막[0])
-        if gap > 0:
-            time.sleep(gap)
-        try:
-            r = requests.get(url, params=params, headers=HEADERS, timeout=timeout)
-            return r.json() if r.status_code == 200 else None
-        except Exception:
-            return None
-        finally:
-            _위키마지막[0] = time.time()
-
 def fetch_wiki_context(title, year=None):
     """한국어 위키백과에서 제작 · 반응 · 영향 · 여담 절만 모아 온다. 줄거리 절은 안 가져온다."""
     try:
         q = f"{title} {year} 영화" if year else f"{title} 영화"
-        r = _위키(WIKI_API, {"action": "query", "list": "search", "srsearch": q, "format": "json"}) or {}
+        r = requests.get(WIKI_API, params={"action": "query", "list": "search", "srsearch": q, "format": "json"}, headers=HEADERS, timeout=20).json()
         hits = r.get("query", {}).get("search", [])
         if not hits:
             return "", None
         page = hits[0]["title"]
-        r = _위키(WIKI_API, {"action": "parse", "page": page, "prop": "wikitext", "format": "json"}) or {}
+        r = requests.get(WIKI_API, params={"action": "parse", "page": page, "prop": "wikitext", "format": "json"}, headers=HEADERS, timeout=20).json()
         text = r.get("parse", {}).get("wikitext", {}).get("*", "")
     except Exception:
         return "", None
@@ -551,144 +456,6 @@ def fetch_wiki_context(title, year=None):
             chunks.append(f"[{name}]\n{body}")
     return "\n\n".join(chunks)[:CONTEXT_MAX_CHARS], "https://ko.wikipedia.org/wiki/" + page.replace(" ", "_")
 
-# V3.9: 감독 이름을 여러 표기로 모은다. TMDB ko-KR이 감독 이름을 영어로 주는 영화가 많다(페인티드 베일 John Curran).
-# 그 이름이 한글 본문에 없어서 씨네21 기사가 감독 조건에서 떨어졌다(9/30: 페인티드 베일 12건 중 12건 · 빠삐용 12건 중 10건). 이 영화 평('한편의 낭만시 < 페인티드 베일 >')도 떨어졌다.
-_RE_한글 = re.compile(r"[가-힣]")
-_enwiki제목 = {}   # Wikidata id → 영어 위키백과 문서 이름. 이름 묶음에서 얻으면 fetch_enwiki가 sitelinks를 다시 안 묻는다. 없으면 빈 문자열
-
-def 위키데이터_이름들(film_qid, 감독qid들=()):
-    """V3.9: Wikidata를 한 번에 묶어 묻는다. 영화 항목의 ko 레이블 · enwiki 문서 이름, 감독 항목의 ko 레이블 · ko 별칭.
-    감독 항목 id는 TMDB 인물 external_ids에서 온다(_감독정보). 돌려주는 것: (영화 ko 레이블, [감독 이름들])"""
-    ids = [q for q in dict.fromkeys([film_qid, *감독qid들]) if q and re.fullmatch(r"Q\d+", q)]
-    if not ids:
-        return None, []
-    j = _위키(WIKIDATA_API, {"action": "wbgetentities", "ids": "|".join(ids[:10]), "props": "labels|aliases|sitelinks",
-                            "languages": "ko", "sitefilter": "enwiki", "format": "json"}) or {}
-    ent = j.get("entities") or {}
-    제목 = None
-    if film_qid in ent:
-        e = ent[film_qid]
-        제목 = ((e.get("labels") or {}).get("ko") or {}).get("value")
-        _enwiki제목[film_qid] = ((e.get("sitelinks") or {}).get("enwiki") or {}).get("title") or ""
-    이름 = []
-    for q in 감독qid들:
-        e = ent.get(q) or {}
-        ko = ((e.get("labels") or {}).get("ko") or {}).get("value")
-        이름 += ([ko] if ko else []) + [a.get("value") for a in (e.get("aliases") or {}).get("ko", []) if a.get("value")]
-    return 제목, 이름
-
-# V3.9: 영어 위키백과 — Production 절은 감독 · 배우 말 재료, Plot 절은 편집국장 사실 대조
-_RE_EN_HEAD = re.compile(r"^(==+)\s*(.+?)\s*\1\s*$", re.M)
-_RE_FILE    = re.compile(r"\[\[(?:File|Image):[^\[\]]*(?:\[\[[^\]]*\]\][^\[\]]*)*\]\]", re.I)
-_RE_COMMENT = re.compile(r"<!--.*?-->", re.S)
-_RE_QUOTE   = re.compile(r"\{\{\s*(?:quote|blockquote|cquote|bquote|quote box)\s*\|\s*(?:text\s*=\s*|quote\s*=\s*)?([^{}|]*)[^{}]*\}\}", re.I)
-_RE_EXTLINK = re.compile(r"\[https?://[^\s\]]+\s*([^\]]*)\]")
-제작절이름 = re.compile(r"development|writing|casting|filming|pre-production|principal photography|shooting", re.I)
-
-def _위키글(t):
-    """위키 문법을 걷어 낸다. 인용 틀(quote · blockquote)은 안의 말을 남긴다. 감독 · 배우 말이 거기 있다."""
-    t = _RE_COMMENT.sub("", _RE_REF.sub("", t))
-    t = _RE_FILE.sub("", t)
-    t = _RE_EXTLINK.sub(r"\1", _RE_LINK.sub(r"\1", t))
-    t = _RE_QUOTE.sub(lambda x: "“" + x.group(1).strip() + "”", t)
-    for _ in range(4):
-        t = _RE_TEMPLATE.sub("", t)
-    t = _RE_BOLD.sub("", t)
-    t = re.sub(r"<[^>]+>", "", t)
-    t = _RE_EN_HEAD.sub(lambda x: f"[{x.group(2)}]", t)
-    t = re.sub(r"[ \t]+\n", "\n", t)
-    return re.sub(r"\n{3,}", "\n\n", t).strip()
-
-def _절들(wt):
-    """절마다 {이름, 수준, 머리글(하위 절 전까지), 전체(하위 절 포함)}."""
-    hs = list(_RE_EN_HEAD.finditer(wt))
-    out = []
-    for i, h in enumerate(hs):
-        lvl = len(h.group(1))
-        다음머리 = hs[i + 1].start() if i + 1 < len(hs) else len(wt)
-        end = next((h2.start() for h2 in hs[i + 1:] if len(h2.group(1)) <= lvl), len(wt))
-        out.append({"이름": h.group(2).strip(), "수준": lvl, "머리글": wt[h.end():다음머리], "전체": wt[h.end():end]})
-    return out
-
-# V3.9 검토: 줄거리 안의 하위 절 머리글이 결말 막이면 거기서 끊는다(9/30 애스터로이드 시티: 13문단의 3분의 2가 [Epilogue] 문단까지 남겼다. 3,000자 자르기에 걸려 겨우 빠졌다)
-_RE_결말머리 = re.compile(r"^\[[^\]\n]*\b(epilogue|ending|aftermath|finale|coda|conclusion|resolution)\b", re.I)
-
-def _결말자르기(글):
-    """V3.9: 줄거리의 마지막 막을 잘라 낸다. 문단이 여럿이면 앞 3분의 2만, 하나면 문장의 앞 3분의 2만 남긴다.
-    검토: 결말 막 머리글([Epilogue] 같은 것) 문단이 3분의 2 안에 들면 그 앞에서 끊는다."""
-    문단 = [x.strip() for x in 글.split("\n\n") if x.strip() and not re.fullmatch(r"\[[^\]]*\]", x.strip())]
-    if len(문단) >= 2:
-        끝 = next((i for i, x in enumerate(문단) if _RE_결말머리.match(x)), len(문단))
-        return "\n\n".join(문단[:min(max(1, len(문단) * 2 // 3), 끝)])
-    문장 = re.split(r"(?<=[.!?])\s+", 글.strip())
-    return " ".join(문장[:max(1, len(문장) * 2 // 3)])
-
-_RE_결말말 = re.compile(r"\b(ending|endings|end of the film|final scene|last scene|final shot|climax|climactic|epilogue|twist ending|plot twist|spoilers?)\b", re.I)
-
-def _문단까지(글, n):
-    """검토: n자에서 자를 때 문장 끝이나 문단 경계에서 자른다. V3.9는 [:3000]으로 잘라 인용문이 낱말 중간에서 끊겼다(페인티드 베일 Writing 'if you we').
-    n자 안에 문장 끝이 없으면 n자로 자른다."""
-    if len(글) <= n:
-        return 글
-    앞 = 글[:n]
-    끝 = max([앞.rfind("\n\n")] + [x.end() for x in re.finditer(r"[.!?][\"”’)]?(?=\s)", 앞)])
-    return 앞[:끝].rstrip() if 끝 > 0 else 앞
-
-def fetch_enwiki(wikidata_id):
-    """V3.9: 영어 위키백과. Wikidata sitelinks 1번(이름 묶음에서 얻었으면 안 묻는다) + enwiki parse 1번.
-    - Production 절(Development · Writing · Casting · Filming)은 감독 · 배우 말 재료(st.감독말 꼴)로 간다. 위키제작말()이 만든다.
-    - Plot 절은 편집국장 사실 대조에만 간다. 작가 · 기획자는 안 받는다. 마지막 막 · 결말은 잘라 낸다(_결말자르기).
-    - 절마다 위키절글자(3000자)까지.
-    - Critical response 절은 넣지 않는다. PM 결정 대기다. 평론가 말을 위키 편집자의 요약으로 받게 되고,
-      9/30 애스터로이드 시티 절이 인용한 매체 40곳 중 Variety · NYT · Guardian · IndieWire처럼 AI 봇을 막은 곳이 많다.
-    돌려주는 것: {"제작": 글, "줄거리": 글, "url": 주소 또는 None}"""
-    out = {"제작": "", "줄거리": "", "url": None}
-    if not wikidata_id:
-        return out
-    if wikidata_id not in _enwiki제목:
-        j = _위키(WIKIDATA_API, {"action": "wbgetentities", "ids": wikidata_id, "props": "sitelinks", "sitefilter": "enwiki", "format": "json"}) or {}
-        _enwiki제목[wikidata_id] = ((((j.get("entities") or {}).get(wikidata_id) or {}).get("sitelinks") or {}).get("enwiki") or {}).get("title") or ""
-    page = _enwiki제목.get(wikidata_id)
-    if not page:
-        return out
-    j = _위키(ENWIKI_API, {"action": "parse", "page": page, "prop": "wikitext", "format": "json", "redirects": 1}) or {}
-    wt = ((j.get("parse") or {}).get("wikitext") or {}).get("*", "")
-    if not wt:
-        return out
-    wt = _RE_COMMENT.sub("", wt)      # 검토: '==Plot==<!-- ... -->'처럼 머리글 줄 끝에 주석이 붙으면 _RE_EN_HEAD가 머리글을 못 찾는다
-    절 = _절들(wt)
-    제작, 부모 = [], ""
-    for s in 절:
-        if s["수준"] == 2:
-            부모 = s["이름"]
-            if re.fullmatch(r"production", 부모, re.I):
-                제작.append(("Production", s["머리글"]))          # 하위 절 앞 글. 하위 절이 없으면 이게 전부다
-            elif 제작절이름.search(부모):
-                제작.append((부모, s["전체"]))
-        elif s["수준"] == 3 and re.fullmatch(r"production", 부모, re.I) and 제작절이름.search(s["이름"]):
-            제작.append((s["이름"], s["전체"]))
-    블록 = []
-    for 이름, 글 in 제작:
-        # 검토: Production은 모델 판정(결말 장면메모 빼기)을 안 거친다. 결말 · 반전을 말하는 문단은 여기서 뺀다
-        글 = "\n\n".join(x for x in _위키글(글).split("\n\n") if x.strip() and not _RE_결말말.search(x))
-        if len(글) >= 40:
-            블록.append(f"[{이름}]\n{글}")
-    out["제작"] = _문단까지("\n\n".join(블록), 위키절글자)
-    줄 = next((s for s in 절 if s["수준"] == 2 and re.match(r"(plot|synopsis)\b", s["이름"], re.I)), None)
-    out["줄거리"] = _문단까지(_결말자르기(_위키글(줄["전체"])), 위키절글자) if 줄 else ""
-    out["url"] = "https://en.wikipedia.org/wiki/" + urllib.parse.quote(page.replace(" ", "_"))
-    return out
-
-def 위키제작말(m):
-    """V3.9: 영어 위키백과 Production 절을 감독 · 배우 말 재료 꼴({매체, 말, 링크, 원문})로 만든다. 문단 하나가 한 줄이다.
-    keep_rules가 st.감독말을 새로 만들 때마다 뒤에 붙인다(n_재료판정 · n_재료보강)."""
-    if not m.제작_en or not m.enwiki_url:
-        return []
-    # 검토: 이 문단은 위키 편집자가 쓴 요약이다. 기획자는 이 칸을 "본인이 한 말 — '감독은 ~라고 했다'로 쓸 수 있다"로 받는다.
-    # 줄마다 머리를 달아 따옴표 밖 문장을 감독 · 배우 말로 옮기지 않게 한다(9/30 오리지날 씬: '둘이 사귄다는 소문이 돌았고 둘은 부인했다'는 편집자 문장이다)
-    줄 = ["편집자 요약(본인 말은 따옴표 안뿐이다): " + x.strip().replace("\n", " ") for x in m.제작_en.split("\n\n") if len(x.strip()) >= 60][:8]
-    return [{"매체": "위키백과(영어)", "말": 줄, "링크": m.enwiki_url, "원문": m.제작_en}] if 줄 else []
-
 def fetch_material(title, year=None, today=None):
     """제목으로 찾아서 재료를 만든다. 백엔드 어댑터가 이 이름으로 부른다(동기)."""
     mid = search_movie(title, year)
@@ -696,13 +463,12 @@ def fetch_material(title, year=None, today=None):
         return None
     return fetch_material_by_id(mid, today=today, fallback_title=title)
 
-def _줄거리(mid, ko, en_상세=None):
-    """V3.4: 한국어 줄거리가 MIN_SYNOPSIS_CHARS보다 짧으면 TMDB 영어 줄거리를 덧붙인다. 작가는 한국어로 옮겨 쓴다.
-    V3.9: en-US 상세를 이미 받았으면(en_상세) 다시 부르지 않는다."""
+def _줄거리(mid, ko):
+    """V3.4: 한국어 줄거리가 MIN_SYNOPSIS_CHARS보다 짧으면 TMDB 영어 줄거리를 덧붙인다. 작가는 한국어로 옮겨 쓴다."""
     if len(ko) >= MIN_SYNOPSIS_CHARS:
         return ko
     try:
-        en = ((en_상세 if en_상세 is not None else _tmdb(f"/movie/{mid}", language="en-US")).get("overview") or "").strip()
+        en = (_tmdb(f"/movie/{mid}", language="en-US").get("overview") or "").strip()
     except Exception:
         en = ""
     if not en:
@@ -711,44 +477,24 @@ def _줄거리(mid, ko, en_상세=None):
 
 def fetch_material_by_id(mid, today=None, fallback_title=""):
     today = today or datetime.date.today().isoformat()
-    d = _tmdb(f"/movie/{mid}", append_to_response="credits,external_ids")      # V3.9: external_ids(wikidata_id)를 같이 받는다
+    d = _tmdb(f"/movie/{mid}", append_to_response="credits")
     credits = d.get("credits", {})
-    감독들 = [c for c in credits.get("crew", []) if c.get("job") == "Director"]
-    director, director_id = (감독들[0].get("name"), 감독들[0].get("id")) if 감독들 else (None, None)
+    director, director_id = None, None
+    for c in credits.get("crew", []):
+        if c.get("job") == "Director":
+            director, director_id = c.get("name"), c.get("id")
+            break
     year = int(d["release_date"][:4]) if d.get("release_date") else None
     reception = decide_reception(d.get("vote_average"), d.get("vote_count"))
     context, context_url = fetch_wiki_context(d.get("title") or fallback_title, year)
     links = [f"https://www.themoviedb.org/movie/{mid}"] + ([context_url] if context_url else [])
-    ko = d.get("overview", "") or ""
-    # V3.9: en-US는 감독 이름이 한글이거나 줄거리가 짧을 때만 부른다. 부르면 credits까지 한 번에 받아 영어 감독 이름 · 영어 줄거리에 같이 쓴다
-    en = None
-    if (director and _RE_한글.search(director)) or len(ko) < MIN_SYNOPSIS_CHARS:
-        try:
-            en = _tmdb(f"/movie/{mid}", language="en-US", append_to_response="credits")
-        except Exception:
-            en = None
-    en감독 = [c.get("name") for c in ((en or {}).get("credits") or {}).get("crew", []) if c.get("job") == "Director" and c.get("name")]
-    director_en = (en감독[0] if en감독 else None) or (director if director and not _RE_한글.search(director) else None)
-    past, 감독qid = _감독정보(director_id, mid) if director_id else ([], None)
-    qid = (d.get("external_ids") or {}).get("wikidata_id")
-    try:                                   # 검토: 위키 쪽이 깨져도 fetch_material(백엔드 계약)은 V3.8처럼 재료를 돌려준다
-        위키제목, 위키감독 = 위키데이터_이름들(qid, [감독qid] if 감독qid else [])
-    except Exception:
-        위키제목, 위키감독 = None, []
-    try:
-        en위키 = fetch_enwiki(qid)
-    except Exception:
-        en위키 = {"제작": "", "줄거리": "", "url": None}
-    이름들 = [x.strip() for x in dict.fromkeys([c.get("name") or "" for c in 감독들] + en감독 + 위키감독) if len(_norm(x)) >= 2]
     return Material(
         tmdb_id=mid, title=d.get("title") or fallback_title, year=year, director=director,
         cast=[c["name"] for c in credits.get("cast", [])[:5]], genres=[g["name"] for g in d.get("genres", [])],
         runtime_min=d.get("runtime"), rating=_kr_certification(mid), release_date=d.get("release_date"),
-        synopsis=_줄거리(mid, ko, en), director_past_works=past,
+        synopsis=_줄거리(mid, d.get("overview", "") or ""), director_past_works=(_director_past_works(director_id, mid) if director_id else []),
         source_work=None, context=context, context_source=context_url,
-        reception=reception, reception_source=(f"TMDB 평점 분포 ({today} 기준)" if reception else None), source_links=links,
-        original_title=d.get("original_title"), wikidata_id=qid, director_en=director_en, 감독이름들=이름들, 위키ko제목=위키제목,
-        제작_en=en위키["제작"], 줄거리_en=en위키["줄거리"], enwiki_url=en위키["url"])
+        reception=reception, reception_source=(f"TMDB 평점 분포 ({today} 기준)" if reception else None), source_links=links)
 
 def genre_ok(m):
     hit = set(m.genres) & EXCLUDE_GENRES
@@ -811,94 +557,41 @@ print("사실 재료 준비 끝")
 # 씨네21은 robots.txt에 막는 경로가 없다(9/28). 두 곳을 읽는다.
 # - 영화 페이지 `/movie/info/?movie_id=` — 전문가 한줄평(`section.expert_star li .reviewer .name · .num · .review`). 이름 · 점수 · 한 줄.
 # - 기사 검색 `/search/news/?query=&p=` — 항목마다 `.news_title` · `.byline span(날짜 · 필자)` · `a[href*=mag_id]`. 기사 본문은 `#news_content`, 필자는 `.byline .writer`.
-# 영화 탭 `/search/movie/?query=`에서 영화 항목(`/movie/info/?movie_id=`)을 찾아 movie_id를 얻는다. 감독 이름 · 상영시간으로 고른다.
-# V3.9: 통합 검색 `/search/`는 영화를 못 찾는다(9/30: 페인티드 베일 · 애스터로이드 시티 · 알렉산더 · 궁둥이에 총을 쏜 남자가 결과에 없다). 영화 탭은 찾는다.
-# 영화 탭 한 줄은 `div.info` 안에 `p.title a`(제목) · `p.align-middle`(갈래 · 상영시간 · 등급) · `span.etc_title` 감독 뒤 `a`(감독 이름들)다. 연도는 없다.
+# 통합 검색 `/search/?query=`에서 영화 항목(`/movie/info/?movie_id=`)을 찾아 movie_id를 얻는다. 제목과 연도로 고른다.
 
 from bs4 import BeautifulSoup
 
 CINE21 = "https://cine21.com"
 
-def _씨네21영화줄(html):
-    """영화 탭 결과 줄. [{movie_id, 이름, 감독들, 상영시간, year, 글}]. 같은 영화가 포스터 · 제목으로 두 번 걸리면 하나로 합친다."""
+def cine21_영화찾기(title, year=None, director=None):
+    """통합 검색에서 영화 항목을 찾는다. 같은 제목이 여럿이면 감독 이름이 든 것을 고른다. 감독도 연도도 안 맞으면 None이다."""
+    html = fetch(f"{CINE21}/search/", params={"query": title})
+    if not html:
+        return None
     s = BeautifulSoup(html, "lxml")
-    줄, 본 = [], set()
+    후보 = []
     for a in s.select("a[href*='/movie/info/']"):
         m = re.search(r"movie_id=(\d+)", a.get("href") or "")
-        이름 = a.get_text(" ", strip=True)
-        if not m or not 이름 or m.group(1) in 본:        # 포스터 링크는 글이 없다
+        if not m:
             continue
-        본.add(m.group(1))
-        블록 = a.find_parent("div", class_="info") or a.find_parent("li") or a.find_parent("div") or a
+        블록 = a.find_parent("li") or a.find_parent("div") or a
         글 = 블록.get_text(" ", strip=True)
-        감독들 = []
-        for p in 블록.select("p"):
-            t = p.select_one("span.etc_title")
-            if t and t.get_text(strip=True) == "감독":
-                감독들 = [x.get_text(" ", strip=True) for x in p.select("a") if x.get_text(strip=True)]
-        if not 감독들:
-            d = re.search(r"감독\s+(.+?)\s+(?:출연|전문가|관객평|$)", 글)
-            감독들 = [d.group(1)] if d else []
-        분 = re.search(r"(\d{2,3})\s*분", 글)
+        이름 = a.get_text(" ", strip=True) or 글[:40]
         y = re.search(r"\((\d{4})\)", 글)
-        줄.append({"movie_id": m.group(1), "이름": 이름, "감독들": 감독들, "감독": " ".join(감독들), "상영시간": int(분.group(1)) if 분 else None,
-                  "year": int(y.group(1)) if y else None, "글": 글[:120]})
-    return 줄
-
-def _이름맞나(이름들, 감독들):
-    """감독 이름 표기 중 하나라도 씨네21 감독 이름과 같거나 한쪽이 다른 쪽에 들어 있으면 맞다."""
-    a = [_norm(x) for x in 이름들 if len(_norm(x)) >= 2]
-    b = [_norm(x) for x in 감독들 if len(_norm(x)) >= 2]
-    return any(x == y or (len(x) >= 3 and x in y) or (len(y) >= 3 and y in x) for x in a for y in b)
-
-def cine21_영화찾기(title, year=None, director=None, *, 원제=None, 다른제목=None, 감독이름들=None, 상영시간=None):
-    """V3.9: 영화 탭에서 영화 항목을 찾는다. 검색어는 한글 제목 → 원제 → Wikidata ko 레이블(다른제목) 순이고, 찾으면 멈춘다.
-    같은 제목이 여럿이면 감독 이름들 중 하나가 맞는 것을 고른다. 안 맞으면 연도 · 상영시간(±상영시간오차분)이 맞는 것을 고른다.
-    감독이 적혀 있는데 이름도 상영시간도 안 맞으면 다른 영화다(None)."""
-    이름들 = list(감독이름들 or []) + ([director] if director else [])
-    제목들 = [x for x in (title, 원제, 다른제목) if x]
-    def 가깝나(c):
-        if year and c["year"] and abs(c["year"] - year) > 1:
-            return False
-        if 상영시간 and c["상영시간"]:
-            return abs(c["상영시간"] - 상영시간) <= 상영시간오차
-        return bool(year and c["year"])              # 상영시간을 못 대면 연도라도 적혀 있어야 한다
-    for q in dict.fromkeys(제목들):
-        html = fetch(f"{CINE21}/search/movie/", params={"query": q})
-        if not html:
-            continue
-        후보 = _씨네21영화줄(html)
-        같은 = [c for c in 후보 if any(_제목비슷(c["이름"], t) for t in 제목들)]
-        if 이름들:
-            if 같은:
-                맞는 = [c for c in 같은 if _이름맞나(이름들, c["감독들"])]
-            else:       # 원제로 찾으면 씨네21 제목이 한글이라 제목이 안 맞는다. 감독 이름에 상영시간까지 맞아야 한다(같은 감독 다른 영화를 거른다)
-                맞는 = [c for c in 후보 if _이름맞나(이름들, c["감독들"]) and (가깝나(c) or not c["상영시간"])]
-            if 맞는:
-                return 맞는[0]
-        가까운 = [c for c in 같은 if 가깝나(c)]
-        if 가까운:
-            return 가까운[0]
-        if 같은 and not 이름들 and not any(c["감독들"] for c in 같은):   # 댈 것이 없으면 첫 줄 (V3.8과 같다)
-            return 같은[0]
-    return None
-
-def _제목비슷(a, b):
-    """씨네21 표기와 TMDB 표기가 조금 다르다(오리지널 씬 · 오리지날 씬). 같거나, 한쪽이 다른 쪽에 들어 있거나, 글자가 75% 넘게 겹치면 비슷하다."""
-    a, b = _norm(a), _norm(b)
-    if not a or not b:
-        return False
-    return a == b or (len(a) >= 4 and a in b) or (len(b) >= 4 and b in a) or difflib.SequenceMatcher(None, a, b).ratio() >= 0.75
-
-def cine21_영화찾기_m(m: Material):
-    """V3.9: Material로 영화 탭을 찾는다. 찾은 줄의 한글 감독 이름은 m.감독이름들에 더한다(기사 거르기 · pre_filter에 쓴다)."""
-    c = cine21_영화찾기(m.title, m.year, m.director, 원제=m.original_title, 다른제목=m.위키ko제목,
-                       감독이름들=m.감독이름들, 상영시간=m.runtime_min)
-    if c:
-        for x in c["감독들"]:
-            if _RE_한글.search(x) and x not in m.감독이름들 and len(_norm(x)) >= 2:
-                m.감독이름들.append(x)
-    return c
+        d = re.search(r"감독\s+([^\s]+(?:\s+[^\s]+)?)\s+출연", 글)
+        후보.append({"movie_id": m.group(1), "이름": 이름, "year": int(y.group(1)) if y else None, "감독": (d.group(1) if d else ""), "글": 글[:120]})
+    if not 후보:
+        return None
+    같은 = [c for c in 후보 if 같은이름(c["이름"], title, 느슨=True)] or 후보
+    if director:
+        맞는 = [c for c in 같은 if _norm(director) in _norm(c["글"])]
+        if 맞는:
+            return 맞는[0]
+        if any(c["감독"] for c in 같은):        # 감독이 적혀 있는데 하나도 안 맞으면 다른 영화다
+            return None
+    if year:
+        같은.sort(key=lambda c: (0 if c["year"] == year else (1 if c["year"] is None else 2)))
+    return 같은[0]
 
 def cine21_한줄평(movie_id):
     """전문가 한줄평. [{이름, 점수, 한줄}]. 평론 수에 안 센다. 관점표에 따로 붙는다."""
@@ -925,75 +618,39 @@ def cine21_한줄평(movie_id):
         시놉 = 다음.get_text("\n", strip=True)[:1500] if 다음 else ""
     return out, {"url": f"{CINE21}/movie/info/?movie_id={movie_id}", "시놉시스": 시놉, "감독": 감독}
 
-def _기사제목맞나(기사제목, 제목들):
-    """V3.9: 기사 제목에 <제목> · ‘제목’ 꼴로 들었거나, 기사 제목 전체가 제목과 같거나, '/' 나열에 들어 있으면 이 영화 기사다.
-    예: '한편의 낭만시 < 페인티드 베일 >' · '오리지날 씬' · '아멜리에/코렐리의 만돌린/ 오리지날 씬 /금발이 너무해'."""
-    t = htmlmod.unescape(기사제목 or "")
-    for 제목 in 제목들:
-        if len(_norm(제목)) < 2:
-            continue
-        if re.search(r"[<〈《「『‘'\"“]\s*" + re.escape(제목.strip()) + r"\s*[>〉》」』’'\"”]", t):
-            return True
-        if _norm(t) == _norm(제목):
-            return True
-        if "/" in t and any(_norm(x) == _norm(제목) for x in t.split("/")):
-            return True
-    return False
-
-def _날짜창안(날짜, year):
-    """V3.9: 기사 날짜가 개봉연도 -1년 ~ +3년 안인지. 개봉연도를 모르면 따지지 않는다. 날짜를 못 읽으면 밖이다."""
-    if not year:
-        return True
-    y = re.search(r"(19|20)\d{2}", 날짜 or "")
-    return bool(y) and year + 씨네21연도창[0] <= int(y.group(0)) <= year + 씨네21연도창[1]
-
-def _기사순위(x):
-    """V3.9: 비평 · 리뷰 · 평론가가 제목에 든 것을 앞에(0). 표시가 없는 기사가 다음이다(1). 옛 씨네21 비평은 제목에 표시가 없다('비싼 대가를 치른 실패작, < 알렉산더 >').
-    프리뷰 · 미리보기 · 인터뷰 · 제작기 · 흥행 소식은 뒤다(2). 프리뷰는 리뷰가 아니다. '감독'은 표시로 안 본다. 제목에 '올리버 스톤 감독의'처럼 흔히 붙는다.
-    인터뷰 · 제작기는 뒤에 있어도 감독 말 재료로 남는다(매체당 두 편 자리를 안 쓴다)."""
-    t = x["제목"] + " " + x.get("미리", "")
-    if re.search(r"비평|(?<!프)리뷰|평론|20자평", t):
-        return 0
-    return 2 if re.search(r"프리뷰|미리\s*보기|시사|인터뷰|제작기|기자회견|박스\s*오피스|box\s*office|예매|흥행|출시|DVD", t, re.I) else 1
-
-def cine21_기사찾기(title, director=None, n=씨네21기사수, *, year=None, 제목들=None, 멈출수=None):
-    """기사 검색. 최신 순이 아니라 관련 순이다.
-    V3.9: 본문을 읽기 전에 목록에서 거른다. 기사 제목이 _기사제목맞나를 통과하고 날짜가 _날짜창안이어야 한다.
-    한글 감독 이름만으로는 통과시키지 않는다(9/30: 감독 이름으로 붙은 기사는 다른 영화 이야기였다 — 페인티드 베일 3건 중 2건).
-    검색어마다 씨네21쪽수(3)쪽까지 넘긴다. n*2 자르기는 거른 뒤에 한다. 멈출수가 있으면 그만큼 모이는 대로 멈춘다(_씨네21있나).
-    director는 검색어에 붙일 한글 이름이다. 한글이 아니면 안 붙인다(영어 이름을 붙이면 씨네21이 못 찾는다)."""
-    제목들 = [x for x in dict.fromkeys([title] + list(제목들 or [])) if x]
-    감독말 = [f"{title} {director.split()[0]}"] if director and _RE_한글.search(director) else []
-    말 = [title] + 감독말 + [f"{title} 리뷰", f"{title} 평론"]
+def cine21_기사찾기(title, director=None, n=씨네21기사수):
+    """기사 검색. 제목이 기사 제목이나 요약에 든 것만. 최신 순이 아니라 관련 순이다."""
+    말 = [title] + ([f"{title} {director.split()[0]}"] if director else []) + [f"{title} 리뷰", f"{title} 평론"]
     seen, out = set(), []
     for q in dict.fromkeys(말):
-        for p in range(1, 씨네21쪽수 + 1):
+        for p in (1, 2):
             html = fetch(f"{CINE21}/search/news/", params={"query": q, "p": p})
             if not html:
                 break
             s = BeautifulSoup(html, "lxml")
-            새것 = 0
+            items = s.select("div.list_with_thumb_item_l, .news_contents")
+            찾음 = 0
             for it in s.select("a[href*='mag_id=']"):
                 m = re.search(r"mag_id=(\d+)", it["href"])
                 if not m or m.group(1) in seen:
                     continue
-                seen.add(m.group(1)); 새것 += 1
                 제목 = it.select_one(".news_title"); 요약 = it.select_one(".news_article"); 바이 = it.select(".byline span")
                 제목글 = 제목.get_text(" ", strip=True) if 제목 else it.get_text(" ", strip=True)[:80]
-                날짜 = 바이[0].get_text(strip=True) if bar_ok(바이, 0) else ""
-                if not (_기사제목맞나(제목글, 제목들) and _날짜창안(날짜, year)):
+                본문미리 = 요약.get_text(" ", strip=True) if 요약 else ""
+                if not (같은이름(title, 제목글, 느슨=True) or _norm(title) in _norm(본문미리)):
                     continue
-                out.append({"mag_id": m.group(1), "제목": 제목글, "미리": (요약.get_text(" ", strip=True) if 요약 else "")[:300],
-                            "날짜": 날짜, "필자": (바이[1].get_text(strip=True) if bar_ok(바이, 1) else ""),
-                            "url": f"{CINE21}/news/view/?mag_id={m.group(1)}", "목록통과": True})
-                if 멈출수 and len(out) >= 멈출수:
-                    return out
-            if 새것 == 0:
+                seen.add(m.group(1)); 찾음 += 1
+                out.append({"mag_id": m.group(1), "제목": 제목글, "미리": 본문미리[:300],
+                            "날짜": (바이[0].get_text(strip=True) if bar_ok(바이, 0) else ""), "필자": (바이[1].get_text(strip=True) if bar_ok(바이, 1) else ""),
+                            "url": f"{CINE21}/news/view/?mag_id={m.group(1)}"})
+            if 찾음 == 0 or len(out) >= n * 2:
                 break
-        if len(out) >= n * 2:
-            break
-    out.sort(key=_기사순위)
-    return out[:n * 2]
+    # 리뷰 · 평론 · 20자평 · 프리뷰가 제목에 든 것을 앞에. 제작기 · 인터뷰도 재료다 (감독 말)
+    def 순위(x):
+        t = x["제목"] + " " + x["미리"]
+        return (0 if re.search(r"리뷰|평론|평론가|비평|20자평|프리뷰|시사", t) else (1 if re.search(r"인터뷰|감독|제작기", t) else 2))
+    out.sort(key=순위)
+    return out[:n * 2]          # 본문을 읽고 감독 이름으로 거르면 줄어든다. 넉넉히 준다
 
 def bar_ok(spans, i):
     return len(spans) > i and spans[i].get_text(strip=True)
@@ -1012,59 +669,9 @@ def cine21_기사읽기(item):
     writer = s.select_one(".byline .writer"); date = s.select_one(".byline .date")
     필자 = re.sub(r"^글\s*", "", writer.get_text(" ", strip=True)).strip() if writer else item.get("필자", "")
     return {"url": item["url"], "막힘": False, "본문": text[:12000], "제목": item["제목"], "매체": "씨네21",
-            "필자": 필자, "날짜": (date.get_text(strip=True) if date else item.get("날짜", "")),
-            "목록통과": bool(item.get("목록통과"))}      # V3.9: 목록에서 제목 · 날짜로 거른 기사. pre_filter가 감독 조건을 안 본다
+            "필자": 필자, "날짜": (date.get_text(strip=True) if date else item.get("날짜", ""))}
 
 print("씨네21 준비 끝")
-
-# ## 6-1. 평론 재료 — Eye for Film (V3.9)
-#
-# 영국 평론 사이트다. 자체 검색 `search.php?title=`이 원제로 평론을 찾는다. robots.txt에 막는 줄 · AI 봇 줄 · Content-Signal 줄이 없다(9/30 확인).
-# 검색 결과가 하나면 평론 페이지가 바로 온다. 여럿이면 목록에서 제목의 '(연도)'가 맞는 `/review/` 하나를 읽는다. 요청은 두 번까지다.
-# 검색 엔진 링크보다 먼저 읽는다. 9/30 표본 다섯 편 중 넷(페인티드 베일 · 알렉산더 · 빠삐용 · 애스터로이드 시티)에 평론이 있었다(2,243~7,040자).
-
-EYEFORFILM = "https://www.eyeforfilm.co.uk"
-
-def _에프제목(t):
-    """'The Painted Veil (2006) Movie Review from Eye for Film' → ('The Painted Veil', 2006)"""
-    m = re.search(r"^(.*?)\s*\((\d{4})\)", t or "", re.S)
-    return (m.group(1).strip(), int(m.group(2))) if m else ((t or "").strip(), None)
-
-def eyeforfilm_평론(m: Material):
-    """원제 검색 1번 → 제목의 '(연도)'가 맞는 평론 1번. 못 찾으면 None. 한글 · 일본어 · 한자 원제는 이 사이트가 못 찾아서 안 묻는다."""
-    원제 = m.original_title or ""
-    if not 원제 or not m.year or re.search(r"[가-힣぀-ヿ一-鿿]", 원제):
-        return None
-    url = f"{EYEFORFILM}/search.php?" + urllib.parse.urlencode({"title": 원제})
-    if not robots_ok(url):
-        return None
-    _site_wait(url)
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
-    except Exception:
-        return None
-    if r.status_code != 200:
-        return None
-    뗌 = lambda x: re.sub(r"^the\s+", "", x.strip(), flags=re.I)
-    def 맞나(제목글):
-        이름, y = _에프제목(제목글)
-        return y == m.year and 같은이름(뗌(이름), 뗌(원제))
-    s = BeautifulSoup(r.text, "lxml")
-    t = s.title.get_text(" ", strip=True) if s.title else ""
-    if "/review/" in r.url or "Movie Review from Eye for Film" in t:          # 결과가 하나면 평론 페이지가 바로 온다
-        if not 맞나(t):
-            return None
-        정본 = s.find("link", rel="canonical") or s.find("meta", attrs={"property": "og:url"})
-        주소 = (정본.get("href") or 정본.get("content") or "") if 정본 else ""
-        return _parse_page(주소 if "/review/" in 주소 else r.url, r.text)
-    for a in s.select("a[href*='/review/']"):
-        글 = a.get_text(" ", strip=True)
-        if not 글 or not 맞나(글):
-            continue
-        href = urllib.parse.urljoin(EYEFORFILM + "/", a["href"])
-        html = fetch(href)
-        return _parse_page(href, html) if html else None
-    return None
 
 # ## 7. 평론 재료 — 검색 엔진 + 본문 읽기
 #
@@ -1072,45 +679,19 @@ def eyeforfilm_평론(m: Material):
 
 from ddgs import DDGS
 
-# V3.9: backend를 auto로 두면 ddgs가 wikipedia · grokipedia를 맨 앞에 넣는다. 위키백과는 차단 목록이고 grokipedia는 AI가 쓴 백과라 자리만 먹는다.
-# 나머지 엔진을 이름으로 준다. bing은 뺐다. 9/30 확인에서 bing과 yahoo는 같은 7건 · 같은 열린 매체 1곳을 냈다.
-검색엔진 = "yahoo,brave,google,mojeek,duckduckgo,startpage"
-검색간격 = 1.0     # 검색끼리 최소 간격(초)
-_검색잠금, _검색마지막 = threading.Lock(), [0.0]
-
 def 검색(q, n=15):
-    """V3.9: 영화 세 편이 같이 돌아도 검색은 전역 잠금으로 한 번에 하나다. DuckDuckGo는 같은 IP가 짧게 여러 번 부르면 수십 분 잠근다.
-    실패하면 3~5초 뒤 한 번만 다시 부른다. 검토: 결과 없음(No results)은 다시 안 부른다."""
-    with _검색잠금:
-        for 차례 in (1, 2):
-            gap = 검색간격 - (time.time() - _검색마지막[0])
-            if gap > 0:
-                time.sleep(gap)
-            try:
-                with DDGS() as d:
-                    return [r["href"] for r in d.text(q, max_results=n, backend=검색엔진) if r.get("href")]
-            except Exception as e:
-                if 차례 == 1 and "No results" not in str(e):     # 검토: 결과가 없는 것은 다시 불러도 없다. 다시 부르면 엔진 여섯(DuckDuckGo 포함)을 한 번 더 두드린다
-                    time.sleep(random.uniform(3, 5))
-                    continue
-                if "No results" not in str(e):
-                    print("   검색 실패:", e)
-                return []
-            finally:
-                _검색마지막[0] = time.time()
-    return []
-
-def _영어이름(m: Material):
-    """V3.9: 영어 질의에 쓸 제목 · 감독. 원제가 한글 · 한자면 한글 제목을 그대로 쓴다."""
-    te = m.original_title if m.original_title and not re.search(r"[가-힣぀-ヿ一-鿿]", m.original_title) else m.title
-    de = m.director_en or (m.director if m.director and not _RE_한글.search(m.director) else "")
-    return te, de or ""
+    try:
+        with DDGS() as d:
+            return [r["href"] for r in d.text(q, max_results=n) if r.get("href")]
+    except Exception as e:
+        if "No results" not in str(e):
+            print("   검색 실패:", e)
+        return []
 
 def 검색_링크(m: Material):
     t, y, d = m.title, m.year or "", (m.director or "")
     말 = [f"{t} {y} 영화 리뷰", f"{t} {d} 평론", f"{t} {y} 영화 평"]
-    te, de = _영어이름(m)                      # V3.9: 영어 질의는 원제 · 영어 감독 이름으로 (한글 제목 영어 질의는 영어 평론을 못 찾았다)
-    말 += [f"{te} {y} film review", f"{te} {de} review"] if de else [f"{te} {y} film review"]
+    말 += [f"{t} {y} film review", f"{t} {d} review"] if d else [f"{t} {y} film review"]
     out = []
     for x in dict.fromkeys(말):
         out += 검색(x, n=15)
@@ -1140,41 +721,21 @@ def robots_batch(links, workers=10):
     allowed = [u for u in links if robots_ok(u)]
     return allowed, [u for u in links if u not in allowed]
 
-try:
-    import trafilatura                 # V3.9: 본문 뽑기. 없으면(백엔드 서버) V3.8 방식만 쓴다
-except Exception:                      # 검토: lxml 판이 안 맞으면 ImportError 말고 다른 오류도 난다. 모듈 불러오기(백엔드 import)가 멈추면 안 된다
-    trafilatura = None
-
-def _본문뽑기(html):
-    """V3.9: trafilatura로 본문만 뽑는다. 메뉴 · 댓글 · 관련 기사 목록이 본문에 섞이지 않는다. 400자(pre_filter 하한)가 안 되면 실패로 본다."""
-    if trafilatura is None:
-        return ""
-    try:
-        t = trafilatura.extract(html, include_comments=False, include_tables=False) or ""
-    except Exception:
-        return ""
-    t = re.sub(r"\n{3,}", "\n\n", t.strip())
-    return t if len(t) >= 400 else ""
-
 def _parse_page(url, html):
     soup = BeautifulSoup(html, "lxml")
     site = None
     tag = soup.find("meta", attrs={"property": "og:site_name"}) or soup.find("meta", attrs={"name": "application-name"})
     if tag and tag.get("content"):
         site = re.split(r"\s+[-|–—:]\s+", htmlmod.unescape(tag["content"]).strip())[0].strip()[:24]
-    title = soup.title.get_text(strip=True) if soup.title else ""
     for t in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
         t.decompose()
+    title = soup.title.get_text(strip=True) if soup.title else ""
     body = soup.select_one("article") or soup.select_one("main") or soup.body or soup
-    전체 = re.sub(r"\n{3,}", "\n\n", body.get_text("\n", strip=True))    # V3.8 방식 (article · main · body 글 전부)
-    text = _본문뽑기(html) or 전체     # trafilatura가 실패하면 V3.8 방식
-    대조 = 전체 if text is not 전체 else ""
-    # V3.9: trafilatura는 감독 · 출연 정보 칸을 본문에서 뺀다(9/30 Eye for Film 페인티드 베일: 본문에 'John Curran'이 없고 정보 칸에만 있다).
-    # pre_filter는 그 칸까지 든 V3.8 글(대조글)로 제목 · 감독을 본다. 모델에는 본문만 간다
+    text = re.sub(r"\n{3,}", "\n\n", body.get_text("\n", strip=True))
     이름 = 매체이름(url)
     if 이름 == "한 매체" and site and not re.search(r"^(home|blog|news)$", site, re.I):
         이름 = site
-    return {"url": url, "막힘": False, "본문": text[:12000], "제목": title, "매체": 이름, "대조글": 대조[:20000]}
+    return {"url": url, "막힘": False, "본문": text[:12000], "제목": title, "매체": 이름}
 
 def read_pages(links, 한도, workers=10):
     allowed, blocked = robots_batch(links)
@@ -1191,10 +752,8 @@ def read_pages(links, 한도, workers=10):
 개인블로그 = re.compile(r"(님의 블로그|블로그|blog|일기|다이어리|끄적|잡담|수다|생활 꿀팁|꿀팁|정보를 알고|Honest Review|어니스트 리뷰)", re.I)
 
 def pre_filter(pages, m: Material):
-    # V3.9: 제목 키는 [한글 제목, 원제]. 감독 조건은 감독이름들(TMDB ko · en · Wikidata ko · 별칭 · 씨네21) 중 하나.
-    # V3.8은 TMDB ko 감독 이름 하나만 봤다. 그 이름이 영어면 한글 기사가, 한글이면 영어 평론이 다 떨어졌다.
-    제목키 = [k for k in dict.fromkeys([_norm(m.title), _norm(m.original_title or "")]) if len(k) >= 2]
-    감독키 = [k for k in dict.fromkeys(_norm(x) for x in (m.감독이름들 or ([m.director] if m.director else []))) if len(k) >= 2]
+    keys = [_norm(m.title)] + ([_norm(m.director)] if m.director else [])
+    keys = [k for k in keys if len(k) >= 2]
     out, seen = [], set()
     for p in pages:
         if p["url"] in seen:
@@ -1202,13 +761,10 @@ def pre_filter(pages, m: Material):
         seen.add(p["url"])
         if len(p["본문"]) < 400:
             continue
-        if p.get("목록통과"):             # V3.9: 씨네21 목록에서 제목 · 날짜로 거른 기사는 400자 조건만 본다
-            out.append(p)
+        글 = _norm(p["본문"] + " " + p["제목"])
+        if not any(k in 글 for k in keys):
             continue
-        글 = _norm((p.get("대조글") or p["본문"]) + " " + p["제목"])      # V3.9: 대조글은 정보 칸까지 든 글이다(_parse_page)
-        if not any(k in 글 for k in 제목키 + 감독키):
-            continue
-        if 감독키 and not any(k in 글 for k in 감독키):      # 같은 제목 다른 영화(괴물 2006 · 2023)를 거른다
+        if m.director and _norm(m.director) not in 글:      # 같은 제목 다른 영화(괴물 2006 · 2023)를 거른다
             continue
         if 개인블로그.search((p.get("매체") or "") + " " + p["제목"]):   # 차단 목록에 없는 개인 블로그. 이름으로 거른다
             continue
@@ -2075,12 +1631,7 @@ def 편집국장_읽기(글: Article, 개요_: 개요, 재료, 관점표, m: Mat
     원문들 += "".join(f"\n\n### (감독 · 배우 말 · {x['매체']}) {x['링크']}\n" + "\n".join("- " + y for y in x["말"]) for x in (감독말 or []))
     앞 = (앞판_text(앞판) + "\n\n") if (앞판기억 and 앞판) else ""
     주문글 = (f"[주문 — 기획자 · 작가가 받은 것]\n{주문_text(주문.접근, 주문.온도, 주문.시작점, 개요_.배치)}\n\n" if 주문 is not None else "")
-    # 검토: [스포일러]는 "재료의 줄거리에 이미 적힌 것은 아니다"라고 받는다. 이 칸을 재료의 줄거리로 읽으면 앞 3분의 2에 든 반전
-    # (9/30 오리지날 씬: 월터가 줄리아의 옛 연인 빌리다 · 알렉산더: 임종)을 글이 밝혀도 스포일러로 안 잡는다. 스포일러는 [영화 정보]의 줄거리로만 가린다
-    줄거리대조 = (f"[영어 위키백과 줄거리 — 사실 대조에만 쓴다. 여기 있는 사건은 재료 안이다. 스포일러는 이 칸이 아니라 [영화 정보]의 줄거리로만 가린다. "
-                f"[영화 정보]의 줄거리에 없는 반전 · 죽음 · 정체를 글이 밝혔으면 이 칸에 있어도 스포일러다. 마지막 막 · 결말은 잘랐다. 출처: {m.enwiki_url}]\n{m.줄거리_en}\n\n"
-                if m.줄거리_en else "")      # V3.9: 작가 · 기획자는 안 받는다
-    ask = (f"{앞}{주문글}[영화 정보]\n{영화_text(m)}\n\n{줄거리대조}"
+    ask = (f"{앞}{주문글}[영화 정보]\n{영화_text(m)}\n\n"
            f"[개요]\n주제: {개요_.주제}\n누구에게: {개요_.누구에게}\n사실목록:\n" + "\n".join("- " + f for f in 개요_.사실목록) + "\n\n"
            f"[관점표]\n{관점표 or '(없음)'}\n\n"
            f"[평론 원문 — {len(재료)}편]\n{원문들}\n\n"
@@ -2288,40 +1839,24 @@ print("상태 준비 끝")
 def n_재료모으기(st: RunState) -> RunState:
     m = st.material
     pages = []
-    # 씨네21 — 영화 페이지 한줄평 + 기사. V3.9: 영화 탭에서 찾고, 찾은 줄의 한글 감독 이름을 m.감독이름들에 더한다
-    c = cine21_영화찾기_m(m)
-    이름들 = m.감독이름들 or ([m.director] if m.director else [])
+    # 씨네21 — 영화 페이지 한줄평 + 기사
+    c = cine21_영화찾기(m.title, m.year, m.director)
     if c:
         st.한줄평, st.씨네21 = cine21_한줄평(c["movie_id"])
         페이지감독 = (st.씨네21 or {}).get("감독", "")
-        if 이름들 and 페이지감독 and not _이름맞나(이름들, [페이지감독.replace("감독", "", 1)]):
+        if m.director and 페이지감독 and _norm(m.director) not in _norm(페이지감독):
             st.log(f"  씨네21: {c['이름']} (movie_id {c['movie_id']}) 감독이 {페이지감독}다. 다른 영화라 한줄평을 버린다")
             st.한줄평, st.씨네21 = [], None
         else:
-            st.log(f"  씨네21: {c['이름']} (movie_id {c['movie_id']}) · 감독 {c['감독'] or '?'} · 한줄평 {len(st.한줄평)}개")
+            st.log(f"  씨네21: {c['이름']} (movie_id {c['movie_id']}) · 한줄평 {len(st.한줄평)}개")
     else:
         st.log("  씨네21: 영화 페이지를 못 찾았다")
-    한글감독 = next((x for x in m.감독이름들 if _RE_한글.search(x)), None) or m.director
-    제목들 = [m.title, (c or {}).get("이름"), m.위키ko제목, m.original_title]
-    기사들 = cine21_기사찾기(m.title, 한글감독, year=m.year, 제목들=제목들)
+    기사들 = cine21_기사찾기(m.title, m.director)
     with ThreadPoolExecutor(max_workers=3) as ex:                 # 같은 사이트는 _site_wait가 1초씩 띄운다
         읽은 = list(ex.map(cine21_기사읽기, 기사들))
-    씨네기사 = pre_filter([p for p in 읽은 if p], m)
-    씨네기사.sort(key=lambda p: (_기사순위(p), -len(p["본문"])))    # V3.9: 매체당 두 편 자리에 긴 비평이 먼저 들어가게
-    씨네기사 = 씨네기사[:씨네21기사수]
+    씨네기사 = pre_filter([p for p in 읽은 if p], m)[:씨네21기사수]
     pages += 씨네기사
-    st.log(f"  씨네21 기사 {len(기사들)}건 찾아(목록에서 제목 · 날짜로 거름) {sum(1 for p in 읽은 if p)}건 읽음 → 이 영화 기사 {len(씨네기사)}건")
-    # V3.9: Eye for Film — 검색 엔진 링크보다 먼저
-    try:                    # 검토: 이 마디에서 예외가 나면 _마디가 글 전체를 탈락시킨다. 한 출처가 죽어도 재료 모으기는 간다
-        e = eyeforfilm_평론(m)
-    except Exception as ex:
-        e = None
-        st.log(f"  Eye for Film 실패: {ex}")
-    if e:
-        pages.append(e)
-    st.log(f"  Eye for Film: {'평론 ' + str(len(e['본문'])) + '자' if e else '못 찾았다'}")
-    if m.제작_en or m.줄거리_en:
-        st.log(f"  영어 위키백과: Production {len(m.제작_en)}자(감독 · 배우 말 재료) · Plot {len(m.줄거리_en)}자(편집국장 대조에만)")
+    st.log(f"  씨네21 기사 {len(기사들)}건 찾아 {sum(1 for p in 읽은 if p)}건 읽음 → 이 영화 기사 {len(씨네기사)}건")
     # 검색으로 다른 매체
     st.links = collect_links(m)
     남는칸 = PAGE_LIMIT - len(pages)
@@ -2342,15 +1877,13 @@ def n_재료판정(st: RunState) -> RunState:
     st.판정원본 = judge_pages(st.pages, st.material, b, log=st.log)
     st.남은콜 = b["남은콜"]
     st.재료, st.감독말 = keep_rules(st.판정원본)
-    st.감독말 += 위키제작말(st.material)          # V3.9: 영어 위키백과 Production 절. 모델 판정 없이 붙는다
     매체들 = ", ".join(dict.fromkeys(r["매체"] for r in st.재료)) or "-"
     st.log(f"  검색 링크 {len(st.links)} / 읽은 페이지 {len(st.pages)} / robots 막힘 {len(st.blocked)} / 남은 평론 {len(st.재료)} ({매체들}) / 장면메모 {sum(len(r['장면메모']) for r in st.재료)} / 감독 말 {sum(len(x['말']) for x in st.감독말)} / 한줄평 {len(st.한줄평)}")
     return st
 
 def 보강_링크(m: Material):
     t, d = m.title, (m.director or "")
-    te, de = _영어이름(m)                      # V3.9: 영어 질의는 원제 · 영어 감독 이름으로
-    말 = [f"{t} 인터뷰 감독", f"{t} 제작기", f"{t} 영화 해석", f"{te} {de or d} interview", f"{te} {m.year} review analysis"]
+    말 = [f"{t} 인터뷰 감독", f"{t} 제작기", f"{t} 영화 해석", f"{t} {d} interview", f"{t} {m.year} review analysis"]
     out = []
     for q in dict.fromkeys(말):
         out += 검색(q, n=10)
@@ -2378,7 +1911,6 @@ def n_재료보강(st: RunState) -> RunState:
     st.pages += 새페이지
     st.판정원본 += 더
     st.재료, st.감독말 = keep_rules(st.판정원본)
-    st.감독말 += 위키제작말(st.material)          # V3.9: keep_rules가 새로 만들었으니 다시 붙인다
     st.log(f"  보강: 페이지 {len(새페이지)}장 더 읽음 → 평론 {len(st.재료)} / 장면메모 {sum(len(r['장면메모']) for r in st.재료)} / 감독 말 {sum(len(x['말']) for x in st.감독말)}")
     return st
 
@@ -2862,7 +2394,7 @@ def 점검():
     if c:
         h, page = cine21_한줄평(c["movie_id"])
         print(f"  한줄평 {len(h)}개 · 페이지 감독 {page['감독'] or '?'}" + (f" — {h[0]['이름']} {h[0]['점수']}: {h[0]['한줄']}" if h else ""))
-    기사 = cine21_기사찾기("헤어질 결심", "박찬욱", n=3, year=2022)
+    기사 = cine21_기사찾기("헤어질 결심", "박찬욱", n=3)
     print(f"  기사 {len(기사)}건", [(x['제목'][:30], x['필자'], x['날짜']) for x in 기사])
     print("\n[검색 엔진]")
     r = 검색("헤어질 결심 2022 영화 리뷰", n=8)
@@ -2946,16 +2478,9 @@ async def cmd_list(titles=TEST_TITLES, 동시=None):
     return results
 
 def _씨네21있나(c, 최소=2):
-    """V3.6: 씨네21 기사가 최소 편 이상 잡히는 영화인지. 분석적인 평론이 있어야 깊이가 나온다.
-    V3.9: 영화 탭을 한 번 먼저 본다. 제목이 비슷한 줄이 없으면 기사를 안 센다. 있으면 기사 목록을 V3.9 규칙(제목 괄호 · 같음 · 나열 + 날짜 창)으로
-    세다가 최소 편이 되면 멈춘다. V3.8은 제목이 느슨하게 든 기사를 날짜 없이 셌다(9/30: 페인티드 베일 12건 중 이 영화 평은 1건)."""
+    """V3.6: 씨네21 기사가 최소 편 이상 잡히는 영화인지. 분석적인 평론이 있어야 깊이가 나온다."""
     try:
-        t = c.get("title") or ""
-        y = int(str(c.get("year") or "")[:4]) if str(c.get("year") or "")[:4].isdigit() else None
-        html = fetch(f"{CINE21}/search/movie/", params={"query": t})
-        if not html or not any(_제목비슷(x["이름"], t) for x in _씨네21영화줄(html)):
-            return False
-        return len(cine21_기사찾기(t, n=최소, year=y, 멈출수=최소)) >= 최소
+        return len(cine21_기사찾기(c.get("title") or "", n=최소)) >= 최소
     except Exception:
         return False
 

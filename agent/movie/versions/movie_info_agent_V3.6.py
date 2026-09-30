@@ -1,7 +1,7 @@
-# # Movie Info agent V3.7 — 영화 정보 전달 에이전트
+# # Movie Info agent V3.6 — 영화 정보 전달 에이전트
 #
 # 콜랩 노트북(Movie_Info_agent_V2.3.ipynb)을 스크립트로 옮긴 것이다.
-# 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_info/올림` · `탈락`에 나눠 쌓인다.
+# 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_info/`에 쌓인다.
 #
 # 위에서부터 차례로 실행한다.
 #
@@ -90,52 +90,6 @@
 # - 재개봉 판정을 고쳤다. 한국 개봉 기록이 그 전에도 있을 때만 재개봉이다. 해외에서 먼저 나오고 몇 해 뒤 한국에 걸린 것은 `late_kr`(늦은 한국 개봉)이다. TMDB 한국 기록이 빠졌을 수 있어 '다시' · '처음' 둘 다 단정하지 않는다.
 #   V3.2에서 2025년 이탈리아 영화의 한국 첫 개봉을 "다시 극장에 걸린다"고 썼다.
 #
-# **V3.7에서 바뀐 것 — 재료를 늘린다 (글이 700~890자로 하한 900자에 걸린다)**
-#
-# - 진단: 재료가 TMDB 한국어 줄거리 78~447자뿐이었다. 기사 검색(DuckDuckGo)은 봇 확인(202)으로 지난 92편에서 0건이었다.
-#   한국어 위키 주변 이야기는 138~191자였다. 작가가 모자란 분량을 뜻풀이 · 되풀이로 채웠다.
-# - DuckDuckGo 기사 검색을 뺐다. `fetch_context`가 더는 부르지 않는다. `_search_links` · `fetch_article_context`를 지웠다.
-# - TMDB 상세 요청에 `external_ids`를 같이 붙여 Wikidata 번호를 받는다. 요청은 늘지 않는다.
-# - `fetch_wikidata`: Wikidata 요청 2회로 위키 문서 제목(ko · en · ja)과 원작 · 각본 · 음악 · 촬영 · 편집 · 촬영지 · 배경 장소를 받는다.
-#   이름은 한국어 레이블만 쓴다. 한국어 레이블이 없는 사람 · 곳은 넘기지 않는다.
-# - 한국어 위키는 Wikidata의 문서 제목으로 곧장 연다(요청 1회). Wikidata 번호가 있는데 한국어 문서가 없으면 한국어 위키를 안 부른다.
-#   Wikidata 번호 자체가 없을 때만 전처럼 제목으로 찾는다.
-# - 한국어 위키 절에 출연 · 주연 · 조연 · 참고를 더했다. 절마다 800자까지다. 문서 앞부분은 늘 넣는다.
-#   '평가' 절의 네이버 · 다음 평점 줄은 버린다. '줄거리' 절은 주변 이야기에 안 넣고 `synopsis_extra`(1500자)로 따로 보낸다. 뒤 절반 문단은 절정 · 결말이라 잘라낸다.
-# - `fetch_cine21_movie`: 씨네21 영화 검색(/search/movie/) → 영화 페이지. 요청 2회. 시놉시스 · 감독 · 출연 한국어 이름과 배역 · 관객 수 · 한국 개봉일을 꺼낸다.
-#   감독 이름은 공백 · 가운뎃점을 지우고 맞춘다. 안 맞으면 상영시간으로 고르고 영화 페이지의 연도로 확인한다. 한줄평은 안 가져온다.
-#   통합 검색(/search/)은 다른 영화 · 배우 항목이 섞여서 안 쓴다. 검색어 이름은 `query`다(`q`로 보내면 결과가 0건이다).
-# - `fetch_cine21_articles`: 씨네21 기사 검색에서 제목에 <제목> · ‘제목’(네 글자 이상이면 제목 그대로)이 있고 날짜가 개봉 연도 -1 ~ +3인 기사만 본다.
-#   인터뷰 · 제작기 · 개봉 소식을 앞에, 리뷰 · 비평을 뒤에 둔다. 본문에 영화 제목이 있는 기사만 3건까지 가져온다.
-# - `fetch_enwiki_context`: 한국어 주변 이야기(한국어 위키 + 씨네21 기사)가 합해서 1500자보다 적을 때만 영어 위키를 1회 부른다.
-#   앞부분 · Production(Development · Writing · Casting · Filming) · Release · Box office · Accolades만 쓴다. 줄거리 · 출연 · 평단 반응 · 주제 절은 뺀다.
-# - 배우 한국어 이름은 씨네21 영화 페이지 → 한국어 위키 출연 절 → Wikidata 한국어 레이블 순서로 찾는다. 앞 두 곳은 배역도 같이 준다.
-#   셋 다 없으면 그 배우는 글에 넘기지 않는다. 원어 이름이 영문 표기 검사에 걸려 세 번 떨어졌다.
-# - 감독은 TMDB 이름에 한글이 있으면 그대로 쓴다. 형태 검사가 이 이름을 본문에서 찾는데, 한국어 표기는 곳마다 다르다
-#   (씨네21 DB · TMDB '마틴 스콜세지', 씨네21 기사 · 한국어 위키 '마틴 스코세이지'). V3.6까지 검사가 보던 이름을 바꾸지 않는다.
-#   한글이 없으면 씨네21 → Wikidata 순서다. 감독은 빼면 글이 안 서서 셋 다 없으면 원어 이름을 남긴다(V3.1 검사가 한글 표기를 받는다).
-# - 씨네21 기사는 같은 제목의 다른 작품을 거른다. 본문 영화 링크 번호가 찾은 영화와 같아야 하고, 링크가 없으면 감독 이름이 본문에 있어야 한다.
-#   오디션(1999, 미이케 다카시)에 2001년 애니메이션 <오디션> 기사 두 건이 붙었다.
-# - 주변 이야기에 출처 머리([씨네21 기사] · [한국어 위키] · [영어 위키])를 단다. 주변 이야기 전체 상한은 5000자에서 8000자로 올렸다.
-# - 새 요청은 `_host_wait`를 거친다. 호스트마다 1초 간격이고 스레드끼리 자물쇠를 나눠 쓴다. 위키미디어(위키백과 · Wikidata)는 전체에서 한 번에 1개다.
-#   씨네21은 robots.txt를 한 번 읽고 막힌 경로는 안 연다.
-# - 재료 정리: 쓸 거리 상한 8개 → 12개. '만든 과정 · 개봉 과정'(`production_notes`) 칸을 더했다. 작가 · 편집국장 · 고치기가 [정리된 재료]로 받는다.
-# - 옮겨 적기 검사: 씨네21 시놉시스 · 줄거리 더(위키)도 줄거리 쪽(14자)으로 본다.
-# - TMDB에 한국 개봉 기록이 없으면 씨네21 개봉일을 쓴다.
-# - 표본 여섯 편 실측(재료 함수만, 모델 안 부름. 반도 · 싱크로닉 · 오디션 · 원 데이 · 더 킬러: 죽음의 여왕 · 플라워 킬링 문):
-#   재료 글자 440~936자 → 2840~6517자. 주변 이야기 0~191자 → 2275~4904자. 한글 없는 인물 0~5명 → 6편 모두 0명.
-#   요청 한 편 6~8회(+ DuckDuckGo 1회) → 9~14회. 재료 모으기 한 편 4~7초 → 11~18초(간격 1초 때문이다).
-#   씨네21 영화 페이지는 6편 중 5편에서 찾았다(더 킬러: 죽음의 여왕 못 찾음). 영어 위키는 4편에서 불렀다.
-# - V3.7 검토에서 고친 것 (판은 그대로 V3.7이다):
-#   Wikidata 첫 요청을 Special:EntityData에서 Action API(wbgetentities, sitelinks · claims)로 바꿨다. /wiki/Special:은 위키미디어 robots.txt가 막은 경로다.
-#   요청 수와 받는 값은 같다. 오디션에서 Wikidata 칸(원작 · 각본 · 촬영 · 배역)이 한 글자도 안 바뀌었다. 없는 항목(missing)이면 한국어 위키를 제목으로 찾는다.
-#   줄거리 더는 절반을 내림으로 남긴다. 올림이면 반도 일곱 문단 중 네 문단이 남아 넷째 문단(철민 죽음 · 631부대 추격 · 황중사가 좀비가 됨)이 들어갔다. 반도 줄거리 더 843자 → 708자.
-#   주변 이야기(한국어 위키 절 · 영어 위키 · 씨네21 기사)에서 결말 · 반전 · 마지막 장면을 말하는 줄은 코드가 뺀다(`_drop_ending`).
-#   오디션 영어 위키 Production 절의 마지막 고문 장면 문단(656자)이 빠졌다. 오디션 재료 4986자 → 4330자, 주변 이야기 3487자 → 2831자. 나머지 네 편은 그대로다.
-#   출처 함수마다 `_출처보호`로 감싼다. 씨네21 HTML이 바뀌어 파싱 중 예외가 나도 fetch_material이 멈추지 않는다. 전에는 백엔드 어댑터까지 예외가 올라갔다.
-#   영문이 든 배우 이름은 넘기지 않는다. 영문 두 글자 이상이 든 배역도 넘기지 않는다(씨네21 배역은 걸러지지 않았다).
-#   한글 없는 감독을 씨네21 감독에 차례대로 이을 때, TMDB 한글 이름과 같은 씨네21 이름은 먼저 뺀다. 한글 · 영문이 섞인 공동 감독이면 같은 사람이 두 번 들어가고 한 사람이 빠졌다.
-#
 # **V3.6에서 바뀐 것 — 평론 말투를 뺀다 (PM 9/29: 너무 진지하고, 안 어울리는 문장이 끼고, 학술적이다)**
 #
 # - 워크플로 진단(저장 글 59편): 평론처럼 뜻을 매긴 문장이 33편 59문장, 앞 문단 갈래 풀이가 25편, 여운으로 닫는 끝 문장이 17편, 자문자답이 12편이다.
@@ -202,7 +156,7 @@ TMDB_KEY = _secret("TMDB_KEY")
 os.environ["OPENAI_API_KEY"] = _secret("LLM_KEY")
 print("키 읽음. 길이:", len(os.environ["OPENAI_API_KEY"]))
 
-VERSION = "Movie Info V3.7"
+VERSION = "Movie Info V3.6"
 FORM = "정보 전달"
 
 # ── 모델 ──────────────────────────────────────────────────
@@ -264,35 +218,23 @@ CRITICISM_LINE = 5.5
 
 # ── 위키백과 주변 이야기 ─────────────────────────────────
 WIKI_API = "https://ko.wikipedia.org/w/api.php"
-WIKI_HEADERS = {"User-Agent": "menu-movie-info-agent/3.7 ( menu-project@example.com )"}   # V3.6: 위키백과는 UA 없는 요청을 403으로 막는다. 그동안 주변 이야기가 늘 비었다. V3.7: 새 외부 요청(Wikidata · 씨네21)도 이 UA를 쓴다
+WIKI_HEADERS = {"User-Agent": "menu-movie-info-agent/3.6 ( menu-project@example.com )"}   # V3.6: 위키백과는 UA 없는 요청을 403으로 막는다. 그동안 주변 이야기가 늘 비었다
 # 절 이름에 이 말이 하나라도 들어가면 가져온다. 위키백과 문서마다 절 이름이 제각각이다
 CONTEXT_SECTIONS = ("제작", "개봉", "반응", "평가", "흥행", "영향", "여담", "기타",
                     "논란", "수상", "후보", "영화제", "촬영", "기획", "배경",
-                    "출시", "공개", "성적", "화제", "비평", "리뷰", "각색", "원작",
-                    "출연", "주연", "조연", "참고")          # V3.7: 출연 · 주연 · 조연 · 참고를 더했다
+                    "출시", "공개", "성적", "화제", "비평", "리뷰", "각색", "원작")
 WIKI_MAX_CHARS = 2500        # 위키백과에서 가져올 최대 길이
-SECTION_MAX_CHARS = 800      # V3.7: 한국어 위키 절 하나에서 가져올 최대 길이
-SYNOPSIS_EXTRA_MAX = 1500    # V3.7: 한국어 위키 '줄거리' 절(결말 앞까지)에서 가져올 최대 길이
 ARTICLE_MAX_CHARS = 1200     # 기사 한 건에서 가져올 최대 길이
 ARTICLE_MAX_COUNT = 3        # 기사는 최대 몇 건까지
-CONTEXT_MAX_CHARS = 8000     # 주변 이야기 전체 최대 길이. V3.7: 5000 → 8000 (씨네21 기사 · 영어 위키가 더해졌다)
-KO_CONTEXT_ENOUGH = 1500     # V3.7: 한국어 주변 이야기(한국어 위키 + 씨네21 기사)가 이보다 적을 때만 영어 위키를 부른다
-ENWIKI_SECTION_MAX = 1200    # V3.7: 영어 위키 절 하나에서 가져올 최대 길이
-ENWIKI_MAX_CHARS = 4000      # V3.7: 영어 위키에서 가져올 최대 길이
-HOST_GAP_SEC = 1.0           # V3.7: 같은 호스트에 요청을 보내는 최소 간격(초). 위키미디어는 전체를 한 호스트로 본다
+CONTEXT_MAX_CHARS = 5000     # 주변 이야기 전체 최대 길이
 
-# ── 씨네21 · Wikidata · 영어 위키 (V3.7) ─────────────────
-# 기사 검색(DuckDuckGo)은 뺐다. 봇 확인(202)으로 지난 92편에서 0건이었다
-CINE21 = "https://cine21.com"
-WIKIDATA_API = "https://www.wikidata.org/w/api.php"
-ENWIKI_API = "https://en.wikipedia.org/w/api.php"
-# Wikidata 속성 → Material 칸 이름. 사람 · 작품 · 곳은 한국어 레이블만 쓴다
-WIKIDATA_PROPS = {"P144": "원작", "P58": "각본", "P86": "음악", "P344": "촬영",
-                  "P1040": "편집", "P915": "촬영지", "P840": "배경 장소"}
-# 영어 위키는 이 말로 시작하는 절만 쓴다. 줄거리 · 출연 · 평단 반응 · 주제 절은 뺀다
-ENWIKI_KEEP = ("production", "development", "writing", "casting", "filming",
-               "release", "box office", "accolades")
-ENWIKI_DROP = ("plot", "synopsis", "premise", "critical", "reception", "themes", "response")
+# 기사를 가져올 곳. 여기 없는 주소는 안 연다
+ARTICLE_DOMAINS = (
+    "cine21.com", "hani.co.kr", "khan.co.kr", "joongang.co.kr",
+    "donga.com", "chosun.com", "hankyung.com", "mk.co.kr",
+    "yna.co.kr", "news1.kr", "newsis.com", "ytn.co.kr",
+    "maxmovie.com", "movist.com", "extmovie.com",
+)
 
 # ── 판정관 통과선 — 임시 ─────────────────────────────────
 PASS = {
@@ -335,24 +277,11 @@ class Material(BaseModel):
     director_past_works: list[str] = []   # 이 영화보다 앞에 만든 것. 제목(연도)
     director_later_works: list[str] = []  # 이 영화보다 뒤에 만든 것
     source_work: str | None = None
-    context: str = ""                   # 주변 이야기. 영화제 · 제작 · 반응. V3.7: 출처 머리([씨네21 기사] · [한국어 위키] · [영어 위키])를 달아 잇는다
+    context: str = ""                   # 주변 이야기. 영화제 · 제작 · 반응
     context_source: str | None = None
     reception: Reception | None = None
     reception_source: str | None = None
     source_links: list[str] = []
-    # ── V3.7: 재료를 늘린 칸 ──
-    wikidata_id: str | None = None
-    roles: dict[str, str] = {}          # 배우 한국어 이름 → 배역. 씨네21 영화 페이지 · 한국어 위키 출연 절에서
-    screenplay: list[str] = []          # 각본 (Wikidata 한국어 레이블)
-    music: list[str] = []               # 음악
-    cinematography: list[str] = []      # 촬영
-    editing: list[str] = []             # 편집
-    filming_locations: list[str] = []   # 촬영지
-    settings: list[str] = []            # 배경 장소
-    cine21_synopsis: str = ""           # 씨네21 영화 페이지 시놉시스
-    synopsis_extra: str = ""            # 한국어 위키 '줄거리' 절. 뒤 절반 문단(절정 · 결말)을 잘라냈다
-    audience: str | None = None         # 관객 수 (씨네21)
-    context_chars: dict[str, int] = {}  # 주변 이야기 출처별 글자 수. 로그용
 
 
 class Brief(BaseModel):
@@ -367,11 +296,7 @@ class Brief(BaseModel):
     plot: str = Field(description="재료의 줄거리를 결말 앞까지 적은 것. 장소 · 직업 · 물건 · 사건 차례를 남긴다. 재료에 없는 사건을 보태지 않는다")
     details: list[str] = Field(
         default_factory=list,
-        description="재료에 있는 구체적인 것. 있는 만큼 적고 열두 개까지. 장소 · 물건 · 설정 · 직업. 한 줄에 하나. 뜻풀이를 적지 않는다")   # V3.7: 8 → 12
-    production_notes: list[str] = Field(
-        default_factory=list,
-        description="만든 과정 · 개봉 과정. 누가 각본 · 음악 · 촬영을 맡았는지, 어디서 찍었는지, 언제 어디서 처음 상영했는지, 몇 명이 봤는지. "
-                    "재료에 있는 것만. 여섯 개까지. 한 줄에 하나. 뜻풀이와 평가를 적지 않는다")   # V3.7
+        description="재료에 있는 구체적인 것. 있는 만큼 적고 여덟 개까지. 장소 · 물건 · 설정 · 직업 · 만든 과정. 한 줄에 하나. 뜻풀이를 적지 않는다")
     closing: str = Field(
         default="", description="마지막 문장에 쓸 줄거리 사실 하나. 앞 문단 계획에는 넣지 않는다. 재료에 있는 것만")
     runtime_rating: str = Field(
@@ -3035,7 +2960,7 @@ def build_system_prompt(order: WriteOrder) -> str:
         FORM_INFO,
         STANCE,
         "[주문 — 편집국장과 판정관도 같은 것을 받는다]\n" + order_text(order),   # V2.5: 온도 · 시작점 · 배치를 뜻과 같이
-        f"[분량]\n{MIN_CHARS}자에서 {MAX_CHARS}자 사이다. 처음부터 {MIN_CHARS}자를 넘게 쓴다. 모자라면 쓸 거리 · 만든 과정 · 주변 이야기 · 인물에서 아직 안 쓴 사실을 더한다. 같은 말을 되풀이해 늘리지 않는다. 문단은 빈 줄로 나눈다.",   # V3.6. V3.7: 만든 과정
+        f"[분량]\n{MIN_CHARS}자에서 {MAX_CHARS}자 사이다. 처음부터 {MIN_CHARS}자를 넘게 쓴다. 모자라면 쓸 거리 · 주변 이야기 · 인물에서 아직 안 쓴 사실을 더한다. 같은 말을 되풀이해 늘리지 않는다. 문단은 빈 줄로 나눈다.",   # V3.6
     ]
     if order.material.upcoming:
         parts.append(UPCOMING_LAYER)
@@ -3055,136 +2980,12 @@ def build_system_prompt(order: WriteOrder) -> str:
             parts.append("앞 글은 주지 않는다. 같은 구조로 돌아가지 말고 처음부터 다시 쓴다.")
     return "\n\n".join(p.strip() for p in parts)
 
-# ## 셀 5 — 재료 모으기 (TMDB + Wikidata + 위키백과 + 씨네21) + 거르기
+# ## 셀 5 — 재료 모으기 (TMDB + 위키백과) + 거르기
 
 import requests
-import threading, time
-from contextlib import contextmanager
-from urllib.parse import urlparse
-from urllib.robotparser import RobotFileParser
-from bs4 import BeautifulSoup
 
 TMDB = "https://api.themoviedb.org/3"
 TODAY = date.today().isoformat()
-
-
-# ── 호스트 간격 (V3.7) ───────────────────────────────────
-# V3.5부터 영화 세 편을 스레드로 같이 모은다. 같은 곳에 요청이 몰리지 않게 호스트마다 자물쇠 하나와 간격을 둔다.
-# 자물쇠를 요청이 끝날 때까지 쥐고 있어서 한 호스트에는 한 번에 요청 하나만 간다. 위키미디어는 ko · en 위키백과와 Wikidata를 한 호스트로 본다.
-_host_locks, _host_last, _host_gap, _host_guard = {}, {}, {}, threading.Lock()
-
-
-def _host_key(host: str) -> str:
-    host = (host or "").lower()
-    if host.endswith(("wikipedia.org", "wikidata.org")):
-        return "wikimedia"
-    return host.replace("www.", "")
-
-
-@contextmanager
-def _host_wait(host: str):
-    """V3.7: 이 호스트의 앞 요청이 끝나고 HOST_GAP_SEC(robots Crawl-delay가 더 길면 그것)이 지난 뒤에 들어간다."""
-    key = _host_key(host)
-    with _host_guard:
-        lk = _host_locks.setdefault(key, threading.Lock())
-    with lk:
-        gap = _host_gap.get(key, HOST_GAP_SEC) - (time.time() - _host_last.get(key, 0))
-        if gap > 0:
-            time.sleep(gap)
-        try:
-            yield
-        finally:
-            _host_last[key] = time.time()
-
-
-def _get(url: str, params: dict | None = None, timeout: int = 20):
-    """V3.7: 새 외부 요청(위키 · Wikidata · 씨네21)은 여기로 보낸다. 간격을 지키고 기존 UA를 붙인다. 200이 아니면 None."""
-    try:
-        with _host_wait(urlparse(url).hostname or ""):
-            r = requests.get(url, params=params, headers=WIKI_HEADERS, timeout=timeout)
-    except Exception:
-        return None
-    return r if r.status_code == 200 else None
-
-
-_robots, _robots_lock = {}, threading.Lock()
-
-
-def _robots_ok(url: str) -> bool:
-    """V3.7: robots.txt가 막은 경로는 안 연다. robots.txt를 못 읽으면 막힌 것으로 본다. 404면 허용이다. 사이트마다 한 번만 읽는다."""
-    p = urlparse(url)
-    base = f"{p.scheme}://{p.netloc}"
-    with _robots_lock:
-        if base not in _robots:
-            rp = RobotFileParser()
-            try:
-                with _host_wait(p.hostname or ""):
-                    r = requests.get(base + "/robots.txt", headers=WIKI_HEADERS, timeout=10)
-                if r.status_code == 404:
-                    rp.parse([])
-                elif r.status_code == 200:
-                    rp.parse(r.text.splitlines())
-                else:
-                    rp = None
-            except Exception:
-                rp = None
-            if rp is not None:
-                try:
-                    d = rp.crawl_delay(WIKI_HEADERS["User-Agent"])
-                    if d:
-                        _host_gap[_host_key(p.hostname or "")] = max(HOST_GAP_SEC, float(d))
-                except Exception:
-                    pass
-            _robots[base] = rp
-    rp = _robots[base]
-    try:
-        return rp is not None and rp.can_fetch(WIKI_HEADERS["User-Agent"], url)
-    except Exception:
-        return False
-
-
-def _c21_get(path: str, params: dict | None = None):
-    """V3.7: 씨네21 요청. robots.txt를 먼저 본다."""
-    url = requests.Request("GET", CINE21 + path, params=params).prepare().url
-    if not _robots_ok(url):
-        return None
-    return _get(url)
-
-
-def _cut(text: str, n: int) -> str:
-    """V3.7: n자에서 자르되 문장 끝(. ? !)에서 끊는다. 뒤 절반 안에 문장 끝이 없으면 그냥 자른다."""
-    text = (text or "").strip()
-    if len(text) <= n:
-        return text
-    head = text[:n]
-    ends = [m.end() for m in re.finditer(r"[.?!](?=\s|$)", head)]
-    return head[:ends[-1]].strip() if ends and ends[-1] > n // 2 else head.strip()
-
-
-# V3.7 검토: 주변 이야기(한국어 위키 절 · 영어 위키 · 씨네21 기사)에서 결말 · 반전 · 마지막 장면을 말하는 줄(문단)은 코드가 뺀다.
-# 오디션(1999) 영어 위키 Production 절에 마지막 고문 장면 이야기가 들어갔다. PREP 규칙('결말이면 가져오지 않는다')에만 기대지 않는다
-_RE_ENDING_KO = re.compile(r"결말|엔딩|마지막 ?장면|라스트 ?[신씬]|반전|스포일러")
-_RE_ENDING_EN = re.compile(r"\b(?:ending|end of the film|final scene|climax|climactic|twist|spoiler)", re.I)
-
-
-def _drop_ending(text: str) -> str:
-    """V3.7 검토: 결말 · 반전 · 마지막 장면을 말하는 줄을 뺀다. 위키 · 기사 모두 줄 하나가 문단 하나다."""
-    return "\n".join(ln for ln in (text or "").split("\n")
-                     if not (_RE_ENDING_KO.search(ln) or _RE_ENDING_EN.search(ln))).strip()
-
-
-def _has_hangul(x: str | None) -> bool:
-    return bool(re.search(r"[가-힣]", x or ""))
-
-
-def _name_key(x: str | None) -> str:
-    """V3.7: 이름 대조용. 공백 · 가운뎃점 · 마침표 · 붙임표를 지우고 소문자로."""
-    return re.sub(r"[\s·・.\-‐,'’]", "", x or "").lower()
-
-
-def _title_key(x: str | None) -> str:
-    """V3.7: 제목 대조용. 글자 · 숫자만 남긴다."""
-    return re.sub(r"[\W_]+", "", x or "").lower()
 
 
 def _tmdb(path: str, **params):
@@ -3265,77 +3066,6 @@ def decide_reception(avg, votes) -> Reception | None:
     return "평가가 갈린다"
 
 
-# ── Wikidata (V3.7) ───────────────────────────────────────
-def _claim_ids(claims: dict, prop: str, limit: int | None = None) -> list[str]:
-    """속성 값 중 항목 번호(Q…)만 차례대로 모은다."""
-    out = []
-    for c in claims.get(prop, []):
-        v = ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value")
-        if isinstance(v, dict) and v.get("id") and v["id"] not in out:
-            out.append(v["id"])
-    return out[:limit] if limit else out
-
-
-def fetch_wikidata(qid: str | None) -> dict:
-    """V3.7: Wikidata에서 위키 문서 제목과 만든 사람 · 장소 사실을 가져온다. 요청 2회. 둘 다 Action API(wbgetentities)다.
-    1회째(sitelinks · claims)로 문서 제목(kowiki · enwiki · jawiki)과 원작 · 각본 · 음악 · 촬영 · 편집 · 촬영지 · 배경 장소를 받고,
-    2회째(labels, ko|en|ja)로 이름을 푼다. 감독 · 출연도 같은 요청에 넣어 원어 이름 → 한국어 이름 표(`이름표`)를 만든다.
-    한국어 레이블이 없거나 한글이 아닌 것은 버린다. ok가 거짓이면 Wikidata를 못 읽은 것이다.
-    V3.7 검토: Special:EntityData는 위키미디어 robots.txt가 막은 경로(/wiki/Special:)라 wbgetentities로 바꿨다. 요청 수는 같다.
-    없는 항목(missing)이면 ok를 거짓으로 둔다. 그래야 한국어 위키를 제목으로 찾는다."""
-    out = {"ok": False, "kowiki": None, "enwiki": None, "jawiki": None, "감독": [], "이름표": {}}
-    out.update({name: [] for name in WIKIDATA_PROPS.values()})
-    if not qid:
-        return out
-    r = _get(WIKIDATA_API, params={"action": "wbgetentities", "ids": qid, "props": "sitelinks|claims",
-                                   "sitefilter": "kowiki|enwiki|jawiki", "format": "json"}, timeout=25)
-    if r is None:
-        return out
-    try:
-        ents = r.json().get("entities", {})
-    except ValueError:
-        return out
-    e = ents.get(qid) or next(iter(ents.values()), {})      # 합쳐진 항목이면 다른 번호로 온다
-    if not e or "missing" in e:
-        return out
-    out["ok"] = True
-    sl = e.get("sitelinks") or {}
-    for k in ("kowiki", "enwiki", "jawiki"):
-        out[k] = (sl.get(k) or {}).get("title")
-    cl = e.get("claims") or {}
-    facts = {name: _claim_ids(cl, p, 4) for p, name in WIKIDATA_PROPS.items()}
-    dir_ids, cast_ids = _claim_ids(cl, "P57", 4), _claim_ids(cl, "P161", 30)
-    ids = list(dict.fromkeys(sum(facts.values(), []) + dir_ids + cast_ids))[:50]   # wbgetentities는 한 번에 50개까지
-    if not ids:
-        return out
-    r = _get(WIKIDATA_API, params={"action": "wbgetentities", "ids": "|".join(ids), "props": "labels",
-                                   "languages": "ko|en|ja", "format": "json"}, timeout=25)
-    if r is None:
-        return out
-    try:
-        ents = r.json().get("entities", {})
-    except ValueError:
-        return out
-    labels = {q: {lang: v.get("value", "") for lang, v in (x.get("labels") or {}).items()}
-              for q, x in ents.items()}
-
-    def ko(q):
-        v = labels.get(q, {}).get("ko", "")
-        return v if _has_hangul(v) else None
-
-    for name, qs in facts.items():
-        out[name] = [ko(q) for q in qs if ko(q)]
-    out["감독"] = [ko(q) for q in dir_ids if ko(q)]
-    for q in dir_ids + cast_ids:                            # 원어 이름(en · ja 레이블) → 한국어 이름
-        k = ko(q)
-        if not k:
-            continue
-        for lang in ("en", "ja", "ko"):
-            if labels[q].get(lang):
-                out["이름표"][_name_key(labels[q][lang])] = k
-    return out
-
-
 # ── 위키백과 주변 이야기 ─────────────────────────────────
 _RE_REF      = re.compile(r"<ref[^>]*/>|<ref.*?</ref>", re.S)
 _RE_TEMPLATE = re.compile(r"\{\{[^{}]*\}\}")
@@ -3344,35 +3074,27 @@ _RE_BOLD     = re.compile(r"'{2,}")
 _RE_HEAD     = re.compile(r"^==+ ?(.+?) ?==+", re.M)
 
 
-def _wiki_page(title: str, year: int | None, sitelink: str | None = None, search: bool = True):
-    """위키백과에서 문서를 찾아 본문 원본과 주소를 돌려준다.
-    V3.7: Wikidata가 알려 준 문서 제목(sitelink)이 있으면 검색 없이 곧장 연다(요청 1회).
-    search=False면 제목 검색을 안 한다. Wikidata 번호가 있는데 한국어 문서가 없을 때다. 요청은 _get(호스트 간격)으로 보낸다."""
+def _wiki_page(title: str, year: int | None):
+    """위키백과에서 문서를 찾아 본문 원본과 주소를 돌려준다."""
     try:
-        page = sitelink
-        if not page:
-            if not search:
-                return "", None
-            hits = []
-            for q in ([f"{title} ({year}년 영화)", f"{title} (영화)", f"{title} 영화", title]
-                      if year else [f"{title} (영화)", f"{title} 영화", title]):
-                r = _get(WIKI_API, params={"action": "query", "list": "search",
-                                           "srsearch": q, "format": "json"})
-                if r is None:
-                    continue
-                # V3.6: 제목이 같은 문서만 쓴다. "반도 (2020년 영화)"로 찾으면 첫 결과가 "2020년" 문서였다
-                hits = [h for h in r.json().get("query", {}).get("search", [])
-                        if re.sub(r"\s*\([^)]*\)\s*$", "", h["title"]).replace(" ", "") == title.replace(" ", "")]
-                if hits:
-                    break
-            if not hits:
-                return "", None
-            page = hits[0]["title"]
-        r = _get(WIKI_API, params={"action": "parse", "page": page, "prop": "wikitext",
-                                   "redirects": 1, "format": "json"})
-        if r is None:
+        hits = []
+        for q in ([f"{title} ({year}년 영화)", f"{title} (영화)", f"{title} 영화", title]
+                  if year else [f"{title} (영화)", f"{title} 영화", title]):
+            r = requests.get(WIKI_API, params={"action": "query", "list": "search",
+                                               "srsearch": q, "format": "json"},
+                             headers=WIKI_HEADERS, timeout=20).json()
+            # V3.6: 제목이 같은 문서만 쓴다. "반도 (2020년 영화)"로 찾으면 첫 결과가 "2020년" 문서였다
+            hits = [h for h in r.get("query", {}).get("search", [])
+                    if re.sub(r"\s*\([^)]*\)\s*$", "", h["title"]).replace(" ", "") == title.replace(" ", "")]
+            if hits:
+                break
+        if not hits:
             return "", None
-        text = r.json().get("parse", {}).get("wikitext", {}).get("*", "")
+        page = hits[0]["title"]
+        r = requests.get(WIKI_API, params={"action": "parse", "page": page,
+                                           "prop": "wikitext", "format": "json"},
+                         headers=WIKI_HEADERS, timeout=20).json()
+        text = r.get("parse", {}).get("wikitext", {}).get("*", "")
     except Exception:
         return "", None
     return text, "https://ko.wikipedia.org/wiki/" + page.replace(" ", "_")
@@ -3387,395 +3109,110 @@ def _clean_wikitext(text: str) -> str:
     return text
 
 
-def _wiki_cast(body: str) -> list[tuple[str, str]]:
-    """V3.7: 한국어 위키 출연 절에서 (배우 이름, 배역)을 뽑는다. '* 강동원 : 한정석 역' · '* 레오나르도 디카프리오 - 어니스트 버크하트 역' 꼴.
-    한글이 없는 이름은 버린다. 배역에 영문이 섞이면 배역만 뺀다."""
-    out = []
-    for ln in body.splitlines():
-        ln = ln.strip()
-        if not ln.startswith("*"):
-            continue
-        parts = re.split(r"\s*[:：]\s*|\s+[-–—]\s+", ln.lstrip("*").strip(), maxsplit=1)
-        name = re.sub(r"\s*\([^)]*\)", "", parts[0]).strip()
-        role = re.sub(r"\s*역\s*$", "", parts[1]).strip() if len(parts) > 1 else ""
-        if re.search(r"[A-Za-z]", role):
-            role = ""
-        if name and _has_hangul(name) and not re.search(r"[A-Za-z]", name) and len(name) <= 20:
-            out.append((name, role))
-    return out
-
-
-def _before_ending(body: str) -> str:
-    """V3.7: 위키 줄거리의 뒤 절반(절정 · 결말)을 잘라낸다. 문단이 둘 이상이면 문단으로, 하나면 문장으로 자른다. 한 문장뿐이면 안 쓴다.
-    반도 위키 줄거리는 일곱 문단이다. 3분의 2(다섯 문단)를 남기면 주요 인물 죽음 · 마지막 추격까지 들어갔다.
-    V3.7 검토: 절반을 올림(네 문단)으로 남기면 넷째 문단의 절정(철민 죽음 · 631부대 추격 · 황중사가 좀비가 됨)이 들어갔다. 내림(세 문단)으로 남긴다."""
-    paras = [p.strip() for p in re.split(r"\n\s*\n", body or "") if p.strip()]
-    if len(paras) >= 2:
-        return "\n\n".join(paras[:max(1, len(paras) // 2)])
-    sents = [x for x in re.split(r"(?<=[.?!])\s+", (body or "").strip()) if x]
-    if len(sents) >= 2:
-        return " ".join(sents[:max(1, len(sents) // 2)])
-    return ""
-
-
-def _kowiki_empty() -> dict:
-    """fetch_kowiki가 아무것도 못 찾았을 때의 모양."""
-    return {"context": "", "url": None, "synopsis_extra": "", "cast": []}
-
-
-def fetch_kowiki(title: str, year: int | None = None, sitelink: str | None = None,
-                 search: bool = True) -> dict:
-    """V3.7: 한국어 위키 문서 하나에서 세 가지를 꺼낸다. sitelink가 있으면 요청 1회다.
-    - context: 문서 앞부분 + CONTEXT_SECTIONS 절(절마다 SECTION_MAX_CHARS, 합해서 WIKI_MAX_CHARS). '평가' 절의 네이버 · 다음 평점 줄은 버린다
-    - synopsis_extra: '줄거리' 절. 주변 이야기에는 안 넣는다. 뒤 절반(절정 · 결말)을 잘라내고 SYNOPSIS_EXTRA_MAX까지
-    - cast: 출연 · 주연 · 조연 절의 (배우 한국어 이름, 배역)"""
-    out = _kowiki_empty()
-    raw, url = _wiki_page(title, year, sitelink=sitelink, search=search)
+def fetch_wiki_context(title: str, year: int | None = None) -> tuple[str, str | None]:
+    """위키백과에서 제작 · 개봉 · 반응 같은 절을 모아 온다.
+    절 이름이 하나도 안 맞으면 문서 앞부분을 대신 가져온다."""
+    raw, url = _wiki_page(title, year)
     if not raw:
-        return out
-    out["url"] = url
+        return "", None
     text = _clean_wikitext(raw)
 
     heads = list(_RE_HEAD.finditer(text))
     chunks = []
-    # V3.7: 문서 앞부분(언제 나온 어느 나라 무슨 영화인지)은 절을 잡았어도 넣는다. V3.6은 절을 하나도 못 잡았을 때만 넣었다
-    lead = _drop_ending(re.sub(r"\n{3,}", "\n\n", (text[:heads[0].start()] if heads else text).strip()))
-    if len(lead) > 80:
-        chunks.append("[문서 앞부분]\n" + _cut(lead, SECTION_MAX_CHARS))
     for i, h in enumerate(heads):
         name = h.group(1).strip()
-        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
-        body = re.sub(r"\n{3,}", "\n\n", text[h.end():end].strip())
-        if "줄거리" in name or "시놉시스" in name:
-            if not out["synopsis_extra"]:
-                out["synopsis_extra"] = _cut(_before_ending(body), SYNOPSIS_EXTRA_MAX)
-            continue
-        if any(k in name for k in ("출연", "주연", "조연", "캐스팅", "성우")):
-            out["cast"] += _wiki_cast(body)
         if not any(k in name for k in CONTEXT_SECTIONS):
             continue
-        if "평가" in name:                                   # 네이버 · 다음 평점 줄은 버린다
-            body = "\n".join(ln for ln in body.splitlines()
-                             if not re.search(r"네이버|다음 ?영화|다음 ?:|평점", ln)).strip()
-        body = _drop_ending(body)                            # V3.7 검토: 결말 · 반전을 말하는 줄은 뺀다
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        body = re.sub(r"\n{3,}", "\n\n", text[h.end():end].strip())
         if len(body) > 40:
-            chunks.append(f"[{name}]\n{_cut(body, SECTION_MAX_CHARS)}")
+            chunks.append(f"[{name}]\n{body}")
 
-    out["context"] = "\n\n".join(chunks)[:WIKI_MAX_CHARS]
-    return out
+    if not chunks:
+        # 절을 하나도 못 잡았다. 문서 맨 앞 요약을 쓴다. 거기에 배경과 성적이 적힌 경우가 많다
+        lead = text[:heads[0].start()] if heads else text
+        lead = re.sub(r"\n{3,}", "\n\n", lead.strip())
+        if len(lead) > 80:
+            chunks.append("[문서 앞부분]\n" + lead)
 
-
-def fetch_wiki_context(title: str, year: int | None = None, sitelink: str | None = None,
-                       search: bool = True) -> tuple[str, str | None]:
-    """위키백과에서 제작 · 개봉 · 반응 같은 절을 모아 온다. V3.7: fetch_kowiki의 주변 이야기만 전과 같은 모양으로 돌려준다."""
-    ko = fetch_kowiki(title, year, sitelink, search)
-    return ko["context"], ko["url"]
-
-
-# ── 씨네21 (V3.7) ─────────────────────────────────────────
-# robots.txt는 SemrushBot만 막는다(9/30 확인). 그래도 _c21_get이 요청마다 robots.txt 규칙을 본다.
-# 영화 리뷰 에이전트의 cine21_영화찾기 · cine21_한줄평 · cine21_기사찾기 · cine21_기사읽기를 옮겼다.
-# 다른 점: 영화는 통합 검색(/search/) 대신 영화 검색(/search/movie/?query=)에서 찾는다. 통합 검색에는 배우 · 감독 항목이 섞인다. 한줄평은 안 가져온다.
-def fetch_cine21_movie(title: str, year: int | None = None, directors=(),
-                       runtime: int | None = None) -> dict | None:
-    """V3.7: 씨네21 영화 검색 → 영화 페이지. 요청 2회(robots.txt는 처음 한 번 더).
-    같은 제목 중 감독 이름(공백 · 가운뎃점을 지우고 비교)이 맞는 것을 고른다.
-    감독이 안 맞으면 상영시간이 가까운 것을 고르고, 영화 페이지의 제작 연도가 year ±1 안인지 본다. 안 맞으면 None이다.
-    돌려주는 것: movie_id · url · 시놉시스 · 감독 · 출연[(한국어 이름, 배역)] · 관객 · 개봉 · 연도"""
-    key = _title_key(title)
-    if not key:
-        return None
-    r = _c21_get("/search/movie/", {"query": title})
-    if r is None:
-        return None
-    s = BeautifulSoup(r.text, "lxml")
-    cands = []
-    for info in s.select("div.info"):
-        a = info.select_one("p.title a[href*='movie_id=']")
-        m = re.search(r"movie_id=(\d+)", a.get("href") or "") if a else None
-        if not m:
-            continue
-        who = []
-        for p in info.select("p"):
-            t = p.select_one(".etc_title")
-            if t and t.get_text(strip=True) == "감독":
-                who = [x.get_text(strip=True) for x in p.select("a")]
-        mins = re.search(r"(\d+)\s*분", info.get_text(" ", strip=True))
-        cands.append({"movie_id": m.group(1), "이름": a.get_text(" ", strip=True), "감독": who,
-                      "분": int(mins.group(1)) if mins else None})
-    same = [c for c in cands if _title_key(c["이름"]) == key]
-    if not same and len(key) >= 4:                           # 부제 차이만 받는다. 짧은 제목은 같아야 한다
-        same = [c for c in cands if key in _title_key(c["이름"])
-                or (len(_title_key(c["이름"])) >= 4 and _title_key(c["이름"]) in key)]
-    if not same:
-        return None
-    dkeys = {_name_key(x) for x in directors if x}
-    by_director = [c for c in same if dkeys & {_name_key(x) for x in c["감독"]}]
-    if by_director:
-        pick = by_director[0]
-    else:
-        if runtime:
-            same.sort(key=lambda c: abs(c["분"] - runtime) if c["분"] else 999)
-        pick = same[0]
-
-    r = _c21_get("/movie/info/", {"movie_id": pick["movie_id"]})
-    if r is None:
-        return None
-    s = BeautifulSoup(r.text, "lxml")
-    det = s.select_one(".movie_detail_info")
-    y = re.search(r"\((\d{4})\)", det.get_text(" ", strip=True)) if det else None
-    page_year = int(y.group(1)) if y else None
-    info = {}
-    for li in s.select(".info_list li"):
-        t = li.select_one(".title")
-        if t:
-            k = t.get_text(strip=True)
-            info.setdefault(k, li.get_text(" ", strip=True).replace(k, "", 1).strip())
-    opened = re.search(r"\d{4}-\d{2}-\d{2}", info.get("개봉", ""))
-    if not by_director and year:                             # 감독으로 못 골랐으면 연도로 확인한다
-        ok = ((page_year is not None and abs(page_year - year) <= 1)
-              or (page_year is None and opened is not None and year - 1 <= int(opened.group(0)[:4]) <= year + 3))
-        if not ok:
-            return None
-
-    감독, 출연 = [], []
-    for it in s.select(".director_actor_box_item"):         # 감독과 배우 칸. 이름 밑에 '감독' 또는 '(배역)'
-        n, role = it.select_one(".title"), it.select_one(".role")
-        n = n.get_text(strip=True) if n else ""
-        role = role.get_text(strip=True) if role else ""
-        if not _has_hangul(n):
-            continue
-        if role == "감독":
-            감독.append(n)
-        elif not role or role.startswith("("):
-            출연.append((n, role.strip("()").strip()))
-    if not 감독 or not 출연:                                  # 감독과 배우 칸이 없으면 정보 칸에서
-        for li in s.select(".info_list li"):
-            t = li.select_one(".title")
-            k = t.get_text(strip=True) if t else ""
-            names = [a.get_text(strip=True) for a in li.select("a[href*='person_id']")]
-            if k == "감독" and not 감독:
-                감독 = [x for x in names if _has_hangul(x)]
-            elif k == "출연" and not 출연:
-                출연 = [(x, "") for x in names if _has_hangul(x)]
-
-    syn = ""
-    node = s.find(string=re.compile(r"^\s*시놉시스\s*$"))
-    box = node.find_parent().find_next_sibling() if node and node.find_parent() else None
-    if box:
-        for t in box(["h3", "b", "strong", "script", "style"]):   # 굵은 글씨 · 제목 줄은 홍보 문구다
-            t.decompose()
-        txt = re.sub(r"\s+", " ", box.get_text(" ", strip=True))
-        sents = [x for x in re.split(r"(?<=[.?!])\s+", txt) if x and not x.endswith("!")]
-        syn = _cut(" ".join(sents), SYNOPSIS_EXTRA_MAX)
-    관객 = info.get("관객", "")
-    return {"movie_id": pick["movie_id"], "url": f"{CINE21}/movie/info/?movie_id={pick['movie_id']}",
-            "시놉시스": syn, "감독": 감독, "출연": 출연,
-            "관객": 관객 if re.search(r"\d", 관객) else None,
-            "개봉": opened.group(0) if opened else None, "연도": page_year}
+    return "\n\n".join(chunks)[:WIKI_MAX_CHARS], url
 
 
-def _news_title_hit(head: str, title: str) -> bool:
-    """V3.7: 기사 제목에 <제목> · ‘제목’ · '제목' · 《제목》이 있으면 맞다. 제목이 네 글자 이상이면 제목 그대로 들어 있어도 맞다.
-    짧은 제목은 그대로 찾으면 '반도' → '한반도'가 걸린다."""
-    core = r"\s*".join(re.escape(ch) for ch in title.replace(" ", ""))
-    if re.search(r"[<《〈「『‘'“\"]\s*" + core + r"\s*[>》〉」』’'”\"]", head):
-        return True
-    k = _title_key(title)
-    return len(k) >= 4 and k in _title_key(head)
+# ── 기사에서 가져오기 ─────────────────────────────────────
+def _allowed(url: str) -> bool:
+    return any(d in url for d in ARTICLE_DOMAINS)
 
 
-def fetch_cine21_articles(title: str, directors=(), year: int | None = None,
-                          movie_id: str | None = None) -> tuple[str, list[str]]:
-    """V3.7: 씨네21 기사 검색에서 이 영화 기사를 ARTICLE_MAX_COUNT건까지 가져온다. 요청: 검색 1~2회 + 기사 읽기 ARTICLE_MAX_COUNT+2회까지.
-    기사 제목에 <제목> · ‘제목’(네 글자 이상이면 제목 그대로)이 있고 날짜가 개봉 연도 -1 ~ +3 안인 것만 본다. 만화 · 포토는 뺀다.
-    인터뷰 · 제작기 · 개봉 소식을 앞에, 리뷰 · 비평을 뒤에 둔다. 같은 무리 안에서는 기사 제목에 감독 이름이 든 것을 앞에 둔다.
-    본문에 영화 제목이 있는 기사만 쓴다. 본문을 처음부터 ARTICLE_MAX_CHARS까지 가져온다.
-    여러 영화를 묶은 기사(外 · 기사 제목에 <…>가 둘 이상)는 영화 제목이 든 문단만 가져온다. 다른 영화 이야기가 섞이지 않게 한다.
-    같은 제목의 다른 작품을 거른다. 본문의 영화 제목에 씨네21 영화 링크가 걸려 있으면 그 번호가 movie_id(fetch_cine21_movie가 찾은 것)여야 한다.
-    링크가 없으면 감독 이름(붙여 쓴 전체 또는 가장 긴 낱말)이 본문에 있어야 한다. 오디션(1999, 미이케 다카시)에 2001년 애니메이션 <오디션> 기사가 붙었다."""
-    if not _title_key(title):
-        return "", []
-    cands, seen = [], set()
-    for page in (1, 2):
-        r = _c21_get("/search/news/", {"query": title, "p": page})
-        if r is None:
-            break
-        s = BeautifulSoup(r.text, "lxml")
-        found = 0
-        for a in s.select("a[href*='mag_id=']"):
-            m = re.search(r"mag_id=(\d+)", a.get("href") or "")
-            if not m or m.group(1) in seen:
-                continue
-            seen.add(m.group(1))
-            found += 1
-            t = a.select_one(".news_title")
-            head = re.sub(r"\s+", " ", t.get_text() if t else "").strip()
-            by = [x.get_text(strip=True) for x in a.select(".byline span")]
-            when = by[0] if by else ""
-            if not head or not _news_title_hit(head, title) or re.search(r"만화|포토|화보", head):
-                continue
-            yy = re.match(r"(\d{4})", when)
-            if year and not (yy and year - 1 <= int(yy.group(1)) <= year + 3):
-                continue
-            cands.append({"mag_id": m.group(1), "제목": head, "날짜": when})
-        if found == 0 or len(cands) >= ARTICLE_MAX_COUNT:
-            break
+def _search_links(query: str, limit: int = 12) -> list[str]:
+    """웹에서 기사 주소를 찾는다. 허용한 곳의 주소만 남긴다."""
+    urls = []
+    try:
+        r = requests.post("https://html.duckduckgo.com/html/",
+                          data={"q": query},
+                          headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        found = re.findall(r'href="(https?://[^"]+)"', r.text)
+        for u in found:
+            u = requests.utils.unquote(u)
+            m = re.search(r"uddg=(https?://[^&]+)", u)
+            if m:
+                u = requests.utils.unquote(m.group(1))
+            if u.startswith("http") and _allowed(u) and u not in urls:
+                urls.append(u)
+            if len(urls) >= limit:
+                break
+    except Exception:
+        pass
+    return urls
 
-    dnames = [d.replace(" ", "") for d in directors if d and _has_hangul(d)]
-    dtokens = set(dnames) | {max(d.split(), key=len) for d in directors
-                             if d and _has_hangul(d) and len(max(d.split(), key=len)) >= 2}
 
-    def rank(x):
-        t = x["제목"]
-        if re.search(r"리뷰|비평|평론|프리뷰|시사|20자평|별점", t):
-            kind = 2
-        elif re.search(r"인터뷰|제작기|감독|배우|촬영|캐스팅|개봉|크랭크|기자회견|현장|영화제", t):
-            kind = 0
-        else:
-            kind = 1
-        return (kind, 0 if any(d in t.replace(" ", "") for d in dnames) else 1)
-    cands.sort(key=rank)
+def _article_text(url: str) -> str:
+    """기사 본문만 뽑아 온다. 사이트마다 파서를 따로 두지 않는다."""
+    try:
+        import trafilatura
+        html = trafilatura.fetch_url(url)
+        if not html:
+            return ""
+        txt = trafilatura.extract(html, include_comments=False,
+                                  include_tables=False) or ""
+    except Exception:
+        return ""
+    return re.sub(r"\n{3,}", "\n\n", txt.strip())
+
+
+def fetch_article_context(title: str, year: int | None = None,
+                          director: str | None = None) -> tuple[str, list[str]]:
+    """제작 뒷이야기 · 영화제 · 개봉 반응이 담긴 기사를 모아 온다."""
+    q = f"영화 {title}"
+    if director:
+        q += f" {director}"
+    q += " 개봉"
 
     chunks, used = [], []
-    tkey = title.replace(" ", "")
-    for x in cands[:ARTICLE_MAX_COUNT + 2]:
+    for u in _search_links(q):
         if len(chunks) >= ARTICLE_MAX_COUNT:
             break
-        r = _c21_get("/news/view/", {"mag_id": x["mag_id"]})
-        if r is None:
+        txt = _article_text(u)
+        if len(txt) < 300 or title not in txt:
             continue
-        s = BeautifulSoup(r.text, "lxml")
-        body = s.select_one("#news_content")
-        if not body:
-            continue
-        linked = set()                                       # 본문에서 이 제목에 걸린 씨네21 영화 번호
-        for a in body.select("a[href*='movie_id=']"):
-            mm = re.search(r"movie_id=(\d+)", a.get("href") or "")
-            if mm and _title_key(a.get_text()) == _title_key(title):
-                linked.add(mm.group(1))
-        plain = body.get_text("").replace(" ", "")
-        if movie_id and linked:
-            if str(movie_id) not in linked:                  # 같은 제목의 다른 작품이다
-                continue
-        elif dtokens and not any(t in plain for t in dtokens):
-            continue
-        for t in body(["script", "style", "iframe", "figure"]):
-            t.decompose()
-        for t in body.select("p.img, .caption"):            # 사진 · 사진 설명
-            t.decompose()
-        for br in body.find_all("br"):
-            br.replace_with("\n")
-        for t in body.find_all(["p", "div", "li", "h2", "h3", "h4", "blockquote"]):
-            t.append("\n")                                   # 문단 끝에만 줄을 바꾼다. 이름 링크 앞뒤에서 줄이 끊기지 않게 한다
-        paras = [re.sub(r"[ \t ]+", " ", p).strip() for p in body.get_text("").split("\n")]
-        paras = [p for p in paras if len(p) >= 12 or re.search(r"[.?!]$", p)]   # 회사 이름 같은 딱지 줄은 뺀다
-        paras = [p for p in paras if _drop_ending(p)]       # V3.7 검토: 결말 · 반전을 말하는 문단은 뺀다
-        hit = [i for i, p in enumerate(paras) if tkey in p.replace(" ", "")]
-        if not hit:                                          # 본문에 영화 제목이 없다
-            continue
-        # 여러 영화를 묶은 기사(外 · 제목 둘 이상)는 영화 제목이 든 문단만, 아니면 처음부터
-        several = "外" in x["제목"] or len({t.strip() for t in re.findall(r"<([^<>]+)>", x["제목"])}) >= 2
-        text = _cut("\n".join(paras[i] for i in hit) if several else "\n".join(paras), ARTICLE_MAX_CHARS)
-        if len(text) < 200:
-            continue
-        chunks.append(f"[씨네21 기사] {x['제목']} ({x['날짜']})\n{text}")
-        used.append(f"{CINE21}/news/view/?mag_id={x['mag_id']}")
+        host = re.sub(r"^https?://(www\.)?", "", u).split("/")[0]
+        chunks.append(f"[{host} 기사]\n{txt[:ARTICLE_MAX_CHARS]}")
+        used.append(u)
     return "\n\n".join(chunks), used
 
 
-# ── 영어 위키 (V3.7) ─────────────────────────────────────
-def fetch_enwiki_context(title: str) -> tuple[str, str | None]:
-    """V3.7: 영어 위키 평문(TextExtracts) 1회. 앞부분 · Production(Development · Writing · Casting · Filming) · Release · Box office · Accolades만 쓴다.
-    Plot · Cast · Critical response · Reception · Themes · '~response' 절은 통째로 뺀다. 절마다 ENWIKI_SECTION_MAX, 합해서 ENWIKI_MAX_CHARS."""
-    if not title:
-        return "", None
-    r = _get(ENWIKI_API, params={"action": "query", "prop": "extracts", "explaintext": 1,
-                                 "exsectionformat": "wiki", "titles": title, "redirects": 1,
-                                 "format": "json", "formatversion": 2}, timeout=25)
-    if r is None:
-        return "", None
-    try:
-        pages = r.json().get("query", {}).get("pages", [])
-    except ValueError:
-        return "", None
-    txt = (pages[0].get("extract") or "") if pages else ""
-    parts = re.split(r"\n(==+)\s*(.+?)\s*==+\n", "\n" + txt)
-    chunks = []
-    lead = _drop_ending(parts[0])                            # V3.7 검토: 결말 · 반전을 말하는 문단은 뺀다
-    if len(lead) > 80:
-        chunks.append("[문서 앞부분]\n" + _cut(lead, ENWIKI_SECTION_MAX))
-    for i in range(1, len(parts) - 2, 3):
-        name, body = parts[i + 1].strip(), _drop_ending(parts[i + 2])
-        low = name.lower()
-        if low == "cast" or any(k in low for k in ENWIKI_DROP):
-            continue
-        if not low.startswith(ENWIKI_KEEP) or len(body) < 40:
-            continue
-        chunks.append(f"[{name}]\n{_cut(body, ENWIKI_SECTION_MAX)}")
-    text = "\n\n".join(chunks)
-    if not text:
-        return "", None
-    return _cut(text, ENWIKI_MAX_CHARS), "https://en.wikipedia.org/wiki/" + title.replace(" ", "_")
-
-
-# ── 주변 이야기 잇기 ──────────────────────────────────────
-def _출처보호(fn, default, *args, **kw):
-    """V3.7 검토: 출처 하나(Wikidata · 씨네21 · 위키)가 뜻밖의 모양(HTML이 바뀜 · 값이 비어 옴)으로 예외를 내도 재료 모으기는 이어간다.
-    네트워크 오류는 _get이 이미 None으로 바꾼다. 여기서는 파싱 중 예외를 받는다. 실패하면 default를 주고 한 줄 남긴다.
-    전에는 씨네21 HTML 하나가 바뀌어 예외가 나면 fetch_material 전체가 멈췄다(백엔드 어댑터까지 올라간다)."""
-    try:
-        return fn(*args, **kw)
-    except Exception as e:
-        print(f"  [재료] {getattr(fn, '__name__', fn)} 실패, 건너뛴다: {type(e).__name__}: {e}")
-        return default
-
-
-def _split_directors(director) -> list[str]:
-    if isinstance(director, str):
-        return [d.strip() for d in director.split(",") if d.strip()]
-    return [d for d in (director or []) if d]
-
-
-def fetch_context(title: str, year: int | None = None, director=None,
-                  sitelinks: dict | None = None, ko: dict | None = None,
-                  cine21_id: str | None = None) -> tuple[str, list[str]]:
-    """주변 이야기를 여러 곳에서 모아 출처 머리를 달아 잇는다.
-    V3.7: [씨네21 기사] → [한국어 위키] → [영어 위키]. 영어 위키는 앞 둘을 합해 KO_CONTEXT_ENOUGH자보다 적을 때만 부른다.
-    DuckDuckGo 기사 검색은 뺐다(봇 확인 202로 지난 92편 0건).
-    sitelinks는 fetch_wikidata가 준 문서 제목이다. None이면 Wikidata를 못 읽은 것이라 한국어 위키를 제목으로 찾는다.
-    ko는 fetch_kowiki 결과다. 이미 읽었으면 넘겨서 다시 안 부른다. cine21_id는 fetch_cine21_movie가 찾은 영화 번호다(같은 제목 기사 거르기)."""
-    if ko is None:
-        ko = (_출처보호(fetch_kowiki, None, title, year, sitelink=(sitelinks or {}).get("kowiki"),
-                        search=sitelinks is None) or _kowiki_empty())
-    arts, art_urls = _출처보호(fetch_cine21_articles, ("", []), title, _split_directors(director), year,
-                              movie_id=cine21_id)
+def fetch_context(title: str, year: int | None = None,
+                  director: str | None = None) -> tuple[str, list[str]]:
+    """주변 이야기를 여러 곳에서 모아 하나로 잇는다."""
     parts, links = [], []
+    wiki, wiki_url = fetch_wiki_context(title, year)
+    if wiki:
+        parts.append(wiki)
+        links.append(wiki_url)
+    arts, art_urls = fetch_article_context(title, year, director)
     if arts:
-        parts.append(arts)                                   # 기사마다 [씨네21 기사] 머리가 붙어 있다
+        parts.append(arts)
         links += art_urls
-    if ko["context"]:
-        parts.append("[한국어 위키]\n" + ko["context"])
-        links.append(ko["url"])
-    en_title = (sitelinks or {}).get("enwiki")
-    if en_title and len(ko["context"]) + len(arts) < KO_CONTEXT_ENOUGH:
-        en, en_url = _출처보호(fetch_enwiki_context, ("", None), en_title)
-        if en:
-            parts.append("[영어 위키]\n" + en)
-            links.append(en_url)
     return "\n\n".join(parts)[:CONTEXT_MAX_CHARS], links
-
-
-_CONTEXT_HEAD = re.compile(r"^\[(씨네21 기사|한국어 위키|영어 위키)\][^\n]*\n", re.M)
-
-
-def context_chars(text: str) -> dict[str, int]:
-    """V3.7: 주변 이야기의 출처별 글자 수. 출처 머리 줄은 안 센다."""
-    out, heads = {}, list(_CONTEXT_HEAD.finditer(text or ""))
-    for i, h in enumerate(heads):
-        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
-        out[h.group(1)] = out.get(h.group(1), 0) + len(text[h.end():end].strip())
-    return out
 
 
 def fetch_material(title: str, year: int | None = None) -> Material | None:
@@ -3787,10 +3224,11 @@ def fetch_material(title: str, year: int | None = None) -> Material | None:
 
 def fetch_material_by_id(mid: int, fallback_title: str = "") -> Material:
     title = fallback_title
-    d = _tmdb(f"/movie/{mid}", append_to_response="credits,external_ids")   # V3.7: external_ids로 Wikidata 번호를 같이 받는다. 요청은 안 는다
+    d = _tmdb(f"/movie/{mid}", append_to_response="credits")
     credits = d.get("credits", {})
 
     directors = [c for c in credits.get("crew", []) if c.get("job") == "Director"]
+    director = ", ".join(c["name"] for c in directors) or None    # 둘이면 둘 다
     director_id = directors[0]["id"] if directors else None       # 전작은 첫 감독 기준
 
     kr = _kr_release(mid)                   # 한국 개봉 기록
@@ -3798,89 +3236,24 @@ def fetch_material_by_id(mid: int, fallback_title: str = "") -> Material:
     first = min([x for x in (kr["first"], world_first) if x], default="")
     rd = kr["date"] or ""
     year = int(first[:4]) if first else (int(rd[:4]) if rd else None)
-    before_works, after_works = (_director_works(director_id, mid, first or rd)
-                                 if director_id else ([], []))
-    reception = decide_reception(d.get("vote_average"), d.get("vote_count"))
-    ko_title = d.get("title") or title
-
-    # V3.7: Wikidata(문서 제목 · 만든 사람 · 장소) → 씨네21 영화 페이지 → 한국어 위키 → 씨네21 기사 · 영어 위키
-    qid = (d.get("external_ids") or {}).get("wikidata_id")
-    # V3.7 검토: 출처마다 _출처보호로 감싼다. 하나가 예외를 내도 나머지로 재료를 만든다
-    wd = _출처보호(fetch_wikidata, None, qid) or fetch_wikidata(None)
-    sitelinks = wd if wd["ok"] else None               # Wikidata를 못 읽었으면 한국어 위키를 제목으로 찾는다
-    names = wd["이름표"]
-    c21 = _출처보호(fetch_cine21_movie, None, ko_title, year, [c["name"] for c in directors] + wd["감독"],
-                   runtime=d.get("runtime"))
-    ko = (_출처보호(fetch_kowiki, None, ko_title, year, sitelink=wd["kowiki"], search=sitelinks is None)
-          or _kowiki_empty())
-
-    # V3.7: 배우 한국어 이름 — 씨네21 영화 페이지 → 한국어 위키 출연 절 → Wikidata 한국어 레이블. 셋 다 없으면 글에 넘기지 않는다
-    #   원어 이름을 넘기면 작가가 그대로 옮겨 영문 표기 검사에 걸린다(세 번 떨어졌다)
-    if c21 and c21["출연"]:
-        pairs = c21["출연"]
-    elif ko["cast"]:
-        pairs = ko["cast"]
-    else:
-        pairs = []
-        for c in credits.get("cast", [])[:5]:
-            n = c["name"] if _has_hangul(c["name"]) else names.get(_name_key(c["name"]))
-            if n:
-                pairs.append((n, ""))
-    # V3.7 검토: 이름 · 배역에 영문이 섞이면 넘기지 않는다(한국어 위키 출연 절과 같은 규칙). 씨네21 배역에는 영문이 섞일 수 있다
-    cast = list(dict.fromkeys(n for n, _ in pairs if _has_hangul(n) and not re.search(r"[A-Za-z]", n)))[:5]
-    roles = {}
-    for n, r in pairs:
-        if n in cast and r and not re.search(r"[A-Za-z]{2,}", r):
-            roles.setdefault(n, r)
-    # 감독: TMDB 이름에 한글이 있으면 그대로 쓴다. 형태 검사가 이 이름을 본문에서 찾는다.
-    #   한국어 표기는 곳마다 다르다(씨네21 DB · TMDB '마틴 스콜세지', 씨네21 기사 · 한국어 위키 '마틴 스코세이지'). V3.6까지 검사가 보던 이름을 바꾸지 않는다
-    # 한글이 없으면 씨네21 영화 페이지(감독 수가 같을 때 차례대로) → Wikidata 한국어 레이블 순서다.
-    # 감독은 빼면 글이 안 선다. 셋 다 없으면 원어 이름을 남긴다(V3.1 검사가 한글로 옮겨 쓴 것을 받는다)
-    c21_dirs = (c21 or {}).get("감독") or []
-    # V3.7 검토: 차례대로 잇는 것은 한글이 없는 감독과, TMDB 한글 이름과 겹치지 않는 씨네21 감독끼리만 한다.
-    #   TMDB [A(영문), 봉준호] · 씨네21 [봉준호, A'']면 전에는 A가 '봉준호'로 바뀌어 같은 사람이 두 번 들어가고 A가 빠졌다
-    known = {_name_key(c["name"]) for c in directors if _has_hangul(c["name"])}
-    c21_left = [x for x in c21_dirs if _name_key(x) not in known]
-    n_latin = sum(1 for c in directors if not _has_hangul(c["name"]))
-    director_names, li = [], 0
-    for c in directors:
-        n = c["name"]
-        if not _has_hangul(n):
-            n = ((c21_left[li] if len(c21_left) == n_latin else None)
-                 or names.get(_name_key(n)) or n)
-            li += 1
-        director_names.append(n)
-    if not director_names:
-        director_names = list(c21_dirs)
-    director_names = list(dict.fromkeys(director_names))
-    director = ", ".join(director_names) or None       # 둘이면 둘 다
-
-    if not rd and c21 and c21.get("개봉"):             # V3.7: TMDB에 한국 개봉 기록이 없으면 씨네21 개봉일을 쓴다
-        rd = c21["개봉"]
     # 한국 개봉이 최초 개봉보다 한참 뒤면 재개봉으로 본다
     # V3.3: 재개봉은 한국 극장 개봉 기록이 그 전에도 있을 때만이다. 해외에서 먼저 나오고 한국에 처음 들어온 것은 늦은 한국 개봉이다
     rerelease = bool(kr.get("rerelease") or (kr["first"] and rd and kr["first"] < rd))
     late_kr = bool(first and rd and not rerelease and rd[:4] != first[:4] and rd > first)
+    before_works, after_works = (_director_works(director_id, mid, first or rd)
+                                 if director_id else ([], []))
     upcoming = bool(rd) and rd > TODAY
-    context, context_links = fetch_context(ko_title, year, list(dict.fromkeys(director_names + c21_dirs + wd["감독"])),
-                                           sitelinks=sitelinks, ko=ko, cine21_id=(c21 or {}).get("movie_id"))
+    reception = decide_reception(d.get("vote_average"), d.get("vote_count"))
+    context, context_links = fetch_context(d.get("title") or title, year, director)
 
-    overview = d.get("overview", "") or ""
-    c21_syn = (c21 or {}).get("시놉시스", "") or ""
-    if c21_syn and len(c21_syn) <= len(overview) and _title_key(c21_syn)[:80] in _title_key(overview):
-        c21_syn = ""                                   # TMDB 줄거리와 같은 배급사 문구면 한 번만 넘긴다
-    wd_used = any(wd[k] for k in WIKIDATA_PROPS.values())
-    links = ([f"https://www.themoviedb.org/movie/{mid}"]
-             + ([c21["url"]] if c21 else [])
-             + ([f"https://www.wikidata.org/wiki/{qid}"] if qid and wd_used else [])
-             + context_links)
+    links = [f"https://www.themoviedb.org/movie/{mid}"] + context_links
 
     m = Material(
         tmdb_id=mid,
-        title=ko_title,
+        title=d.get("title") or title,
         year=year,
         director=director,
-        cast=cast,
+        cast=[c["name"] for c in credits.get("cast", [])[:5]],
         genres=[g["name"] for g in d.get("genres", [])],
         runtime_min=d.get("runtime") or None,
         rating=kr["cert"],
@@ -3891,27 +3264,15 @@ def fetch_material_by_id(mid: int, fallback_title: str = "") -> Material:
         first_release=first or None,
         adult=bool(d.get("adult")),
         collection_id=((d.get("belongs_to_collection") or {}).get("id")),
-        synopsis=overview,
+        synopsis=d.get("overview", "") or "",
         director_past_works=before_works,
         director_later_works=after_works,
-        source_work=(", ".join(wd["원작"]) or None),
+        source_work=None,
         context=context,
         context_source=(", ".join(context_links) if context_links else None),
         reception=reception,
         reception_source=(f"TMDB 평점 분포 ({TODAY} 기준)" if reception else None),
         source_links=links,
-        wikidata_id=qid,
-        roles=roles,
-        screenplay=wd["각본"],
-        music=wd["음악"],
-        cinematography=wd["촬영"],
-        editing=wd["편집"],
-        filming_locations=wd["촬영지"],
-        settings=wd["배경 장소"],
-        cine21_synopsis=c21_syn,
-        synopsis_extra=ko["synopsis_extra"],
-        audience=(c21 or {}).get("관객"),
-        context_chars=context_chars(context),
     )
     m.series = find_series(m)
     return m
@@ -3967,26 +3328,15 @@ def material_to_text(m: Material) -> str:
     else:
         rows.append(f"한국 개봉: {m.release_date or '정보 없음'}" + (때 if m.release_date else ""))
     add("감독", m.director)
-    roles = getattr(m, "roles", None) or {}
-    add("출연", ", ".join(f"{c}({roles[c]})" if roles.get(c) else c for c in m.cast))   # V3.7: 배역을 알면 괄호로 붙인다
+    add("출연", ", ".join(m.cast))
     add("갈래", " · ".join(m.genres))
     add("상영시간", f"{m.runtime_min}분" if m.runtime_min else None)
     add("등급", m.rating)
     add("원작", m.source_work)
-    # V3.7: 만든 사람 · 장소 (Wikidata 한국어 레이블) · 관객 수 (씨네21)
-    add("각본", ", ".join(getattr(m, "screenplay", None) or []))
-    add("음악", ", ".join(getattr(m, "music", None) or []))
-    add("촬영", ", ".join(getattr(m, "cinematography", None) or []))
-    add("편집", ", ".join(getattr(m, "editing", None) or []))
-    add("촬영지", ", ".join(getattr(m, "filming_locations", None) or []))
-    add("배경 장소", ", ".join(getattr(m, "settings", None) or []))
-    add("관객 수 (씨네21)", getattr(m, "audience", None))
     add("시리즈 용어집", m.series or "")
     add("감독이 이 영화보다 앞에 만든 것", ", ".join(m.director_past_works))
     add("감독이 이 영화보다 뒤에 만든 것", ", ".join(m.director_later_works))
     add("줄거리", m.synopsis)
-    add("씨네21 시놉시스", getattr(m, "cine21_synopsis", ""))                               # V3.7
-    add("줄거리 더 (한국어 위키. 끝부분은 잘라냈다. 결말 앞까지만 쓴다)", getattr(m, "synopsis_extra", ""))   # V3.7
 
     if m.reception:
         rows.append(f"대중 평가 갈래: {m.reception}")     # 출처 · 날짜 · 점수는 본문에 못 가니 안 넘긴다
@@ -4179,7 +3529,6 @@ PREP_SYSTEM = """
   예: 나인틴 헌드레드(팀 로스)
 널리 알려진 작품이면 네가 아는 배역으로 짝짓는다.
 누가 누구인지 모르겠으면 배우 이름만 남긴다. 짐작으로 짝짓지 않되, 빼지도 않는다.
-출연 목록에 괄호로 배역이 붙어 있으면 그 배역 이름을 그대로 쓴다. (V3.7)
 사람이 아닌 존재(외계 생명체 · 로봇 · 동물)는 괄호를 붙이지 않는다. 목소리를 맡은 사람을 알면 "(목소리: 이름)"으로 적는다.
 괄호 안에 "미상" · "알 수 없음" · "정보 없음" 같은 말을 넣지 않는다. 모르면 괄호 자체를 뺀다.
 번호나 별명으로만 불리는 인물이면 그렇다는 것을 붙인다.
@@ -4191,9 +3540,6 @@ PREP_SYSTEM = """
   안 됨: 해리는 뜻밖의 대회에 휘말린다. (무엇이 일어나는지 사라졌다)
   됨: 열네 살 해리는 세 학교가 겨루는 트라이위저드 대회에 자기도 모르게 이름이 올라간다. 첫 과제는 용이 지키는 황금 알을 가져오는 것이다.
 원래 줄거리 문장을 그대로 옮기지 않는다.
-재료에 '씨네21 시놉시스' · '줄거리 더'가 있으면 같이 읽고 줄거리를 채운다. 셋이 어긋나면 TMDB 줄거리 · 씨네21 시놉시스를 따른다. (V3.7)
-'줄거리 더'는 한국어 위키 줄거리의 끝부분을 잘라낸 것이다. 여기서도 결말 앞까지만 적는다.
-누가 죽는지 · 범인이 누구인지 · 반전 · 마지막에 어떻게 되는지는 적지 않는다. 앞부분 사건과 인물 관계를 쓰는 데만 쓴다.
 
 [상영시간과 등급]
 재료에 있는 그대로 적는다. 둘 중 하나만 있으면 있는 것만 적는다.
@@ -4236,21 +3582,10 @@ PREP_SYSTEM = """
 빼는 건 이 영화와 관계없는 것뿐이다. 표기가 헷갈린다는 이유로 빼지 않는다.
 
 [쓸 거리 — V3.6]
-재료에 있는 구체적인 것을 있는 만큼 적는다. 열두 개까지다(V3.7). 장소 이름 · 물건 · 설정 · 인물의 직업 같은 것이다.
-  예: 등대가 선 섬 이름은 로크다 / 주인공은 밤마다 등대 불을 켜는 일을 한다
+재료에 있는 구체적인 것을 있는 만큼 적는다. 여덟 개까지다. 장소 이름 · 물건 · 설정 · 인물의 직업 · 만든 과정 같은 것이다.
+  예: 등대가 선 섬 이름은 로크다 / 주인공은 밤마다 등대 불을 켜는 일을 한다 / 촬영은 실제 등대에서 했다
 뜻풀이와 평가는 적지 않는다. "가족의 위기로 넓어진다"는 쓸 거리가 아니다.
 재료 밖 사실은 널리 알려진 작품이고 확실한 것일 때만 한두 개 적는다. 모자라면 적은 대로 둔다.
-
-[만든 과정 · 개봉 과정 — V3.7]
-재료의 각본 · 음악 · 촬영 · 편집 · 촬영지 · 배경 장소 · 관객 수와 주변 이야기([씨네21 기사] · [한국어 위키] · [영어 위키])에서
-이 영화를 만든 과정과 개봉 과정의 사실을 모은다. 여섯 개까지다. 한 줄에 하나.
-누가 각본 · 음악 · 촬영을 맡았는지, 어디서 찍었는지, 배우를 어떻게 골랐는지, 언제 어느 영화제에서 처음 상영했는지, 몇 명이 봤는지 같은 것이다.
-  예: 촬영은 실제 등대에서 했다 / 주연 배우는 공개 오디션으로 뽑았다 / 칸 영화제 경쟁 부문에서 처음 상영했다
-기사 · 위키 문장을 그대로 옮기지 않는다. 사실만 네 말로 적는다. 뜻풀이와 평가는 적지 않는다.
-관객 수는 여기에 적는다. 기대나 반응 칸에 섞지 않는다.
-영어 위키에서 온 사람 이름 · 제목은 한글로 적는다. 한글 표기를 모르면 그 사실을 뺀다.
-주변 이야기에 줄거리의 결말이 적혀 있으면 가져오지 않는다.
-각본 · 음악 · 촬영 · 편집 칸이 주변 이야기와 어긋나면(예: 각본 칸은 원작자인데 위키는 다른 사람이 썼다고 한다) 그 사실은 적지 않는다.
 
 [끝 문장에 쓸 사실 — V3.6]
 줄거리 사실 하나를 끝 문장용으로 남긴다. 문단 계획의 앞 문단에는 넣지 않는다. 뜻을 붙이지 않고 사실만 적는다.
@@ -4290,8 +3625,6 @@ def brief_to_text(b: Brief) -> str:
     rows.append(f"줄거리: {b.plot}")
     if b.details:                                          # V3.6
         rows.append("쓸 거리 (골라 쓴다. 다 쓰지 않는다. 뜻풀이 대신 이것을 쓴다): " + " / ".join(b.details))
-    if getattr(b, "production_notes", None):               # V3.7
-        rows.append("만든 과정 · 개봉 과정 (앞 문단에 골라 쓴다. 관객 수 말고는 관람 정보 문단에 몰지 않는다): " + " / ".join(b.production_notes))
     if b.closing:
         rows.append(f"끝 문장에 쓸 사실 (앞 문단에 쓰지 않는다): {b.closing}")
     rows.append(f"어디에서 나왔는지: {b.origin or '재료 없음 — 쓰지 않는다'}")
@@ -4509,8 +3842,6 @@ def _latin_leftovers(body: str) -> list[str]:
             continue
         if all(re.fullmatch(r"[A-Z]{2,5}", w) for w in t.split()):   # V3.2: FBI · CIA · NASA 같은 대문자 약어는 한국어에서도 그대로 쓴다
             continue
-        if re.fullmatch(r"(?:[A-Z]\.\s?){1,4}", t + ("" if t.endswith(".") else ".")):   # V3.7: J. K. 롤링 · J. R. R. 톨킨처럼 이름 머리글자는 한국어 표기에서도 그대로 쓴다
-            continue
         out.append(t)
     return out
 
@@ -4684,10 +4015,7 @@ def shape_check(article: Article, order: WriteOrder) -> list[str]:
     bad += _paragraph_openers(body)
 
     # V3.6: 줄거리는 14글자, 주변 이야기(위키 · 기사)는 문장을 옮긴 수준(24글자)부터 본다. 사실 구절(작가 · 촬영지 · 긴 제목)은 바꿔 쓸 수 없다
-    # V3.7: 씨네21 시놉시스 · 줄거리 더(위키 줄거리 절)도 줄거리 쪽(14글자)으로 본다. 같은 구절이 두 곳에 있으면 한 번만 센다
-    copied = list(dict.fromkeys(
-        _copied_spans(body, m.synopsis) + _copied_spans(body, m.cine21_synopsis) + _copied_spans(body, m.synopsis_extra)
-        + _copied_spans(body, m.context, COPY_CONTEXT_LEN)))
+    copied = _copied_spans(body, m.synopsis) + _copied_spans(body, m.context, COPY_CONTEXT_LEN)
     if copied:
         # V3.6: 겹친 구절을 본문에 적힌 그대로(공백 포함) 다 보여 준다. '그대로 옮긴'은 새로 쓰기 신호라 쓰지 않는다
         보기 = []
@@ -5078,7 +4406,7 @@ FIXER_SYSTEM = """
 지적을 고치느라 다른 곳이 어긋나면, 그 자리까지만 최소로 손본다.
 
 분량이 지적됐으면 그 문단 안에서 늘리거나 줄인다. 새 문단을 만들지 않는다.
-'글이 짧다'고 지적됐으면 [정리된 재료]의 쓸 거리 · 만든 과정 · 개봉 과정 · 주변 이야기 · 인물 · 어디에서 나왔는지에서 아직 안 쓴 사실을 그 문단에 문장으로 보탠다. 같은 말을 다른 말로 되풀이해 늘리지 않는다. (V3.6. V3.7: 만든 과정 · 개봉 과정)
+'글이 짧다'고 지적됐으면 [정리된 재료]의 쓸 거리 · 주변 이야기 · 인물 · 어디에서 나왔는지에서 아직 안 쓴 사실을 그 문단에 문장으로 보탠다. 같은 말을 다른 말로 되풀이해 늘리지 않는다. (V3.6)
 문장을 빼서 분량이 모자라면 재료에서 아직 안 쓴 사실로 채운다. 이미 쓴 정보(출연진 · 개봉일 · 상영시간 · 등급 · 갈래)를 다시 적어 채우지 않는다. (V3.4)
 마지막 문장을 빼게 되면 재료 안에서 앞 이야기로 돌아가 닫는 새 문장을 쓴다. 글을 관람 정보로 끝내지 않는다. (V3.4)
 문장이 짧다고 지적됐으면 앞뒤 문장을 이어 붙인다. 내용을 더 넣지 않는다.
@@ -5444,8 +4772,7 @@ def show(out: dict):
 # ## 셀 14 — 마크다운으로 저장하고 zip으로 묶기
 
 OUT_DIR = HERE.parent / "out" / "movie_info"
-(OUT_DIR / "올림").mkdir(parents=True, exist_ok=True)     # 영화 리뷰처럼 올림 · 탈락을 폴더로 나눈다
-(OUT_DIR / "탈락").mkdir(parents=True, exist_ok=True)
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _safe_name(text: str) -> str:
@@ -5515,9 +4842,7 @@ def save_md(out: dict) -> Path:
     o = out.get("주문")
     title = out["글"].title if out.get("글") else "글없음"
     movie = o.material.title if o else "영화없음"
-    from datetime import datetime                    # 시각을 붙인다. 같은 제목이 덮이지 않고, 팀원 글과 id가 겹치지 않는다(export_contents)
-    폴더 = OUT_DIR / ("올림" if out.get("상태") == "올림" else "탈락")   # 탈락보관 · 재료부족 · 판단보류 · 대상아님은 탈락
-    path = 폴더 / f"{_safe_name(movie)}__{_safe_name(title)}_{datetime.now():%m%d_%H%M%S}.md"
+    path = OUT_DIR / f"{_safe_name(movie)}__{_safe_name(title)}.md"
     path.write_text(to_markdown(out), encoding="utf-8")
     return path
 
@@ -5539,20 +4864,19 @@ def download_all():
 # ======================================================================
 
 def cmd_material(title: str, year: int):
-    """셀 15 — 재료가 얼마나 들어왔는지 보기. V3.7: 재료 함수 전체를 돌리고 출처별 글자 수를 찍는다. 모델은 안 부른다"""
-    m = fetch_material(title, year)
-    if m is None:
-        print(f"[{title}] TMDB에서 못 찾았다")
-        return
-    text = material_to_text(m)
-    print(text)
+    """셀 15 — 재료가 얼마나 들어왔는지 보기"""
+    wiki, wiki_url = fetch_wiki_context(title, year)
+    print("위키 문서:", wiki_url)
+    print("위키 길이:", len(wiki))
+    print(wiki[:600])
     print("\n" + "-" * 60)
-    print("재료 글자 수:", len(text))
-    print("줄거리:", len(m.synopsis), "· 씨네21 시놉시스:", len(m.cine21_synopsis), "· 줄거리 더:", len(m.synopsis_extra))
-    print("주변 이야기 출처별 글자 수:", m.context_chars or "없음")
-    print("출처:")
-    for u in m.source_links:
+
+    arts, art_urls = fetch_article_context(title, year)
+    print("기사", len(art_urls), "건")
+    for u in art_urls:
         print(" -", u)
+    print("기사 길이:", len(arts))
+    print(arts[:600])
 
 
 async def cmd_one(title: str, year: int):
@@ -5622,8 +4946,8 @@ async def cmd_batch(cands, label: str, at_once: int | None = None):
     await asyncio.gather(*(one(c) for c in todo))
 
     print("\n저장된 파일:")
-    for p in sorted(OUT_DIR.rglob("*.md")):
-        print(" -", p.relative_to(OUT_DIR).as_posix())
+    for p in sorted(OUT_DIR.glob("*.md")):
+        print(" -", p.name)
     download_all()
 
 
