@@ -4,12 +4,13 @@ import { consumerRoutes } from "@/lib/consumer-routes";
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { ContentAIPanel } from "@/components/content/content-ai-panel";
 import { ContentCardActions } from "@/components/home/content-card-actions";
 import { SourceInfo } from "@/components/content/source-info";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
+import { useContentNavigation, type PreparedContentResult } from "@/components/providers/content-navigation-provider";
 import {
   ContentNotFoundError,
   getContent,
@@ -30,16 +31,27 @@ type ContentDetailScreenProps = {
 type ContentDetailLoaderProps = {
   contentId: string;
   topicId: string;
+  initialResult?: PreparedContentResult | null;
 };
 
 type ContentAction =
   | { type: "feedback"; feedback: ContentFeedback }
   | { type: "save"; saved: boolean };
 
-function ContentDetailLoader({ contentId, topicId }: ContentDetailLoaderProps) {
-  const [content, setContent] = useState<ContentDetail | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<"not-found" | "error" | null>(null);
+function ContentDetailReady({ contentId, topicId }: ContentDetailLoaderProps) {
+  const { read, release } = useContentNavigation();
+  const [prepared] = useState(() => read(contentId, topicId));
+  useLayoutEffect(() => {
+    if (prepared) release(prepared);
+  }, [prepared, release]);
+
+  return <ContentDetailLoader contentId={contentId} topicId={topicId} initialResult={prepared} />;
+}
+
+function ContentDetailLoader({ contentId, topicId, initialResult }: ContentDetailLoaderProps) {
+  const [content, setContent] = useState<ContentDetail | null>(initialResult?.content ?? null);
+  const [isLoading, setIsLoading] = useState(!initialResult);
+  const [error, setError] = useState<"not-found" | "error" | null>(initialResult?.error ?? null);
   const [retryCount, setRetryCount] = useState(0);
   const [pendingAction, setPendingAction] = useState<ContentAction | null>(null);
   const [failedAction, setFailedAction] = useState<ContentAction | null>(null);
@@ -81,14 +93,14 @@ function ContentDetailLoader({ contentId, topicId }: ContentDetailLoaderProps) {
       }
     }
 
-    void loadContent();
+    if (!initialResult || retryCount > 0) void loadContent();
 
     return () => {
       isCancelled = true;
       requestGeneration.current += 1;
       actionInFlight.current = false;
     };
-  }, [contentId, topicId, retryCount]);
+  }, [contentId, topicId, retryCount, initialResult]);
 
   function retryContent() {
     setIsLoading(true);
@@ -390,7 +402,7 @@ export function ContentDetailScreen({
             현재 연결된 분야의 콘텐츠가 아닙니다. 홈에서 다시 선택해 주세요.
           </p>
         ) : (
-          <ContentDetailLoader
+          <ContentDetailReady
             key={JSON.stringify([topicId, contentId])}
             contentId={contentId}
             topicId={topicId}

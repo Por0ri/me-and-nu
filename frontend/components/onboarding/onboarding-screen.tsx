@@ -70,7 +70,7 @@ const CONSENT_OPTIONS = [
 const POLICY_LABELS: Record<string, string> = Object.fromEntries(
   CONSENT_OPTIONS.map(({ key, label }) => [key, label]),
 );
-const MINIMUM_SUBTOPICS = isConsumerApiMode ? 1 : 5;
+const MINIMUM_SUBTOPICS = 5;
 const MAX_VISIBLE_SUBTOPICS = 7;
 
 // Presentation order only; the existing taxonomy and Provider IDs are unchanged.

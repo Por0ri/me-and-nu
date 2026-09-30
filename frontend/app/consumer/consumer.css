@@ -1,4 +1,38 @@
 /* Consumer presentation only. Team root styles and Tailwind remain unchanged. */
+/* Figma HOME -> Article: MOVE_IN / LEFT, 200ms EASE_IN_AND_OUT.
+   Keep the home snapshot still while the new article enters from the right. */
+:root.consumer-content-opening .va-home { view-transition-name: va-home-still; }
+:root.consumer-content-opening .va-detail { view-transition-name: va-content-enter; }
+:root.consumer-content-opening::view-transition-group(root),
+:root.consumer-content-opening::view-transition-old(root),
+:root.consumer-content-opening::view-transition-new(root) {
+  animation: none;
+}
+::view-transition-group(va-home-still) {
+  animation: none;
+  z-index: 1;
+}
+::view-transition-old(va-home-still) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-group(va-content-enter) {
+  animation: none;
+  overflow: clip;
+  z-index: 2;
+}
+::view-transition-new(va-content-enter) {
+  animation: va-content-move-in 200ms ease-in-out both;
+  mix-blend-mode: normal;
+}
+@keyframes va-content-move-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-new(va-content-enter) { animation: none; }
+}
+
 .consumer-mock {
   --background: #ffffff;
   --foreground: #171717;

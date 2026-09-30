@@ -456,6 +456,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
                         sectionTitle={section.title}
                         viewMode={viewMode}
                         eagerImage={content.id === firstContentId}
+                        animateEntry
                       />
                     ))}
                   </div>

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useSyncExternalStore } from "react";
 
 import { ContentCardActions } from "@/components/home/content-card-actions";
+import { useContentNavigation } from "@/components/providers/content-navigation-provider";
 import { readContentSavedState, subscribeContentState } from "@/lib/content-state";
 import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import { formatRelativeTime } from "@/lib/relative-time";
@@ -34,6 +35,7 @@ type ContentCardProps = {
   sectionTitle: string;
   viewMode: "list" | "card";
   eagerImage?: boolean;
+  animateEntry?: boolean;
 };
 
 export function ContentCard({
@@ -42,7 +44,15 @@ export function ContentCard({
   sectionTitle,
   viewMode,
   eagerImage = false,
+  animateEntry = false,
 }: ContentCardProps) {
+  const { navigate } = useContentNavigation();
+  const navigation = animateEntry ? {
+    onNavigate: (event: { preventDefault: () => void }) => {
+      event.preventDefault();
+      void navigate(content.id, topicId);
+    },
+  } : {};
   const saved = useSyncExternalStore(
     subscribeContentState,
     () => readContentSavedState({ contentId: content.id, topicContext: { topicId } }, content.saved),
@@ -59,6 +69,7 @@ export function ContentCard({
     return (
       <div className="va-content-card-shell">
         <Link
+          {...navigation}
           href={{
             pathname: consumerRoutes.content(content.id),
             query: { topicId },
@@ -112,6 +123,7 @@ export function ContentCard({
 
   return (
     <Link
+      {...navigation}
       href={{
         pathname: consumerRoutes.content(content.id),
         query: { topicId },
