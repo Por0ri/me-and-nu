@@ -98,6 +98,9 @@ export async function getContent(
         sourceName: detail.publisher ?? "출처 없음",
         saved,
         liked,
+        tag: detail.subtopicNames?.[0],
+        aiGenerated: detail.productionType === "ai",
+        publishedAt: detail.publishedAt ?? undefined,
         body: detail.displayMode === "full_body" ? detail.body ?? undefined : undefined,
         sources: detail.sourceUrl
           ? [{ id: `source-${contentId}`, name: detail.publisher ?? "출처 없음", url: detail.sourceUrl }]
@@ -220,6 +223,9 @@ export async function getSavedContents({
           imageUrl: item.imageUrl ?? undefined,
           sourceName: item.sourceName ?? "출처 없음",
           saved: true,
+          tag: item.subtopicNames?.[0],
+          aiGenerated: item.productionType === "ai",
+          publishedAt: item.publishedAt ?? undefined,
         });
       }
       if (!page.nextCursor) break;

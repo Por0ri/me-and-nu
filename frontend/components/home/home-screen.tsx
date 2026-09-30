@@ -9,7 +9,9 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { ContentCard } from "@/components/home/content-card";
 import { HomeAIPanel } from "@/components/home/home-ai-panel";
+import { ConsumerBottomNav } from "@/components/navigation/consumer-bottom-nav";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
+import { getUnreadNotificationCount } from "@/lib/api";
 import { getHomeContents } from "@/lib/consumer-api/home";
 import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import { isLocalDemoLoginAvailable } from "@/lib/consumer-api/local-demo";
@@ -17,7 +19,8 @@ import type { HomeData } from "@/types/home";
 
 type HomeViewMode = "list" | "card";
 
-const HOME_VIEW_MODE_STORAGE_KEY = "menu:home-view-mode";
+// 디자인 기본값이 카드형으로 바뀌어 키를 새로 둔다(예전 목록형 선택이 남지 않게).
+const HOME_VIEW_MODE_STORAGE_KEY = "menu:home-view-mode:v2";
 
 const HOME_ERROR_MESSAGE =
   "홈 콘텐츠를 불러오지 못했습니다. 다시 시도해 주세요.";
@@ -61,9 +64,10 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(
     initialSelectedTopicId,
   );
-  const [viewMode, setViewMode] = useState<HomeViewMode>("list");
+  const [viewMode, setViewMode] = useState<HomeViewMode>("card");
   const [isTopicMenuOpen, setIsTopicMenuOpen] = useState(false);
   const [canRestartDemo, setCanRestartDemo] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const topicMenuId = useId();
   const topicMenuRef = useRef<HTMLDivElement>(null);
   const topicMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -73,6 +77,16 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
 
   useEffect(() => {
     setCanRestartDemo(isConsumerApiMode && isLocalDemoLoginAvailable());
+    if (!isConsumerApiMode) return;
+    let isCancelled = false;
+    getUnreadNotificationCount()
+      .then((result) => {
+        if (!isCancelled) setUnreadCount(result.unreadCount);
+      })
+      .catch(() => undefined);
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -385,9 +399,14 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
                 </div>
               ) : null}
             </div>
-            <span role="img" aria-label="알림 아이콘 (현재 기능 없음)">
+            <Link
+              href={{ pathname: consumerRoutes.notifications, query: { topicId: selectedTopicId } }}
+              aria-label={unreadCount > 0 ? `알림 ${unreadCount}개 안 읽음` : "알림"}
+              className="va-noti-bell"
+            >
               <Image src="/ui-home/notifications.svg" alt="" width={24} height={24} />
-            </span>
+              {unreadCount > 0 ? <span className="va-noti-dot" aria-hidden="true" /> : null}
+            </Link>
           </div>
         </header>
 
@@ -463,17 +482,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
           />
         ) : null}
 
-        <nav aria-label="홈 메뉴" className="va-bottom-nav">
-          <span aria-current="page" className="va-nav-current">
-            <span className="va-nav-indicator">HOME</span>
-          </span>
-          <Link
-            href={{ pathname: consumerRoutes.saved, query: { topicId: selectedTopicId } }}
-            aria-label="저장 목록으로 이동"
-          >
-            SAVE
-          </Link>
-        </nav>
+        <ConsumerBottomNav current="home" topicId={selectedTopicId} />
       </div>
     </main>
   );

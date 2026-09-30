@@ -55,6 +55,9 @@ async function getApiHomeContents(topicId: string): Promise<HomeData> {
           saved: card.saved,
           recommendationReason: card.recommendationReason ?? undefined,
           liked: card.myReaction?.liked ?? false,
+          tag: card.subtopicNames?.[0],
+          aiGenerated: card.productionType === "ai",
+          publishedAt: card.publishedAt ?? undefined,
         };
       });
       if (existing) {

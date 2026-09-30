@@ -1,5 +1,7 @@
 """API-041 saved content listing."""
 
+from datetime import datetime
+
 from pydantic import ConfigDict, Field
 
 from app.schemas.common import CamelModel
@@ -15,6 +17,9 @@ class SavedBookmarkItem(CamelModel):
     summary: str | None = None
     image_url: str | None = None
     source_name: str | None = None
+    production_type: str | None = None
+    published_at: datetime | None = None
+    subtopic_names: list[str] = Field(default_factory=list)
 
 
 class SavedBookmarksResponse(CamelModel):

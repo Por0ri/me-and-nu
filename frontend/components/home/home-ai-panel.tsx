@@ -3,9 +3,16 @@
 import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 
+import { SourceInfo } from "@/components/content/source-info";
 import { sendHomeAIQuestion } from "@/lib/consumer-api/ai";
 import type { HomeAIResponse } from "@/types/ai";
 import type { Topic } from "@/types/home";
+
+const HOME_EXAMPLE_QUESTIONS = [
+  "요즘 화제인 작품 이야기를 보고 싶어",
+  "평론가가 분석한 글 위주로 보여줘",
+  "가볍게 읽을 수 있는 글 추천해줘",
+];
 
 type HomeAIPanelProps = {
   topic: Topic;
@@ -206,16 +213,15 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
             </h2>
             {request.status === "idle" ? (
               <>
-                <ul aria-label="Mock 예시 질문" className="va-ai-examples">
-                  <li>음악 이야기를 알려주세요</li>
-                  <li>영화 이야기를 알려주세요</li>
-                  <li>애니메이션 이야기를 알려주세요</li>
+                <ul aria-label="예시 질문" className="va-ai-examples">
+                  {HOME_EXAMPLE_QUESTIONS.map((example) => (
+                    <li key={example}>
+                      <button type="button" disabled={isPending} onClick={() => void submitQuestion(example)}>
+                        {example}
+                      </button>
+                    </li>
+                  ))}
                 </ul>
-                <p className="va-muted text-xs leading-5">
-                  현재는 분야별 고정 Mock 답변을 제공합니다. 정해진 예시 질문에서만 분야
-                  이동 제안을 재현하며, 실제로 질문을 해석하거나 홈 콘텐츠를 변경하지
-                  않습니다.
-                </p>
               </>
             ) : null}
 
@@ -246,12 +252,24 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
             ) : null}
             {request.status === "success" ? (
               request.result.type === "answer" ? (
-                <div className="va-ai-answer space-y-2" role="status">
-                  <h3 className="sr-only">AI 답변</h3>
-                  <p className="whitespace-pre-wrap text-sm leading-6">
-                    {request.result.answer}
-                  </p>
-                </div>
+                <>
+                  <div className="va-ai-answer space-y-2" role="status">
+                    <h3 className="sr-only">AI 답변</h3>
+                    <p className="whitespace-pre-wrap text-sm leading-6">
+                      {request.result.answer}
+                    </p>
+                  </div>
+                  {request.result.sources?.length ? (
+                    <div className="va-article-sources">
+                      <SourceInfo
+                        sources={request.result.sources}
+                        headingId={`${inputId}-sources`}
+                        title="AI 답변 근거"
+                        internal
+                      />
+                    </div>
+                  ) : null}
+                </>
               ) : (
                 <div className="va-ai-answer space-y-2" role="status">
                   <h3 className="text-sm font-semibold">
@@ -294,7 +312,7 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
                   setValidationError(null);
                 }}
                 rows={2}
-                placeholder="현재 분야에 대해 질문해 주세요"
+                placeholder="매거진 목록에 대한 의견을 알려주세요"
                 className="va-ai-input"
               />
               <button
@@ -302,7 +320,10 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
                 disabled={isPending}
                 className="va-ai-send"
               >
-                전송
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="sr-only">전송</span>
               </button>
             </div>
             {validationError ? (

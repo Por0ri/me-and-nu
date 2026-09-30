@@ -12,6 +12,12 @@ type ContentAIPanelProps = {
   topicId: string;
 };
 
+const CONTENT_EXAMPLE_QUESTIONS = [
+  "이 글 내용이 정확한 사실인지 확인해줄래?",
+  "이 작품을 처음 보는 사람에게 추천해도 될까?",
+  "비슷한 분위기의 작품도 알려줘",
+];
+
 type AIRequestState =
   | { status: "idle" }
   | { status: "pending"; question: string }
@@ -203,12 +209,18 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
               id={`${inputId}-title`}
               className={request.status === "idle" ? "va-ai-title" : "sr-only"}
             >
-              이 글에 대해 궁금한 점을<br />물어보세요
+              현재 컨텐츠에 대한<br />다양한 질문을 해보세요!
             </h2>
             {request.status === "idle" ? (
-              <p className="va-muted text-xs leading-5">
-                현재는 질문 내용을 해석하지 않고 콘텐츠별 고정 Mock 답변을 제공합니다.
-              </p>
+              <ul aria-label="예시 질문" className="va-ai-examples">
+                {CONTENT_EXAMPLE_QUESTIONS.map((example) => (
+                  <li key={example}>
+                    <button type="button" disabled={isPending} onClick={() => void submitQuestion(example)}>
+                      {example}
+                    </button>
+                  </li>
+                ))}
+              </ul>
             ) : null}
 
             {request.status !== "idle" ? (
@@ -253,7 +265,8 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
                   <SourceInfo
                     sources={request.result.sources}
                     headingId={`${inputId}-sources`}
-                    title="AI 답변 참고 출처"
+                    title="AI 답변 근거"
+                    internal
                   />
                 </div>
               </>
@@ -284,7 +297,7 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
                   setValidationError(null);
                 }}
                 rows={2}
-                placeholder="이 글에 대해 궁금한 점을 물어보세요"
+                placeholder="현재 컨텐츠 내용에 대한 질문"
                 className="va-ai-input"
               />
               <button
@@ -292,7 +305,10 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
                 disabled={isPending}
                 className="va-ai-send"
               >
-                전송
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="sr-only">전송</span>
               </button>
             </div>
             {validationError ? (

@@ -25,5 +25,5 @@ export type HomeAIRequest = {
 };
 
 export type HomeAIResponse =
-  | { type: "answer"; answer: string }
+  | { type: "answer"; answer: string; sources?: Source[] }
   | { type: "topicSwitchSuggested"; targetTopic: Topic; message: string };

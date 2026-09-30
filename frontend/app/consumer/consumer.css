@@ -288,6 +288,7 @@
   line-height: 1.5;
 }
 .consumer-mock .ui-version-a .va-thumbnail {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -405,7 +406,7 @@
   border-radius: 16px;
   background: #40403b;
 }
-.consumer-mock .ui-home .va-card-image { object-fit: cover; }
+.consumer-mock .ui-home .va-card-image { object-fit: cover; filter: brightness(0.88); }
 .consumer-mock .ui-home .va-card-image-fallback {
   position: absolute;
   inset: 0;
@@ -413,7 +414,10 @@
   align-items: flex-start;
   justify-content: center;
   padding: 96px 24px 0;
-  background: linear-gradient(160deg, #75756b, #40403b);
+  /* 이미지가 없는 콘텐츠는 빈 칸 대신 부드러운 그라데이션을 보여준다. */
+  background:
+    radial-gradient(120% 80% at 80% 10%, #4499f359 0%, transparent 60%),
+    linear-gradient(160deg, #75756b, #2b2b28);
   color: var(--va-line);
   font-size: 12px;
 }
@@ -424,8 +428,9 @@
   align-items: flex-start;
   gap: 8px;
   width: 100%;
-  padding: 16px 24px;
-  background: linear-gradient(180deg, transparent 0%, transparent 20%, rgb(0 0 0 / 40%) 50%, rgb(0 0 0 / 80%) 80%, rgb(0 0 0 / 90%) 100%);
+  padding: 96px 24px 16px;
+  /* 밝은 사진 위에서도 흰 제목이 읽히도록 아래로 갈수록 어둡게 덮는다. */
+  background: linear-gradient(180deg, transparent 0%, rgb(0 0 0 / 35%) 25%, rgb(0 0 0 / 72%) 55%, rgb(0 0 0 / 90%) 100%);
 }
 .consumer-mock .ui-home .va-card-overlay .va-section-chip {
   min-height: 28px;
@@ -442,9 +447,13 @@
 }
 .consumer-mock .ui-home .va-card-metadata {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
   min-height: 27px;
-  color: #c0c0ba;
+  padding-bottom: 8px;
+  color: #f0f0ef;
   font-size: 12px;
   font-weight: 500;
   line-height: 1.35;
@@ -573,6 +582,10 @@
   overflow-x: auto;
   padding-bottom: 8px;
 }
+.consumer-mock .ui-version-a .va-ai-examples button {
+  text-align: left;
+  cursor: pointer;
+}
 .consumer-mock .ui-version-a .va-ai-examples > li {
   flex-shrink: 0;
   max-width: 256px;
@@ -623,8 +636,12 @@
   flex-shrink: 0;
   min-width: 44px;
   min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
   background: #f0f0ef;
+  color: var(--va-ink);
   font-size: 12px;
   font-weight: 600;
 }
@@ -750,9 +767,54 @@
   padding-top: 120px;
   border: 0;
   color: #f0f0ef;
-  background: linear-gradient(transparent, rgb(0 0 0 / 80%) 70%, rgb(0 0 0 / 90%));
+  background: linear-gradient(transparent, rgb(0 0 0 / 45%) 25%, rgb(0 0 0 / 80%) 65%, rgb(0 0 0 / 92%));
 }
 .consumer-mock .ui-version-a .va-detail-header-image .va-detail-source-name { color: #c0c0ba; }
+.consumer-mock .ui-version-a .va-detail-image-fallback {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 80% at 80% 10%, #4499f359 0%, transparent 60%),
+    linear-gradient(160deg, #75756b, #2b2b28);
+}
+.consumer-mock .ui-version-a .va-detail-topbar {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  left: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.consumer-mock .ui-version-a .va-detail-topbar .va-card-actions { position: static; }
+.consumer-mock .ui-version-a .va-detail-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgb(192 192 186 / 48%);
+  border-radius: 50%;
+  background: rgb(192 192 186 / 48%);
+  color: #f9f9f9;
+}
+.consumer-mock .ui-version-a .va-detail-header-image .va-detail-heading .va-section-chip {
+  margin-bottom: 12px;
+  background: rgb(240 240 239 / 80%);
+  color: var(--va-ink);
+}
+.consumer-mock .ui-version-a .va-detail-byline {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  color: #f0f0ef;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
 .consumer-mock .ui-version-a .va-detail-content { padding: 24px; }
 .consumer-mock .ui-version-a .va-detail-body { font-size: 16px; line-height: 1.8; }
 .consumer-mock .ui-version-a .va-detail-reason {
@@ -929,3 +991,200 @@
   .consumer-mock .ui-onboarding .ob-intro h1 { letter-spacing: -0.5px; }
   .consumer-mock .ui-onboarding .ob-intro p { font-size: 14px; }
 }
+
+/* 저장·마이페이지 공통 */
+.consumer-mock .ui-version-a .va-page-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.consumer-mock .ui-version-a .va-row-time {
+  color: #a3a39b;
+  font-size: 12px;
+}
+.consumer-mock .ui-version-a .va-tab-page {
+  padding-bottom: calc(104px + env(safe-area-inset-bottom));
+}
+
+/* 마이페이지 */
+.consumer-mock .ui-version-a .va-my-section {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 24px 8px;
+}
+.consumer-mock .ui-version-a .va-my-section-title {
+  padding: 8px 0;
+  color: #a3a39b;
+  font-size: 14px;
+  font-weight: 500;
+}
+.consumer-mock .ui-version-a .va-my-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  width: 100%;
+  color: var(--va-ink);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.consumer-mock .ui-version-a .va-my-row > span:first-child { flex-shrink: 0; }
+.consumer-mock .ui-version-a .va-my-row-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: #75756b;
+  font-size: 14px;
+  font-weight: 400;
+}
+.consumer-mock .ui-version-a .va-my-row-value-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.consumer-mock .ui-version-a .va-my-row-muted { color: #a3a39b; font-weight: 500; }
+.consumer-mock .ui-version-a .va-toggle {
+  position: relative;
+  flex-shrink: 0;
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  background: #d8d8d4;
+  transition: background 0.15s;
+}
+.consumer-mock .ui-version-a .va-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #8d8d85;
+  transition: transform 0.15s, background 0.15s;
+}
+.consumer-mock .ui-version-a [aria-checked="true"] .va-toggle { background: #a4cdf9; }
+.consumer-mock .ui-version-a [aria-checked="true"] .va-toggle-thumb {
+  transform: translateX(20px);
+  background: #f9f9f9;
+}
+.consumer-mock .ui-version-a .va-toast {
+  position: fixed;
+  z-index: 20;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: #2b2b28e6;
+  color: #f9f9f9;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.consumer-mock .ui-version-a .va-my-topic-list { padding: 24px 24px 0; }
+.consumer-mock .ui-version-a .va-my-topic-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 88px;
+  padding: 0 30px;
+  border-bottom: 1px solid #d8d8d4;
+  font-size: 18px;
+}
+.consumer-mock .ui-version-a .va-my-subscribe-title {
+  padding: 24px 24px 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+.consumer-mock .ui-version-a .va-my-subscribe-title + .va-my-topic-list .va-my-topic-row { padding: 0; min-height: 58px; font-size: 14px; }
+.consumer-mock .ui-version-a .va-my-topic-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.consumer-mock .ui-version-a .va-my-topic-add { background: #74b3f6; color: var(--va-ink); }
+.consumer-mock .ui-version-a .va-my-topic-remove { background: #c0c0ba; color: var(--va-ink); }
+
+/* 알림 */
+.consumer-mock .ui-version-a .va-noti-bell { position: relative; display: inline-flex; }
+.consumer-mock .ui-version-a .va-noti-dot {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f0503c;
+}
+.consumer-mock .ui-version-a .va-noti-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 24px;
+  background: #f9f9f9;
+}
+.consumer-mock .ui-version-a .va-noti-back { display: inline-flex; align-items: center; min-width: 32px; min-height: 44px; }
+.consumer-mock .ui-version-a .va-noti-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 16px;
+  background: #f0f0ef;
+}
+.consumer-mock .ui-version-a .va-noti-tabs button {
+  /* 탭을 바꿔도 알약 크기가 변하지 않게 폭을 고정한다. */
+  width: 44px;
+  min-height: 26px;
+  border-radius: 13px;
+  color: #75756b;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.consumer-mock .ui-version-a .va-noti-tabs [aria-selected="true"] { background: #d4e7fc; color: var(--va-ink); }
+.consumer-mock .ui-version-a .va-noti-group { padding: 28px 24px 4px; font-size: 16px; font-weight: 700; }
+.consumer-mock .ui-version-a .va-noti-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 14px 24px;
+  border-bottom: 1px solid #ecece8;
+  text-align: left;
+  cursor: pointer;
+}
+.consumer-mock .ui-version-a .va-noti-text { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.consumer-mock .ui-version-a .va-noti-item-body { font-size: 13px; line-height: 1.5; word-break: keep-all; }
+.consumer-mock .ui-version-a .va-noti-item-preview {
+  overflow: hidden;
+  color: #75756b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.consumer-mock .ui-version-a .va-noti-item-time { color: #a3a39b; font-size: 10px; }
+.consumer-mock .ui-version-a .va-noti-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 48px;
+  height: 54px;
+  overflow: hidden;
+  background: #eeede8;
+}
+.consumer-mock .ui-version-a .va-noti-unread { background: #4499f30f; }
+.consumer-mock .ui-version-a .va-noti-empty { padding: 8px 24px 4px; color: #a3a39b; font-size: 12px; }
+
+/* 목록 길이가 달라져 스크롤바가 생기고 사라져도 화면이 옆으로 밀리지 않게 자리를 비워 둔다. */
+html:has(.consumer-mock) { scrollbar-gutter: stable; background: #f8f6f2; }
