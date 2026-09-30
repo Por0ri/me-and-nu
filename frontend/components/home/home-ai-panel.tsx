@@ -14,6 +14,12 @@ const HOME_EXAMPLE_QUESTIONS = [
   "가볍게 읽을 수 있는 글 추천해줘",
 ];
 
+const MOVIE_EXAMPLE_QUESTIONS = [
+  "OO감독의 최신 인터뷰 보고 싶어",
+  "요즘 영화 트렌드와 관련된 기사 찾아줘",
+  "OO평론가가 쓴 글 읽고 싶어",
+];
+
 type HomeAIPanelProps = {
   topic: Topic;
   availableTopicIds: string[];
@@ -35,8 +41,13 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const composerTriggerRef = useRef<HTMLButtonElement>(null);
+  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const [isAiOpen, setIsAiOpen] = useState(false);
   const isPending = request.status === "pending";
+  const exampleQuestions = topic.id === "topic-movie" || topic.code?.toLowerCase() === "movie"
+    ? MOVIE_EXAMPLE_QUESTIONS
+    : HOME_EXAMPLE_QUESTIONS;
 
   useEffect(() => {
     requestGeneration.current += 1;
@@ -107,8 +118,8 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
     }
 
     setIsAiOpen(false);
-    if (triggerRef.current?.isConnected) {
-      triggerRef.current.focus({ preventScroll: true });
+    if (composerTriggerRef.current?.isConnected) {
+      composerTriggerRef.current.focus({ preventScroll: true });
     }
   }
 
@@ -151,23 +162,37 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-label="현재 분야 AI 질문 열기"
-        aria-haspopup="dialog"
-        aria-expanded={isAiOpen}
-        aria-controls={`${inputId}-dialog`}
-        onClick={openAI}
-        className="va-ai-jump"
-      >
-        <Image src="/ui-version-a/edit.svg" alt="" width={28} height={28} />
-      </button>
+      <div className="va-home-ai-dock" data-expanded={isComposerExpanded}>
+        {isComposerExpanded ? (
+          <button
+            ref={composerTriggerRef}
+            type="button"
+            aria-label="현재 분야 AI 질문 열기"
+            aria-haspopup="dialog"
+            aria-expanded={isAiOpen}
+            aria-controls={`${inputId}-dialog`}
+            onClick={openAI}
+            className="va-home-ai-prompt"
+          >
+            매거진 목록에 대한 의견을 알려주세요
+          </button>
+        ) : null}
+        <button
+          ref={triggerRef}
+          type="button"
+          aria-label={isComposerExpanded ? "AI 입력 바 접기" : "AI 입력 바 펼치기"}
+          aria-expanded={isComposerExpanded}
+          onClick={() => setIsComposerExpanded((expanded) => !expanded)}
+          className="va-ai-jump"
+        >
+          <Image src="/ui-version-a/edit.svg" alt="" width={28} height={28} />
+        </button>
+      </div>
       <dialog
         ref={dialogRef}
         id={`${inputId}-dialog`}
         aria-labelledby={`${inputId}-title`}
-        className="va-ai-dialog"
+        className="va-ai-dialog va-home-ai-dialog"
         onClose={handleAIClose}
         onCancel={(event) => {
           event.preventDefault();
@@ -191,16 +216,15 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
       >
         <div className="va-ai-sheet">
           <header className="va-ai-sheet-header">
-            <span aria-hidden="true" className="va-ai-grabber" />
-            <p className="va-muted text-xs">현재 분야: {topic.name}</p>
+            <p className="sr-only">현재 분야: {topic.name}</p>
             <button
               data-ai-close
               type="button"
               onClick={closeAI}
               aria-label="AI 질문 닫기"
-              className="va-ai-close"
+              className="va-ai-close va-home-ai-close"
             >
-              닫기
+              <span aria-hidden="true" className="va-ai-grabber" />
             </button>
           </header>
 
@@ -214,7 +238,7 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
             {request.status === "idle" ? (
               <>
                 <ul aria-label="예시 질문" className="va-ai-examples">
-                  {HOME_EXAMPLE_QUESTIONS.map((example) => (
+                  {exampleQuestions.map((example) => (
                     <li key={example}>
                       <button type="button" disabled={isPending} onClick={() => void submitQuestion(example)}>
                         {example}
@@ -311,7 +335,7 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
                   setQuestion(event.target.value);
                   setValidationError(null);
                 }}
-                rows={2}
+                rows={1}
                 placeholder="매거진 목록에 대한 의견을 알려주세요"
                 className="va-ai-input"
               />
@@ -320,9 +344,7 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
                 disabled={isPending}
                 className="va-ai-send"
               >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+                <Image src="/ui-home/send.svg" alt="" width={16} height={16} />
                 <span className="sr-only">전송</span>
               </button>
             </div>

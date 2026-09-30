@@ -32,6 +32,8 @@ const HEADER_TOPIC_LABELS = new Map([
   ["topic-anime", "animation"],
 ]);
 
+const TOPIC_MENU_ORDER = ["애니메이션", "영화", "음악"];
+
 async function requestHomeData(topicId: string): Promise<HomeData> {
   const result = await getHomeContents({ topicId });
 
@@ -69,8 +71,8 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
   const [canRestartDemo, setCanRestartDemo] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const topicMenuId = useId();
-  const topicMenuRef = useRef<HTMLDivElement>(null);
   const topicMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const topicDialogRef = useRef<HTMLDialogElement>(null);
   const [homeData, setHomeData] = useState<HomeData | null>(null);
   const [isLoading, setIsLoading] = useState(initialSelectedTopicId !== null);
   const [error, setError] = useState<string | null>(null);
@@ -98,32 +100,15 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
   }, [flowState, initialSelectedTopicId, isRestoring, selectedTopicId]);
 
   useEffect(() => {
-    if (!isTopicMenuOpen) {
-      return;
-    }
+    const dialog = topicDialogRef.current;
+    if (!dialog) return;
+    if (isTopicMenuOpen && !dialog.open) dialog.showModal();
+    if (!isTopicMenuOpen && dialog.open) dialog.close();
+    if (!isTopicMenuOpen) return;
 
-    function closeOnOutsideClick(event: PointerEvent) {
-      if (
-        event.target instanceof Node &&
-        !topicMenuRef.current?.contains(event.target)
-      ) {
-        setIsTopicMenuOpen(false);
-      }
-    }
-
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setIsTopicMenuOpen(false);
-        topicMenuButtonRef.current?.focus();
-      }
-    }
-
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
   }, [isTopicMenuOpen]);
 
   useEffect(() => {
@@ -135,7 +120,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
           setViewMode(storedViewMode);
         }
       } catch {
-        // Unavailable storage leaves the initial List view intact.
+        // Unavailable storage leaves the initial Card view intact.
       }
     });
 
@@ -226,7 +211,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
 
   if (isConsumerApiMode && restoreError) {
     return (
-      <main className="ui-version-a ui-home">
+      <main className="ui-version-a ui-home ui-home-screen">
         <section className="va-shell va-recovery space-y-4 text-center">
           <h1 className="text-2xl font-semibold">홈</h1>
           <p role="alert" className="va-muted text-sm leading-6">{restoreError}</p>
@@ -244,7 +229,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
 
   if (!flowState || !initialHomeTopicId) {
     return (
-      <main className="ui-version-a ui-home">
+      <main className="ui-version-a ui-home ui-home-screen">
         <section className="va-shell va-recovery space-y-4 text-center">
           <h1 className="text-2xl font-semibold">홈</h1>
           <p role="status" className="va-muted text-sm leading-6">
@@ -263,7 +248,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
 
   if (!initialSelectedTopicId || !selectedTopicId) {
     return (
-      <main className="ui-version-a ui-home">
+      <main className="ui-version-a ui-home ui-home-screen">
         <section className="va-shell va-recovery space-y-4 text-center">
           <h1 className="text-2xl font-semibold">홈</h1>
           <p role="status" className="va-muted text-sm leading-6">
@@ -278,6 +263,13 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
   }
 
   const allTopics = homeData?.topics ?? [];
+  const menuTopics = [...allTopics].sort((a, b) => {
+    const rank = (name: string) => {
+      const index = TOPIC_MENU_ORDER.indexOf(name);
+      return index < 0 ? TOPIC_MENU_ORDER.length : index;
+    };
+    return rank(a.name) - rank(b.name);
+  });
   const visibleTopics = allTopics.filter((topic) =>
     flowState.availableTopicIds.includes(topic.id),
   );
@@ -285,6 +277,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
     (topic) => topic.id === selectedTopicId,
   );
   const isCurrentTopicData = homeData?.selectedTopicId === selectedTopicId;
+  const firstContentId = homeData?.sections.find((section) => section.contents.length > 0)?.contents[0]?.id;
   const headerTopicLabel = currentTopic
     ? isConsumerApiMode
       ? currentTopic.code?.toLowerCase() ?? currentTopic.name
@@ -292,113 +285,114 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
     : "nu";
 
   return (
-    <main className="ui-version-a ui-home">
+    <main className="ui-version-a ui-home ui-home-screen">
       <div className="va-shell va-home">
         <header className="va-home-header">
-          <div className="min-w-0">
-            <p className="va-home-brand">
+          <div className="va-topic-switch min-w-0">
+            <button
+              ref={topicMenuButtonRef}
+              type="button"
+              onClick={() => setIsTopicMenuOpen((isOpen) => !isOpen)}
+              aria-label="분야 전환 메뉴"
+              aria-haspopup="dialog"
+              aria-expanded={isTopicMenuOpen}
+              aria-controls={topicMenuId}
+              className="va-home-brand"
+            >
               me;<span className="va-accent">{headerTopicLabel}</span>
-            </p>
+            </button>
             <h1 className="sr-only">홈</h1>
             {currentTopic ? (
               <p className="sr-only">현재 분야: {currentTopic.name}</p>
             ) : null}
+            <dialog
+              ref={topicDialogRef}
+              id={topicMenuId}
+              aria-labelledby={`${topicMenuId}-title`}
+              className="va-topic-popover"
+              onClose={() => setIsTopicMenuOpen(false)}
+              onCancel={() => setIsTopicMenuOpen(false)}
+              onClick={(event) => {
+                if (event.target !== event.currentTarget) return;
+                const bounds = event.currentTarget.getBoundingClientRect();
+                if (event.clientX < bounds.left || event.clientX > bounds.right ||
+                    event.clientY < bounds.top || event.clientY > bounds.bottom) {
+                  setIsTopicMenuOpen(false);
+                }
+              }}
+            >
+              <h2 id={`${topicMenuId}-title`}>탐색할 분야를 골라주세요.</h2>
+              {allTopics.length > 0 ? (
+                <nav aria-label="분야 선택" className="va-topic-menu-options">
+                  {menuTopics.map((topic) => {
+                    const isActive = flowState.availableTopicIds.includes(topic.id);
+                    const isSelected = topic.id === selectedTopicId;
+
+                    if (!isActive) {
+                      return (
+                        <Link
+                          key={topic.id}
+                          href={{
+                            pathname: consumerRoutes.addTopic,
+                            query: {
+                              returnTopicId: selectedTopicId,
+                              targetTopicId: topic.id,
+                            },
+                          }}
+                          onClick={() => setIsTopicMenuOpen(false)}
+                          aria-label={`${topic.name} 분야 추가`}
+                          className="va-topic-menu-option"
+                        >
+                          {topic.name}
+                          <span className="va-topic-add">+ 추가</span>
+                        </Link>
+                      );
+                    }
+
+                    return (
+                      <button
+                        key={topic.id}
+                        type="button"
+                        aria-pressed={isSelected}
+                        disabled={isLoading}
+                        onClick={() => {
+                          selectTopic(topic.id);
+                          setIsTopicMenuOpen(false);
+                          topicMenuButtonRef.current?.focus();
+                        }}
+                        className="va-topic-menu-option"
+                      >
+                        {topic.name}
+                        {isSelected ? (
+                          <span className="va-topic-current">탐색중<span className="sr-only"> · 현재 분야</span></span>
+                        ) : (
+                          <Image src="/ui-home/topic-arrow.svg" alt="" width={21.6} height={21.6} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </nav>
+              ) : null}
+              {canRestartDemo ? (
+                <Link
+                  href={consumerRoutes.login}
+                  onClick={() => setIsTopicMenuOpen(false)}
+                  className="va-topic-menu-option"
+                >
+                  처음부터 시연하기
+                </Link>
+              ) : null}
+            </dialog>
           </div>
           <div className="va-header-icons">
-            <div ref={topicMenuRef} className="va-topic-switch">
-              <button
-                ref={topicMenuButtonRef}
-                type="button"
-                onClick={() => setIsTopicMenuOpen((isOpen) => !isOpen)}
-                aria-label="분야 전환 메뉴"
-                aria-expanded={isTopicMenuOpen}
-                aria-controls={isTopicMenuOpen ? topicMenuId : undefined}
-                className="va-topic-switch-trigger"
-              >
-                <Image src="/ui-version-a/swap-horiz.svg" alt="" width={20} height={16} />
-              </button>
-              {isTopicMenuOpen ? (
-                <div id={topicMenuId} className="va-topic-popover">
-                  {allTopics.length > 0 ? (
-                    <nav aria-label="분야 선택" className="va-topic-menu-options">
-                      {allTopics.map((topic) => {
-                        const isActive = flowState.availableTopicIds.includes(topic.id);
-                        const isSelected = topic.id === selectedTopicId;
-
-                        if (!isActive) {
-                          return (
-                            <Link
-                              key={topic.id}
-                              href={{
-                                pathname: consumerRoutes.addTopic,
-                                query: {
-                                  returnTopicId: selectedTopicId,
-                                  targetTopicId: topic.id,
-                                },
-                              }}
-                              onClick={() => setIsTopicMenuOpen(false)}
-                              aria-label={`${topic.name} 분야 추가`}
-                              className="va-topic-menu-option"
-                            >
-                              {topic.name}
-                              <span className="va-muted text-xs">+ 추가</span>
-                            </Link>
-                          );
-                        }
-
-                        return (
-                          <button
-                            key={topic.id}
-                            type="button"
-                            aria-pressed={isSelected}
-                            disabled={isLoading}
-                            onClick={() => {
-                              selectTopic(topic.id);
-                              setIsTopicMenuOpen(false);
-                              topicMenuButtonRef.current?.focus();
-                            }}
-                            className="va-topic-menu-option"
-                          >
-                            {topic.name}
-                            {isSelected ? <span className="text-xs">현재 분야</span> : null}
-                          </button>
-                        );
-                      })}
-                    </nav>
-                  ) : null}
-                  <Link
-                    href={{
-                      pathname: consumerRoutes.addTopic,
-                      query: { returnTopicId: selectedTopicId },
-                    }}
-                    onClick={() => setIsTopicMenuOpen(false)}
-                    className="va-topic-menu-option"
-                  >
-                    분야 추가
-                  </Link>
-                  {canRestartDemo ? (
-                    <Link
-                      href={consumerRoutes.login}
-                      onClick={() => setIsTopicMenuOpen(false)}
-                      className="va-topic-menu-option"
-                    >
-                      처음부터 시연하기
-                    </Link>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      toggleViewMode();
-                      setIsTopicMenuOpen(false);
-                      topicMenuButtonRef.current?.focus();
-                    }}
-                    className="va-topic-menu-view"
-                  >
-                    {viewMode === "list" ? "카드 보기로 전환" : "목록 보기로 전환"}
-                  </button>
-                </div>
-              ) : null}
-            </div>
+            <button
+              type="button"
+              onClick={toggleViewMode}
+              aria-label={viewMode === "list" ? "카드 보기로 전환" : "목록 보기로 전환"}
+              className="va-topic-switch-trigger"
+            >
+              <Image src="/ui-version-a/swap-horiz.svg" alt="" width={20} height={16} />
+            </button>
             <Link
               href={{ pathname: consumerRoutes.notifications, query: { topicId: selectedTopicId } }}
               aria-label={unreadCount > 0 ? `알림 ${unreadCount}개 안 읽음` : "알림"}
@@ -461,6 +455,7 @@ export function HomeScreen({ topicId }: { topicId: string | null }) {
                         topicId={selectedTopicId}
                         sectionTitle={section.title}
                         viewMode={viewMode}
+                        eagerImage={content.id === firstContentId}
                       />
                     ))}
                   </div>
