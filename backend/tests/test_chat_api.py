@@ -89,3 +89,20 @@ def test_related_contents_are_ranked_by_question_overlap():
     alexander = SimpleNamespace(title="전장의 중심", summary="알렉산더의 돌격", body="히다스페스 전투 장면")
     other = SimpleNamespace(title="미나리", summary="가족", body="농장")
     assert chat_service._score(tokens, alexander) > chat_service._score(tokens, other) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stored", "api_type"),
+    [("needs_clarification", "needs_clarification"), ("blocked", "blocked")],
+)
+async def test_agent_result_types_are_reported(stored, api_type):
+    message = _assistant(message_body="되묻는 문장", result_type=stored, notices=[])
+    job = await chat_service.get_job(_db_returning((message, object())), 1, 9001)
+    assert job.status == "completed"
+    assert job.result.type == api_type
+
+
+def test_question_over_500_chars_is_rejected():
+    with pytest.raises(ValidationError):
+        ChatMessageCreate(client_message_id="11111111-1111-4111-8111-111111111111", content="가" * 501)

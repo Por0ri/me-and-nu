@@ -26,7 +26,7 @@ class ChatSessionResponse(CamelModel):
 
 class ChatMessageCreate(CamelModel):
     client_message_id: uuid.UUID
-    content: str = Field(max_length=1000)
+    content: str = Field(max_length=500)  # FR-612 입력 500자
     selected_text: str | None = Field(default=None, max_length=2000)
 
     @field_validator("content")
@@ -50,7 +50,7 @@ class ChatSource(CamelModel):
 
 
 class ChatJobResult(CamelModel):
-    type: Literal["answer", "topicSwitchSuggested"]
+    type: Literal["answer", "topicSwitchSuggested", "needs_clarification", "blocked"]
     message_id: int
     content: str
     sources: list[ChatSource] = Field(default_factory=list)

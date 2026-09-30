@@ -1,20 +1,34 @@
-"""AI 대화: 세션 만들기, 질문 받기, 답 만들기(제한형 RAG), 답 조회.
+"""AI 대화: 세션 만들기, 질문 받기, 답 만들기, 답 조회.
 
 답은 요청 경로 밖(백그라운드)에서 만든다. 질문을 받으면 빈 assistant 메시지를
 먼저 만들어 그 ID를 jobId로 돌려주고, 답이 채워지면 completed가 된다.
-근거는 현재 분야의 공개 콘텐츠 안에서만 찾는다(보고 있는 글 + 질문과 겹치는 글).
+답은 소비자 챗봇 에이전트(agent/chatbot, LangGraph)가 만든다. 근거는 현재 분야의
+공개 콘텐츠와 정해 둔 공식 API 조회 결과 안에서만 쓴다.
 """
 
 import logging
-import re
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
-from app.integrations import llm
-from app.models import ChatMessage, ChatSession, Tap, Topic
+from app.integrations import chatbot_facts as agent_facts
+from app.integrations import chatbot_search as agent_search
+from app.integrations.chatbot_agent import TurnInput, build_deps, run_turn
+from app.integrations.chatbot_agent import limits as agent_limits
+from app.integrations.chatbot_agent import phrases as agent_phrases
+from app.integrations.chatbot_agent import prompts as agent_prompts
+from app.models import (
+    AgentRun,
+    AgentRunStep,
+    ChatMessage,
+    ChatSession,
+    ChatUnansweredQuestion,
+    LongTermMemory,
+    Tap,
+    Topic,
+)
 from app.repositories import catalog_repository as catalog_repo
 from app.repositories import content_repository as content_repo
 from app.schemas.chat import (
@@ -33,9 +47,15 @@ logger = logging.getLogger(__name__)
 FAILED = "GENERATION_FAILED"
 TOPIC_SWITCH = "TOPIC_SWITCH"
 INSUFFICIENT = "EVIDENCE_INSUFFICIENT"
-INSUFFICIENT_MESSAGE = "확인된 자료가 충분하지 않아 단정하지 않았어요."
-MAX_RELATED = 3
-BODY_LIMIT = 3500
+INSUFFICIENT_MESSAGE = agent_phrases.INSUFFICIENT
+AGENT_CODE = "consumer_chat"
+# DB 결과 종류 → API-053 result.type
+RESULT_TYPES = {
+    "answer": "answer",
+    "topic_switch_suggested": "topicSwitchSuggested",
+    "needs_clarification": "needs_clarification",
+    "blocked": "blocked",
+}
 
 
 # ---------- 세션·메시지 ----------
@@ -150,7 +170,7 @@ async def get_job(db: AsyncSession, user_id: int, job_id: int) -> ChatJobRespons
         job_id=job_id,
         status="completed",
         result=ChatJobResult(
-            type="topicSwitchSuggested" if message.result_type == "topic_switch_suggested" else "answer",
+            type=RESULT_TYPES.get(message.result_type, "answer"),
             message_id=message.chat_message_id,
             content=message.message_body,
             sources=[ChatSource(**source) for source in message.answer_sources or []],
@@ -161,39 +181,11 @@ async def get_job(db: AsyncSession, user_id: int, job_id: int) -> ChatJobRespons
     )
 
 
-# ---------- 답 만들기 ----------
+# ---------- 답 만들기 (소비자 챗봇 에이전트, LangGraph) ----------
 
-def _tokens(text: str) -> set[str]:
-    return set(re.findall(r"[0-9A-Za-z가-힣]{2,}", text.lower()))
-
-
-def _score(question_tokens: set[str], content) -> int:
-    haystack = f"{content.title} {content.summary or ''} {(content.body or '')[:2000]}".lower()
-    return sum(1 for token in question_tokens if token in haystack)
-
-
-async def _source_url(db: AsyncSession, content_id: int) -> str:
-    source = await content_repo.get_primary_source(db, content_id)
-    return source[0].source_url if source else ""
-
-
-def _instructions(topic: Topic, other_topics: list[Topic]) -> str:
-    others = ", ".join(f"{t.topic_code}({t.topic_name})" for t in other_topics)
-    return (
-        f"너는 콘텐츠 큐레이션 서비스 me;nu의 '{topic.topic_name}' 분야 AI 도우미다.\n"
-        "규칙:\n"
-        "- [자료]에 적힌 내용 안에서만 답한다. 자료에 없는 사실은 지어내지 말고 "
-        "\"제가 가진 자료로는 확인되지 않아요\"라고 말한다.\n"
-        "- 사실인지 묻는 질문에는 자료와 맞는 부분과 확인되지 않는 부분을 나누어 말한다.\n"
-        f"- 질문이 '{topic.topic_name}'이 아니라 다른 분야({others})에 관한 것이면 "
-        "답하지 말고 그 분야로 옮기길 권한다.\n"
-        "- 한국어 존댓말, 3~5문장. 과장하거나 광고하지 않는다.\n"
-        "- '자료 1' 같은 번호는 답변 문장에 쓰지 않는다. '이 글', '관련 글'처럼 말하고 번호는 used에만 적는다.\n"
-        "반드시 아래 JSON 하나로만 답한다:\n"
-        '{"answer": "답변", "used": [답에 쓴 자료 번호], '
-        '"evidence": "sufficient" 또는 "insufficient", '
-        '"switchTopic": 다른 분야 질문이면 그 분야 code, 아니면 null}'
-    )
+# 팀 테스트가 쓰는 이름을 남긴다. 실제 검색은 integrations.chatbot_search가 한다.
+_tokens = agent_search.tokens
+_score = agent_search.score
 
 
 async def generate_answer(job_id: int) -> None:
@@ -215,37 +207,13 @@ async def generate_answer(job_id: int) -> None:
                 await db.commit()
 
 
-async def _pick_materials(db: AsyncSession, session: ChatSession, topic_id: int, question: ChatMessage) -> list:
-    """보고 있는 글을 먼저 두고, 질문과 많이 겹치는 같은 분야 글을 더한다."""
-    materials = []
-    if session.anchor_content_id:
-        anchor = await content_repo.get_public_content(db, session.anchor_content_id, topic_id)
-        if anchor is not None:
-            materials.append(anchor)
-    candidates = await content_repo.list_public_contents(
-        db, topic_id, subtopic_id=None, after=None, limit=100
-    )
-    question_tokens = _tokens(f"{question.message_body} {question.selected_text or ''}")
-    taken = {m.content_id for m in materials}
-    scored = sorted(
-        ((_score(question_tokens, c), c) for c in candidates if c.content_id not in taken),
-        key=lambda pair: pair[0],
-        reverse=True,
-    )
-    related = [c for score, c in scored[:MAX_RELATED] if score > 0]
-    if not related and not materials:
-        # 홈에서 막연하게 물으면 최근 글을 자료로 쓴다.
-        related = [c for _, c in scored[:MAX_RELATED]]
-    return materials + related
-
-
-async def _fill_answer(db: AsyncSession, job: ChatMessage) -> None:
-    session = await db.get(ChatSession, job.chat_session_id)
-    tap = await db.get(Tap, session.tap_id)
-    topic = await catalog_repo.get_active_topic(db, tap.topic_id)
+async def _turn_input(db: AsyncSession, session: ChatSession, job: ChatMessage, topic: Topic) -> tuple[TurnInput, ChatMessage]:
     all_topics = await catalog_repo.list_active_topics(db, None)
-    other_topics = [t for t in all_topics if t.topic_id != topic.topic_id]
-
+    others = [
+        {"code": t.topic_code, "name": t.topic_name, "topicId": t.topic_id}
+        for t in all_topics
+        if t.topic_id != topic.topic_id
+    ]
     recent = (
         await db.scalars(
             select(ChatMessage)
@@ -255,55 +223,131 @@ async def _fill_answer(db: AsyncSession, job: ChatMessage) -> None:
                 func.length(ChatMessage.message_body) > 0,
             )
             .order_by(ChatMessage.chat_message_id.desc())
-            .limit(5)
+            .limit(agent_limits.HISTORY_TURNS * 2 + 1)
         )
     ).all()
-    history = list(reversed(recent))
-    if not history or history[-1].sender_role != "user":
+    messages = list(reversed(recent))
+    if not messages or messages[-1].sender_role != "user":
         raise RuntimeError("question not found")
-    question = history[-1]
-
-    materials = await _pick_materials(db, session, topic.topic_id, question)
-    blocks = []
-    for number, content in enumerate(materials, start=1):
-        text = content.body or content.summary or ""
-        label = "지금 보고 있는 글" if content.content_id == session.anchor_content_id else "관련 글"
-        blocks.append(f"[자료 {number}] ({label}) {content.title}\n{text[:BODY_LIMIT]}")
-    past = "\n".join(
-        f"{'사용자' if m.sender_role == 'user' else 'AI'}: {m.message_body}" for m in history[:-1]
+    question = messages[-1]
+    history = [
+        {"role": m.sender_role, "text": m.message_body}
+        for m in messages[:-1]
+        if m.sender_role in {"user", "assistant"}
+    ]
+    # FR-608: 앞 대화 요약. 요약을 만드는 자리는 아직 정하지 않았다(미결). 있으면 읽기만 한다.
+    memory = await db.scalar(
+        select(LongTermMemory.summary)
+        .where(LongTermMemory.source_chat_session_id == session.chat_session_id)
+        .order_by(LongTermMemory.created_at.desc())
+        .limit(1)
     )
-    parts = ["[자료]\n" + ("\n\n".join(blocks) or "(자료 없음)")]
-    if past:
-        parts.append(f"[앞선 대화]\n{past}")
-    if question.selected_text:
-        parts.append(f"[사용자가 고른 문장]\n{question.selected_text}")
-    parts.append(f"[질문]\n{question.message_body}")
+    anchor = None
+    if session.anchor_content_id:
+        anchor = await agent_search.anchor_item(
+            db, session.anchor_content_id, topic.topic_id, question.message_body
+        )
+    turn = TurnInput(
+        topic_id=topic.topic_id,
+        topic_code=topic.topic_code,
+        topic_name=topic.topic_name,
+        question=question.message_body,
+        other_topics=others,
+        selected_text=question.selected_text,
+        anchor=anchor,
+        history=history,
+        memory_summary=memory,
+        fact_providers=agent_facts.providers_for(topic.topic_code),
+    )
+    return turn, question
 
-    reply = await llm.ask_json(_instructions(topic, other_topics), "\n\n".join(parts))
-    answer = str(reply.get("answer") or "").strip()
-    if not answer:
-        raise RuntimeError("empty answer")
 
-    switch = next((t for t in other_topics if t.topic_code == reply.get("switchTopic")), None)
-    notices: list[dict[str, str]] = []
-    sources: list[dict] = []
-    if switch is not None:
-        job.result_type = "topic_switch_suggested"
-        notices.append({"code": TOPIC_SWITCH, "topicId": str(switch.topic_id)})
-    else:
-        job.result_type = "answer"
-        used = [n for n in reply.get("used") or [] if isinstance(n, int) and 1 <= n <= len(materials)]
-        for number in dict.fromkeys(used):
-            content = materials[number - 1]
-            sources.append({
-                "contentId": content.content_id,
-                "title": content.title,
-                "url": await _source_url(db, content.content_id),
-            })
-        if reply.get("evidence") == "insufficient" or not sources:
-            notices.append({"code": INSUFFICIENT, "message": INSUFFICIENT_MESSAGE})
-    job.message_body = answer
-    job.answer_sources = sources
-    job.notices = notices
+def _parse_time(value: str | None) -> datetime:
+    return datetime.fromisoformat(value) if value else datetime.now(timezone.utc)
+
+
+def _record_steps(db: AsyncSession, run: AgentRun, steps: list[dict]) -> None:
+    attempts: dict[str, int] = {}
+    for order, step in enumerate(steps, start=1):
+        attempts[step["name"]] = attempts.get(step["name"], 0) + 1
+        db.add(
+            AgentRunStep(
+                agent_run_id=run.agent_run_id,
+                step_order=order,
+                step_name=step["name"][:30],
+                attempt_no=attempts[step["name"]],
+                model_name=step.get("model"),
+                prompt_version=step.get("promptVersion"),
+                step_input={"effort": step.get("effort"), "prompt": step.get("input")},
+                step_result=step.get("result"),
+                decision="ok" if step.get("ok") else "error",
+                started_at=_parse_time(step.get("startedAt")),
+                finished_at=_parse_time(step.get("finishedAt")),
+            )
+        )
+
+
+async def _fill_answer(db: AsyncSession, job: ChatMessage) -> None:
+    session = await db.get(ChatSession, job.chat_session_id)
+    tap = await db.get(Tap, session.tap_id)
+    topic = await catalog_repo.get_active_topic(db, tap.topic_id)
+    if topic is None:
+        job.result_type = "blocked"
+        job.message_body = agent_phrases.NO_TOPIC
+        job.answer_sources = []
+        job.notices = []
+        await db.commit()
+        return
+
+    turn, question = await _turn_input(db, session, job, topic)
+    run = AgentRun(
+        requested_by_user_id=session.user_id,
+        topic_id=topic.topic_id,
+        agent_code=AGENT_CODE,
+        agent_version=agent_prompts.PROMPT_VERSION,
+        status="running",
+        input_payload={
+            "chatSessionId": session.chat_session_id,
+            "questionMessageId": question.chat_message_id,
+            "jobMessageId": job.chat_message_id,
+        },
+        started_at=datetime.now(timezone.utc),
+    )
+    db.add(run)
+    await db.flush()
+    job.agent_run_id = run.agent_run_id
+
+    outcome = await run_turn(turn, build_deps(db, topic.topic_code))
+
+    _record_steps(db, run, outcome.steps)
+    run.node_count = min(len(outcome.steps), 32767)
+    run.output_payload = {
+        "resultType": outcome.result_type,
+        "route": outcome.route,
+        "llmCalls": outcome.llm_calls,
+        "blockedBy": outcome.blocked_by,
+        "unansweredReason": outcome.unanswered_reason,
+    }
+    run.finished_at = datetime.now(timezone.utc)
+    if outcome.result_type == "failed":
+        run.status = "failed"
+        run.error_message = outcome.blocked_by or "generation failed"
+        job.notices = [{"code": FAILED, "message": "답변 생성에 실패했습니다."}]
+        await db.commit()
+        return
+
+    run.status = "succeeded"
+    job.result_type = outcome.result_type
+    job.message_body = outcome.message
+    job.answer_sources = outcome.sources
+    job.notices = outcome.notices
     job.written_at = datetime.now(timezone.utc)
+    if outcome.unanswered_reason:
+        db.add(
+            ChatUnansweredQuestion(
+                chat_message_id=question.chat_message_id,
+                topic_id=topic.topic_id,
+                reason=outcome.unanswered_reason,
+            )
+        )
     await db.commit()

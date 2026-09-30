@@ -11,3 +11,4 @@ pydantic-settings
 pydantic-ai-slim[openai]
 python-dotenv
 requests
+langgraph

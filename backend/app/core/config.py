@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # 외부 서비스 키 (없으면 해당 기능만 꺼진다)
     tmdb_key: str | None = None
     llm_key: str | None = None
+    kobis_key: str | None = None  # 영화진흥위원회 박스오피스 (챗봇 사실 확인)
 
     @property
     def cors_origins(self) -> list[str]:
