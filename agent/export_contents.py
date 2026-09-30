@@ -5,6 +5,9 @@ agent/contents/ 아래에 깨끗한 글(.md)과 한 벌의 JSON(contents.json)�
 
     python agent/export_contents.py          # 다시 돌려도 같은 글은 같은 id로 덮어쓴다
 
+팀원마다 out/ 이 다르므로 합친다. 이미 contents.json 에 있는 글은 그대로 두고, 내 out/ 의 올림 글만
+id로 더하거나 덮어쓴다. 내 out/ 에 원본이 있는데 올림에서 빠진 글만 contents 에서 뺀다.
+
 JSON 한 건의 모양은 프론트 mock(frontend/types/content.ts ContentDetail)에 맞췄다.
   id · title · summary · body · sourceName · sources[{id, name, url}] · saved(false) · topicId
 그 밖에 subtopic(영화 정보 · 영화 리뷰 · 음악 리뷰 · 애니 유형) · work(작품 이름) · agent · agentVersion · createdAt 을 붙인다.
@@ -144,29 +147,39 @@ def 읽기(path: Path, topic_id: str, topic_name: str, subtopic):
 
 
 def main():
-    items = []
+    # 팀원마다 out/ 이 다르다. 이미 올라간 글(contents.json)은 두고, 내 out/ 의 올림 글만 id로 더하거나 덮어쓴다
+    json_path = DEST / "contents.json"
+    old = json.loads(json_path.read_text(encoding="utf-8")) if json_path.exists() else []
+    merged = {it["id"]: it for it in old}
+    mine, dropped = [], []
     for folder, topic_id, topic_name, sub in FOLDERS:
         for p in sorted((OUT / folder).glob("*.md")):
             it = 읽기(p, topic_id, topic_name, sub)
             if it:
-                items.append(it)
-    items.sort(key=lambda x: (x["topicId"], x["createdAt"]))
-    # 지난번에 뽑은 .md는 지우고 다시 쓴다(올림에서 빠진 글이 남지 않게)
-    for d in TOPIC_DIR.values():
-        for old in (DEST / d).glob("*.md"):
-            old.unlink()
-    for it in items:
+                mine.append(it)
+            else:                                            # 내 원본이 올림에서 빠졌으면 전에 올린 것도 뺀다
+                dropped.append(p.relative_to(OUT).as_posix())
+    added = sum(it["id"] not in merged for it in mine)
+    for it in old:
+        if it["origin"] in dropped:
+            del merged[it["id"]]
+            (DEST / TOPIC_DIR[it["topicId"]] / f"{it['id']}.md").unlink(missing_ok=True)
+    merged.update({it["id"]: it for it in mine})
+    items = sorted(merged.values(), key=lambda x: (x["topicId"], x["createdAt"]))
+    for it in mine:                                          # 남의 .md는 건드리지 않는다
         d = DEST / TOPIC_DIR[it["topicId"]]
         d.mkdir(parents=True, exist_ok=True)
         src = "\n".join(f"- {s['name']}" + (f" — {s['url']}" if s["url"] else "") for s in it["sources"])
         meta = f"{it['topicName']} · {it['subtopic']}" + (f" · {it['work']}" if it["work"] else "") + f" · {it['agentVersion']} · {it['createdAt'][:10]}"
         (d / f"{it['id']}.md").write_text(f"# {it['title']}\n\n{meta}\n\n{it['body']}\n\n## 출처\n{src}\n", encoding="utf-8")
-    (DEST / "contents.json").write_text(json.dumps(items, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    json_path.write_text(json.dumps(items, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     세기 = {}
     for it in items:
         k = f"{it['topicName']} · {it['subtopic']}"
         세기[k] = 세기.get(k, 0) + 1
-    print(f"올림 글 {len(items)}편 → {DEST}")
+    빠짐 = len(old) + added - len(items)
+    print(f"내 올림 글 {len(mine)}편 (새로 {added} · 덮어씀 {len(mine) - added} · 뺌 {빠짐})")
+    print(f"전체 {len(items)}편 → {DEST}")
     for k, n in sorted(세기.items()):
         print(f"  {k}: {n}편")
 

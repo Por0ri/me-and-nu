@@ -5514,7 +5514,8 @@ def save_md(out: dict) -> Path:
     o = out.get("주문")
     title = out["글"].title if out.get("글") else "글없음"
     movie = o.material.title if o else "영화없음"
-    path = OUT_DIR / f"{_safe_name(movie)}__{_safe_name(title)}.md"
+    from datetime import datetime                    # 시각을 붙인다. 같은 제목이 덮이지 않고, 팀원 글과 id가 겹치지 않는다(export_contents)
+    path = OUT_DIR / f"{_safe_name(movie)}__{_safe_name(title)}_{datetime.now():%m%d_%H%M%S}.md"
     path.write_text(to_markdown(out), encoding="utf-8")
     return path
 
