@@ -108,6 +108,8 @@ export function OnboardingScreen() {
   const [subtopicDraftByTopicId, setSubtopicDraftByTopicId] =
     useState<SubtopicDraftByTopicId>({});
   const [searchQuery, setSearchQuery] = useState("");
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [isSuggestionDismissed, setIsSuggestionDismissed] = useState(false);
   const [confirmation, setConfirmation] =
     useState<OnboardingConfirmation | null>(null);
   const [pendingAction, setPendingAction] =
@@ -263,6 +265,8 @@ export function OnboardingScreen() {
   function selectTopic(topicId: string) {
     setSelectedTopicId(topicId);
     setSearchQuery("");
+    setSuggestionIndex(0);
+    setIsSuggestionDismissed(false);
     setConfirmation(null);
     setSubtopicDraftByTopicId((currentDrafts) =>
       currentDrafts[topicId]
@@ -479,11 +483,26 @@ export function OnboardingScreen() {
     selectedTopic?.subtopicOptions ?? [],
     searchQuery,
   );
-  // Search the entire catalog before limiting the existing chip layout.
-  const visibleSubtopics = filteredSubtopics.slice(0, MAX_VISIBLE_SUBTOPICS);
+  // The seven discovery chips stay visible independently of the search input.
+  const visibleSubtopics = (selectedTopic?.subtopicOptions ?? []).slice(0, MAX_VISIBLE_SUBTOPICS);
   const selectedSubtopics = (selectedTopic?.subtopicOptions ?? []).filter(
     (subtopic) => selectedTopicDraft?.selectedSubtopicIds.includes(subtopic.id),
   );
+  const suggestions = searchQuery.trim()
+    ? filteredSubtopics.filter((subtopic) => !selectedTopicDraft?.selectedSubtopicIds.includes(subtopic.id))
+    : [];
+  const suggestedSubtopic = !isSuggestionDismissed && suggestions.length > 0
+    ? suggestions[suggestionIndex % suggestions.length]
+    : null;
+
+  function selectSuggestedSubtopic() {
+    if (!suggestedSubtopic) return;
+    toggleSubtopic(suggestedSubtopic.id);
+    setSearchQuery("");
+    setSuggestionIndex(0);
+    setIsSuggestionDismissed(false);
+    searchInputRef.current?.focus();
+  }
 
   if (isLoadingOptions) {
     return (
@@ -617,9 +636,67 @@ export function OnboardingScreen() {
                 </div>
                 <div className="ob-search-group" data-has-selection={selectedSubtopics.length > 0}>
                   <div className="ob-search">
-                    <input ref={searchInputRef} type="search" aria-label={`${selectedTopic.label} 세부 토픽 검색`} placeholder="장르, 스토리, 배경, 분위기로 검색하세요." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
-                    <button type="button" aria-label="세부 토픽 검색" onClick={() => searchInputRef.current?.focus()}><span className="ob-search-icon"><OnboardingIcon name="search-arrow" /></span></button>
+                    <input
+                      ref={searchInputRef}
+                      type="search"
+                      role="combobox"
+                      aria-label={`${selectedTopic.label} 세부 토픽 검색`}
+                      aria-autocomplete="list"
+                      aria-expanded={suggestedSubtopic !== null}
+                      aria-controls={suggestedSubtopic ? "subtopic-suggestions" : undefined}
+                      aria-activedescendant={suggestedSubtopic ? `subtopic-suggestion-${suggestedSubtopic.id}` : undefined}
+                      autoComplete="off"
+                      placeholder="장르, 스토리, 배경, 분위기로 검색하세요."
+                      value={searchQuery}
+                      onChange={(event) => {
+                        setSearchQuery(event.target.value);
+                        setSuggestionIndex(0);
+                        setIsSuggestionDismissed(false);
+                      }}
+                      onKeyDown={(event) => {
+                        // IME confirmation must not select a topic or submit the form.
+                        if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                          if (event.key === "Enter") event.preventDefault();
+                          return;
+                        }
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          selectSuggestedSubtopic();
+                        } else if (event.key === "Escape") {
+                          event.preventDefault();
+                          setIsSuggestionDismissed(true);
+                        } else if (suggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+                          event.preventDefault();
+                          setIsSuggestionDismissed(false);
+                          setSuggestionIndex((index) => (index + (event.key === "ArrowDown" ? 1 : suggestions.length - 1)) % suggestions.length);
+                        }
+                      }}
+                    />
+                    {suggestedSubtopic && (
+                      <div id="subtopic-suggestions" role="listbox" aria-label="세부 토픽 자동완성" className="ob-inline-suggestions">
+                        <button
+                          id={`subtopic-suggestion-${suggestedSubtopic.id}`}
+                          type="button"
+                          role="option"
+                          aria-selected="true"
+                          tabIndex={-1}
+                          className="ob-chip ob-suggestion"
+                          onClick={selectSuggestedSubtopic}
+                        >
+                          {suggestedSubtopic.label}
+                        </button>
+                      </div>
+                    )}
+                    <button type="button" aria-label={suggestedSubtopic ? `${suggestedSubtopic.label} 선택` : "세부 토픽 검색"} onClick={() => {
+                      if (suggestedSubtopic) selectSuggestedSubtopic();
+                      else searchInputRef.current?.focus();
+                    }}><span className="ob-search-icon"><OnboardingIcon name="search-arrow" /></span></button>
                   </div>
+                  <p className="sr-only" role="status">
+                    {searchQuery.trim() && (suggestedSubtopic
+                      ? `${suggestedSubtopic.label} 자동완성. Enter로 선택할 수 있습니다.${suggestions.length > 1 ? ` 후보 ${suggestions.length}개. 위아래 방향키로 변경할 수 있습니다.` : ""}`
+                      : suggestions.length === 0 ? "추가로 선택할 검색 결과가 없습니다." : "")}
+                  </p>
                   {selectedSubtopics.length > 0 && (
                     <ul className="ob-selected-chips" aria-label="선택한 세부 토픽" tabIndex={0}>
                       {selectedSubtopics.map((subtopic) => (
@@ -642,7 +719,6 @@ export function OnboardingScreen() {
                       </label>
                     ))}
                   </div>
-                  {filteredSubtopics.length === 0 && <p role="status" className="ob-empty">검색 결과가 없어요. 다른 키워드로 검색해 주세요.</p>}
                 </fieldset>
                 {/* FE 1380:16028 has copy/layout only; no prototype action is defined. */}
                 <p className="ob-more">더보기</p>

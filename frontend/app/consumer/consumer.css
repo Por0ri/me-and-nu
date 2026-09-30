@@ -1261,6 +1261,18 @@ html:has(.consumer-mock :is(.ob-subtopics, .ob-confirmation)) { scrollbar-gutter
 .consumer-mock .ui-onboarding .ob-subtopics .ob-search input { outline: none; }
 .consumer-mock .ui-onboarding .ob-subtopics .ob-search-icon { display: grid; place-items: center; width: 24px; height: 24px; }
 .consumer-mock .ui-onboarding .ob-subtopics .ob-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-inline-suggestions { display: flex; flex-shrink: 0; max-width: 50%; min-width: 0; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search .ob-suggestion {
+  display: block;
+  width: auto;
+  height: 27px;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-radius: 999px;
+  background: transparent;
+}
 .consumer-mock .ui-onboarding .ob-subtopics .ob-search-group[data-has-selection="true"] .ob-search {
   border-color: #0000000a;
   border-radius: 24px 24px 0 0;
