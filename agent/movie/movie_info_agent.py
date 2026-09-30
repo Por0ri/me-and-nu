@@ -1,7 +1,7 @@
 # # Movie Info agent V3.7 — 영화 정보 전달 에이전트
 #
 # 콜랩 노트북(Movie_Info_agent_V2.3.ipynb)을 스크립트로 옮긴 것이다.
-# 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_info/`에 쌓인다.
+# 키는 `.env` 또는 환경변수 `LLM_KEY` · `TMDB_KEY`에서 읽는다. 결과는 `agent/out/movie_info/올림` · `탈락`에 나눠 쌓인다.
 #
 # 위에서부터 차례로 실행한다.
 #
@@ -5444,7 +5444,8 @@ def show(out: dict):
 # ## 셀 14 — 마크다운으로 저장하고 zip으로 묶기
 
 OUT_DIR = HERE.parent / "out" / "movie_info"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+(OUT_DIR / "올림").mkdir(parents=True, exist_ok=True)     # 영화 리뷰처럼 올림 · 탈락을 폴더로 나눈다
+(OUT_DIR / "탈락").mkdir(parents=True, exist_ok=True)
 
 
 def _safe_name(text: str) -> str:
@@ -5514,7 +5515,9 @@ def save_md(out: dict) -> Path:
     o = out.get("주문")
     title = out["글"].title if out.get("글") else "글없음"
     movie = o.material.title if o else "영화없음"
-    path = OUT_DIR / f"{_safe_name(movie)}__{_safe_name(title)}.md"
+    from datetime import datetime                    # 시각을 붙인다. 같은 제목이 덮이지 않고, 팀원 글과 id가 겹치지 않는다(export_contents)
+    폴더 = OUT_DIR / ("올림" if out.get("상태") == "올림" else "탈락")   # 탈락보관 · 재료부족 · 판단보류 · 대상아님은 탈락
+    path = 폴더 / f"{_safe_name(movie)}__{_safe_name(title)}_{datetime.now():%m%d_%H%M%S}.md"
     path.write_text(to_markdown(out), encoding="utf-8")
     return path
 
@@ -5619,8 +5622,8 @@ async def cmd_batch(cands, label: str, at_once: int | None = None):
     await asyncio.gather(*(one(c) for c in todo))
 
     print("\n저장된 파일:")
-    for p in sorted(OUT_DIR.glob("*.md")):
-        print(" -", p.name)
+    for p in sorted(OUT_DIR.rglob("*.md")):
+        print(" -", p.relative_to(OUT_DIR).as_posix())
     download_all()
 
 
