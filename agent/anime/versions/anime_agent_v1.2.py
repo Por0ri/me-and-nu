@@ -1,4 +1,4 @@
-# # anime_agent v1.4 — 애니 콘텐츠 크리에이팅 에이전트
+# # anime_agent v1.2 — 애니 콘텐츠 크리에이팅 에이전트
 #
 # 키는 `.env` 또는 환경변수 `LLM_KEY`에서 읽는다. 결과는 `agent/out/anime/올림|탈락/`에 쌓인다.
 #
@@ -99,56 +99,6 @@
 #   reasoning_effort 를 none 으로 둘 때만 함수 호출이 된다 — 문서에 그렇게 적혀 있다).
 #   글 품질이 어떻게 달라지는지는 아직 안 봤다. 나빠지면 MODEL 한 줄을 gpt-5.6-luna 로 되돌린다.
 #
-# v1.4에서 바뀐 것 — v1.3 코드 검토에서 고친 것 (9/30)
-# - 1 작품리뷰 ANN 링크에서 끝난 작품의 마지막 두 화 리뷰를 뺀다. 결말 리뷰다.
-#   v1.3은 잔향의 테러 11화(11화 중) · 장송의 프리렌 28화(28화 중) · 나루토 질풍전 500화(500화 중) · 진격의 거인 파이널 시즌 16화(16화 중) 리뷰를 골랐다.
-#   규칙은 신작소식 전작 회차(마지막 두 화는 뺀다)와 같다. 방영 중인 작품은 가장 뒤 화를 그대로 둔다.
-#   리뷰 화 번호가 화수보다 크면(시즌을 이어 센 번호) 리뷰가 있는 가장 뒤 화를 끝으로 본다. 캐시 이름을 `ann_review_v2_`로 바꿨다.
-# - 2 리뷰가 없는 작품은 ANN 페이지에 Reviews 칸이 없다. v1.3은 그때 메뉴의 리뷰 목록 링크(/review/)를 리뷰 하나로 잡았다.
-#   그러면 ANN 링크가 있는 것으로 보고 'site:animenewsnetwork.com' 검색도 뺐다.
-#   지금은 리뷰 글 꼴(`/review/…/.숫자`)만 받는다. 대체 경로는 링크 글이 그 페이지 제목으로 시작하는 것만 받는다.
-# - 3 `_위키get`은 200 응답 안의 {'error': ...}(maxlag · ratelimited)를 None으로 준다. v1.3의 위키데이터는 이것을 '없음'으로 7일 캐시했다.
-#   en 위키 외부 링크 요청이 실패해도 ANN 빈 결과로 캐시하지 않는다.
-# - 4 성우 어워드 · 아니메 그랑프리 수상 줄의 해를 회차로 센다(2006 + 회 · 1978 + 회). v1.3은 문장의 해를 썼다.
-#   '翌年' 문장은 앞 문장의 해가 이어져 1년 틀렸다(제11회 성우 어워드 → 2016년).
-# - 5 위키 사람 문서 · 위키 제작절 · ANN 리뷰 링크를 try로 감쌌다. v1.3은 여기서 예외가 나면 마디 실패로 탈락하고 다음 후보로 안 갔다.
-#   지금은 로그를 남기고 ko 문서 · 검색으로 간다.
-# - 6 Wikidata에 없는 사람의 ko 문서는 그 사람 문서일 때만 맥락으로 쓴다. 머리 400자에 원어 이름이 있거나 문서 제목이 표기와 같아야 한다.
-#   v1.3이 용어집 조건을 빼서 검색 첫 문서를 받는다. 그 문서가 작품 문서일 수 있다.
-# - 7 ja · en 맥락과 제작절 머리말을 '원어 이름은 표기표를 따른다' → '이름은 표기표에 있는 것만 쓴다'로 바꿨다.
-#   카지 유키 ja 맥락에는 표기표에 없는 성우 이름이 열 개 남아 있다(竹達彩奈 · 山寺宏一 등).
-# - 표본(모델 없이, 9/30 다시 잼). 카지 유키의 사실표 / 이야기 / 맥락 / 고유 사실은 v1.2 1,377 / 2,017 / 3,000자 / 20개(ko 15번 · 17초)다.
-#   v1.3은 1,857 / 2,017 / 1,849자 / 26개(AniList 1 · ko 13 · Wikidata 2 · ja 1 · en 1 · 38초)다. 구현자 수치와 같다.
-#   v1.4는 1,857 / 2,017 / 1,870자 / 26개다. 맥락이 머리말만큼(21자) 늘었고 요청 수는 같다(37초).
-#   잔향의 테러 ANN 링크는 v1.3 전체 리뷰 2편 + 11화 → v1.4 전체 리뷰 2편 + 9화다. 요청은 Wikidata 2 · ANN 2(robots 포함)로 같다.
-#
-# v1.3에서 바뀐 것 — 재료를 넓힌다 · 사람 글 약력 · 작품리뷰 ANN 리뷰 (PM 9/30)
-# - 사람 글(성우) 사실표에 그 사람 자신의 사실(데뷔 · 수상 · 본인 발언)이 없었다. ko 위키 서술은 72~507자였다.
-#   분량이 984~1,038자로 떨어졌다. 발언 하나를 돌려 써서 되풀이 치명이 났다.
-# - 사람 후보 8명 중 4명(감독 · 로마자 배역)은 이야기 0자로 검색을 다 한 뒤 버려졌다. 작품리뷰의 평 글은 검색에서만 왔고, 검색은 자주 실패했다.
-# - 1 `al_staff`가 설명(description) · 출신(homeTown) · 활동 시작(yearsActive)을 받는다. 캐시 이름은 `al_staff_v2_{id}`다.
-#   사실표에 '- 출신' · '- 활동 시작' 줄과 설명의 사실 줄이 붙는다. 설명의 링크 줄 · 게임 배역 목록 · 스포일러 칸은 뺀다.
-# - 2 `위키데이터(속성, id)`는 AniList id(사람 P11227 · 작품 P8729)로 Wikidata 항목을 찾는다. 요청은 2번이다(haswbstatement 검색 · wbgetentities). 7일 캐시한다.
-# - 3 `위키_사람문서`는 ja · en 사람 문서의 서술 절(来歴 · 経歴 · 人物 · 特色 / Biography · Career · Personal life)만 읽는다. 사람마다 요청은 4번이다.
-#   出演 · Filmography 같은 목록 절과 제목에 AI가 든 절은 뺀다. 서술 절 안에 섞인 생성 AI 활동 문단(호우키 '声優として')도 뺀다.
-#   『작품』은 참여작 원어 → 표기로 바꾸고, 못 바꾼 문장은 뺀다.
-# - 4 ja와 en(또는 AniList 설명)이 같은 회차 · 해로 맞는 데뷔 · 첫 주연 · 수상만 사실표 [약력 — 위키백과 ja · en]에 넣는다. 사실_세기가 이 줄을 센다.
-#   나머지 서술은 맥락으로 간다. Wikidata에 없는 사람은 전처럼 ko 문서를 맥락으로 쓴다. 표기 출처가 용어집일 때만 읽던 조건은 뺐다.
-# - 5 배역이 없는 제작진 · 배역 표기가 없는 성우는 ja 애니 문서의 制作 · 演出 · キャスティング 절에서 그 사람 이름이 든 문단을 이야기로 받는다.
-#   `_wiki_section`이 여러 절을 한 번에 받는다(`여럿=True`).
-# - 6 정보형은 재료를 모은 직후 고유 사실 수 · 이야기를 본다. 모자라면 검색 · 페이지 읽기 전에 다음 후보로 간다.
-# - 7 `ann_리뷰링크`는 ANN 백과사전 작품 페이지의 Reviews 칸에서 리뷰 2~3편을 고른다. 시리즈 전체 리뷰가 먼저고, 마지막 화 리뷰가 다음이다.
-#   ANN id는 Wikidata P1985 → en 위키 외부 링크 순으로 찾는다. 파트 · 속편은 ANN 관련작 링크로 따라간다. robots(Crawl-delay 2)를 지키고 api.xml은 안 쓴다.
-#   Reviews 칸을 못 찾으면 페이지 전체 리뷰 링크에서 옆 칸 목록과 여러 쪽에 같이 나온 slug를 뺀다.
-# - 8 작품리뷰는 ANN 리뷰를 읽을 링크 맨 앞에 둔다. ANN 링크가 있으면 'site:animenewsnetwork.com' 검색을 뺀다. 매체당 2건 상한은 그대로다.
-#   제작이야기에는 안 붙인다. ANN 리뷰는 인터뷰가 아니라서 판정에서 버려진다.
-# - 9 검색 엔진을 yahoo · brave · google · mojeek · duckduckgo · startpage로 정한다. 기본값(auto)은 wikipedia · grokipedia가 자리를 먹었다. 차단 도메인에 grokipedia.com을 더했다.
-# - 위키백과 · Wikidata 요청은 전부 `_위키get`을 지난다. 전역으로 동시 1개 · 1초 간격이다. 전에는 간격 없이 스레드마다 따로 불렀다.
-# - 표본(모델 없이, 9/30). 고유 사실 수는 카지 유키 20 → 26, 이시카와 유이 16 → 22, 호우키 카츠히사 14 → 18, 이치노세 카나 24 → 33이다.
-#   사실표는 901~1,377자 → 1,123~1,857자다. 맥락은 ko 문서 0~3,000자(카지 · 이시카와는 줄의 94~98%가 출연작 목록) → ja · en 서술 1,334~4,053자다.
-#   ANN 리뷰 링크는 0 → 장송의 프리렌 3 · 잔향의 테러 3 · 나루토 질풍전 3 · 진격의 거인 파이널 시즌 2다.
-#   사람 한 명의 재료 모으기는 17~18초 → 36~39초다. 위키 요청 1초 간격 때문이다.
-#
 # v1.2에서 바뀐 것 — 유형 정의를 셋이 같이 받는다 · 사람 글 다시 정의 (PM 9/29: 워크플로 검수 20편 중 14편 C)
 # - 사람 글(코드 기아스 · 후쿠야마 준)이 "~하려면 ~보면 된다"로 열리고, 캐릭터 분석으로 채워지고, 작품 일반 인터뷰로 끝났다.
 #   원인은 유형 정의를 작가만 받은 것, 기획자 규칙이 '왜 · 어떻게' 질문을 강제한 것, 시작점 '결론부터'의 뜻이 감상순서용이었던 것이다.
@@ -219,7 +169,6 @@ load_dotenv(HERE.parent / ".env")
 load_dotenv(HERE / ".env")
 
 # ───── 여기서 고친다 ─────────────────────────────────────────────
-VERSION     = "v1.4"
 MODEL       = "openai:gpt-6-luna"             # 영화 · 음악 에이전트와 같은 모델. 2026-09-24에 gpt-5.6-luna 에서 바꿨다
 KEY_ENV     = "OPENAI_API_KEY"
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -288,13 +237,6 @@ JIKAN_PAGES   = 15     # Jikan 회차 목록을 최대 몇 쪽까지 (100화씩.
 # v0.6
 앞판기억       = True   # 편집국장이 앞 판 점수 · 문제 목록 · 앞 판 글을 받는다. 문제마다 고쳐짐 / 남음 / 새로 생김 / 못 봄. False면 판마다 처음 보는 것처럼 본다
 최고판저장     = True   # 마지막 판이 탈락이면 기록 중 편집국장 점수가 제일 높은 판의 글을 저장한다. False면 마지막 판을 저장한다
-# v1.3
-위키간격       = 1.0    # 위키백과 · Wikidata 요청 사이 간격(초). 전역으로 동시 1개다
-ANN리뷰수      = 3      # 작품리뷰. ANN 백과사전에서 가져올 리뷰 링크 수. 매체당 상한(PER_MEDIA)은 그대로라 판정 뒤 2편까지 남는다
-ANN쪽상한      = 3      # ANN 작품 페이지를 이만큼까지 연다(파트 · 속편 따라가기 포함). Crawl-delay 2초
-사람맥락ja     = 2600   # 사람 유형. 위키 ja 서술 절을 맥락에 이만큼
-사람맥락en     = 1400   # 사람 유형. 위키 en 서술 절을 맥락에 이만큼
-검색엔진       = "yahoo,brave,google,mojeek,duckduckgo,startpage"   # ddgs backend. 기본(auto)은 wikipedia · grokipedia가 앞자리를 먹는다
 CONTACT       = "menu-project@example.com"
 # ─────────────────────────────────────────────────────────────
 
@@ -665,13 +607,11 @@ def al_search(q):
     return [_작품(m) for m in (d or {}).get("Page", {}).get("media", [])]
 
 def al_staff(sid):
-    """v1.3: 설명(description) · 출신(homeTown) · 활동 시작(yearsActive)과 작품 영어 제목을 더 받는다. 캐시 이름이 al_staff_v2_ 로 바뀌었다."""
-    key = f"al_staff_v2_{sid}"
+    key = f"al_staff_{sid}"
     c = _cache_get(key)
     if c:
         return c
     d = al("""query($id:Int){ Staff(id:$id){ id name { full native } primaryOccupations dateOfBirth { year month day } siteUrl
-      description(asHtml: false) homeTown yearsActive
       characterMedia(perPage: 25, sort: POPULARITY_DESC) { edges { characterRole characters { id name { full native } }
         node { id title { romaji english native } synonyms format startDate { year month } popularity studios(isMain: true) { nodes { name } } } } }
       staffMedia(perPage: 25, sort: POPULARITY_DESC, type: ANIME) { edges { staffRole node { id title { romaji english native } synonyms format startDate { year month } popularity studios(isMain: true) { nodes { name } } } } }
@@ -681,14 +621,13 @@ def al_staff(sid):
         return None
     out = {"id": s["id"], "full": s["name"]["full"], "native": s["name"].get("native"), "직업": s.get("primaryOccupations") or [],
            "dob": s.get("dateOfBirth") or {}, "siteUrl": s.get("siteUrl"),
-           "설명": s.get("description") or "", "출신": s.get("homeTown"), "활동": [y for y in (s.get("yearsActive") or []) if y],   # v1.3
-           "배역": [{"작품id": e["node"]["id"], "romaji": e["node"]["title"]["romaji"], "native": e["node"]["title"].get("native"), "english": e["node"]["title"].get("english"),
+           "배역": [{"작품id": e["node"]["id"], "romaji": e["node"]["title"]["romaji"], "native": e["node"]["title"].get("native"),
                     "한글별칭": _한글별칭(e["node"].get("synonyms")), "format": e["node"].get("format"), "year": (e["node"].get("startDate") or {}).get("year"),
                     "month": (e["node"].get("startDate") or {}).get("month"), "studios": [x["name"] for x in (e["node"].get("studios") or {}).get("nodes", [])],
                     "popularity": e["node"].get("popularity"), "역할": e.get("characterRole"),
                     "캐릭터": [{"id": c["id"], "full": c["name"]["full"], "native": c["name"].get("native")} for c in (e.get("characters") or []) if c and c.get("name")]}
                    for e in (s.get("characterMedia") or {}).get("edges", []) if e and e.get("node")],   # v1.0: AniList가 빈 칸(None)을 섞어 보낸다
-           "참여": [{"작품id": e["node"]["id"], "romaji": e["node"]["title"]["romaji"], "native": e["node"]["title"].get("native"), "english": e["node"]["title"].get("english"),
+           "참여": [{"작품id": e["node"]["id"], "romaji": e["node"]["title"]["romaji"], "native": e["node"]["title"].get("native"),
                     "한글별칭": _한글별칭(e["node"].get("synonyms")), "format": e["node"].get("format"), "year": (e["node"].get("startDate") or {}).get("year"),
                     "month": (e["node"].get("startDate") or {}).get("month"), "studios": [x["name"] for x in (e["node"].get("studios") or {}).get("nodes", [])],
                     "popularity": e["node"].get("popularity"), "역할": e.get("staffRole")}
@@ -1004,39 +943,19 @@ print("라프텔 준비 끝")
 등장인물절제목 = ["등장인물", "등장 인물", "주요 인물", "캐릭터"]
 애니낱말 = re.compile(r"(애니|만화|성우|캐릭터|등장인물|감독|작가|작화|제작|anime|manga|voice)", re.I)
 
-_위키잠금 = threading.Lock()
-_위키마지막 = [0.0]
-
-def _위키get(url, params, timeout=15):
-    """v1.3: 위키백과 · Wikidata 요청은 전부 여기로 온다. 전역으로 동시 1개 · 위키간격(1초) 간격이다(Wikimedia API 규칙). JSON을 돌려준다. 실패하면 None.
-    v1.4: 200인데 {'error': ...}(maxlag · ratelimited · 없는 문서)이면 None이다. 전에는 위키데이터가 이것을 '없음'으로 7일 캐시했다."""
-    with _위키잠금:
-        wait = 위키간격 - (time.time() - _위키마지막[0])
-        if wait > 0:
-            time.sleep(wait)
-        try:
-            r = requests.get(url, params=params, headers=HEADERS, timeout=timeout)
-            if r.status_code != 200:
-                return None
-            j = r.json()
-            return None if isinstance(j, dict) and "error" in j else j
-        except Exception:
-            return None
-        finally:
-            _위키마지막[0] = time.time()
-
 def _wiki_search(q, lang, n=5):
     try:
-        r = _위키get(f"https://{lang}.wikipedia.org/w/api.php",
-                    {"action": "query", "list": "search", "srsearch": q, "format": "json", "srlimit": n}) or {}
+        r = requests.get(f"https://{lang}.wikipedia.org/w/api.php",
+                         params={"action": "query", "list": "search", "srsearch": q, "format": "json", "srlimit": n},
+                         headers=HEADERS, timeout=15).json()
         return [(h["title"], re.sub(r"<.*?>", "", htmlmod.unescape(h.get("snippet") or ""))) for h in r.get("query", {}).get("search", [])]
     except Exception:
         return []
 
 def _wiki_extract(lang, title, n=6000):
     try:
-        p = _위키get(f"https://{lang}.wikipedia.org/w/api.php", {"action": "query", "prop": "extracts", "explaintext": 1,
-                    "titles": title, "format": "json", "redirects": 1})
+        p = requests.get(f"https://{lang}.wikipedia.org/w/api.php", params={"action": "query", "prop": "extracts", "explaintext": 1,
+                         "titles": title, "format": "json", "redirects": 1}, headers=HEADERS, timeout=15).json()
         page = next(iter(p["query"]["pages"].values()))
         text = (page.get("extract") or "").strip()
         if len(text) > 200:
@@ -1045,37 +964,19 @@ def _wiki_extract(lang, title, n=6000):
         pass
     return None
 
-def _wiki_section(lang, title, keys, n=8000, 여럿=False, 절상한=4):
-    """keys가 제목에 든 첫 절의 글. 없으면 None.
-    v1.3: 여럿=True면 맞는 절을 절상한개까지 받아 [(절 제목, [문단, ...])]로 돌려준다. 문단은 <p> · <li> 하나씩이다.
-    앞에서 고른 절의 하위 절은 이미 그 절에 들어 있어서 따로 안 받는다. 없으면 빈 목록."""
+def _wiki_section(lang, title, keys, n=8000):
     try:
         api = f"https://{lang}.wikipedia.org/w/api.php"
-        secs = _위키get(api, {"action": "parse", "page": title, "prop": "sections", "format": "json", "redirects": 1}) or {}
-        맞음 = [sec for sec in secs.get("parse", {}).get("sections", []) if any(k.lower() in sec["line"].lower() for k in keys)]
-        if not 맞음:
-            return [] if 여럿 else None
+        secs = requests.get(api, params={"action": "parse", "page": title, "prop": "sections", "format": "json", "redirects": 1}, headers=HEADERS, timeout=15).json()
+        idx = None
+        for sec in secs.get("parse", {}).get("sections", []):
+            if any(k.lower() in sec["line"].lower() for k in keys):
+                idx = sec["index"]; break
+        if idx is None:
+            return None
+        html = requests.get(api, params={"action": "parse", "page": title, "section": idx, "prop": "text", "format": "json", "redirects": 1},
+                            headers=HEADERS, timeout=15).json()["parse"]["text"]["*"]
         from bs4 import BeautifulSoup
-        if 여럿:
-            out, 고른번호 = [], []
-            for sec in 맞음:
-                if len(out) >= 절상한:
-                    break
-                if any(str(sec.get("number", "")).startswith(b + ".") for b in 고른번호):
-                    continue
-                r = _위키get(api, {"action": "parse", "page": title, "section": sec["index"], "prop": "text", "format": "json", "redirects": 1}) or {}
-                html = ((r.get("parse") or {}).get("text") or {}).get("*")
-                if not html:
-                    continue
-                고른번호.append(str(sec.get("number", "")))
-                soup = BeautifulSoup(html, "lxml")
-                for t in soup(["table", "sup", "style"]):
-                    t.decompose()
-                문단 = [re.sub(r"\s+", " ", x.get_text("", strip=True)) for x in soup.find_all(["p", "li"])]
-                out.append((re.sub(r"<.*?>", "", sec["line"]), [x for x in 문단 if x]))
-            return out
-        idx = 맞음[0]["index"]
-        html = _위키get(api, {"action": "parse", "page": title, "section": idx, "prop": "text", "format": "json", "redirects": 1})["parse"]["text"]["*"]
         soup = BeautifulSoup(html, "lxml")
         for t in soup(["table", "sup", "style"]):
             t.decompose()
@@ -1083,7 +984,7 @@ def _wiki_section(lang, title, keys, n=8000, 여럿=False, 절상한=4):
         text = "\n".join(l for l in text.splitlines() if l.strip() not in ("[", "]", "|", "편집", "원본 편집"))   # 위키 화면의 편집 단추가 섞여 온다
         return text[:n] if len(text) > 100 else None
     except Exception:
-        return [] if 여럿 else None
+        return None
 
 def 위키_작품문서(작품, series=None):
     """ko 위키백과 작품 문서. 한국 제목 → 시리즈 이름 → 로마자 순으로 찾는다."""
@@ -1148,296 +1049,6 @@ def 위키_표기(native, hint_kind="인물"):
             return t
     return None
 
-# ## 7-1. Wikidata · 위키백과 사람 문서 (v1.3)
-#
-# AniList id → Wikidata 항목 → ja · en 문서 제목 · ANN id. ko 위키의 사람 서술은 72~507자라 ja · en 서술 절을 읽는다.
-# 『작품』 원어는 참여작 표기로 바꾸고, 못 바꾼 문장은 뺀다. 약력(데뷔 · 첫 주연 · 수상)은 ja와 en이 같은 해 · 회차로 맞을 때만 사실로 쓴다.
-
-WD_API = "https://www.wikidata.org/w/api.php"
-사람서술절 = {"ja": ("来歴", "経歴", "略歴", "生い立ち", "人物", "特色", "キャリア", "声優として", "エピソード", "趣味"),
-             "en": ("Biography", "Career", "Early life", "Personal life", "Life", "Background")}
-사람목록절 = re.compile(r"(出演|作品|ディスコグラフィ|受賞|Filmography|Discography|Works|Roles|Awards|Accolades|Credits)", re.I)
-AI절 = re.compile(r"(?<![A-Za-z])AI(?![A-Za-z])")          # 무단 생성 AI 반대 활동 절 같은 것. 'AIR' 같은 낱말은 안 걸린다
-AI문단 = re.compile(r"(生成AI|無断生成|NOMORE|音声AI|AI音声|合成音声|generative AI|AI-generated|AI voice|artificial intelligence)", re.I)   # 서술 절 안에 섞인 같은 활동 문단(호우키 '声優として')
-결말말_ja = re.compile(r"(最終回|最終話|結末|ネタバレ)")
-결말말_en = re.compile(r"\b(finale|spoilers?|final episode)\b", re.I)
-
-def 위키데이터(속성, id):
-    """AniList id(사람 P11227 · 작품 P8729)로 Wikidata 항목을 찾는다. 요청 2번(haswbstatement 검색 · wbgetentities). 7일 캐시.
-    {'Q', 'sitelinks': {jawiki · enwiki · kowiki: 제목}, 'ANN사람': [P1982], 'ANN작품': [P1985], 'MAL': [P4084 · P4086]}. 없으면 None."""
-    if not id:
-        return None
-    key = f"wd_{속성}_{id}"
-    c = _cache_get(key)
-    if c is not None:
-        return c if c.get("Q") else None
-    r = _위키get(WD_API, {"action": "query", "list": "search", "srsearch": f"haswbstatement:{속성}={id}", "srlimit": 3, "format": "json"})
-    if r is None:
-        return None                                      # 요청 실패는 캐시에 안 남긴다
-    hits = [h["title"] for h in (r.get("query") or {}).get("search", []) if re.fullmatch(r"Q\d+", h.get("title") or "")]
-    if not hits:
-        _cache_put(key, {"Q": None})
-        return None
-    q = hits[0]
-    e = _위키get(WD_API, {"action": "wbgetentities", "ids": q, "props": "claims|sitelinks", "sitefilter": "jawiki|enwiki|kowiki", "format": "json"})
-    ent = ((e or {}).get("entities") or {}).get(q)
-    if not ent:
-        return None
-    cl = ent.get("claims") or {}
-    def val(p):
-        return [str(x["mainsnak"]["datavalue"]["value"]) for x in cl.get(p, []) if (x.get("mainsnak") or {}).get("datavalue")]
-    out = {"Q": q, "sitelinks": {k: v["title"] for k, v in (ent.get("sitelinks") or {}).items() if k in ("jawiki", "enwiki", "kowiki")},
-           "ANN사람": val("P1982"), "ANN작품": val("P1985"), "MAL": val("P4084") + val("P4086")}
-    _cache_put(key, out)
-    return out
-
-def _위키_절나누기(text):
-    """extracts(exsectionformat=wiki) 글 → [(절 제목, 깊이, 본문)]. 맨 앞은 ('(머리)', 1, 머리글)이다."""
-    parts = re.split(r"\n(={2,6})\s*(.+?)\s*\1\n", "\n" + (text or ""))
-    out = [("(머리)", 1, parts[0].strip())]
-    for i in range(1, len(parts) - 2, 3):
-        out.append((parts[i + 1], len(parts[i]), parts[i + 2].strip()))
-    return out
-
-def _위키_서술(lang, title):
-    """사람 문서에서 머리글과 서술 절만. 목록 절(出演 · Filmography)과 제목에 AI가 든 절은 하위 절까지 뺀다.
-    서술 절 안의 생성 AI 활동 문단도 뺀다. (글, 링크). 요청 1번."""
-    r = _위키get(f"https://{lang}.wikipedia.org/w/api.php", {"action": "query", "prop": "extracts", "explaintext": 1, "exsectionformat": "wiki",
-                                                            "redirects": 1, "titles": title, "format": "json"})
-    try:
-        page = next(iter(r["query"]["pages"].values()))
-    except Exception:
-        return "", None
-    남, 윗절 = [], True
-    for 제목, 깊이, 본문 in _위키_절나누기(page.get("extract") or ""):
-        if 깊이 <= 2:
-            윗절 = 제목 == "(머리)" or (any(k.lower() in 제목.lower() for k in 사람서술절[lang]) and not 사람목록절.search(제목) and not AI절.search(제목))
-            ok = 윗절
-        else:
-            ok = 윗절 and not 사람목록절.search(제목) and not AI절.search(제목)
-        본문 = "\n".join(l for l in 본문.splitlines() if not AI문단.search(l))
-        if ok and 본문.strip():
-            남.append(본문)
-    t = page.get("title") or title
-    return "\n".join(남), f"https://{lang}.wikipedia.org/wiki/{urllib.parse.quote(t.replace(' ', '_'))}"
-
-def _제목찾기(원어, 표):
-    """『』 안 원어 제목 → 표기. 표['제목']은 {_norm(원어): 표기}. 앞부분이 같으면(『進撃の巨人』 ↔ 進撃の巨人 The Final Season) 가장 짧은 것. 없으면 용어집. 못 찾으면 None."""
-    k = _norm(원어)
-    if len(k) < 2:
-        return None
-    제목 = 표.get("제목") or {}
-    if k in 제목:
-        return 제목[k]
-    앞 = sorted((n for n in 제목 if n.startswith(k)), key=len)
-    if 앞:
-        return 제목[앞[0]]
-    return 용어집_찾기(원어)
-
-def _일본어_바꾸기(글, 표):
-    """『작품』 → 《표기》. 못 바꾼 『』가 든 문장은 뺀다. 표['인물']의 원어 이름은 표기로 바꾼다. 결말 낱말이 든 문장도 뺀다."""
-    인물 = sorted(((a, b) for a, b in (표.get("인물") or {}).items() if a and len(a) >= 2), key=lambda x: -len(x[0]))
-    줄들 = []
-    for 줄 in (글 or "").splitlines():
-        남 = []
-        for s in re.split(r"(?<=。)", 줄):
-            if not s.strip() or 결말말_ja.search(s):
-                continue
-            못 = []
-            def 바꿈(m):
-                t = _제목찾기(m.group(1), 표)
-                if not t:
-                    못.append(m.group(1))
-                    return m.group(0)
-                return f"《{t}》"
-            s2 = re.sub(r"『([^』]{1,80})』", 바꿈, s)
-            if 못:
-                continue
-            for a, b in 인물:
-                s2 = s2.replace(a, b)
-            남.append(s2)
-        if 남:
-            줄들.append("".join(남))
-    return "\n".join(줄들)
-
-def _영어_바꾸기(글, 표):
-    """표['영문']의 영어 · 로마자 제목과 캐릭터 이름을 표기로 바꾼다. 결말 낱말이 든 문장은 뺀다. en 글은 제목 표시가 없어 못 바꾼 제목을 가려내지 못한다."""
-    바꿈 = sorted(((a, b) for a, b in (표.get("영문") or {}).items() if a and len(a) >= 4), key=lambda x: -len(x[0]))
-    줄들 = []
-    for 줄 in (글 or "").splitlines():
-        남 = []
-        for s in re.split(r"(?<=[.!?])\s+", 줄):
-            if not s.strip() or 결말말_en.search(s):
-                continue
-            for a, b in 바꿈:
-                s = s.replace(a, b)
-            남.append(s)
-        if 남:
-            줄들.append(" ".join(남))
-    return "\n".join(줄들)
-
-상이름표 = [   # (ja 이름 꼴, en 이름 꼴, 한국어, 맞추는 값). ja와 en에 같은 회차(회) · 해(해)가 있어야 사실로 쓴다
-    (r"声優アワード", r"Seiy[uū]\s*Awards?", "성우 어워드", "회"),
-    (r"アニメグランプリ", r"Anime Grand Prix", "아니메 그랑프리", "회"),
-    (r"東京アニメアワード", r"Tokyo Anime Awards?", "도쿄 애니메 어워드", "해"),
-    (r"クランチロール・?アニメアワード", r"Crunchyroll Anime Awards?", "크런치롤 애니메 어워드", "해"),
-    (r"ニュータイプアニメアワード", r"Newtype Anime Awards?", "뉴타입 애니메 어워드", "해"),
-]
-회차해 = {"성우 어워드": 2006, "아니메 그랑프리": 1978}   # v1.4: 제1회가 2007년 · 1979년이고 해마다 한 번이다(제7회 성우 어워드 2013 · 제36회 아니메 그랑프리 2014)
-부문표 = {"新人男優賞": "신인 남우상", "新人女優賞": "신인 여우상", "新人声優賞": "신인 성우상", "主演男優賞": "주연 남우상", "主演女優賞": "주연 여우상",
-         "主演声優賞": "주연 성우상", "助演男優賞": "조연 남우상", "助演女優賞": "조연 여우상", "助演声優賞": "조연 성우상", "歌唱賞": "가창상",
-         "パーソナリティ賞": "퍼스널리티상", "特別賞": "특별상", "功労賞": "공로상", "富山敬賞": "도야마 게이상", "高橋和枝賞": "다카하시 가즈에상",
-         "外国映画・ドラマ賞": "외국 영화 · 드라마상", "シナジー賞": "시너지상", "海外ファン賞": "해외 팬상", "キッズファミリー賞": "키즈 패밀리상", "ゲーム賞": "게임상"}
-데뷔말_ja = re.compile(r"デビュー")
-주연말_ja = re.compile(r"(初主演|初の主演|初のメインキャスト|初メインキャスト|初のメイン|初のヒロイン)")
-가수말_ja = re.compile(r"(歌手|シングル|アーティスト|CD|ソロ)")
-데뷔말_en = re.compile(r"\bdebut", re.I)
-주연말_en = re.compile(r"\bfirst (?:main|lead|leading|starring|major|protagonist)(?: role)?\b|\bfirst role as (?:the )?(?:lead|protagonist)", re.I)
-가수말_en = re.compile(r"\b(singer|single|album|music|song)\b", re.I)
-수상말_en = re.compile(r"\b(won|wins|win|received|receiving|recipient|awarded)\b", re.I)
-
-def _문장들_ja(글):
-    """[(해, 문장)]. 줄마다 해를 새로 잡는다. 문장 머리 쪽 'YYYY年'이 해고, '同年' 같은 문장은 앞 문장의 해를 쓴다."""
-    out = []
-    for 줄 in (글 or "").splitlines():
-        해 = None
-        for s in re.split(r"(?<=。)", 줄):
-            s = s.strip()
-            if not s:
-                continue
-            m = re.match(r"^.{0,12}?((?:19|20)\d{2})年", s)
-            if m:
-                해 = int(m.group(1))
-            out.append((해, s))
-    return out
-
-def _문장들_en(글):
-    return [s for s in re.split(r"(?<=[.!?])\s+|\n", 글 or "") if s.strip()]
-
-def _약력_ja(글, 표):
-    """ja 서술에서 {(종류, 값): {해, 부문, 작품}}. 종류는 상 이름 · '데뷔' · '가수 데뷔' · '주연'."""
-    out = {}
-    for 해, s in _문장들_ja(글):
-        if "ノミネート" in s:
-            continue
-        for ja꼴, _, 이름, 값종류 in 상이름표:
-            for m in re.finditer(ja꼴, s):
-                뒤 = s[m.end():m.end() + 30]
-                if not ("受賞" in s or "賞" in 뒤 or "グランプリ" in 뒤):
-                    continue
-                if 값종류 == "회":
-                    mm = re.search(r"第(\d+)回\s*$", s[max(0, m.start() - 10):m.start()])
-                    값들 = [int(mm.group(1))] if mm else []
-                else:
-                    mm = re.match(r"\s*((?:19|20)\d{2})", 뒤)
-                    값들 = [int(mm.group(1))] if mm else [int(y) for y in re.findall(r"((?:19|20)\d{2})年", s)] or ([해] if 해 else [])
-                부 = next((부문표[k] for k in 부문표 if k in 뒤[:24]), None) if 이름 == "성우 어워드" else None
-                for 값 in 값들:
-                    # v1.4: 회차 상은 해를 회차로 센다. 문장 해는 '同年 · 翌年' 문장에서 앞 문장 해가 이어져 틀린다
-                    out.setdefault((이름, 값), {"해": 회차해[이름] + 값 if 이름 in 회차해 else 해, "부문": 부, "작품": None})
-        for 말, 종류 in ((데뷔말_ja, "데뷔"), (주연말_ja, "주연")):
-            if 해 and 말.search(s):
-                if 종류 == "데뷔" and 가수말_ja.search(s):
-                    종류 = "가수 데뷔"
-                작품 = None
-                for t in re.findall(r"『([^』]{1,80})』", s):
-                    작품 = _제목찾기(t, 표)
-                    if 작품:
-                        break
-                라벨 = "첫 주연" if 종류 == "주연" and re.search(r"主演", s) else ("첫 메인 배역" if 종류 == "주연" else 종류)
-                out.setdefault((종류, 해), {"해": 해, "부문": None, "작품": 작품, "라벨": 라벨})
-    return out
-
-def _약력_en(글):
-    """en 글(위키 en 서술 · AniList 설명)에서 {(종류, 값)}. 종류 · 값은 _약력_ja와 같은 꼴이다."""
-    out = set()
-    for s in _문장들_en(글):
-        if re.search(r"nominat", s, re.I) and not 수상말_en.search(s):
-            continue
-        for _, en꼴, 이름, 값종류 in 상이름표:
-            for m in re.finditer(en꼴, s, re.I):
-                if 값종류 == "회":
-                    mm = re.search(r"(\d+)(?:st|nd|rd|th)\s+(?:annual\s+)?$", s[max(0, m.start() - 20):m.start()], re.I)
-                    if mm:
-                        out.add((이름, int(mm.group(1))))
-                else:
-                    mm = re.match(r"\s*\(?((?:19|20)\d{2})", s[m.end():m.end() + 10]) or re.search(r"((?:19|20)\d{2})\s*$", s[max(0, m.start() - 8):m.start()])
-                    for y in ([mm.group(1)] if mm else re.findall(r"\b((?:19|20)\d{2})\b", s)):
-                        out.add((이름, int(y)))
-        해들 = [int(y) for y in re.findall(r"\b((?:19|20)\d{2})\b", s)]
-        if 데뷔말_en.search(s):
-            for y in 해들:
-                out.add(("가수 데뷔" if 가수말_en.search(s) else "데뷔", y))
-        if 주연말_en.search(s):
-            for y in 해들:
-                out.add(("주연", y))
-    return out
-
-def _약력줄(ja, en_위키, en_al):
-    """ja와 en(위키 en 또는 AniList 설명)이 같은 (종류, 값)을 가진 것만 사실 줄로 낸다."""
-    줄 = []
-    for (종류, 값), v in sorted(ja.items(), key=lambda x: (x[1].get("해") or 0, str(x[0]))):
-        출처 = [n for n, s in (("위키백과 en", en_위키), ("AniList", en_al)) if (종류, 값) in s]
-        if not 출처:
-            continue
-        src = f"  ← 위키백과 ja · {' · '.join(출처)}"
-        if 종류 in ("데뷔", "가수 데뷔", "주연"):
-            줄.append(f"- {v.get('라벨') or 종류}: {값}년" + (f" 《{v['작품']}》" if v.get("작품") else "") + src)
-        else:
-            회 = f"제{값}회 " if any(x[2] == 종류 and x[3] == "회" for x in 상이름표) else ""
-            해 = f" ({v['해']}년)" if v.get("해") and 회 else (f" ({값}년)" if not 회 else "")
-            줄.append(f"- 수상: {회}{종류}" + (f" {v['부문']}" if v.get("부문") else "") + 해 + src)
-    return 줄
-
-def 위키_사람문서(sid, native, 표, 설명=""):
-    """AniList staff id → Wikidata → ja · en 사람 문서 서술 절. 사람마다 요청 4번(Wikidata 2 · ja 1 · en 1). Wikidata에 없으면 None.
-    표 = {'제목': {_norm(원어): 표기}, '인물': {원어: 표기}, '영문': {영어 · 로마자: 표기}}. 설명은 AniList 설명(약력 대조에 쓴다).
-    {'약력': [사실 줄], '맥락': 글, '링크': [url], 'ja': 서술 글자 수, 'en': 서술 글자 수}"""
-    wd = 위키데이터("P11227", sid)
-    if not wd:
-        return None
-    sl = wd.get("sitelinks") or {}
-    ja, ja링크 = _위키_서술("ja", sl["jawiki"]) if sl.get("jawiki") else ("", None)
-    en, en링크 = _위키_서술("en", sl["enwiki"]) if sl.get("enwiki") else ("", None)
-    약력 = _약력줄(_약력_ja(ja, 표), _약력_en(en), _약력_en(설명))
-    ja글 = _일본어_바꾸기(ja, 표)[:사람맥락ja]
-    en글 = _영어_바꾸기(en, 표)[:사람맥락ja + 사람맥락en - len(ja글)]      # ja가 짧으면 남는 몫을 en에 준다
-    # v1.4: 머리말을 '원어 이름은 표기표를 따른다' → '표기표에 있는 것만 쓴다'로. 표기표에 없는 공연자 · 소속사 · 곡 이름을 옮겨 적지 않게 한다
-    맥락 = "\n\n".join(x for x in [f"[위키백과 ja — 서술 절. 이름은 표기표에 있는 것만 쓴다]\n{ja글}" if ja글.strip() else "",
-                                   f"[위키백과 en — 서술 절. 이름은 표기표에 있는 것만 쓴다]\n{en글}" if en글.strip() else ""] if x)
-    return {"약력": 약력, "맥락": 맥락, "링크": [u for u, g in ((ja링크, ja글), (en링크, en글)) if u and g.strip()], "ja": len(ja), "en": len(en)}
-
-제작절제목 = ["制作", "製作", "演出", "キャスティング"]
-
-def 위키_제작절(작품, native, 표):
-    """ja 애니 문서의 制作 · 演出 · キャスティング 절에서 그 사람 이름(원어)이 든 문단. {'본문', '링크'} 또는 None.
-    문서 제목은 Wikidata(작품 P8729)의 jawiki → '원어 제목 (アニメ)' → ja 검색 첫 문서 순이다. 원작 문서에 애니가 한 절로만 있으면
-    制作 절이 없어서 애니 문서를 먼저 본다(葬送のフリーレン → 葬送のフリーレン (アニメ)). 목록 줄(40자 미만)은 뺀다."""
-    if not native or not 작품:
-        return None
-    def 후보():
-        wd = 위키데이터("P8729", 작품.get("id"))
-        yield ((wd or {}).get("sitelinks") or {}).get("jawiki")
-        if 작품.get("native"):
-            yield f"{작품['native']} (アニメ)"
-            hits = _wiki_search(작품["native"], "ja", 3)          # 앞의 것으로 못 찾을 때만 검색한다
-            yield hits[0][0] if hits else None
-    이름 = re.sub(r"\s", "", native)
-    본 = set()
-    for title in 후보():
-        if not title or title in 본:
-            continue
-        본.add(title)
-        절들 = _wiki_section("ja", title, 제작절제목, 여럿=True)
-        if not 절들:
-            continue                                     # 문서가 없거나 制作 절이 없다
-        문단 = [p for _, ps in 절들 for p in ps if len(p) >= 40 and 이름 in re.sub(r"\s", "", p)]
-        글 = _일본어_바꾸기("\n".join(dict.fromkeys(문단)), 표)
-        if 글.strip():
-            return {"본문": 글[:2500], "링크": f"https://ja.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"}
-        return None                                      # 制作 절은 있는데 이 사람 이야기가 없다
-    return None
-
 print("위키백과 준비 끝")
 
 # ## 8. 검색 · 본문 읽기 — 심층형
@@ -1451,7 +1062,6 @@ print("위키백과 준비 끝")
     "reddit.com", "quora.com", "tumblr.com", "youtube.com", "youtu.be", "tiktok.com", "instagram.com", "facebook.com", "x.com", "twitter.com",
     "laftel.net", "netflix.com", "crunchyroll.com/watch", "myanimelist.net", "anilist.co", "kitsu.io", "anime-planet.com", "imdb.com",
     "amazon.com", "coupang.com", "aladin.co.kr", "yes24.com", "pinterest.com", "wikipedia.org",
-    "grokipedia.com",                                                                   # v1.3
 ]
 매체이름표 = {
     "animenewsnetwork.com": "Anime News Network", "animeanime.jp": "아니메! 아니메!", "crunchyroll.com": "Crunchyroll",
@@ -1472,11 +1082,10 @@ def 매체이름(url):
     return "한 매체"
 
 def 검색(q, n=15):
-    """v1.3: 엔진을 검색엔진(yahoo · brave · google · mojeek · duckduckgo · startpage)으로 정한다. 기본(auto)은 wikipedia · grokipedia가 자리를 먹었다."""
     try:
         from ddgs import DDGS
         with DDGS() as d:
-            return [r["href"] for r in d.text(q, max_results=n, backend=검색엔진) if r.get("href")]
+            return [r["href"] for r in d.text(q, max_results=n) if r.get("href")]
     except Exception as e:
         if "No results" not in str(e):
             print("   검색 실패:", e)
@@ -1514,12 +1123,9 @@ def 검색말(주제):
         말 += [f"{ko} 애니 리뷰", f"{ko} 애니 평론", f"{en or ro} anime review", f"site:animenewsnetwork.com {ro} review", f"{ja} アニメ レビュー 評価"]
     return [x for x in dict.fromkeys(말) if x and "None" not in x]
 
-def collect_links(주제, 앞링크=()):
-    """v1.3: 앞링크(ANN 백과사전 리뷰)를 맨 앞에 둔다. 앞링크가 있으면 검색말의 'site:animenewsnetwork.com' 질의를 뺀다."""
-    links = list(앞링크)
+def collect_links(주제):
+    links = []
     for q in 검색말(주제):
-        if 앞링크 and "site:animenewsnetwork.com" in q:
-            continue
         links += 검색(q, n=12)
     seen, out = set(), []
     for u in links:
@@ -1574,191 +1180,6 @@ def read_pages(links, 한도, workers=10):
             if h:
                 pages.append(_parse_page(u, h))
     return pages[:max(0, 한도)], blocked
-
-# ## 8-1. ANN 백과사전 리뷰 링크 — 작품리뷰 (v1.3)
-#
-# 작품리뷰의 평 글은 검색에서만 왔고, 검색은 자주 실패했다. ANN 백과사전 작품 페이지의 Reviews 칸에 그 작품 리뷰가 걸려 있다.
-# ANN id는 Wikidata P1985 → en 위키 외부 링크 순으로 찾는다. 요청은 fetch()로 해서 robots(Crawl-delay 2)를 지킨다. api.xml은 robots가 막아 안 쓴다.
-
-import unicodedata, difflib, collections
-
-ANN = "https://www.animenewsnetwork.com"
-_ANN꼬리 = re.compile(r"\((?:tv|movie|oav|ova|ona|special|web)[^)]*\)", re.I)   # 'Attack on Titan (TV 4/2019)'의 괄호
-_ANN리뷰꼴 = re.compile(r"/review/[^?#]+/\.\d+/?$")                               # v1.4: 리뷰 글 하나. '/review/terror-in-resonance/episode-11/.79229'. 목록(/review/ · /review/archive)은 아니다
-
-def _ann_키(s):
-    s = unicodedata.normalize("NFKD", s or "")
-    s = "".join(ch for ch in s if not unicodedata.combining(ch)).lower()
-    s = re.sub(r"\bthe\b", "", _ANN꼬리.sub("", s))
-    return re.sub(r"[^0-9a-z぀-ヿ一-鿿]", "", s)
-
-def _ann_숫자(s):
-    return sorted(x for x in re.findall(r"\d+", _ANN꼬리.sub("", s or "")) if len(x) < 4)
-
-def _ann_맞음(제목들, 작품):
-    """ANN 제목들과 작품 제목들(영어 · 로마자 · 일본어 · 별칭) 가운데 가장 가까운 짝의 (숫자 같음, 닮음 0~1)."""
-    best = (False, 0.0)
-    for a in 제목들:
-        for b in [작품.get("english"), 작품.get("romaji"), 작품.get("native")] + list(작품.get("synonyms") or [])[:6]:
-            ka, kb = _ann_키(a), _ann_키(b)
-            if not ka or not kb:
-                continue
-            r = (_ann_숫자(a) == _ann_숫자(b), difflib.SequenceMatcher(None, ka, kb).ratio())
-            if r > best:
-                best = r
-    return best
-
-def _ann_slug(u):
-    m = re.search(r"/review/([^/]+)", u or "")
-    return m.group(1) if m else ""
-
-def _ann_쪽(aid):
-    """ANN 작품 페이지 하나. {'id', '제목들', '리뷰': [(링크, 글)], '바깥': [(링크, 글)], '관련': [{id, 제목, 관계}]}. 못 열면 None."""
-    html = fetch(f"{ANN}/encyclopedia/anime.php?id={aid}", timeout=25)
-    if not html:
-        return None
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(html, "lxml")
-    h = soup.select_one("#page_header")
-    제목들 = [h.get_text(" ", strip=True)] if h else []
-    alt = soup.select_one("#infotype-2")
-    if alt:
-        제목들 += [re.sub(r"\s*\([A-Za-z ]+\)\s*$", "", x.get_text(" ", strip=True)) for x in alt.find_all("div")]
-    리뷰 = []
-    for blk in soup.select("div.encyc-info-type.articles"):
-        머리 = blk.find("strong")
-        if 머리 and 머리.get_text(strip=True).lower().startswith("review"):
-            리뷰 = [(a["href"], a.get_text(" ", strip=True)) for a in blk.select("a[href*='/review/']") if _ANN리뷰꼴.search(a["href"])]
-    바깥 = []
-    if not 리뷰:
-        # Reviews 칸을 못 찾았을 때만 쓴다. 옆 칸(메뉴 · 새 리뷰 목록 · 회차 리뷰 목록)은 뺀다
-        # v1.4: 리뷰가 없는 작품은 Reviews 칸이 없다. 그때 메뉴의 리뷰 목록 링크(/review/)가 리뷰로 잡혔다.
-        #       리뷰 글 꼴(/review/…/.숫자)이고 링크 글이 이 페이지 제목으로 시작하는 것만 받는다
-        머리키 = _ann_키(제목들[0]) if 제목들 else ""
-        for a in soup.select("a[href*='/review/']"):
-            if a.find_parent("nav") or a.find_parent(class_=re.compile("herald")) or a.find_parent(id="episode-review-for-aside"):
-                continue
-            if not _ANN리뷰꼴.search(a["href"]) or not 머리키 or not _ann_키(a.get_text(" ", strip=True)).startswith(머리키):
-                continue
-            바깥.append((a["href"], a.get_text(" ", strip=True)))
-    관련 = []
-    rel = soup.select_one("#infotype-related")
-    for a in (rel.select("a[href*='anime.php?id=']") if rel else []):
-        m = re.search(r"id=(\d+)", a["href"])
-        뒤 = a.next_sibling if isinstance(a.next_sibling, str) else ""
-        앞 = a.previous_sibling if isinstance(a.previous_sibling, str) else ""
-        mm = re.search(r"\(([^)]+)\)", 뒤 or "")
-        관계 = mm.group(1).strip().lower() if mm else ("prequel" if "sequel of" in (앞 or "") else "")
-        if m:
-            관련.append({"id": m.group(1), "제목": a.get_text(" ", strip=True), "관계": 관계})
-    return {"id": str(aid), "제목들": 제목들, "리뷰": 리뷰, "바깥": 바깥, "관련": 관련}
-
-def _enwiki_ann_ids(title):
-    """en 위키 문서의 외부 링크에서 ANN 작품 id(anime.php?id=). 요청 1번. v1.4: 요청이 실패하면 None(빈 목록과 가른다. 빈 결과만 캐시한다)."""
-    r = _위키get("https://en.wikipedia.org/w/api.php", {"action": "query", "prop": "extlinks", "titles": title, "ellimit": "max", "redirects": 1, "format": "json"})
-    if r is None:
-        return None
-    links = [x.get("*") or x.get("url") or "" for p in (r.get("query") or {}).get("pages", {}).values() for x in p.get("extlinks", [])]
-    return list(dict.fromkeys(m.group(1) for u in links for m in [re.search(r"animenewsnetwork\.com/encyclopedia/anime\.php\?id=(\d+)", u)] if m))
-
-def _ann_id들(작품):
-    """(ANN id 후보, 이 작품 것이 확실한지). 작품 → 전편(PREQUEL · PARENT, 둘까지) 순으로 Wikidata P1985 → en 위키 외부 링크를 본다.
-    전편에서 찾은 id는 뒤에서 ANN 관련작(sequel) 링크로 따라간다. 요청이 실패해 못 본 것이 있으면 None."""
-    실패 = False
-    전편 = [r for r in (작품.get("relations") or []) if r.get("type") in ("PREQUEL", "PARENT") and r.get("mtype") == "ANIME"][:2]
-    for 차례, w in enumerate([작품] + 전편):
-        wd = 위키데이터("P8729", w.get("id"))
-        if wd is None and _cache_get(f"wd_P8729_{w.get('id')}") is None:
-            실패 = True
-        if not wd:
-            continue
-        ids = list(dict.fromkeys(wd.get("ANN작품") or []))
-        if ids:
-            return ids, (차례 == 0 and len(ids) == 1)
-        en = (wd.get("sitelinks") or {}).get("enwiki")
-        ids = _enwiki_ann_ids(en) if en else []
-        if ids is None:
-            실패 = True                                  # v1.4: en 위키 요청 실패. 전에는 빈 결과로 보고 7일 캐시했다
-            continue
-        if ids:
-            return ids, False
-    return (None if 실패 else []), False
-
-def _ann_고르기(글들, n=ANN리뷰수, 끝화=None):
-    """리뷰 링크 → 2~3편. 시리즈 전체 리뷰(회차 번호 없는 것)를 먼저, 마지막 화 리뷰를 다음으로.
-    전체 리뷰 안에서는 complete · 시즌 · 시리즈가 든 것 → slug만 있는 것 → 권 · 파트 BD/DVD 리뷰 순이다.
-    v1.4: 끝화(끝난 작품의 화수)를 주면 마지막 두 화 리뷰를 뺀다. 결말이다(신작소식 전작 회차와 같은 규칙).
-    리뷰 화 번호가 화수보다 크면(시즌을 이어 센 번호) 리뷰가 있는 가장 뒤 화를 끝으로 본다.
-    v1.3은 잔향의 테러 11화(11화 중) · 장송의 프리렌 28화(28화 중) · 나루토 질풍전 500화(500화 중) 리뷰를 골랐다."""
-    전체, 화 = [], []
-    for h, _ in 글들:
-        u = urllib.parse.urljoin(ANN + "/", h)
-        m = re.search(r"/episodes?-(\d+)(?:-(\d+))?", u)
-        if m:
-            화.append((int(m.group(2) or m.group(1)), u))
-        else:
-            전체.append(u)
-    if 끝화 is not None and 화:
-        끝 = max([끝화 or 0] + [k for k, _ in 화])
-        화 = [(k, u) for k, u in 화 if k <= 끝 - 2]
-    def 전체순(u):
-        뒤 = re.sub(r"/?\.\d+/?$", "", re.sub(r"^.*/review/[^/]+/?", "", u))   # slug 뒤. 'bd-dvd-the-complete-series'
-        부분 = re.search(r"volume|vol-?\d|part-?\d|set-\d|disc-?\d", 뒤)
-        if re.search(r"complete|collection|entire|whole|season|series", 뒤) and not 부분:
-            return 0
-        return 1 if not 뒤 else 2
-    전체 = sorted(dict.fromkeys(전체), key=전체순)
-    화.sort(key=lambda x: -x[0])
-    out = 전체[:max(1, n - 1)] + [u for _, u in 화[:1]]
-    for _, u in 화[1:]:
-        if len(out) >= 2:
-            break
-        out.append(u)
-    return list(dict.fromkeys(out))[:n]
-
-def ann_리뷰링크(작품):
-    """ANN 백과사전 작품 페이지의 Reviews 칸에서 리뷰 링크 2~3편. 못 찾으면 빈 목록. 7일 캐시.
-    Wikidata가 이 작품 id로 준 ANN id 하나면 그대로 믿는다. 그 밖에는 제목(숫자 · 닮음)이 맞는 페이지만 쓴다. 파트 · 속편은 관련작 링크로 따라간다."""
-    if not 작품 or not 작품.get("id"):
-        return []
-    key = f"ann_review_v2_{작품['id']}"                 # v1.4: v1 캐시에는 마지막 화 리뷰 · 리뷰 목록 링크가 들어 있다
-    c = _cache_get(key)
-    if c is not None:
-        return c.get("링크", [])
-    ids, 확실 = _ann_id들(작품)
-    if ids is None:
-        return []                                         # Wikidata 요청 실패. 캐시에 안 남긴다
-    할, 본, 쪽들, 고른 = list(ids[:ANN쪽상한]), set(), [], None
-    while 할 and len(쪽들) < ANN쪽상한:
-        aid = 할.pop(0)
-        if aid in 본:
-            continue
-        본.add(aid)
-        p = _ann_쪽(aid)
-        if not p:
-            continue
-        쪽들.append(p)
-        같음, 닮음 = _ann_맞음(p["제목들"], 작품)
-        if 확실 or (같음 and 닮음 >= 0.8):
-            고른 = p
-            break
-        후보 = [(_ann_맞음([r["제목"]], 작품), r["id"]) for r in p["관련"] if r["관계"] in ("sequel", "prequel") and r["id"] not in 본]
-        후보 = sorted((x for x in 후보 if x[0][0] and x[0][1] >= 0.7), reverse=True)
-        if 후보:
-            할.insert(0, 후보[0][1])
-    if not 고른:
-        if 쪽들 or not ids:
-            _cache_put(key, {"링크": []})
-        return []
-    글들 = 고른["리뷰"]
-    if not 글들:
-        # Reviews 칸이 없을 때. 여러 쪽에 같이 나온 slug는 옆 칸 광고성 리뷰 링크다
-        slug쪽 = collections.Counter(s for p in 쪽들 for s in {_ann_slug(h) for h, _ in p["바깥"]})
-        글들 = [(h, t) for h, t in 고른["바깥"] if len(쪽들) < 2 or slug쪽[_ann_slug(h)] < 2]
-    # v1.4: 방영 중인 작품만 마지막 화를 남긴다. 끝났거나 상태를 모르면 마지막 두 화 리뷰를 뺀다
-    링크 = _ann_고르기(글들, 끝화=None if 작품.get("status") in ("RELEASING", "NOT_YET_RELEASED") else (작품.get("episodes") or 0))
-    _cache_put(key, {"링크": 링크, "ann": 고른["id"], "제목": (고른["제목들"] or [""])[0]})
-    return 링크
 
 print("검색 · 본문 읽기 준비 끝")
 
@@ -2164,57 +1585,6 @@ def 작품_한줄(w, 표):
     상태 = {"NOT_YET_RELEASED": ", 방영 전", "RELEASING": ", 방영 중"}.get(w.get("status") or "", "")
     return 이름, f"{이름 or '(표기 없음: ' + (w.get('romaji') or '') + ')'} ({y or '연도 모름'}{', ' + f if f else ''}{', ' + str(w['episodes']) + '화' if w.get('episodes') else ''}{상태})"
 
-도도부현 = {"hokkaido": "홋카이도", "aomori": "아오모리현", "iwate": "이와테현", "miyagi": "미야기현", "akita": "아키타현", "yamagata": "야마가타현",
-           "fukushima": "후쿠시마현", "ibaraki": "이바라키현", "tochigi": "도치기현", "gunma": "군마현", "saitama": "사이타마현", "chiba": "지바현",
-           "tokyo": "도쿄도", "kanagawa": "가나가와현", "niigata": "니가타현", "toyama": "도야마현", "ishikawa": "이시카와현", "fukui": "후쿠이현",
-           "yamanashi": "야마나시현", "nagano": "나가노현", "gifu": "기후현", "shizuoka": "시즈오카현", "aichi": "아이치현", "mie": "미에현",
-           "shiga": "시가현", "kyoto": "교토부", "osaka": "오사카부", "hyogo": "효고현", "nara": "나라현", "wakayama": "와카야마현",
-           "tottori": "돗토리현", "shimane": "시마네현", "okayama": "오카야마현", "hiroshima": "히로시마현", "yamaguchi": "야마구치현",
-           "tokushima": "도쿠시마현", "kagawa": "가가와현", "ehime": "에히메현", "kochi": "고치현", "fukuoka": "후쿠오카현", "saga": "사가현",
-           "nagasaki": "나가사키현", "kumamoto": "구마모토현", "oita": "오이타현", "miyazaki": "미야자키현", "kagoshima": "가고시마현", "okinawa": "오키나와현"}
-설명키 = {"height": "키", "blood type": "혈액형", "bloodtype": "혈액형", "hobbies": "취미", "hobby": "취미", "skills": "특기",
-         "skills & abilities": "특기", "skills and abilities": "특기", "agency": "소속사", "talent agency": "소속사", "education": "학력",
-         "spouse": "배우자", "birth name": "본명", "real name": "본명", "nickname": "별명", "nicknames": "별명"}
-설명뺄키 = {"birthplace", "hometown", "birthday", "date of birth", "zodiac", "star sign", "website", "twitter", "instagram"}
-
-def _al_사람사실(d):
-    """v1.3: AniList 출신 · 활동 시작 · 설명 → 사실 줄. 설명의 링크 줄 · 게임 배역 목록(Non-Anime Roles 뒤) · 스포일러(~! !~)는 뺀다.
-    일본 출신은 도도부현만 한국어로 쓴다(시 이름은 로마자라 뺀다)."""
-    줄 = []
-    출신 = d.get("출신") or ""
-    if 출신:
-        조각 = [x.strip() for x in 출신.split(",") if x.strip()]
-        현 = next((도도부현[k] for x in 조각 for k in [_norm_roma(re.sub(r"(?i)\s*(prefecture|metropolis|-ken|-to|-fu)$", "", x))] if k in 도도부현), None)
-        줄.append(f"- 출신: {현}  ← AniList" if 현 else f"- 출신: {출신}  ← AniList")
-    if d.get("활동"):
-        줄.append(f"- 활동 시작: {min(d['활동'])}년  ← AniList")
-    글 = re.sub(r"~!.*?!~", "", d.get("설명") or "", flags=re.S)
-    for l in 글.splitlines():
-        if re.search(r"(?i)non[- ]?anime roles|other roles|^\s*(?:__|\*\*)?\s*(?:notable )?roles", l):
-            break
-        l2 = re.sub(r"\[([^\]]*)\]\((?:https?://)[^)]*\)", r"\1", l)            # 글 안 링크는 글자만 남긴다
-        if re.search(r"https?://", l2) or not re.sub(r"[\s|•·\-*_]", "", re.sub(r"\[[^\]]*\]\([^)]*\)", "", l)):
-            continue                                                            # 링크만 있는 줄
-        m = re.match(r"^\s*(?:[-•*]\s*)?(?:__|\*\*)\s*([^_*:]{2,30}?)\s*:?\s*(?:__|\*\*)\s*:?\s*(.+)$", l2)
-        if m:
-            k = m.group(1).strip().lower()
-            if k in 설명뺄키:
-                continue
-            줄.append(f"- {설명키.get(k, m.group(1).strip())}: {m.group(2).strip()[:120]}  ← AniList 설명")
-            continue
-        t = re.sub(r"[_*]{2}", "", l2).strip(" -•")
-        if len(t) >= 20:
-            줄.append(f"- {t[:300]}  ← AniList 설명")
-    return 줄
-
-def _바꿈더하기(바꿈, b, 표기):
-    """v1.3: 참여작 하나의 원어 · 영어 · 로마자 제목 → 표기. 위키 ja · en 글을 표기로 바꿀 때 쓴다."""
-    if b.get("native"):
-        바꿈["제목"][_norm(b["native"])] = 표기
-    for x in (b.get("english"), b.get("romaji")):
-        if x and len(x) >= 4:
-            바꿈["영문"][x] = f"《{표기}》"
-
 def 재료_사람(st):
     p = st.주제["사람"]
     d = al_staff(p["id"])
@@ -2226,28 +1596,16 @@ def 재료_사람(st):
         st.이유 = f"사람 표기 없음: {d['full']}"; return False
     줄, 작품수 = [], set()
     합침 = {}
-    바꿈 = {"제목": {}, "인물": {}, "영문": {}}              # v1.3: 위키 ja · en 글의 원어 제목 · 이름 → 표기
-    if d.get("native"):
-        바꿈["인물"][d["native"]] = 이름["표기"]
-    바꿈["영문"][d["full"]] = 이름["표기"]
-    w0 = st.주제["작품"] or {}
-    if w0.get("한국제목"):
-        _바꿈더하기(바꿈, w0, w0["한국제목"])
     for b in sorted(d["배역"], key=lambda x: -(x.get("popularity") or 0)):
         w = {"id": b["작품id"], "romaji": b["romaji"], "native": b["native"], "한글별칭": b["한글별칭"], "format": b["format"], "start": {"y": b["year"], "m": b.get("month")}, "studios": b.get("studios") or []}
         t = 표.작품(w)
         if not t["표기"] or t["출처"] == "위키":
             continue
-        _바꿈더하기(바꿈, b, t["표기"])
         h = 합침.setdefault(b["작품id"], {"표기": t["표기"], "year": b["year"], "배역": [], "역할": b.get("역할")})
         for c in b["캐릭터"]:
             ct = 표.사람(c["full"], c.get("native"))
-            if ct["표기"] and ct["출처"] != "위키":
-                if c.get("native"):
-                    바꿈["인물"][c["native"]] = ct["표기"]
-                바꿈["영문"][c["full"]] = ct["표기"]
-                if ct["표기"] not in h["배역"]:
-                    h["배역"].append(ct["표기"])
+            if ct["표기"] and ct["출처"] != "위키" and ct["표기"] not in h["배역"]:
+                h["배역"].append(ct["표기"])
         if b.get("역할") == "MAIN":
             h["역할"] = "MAIN"
     for wid, h in 합침.items():
@@ -2259,7 +1617,6 @@ def 재료_사람(st):
         t = 표.작품(w)
         if not t["표기"] or t["출처"] == "위키":
             continue
-        _바꿈더하기(바꿈, s, t["표기"])
         줄.append(f"- {t['표기']} ({s['year'] or '연도 모름'}) — {역할표기(s['역할'])}  ← AniList {d['siteUrl']}")
         작품수.add(s["작품id"])
     if len(작품수) < 최소참여작:
@@ -2270,7 +1627,7 @@ def 재료_사람(st):
     배역뜻 = 용어집_뜻(st.주제["시리즈"], 배역표기_) if 배역표기_ else ""
     사실 = [f"[사람] {이름['표기']} — {p.get('역할')}  (표기 출처: {이름['출처']})",
             f"- 하는 일: {직업}  ← AniList",
-            (f"- 태어난 해: {dob['year']}년  ← AniList" if dob.get("year") else "- 태어난 해: 모름")] + _al_사람사실(d) + [   # v1.3: 출신 · 활동 시작 · 설명
+            (f"- 태어난 해: {dob['year']}년  ← AniList" if dob.get("year") else "- 태어난 해: 모름"),
             f"- 이 시리즈에서: {st.주제['시리즈']}" + (f" {배역표기_ or ''} 역" if p.get("배역") else "") + (f" — {배역뜻}  ← 용어집" if 배역뜻 else ""),
             "", f"[참여작 — 한국 표기가 있는 것만. {len(작품수)}개]"] + 줄[:30]
     # 배역이 나오는 회차 — 라프텔 회차 줄거리
@@ -2288,32 +1645,10 @@ def 재료_사람(st):
         이야기.append("[등장인물 — 위키백과 ko]\n" + 절["등장인물"][:2000])
         if 절["링크"]:
             st.맥락링크.append(절["링크"])
-    if not 이야기:
-        # v1.3: 배역이 없는 제작진 · 배역 표기가 없는 성우. ja 애니 문서의 制作 · 演出 · キャスティング 절에서 이 사람 이름이 든 문단
-        try:
-            제 = 위키_제작절(w0, d.get("native"), 바꿈)
-        except Exception as e:                            # v1.4: 새 출처 하나가 깨져도 마디 실패(탈락)로 가지 않는다
-            st.log(f"  위키 제작절 실패: {e}"); 제 = None
-        if 제:
-            이야기.append("[제작 · 캐스팅 — 위키백과 ja. 이름은 표기표에 있는 것만 쓴다]\n" + 제["본문"])
-            st.맥락링크.append(제["링크"])
     st.이야기 = "\n\n".join(이야기)
-    # v1.3: 사람 문서는 Wikidata → ja · en 서술 절. ja · en이 맞는 약력은 사실표로, 나머지 서술은 맥락으로 간다
-    try:
-        문서 = 위키_사람문서(d["id"], d.get("native"), 바꿈, d.get("설명") or "")
-    except Exception as e:                                # v1.4: 위와 같다. 실패하면 ko 문서로 간다
-        st.log(f"  위키 사람 문서 실패: {e}"); 문서 = None
-    if 문서 and 문서["약력"]:
-        사실 += ["", "[약력 — 위키백과 ja · en]"] + 문서["약력"]
-    if 문서 and 문서["맥락"]:
-        st.맥락 = 문서["맥락"]; st.맥락링크 += 문서["링크"]
-    else:
-        w = 위키_작품문서({"한국제목": 이름["표기"]})          # Wikidata에 없으면 전처럼 ko 문서. v1.3: 표기 출처가 용어집일 때만 읽던 조건을 뺐다
-        # v1.4: 그 사람 문서인지 본다. 머리 400자에 원어 이름이 있거나 문서 제목이 표기다. 검색 첫 문서가 작품 문서일 수 있다
-        그사람 = w and ((d.get("native") and re.sub(r"\s", "", d["native"]) in re.sub(r"\s", "", w["본문"][:400]))
-                         or re.sub(r"\s", "", 이름["표기"]) == re.sub(r"\s|\(.*?\)", "", w.get("제목") or ""))
-        if 그사람 and 애니낱말.search(w["본문"][:800]):
-            st.맥락 = w["본문"][:3000]; st.맥락링크.append(w["링크"])
+    w = 위키_작품문서({"한국제목": 이름["표기"]}) if 이름["출처"] == "용어집" else None
+    if w and 애니낱말.search(w["본문"][:800]):
+        st.맥락 = w["본문"][:3000]; st.맥락링크.append(w["링크"])
     st.사실표 = "\n".join(사실)
     st.사실링크 = [d["siteUrl"]]
     return True
@@ -3878,12 +3213,7 @@ def 형태검사(본문, st, 제목=""):
             걸림.append(f"같은 숫자 되풀이: {tok} {cnt}번"); break
     if len(re.findall(r"(?:보|하|가|되|두|놓|얹|보태)면 된다", t)) >= 2:
         걸림.append("'~하면 된다' 되풀이")
-    # v1.4: 표기표 이름(사람 · 캐릭터 · 작품)과 따옴표 속 곡 · 책 제목도 빼고 본다. "스기야마 노리아키가 맡은", "‘Number One’은"이 두 문단에 나와 치명으로 걸렸다
-    t_겹침 = re.sub(r"‘[^’]*’|“[^”]*”|「[^」]*」|『[^』]*』|《[^》]*》", "", t_매체뺌)
-    for _n in sorted([v["표기"] for v in st.용어표.확정().values() if v.get("표기")] if st.용어표 else [], key=len, reverse=True):
-        if len(_n) >= 2:
-            t_겹침 = t_겹침.replace(_n, "")
-    겹 = _문단겹침([p.strip() for p in t_겹침.split("\n") if p.strip()])   # v1.2: 매체 이름이 두 문단에 나온 것은 되풀이가 아니다
+    겹 = _문단겹침([p.strip() for p in t_매체뺌.split("\n") if p.strip()])   # v1.2: 매체 이름이 두 문단에 나온 것은 되풀이가 아니다
     if 겹:
         걸림.append("문단 사이 되풀이: " + 겹)
     for p in 문단:
@@ -4301,13 +3631,6 @@ def n_재료모으기(st: RunState) -> RunState:
         if not ok:
             st.사실표 = ""
             return st
-        # v1.3: 고유 사실 · 이야기가 모자라면 검색 · 페이지 읽기 전에 버린다. 전에는 검색을 다 하고 재료판정에서 버렸다(사람 후보 8명 중 4명)
-        st.사실수 = 사실_세기(st.사실표, st.이야기)
-        if st.사실수 < 최소사실 or not st.이야기:
-            st.log(f"  사실표 {len(st.사실표)}자 · 이야기 {len(st.이야기)}자 · 맥락 {len(st.맥락)}자 · 고유 사실 {st.사실수}개")
-            st.이유 = f"재료가 얇다 (고유 사실 {st.사실수}개 · 이야기 {len(st.이야기)}자). 검색 전에 버린다"
-            st.사실표 = ""
-            return st
         # v0.4: 정보형도 리뷰 · 인터뷰를 읽는다. 장면 · 발언 · 남의 해석이 여기서 온다
         if 정보형검색 and w.get("한국제목") and st.유형 not in ("기념일", "신작소식"):   # v0.7: 신작은 아직 리뷰가 없다
             st.links = collect_links(st.주제)
@@ -4324,13 +3647,7 @@ def n_재료모으기(st: RunState) -> RunState:
     if not w["한국제목"]:
         st.이유 = f"작품 표기 없음: {w.get('romaji')}"
         return st
-    try:
-        ann = ann_리뷰링크(w) if st.유형 == "작품리뷰" else []   # v1.3: ANN 백과사전 리뷰를 읽을 링크 맨 앞에 둔다. 제작이야기에는 안 붙인다(인터뷰가 아니다)
-    except Exception as e:                                # v1.4: ANN 페이지 꼴이 바뀌어도 검색으로 간다
-        st.log(f"  ANN 리뷰 링크 실패: {e}"); ann = []
-    if ann:
-        st.log(f"  ANN 리뷰 링크 {len(ann)}개")
-    st.links = collect_links(st.주제, 앞링크=ann)
+    st.links = collect_links(st.주제)
     with ThreadPoolExecutor(max_workers=5) as ex:                 # v0.5: 검색 페이지 ∥ 위키 평가 절 ko · en ∥ 위키 작품 문서 ∥ 라프텔 회차 + 위키 줄거리
         f_pages = ex.submit(read_pages, st.links, PAGE_LIMIT)
         f_wiki = [ex.submit(위키_평가절, w, st.주제["시리즈"], lang) for lang in ("ko", "en")]
@@ -4862,7 +4179,7 @@ def 저장(st: RunState):
              "", "## 표기 출처"] + (표기줄 or ["- 없음"]) + \
             ["", "## 출처"] + (출처줄 or ["- 없음"]) + \
             ["", f"## 개요 ({r['차례']}차)", f"- 질문: {r['개요'].주제}", f"- 답: {r['개요'].답 or '-'}", "", "## 판정 기록"] + 최고줄 + 로그 + \
-            ["", f"마디 {st.steps}개 · 모델 요청 {LLM_CALL_CAP - st.남은콜}회 · {VERSION}"]
+            ["", f"마디 {st.steps}개 · 모델 요청 {LLM_CALL_CAP - st.남은콜}회"]
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
 
