@@ -39,6 +39,11 @@ type OnboardingStep =
   | "confirmation";
 
 type PendingAction = "submit" | null;
+type StartChoicePhase = "idle" | "animating" | "helper";
+
+// FE 1380:16324 -> 1380:15963 -> 1380:15965.
+const START_CHOICE_ANIMATION_MS = 200;
+const START_CHOICE_HELPER_MS = 300;
 
 type SubtopicDraft = {
   selectedSubtopicIds: string[];
@@ -96,6 +101,7 @@ export function OnboardingScreen() {
     marketing: false,
   });
   const [accountType, setAccountType] = useState<AccountType | null>(null);
+  const [startChoicePhase, setStartChoicePhase] = useState<StartChoicePhase>("idle");
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [subtopicDraftByTopicId, setSubtopicDraftByTopicId] =
     useState<SubtopicDraftByTopicId>({});
@@ -129,6 +135,36 @@ export function OnboardingScreen() {
       previousStep.current = currentStep;
     }
   }, [currentStep]);
+
+  useEffect(() => {
+    if (currentStep !== "account-type" || startChoicePhase === "idle" || pendingAction !== null || onboardingSaved) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled || savedOnboarding.current || requestInFlight.current) return;
+      if (startChoicePhase === "animating") {
+        setStartChoicePhase("helper");
+      } else {
+        setStartChoicePhase("idle");
+        setCurrentStep("topic");
+      }
+    }, startChoicePhase === "animating" ? START_CHOICE_ANIMATION_MS : START_CHOICE_HELPER_MS);
+
+    // Leaving the document/history entry must not complete a stale transition.
+    const cancelTransition = () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      setStartChoicePhase("idle");
+    };
+    window.addEventListener("pagehide", cancelTransition);
+    window.addEventListener("popstate", cancelTransition);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener("pagehide", cancelTransition);
+      window.removeEventListener("popstate", cancelTransition);
+    };
+  }, [currentStep, startChoicePhase, pendingAction, onboardingSaved]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -197,9 +233,18 @@ export function OnboardingScreen() {
 
   function moveToStep(step: OnboardingStep) {
     if (savedOnboarding.current) return;
+    setStartChoicePhase("idle");
     setValidationMessage(null);
     setActionError(null);
     setCurrentStep(step);
+  }
+
+  function selectConsumer() {
+    if (currentStep !== "account-type" || startChoicePhase !== "idle" || pendingAction !== null || savedOnboarding.current) return;
+    setAccountType("consumer");
+    setValidationMessage(null);
+    setActionError(null);
+    setStartChoicePhase("animating");
   }
 
   function handleConsentSubmit(event: FormEvent<HTMLFormElement>) {
@@ -461,7 +506,7 @@ export function OnboardingScreen() {
 
   return (
     <main className="ui-version-a ui-onboarding">
-      <section className={`va-shell ob-screen ob-${currentStep}`} aria-labelledby="onboarding-title" aria-busy={pendingAction !== null}>
+      <section className={`va-shell ob-screen ob-${currentStep}`} aria-labelledby="onboarding-title" aria-busy={pendingAction !== null || startChoicePhase !== "idle"}>
         {currentStep === "consent" ? (
           <form onSubmit={handleConsentSubmit} className="ob-entry ob-consent-form">
             <OnboardingBackdrop />
@@ -501,8 +546,13 @@ export function OnboardingScreen() {
               <button type="submit" className="ob-primary" disabled={!requiredConsented}>시작하기</button>
             </div>
           </form>
+        ) : currentStep === "account-type" && startChoicePhase === "helper" ? (
+          <div className="ob-choice-helper">
+            <div className="ob-choice-helper-art" aria-hidden="true"><OnboardingIcon name="topic-background" /></div>
+            <h1 id="onboarding-title" ref={titleRef} tabIndex={-1} className="sr-only">탐색할 분야를 준비하고 있어요</h1>
+          </div>
         ) : currentStep === "account-type" ? (
-          <div className="ob-start-choice">
+          <div className="ob-start-choice" data-transition={startChoicePhase}>
             <div className="ob-choice-art" aria-hidden="true">
               <div className="ob-choice-top"><OnboardingIcon name="choice-top" /></div>
               <div className="ob-choice-bottom"><OnboardingIcon name="choice-bottom" /></div>
@@ -511,13 +561,13 @@ export function OnboardingScreen() {
               <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>어떻게 시작할까요?</h1>
               <p>선택한 유형에 맞는 시작 흐름으로 이동합니다</p>
             </div>
-            <button className="ob-consumer-choice" type="button" onClick={() => { setAccountType("consumer"); moveToStep("topic"); }}>
-              <span className="ob-choice-heading">컨텐츠 소비자</span>
+            <button className="ob-consumer-choice" type="button" disabled={startChoicePhase !== "idle" || pendingAction !== null || onboardingSaved} onClick={selectConsumer}>
+              <span className="ob-choice-heading">콘텐츠 소비자</span>
               <span className="ob-choice-description">관심사별 매거진 읽기</span>
               <OnboardingIcon name="choice-chevron" />
             </button>
-            <button className="ob-creator-choice" type="button" disabled aria-label="컨텐츠 크리에이터, 관심사별 매거진 생성하기 (준비 중)">
-              <span className="ob-choice-heading">컨텐츠<br />크리에이터</span>
+            <button className="ob-creator-choice" type="button" disabled aria-label="콘텐츠 크리에이터, 관심사별 매거진 생성하기 (준비 중)">
+              <span className="ob-choice-heading">콘텐츠<br />크리에이터</span>
               <span className="ob-choice-description">관심사별 매거진 생성하기</span>
               <OnboardingIcon name="choice-chevron" />
             </button>
@@ -534,7 +584,7 @@ export function OnboardingScreen() {
                 </div>
                 <div className="ob-topic-list">
                   {topicOptions.map((topic) => (
-                    <button type="button" className="ob-topic-button" key={topic.id} aria-pressed={selectedTopicId === topic.id} onClick={() => selectTopic(topic.id)}>
+                    <button type="button" className="ob-topic-button" key={topic.id} onClick={() => selectTopic(topic.id)}>
                       <span>{topic.label}</span><OnboardingIcon name="topic-arrow" />
                     </button>
                   ))}

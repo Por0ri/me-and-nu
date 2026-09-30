@@ -916,6 +916,59 @@
 .consumer-mock .ui-onboarding .ob-social-naver { gap: 6.667px; background: #09a34a; color: #fff; }
 .consumer-mock .ui-onboarding .ob-naver-symbol { width: 25.833px; height: 23.333px; overflow: hidden; }
 .consumer-mock .ui-onboarding .ob-naver-symbol img { position: absolute; width: 306.667px; height: 40px; left: -98.333px; top: -8.35px; }
+
+/* S01: FE 1380:16365, with the 45px native OS status bar excluded. */
+@font-face {
+  font-family: "Roboto";
+  src: url("/ui-onboarding/RobotoVariable.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+html:has(.consumer-mock .ob-login) { scrollbar-gutter: auto; }
+.consumer-mock .ui-onboarding .ob-login .ob-brand {
+  position: relative;
+  left: 1px;
+  width: 195px;
+  height: 82px;
+  margin-inline: auto;
+  letter-spacing: 0;
+}
+.consumer-mock .ui-onboarding .ob-login .ob-brand > * { width: 100%; white-space: nowrap; }
+.consumer-mock .ui-onboarding .ob-login .ob-login-actions { margin-top: 162px; }
+.consumer-mock .ui-onboarding .ob-login .ob-social-hint {
+  position: relative;
+  width: 139px;
+  height: 30px;
+  margin-inline: auto;
+  letter-spacing: 0;
+}
+.consumer-mock .ui-onboarding .ob-login .ob-social-hint p { width: 100%; height: 24px; white-space: nowrap; }
+.consumer-mock .ui-onboarding .ob-login .ob-social-hint img {
+  position: absolute;
+  top: 24px;
+  left: calc(50% - 5.19615px);
+}
+.consumer-mock .ui-onboarding .ob-login .ob-social-button {
+  font-family: "Roboto", "Pretendard", sans-serif;
+  font-variation-settings: "wdth" 100;
+  letter-spacing: 0;
+  transition: none;
+}
+.consumer-mock .ui-onboarding .ob-login .ob-social-kakao > img {
+  position: absolute;
+  top: 12px;
+  left: calc(50% - 45.5px);
+}
+.consumer-mock .ui-onboarding .ob-login .ob-social-kakao > span:last-child {
+  position: absolute;
+  top: 13px;
+  left: calc(50% - 17.831543px);
+  letter-spacing: -0.17px;
+}
+.consumer-mock .ui-onboarding .ob-login .ob-social-naver { line-height: normal; }
+.consumer-mock .ui-onboarding .ob-login .ob-social-naver > span:last-child { min-width: 70px; }
+
 .consumer-mock .ui-onboarding .ob-consent-form { padding-top: 201px; padding-bottom: 40px; }
 .consumer-mock .ui-onboarding .ob-consents { margin-top: 56px; min-width: 0; }
 .consumer-mock .ui-onboarding .ob-consent-all { display: flex; align-items: center; gap: 8px; padding: 8px 24px; border-bottom: 1px solid #d8d8d4; font-size: 18px; line-height: 27px; cursor: pointer; }
@@ -933,6 +986,30 @@
 .consumer-mock .ui-onboarding .ob-primary { display: block; width: 100%; min-height: 42px; border-radius: 8px; padding: 10px; background: #74b3f6; color: #252522; text-align: center; font-size: 16px; font-weight: 600; line-height: 1.35; }
 .consumer-mock .ui-onboarding .ob-primary:disabled { opacity: 1; background: #d8d8d4; }
 .consumer-mock .ui-onboarding .ob-primary:hover:not(:disabled) { background: #a4cdf9; }
+
+/* S02: FE 1392:28069 / 1380:27305, excluding the 45px native OS status bar. */
+html:has(.consumer-mock .ob-consent) { scrollbar-gutter: auto; }
+.consumer-mock .ui-onboarding .ob-consent .ob-brand {
+  width: 195px;
+  height: 107px;
+  margin-inline: auto;
+}
+.consumer-mock .ui-onboarding .ob-consent .ob-brand > * { width: 100%; white-space: nowrap; }
+.consumer-mock .ui-onboarding .ob-consent .ob-brand h1 { height: 24px; flex-shrink: 0; }
+.consumer-mock .ui-onboarding .ob-consent .ob-consent-all { height: 44px; }
+.consumer-mock .ui-onboarding .ob-consent .ob-consent-kind { width: 25px; }
+/* Keep the 69px design gap in normal flow for optional policies and expanded terms. */
+.consumer-mock .ui-onboarding .ob-consent .ob-consent-action { margin-top: 69px; }
+.consumer-mock .ui-onboarding .ob-consent .ob-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  min-height: 40px;
+  transition: none;
+}
+.consumer-mock .ui-onboarding .ob-consent .ob-primary:hover:not(:disabled) { background: #74b3f6; }
+
 .consumer-mock .ui-onboarding .ob-start-choice { position: relative; min-height: max(767px, 100dvh); padding: 94px 24px 100px; background: #f8f6f2; isolation: isolate; }
 .consumer-mock .ui-onboarding .ob-choice-art { position: absolute; z-index: -1; inset: 0; pointer-events: none; }
 .consumer-mock .ui-onboarding .ob-choice-top { position: absolute; top: -45px; left: calc(50% - 187.5px); z-index: 1; }
@@ -956,7 +1033,84 @@
 .consumer-mock .ui-onboarding .ob-topic-content { padding: 39px 24px 40px; }
 .consumer-mock .ui-onboarding .ob-topic-list { margin-top: 36px; }
 .consumer-mock .ui-onboarding .ob-topic-button { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 88px; padding: 8px 30px; border-bottom: 1px solid #d8d8d4; text-align: left; font-size: 20px; font-weight: 500; line-height: 1.35; }
-.consumer-mock .ui-onboarding .ob-topic-button[aria-pressed="true"] { background: #d4e7fc60; }
+
+/* Start Choice / S03: FE 1380:16307 / 1380:15963 / 1380:15965.
+   Coordinates exclude the 45px native OS status bar; later steps keep their gutter. */
+@font-face {
+  font-family: "SUIT";
+  src: url("/ui-onboarding/SUIT-Bold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+html:has(.consumer-mock :is(.ob-account-type, .ob-topic)) { scrollbar-gutter: auto; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-choice-intro { position: relative; left: 0.5px; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-choice-intro h1 {
+  width: 172px;
+  height: 30px;
+  margin-inline: auto;
+  font-family: "SUIT", "Pretendard", sans-serif;
+  white-space: nowrap;
+}
+.consumer-mock .ui-onboarding .ob-account-type .ob-choice-intro p {
+  width: 276px;
+  height: 22px;
+  margin-inline: auto;
+  white-space: nowrap;
+}
+.consumer-mock .ui-onboarding .ob-account-type :is(.ob-consumer-choice, .ob-creator-choice) {
+  align-items: flex-start;
+  transition: none;
+}
+.consumer-mock .ui-onboarding .ob-account-type .ob-consumer-choice {
+  width: 156px;
+  margin-top: 90px;
+  margin-left: calc(50% - 64.5px);
+}
+.consumer-mock .ui-onboarding .ob-account-type .ob-consumer-choice:disabled { opacity: 1; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-consumer-choice > img { left: 130px; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-creator-choice {
+  width: 143px;
+  margin-left: calc(50% - 51.5px);
+}
+.consumer-mock .ui-onboarding .ob-account-type .ob-creator-choice .ob-choice-heading { width: 104px; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-creator-choice .ob-choice-description { margin-left: -24.5px; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-creator-choice > img { left: 116px; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-choice-bottom { transform-origin: top left; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-choice-bottom::after {
+  content: "";
+  display: block;
+  margin-top: -1px; /* Overlap the SVG edge to avoid a fractional-scale seam. */
+  height: 100dvh;
+  background: #f8f6f2;
+}
+/* Smart Animate matches Polygon 1. Its top moves 408.5 -> -304 and its
+   diagonal rises 100 -> 190px; the unchanged paper below it fills the shell.
+   Transform the existing SVG wrapper without resizing/replacing the asset. */
+@keyframes ob-choice-expand {
+  to { transform: translateY(-712.5px) scaleY(1.9); }
+}
+@keyframes ob-choice-disappear {
+  to { opacity: 0; }
+}
+/* The frames have no fill. The demo exposes the black prototype backdrop
+   above the moving paper while unmatched layers fade away. */
+.consumer-mock .ui-onboarding .ob-account-type .ob-start-choice[data-transition="animating"] { background: #000; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-start-choice[data-transition="animating"] .ob-choice-bottom {
+  animation: ob-choice-expand 200ms ease-in-out forwards;
+}
+.consumer-mock .ui-onboarding .ob-account-type .ob-start-choice[data-transition="animating"] :is(.ob-choice-top, .ob-choice-intro, .ob-consumer-choice, .ob-creator-choice) {
+  animation: ob-choice-disappear 200ms ease-in-out forwards;
+  pointer-events: none;
+}
+.consumer-mock .ui-onboarding .ob-account-type .ob-choice-helper { position: relative; min-height: 100dvh; isolation: isolate; }
+.consumer-mock .ui-onboarding .ob-account-type .ob-choice-helper-art { position: absolute; z-index: -1; top: -349px; left: calc(50% - 187.5px); pointer-events: none; }
+.consumer-mock .ui-onboarding .ob-topic .ob-intro h1 { height: 64px; }
+.consumer-mock .ui-onboarding .ob-topic .ob-intro p { height: 22px; }
+.consumer-mock .ui-onboarding .ob-topic .ob-topic-button { padding-inline: 29.5px; transition: none; }
+.consumer-mock .ui-onboarding .ob-topic .ob-topic-button:active > span { color: #4499f3; }
+.consumer-mock .ui-onboarding .ob-topic .ob-navigation button { transition: none; }
+
 .consumer-mock .ui-onboarding .ob-subtopic-form { display: flex; flex-direction: column; gap: 28px; padding: 25px 24px 40px; }
 .consumer-mock .ui-onboarding .ob-search { display: flex; align-items: center; gap: 8px; height: 46px; margin-top: 4px; padding: 8px 8px 8px 16px; border: 1px solid #f9f9f9a6; border-radius: 24px; background: #ffffffa3; backdrop-filter: blur(12px); box-shadow: 0 8px 24px #0000001f; }
 .consumer-mock .ui-onboarding .ob-search input { width: 100%; min-width: 0; background: transparent; font-size: 14px; line-height: 1.5; }
