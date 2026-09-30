@@ -8,7 +8,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 
 import { ContentAIPanel } from "@/components/content/content-ai-panel";
 import { ContentCardActions } from "@/components/home/content-card-actions";
-import { SourceInfo } from "@/components/content/source-info";
+import { ContinueReading } from "@/components/content/continue-reading";
 import { useConsumerFlow } from "@/components/providers/consumer-flow-provider";
 import { useContentNavigation, type PreparedContentResult } from "@/components/providers/content-navigation-provider";
 import {
@@ -22,33 +22,36 @@ import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import { readContentSavedState, subscribeContentState } from "@/lib/content-state";
 import { formatRelativeTime } from "@/lib/relative-time";
 import type { ContentDetail, ContentFeedback } from "@/types/content";
+import type { ContentReadingOrigin } from "@/lib/continue-reading";
 
 type ContentDetailScreenProps = {
   contentId: string;
   topicId: string | null;
+  readingOrigin?: ContentReadingOrigin;
 };
 
 type ContentDetailLoaderProps = {
   contentId: string;
   topicId: string;
   initialResult?: PreparedContentResult | null;
+  readingOrigin: ContentReadingOrigin;
 };
 
 type ContentAction =
   | { type: "feedback"; feedback: ContentFeedback }
   | { type: "save"; saved: boolean };
 
-function ContentDetailReady({ contentId, topicId }: ContentDetailLoaderProps) {
+function ContentDetailReady({ contentId, topicId, readingOrigin }: ContentDetailLoaderProps) {
   const { read, release } = useContentNavigation();
   const [prepared] = useState(() => read(contentId, topicId));
   useLayoutEffect(() => {
     if (prepared) release(prepared);
   }, [prepared, release]);
 
-  return <ContentDetailLoader contentId={contentId} topicId={topicId} initialResult={prepared} />;
+  return <ContentDetailLoader contentId={contentId} topicId={topicId} initialResult={prepared} readingOrigin={readingOrigin} />;
 }
 
-function ContentDetailLoader({ contentId, topicId, initialResult }: ContentDetailLoaderProps) {
+function ContentDetailLoader({ contentId, topicId, initialResult, readingOrigin }: ContentDetailLoaderProps) {
   const [content, setContent] = useState<ContentDetail | null>(initialResult?.content ?? null);
   const [isLoading, setIsLoading] = useState(!initialResult);
   const [error, setError] = useState<"not-found" | "error" | null>(initialResult?.error ?? null);
@@ -228,8 +231,8 @@ function ContentDetailLoader({ contentId, topicId, initialResult }: ContentDetai
         )}
         <div className="va-detail-topbar">
           <Link
-            href={{ pathname: consumerRoutes.home, query: { topicId } }}
-            aria-label="홈으로 돌아가기"
+            href={{ pathname: readingOrigin === "saved" ? consumerRoutes.saved : consumerRoutes.home, query: { topicId } }}
+            aria-label={readingOrigin === "saved" ? "저장 목록으로 돌아가기" : "홈으로 돌아가기"}
             className="va-detail-back"
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -320,9 +323,7 @@ function ContentDetailLoader({ contentId, topicId, initialResult }: ContentDetai
             </div>
           ) : null}
         </section>
-        <div className="va-article-sources">
-          <SourceInfo sources={content.sources} />
-        </div>
+        <ContinueReading contentId={contentId} topicId={topicId} readingOrigin={readingOrigin} />
       </div>
       <ContentAIPanel
         key={JSON.stringify([topicId, contentId])}
@@ -336,6 +337,7 @@ function ContentDetailLoader({ contentId, topicId, initialResult }: ContentDetai
 export function ContentDetailScreen({
   contentId,
   topicId,
+  readingOrigin = "home",
 }: ContentDetailScreenProps) {
   const { flowState, isRestoring, restoreError, refreshTopics } = useConsumerFlow();
   const validatedTopicId =
@@ -353,12 +355,12 @@ export function ContentDetailScreen({
           <Link
             href={
               validatedTopicId
-                ? { pathname: consumerRoutes.home, query: { topicId: validatedTopicId } }
-                : consumerRoutes.home
+                ? { pathname: readingOrigin === "saved" ? consumerRoutes.saved : consumerRoutes.home, query: { topicId: validatedTopicId } }
+                : readingOrigin === "saved" ? consumerRoutes.saved : consumerRoutes.home
             }
             className="va-detail-nav-link"
           >
-            홈으로 돌아가기
+            {readingOrigin === "saved" ? "저장 목록으로 돌아가기" : "홈으로 돌아가기"}
           </Link>
           {validatedTopicId ? (
             <Link
@@ -403,9 +405,10 @@ export function ContentDetailScreen({
           </p>
         ) : (
           <ContentDetailReady
-            key={JSON.stringify([topicId, contentId])}
+            key={JSON.stringify([topicId, contentId, readingOrigin])}
             contentId={contentId}
             topicId={topicId}
+            readingOrigin={readingOrigin}
           />
         )}
       </div>

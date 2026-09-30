@@ -12,6 +12,7 @@ import { readContentSavedState, subscribeContentState } from "@/lib/content-stat
 import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import { formatRelativeTime } from "@/lib/relative-time";
 import type { Content } from "@/types/content";
+import type { ContentReadingOrigin } from "@/lib/continue-reading";
 
 // Figma thumbnails for the existing Movie fixtures, used only in Home presentation.
 const movieHomeThumbnails: Record<
@@ -36,6 +37,7 @@ type ContentCardProps = {
   viewMode: "list" | "card";
   eagerImage?: boolean;
   animateEntry?: boolean;
+  readingOrigin?: ContentReadingOrigin;
 };
 
 export function ContentCard({
@@ -45,9 +47,11 @@ export function ContentCard({
   viewMode,
   eagerImage = false,
   animateEntry = false,
+  readingOrigin = "home",
 }: ContentCardProps) {
   const { navigate } = useContentNavigation();
-  const navigation = animateEntry ? {
+  const detailQuery = { topicId, ...(readingOrigin === "saved" ? { from: "saved" } : {}) };
+  const navigation = animateEntry && readingOrigin === "home" ? {
     onNavigate: (event: { preventDefault: () => void }) => {
       event.preventDefault();
       void navigate(content.id, topicId);
@@ -72,7 +76,7 @@ export function ContentCard({
           {...navigation}
           href={{
             pathname: consumerRoutes.content(content.id),
-            query: { topicId },
+            query: detailQuery,
           }}
           aria-label={`${content.title} 상세 보기`}
           className="va-content-link va-content-card-link block"
@@ -126,7 +130,7 @@ export function ContentCard({
       {...navigation}
       href={{
         pathname: consumerRoutes.content(content.id),
-        query: { topicId },
+        query: detailQuery,
       }}
       aria-label={`${content.title} 상세 보기`}
       className="va-content-link block"

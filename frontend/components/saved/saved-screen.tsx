@@ -96,7 +96,7 @@ function SavedContentsLoader({ topicId }: { topicId: string }) {
         <ul>
           {data.contents.map((content) => (
             <li key={content.id}>
-              <ContentCard content={content} topicId={topicId} sectionTitle="" viewMode="list" />
+              <ContentCard content={content} topicId={topicId} sectionTitle="" viewMode="list" readingOrigin="saved" />
             </li>
           ))}
         </ul>

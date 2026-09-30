@@ -197,9 +197,10 @@ export async function saveContent(
   return updateSavedState(input, true);
 }
 
-export async function getSavedContents({
-  topicId,
-}: GetSavedContentsInput): Promise<SavedContentsData> {
+export async function getSavedContents(
+  { topicId }: GetSavedContentsInput,
+  options?: { syncReactions?: boolean },
+): Promise<SavedContentsData> {
   if (isConsumerApiMode) {
     const numericTopicId = requireApiId(topicId, "Topic ID");
     const [catalog, firstPage] = await Promise.all([
@@ -233,7 +234,9 @@ export async function getSavedContents({
       seenCursors.add(page.nextCursor);
       page = await getBookmarks({ topicId: numericTopicId, cursor: page.nextCursor, limit: 100 });
     }
-    replaceApiSavedStatesForTopic(topicId, new Set(contents.map((item) => item.id)));
+    if (options?.syncReactions ?? true) {
+      replaceApiSavedStatesForTopic(topicId, new Set(contents.map((item) => item.id)));
+    }
     return { topic: { id: topicId, name: topic.name, code: topic.code }, contents };
   }
   const topic = mockTopics.find((item) => item.id === topicId);

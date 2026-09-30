@@ -874,6 +874,67 @@
   background: #d4e7fc;
 }
 .consumer-mock .ui-version-a .va-article-sources { min-width: 0; }
+/* Figma Article/content (1511:20478): full-width continuation rows. */
+.consumer-mock .ui-version-a .va-detail-actions:has(+ .va-continue-reading) {
+  margin-block-end: 0;
+}
+.consumer-mock .ui-version-a .va-detail-content > .va-continue-reading {
+  margin: 0 -24px -24px;
+}
+.consumer-mock .ui-version-a .va-continue-heading {
+  padding: 48px 24px 8px;
+  color: var(--va-ink);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.consumer-mock .ui-version-a .va-continue-list { list-style: none; padding: 0; margin: 0; }
+.consumer-mock .ui-version-a .va-continue-link {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 24px;
+  border-bottom: 1px solid #d8d8d4;
+  color: var(--va-ink);
+}
+.consumer-mock .ui-version-a .va-continue-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  max-width: 104px;
+  height: 28px;
+  padding-inline: 12px;
+  border: 1px solid #c0c0ba;
+  border-radius: 32px;
+  background: rgb(240 240 239 / 80%);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.consumer-mock .ui-version-a .va-continue-title {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  font-size: 16px;
+  font-weight: 300;
+  line-height: 1.5;
+  letter-spacing: -0.64px;
+}
+.consumer-mock .ui-version-a :is(.va-continue-title, .va-continue-chip) > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.consumer-mock .ui-version-a .va-continue-arrow { flex-shrink: 0; }
+.consumer-mock .ui-version-a .va-continue-message {
+  padding: 8px 24px;
+  color: var(--va-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
 .consumer-mock .ui-version-a .va-article-sources h2 {
   color: var(--va-ink);
   font-size: 14px;
