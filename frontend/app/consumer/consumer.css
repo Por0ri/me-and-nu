@@ -1146,6 +1146,70 @@ html:has(.consumer-mock :is(.ob-account-type, .ob-topic)) { scrollbar-gutter: au
   .consumer-mock .ui-onboarding .ob-intro p { font-size: 14px; }
 }
 
+/* S04: FE 1380:16006 / 1380:16293 / 1380:15982.
+   Coordinates exclude the 45px native OS status bar. Keep Additional Topic's base styles. */
+html:has(.consumer-mock :is(.ob-subtopics, .ob-confirmation)) { scrollbar-gutter: auto; }
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) button { transition: none; }
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) .ob-primary { height: 42px; }
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) .ob-primary:hover:not(:disabled) { background: #74b3f6; }
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) :is(.ob-chip, .ob-confirmed-chip) {
+  height: 27px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.consumer-mock .ui-onboarding :is(.ob-subtopics, .ob-confirmation) .ob-confirmed-chip button { width: 12px; height: 12px; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-intro h1 { width: min(100%, 318.662px); height: 64px; margin-inline: auto; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search-group { margin: 4px 1px 0; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search { margin-top: 0; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search input { outline: none; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search-icon { display: grid; place-items: center; width: 24px; height: 24px; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-search-group[data-has-selection="true"] .ob-search {
+  border-color: #0000000a;
+  border-radius: 24px 24px 0 0;
+}
+.consumer-mock .ui-onboarding .ob-subtopics .ob-selected-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 8px 8px 8px 16px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  border: 1px solid #0000000a;
+  border-radius: 0 0 24px 24px;
+  background: #ffffffa3;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px #0000001f;
+}
+.consumer-mock .ui-onboarding .ob-subtopics .ob-selected-chips::-webkit-scrollbar { display: none; }
+.consumer-mock .ui-onboarding .ob-subtopics .ob-more {
+  align-self: center;
+  width: 53px;
+  height: 29px;
+  padding: 4px 8px;
+  color: #75756b;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 21px;
+  text-decoration: underline;
+  text-underline-position: from-font;
+}
+.consumer-mock .ui-onboarding .ob-confirmation .ob-intro h1 { height: 32px; }
+.consumer-mock .ui-onboarding .ob-confirmation .ob-confirmation-card {
+  /* Preserve the Figma 0.5px border inset even with Windows fractional device scaling. */
+  border: 0;
+  padding: 15.5px 20.5px;
+  box-shadow: inset 0 0 0 0.5px #d8d8d4;
+}
+.consumer-mock .ui-onboarding .ob-confirmation .ob-confirmation-card h2 { height: 22px; }
+.consumer-mock .ui-onboarding .ob-confirmation .ob-confirmation-card .ob-chips { width: min(100%, 280px); }
+.consumer-mock .ui-onboarding .ob-confirmation .ob-review-option .ob-chip { background: #f8f6f2; }
+.consumer-mock .ui-onboarding .ob-confirmation .ob-edit { text-underline-offset: auto; text-underline-position: from-font; }
+
 /* 저장·마이페이지 공통 */
 .consumer-mock .ui-version-a .va-page-title {
   font-size: 22px;
