@@ -22,8 +22,10 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 DEST = HERE / "contents"
 
-# 결과 폴더 → 토픽. 영화 정보는 올림 · 탈락이 한 폴더라 머리의 **상태**로 가른다
+# 결과 폴더 → 토픽. 영화 정보도 올림 · 탈락을 폴더로 나눈다(V3.7~).
+# 그 전 판은 movie_info/ 한 폴더에 섞여 있어서, 거기 남은 글은 머리의 **상태**로 가른다
 FOLDERS = [
+    ("movie_info/올림", "topic-movie", "영화", "영화 정보"),
     ("movie_info", "topic-movie", "영화", "영화 정보"),
     ("movie_review/올림", "topic-movie", "영화", "영화 리뷰"),
     ("music/올림", "topic-music", "음악", "음악 리뷰"),
