@@ -7,10 +7,12 @@ import Link from "next/link";
 import { useSyncExternalStore } from "react";
 
 import { ContentCardActions } from "@/components/home/content-card-actions";
+import { useContentNavigation } from "@/components/providers/content-navigation-provider";
 import { readContentSavedState, subscribeContentState } from "@/lib/content-state";
 import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import { formatRelativeTime } from "@/lib/relative-time";
 import type { Content } from "@/types/content";
+import type { ContentReadingOrigin } from "@/lib/continue-reading";
 
 // Figma thumbnails for the existing Movie fixtures, used only in Home presentation.
 const movieHomeThumbnails: Record<
@@ -33,6 +35,9 @@ type ContentCardProps = {
   topicId: string;
   sectionTitle: string;
   viewMode: "list" | "card";
+  eagerImage?: boolean;
+  animateEntry?: boolean;
+  readingOrigin?: ContentReadingOrigin;
 };
 
 export function ContentCard({
@@ -40,7 +45,18 @@ export function ContentCard({
   topicId,
   sectionTitle,
   viewMode,
+  eagerImage = false,
+  animateEntry = false,
+  readingOrigin = "home",
 }: ContentCardProps) {
+  const { navigate } = useContentNavigation();
+  const detailQuery = { topicId, ...(readingOrigin === "saved" ? { from: "saved" } : {}) };
+  const navigation = animateEntry && readingOrigin === "home" ? {
+    onNavigate: (event: { preventDefault: () => void }) => {
+      event.preventDefault();
+      void navigate(content.id, topicId);
+    },
+  } : {};
   const saved = useSyncExternalStore(
     subscribeContentState,
     () => readContentSavedState({ contentId: content.id, topicContext: { topicId } }, content.saved),
@@ -57,9 +73,10 @@ export function ContentCard({
     return (
       <div className="va-content-card-shell">
         <Link
+          {...navigation}
           href={{
             pathname: consumerRoutes.content(content.id),
-            query: { topicId },
+            query: detailQuery,
           }}
           aria-label={`${content.title} 상세 보기`}
           className="va-content-link va-content-card-link block"
@@ -72,6 +89,7 @@ export function ContentCard({
                 fill
                 sizes="(max-width: 375px) calc(100vw - 48px), 327px"
                 unoptimized
+                loading={eagerImage ? "eager" : "lazy"}
                 className="va-card-image"
                 style={
                   content.imageUrl
@@ -88,7 +106,7 @@ export function ContentCard({
               <div className="va-card-metadata">
                 <p>
                   By {byline}
-                  {content.aiGenerated ? <span className="block">AI생성 컨텐츠</span> : null}
+                  {content.aiGenerated ? <span className="block">AI생성 콘텐츠</span> : null}
                 </p>
                 {relativeTime ? <p>{relativeTime}</p> : null}
               </div>
@@ -109,15 +127,16 @@ export function ContentCard({
 
   return (
     <Link
+      {...navigation}
       href={{
         pathname: consumerRoutes.content(content.id),
-        query: { topicId },
+        query: detailQuery,
       }}
       aria-label={`${content.title} 상세 보기`}
       className="va-content-link block"
     >
       <article className="va-content-row">
-        <div className="min-w-0 space-y-2">
+        <div className="va-row-copy min-w-0 space-y-2">
           {chip ? <p className="va-section-chip">{chip}</p> : null}
           <h3 className="text-base leading-[1.4] tracking-[-0.02em]">
             {content.title}
@@ -133,6 +152,7 @@ export function ContentCard({
               width={94}
               height={98}
               unoptimized
+              loading={eagerImage ? "eager" : "lazy"}
               className="h-full w-full object-cover"
             />
           ) : (

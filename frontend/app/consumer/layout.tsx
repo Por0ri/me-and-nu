@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { ConsumerFlowProvider } from "@/components/providers/consumer-flow-provider";
 import { ConsumerSessionProvider } from "@/components/providers/consumer-session-provider";
+import { ContentNavigationProvider } from "@/components/providers/content-navigation-provider";
 import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 
 import "./consumer.css";
@@ -18,7 +19,9 @@ export default function ConsumerLayout({ children }: { children: ReactNode }) {
   return (
     <div className="consumer-mock">
       <ConsumerSessionProvider>
-        <ConsumerFlowProvider>{children}</ConsumerFlowProvider>
+        <ConsumerFlowProvider>
+          <ContentNavigationProvider>{children}</ContentNavigationProvider>
+        </ConsumerFlowProvider>
       </ConsumerSessionProvider>
     </div>
   );

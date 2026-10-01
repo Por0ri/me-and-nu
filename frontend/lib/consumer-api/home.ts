@@ -24,7 +24,10 @@ function requireApiTopicId(value: string): number {
   return id;
 }
 
-async function getApiHomeContents(topicId: string): Promise<HomeData> {
+async function getApiHomeContents(
+  topicId: string,
+  syncReactions: boolean,
+): Promise<HomeData> {
   const numericTopicId = requireApiTopicId(topicId);
   const [catalog, firstPage] = await Promise.all([
     getTopics(),
@@ -42,10 +45,12 @@ async function getApiHomeContents(topicId: string): Promise<HomeData> {
       const existing = sections.get(section.id);
       const contents = section.contents.map((card) => {
         const contentId = String(card.id);
-        seedApiContentState(
-          { contentId, topicContext: { topicId } },
-          { saved: card.saved, liked: card.myReaction?.liked ?? false },
-        );
+        if (syncReactions) {
+          seedApiContentState(
+            { contentId, topicContext: { topicId } },
+            { saved: card.saved, liked: card.myReaction?.liked ?? false },
+          );
+        }
         return {
           id: contentId,
           title: card.title,
@@ -83,10 +88,11 @@ async function getApiHomeContents(topicId: string): Promise<HomeData> {
   };
 }
 
-export async function getHomeContents({
-  topicId,
-}: GetHomeContentsInput): Promise<HomeData> {
-  if (isConsumerApiMode) return getApiHomeContents(topicId);
+export async function getHomeContents(
+  { topicId }: GetHomeContentsInput,
+  options?: { syncReactions?: boolean },
+): Promise<HomeData> {
+  if (isConsumerApiMode) return getApiHomeContents(topicId, options?.syncReactions ?? true);
   const homeFixture = mockHomeDataByTopicId[topicId];
 
   if (!homeFixture) {

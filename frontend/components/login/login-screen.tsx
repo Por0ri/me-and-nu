@@ -30,11 +30,13 @@ export function LoginScreen() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const isLoginRequestPending = useRef(false);
   const [isLocalDemo, setIsLocalDemo] = useState(false);
+  const [showDemoDetails, setShowDemoDetails] = useState(false);
   const [completedProviderId, setCompletedProviderId] = useState<string | null>(null);
 
   useEffect(() => {
     let isCancelled = false;
     setIsLocalDemo(isLocalDemoLoginAvailable());
+    setShowDemoDetails(new URLSearchParams(window.location.search).get("debug") === "1");
 
     async function loadLoginOptions() {
       try {
@@ -127,7 +129,11 @@ export function LoginScreen() {
             <OnboardingIcon name="bubble-tip" />
           </div>
           {isConsumerApiMode && isLocalDemo ? (
-            <p className="mb-3 text-center text-xs leading-5 text-black/60">
+            // Keep the demo disclosure available without shifting the presentation layout.
+            <p
+              id="login-demo-description"
+              className={showDemoDetails ? "mb-3 text-center text-xs leading-5 text-black/60" : "sr-only"}
+            >
               로컬 시연용입니다. 실제 SNS 인증 없이<br />
               새 시연 계정으로 로그인 → 온보딩 → 홈을 확인합니다.
             </p>
@@ -160,6 +166,7 @@ export function LoginScreen() {
                 <button
                   key={provider.id}
                   type="button"
+                  aria-describedby={isConsumerApiMode && isLocalDemo ? "login-demo-description" : undefined}
                   disabled={isLoginPending || (completedProviderId !== null && completedProviderId !== provider.id)}
                   onClick={() => void handleLogin(provider.id)}
                   className={`ob-social-button ob-social-${provider.id}`}
@@ -179,7 +186,10 @@ export function LoginScreen() {
                   <span>
                     {pendingProviderId === provider.id
                       ? "로그인 중..."
-                      : completedProviderId === provider.id ? "온보딩으로 이동" : provider.label}
+                      : completedProviderId === provider.id ? "온보딩으로 이동"
+                      : showDemoDetails ? provider.label
+                      : provider.id === "kakao" ? "카카오 로그인"
+                      : provider.id === "naver" ? "네이버 로그인" : provider.label}
                   </span>
                 </button>
               ))}
