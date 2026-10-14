@@ -1,0 +1,114 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "screenNodeId": "619:730",
+  "componentNodeId": "660:676",
+  "characterStyle": "pending; existing Figma references only",
+  "assets": [
+    {
+      "file": "background.svg",
+      "sha256": "4589487776D7C34CF3E1F3748D2E485B9057FC9D1593805FD26D4B7A4EE6C63B",
+      "bytes": 528,
+      "nodeId": "619:730"
+    },
+    {
+      "file": "dots-1.svg",
+      "sha256": "B5BEE1CD9E7390F1B4A4117011B67201A10F4167F02255FC8EB9ED0F475751C2",
+      "bytes": 962,
+      "nodeId": "643:1147"
+    },
+    {
+      "file": "dots-2.svg",
+      "sha256": "3C4AD436B34AA5B30F183B241F016DB495A5748DAF03CB675F216DB97A781D41",
+      "bytes": 960,
+      "nodeId": "643:1148"
+    },
+    {
+      "file": "dots-3.svg",
+      "sha256": "BDF121F7D52339BE304A790C599F78637078DEF14EE9EEE72EF591AFDD139364",
+      "bytes": 960,
+      "nodeId": "643:1149"
+    },
+    {
+      "file": "phase-1.png",
+      "sha256": "01014B987FE749F669B85A6D772AD0D44C5E58158431C8065EDA8EA9A7672E98",
+      "bytes": 189215,
+      "nodeId": "643:1147",
+      "sourceSha256": "79CCFC0A45BB077864041F0220B896950F9C3F6378D9C0A751BCFB64E4B0DD65",
+      "optimization": {
+        "tool": "sharp 0.35.4 / libvips 8.18.6",
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "adaptiveFiltering": true,
+        "palette": false,
+        "preserveAlpha": true,
+        "preserveAspectRatio": true,
+        "sourceWidth": 1086,
+        "sourceHeight": 1448,
+        "sourceBytes": 1081982,
+        "width": 456,
+        "height": 608,
+        "bytes": 189215,
+        "sourceSha256": "79CCFC0A45BB077864041F0220B896950F9C3F6378D9C0A751BCFB64E4B0DD65",
+        "outputSha256": "01014B987FE749F669B85A6D772AD0D44C5E58158431C8065EDA8EA9A7672E98"
+      }
+    },
+    {
+      "file": "phase-2.png",
+      "sha256": "EB6B9BC58A810231A280585A50DD7C56BAF4B1802F5088F08F52D2599353A2FF",
+      "bytes": 195979,
+      "nodeId": "643:1148",
+      "sourceSha256": "2D13D1E7D6DD2048BA2E1E2DBCC8CA9D72FF4BDBA4F4104DC226DC1E59B29000",
+      "optimization": {
+        "tool": "sharp 0.35.4 / libvips 8.18.6",
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "adaptiveFiltering": true,
+        "palette": false,
+        "preserveAlpha": true,
+        "preserveAspectRatio": true,
+        "sourceWidth": 1086,
+        "sourceHeight": 1448,
+        "sourceBytes": 1117668,
+        "width": 456,
+        "height": 608,
+        "bytes": 195979,
+        "sourceSha256": "2D13D1E7D6DD2048BA2E1E2DBCC8CA9D72FF4BDBA4F4104DC226DC1E59B29000",
+        "outputSha256": "EB6B9BC58A810231A280585A50DD7C56BAF4B1802F5088F08F52D2599353A2FF"
+      }
+    },
+    {
+      "file": "phase-3.png",
+      "sha256": "47141856F53859BE9AF7F8BA92812B767FA9BC5C069CFCE3B5562F79FC008CA2",
+      "bytes": 221754,
+      "nodeId": "643:1149",
+      "sourceSha256": "6964DCC46C5CD74FC41B012AF51E13FA6EF7A7EEF714A5922179A5A7BD3450A5",
+      "optimization": {
+        "tool": "sharp 0.35.4 / libvips 8.18.6",
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "adaptiveFiltering": true,
+        "palette": false,
+        "preserveAlpha": true,
+        "preserveAspectRatio": true,
+        "sourceWidth": 1086,
+        "sourceHeight": 1448,
+        "sourceBytes": 1341856,
+        "width": 456,
+        "height": 608,
+        "bytes": 221754,
+        "sourceSha256": "6964DCC46C5CD74FC41B012AF51E13FA6EF7A7EEF714A5922179A5A7BD3450A5",
+        "outputSha256": "47141856F53859BE9AF7F8BA92812B767FA9BC5C069CFCE3B5562F79FC008CA2"
+      }
+    }
+  ],
+  "display": {
+    "width": 227.7,
+    "height": 252.9,
+    "objectFit": "cover",
+    "figmaScaleMode": "FILL",
+    "crop": "unchanged; centered cover"
+  }
+}

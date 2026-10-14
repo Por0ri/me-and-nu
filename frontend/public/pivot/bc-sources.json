@@ -1,0 +1,784 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "assets": [
+    {
+      "screen": "interest",
+      "nodeId": "165:2689",
+      "variable": "imgOutline",
+      "file": "splash-imgOutline.svg",
+      "sha256": "8FC4AC3795108B83688E1DD633B82CABE98F92A749CC99056051B1EFEFD65F30"
+    },
+    {
+      "screen": "interest",
+      "nodeId": "165:2689",
+      "variable": "imgBatteryEnd",
+      "file": "splash-imgBatteryEnd.svg",
+      "sha256": "CA11170445095A1C01247E1EAD221CAAAA42BED47A1A2DEB539D7054A7463AB4"
+    },
+    {
+      "screen": "interest",
+      "nodeId": "165:2689",
+      "variable": "imgWifi",
+      "file": "splash-imgWifi.svg",
+      "sha256": "7F6F596DFC421E5BF408D76D666D7CD567266E01294D9BB99AE8FA44B0278B68"
+    },
+    {
+      "screen": "interest",
+      "nodeId": "165:2689",
+      "variable": "imgIconMobileSignal",
+      "file": "splash-imgIconMobileSignal.svg",
+      "sha256": "CCC2FE2834D934C720BC122539AA280FB144D244AFEE62DF3FF155F8F27653B0"
+    },
+    {
+      "screen": "interest",
+      "nodeId": "165:2689",
+      "variable": "img",
+      "file": "bc-interest-img.png",
+      "sha256": "1C5A02C084AD40D98124ED53B2D5691A36AA6CBCE5EC905C386BB48D9AD808FF",
+      "sourceSha256": "0ED11FF27358EC78689B8A8DA7CCB5089C9C0A8AEB780A6C4A2BA68D25DE021B",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 324,
+        "height": 324,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 880062,
+        "bytes": 21381
+      }
+    },
+    {
+      "screen": "interest",
+      "nodeId": "165:2689",
+      "variable": "img1",
+      "file": "bc-interest-img1.png",
+      "sha256": "2C17E3452D208359D781389D8310EABC9FE3B26531E2D93F52E6C33552594ECB",
+      "sourceSha256": "AEE9CBE36A9AF89D5A719EC3883F793DD8D493BB53F6E1CAEE40FCAB7CF96A95",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 324,
+        "height": 324,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 2349506,
+        "bytes": 54628
+      }
+    },
+    {
+      "screen": "interest",
+      "nodeId": "165:2689",
+      "variable": "img4Vectorized",
+      "file": "bc-interest-img4Vectorized.svg",
+      "sha256": "47AAB4CEB612087FC57A2227B70AAD122DB9B5E6F70970EF28969CBA655E8ECC"
+    },
+    {
+      "screen": "interest",
+      "nodeId": "165:2689",
+      "variable": "img2",
+      "file": "bc-interest-img2.svg",
+      "sha256": "F7F8996886447E50098263662F2D88E314D17970698A009BD0EFC3B07EE6E560"
+    },
+    {
+      "screen": "interest-on",
+      "nodeId": "165:2845",
+      "variable": "imgOutline",
+      "file": "splash-imgOutline.svg",
+      "sha256": "8FC4AC3795108B83688E1DD633B82CABE98F92A749CC99056051B1EFEFD65F30"
+    },
+    {
+      "screen": "interest-on",
+      "nodeId": "165:2845",
+      "variable": "imgBatteryEnd",
+      "file": "splash-imgBatteryEnd.svg",
+      "sha256": "CA11170445095A1C01247E1EAD221CAAAA42BED47A1A2DEB539D7054A7463AB4"
+    },
+    {
+      "screen": "interest-on",
+      "nodeId": "165:2845",
+      "variable": "imgWifi",
+      "file": "splash-imgWifi.svg",
+      "sha256": "7F6F596DFC421E5BF408D76D666D7CD567266E01294D9BB99AE8FA44B0278B68"
+    },
+    {
+      "screen": "interest-on",
+      "nodeId": "165:2845",
+      "variable": "imgIconMobileSignal",
+      "file": "splash-imgIconMobileSignal.svg",
+      "sha256": "CCC2FE2834D934C720BC122539AA280FB144D244AFEE62DF3FF155F8F27653B0"
+    },
+    {
+      "screen": "interest-on",
+      "nodeId": "165:2845",
+      "variable": "img",
+      "file": "bc-interest-img1.png",
+      "sha256": "2C17E3452D208359D781389D8310EABC9FE3B26531E2D93F52E6C33552594ECB",
+      "sourceSha256": "AEE9CBE36A9AF89D5A719EC3883F793DD8D493BB53F6E1CAEE40FCAB7CF96A95",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 324,
+        "height": 324,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 2349506,
+        "bytes": 54628
+      }
+    },
+    {
+      "screen": "interest-on",
+      "nodeId": "165:2845",
+      "variable": "img2",
+      "file": "bc-interest-img.png",
+      "sha256": "1C5A02C084AD40D98124ED53B2D5691A36AA6CBCE5EC905C386BB48D9AD808FF",
+      "sourceSha256": "0ED11FF27358EC78689B8A8DA7CCB5089C9C0A8AEB780A6C4A2BA68D25DE021B",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 324,
+        "height": 324,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 880062,
+        "bytes": 21381
+      }
+    },
+    {
+      "screen": "interest-on",
+      "nodeId": "165:2845",
+      "variable": "img1",
+      "file": "bc-interest-img2.svg",
+      "sha256": "F7F8996886447E50098263662F2D88E314D17970698A009BD0EFC3B07EE6E560"
+    },
+    {
+      "screen": "interest-on",
+      "nodeId": "165:2845",
+      "variable": "img4Vectorized",
+      "file": "bc-interest-on-img4Vectorized.svg",
+      "sha256": "110EE94224686E6ECE0970FA3F2257C4DFEF099D5022D97EEC8743F2404A3FC1"
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgOutline",
+      "file": "splash-imgOutline.svg",
+      "sha256": "8FC4AC3795108B83688E1DD633B82CABE98F92A749CC99056051B1EFEFD65F30"
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgBatteryEnd",
+      "file": "splash-imgBatteryEnd.svg",
+      "sha256": "CA11170445095A1C01247E1EAD221CAAAA42BED47A1A2DEB539D7054A7463AB4"
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgWifi",
+      "file": "splash-imgWifi.svg",
+      "sha256": "7F6F596DFC421E5BF408D76D666D7CD567266E01294D9BB99AE8FA44B0278B68"
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgIconMobileSignal",
+      "file": "splash-imgIconMobileSignal.svg",
+      "sha256": "CCC2FE2834D934C720BC122539AA280FB144D244AFEE62DF3FF155F8F27653B0"
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgFrame303",
+      "file": "bc-q1-imgFrame303.png",
+      "sha256": "C919CADD95D42D14378D91EA41CFFC32A61792AF208FD3EFEE9B9BD5A805723C",
+      "sourceSha256": "6CF8CC61809FEAE23E345C620EA7D22AADC803ADC7CBA29870C47259C88578B3",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1233115,
+        "bytes": 16846
+      }
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgFrame304",
+      "file": "bc-q1-imgFrame304.png",
+      "sha256": "34C2B24C09A037B045D9A0FBAA37AF464C8FA0285B7FF1CB629F0C609FB4BFF6",
+      "sourceSha256": "532D9061F6EDE9DCD5952328E7E4EAC811C6E0FC321DE4D1BB32F43B905BFB0B",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 901574,
+        "bytes": 13614
+      }
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgFrame305",
+      "file": "bc-q1-imgFrame305.png",
+      "sha256": "D0D6C7460D8B4FEDB9F74C3419329AD9E1C0C55BE37870D5DC198CA0B55F0A2C",
+      "sourceSha256": "3EEC1991DF0BB2CDB51D747202DE1079380A1BD950FD636EA372DAFA963FABF8",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1196040,
+        "bytes": 18107
+      }
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgFrame306",
+      "file": "bc-q1-imgFrame306.png",
+      "sha256": "AFD9938E828E9194ED68AF98F9079899468F2564241A87B518D0731B0E544B4A",
+      "sourceSha256": "0EE2A6C38262C027ADE53C360008529824616261901B6A2088E8B74F477D08B2",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1237026,
+        "bytes": 17959
+      }
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgFrame307",
+      "file": "bc-q1-imgFrame307.png",
+      "sha256": "2E5170AA75A80862FA98CE79274914BA118DE055F83A239F962EBD601844206A",
+      "sourceSha256": "6159B3D63A586DA89EA71B5A4367243FE1A2C5FEB48E0DBFD58139C50327FB0B",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1196435,
+        "bytes": 14873
+      }
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgFrame308",
+      "file": "bc-q1-imgFrame308.png",
+      "sha256": "B7C3772899F8A60B4CBEE7F6F3D7D815972190CC7D91B271C264737A494833F0",
+      "sourceSha256": "5E5171F62DCF1BDAB1E7088C0B8D29C9C201B3DA9ABF0AA0E2544E6F7CBAD044",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 866261,
+        "bytes": 12738
+      }
+    },
+    {
+      "screen": "q1",
+      "nodeId": "399:1259",
+      "variable": "imgChevronBackward",
+      "file": "bc-q1-imgChevronBackward.svg",
+      "sha256": "BF94D3E788CE683F688BEE7A493380289152BF8C889B754EB62F883A1ACD452C"
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgOutline",
+      "file": "splash-imgOutline.svg",
+      "sha256": "8FC4AC3795108B83688E1DD633B82CABE98F92A749CC99056051B1EFEFD65F30"
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgBatteryEnd",
+      "file": "splash-imgBatteryEnd.svg",
+      "sha256": "CA11170445095A1C01247E1EAD221CAAAA42BED47A1A2DEB539D7054A7463AB4"
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgWifi",
+      "file": "splash-imgWifi.svg",
+      "sha256": "7F6F596DFC421E5BF408D76D666D7CD567266E01294D9BB99AE8FA44B0278B68"
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgIconMobileSignal",
+      "file": "splash-imgIconMobileSignal.svg",
+      "sha256": "CCC2FE2834D934C720BC122539AA280FB144D244AFEE62DF3FF155F8F27653B0"
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgFrame303",
+      "file": "bc-q1-imgFrame303.png",
+      "sha256": "C919CADD95D42D14378D91EA41CFFC32A61792AF208FD3EFEE9B9BD5A805723C",
+      "sourceSha256": "6CF8CC61809FEAE23E345C620EA7D22AADC803ADC7CBA29870C47259C88578B3",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1233115,
+        "bytes": 16846
+      }
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgFrame304",
+      "file": "bc-q1-imgFrame304.png",
+      "sha256": "34C2B24C09A037B045D9A0FBAA37AF464C8FA0285B7FF1CB629F0C609FB4BFF6",
+      "sourceSha256": "532D9061F6EDE9DCD5952328E7E4EAC811C6E0FC321DE4D1BB32F43B905BFB0B",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 901574,
+        "bytes": 13614
+      }
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgFrame305",
+      "file": "bc-q1-imgFrame305.png",
+      "sha256": "D0D6C7460D8B4FEDB9F74C3419329AD9E1C0C55BE37870D5DC198CA0B55F0A2C",
+      "sourceSha256": "3EEC1991DF0BB2CDB51D747202DE1079380A1BD950FD636EA372DAFA963FABF8",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1196040,
+        "bytes": 18107
+      }
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgFrame306",
+      "file": "bc-q1-imgFrame306.png",
+      "sha256": "AFD9938E828E9194ED68AF98F9079899468F2564241A87B518D0731B0E544B4A",
+      "sourceSha256": "0EE2A6C38262C027ADE53C360008529824616261901B6A2088E8B74F477D08B2",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1237026,
+        "bytes": 17959
+      }
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgFrame307",
+      "file": "bc-q1-imgFrame307.png",
+      "sha256": "2E5170AA75A80862FA98CE79274914BA118DE055F83A239F962EBD601844206A",
+      "sourceSha256": "6159B3D63A586DA89EA71B5A4367243FE1A2C5FEB48E0DBFD58139C50327FB0B",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1196435,
+        "bytes": 14873
+      }
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgFrame308",
+      "file": "bc-q1-imgFrame308.png",
+      "sha256": "B7C3772899F8A60B4CBEE7F6F3D7D815972190CC7D91B271C264737A494833F0",
+      "sourceSha256": "5E5171F62DCF1BDAB1E7088C0B8D29C9C201B3DA9ABF0AA0E2544E6F7CBAD044",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 228,
+        "height": 228,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 866261,
+        "bytes": 12738
+      }
+    },
+    {
+      "screen": "q1-on",
+      "nodeId": "399:1481",
+      "variable": "imgChevronBackward",
+      "file": "bc-q1-imgChevronBackward.svg",
+      "sha256": "BF94D3E788CE683F688BEE7A493380289152BF8C889B754EB62F883A1ACD452C"
+    },
+    {
+      "screen": "q2",
+      "nodeId": "399:1628",
+      "variable": "imgFrame304",
+      "file": "bc-q2-imgFrame304.png",
+      "sha256": "F58D5A4FED65D761D4496F1777DB406F21617B8EEBF479D9529BBCD2BEEFB0DB",
+      "sourceSha256": "8A391F99CBDB6472890FEDC72C534F80194793C5B49034A6CC34F4EE901190BB",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 132,
+        "height": 132,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 703823,
+        "bytes": 5561
+      }
+    },
+    {
+      "screen": "q2",
+      "nodeId": "399:1628",
+      "variable": "imgOutline",
+      "file": "splash-imgOutline.svg",
+      "sha256": "8FC4AC3795108B83688E1DD633B82CABE98F92A749CC99056051B1EFEFD65F30"
+    },
+    {
+      "screen": "q2",
+      "nodeId": "399:1628",
+      "variable": "imgBatteryEnd",
+      "file": "splash-imgBatteryEnd.svg",
+      "sha256": "CA11170445095A1C01247E1EAD221CAAAA42BED47A1A2DEB539D7054A7463AB4"
+    },
+    {
+      "screen": "q2",
+      "nodeId": "399:1628",
+      "variable": "imgWifi",
+      "file": "splash-imgWifi.svg",
+      "sha256": "7F6F596DFC421E5BF408D76D666D7CD567266E01294D9BB99AE8FA44B0278B68"
+    },
+    {
+      "screen": "q2",
+      "nodeId": "399:1628",
+      "variable": "imgIconMobileSignal",
+      "file": "splash-imgIconMobileSignal.svg",
+      "sha256": "CCC2FE2834D934C720BC122539AA280FB144D244AFEE62DF3FF155F8F27653B0"
+    },
+    {
+      "screen": "q2",
+      "nodeId": "399:1628",
+      "variable": "imgFrame305",
+      "file": "bc-q2-imgFrame305.png",
+      "sha256": "B5852B31A6716EAA9BFE579708003C68716787075C481E4A563AEE57FD523AE3",
+      "sourceSha256": "5A3883D33395A3883FED23D4846600C2AA048F2D0737ECC19CFF61DD5F63BBE1",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 132,
+        "height": 132,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1100424,
+        "bytes": 6777
+      }
+    },
+    {
+      "screen": "q2",
+      "nodeId": "399:1628",
+      "variable": "imgFrame306",
+      "file": "bc-q2-imgFrame306.png",
+      "sha256": "A68E943A6CD5AE22472E6737215F002CDD38D232A70EEE1F0B7D01AB1855C3AD",
+      "sourceSha256": "3E8AB92F7C29C34519CD367AF80314D9DA3D75817E9866F297B6C0C7DD260C44",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 132,
+        "height": 132,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 831300,
+        "bytes": 5710
+      }
+    },
+    {
+      "screen": "q2",
+      "nodeId": "399:1628",
+      "variable": "imgFrame307",
+      "file": "bc-q2-imgFrame307.png",
+      "sha256": "543FB56B9637594DED57F0C954F2C0C1E1508BC551F11FBC6741DCB63339ECD3",
+      "sourceSha256": "617A2488AE5777B96DB3AD7DB918332C988F992976556A755FE8FE63897B6043",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 132,
+        "height": 132,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 836233,
+        "bytes": 6045
+      }
+    },
+    {
+      "screen": "q2",
+      "nodeId": "399:1628",
+      "variable": "imgChevronBackward",
+      "file": "bc-q1-imgChevronBackward.svg",
+      "sha256": "BF94D3E788CE683F688BEE7A493380289152BF8C889B754EB62F883A1ACD452C"
+    },
+    {
+      "screen": "q2-on",
+      "nodeId": "399:1822",
+      "variable": "imgFrame304",
+      "file": "bc-q2-imgFrame304.png",
+      "sha256": "F58D5A4FED65D761D4496F1777DB406F21617B8EEBF479D9529BBCD2BEEFB0DB",
+      "sourceSha256": "8A391F99CBDB6472890FEDC72C534F80194793C5B49034A6CC34F4EE901190BB",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 132,
+        "height": 132,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 703823,
+        "bytes": 5561
+      }
+    },
+    {
+      "screen": "q2-on",
+      "nodeId": "399:1822",
+      "variable": "imgOutline",
+      "file": "splash-imgOutline.svg",
+      "sha256": "8FC4AC3795108B83688E1DD633B82CABE98F92A749CC99056051B1EFEFD65F30"
+    },
+    {
+      "screen": "q2-on",
+      "nodeId": "399:1822",
+      "variable": "imgBatteryEnd",
+      "file": "splash-imgBatteryEnd.svg",
+      "sha256": "CA11170445095A1C01247E1EAD221CAAAA42BED47A1A2DEB539D7054A7463AB4"
+    },
+    {
+      "screen": "q2-on",
+      "nodeId": "399:1822",
+      "variable": "imgWifi",
+      "file": "splash-imgWifi.svg",
+      "sha256": "7F6F596DFC421E5BF408D76D666D7CD567266E01294D9BB99AE8FA44B0278B68"
+    },
+    {
+      "screen": "q2-on",
+      "nodeId": "399:1822",
+      "variable": "imgIconMobileSignal",
+      "file": "splash-imgIconMobileSignal.svg",
+      "sha256": "CCC2FE2834D934C720BC122539AA280FB144D244AFEE62DF3FF155F8F27653B0"
+    },
+    {
+      "screen": "q2-on",
+      "nodeId": "399:1822",
+      "variable": "imgFrame305",
+      "file": "bc-q2-imgFrame305.png",
+      "sha256": "B5852B31A6716EAA9BFE579708003C68716787075C481E4A563AEE57FD523AE3",
+      "sourceSha256": "5A3883D33395A3883FED23D4846600C2AA048F2D0737ECC19CFF61DD5F63BBE1",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 132,
+        "height": 132,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1100424,
+        "bytes": 6777
+      }
+    },
+    {
+      "screen": "q2-on",
+      "nodeId": "399:1822",
+      "variable": "imgFrame306",
+      "file": "bc-q2-imgFrame306.png",
+      "sha256": "A68E943A6CD5AE22472E6737215F002CDD38D232A70EEE1F0B7D01AB1855C3AD",
+      "sourceSha256": "3E8AB92F7C29C34519CD367AF80314D9DA3D75817E9866F297B6C0C7DD260C44",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 132,
+        "height": 132,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 831300,
+        "bytes": 5710
+      }
+    },
+    {
+      "screen": "q2-on",
+      "nodeId": "399:1822",
+      "variable": "imgFrame307",
+      "file": "bc-q2-imgFrame307.png",
+      "sha256": "543FB56B9637594DED57F0C954F2C0C1E1508BC551F11FBC6741DCB63339ECD3",
+      "sourceSha256": "617A2488AE5777B96DB3AD7DB918332C988F992976556A755FE8FE63897B6043",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 132,
+        "height": 132,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 836233,
+        "bytes": 6045
+      }
+    },
+    {
+      "screen": "q2-on",
+      "nodeId": "399:1822",
+      "variable": "imgChevronBackward",
+      "file": "bc-q1-imgChevronBackward.svg",
+      "sha256": "BF94D3E788CE683F688BEE7A493380289152BF8C889B754EB62F883A1ACD452C"
+    },
+    {
+      "screen": "result",
+      "nodeId": "399:1975",
+      "variable": "imgOutline",
+      "file": "splash-imgOutline.svg",
+      "sha256": "8FC4AC3795108B83688E1DD633B82CABE98F92A749CC99056051B1EFEFD65F30"
+    },
+    {
+      "screen": "result",
+      "nodeId": "399:1975",
+      "variable": "imgBatteryEnd",
+      "file": "splash-imgBatteryEnd.svg",
+      "sha256": "CA11170445095A1C01247E1EAD221CAAAA42BED47A1A2DEB539D7054A7463AB4"
+    },
+    {
+      "screen": "result",
+      "nodeId": "399:1975",
+      "variable": "imgWifi",
+      "file": "splash-imgWifi.svg",
+      "sha256": "7F6F596DFC421E5BF408D76D666D7CD567266E01294D9BB99AE8FA44B0278B68"
+    },
+    {
+      "screen": "result",
+      "nodeId": "399:1975",
+      "variable": "imgIconMobileSignal",
+      "file": "splash-imgIconMobileSignal.svg",
+      "sha256": "CCC2FE2834D934C720BC122539AA280FB144D244AFEE62DF3FF155F8F27653B0"
+    },
+    {
+      "screen": "result",
+      "nodeId": "399:1975",
+      "variable": "imgImage24",
+      "file": "splash-imgImage24.png",
+      "sha256": "D951B0D6BB8AA08AAF008D50226CEFF53E93142E6E58E613C779D6CDFBCA56CE",
+      "sourceSha256": "9F863FE8B338B3E7F49C2C2F1A6C3BF23ED8EE7D69AF88F4F56DDC4022D3F046",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 840,
+        "height": 840,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1106227,
+        "bytes": 138290
+      }
+    },
+    {
+      "screen": "result",
+      "nodeId": "399:1975",
+      "variable": "img2",
+      "file": "bc-result-img2.png",
+      "sha256": "AA64F599C0C8129660F596DB03FC955916F70714D74CEA1BBBCC0B4D3426C66A",
+      "sourceSha256": "1535966CDE9BF3AA402BBD52465647EF8BF652F029E0642AEA7C035EFC33585C",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 87,
+        "height": 87,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 828892,
+        "bytes": 3667
+      }
+    },
+    {
+      "screen": "result",
+      "nodeId": "399:1975",
+      "variable": "img3",
+      "file": "bc-result-img3.png",
+      "sha256": "FFE4B04D142FCFB0EA41541591D9D2A99DD06C21CC2400E9271B196C90587E52",
+      "sourceSha256": "F44098CA3979C5350EB9FBC80F905D4B6DA3D1F22FE3FE76979DD42C5ACF05DA",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 87,
+        "height": 87,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1066943,
+        "bytes": 4284
+      }
+    },
+    {
+      "screen": "result",
+      "nodeId": "399:1975",
+      "variable": "img",
+      "file": "bc-result-img.svg",
+      "sha256": "5D3F5F31F8125FA36E47FAE09D97912DF10F31A083B6CD525AA8180A3BCBB347"
+    },
+    {
+      "screen": "result",
+      "nodeId": "399:1975",
+      "variable": "img1",
+      "file": "bc-result-img1.svg",
+      "sha256": "73044825A38C3986813C957BCC91FAA83C48A94006E8FE828E0515DA975DDCD8"
+    }
+  ]
+}

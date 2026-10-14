@@ -1,0 +1,272 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "assets": [
+    {
+      "file": "splash-imgOutline.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgOutline"
+    },
+    {
+      "file": "splash-imgBatteryEnd.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgBatteryEnd"
+    },
+    {
+      "file": "splash-imgWifi.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgWifi"
+    },
+    {
+      "file": "splash-imgIconMobileSignal.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgIconMobileSignal"
+    },
+    {
+      "file": "splash-imgImage24.png",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgImage24",
+      "sourceSha256": "9F863FE8B338B3E7F49C2C2F1A6C3BF23ED8EE7D69AF88F4F56DDC4022D3F046",
+      "sha256": "D951B0D6BB8AA08AAF008D50226CEFF53E93142E6E58E613C779D6CDFBCA56CE",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 840,
+        "height": 840,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1106227,
+        "bytes": 138290
+      }
+    },
+    {
+      "file": "splash-img.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "img"
+    },
+    {
+      "file": "splash-img1.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "img1"
+    },
+    {
+      "file": "splash-img4Vectorized.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "img4Vectorized"
+    },
+    {
+      "file": "login-imgOutline.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgOutline"
+    },
+    {
+      "file": "login-imgBatteryEnd.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgBatteryEnd"
+    },
+    {
+      "file": "login-imgWifi.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgWifi"
+    },
+    {
+      "file": "login-imgIconMobileSignal.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgIconMobileSignal"
+    },
+    {
+      "file": "login-imgImage26.png",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgImage26",
+      "sourceSha256": "7FF549B3E822A3191B43F4890042D0DD1FF909C840FF6FA6629D47416E3CA03B",
+      "sha256": "7F9AB18C668B915A9CFCD8666172A7C506B04B84DCED12274AC2CCE5166D2274",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 510,
+        "height": 668,
+        "sourceWidth": 1096,
+        "sourceHeight": 1435,
+        "sourceBytes": 1551635,
+        "bytes": 95720
+      }
+    },
+    {
+      "file": "login-img2.png",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "img2",
+      "sourceSha256": "DC75FEE7F54BEF6DF4D1D4C42870DBAE24AEF36929225DF8D617AFA52FD6E3DC",
+      "sha256": "6B4121173AF68BA7F7E429AC320E88CBB2A713E298E24AE036A0A7B2A760B6E3",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 924,
+        "height": 121,
+        "sourceWidth": 1264,
+        "sourceHeight": 165,
+        "sourceBytes": 81102,
+        "bytes": 27215
+      }
+    },
+    {
+      "file": "login-img.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "img"
+    },
+    {
+      "file": "login-img1.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "img1"
+    },
+    {
+      "file": "login-img4Vectorized.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "img4Vectorized"
+    },
+    {
+      "file": "login-imgRoundedRectangle2.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgRoundedRectangle2"
+    },
+    {
+      "file": "login-imgShape1.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgShape1"
+    },
+    {
+      "file": "login-imgPolygon3.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgPolygon3"
+    },
+    {
+      "file": "consent-imgOutline.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgOutline"
+    },
+    {
+      "file": "consent-imgBatteryEnd.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgBatteryEnd"
+    },
+    {
+      "file": "consent-imgWifi.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgWifi"
+    },
+    {
+      "file": "consent-imgIconMobileSignal.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgIconMobileSignal"
+    },
+    {
+      "file": "consent-imgChevronForward.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgChevronForward"
+    },
+    {
+      "file": "consent-imgStateOff.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgStateOff"
+    },
+    {
+      "file": "consent-img.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "img"
+    },
+    {
+      "file": "consent-img1.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "img1"
+    },
+    {
+      "file": "consent-img4Vectorized.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "img4Vectorized"
+    },
+    {
+      "file": "accepted-imgOutline.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgOutline"
+    },
+    {
+      "file": "accepted-imgBatteryEnd.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgBatteryEnd"
+    },
+    {
+      "file": "accepted-imgWifi.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgWifi"
+    },
+    {
+      "file": "accepted-imgIconMobileSignal.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgIconMobileSignal"
+    },
+    {
+      "file": "accepted-imgChevronForward.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgChevronForward"
+    },
+    {
+      "file": "accepted-imgStateOn.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgStateOn"
+    },
+    {
+      "file": "accepted-img.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "img"
+    },
+    {
+      "file": "accepted-img1.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "img1"
+    },
+    {
+      "file": "accepted-img4Vectorized.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "img4Vectorized"
+    }
+  ]
+}
