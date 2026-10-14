@@ -1,0 +1,412 @@
+[
+ {
+  "entity_id": "frieren",
+  "entity_type": "작품",
+  "name": "장송의 프리렌",
+  "attributes": {
+   "genres": [
+    "Adventure",
+    "Drama",
+    "Fantasy"
+   ],
+   "tags": [
+    {
+     "name": "Elf",
+     "rank": 90
+    },
+    {
+     "name": "Travel",
+     "rank": 85
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "aot",
+  "entity_type": "작품",
+  "name": "진격의 거인",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Drama",
+    "Fantasy",
+    "Mystery"
+   ],
+   "tags": [
+    {
+     "name": "Kaiju",
+     "rank": 93
+    },
+    {
+     "name": "Revenge",
+     "rank": 93
+    },
+    {
+     "name": "Military",
+     "rank": 88
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "kny",
+  "entity_type": "작품",
+  "name": "귀멸의 칼날",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Adventure",
+    "Drama",
+    "Fantasy",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Demons",
+     "rank": 96
+    },
+    {
+     "name": "Swordplay",
+     "rank": 88
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "jjk",
+  "entity_type": "작품",
+  "name": "주술회전",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Drama",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Urban Fantasy",
+     "rank": 93
+    },
+    {
+     "name": "Curses",
+     "rank": 90
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "mha",
+  "entity_type": "작품",
+  "name": "나의 히어로 아카데미아",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Adventure",
+    "Comedy"
+   ],
+   "tags": [
+    {
+     "name": "Super Power",
+     "rank": 98
+    },
+    {
+     "name": "Superhero",
+     "rank": 97
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "onepiece",
+  "entity_type": "작품",
+  "name": "원피스",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Adventure",
+    "Comedy",
+    "Drama",
+    "Fantasy"
+   ],
+   "tags": [
+    {
+     "name": "Pirates",
+     "rank": 98
+    },
+    {
+     "name": "Travel",
+     "rank": 94
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "deathnote",
+  "entity_type": "작품",
+  "name": "데스노트",
+  "attributes": {
+   "genres": [
+    "Mystery",
+    "Psychological",
+    "Supernatural",
+    "Thriller"
+   ],
+   "tags": [
+    {
+     "name": "Crime",
+     "rank": 96
+    },
+    {
+     "name": "Detective",
+     "rank": 95
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "tokyoghoul",
+  "entity_type": "작품",
+  "name": "도쿄 구울",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Drama",
+    "Horror",
+    "Mystery",
+    "Psychological",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Gore",
+     "rank": 90
+    },
+    {
+     "name": "Urban Fantasy",
+     "rank": 89
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "opm",
+  "entity_type": "작품",
+  "name": "원펀맨",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Comedy",
+    "Sci-Fi",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Superhero",
+     "rank": 98
+    },
+    {
+     "name": "Parody",
+     "rank": 91
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "hxh",
+  "entity_type": "작품",
+  "name": "헌터×헌터",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Adventure",
+    "Fantasy"
+   ],
+   "tags": [
+    {
+     "name": "Super Power",
+     "rank": 91
+    },
+    {
+     "name": "Travel",
+     "rank": 82
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "spyfamily",
+  "entity_type": "작품",
+  "name": "스파이 패밀리",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Comedy",
+    "Slice of Life"
+   ],
+   "tags": [
+    {
+     "name": "Espionage",
+     "rank": 90
+    },
+    {
+     "name": "Found Family",
+     "rank": 88
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "haikyu",
+  "entity_type": "작품",
+  "name": "하이큐!!",
+  "attributes": {
+   "genres": [
+    "Comedy",
+    "Drama",
+    "Sports"
+   ],
+   "tags": [
+    {
+     "name": "Volleyball",
+     "rank": 98
+    },
+    {
+     "name": "Team Sports",
+     "rank": 92
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "bocchi",
+  "entity_type": "작품",
+  "name": "봇치 더 록!",
+  "attributes": {
+   "genres": [
+    "Comedy",
+    "Music",
+    "Slice of Life"
+   ],
+   "tags": [
+    {
+     "name": "Band",
+     "rank": 97
+    },
+    {
+     "name": "Social Anxiety",
+     "rank": 90
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "oshinoko",
+  "entity_type": "작품",
+  "name": "최애의 아이",
+  "attributes": {
+   "genres": [
+    "Drama",
+    "Mystery",
+    "Psychological",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Idol",
+     "rank": 95
+    },
+    {
+     "name": "Reincarnation",
+     "rank": 90
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "csm",
+  "entity_type": "작품",
+  "name": "체인소 맨",
+  "attributes": {
+   "genres": [
+    "Action",
+    "Drama",
+    "Horror",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Demons",
+     "rank": 92
+    },
+    {
+     "name": "Gore",
+     "rank": 90
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "apothecary",
+  "entity_type": "작품",
+  "name": "약사의 혼잣말",
+  "attributes": {
+   "genres": [
+    "Drama",
+    "Mystery"
+   ],
+   "tags": [
+    {
+     "name": "Medicine",
+     "rank": 92
+    },
+    {
+     "name": "Historical",
+     "rank": 90
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "dungeonmeshi",
+  "entity_type": "작품",
+  "name": "던전밥",
+  "attributes": {
+   "genres": [
+    "Adventure",
+    "Comedy",
+    "Fantasy"
+   ],
+   "tags": [
+    {
+     "name": "Food",
+     "rank": 96
+    },
+    {
+     "name": "Dungeon",
+     "rank": 92
+    }
+   ]
+  }
+ },
+ {
+  "entity_id": "bluelock",
+  "entity_type": "작품",
+  "name": "블루 록",
+  "attributes": {
+   "genres": [
+    "Drama",
+    "Sports"
+   ],
+   "tags": [
+    {
+     "name": "Football",
+     "rank": 98
+    },
+    {
+     "name": "Battle Royale",
+     "rank": 70
+    }
+   ]
+  }
+ }
+]
