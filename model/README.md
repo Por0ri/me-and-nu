@@ -14,7 +14,7 @@ me;nu 피드에 콘텐츠를 어떤 순서로 보여줄지 정하는 코드. 기
 
 ## 실행
 
-저장소 루트에서 실행한다. 표준 라이브러리만 쓴다.
+저장소 루트에서 실행한다. 표준 라이브러리와 numpy를 쓴다 (`pip install -r model/requirements.txt`).
 
 ```bash
 python model/scripts/make_sample_data.py   # 샘플 데이터 다시 만들기
