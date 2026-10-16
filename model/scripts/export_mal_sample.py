@@ -1,6 +1,7 @@
 # export_mal_sample — MAL 데이터에서 채점기용 표본을 뽑아 CSV로 저장한다
 #
-# MAL 데이터(anime_large 스키마, 2004~2022-03)는 로컬 Docker Postgres 에 있다.
+# MAL 데이터(mal 스키마, 2004~2022-03)는 모델 전용 Docker Postgres(anime-db) 에 있다.
+# 띄우는 법: docker compose -f model/db/compose.yaml up -d
 # 2억 줄을 다 쓰면 무거우니 유저 일부만 뽑는다.
 # - 유저: 다 본 작품 20~1000개, 2021년 이후 접속. md5 순서로 골라서 매번 같은 유저가 나온다
 # - 기록: 그 유저들의 시청 기록 (보고 싶어요 plan_to_watch 는 뺌)
@@ -10,19 +11,19 @@
 #   python model/scripts/export_mal_sample.py 5000       # 유저 수 바꾸기
 #   → model/data/mal_sample/ 아래 CSV 3개 (커밋 안 함)
 #
-# Docker Desktop 이 켜져 있어야 한다. 컨테이너 이름은 MENU_PG_CONTAINER 로 바꿀 수 있다.
+# Docker Desktop 이 켜져 있어야 한다. 컨테이너 이름은 ANIME_DB_CONTAINER 로 바꿀 수 있다.
 
 import os
 import pathlib
 import subprocess
 import sys
 
-CONTAINER = os.environ.get("MENU_PG_CONTAINER", "menu-postgres")
-DB = "menu_db"
+CONTAINER = os.environ.get("ANIME_DB_CONTAINER", "anime-db")
+DB = "anime_db"
 OUT = pathlib.Path(__file__).resolve().parents[1] / "data" / "mal_sample"
 
 USERS_SQL = """
-select user_id from anime_large."user"
+select user_id from mal."user"
 where num_completed between 20 and 1000 and last_online_date >= '2021-01-01'
 order by md5(user_id) limit {n}
 """
@@ -32,17 +33,17 @@ QUERIES = {
         with u as ({users})
         select ua.user_id, ua.anime_id, ua.status, ua.score, ua.favorite,
                ua.last_interaction_date::timestamp as t
-        from anime_large.user_anime ua join u using (user_id)
+        from mal.user_anime ua join u using (user_id)
         where ua.status <> 'plan_to_watch' and ua.last_interaction_date is not null
         order by ua.user_id, t
     """,
     "anime.csv": """
         select anime_id, title, type, genres, left(start_date, 10) as start_date, members_count
-        from anime_large.anime
+        from mal.anime
     """,
     "anime_anime.csv": """
         select "animeA" as anime_a, "animeB" as anime_b, recommendation, related, relation_type
-        from anime_large.anime_anime
+        from mal.anime_anime
         where recommendation = 1 or (related = 1 and relation_type <> 'Identity')
     """,
 }

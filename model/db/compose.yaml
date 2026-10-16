@@ -1,0 +1,28 @@
+# 모델 전용 DB — MAL 시청 기록과 애니 정보 (서비스 앱 DB와 별개)
+#
+#   docker compose -f model/db/compose.yaml up -d
+#
+# 비밀번호는 같은 폴더의 .env 에서 읽는다 (.env.example 참고)
+
+services:
+  anime-db:
+    image: pgvector/pgvector:pg18
+    container_name: anime-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${ANIME_DB_USER}
+      POSTGRES_PASSWORD: ${ANIME_DB_PASSWORD}
+      POSTGRES_DB: anime_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - anime-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d anime_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  anime-db-data:
+    name: anime-db-data
