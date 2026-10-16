@@ -1,0 +1,77 @@
+{
+  "request_id": "sample-official-event",
+  "topic": "공식 애니메이션 행사 샘플",
+  "content_kind": "information",
+  "content_type": "event",
+  "sources": [
+    {
+      "id": "official_event",
+      "title": "공식 행사 공지",
+      "url": "https://example.com/official/event",
+      "publisher": "공식 제작위원회",
+      "is_official": true,
+      "published_at": "2026-10-07",
+      "checked_at": "2026-10-07T15:00:00+09:00",
+      "role": "primary"
+    }
+  ],
+  "facts": [
+    {"id": "f1", "statement": "행사는 11월 8일 시작한다.", "source_ids": ["official_event"], "verified": true, "time_sensitive": true},
+    {"id": "f2", "statement": "공식 전시와 상품 판매가 진행된다.", "source_ids": ["official_event"], "verified": true},
+    {"id": "f3", "statement": "온라인 예매가 필요하다.", "source_ids": ["official_event"], "verified": true},
+    {"id": "f4", "statement": "수량 한정 특전이 제공된다.", "source_ids": ["official_event"], "verified": true}
+  ],
+  "images": [
+    {"id": "i1", "url": "https://example.com/official/kv.jpg", "source_url": "https://example.com/official/event", "official": true, "rights_status": "allowed", "rights_basis": "official_media_kit", "rights_evidence_url": "https://example.com/official/usage-policy", "rights_scope": ["instagram", "app", "commercial", "adapt"], "rights_checked_at": "2026-10-07T15:00:00+09:00", "attribution_text": "샘플 공식 이미지 출처", "download_status": "available", "width": 1920, "height": 1080, "fingerprint": "sample-i1"},
+    {"id": "i2", "url": "https://example.com/official/exhibit.jpg", "source_url": "https://example.com/official/event", "official": true, "rights_status": "allowed", "rights_basis": "official_media_kit", "rights_evidence_url": "https://example.com/official/usage-policy", "rights_scope": ["instagram", "app", "commercial", "adapt"], "rights_checked_at": "2026-10-07T15:00:00+09:00", "attribution_text": "샘플 공식 이미지 출처", "download_status": "available", "width": 1200, "height": 1600, "fingerprint": "sample-i2"},
+    {"id": "i3", "url": "https://example.com/official/ticket.jpg", "source_url": "https://example.com/official/event", "official": true, "rights_status": "allowed", "rights_basis": "official_media_kit", "rights_evidence_url": "https://example.com/official/usage-policy", "rights_scope": ["instagram", "app", "commercial", "adapt"], "rights_checked_at": "2026-10-07T15:00:00+09:00", "attribution_text": "샘플 공식 이미지 출처", "download_status": "available", "width": 1080, "height": 1080, "fingerprint": "sample-i3"},
+    {"id": "i4", "url": "https://example.com/official/bonus.jpg", "source_url": "https://example.com/official/event", "official": true, "rights_status": "allowed", "rights_basis": "official_media_kit", "rights_evidence_url": "https://example.com/official/usage-policy", "rights_scope": ["instagram", "app", "commercial", "adapt"], "rights_checked_at": "2026-10-07T15:00:00+09:00", "attribution_text": "샘플 공식 이미지 출처", "download_status": "available", "width": 1080, "height": 1350, "fingerprint": "sample-i4"}
+  ],
+  "cards": [
+    {
+      "page": 1,
+      "role": "cover",
+      "eyebrow": "OFFICIAL EVENT",
+      "title_lines": ["11월 8일,", "전시가 시작된다"],
+      "body_sentences": ["공식 행사 핵심 정보만 모았다."],
+      "protected_phrases": ["11월 8일"],
+      "fact_ids": ["f1"],
+      "image_id": "i1",
+      "layout": {"template": "topwide", "fit_mode": "contain_blur", "image_box": {"x": 0.04, "y": 0.04, "width": 0.92, "height": 0.56}, "copy_box": {"x": 0.05, "y": 0.68, "width": 0.90, "height": 0.22}, "image_scale": 1.0, "image_offset_y": 0.0, "contrast_mode": "light_on_dark", "blur_background": true}
+    },
+    {
+      "page": 2,
+      "role": "detail",
+      "eyebrow": "EXHIBITION",
+      "title_lines": ["공식 전시와", "상품 판매"],
+      "body_sentences": ["동선과 판매 구역은 현장 안내를 따른다."],
+      "fact_ids": ["f2"],
+      "image_id": "i2",
+      "layout": {"template": "split", "fit_mode": "contain_blur", "image_box": {"x": 0.45, "y": 0.08, "width": 0.52, "height": 0.82}, "copy_box": {"x": 0.05, "y": 0.20, "width": 0.38, "height": 0.40}, "image_scale": 1.0, "image_offset_y": 0.0, "contrast_mode": "light_on_dark", "blur_background": true}
+    },
+    {
+      "page": 3,
+      "role": "detail",
+      "eyebrow": "TICKET",
+      "title_lines": ["입장 전,", "예매부터"],
+      "body_sentences": ["온라인 예매가 필요하다."],
+      "fact_ids": ["f3"],
+      "image_id": "i3",
+      "layout": {"template": "metric", "fit_mode": "contain_blur", "image_box": {"x": 0.45, "y": 0.10, "width": 0.52, "height": 0.78}, "copy_box": {"x": 0.05, "y": 0.20, "width": 0.38, "height": 0.35}, "image_scale": 1.0, "image_offset_y": 0.0, "contrast_mode": "light_on_dark", "blur_background": true}
+    },
+    {
+      "page": 4,
+      "role": "ending",
+      "eyebrow": "LIMITED BONUS",
+      "title_lines": ["특전은 한정이다.", "시간도 같은 편이다."],
+      "body_sentences": [],
+      "fact_ids": ["f4"],
+      "image_id": "i4",
+      "layout": {"template": "ending", "fit_mode": "contain_blur", "image_box": {"x": 0.04, "y": 0.04, "width": 0.92, "height": 0.60}, "copy_box": {"x": 0.05, "y": 0.68, "width": 0.90, "height": 0.22}, "image_scale": 1.0, "image_offset_y": 0.0, "contrast_mode": "scrim_required", "blur_background": true},
+      "ending_joke": true
+    }
+  ],
+  "prior_image_fingerprints": [],
+  "status": "draft"
+}
+
