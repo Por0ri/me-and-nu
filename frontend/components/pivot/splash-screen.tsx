@@ -27,11 +27,10 @@ export function SplashScreen({ preview = false, onContinue }: { preview?: boolea
     <PivotFrame splash chrome={preview}>
     <h1 className={styles.srOnly} tabIndex={-1}>me;nu, 당신의 덕질을 위한 시작</h1>
     <div className={styles.splashRings} aria-hidden="true">
-      <PivotAsset screen="splash" name="img" width={380} height={380} />
-      <PivotAsset screen="splash" name="img1" width={247} height={254} />
+      <img src="/pivot/splash-decoration.png" alt="" width={375} height={375} />
     </div>
     <PivotBrand screen="splash" className={styles.splashBrand} />
-    <div className={styles.splashMascot}><PivotAsset screen="splash" name="imgImage24" /></div>
+    <div className={styles.splashMascot}><PivotAsset screen="splash" name="imgImage28" /></div>
     {!preview && <button type="button" className={styles.skip} onClick={continueOnce}>로그인 화면으로 건너뛰기</button>}
     </PivotFrame>
   </div>;

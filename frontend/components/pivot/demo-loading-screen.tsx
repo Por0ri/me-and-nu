@@ -70,12 +70,13 @@ export function DemoLoadingScreen({ onComplete, onRestart }: { onComplete: () =>
     return startDemoLoading(setPhase, onComplete);
   }, [onComplete, imageState]);
   return <PivotFrame decorated={false} className={styles.screen}>
-    <img className={styles.background} src="/pivot/loading/background.svg" alt="" aria-hidden="true" width={380} height={380} />
+    <img className={styles.background} src="/pivot/loading/background.svg" alt="" aria-hidden="true" width={375} height={375} />
     <section className={styles.intro} aria-labelledby="demo-loading-heading">
-      <h1 id="demo-loading-heading" tabIndex={-1}>시연용 피드 준비 중</h1>
-      <p role="status">화면 전환 예시예요.<br />실제 콘텐츠 수집·추천·저장은 진행하지 않아요.</p>
+      <h1 id="demo-loading-heading" tabIndex={-1}>취향을 불러오는 중</h1>
+      <p>시연용 화면을 준비하고 있어요</p>
     </section>
     <LoadingArtwork phase={reducedMotion ? 0 : phase} imageState={imageState} firstImageRef={firstImageRef} />
+    <p className={styles.notice} role="status">화면 전환 예시예요.<br />실제 콘텐츠 수집·추천·저장은 진행하지 않아요.</p>
     <div className={styles.actions}><PrimaryButton onClick={onRestart}>처음부터 시연</PrimaryButton></div>
   </PivotFrame>;
 }

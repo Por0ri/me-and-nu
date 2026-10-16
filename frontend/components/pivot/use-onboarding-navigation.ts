@@ -7,12 +7,13 @@ export function useOnboardingNavigation(state: OnboardingState, dispatch: Dispat
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-  function navigate(back: boolean) {
-    if (lock.current || (!back && !canAdvance(state))) return;
+  function navigate(action: "advance" | "back" | "reselect") {
+    if (lock.current || (action === "advance" && !canAdvance(state)) || (action === "reselect" && state.step !== "result")) return;
     lock.current = true; setBusy(true);
     timer.current = setTimeout(() => { lock.current = false; setBusy(false); }, 200);
-    if (back && state.step === "interest") onExit();
-    else dispatch({ type: back ? "back" : "advance", from: state.step });
+    if (action === "back" && state.step === "interest") onExit();
+    else if (action === "reselect") dispatch({ type: "reselect", from: "result" });
+    else dispatch({ type: action, from: state.step });
   }
-  return { busy, advance: () => navigate(false), back: () => navigate(true) };
+  return { busy, advance: () => navigate("advance"), back: () => navigate("back"), reselect: () => navigate("reselect") };
 }

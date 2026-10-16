@@ -32,7 +32,7 @@ export function LoginScreen({ preview = false, onDemoContinue }: { preview?: boo
     <section className={styles.loginIntro} aria-labelledby="login-heading">
       <PivotBrand screen="login" />
       <h1 id="login-heading" tabIndex={-1}>당신의 덕질에<br />딱 맞는 정보를 만나보세요</h1>
-      <PivotAsset screen="login" name="imgImage26" className={styles.loginMascot} width={169} height={221} />
+      <div className={styles.loginMascot}><PivotAsset screen="login" name="imgImage36" width={169} height={205.183} /></div>
     </section>
     <div className={styles.loginActions}>
       <div className={styles.bubble} aria-hidden="true"><span>SNS로 간편하게 시작하기</span><PivotAsset screen="login" name="imgPolygon3" width={10.392} height={6} /></div>

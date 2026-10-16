@@ -62,8 +62,55 @@ async function quickResult(page) {
  await choose(page,'q2','characters'); await advance(page);
  await page.waitForFunction(()=>!document.querySelector('button[aria-describedby="home-feedback"]').disabled);
 }
+
+async function checkLoadingGeometry(page,phase) {
+ const geometry=await phase.evaluate(node=>{
+  const image=node.querySelector('img:not([hidden])'),rect=image.getBoundingClientRect(),box=image.parentElement.getBoundingClientRect();
+  return {phase:Number(node.getAttribute('data-demo-loading-phase')),width:rect.width,height:rect.height,top:rect.top-box.top,boxWidth:box.width,boxHeight:box.height,naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight,fit:getComputedStyle(image).objectFit};
+ });
+ const scale=(await page.evaluate(()=>innerHeight))<=700?.8:1;
+ const cover=geometry.phase===2;
+ assert.ok(Math.abs(geometry.boxWidth-227.7*scale)<.1);
+ assert.ok(Math.abs(geometry.boxHeight-252.9*scale)<.1);
+ assert.ok(Math.abs(geometry.width-227.7*scale)<.1);
+ assert.ok(Math.abs(geometry.height-252.9*(cover?1:.9004)*scale)<.1);
+ assert.ok(Math.abs(geometry.top-252.9*(cover?0:.0498)*scale)<.1);
+ assert.equal(geometry.fit,cover?'cover':'fill');
+ assert.equal(geometry.naturalWidth,process.env.PIVOT_ORIGINAL_LOADING_DIR?1254:512);
+ assert.equal(geometry.naturalHeight,process.env.PIVOT_ORIGINAL_LOADING_DIR?1254:512);
+ if(!cover) assert.ok(Math.abs(geometry.width/geometry.height-1)<.001);
+}
+async function reselectFlow(page,stem) {
+ assert.equal(await page.getByRole('button',{name:'이전 단계'}).count(),0,'Result has no ordinary Back');
+ const reselect=page.getByRole('button',{name:'다시 선택하기',exact:true});
+ // Navigation deliberately locks for 200ms after each transition.
+ await page.waitForFunction(()=>!document.querySelector('button').disabled && [...document.querySelectorAll('button')].some(b=>b.textContent==='다시 선택하기'&&!b.disabled));
+ await reselect.focus();await page.keyboard.press('Enter');
+ await page.locator('input[name=q1]').first().waitFor();await headingFocused(page);
+ assert.equal(await page.locator('input[name=q1]:checked').count(),0);
+ assert.equal(await page.getByLabel('선택 답변 요약').count(),0);
+ assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
+ await page.getByRole('button',{name:'이전 단계'}).click();
+ assert.equal(await page.getByRole('checkbox',{name:'애니메이션',exact:true}).isChecked(),true);
+ assert.equal(await page.getByRole('button',{name:'이전 단계'}).count(),0,'Interest has no ordinary Back');
+ await page.getByRole('button',{name:'애니메이션 선택하고 시작하기'}).click();
+ await page.locator('input[name=q1]').first().waitFor();
+ assert.equal(await page.locator('input[name=q1]:checked').count(),0);
+ const input=page.locator('input[name=q1][value=goods]');await input.focus();await page.keyboard.press('Space');
+ assert.equal(await input.locator('..').evaluate(e=>getComputedStyle(e).outlineWidth),'3px');
+ await advance(page);await headingFocused(page);
+ assert.equal(await page.locator('input[name=q2]:checked').count(),0);
+ assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
+ await choose(page,'q2','restock');await advance(page);await headingFocused(page);
+ const summary=await page.getByLabel('선택 답변 요약').innerText();
+ assert.match(summary,/굿즈 구매 정보/);assert.match(summary,/굿즈 출시 및 재입고 정보/);
+ assert.doesNotMatch(summary,/관련 OST|신작\/시즌 공개 소식/);
+ await snapshot(page,stem+'-reselected-result');
+}
+
 async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
  await headingFocused(page);
+ assert.equal(await page.getByRole('button',{name:'이전 단계'}).count(),0,'Interest has no ordinary Back');
  assert.equal(await page.getByRole('button',{name:'애니메이션 선택하고 시작하기'}).isDisabled(),true);
  const interest = page.getByRole('checkbox',{name:'애니메이션',exact:true});
  await interest.focus(); await page.keyboard.press('Space');
@@ -85,20 +132,17 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
  assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
  await choose(page,'q2','events');
  await snapshot(page,stem+'-q2');
- await advance(page); await headingFocused(page);
- assert.match(await page.getByLabel('선택 답변 요약').innerText(),/캐릭터 관계성/);
- assert.match(await page.getByLabel('선택 답변 요약').innerText(),/팝업 · 전시 · 콜라보 소식/);
- await snapshot(page,stem+'-result');
- await page.getByRole('button',{name:'이전 단계'}).click();
- await page.locator('input[name=q2]').first().waitFor();
- assert.equal(await page.locator('input[name=q2]:checked').inputValue(),'events');
+ // Ordinary Q2 → Q1 → Q2 navigation preserves both answers.
  await page.getByRole('button',{name:'이전 단계'}).click();
  await page.locator('input[name=q1]').first().waitFor();
  assert.equal(await page.locator('input[name=q1]:checked').inputValue(),'relationships');
  await choose(page,'q1','ost'); await advance(page);
+ assert.equal(await page.locator('input[name=q2]:checked').inputValue(),'events');
  await choose(page,'q2','releases'); await advance(page);
  assert.match(await page.getByLabel('선택 답변 요약').innerText(),/관련 OST/);
  assert.match(await page.getByLabel('선택 답변 요약').innerText(),/신작\/시즌 공개 소식/);
+ await snapshot(page,stem+'-result');
+ await reselectFlow(page,stem);
  if (enterHome) {
   await page.waitForFunction(()=>!document.querySelector('button[aria-describedby="home-feedback"]').disabled);
   await page.clock.install(); await pauseClock(page);
@@ -116,24 +160,17 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    releaseFirstImage();
   }
   await page.locator('[data-loading-image-state="ready"]').waitFor();
-  const geometry=await phase.evaluate(node=>{
-   const image=node.querySelector('img:not([hidden])'),rect=image.getBoundingClientRect();
-   return {width:rect.width,height:rect.height,naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight,fit:getComputedStyle(image).objectFit};
-  });
-  const scale=(await page.evaluate(()=>innerHeight))<=700?.8:1;
-  assert.ok(Math.abs(geometry.width-227.7*scale)<.1);
-  assert.ok(Math.abs(geometry.height-252.9*scale)<.1);
-  assert.equal(geometry.fit,'cover');
-  assert.equal(geometry.naturalWidth,process.env.PIVOT_ORIGINAL_LOADING_DIR?1086:456);
-  assert.equal(geometry.naturalHeight,process.env.PIVOT_ORIGINAL_LOADING_DIR?1448:608);
+  await checkLoadingGeometry(page,phase);
   assert.match(await page.getByRole('status').innerText(),/실제 콘텐츠 수집·추천·저장은 진행하지 않/);
   await snapshot(page,stem+'-loading-1');
   await phase.locator('img:not([hidden])').first().screenshot({path:path.join(out,stem+'-crop-1.png')});
   await page.clock.runFor(799); assert.equal(await phase.getAttribute('data-demo-loading-phase'),'1');
   await page.clock.runFor(1); assert.equal(await phase.getAttribute('data-demo-loading-phase'),motion==='reduce'?'1':'2');
+  await checkLoadingGeometry(page,phase);
   await snapshot(page,stem+'-loading-2');
   await phase.locator('img:not([hidden])').first().screenshot({path:path.join(out,stem+'-crop-2.png')});
   await page.clock.runFor(800); assert.equal(await phase.getAttribute('data-demo-loading-phase'),motion==='reduce'?'1':'3');
+  await checkLoadingGeometry(page,phase);
   await snapshot(page,stem+'-loading-3');
   await phase.locator('img:not([hidden])').first().screenshot({path:path.join(out,stem+'-crop-3.png')});
   await page.clock.runFor(799); assert.equal(await page.locator('main article').count(),0);
@@ -292,8 +329,10 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
     // A decoded image whose promise never settles follows the same bounded path.
     await page.getByRole('button',{name:'처음부터 시연'}).click(); await headingFocused(page);
     await page.clock.runFor(3300); await page.clock.resume(); await quickResult(page); await pauseClock(page);
+    const decodeBeforeHung=await page.evaluate(()=>window.__decodeCalls);
     await page.getByRole('button',{name:'콘텐츠 보러가기'}).click();
-    await page.waitForFunction(()=>window.__decodeCalls===1);
+    // Cached images can decode twice under React dev StrictMode.
+    await page.waitForFunction(before=>window.__decodeCalls>before,decodeBeforeHung);
     await page.clock.runFor(2999); assert.equal(await phase.getAttribute('data-loading-image-state'),'pending');
     await page.clock.runFor(1); assert.equal(await phase.getAttribute('data-loading-image-state'),'failed');
     await page.clock.runFor(500); await page.evaluate(()=>window.__releaseDecode());
@@ -305,8 +344,9 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
     await page.getByRole('button',{name:'처음부터 시연'}).click(); await headingFocused(page);
     await page.clock.runFor(3300); await page.clock.resume(); await quickResult(page); await pauseClock(page);
     await page.evaluate(()=>{window.__holdFirstDecode=true;});
+    const decodeBeforeRestart=await page.evaluate(()=>window.__decodeCalls);
     await page.getByRole('button',{name:'콘텐츠 보러가기'}).click();
-    await page.waitForFunction(()=>window.__decodeCalls===2);
+    await page.waitForFunction(before=>window.__decodeCalls>before,decodeBeforeRestart);
     await page.clock.runFor(1000); await page.getByRole('button',{name:'처음부터 시연'}).click();
     await headingFocused(page); await page.evaluate(()=>window.__releaseDecode());
     await page.clock.runFor(3300); await page.getByRole('button',{name:'로그인 없이 시연 계속하기'}).waitFor();

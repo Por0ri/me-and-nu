@@ -279,13 +279,23 @@ test('All scoped loading assets are present and retain their recorded source has
     assert.ok(content.length > 0);
     assert.equal(crypto.createHash('sha256').update(content).digest('hex').toUpperCase(), asset.sha256);
     if (asset.file.endsWith('.png')) {
-      assert.equal(content.readUInt32BE(16), 456);
-      assert.equal(content.readUInt32BE(20), 608);
+      assert.equal(content.readUInt32BE(16), 512);
+      assert.equal(content.readUInt32BE(20), 512);
       assert.equal(asset.sourceSha256, asset.optimization.sourceSha256);
-      assert.equal(asset.optimization.sourceWidth * 608, asset.optimization.sourceHeight * 456);
+      assert.equal(asset.optimization.sourceWidth, 1254);
+      assert.equal(asset.optimization.sourceHeight, 1254);
+      assert.equal(asset.optimization.width, 512); assert.equal(asset.optimization.height, 512);
+      assert.equal(asset.optimization.palette, false);
+      assert.equal(asset.optimization.preserveAlpha, true);
+      assert.equal(asset.optimization.preserveAspectRatio, true);
       assert.ok(content.length < asset.optimization.sourceBytes);
-      assert.equal(manifest.display.objectFit, 'cover');
-      assert.equal(manifest.display.figmaScaleMode, 'FILL');
     }
   }
+});
+
+test('Latest loading assets stay within the previous 606948-byte PNG budget', () => {
+  const folder = path.join(root, 'public/pivot/loading');
+  const names = ['phase-1.png', 'phase-2.png', 'phase-3.png'];
+  const bytes = names.reduce((total, file) => total + fs.statSync(path.join(folder, file)).size, 0);
+  assert.ok(bytes <= 606948, 'Loading PNGs exceed the previous optimized budget: ' + bytes);
 });

@@ -4,7 +4,7 @@ export const q1Choices = [
   { id: "relationships", lines: ["캐릭터의 관계성과", "감정선에 빠진다"], summary: "캐릭터 관계성", asset: "imgFrame304" },
   { id: "ost", lines: ["관련 OST를", "찾아듣는다"], summary: "관련 OST", asset: "imgFrame305" },
   { id: "goods", lines: ["굿즈를 모으거나", "구매 정보를 찾는다"], summary: "굿즈 구매 정보", asset: "imgFrame306" },
-  { id: "events", lines: ["팝업 · 전시 · 이벤트", "등을 찾아간다"], summary: "팝업 · 전시 · 이벤트", asset: "imgFrame307" },
+  { id: "events", lines: ["팝업•전시•이벤트", "등을 찾아간다"], summary: "팝업 · 전시 · 이벤트", asset: "imgFrame307" },
   { id: "news", lines: ["새로운 소식을", "빠르게 확인한다"], summary: "새로운 소식", asset: "imgFrame308" },
 ] as const;
 export const q2Choices = [
@@ -23,6 +23,7 @@ export type OnboardingAction =
   | { type: "choose-q1"; value: string }
   | { type: "choose-q2"; value: string }
   | { type: "advance" | "back"; from: OnboardingStep }
+  | { type: "reselect"; from: "result" }
   | { type: "reset" };
 export const initialOnboardingState = (): OnboardingState => ({ step: "interest", interest: null, q1: null, q2: null });
 const isQ1 = (value: unknown): value is Q1Choice => q1Choices.some((choice) => choice.id === value);
@@ -38,6 +39,9 @@ export function canAdvance(state: OnboardingState): boolean {
 }
 export function onboardingReducer(state: OnboardingState, action: OnboardingAction): OnboardingState {
   if (action.type === "reset") return initialOnboardingState();
+  // Only explicit result reselection clears answers; ordinary back preserves them.
+  if (action.type === "reselect") return state.step === action.from
+    ? { ...state, step: "q1", q1: null, q2: null } : state;
   if (action.type === "toggle-interest") return state.step === "interest"
     ? { ...state, interest: state.interest ? null : "animation" } : state;
   if (action.type === "choose-q1") return state.step === "q1" && isQ1(action.value) ? { ...state, q1: action.value } : state;

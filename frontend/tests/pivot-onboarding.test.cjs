@@ -86,3 +86,39 @@ test('Unconnected service rejects and never fabricates saved success', async () 
   assert.equal(pendingOnboardingService.availability, 'unconfigured');
   await assert.rejects(pendingOnboardingService.submitSelection({ interest: 'animation', q1: 'ost', q2: 'events' }, { consents: [] }), /계약이 아직 연결/);
 });
+
+
+test('Reselect clears both answers and summary while preserving interest, for all result combinations', () => {
+  for (const q1 of m.q1Choices) for (const q2 of m.q2Choices) {
+    let state = go(selectedInterest());
+    state = go(reduce(state, { type: 'choose-q1', value: q1.id }));
+    state = go(reduce(state, { type: 'choose-q2', value: q2.id }));
+    const action = { type: 'reselect', from: 'result' };
+    state = reduce(state, action);
+    assert.equal(state.step, 'q1'); assert.equal(state.interest, 'animation');
+    assert.equal(state.q1, null); assert.equal(state.q2, null);
+    assert.equal(m.selectionSummary(state).q1, ''); assert.equal(m.selectionSummary(state).q2, '');
+    assert.equal(m.canAdvance(state), false); assert.equal(m.isSelectionComplete(state), false);
+    assert.throws(() => m.buildSelectionDraft(state));
+    assert.equal(reduce(state, action), state);
+    state = reduce(state, { type: 'choose-q1', value: 'goods' });
+    assert.equal(reduce(state, action), state, 'Stale reselection cannot clear a new Q1 answer');
+    state = go(state);
+    assert.equal(state.q2, null); assert.equal(m.canAdvance(state), false);
+    state = go(reduce(state, { type: 'choose-q2', value: 'restock' }));
+    assert.equal(state.step, 'result');
+    assert.equal(m.selectionSummary(state).q1, '굿즈 구매 정보');
+    assert.equal(m.selectionSummary(state).q2, '굿즈 출시 및 재입고 정보');
+  }
+});
+test('Reselect only works at result; ordinary back preserves both answers through interest', () => {
+  for (const step of ['interest', 'q1', 'q2']) {
+    const state = { step, interest: 'animation', q1: 'ost', q2: 'events' };
+    assert.equal(reduce(state, { type: 'reselect', from: 'result' }), state);
+  }
+  let state = { step: 'result', interest: 'animation', q1: 'ost', q2: 'events' };
+  for (const step of ['q2', 'q1', 'interest']) {
+    state = back(state); assert.equal(state.step, step);
+    assert.equal(state.interest, 'animation'); assert.equal(state.q1, 'ost'); assert.equal(state.q2, 'events');
+  }
+});

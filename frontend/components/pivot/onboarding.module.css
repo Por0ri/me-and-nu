@@ -4,8 +4,7 @@
 .frame h1, .frame h2, .frame p { margin: 0; }
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .back { display: grid; place-items: center; width: 44px; height: 44px; flex: none; padding: 0; border: 0; background: transparent; border-radius: 8px; }
-.interestHeader { position: relative; display: flex; align-items: center; justify-content: center; margin: 77px 24px 0; height: 36px; }
-.interestHeader .back { position: absolute; left: -10px; }
+.interestHeader { position: relative; display: flex; align-items: flex-start; justify-content: center; margin: 77px 24px 0; height: 36px; }
 .interestBody { margin: 21px 24px 0; }
 .interestBody h1 { font-size: 32px; font-weight: 700; line-height: 44px; text-align: center; }
 .interestBody h1 em { font-style: normal; color: #7043b4; }
@@ -14,13 +13,14 @@
 .interestCard, .choice { position: relative; border: 2px solid #e4e4e7; border-radius: 8px; cursor: pointer; background: transparent; }
 .interestCard input, .choice input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .interestCard:has(input:focus-visible), .choice:has(input:focus-visible) { outline: 3px solid #7043b4; outline-offset: 3px; }
-.interestCard { display: flex; flex-direction: column; align-items: center; gap: 8px; height: 202px; padding: 13px 0 15px; }
-.interestArtwork { position: relative; display: block; flex: none; width: 134px; height: 109px; overflow: hidden; }
-.interestArtwork img { position: absolute; left: 14.4625px; top: -.1485px; }
+.interestCard { display: flex; flex-direction: column; align-items: center; gap: 5px; height: 202px; padding: 13px 0 15px; }
+.interestArtwork { position: relative; display: block; flex: none; width: 115px; height: 100px; overflow: hidden; }
+.interestArtwork img { position: absolute; left: 0; top: -5.86px; width: 115px; height: 104.11px; }
 .interestCard strong { font-size: 16px; font-weight: 600; line-height: 24px; color: #27272a; }
-.badge { border-radius: 24px; background: #efe7ff; color: #583199; padding: 3px 14px; font-size: 11px; line-height: 16px; font-weight: 500; margin-top: -3px; }
+.badge { border-radius: 24px; background: #efe7ff; color: #583199; padding: 3px 14px; font-size: 11px; line-height: 16px; font-weight: 500; margin-top: 0; }
 .selected { background: #f7f2ff; border-color: #7043b4; }
 .selected .badge { color: #7043b4; }
+.interestCard.selected strong { color: #3f3f46; }
 .upcoming { height: 202px; border: 1px dashed #e4e4e7; border-radius: 14px; background: #f4f4f5; display: flex; flex-direction: column; align-items: center; gap: 13px; padding-top: 58px; color: #b9b9c1; }
 .upcoming strong { font-size: 16px; line-height: 24px; font-weight: 600; }
 .hint { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 10px 20px; margin-top: 23px; border: 1px solid #e4e4e7; border-radius: 8px; }
@@ -41,18 +41,19 @@
 .q1Grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 24px; }
 .choice { color: #27272a; font-size: 16px; line-height: 24px; font-weight: 600; }
 .q1Card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 146px; padding: 10px; text-align: center; word-break: keep-all; overflow-wrap: anywhere; }
+.q1Card > img { width: 76px; height: 66px; object-fit: cover; }
+.q1Card > span { display: block; }
 .q2List { display: flex; flex-direction: column; gap: 12px; }
 .q2Card { display: flex; align-items: center; gap: 16px; min-height: 76px; padding: 10px 18px; }
 .q2Card span { min-width: 0; overflow-wrap: anywhere; word-break: keep-all; }
 .resultDecorations { position: absolute; inset: 0; pointer-events: none; z-index: -1; }
 .topDecoration { position: absolute; left: -235px; top: -237px; }
 .sideDecoration { position: absolute; left: calc(100% - 110px); top: 153px; }
-.resultNavigation { position: absolute; left: 14px; top: 43px; }
 .resultBody { position: relative; margin: 156px 24px 0; }
 .resultBody h1 { font-size: 24px; line-height: 34px; font-weight: 700; text-align: center; }
 .frame .resultMode { position: absolute; top: -29px; left: 0; right: 0; color: #7043b4; font-size: 11px; line-height: 18px; text-align: center; }
-.resultMascot { position: relative; width: 144px; height: 88px; overflow: hidden; margin: 32px auto 0; }
-.resultMascot img { position: absolute; width: 102.74%; height: 168.74%; left: -1.37%; top: -64.24%; }
+.resultMascot { position: relative; width: 195px; height: 104px; overflow: hidden; margin: 32px auto 0; }
+.resultMascot img { position: absolute; width: 97.78%; height: 153.89%; left: 1.11%; top: -53.89%; }
 .summary { border-radius: 8px; background: #efe7ff; padding: 12px 8px; }
 .summaryIntro { min-height: 51px; padding-left: 7px; }
 .summaryIntro h2 { font-size: 16px; line-height: 24px; font-weight: 600; }
@@ -65,11 +66,10 @@
 .frame .connectionNotice { font-size: 12px; line-height: 18px; color: #71717a; margin-top: 16px; text-align: center; }
 .frame .homeFeedback { font-size: 13px; line-height: 20px; margin-top: 10px; color: #7043b4; text-align: center; }
 .homeFeedback:empty { display: none; }
+.reselect { display: block; width: 100%; min-height: 44px; margin: 0 0 4px; padding: 12px 8px; border: 0; background: transparent; color: #71717a; text-decoration: underline; text-underline-position: under; font-size: 14px; line-height: 20px; }
 .restart { display: block; border: 0; padding: 10px; min-height: 44px; margin: 8px auto 0; background: transparent; color: #7043b4; text-decoration: underline; font-size: 14px; }
 @media (max-width: 350px) {
   .interestCards { grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); }
-  .interestArtwork { width: 108px; }
-  .interestArtwork img { left: 0; }
   .hint { padding-inline: 12px; }
   .q1Grid { column-gap: 12px; }
   .q1Card { padding-inline: 7px; }
