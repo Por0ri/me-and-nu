@@ -5,6 +5,7 @@
 #
 # 정답은 "다 본(completed)" 작품만 쓴다 (EXP-08). "보는 중" 작품은 매주 진도를 고치는 방영작(원피스 등)이
 # 정답으로 몰려서 시험이 "지금 챙겨 보는 방영작 맞히기"로 치우쳤기 때문.
+# 정답 기간은 2020-01 ~ 2022-01 (EXP-12). 데이터 수집 직전(2022-02~03) 정답은 한 작품으로 몰려서 뺀다.
 #
 # 메인 점수는 시리즈 단위다. 정답이 "원피스 극장판 Z"일 때 "원피스"를 추천해도 맞힌 걸로 친다.
 # me;nu 는 작품 글을 보여주는 서비스라 같은 시리즈면 같은 관심사로 보기 때문. 작품 단위 점수도 같이 낸다.
@@ -41,6 +42,9 @@ ANILIST = ROOT / "anilist" / "media.jsonl"  # model/scripts/fetch_anilist.py 로
 
 TARGET_STATUS = ("completed",)  # 정답으로 쓸 상태 (EXP-08 전까지는 completed + watching)
 TARGET_AFTER = to_seconds(datetime(2020, 1, 1))  # 정답 시각이 이보다 오래되면 날짜가 부정확해서 뺀다
+# 데이터 수집(2022-03) 직전 정답은 뺀다 (EXP-12). 직전에 끝난 대작(귀멸의 칼날 유곽편)으로 정답이 몰려서
+# "최근 인기"가 실제보다 강하게 나왔음
+TARGET_BEFORE = to_seconds(datetime(2022, 2, 1))
 MIN_HISTORY = 5                 # 가리고 남은 기록이 이보다 적으면 뺀다
 TUNE_USERS = 5000               # 앞쪽 유저는 설정값 고르기용(연습), 나머지는 채점용(실전)
 
@@ -71,9 +75,11 @@ def load_anilist():
         for line in f:
             for m in json.loads(line)["media"]:
                 if m["idMal"]:
+                    tags = [t for t in m["tags"] if not t["isAdult"]]
                     out[m["idMal"]] = {
                         "genres": set(m["genres"]),
-                        "tags": {t["name"]: t["rank"] / 100 for t in m["tags"] if not t["isAdult"]},
+                        "tags": {t["name"]: t["rank"] / 100 for t in tags},
+                        "cats": {t["name"]: t["category"] for t in tags},  # 태그 → 분류 (예: Theme-Drama)
                         "adult": m["isAdult"],
                     }
     return out
@@ -139,7 +145,7 @@ def make_cases(data, target_status=TARGET_STATUS):
             continue
         t_last = t[cand].max()
         last = np.flatnonzero(cand & (t == t_last))
-        if len(last) != 1 or t_last < TARGET_AFTER:
+        if len(last) != 1 or not TARGET_AFTER <= t_last < TARGET_BEFORE:
             continue
         h = t < t_last
         if h.sum() < MIN_HISTORY:
@@ -160,18 +166,34 @@ def shorten(case, n):
     return {**case, "history": History(*(col[pick] for col in h))}
 
 
-# 온보딩 흉내: 작품 n개 + 장르 칩 n_genres개 (그 유저가 본 작품에 가장 많이 나온 장르)
-# 칩은 온보딩에 실제로 보일 AniList 장르만 쓴다 (MAL 이름 기준. Thriller 는 MAL 의 Suspense, 성인·선정 장르 제외)
+# 온보딩 흉내: 작품 n개 + 장르 칩 n_genres개 + 테마 칩 n_themes개 (그 유저가 본 작품에 가장 많이 나온 것)
+# 장르 칩은 온보딩에 실제로 보일 AniList 장르만 쓴다 (성인·선정 장르 제외)
+# anilist 를 안 주면 MAL 장르로 센다 (MAL 이름 기준. Thriller 는 MAL 의 Suspense)
 CHIP_GENRES = {"Action", "Adventure", "Comedy", "Drama", "Fantasy", "Horror", "Mecha", "Music", "Mystery",
                "Psychological", "Romance", "Sci-Fi", "Slice of Life", "Sports", "Supernatural", "Suspense"}
+ANILIST_CHIP_GENRES = {"Action", "Adventure", "Comedy", "Drama", "Fantasy", "Horror", "Mahou Shoujo", "Mecha",
+                       "Music", "Mystery", "Psychological", "Romance", "Sci-Fi", "Slice of Life", "Sports",
+                       "Supernatural", "Thriller"}
+# 테마 칩 후보 (시험용 임시안. 실제 칩은 기획과 함께 확정)
+THEME_CHIPS = {"Isekai", "Magic", "Super Power", "Swordplay", "Revenge", "Tragedy", "Gore", "Post-Apocalyptic",
+               "Survival", "School", "Time Manipulation", "Coming of Age", "Iyashikei", "War", "Crime",
+               "Virtual World"}
 
 
-def onboarding(case, anime, n=1, n_genres=3):
+def onboarding(case, anime, n=1, n_genres=3, anilist=None, n_themes=0):
     h = case["history"]
-    count = Counter(g for a in h.anime[np.isin(h.status, WATCHED)].tolist()
-                    for g in anime.get(a, {}).get("genres", ()) if g in CHIP_GENRES)
-    picked = [g for g, _ in sorted(count.items(), key=lambda kv: (-kv[1], kv[0]))[:n_genres]]
-    return {**shorten(case, n), "genres": picked}
+    watched = h.anime[np.isin(h.status, WATCHED)].tolist()
+    top = lambda c, k: [x for x, _ in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))[:k]]
+    if anilist is None:
+        genres = Counter(g for a in watched for g in anime.get(a, {}).get("genres", ()) if g in CHIP_GENRES)
+    else:
+        genres = Counter(g for a in watched for g in anilist.get(a, {}).get("genres", ()) if g in ANILIST_CHIP_GENRES)
+    themes = Counter()
+    for a in watched:  # 테마는 관련도 % 만큼 센다
+        for tag, w in (anilist or {}).get(a, {}).get("tags", {}).items():
+            if tag in THEME_CHIPS:
+                themes[tag] += w
+    return {**shorten(case, n), "genres": top(genres, n_genres), "themes": top(themes, n_themes)}
 
 
 def build_context(cases, anime, series, anilist=None, features=FEATURES, data=None):
@@ -195,8 +217,9 @@ def evaluate(cases, ctx, model, one_per_series=ONE_PER_SERIES):
     by_kind = {"보던": [0, 0], "새": [0, 0]}  # [맞힌 수, 전체 수]
     for case in cases:
         user = {"history": case["history"], "t": case["t"]}  # 모델에는 정답을 넘기지 않는다
-        if "genres" in case:
-            user["genres"] = case["genres"]
+        for chips in ("genres", "themes"):  # 온보딩 흉내에서 고른 칩
+            if chips in case:
+                user[chips] = case[chips]
         recs = pick_top(model(user, ctx), user, ctx, one_per_series)
         rec_series = [ser(a) for a in recs]
         hit = ser(case["target"]) in rec_series

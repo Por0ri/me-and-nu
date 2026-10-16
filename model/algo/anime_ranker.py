@@ -6,7 +6,7 @@
 # 방법은 모두 (user, ctx) → 작품 id 를 좋은 순서로 줄 세운 목록 을 돌려준다.
 # - user: {"history": History, "t": 지금 시각(초)}. 정답은 보지 않는다
 #   History 는 유저 기록을 칸별 배열로 담은 것 (t 시각(초) · anime 작품 id · status 상태 번호 · score 점수 · fav 최애)
-#   온보딩에서 고른 장르가 있으면 user["genres"] 에 넣는다
+#   온보딩에서 고른 장르·테마가 있으면 user["genres"], user["themes"] 에 넣는다
 # - ctx: 모든 유저가 같이 쓰는 정보. build_context 로 만든다
 # 줄 세운 목록에서 본 작품·성인 작품·방영 전 작품 빼기, 시리즈당 1개는 pick_top 이 처리한다.
 # 계산은 numpy 로 한 번에 한다 (작품마다 따로 계산하면 느림).
@@ -29,11 +29,15 @@ ONE_PER_SERIES = True           # 추천 10개에 같은 시리즈는 1개만
 N_CANDIDATES = 2000             # 장르 취향이 고르는 후보: 인기 상위 몇 개 안에서
 ADULT_GENRES = {"Hentai", "Erotica"}  # 성인 작품은 추천하지 않는다 (AniList isAdult 도 같이 봄)
 
-# 취향을 잴 때 작품을 무엇으로 표현할지 (EXP-06: MAL 장르가 가장 좋았음)
+# 취향을 잴 때 작품을 무엇으로 표현할지. EXP-13 에서 AniList 태그 전체가 가장 좋아서 기본값으로 씀
+# (취향 점수만 기준 연습 9.14%, MAL 장르 3.98%, 테마 태그만 5.48%)
 # "mal": MAL 장르 44개 / "anilist_genre": AniList 장르 / "anilist_tag": AniList 장르 + 태그(관련도 %)
 # "anilist_tag_idf": anilist_tag 에서 흔한 태그(예: 남자 주인공)는 덜 친다
-FEATURES = "mal"
-CHIP_WEIGHT = 1.0               # 온보딩에서 고른 장르 하나 = 그 장르 작품 하나를 본 만큼
+# "anilist_theme": anilist_tag 에서 등장인물·제작 방식 태그를 뺀 것 (테마·배경·대상층만)
+FEATURES = "anilist_tag"
+NON_THEME_TAGS = {"Cast-Traits", "Cast-Main Cast", "Technical"}  # anilist_theme 에서 빼는 태그 분류
+CHIP_WEIGHT = 1.0               # 온보딩에서 고른 장르·테마 하나 = 그런 작품 하나를 본 만큼
+GENRE_ALIAS = {"Suspense": "Thriller"}  # MAL 장르 이름 → AniList 장르 이름
 
 # 다음 편 보너스. 최근에 본 시리즈일수록 크고, NEXT_TAU 일마다 약 1/e 로 줄어든다
 # 값은 EXP-04 에서 연습 3,000명으로 고름 (보너스 2~5, 기간 1~3년이면 비슷)
@@ -75,7 +79,9 @@ def build_vectors(anime, anilist, features=FEATURES):
     vec = {}
     for a, m in anilist.items():
         v = {"g:" + g: 1.0 for g in m["genres"]}
-        if features != "anilist_genre":
+        if features == "anilist_theme":
+            v.update({"t:" + t: r for t, r in m["tags"].items() if m["cats"].get(t) not in NON_THEME_TAGS})
+        elif features != "anilist_genre":
             v.update({"t:" + t: r for t, r in m["tags"].items()})
         vec[a] = v
     if features == "anilist_tag_idf":
@@ -204,8 +210,13 @@ def genre_scores(user, ctx):
     # 본 작품들의 장르·태그를 더해 취향을 만들고, 모든 작품의 유사도(0~1)를 한 번에 계산한다
     h = user["history"]
     p = ctx["X"][rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])].sum(axis=0)
-    for g in user.get("genres", ()):  # 온보딩에서 고른 장르
-        j = ctx["feature_col"].get(g, ctx["feature_col"].get("g:" + g))
+    col = ctx["feature_col"]
+    for g in user.get("genres", ()):  # 온보딩에서 고른 장르 (MAL 표현이면 이름 그대로, AniList 표현이면 "g:" 이름)
+        j = col.get(g, col.get("g:" + GENRE_ALIAS.get(g, g)))
+        if j is not None:
+            p[j] += CHIP_WEIGHT
+    for th in user.get("themes", ()):  # 온보딩에서 고른 테마 (AniList 태그)
+        j = col.get("t:" + th)
         if j is not None:
             p[j] += CHIP_WEIGHT
     norm = math.sqrt(p @ p) or 1.0
