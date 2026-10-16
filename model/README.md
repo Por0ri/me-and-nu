@@ -6,7 +6,7 @@ me;nu 피드에 콘텐츠를 어떤 순서로 보여줄지 정하는 코드. 기
 
 | 경로 | 내용 |
 |---|---|
-| `menu_reco/v0.py` | v0 추천. 규칙 점수(유형·장르·작품·최신·반응) → 같은 작품 연달아 금지 → 스포일러 흐림 |
+| `algo/content_v0.py` | v0 추천. 규칙 점수(유형·장르·작품·최신·반응) → 같은 작품 연달아 금지 → 스포일러 흐림 |
 | `scripts/make_sample_data.py` | 테스트용 샘플 작품·콘텐츠·유저 생성 |
 | `sample/` | 샘플 데이터 (생성 결과, 커밋함) |
 | `notebooks/v0_demo.ipynb` | 결과 확인용 노트북. 유저별 추천과 점수 내역, 가중치 바꿔 보기 |
@@ -18,7 +18,7 @@ me;nu 피드에 콘텐츠를 어떤 순서로 보여줄지 정하는 코드. 기
 
 ```bash
 python model/scripts/make_sample_data.py   # 샘플 데이터 다시 만들기
-python -m model.menu_reco.v0               # 샘플 유저 6명 추천 결과
+python -m model.algo.content_v0            # 샘플 유저 6명 추천 결과
 ```
 
 ## 버전
