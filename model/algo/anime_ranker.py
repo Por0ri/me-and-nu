@@ -1,4 +1,4 @@
-# anime_ranker — 유저에게 추천할 애니 순서를 정한다 (v0.5 후보들)
+# anime_ranker — 유저에게 추천할 애니 순서를 정한다 (v0.5 = next_auto, 나머지는 비교용)
 #
 # 콘텐츠 추천(content_v0.py)이 "어떤 작품 글을 올릴지" 정할 때 쓸 작품 취향 부분이다.
 # 채점기(eval/next_anime_test.py)가 이 방법들을 불러서 점수를 매긴다.
@@ -48,18 +48,29 @@ NEXT_TAU = 365
 # EXP-05: 새 시리즈 점수가 장르 취향보다 10% 넘게 안 떨어지는 선에서 전체 최대 → 2개
 NEXT_SLOTS = 2
 
-# 인기도 섞기 (EXP-09). 점수 = 장르 유사도(0~1) + POP_BETA × 인기도(0~1)
+# 인기도 섞기 (EXP-10). 점수 = 장르 유사도(0~1) + POP_BETA × 인기도(0~1)
 # "all": 전체 기간 인기 / "recent": 지금 시각 직전 RECENT_DAYS 일 동안 많이 본 작품 (요즘 뜨는 작품)
 POP_BETA = 0.0
 POP_KIND = "all"
 RECENT_DAYS = 30
 N_RECENT_CANDIDATES = 300       # 최근 인기 섞기에서 후보에 더 넣는 개수 (새로 뜨는 작품이 후보 밖일 수 있어서)
 
-# 같이 본 작품 (EXP-10). "이거 본 사람이 저것도 봄"을 센다 (연관 규칙)
+# 같이 본 작품 (EXP-11). "이거 본 사람이 저것도 봄"을 센다 (연관 규칙)
 # "confidence": A 본 사람 중 B도 본 비율 / "lift": 그 비율이 B의 원래 인기보다 몇 배인지 / "cosine": 둘의 중간
+# 본 작품마다 점수를 더한다. "confidence_max" 는 더하지 않고 가장 센 것 하나만 쓴다 (Apriori 방식, EXP-17·18)
 COWATCH_ITEMS = 3000            # 같이 본 횟수를 셀 작품: 인기 상위 몇 개
 COWATCH_KIND = "confidence"
 LIFT_MIN_COUNT = 5              # lift 는 같이 본 사람이 이보다 적으면 0 (우연한 조합 걸러내기)
+
+# 학습하는 행동 기반 모델 (EXP-15). "같이 본 작품" 자리에 바꿔 끼울 수 있다 (kind="ease" / "als")
+# EASE 는 v0.5 기존 유저 설정에 쓴다 (EXP-16·18). ALS 는 비교용
+# EASE (Steck 2019): 같이 본 횟수 표로 작품끼리 관계를 한 번에 계산하는 선형 모델. λ 가 클수록 단순해진다
+# ALS (Hu·Koren·Volinsky 2008): 유저·작품을 숫자 벡터로 바꾸는 행렬 분해. 본 작품은 (1 + α) 만큼 중요하게 친다
+EASE_LAMBDA = 500.0
+ALS_FACTORS = 64
+ALS_REG = 1.0
+ALS_ALPHA = 10.0
+ALS_ITERS = 10
 
 
 def to_seconds(dt):
@@ -180,7 +191,46 @@ def build_cowatch(ctx, histories, n_items=COWATCH_ITEMS):
         }
     for S in sims.values():
         np.fill_diagonal(S, 0)
-    ctx.update(cw_rows=uni, cw_pos=pos, cw_sim=sims)
+    ctx.update(cw_rows=uni, cw_pos=pos, cw_sim=sims, cw_count=C)
+
+
+def build_ease(ctx, lam=EASE_LAMBDA):
+    # EASE: B = −P / P의 대각 (열마다), P = (같이 본 횟수 표 + λI)의 역행렬. 대각은 0. build_cowatch 다음에 부른다
+    P = np.linalg.inv(ctx["cw_count"].astype(np.float64) + lam * np.eye(len(ctx["cw_count"])))
+    B = -P / np.diag(P)[None, :]
+    np.fill_diagonal(B, 0)
+    ctx["cw_sim"]["ease"] = B
+
+
+def build_als(ctx, histories, factors=ALS_FACTORS, reg=ALS_REG, alpha=ALS_ALPHA, iters=ALS_ITERS, seed=0):
+    # ALS: 유저 벡터와 작품 벡터를 번갈아 고친다. 같이 본 횟수 표와 같은 작품(인기 상위 COWATCH_ITEMS 편)만 쓴다
+    pos, m = ctx["cw_pos"], len(ctx["cw_rows"])
+    users = []
+    for h in histories:
+        p = pos[rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])]
+        p = np.unique(p[p >= 0])
+        if len(p):
+            users.append(p)
+    item_users = [[] for _ in range(m)]
+    for u, p in enumerate(users):
+        for i in p.tolist():
+            item_users[i].append(u)
+    item_users = [np.array(x, dtype=np.int64) for x in item_users]
+    eye = np.eye(factors)
+
+    def solve(F, lists):  # 상대편 벡터 F 로 이쪽 벡터를 한 번에 푼다
+        FtF, out = F.T @ F, np.zeros((len(lists), factors))
+        for j, idx in enumerate(lists):
+            if len(idx):
+                Fi = F[idx]
+                out[j] = np.linalg.solve(FtF + alpha * (Fi.T @ Fi) + reg * eye, (1 + alpha) * Fi.sum(axis=0))
+        return out
+
+    Y = np.random.default_rng(seed).normal(0, 0.01, (m, factors))
+    for _ in range(iters):
+        X = solve(Y, users)
+        Y = solve(X, item_users)
+    ctx.update(als_Y=Y, als_YtY=Y.T @ Y, als_reg=reg, als_alpha=alpha)
 
 
 def rows_of(ctx, anime_ids):
@@ -316,21 +366,80 @@ def genre_pop(user, ctx, beta=POP_BETA, kind=POP_KIND):
 
 
 def next_genre_pop(user, ctx, beta=POP_BETA, kind=POP_KIND, slots=NEXT_SLOTS):
-    """다음 편 자리 제한 + 인기도 섞기 (EXP-09)."""
+    """다음 편 자리 제한 + 인기도 섞기 (EXP-10)."""
     return next_picks(user, ctx, slots) + genre_pop(user, ctx, beta, kind)
 
 
-def cowatch(user, ctx, kind=COWATCH_KIND):
-    """같이 본 작품 (EXP-10). 내가 본 작품 하나하나와 '같이 본' 정도를 더해 줄 세운다. 같으면 인기순."""
+def cf_raw(user, ctx, kind=COWATCH_KIND):
+    # 행동 기반 점수 (같이 본 횟수 표의 작품마다). kind: confidence · cosine · lift · ease → 본 작품 줄을 더함
+    # confidence_max → 본 작품 줄 중 가장 큰 값 / als → 유저 벡터
     h = user["history"]
     p = ctx["cw_pos"][rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])]
-    score = ctx["cw_sim"][kind][p[p >= 0]].sum(axis=0)
-    return rank_rows(ctx["cw_rows"], ctx, -score)
+    p = p[p >= 0]
+    if kind == "confidence_max":
+        return ctx["cw_sim"]["confidence"][p].max(axis=0) if len(p) else np.zeros(len(ctx["cw_rows"]))
+    if kind != "als":
+        return ctx["cw_sim"][kind][p].sum(axis=0)
+    if not len(p):
+        return np.zeros(len(ctx["cw_rows"]))
+    Y, Yi = ctx["als_Y"], ctx["als_Y"][np.unique(p)]
+    A = ctx["als_YtY"] + ctx["als_alpha"] * (Yi.T @ Yi) + ctx["als_reg"] * np.eye(Y.shape[1])
+    return Y @ np.linalg.solve(A, (1 + ctx["als_alpha"]) * Yi.sum(axis=0))
+
+
+def cowatch(user, ctx, kind=COWATCH_KIND):
+    """같이 본 작품 (EXP-11). 내가 본 작품 하나하나와 '같이 본' 정도를 더해 줄 세운다. 같으면 인기순.
+    kind 로 EASE·ALS 를 고르면 같은 자리에서 비교할 수 있다 (EXP-15)."""
+    return rank_rows(ctx["cw_rows"], ctx, -cf_raw(user, ctx, kind))
 
 
 def next_cowatch(user, ctx, kind=COWATCH_KIND, slots=NEXT_SLOTS):
-    """다음 편 자리 제한 + 같이 본 작품 (EXP-10)."""
+    """다음 편 자리 제한 + 같이 본 작품 (EXP-11)."""
     return next_picks(user, ctx, slots) + cowatch(user, ctx, kind)
+
+
+def cowatch_scores(user, ctx, kind=COWATCH_KIND):
+    # 행동 기반 점수를 모든 작품에 대해 0~1 로 (그 유저의 1등 작품이 1). 같이 본 횟수 표 밖 작품은 0
+    raw = cf_raw(user, ctx, kind)
+    out = np.zeros(len(ctx["ids"]))
+    if raw.max() > 0:
+        out[ctx["cw_rows"]] = raw / raw.max()
+    return out
+
+
+# 조합 (EXP-14). 새 작품 자리 점수 = 취향 유사도 + β × 인기도 + γ × 행동 기반 점수 (셋 다 0~1)
+# 기록이 적은 유저(신규)와 많은 유저는 강한 재료가 달라서 따로 고름 (연습 5,000명 기준, 값은 EXP-18 에서 확정)
+# - 기존 유저: 최근 30일 인기 β=0.35 + EASE γ=0.5 → 실전 33.01% (아이템 기반 CF 로는 27.53%)
+# - 신규 유저: 전체 기간 인기 β=1 + 같이 본 작품(가장 센 규칙 하나) γ=2 → 실전 18.55% (작품 1개 + 칩)
+# - 본 작품 7개 이하면 신규 유저 설정. 연습에서 7개까지는 신규 설정, 10개부터 EASE 가 이김 (EXP-16·18)
+# cf: 행동 기반 부분에 쓸 방법 (confidence · confidence_max = 아이템 기반 CF / ease / als)
+WARM = {"beta": 0.35, "gamma": 0.5, "kind": "recent", "cf": "ease"}            # 기록 많은 유저
+COLD = {"beta": 1.0, "gamma": 2.0, "kind": "all", "cf": "confidence_max"}      # 기록 적은 유저 (온보딩 직후)
+COLD_MAX_WATCHED = 7                                     # 본 작품이 이 개수 이하면 신규 유저 설정
+
+
+def hybrid(user, ctx, beta, gamma, kind="recent", cf_kind=COWATCH_KIND):
+    """취향 + 인기도 + 같이 본 작품 섞기 (EXP-14). cf_kind 로 같이 본 작품 대신 EASE·ALS 를 쓸 수 있다."""
+    s, p, c = genre_scores(user, ctx), pop_scores(user, ctx, kind), cowatch_scores(user, ctx, cf_kind)
+    rows = np.unique(np.r_[pop_candidates(user, ctx, kind), ctx["cw_rows"]])
+    return rank_rows(rows, ctx, -(s[rows] + beta * p[rows] + gamma * c[rows]))
+
+
+def next_hybrid(user, ctx, beta=None, gamma=None, kind=None, slots=NEXT_SLOTS, cf_kind=None):
+    """다음 편 자리 제한 + 조합 (EXP-14). 값을 안 주면 기존 유저 설정(WARM)."""
+    beta = WARM["beta"] if beta is None else beta
+    gamma = WARM["gamma"] if gamma is None else gamma
+    kind = WARM["kind"] if kind is None else kind
+    cf_kind = WARM["cf"] if cf_kind is None else cf_kind
+    return next_picks(user, ctx, slots) + hybrid(user, ctx, beta, gamma, kind, cf_kind)
+
+
+def next_auto(user, ctx, slots=NEXT_SLOTS):
+    """v0.5. 조합 자동 설정 (EXP-14, 값은 EXP-18). 본 작품 수로 신규 유저 / 기존 유저 설정을 고른다.
+    기존 유저 설정은 EASE 를 쓰므로 build_cowatch → build_ease 를 먼저 불러 둔다."""
+    n = int(np.isin(user["history"].status, WATCHED).sum())
+    cfg = COLD if n <= COLD_MAX_WATCHED else WARM
+    return next_hybrid(user, ctx, cfg["beta"], cfg["gamma"], cfg["kind"], slots, cfg.get("cf", COWATCH_KIND))
 
 
 # ## 3. 최종 K개 고르기

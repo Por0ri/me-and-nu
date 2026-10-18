@@ -33,7 +33,7 @@ import numpy as np
 from model.algo import anime_ranker
 from model.algo.series import SEASON_RELATIONS, build_series
 from model.algo.anime_ranker import (FEATURES, N_CANDIDATES, ONE_PER_SERIES, STATUS, WATCHED, History,
-                                    genre, next_in_series, next_limited, next_plus_new, pick_top, popular,
+                                    genre, next_auto, next_cowatch, next_limited, pick_top, popular,
                                     to_seconds)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "data"
@@ -48,9 +48,8 @@ TARGET_BEFORE = to_seconds(datetime(2022, 2, 1))
 MIN_HISTORY = 5                 # 가리고 남은 기록이 이보다 적으면 뺀다
 TUNE_USERS = 5000               # 앞쪽 유저는 설정값 고르기용(연습), 나머지는 채점용(실전)
 
-MODELS = {"인기순": popular, "장르 취향(v0)": genre,
-          "다음 편 우선": next_in_series, "다음 편 자리 제한": next_limited,
-          "다음 편 + 새 시리즈": next_plus_new}
+MODELS = {"인기순": popular, "취향만": genre, "다음 편 + 취향": next_limited,
+          "다음 편 + 같이 본 작품": next_cowatch, "v0.5 (조합 자동)": next_auto}
 
 
 # ## 1. 데이터 읽기
@@ -196,12 +195,33 @@ def onboarding(case, anime, n=1, n_genres=3, anilist=None, n_themes=0):
     return {**shorten(case, n), "genres": top(genres, n_genres), "themes": top(themes, n_themes)}
 
 
-def build_context(cases, anime, series, anilist=None, features=FEATURES, data=None):
+def stats_histories(data, cases):
+    """인기도·같이 본 작품을 셀 기록 (EXP-14). 시험 유저는 정답 전 기록만, 나머지 유저는 TARGET_BEFORE 전 기록 전부.
+    시험 유저만 세면 정답 기간을 좁힐 때 세는 사람도 같이 줄어서 통계가 약해진다"""
+    in_test = {c["user_id"]: c["history"] for c in cases}
+    u = data["user"]
+    starts = np.r_[0, np.flatnonzero(np.diff(u)) + 1]
+    ends = np.r_[starts[1:], len(u)]
+    out = []
+    for a, b in zip(starts, ends):
+        uid = str(data["user_ids"][u[a]])
+        if uid in in_test:
+            out.append(in_test[uid])
+            continue
+        m = data["t"][a:b] < TARGET_BEFORE
+        if m.any():
+            out.append(History(data["t"][a:b][m], data["anime"][a:b][m], data["status"][a:b][m],
+                               data["score"][a:b][m], data["fav"][a:b][m]))
+    return out
+
+
+def build_context(cases, anime, series, anilist=None, features=FEATURES, data=None, stats=None):
     # 인기도는 가리고 남은 기록만으로 센다 (가린 작품을 미리 보면 반칙)
+    # stats 를 주면 그 기록으로 센다 (stats_histories). 안 주면 시험 유저 기록만
     # data 를 주면 "최근 인기"(정답 직전 30일 동안 많이 본 작품)도 계산할 수 있게 한다
     pop = Counter()
-    for case in cases:
-        pop.update(set(case["history"].anime.tolist()))
+    for h in (stats if stats is not None else [c["history"] for c in cases]):
+        pop.update(set(h.anime.tolist()))
     events = (data["anime"], data["t"]) if data is not None else None
     return anime_ranker.build_context(anime, series, pop, anilist, features, events)
 
@@ -240,11 +260,13 @@ def main():
     max_users = int(sys.argv[1]) if len(sys.argv) > 1 else None
     anime = load_anime()
     data = load_interactions()
-    cases = make_cases(data)
-    if max_users:
-        cases = cases[:max_users]
+    all_cases = make_cases(data)
+    cases = all_cases[:max_users] if max_users else all_cases
     anilist = load_anilist()
-    ctx = build_context(cases, anime, load_series(anime), anilist)
+    stats = stats_histories(data, all_cases)  # 정답은 빼고 센다
+    ctx = build_context(cases, anime, load_series(anime), anilist, data=data, stats=stats)
+    anime_ranker.build_cowatch(ctx, stats)
+    anime_ranker.build_ease(ctx)
     cands = set(ctx["by_popularity"][:N_CANDIDATES])
     in_cands = sum(c["target"] in cands for c in cases) / len(cases)
     print(f"유저 {len(data['user_ids']):,}명 중 채점 가능 {len(cases):,}명 · 작품 {len(anime):,}편 · 정답 {'+'.join(TARGET_STATUS)}")
