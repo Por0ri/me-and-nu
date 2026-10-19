@@ -1,0 +1,140 @@
+[
+ {
+  "user_id": "seowon",
+  "name": "서원",
+  "content_types": [
+   "review",
+   "behind",
+   "curation"
+  ],
+  "genres": [
+   "Horror",
+   "Psychological",
+   "Fantasy"
+  ],
+  "favorite_works": [
+   "csm",
+   "tokyoghoul",
+   "aot"
+  ],
+  "is_sample": true,
+  "seen_content_ids": [
+   81
+  ],
+  "feedback": [
+   {
+    "content_id": 81,
+    "action": "save"
+   }
+  ]
+ },
+ {
+  "user_id": "junseong",
+  "name": "준성",
+  "content_types": [
+   "news",
+   "guide"
+  ],
+  "genres": [
+   "Action",
+   "Adventure",
+   "Comedy"
+  ],
+  "favorite_works": [
+   "onepiece",
+   "hxh",
+   "opm",
+   "mha"
+  ],
+  "is_sample": true,
+  "seen_content_ids": [],
+  "feedback": [
+   {
+    "content_id": 24,
+    "action": "less"
+   }
+  ]
+ },
+ {
+  "user_id": "taewoong",
+  "name": "태웅",
+  "content_types": [
+   "event",
+   "goods",
+   "news"
+  ],
+  "genres": [
+   "Sports",
+   "Comedy"
+  ],
+  "favorite_works": [
+   "bluelock",
+   "haikyu"
+  ],
+  "is_sample": true,
+  "seen_content_ids": [],
+  "feedback": []
+ },
+ {
+  "user_id": "guseong",
+  "name": "구성",
+  "content_types": [
+   "people",
+   "behind"
+  ],
+  "genres": [
+   "Mystery",
+   "Thriller",
+   "Psychological"
+  ],
+  "favorite_works": [
+   "deathnote",
+   "hxh"
+  ],
+  "is_sample": true,
+  "seen_content_ids": [],
+  "feedback": []
+ },
+ {
+  "user_id": "beomsu",
+  "name": "범수",
+  "content_types": [
+   "people",
+   "behind",
+   "news"
+  ],
+  "genres": [
+   "Action",
+   "Adventure",
+   "Drama"
+  ],
+  "favorite_works": [
+   "onepiece",
+   "kny"
+  ],
+  "is_sample": true,
+  "seen_content_ids": [],
+  "feedback": []
+ },
+ {
+  "user_id": "yeonju",
+  "name": "연주",
+  "content_types": [
+   "curation",
+   "guide"
+  ],
+  "genres": [
+   "Slice of Life",
+   "Mystery",
+   "Drama"
+  ],
+  "favorite_works": [
+   "apothecary",
+   "frieren",
+   "bocchi"
+  ],
+  "is_sample": true,
+  "seen_content_ids": [],
+  "feedback": []
+ }
+]
