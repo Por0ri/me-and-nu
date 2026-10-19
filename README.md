@@ -1,6 +1,8 @@
 # me_nu V1 로컬 API 통합 테스트
 
-Next.js, FastAPI, PostgreSQL 기반 로컬 V1 테스트 프로젝트입니다. 공개 API의 기본 경로는 `/api/v1`이며 응답 JSON은 camelCase를 사용합니다. 일반 인증은 PostgreSQL에 저장하는 세션과 HttpOnly 쿠키, 변경 요청은 `X-CSRF-Token`을 사용합니다. 로컬 Swagger 테스트용 로그인 우회도 제공합니다.
+Next.js, FastAPI, PostgreSQL, Redis 기반 로컬 V1 테스트 프로젝트입니다. 공개 API의 기본 경로는 `/api/v1`이며 응답 JSON은 camelCase를 사용합니다. 일반 인증은 서버 세션과 HttpOnly 쿠키, 변경 요청은 `X-CSRF-Token`을 사용합니다. `SESSION_BACKEND=redis`이면 세션을 Redis에 저장하며 사용자 데이터는 PostgreSQL에 유지합니다. 로컬 Swagger 테스트용 로그인 우회도 제공합니다.
+
+팀 테스트 서버용 Dockerfile, 독립 Compose 설정, 환경변수 준비와 실행 순서는 [백엔드 배포 안내](deploy/README.md)를 참고하세요. OAuth 연결 전에는 개발용 인증을 끈 상태로 API·PostgreSQL·Redis 연결과 공개 API를 확인합니다.
 
 ## 준비
 
@@ -15,8 +17,10 @@ Next.js, FastAPI, PostgreSQL 기반 로컬 V1 테스트 프로젝트입니다. �
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
 if (!(Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
 if (!(Test-Path frontend/.env.local)) { Copy-Item frontend/.env.example frontend/.env.local }
-docker compose up -d postgres
+docker compose up -d postgres redis
 ```
+
+기존 환경은 `backend/.env`에 `SESSION_BACKEND=redis`, `REDIS_URL=redis://127.0.0.1:6379/0`을 추가한 뒤 백엔드를 재시작하면 전환됩니다. 기존 DB 세션은 Redis로 복사하지 않으므로 다시 로그인하세요. 세션의 기본 만료 시간은 30분이며 Redis 장애 시 인증 요청은 503을 반환합니다. 연결 상태는 `/health/redis`에서 확인합니다. 자세한 전환·복구 동작은 [Redis 세션 안내](backend/README.md#redis-로그인-세션)에 있습니다.
 
 ## 마이그레이션·seed·백엔드 실행
 
@@ -85,6 +89,6 @@ npm run build
 
 ## 현재 범위와 이후 연결 지점
 
-이번 로컬 범위는 세션·정책·온보딩·프로필·Topic/Subtopic·구독·피드·콘텐츠 상세·O/X·좋아요·북마크입니다. 공개 콘텐츠는 DB에서 조회하고, 추천 이유와 노출 여부는 추천·이벤트 로그가 연결되기 전의 기본값입니다. 현재 포함하지 않는 OAuth 공급자 통신, Celery, Redis, 추천 알고리즘, `/chat/*`는 이후 구현 범위입니다. 내부 AgentRun은 공개 API가 아니며, 추후 `/chat/*` 서비스가 내부 Agent 실행과 저장 결과를 연결합니다.
+이번 로컬 범위는 세션·정책·온보딩·프로필·Topic/Subtopic·구독·피드·콘텐츠 상세·O/X·좋아요·북마크입니다. Redis는 익명·로그인 세션 저장에 적용되었습니다. 조회 캐시와 Celery 작업 큐는 아직 연결하지 않았습니다. 공개 콘텐츠는 DB에서 조회하고, 추천 이유와 노출 여부는 추천·이벤트 로그가 연결되기 전의 기본값입니다. OAuth 공급자 통신과 추천 알고리즘은 이후 구현 범위입니다. 내부 AgentRun은 공개 API가 아니며, 추후 `/chat/*` 서비스가 내부 Agent 실행과 저장 결과를 연결합니다.
 
 오류는 `{ "code": "...", "message": "..." }` 형식입니다. 주요 상태 코드는 조회 200, 생성 201, 성공한 삭제·로그아웃 204, 인증 없음 401, CSRF 또는 온보딩 필요 403, 미존재 404, 중복·상태 충돌 409, 입력·cursor 오류 422입니다.

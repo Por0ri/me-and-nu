@@ -1,0 +1,131 @@
+# Standalone deployment configuration. Do not merge with the local compose.yaml.
+name: me-nu-deploy
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-backend-environment: &backend-environment
+  # Generate URL-safe hex passwords as described in deploy/.env.example.
+  DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-me_nu}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-me_nu}"
+  DATABASE_ECHO: "false"
+  SESSION_BACKEND: redis
+  REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in deploy/.env}@redis:6379/0"
+  REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-me_nu_staging}
+  REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-0.5}
+  REDIS_MAX_CONNECTIONS: ${REDIS_MAX_CONNECTIONS:-20}
+  FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:?Set FRONTEND_ORIGINS in deploy/.env}
+  ENABLE_DEV_API: "false"
+  ENABLE_DEV_AUTH_BYPASS: "false"
+  SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-menu_staging_session}
+  SESSION_EXPIRE_MINUTES: ${SESSION_EXPIRE_MINUTES:-30}
+  SESSION_COOKIE_SECURE: "true"
+  FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+  TMDB_KEY: ${TMDB_KEY:-}
+  LLM_KEY: ${LLM_KEY:-}
+
+x-backend: &backend
+  image: ${BACKEND_IMAGE:-me-nu-backend:staging}
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  environment: *backend-environment
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging: *logging
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-me_nu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-me_nu}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    logging: *logging
+
+  redis:
+    image: redis:8.2-alpine
+    restart: unless-stopped
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in deploy/.env}
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?Set REDIS_PASSWORD in deploy/.env}
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - always
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-128mb}
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    logging: *logging
+
+  migrate:
+    <<: *backend
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data
+    healthcheck:
+      disable: true
+
+  api:
+    <<: *backend
+    restart: unless-stopped
+    ports:
+      # A host HTTPS reverse proxy or SSH tunnel connects here.
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - data
+      - egress
+    stop_grace_period: 30s
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  data:
+    internal: true
+  egress:

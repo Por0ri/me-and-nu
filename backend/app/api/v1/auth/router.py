@@ -13,6 +13,7 @@ from app.api.deps import (
     require_csrf,
 )
 from app.core.config import settings
+from app.api.session_store import get_session_store
 from app.core.exceptions import ApiError
 from app.core.security import (
     csrf_token_for_session,
@@ -21,6 +22,7 @@ from app.core.security import (
 )
 from app.db.session import get_db
 from app.repositories.auth_session_repository import create_auth_session, revoke_auth_session
+from app.repositories.redis_session_store import RedisSessionStore
 from app.schemas.auth import SessionResponse, SessionUser
 from app.schemas.common import COMMON_ERRORS
 
@@ -54,12 +56,14 @@ async def get_session(
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
     context: Annotated[AuthContext | None, Depends(get_optional_auth_context)],
+    store: Annotated[RedisSessionStore | None, Depends(get_session_store)],
 ) -> SessionResponse:
     response.headers["Cache-Control"] = "private, no-store"
     if context is None:
         _validate_anonymous_session_source(request)
-        _, raw_token = await create_auth_session(db, user_id=None, session_state="anonymous")
-        await db.commit()
+        _, raw_token = await create_auth_session(db, user_id=None, session_state="anonymous", store=store)
+        if store is None:
+            await db.commit()
         set_session_cookie(response, raw_token)
         return SessionResponse(
             authenticated=False,
@@ -108,6 +112,7 @@ async def logout(
         raise ApiError(403, "CSRF_INVALID", "요청 출처가 허용되지 않습니다.")
     if context is not None:
         await require_csrf(request, context, csrf_token)
-        revoke_auth_session(context.session)
-        await db.commit()
+        await revoke_auth_session(context.session, store=context.session_store)
+        if context.session_store is None:
+            await db.commit()
     delete_session_cookie(response)

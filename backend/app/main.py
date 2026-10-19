@@ -9,6 +9,7 @@ from app.api.dev.agent_publication import router as dev_agent_publication_router
 from app.api.health import router as health_router
 from app.core.config import settings
 from app.core.exceptions import install_exception_handlers
+from app.core.redis import redis_lifespan
 
 def create_app(enable_dev_api: bool | None = None) -> FastAPI:
     dev_api_enabled = settings.enable_dev_api if enable_dev_api is None else enable_dev_api
@@ -21,6 +22,7 @@ def create_app(enable_dev_api: bool | None = None) -> FastAPI:
         title="큐레이팅 플랫폼 REST API",
         version="1.1.0-local",
         description=description,
+        lifespan=redis_lifespan,
     )
     @api.middleware("http")
     async def v1_response_contract(request: Request, call_next):

@@ -18,7 +18,7 @@ router = APIRouter(prefix="/onboarding", tags=["온보딩"])
     status_code=201,
     response_model=OnboardingResponse,
     summary="회원 온보딩 일괄 완료",
-    description="onboarding_pending 세션과 X-CSRF-Token이 필요합니다. 프로필, 동의 이력, 최초 관심사, 기본 알림 설정, 활성 세션을 한 DB 트랜잭션으로 저장합니다. 완료 후 세션 ID가 교체되므로 GET /auth/session을 다시 호출하세요.",
+    description="onboarding_pending 세션과 X-CSRF-Token이 필요합니다. 프로필, 동의 이력, 최초 관심사, 기본 알림 설정을 DB 트랜잭션으로 저장하고 세션을 교체합니다. 완료 후 GET /auth/session을 다시 호출하세요.",
     responses={
         **COMMON_ERRORS,
         201: {"description": "온보딩 완료"},

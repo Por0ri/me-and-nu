@@ -5,7 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext
 from app.core.exceptions import ApiError
 from app.models import NotificationSetting, Tap, TapTopic
-from app.repositories.auth_session_repository import create_auth_session, revoke_auth_session, utcnow
+from app.repositories.auth_session_repository import (
+    create_auth_session,
+    discard_uncommitted_session,
+    revoke_auth_session,
+    utcnow,
+)
 from app.repositories.onboarding_repository import find_active_topic, find_subtopics, lock_user
 from app.repositories.policy_repository import add_consent_history, get_current_policies
 from app.schemas.onboarding import ActiveTopic, OnboardingRequest, OnboardingResponse, OnboardingUser
@@ -26,6 +31,7 @@ async def complete_onboarding(
     context: AuthContext,
     payload: OnboardingRequest,
 ) -> tuple[OnboardingResponse, str]:
+    new_session = None
     try:
         user = await lock_user(db, context.session.user_id)
         if user is None:
@@ -74,8 +80,10 @@ async def complete_onboarding(
                 db.add(TapTopic(tap_id=tap.tap_id, subtopic_id=subtopic_id))
 
         db.add(NotificationSetting(user_id=user.user_id))
-        revoke_auth_session(context.session)
-        _, raw_token = await create_auth_session(db, user_id=user.user_id, session_state="active")
+        await revoke_auth_session(context.session, store=context.session_store)
+        new_session, raw_token = await create_auth_session(
+            db, user_id=user.user_id, session_state="active", store=context.session_store
+        )
         await db.commit()
 
         active_topic = (
@@ -97,4 +105,5 @@ async def complete_onboarding(
         )
     except Exception:
         await db.rollback()
+        await discard_uncommitted_session(new_session, store=context.session_store)
         raise

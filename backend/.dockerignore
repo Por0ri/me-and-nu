@@ -1,0 +1,20 @@
+# Only these runtime files may enter the build context.
+**
+!requirements.txt
+!Dockerfile
+!.dockerignore
+!alembic.ini
+!alembic/
+!alembic/**
+!app/
+!app/**
+!scripts/
+!scripts/check_health.py
+
+# Keep secrets and generated files excluded even inside an allowed directory.
+**/.env
+**/.env.*
+**/__pycache__
+**/*.py[cod]
+**/*.pem
+**/*.key

@@ -5555,20 +5555,40 @@ def cmd_material(title: str, year: int):
         print(" -", u)
 
 
+def _print_upload_rate(results: list[dict | None]):
+    """이번 실행에서 최종 상태를 받은 영화만 분모에 넣는다."""
+    states = [r["상태"] for r in results if isinstance(r, dict) and r.get("상태")]
+    completed = len(states)
+    uploaded = states.count("올림")
+    missing = len(results) - completed
+    if completed:
+        print(f"\n이번 실행 올림률: {uploaded}/{completed} ({uploaded / completed:.1%})")
+    else:
+        print("\n이번 실행 올림률: 산출 불가 (판정 완료 0편)")
+    print(f"대상 {len(results)}편 · 판정 완료 {completed}편 · 오류/결과 없음 {missing}편")
+
+
 async def cmd_one(title: str, year: int):
     """셀 16 — 한 편 돌려보기"""
-    m = fetch_material(title, year)
-    if m is None:
-        print(f"[{title}] TMDB에서 못 찾았다")
-        return
-    print(material_to_text(m))
-    print()
-    out = await produce(m)
-    show(out)
+    try:
+        m = fetch_material(title, year)
+        if m is None:
+            print(f"[{title}] TMDB에서 못 찾았다")
+            _print_upload_rate([None])
+            return
+        print(material_to_text(m))
+        print()
+        out = await produce(m)
+        show(out)
 
-    if out.get("글"):
-        p = save_md(out)
-        print("\n저장:", p)
+        if out.get("글"):
+            p = save_md(out)
+            print("\n저장:", p)
+    except Exception as e:
+        print(f"[{title}] 오류로 멈췄다 — {type(e).__name__}: {e}")
+        _print_upload_rate([None])
+        raise
+    _print_upload_rate([out])
 
 
 def _print_log(mat, r):
@@ -5611,15 +5631,16 @@ async def cmd_batch(cands, label: str, at_once: int | None = None):
             try:
                 mat = await asyncio.to_thread(fetch_material_by_id, c["id"], fallback_title=c["title"] or "")
                 r = await produce(mat)
+                _print_log(mat, r)                       # 한 편 로그는 끝난 뒤 한 번에 찍어서 섞이지 않는다
+                if r.get("글"):
+                    save_md(r)
+                return r
             except Exception as e:                   # 한 편이 멈춰도 나머지는 돈다
                 print(f"[{c['title']}] 오류로 멈췄다 — {type(e).__name__}: {e}")
                 return None
-            _print_log(mat, r)                       # 한 편 로그는 끝난 뒤 한 번에 찍어서 섞이지 않는다
-            if r.get("글"):
-                save_md(r)
-            return r
 
-    await asyncio.gather(*(one(c) for c in todo))
+    results = await asyncio.gather(*(one(c) for c in todo))
+    _print_upload_rate(results)
 
     print("\n저장된 파일:")
     for p in sorted(OUT_DIR.rglob("*.md")):

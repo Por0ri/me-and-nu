@@ -22,14 +22,14 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 | AI 대화 (API-048·052·053) | `POST /api/v1/chat/sessions`, `POST /api/v1/chat/sessions/{sessionId}/messages`, `GET /api/v1/chat/jobs/{jobId}` — `backend/.env`의 `LLM_KEY` 필요. 현재 분야 공개 콘텐츠 안에서만 근거를 찾아 답합니다. |
 | 알림 (API-107·108·109) | `GET /api/v1/users/me/notifications`, `GET /api/v1/users/me/notifications/unread-count`, `PATCH /api/v1/users/me/notifications/{notificationId}` — 발행 배치가 생기기 전까지는 알림함을 열 때 내 분야의 최근 30일 새 글과 환영 공지를 채웁니다. 마이그레이션(`alembic upgrade head`) 필요. |
 
-인증과 데이터는 PostgreSQL을 사용합니다. 개발용 가입·로그인과 Agent 결과 조회는 `ENABLE_DEV_API=true`에서만 등록됩니다. Agent 결과 조회는 로컬 요청과 인증된 개발 사용자로 제한되며 Swagger의 **개발용 Agent 결과**에 표시됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 영화 Agent 실행 결과가 승인되고 사실 확인 항목이 없으면 저장 직후 공개 Content 피드에 자동 발행됩니다. 탈락하거나 사실 확인이 필요한 초안은 자동 발행되지 않습니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
+사용자와 콘텐츠 데이터는 PostgreSQL을 사용합니다. 세션 저장소는 `SESSION_BACKEND=redis`로 Redis를 선택할 수 있으며 미설정 시 기존 PostgreSQL 세션을 사용합니다. 개발용 가입·로그인과 Agent 결과 조회는 `ENABLE_DEV_API=true`에서만 등록됩니다. Agent 결과 조회는 로컬 요청과 인증된 개발 사용자로 제한되며 Swagger의 **개발용 Agent 결과**에 표시됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 영화 Agent 실행 결과가 승인되고 사실 확인 항목이 없으면 저장 직후 공개 Content 피드에 자동 발행됩니다. 탈락하거나 사실 확인이 필요한 초안은 자동 발행되지 않습니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
 
 ### 환경 변수와 실행
 
 `backend/.env.example`의 `DATABASE_URL`, `FRONTEND_ORIGINS`, `ENABLE_DEV_API`, `ENABLE_DEV_AUTH_BYPASS`, `SESSION_COOKIE_NAME`, `SESSION_EXPIRE_MINUTES`, `SESSION_COOKIE_SECURE`를 참고하세요. 비밀값은 `.env.example`에 넣지 않습니다. 루트 `compose.yaml`의 PostgreSQL과 같은 접속 정보를 사용합니다. Swagger에서 로그인 없이 테스트하려면 `backend/.env`에 두 개발용 설정을 모두 `true`로 지정하고 서버를 `localhost`에만 바인딩하세요.
 
 ```powershell
-# 저장소 루트에서 docker compose up -d postgres를 먼저 실행
+# 저장소 루트에서 docker compose up -d postgres redis를 먼저 실행
 cd backend
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m alembic upgrade head
@@ -42,7 +42,37 @@ cd backend
 
 조회는 주로 200, 생성은 201, 삭제·로그아웃은 본문 없는 204입니다. `/api/v1` 응답은 `Cache-Control: private, no-store`를 보냅니다. 오류는 `code`와 `message`를 포함하고 입력 검증 오류의 `fields[]`에는 `field`·`code`·`message`가 붙습니다. `requestId`는 실제 값이 있을 때만 보냅니다. 대표 오류는 `MALFORMED_JSON`(400), `AUTH_REQUIRED`(401), `CSRF_INVALID`·`ONBOARDING_REQUIRED`(403), `TOPIC_NOT_FOUND`·`CONTENT_NOT_FOUND`(404), `ONBOARDING_ALREADY_COMPLETED`·`STATE_CONFLICT`(409), `UNSUPPORTED_MEDIA_TYPE`(415), `VALIDATION_ERROR`·`INVALID_CURSOR`(422)입니다.
 
-[Swagger 테스트 가이드](../docs/SWAGGER_TEST_GUIDE.md)에서 실제 ID를 조회해 온보딩·피드·반응까지 호출하는 순서를 확인하세요. 추천 알고리즘과 이벤트 로그가 아직 없으므로 추천 이유·노출 상태는 기본값이며, `/chat/*`와 내부 AgentRun 연결은 추후 서비스 계층에서 진행합니다. OAuth 공급자 통신, Celery, Redis, 관리자 전체 API 등은 이번 구현에 포함되지 않습니다. 아래 목표 API 표에서 위 구현 범위를 제외한 항목은 후속 작업 대상입니다.
+[Swagger 테스트 가이드](../docs/SWAGGER_TEST_GUIDE.md)에서 실제 ID를 조회해 온보딩·피드·반응까지 호출하는 순서를 확인하세요. 추천 알고리즘과 이벤트 로그가 아직 없으므로 추천 이유·노출 상태는 기본값이며, `/chat/*`와 내부 AgentRun 연결은 추후 서비스 계층에서 진행합니다. OAuth 공급자 통신, Celery, Redis 조회 캐시, 관리자 전체 API 등은 이번 구현에 포함되지 않습니다. 아래 목표 API 표에서 위 구현 범위를 제외한 항목은 후속 작업 대상입니다.
+
+### Redis 로그인 세션
+
+루트에서 `docker compose up -d --wait redis`를 실행하고, `backend/.env`에 다음 설정을 추가한 뒤 백엔드를 재시작합니다. Redis 접속 포트를 바꿀 때는 루트 `.env`의 `REDIS_PORT`와 아래 URL을 함께 변경하세요. 로컬 Redis는 IPv4에 바인딩하므로 Windows의 localhost 주소 해석 지연을 피하도록 `127.0.0.1`을 사용합니다. 브라우저·프런트엔드 주소는 계속 localhost를 사용하세요.
+
+```dotenv
+SESSION_BACKEND=redis
+REDIS_URL=redis://127.0.0.1:6379/0
+REDIS_KEY_PREFIX=me_nu
+REDIS_SOCKET_TIMEOUT_SECONDS=0.5
+REDIS_MAX_CONNECTIONS=20
+SESSION_EXPIRE_MINUTES=30
+```
+
+- 익명 CSRF 세션과 로그인 세션을 Redis에 저장합니다. 로그인·온보딩 완료 시 이전 세션을 폐기하고 새 ID를 발급하며 로그아웃은 해당 키를 삭제합니다. HttpOnly 쿠키와 기존 CSRF·Origin 검사는 유지합니다. 실제 인증 검증 시 `ENABLE_DEV_AUTH_BYPASS=false`를 사용하세요.
+- 키는 `me_nu:auth-session:v1:<세션 토큰의 SHA-256>`입니다. 값에는 사용자 ID·상태·생성/만료 시각·토큰 해시만 저장합니다. 원본 쿠키, 원본 CSRF 토큰, 비밀번호는 저장하지 않습니다. 기본 만료는 발급 시점부터 30분이며 조회해도 연장하지 않습니다.
+- Redis 세션 조회마다 사용자 존재·활성 상태는 PostgreSQL에서 확인합니다. Redis 키가 없거나 만료되면 미인증, 연결/저장/폐기 실패는 `503 SESSION_STORE_UNAVAILABLE`입니다. 장애 시 PostgreSQL 세션으로 자동 전환하지 않습니다.
+- `/health/redis`는 연결 성공 시 `200 {"status":"ok"}`, URL 미설정 시 `200 {"status":"disabled"}`, 장애 시 `503 REDIS_UNAVAILABLE`을 반환합니다. 세션 모드를 Redis로 지정하면서 URL을 빠뜨리면 서버 설정 검증이 실패합니다.
+- Compose는 localhost에만 포트를 열고 전용 볼륨, AOF·`appendfsync always`, `noeviction`을 사용합니다. 메모리 한도에 도달하면 기존 세션을 임의 삭제하는 대신 새 저장이 실패합니다. 캐시·작업 큐와 공유하지 않는 세션 전용 구성입니다. 외부 배포 시 인증·TLS가 설정된 접속 URL과 비공개 네트워크를 사용하세요.
+- DB와 Redis를 묶는 분산 트랜잭션은 없습니다. 로그인·온보딩 DB 저장이 실패하면 새 Redis 세션을 정리하고 쿠키를 발급하지 않습니다. 정리 중 Redis도 실패하면 미발급 세션은 TTL로 사라집니다. 이전 세션 폐기 이후 실패한 경우 다시 로그인해야 합니다.
+- 기존 PostgreSQL 세션은 자동 이관하지 않으므로 전환 후 다시 로그인합니다. `SESSION_BACKEND=postgres`로 복귀하면 기존 DB의 미만료 세션이 다시 유효할 수 있습니다. 저장소 전환을 전체 세션 폐기 수단으로 사용하지 마세요. 세션 테이블은 호환성을 위해 유지하며 추가 DB 마이그레이션은 필요 없습니다.
+
+연결 관리는 Redis의 [비동기 클라이언트 안내](https://redis.io/docs/latest/develop/clients/redis-py/async/)에 맞춰 앱 실행 중 연결 풀을 공유하고 종료 시 닫습니다.
+
+실제 Redis의 공유·폐기·TTL 검증은 `backend`에서 아래 명령으로 실행합니다. 테스트마다 별도 키 접두사를 만들고 자기 키만 삭제합니다. `TEST_REDIS_URL`이 없으면 실제 서버 테스트 2개만 건너뛰고 나머지 테스트는 Redis 대역으로 실행합니다.
+
+```powershell
+$env:TEST_REDIS_URL = 'redis://127.0.0.1:6379/0'
+.\.venv\Scripts\python.exe -m pytest -q
+```
 
 ### 커밋된 Agent 콘텐츠 일괄 적재
 

@@ -42,7 +42,7 @@ def auth_environment(monkeypatch: pytest.MonkeyPatch):
             return None
         return AuthContext(session=row, raw_token=raw, user=user if row.user_id else None)
 
-    async def fake_create_session(_, *, user_id: int | None, session_state: str):
+    async def fake_create_session(_, *, user_id: int | None, session_state: str, store=None):
         raw = create_session_id()
         row = SimpleNamespace(
             user_id=user_id, session_state=session_state,

@@ -2904,20 +2904,41 @@ def 끝나면zip():
 
 TEST_TITLES = [("괴물", 2006), ("헤어질 결심", 2022), ("프로젝트 헤일메리", 2026), ("케빈에 대하여", 2011), ("판의 미로", 2006)]
 
+def _올림률_출력(results, 시도수, tmdb_없음=0, 오류=0):
+    완료 = len(results)
+    올림 = sum(r.get("상태") == "올림" for _, r in results)
+    비율 = f"{올림}/{완료} ({올림 / 완료:.1%})" if 완료 else "산출 불가 (완료 0편)"
+    print(f"\n이번 실행 올림률: {비율} · 시도 {시도수}편 · TMDB 미발견 {tmdb_없음}편 · 오류 {오류}편")
+
 async def cmd_one(title, year, **지정):
-    m = fetch_material(title, year)
+    try:
+        m = fetch_material(title, year)
+    except Exception as e:
+        print(f"[{title}] 재료 조회 오류: {type(e).__name__}: {e}")
+        _올림률_출력([], 1, 오류=1)
+        raise
     if m is None:
-        print(f"[{title}] TMDB에서 못 찾았다"); return None
+        print(f"[{title}] TMDB에서 못 찾았다")
+        _올림률_출력([], 1, tmdb_없음=1)
+        return None
     print(material_to_text(m)[:600]); print()
-    out = await produce(m, **지정)
+    try:
+        out = await produce(m, **지정)
+    except Exception as e:
+        print(f"[{title}] 실행 오류: {type(e).__name__}: {e}")
+        _올림률_출력([], 1, 오류=1)
+        raise
     show(out)
+    _올림률_출력([(m.title, out)], 1)
     끝나면zip()
     return out
 
-async def _같이돌기(목록, 재료뽑기, 동시=None):
+async def _같이돌기(목록, 재료뽑기, 동시=None, 집계=None):
     """V3.7: 목록을 동시(기본 동시영화)편씩 같이 돈다. 재료뽑기(항목) → Material 또는 None(동기, 스레드에서 돈다).
     돌려주는 것은 [(영화 제목, produce 결과)]. 못 찾은 것 · 오류로 멈춘 것은 빠진다."""
     동시 = max(1, int(동시 or 동시영화))
+    if 집계 is not None:
+        집계.update(tmdb_없음=0, 오류=0)
     문 = asyncio.Semaphore(동시)
     if 동시 > 1:
         print(f"영화를 {동시}편씩 같이 돈다. 로그 앞의 [번호]로 가른다")
@@ -2928,10 +2949,14 @@ async def _같이돌기(목록, 재료뽑기, 동시=None):
             try:
                 m = await asyncio.to_thread(재료뽑기, x)
                 if m is None:
+                    if 집계 is not None:
+                        집계["tmdb_없음"] += 1
                     print(f"{표식}{x} — TMDB에서 못 찾았다"); return None
                 print(f"\n{표식}===== {m.title} ({m.year}) · 감독 {m.director} =====")
                 r = await produce(m, 표식=표식)
             except Exception as e:                     # 한 편이 멈춰도 나머지는 돈다
+                if 집계 is not None:
+                    집계["오류"] += 1
                 print(f"{표식}{x} — 오류로 멈췄다: {type(e).__name__}: {e}"); return None
             print(f"{표식}[{m.title}] {r['상태']}" + (f" — {r.get('이유', '')}" if r.get("이유") else ""))
             return (m.title, r)
@@ -2941,7 +2966,10 @@ async def _같이돌기(목록, 재료뽑기, 동시=None):
 
 async def cmd_list(titles=TEST_TITLES, 동시=None):
     _조건판_새로()
-    results = await _같이돌기(list(dict.fromkeys(titles)), lambda ty: fetch_material(*ty), 동시)
+    목록 = list(dict.fromkeys(titles))
+    집계 = {}
+    results = await _같이돌기(목록, lambda ty: fetch_material(*ty), 동시, 집계)
+    _올림률_출력(results, len(목록), **집계)
     끝나면zip()
     return results
 
@@ -2966,7 +2994,9 @@ async def cmd_random(n=5, seed=None, 동시=None):
     print(f"씨네21 기사로 거름: 후보 {len(후보)}편 → {len(cands)}편")
     print("뽑힌 영화:", [(c["title"], c["year"]) for c in cands])
     cands = list({c["id"]: c for c in cands}.values())             # 같은 영화는 한 번만
-    results = await _같이돌기(cands, lambda c: fetch_material_by_id(c["id"], fallback_title=c["title"] or ""), 동시)
+    집계 = {}
+    results = await _같이돌기(cands, lambda c: fetch_material_by_id(c["id"], fallback_title=c["title"] or ""), 동시, 집계)
+    _올림률_출력(results, len(cands), **집계)
     끝나면zip()
     return results
 

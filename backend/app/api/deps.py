@@ -10,11 +10,13 @@ from fastapi.security import APIKeyCookie, APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.api.session_store import get_session_store
 from app.core.exceptions import ApiError
 from app.core.security import csrf_token_for_session, hash_token
 from app.db.session import get_db
 from app.models import AuthSession, UserAccount
 from app.repositories.auth_session_repository import find_auth_session, utcnow
+from app.repositories.redis_session_store import RedisSessionStore
 from app.repositories.user_repository import get_user_by_email, get_user_by_id
 
 from app.seeds.dev_user import DEV_USER_AUTH_PROVIDER, DEV_USER_EMAIL, DEV_USER_PROVIDER_ID
@@ -42,6 +44,7 @@ class AuthContext:
     raw_token: str
     user: UserAccount | None
     is_dev_bypass: bool = False
+    session_store: RedisSessionStore | None = None
 
 
 def local_dev_auth_bypass_enabled(request: Request) -> bool:
@@ -90,12 +93,13 @@ async def get_optional_auth_context(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     raw_token: Annotated[str | None, Security(session_cookie_scheme)],
+    store: Annotated[RedisSessionStore | None, Depends(get_session_store)],
 ) -> AuthContext | None:
     if local_dev_auth_bypass_enabled(request):
         return await get_dev_auth_context(db)
     if not raw_token:
         return None
-    session = await find_auth_session(db, raw_token)
+    session = await find_auth_session(db, raw_token, store=store)
     if session is None:
         return None
     user = None
@@ -103,7 +107,7 @@ async def get_optional_auth_context(
         user = await get_user_by_id(db, session.user_id)
         if user is None or user.account_status != "active":
             return None
-    return AuthContext(session=session, raw_token=raw_token, user=user)
+    return AuthContext(session=session, raw_token=raw_token, user=user, session_store=store)
 
 
 async def get_auth_context(

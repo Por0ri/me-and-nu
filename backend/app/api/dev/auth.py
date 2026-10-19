@@ -6,10 +6,17 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, get_optional_auth_context, require_csrf
+from app.api.session_store import get_session_store
 from app.core.exceptions import ApiError
 from app.core.security import set_session_cookie
 from app.db.session import get_db
-from app.repositories.auth_session_repository import create_auth_session, revoke_auth_session, utcnow
+from app.repositories.auth_session_repository import (
+    create_auth_session,
+    discard_uncommitted_session,
+    revoke_auth_session,
+    utcnow,
+)
+from app.repositories.redis_session_store import RedisSessionStore
 from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, UserResponse
 from app.schemas.common import COMMON_ERRORS
 from app.services.user_service import EmailAlreadyRegisteredError, authenticate_user, register_user
@@ -56,18 +63,27 @@ async def login(
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
     context: Annotated[AuthContext | None, Depends(get_optional_auth_context)],
+    store: Annotated[RedisSessionStore | None, Depends(get_session_store)],
     _: Annotated[None, Depends(require_csrf)],
 ) -> LoginResponse:
     user = await authenticate_user(db, email=str(login_request.email), password=login_request.password)
     if user is None or user.account_status != "active":
         raise ApiError(401, "AUTH_REQUIRED", "이메일 또는 비밀번호가 올바르지 않습니다.")
 
-    if context is not None:
-        revoke_auth_session(context.session)
-    state = "active" if user.onboarding_completed_at is not None else "onboarding_pending"
-    _, raw_token = await create_auth_session(db, user_id=user.user_id, session_state=state)
-    user.last_login_at = utcnow()
-    await db.commit()
+    new_session = None
+    try:
+        if context is not None:
+            await revoke_auth_session(context.session, store=context.session_store)
+        state = "active" if user.onboarding_completed_at is not None else "onboarding_pending"
+        new_session, raw_token = await create_auth_session(
+            db, user_id=user.user_id, session_state=state, store=store
+        )
+        user.last_login_at = utcnow()
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await discard_uncommitted_session(new_session, store=store)
+        raise
     set_session_cookie(response, raw_token)
     return LoginResponse(
         message="로그인되었습니다.",
