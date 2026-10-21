@@ -39,6 +39,7 @@ from model.algo.anime_ranker import (FEATURES, N_CANDIDATES, ONE_PER_SERIES, STA
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "data"
 DATA = pathlib.Path(os.environ.get("MAL_SAMPLE_DIR", ROOT / "mal_sample"))
 ANILIST = ROOT / "anilist" / "media.jsonl"  # model/scripts/fetch_anilist.py 로 받음
+DETAIL = ROOT / "anilist" / "detail.jsonl"   # 스튜디오·제작진·성우 (fetch_anilist.py detail). 없으면 사람 정보 없이
 
 TARGET_STATUS = ("completed",)  # 정답으로 쓸 상태 (EXP-08 전까지는 completed + watching)
 TARGET_AFTER = to_seconds(datetime(2020, 1, 1))  # 정답 시각이 이보다 오래되면 날짜가 부정확해서 뺀다
@@ -66,14 +67,15 @@ def load_anime():
 
 
 def load_anilist():
-    # MAL id → AniList 장르·태그. 받은 파일이 없으면 빈 dict
-    out = {}
+    # MAL id → AniList 장르·태그 (+ 상세 정보를 받아 뒀으면 스튜디오·핵심 제작진·주연 성우). 받은 파일이 없으면 빈 dict
+    out, mal_of = {}, {}
     if not ANILIST.exists():
         return out
     with open(ANILIST, encoding="utf-8") as f:
         for line in f:
             for m in json.loads(line)["media"]:
                 if m["idMal"]:
+                    mal_of[m["id"]] = m["idMal"]
                     tags = [t for t in m["tags"] if not t["isAdult"]]
                     out[m["idMal"]] = {
                         "genres": set(m["genres"]),
@@ -81,6 +83,12 @@ def load_anilist():
                         "cats": {t["name"]: t["category"] for t in tags},  # 태그 → 분류 (예: Theme-Drama)
                         "adult": m["isAdult"],
                     }
+    if DETAIL.exists():
+        with open(DETAIL, encoding="utf-8") as f:
+            for line in f:
+                for d in json.loads(line)["media"]:
+                    if mal_of.get(d["id"]) in out:
+                        out[mal_of[d["id"]]].update(anime_ranker.people_of(d))
     return out
 
 

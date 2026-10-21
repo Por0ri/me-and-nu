@@ -14,6 +14,7 @@
 #   python -m model.eval.new_anime_test input    # 유저가 고른 신작도 비슷한 작품으로 이어서 계산 (1-1b)
 #   python -m model.eval.new_anime_test ease     # 위를 기록 많은 유저 설정에만 켠 그대로 다시 재고 짝지어 확인 (EXP-24)
 #   python -m model.eval.new_anime_test trend    # 신규 유저 설정에 최근 30일 인기(트렌딩)를 더 섞기 (EXP-25)
+#   python -m model.eval.new_anime_test people   # 작품 특징에 스튜디오·핵심 제작진·주연 성우 더하기 (EXP-26, 1-4 0단계)
 
 import csv
 import json
@@ -370,6 +371,85 @@ def trend_test():
         print(f"짝 비교: {paired(*hs)}", flush=True)
 
 
+THREE = ("studio", "staff", "voice")
+PEOPLE_SETS = [("장르·태그만 (지금)", {}), ("+ 스튜디오 0.5", {"studio": 0.5}), ("+ 핵심 제작진 0.5", {"staff": 0.5}),
+               ("+ 주연 성우 0.5", {"voice": 0.5}), ("+ 셋 다 0.25", dict.fromkeys(THREE, 0.25)),
+               ("+ 셋 다 0.5", dict.fromkeys(THREE, 0.5)), ("+ 셋 다 1", dict.fromkeys(THREE, 1.0))]
+
+
+def use_people(weights, anilist, ctx, new_ctx, new_ids):
+    # 작품 특징표를 사람 정보 비중 weights 로 다시 만들어 두 문맥에 넣고, 빌려 오기 이웃도 새 특징으로 다시 고른다
+    ar.PEOPLE.clear()
+    ar.PEOPLE.update(weights)
+    ar.build_features(ctx, anilist)
+    for k in ("X", "vnorm", "feature_col", "feat_rows", "Xf"):
+        new_ctx[k] = ctx[k]
+    ar.build_cf_borrow(new_ctx, new_ids, use=("tag", "rec"))
+
+
+def people_test():
+    # 1-4 0단계 (EXP-26): 작품 특징(장르·태그)에 스튜디오·핵심 제작진·주연 성우를 더하면 오르는가
+    # 고르는 기준 (미리 정함): 연습 5,000명 (신규 유저 · 작품 1개 + 칩 · 신작 기록 없음) 시리즈 Hit@10 최고
+    # 채택 기준 (미리 정함): 실전에서 시리즈 Hit@10·NDCG·정답이 신작이 같이 오르고 짝 비교 우연일 확률 0.05 미만.
+    #   작품 3개 + 칩, 기록 전체(기존 유저), 기록 다 있는 신규 유저에서도 안 떨어질 때
+    t0 = time.time()
+    anime, anilist, cases, ctx, new_ctx, new_ids, is_new, is_ip = prepare()
+    onb1 = [t.onboarding(c, anime, 1, 3, anilist, 3) for c in cases]
+    onb3 = [t.onboarding(c, anime, 3, 3, anilist, 3) for c in cases]
+    n_people = sum(1 for m in anilist.values() if m.get("staff"))
+    print(f"신작 기록 없음 · 빌려 오기 켬 · 사람 정보 있는 작품 {n_people:,}편 · 준비 {time.time() - t0:.0f}초")
+    head = "방법\t시리즈 Hit@10\tNDCG@10\t정답이 신작\t정답이 신규 IP\t추천 10개 중 신작 (앞 1,000명)"
+    tune = onb1[: t.TUNE_USERS]
+    print(f"\n[연습 {len(tune):,}명 · 신규 유저 (작품 1개 + 장르 3 + 테마 3) · 사람 정보 고르기]\n{head}")
+    best, best_hit = PEOPLE_SETS[0], -1.0
+    for name, w in PEOPLE_SETS:
+        use_people(w, anilist, ctx, new_ctx, new_ids)
+        h, row = measure(tune, new_ctx, ar.next_auto, new_ids, is_new, is_ip)
+        print(f"{name}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+        if h[:, 0].mean() > best_hit + 1e-9:
+            best, best_hit = (name, w), h[:, 0].mean()
+    print(f"→ 고른 방법: {best[0]}", flush=True)
+    if best[0] == PEOPLE_SETS[0][0]:
+        return
+    for scen, cs, c in (("신규 유저 · 작품 1개 + 칩 · 신작 기록 없음", onb1, new_ctx),
+                        ("신규 유저 · 작품 3개 + 칩 · 신작 기록 없음", onb3, new_ctx),
+                        ("기록 전체 (기존 유저 설정) · 신작 기록 없음", cases, new_ctx),
+                        ("신규 유저 · 작품 1개 + 칩 · 기록 다 있음", onb1, ctx)):
+        part = cs[t.TUNE_USERS:]
+        print(f"\n[실전 {len(part):,}명 · {scen}]\n{head}")
+        hs = []
+        for name, w in (PEOPLE_SETS[0], best):
+            use_people(w, anilist, ctx, new_ctx, new_ids)
+            h, row = measure(part, c, ar.next_auto, new_ids, is_new, is_ip)
+            hs.append(h)
+            print(f"{name}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+        print(f"짝 비교: {paired(*hs)}", flush=True)
+
+
+def people_check():
+    # EXP-26 확인: (1) 빠뜨린 상황 — 기존 유저 · 기록 다 있음 (대표 점수 33.06%) 에서 안 떨어지는가
+    # (2) 경계값 — 연습 1등이 가장 센 값(1)이라 더 센 값(1.5 · 2 · 3)도 연습에서만 본다 (더 좋으면 따로 실험)
+    t0 = time.time()
+    anime, anilist, cases, ctx, new_ctx, new_ids, is_new, is_ip = prepare()
+    onb1 = [t.onboarding(c, anime, 1, 3, anilist, 3) for c in cases]
+    head = "방법\t시리즈 Hit@10\tNDCG@10\t정답이 신작\t정답이 신규 IP\t추천 10개 중 신작 (앞 1,000명)"
+    part = cases[t.TUNE_USERS:]
+    print(f"[실전 {len(part):,}명 · 기록 전체 (기존 유저 설정) · 기록 다 있음]\n{head}")
+    hs = []
+    for name, w in (PEOPLE_SETS[0], PEOPLE_SETS[-1]):
+        use_people(w, anilist, ctx, new_ctx, new_ids)
+        h, row = measure(part, ctx, ar.next_auto, new_ids, is_new, is_ip)
+        hs.append(h)
+        print(f"{name}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+    print(f"짝 비교: {paired(*hs)}", flush=True)
+    tune = onb1[: t.TUNE_USERS]
+    print(f"\n[연습 {len(tune):,}명 · 신규 유저 (작품 1개 + 칩) · 신작 기록 없음 · 더 센 값]\n{head}")
+    for v in (1.0, 1.5, 2.0, 3.0):
+        use_people(dict.fromkeys(THREE, v), anilist, ctx, new_ctx, new_ids)
+        h, row = measure(tune, new_ctx, ar.next_auto, new_ids, is_new, is_ip)
+        print(f"+ 셋 다 {v}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+
+
 def main():
     if sys.argv[1:2] == ["cold"]:
         return cold_test()
@@ -379,6 +459,10 @@ def main():
         return ease_check()
     if sys.argv[1:2] == ["trend"]:
         return trend_test()
+    if sys.argv[1:2] == ["people"]:
+        return people_test()
+    if sys.argv[1:2] == ["people_check"]:
+        return people_check()
     if sys.argv[1:2] == ["fill"]:
         return fill_test()
     t0 = time.time()

@@ -7,6 +7,8 @@
 # - 칸: AniList id, MAL id, 제목, 형식(TV·극장판 등), 시작 연도, 장르, 태그(이름·관련도·분류·스포일러 여부), 성인물 여부
 # - links: 위 두 파일 작품의 관계(속편·전편 등)·커뮤니티 추천(평점 순 10개)·인기·다른 이름 → links.jsonl
 #   시즌을 시리즈로 묶고(me;nu 작품 번호), MAL 기록이 없는 신작끼리도 잇는 데 쓴다
+# - detail: 위 두 파일 작품의 줄거리·원작 종류·방영 정보·스튜디오·제작진(관련도 순 25명)·
+#   캐릭터(주연 먼저 10명)와 일본 성우 → detail.jsonl. 작품 특징을 태그 밖으로 넓히는 실험(1-4)에 쓴다
 # - 이미 받은 작품·페이지는 다시 요청하지 않는다
 # - 요청 사이 2.1초 이상 쉰다 (분당 30회 이하). 429 응답이면 Retry-After 만큼 기다린다
 #
@@ -15,6 +17,7 @@
 #   python model/scripts/fetch_anilist.py 50           # 50편만 (시험용)
 #   python model/scripts/fetch_anilist.py recent 1000  # 2022년 이후 인기작 1000편
 #   python model/scripts/fetch_anilist.py links        # 받은 작품들의 관계·추천·인기 (links 25 = 25편만, 시험용)
+#   python model/scripts/fetch_anilist.py detail       # 받은 작품들의 줄거리·스튜디오·제작진·캐릭터·성우 (detail 20 = 20편만)
 #   → model/data/anilist/ (커밋 안 함)
 
 import csv
@@ -31,9 +34,11 @@ MAL = ROOT / "mal_sample" / "interactions.csv"
 OUT = ROOT / "anilist" / "media.jsonl"
 OUT_RECENT = ROOT / "anilist" / "media_recent.jsonl"
 OUT_LINKS = ROOT / "anilist" / "links.jsonl"
+OUT_DETAIL = ROOT / "anilist" / "detail.jsonl"
 URL = "https://graphql.anilist.co"
 PER_REQUEST = 50
 PER_LINKS = 25          # 관계·추천은 작품마다 목록이 붙어서 요청 하나를 작게
+PER_DETAIL = 10         # 제작진·캐릭터·성우까지 붙으면 더 작게 (요청 하나의 복잡도 한도)
 PAUSE = 2.1
 RECENT_AFTER = 20211231  # 이 날짜 다음부터 시작한 작품 (YYYYMMDD)
 
@@ -68,6 +73,20 @@ query ($ids: [Int]) {
   }
 }
 """
+QUERY_DETAIL = """
+query ($ids: [Int], $per: Int) {
+  Page(page: 1, perPage: $per) {
+    media(id_in: $ids, type: ANIME) {
+      id description(asHtml: false) source(version: 3) seasonYear episodes duration countryOfOrigin
+      studios { edges { isMain node { id name isAnimationStudio } } }
+      staff(sort: RELEVANCE, perPage: 25) { edges { role node { id name { full native } } } }
+      characters(sort: [ROLE, RELEVANCE, ID], perPage: 10) {
+        edges { role node { id name { full native } } voiceActors(language: JAPANESE, sort: RELEVANCE) { id name { full native } } }
+      }
+    }
+  }
+}
+"""
 
 
 def fetched_ids():
@@ -98,6 +117,26 @@ def fetch_links(limit=None):
             print(f"  {i + len(ids)}/{len(todo)} · 남은 한도 {remaining}", flush=True)
             time.sleep(PAUSE)
     print(f"끝 → {OUT_LINKS}")
+
+
+def fetch_detail(limit=None):
+    # 줄거리·스튜디오·제작진·캐릭터·성우. 받은 작품은 다시 요청하지 않는다
+    done = set()
+    if OUT_DETAIL.exists():
+        with open(OUT_DETAIL, encoding="utf-8") as f:
+            for line in f:
+                done.update(json.loads(line)["requested_ids"])
+    todo = [a for a in fetched_ids() if a not in done][:limit]
+    print(f"상세 정보 받을 작품 {len(todo)}편 → 요청 {(len(todo) + PER_DETAIL - 1) // PER_DETAIL}번", flush=True)
+    with open(OUT_DETAIL, "a", encoding="utf-8", newline="\n") as f:
+        for i in range(0, len(todo), PER_DETAIL):
+            ids = todo[i:i + PER_DETAIL]
+            media, remaining = post(QUERY_DETAIL, {"ids": ids, "per": PER_DETAIL})
+            f.write(json.dumps({"requested_ids": ids, "media": media}, ensure_ascii=False) + "\n")
+            f.flush()
+            print(f"  {i + len(ids)}/{len(todo)} · 남은 한도 {remaining}", flush=True)
+            time.sleep(PAUSE)
+    print(f"끝 → {OUT_DETAIL}")
 
 
 def top_mal_ids(n):
@@ -166,6 +205,9 @@ def main():
         return
     if len(sys.argv) > 1 and sys.argv[1] == "links":
         fetch_links(int(sys.argv[2]) if len(sys.argv) > 2 else None)
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "detail":
+        fetch_detail(int(sys.argv[2]) if len(sys.argv) > 2 else None)
         return
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
     OUT.parent.mkdir(parents=True, exist_ok=True)

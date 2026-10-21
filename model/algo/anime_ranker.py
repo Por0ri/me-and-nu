@@ -39,6 +39,16 @@ NON_THEME_TAGS = {"Cast-Traits", "Cast-Main Cast", "Technical"}  # anilist_theme
 CHIP_WEIGHT = 1.0               # 온보딩에서 고른 장르·테마 하나 = 그런 작품 하나를 본 만큼
 GENRE_ALIAS = {"Suspense": "Thriller"}  # MAL 장르 이름 → AniList 장르 이름
 
+# 작품 특징에 더할 사람 정보 (1-4 0단계, EXP-26 채택). 묶음마다 비중, 비어 있으면 장르·태그만
+# studio: 애니 제작 주 스튜디오 / staff: 핵심 제작진 / voice: 주연 캐릭터의 일본 성우
+# 흔한 사람일수록 덜 친다 (× log(작품 수 / 그 사람이 붙은 작품 수) / log(작품 수)). 작품 1개에만 나오는 사람은 뺀다
+# 사람 정보는 작품 정보(anilist)에 studios · staff · voices 로 들어 있을 때만 쓰인다 (people_of)
+PEOPLE = {"studio": 1.0, "staff": 1.0, "voice": 1.0}
+PEOPLE_GROUPS = (("studio", "s:", "studios"), ("staff", "p:", "staff"), ("voice", "v:", "voices"))
+KEY_STAFF_ROLES = {"Director", "Chief Director", "Series Composition", "Music", "Character Design",
+                   "Original Creator", "Original Story"}
+WHOLE_WORK_ROLES = {"Script", "Screenplay"}  # 화수 표시가 없을 때만 (극장판 각본). 시리즈의 화별 각본가는 너무 많아서 뺌
+
 # 다음 편 보너스. 최근에 본 시리즈일수록 크고, NEXT_TAU 일마다 약 1/e 로 줄어든다
 # 값은 EXP-04 에서 연습 3,000명으로 고름 (보너스 2~5, 기간 1~3년이면 비슷)
 NEXT_WEIGHT = 5.0
@@ -100,7 +110,39 @@ def build_vectors(anime, anilist, features=FEATURES):
         df = Counter(f for v in vec.values() for f in v)
         n = len(vec)
         vec = {a: {f: w * math.log(n / df[f]) for f, w in v.items() if df[f] < n} for a, v in vec.items()}
+    if PEOPLE:
+        add_people(vec, anilist)
     return vec
+
+
+def people_of(detail):
+    """AniList 상세 정보 한 작품(fetch_anilist.py detail) → 스튜디오 · 핵심 제작진 · 주연 성우 번호"""
+    studios = {e["node"]["id"] for e in (detail.get("studios") or {}).get("edges", [])
+               if e.get("isMain") and e["node"].get("isAnimationStudio")}
+    staff = set()
+    for e in (detail.get("staff") or {}).get("edges", []):
+        role = e.get("role") or ""
+        base = role.split(" (")[0]
+        if base in KEY_STAFF_ROLES or (base in WHOLE_WORK_ROLES and "(" not in role):
+            staff.add(e["node"]["id"])
+    voices = {v["id"] for e in (detail.get("characters") or {}).get("edges", []) if e.get("role") == "MAIN"
+              for v in e.get("voiceActors") or []}
+    return {"studios": studios, "staff": staff, "voices": voices}
+
+
+def add_people(vec, anilist):
+    # 작품 특징에 사람 정보를 PEOPLE 비중으로 더한다. 흔한 사람일수록 덜 치고, 작품 1개에만 나오는 사람은 뺀다
+    groups = [(g, p, k) for g, p, k in PEOPLE_GROUPS if PEOPLE.get(g)]
+    df = Counter(p + str(x) for m in anilist.values() for _, p, k in groups for x in m.get(k, ()))
+    n = sum(1 for m in anilist.values() if any(m.get(k) for _, _, k in groups))
+    if n < 2:
+        return
+    for a, m in anilist.items():
+        for g, p, k in groups:
+            for x in m.get(k, ()):
+                f = p + str(x)
+                if df[f] >= 2 and a in vec:
+                    vec[a][f] = PEOPLE[g] * math.log(n / df[f]) / math.log(n)
 
 
 def build_context(anime, series, popularity, anilist=None, features=FEATURES, events=None):
@@ -122,33 +164,40 @@ def build_context(anime, series, popularity, anilist=None, features=FEATURES, ev
         if a in anime:
             series_items[s].append(a)
 
-    # 작품 × 특징 표. 장르 취향은 이 표로 한 번에 계산한다
     anilist = anilist or {}
-    vec = build_vectors(anime, anilist, features)
-    feats = sorted({f for v in vec.values() for f in v})
-    col = {f: j for j, f in enumerate(feats)}
-    X = np.zeros((n, len(feats)))
-    for a, v in vec.items():
-        if a in row:
-            for f, w in v.items():
-                X[row[a], col[f]] = w
-    vnorm = np.sqrt((X * X).sum(axis=1))
-    vnorm[vnorm == 0] = 1.0
-
     adult = {a for a, v in anime.items() if v["genres"] & ADULT_GENRES}
     adult |= {a for a, m in anilist.items() if m["adult"]}
     start = {a: int(v["start_date"].replace("-", "")) for a, v in anime.items() if v["start_date"]}
 
     ctx = {
         "anime": anime, "ids": ids, "row": row, "series": series, "series_items": series_items,
-        "X": X, "vnorm": vnorm, "feature_col": col, "adult": adult, "start": start,
+        "adult": adult, "start": start,
         "by_popularity": by_popularity, "pop_rank": pop_rank,
         "pop_norm": np.log1p(pop_count) / math.log1p(max(pop_count.max(), 1)),
         "cand_rows": np.array([row[a] for a in by_popularity[:N_CANDIDATES]], dtype=np.int64),
     }
+    build_features(ctx, anilist, features)
     if events is not None:
         build_recent(ctx, *events)
     return ctx
+
+
+def build_features(ctx, anilist, features=FEATURES):
+    # 작품 × 특징 표. 장르 취향은 이 표로 한 번에 계산한다. 특징 설정(FEATURES · PEOPLE)을 바꾸면 다시 부른다
+    # 특징이 있는 작품 줄만 따로 모아 둔다 (Xf). 특징이 없는 작품은 취향 점수가 늘 0이라 계산을 건너뛴다
+    vec = build_vectors(ctx["anime"], anilist, features)
+    feats = sorted({f for v in vec.values() for f in v})
+    col = {f: j for j, f in enumerate(feats)}
+    row = ctx["row"]
+    X = np.zeros((len(ctx["ids"]), len(feats)))
+    for a, v in vec.items():
+        if a in row:
+            for f, w in v.items():
+                X[row[a], col[f]] = w
+    vnorm = np.sqrt((X * X).sum(axis=1))
+    has = np.flatnonzero(vnorm > 0)
+    vnorm[vnorm == 0] = 1.0
+    ctx.update(X=X, vnorm=vnorm, feature_col=col, feat_rows=has, Xf=X[has])
 
 
 def build_recent(ctx, anime_ids, seconds):
@@ -299,7 +348,10 @@ def genre_scores(user, ctx):
         if j is not None:
             p[j] += CHIP_WEIGHT
     norm = math.sqrt(p @ p) or 1.0
-    return (ctx["X"] @ p) / (norm * ctx["vnorm"])  # 코사인 유사도
+    out = np.zeros(len(ctx["ids"]))                   # 특징이 없는 작품은 0
+    r = ctx["feat_rows"]
+    out[r] = (ctx["Xf"] @ p) / (norm * ctx["vnorm"][r])  # 코사인 유사도
+    return out
 
 
 def rank_rows(rows, ctx, *keys):
@@ -463,10 +515,10 @@ def build_cf_borrow(ctx, missing_ids, k=10, use=("tag", "rec")):
     donors = cw[~missing[cw]]                                  # 같이 본 표 안에서 기록이 있는 작품
     col = {r: j for j, r in enumerate(donors.tolist())}
     rows = np.flatnonzero(missing)
-    Xn = ctx["X"] / ctx["vnorm"][:, None]
     W = np.zeros((len(rows), len(donors)))                     # 기록 없는 작품 × 빌려 올 작품 무게
-    if "tag" in use:
-        S = Xn[rows] @ Xn[donors].T
+    if "tag" in use:                                           # 작품 특징 코사인 (PEOPLE 이 있으면 사람 정보 포함)
+        X, vn = ctx["X"], ctx["vnorm"]
+        S = (X[rows] / vn[rows, None]) @ (X[donors] / vn[donors, None]).T
         top = np.argpartition(-S, min(k, len(donors) - 1), axis=1)[:, :k]
         for i in range(len(rows)):
             W[i, top[i]] += np.clip(S[i, top[i]], 0, None)
