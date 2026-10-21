@@ -21,6 +21,8 @@ function load(relative, { react = React, clock } = {}) {
       if (name === 'react/jsx-runtime') return require(name);
       if (name === '@/lib/pivot/transitions') return clock ? load('lib/pivot/transitions.ts', { clock }) : transitions;
       if (name === './pivot-ui') return load('components/pivot/pivot-ui.tsx');
+      if (name === './splash-background') return load('components/pivot/splash-background.tsx');
+      if (name === '@/lib/pivot/moving-gradient/runtime') return { startMovingGradient() { throw new Error('SSR must not initialize WebGPU'); } };
       if (name === 'next/navigation') return { useRouter: () => ({ replace() {} }) };
       if (name.endsWith('.module.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error('Unexpected transition dependency: ' + name);
@@ -269,6 +271,27 @@ test('Splash heading is a programmatic focus target for demo restart', () => {
   const { SplashScreen } = load('components/pivot/splash-screen.tsx');
   const html = renderToStaticMarkup(React.createElement(SplashScreen, { preview: true }));
   assert.match(html, /<h1[^>]*tabindex="-1"/);
+});
+
+test('Splash preserves authored poses and server-renders the static fallback before WebGPU initializes', () => {
+  const { SplashScreen } = load('components/pivot/splash-screen.tsx');
+  const html = renderToStaticMarkup(React.createElement(SplashScreen, { preview: true }));
+  for (const state of [1, 2]) assert.match(html, new RegExp('data-splash-character-state="' + state + '"'));
+  assert.match(html, /\/pivot\/home\/chrome\/mascot.png/);
+  assert.match(html, /\/pivot\/splash\/state-2.png/);
+  assert.match(html, /data-splash-background="static"/);
+  assert.match(html, /<canvas[^>]*width="375"[^>]*height="375"/);
+  assert.doesNotMatch(html, /9:41|imgWifi|imgBatteryEnd/);
+});
+
+test('Splash pose animation uses 800ms states, respects reduced motion, and leaves navigation timing unchanged', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public/pivot/splash/sources.json'), 'utf8'));
+  assert.equal(manifest.stateDurationMs, 800); assert.equal(manifest.periodMs, 1600);
+  assert.equal(manifest.shaderImplemented, true);
+  const css = fs.readFileSync(path.join(root, 'components/pivot/pivot.module.css'), 'utf8');
+  assert.match(css, /1600ms steps\(1, end\) infinite/);
+  assert.match(css, /prefers-reduced-motion: reduce\)\s*{\s*\.splashMascotRest, \.splashMascotRaised\s*{\s*animation: none/);
+  assert.equal(transitions.SPLASH_WAIT_MS, 3000); assert.equal(transitions.SPLASH_DISSOLVE_MS, 300);
 });
 test('All scoped loading assets are present and retain their recorded source hashes', () => {
   const folder = path.join(root, 'public/pivot/loading');

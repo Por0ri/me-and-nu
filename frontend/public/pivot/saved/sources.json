@@ -1,0 +1,44 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "page": "범수님",
+  "nodeId": "1363:8604",
+  "layout": {
+    "viewportWidth": 375,
+    "columns": 2,
+    "cardWidth": 158,
+    "cardHeight": 203,
+    "gap": 10,
+    "radius": 4,
+    "sideInset": 24
+  },
+  "assets": [
+    {
+      "path": "/pivot/home/slide-1.png",
+      "source": "1239:4879",
+      "width": 297,
+      "height": 371,
+      "sha256": "6703fc4f2d1780bd35b68d118d4112510ac3b193c78a6a0a1a5b740769c99700"
+    },
+    {
+      "path": "/pivot/home/slide-5.png",
+      "source": "canonical-demo-reading",
+      "width": 297,
+      "height": 371,
+      "sha256": "dcfc2b11c203f5a94fa580364854bdfbb44546c9a12b8e023411055929af301e"
+    },
+    {
+      "path": "/pivot/home/chrome/logo.svg",
+      "source": "1363:8618",
+      "width": 103,
+      "height": 20.5862,
+      "sha256": "ad1b65d00f4d2ffc9aae292bd0cc97566d6ebc830266472664a32b3c8c1de3d4"
+    },
+    {
+      "path": "/pivot/home/chrome/notification.svg",
+      "source": "594:1659",
+      "width": 24,
+      "height": 24,
+      "sha256": "71468b9cb5180821c7c6457f7a69fa2ae914ab93c682a9cad6c0d0cf14e3766e"
+    }
+  ]
+}

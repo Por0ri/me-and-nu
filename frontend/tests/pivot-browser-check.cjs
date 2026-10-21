@@ -16,7 +16,10 @@ const motion = process.argv[5] || 'reduce';
 const results = [];
 fs.mkdirSync(out, {recursive:true});
 async function ready(page) {
- await page.evaluate(async () => { await document.fonts.ready; await Promise.all([...document.images].map(i=>i.decode().catch(()=>{}))); });
+ await page.evaluate(async () => { await document.fonts.ready; await Promise.all([...document.images].map(i=>{
+  // H2-A introduces offscreen lazy slides; load them before a full-page capture.
+  if(i.loading==='lazy') i.loading='eager'; return i.decode().catch(()=>{});
+ })); });
 }
 async function snapshot(page, name) {
  await ready(page);
@@ -180,7 +183,10 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
   await headingFocused(page);
   assert.equal(await page.locator('main article').count(),3);
   assert.match(await page.getByLabel('시연용 피드 안내').innerText(),/실제 추천 결과가 아니/);
-  assert.equal(await page.locator('main button').count(),1,'Only demo restart is interactive');
+  assert.equal(await page.locator('[data-home-track]').count(),3,'H2-A gives each post a carousel');
+  assert.deepEqual(await page.locator('[data-home-post]').evaluateAll(posts=>posts.map(post=>post.querySelectorAll('[data-home-slide]').length)),[5,3,2]);
+  assert.equal(await page.locator('[data-home-detail]').count(),3);
+  assert.equal(await page.locator('main article a').count(),0,'Pending Detail never links to a missing route');
   const titles = await page.locator('main article h3').allTextContents();
   await page.getByRole('searchbox',{name:'작품 이름',exact:true}).fill('검색하지 않는 입력');
   await page.keyboard.press('Enter');
@@ -248,6 +254,7 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    });
    const page=await context.newPage();page.setDefaultTimeout(10000);
    page.on('pageerror',e=>errors.push(e.message));
+   page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
    const prefix=String(viewport.width);
    if(mode==='blocked-production') {
     const response=await page.goto(base+'/pivot/demo');
@@ -455,7 +462,7 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    assert.equal(await page.evaluate(()=>window.__consumerIntact()),true);
    results.push({viewport,scenario:'service Home unconfigured; no Mock fallback; input only; API and Consumer isolation',apiRequests:0,status:'pass'});
    // Every design preview remains reachable and network-isolated.
-   if(mode !== 'production') {
+   if(mode !== 'production' && mode !== 'approved-preview') {
    for(const screen of ['splash','login','consent','interest','q1','q2','result']) {
     await page.goto(base+'/pivot/preview?screen='+screen);
     await page.locator('main h1').waitFor();await snapshot(page,prefix+'-preview-'+screen);
@@ -463,7 +470,7 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    assert.deepEqual(requests,[]);
    results.push({viewport,scenario:'all seven preview screens',apiRequests:0,status:'pass'});
    }
-   if(mode === 'development') {
+   if(mode === 'development' || mode === 'approved-preview') {
     await page.goto(base+'/pivot/consent');
     await page.getByRole('heading',{name:'로그인 확인'}).waitFor();
     assert.equal(requests.length,0,'Default development configuration must not read APIs');

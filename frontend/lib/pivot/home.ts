@@ -1,10 +1,25 @@
-// FE presentation port only. No recommendation, search, category or backend ID contract.
+// FE display models only. These are not the final Pivot API or recommendation contract.
+export type HomeSlideModel = {
+  id: string;
+  order: number;
+  image?: { src: string; alt: string };
+  description: string;
+};
+
 export type HomeCardModel = {
   id: string;
   title: string;
-  summary: string;
-  image?: { src: string; alt: string };
+  detailContentId: string;
+  slides: readonly HomeSlideModel[];
 };
+
+export type HomeDetailTarget = { postId: string; contentId: string };
+export type HomeDetailHandler = (target: HomeDetailTarget) => void;
+
+/** Keep source data immutable; display order is explicit rather than inferred from IDs. */
+export function orderedHomeSlides(slides: readonly HomeSlideModel[]): HomeSlideModel[] {
+  return [...slides].sort((a, b) => a.order - b.order);
+}
 
 export type HomeViewModel = {
   origin: "demo" | "service";

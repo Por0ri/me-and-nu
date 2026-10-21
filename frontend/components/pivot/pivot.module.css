@@ -55,9 +55,30 @@
 @media (prefers-reduced-motion: reduce) { .splashLeaving { animation: none; } }
 .splashRings { position: absolute; top: calc(50% - 220px); left: 50%; width: 375px; height: 375px; transform: translateX(-50%); }
 .splashRings > img { position: absolute; max-width: none; width: 375px; height: 375px; }
+.splashLiveCircle { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; background: linear-gradient(180deg, #fffdfa 0%, #f6edfd 100%); visibility: hidden; }
+.splashGradientCanvas { display: block; width: 375px; height: 375px; opacity: .2; }
+.splashRings[data-splash-background="animated"] .splashLiveCircle { visibility: visible; }
+.splashRings[data-splash-background="animated"] .splashStaticCircle { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .splashRings[data-splash-background="animated"] .splashLiveCircle { visibility: hidden; }
+  .splashRings[data-splash-background="animated"] .splashStaticCircle { visibility: visible; }
+}
 .splashBrand { position: absolute; top: calc(50% - 46px); left: calc(50% - 70.5px); }
-.splashMascot { position: absolute; width: 322px; height: 172px; bottom: 0; left: calc(50% - 161px); overflow: hidden; pointer-events: none; }
-.splashMascot img { position: absolute; width: 97.78%; height: 153.89%; max-width: none; left: 1.11%; top: -53.89%; }
+.splashMascot { position: absolute; width: 322px; height: 207px; bottom: 0; left: calc(50% - 155.5px); pointer-events: none; }
+/* Figma CHANGE_TO has no transition: swap the two authored crops every 800ms.
+   The raised pose is 35px taller and uses a different expression, not a translated still. */
+.splashMascotRest, .splashMascotRaised { position: absolute; bottom: 0; overflow: hidden; animation: pivot-mascot-rest 1600ms steps(1, end) infinite; }
+.splashMascotRest { left: 0; width: 322px; height: 172px; }
+.splashMascotRaised { left: 9.5px; width: 303px; height: 207px; animation-name: pivot-mascot-raised; opacity: 0; }
+.splashMascotRest img { position: absolute; width: 97.78%; height: 153.89%; max-width: none; left: 1.11%; top: -53.89%; }
+.splashMascotRaised img { position: absolute; width: 97.78%; height: 140.79%; max-width: none; left: 1.11%; top: -18.45%; }
+@keyframes pivot-mascot-rest { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes pivot-mascot-raised { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .splashMascotRest, .splashMascotRaised { animation: none; }
+  .splashMascotRest { opacity: 1; }
+  .splashMascotRaised { opacity: 0; }
+}
 .skip { position: absolute; top: 48px; left: 24px; background: white; padding: 12px; transform: translateY(-200px); }
 .skip:focus { transform: none; }
 .loginIntro { display: flex; flex-direction: column; align-items: center; gap: 48px; padding-top: 152px; margin-inline: 24px; }

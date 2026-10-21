@@ -1,0 +1,26 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "page": "범수님",
+  "nodeId": "1206:2889",
+  "periodMs": 1600,
+  "stateDurationMs": 800,
+  "transition": "CHANGE_TO / no transition",
+  "shaderImplemented": true,
+  "shaderRenderer": "WebGPU / original WGSL / static fallback",
+  "assets": [
+    {
+      "path": "/pivot/home/chrome/mascot.png",
+      "state": 1,
+      "nodeId": "1206:2893",
+      "figmaImageHash": "63294ffdc9b06f1915cfac0c38683e49739ad8c1",
+      "sha256": "ce71b1804e9afc4a2f24be9905aaf4e7716bf5f15297169a1f1359b4e759c807"
+    },
+    {
+      "path": "/pivot/splash/state-2.png",
+      "state": 2,
+      "nodeId": "1206:2891",
+      "figmaAsset": "daf140a6-c34a-4b5a-9a41-e3ac953d01c0",
+      "sha256": "65d51e33fae7353b7aa450bbec36bff9191e6864c9e50e516fe331ae739f978d"
+    }
+  ]
+}
