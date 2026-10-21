@@ -10,7 +10,7 @@ from ani_menu_agent.models import (
     LanguageReview,
     UsageRecord,
 )
-from ani_menu_agent.nodes import _merge_copy_revision, route_review
+from ani_menu_agent.nodes import _merge_copy_revision, _remove_copy_pages, route_review
 
 SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sample_content.json"
 GENERATION_SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "generation_input.json"
@@ -48,7 +48,14 @@ def _review_fixture(pages: int) -> dict:
     }
 
 
-def test_graph_uses_independent_reviewer_without_approving_fixture_for_feed() -> None:
+def test_graph_uses_independent_reviewer_without_approving_fixture_for_feed(monkeypatch) -> None:
+    from ani_menu_agent.agents.reviewer import agent as reviewer_agent
+
+    monkeypatch.setattr(
+        reviewer_agent,
+        "AgentRepository",
+        lambda: (_ for _ in ()).throw(AssertionError("offline fixture must not access a DB")),
+    )
     package = json.loads(SAMPLE.read_text(encoding="utf-8"))
     result = build_graph().invoke(
         {
@@ -157,7 +164,7 @@ def test_low_fan_engagement_fails_language_gate() -> None:
     assert any(issue.code == "LANGUAGE_FAN_ENGAGEMENT" for issue in issues)
 
 
-def test_cover_and_ending_require_stronger_fan_hook_than_middle_cards() -> None:
+def test_cover_and_ending_accept_adequate_fan_hook_score() -> None:
     review = LanguageReview.model_validate(
         {
             "content_type_fit": 5,
@@ -180,7 +187,7 @@ def test_cover_and_ending_require_stronger_fan_hook_than_middle_cards() -> None:
 
     _, _, _, issues = _score_language(review, hook_pages={1, 3})
 
-    assert [issue.page for issue in issues if issue.code == "LANGUAGE_FAN_ENGAGEMENT"] == [1, 3]
+    assert not any(issue.code == "LANGUAGE_FAN_ENGAGEMENT" for issue in issues)
 
 
 def test_safety_issue_is_a_non_compensable_reviewer_blocker() -> None:
@@ -279,6 +286,47 @@ def test_copy_revision_replaces_only_flagged_page_and_preserves_other_cards() ->
         ["기존 마무리"],
     ]
     assert [card.image_id for card in merged] == ["image-1", "image-2-new", "image-3"]
+
+
+def test_explicit_reviewer_card_removal_reindexes_remaining_cards() -> None:
+    payload = json.loads(SAMPLE.read_text(encoding="utf-8"))
+    cards = [CopyCard.model_validate(card) for card in payload["cards"]]
+
+    kept = _remove_copy_pages(cards, [2])
+
+    assert [card.page for card in kept] == [1, 2, 3]
+    assert [card.role for card in kept] == ["cover", "detail", "ending"]
+
+
+def test_visual_repair_preserves_copy_and_uses_each_source_image_only_once() -> None:
+    from ani_menu_agent.agents.content_generation.graph import build_content_generation_agent
+    from ani_menu_agent.layout_engine import build_cards
+    from ani_menu_agent.models import ContentPackage
+
+    package = ContentPackage.model_validate_json(SAMPLE.read_text(encoding="utf-8"))
+    copies = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
+    ]
+    copies[2] = copies[2].model_copy(update={"image_id": copies[1].image_id})
+    package.cards = build_cards(copies, package.images)
+    titles_before = [card.title_lines for card in package.cards]
+
+    result = build_content_generation_agent().invoke(
+        {
+            "package": package.model_dump(mode="json"),
+            "trace": [],
+            "needs_revision": True,
+            "revision_owner": "image_curator",
+            "render_required": False,
+        }
+    )
+    repaired = ContentPackage.model_validate(result["package"])
+    source_images = [card.image_id for card in repaired.cards if card.visual_mode == "source_image"]
+
+    assert result["status"] == "visuals_repaired"
+    assert result["trace"] == ["visual_repair"]
+    assert len(source_images) == len(set(source_images))
+    assert [card.title_lines for card in repaired.cards] == titles_before
 
 
 def test_empty_cards_use_structured_generation_path(monkeypatch) -> None:
@@ -401,9 +449,10 @@ def test_offline_fixture_uses_no_llm(monkeypatch) -> None:
     assert result["usage_records"][0]["model"] == "offline-fixture"
     assert result["usage_records"][0]["estimated_cost_usd"] == 0
     assert len(result["package"]["cards"]) == 4
+    assert all(card["visual_mode"] == "source_image" for card in result["package"]["cards"])
 
 
-def test_unverified_rights_returns_to_crawler_before_generation() -> None:
+def test_unverified_image_pool_returns_for_recollection_before_copywriting() -> None:
     package = json.loads(GENERATION_SAMPLE.read_text(encoding="utf-8"))
     for image in package["images"]:
         image["rights_status"] = "needs_review"
@@ -428,10 +477,11 @@ def test_unverified_rights_returns_to_crawler_before_generation() -> None:
             "revision_count": 0,
             "max_revision": 2,
             "allow_llm": False,
+            "review_fixture": _review_fixture(4),
         }
     )
-    assert result["revision_count"] == 0
-    assert result.get("usage_records", []) == []
-    assert result["status"] == "needs_crawler_update"
     assert "copy_writer" not in result["trace"]
-    assert result["editorial_decision"] == "return_to_crawler"
+    assert "usage_records" not in result
+    assert result["status"] == "needs_crawler_update"
+    assert result["qa_report"][0]["code"] == "SOURCE_IMAGE_POOL_INSUFFICIENT"
+    assert "crawler_update_required" in result["trace"]

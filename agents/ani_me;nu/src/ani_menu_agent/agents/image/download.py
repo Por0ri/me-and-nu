@@ -68,13 +68,21 @@ def _validate_public_https(url: str, source: SourceEvidence) -> None:
             raise ImageDownloadError("내부 네트워크 주소로 연결되는 이미지는 받을 수 없습니다.")
 
 
+def _image_request_headers(source: SourceEvidence) -> dict[str, str]:
+    return {
+        "User-Agent": "me-nu-content-agent/0.3 (image asset fetcher)",
+        # Some official sites reject hotlinked image requests without the page origin.
+        "Referer": str(source.url),
+    }
+
+
 def _fetch_bytes(
     url: str,
     source: SourceEvidence,
     timeout: float,
     robots_cache: dict[str, RobotFileParser | None] | None = None,
 ) -> tuple[bytes, str]:
-    headers = {"User-Agent": "me-nu-content-agent/0.3 (image asset fetcher)"}
+    headers = _image_request_headers(source)
     with httpx.Client(timeout=timeout, follow_redirects=False, headers=headers) as client:
         current_url = url
         for _ in range(REDIRECT_LIMIT + 1):
@@ -148,7 +156,7 @@ def _check_robots(
 
 def _validated_image(
     payload: bytes, content_type: str
-) -> tuple[str, int, int, bool, NormalizedBox | None]:
+) -> tuple[str, int, int, bool, float | None, NormalizedBox | None]:
     try:
         with Image.open(io.BytesIO(payload)) as image:
             image_format = (image.format or "").upper()
@@ -158,8 +166,13 @@ def _validated_image(
             rgba = image.convert("RGBA")
             alpha = rgba.getchannel("A")
             has_alpha = alpha.getextrema()[0] < 255
+            alpha_coverage = None
             alpha_box = None
             if has_alpha:
+                sampled_alpha = alpha.resize((min(width, 128), min(height, 128)))
+                alpha_coverage = sum(sampled_alpha.histogram()[17:]) / (
+                    sampled_alpha.width * sampled_alpha.height
+                )
                 bbox = alpha.point(lambda value: 255 if value > 8 else 0).getbbox()
                 if bbox is not None:
                     left, top, right, bottom = bbox
@@ -175,7 +188,7 @@ def _validated_image(
         raise ImageDownloadError(f"지원하지 않는 이미지 포맷입니다: {image_format or content_type}")
     if width < 1 or height < 1 or width * height > MAX_IMAGE_PIXELS:
         raise ImageDownloadError("이미지 크기가 허용 범위를 벗어났습니다.")
-    return ALLOWED_FORMATS[image_format], width, height, has_alpha, alpha_box
+    return ALLOWED_FORMATS[image_format], width, height, has_alpha, alpha_coverage, alpha_box
 
 
 def download_image(
@@ -196,7 +209,9 @@ def download_image(
         )
     source = _source_for_image(package, image)
     payload, content_type = _fetch_bytes(str(image.url), source, timeout, robots_cache)
-    suffix, width, height, has_alpha, subject_box = _validated_image(payload, content_type)
+    suffix, width, height, has_alpha, alpha_coverage, subject_box = _validated_image(
+        payload, content_type
+    )
     digest = hashlib.sha256(payload).hexdigest()
     return image.model_copy(
         update={
@@ -208,6 +223,7 @@ def download_image(
             "width": width,
             "height": height,
             "has_alpha": has_alpha,
+            "alpha_coverage": alpha_coverage,
             "subject_box": subject_box,
             "fingerprint": digest,
             "download_status": "downloaded",

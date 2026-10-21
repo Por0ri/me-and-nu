@@ -18,6 +18,10 @@ def test_source_registry_is_valid() -> None:
         "ja_kyosai_official",
         "naruto_official",
         "attack_on_titan_official",
+        "one_piece_official",
+        "my_hero_academia_official",
+        "the_fable_anime_official",
+        "bleach_anime_official",
     }
     assert {source.id for source in registry.collectable_sources} == {
         "anime_schedule_rss",
@@ -32,14 +36,38 @@ def test_source_registry_is_valid() -> None:
         "ja_kyosai_official",
         "naruto_official",
         "attack_on_titan_official",
+        "one_piece_official",
+        "my_hero_academia_official",
+        "the_fable_anime_official",
+        "bleach_anime_official",
         "ruliweb_anime_info",
         "reddit_anime",
     }
     aniplus = next(source for source in registry.sources if source.id == "aniplus")
     assert aniplus.status == "terms_review"
+    naruto = next(source for source in registry.sources if source.id == "naruto_official")
+    assert "cmsapi-frontend.naruto-official.com" in naruto.allowed_asset_hosts
     natsume = next(source for source in registry.sources if source.id == "natsume_official")
     assert natsume.work_title_ko == "나츠메 우인장"
     assert natsume.work_title_original == "夏目友人帳"
     assert any(source.role == "primary" for source in registry.sources)
     assert any(source.role == "trend" for source in registry.sources)
     assert len({source.id for source in registry.sources}) == len(registry.sources)
+
+
+def test_new_community_sources_are_registered_but_never_auto_collected() -> None:
+    registry = load_source_registry()
+    expected = {
+        "theqoo_anime_trend",
+        "dcinside_anime_trend",
+        "arca_live_anime_trend",
+        "fmkorea_anime_trend",
+    }
+    by_id = {source.id: source for source in registry.community_sources}
+
+    assert expected <= set(by_id)
+    assert all(by_id[source_id].role == "trend" for source_id in expected)
+    assert all(by_id[source_id].collection == "manual" for source_id in expected)
+    assert all(by_id[source_id].status != "trend_only" for source_id in expected)
+    assert not (expected & {source.id for source in registry.collectable_sources})
+    assert by_id["dcinside_anime_trend"].status == "permission_required"

@@ -1,6 +1,7 @@
 """이미지 원본을 자르지 않고 카드에 맞추는 결정적 레이아웃 엔진."""
 
 from ani_menu_agent.models import CardSpec, CopyCard, ImageAsset, LayoutSpec, NormalizedBox
+from ani_menu_agent.policy import POLICY
 
 
 def _aspect(image: ImageAsset) -> float:
@@ -37,6 +38,39 @@ def _cover_layout(image: ImageAsset) -> LayoutSpec:
         background_style="blur",
         image_box=NormalizedBox(x=0.04, y=0.04, width=0.92, height=0.54),
         copy_box=NormalizedBox(x=0.05, y=0.61, width=0.90, height=0.31),
+        image_scale=1.0,
+        image_offset_y=0.0,
+        contrast_mode="scrim_required",
+        blur_background=True,
+    )
+
+
+def _image_led_cover_layout(image: ImageAsset) -> LayoutSpec:
+    """Feature source art without placing headlines over its embedded credits."""
+    aspect = _aspect(image)
+    if aspect >= 1.18:
+        # A landscape image is matched to a shallow top hero, avoiding a large
+        # empty band above it while preserving the complete source frame.
+        return LayoutSpec(
+            template="full_bleed",
+            fit_mode="contain_blur",
+            background_style="blur",
+            image_box=NormalizedBox(x=0.02, y=0.045, width=0.96, height=0.52),
+            copy_box=NormalizedBox(x=0.055, y=0.55, width=0.89, height=0.39),
+            image_scale=1.0,
+            image_offset_y=0.0,
+            contrast_mode="scrim_required",
+            blur_background=True,
+        )
+    if aspect < 0.45:
+        # Dense, very tall artwork needs the poster treatment to stay readable.
+        return _poster_side_layout("left")
+    return LayoutSpec(
+        template="full_bleed",
+        fit_mode="contain_blur",
+        background_style="blur",
+        image_box=NormalizedBox(x=0.02, y=0.045, width=0.96, height=0.50),
+        copy_box=NormalizedBox(x=0.055, y=0.59, width=0.89, height=0.34),
         image_scale=1.0,
         image_offset_y=0.0,
         contrast_mode="scrim_required",
@@ -134,6 +168,26 @@ def _portrait_side_layout(image_side: str) -> LayoutSpec:
     )
 
 
+def _portrait_side_layout_for_resolution(image: ImageAsset, image_side: str) -> LayoutSpec:
+    """Use a compact portrait placement when the source cannot support a hero crop."""
+    large_layout = _portrait_side_layout(image_side)
+    target_width = (
+        POLICY.logical_card_width
+        * large_layout.image_box.width
+        * POLICY.image_quality_target_dpr
+    )
+    target_height = (
+        POLICY.logical_card_height
+        * large_layout.image_box.height
+        * POLICY.image_quality_target_dpr
+    )
+    required_scale = min(target_width / image.width, target_height / image.height)
+    if required_scale <= POLICY.max_image_upscale:
+        return large_layout
+    # A narrower, still tall image area keeps a 500×750 official asset sharp at 4× output.
+    return _side_layout(image_side)
+
+
 def _detail_layout(image: ImageAsset, page: int, copy: CopyCard) -> LayoutSpec:
     aspect = _aspect(image)
     copy_length = len("".join(copy.title_lines)) + sum(map(len, copy.body_sentences))
@@ -148,7 +202,7 @@ def _detail_layout(image: ImageAsset, page: int, copy: CopyCard) -> LayoutSpec:
     if compact_copy and _is_dense_portrait(image, aspect):
         return _poster_side_layout(image_side)
     if compact_copy and aspect < 0.90:
-        return _portrait_side_layout(image_side)
+        return _portrait_side_layout_for_resolution(image, image_side)
     if compact_copy and aspect < 1.18:
         return _side_layout(image_side)
     if aspect >= 1.18 and compact_copy:
@@ -161,10 +215,25 @@ def _ending_layout(image: ImageAsset, page: int, copy: CopyCard) -> LayoutSpec:
     if _is_dense_portrait(image, aspect):
         return _poster_side_layout("right" if page % 2 else "left")
     if aspect < 0.90:
-        return _portrait_side_layout("right" if page % 2 else "left")
+        return _portrait_side_layout_for_resolution(
+            image, "right" if page % 2 else "left"
+        )
     if aspect >= 1.18:
         return _wide_layout("bottom")
     return _stacked_layout(palette=True)
+
+
+def _editorial_graphic_layout(page: int) -> LayoutSpec:
+    """Reserve a calm, full-card composition for original text-led visual storytelling."""
+    return LayoutSpec(
+        template="editorial_graphic",
+        fit_mode="contain",
+        background_style="palette",
+        image_box=NormalizedBox(x=0.08, y=0.12, width=0.84, height=0.30),
+        copy_box=NormalizedBox(x=0.08, y=0.44, width=0.84, height=0.43),
+        contrast_mode="light_on_dark",
+        blur_background=False,
+    )
 
 
 def build_cards(copy_cards: list[CopyCard], images: list[ImageAsset]) -> list[CardSpec]:
@@ -172,8 +241,14 @@ def build_cards(copy_cards: list[CopyCard], images: list[ImageAsset]) -> list[Ca
     cards: list[CardSpec] = []
     last_page = max(card.page for card in copy_cards)
     for copy in sorted(copy_cards, key=lambda item: item.page):
-        if copy.image_id not in image_by_id and images:
-            copy = copy.model_copy(update={"image_id": images[(copy.page - 1) % len(images)].id})
+        if copy.visual_mode == "editorial_graphic":
+            cards.append(
+                CardSpec(
+                    **copy.model_dump(),
+                    layout=_editorial_graphic_layout(copy.page),
+                )
+            )
+            continue
         image = image_by_id.get(copy.image_id)
         if image is None:
             # 품질 게이트가 IMAGE_MISSING으로 잡을 수 있도록 안전한 더미 치수를 사용합니다.
@@ -183,7 +258,7 @@ def build_cards(copy_cards: list[CopyCard], images: list[ImageAsset]) -> list[Ca
                 source_url="https://invalid.example/",
             )
         layout = (
-            _cover_layout(image)
+            _image_led_cover_layout(image)
             if copy.page == 1
             else _ending_layout(image, copy.page, copy)
             if copy.page == last_page

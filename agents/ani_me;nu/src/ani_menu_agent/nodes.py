@@ -4,7 +4,7 @@ from pydantic import ValidationError
 
 from ani_menu_agent.agents.common import append_trace
 from ani_menu_agent.generation import generate_copy_deck
-from ani_menu_agent.image_selection import assign_distinct_images, image_coverage_issue
+from ani_menu_agent.image_selection import assign_distinct_images
 from ani_menu_agent.layout_engine import build_cards
 from ani_menu_agent.models import ContentPackage, CopyCard, QualityIssue
 from ani_menu_agent.policy import POLICY
@@ -24,6 +24,59 @@ def _merge_copy_revision(
     for page in revision_pages:
         cards_by_page[page] = replacement_by_page[page]
     return [cards_by_page[page] for page in sorted(cards_by_page)]
+
+
+def _remove_copy_pages(cards: list[CopyCard], remove_pages: list[int]) -> list[CopyCard]:
+    """Honor an explicit reviewer request to drop a redundant middle card."""
+    removed = set(remove_pages)
+    kept = [card for card in cards if card.page not in removed]
+    if len(kept) < POLICY.min_cards:
+        raise RuntimeError("카드 삭제 후 최소 장수에 미달해 자동 삭제할 수 없습니다.")
+    return [card.model_copy(update={"page": index}) for index, card in enumerate(kept, start=1)]
+
+
+def _normalize_structural_roles(cards: list[CopyCard]) -> list[CopyCard]:
+    """Roles are positional structure, not free-form copywriter output."""
+    ordered = sorted(cards, key=lambda item: item.page)
+    last = len(ordered) - 1
+    return [
+        card.model_copy(
+            update={
+                "role": "cover" if index == 0 else "ending" if index == last else "detail"
+            }
+        )
+        for index, card in enumerate(ordered)
+    ]
+
+
+def _cover_image_issue(package: ContentPackage) -> QualityIssue | None:
+    final_page = max((card.page for card in package.cards), default=0)
+    graphic_pages = [card.page for card in package.cards if card.visual_mode == "editorial_graphic"]
+    missing_cards = [
+        card
+        for card in package.cards
+        if (
+            card.visual_mode != "source_image"
+            or card.image_id not in {image.id for image in package.images}
+        )
+        and not (
+            card.role == "ending"
+            and card.page == final_page
+            and graphic_pages == [final_page]
+        )
+    ]
+    if missing_cards:
+        missing_page = missing_cards[0].page
+        return QualityIssue(
+            code="SOURCE_IMAGE_MISSING",
+            message=(
+                "정보형 캐러셀 표지에 사용할 공식 원본 이미지가 없습니다. "
+                "공식 이미지 자료를 다시 수집한 뒤 표지를 생성하세요."
+            ),
+            page=missing_page,
+            owner="image_curator",
+        )
+    return None
 
 
 def intake(state: ContentState) -> ContentState:
@@ -49,26 +102,26 @@ def intake(state: ContentState) -> ContentState:
 def rights_preflight(state: ContentState) -> ContentState:
     """차단된 이미지뿐이면 LLM 호출 전에 크롤러로 되돌립니다."""
     package = ContentPackage.model_validate(state["package"])
-    coverage_issue = image_coverage_issue(package)
-    if coverage_issue is None:
+    from ani_menu_agent.image_selection import distinct_editorial_images
+
+    eligible_images = distinct_editorial_images(package.images, package.sources)
+    required_images = max(POLICY.min_cards - 1, len(package.cards) - 1)
+    if len(eligible_images) < required_images:
+        issue = QualityIssue(
+            code="SOURCE_IMAGE_POOL_INSUFFICIENT",
+            message=(
+                f"Only {len(eligible_images)} distinct usable images are available for "
+                f"{required_images} cards; collect more relevant official images."
+            ),
+            owner="image_curator",
+        )
         return {
             "trace": append_trace(state, "rights_preflight"),
-            "status": "rights_cleared",
+            "package": package.model_dump(mode="json"),
+            "qa_report": [issue.model_dump(mode="json")],
+            "status": "needs_crawler_update",
         }
-    issue = QualityIssue.model_validate(coverage_issue)
-    if not package.images:
-        issue = issue.model_copy(
-            update={
-                "code": "IMAGE_RIGHTS_REVIEW",
-                "message": "이용 범위와 출처가 확인된 공식 이미지가 없습니다.",
-            }
-        )
-    return {
-        "trace": append_trace(state, "rights_preflight"),
-        "status": "needs_crawler_update",
-        "qa_report": [issue.model_dump(mode="json")],
-        "revision_owner": "image_curator",
-    }
+    return {"trace": append_trace(state, "rights_preflight"), "status": "rights_cleared"}
 
 
 def copy_writer(state: ContentState) -> ContentState:
@@ -106,33 +159,59 @@ def copy_writer(state: ContentState) -> ContentState:
     issues = [QualityIssue.model_validate(issue) for issue in state.get("qa_report", [])]
     existing_cards = None
     revision_pages: list[int] = []
+    remove_pages: list[int] = []
+    remove_only = False
     if revising_copy and package.cards:
         existing_cards = [
             CopyCard.model_validate(card.model_dump(exclude={"layout"})).model_dump(mode="json")
             for card in package.cards
         ]
         copy_issues = [issue for issue in issues if issue.owner == "copy_writer"]
+        removable_pages = {
+            issue.page
+            for issue in copy_issues
+            if issue.page is not None
+            and any(
+                token in issue.message
+                for token in ("덜어내세요", "카드를 제거", "카드를 삭제")
+            )
+        }
+        removable_pages &= {
+            card.page for card in package.cards if card.role not in {"cover", "ending"}
+        }
+        if len(package.cards) - len(removable_pages) >= POLICY.min_cards:
+            remove_pages = sorted(removable_pages)
+        copy_issues = [issue for issue in copy_issues if issue.page not in remove_pages]
+        remove_only = bool(remove_pages) and not copy_issues
         page_issues = [issue.page for issue in copy_issues if issue.page is not None]
         # Global issues cannot safely be assigned to one page; in that case the LLM
         # may revise the whole deck. Page-scoped issues stay limited to their cards.
         if copy_issues and all(issue.page is not None for issue in copy_issues):
             revision_pages = sorted(set(page_issues))
-    generated = generate_copy_deck(
-        package,
-        issues=issues,
-        existing_cards=existing_cards,
-        revision_pages=revision_pages,
-    )
-    generated_cards = generated.deck.cards
-    if not existing_cards or not revision_pages:
-        package.content_type = generated.deck.content_type
-    if not existing_cards or not revision_pages:
-        package.editorial_angle = generated.deck.editorial_angle
-        package.cover_mode = generated.deck.cover_mode
-        package.ending_mode = generated.deck.ending_mode
-    if existing_cards and revision_pages:
-        generated_cards = _merge_copy_revision(existing_cards, generated_cards, revision_pages)
-    usage_records = [*state.get("usage_records", []), generated.usage.model_dump(mode="json")]
+    usage_records = list(state.get("usage_records", []))
+    generation_issues = [issue for issue in issues if issue.page not in remove_pages]
+    if revising_copy and existing_cards and remove_only:
+        generated_cards = [CopyCard.model_validate(card) for card in existing_cards]
+    else:
+        generated = generate_copy_deck(
+            package,
+            issues=generation_issues,
+            existing_cards=existing_cards,
+            revision_pages=revision_pages,
+            revision_attempt=state.get("review_failures", 0) if revising_copy else 0,
+        )
+        generated_cards = generated.deck.cards
+        if not existing_cards or not revision_pages:
+            package.content_type = generated.deck.content_type
+        if not existing_cards or not revision_pages:
+            package.editorial_angle = generated.deck.editorial_angle
+            package.cover_mode = generated.deck.cover_mode
+            package.ending_mode = generated.deck.ending_mode
+        if existing_cards and revision_pages:
+            generated_cards = _merge_copy_revision(existing_cards, generated_cards, revision_pages)
+        usage_records.append(generated.usage.model_dump(mode="json"))
+    if remove_pages:
+        generated_cards = _remove_copy_pages(generated_cards, remove_pages)
     for _attempt in range(2):
         oversized = [
             card
@@ -167,6 +246,7 @@ def copy_writer(state: ContentState) -> ContentState:
             revision_pages,
         )
         usage_records.append(revised.usage.model_dump(mode="json"))
+    generated_cards = _normalize_structural_roles(generated_cards)
     if any(
         len(" ".join(card.body_sentences).strip()) > POLICY.max_body_chars
         for card in generated_cards
@@ -203,28 +283,43 @@ def layout_director(state: ContentState) -> ContentState:
             }
         return {"trace": append_trace(state, "layout_director"), "status": "layout_supplied"}
     copies = [CopyCard.model_validate(card) for card in state["draft_cards"]]
-    copies, images_assigned = assign_distinct_images(copies, package)
-    if not images_assigned:
-        issue = QualityIssue.model_validate(
-            image_coverage_issue(package, card_count=len(copies))
-            or {
-                "code": "IMAGE_COVERAGE_INSUFFICIENT",
-                "message": "각 카드에 서로 다른 공식 이미지를 배정할 수 없습니다.",
-                "owner": "image_curator",
-            }
-        )
+    copies = assign_distinct_images(copies, package)
+    package.cards = build_cards(copies, package.images)
+    cover_issue = _cover_image_issue(package)
+    if cover_issue:
         return {
             "trace": append_trace(state, "layout_director"),
             "package": package.model_dump(mode="json"),
-            "qa_report": [issue.model_dump(mode="json")],
-            "revision_owner": "image_curator",
+            "qa_report": [cover_issue.model_dump(mode="json")],
             "status": "needs_crawler_update",
         }
-    package.cards = build_cards(copies, package.images)
     return {
         "trace": append_trace(state, "layout_director"),
         "package": package.model_dump(mode="json"),
         "status": "layout_planned",
+    }
+
+
+def repair_visual_assignments(state: ContentState) -> ContentState:
+    """Repair only the visual layer after review; copy and verified facts stay untouched."""
+    package = ContentPackage.model_validate(state["package"])
+    copies = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
+    ]
+    repaired = assign_distinct_images(copies, package)
+    package.cards = build_cards(repaired, package.images)
+    cover_issue = _cover_image_issue(package)
+    if cover_issue:
+        return {
+            "trace": append_trace(state, "visual_repair"),
+            "package": package.model_dump(mode="json"),
+            "qa_report": [cover_issue.model_dump(mode="json")],
+            "status": "needs_crawler_update",
+        }
+    return {
+        "trace": append_trace(state, "visual_repair"),
+        "package": package.model_dump(mode="json"),
+        "status": "visuals_repaired",
     }
 
 

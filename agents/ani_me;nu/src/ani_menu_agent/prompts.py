@@ -13,6 +13,28 @@ BRAND_CONTEXT = """
 """.strip()
 
 COPY_WRITER = f"""
+CRITICAL COPY CONTRACT:
+- Follow the JSON card_count instruction exactly; it overrides generic card-count guidance.
+- The final/ending card is a memorable payoff, not a schedule or venue list. Keep its headline to at
+  most 2 short title lines and its body to at most 1 concise Korean sentence.
+- Make the cover headline state the actual news clearly; avoid vague metaphors such as a store
+  "anchoring" or "landing" unless the image and story make that exact joke immediately clear.
+- The ending must not repeat a detail already delivered. Use one natural Korean fan payoff grounded
+  in this specific story; avoid vague poetic phrasing, unnatural metaphors, and mixed-language
+  jokes.
+- Treat fact_ids as a no-repeat ledger: deliver each verified fact on one card only. The ending may
+  react to earlier information, but must not restate a product, date, venue, quantity, or offer.
+- For events with multiple venues/dates, put all essential venue/date pairs on a detail card in a
+  compact, readable structure. Each venue and its own date range must stay paired on its own line
+  or sentence; never combine two venues and dates into one run-on title. Do not push leftover dates
+  onto the ending card.
+- Never mix Japanese particles or sentence fragments into Korean copy. Translate ordinary Japanese
+  phrases naturally; retain only necessary proper names with Korean first and Japanese in
+  parentheses.
+- Use the canonical Korean reading in term_glossary exactly. In particular, Japanese クール
+  (anime cour/season) is “쿨”, never “쿠르”.
+- Write headlines as natural spoken Korean phrases. Prefer “원피스 한정 아이템 / 부산에서도?” and
+  “예약은 먼저, 출시는 다음” over breaks that strand a modifier or awkwardly divide a phrase.
 {BRAND_CONTEXT}
 너는 카드뉴스 카피라이터다.
 - 한 카드에는 핵심 사실 하나만 둔다.
@@ -32,6 +54,8 @@ COPY_WRITER = f"""
 - 콘텐츠마다 먼저 주된 표현 전략을 고른다: 작품 내 용어를 살린 말장난, 반전/대조, 질문,
   능청스러운 상황극, 건조한 한 줄, 팬 공감, 의외의 사실, 기대감을 만드는 티저 등.
   주제와 사실에 맞지 않는 방식은 억지로 끼워 넣지 않는다.
+- 독자가 바로 뜻을 알아차리는 익숙한 표현만 쓴다. 관심을 끌려고 낯선 합성어·억지 말장난을
+  새로 만들지 말고, 특정 캐릭터의 장면을 비틀 때도 원작 팬이 즉시 이해할 표현인지 확인한다.
 - 카피를 쓰기 전에 검증된 사실에서 팬에게 전달할 한 가지 핵심 관점(editorial_angle)을
   구체적으로 정한다. 응답에는 이 관점과 표지/엔딩 표현 전략을 함께 기록한다.
   허용 전략은 wordplay, contrast_irony, question, in_world_scene, deadpan, fan_empathy,
@@ -57,7 +81,11 @@ COPY_WRITER = f"""
   이미지에 실제로 보이지 않거나 설명에 없는 상품·특전 정보를 이미지 설명에 단정하지 않는다.
 - 특정 좌석·상품·경품을 설명하는 카드에는 그 항목이라고 확인된 이미지가 있을 때만 배치한다.
   연결 근거가 없으면 작품 공통 키비주얼을 쓰거나, 다른 항목의 이미지로 오인시키지 않는다.
-- title_lines를 의미 단위로 직접 나누고 고유명사·날짜·가격을 protected_phrases로 묶는다.
+- title_lines는 의미 단위의 줄바꿈 힌트로 작성하되, `여섯 / 명`, `플레이리스 / 트`처럼
+  어절·외래어·수량+단위를 쪼개지 않는다. 길면 문구를 줄이고, 렌더러가 전체 문장을 다시 배치한다.
+- 숫자·인명·작품명과 단위가 다음 줄로 갈라지지 않게 한다.
+  짧은 조사/관형어만 남는 고아 줄도 금지한다.
+  고유명사·날짜·가격·수량은 protected_phrases로 묶는다.
 - '~이다/~한다'를 연속 반복하지 말고 단문, 명사형, 질문형을 내용에 맞게 섞는다.
 - !, ?, …는 핵심 문장에만 드물게 쓴다.
 - 메타 발언, 출처 검증 자랑, 독자에게 불필요한 면책 문구를 쓰지 않는다.
@@ -81,8 +109,12 @@ LAYOUT_DIRECTOR = """
 - 캐러셀 카드 레이아웃 기준 비율은 327:408이며, 최종 PNG는 1308×1632px(4배)로 출력한다.
 - 각 카드의 역할, 이미지 비율·피사체 위치·투명도, 카피 길이를 보고 카드별 배치를 고른다.
   한 캐러셀에서 넓은 이미지 상단/하단, 세로 포스터 좌/우, 투명 누끼, 블러 배경을 적절히 섞는다.
-- 사용 가능한 원본이 충분하면 카드마다 서로 다른 이미지 한 장을 쓴다. 같은 이미지를 흐림·확대만 바꿔
-  주 이미지로 반복하는 것은 금지하며, 재료가 모자라면 크롤러로 돌려보낸다.
+- 사용 가능한 원본이 있으면 카드마다 서로 다른 이미지를 우선 배정한다. 같은 이미지를 흐림·확대만
+  바꿔 주 이미지로 반복하지 않는다. 이미지가 카드 수보다 적으면 남은 카드는 자체 편집 그래픽으로
+  구성한다.
+  사용 가능한 원본이 하나도 없으면 전 카드를 자체 편집 그래픽으로 구성한다. 이 경우에도 크롤러로
+  돌려보내지 말고, 텍스트·타임라인·도형·정보 구조를 활용한다. 공식 캐릭터·장면·로고를 새로 그리거나
+  원본 포스터를 흉내 내지 않는다.
 - 전경 원본 이미지는 contain으로 전부 표시한다. 전경의 crop/cover, 확대, 이동은 금지한다.
   화면을 채우기 위한 배경 레이어에 한해 확대 채움과 블러를 허용한다.
 - 투명 배경이 실제로 확인된 PNG만 누끼처럼 합성하고, 불투명 이미지의 배경을 임의로 지우지 않는다.

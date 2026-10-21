@@ -20,6 +20,7 @@ class Source(BaseModel):
         "terms_review",
         "setup_required",
         "technical_review",
+        "permission_required",
         "trend_only",
         "later",
     ]
@@ -33,10 +34,17 @@ class Source(BaseModel):
 
     @model_validator(mode="after")
     def validate_status(self) -> "Source":
-        if self.role == "trend" and self.status != "trend_only":
-            raise ValueError("trend 출처는 trend_only 상태여야 합니다.")
+        if self.role == "trend" and self.status not in {
+            "trend_only",
+            "terms_review",
+            "technical_review",
+            "permission_required",
+        }:
+            raise ValueError("trend 출처는 trend_only 또는 검토 대기 상태여야 합니다.")
         if self.status == "active" and self.collection == "manual":
             raise ValueError("active 출처에는 자동 수집 방식이 필요합니다.")
+        if self.category == "community_trend" and self.collection != "manual":
+            raise ValueError("권한 확인 전 커뮤니티 트렌드 출처는 수동 방식만 허용됩니다.")
         return self
 
 
@@ -67,3 +75,8 @@ class SourceRegistry(BaseModel):
             if source.status == "active"
             or (source.role == "trend" and source.status == "trend_only")
         ]
+
+    @property
+    def community_sources(self) -> list[Source]:
+        """Community sources are registered separately from factual/discovery feeds."""
+        return [source for source in self.sources if source.category == "community_trend"]

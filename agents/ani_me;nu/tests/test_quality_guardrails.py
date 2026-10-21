@@ -2,9 +2,14 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
+from ani_menu_agent.classification import infer_strong_content_type
 from ani_menu_agent.layout_engine import build_cards
-from ani_menu_agent.models import ContentKind, ContentPackage, CopyCard, NormalizedBox
-from ani_menu_agent.nodes import layout_director
+from ani_menu_agent.models import ContentKind, ContentPackage, CopyCard, ImageAsset, NormalizedBox
+from ani_menu_agent.nodes import (
+    _normalize_structural_roles,
+    layout_director,
+    rights_preflight,
+)
 from ani_menu_agent.quality import run_quality_checks, score_quality
 
 SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sample_content.json"
@@ -84,6 +89,177 @@ def test_cover_and_ending_roles_are_required_for_story_flow() -> None:
     assert {"COVER_ROLE_MISSING", "ENDING_ROLE_MISSING"}.issubset(issue_codes(payload))
 
 
+def test_information_deck_rejects_reused_interior_evidence() -> None:
+    payload = load_sample()
+    shared_fact_ids = payload["cards"][0]["fact_ids"]
+    payload["cards"][0]["role"] = "detail"
+    payload["cards"][1]["role"] = "detail"
+    payload["cards"][2]["role"] = "ending"
+    payload["cards"][0]["fact_ids"] = shared_fact_ids
+    payload["cards"][1]["fact_ids"] = shared_fact_ids
+    package = ContentPackage.model_validate(payload)
+
+    assert "CARD_FACT_REUSED" in {issue.code for issue in run_quality_checks(package)}
+
+
+def test_stale_source_blocks_time_sensitive_information() -> None:
+    payload = load_sample()
+    payload["sources"][0]["published_at"] = "2025-01-01T09:00:00+09:00"
+    payload["facts"][0]["time_sensitive"] = True
+    package = ContentPackage.model_validate(payload)
+
+    assert "SOURCE_STALE" in {issue.code for issue in run_quality_checks(package)}
+
+
+def test_missing_source_publication_date_does_not_block_content() -> None:
+    payload = load_sample()
+    payload["sources"][0]["published_at"] = None
+
+    assert "SOURCE_PUBLISHED_AT_MISSING" not in issue_codes(payload)
+
+
+def test_event_period_dates_from_verified_range_must_be_structured() -> None:
+    payload = load_sample()
+    payload["content_type"] = "event"
+    payload["facts"][0]["fact_type"] = "event_schedule"
+    payload["facts"][0].setdefault("details", {})["source_quote"] = (
+        "개최 기간은 2026년 10월 23일부터 10월 27일까지"
+    )
+
+    assert "EVENT_PERIOD_MISSING" in issue_codes(payload)
+
+
+def test_event_venue_requires_country_and_domestic_overseas_region() -> None:
+    payload = load_sample()
+    payload["content_type"] = "event"
+    payload["facts"][0]["fact_type"] = "location"
+    payload["facts"][0].setdefault("details", {})["source_quote"] = "開催場所：東京・平和島"
+    package = ContentPackage.model_validate(payload)
+
+    assert {"EVENT_COUNTRY_MISSING", "EVENT_REGION_MISSING"}.issubset(
+        {issue.code for issue in run_quality_checks(package)}
+    )
+
+
+def test_event_venue_with_country_still_requires_domestic_overseas_region() -> None:
+    payload = load_sample()
+    payload["content_type"] = "event"
+    payload["event_country"] = "Japan"
+    payload["event_region"] = "unknown"
+    payload["facts"][0]["fact_type"] = "location"
+    payload["facts"][0].setdefault("details", {})["source_quote"] = "開催場所：東京・平和島"
+    package = ContentPackage.model_validate(payload)
+
+    assert "EVENT_COUNTRY_MISSING" not in {issue.code for issue in run_quality_checks(package)}
+    assert "EVENT_REGION_MISSING" in {issue.code for issue in run_quality_checks(package)}
+
+
+def test_used_campaign_fact_with_expired_deadline_is_blocked() -> None:
+    from datetime import date, timedelta
+
+    payload = load_sample()
+    yesterday = date.today() - timedelta(days=1)
+    payload["facts"][0]["fact_type"] = "promotion"
+    payload["facts"][0]["time_sensitive"] = True
+    payload["facts"][0].setdefault("details", {})["source_quote"] = (
+        f"{yesterday.year}年{yesterday.month}月{yesterday.day}日まで開催"
+    )
+    payload["cards"][0]["fact_ids"] = [payload["facts"][0]["id"]]
+    package = ContentPackage.model_validate(payload)
+
+    assert "CAMPAIGN_EXPIRED" in {issue.code for issue in run_quality_checks(package)}
+
+
+def test_information_deck_needs_three_distinct_verified_facts() -> None:
+    payload = load_sample()
+    payload["cards"][0]["fact_ids"] = ["f1"]
+    payload["cards"][1]["fact_ids"] = ["f1"]
+    payload["cards"][2]["fact_ids"] = ["f1"]
+    package = ContentPackage.model_validate(payload)
+
+    assert "FACT_DIVERSITY_LOW" in {issue.code for issue in run_quality_checks(package)}
+
+
+def test_verified_product_facts_override_wrong_news_taxonomy() -> None:
+    package = ContentPackage.model_validate(load_sample())
+    package.content_type = "news"
+    package.facts[0].fact_type = "product_description"
+    package.facts[1].fact_type = "price"
+
+    assert infer_strong_content_type(package) == "goods"
+    assert "CONTENT_TYPE_MISMATCH" in {issue.code for issue in run_quality_checks(package)}
+
+
+def test_information_cover_without_official_source_art_returns_for_recollection() -> None:
+    package = ContentPackage.model_validate(load_sample())
+    package.cards[0].visual_mode = "editorial_graphic"
+
+    assert "COVER_SOURCE_IMAGE_MISSING" in {issue.code for issue in run_quality_checks(package)}
+
+
+def test_layout_returns_for_cover_art_before_render_when_source_image_pool_is_empty() -> None:
+    payload = load_sample()
+    payload["images"] = []
+    package = ContentPackage.model_validate(payload)
+    copies = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"})).model_dump(mode="json")
+        for card in package.cards
+    ]
+
+    result = layout_director(
+        {"package": package.model_dump(mode="json"), "draft_cards": copies, "trace": []}
+    )
+
+    assert result["status"] == "needs_crawler_update"
+    assert result["qa_report"][0]["code"] == "SOURCE_IMAGE_MISSING"
+
+
+def test_one_distinct_official_image_allows_two_card_deck_with_graphic_ending() -> None:
+    payload = load_sample()
+    payload["images"] = [payload["images"][0]]
+    package = ContentPackage.model_validate(payload)
+    package.cards = []
+
+    preflight = rights_preflight({"package": package.model_dump(mode="json"), "trace": []})
+    assert preflight["status"] == "rights_cleared"
+
+    original_cards = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"}))
+        for card in ContentPackage.model_validate(load_sample()).cards
+    ]
+    copies = [
+        original_cards[0].model_copy(update={"page": 1, "role": "cover"}),
+        original_cards[-1].model_copy(update={"page": 2, "role": "ending"}),
+    ]
+    result = layout_director(
+        {
+            "package": package.model_dump(mode="json"),
+            "draft_cards": [card.model_dump(mode="json") for card in copies],
+            "trace": [],
+        }
+    )
+
+    assert result["status"] == "layout_planned"
+    assert result["package"]["cards"][0]["visual_mode"] == "source_image"
+    assert result["package"]["cards"][1]["visual_mode"] == "editorial_graphic"
+    result_package = ContentPackage.model_validate(result["package"])
+    assert "CARD_COUNT" not in {issue.code for issue in run_quality_checks(result_package)}
+
+
+def test_structural_card_roles_are_normalized_by_position() -> None:
+    package = ContentPackage.model_validate(load_sample())
+    copies = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
+    ]
+    copies[0] = copies[0].model_copy(update={"role": "detail"})
+    copies[-1] = copies[-1].model_copy(update={"role": "goods_ending"})
+
+    normalized = _normalize_structural_roles(copies)
+
+    assert normalized[0].role == "cover"
+    assert normalized[-1].role == "ending"
+
+
 def test_split_protected_phrase_returns_to_copy_writer() -> None:
     payload = load_sample()
     payload["cards"][0]["title_lines"] = ["2026년 10월 6일", "정오부터 예약"]
@@ -130,6 +306,133 @@ def test_korean_first_bilingual_title_passes_translation_guardrail() -> None:
     assert "JAPANESE_COPY_UNTRANSLATED" not in codes
 
 
+def test_korean_translation_with_parenthesized_japanese_original_is_allowed() -> None:
+    payload = load_sample()
+    payload["cards"][1]["body_sentences"] = [
+        "신작 제목은 《그림자의 부상》(『NARUTO-ナルト- SHADOW RISING』)으로 공개됐다."
+    ]
+    package = ContentPackage.model_validate(payload)
+
+    codes = {issue.code for issue in run_quality_checks(package)}
+
+    assert "JAPANESE_COPY_UNTRANSLATED" not in codes
+
+
+def test_glossary_does_not_exempt_unpaired_japanese_fragment() -> None:
+    payload = load_sample()
+    payload["term_glossary"] = [
+        {"original": "クール では", "korean": "쿨에서", "category": "other"}
+    ]
+    payload["cards"][1]["body_sentences"] = ["최종 쿨 では 다시 만난다."]
+
+    assert "JAPANESE_COPY_UNTRANSLATED" in issue_codes(payload)
+
+
+def test_japanese_cour_translation_corrects_kuru_to_cool() -> None:
+    payload = load_sample()
+    payload["term_glossary"] = [
+        {"original": "最終クール", "korean": "최종 쿠르", "category": "other"}
+    ]
+    package = ContentPackage.model_validate(payload)
+
+    assert package.term_glossary[0].korean == "최종 쿨"
+
+
+def test_kuru_mistranslation_in_copy_is_blocked() -> None:
+    payload = load_sample()
+    payload["term_glossary"] = [
+        {"original": "最終クール", "korean": "최종 쿨", "category": "other"}
+    ]
+    payload["cards"][1]["body_sentences"] = ["최종 쿠르 편을 기념한다."]
+
+    assert "JAPANESE_TERM_MISTRANSLATED" in issue_codes(payload)
+
+
+def test_multiple_event_dates_cannot_be_packed_into_headline() -> None:
+    payload = load_sample()
+    payload["content_type"] = "event"
+    payload["cards"][0]["title_lines"] = [
+        "10월 18일~11월 9일 / 11월 20일~12월 20일"
+    ]
+
+    assert "EVENT_SCHEDULE_IN_TITLE" in issue_codes(payload)
+
+
+def test_japanese_punctuation_in_korean_copy_is_flagged() -> None:
+    payload = load_sample()
+    payload["cards"][1]["body_sentences"] = ["무대가 열린다。팬들이 함께 듣는다."]
+
+    assert "JAPANESE_COPY_UNTRANSLATED" in issue_codes(payload)
+
+
+def test_untranslated_japanese_kanji_with_number_is_flagged() -> None:
+    payload = load_sample()
+    payload["cards"][1]["body_sentences"] = ["約4시간 동안 함께 듣는다."]
+
+    assert "JAPANESE_COPY_UNTRANSLATED" in issue_codes(payload)
+
+
+def test_translated_label_allows_necessary_official_japanese_hashtag() -> None:
+    payload = load_sample()
+    payload["cards"][1]["body_sentences"] = ["태그는 ‘블리치 완결’(#BLEACH完結)로 안내된다."]
+
+    assert "JAPANESE_COPY_UNTRANSLATED" not in issue_codes(payload)
+
+
+def test_japanese_suffix_in_korean_labeled_official_hashtag_is_not_prose() -> None:
+    payload = load_sample()
+    payload["cards"][1]["body_sentences"] = ["블리치 완결 이벤트 해시태그는 #BLEACH完結."]
+
+    assert "JAPANESE_COPY_UNTRANSLATED" not in issue_codes(payload)
+
+
+def test_protected_fact_phrase_allows_natural_korean_particle() -> None:
+    payload = load_sample()
+    payload["cards"][1]["protected_phrases"] = ["\ucfe8 \ubc30\uc1a1\ube44 \ubcc4\ub3c4"]
+    payload["cards"][1]["body_sentences"] = [
+        "\ucfe8 \ubc30\uc1a1\ube44\ub294 \ubcc4\ub3c4\uc785\ub2c8\ub2e4."
+    ]
+
+    assert "PROTECTED_PHRASE_LOST" not in issue_codes(payload)
+
+
+def test_unpaired_japanese_copy_reaches_language_review() -> None:
+    package = ContentPackage.model_validate(load_sample())
+    package.cards[1].body_sentences = ["무대는 コート에서 열린다."]
+    issues = run_quality_checks(package)
+    report = score_quality(package, issues, language_score=20, safety_score=10)
+
+    assert "JAPANESE_COPY_UNTRANSLATED" not in report["hard_blockers"]
+    assert report["decision"] == "revise"
+
+
+def test_long_ending_is_a_warning_not_an_automatic_rejection() -> None:
+    payload = load_sample()
+    payload["cards"][-1]["body_sentences"] = ["가" * 100]
+    package = ContentPackage.model_validate(payload)
+
+    issues = run_quality_checks(package)
+    ending_issue = next(issue for issue in issues if issue.code == "ENDING_TOO_LONG")
+    report = score_quality(
+        package,
+        issues,
+        language_score=20,
+        safety_score=10,
+        card_language_scores={page: 90 for page in range(1, 5)},
+    )
+
+    assert ending_issue.severity == "warning"
+    assert "ENDING_TOO_LONG" not in report["hard_blockers"]
+    assert report["decision"] == "pass_candidate"
+
+
+def test_cover_and_ending_may_recap_the_same_verified_fact() -> None:
+    payload = load_sample()
+    payload["cards"][-1]["fact_ids"] = payload["cards"][0]["fact_ids"]
+
+    assert "CARD_REDUNDANT" not in issue_codes(payload)
+
+
 def test_raw_image_reuse_is_rejected() -> None:
     payload = load_sample()
     payload["cards"][2]["image_id"] = payload["cards"][1]["image_id"]
@@ -149,10 +452,10 @@ def test_image_that_needs_excessive_upscaling_returns_to_image_collection() -> N
 
     assert issue.owner == "image_curator"
     assert issue.page == 1
-    assert report["decision"] == "return_to_crawler"
+    assert report["decision"] == "revise"
 
 
-def test_raw_image_reuse_is_sent_back_to_crawler_not_copy_revision() -> None:
+def test_raw_image_reuse_is_sent_to_targeted_visual_repair() -> None:
     payload = load_sample()
     payload["cards"][2]["image_id"] = payload["cards"][1]["image_id"]
     package = ContentPackage.model_validate(payload)
@@ -161,7 +464,7 @@ def test_raw_image_reuse_is_sent_back_to_crawler_not_copy_revision() -> None:
     report = score_quality(package, issues, language_score=20, safety_score=10)
 
     assert reuse_issue.owner == "image_curator"
-    assert report["decision"] == "return_to_crawler"
+    assert report["decision"] == "revise"
     assert "IMAGE_REUSED_RAW" in report["hard_blockers"]
 
 
@@ -189,26 +492,267 @@ def test_blurred_background_does_not_excuse_repeating_the_same_foreground() -> N
     assert "IMAGE_REUSED_RAW" in issue_codes(payload)
 
 
-def test_insufficient_unique_image_pool_is_a_crawler_blocker() -> None:
+def test_sparse_unique_image_pool_returns_to_crawler_except_final_end_card() -> None:
+    from ani_menu_agent.image_selection import assign_distinct_images
+    from ani_menu_agent.layout_engine import build_cards
+
     payload = load_sample()
     payload["images"] = payload["images"][:2]
     package = ContentPackage.model_validate(payload)
+    copies = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
+    ]
+    assigned = assign_distinct_images(copies, package)
+    package.cards = build_cards(assigned, package.images)
     issues = run_quality_checks(package)
     report = score_quality(package, issues)
 
-    assert "IMAGE_COVERAGE_INSUFFICIENT" in {issue.code for issue in issues}
     assert report["decision"] == "return_to_crawler"
+    assert package.cards[-1].visual_mode == "editorial_graphic"
+    assert all(card.visual_mode == "source_image" for card in package.cards[:-1])
 
 
-def test_preflight_returns_to_crawler_before_copy_generation_for_sparse_images() -> None:
+def test_article_relevant_images_can_fill_cards_when_fact_links_are_sparse() -> None:
+    from ani_menu_agent.image_selection import assign_distinct_images
+
+    payload = load_sample()
+    payload["images"] = payload["images"][:3]
+    for image in payload["images"]:
+        image["visual_match"] = "exact"
+        image["related_fact_ids"] = ["fact-from-another-card"]
+    package = ContentPackage.model_validate(payload)
+    copies = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
+    ]
+
+    assigned = assign_distinct_images(copies, package)
+
+    assert all(card.image_id in {image.id for image in package.images} for card in assigned[:-1])
+    assert len({card.image_id for card in assigned[:-1]}) == len(assigned[:-1])
+    assert assigned[-1].visual_mode == "editorial_graphic"
+
+
+def test_low_coverage_transparent_sprite_is_not_selected_as_a_full_card_image() -> None:
+    from ani_menu_agent.image_selection import assign_distinct_images
+
+    payload = load_sample()
+    payload["images"][0]["has_alpha"] = True
+    payload["images"][0]["alpha_coverage"] = 0.06
+    package = ContentPackage.model_validate(payload)
+    copies = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
+    ]
+
+    assigned = assign_distinct_images(copies, package)
+
+    assert payload["images"][0]["id"] not in {card.image_id for card in assigned}
+
+
+def test_ultrawide_schedule_and_decorative_title_assets_are_not_editorial_cards() -> None:
+    from ani_menu_agent.image_selection import distinct_editorial_images
+
+    payload = load_sample()
+    payload["images"][0]["url"] = "https://example.com/assets/img_date_onair_pc.webp"
+    payload["images"][0]["width"] = 2246
+    payload["images"][0]["height"] = 143
+    payload["images"][1]["url"] = "https://example.com/assets/common/title/ttl_intro.webp"
+    payload["images"][1]["source_description"] = "intro"
+    package = ContentPackage.model_validate(payload)
+
+    selected = distinct_editorial_images(package.images, package.sources)
+
+    assert all("img_date_onair" not in str(image.url) for image in selected)
+    assert all("ttl_intro" not in str(image.url) for image in selected)
+
+
+def test_image_with_long_embedded_copy_description_is_not_used_as_card_visual() -> None:
+    from ani_menu_agent.image_selection import distinct_editorial_images
+
+    payload = load_sample()
+    payload["images"][0]["source_description"] = "작품 줄거리 " * 50
+    package = ContentPackage.model_validate(payload)
+
+    selected = distinct_editorial_images(package.images, package.sources)
+
+    assert payload["images"][0]["id"] not in {image.id for image in selected}
+
+
+def test_responsive_resized_variants_count_as_the_same_source_image() -> None:
+    from ani_menu_agent.image_selection import image_visual_key
+
+    payload = load_sample()
+    image = ImageAsset.model_validate(payload["images"][0])
+    resized = image.model_copy(
+        update={
+            "url": str(image.url).replace(".webp", "-768x432.webp"),
+            "fingerprint": "different-rendition-bytes",
+        }
+    )
+
+    assert image_visual_key(image) == image_visual_key(resized)
+
+
+def test_width_path_renditions_count_as_the_same_source_image() -> None:
+    from ani_menu_agent.image_selection import image_visual_key
+
+    image = ImageAsset(
+        id="official-large",
+        url="https://anime.example/news/SYS/CONTENTS/abc123/w1200",
+        source_url="https://anime.example/news/123",
+    )
+    resized = image.model_copy(
+        update={
+            "id": "official-small",
+            "url": "https://anime.example/news/SYS/CONTENTS/abc123/w707",
+            "fingerprint": "different-rendition-bytes",
+        }
+    )
+
+    assert image_visual_key(image) == image_visual_key(resized)
+
+
+def test_distinct_image_selection_keeps_the_largest_width_path_rendition() -> None:
+    from ani_menu_agent.image_selection import distinct_editorial_images
+
+    payload = load_sample()
+    base = ImageAsset.model_validate(payload["images"][0])
+    small = base.model_copy(
+        update={
+            "id": "same-image-small",
+            "url": "https://anime.example/news/SYS/CONTENTS/abc123/w707",
+            "width": 707,
+            "height": 396,
+            "fingerprint": "small-rendition",
+        }
+    )
+    large = base.model_copy(
+        update={
+            "id": "same-image-large",
+            "url": "https://anime.example/news/SYS/CONTENTS/abc123/w1200",
+            "width": 1200,
+            "height": 672,
+            "fingerprint": "large-rendition",
+        }
+    )
+    package = ContentPackage.model_validate({**payload, "images": [small, large]})
+
+    selected = distinct_editorial_images(package.images, package.sources)
+
+    assert [image.id for image in selected] == ["same-image-large"]
+
+
+def test_api_query_parameter_identifying_an_image_is_preserved_for_deduplication() -> None:
+    from ani_menu_agent.image_selection import image_visual_key
+
+    first = ImageAsset(
+        id="naruto-product-a",
+        url="https://cms.example.com/image?path=%2Fproducts%2Fa.jpeg",
+        source_url="https://official.example.com/news/1",
+    )
+    second = first.model_copy(
+        update={
+            "id": "naruto-product-b",
+            "url": "https://cms.example.com/image?path=%2Fproducts%2Fb.jpeg",
+        }
+    )
+    resized = first.model_copy(
+        update={
+            "id": "naruto-product-a-small",
+            "url": "https://cms.example.com/image?path=%2Fproducts%2Fa.jpeg&w=640&utm_source=page",
+        }
+    )
+
+    assert image_visual_key(first) != image_visual_key(second)
+    assert image_visual_key(first) == image_visual_key(resized)
+
+
+def test_same_downloaded_image_under_different_urls_is_only_selected_once() -> None:
+    from ani_menu_agent.image_selection import distinct_editorial_images
+
+    payload = load_sample()
+    payload["images"][0]["fingerprint"] = "same-bytes"
+    payload["images"][1]["url"] = "https://cdn.example.com/alternate-copy.webp"
+    payload["images"][1]["fingerprint"] = "same-bytes"
+    package = ContentPackage.model_validate(payload)
+
+    selected = distinct_editorial_images(package.images, package.sources)
+
+    assert len([image for image in selected if image.fingerprint == "same-bytes"]) == 1
+
+
+def test_same_site_image_from_an_unrelated_page_is_excluded() -> None:
+    from ani_menu_agent.image_selection import distinct_editorial_images
+
+    payload = load_sample()
+    payload["images"][0]["source_url"] = "https://example.com/official/goods"
+    package = ContentPackage.model_validate(payload)
+
+    selected = distinct_editorial_images(package.images, package.sources)
+
+    assert payload["images"][0]["id"] not in {image.id for image in selected}
+
+    package.cards[0].image_id = payload["images"][0]["id"]
+    issue_codes_found = issue_codes(package.model_dump(mode="json"))
+    assert "IMAGE_SOURCE_PAGE_MISMATCH" in issue_codes_found
+
+
+def test_localized_official_article_route_is_same_source_page() -> None:
+    from ani_menu_agent.image_selection import image_belongs_to_package_sources
+    from ani_menu_agent.models import ImageAsset, SourceEvidence
+
+    source = SourceEvidence(
+        id="naruto_official",
+        title="Naruto article",
+        url="https://naruto-official.com/news/01_2690",
+        publisher="Naruto Official",
+        is_official=True,
+        role="primary",
+    )
+    image = ImageAsset(
+        id="localized-article-image",
+        url="https://naruto-official.com/assets/item.jpg",
+        source_url="https://naruto-official.com/de/news/01_2690",
+        official=True,
+        width=1200,
+        height=1200,
+    )
+
+    assert image_belongs_to_package_sources(image, [source])
+
+
+def test_preflight_returns_to_crawler_when_image_pool_cannot_fill_nonfinal_cards() -> None:
     from ani_menu_agent.nodes import rights_preflight
 
     payload = load_sample()
-    payload["images"] = payload["images"][:2]
+    payload["images"] = []
     result = rights_preflight({"package": payload, "trace": []})
 
     assert result["status"] == "needs_crawler_update"
-    assert result["qa_report"][0]["code"] == "IMAGE_COVERAGE_INSUFFICIENT"
+    assert result["qa_report"][0]["code"] == "SOURCE_IMAGE_POOL_INSUFFICIENT"
+
+
+def test_empty_image_pool_only_allows_minimal_final_text_card_fallback() -> None:
+    from ani_menu_agent.image_selection import assign_distinct_images
+    from ani_menu_agent.layout_engine import build_cards
+
+    payload = load_sample()
+    payload["images"] = []
+    package = ContentPackage.model_validate(payload)
+    copies = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
+    ]
+
+    package.cards = build_cards(assign_distinct_images(copies, package), package.images)
+    issues = run_quality_checks(package)
+    report = score_quality(package, issues)
+
+    assert all(card.visual_mode == "source_image" for card in package.cards[:-1])
+    assert package.cards[-1].visual_mode == "editorial_graphic"
+    assert report["visual_mode_counts"]["source_image"] == len(package.cards) - 1
+    assert report["dimensions"]["image_suitability_and_rights"] == 0
+    assert "IMAGE_MISSING" in report["hard_blockers"]
+    assert report["decision"] == "return_to_crawler"
+    assert "IMAGE_MISSING" in {issue.code for issue in issues}
 
 
 def test_blurred_fallback_is_not_allowed_when_four_unique_images_exist() -> None:
@@ -318,7 +862,7 @@ def test_layout_engine_uses_full_image_without_zoom_for_every_aspect_ratio() -> 
     assert all(card.layout.image_offset_y == 0.0 for card in cards)
 
 
-def test_layout_engine_maps_unknown_image_ids_to_a_real_asset() -> None:
+def test_layout_engine_does_not_silently_reuse_an_image_for_unknown_ids() -> None:
     payload = load_sample()
     package = ContentPackage.model_validate(payload)
     copy_cards = [CopyCard.model_validate(card) for card in payload["cards"]]
@@ -326,7 +870,10 @@ def test_layout_engine_maps_unknown_image_ids_to_a_real_asset() -> None:
 
     cards = build_cards(copy_cards, package.images)
 
-    assert cards[0].image_id in {image.id for image in package.images}
+    assert cards[0].image_id == "hallucinated-image-id"
+    assert "IMAGE_MISSING" in {
+        issue.code for issue in run_quality_checks(package.model_copy(update={"cards": cards}))
+    }
 
 
 def test_layout_director_reassigns_repeated_image_choices_to_unique_assets() -> None:
@@ -349,7 +896,7 @@ def test_layout_director_reassigns_repeated_image_choices_to_unique_assets() -> 
     assert {card.image_reuse_mode for card in rebuilt.cards} == {"unique"}
 
 
-def test_layout_director_returns_for_more_images_when_card_count_exceeds_pool() -> None:
+def test_layout_director_uses_original_graphics_when_image_pool_is_smaller_than_deck() -> None:
     from ani_menu_agent.nodes import layout_director
 
     payload = load_sample()
@@ -364,8 +911,10 @@ def test_layout_director_returns_for_more_images_when_card_count_exceeds_pool() 
         }
     )
 
-    assert result["status"] == "needs_crawler_update"
-    assert result["qa_report"][0]["code"] == "IMAGE_COVERAGE_INSUFFICIENT"
+    assert result["status"] == "layout_planned"
+    rebuilt = ContentPackage.model_validate(result["package"])
+    assert sum(card.visual_mode == "source_image" for card in rebuilt.cards) == 3
+    assert sum(card.visual_mode == "editorial_graphic" for card in rebuilt.cards) == 1
 
 
 def test_layouts_vary_by_card_shape_and_role() -> None:
@@ -464,8 +1013,28 @@ def test_information_dense_poster_uses_nearly_full_height_without_cropping() -> 
     assert poster.layout.image_box.height == 0.94
     assert poster.layout.fit_mode == "contain_blur"
     assert poster.layout.image_scale == 1.0
-    assert cards[0].layout.template in {"poster_left", "poster_right"}
+    assert cards[0].layout.template == "poster_left"
+    assert cards[0].layout.image_box.width == 0.46
+    assert cards[0].layout.fit_mode == "contain_blur"
     assert cards[0].layout.image_box.height == 0.94
+
+
+def test_landscape_cover_uses_top_hero_and_overlapping_headline_without_crop() -> None:
+    package = ContentPackage.model_validate(load_sample())
+    image = package.images[0].model_copy(update={"width": 1920, "height": 1080})
+    cover = CopyCard(
+        page=1,
+        role="cover",
+        title_lines=["작품 소식이 돌아왔다"],
+        image_id=image.id,
+    )
+
+    layout = build_cards([cover], [image])[0].layout
+
+    assert layout.image_box.y == 0.045
+    assert layout.image_box.height == 0.52
+    assert layout.copy_box.y == 0.55
+    assert layout.fit_mode == "contain_blur"
 
 
 def test_ocr_density_routes_portrait_infographic_to_poster_layout() -> None:

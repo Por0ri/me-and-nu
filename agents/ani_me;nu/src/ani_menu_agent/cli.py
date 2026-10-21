@@ -150,10 +150,19 @@ def doctor() -> None:
         table.add_row(package, importlib.metadata.version(package))
     table.add_row("실행 환경", settings.environment)
     table.add_row("LLM 모델", settings.model_name)
-    table.add_row(
-        "PostgreSQL",
-        "연결 주소 설정됨" if settings.database_url else "ANI_MENU_DATABASE_URL 미설정",
-    )
+    if settings.database_backend == "sqlite":
+        sqlite_path = settings.database_path or "data/ani_menu_local.sqlite3"
+        table.add_row("저장소", f"SQLite · {sqlite_path}")
+    elif settings.database_backend == "postgresql":
+        table.add_row(
+            "저장소",
+            "PostgreSQL · 연결 주소 설정됨" if settings.database_url else "PostgreSQL · URL 미설정",
+        )
+    elif settings.database_url:
+        table.add_row("저장소", "자동 선택 · PostgreSQL URL 설정됨")
+    else:
+        sqlite_path = settings.database_path or "data/ani_menu_local.sqlite3"
+        table.add_row("저장소", f"자동 선택 · SQLite {sqlite_path}")
     table.add_row(
         "API 키", "설정됨" if settings.openai_api_key else "미설정(코드 검수는 실행 가능)"
     )
@@ -167,12 +176,14 @@ def graph_smoke() -> None:
     package = _load_package(SAMPLE_PATH)
     review_fixture = {
         "summary": "구조 검증 전용 fixture 평가. 실제 게시 승인으로 사용되지 않습니다.",
+        "content_type_fit": 5,
         "cards": [
             {
                 "page": card.page,
                 "korean_naturalness": 5,
                 "translation_naturalness": 5,
                 "reader_clarity": 5,
+                "fan_engagement": 5,
                 "card_flow": 5,
                 "safety_respect": 5,
                 "safety_blocker": False,
@@ -290,6 +301,13 @@ def crawl_generate(
         typer.Option("--output", "-o"),
     ] = Path("output/drafts/crawl_generated.json"),
     max_images: Annotated[int, typer.Option("--max-images", min=1, max=20)] = 8,
+    retry_failed: Annotated[
+        bool,
+        typer.Option(
+            "--retry-failed",
+            help="같은 request_id가 미통과 상태일 때만 기존 실패 건을 다시 생성합니다.",
+        ),
+    ] = False,
 ) -> None:
     """공식 페이지 수집부터 DB 적재, 카드 생성·검수까지 한 번에 실행합니다."""
     registry = load_source_registry()
@@ -304,7 +322,10 @@ def crawl_generate(
     console.print("1/5 공식 페이지 수집 중…")
     stage_started = perf_counter()
     try:
-        capture = collect_official_page(source, url)
+        # A generated story must not borrow images from unrelated articles on
+        # the same site. Related-page expansion remains available for asset
+        # inventory, but content generation stays scoped to its source article.
+        capture = collect_official_page(source, url, expand_related_pages=False)
         stage_timings["page_collection"] = round(perf_counter() - stage_started, 3)
         payload = capture.model_dump(mode="json")
         image_rows: list[dict[str, str]] = []
@@ -317,6 +338,7 @@ def crawl_generate(
                     "id": image_id,
                     "url": str(image_url),
                     "alt_text": capture.image_alt_text.get(str(image_url), ""),
+                    "source_url": capture.image_source_pages.get(str(image_url), str(capture.url)),
                     "local_path": "",
                     "download_status": "pending",
                     "rights_status": RightsStatus.NEEDS_REVIEW.value,
@@ -332,6 +354,28 @@ def crawl_generate(
         stage_timings["fact_extraction"] = round(perf_counter() - stage_started, 3)
     except (ValueError, KeyError, httpx.HTTPError, RuntimeError) as exc:
         raise typer.BadParameter(f"크롤링·팩트 추출 단계에서 중단: {exc}") from exc
+
+    duplicate = repository.find_duplicate_content(package, retry_same_request=retry_failed)
+    if duplicate:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(
+                {
+                    "status": "duplicate_skipped",
+                    "duplicate_of": duplicate,
+                    "request_id": package.request_id,
+                    "topic": package.topic,
+                    "source_urls": [str(source.url) for source in package.sources],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        raise typer.BadParameter(
+            "기존 콘텐츠와 작품·출처 또는 핵심 사실이 중복되어 카드 생성을 건너뜁니다. "
+            f"기존 request_id={duplicate['request_id']} ({duplicate['reason']})"
+        )
 
     console.print("3/5 자료 저장 및 수집 메타데이터 정리 중…")
     stage_started = perf_counter()
@@ -360,11 +404,9 @@ def crawl_generate(
         )
         and image.download_status in {"downloaded", "available"}
     ]
-    if not usable_images:
-        raise typer.BadParameter(
-            "팩트는 DB에 적재했지만, 출처·권리 조건을 통과해 내려받은 이미지가 없어 "
-            "생성을 중단했습니다."
-        )
+    # Sparse imagery is not by itself a reason to reject useful, fact-backed content.
+    # The graph uses each source image at most once and fills remaining cards with
+    # original typographic/editorial graphics rather than repeating copyrighted art.
 
     console.print("5/5 카드 생성 및 독립 검수 중…")
     try:
@@ -668,7 +710,7 @@ def collect_page(
         image = ImageAsset(
             id=f"{source.id}-{hashlib.sha1(str(image_url).encode('utf-8')).hexdigest()[:14]}",
             url=image_url,
-            source_url=capture.url,
+            source_url=capture.image_source_pages.get(str(image_url), capture.url),
             official=True,
             rights_status=RightsStatus.NEEDS_REVIEW,
         )

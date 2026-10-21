@@ -13,9 +13,12 @@ def render_markdown(package: ContentPackage) -> str:
         f"- 콘텐츠 유형: {package.content_kind.value}",
         f"- 추천 콘텐츠 타입: {package.content_type or '미분류'}",
         f"- 상태: {package.status}",
-        f"- 지역 우선순위: {package.region_policy}",
-        "",
     ]
+    if package.event_country:
+        lines.append(f"- 국가: {package.event_country}")
+    if package.event_start and package.event_end:
+        lines.append(f"- 행사/발매 기간: {package.event_start} ~ {package.event_end}")
+    lines.append("")
 
     source_by_id = {source.id: source for source in package.sources}
     fact_by_id = {fact.id: fact for fact in package.facts}

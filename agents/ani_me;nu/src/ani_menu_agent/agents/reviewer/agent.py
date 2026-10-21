@@ -10,6 +10,7 @@ from ani_menu_agent.agents.reviewer.prompt import REVIEWER_PROMPT
 from ani_menu_agent.config import get_settings
 from ani_menu_agent.generation import _infer_copy_mode, estimate_gpt_6_luna_cost
 from ani_menu_agent.models import (
+    CONTENT_TYPE_GUIDANCE,
     ContentPackage,
     LanguageReview,
     QualityIssue,
@@ -79,6 +80,11 @@ def _review_payload(package: ContentPackage) -> dict:
         "available_content_types": [
             {"code": code, "label_ko": label} for code, label in content_types.items()
         ],
+        "content_type_guidance": CONTENT_TYPE_GUIDANCE,
+        "publication_date_policy": (
+            "Do not require or recommend showing the source/article publication date. "
+            "When a verified event/popup period is supplied, check that both endpoints appear."
+        ),
         "editorial_plan": {
             "angle": package.editorial_angle,
             "cover_mode": package.cover_mode,
@@ -121,8 +127,6 @@ def _score_language(
         values = [getattr(card, key) for key in dimensions]
         card_scores[card.page] = round((sum(values) + card.safety_respect) / (len(values) + 1) * 20)
         for criterion, threshold in LANGUAGE_THRESHOLDS.items():
-            if criterion == "fan_engagement" and hook_pages and card.page in hook_pages:
-                threshold = 4
             value = getattr(card, criterion)
             if value < threshold:
                 feedback = (
@@ -172,12 +176,20 @@ def review_content(state: ContentState) -> ContentState:
     package = ContentPackage.model_validate(state["package"])
     issues = run_quality_checks(package)
     code_report = score_quality(package, issues)
+    offline_fixture = state.get("review_fixture") is not None
     hard_codes = set(code_report["hard_blockers"])
     if hard_codes:
         decision = code_report["decision"]
         failures = state.get("review_failures", 0) + (1 if decision == "revise" else 0)
-        status = "needs_crawler_update" if decision == "return_to_crawler" else "review_returned"
-        AgentRepository().persist_generated_content(package, status, code_report)
+        status = (
+            "offline_review_only"
+            if offline_fixture
+            else "needs_crawler_update"
+            if decision == "return_to_crawler"
+            else "review_returned"
+        )
+        if not offline_fixture:
+            AgentRepository().persist_generated_content(package, status, code_report)
         return {
             "trace": append_trace(state, "review_agent"),
             "qa_report": [issue.model_dump(mode="json") for issue in issues],
@@ -185,6 +197,7 @@ def review_content(state: ContentState) -> ContentState:
             "quality_score": int(code_report["total"]),
             "review_failures": failures,
             "needs_revision": decision == "revise",
+            "review_mode": "offline_fixture" if offline_fixture else "code",
             "revision_owner": next(
                 (
                     issue.owner
@@ -193,9 +206,13 @@ def review_content(state: ContentState) -> ContentState:
                 ),
                 "fact_checker" if hard_codes & FACT_BLOCKERS else "image_curator",
             ),
-            "editorial_decision": "return_to_crawler"
-            if decision == "return_to_crawler"
-            else "revise",
+            "editorial_decision": (
+                "offline_fixture_failed"
+                if offline_fixture
+                else "return_to_crawler"
+                if decision == "return_to_crawler"
+                else "revise"
+            ),
             "status": status,
         }
 
@@ -355,7 +372,8 @@ def review_content(state: ContentState) -> ContentState:
         status = "review_returned"
         editorial_decision = decision
 
-    AgentRepository().persist_generated_content(package, status, report)
+    if review_mode != "offline_fixture":
+        AgentRepository().persist_generated_content(package, status, report)
     return {
         "trace": append_trace(state, "review_agent"),
         "qa_report": [issue.model_dump(mode="json") for issue in issues],
@@ -365,7 +383,11 @@ def review_content(state: ContentState) -> ContentState:
         "review_mode": review_mode,
         "needs_revision": decision == "revise",
         "revision_owner": next(
-            (issue.owner for issue in issues if issue.owner in {"copy_writer", "layout_director"}),
+            (
+                issue.owner
+                for issue in issues
+                if issue.owner in {"copy_writer", "layout_director", "image_curator"}
+            ),
             "copy_writer",
         ),
         "review_failures": failures,

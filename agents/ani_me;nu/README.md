@@ -26,7 +26,7 @@ flowchart LR
 ```powershell
 uv sync --all-groups
 Copy-Item .env.example .env
-# .env의 ANI_MENU_DATABASE_URL을 실제 PostgreSQL 접속 정보로 설정
+# 기본 저장소는 로컬 SQLite입니다. 팀 PostgreSQL을 쓸 때만 backend와 접속 URL을 바꿉니다.
 uv run ani-menu doctor
 uv run ani-menu sources
 ```
@@ -45,7 +45,9 @@ uv run ani-menu crawl-ingest data\input\<verified_package>.json
 uv run ani-menu generate-db <request_id> --kind information
 ```
 
-오프라인 구조 시험은 `uv run ani-menu graph-smoke`, 전체 테스트는 `uv run pytest`입니다. fixture 시험은 실제 콘텐츠 언어 검수나 게시 승인을 대신하지 않습니다. API 키가 없으면 최종 reviewer는 통과 판정을 내리지 않고 검수를 대기합니다. 수집 자료와 이미지 바이너리 모두 PostgreSQL에 저장하며 이미지는 SHA-256으로 중복 저장을 막습니다.
+오프라인 구조 시험은 `uv run ani-menu graph-smoke`, 전체 테스트는 `uv run pytest`입니다. fixture 시험은 실제 콘텐츠 언어 검수나 게시 승인을 대신하지 않습니다. API 키가 없으면 최종 reviewer는 통과 판정을 내리지 않고 검수를 대기합니다. 로컬 개발은 SQLite에 저장하고, 팀 PostgreSQL은 명시적으로 backend를 선택했을 때만 사용합니다. 이미지는 SHA-256으로 중복 저장을 막습니다.
+
+카드 생성을 시작하기 전에 기존 초안·게시 대기·탈락 보관 콘텐츠를 확인합니다. 같은 공식 원문 URL이거나 같은 작품에서 출처 제목 또는 핵심 사실이 겹치는 고확도 중복은 `duplicate_skipped`로 기록하고 새 카드 생성과 피드 적재를 건너뜁니다. SQLite 임시 저장소를 쓸 때는 실행 환경에서 `ANI_MENU_DATABASE_BACKEND=sqlite`와 `ANI_MENU_DATABASE_PATH=data/ani_menu_local.sqlite3`를 지정합니다.
 
 ## 주요 문서
 

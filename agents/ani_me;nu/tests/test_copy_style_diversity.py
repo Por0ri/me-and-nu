@@ -62,7 +62,7 @@ def test_content_type_is_stored_and_queryable_for_feed_ranking(tmp_path: Path) -
         "people",
         "goods",
         "behind",
-        "review_analysis",
+        "review",
         "humor",
         "character",
         "curation",
@@ -87,6 +87,25 @@ def test_content_type_is_stored_and_queryable_for_feed_ranking(tmp_path: Path) -
     feed_item = repository.active_feed_items()[0]
     assert feed_item["content_type"] == "event"
     assert feed_item["package"]["content_type"] == "event"
+
+
+def test_legacy_review_analysis_alias_normalizes_to_review() -> None:
+    payload = ContentPackage.model_validate_json(SAMPLE.read_text(encoding="utf-8"))
+    payload.content_type = "review_analysis"
+
+    normalized = ContentPackage.model_validate(payload.model_dump(mode="json"))
+
+    assert normalized.content_type == "review"
+
+
+def test_news_does_not_store_event_country() -> None:
+    package = ContentPackage.model_validate_json(SAMPLE.read_text(encoding="utf-8"))
+    package.content_type = "news"
+    package.event_country = "JP"
+
+    normalized = ContentPackage.model_validate(package.model_dump(mode="json"))
+
+    assert normalized.event_country is None
 
 
 def test_unclassified_content_cannot_enter_feed(tmp_path: Path) -> None:

@@ -7,15 +7,29 @@ from ani_menu_agent.extraction import (
     PageFactExtraction,
     _date_in_quote,
     _evidence_backed_facts,
+    _infer_event_location_from_facts,
     _verified_event_dates,
+    _verified_event_dates_from_facts,
     extract_page_capture,
 )
+from ani_menu_agent.models import Fact
 
 
 def test_japanese_date_range_inherits_year_for_end_date() -> None:
     assert _date_in_quote("開催期間：2026年9月25日（金）11:00～10月23日（金）10:59") == [
         "2026-09-25",
         "2026-10-23",
+    ]
+
+
+def test_event_date_parser_handles_korean_and_abbreviated_range_endpoints() -> None:
+    assert _date_in_quote("행사 기간: 2026년 10월 23~27일") == [
+        "2026-10-23",
+        "2026-10-27",
+    ]
+    assert _date_in_quote("期間：2026/10/23～27日") == [
+        "2026-10-23",
+        "2026-10-27",
     ]
 
 
@@ -69,6 +83,55 @@ def test_event_dates_require_matching_verbatim_date_evidence() -> None:
     )
 
 
+def test_single_day_event_date_is_stored_as_both_period_endpoints() -> None:
+    extracted = PageFactExtraction(
+        topic="하루 행사",
+        event_start="2026-10-20",
+        event_start_evidence_quote="開催日：2026年10月20日",
+        facts=[
+            FactCandidate(
+                statement="10월 20일 하루 개최된다.",
+                evidence_quote="開催日：2026年10月20日",
+                fact_type="event_date",
+            )
+        ],
+    )
+
+    assert _verified_event_dates(extracted) == ("2026-10-20", "2026-10-20")
+
+
+def test_single_day_goods_release_is_stored_as_both_period_endpoints() -> None:
+    fact = Fact(
+        id="release",
+        statement="상품은 10월 20일 발매된다.",
+        source_ids=["official"],
+        verified=True,
+        fact_type="product_release",
+        details={"source_quote": "発売日：2026年10月20日"},
+    )
+
+    assert _verified_event_dates_from_facts([fact]) == ("2026-10-20", "2026-10-20")
+
+
+def test_page_fact_schema_tolerates_long_official_lists() -> None:
+    facts = [
+        FactCandidate(statement=f"공식 목록 항목 {index}", evidence_quote="공식 목록")
+        for index in range(21)
+    ]
+
+    assert len(PageFactExtraction(topic="공식 목록", facts=facts).facts) == 21
+
+
+def test_fact_details_accept_numeric_price_lists() -> None:
+    fact = FactCandidate(
+        statement="Price range is 550 to 1980 yen.",
+        evidence_quote="Price: 550–1,980 yen",
+        details={"prices_yen": [550, 1980]},
+    )
+
+    assert fact.details["prices_yen"] == [550, 1980]
+
+
 def test_capture_extraction_builds_package_without_live_api(
     tmp_path: Path,
     monkeypatch,
@@ -103,6 +166,9 @@ def test_capture_extraction_builds_package_without_live_api(
         event_start_evidence_quote=source_quote,
         event_end="2026-11-09",
         event_end_evidence_quote=source_quote,
+        event_location="渋谷公園通り店",
+        event_country="Japan",
+        event_location_evidence_quote="ORBcafe 渋谷公園通り店",
         facts=[FactCandidate(statement="행사는 11월 9일까지 열린다.", evidence_quote=source_quote)],
     )
 
@@ -135,6 +201,9 @@ def test_capture_extraction_builds_package_without_live_api(
     package, usage = extract_page_capture(path)
     assert package.event_start == "2026-10-10"
     assert package.event_end == "2026-11-09"
+    assert package.event_location == "渋谷公園通り店"
+    assert package.event_country == "JP"
+    assert package.event_region == "overseas"
     assert package.facts[0].verified is True
     assert package.images[0].official is True
     assert package.images[0].source_description == "프리렌 키 비주얼"
@@ -147,3 +216,131 @@ def test_capture_extraction_builds_package_without_live_api(
     assert usage["output_tokens"] == 10
     assert usage["estimated_cost_usd"] == 0.000007075
     assert usage["elapsed_seconds"] >= 0
+
+
+def test_event_term_category_is_valid() -> None:
+    extracted = PageFactExtraction(
+        topic="공식 행사",
+        facts=[{"statement": "행사 일정이 공개됐다.", "evidence_quote": "공식 발표"}],
+        term_glossary=[
+            {
+                "original": "ジャンプフェスタ",
+                "korean": "점프 페스타",
+                "category": "event",
+            }
+        ],
+    )
+
+    assert extracted.term_glossary[0].category == "event"
+
+
+def test_japanese_city_evidence_fills_overseas_event_metadata() -> None:
+    facts = [
+        Fact(
+            id="venue-1",
+            statement="시부야 PARCO에서 진행한다.",
+            source_ids=["bleach_official"],
+            verified=True,
+            fact_type="event_schedule",
+            details={"location": "도쿄 시부야 PARCO 6층"},
+        ),
+        Fact(
+            id="venue-2",
+            statement="신사이바시 PARCO에서도 진행한다.",
+            source_ids=["bleach_official"],
+            verified=True,
+            fact_type="event_schedule",
+            details={"location": "오사카 신사이바시 PARCO 6층"},
+        ),
+    ]
+
+    location, country, region = _infer_event_location_from_facts(
+        facts, "東京・渋谷PARCOと大阪・心斎橋PARCOにて開催。"
+    )
+
+    assert location == "도쿄 시부야 PARCO 6층 / 오사카 신사이바시 PARCO 6층"
+    assert country == "Japan"
+    assert region == "overseas"
+
+
+def test_quote_verified_schedule_facts_supply_missing_period_endpoints() -> None:
+    facts = [
+        Fact(
+            id="venue-period",
+            statement="나고야점은 11월 20일부터 12월 20일까지 운영한다.",
+            source_ids=["bleach_official"],
+            verified=True,
+            fact_type="event_schedule",
+            details={
+                "start": "2026-11-20",
+                "end": "2026-12-20",
+                "source_quote": "名古屋PARCO店 2026年11月20日(金)～12月20日(火)",
+            },
+        )
+    ]
+
+    assert _verified_event_dates_from_facts(facts) == ("2026-11-20", "2026-12-20")
+
+
+def test_quote_backed_los_angeles_venue_is_classified_as_overseas() -> None:
+    fact = Fact(
+        id="la-location",
+        statement="Westfield Century City 2층, 로스앤젤레스",
+        source_ids=["one_piece_official"],
+        verified=True,
+        fact_type="location",
+        details={
+            "source_quote": (
+                "Westfield Century City 2F(10250 Santa Monica Blvd. Los Angeles CA 90067)"
+            )
+        },
+    )
+
+    location, country, region = _infer_event_location_from_facts(
+        [fact], fact.details["source_quote"]
+    )
+
+    assert location == fact.statement
+    assert country == "United States"
+    assert region == "overseas"
+
+
+def test_event_location_fact_type_is_used_for_country_inference() -> None:
+    quote = "東京・大阪・愛知・北海道で期間限定オープン"
+    fact = Fact(
+        id="mha-event-location",
+        statement="도쿄·오사카·아이치·홋카이도에서 기간 한정 운영한다.",
+        source_ids=["my_hero_academia_official"],
+        verified=True,
+        fact_type="event_location",
+        details={"source_quote": quote},
+    )
+
+    location, country, region = _infer_event_location_from_facts([fact], quote)
+
+    assert location == fact.statement
+    assert country == "Japan"
+    assert region == "overseas"
+
+
+def test_quote_backed_busan_venue_is_classified_as_domestic() -> None:
+    fact = Fact(
+        id="busan-location",
+        statement="롯데백화점 부산본점 지하 1층",
+        source_ids=["one_piece_official"],
+        verified=True,
+        fact_type="location",
+        details={
+            "source_quote": (
+                "Lotte Department Store Busan Main Branch, Busanjin-gu, Busan, Republic of Korea"
+            )
+        },
+    )
+
+    location, country, region = _infer_event_location_from_facts(
+        [fact], fact.details["source_quote"]
+    )
+
+    assert location == fact.statement
+    assert country == "대한민국"
+    assert region == "domestic"

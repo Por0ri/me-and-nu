@@ -18,8 +18,10 @@ from PIL import Image
 
 from ani_menu_agent.agents.content_generation.renderer import OUTPUT_IMAGE_SIZE
 from ani_menu_agent.config import get_settings
+from ani_menu_agent.duplicate_detection import duplicate_reason
 from ani_menu_agent.models import CONTENT_TYPE_LABELS, ContentPackage
 from ani_menu_agent.policy import POLICY
+from ani_menu_agent.work_catalog import attach_menu_work_ids
 
 
 def _utc_now() -> datetime:
@@ -191,6 +193,12 @@ class AgentRepository:
                 self.path = Path.cwd() / self.path
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.dialect = "sqlite"
+        elif settings.database_backend == "sqlite":
+            self.path = Path(settings.database_path or "data/ani_menu_local.sqlite3")
+            if not self.path.is_absolute():
+                self.path = Path.cwd() / self.path
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.dialect = "sqlite"
         elif database_url or settings.database_url:
             self.database_url = database_url or settings.database_url
             self.dialect = "postgresql"
@@ -282,7 +290,12 @@ class AgentRepository:
                     queued_at TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'ready',
                     valid_until TEXT,
-                    purge_at TEXT
+                    purge_at TEXT,
+                    event_start TEXT,
+                    event_end TEXT,
+                    event_location TEXT,
+                    event_country TEXT,
+                    event_region TEXT NOT NULL DEFAULT 'unknown'
                 );
                 CREATE TABLE IF NOT EXISTS content_drafts (
                     request_id TEXT PRIMARY KEY,
@@ -295,6 +308,11 @@ class AgentRepository:
                     purge_at TEXT NOT NULL,
                     quality_score INTEGER,
                     quality_report_json TEXT,
+                    event_start TEXT,
+                    event_end TEXT,
+                    event_location TEXT,
+                    event_country TEXT,
+                    event_region TEXT NOT NULL DEFAULT 'unknown',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -307,10 +325,19 @@ class AgentRepository:
                     body_json TEXT NOT NULL,
                     fact_ids_json TEXT NOT NULL,
                     image_id TEXT NOT NULL,
+                    visual_mode TEXT NOT NULL DEFAULT 'source_image',
                     image_explanation TEXT NOT NULL,
                     layout_json TEXT NOT NULL,
                     rendered_image_key TEXT,
                     PRIMARY KEY (request_id, page)
+                );
+                CREATE TABLE IF NOT EXISTS content_work_links (
+                    request_id TEXT NOT NULL,
+                    menu_work_id INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    is_primary INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (request_id, menu_work_id),
+                    UNIQUE (request_id, sort_order)
                 );
                 CREATE TABLE IF NOT EXISTS image_blobs (
                     sha256 TEXT PRIMARY KEY,
@@ -330,13 +357,26 @@ class AgentRepository:
                     "valid_until": "TEXT",
                     "purge_at": "TEXT",
                     "content_type": "TEXT",
+                    "event_start": "TEXT",
+                    "event_end": "TEXT",
+                    "event_location": "TEXT",
+                    "event_country": "TEXT",
+                    "event_region": "TEXT NOT NULL DEFAULT 'unknown'",
                 },
                 "content_drafts": {
                     "quality_score": "INTEGER",
                     "quality_report_json": "TEXT",
                     "content_type": "TEXT",
+                    "event_start": "TEXT",
+                    "event_end": "TEXT",
+                    "event_location": "TEXT",
+                    "event_country": "TEXT",
+                    "event_region": "TEXT NOT NULL DEFAULT 'unknown'",
                 },
-                "content_cards": {"rendered_image_key": "TEXT"},
+                "content_cards": {
+                    "rendered_image_key": "TEXT",
+                    "visual_mode": "TEXT NOT NULL DEFAULT 'source_image'",
+                },
             }
             if self.dialect == "sqlite":
                 for table, columns in migrations.items():
@@ -355,6 +395,33 @@ class AgentRepository:
                         connection.execute(
                             f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {declaration}"
                         )
+            for table in ("content_drafts", "feed_queue"):
+                for row in connection.execute(
+                    f"SELECT request_id, package_json FROM {table}"
+                ).fetchall():
+                    try:
+                        package_data = json.loads(row["package_json"])
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    event_region = package_data.get("event_region") or "unknown"
+                    if event_region not in {"domestic", "overseas", "unknown"}:
+                        event_region = "unknown"
+                    connection.execute(
+                        f"UPDATE {table} SET event_start=COALESCE(event_start, ?), "
+                        "event_end=COALESCE(event_end, ?), "
+                        "event_location=COALESCE(event_location, ?), "
+                        "event_country=COALESCE(event_country, ?), "
+                        "event_region=CASE WHEN event_region='unknown' "
+                        "THEN ? ELSE event_region END WHERE request_id=?",
+                        (
+                            package_data.get("event_start"),
+                            package_data.get("event_end"),
+                            package_data.get("event_location"),
+                            package_data.get("event_country"),
+                            event_region,
+                            row["request_id"],
+                        ),
+                    )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agent_records_valid_until "
                 "ON agent_records(valid_until)"
@@ -370,12 +437,51 @@ class AgentRepository:
                 "CREATE INDEX IF NOT EXISTS idx_feed_queue_type_status "
                 "ON feed_queue(content_type, status, queued_at)"
             )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_feed_queue_event_region_dates "
+                "ON feed_queue(event_region, event_start, event_end)"
+            )
             for order, (content_type, label) in enumerate(CONTENT_TYPE_LABELS.items(), start=1):
                 connection.execute(
                     "INSERT INTO content_types (type_code, label_ko, sort_order, active) "
                     "VALUES (?, ?, ?, 1) ON CONFLICT(type_code) DO NOTHING",
                     (content_type.value, label, order),
                 )
+            # The public taxonomy is now `review`; migrate legacy package and index values.
+            connection.execute("DELETE FROM content_types WHERE type_code='review_analysis'")
+            for table in ("content_drafts", "feed_queue", "rejected_archive"):
+                country_column = "event_country" if table != "rejected_archive" else "NULL"
+                rows = connection.execute(
+                    f"SELECT request_id, content_type, {country_column} AS event_country, "
+                    f"package_json FROM {table}"
+                ).fetchall()
+                for row in rows:
+                    try:
+                        package_data = json.loads(row["package_json"])
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if row["content_type"] and not package_data.get("content_type"):
+                        package_data["content_type"] = row["content_type"]
+                    package = ContentPackage.model_validate(package_data)
+                    code = package.content_type
+                    country = package.event_country
+                    if row["content_type"] == "review_analysis":
+                        code = "review"
+                        package.content_type = code
+                    if code != row["content_type"] or country != row["event_country"]:
+                        if table == "rejected_archive":
+                            connection.execute(
+                                "UPDATE rejected_archive SET content_type=?, package_json=? "
+                                "WHERE request_id=?",
+                                (code, package.model_dump_json(), row["request_id"]),
+                            )
+                        else:
+                            connection.execute(
+                                f"UPDATE {table} SET content_type=?, event_country=?, "
+                                "package_json=? "
+                                "WHERE request_id=?",
+                                (code, country, package.model_dump_json(), row["request_id"]),
+                            )
             for table in ("content_drafts", "feed_queue", "rejected_archive"):
                 rows = connection.execute(
                     f"SELECT request_id, package_json FROM {table} WHERE content_type IS NULL"
@@ -745,6 +851,54 @@ class AgentRepository:
                 break
         return examples
 
+    def find_duplicate_content(
+        self,
+        package: ContentPackage,
+        *,
+        retry_same_request: bool = False,
+    ) -> dict[str, str] | None:
+        """Find an existing same-work story before spending tokens on card generation."""
+        with self.connect() as connection:
+            rows = []
+            for table in ("content_drafts", "feed_queue"):
+                rows.extend(
+                    connection.execute(
+                        f"SELECT request_id, topic, package_json, status FROM {table}"
+                    ).fetchall()
+                )
+            rows.extend(
+                connection.execute(
+                    "SELECT request_id, topic, package_json, 'rejected_archived' AS status "
+                    "FROM rejected_archive"
+                ).fetchall()
+            )
+        seen: set[str] = set()
+        for row in rows:
+            request_id = str(row["request_id"])
+            if request_id in seen:
+                continue
+            seen.add(request_id)
+            if (
+                retry_same_request
+                and request_id == package.request_id
+                and row["status"]
+                in {
+                    "needs_crawler_update",
+                    "rejected_archived",
+                    "review_returned",
+                    "held_for_quality_review",
+                }
+            ):
+                continue
+            try:
+                existing = json.loads(row["package_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            reason = duplicate_reason(package, existing)
+            if reason:
+                return {"request_id": request_id, "topic": str(row["topic"]), "reason": reason}
+        return None
+
     def load_content_package(self, request_id: str, content_kind: str) -> ContentPackage:
         """Load generation inputs from crawler-owned records, never from discovery captures."""
         if content_kind not in {"information", "humor"}:
@@ -816,13 +970,41 @@ class AgentRepository:
             raise ValueError("정보 콘텐츠는 공식 1차 출처가 DB에 있어야 합니다.")
 
         meta = eligible_rows[0]
+        event_start = meta["event_start"]
+        event_end = meta["event_end"]
+        event_location = None
+        event_country = None
+        event_region = "unknown"
+        if content_kind == "information" and facts:
+            # Event metadata is reconstructed from verified crawler facts because
+            # agent_records stores structured dates but venue/country metadata lives
+            # in quote-backed fact details.
+            from ani_menu_agent.extraction import (
+                _infer_event_location_from_facts,
+                _verified_event_dates_from_facts,
+            )
+            from ani_menu_agent.models import Fact
+
+            fact_models = [Fact.model_validate(fact) for fact in facts]
+            fact_start, fact_end = _verified_event_dates_from_facts(fact_models)
+            event_start = event_start or fact_start
+            event_end = event_end or fact_end
+            evidence_text = "\n".join(
+                str(fact.details.get("source_quote", "")) for fact in fact_models
+            )
+            event_location, event_country, event_region = _infer_event_location_from_facts(
+                fact_models, evidence_text
+            )
         return ContentPackage(
             request_id=request_id,
             topic=meta["topic"],
             content_kind=content_kind,
             audience_region=meta["region"],
-            event_start=meta["event_start"],
-            event_end=meta["event_end"],
+            event_start=event_start,
+            event_end=event_end,
+            event_location=event_location,
+            event_country=event_country,
+            event_region=event_region,
             feed_valid_until=valid_until,
             purge_at=meta["expires_at"],
             retention_expires_at=meta["expires_at"],
@@ -937,6 +1119,9 @@ class AgentRepository:
         quality_report: dict[str, Any] | None = None,
     ) -> None:
         """Save the latest generated version and its card rows, including drafts under review."""
+        attach_menu_work_ids(package)
+        if package.content_type != "event":
+            package.event_country = None
         prepare_package_lifecycle(package)
         now = _utc_now().isoformat()
         with self.connect() as connection:
@@ -945,8 +1130,9 @@ class AgentRepository:
                 INSERT INTO content_drafts (
                     request_id, topic, content_kind, content_type, status, package_json,
                     valid_until, purge_at, quality_score, quality_report_json,
+                    event_start, event_end, event_location, event_country, event_region,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     topic=excluded.topic,
                     content_kind=excluded.content_kind,
@@ -957,6 +1143,11 @@ class AgentRepository:
                     purge_at=excluded.purge_at,
                     quality_score=excluded.quality_score,
                     quality_report_json=excluded.quality_report_json,
+                    event_start=excluded.event_start,
+                    event_end=excluded.event_end,
+                    event_location=excluded.event_location,
+                    event_country=excluded.event_country,
+                    event_region=excluded.event_region,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -970,6 +1161,11 @@ class AgentRepository:
                     package.purge_at,
                     int(quality_report["total"]) if quality_report else None,
                     json.dumps(quality_report, ensure_ascii=False) if quality_report else None,
+                    package.event_start,
+                    package.event_end,
+                    package.event_location,
+                    package.event_country,
+                    package.event_region,
                     now,
                     now,
                 ),
@@ -977,14 +1173,15 @@ class AgentRepository:
             connection.execute(
                 "DELETE FROM content_cards WHERE request_id=?", (package.request_id,)
             )
+            self._replace_work_links(connection, package)
             for card in package.cards:
                 connection.execute(
                     """
                     INSERT INTO content_cards (
                         request_id, page, role, eyebrow, title_lines_json, body_json,
-                        fact_ids_json, image_id, image_explanation, layout_json,
+                        fact_ids_json, image_id, visual_mode, image_explanation, layout_json,
                         rendered_image_key
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         package.request_id,
@@ -995,6 +1192,7 @@ class AgentRepository:
                         json.dumps(card.body_sentences, ensure_ascii=False),
                         json.dumps(card.fact_ids, ensure_ascii=False),
                         card.image_id,
+                        card.visual_mode,
                         card.image_explanation,
                         card.layout.model_dump_json(),
                         card.rendered_image_key,
@@ -1007,6 +1205,15 @@ class AgentRepository:
                 "UPDATE content_drafts SET status=?, updated_at=? WHERE request_id=?",
                 (status, _utc_now().isoformat(), request_id),
             )
+            # A previously approved revision can remain in the queue when a later
+            # retry of the same request is rejected or returned for new evidence.
+            # Keep that stale revision out of the serving set without deleting it.
+            if status != "ready_for_feed":
+                connection.execute(
+                    "UPDATE feed_queue SET status='held_for_quality_review' "
+                    "WHERE request_id=? AND status='ready'",
+                    (request_id,),
+                )
 
     def archive_rejected(
         self,
@@ -1057,19 +1264,26 @@ class AgentRepository:
             raise ValueError("분류되지 않은 콘텐츠는 피드 대기열에 적재할 수 없습니다.")
         if package.content_type not in {item["code"] for item in self.active_content_types()}:
             raise ValueError(f"활성 콘텐츠 유형이 아닙니다: {package.content_type}")
+        attach_menu_work_ids(package)
+        if package.content_type != "event":
+            package.event_country = None
         prepare_package_lifecycle(package)
         with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO feed_queue (
                     request_id, topic, content_type, package_json, queued_at, status,
-                    valid_until, purge_at
-                ) VALUES (?, ?, ?, ?, ?, 'ready', ?, ?)
+                    valid_until, purge_at, event_start, event_end, event_location,
+                    event_country, event_region
+                ) VALUES (?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     topic=excluded.topic, content_type=excluded.content_type,
                     package_json=excluded.package_json,
                     queued_at=excluded.queued_at, status='ready',
-                    valid_until=excluded.valid_until, purge_at=excluded.purge_at
+                    valid_until=excluded.valid_until, purge_at=excluded.purge_at,
+                    event_start=excluded.event_start, event_end=excluded.event_end,
+                    event_location=excluded.event_location,
+                    event_country=excluded.event_country, event_region=excluded.event_region
                 """,
                 (
                     package.request_id,
@@ -1079,6 +1293,11 @@ class AgentRepository:
                     _utc_now().isoformat(),
                     package.feed_valid_until,
                     package.purge_at,
+                    package.event_start,
+                    package.event_end,
+                    package.event_location,
+                    package.event_country,
+                    package.event_region,
                 ),
             )
             connection.execute(
@@ -1086,19 +1305,21 @@ class AgentRepository:
                 "WHERE request_id=?",
                 (_utc_now().isoformat(), package.request_id),
             )
+            self._replace_work_links(connection, package)
             for card in package.cards:
                 connection.execute(
                     """
                     INSERT INTO content_cards (
                         request_id, page, role, eyebrow, title_lines_json, body_json,
-                        fact_ids_json, image_id, image_explanation, layout_json,
+                        fact_ids_json, image_id, visual_mode, image_explanation, layout_json,
                         rendered_image_key
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(request_id, page) DO UPDATE SET
                         role=excluded.role, eyebrow=excluded.eyebrow,
                         title_lines_json=excluded.title_lines_json,
                         body_json=excluded.body_json, fact_ids_json=excluded.fact_ids_json,
                         image_id=excluded.image_id,
+                        visual_mode=excluded.visual_mode,
                         image_explanation=excluded.image_explanation,
                         layout_json=excluded.layout_json,
                         rendered_image_key=excluded.rendered_image_key
@@ -1112,11 +1333,25 @@ class AgentRepository:
                         json.dumps(card.body_sentences, ensure_ascii=False),
                         json.dumps(card.fact_ids, ensure_ascii=False),
                         card.image_id,
+                        card.visual_mode,
                         card.image_explanation,
                         card.layout.model_dump_json(),
                         card.rendered_image_key,
                     ),
                 )
+
+    @staticmethod
+    def _replace_work_links(connection, package: ContentPackage) -> None:
+        """Persist canonical work links in representative-first order."""
+        connection.execute(
+            "DELETE FROM content_work_links WHERE request_id=?", (package.request_id,)
+        )
+        for sort_order, menu_work_id in enumerate(package.menu_work_ids, start=1):
+            connection.execute(
+                "INSERT INTO content_work_links "
+                "(request_id, menu_work_id, sort_order, is_primary) VALUES (?, ?, ?, ?)",
+                (package.request_id, menu_work_id, sort_order, int(sort_order == 1)),
+            )
 
     def active_feed_items(self, now: datetime | None = None) -> list[dict[str, Any]]:
         cutoff = (now or _utc_now()).astimezone(UTC).isoformat()
@@ -1128,7 +1363,24 @@ class AgentRepository:
                 "ORDER BY queued_at DESC",
                 (cutoff,),
             ).fetchall()
-        return [dict(row) | {"package": json.loads(row["package_json"])} for row in rows]
+        hidden_package_fields = {
+            "audience_region",
+            "region_policy",
+            "event_location",
+            "event_region",
+            "feed_valid_until",
+            "purge_at",
+            "retention_expires_at",
+        }
+        result = []
+        for row in rows:
+            package = json.loads(row["package_json"])
+            if row["content_type"] != "event":
+                package.pop("event_country", None)
+            for field in hidden_package_fields:
+                package.pop(field, None)
+            result.append(dict(row) | {"package": package})
+        return result
 
     def cleanup_expired(self, now: datetime | None = None) -> int:
         cutoff = (now or _utc_now()).astimezone(UTC).isoformat()

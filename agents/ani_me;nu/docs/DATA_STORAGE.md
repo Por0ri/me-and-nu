@@ -35,9 +35,11 @@ CSV는 초기 작품 카탈로그 가져오기용 입력 데이터로만 취급�
 
 ## 카드 원고 형식
 
-카드 원고의 기준 데이터는 Markdown 문자열이 아니라 `ContentPackage`와 카드별 구조 필드입니다. `content_cards`에는 `page`, `role`, `eyebrow`, `title_lines`, `body_sentences`, `fact_ids`, `image_id`, `image_explanation`, `layout`, `rendered_image_key`를 저장하고, `feed_queue.package_json`에는 전체 패키지와 출처·사실·이미지 메타데이터를 함께 보존합니다. 한 행이 카드 한 장이며 `page`로 캐러셀 순서를 보장합니다.
+카드 원고의 기준 데이터는 Markdown 문자열이 아니라 `ContentPackage`와 카드별 구조 필드입니다. `content_cards`에는 `page`, `role`, `eyebrow`, `title_lines`, `body_sentences`, `fact_ids`, `image_id`, `visual_mode`, `image_explanation`, `layout`, `rendered_image_key`를 저장하고, `feed_queue.package_json`에는 전체 패키지와 출처·사실·이미지 메타데이터를 함께 보존합니다. `visual_mode`는 원본 이미지 카드(`source_image`)와 자체 편집 그래픽 카드(`editorial_graphic`)를 구분합니다. 한 행이 카드 한 장이며 `page`로 캐러셀 순서를 보장합니다.
 
-각 캐러셀에는 추천용 대표 `content_type`을 하나 저장합니다. 현재 활성 타입은 소식(`news`), 행사(`event`), 작품 가이드(`guide`), 인물(`people`), 굿즈(`goods`), 비하인드(`behind`), 리뷰 분석(`review_analysis`), 유머(`humor`), 캐릭터(`character`), 큐레이션(`curation`), 음악(`music`) 11개입니다. `content_kind`의 `information`/`humor`는 수집·생성 경로이고, 추천용 `content_type`과 별도 필드입니다. 하위 카테고리는 아직 저장하지 않습니다. `content_types` 레지스트리와 `content_drafts`/`feed_queue`의 인덱스 컬럼을 사용해 타입별 추천 조회를 지원하며, 미분류 콘텐츠는 피드에 넣지 않습니다.
+각 캐러셀에는 추천용 대표 `content_type`을 하나 저장합니다. 현재 활성 타입은 소식(`news`), 행사(`event`), 작품 가이드(`guide`), 인물(`people`), 굿즈(`goods`), 비하인드(`behind`), 리뷰 분석(`review`), 유머(`humor`), 캐릭터(`character`), 큐레이션(`curation`), 음악(`music`) 11개입니다. `content_kind`의 `information`/`humor`는 수집·생성 경로이고, 추천용 `content_type`과 별도 필드입니다. 하위 카테고리는 아직 저장하지 않습니다. `content_types` 레지스트리와 `content_drafts`/`feed_queue`의 인덱스 컬럼을 사용해 타입별 추천 조회를 지원하며, 미분류 콘텐츠는 피드에 넣지 않습니다.
+
+행사·팝업 콘텐츠는 원문에 근거가 있을 때 `event_start`, `event_end`, `event_location`, `event_country`, `event_region`을 `content_drafts`와 `feed_queue` 양쪽의 조회 가능한 컬럼과 `package_json`에 저장합니다. `event_country`는 `KR`, `JP`, `US` 같은 ISO 국가 코드이고, `event_region`은 한국 기준 `domestic`/`overseas`로 내부 분류에만 씁니다. 피드 응답에는 국가 코드만 공개하고 상세 장소, 독자 국가, 내부 지역 우선순위는 노출하지 않습니다. 하루 행사·굿즈 발매는 확인된 같은 날짜를 `event_start`와 `event_end` 양쪽에 저장합니다. `valid_until`은 피드 만료 처리용 내부 필드이며 피드 응답이나 카드에 노출하지 않습니다. 이는 실제 행사 종료일 `event_end`와 다른 값입니다. 원문 발표일은 출처 추적 메타데이터로만 보존하며 카드 문구에는 표시하지 않습니다.
 
 - 제목은 `title_lines` 배열로 보관해 한국어 단어가 렌더 단계에서 어색하게 쪼개지지 않도록 합니다.
 - 본문은 `body_sentences` 배열로 문장 단위 보관합니다. 마크다운 줄바꿈이나 HTML 태그에 문장 의미를 맡기지 않습니다.

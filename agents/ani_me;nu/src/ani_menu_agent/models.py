@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Literal
 from urllib.parse import urlparse
@@ -25,7 +26,7 @@ class ContentType(StrEnum):
     PEOPLE = "people"
     GOODS = "goods"
     BEHIND = "behind"
-    REVIEW_ANALYSIS = "review_analysis"
+    REVIEW = "review"
     HUMOR = "humor"
     CHARACTER = "character"
     CURATION = "curation"
@@ -39,11 +40,31 @@ CONTENT_TYPE_LABELS = {
     ContentType.PEOPLE: "인물",
     ContentType.GOODS: "굿즈",
     ContentType.BEHIND: "비하인드",
-    ContentType.REVIEW_ANALYSIS: "리뷰 분석",
+    ContentType.REVIEW: "리뷰 분석",
     ContentType.HUMOR: "유머",
     ContentType.CHARACTER: "캐릭터",
     ContentType.CURATION: "큐레이션",
     ContentType.MUSIC: "음악",
+}
+
+CONTENT_TYPE_GUIDANCE = {
+    "news": (
+        "애니화·후속작 발표, 방영·OTT 일정, PV·비주얼 공개, 캐스팅·제작진 발표, "
+        "원작 동향, 흥행·수상·업계 소식"
+    ),
+    "event": (
+        "전시·원화전, 팝업스토어, 콜라보 카페, 상영회·재개봉, 무대인사, "
+        "공연·애니송 이벤트, 대형 행사"
+    ),
+    "guide": "작품 소개, 입문 가이드, 정주행 순서, 세계관·용어 정리, 인물 관계도",
+    "people": "성우 출연작, 감독·작가·스튜디오 소개, OP·ED 아티스트 등 사람 중심 정보",
+    "curation": "테마별 작품 모음, 취향 연결, 분기 결산·랭킹, 숨은 명작 추천",
+    "goods": "피규어·굿즈 발매·예약, 블루레이·OST, 한정판·특전, 작품 콜라보 상품",
+    "behind": "제작 비하인드, 성지순례, 오마주·패러디 등 작품 제작·문화의 뒷이야기",
+    "review": "작품 리뷰, 분기 신작 첫인상, 원작과 애니메이션 비교·분석",
+    "character": "캐릭터 생일, 프로필, 작품에서 확인되는 TMI와 인물 중심 이야기",
+    "music": "애니메이션 OST·BGM·주제가·삽입곡과 음악가 정보",
+    "humor": "작품 사실을 비틀지 않는 팬덤 유머·밈·재미있는 상황극",
 }
 
 
@@ -84,13 +105,22 @@ class Fact(BaseModel):
     verified: bool = False
     time_sensitive: bool = False
     fact_type: str = "general"
-    details: dict[str, str | int | bool | list[str] | None] = Field(default_factory=dict)
+    details: dict[str, str | int | float | bool | list[str | int | float] | None] = Field(
+        default_factory=dict
+    )
 
 
 class TermTranslation(BaseModel):
     original: str = Field(min_length=1)
     korean: str = Field(min_length=1)
-    category: Literal["work_title", "character", "product", "brand", "other"] = "other"
+    category: Literal["work_title", "character", "product", "brand", "event", "other"] = "other"
+
+    @model_validator(mode="after")
+    def normalize_known_korean_terms(self) -> TermTranslation:
+        # Japanese クール is the anime-season term “cour”, conventionally Korean “쿨”.
+        if "クール" in self.original and "쿠르" in self.korean:
+            self.korean = self.korean.replace("쿠르", "쿨")
+        return self
 
 
 class ImageAsset(BaseModel):
@@ -107,6 +137,7 @@ class ImageAsset(BaseModel):
     width: int = Field(default=0, ge=0)
     height: int = Field(default=0, ge=0)
     has_alpha: bool = False
+    alpha_coverage: float | None = Field(default=None, ge=0, le=1)
     subject_hint: str = "center"
     subject_box: NormalizedBox | None = None
     fingerprint: str | None = None
@@ -218,6 +249,7 @@ class CardSpec(BaseModel):
     protected_phrases: list[str] = Field(default_factory=list)
     fact_ids: list[str] = Field(default_factory=list)
     image_id: str
+    visual_mode: Literal["source_image", "editorial_graphic"] = "source_image"
     image_explanation: str = ""
     image_reuse_mode: str = "unique"
     layout: LayoutSpec
@@ -242,6 +274,7 @@ class CopyCard(BaseModel):
     protected_phrases: list[str] = Field(default_factory=list)
     fact_ids: list[str] = Field(default_factory=list)
     image_id: str
+    visual_mode: Literal["source_image", "editorial_graphic"] = "source_image"
     image_explanation: str = ""
     image_reuse_mode: str = "unique"
     ending_joke: bool = False
@@ -272,7 +305,7 @@ class CopyDeck(BaseModel):
         "teaser",
         "declarative",
     ]
-    cards: list[CopyCard] = Field(min_length=3, max_length=10)
+    cards: list[CopyCard] = Field(min_length=2, max_length=10)
 
 
 class CardLanguageReview(BaseModel):
@@ -309,7 +342,7 @@ class LanguageReview(BaseModel):
 
     content_type_fit: int = Field(ge=0, le=5)
     content_type_feedback: str = ""
-    cards: list[CardLanguageReview] = Field(min_length=3, max_length=10)
+    cards: list[CardLanguageReview] = Field(min_length=2, max_length=10)
     summary: str = ""
 
 
@@ -335,10 +368,15 @@ class ContentPackage(BaseModel):
     topic: str
     content_kind: ContentKind
     content_type: str | None = None
+    # Ordered work-dictionary IDs; index 0 is the representative work.
+    menu_work_ids: list[int] = Field(default_factory=list)
     audience_region: str = "KR"
     region_policy: str = "kr_first"
     event_start: str | None = None
     event_end: str | None = None
+    event_location: str | None = None
+    event_country: str | None = None
+    event_region: str = "unknown"
     feed_valid_until: str | None = None
     purge_at: str | None = None
     retention_expires_at: str | None = None
@@ -354,6 +392,68 @@ class ContentPackage(BaseModel):
     cards: list[CardSpec] = Field(default_factory=list)
     prior_image_fingerprints: list[str] = Field(default_factory=list)
     status: str = "draft"
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_content_metadata(cls, value):
+        if not isinstance(value, dict):
+            return value
+        if value.get("content_type") == "review_analysis":
+            value["content_type"] = "review"
+        # A country is the physical location of an event/pop-up, not the country
+        # an anime announcement happens to mention or originate from.
+        if value.get("content_type") and value.get("content_type") != "event":
+            value["event_country"] = None
+        country = value.get("event_country")
+        if isinstance(country, str) and country.strip():
+            aliases = {
+                "대한민국": "KR",
+                "한국": "KR",
+                "korea": "KR",
+                "south korea": "KR",
+                "republic of korea": "KR",
+                "일본": "JP",
+                "japan": "JP",
+                "日本": "JP",
+                "미국": "US",
+                "united states": "US",
+                "united states of america": "US",
+                "usa": "US",
+                "u.s.": "US",
+                "us": "US",
+                "kr": "KR",
+                "jp": "JP",
+                "canada": "CA",
+                "캐나다": "CA",
+                "france": "FR",
+                "프랑스": "FR",
+                "germany": "DE",
+                "독일": "DE",
+                "taiwan": "TW",
+                "대만": "TW",
+                "hong kong": "HK",
+                "홍콩": "HK",
+                "china": "CN",
+                "중국": "CN",
+                "singapore": "SG",
+                "싱가포르": "SG",
+                "australia": "AU",
+                "호주": "AU",
+                "united kingdom": "GB",
+                "영국": "GB",
+            }
+            codes = []
+            for part in re.split(r"\s*[/,]\s*", country):
+                if not part.strip():
+                    continue
+                country_part = part.strip()
+                code = aliases.get(country_part.casefold())
+                if code is None and re.fullmatch(r"[A-Za-z]{2}", country_part):
+                    code = country_part.upper()
+                if code:
+                    codes.append(code)
+            value["event_country"] = ",".join(dict.fromkeys(codes)) or None
+        return value
 
 
 class QualityIssue(BaseModel):

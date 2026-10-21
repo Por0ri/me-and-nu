@@ -3,7 +3,20 @@ import io
 import pytest
 from PIL import Image, ImageDraw
 
-from ani_menu_agent.agents.image.download import _validated_image
+from ani_menu_agent.agents.image.download import _image_request_headers, _validated_image
+from ani_menu_agent.models import SourceEvidence
+
+
+def test_image_request_identifies_the_official_page_as_referer() -> None:
+    source = SourceEvidence(
+        id="official",
+        title="Official news",
+        url="https://example.com/news/1",
+        publisher="Example",
+        is_official=True,
+    )
+
+    assert _image_request_headers(source)["Referer"] == "https://example.com/news/1"
 
 
 def test_image_validation_extracts_real_transparency_and_subject_bounds() -> None:
@@ -12,12 +25,13 @@ def test_image_validation_extracts_real_transparency_and_subject_bounds() -> Non
     payload = io.BytesIO()
     source.save(payload, format="PNG")
 
-    suffix, width, height, has_alpha, subject_box = _validated_image(
+    suffix, width, height, has_alpha, alpha_coverage, subject_box = _validated_image(
         payload.getvalue(), "image/png"
     )
 
     assert (suffix, width, height) == (".png", 200, 300)
     assert has_alpha is True
+    assert alpha_coverage is not None and 0.30 < alpha_coverage < 0.45
     assert subject_box is not None
     assert subject_box.x == 0.2
     assert subject_box.y == 0.1
@@ -30,7 +44,10 @@ def test_image_validation_does_not_mark_opaque_image_as_cutout() -> None:
     payload = io.BytesIO()
     source.save(payload, format="JPEG")
 
-    _, _, _, has_alpha, subject_box = _validated_image(payload.getvalue(), "image/jpeg")
+    _, _, _, has_alpha, alpha_coverage, subject_box = _validated_image(
+        payload.getvalue(), "image/jpeg"
+    )
 
     assert has_alpha is False
+    assert alpha_coverage is None
     assert subject_box is None
