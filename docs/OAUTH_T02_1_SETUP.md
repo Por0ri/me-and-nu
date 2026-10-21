@@ -1,6 +1,6 @@
 # T02 OAuth 백엔드 설정과 연결 계약
 
-기준일: 2026-10-20, 로컬 검증 갱신: 2026-10-21. T02-1에서 시작해 프론트 작업 없이 OAuth 백엔드와 Q1·Q2 온보딩 저장을 구현했다. 별도 로컬 테스트 DB에 마이그레이션을 적용했으며, 실제 카카오 인증 후 로컬 세션 발급을 재확인했다. 원격 OAuth 배포 검증은 별도다. 사용자 지시에 따라 이후 커밋·푸시는 `backend-labs`에서 진행하며, 머지는 별도 지시 전까지 수행하지 않는다.
+기준일: 2026-10-20, 로컬 검증 갱신: 2026-10-21. T02-1에서 시작해 프론트 작업 없이 OAuth 백엔드와 Q1·Q2 온보딩 저장을 구현했다. 별도 로컬 테스트 DB에 마이그레이션을 적용했으며, 실제 카카오 인증 → 온보딩 완료 → PostgreSQL 저장값 대조까지 확인했다. 원격 OAuth 배포 검증은 별도다. 사용자 지시에 따라 이후 커밋·푸시는 `backend-labs`에서 진행하며, 머지는 별도 지시 전까지 수행하지 않는다.
 
 ## 2026-10-21 로컬 1단계 검증 결과
 
@@ -26,6 +26,67 @@
 7. 온보딩을 이어갈 때는 새 `csrfToken`으로 Swagger Authorize를 갱신한다. 이번 1단계에서는 `POST /api/v1/onboarding/complete`를 호출하지 않는다.
 
 이미 온보딩을 완료한 계정은 초기화하지 않는다. 신규 온보딩 과정을 시연하려면 온보딩 미완료 카카오 테스트 계정을 사용한다. 오래된 인가 URL은 재사용하지 않고 2~5단계부터 다시 진행한다.
+
+## 2026-10-21 온보딩 제출과 저장 검증 결과
+
+앞서 합의한 단계표의 2단계는 가입 상태 조회, 3단계는 온보딩 제출이다. 이번에는 두 단계를 완료하고, 사용자가 요청한 저장 결과 대조(4단계)도 수행했다. 로그아웃 후 재로그인(5단계)은 이번 실제 브라우저 검증에 포함하지 않았다.
+
+- 실제 카카오 로그인 세션에서 `onboarding_pending`을 확인하고 최신 CSRF로 Swagger의 `POST /api/v1/onboarding/complete`를 실행했다.
+- 사용자가 승인한 테스트 프로필은 닉네임 `온보딩테스트`, 생년월일 `2000-01-01`, 분야 애니메이션이다. Q1은 `ost`, Q2는 `events`를 선택했다.
+- 현재 로컬 정책 `v1`은 실제 서비스 약관이 아닌 테스트용 임시 안내다. 사용자의 선택에 따라 이용약관·개인정보 동의는 `true`, 광고·마케팅 동의는 `false`로 제출했다.
+- 응답은 `201`, `onboardingCompleted=true`, `activeTopic.code=anime`, `answers={"q1":"ost","q2":"events"}`였다. `activeTopic.subtopicIds`는 빈 배열이었다.
+- 후속 `GET /api/v1/auth/session`은 `authenticated=true`, `sessionState=active`, `onboardingCompleted=true`였다. CSRF가 교체됐고 페이지 새로고침 후에도 같은 계정의 완료 상태가 유지됐다.
+- 응답의 회원 ID와 Topic ID로 범위를 제한해 PostgreSQL을 읽기 전용 트랜잭션으로 조회했다. `me_nu_oauth_local`과 전용 DB 표식을 먼저 확인했다.
+- DB에서 테스트 닉네임·생년월일 일치, `onboarding_completed_at` 저장, 활성 `tap` 1개와 연결된 `onboarding_answers` 1행을 확인했다. 같은 행의 `q1_choice=ost`, `q2_choice=events`가 제출값과 일치했다. 해당 `tap`의 `tap_topic` 행은 0개였다.
+- 동의 이력은 4종류 각각 1행, 모두 `v1`이었다. 이용약관·개인정보는 동의 시각과 `true`, 광고·마케팅은 `false`로 저장됐다. 알림 설정의 `marketing`도 `false`였다. Q2의 `events` 선택은 광고·마케팅 동의를 뜻하지 않는다.
+- 이번에는 기존 구현의 실제 실행과 데이터 저장을 검증했으며 추가 코드·스키마 변경은 없었다. 프론트 파일, 원본 `me_nu`, 배포 DB는 변경하지 않았다. 완료한 테스트 계정 데이터는 보존한다.
+
+## 온보딩 Swagger 시연 순서
+
+현재 계정은 이미 완료 상태다. 결과만 다시 보려면 로그인했던 같은 브라우저에서 `GET /api/v1/auth/session`을 실행해 `active`와 `onboardingCompleted=true`를 확인한다. 세션이 만료됐다면 위 카카오 로그인 절차를 다시 진행한다.
+
+신규 온보딩을 처음부터 시연하려면 온보딩 미완료 카카오 테스트 계정으로 로그인한 뒤 다음 순서로 진행한다.
+
+1. `GET /api/v1/auth/session`에서 `onboarding_pending`을 확인한다. 반환된 `csrfToken`으로 Swagger **Authorize → CsrfToken**을 갱신한다. 토큰 값만 입력하고 `SessionCookie`는 비워 둔다.
+2. `GET /api/v1/policies`, `GET /api/v1/topics`로 현재 정책 버전과 Topic ID를 확인한다. 아래 `v1`, `topicId=2`는 이번 PC의 로컬 테스트 값이며 다른 환경에서는 조회 결과로 바꾼다.
+3. `POST /api/v1/onboarding/complete`에서 **Try it out**을 누르고 다음 본문을 입력한다. 닉네임·테스트 생년월일·Q1·Q2·동의는 시연자가 선택한다. 필수 2종은 동의해야 하고 선택 2종은 미동의로도 완료할 수 있다.
+
+```json
+{
+  "nickname": "온보딩테스트",
+  "birthDate": "2000-01-01",
+  "accountType": "user",
+  "consents": [
+    {"type": "terms", "policyVersion": "v1", "agreed": true},
+    {"type": "privacy", "policyVersion": "v1", "agreed": true},
+    {"type": "advertising", "policyVersion": "v1", "agreed": false},
+    {"type": "marketing", "policyVersion": "v1", "agreed": false}
+  ],
+  "topicId": 2,
+  "answers": {"q1": "ost", "q2": "events"}
+}
+```
+
+4. **Execute** 후 `201`, `onboardingCompleted=true`, 제출한 `answers`가 반환되는지 확인한다. `profileImageId`와 `subtopicIds`는 요청에 넣지 않는다.
+5. `GET /api/v1/auth/session`을 다시 실행해 `active`를 확인한다. 다음 변경 요청 전에 새 응답의 CSRF로 Authorize를 갱신한다.
+6. DB 클라이언트에서 **`me_nu_oauth_local`**에 연결한다. 아래 조회에서 `REPLACE_WITH_USER_ID`를 완료 응답 또는 현재 세션의 `user.id`로 바꾸고 실행한다. 동일 계정의 활성 분야가 여러 개라면 완료 응답의 `activeTopic.id`에 해당하는 행을 확인한다.
+
+```sql
+BEGIN TRANSACTION READ ONLY;
+SELECT current_database();
+SELECT t.topic_id, a.q1_choice, a.q2_choice, a.created_at,
+       u.onboarding_completed_at,
+       (SELECT count(*) FROM tap_topic AS st WHERE st.tap_id = t.tap_id) AS subtopic_count
+FROM user_account AS u
+JOIN tap AS t ON t.user_id = u.user_id AND t.deleted_at IS NULL
+JOIN onboarding_answers AS a ON a.tap_id = t.tap_id
+WHERE u.user_id = REPLACE_WITH_USER_ID;
+ROLLBACK;
+```
+
+이번 테스트의 예상값은 `topic_id=2`, `q1_choice=ost`, `q2_choice=events`, 두 시각은 null이 아님, `subtopic_count=0`인 행 1개다. `ROLLBACK`은 읽기 전용 조회 트랜잭션을 끝내며 이미 저장한 온보딩 데이터는 그대로 유지한다.
+
+이미 완료한 계정으로 온보딩을 다시 제출하면 계약상 `409 ONBOARDING_ALREADY_COMPLETED`다. 이를 재현하기 위해 계정이나 완료 상태를 초기화하지 않는다. `403`이면 최신 CSRF와 만 14세 이상인 테스트 생년월일을 확인하고, `422`이면 요청 형식과 Q1·Q2 허용값을 확인한다.
 
 ## 확정 사항과 환경
 
@@ -189,6 +250,6 @@ http://localhost:8000/api/v1/auth/login/kakao/callback
 - 기존 자동 테스트는 공급자 통신을 대체하고 DB 동작은 SQLite 메모리로 확인한다. 실제 카카오 OAuth의 로컬 브라우저 검증은 위 2026-10-21 결과를 따른다. 실제 PostgreSQL 동시 요청 경합과 원격 쿠키·프록시는 추가 검증 대상이다.
 - 검증: 기존 OAuth·인증 자동 테스트 268개 통과, 로컬 실행 스크립트의 DB·Redis 격리 및 원본 환경파일 보존 테스트 18개 통과.
 - 초기 로컬 PostgreSQL·Redis 점검에서는 API/DB/Redis 상태, Swagger, 익명 세션, CSRF 거절, 카카오 인가 URL 생성, 로그인 취소 시 state 소비, state 재사용 거절, 로그아웃을 확인했다. 이후 실제 회원 로그인 확인은 위 2026-10-21 검증 기록에 추가했다.
-- 재인증·탈퇴 복구, 30일 로그인 유지, 네이버 실계정 검증 및 프론트 연결은 후속 작업이다. Q1·Q2 저장 백엔드는 구현됐으며 실제 카카오 로그인 세션에서 온보딩 완료까지 이어가는 검증은 다음 단계다.
+- 재인증·탈퇴 복구, 30일 로그인 유지, 네이버 실계정 검증 및 프론트 연결은 후속 작업이다. 실제 카카오 로그인 세션에서 온보딩 완료와 Q1·Q2 PostgreSQL 저장까지 확인했다. 완료 회원의 로그아웃 후 재로그인은 다음 실제 브라우저 검증 단계다.
 
 계약 근거: [API-001](https://app.notion.com/p/3f704c45a9618129aac0fb2b55c85e71), [API-002](https://app.notion.com/p/3f704c45a96181208b87d1d534f49876), [카카오 REST](https://developers.kakao.com/docs/ko/kakaologin/rest-api), [네이버 인증 API](https://developers.naver.com/docs/login/api/api.md). 원본의 프론트 경로는 최종 확인 대상이며, 백엔드 단독 복귀 방식은 이번 작업에서 추가한 계약이다.
