@@ -505,19 +505,24 @@ def cowatch_scores(user, ctx, kind=COWATCH_KIND):
 # 기록이 적은 유저(신규)와 많은 유저는 강한 재료가 달라서 따로 고름 (연습 5,000명 기준, 값은 EXP-18 에서 확정)
 # - 기존 유저: 최근 30일 인기 β=0.35 + EASE γ=0.5 → 실전 33.01% (아이템 기반 CF 로는 27.53%)
 # - 신규 유저: 전체 기간 인기 β=1 + 같이 본 작품(가장 센 규칙 하나) γ=2 → 실전 18.55% (작품 1개 + 칩)
+#   + 최근 30일 인기 0.5 (trend, EXP-25) → 18.54% → 19.62%. 신작 기록이 없는 상황 15.22% → 17.84%
 # - 본 작품 7개 이하면 신규 유저 설정. 연습에서 7개까지는 신규 설정, 10개부터 EASE 가 이김 (EXP-16·18)
 # cf: 행동 기반 부분에 쓸 방법 (confidence · confidence_max = 아이템 기반 CF / ease / als)
 WARM = {"beta": 0.35, "gamma": 0.5, "kind": "recent", "cf": "ease"}            # 기록 많은 유저
-COLD = {"beta": 1.0, "gamma": 2.0, "kind": "all", "cf": "confidence_max"}      # 기록 적은 유저 (온보딩 직후)
+COLD = {"beta": 1.0, "gamma": 2.0, "kind": "all", "cf": "confidence_max", "trend": 0.5}  # 기록 적은 유저 (온보딩 직후)
 COLD_MAX_WATCHED = 7                                     # 본 작품이 이 개수 이하면 신규 유저 설정
 
 
-def hybrid(user, ctx, beta, gamma, kind="recent", cf_kind=COWATCH_KIND, delta=0.0):
+def hybrid(user, ctx, beta, gamma, kind="recent", cf_kind=COWATCH_KIND, delta=0.0, trend=0.0):
     """취향 + 인기도 + 같이 본 작품 섞기 (EXP-14). cf_kind 로 같이 본 작품 대신 EASE·ALS 를 쓸 수 있다.
-    delta > 0 이면 AniList 커뮤니티 추천도 섞는다 (build_rec 먼저. 추천으로 이어진 작품은 후보에 넣음)"""
+    delta > 0 이면 AniList 커뮤니티 추천도 섞는다 (build_rec 먼저. 추천으로 이어진 작품은 후보에 넣음)
+    trend > 0 이면 최근 30일 인기를 더 섞는다 (전체 기간 인기를 쓰는 신규 유저 설정용, EXP-25. 최근 인기 300편은 후보에 넣음)"""
     s, p, c = genre_scores(user, ctx), pop_scores(user, ctx, kind), cowatch_scores(user, ctx, cf_kind)
     total = s + beta * p + gamma * c
     rows = np.unique(np.r_[pop_candidates(user, ctx, kind), ctx["cw_rows"]])
+    if trend:
+        total = total + trend * pop_scores(user, ctx, "recent")
+        rows = np.unique(np.r_[rows, pop_candidates(user, ctx, "recent")])
     if delta and "rec" in ctx:
         r = rec_scores(user, ctx)
         total = total + delta * r
@@ -525,14 +530,15 @@ def hybrid(user, ctx, beta, gamma, kind="recent", cf_kind=COWATCH_KIND, delta=0.
     return rank_rows(rows, ctx, -total[rows])
 
 
-def next_hybrid(user, ctx, beta=None, gamma=None, kind=None, slots=NEXT_SLOTS, cf_kind=None, delta=None):
+def next_hybrid(user, ctx, beta=None, gamma=None, kind=None, slots=NEXT_SLOTS, cf_kind=None, delta=None, trend=None):
     """다음 편 자리 제한 + 조합 (EXP-14). 값을 안 주면 기존 유저 설정(WARM)."""
     beta = WARM["beta"] if beta is None else beta
     gamma = WARM["gamma"] if gamma is None else gamma
     kind = WARM["kind"] if kind is None else kind
     cf_kind = WARM["cf"] if cf_kind is None else cf_kind
     delta = WARM.get("rec", 0.0) if delta is None else delta
-    return next_picks(user, ctx, slots) + hybrid(user, ctx, beta, gamma, kind, cf_kind, delta)
+    trend = WARM.get("trend", 0.0) if trend is None else trend
+    return next_picks(user, ctx, slots) + hybrid(user, ctx, beta, gamma, kind, cf_kind, delta, trend)
 
 
 def next_auto(user, ctx, slots=NEXT_SLOTS):
@@ -541,7 +547,7 @@ def next_auto(user, ctx, slots=NEXT_SLOTS):
     n = int(np.isin(user["history"].status, WATCHED).sum())
     cfg = COLD if n <= COLD_MAX_WATCHED else WARM
     return next_hybrid(user, ctx, cfg["beta"], cfg["gamma"], cfg["kind"], slots, cfg.get("cf", COWATCH_KIND),
-                       cfg.get("rec", 0.0))
+                       cfg.get("rec", 0.0), cfg.get("trend", 0.0))
 
 
 # ## 3. 최종 K개 고르기

@@ -13,6 +13,7 @@
 #   python -m model.eval.new_anime_test fill     # 기록 없는 작품의 점수를 0점 대신 채우기 (EXP-23)
 #   python -m model.eval.new_anime_test input    # 유저가 고른 신작도 비슷한 작품으로 이어서 계산 (1-1b)
 #   python -m model.eval.new_anime_test ease     # 위를 기록 많은 유저 설정에만 켠 그대로 다시 재고 짝지어 확인 (EXP-24)
+#   python -m model.eval.new_anime_test trend    # 신규 유저 설정에 최근 30일 인기(트렌딩)를 더 섞기 (EXP-25)
 
 import csv
 import json
@@ -315,6 +316,60 @@ def ease_check():
         print(f"짝 비교: {paired(*hs)}", flush=True)
 
 
+TRENDS = (0.0, 0.1, 0.25, 0.5, 1.0, 2.0)   # 2-1: 신규 유저 설정에 더 섞을 최근 30일 인기 비중 후보
+
+
+def with_trend(w, replace=False):
+    # 신규 유저 설정에만 최근 30일 인기 비중 w. replace 면 섞지 않고 전체 기간 인기를 최근 30일 인기로 바꿈 (참고용)
+    def model(user, c):
+        old = dict(ar.COLD)
+        if replace:
+            ar.COLD["kind"] = "recent"
+        ar.COLD["trend"] = w
+        try:
+            return ar.next_auto(user, c)
+        finally:
+            ar.COLD.clear()
+            ar.COLD.update(old)
+    return model
+
+
+def trend_test():
+    # 2-1: 신규 유저 설정(전체 기간 인기 β=1)에 최근 30일 인기(트렌딩)를 더 섞으면 신작·신규 IP 가 올라오는가
+    # 고르는 기준 (미리 정함): 연습 5,000명 (작품 1개 + 칩 · 신작 기록 없음) 시리즈 Hit@10 최고
+    # 채택 기준 (미리 정함): 실전에서 시리즈 Hit@10·NDCG·정답이 신작이 같이 오르고 짝 비교 우연일 확률 0.05 미만.
+    #   작품 3개 + 칩, 기록 다 있는 상황에서도 안 떨어질 때. 신규 IP 만 오르고 전체가 떨어지면 안 바꿈
+    t0 = time.time()
+    anime, anilist, cases, ctx, new_ctx, new_ids, is_new, is_ip = prepare()
+    onb1 = [t.onboarding(c, anime, 1, 3, anilist, 3) for c in cases]
+    onb3 = [t.onboarding(c, anime, 3, 3, anilist, 3) for c in cases]
+    print(f"신작 기록 없음 · 후보 쪽 빌려 오기 켬 · 준비 {time.time() - t0:.0f}초")
+    head = "방법\t시리즈 Hit@10\tNDCG@10\t정답이 신작\t정답이 신규 IP\t추천 10개 중 신작 (앞 1,000명)"
+    tune = onb1[: t.TUNE_USERS]
+    print(f"\n[연습 {len(tune):,}명 · 신규 유저 (작품 1개 + 장르 3 + 테마 3) · 비중 고르기]\n{head}")
+    variants = [(f"최근 인기 {w}", w, False) for w in TRENDS] + [("최근 인기로 바꾸기 (참고)", 0.0, True)]
+    best, best_hit = variants[0], -1.0
+    for v in variants:
+        h, row = measure(tune, new_ctx, with_trend(v[1], v[2]), new_ids, is_new, is_ip)
+        print(f"{v[0]}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+        if h[:, 0].mean() > best_hit + 1e-9:
+            best, best_hit = v, h[:, 0].mean()
+    print(f"→ 고른 방법: {best[0]}", flush=True)
+    if best is variants[0]:
+        return
+    for scen, cs, c in (("신규 유저 · 작품 1개 + 칩 · 신작 기록 없음", onb1, new_ctx),
+                        ("신규 유저 · 작품 3개 + 칩 · 신작 기록 없음", onb3, new_ctx),
+                        ("신규 유저 · 작품 1개 + 칩 · 기록 다 있음", onb1, ctx)):
+        part = cs[t.TUNE_USERS:]
+        print(f"\n[실전 {len(part):,}명 · {scen}]\n{head}")
+        hs = []
+        for name, w, rep in (("지금 (섞기 없음)", 0.0, False), best):
+            h, row = measure(part, c, with_trend(w, rep), new_ids, is_new, is_ip)
+            hs.append(h)
+            print(f"{name}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+        print(f"짝 비교: {paired(*hs)}", flush=True)
+
+
 def main():
     if sys.argv[1:2] == ["cold"]:
         return cold_test()
@@ -322,6 +377,8 @@ def main():
         return input_test()
     if sys.argv[1:2] == ["ease"]:
         return ease_check()
+    if sys.argv[1:2] == ["trend"]:
+        return trend_test()
     if sys.argv[1:2] == ["fill"]:
         return fill_test()
     t0 = time.time()
