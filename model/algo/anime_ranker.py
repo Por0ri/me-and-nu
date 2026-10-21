@@ -181,17 +181,22 @@ def build_cowatch(ctx, histories, n_items=COWATCH_ITEMS):
             p = pos[rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])]
             B[j, p[p >= 0]] = 1
         C += B.T @ B
+    ctx.update(cw_rows=uni, cw_pos=pos, cw_sim=cowatch_sims(C, len(histories)), cw_count=C, cw_users=len(histories))
+
+
+def cowatch_sims(C, n_users):
+    # 같이 본 사람 수 표 → 유사도 표들 (confidence · cosine · lift). 대각은 0
     d = np.diag(C).astype(np.float64)                    # 작품마다 본 사람 수
     Cd = C.astype(np.float64)
     with np.errstate(divide="ignore", invalid="ignore"):
         sims = {
             "confidence": np.nan_to_num(Cd / d[:, None]),
             "cosine": np.nan_to_num(Cd / np.sqrt(np.outer(d, d))),
-            "lift": np.nan_to_num(np.where(Cd >= LIFT_MIN_COUNT, Cd * len(histories) / np.outer(d, d), 0)),
+            "lift": np.nan_to_num(np.where(Cd >= LIFT_MIN_COUNT, Cd * n_users / np.outer(d, d), 0)),
         }
     for S in sims.values():
         np.fill_diagonal(S, 0)
-    ctx.update(cw_rows=uni, cw_pos=pos, cw_sim=sims, cw_count=C)
+    return sims
 
 
 def build_ease(ctx, lam=EASE_LAMBDA):
@@ -231,6 +236,30 @@ def build_als(ctx, histories, factors=ALS_FACTORS, reg=ALS_REG, alpha=ALS_ALPHA,
         X = solve(Y, users)
         Y = solve(X, item_users)
     ctx.update(als_Y=Y, als_YtY=Y.T @ Y, als_reg=reg, als_alpha=alpha)
+
+
+def build_rec(ctx, edges):
+    """AniList 커뮤니티 추천 ("이거 좋아하면 이것도", 유저 투표). edges: (작품 a, 추천 작품 b, 추천 수) 목록.
+    a → b 와 b → a 를 둘 다 잇고, 세기는 log(1 + 추천 수). 작품 줄마다 (이어진 줄 배열, 세기 배열)로 둔다"""
+    out = defaultdict(lambda: ([], []))
+    row = ctx["row"]
+    for a, b, n in edges:
+        if a in row and b in row and a != b and n > 0:
+            for x, y in ((a, b), (b, a)):
+                out[row[x]][0].append(row[y])
+                out[row[x]][1].append(math.log1p(n))
+    ctx["rec"] = {r: (np.array(ys, dtype=np.int64), np.array(ws)) for r, (ys, ws) in out.items()}
+
+
+def rec_scores(user, ctx):
+    # 본 작품들이 커뮤니티 추천으로 이어진 작품마다 세기를 더한다. 0~1 (그 유저의 1등이 1)
+    h = user["history"]
+    links = [ctx["rec"][r] for r in rows_of(ctx, h.anime[np.isin(h.status, WATCHED)]).tolist() if r in ctx["rec"]]
+    if not links:
+        return np.zeros(len(ctx["ids"]))
+    out = np.bincount(np.concatenate([y for y, _ in links]), weights=np.concatenate([w for _, w in links]),
+                      minlength=len(ctx["ids"]))
+    return out / out.max()
 
 
 def rows_of(ctx, anime_ids):
@@ -418,20 +447,27 @@ COLD = {"beta": 1.0, "gamma": 2.0, "kind": "all", "cf": "confidence_max"}      #
 COLD_MAX_WATCHED = 7                                     # 본 작품이 이 개수 이하면 신규 유저 설정
 
 
-def hybrid(user, ctx, beta, gamma, kind="recent", cf_kind=COWATCH_KIND):
-    """취향 + 인기도 + 같이 본 작품 섞기 (EXP-14). cf_kind 로 같이 본 작품 대신 EASE·ALS 를 쓸 수 있다."""
+def hybrid(user, ctx, beta, gamma, kind="recent", cf_kind=COWATCH_KIND, delta=0.0):
+    """취향 + 인기도 + 같이 본 작품 섞기 (EXP-14). cf_kind 로 같이 본 작품 대신 EASE·ALS 를 쓸 수 있다.
+    delta > 0 이면 AniList 커뮤니티 추천도 섞는다 (build_rec 먼저. 추천으로 이어진 작품은 후보에 넣음)"""
     s, p, c = genre_scores(user, ctx), pop_scores(user, ctx, kind), cowatch_scores(user, ctx, cf_kind)
+    total = s + beta * p + gamma * c
     rows = np.unique(np.r_[pop_candidates(user, ctx, kind), ctx["cw_rows"]])
-    return rank_rows(rows, ctx, -(s[rows] + beta * p[rows] + gamma * c[rows]))
+    if delta and "rec" in ctx:
+        r = rec_scores(user, ctx)
+        total = total + delta * r
+        rows = np.unique(np.r_[rows, np.flatnonzero(r > 0)])
+    return rank_rows(rows, ctx, -total[rows])
 
 
-def next_hybrid(user, ctx, beta=None, gamma=None, kind=None, slots=NEXT_SLOTS, cf_kind=None):
+def next_hybrid(user, ctx, beta=None, gamma=None, kind=None, slots=NEXT_SLOTS, cf_kind=None, delta=None):
     """다음 편 자리 제한 + 조합 (EXP-14). 값을 안 주면 기존 유저 설정(WARM)."""
     beta = WARM["beta"] if beta is None else beta
     gamma = WARM["gamma"] if gamma is None else gamma
     kind = WARM["kind"] if kind is None else kind
     cf_kind = WARM["cf"] if cf_kind is None else cf_kind
-    return next_picks(user, ctx, slots) + hybrid(user, ctx, beta, gamma, kind, cf_kind)
+    delta = WARM.get("rec", 0.0) if delta is None else delta
+    return next_picks(user, ctx, slots) + hybrid(user, ctx, beta, gamma, kind, cf_kind, delta)
 
 
 def next_auto(user, ctx, slots=NEXT_SLOTS):
@@ -439,7 +475,8 @@ def next_auto(user, ctx, slots=NEXT_SLOTS):
     기존 유저 설정은 EASE 를 쓰므로 build_cowatch → build_ease 를 먼저 불러 둔다."""
     n = int(np.isin(user["history"].status, WATCHED).sum())
     cfg = COLD if n <= COLD_MAX_WATCHED else WARM
-    return next_hybrid(user, ctx, cfg["beta"], cfg["gamma"], cfg["kind"], slots, cfg.get("cf", COWATCH_KIND))
+    return next_hybrid(user, ctx, cfg["beta"], cfg["gamma"], cfg["kind"], slots, cfg.get("cf", COWATCH_KIND),
+                       cfg.get("rec", 0.0))
 
 
 # ## 3. 최종 K개 고르기
