@@ -1,6 +1,31 @@
 # T02 OAuth 백엔드 설정과 연결 계약
 
-기준일: 2026-10-20. T02-1에서 시작해 사용자의 후속 지시에 따라 프론트 작업 없이 가능한 OAuth 백엔드까지 구현했다. 아래 구현 상태는 로컬 코드 기준이다. 카카오 앱 등록과 로컬 키 입력·localhost callback 등록은 준비됐다. 별도 로컬 테스트 DB에는 마이그레이션을 적용했다. 원격 OAuth 배포와 실계정 로그인 검증은 아직 수행하지 않았다. 사용자 지시 전까지 커밋·푸시·머지는 보류한다.
+기준일: 2026-10-20, 로컬 검증 갱신: 2026-10-21. T02-1에서 시작해 프론트 작업 없이 OAuth 백엔드와 Q1·Q2 온보딩 저장을 구현했다. 별도 로컬 테스트 DB에 마이그레이션을 적용했으며, 실제 카카오 인증 후 로컬 세션 발급을 재확인했다. 원격 OAuth 배포 검증은 별도다. 사용자 지시에 따라 이후 커밋·푸시는 `backend-labs`에서 진행하며, 머지는 별도 지시 전까지 수행하지 않는다.
+
+## 2026-10-21 로컬 1단계 검증 결과
+
+목표는 실제 카카오 인증과 서비스 세션 발급 확인이다. 이번 브라우저 검증에서는 온보딩 완료 요청을 제출하지 않았다.
+
+- 실행 환경: `http://localhost:8000`, 전용 DB `me_nu_oauth_local`, Redis 세션. `run_local_oauth.py --check` 통과.
+- Edge의 Swagger에서 `GET /api/v1/auth/session`이 `200`, `authenticated=false`, `sessionState=anonymous`를 반환했다.
+- 해당 세션의 CSRF를 적용한 `POST /api/v1/auth/login/kakao`가 `200`과 인가 URL을 반환했다. callback 주소는 `http://localhost:8000/api/v1/auth/login/kakao/callback`이었다.
+- 같은 브라우저에서 인가 URL을 열어 실제 카카오 인증을 진행했다. 기존 카카오 로그인 상태로 이어져 별도 계정 입력 화면은 나타나지 않았다.
+- 최종 주소는 오류 query가 없는 `/api/v1/auth/session`이었으며 `authenticated=true`, `sessionState=onboarding_pending`, `onboardingCompleted=false`, `user=null`을 확인했다.
+- 로그인 전후 CSRF가 바뀌었고, 최종 페이지를 새로고침해도 로그인 상태가 유지됐다. 토큰·쿠키·인가 URL 원문은 기록하지 않는다.
+- `onboarding_pending`은 온보딩 미완료 상태라는 뜻이며, 이번 요청에서 새 계정이 생성됐다는 뜻은 아니다. 이후 단계에서 실제 약관·Topic을 조회하고 온보딩을 제출한다.
+- 직전 준비 단계에서 관련 자동 테스트 78개가 통과했다. 자동 테스트의 공급자 응답 대체 검증과 위 실제 브라우저 검증은 구분한다.
+
+## 1단계 Swagger 시연 순서
+
+1. `http://localhost:8000/docs`를 연다. 서버가 이미 실행 중이면 실행 스크립트를 중복으로 시작하지 않는다.
+2. **인증·세션 → GET `/api/v1/auth/session` → Try it out → Execute**를 실행한다.
+3. 응답의 `csrfToken`을 **Authorize → CsrfToken**에 값만 입력하고 적용한다. `SessionCookie`는 입력하지 않는다.
+4. **POST `/api/v1/auth/login/{provider}`**에서 `provider`에 `kakao`, 본문에 `{"purpose":"signin"}`을 넣고 실행한다.
+5. 반환된 `authorizationUrl`을 같은 브라우저 프로필의 주소창에서 연다. 계정 입력·동의 화면이 나오면 사용자가 직접 진행한다. 기존 카카오 세션이 있으면 바로 callback으로 돌아올 수 있다.
+6. 최종 주소에 `error`가 없고 응답이 `authenticated=true`인지 확인한다. 미완료 회원은 `onboarding_pending`, 완료 회원은 `active`가 정상이다. callback의 리다이렉트만으로 성공으로 판단하지 않는다.
+7. 온보딩을 이어갈 때는 새 `csrfToken`으로 Swagger Authorize를 갱신한다. 이번 1단계에서는 `POST /api/v1/onboarding/complete`를 호출하지 않는다.
+
+이미 온보딩을 완료한 계정은 초기화하지 않는다. 신규 온보딩 과정을 시연하려면 온보딩 미완료 카카오 테스트 계정을 사용한다. 오래된 인가 URL은 재사용하지 않고 2~5단계부터 다시 진행한다.
 
 ## 확정 사항과 환경
 
@@ -9,7 +34,7 @@
 - **사용자 확정:** 신규 소셜 계정의 이메일이 기존 계정과 겹치면 가입을 중단하고 기존 가입 수단으로 로그인하도록 안내한다.
 - 프론트 작업·주소 결정은 보류한다. 프론트 없이 백엔드에서 인증 결과를 확인할 수 있다.
 - API 주소는 `https://api.test.me-nu.kr`이다. 2026-10-20 DNS A 조회와 TLS 검증을 포함한 `/health` 호출이 성공했고 `200 {"status":"ok"}`를 받았다. 신규 OAuth 코드의 배포 확인은 아니다.
-- 카카오 개발자 앱은 사용자가 생성했다. PC의 `backend/.env`에서 키 두 개의 입력 여부를 확인했고, localhost callback 추가 완료를 사용자가 확인했다. 키 유효성은 실제 로그인에서 확인한다. 네이버 등록은 후속 작업이다.
+- 카카오 개발자 앱은 사용자가 생성했다. PC의 `backend/.env`에 키 두 개가 설정되어 있고 localhost callback이 등록됐다. 2026-10-21 실제 로컬 로그인 성공으로 현재 설정의 동작을 확인했다. 네이버 등록은 후속 작업이다.
 - 기존 세션 만료 30분은 유지한다. PRD의 30일 유지와 탈퇴용 재인증 정책은 후속 결정 사항이다.
 
 ## 구현된 계약
@@ -33,7 +58,7 @@
 
 원본 API-001의 `reauth`·`restore`는 현재 `422 UNSUPPORTED_AUTH_PURPOSE`로 거절한다. 본인 재인증·탈퇴 복구는 T08에서 연결한다. 개발용 인증 우회 세션으로는 실제 OAuth를 시작할 수 없다.
 
-신규 계정은 소셜 식별만 끝난 상태다. 닉네임·생년월일·동의·관심사 검증은 기존 온보딩 API가 담당하고, 완료 전에는 보호된 서비스 기능에 접근할 수 없다. 새 디자인의 Q1·Q2 저장은 아직 연결하지 않았다.
+신규 계정은 소셜 식별만 끝난 상태다. `POST /api/v1/onboarding/complete`가 닉네임·생년월일·동의·Topic 및 필수 `answers: {q1,q2}`를 검증하고 저장한다. Q1·Q2는 각각 허용된 문자열 1개이며 `subtopicIds`와 `profileImageId`는 입력하지 않는다. 완료 전에는 보호된 서비스 기능에 접근할 수 없다.
 
 이메일은 공급자가 제공한 경우에 중복을 검사한다. 카카오는 유효·검증 완료 표시가 있는 이메일만 사용하며, 누락 시 기존 DB 계약대로 null을 허용한다. 이메일을 받지 못한 두 소셜 계정이 같은 사람인지 추측하지 않는다.
 
@@ -98,13 +123,13 @@ cd C:\Users\USER\me_nu\backend
 .\.venv\Scripts\python.exe scripts/run_local_oauth.py
 ```
 
-- 테스트 DB: 기존 로컬 PostgreSQL 안의 `me_nu_oauth_local`, revision `b9d4e2a7f013`.
+- 테스트 DB: 기존 로컬 PostgreSQL 안의 `me_nu_oauth_local`, revision `c0e5f3b8a124`.
 - 기존 DB `me_nu`는 revision `e7a4c2d9b812` 그대로 유지했다.
 - Redis 접두사 `me_nu_oauth_local`, 쿠키 `menu_oauth_local`을 사용한다.
 - `localhost:8000`으로 실행하고 카카오만 활성화한다. 개발용 인증 우회와 개발용 API는 비활성화한다.
 - 프론트 복귀 주소는 비워 두고, callback의 code/state가 콘솔에 남지 않도록 접근 로그를 끈다.
 - 원격 DB·Redis 및 연결 대상 변경에 쓰일 수 있는 URL query 옵션을 거부한다. 테스트 DB 관리 표식이 없으면 마이그레이션·실행을 거부한다.
-- 이 실행 모드에서는 데이터와 로그인 세션이 기존 로컬 API와 분리된다. 로그인 확인만을 위해 콘텐츠나 데모 회원을 적재하지 않았다.
+- 이 실행 모드에서는 데이터와 로그인 세션이 기존 로컬 API와 분리된다. 온보딩 테스트용 약관 4개와 활성 `anime` Topic을 준비했다. 콘텐츠나 데모 회원은 이 준비 작업에 포함하지 않았다. Topic ID·정책 버전은 API 조회 결과를 사용한다.
 
 키가 없을 때는 `backend/.env`의 `KAKAO_CLIENT_ID`에 REST API 키, `KAKAO_CLIENT_SECRET`에 Client Secret을 넣는다. 키 값은 출력하거나 Git에 넣지 않는다. 나머지 OAuth 실행 설정은 이 스크립트가 적용한다.
 
@@ -133,6 +158,8 @@ http://localhost:8000/api/v1/auth/login/kakao/callback
 
 직전 revision은 T01의 `a8c3d1f6e902`다. `upgrade head`에는 기존 `signup_channel` 제거도 포함되므로 서버의 현재 revision과 적용 범위를 확인한 뒤 배포 절차를 따른다. 별도 로컬 테스트 DB에만 적용했으며, 기존 로컬 DB와 원격 서버 DB에는 적용하지 않았다.
 
+2026-10-21 후속 revision `c0e5f3b8a124`는 `tap`별 Q1·Q2를 저장하는 `onboarding_answers`를 추가한다. 전용 로컬 테스트 DB에는 적용됐고, 원본 `me_nu`는 `e7a4c2d9b812`로 유지했다. `--prepare`는 전용 DB 마이그레이션만 수행하며 약관·Topic을 자동 생성하지 않는다.
+
 ## 프론트 없이 확인하는 순서
 
 신규 코드를 로컬 또는 팀 API 서버에 적용한 **이후**의 수동 검증 순서다.
@@ -159,9 +186,9 @@ http://localhost:8000/api/v1/auth/login/kakao/callback
 
 - 프론트 연결 시에만 `OAUTH_FRONTEND_ORIGIN`을 채우고 `FRONTEND_ORIGINS`에 등록한다. 기존 SameSite=Lax 쿠키 방식은 같은 사이트의 HTTPS 구성에 맞춘다.
 - 화면 복귀 경로는 Pivot 설계의 신규 `/pivot/consent`, 완료 `/pivot/home`, 실패 `/pivot/login?error=...`다. 이번에 프론트 파일을 변경하거나 원격 브랜치를 병합하지 않았다.
-- 기존 자동 테스트는 공급자 통신을 대체하고 DB 동작은 SQLite 메모리로 확인한다. 실제 PostgreSQL 동시 요청 경합, 실계정 OAuth, 원격 쿠키·프록시는 추가 검증 대상이다.
+- 기존 자동 테스트는 공급자 통신을 대체하고 DB 동작은 SQLite 메모리로 확인한다. 실제 카카오 OAuth의 로컬 브라우저 검증은 위 2026-10-21 결과를 따른다. 실제 PostgreSQL 동시 요청 경합과 원격 쿠키·프록시는 추가 검증 대상이다.
 - 검증: 기존 OAuth·인증 자동 테스트 268개 통과, 로컬 실행 스크립트의 DB·Redis 격리 및 원본 환경파일 보존 테스트 18개 통과.
-- 실제 로컬 PostgreSQL·Redis에서 API/DB/Redis 상태, Swagger, 익명 세션, CSRF 거절, 카카오 인가 URL 생성, 로그인 취소 시 state 소비, state 재사용 거절, 로그아웃을 확인했다. 이 점검은 카카오 토큰 교환이나 실제 회원 로그인을 수행하지 않았다.
-- 재인증·탈퇴 복구, 30일 로그인 유지, Q1·Q2 저장은 후속 작업이다.
+- 초기 로컬 PostgreSQL·Redis 점검에서는 API/DB/Redis 상태, Swagger, 익명 세션, CSRF 거절, 카카오 인가 URL 생성, 로그인 취소 시 state 소비, state 재사용 거절, 로그아웃을 확인했다. 이후 실제 회원 로그인 확인은 위 2026-10-21 검증 기록에 추가했다.
+- 재인증·탈퇴 복구, 30일 로그인 유지, 네이버 실계정 검증 및 프론트 연결은 후속 작업이다. Q1·Q2 저장 백엔드는 구현됐으며 실제 카카오 로그인 세션에서 온보딩 완료까지 이어가는 검증은 다음 단계다.
 
 계약 근거: [API-001](https://app.notion.com/p/3f704c45a9618129aac0fb2b55c85e71), [API-002](https://app.notion.com/p/3f704c45a96181208b87d1d534f49876), [카카오 REST](https://developers.kakao.com/docs/ko/kakaologin/rest-api), [네이버 인증 API](https://developers.naver.com/docs/login/api/api.md). 원본의 프론트 경로는 최종 확인 대상이며, 백엔드 단독 복귀 방식은 이번 작업에서 추가한 계약이다.
