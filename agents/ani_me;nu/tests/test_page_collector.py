@@ -192,3 +192,47 @@ def test_page_capture_can_disable_related_images_for_content_generation(monkeypa
     assert [str(url) for url in capture.image_urls] == [
         "https://anime.example/media/current-story.jpg"
     ]
+
+
+def test_page_capture_falls_back_to_specific_article_body_when_precision_parser_is_empty(
+    monkeypatch,
+) -> None:
+    from ani_menu_agent.sources import page_collector
+
+    source = Source(
+        id="anime_official",
+        name="Official site",
+        url="https://anime.example/news/",
+        category="anime",
+        role="primary",
+        collection="html",
+        status="active",
+        region="JP",
+        allowed_asset_hosts=["anime.example"],
+    )
+    html = """
+    <html><body>
+      <nav>Global navigation must not become article content</nav>
+      <div class="news_detail_cont">
+        <img src="/media/calendar.jpg" alt="Calendar">
+        <p>新作カレンダーは12月発売予定です。</p>
+        <p>価格は1,760円です。</p>
+      </div>
+      <footer>Footer noise must not become article content</footer>
+    </body></html>
+    """
+
+    monkeypatch.setattr(page_collector, "_get_html", lambda *_args: (html, html_url))
+    monkeypatch.setattr(page_collector.trafilatura, "extract", lambda *_args, **_kwargs: None)
+    html_url = "https://anime.example/news/calendar/"
+
+    capture = collect_official_page(
+        source,
+        html_url,
+        expand_related_pages=False,
+    )
+
+    assert "新作カレンダーは12月発売予定です。" in capture.text
+    assert "価格は1,760円です。" in capture.text
+    assert "Global navigation" not in capture.text
+    assert "Footer noise" not in capture.text

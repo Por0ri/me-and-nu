@@ -354,6 +354,36 @@ def _article_content_scope(soup: BeautifulSoup):
     return soup
 
 
+def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
+    """Extract prose from a known article body when the precision parser returns nothing."""
+    extracted = (
+        trafilatura.extract(
+            html,
+            url=page_url,
+            include_comments=False,
+            include_tables=True,
+            favor_precision=True,
+        )
+        or ""
+    )
+    if extracted.strip():
+        return extracted
+
+    scope = _article_content_scope(soup)
+    # Do not fall back to the whole document: that risks turning navigation,
+    # recommendations, or site chrome into apparent article facts.
+    if scope is soup:
+        return ""
+    body = BeautifulSoup(str(scope), "html.parser")
+    for tag in body.select("script, style, noscript, iframe, nav, footer, aside, form, button"):
+        tag.decompose()
+    lines = [
+        re.sub(r"\s+", " ", line).strip()
+        for line in body.get_text(separator="\n", strip=True).splitlines()
+    ]
+    return "\n".join(line for line in lines if line)
+
+
 def _positive_dimension(value: object) -> int:
     try:
         return max(0, int(str(value).replace("px", "").strip()))
@@ -434,16 +464,7 @@ def collect_official_page(
 
     published_at = _published_date_from_html(soup)
 
-    extracted = (
-        trafilatura.extract(
-            html,
-            url=final_url,
-            include_comments=False,
-            include_tables=True,
-            favor_precision=True,
-        )
-        or ""
-    )
+    extracted = _extract_article_text(html, final_url, soup)
     image_urls, image_alt_text = _image_candidates(soup, final_url)
     seed_image_urls = image_urls
     image_urls = seed_image_urls[:3]
