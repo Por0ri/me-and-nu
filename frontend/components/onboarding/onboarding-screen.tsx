@@ -243,9 +243,9 @@ export function OnboardingScreen() {
     setCurrentStep(step);
   }
 
-  function selectConsumer() {
+  function startUserOnboarding() {
     if (currentStep !== "account-type" || startChoicePhase !== "idle" || pendingAction !== null || savedOnboarding.current) return;
-    setAccountType("consumer");
+    setAccountType("user");
     setValidationMessage(null);
     setActionError(null);
     setStartChoicePhase("animating");
@@ -369,7 +369,7 @@ export function OnboardingScreen() {
     if (
       !confirmation ||
       !requiredConsented ||
-      accountType !== "consumer"
+      accountType !== "user"
     ) {
       return null;
     }
@@ -473,7 +473,7 @@ export function OnboardingScreen() {
         return rank(a.code) - rank(b.code);
       })
     : TOPIC_ORDER.flatMap((id) => options?.topics.filter((topic) => topic.id === id) ?? []);
-  const consumerAvailable = options?.accountTypes.includes("consumer") ?? false;
+  const userAvailable = options?.accountTypes.includes("user") ?? false;
   const selectedTopic =
     options?.topics.find((topic) => topic.id === selectedTopicId) ?? null;
   const selectedTopicDraft = selectedTopicId
@@ -533,11 +533,11 @@ export function OnboardingScreen() {
     );
   }
 
-  if (!options || !consumerAvailable || options.topics.length === 0) {
+  if (!options || !userAvailable || options.topics.length === 0) {
     return (
       <main className="flex flex-1 items-center justify-center px-6 py-12">
         <p role="status" className="text-sm text-black/60">
-          사용 가능한 Consumer 온보딩 항목이 없습니다.
+          사용 가능한 회원 온보딩 항목이 없습니다.
         </p>
       </main>
     );
@@ -597,17 +597,12 @@ export function OnboardingScreen() {
               <div className="ob-choice-bottom"><OnboardingIcon name="choice-bottom" /></div>
             </div>
             <div className="ob-choice-intro">
-              <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>어떻게 시작할까요?</h1>
-              <p>선택한 유형에 맞는 시작 흐름으로 이동합니다</p>
+              <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>관심사 탐색을 시작해요</h1>
+              <p>좋아하는 분야와 관심사를 선택해 주세요</p>
             </div>
-            <button className="ob-consumer-choice" type="button" disabled={startChoicePhase !== "idle" || pendingAction !== null || onboardingSaved} onClick={selectConsumer}>
-              <span className="ob-choice-heading">콘텐츠 소비자</span>
+            <button className="ob-consumer-choice" type="button" disabled={startChoicePhase !== "idle" || pendingAction !== null || onboardingSaved} onClick={startUserOnboarding}>
+              <span className="ob-choice-heading">탐색 시작하기</span>
               <span className="ob-choice-description">관심사별 매거진 읽기</span>
-              <OnboardingIcon name="choice-chevron" />
-            </button>
-            <button className="ob-creator-choice" type="button" disabled aria-label="콘텐츠 크리에이터, 관심사별 매거진 생성하기 (준비 중)">
-              <span className="ob-choice-heading">콘텐츠<br />크리에이터</span>
-              <span className="ob-choice-description">관심사별 매거진 생성하기</span>
               <OnboardingIcon name="choice-chevron" />
             </button>
           </div>

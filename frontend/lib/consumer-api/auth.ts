@@ -24,7 +24,7 @@ async function startLocalDemo(providerId: string): Promise<LoginResult> {
         email: `consumer-demo-${suffix}@example.com`,
         password: `Demo!${window.crypto.randomUUID()}A9`,
         nickname: `시연사용자${suffix.slice(0, 8)}`,
-        role: "consumer",
+        role: "user",
       },
       registered: false,
     };

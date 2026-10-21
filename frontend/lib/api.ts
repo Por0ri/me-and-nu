@@ -1,8 +1,10 @@
+import { aiQuestionError } from "@/lib/ai-question";
+
 /** V1 browser client. The server owns the HttpOnly cookie; only CSRF lives in memory. */
-export type AccountType = "consumer" | "creator" | "admin";
+export type AccountType = "user";
 export type Preference = "positive" | "negative";
 export type DevUser = { id: number; email: string; nickname: string; accountType: AccountType };
-export type RegisterInput = { email: string; password: string; nickname: string; role: "consumer" | "creator" };
+export type RegisterInput = { email: string; password: string; nickname: string; role: "user" };
 export type LoginInput = { email: string; password: string };
 export type LoginResponse = { message: string; user: DevUser };
 export type Session = {
@@ -44,10 +46,11 @@ type OnboardingBase = {
   nickname: string;
   profileImageId?: null;
 };
-export type OnboardingInput = OnboardingBase & (
-  | { accountType: "consumer"; topicId: number; subtopicIds: number[] }
-  | { accountType: "creator"; topicId?: never; subtopicIds?: never }
-);
+export type OnboardingInput = OnboardingBase & {
+  accountType: "user";
+  topicId: number;
+  subtopicIds: number[];
+};
 export type OnboardingResponse = {
   user: { id: number; accountType: AccountType };
   onboardingCompleted: boolean;
@@ -127,7 +130,7 @@ export type ChatJob = {
   error: { code: string; message: string } | null;
 };
 export type NotificationItem = {
-  notificationId: number; type: string; title: string; body: string;
+  notificationId: number; type: "system_notice"; title: string; body: string;
   topicId: number | null; contentId: number | null; imageUrl: string | null;
   isRead: boolean; readAt: string | null; createdAt: string;
 };
@@ -281,7 +284,9 @@ export function createChatSession(topicId: number, anchorContentId?: number): Pr
   return apiRequest("/api/v1/chat/sessions", { method: "POST", body: JSON.stringify({ topicId, anchorContentId }) });
 }
 export function sendChatMessage(sessionId: number, content: string, clientMessageId: string): Promise<{ userMessageId: number; jobId: number; status: string }> {
-  return apiRequest(`/api/v1/chat/sessions/${sessionId}/messages`, { method: "POST", body: JSON.stringify({ content, clientMessageId }) });
+  const validationError = aiQuestionError(content);
+  if (validationError) return Promise.reject(new Error(validationError));
+  return apiRequest(`/api/v1/chat/sessions/${sessionId}/messages`, { method: "POST", body: JSON.stringify({ content: content.trim(), clientMessageId }) });
 }
 export function getChatJob(jobId: number): Promise<ChatJob> {
   return apiRequest(`/api/v1/chat/jobs/${jobId}`);

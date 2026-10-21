@@ -12,6 +12,7 @@ export type ContentAIRequest = {
 // FE Mock/View Model이며 실제 Backend API DTO 확정본이 아니다. 실제 연동 시 Adapter 매핑 대상이다.
 export type ContentAIResponse = {
   answer: string;
+  aiNotice?: string;
   sources: Source[];
   evidenceStatus: EvidenceStatus;
   sourceTopicId?: string;
@@ -24,6 +25,7 @@ export type HomeAIRequest = {
   question: string;
 };
 
-export type HomeAIResponse =
+export type HomeAIResponse = { aiNotice?: string } & (
   | { type: "answer"; answer: string; sources?: Source[] }
-  | { type: "topicSwitchSuggested"; targetTopic: Topic; message: string };
+  | { type: "topicSwitchSuggested"; targetTopic: Topic; message: string }
+);

@@ -36,7 +36,7 @@ export async function getOnboardingOptions(): Promise<OnboardingOptions> {
       throw new Error("Current consent policies are unavailable.");
     }
     return {
-      accountTypes: ["consumer"],
+      accountTypes: ["user"],
       topics,
       policyItems: policies.consentItems.map(({ type, policyVersion, required, text }) => ({
         type, policyVersion, required, text,
@@ -88,8 +88,8 @@ export async function submitOnboarding(
     if (!validateBirthdate(data.birthdate).valid || getAgeEligibility(data.birthdate) !== "eligible") {
       throw new Error("A valid age-eligible birth date is required.");
     }
-    if (data.accountType !== "consumer") {
-      throw new Error("Consumer onboarding requires a consumer account.");
+    if (data.accountType !== "user") {
+      throw new Error("Onboarding requires a user account.");
     }
     const policies = data.policyItems;
     if (!policies?.length || new Set(policies.map((item) => item.type)).size !== policies.length) {
@@ -110,7 +110,7 @@ export async function submitOnboarding(
     const response = await onboard({
       nickname,
       birthDate: data.birthdate,
-      accountType: "consumer",
+      accountType: "user",
       consents,
       topicId,
       subtopicIds,

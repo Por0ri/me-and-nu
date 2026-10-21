@@ -11,14 +11,6 @@ import { isConsumerApiMode } from "@/lib/consumer-api/mode";
 import { consumerRoutes } from "@/lib/consumer-routes";
 import { formatRelativeTime } from "@/lib/relative-time";
 
-type NotificationTab = "notice" | "activity";
-
-// 알림: 새 게시글·공지사항 / 활동: 팔로우·메시지 (피그마 noti page_01·02)
-const TAB_TYPES: Record<NotificationTab, string[]> = {
-  notice: ["topic_new_post", "creator_new_post", "system_notice"],
-  activity: ["follow", "direct_message"],
-};
-
 const GROUPS = ["오늘", "어제", "최근 7일", "최근 30일"] as const;
 
 function groupOf(createdAt: string, now = new Date()): (typeof GROUPS)[number] {
@@ -41,9 +33,9 @@ function formatNotificationTime(createdAt: string): string {
 export function NotificationsScreen({ topicId }: { topicId: string | null }) {
   const router = useRouter();
   const { flowState, isRestoring } = useConsumerFlow();
-  const [tab, setTab] = useState<NotificationTab>("notice");
   const [items, setItems] = useState<NotificationItem[] | null>(null);
   const [hasError, setHasError] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
   const currentTopicId = topicId ?? flowState?.initialHomeTopicId ?? null;
 
   useEffect(() => {
@@ -54,7 +46,7 @@ export function NotificationsScreen({ topicId }: { topicId: string | null }) {
     let isCancelled = false;
     getNotifications()
       .then((result) => {
-        if (!isCancelled) setItems(result.items);
+        if (!isCancelled) setItems(result.items.filter((item) => item.type === "system_notice"));
       })
       .catch(() => {
         if (!isCancelled) setHasError(true);
@@ -65,11 +57,18 @@ export function NotificationsScreen({ topicId }: { topicId: string | null }) {
   }, []);
 
   async function openNotification(item: NotificationItem) {
+    if (item.type !== "system_notice") return;
+    setReadError(null);
     if (!item.isRead) {
-      setItems((current) =>
-        current?.map((n) => (n.notificationId === item.notificationId ? { ...n, isRead: true } : n)) ?? null,
-      );
-      await markNotificationRead(item.notificationId).catch(() => undefined);
+      try {
+        const result = await markNotificationRead(item.notificationId);
+        setItems((current) =>
+          current?.map((n) => (n.notificationId === item.notificationId ? { ...n, isRead: result.isRead, readAt: result.readAt } : n)) ?? null,
+        );
+      } catch {
+        setReadError("공지의 읽음 상태를 저장하지 못했습니다. 다시 시도해 주세요.");
+        return;
+      }
     }
     if (item.contentId && item.topicId) {
       router.push(`${consumerRoutes.content(String(item.contentId))}?topicId=${item.topicId}`);
@@ -78,7 +77,7 @@ export function NotificationsScreen({ topicId }: { topicId: string | null }) {
 
   if (isConsumerApiMode && isRestoring) return null;
 
-  const visible = items?.filter((item) => TAB_TYPES[tab].includes(item.type)) ?? [];
+  const visible = items ?? [];
   const backHref = currentTopicId
     ? { pathname: consumerRoutes.home, query: { topicId: currentTopicId } }
     : consumerRoutes.home;
@@ -92,27 +91,10 @@ export function NotificationsScreen({ topicId }: { topicId: string | null }) {
               <path d="M15 5l-7 7 7 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </Link>
-          <h1 className="sr-only">알림</h1>
-          <div role="tablist" aria-label="알림 종류" className="va-noti-tabs">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "notice"}
-              onClick={() => setTab("notice")}
-            >
-              알림
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "activity"}
-              onClick={() => setTab("activity")}
-            >
-              활동
-            </button>
-          </div>
+          <h1 className="text-lg font-semibold">운영공지</h1>
         </header>
 
+        {readError ? <p role="alert" className="va-message text-center text-sm text-red-600">{readError}</p> : null}
         {hasError ? (
           <p role="alert" className="va-message text-center text-sm text-red-600">
             알림을 불러오지 못했습니다.
@@ -121,7 +103,7 @@ export function NotificationsScreen({ topicId }: { topicId: string | null }) {
           <p role="status" className="va-message va-muted text-center text-sm">불러오는 중입니다.</p>
         ) : visible.length === 0 ? (
           <p role="status" className="va-message va-muted text-center text-sm">
-            {tab === "notice" ? "새 알림이 없어요." : "아직 받은 팔로우·메시지 알림이 없어요."}
+            새 운영공지가 없어요.
           </p>
         ) : (
           // 기간 제목은 알림이 없어도 항상 보여준다.
@@ -139,15 +121,12 @@ export function NotificationsScreen({ topicId }: { topicId: string | null }) {
                       <button
                         type="button"
                         onClick={() => void openNotification(item)}
-                        aria-label={`${item.body} ${item.title}`}
+                        aria-label={`${item.title} ${item.body}`}
                         className={`va-noti-item${item.isRead ? "" : " va-noti-unread"}`}
                       >
                         <span className="va-noti-text">
+                          <span className="font-semibold">{item.title}</span>
                           <span className="va-noti-item-body">{item.body}</span>
-                          {item.type === "direct_message" ? (
-                            // 메시지 알림은 제목 자리에 메시지 미리보기가 온다.
-                            <span className="va-noti-item-preview">{item.title}</span>
-                          ) : null}
                           <span className="va-noti-item-time">{formatNotificationTime(item.createdAt)}</span>
                         </span>
                         {item.imageUrl ? (

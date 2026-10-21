@@ -66,7 +66,7 @@ export const mockSubtopicOptionsByTopicId: Record<
 };
 
 export const mockOnboardingOptions: OnboardingOptions = {
-  accountTypes: ["consumer"],
+  accountTypes: ["user"],
   topics: mockTopics.map((topic) => ({
     id: topic.id,
     label: topic.name,

@@ -1,0 +1,65 @@
+import type { Topic, TopicContext } from "@/types/home";
+
+export type Source = {
+  id: string;
+  name: string;
+  url?: string;
+};
+
+export type Content = {
+  id: string;
+  title: string;
+  summary: string;
+  imageUrl?: string;
+  sourceName: string;
+  saved: boolean;
+  recommendationReason?: string;
+  liked?: boolean;
+  /** 카드 태그로 보여줄 대표 세부 토픽 이름 */
+  tag?: string;
+  /** AI가 만든 글이면 true */
+  aiGenerated?: boolean;
+  publishedAt?: string;
+};
+
+/** 현재 Mock의 추천 적합도 선택값이며 Backend 최종 Contract가 아니다. */
+export type ContentFeedback = "O" | "X";
+
+export type ContentDetail = Content & {
+  body?: string;
+  sources: Source[];
+  topicContext: TopicContext;
+  feedback: ContentFeedback | null;
+};
+
+export type GetContentInput = {
+  contentId: string;
+  topicContext: TopicContext;
+};
+
+export type SaveContentInput = GetContentInput;
+
+export type GetSavedContentsInput = {
+  topicId: string;
+};
+
+/** FE 목록 화면용 반환 형태이며 Backend DTO가 아니다. */
+export type SavedContentsData = {
+  topic: Topic;
+  contents: Content[];
+};
+
+export type SetContentFeedbackInput = GetContentInput & {
+  feedback: ContentFeedback;
+  currentFeedback?: ContentFeedback | null;
+};
+
+export type ContentFeedbackResult = GetContentInput & {
+  feedback: ContentFeedback | null;
+};
+
+export type SaveResult = {
+  contentId: string;
+  saved: boolean;
+  topicContext: TopicContext;
+};

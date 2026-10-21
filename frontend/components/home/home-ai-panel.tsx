@@ -4,7 +4,9 @@ import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { SourceInfo } from "@/components/content/source-info";
+import { AINotice } from "@/components/content/ai-notice";
 import { sendHomeAIQuestion } from "@/lib/consumer-api/ai";
+import { AI_QUESTION_MAX_LENGTH, aiQuestionError, aiQuestionLength } from "@/lib/ai-question";
 import type { HomeAIResponse } from "@/types/ai";
 import type { Topic } from "@/types/home";
 
@@ -45,6 +47,7 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const [isAiOpen, setIsAiOpen] = useState(false);
   const isPending = request.status === "pending";
+  const questionLength = aiQuestionLength(question);
   const exampleQuestions = topic.id === "topic-movie" || topic.code?.toLowerCase() === "movie"
     ? MOVIE_EXAMPLE_QUESTIONS
     : HOME_EXAMPLE_QUESTIONS;
@@ -130,8 +133,9 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
 
     const trimmedQuestion = value.trim();
 
-    if (!trimmedQuestion) {
-      setValidationError("질문을 입력해 주세요.");
+    const error = aiQuestionError(value);
+    if (error) {
+      setValidationError(error);
       return;
     }
 
@@ -310,6 +314,7 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
                 </div>
               )
             ) : null}
+            {request.status === "success" ? <AINotice notice={request.result.aiNotice} /> : null}
           </div>
 
           <form
@@ -330,10 +335,10 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
                 value={question}
                 disabled={isPending}
                 aria-invalid={validationError !== null}
-                aria-describedby={validationError ? `${inputId}-error` : undefined}
+                aria-describedby={`${inputId}-length${validationError ? ` ${inputId}-error` : ""}`}
                 onChange={(event) => {
                   setQuestion(event.target.value);
-                  setValidationError(null);
+                  setValidationError(aiQuestionLength(event.target.value) > AI_QUESTION_MAX_LENGTH ? aiQuestionError(event.target.value) : null);
                 }}
                 rows={1}
                 placeholder="매거진 목록에 대한 의견을 알려주세요"
@@ -341,13 +346,16 @@ export function HomeAIPanel({ topic, availableTopicIds }: HomeAIPanelProps) {
               />
               <button
                 type="submit"
-                disabled={isPending}
+                disabled={isPending || questionLength > AI_QUESTION_MAX_LENGTH}
                 className="va-ai-send"
               >
                 <Image src="/ui-home/send.svg" alt="" width={16} height={16} />
                 <span className="sr-only">전송</span>
               </button>
             </div>
+            <p id={`${inputId}-length`} className="mt-2 text-right text-xs va-muted">
+              {questionLength} / {AI_QUESTION_MAX_LENGTH}자 · {Math.max(0, AI_QUESTION_MAX_LENGTH - questionLength)}자 남음
+            </p>
             {validationError ? (
               <p id={`${inputId}-error`} role="alert" className="mt-3 text-sm text-red-600">
                 {validationError}

@@ -4,7 +4,9 @@ import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { SourceInfo } from "@/components/content/source-info";
+import { AINotice } from "@/components/content/ai-notice";
 import { sendContentAIQuestion } from "@/lib/consumer-api/ai";
+import { AI_QUESTION_MAX_LENGTH, aiQuestionError, aiQuestionLength } from "@/lib/ai-question";
 import type { ContentAIResponse } from "@/types/ai";
 
 type ContentAIPanelProps = {
@@ -36,6 +38,7 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [isAiOpen, setIsAiOpen] = useState(false);
   const isPending = request.status === "pending";
+  const questionLength = aiQuestionLength(question);
 
   useEffect(() => {
     requestGeneration.current += 1;
@@ -118,8 +121,9 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
 
     const trimmedQuestion = value.trim();
 
-    if (!trimmedQuestion) {
-      setValidationError("질문을 입력해 주세요.");
+    const error = aiQuestionError(value);
+    if (error) {
+      setValidationError(error);
       return;
     }
 
@@ -271,6 +275,7 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
                 </div>
               </>
             ) : null}
+            {request.status === "success" ? <AINotice notice={request.result.aiNotice} /> : null}
           </div>
 
           <form
@@ -291,10 +296,10 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
                 value={question}
                 disabled={isPending}
                 aria-invalid={validationError !== null}
-                aria-describedby={validationError ? `${inputId}-error` : undefined}
+                aria-describedby={`${inputId}-length${validationError ? ` ${inputId}-error` : ""}`}
                 onChange={(event) => {
                   setQuestion(event.target.value);
-                  setValidationError(null);
+                  setValidationError(aiQuestionLength(event.target.value) > AI_QUESTION_MAX_LENGTH ? aiQuestionError(event.target.value) : null);
                 }}
                 rows={2}
                 placeholder="현재 컨텐츠 내용에 대한 질문"
@@ -302,7 +307,7 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
               />
               <button
                 type="submit"
-                disabled={isPending}
+                disabled={isPending || questionLength > AI_QUESTION_MAX_LENGTH}
                 className="va-ai-send"
               >
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -311,6 +316,9 @@ export function ContentAIPanel({ contentId, topicId }: ContentAIPanelProps) {
                 <span className="sr-only">전송</span>
               </button>
             </div>
+            <p id={`${inputId}-length`} className="mt-2 text-right text-xs va-muted">
+              {questionLength} / {AI_QUESTION_MAX_LENGTH}자 · {Math.max(0, AI_QUESTION_MAX_LENGTH - questionLength)}자 남음
+            </p>
             {validationError ? (
               <p id={`${inputId}-error`} role="alert" className="mt-3 text-sm text-red-600">
                 {validationError}
