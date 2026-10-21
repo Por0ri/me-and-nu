@@ -402,13 +402,18 @@ def next_genre_pop(user, ctx, beta=POP_BETA, kind=POP_KIND, slots=NEXT_SLOTS):
 def cf_raw(user, ctx, kind=COWATCH_KIND):
     # 행동 기반 점수 (같이 본 횟수 표의 작품마다). kind: confidence · cosine · lift · ease → 본 작품 줄을 더함
     # confidence_max → 본 작품 줄 중 가장 큰 값 / als → 유저 벡터
+    # CF_INPUT 에 든 종류면 본 작품 중 같이 본 기록이 없는 작품을 "비슷한 작품들의 줄"(무게 평균)로 바꿔 넣는다 (EXP-24)
     h = user["history"]
-    p = ctx["cw_pos"][rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])]
+    rows = rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])
+    p = ctx["cw_pos"][rows]
     p = p[p >= 0]
+    extra = _borrowed_rows(ctx, rows, kind) if CF_INPUT and kind in CF_INPUT and "cf_borrow" in ctx else None
     if kind == "confidence_max":
-        return ctx["cw_sim"]["confidence"][p].max(axis=0) if len(p) else np.zeros(len(ctx["cw_rows"]))
+        out = ctx["cw_sim"]["confidence"][p].max(axis=0) if len(p) else np.zeros(len(ctx["cw_rows"]))
+        return out if extra is None else np.maximum(out, extra.max(axis=0))
     if kind != "als":
-        return ctx["cw_sim"][kind][p].sum(axis=0)
+        out = ctx["cw_sim"][kind][p].sum(axis=0)
+        return out if extra is None else out + extra.sum(axis=0)
     if not len(p):
         return np.zeros(len(ctx["cw_rows"]))
     Y, Yi = ctx["als_Y"], ctx["als_Y"][np.unique(p)]
@@ -427,12 +432,72 @@ def next_cowatch(user, ctx, kind=COWATCH_KIND, slots=NEXT_SLOTS):
     return next_picks(user, ctx, slots) + cowatch(user, ctx, kind)
 
 
+CF_FILL = "borrow"   # 같이 본 기록이 없는 작품(ctx["cf_missing"])의 행동 기반 점수: None(0점) · "median" · "borrow". EXP-23에서 borrow 채택
+CF_INPUT = ("ease",)  # 유저가 본 작품 중 기록 없는 작품도 비슷한 작품으로 이어서 계산할 행동 기반 종류들. EXP-24에서 기록 많은 유저 설정(EASE)만 채택
+# 둘 다 build_cf_borrow 를 부른 문맥에서만 작동한다 (MAL 채점기는 기록 없는 작품을 정하지 않아서 결과 그대로).
+# 서비스에선 MAL 기록이 없는 작품(2022년 이후 작품) = 기록 없는 작품
+
+
+def _borrowed_rows(ctx, rows, kind):
+    # 본 작품 줄 번호 중 기록 없는 작품마다 "비슷한 작품 줄의 무게 평균" (build_cf_borrow 의 무게). 없으면 None
+    idx = ctx.get("cf_borrow_idx")
+    if idx is None:
+        idx = ctx["cf_borrow_idx"] = {r: i for i, r in enumerate(ctx["cf_borrow"][0].tolist())}
+    q = [idx[r] for r in rows.tolist() if r in idx]
+    if not q:
+        return None
+    cache = ctx.setdefault("cf_pseudo", {})
+    if kind not in cache:                       # 유사도 종류마다 한 번만 계산 (기록 없는 작품 × 같이 본 표 작품)
+        _, donors, W = ctx["cf_borrow"]
+        S = ctx["cw_sim"]["confidence" if kind == "confidence_max" else kind]
+        cache[kind] = W @ S[ctx["cw_pos"][donors]]
+    return cache[kind][q]
+
+
+def build_cf_borrow(ctx, missing_ids, k=10, use=("tag", "rec")):
+    """기록 없는 작품마다 점수를 빌려 올 "기록 있는 비슷한 작품" k개와 무게를 정해 둔다.
+    tag = AniList 태그 코사인, rec = 커뮤니티 추천 세기 (build_rec 먼저). 둘 다 쓰면 무게를 더함"""
+    row, cw = ctx["row"], ctx["cw_rows"]
+    missing = np.zeros(len(ctx["ids"]), dtype=bool)
+    missing[[row[a] for a in missing_ids if a in row]] = True
+    donors = cw[~missing[cw]]                                  # 같이 본 표 안에서 기록이 있는 작품
+    col = {r: j for j, r in enumerate(donors.tolist())}
+    rows = np.flatnonzero(missing)
+    Xn = ctx["X"] / ctx["vnorm"][:, None]
+    W = np.zeros((len(rows), len(donors)))                     # 기록 없는 작품 × 빌려 올 작품 무게
+    if "tag" in use:
+        S = Xn[rows] @ Xn[donors].T
+        top = np.argpartition(-S, min(k, len(donors) - 1), axis=1)[:, :k]
+        for i in range(len(rows)):
+            W[i, top[i]] += np.clip(S[i, top[i]], 0, None)
+    if "rec" in use:
+        for i, r in enumerate(rows.tolist()):
+            ys, ws = ctx.get("rec", {}).get(r, ((), ()))
+            for y, wv in zip(np.asarray(ys).tolist(), np.asarray(ws).tolist()):
+                if y in col:
+                    W[i, col[y]] += wv / max(ws)
+    keep = W.sum(axis=1) > 0
+    ctx["cf_missing"] = missing
+    ctx["cf_borrow"] = (rows[keep], donors, W[keep] / W[keep].sum(axis=1, keepdims=True))
+    ctx.pop("cf_borrow_idx", None)              # 다시 만들면 미리 계산한 것도 버림
+    ctx.pop("cf_pseudo", None)
+
+
 def cowatch_scores(user, ctx, kind=COWATCH_KIND):
     # 행동 기반 점수를 모든 작품에 대해 0~1 로 (그 유저의 1등 작품이 1). 같이 본 횟수 표 밖 작품은 0
+    # CF_FILL 이 있으면 기록 없는 작품도 0점으로 두지 않는다 (기록 있는 옛날 작품만 점수를 받아 신작이 밀리는 문제, EXP-21·23)
     raw = cf_raw(user, ctx, kind)
     out = np.zeros(len(ctx["ids"]))
     if raw.max() > 0:
         out[ctx["cw_rows"]] = raw / raw.max()
+    if CF_FILL and "cf_missing" in ctx:
+        miss = ctx["cf_missing"]
+        if CF_FILL == "median":
+            have = ctx["cw_rows"][~miss[ctx["cw_rows"]]]
+            out[miss] = np.median(out[have])
+        elif CF_FILL == "borrow":
+            rows, donors, W = ctx["cf_borrow"]
+            out[rows] = W @ out[donors]
     return out
 
 

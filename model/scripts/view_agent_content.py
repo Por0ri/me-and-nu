@@ -4,9 +4,11 @@
 # 글마다 유형 · 연결된 작품 · 날짜 · 품질 점수와, 모델 입장에서 확인할 점(발표일 없음 · 대표 작품 없음 · 같은 원문)을 같이 보여준다.
 # DB 는 읽기만 한다 (임시 파일도 안 만듦). 결과는 model/data/agent_view/ 에 저장 (커밋 안 함)
 # --share 경로 를 주면 이미지를 줄여서 HTML 안에 넣은 파일 하나를 만든다 (팀원에게 보내기용)
+# --new 예전DB 를 주면 예전 DB 에 없던 글만 보여준다 (새로 받은 글만 확인할 때)
 #
 #   python model/scripts/view_agent_content.py "C:/Users/06swl/Downloads/ani_menu_local.sqlite3"
 #   python model/scripts/view_agent_content.py "…/ani_menu_local.sqlite3" --share "C:/Users/06swl/Downloads/에이전트_글_보기.html"
+#   python model/scripts/view_agent_content.py "…/새 파일.sqlite3" --new "…/예전 파일.sqlite3" --share "…/새_글.html"
 
 import base64
 import csv
@@ -34,6 +36,8 @@ border-radius:6px;padding:0 6px;margin-right:4px} .warn{color:#b91c1c;font-size:
 .cards{display:flex;gap:10px;overflow-x:auto;padding:10px 0} .card{flex:0 0 auto;width:300px}
 .card img{width:300px;border-radius:8px;display:block} .text{width:300px;min-height:200px;border:1px dashed #a1a1aa;
 border-radius:8px;padding:10px;box-sizing:border-box;font-size:13px} .page{font-size:12px;color:#71717a}
+details{margin-top:8px;font-size:13px} summary{cursor:pointer;color:#3730a3} table.kv{border-collapse:collapse;margin:6px 0;width:100%}
+table.kv th,table.kv td{border:1px solid #e4e4e7;padding:3px 6px;text-align:left;vertical-align:top;word-break:break-all} table.kv th{background:#f4f4f5;white-space:nowrap}
 """
 
 
@@ -55,8 +59,13 @@ def shrunk(data):
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def main(db_path, share=None):
-    db = sqlite3.connect(f"file:{pathlib.Path(db_path).as_posix()}?mode=ro&immutable=1", uri=True)
+def open_db(path):
+    return sqlite3.connect(f"file:{pathlib.Path(path).as_posix()}?mode=ro&immutable=1", uri=True)
+
+
+def main(db_path, share=None, old_db=None):
+    db = open_db(db_path)
+    skip = {r for (r,) in open_db(old_db).execute("select request_id from feed_queue")} if old_db else set()
     labels = dict(db.execute("select type_code, label_ko from content_types"))
     names = {}
     works_csv = DATA / "menu_works.csv"
@@ -92,6 +101,11 @@ def main(db_path, share=None):
             if key in seen_src:
                 warns.append(f"같은 원문이 앞 글에도 있음: {seen_src[key]}")
             seen_src.setdefault(key, topic)
+        last_day = p.get("event_end") or p.get("event_start")   # 행사·발매가 끝나기(또는 시작하기) 전에 노출이 끝나는지
+        if last_day and until and until[:10] < last_day[:10]:
+            warns.append(f"노출 끝({until[:10]})이 행사·발매 날짜({last_day[:10]})보다 빠름")
+        if rid in skip:                                # --new: 예전 DB 에 있던 글은 중복 확인에만 쓰고 안 보여줌
+            continue
 
         cards = []
         for page, role, eyebrow, title, body, key in db.execute(
@@ -114,6 +128,20 @@ def main(db_path, share=None):
 
         work_html = " ".join(f'<span class="chip">{"대표 " if prim else ""}{esc(names.get(wid, wid))} ({esc(wid)})</span>'
                              for wid, prim in w) or "없음"
+        region = (f'지역: 행사 {esc(p.get("event_country") or "-")} · {esc(p.get("event_region") or "-")} '
+                  f'({esc(p.get("event_location") or "장소 없음")}) / 원문 사이트 '
+                  f'{esc(", ".join(sorted({s.get("region") or "-" for s in src})))} / 독자 {esc(p.get("audience_region") or "-")}')
+        # 저장된 데이터 전부 (카드·이미지 말고): 글 정보 · 원문 · 사실
+        info = "".join(f"<tr><th>{esc(k)}</th><td>{esc(json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else v)}</td></tr>"
+                       for k, v in p.items() if k not in ("cards", "images", "prior_image_fingerprints", "facts", "sources"))
+        srcs = "".join(f"<tr><td>{esc(s.get('publisher'))}</td><td>{esc(s.get('region'))}</td><td>{esc(s.get('published_at'))}</td>"
+                       f"<td>{esc(s.get('is_official'))}</td><td>{esc(s.get('url'))}</td></tr>" for s in src)
+        facts = "".join(f"<li>{esc(f.get('statement'))} <span class='page'>[{esc(f.get('fact_type'))}"
+                        f"{' · 원문: ' + esc((f.get('details') or {}).get('source_quote')) if (f.get('details') or {}).get('source_quote') else ''}]</span></li>"
+                        for f in p.get("facts", []))
+        stored = (f'<details><summary>저장된 데이터 보기</summary><table class="kv">{info}</table>'
+                  f'<b>원문</b><table class="kv"><tr><th>출처</th><th>원문 지역</th><th>발표일</th><th>공식</th><th>주소</th></tr>{srcs}</table>'
+                  f'<b>사실 {len(p.get("facts", []))}개</b><ol>{facts}</ol></details>')
         src_html = " · ".join(f'<a href="{esc(s.get("url"))}" target="_blank" rel="noopener">{esc(s.get("publisher") or "원문")}</a>'
                               f' (발표일 {esc(s.get("published_at") or "없음")})' for s in src)
         posts.append(
@@ -121,18 +149,20 @@ def main(db_path, share=None):
             f'<span class="chip">{esc(labels.get(ctype, ctype))}</span> 상태 {esc(status)} · 품질 {esc(quality.get(rid, "-"))} · '
             f'만든 날 {esc((queued or "")[:10])} · 노출 끝 {esc((until or "")[:10])} · '
             f'행사 {esc(p.get("event_start") or "-")} ~ {esc(p.get("event_end") or "-")}<br>'
-            f'작품: {work_html}<br>원문: {src_html or "없음"}</div>'
+            f'작품: {work_html}<br>{region}<br>원문: {src_html or "없음"}</div>'
             + "".join(f'<div class="warn">⚠ {esc(x)}</div>' for x in warns)
-            + f'<div class="cards">{"".join(cards)}</div></div>')
+            + f'<div class="cards">{"".join(cards)}</div>{stored}</div>')
 
     page = (f'<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
             f'<title>에이전트 글 보기</title><style>{CSS}</style></head><body>'
-            f'<h1>에이전트 글 {len(rows)}개 · {esc(pathlib.Path(db_path).name)}</h1>{"".join(posts)}</body></html>')
+            f'<h1>에이전트 {"새 " if old_db else ""}글 {len(posts)}개 · {esc(pathlib.Path(db_path).name)}</h1>'
+            f'{"".join(posts)}</body></html>')
     target = pathlib.Path(share) if share else OUT / "index.html"
     target.write_text(page, encoding="utf-8")
-    print(f"글 {len(rows)}개 → {target} ({target.stat().st_size / 1e6:.1f}MB)")
+    print(f"글 {len(posts)}개 → {target} ({target.stat().st_size / 1e6:.1f}MB)")
     webbrowser.open(target.as_uri())
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[sys.argv.index("--share") + 1] if "--share" in sys.argv else None)
+    arg = lambda name: sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
+    main(sys.argv[1], arg("--share"), arg("--new"))
