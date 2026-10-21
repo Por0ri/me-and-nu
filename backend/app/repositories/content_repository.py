@@ -8,7 +8,6 @@ from app.models import (
     ContentReaction,
     ContentSource,
     ContentTag,
-    CreatorChannel,
     SavedItem,
     SourceSite,
     Subtopic,
@@ -96,10 +95,6 @@ async def list_content_subtopic_names(db: AsyncSession, content_id: int) -> list
         .order_by(Subtopic.subtopic_id)
     )
     return list((await db.scalars(statement)).all())
-
-
-async def get_channel(db: AsyncSession, channel_id: int) -> CreatorChannel | None:
-    return await db.get(CreatorChannel, channel_id)
 
 
 async def get_reaction(

@@ -2,7 +2,7 @@
 
 Next.js, FastAPI, PostgreSQL, Redis 기반 로컬 V1 테스트 프로젝트입니다. 공개 API의 기본 경로는 `/api/v1`이며 응답 JSON은 camelCase를 사용합니다. 일반 인증은 서버 세션과 HttpOnly 쿠키, 변경 요청은 `X-CSRF-Token`을 사용합니다. `SESSION_BACKEND=redis`이면 세션을 Redis에 저장하며 사용자 데이터는 PostgreSQL에 유지합니다. 로컬 Swagger 테스트용 로그인 우회도 제공합니다.
 
-팀 테스트 서버용 Dockerfile, 독립 Compose 설정, 환경변수 준비와 실행 순서는 [백엔드 배포 안내](deploy/README.md)를 참고하세요. OAuth 연결 전에는 개발용 인증을 끈 상태로 API·PostgreSQL·Redis 연결과 공개 API를 확인합니다.
+팀 테스트 서버용 Dockerfile, 독립 Compose 설정, 환경변수 준비와 실행 순서는 [백엔드 배포 안내](deploy/README.md)를 참고하세요. 카카오·네이버 OAuth 백엔드와 프론트 없이 확인하는 절차는 [OAuth 설정 안내](docs/OAUTH_T02_1_SETUP.md)에 정리했습니다. 실제 앱 등록·DB 적용·원격 배포는 별도 단계이며 기본 OAuth 설정은 비활성입니다.
 
 ## 준비
 
@@ -37,6 +37,8 @@ if (!(Test-Path .venv)) { py -m venv .venv }
 
 Windows에서는 위 실행 스크립트가 PostgreSQL 비동기 연결에 맞는 이벤트 루프를 사용합니다. 자동 재시작은 하지 않으므로 코드 변경 후에는 기존 서버를 종료하고 다시 실행하세요. 이미 `http://localhost:8000/health/db`가 정상 응답하면 서버가 실행 중입니다. 같은 8000번 포트로 중복 실행하면 Windows에서 `WinError 10013` 또는 `10048`이 발생할 수 있습니다.
 
+API의 회원 유형은 `user` 하나이며 DB에 별도로 저장하지 않습니다. 새 ERD에 맞춰 `signup_channel`을 제거하는 마이그레이션 `a8c3d1f6e902`를 준비했습니다. 기존 컬럼이 남아 있어도 API는 해당 값을 읽거나 쓰지 않으며, 기존 `consumer`·`creator` 계정도 `user`로 응답합니다. 실제 DB 적용은 이번 작업에서 수행하지 않았습니다. 마이그레이션을 적용하면 계정 ID와 연결 데이터는 유지되지만 기존 회원 유형 구분은 제거되며, downgrade로도 이전 `creator` 구분은 복원되지 않습니다.
+
 `app.seeds.v1_local`은 정책, 영화 Topic·Subtopic, 로컬 공개 콘텐츠를 멱등적으로 준비합니다. `app.seeds.dev_user`는 로컬 테스트용 데모 사용자를 준비합니다. 기존 영화 Agent와 저장 로직은 별개입니다. 서버 실행 중 [Swagger UI](http://localhost:8000/docs), [OpenAPI JSON](http://localhost:8000/openapi.json), [ReDoc](http://localhost:8000/redoc)을 확인할 수 있습니다.
 
 ## Swagger에서 로그인 없이 테스트
@@ -60,7 +62,7 @@ npm run dev
 
 1. 개발용 회원가입과 로그인. 화면은 첫 변경 요청 전 익명 세션을 조회해 CSRF 토큰을 확보합니다.
 2. 로그인 후 세션 조회, 정책·Topic·Subtopic 조회.
-3. consumer는 실제 조회한 Topic과 Subtopic을 선택하고, 필수 정책에 동의한 뒤 온보딩 제출.
+3. `user` 회원으로 실제 조회한 Topic과 Subtopic을 선택하고, 필수 정책에 동의한 뒤 온보딩 제출.
 4. 내 프로필과 Topic·Subtopic 구독 확인. 필요하면 닉네임 수정 또는 새 Topic 추가.
 5. 활성 Topic의 피드와 콘텐츠 상세 조회. 실제 콘텐츠 ID를 선택합니다.
 6. O/X, 좋아요, 북마크 설정·취소 후 피드와 상세에 상태가 반영되는지 확인.
@@ -89,6 +91,6 @@ npm run build
 
 ## 현재 범위와 이후 연결 지점
 
-이번 로컬 범위는 세션·정책·온보딩·프로필·Topic/Subtopic·구독·피드·콘텐츠 상세·O/X·좋아요·북마크입니다. Redis는 익명·로그인 세션 저장에 적용되었습니다. 조회 캐시와 Celery 작업 큐는 아직 연결하지 않았습니다. 공개 콘텐츠는 DB에서 조회하고, 추천 이유와 노출 여부는 추천·이벤트 로그가 연결되기 전의 기본값입니다. OAuth 공급자 통신과 추천 알고리즘은 이후 구현 범위입니다. 내부 AgentRun은 공개 API가 아니며, 추후 `/chat/*` 서비스가 내부 Agent 실행과 저장 결과를 연결합니다.
+이번 로컬 범위는 세션·정책·온보딩·프로필·Topic/Subtopic·구독·피드·콘텐츠 상세·O/X·좋아요·북마크입니다. Redis는 익명·로그인 세션 저장에 적용되었습니다. 조회 캐시와 Celery 작업 큐는 아직 연결하지 않았습니다. 공개 콘텐츠는 DB에서 조회하고, 추천 이유와 노출 여부는 추천·이벤트 로그가 연결되기 전의 기본값입니다. OAuth 공급자 통신과 세션 연결은 백엔드 모의 테스트까지 구현했으며, 실계정 인증·원격 배포는 후속입니다. 추천 알고리즘도 후속 범위입니다. 내부 AgentRun은 공개 API가 아니며, 추후 `/chat/*` 서비스가 내부 Agent 실행과 저장 결과를 연결합니다.
 
 오류는 `{ "code": "...", "message": "..." }` 형식입니다. 주요 상태 코드는 조회 200, 생성 201, 성공한 삭제·로그아웃 204, 인증 없음 401, CSRF 또는 온보딩 필요 403, 미존재 404, 중복·상태 충돌 409, 입력·cursor 오류 422입니다.

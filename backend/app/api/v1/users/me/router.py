@@ -21,7 +21,7 @@ def profile_response(user: UserAccount) -> ProfileResponse:
         email=user.email,
         profile_image_id=None,
         profile_image_url=None,
-        account_type=user.signup_channel,
+        account_type=user.account_type,
     )
 
 

@@ -2,6 +2,8 @@
 
 검증 기준: 2026-09-26, `main`의 `ab9235e`. [Notion V1.0 API 명세서](https://app.notion.com/p/6cf04c45a96182f4a1d781fe8f2d5af6)와 그 안의 [PRD v0.6 FR 매칭 목록](https://app.notion.com/p/b9504c45a96182a7ad4981e43cd406fe), 현재 FastAPI `/openapi.json`의 **HTTP 메서드와 경로**를 대조했다. 표의 `대응`은 라우트가 존재한다는 뜻이며, 명세의 모든 요청·응답·권한 조건을 검증했다는 뜻은 아니다.
 
+2026-10-21 API-004 후속 변경: 온보딩 세부 관심사 선택을 Q1·Q2 각각 1개 저장으로 대체했다. 필수 `answers`를 받고 기존 `subtopicIds`는 거절한다. DB 추가 마이그레이션은 `c0e5f3b8a124`이며 실제 적용 상태는 별도 확인한다. 프론트 호출부는 이번에 수정하지 않았다. 아래 API 개수는 최초 검증일의 기록이다.
+
 - 현재 OpenAPI: **32개 작업** = 명세 번호에 대응하는 공개 V1 API **24개** + 번호 없는 로컬 개발용 API **6개** + 번호 없는 상태 확인 API **2개**. 개발용 API는 `ENABLE_DEV_API=true`일 때만 나타난다.
 - 명세 번호는 API-001~API-106 중 **API-003이 결번**이라 실제 번호가 붙은 항목은 105개다. 현재 표는 그중 구현된 24개만 다룬다.
 - 경로 끝의 `/`는 붙이지 않는다. 이는 [명세의 공통 계약](https://app.notion.com/p/15f04c45a961825c9172817e6931113e) 및 현재 라우터와 일치한다. `backend/README.md`의 전체 목표 API 표에는 과거의 끝 `/` 표기가 남아 있다.
@@ -12,7 +14,7 @@
 
 | 명세 번호 | 기능 | 현재 구현 메서드·경로 | 대조 결과 |
 | --- | --- | --- | --- |
-| [API-004](https://app.notion.com/p/c6004c45a961823ea9450197815f97ec) | 온보딩 일괄 제출 | `POST /api/v1/onboarding` | **부분**: 명세의 회원 생성은 현재 개발용 가입 API로 먼저 처리하고, 이 API는 온보딩 대기 세션의 프로필·동의·관심사 저장을 담당한다. |
+| [API-004](https://app.notion.com/p/c6004c45a961823ea9450197815f97ec) | 온보딩 일괄 제출 | `POST /api/v1/onboarding/complete` | **부분**: 온보딩 대기 세션의 프로필·동의·Topic·Q1/Q2를 저장한다. 기존 필수 프로필·동의 입력을 유지하며 `answers: {q1,q2}` 필수, `subtopicIds` 요청은 422. 응답은 `answers`와 `activeTopic.subtopicIds=[]`. Q2는 알림 동의가 아니며 기존 세부 관심사·구독 API는 유지한다. 이미지 연결은 미지원이다. |
 | [API-005](https://app.notion.com/p/49604c45a96182499b66818e8cb63277) | 현재 세션·온보딩 상태 | `GET /api/v1/auth/session` | 대응. 비로그인도 200을 반환한다. |
 | [API-006](https://app.notion.com/p/09104c45a96182a3a71a81cc8cd4cf8b) | 로그아웃 | `POST /api/v1/auth/logout` | 대응. 성공 시 본문 없는 204. |
 | [API-007](https://app.notion.com/p/20504c45a961832d81c1018633526ca6) | 내 프로필 조회 | `GET /api/v1/users/me` | 대응. |

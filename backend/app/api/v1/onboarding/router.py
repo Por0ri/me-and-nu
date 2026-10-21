@@ -14,15 +14,15 @@ router = APIRouter(prefix="/onboarding", tags=["온보딩"])
 
 
 @router.post(
-    "",
+    "/complete",
     status_code=201,
     response_model=OnboardingResponse,
     summary="회원 온보딩 일괄 완료",
-    description="onboarding_pending 세션과 X-CSRF-Token이 필요합니다. 프로필, 동의 이력, 최초 관심사, 기본 알림 설정을 DB 트랜잭션으로 저장하고 세션을 교체합니다. 완료 후 GET /auth/session을 다시 호출하세요.",
+    description="onboarding_pending 세션과 X-CSRF-Token이 필요합니다. 닉네임·생년월일, 동의 이력, 최초 관심 분야(topicId), Q1·Q2 답변(answers에서 각각 단일 값), 기본 알림 설정을 DB 트랜잭션으로 저장하고 세션을 교체합니다. profileImageId와 subtopicIds는 받지 않으며 세부 관심사를 자동 구독하지 않습니다. 완료 후 GET /auth/session을 다시 호출하세요.",
     responses={
         **COMMON_ERRORS,
         201: {"description": "온보딩 완료"},
-        404: {"description": "Topic 또는 이미지 없음", "content": {"application/json": {"example": {"code": "TOPIC_NOT_FOUND", "message": "Topic을 찾을 수 없습니다."}}}},
+        404: {"description": "Topic 없음", "content": {"application/json": {"example": {"code": "TOPIC_NOT_FOUND", "message": "Topic을 찾을 수 없습니다."}}}},
         409: {"description": "중복 온보딩 또는 정책 버전 충돌", "content": {"application/json": {"example": {"code": "POLICY_VERSION_CONFLICT", "message": "정책 버전이 변경되었습니다. 정책을 다시 조회해 주세요."}}}},
     },
 )

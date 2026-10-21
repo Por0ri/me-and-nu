@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
@@ -12,7 +13,7 @@ class ProfileResponse(CamelModel):
     email: str | None
     profile_image_id: int | None = None
     profile_image_url: str | None = None
-    account_type: str
+    account_type: Literal["user"]
 
 
 class ProfilePatchRequest(CamelModel):

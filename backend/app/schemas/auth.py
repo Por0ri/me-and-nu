@@ -14,7 +14,7 @@ class RegisterRequest(CamelModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     nickname: Nickname
-    role: Literal["consumer", "creator"] = "consumer"
+    role: Literal["user"] = "user"
 
 
 class LoginRequest(CamelModel):
@@ -26,7 +26,7 @@ class UserResponse(CamelModel):
     id: int
     email: str | None
     nickname: str
-    account_type: str
+    account_type: Literal["user"]
 
 
 class LoginResponse(CamelModel):
@@ -36,7 +36,7 @@ class LoginResponse(CamelModel):
 
 class SessionUser(CamelModel):
     id: int
-    account_type: str
+    account_type: Literal["user"]
 
 
 class SessionResponse(CamelModel):

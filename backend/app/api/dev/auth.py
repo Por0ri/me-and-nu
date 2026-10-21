@@ -47,7 +47,7 @@ async def register(
         id=user.user_id,
         email=user.email,
         nickname=user.nickname,
-        account_type=user.signup_channel,
+        account_type=user.account_type,
     )
 
 
@@ -91,6 +91,6 @@ async def login(
             id=user.user_id,
             email=user.email,
             nickname=user.nickname,
-            account_type=user.signup_channel,
+            account_type=user.account_type,
         ),
     )

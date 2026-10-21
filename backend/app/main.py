@@ -17,7 +17,7 @@ def create_app(enable_dev_api: bool | None = None) -> FastAPI:
     if dev_api_enabled and settings.enable_dev_auth_bypass:
         description += " 로컬 Swagger 테스트 모드: 로그인과 CSRF 입력 없이 전용 데모 사용자로 보호 API를 호출할 수 있습니다."
     else:
-        description += " 개발용 로그인 후 /auth/session의 csrfToken을 Swagger Authorize에 입력하세요."
+        description += " /auth/session의 csrfToken을 Swagger Authorize에 입력하세요. 소셜 로그인은 공급자 설정 후 /auth/login/{provider}에서 시작하며, 활성화된 개발용 로그인도 사용할 수 있습니다."
     api = FastAPI(
         title="큐레이팅 플랫폼 REST API",
         version="1.1.0-local",

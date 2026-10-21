@@ -15,7 +15,6 @@ def test_user_model_columns():
         "provider_user_id",
         "email",
         "nickname",
-        "signup_channel",
         "account_status",
         "birth_date",
         "auth_provider",

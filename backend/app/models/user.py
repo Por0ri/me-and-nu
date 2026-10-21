@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 
 from sqlalchemy import (
     BigInteger,
@@ -27,12 +28,6 @@ class UserAccount(Base):
     provider_user_id: Mapped[str | None] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(255))
     nickname: Mapped[str] = mapped_column(String(50), nullable=False)
-    signup_channel: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        default="consumer",
-        server_default="consumer",
-    )
     account_status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
@@ -77,10 +72,6 @@ class UserAccount(Base):
             postgresql_where=email.is_not(None),
         ),
         CheckConstraint(
-            "signup_channel IN ('consumer', 'creator')",
-            name="ck_user_account_signup_channel",
-        ),
-        CheckConstraint(
             "account_status IN "
             "('active', 'warned', 'suspended', 'banned', 'withdrawn')",
             name="ck_user_account_status",
@@ -105,9 +96,14 @@ class UserAccount(Base):
         return self.user_id
 
     @property
-    def role(self) -> str:
-        """1차 통합 동안 기존 role 응답에 최초 가입 경로를 제공합니다."""
-        return self.signup_channel
+    def account_type(self) -> Literal["user"]:
+        """일반 회원 API의 단일 유형이며 DB에 별도로 저장하지 않습니다."""
+        return "user"
+
+    @property
+    def role(self) -> Literal["user"]:
+        """개발용 가입 계약과 호환되는 단일 회원 유형입니다."""
+        return self.account_type
 
     def __repr__(self) -> str:
         return (

@@ -12,15 +12,16 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 | 개발용 Agent 결과 | `GET /api/v1/dev/agent-runs`, `GET /api/v1/dev/agent-runs/{agentRunId}` |
 | 개발용 Agent 발행 | `POST /api/v1/dev/agent-runs/{agentRunId}/publish`, `POST /api/v1/dev/agent-runs/{agentRunId}/publish-preview` |
 | 세션 | `GET /api/v1/auth/session`, `POST /api/v1/auth/logout` |
-| 정책·온보딩 | `GET /api/v1/policies`, `POST /api/v1/onboarding` |
+| 소셜 OAuth (API-001·002) | `POST /api/v1/auth/login/{provider}`, `GET /api/v1/auth/login/{provider}/callback` — 카카오·네이버. 앱 키와 `oauth_attempt` 마이그레이션 필요, 기본 비활성. [설정·백엔드 단독 검증](../docs/OAUTH_T02_1_SETUP.md) |
+| 정책·온보딩 | `GET /api/v1/policies`, `POST /api/v1/onboarding/complete` |
 | 내 정보 | `GET/PATCH /api/v1/users/me`, `GET/PATCH /api/v1/users/me/consents` |
 | Topic·Subtopic | `GET /api/v1/topics`, `GET /api/v1/topics/{topicId}/subtopics`, `GET /api/v1/subtopics/{subtopicId}` |
 | 내 관심사 | `GET/POST /api/v1/me/topics`, `GET /api/v1/me/topics/{topicId}/subtopics`, `PUT/DELETE /api/v1/me/topics/{topicId}/subtopics/{subtopicId}` |
 | 피드·콘텐츠 | `GET /api/v1/topics/{topicId}/feed`, `GET /api/v1/contents/{contentId}?topicId=...` |
 | 반응·저장 | `PUT/DELETE /api/v1/contents/{contentId}/preference`, `/like`, `/bookmark` |
 | 저장 목록 (API-041) | `GET /api/v1/users/me/bookmarks?topicId=...&limit=...&cursor=...` |
-| AI 대화 (API-048·052·053) | `POST /api/v1/chat/sessions`, `POST /api/v1/chat/sessions/{sessionId}/messages`, `GET /api/v1/chat/jobs/{jobId}` — `backend/.env`의 `LLM_KEY` 필요. 현재 분야 공개 콘텐츠 안에서만 근거를 찾아 답합니다. |
-| 알림 (API-107·108·109) | `GET /api/v1/users/me/notifications`, `GET /api/v1/users/me/notifications/unread-count`, `PATCH /api/v1/users/me/notifications/{notificationId}` — 발행 배치가 생기기 전까지는 알림함을 열 때 내 분야의 최근 30일 새 글과 환영 공지를 채웁니다. 마이그레이션(`alembic upgrade head`) 필요. |
+| AI 대화 (API-048·052·053) | `POST /api/v1/chat/sessions`, `POST /api/v1/chat/sessions/{sessionId}/messages`, `GET /api/v1/chat/jobs/{jobId}` — `backend/.env`의 `LLM_KEY` 필요. 질문은 앞뒤 공백 제외 최대 500자이며 현재 분야 공개 콘텐츠 안에서만 근거를 찾아 답합니다. |
+| 알림 (API-107·108·109) | `GET /api/v1/users/me/notifications`, `GET /api/v1/users/me/notifications/unread-count`, `PATCH /api/v1/users/me/notifications/{notificationId}` — 운영공지(`system_notice`)만 목록·미읽음 수·읽음 처리에 포함합니다. 환영 공지를 생성하며, 기존 다른 유형 알림은 보존하되 공개 API에서 제외합니다. 실제 운영공지 공급은 후속 작업입니다. |
 
 사용자와 콘텐츠 데이터는 PostgreSQL을 사용합니다. 세션 저장소는 `SESSION_BACKEND=redis`로 Redis를 선택할 수 있으며 미설정 시 기존 PostgreSQL 세션을 사용합니다. 개발용 가입·로그인과 Agent 결과 조회는 `ENABLE_DEV_API=true`에서만 등록됩니다. Agent 결과 조회는 로컬 요청과 인증된 개발 사용자로 제한되며 Swagger의 **개발용 Agent 결과**에 표시됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 영화 Agent 실행 결과가 승인되고 사실 확인 항목이 없으면 저장 직후 공개 Content 피드에 자동 발행됩니다. 탈락하거나 사실 확인이 필요한 초안은 자동 발행되지 않습니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
 
@@ -42,7 +43,19 @@ cd backend
 
 조회는 주로 200, 생성은 201, 삭제·로그아웃은 본문 없는 204입니다. `/api/v1` 응답은 `Cache-Control: private, no-store`를 보냅니다. 오류는 `code`와 `message`를 포함하고 입력 검증 오류의 `fields[]`에는 `field`·`code`·`message`가 붙습니다. `requestId`는 실제 값이 있을 때만 보냅니다. 대표 오류는 `MALFORMED_JSON`(400), `AUTH_REQUIRED`(401), `CSRF_INVALID`·`ONBOARDING_REQUIRED`(403), `TOPIC_NOT_FOUND`·`CONTENT_NOT_FOUND`(404), `ONBOARDING_ALREADY_COMPLETED`·`STATE_CONFLICT`(409), `UNSUPPORTED_MEDIA_TYPE`(415), `VALIDATION_ERROR`·`INVALID_CURSOR`(422)입니다.
 
-[Swagger 테스트 가이드](../docs/SWAGGER_TEST_GUIDE.md)에서 실제 ID를 조회해 온보딩·피드·반응까지 호출하는 순서를 확인하세요. 추천 알고리즘과 이벤트 로그가 아직 없으므로 추천 이유·노출 상태는 기본값이며, `/chat/*`와 내부 AgentRun 연결은 추후 서비스 계층에서 진행합니다. OAuth 공급자 통신, Celery, Redis 조회 캐시, 관리자 전체 API 등은 이번 구현에 포함되지 않습니다. 아래 목표 API 표에서 위 구현 범위를 제외한 항목은 후속 작업 대상입니다.
+[Swagger 테스트 가이드](../docs/SWAGGER_TEST_GUIDE.md)에서 실제 ID를 조회해 온보딩·피드·반응까지 호출하는 순서를 확인하세요. 추천 이유·노출 상태 등 미연결 기능은 후속 작업입니다. OAuth 백엔드는 공급자 응답 대체 테스트까지 구현했으며 실제 앱 등록·배포·실계정 검증은 [OAuth 안내](../docs/OAUTH_T02_1_SETUP.md)에 따라 진행합니다. Celery, Redis 조회 캐시, 관리자 전체 API 등은 후속 범위입니다.
+
+### 온보딩 답변 계약 (2026-10-21)
+
+`POST /api/v1/onboarding/complete`는 `nickname`, `birthDate`, `accountType=user`, `consents`, `topicId`와 함께 필수 `answers: {"q1":"world","q2":"releases"}`를 받습니다. Q1은 `world`, `relationships`, `ost`, `goods`, `events`, `news` 중 하나, Q2는 `releases`, `characters`, `restock`, `events` 중 하나의 문자열입니다. 배열·누락·다른 필드는 거절하며, 기존 `subtopicIds`는 온보딩 요청에서 제거되어 보내면 422입니다.
+
+온보딩에서는 프로필 이미지를 받지 않습니다. 요청 JSON에서 `profileImageId`를 생략해야 하며, `null`을 포함해 전송하면 추가 필드로 판단하여 422 `VALIDATION_ERROR`를 반환합니다. 이번 이미지 입력 제거는 온보딩 요청·검증에만 적용하며 DB 변경이나 추가 마이그레이션이 필요하지 않습니다. 별도 프로필 수정 API와 이미지 업로드 백로그는 이번 변경 범위에 포함하지 않습니다.
+
+답변은 `tap`에 연결된 `onboarding_answers`에 프로필·동의·온보딩 완료 상태와 함께 저장합니다. 성공 응답에는 `answers`와 `activeTopic.subtopicIds=[]`가 포함됩니다. Q2는 정보 선호도이며 알림·마케팅 동의를 변경하지 않습니다. 기존 세부 관심사 데이터·`tap_topic` 및 별도 구독 API는 유지합니다.
+
+추가 마이그레이션은 `c0e5f3b8a124`(이전 `b9d4e2a7f013`)입니다. 환경별 실제 적용 상태는 별도로 확인해야 합니다. 프론트는 이번 변경 범위 밖이며 호출 경로·요청/응답 타입을 새 계약에 맞추는 후속 작업이 필요합니다.
+
+2026-10-21 이 PC의 카카오 테스트용 `me_nu_oauth_local`에는 위 마이그레이션과 로컬 테스트용 약관 4개, `anime` Topic을 준비했습니다. `scripts/run_local_oauth.py`로 실행하면 이 DB를 사용합니다. 원본 `me_nu`와 배포 DB에는 이번 변경을 적용하지 않았습니다. 수동 테스트에는 `onboarding_pending` 세션과 현재 CSRF를 사용하고, Topic ID·약관 버전은 GET 결과를 사용하세요. 이미 온보딩을 마친 계정에 답변을 임의로 채우거나 완료 상태를 초기화하지 않습니다.
 
 ### Redis 로그인 세션
 
@@ -78,7 +91,7 @@ $env:TEST_REDIS_URL = 'redis://127.0.0.1:6379/0'
 
 `backend`에서 `python -m app.seeds.agent_contents --git-ref f645df0`으로 읽기 전용 검사 후, `--apply`를 붙여 적재할 수 있습니다. 원격 커밋의 JSON을 직접 읽으며 현재 브랜치를 변경하지 않습니다. 전체 트랜잭션·중복 방지·원본 추적을 지원합니다. [적재 결과와 실행 안내](../docs/AGENT_CONTENT_IMPORT.md)를 참고하세요.
 
-온보딩의 분야별 임시 관심사 7개는 콘텐츠 적재 후 `python -m app.seeds.agent_interests --git-ref f645df0 --apply`로 등록합니다. 기존 작품 분류를 보존하면서 콘텐츠 연결을 추가합니다. [임시 분류와 실행 안내](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)를 참고하세요.
+기존 분야별 임시 세부 관심사 7개는 콘텐츠 적재 후 `python -m app.seeds.agent_interests --git-ref f645df0 --apply`로 등록할 수 있습니다. 현재 Q1·Q2 온보딩의 필수 준비 과정은 아니며, 기존 작품 분류를 보존하면서 콘텐츠 연결을 추가하는 용도입니다. [임시 분류와 실행 안내](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)를 참고하세요.
 
 콘텐츠 사진은 `backend/.env`에 `TMDB_KEY`를 넣은 뒤 `python -m app.seeds.content_images --apply`로 채웁니다. 영화·애니는 TMDB 장면 사진(없으면 포스터), 음악은 MusicBrainz 앨범 표지를 쓰며 `image_url`이 비어 있는 Agent 콘텐츠만 바꿉니다. 먼저 `--apply` 없이 실행하면 찾은 결과만 미리 볼 수 있습니다.
 
@@ -146,7 +159,7 @@ me_nu/
 |---|---|---|---|---|
 | API-001 | 소셜 로그인 시작 | POST | /api/v1/auth/login/{provider} | 1차 |
 | API-002 | 소셜 콜백·세션 발급 | GET | /api/v1/auth/login/{provider}/callback | 1차 |
-| API-004 | 회원·기본 프로필 생성 및 온보딩 일괄 제출 | POST | /api/v1/onboarding | 1차 |
+| API-004 | 회원·기본 프로필 생성 및 온보딩 일괄 제출 | POST | /api/v1/onboarding/complete | 1차 |
 | API-005 | 현재 세션·온보딩 상태 조회 | GET | /api/v1/auth/session | 1차 |
 | API-006 | 로그아웃 | POST | /api/v1/auth/logout | — |
 
@@ -295,7 +308,7 @@ me_nu/
 
 ## 남은 V1.1 목표 범위
 
-위 전체 목록 중 현재 구현 절에 표시되지 않은 endpoint는 후속 범위입니다. 특히 OAuth, 채팅, 추천·검색, 관리자·신고, 개인정보 권리 요청, 광고·알림·DM은 아직 로컬 통합 테스트 대상이 아닙니다. 기존 Agent Adapter와 실행·저장 로직은 유지하며, `/chat/*` 구현 시 내부 서비스에서 연결합니다.
+위 전체 목록 중 현재 구현 절에 표시되지 않은 endpoint는 후속 범위입니다. OAuth는 백엔드 모의 통합 테스트를 완료했으며, 공급자 앱 등록·실계정 인증·배포 환경 검증은 아직 남아 있습니다. 채팅·알림 등 부분 구현 영역도 위 현재 구현 표의 범위를 기준으로 확인하세요.
 
 ## API 문서
 

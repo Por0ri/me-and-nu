@@ -1,6 +1,6 @@
 # 팀 테스트용 백엔드 배포
 
-FastAPI, PostgreSQL 17 + pgvector, Redis를 한 서버에서 실행하는 준비 구성입니다. OAuth는 포함하지 않으므로 현재는 공개 API와 상태 확인까지만 사용할 수 있습니다. 프런트엔드 로그인·온보딩·인증이 필요한 기능의 통합 테스트는 OAuth 연결 후 진행합니다.
+FastAPI, PostgreSQL 17 + pgvector, Redis를 한 서버에서 실행하는 준비 구성입니다. OAuth는 기본 비활성이며, 앱 키·마이그레이션 준비 후 [OAuth 설정과 백엔드 단독 검증](../docs/OAUTH_T02_1_SETUP.md)에 따라 활성화할 수 있습니다. 프런트엔드의 새 화면 연결은 후속 작업입니다.
 
 Lightsail 초기 구성, 이미지 저장소 분리, 서버 증설 조건과 이전 절차는 [아키텍처와 증설 계획](ARCHITECTURE.md)을 참고하세요.
 

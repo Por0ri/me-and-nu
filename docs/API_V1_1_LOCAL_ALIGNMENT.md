@@ -4,11 +4,13 @@
 
 `ENABLE_DEV_API=true`에서 로컬 OpenAPI에 등록되는 HTTP 작업은 번호 API 24개, 개발용 6개, 상태 확인 2개다. 아래 공개 경로는 `/api/v1` 접두사를 한 번만 쓰며 끝에 `/`를 붙이지 않는다. `정합`은 해당 로컬 기능의 메서드·경로·주요 입출력 계약이 대응한다는 뜻이다. `부분` 항목의 빠진 기능은 표에 명시했다. 실제 네트워크·DB 실행 결과는 별도 검증 결과로 판단해야 한다.
 
+**2026-10-21 온보딩 후속 변경:** API-004는 `POST /api/v1/onboarding/complete`에서 `subtopicIds` 대신 필수 `answers: {"q1":"world","q2":"releases"}`를 받는다. Q1·Q2 각각 단일 허용값을 `onboarding_answers`에 저장하는 마이그레이션은 `c0e5f3b8a124`다. 실제 DB 적용 여부는 환경별로 확인한다. 이 변경에서는 프론트를 수정하지 않았으므로 기존 `onboard` 경로·입출력 타입을 별도로 갱신해야 한다. 아래의 2026-09-29 검증 수치·기록은 당시 결과다.
+
 ## 현재 번호 API 대조
 
 | 번호 | 메서드와 공개 경로 | 상태 | 로컬에서 확인할 계약과 범위 |
 | --- | --- | --- | --- |
-| API-004 | `POST /api/v1/onboarding` | **부분** | `201`, 동의·프로필·Topic/Subtopic 저장과 소속 검증. 로컬 개발용 계정의 온보딩 완료이며, 명세의 소셜 회원 생성 전체는 아니다. |
+| API-004 | `POST /api/v1/onboarding/complete` | **부분** | `201`, 동의·프로필·Topic·Q1/Q2 저장. 필수 `answers`를 반환하고 `activeTopic.subtopicIds=[]`. 기존 `subtopicIds` 요청은 422. 온보딩 대기 세션의 완료이며 프로필 이미지 연결은 미지원이다. |
 | API-005 | `GET /api/v1/auth/session` | **부분** | 비로그인도 `200`과 익명 세션 쿠키·`csrfToken`을 받는다. 응답 모델은 `restoration_pending`을 허용하지만 계정 복구 절차(API-010)는 아직 없다. |
 | API-006 | `POST /api/v1/auth/logout` | 정합 | 현재 세션 폐기, `204` 빈 본문. 유효 세션의 변경 요청에는 CSRF가 필요하다. |
 | API-007 | `GET /api/v1/users/me` | 정합 | 온보딩 완료 사용자의 프로필 조회. |
@@ -43,13 +45,13 @@
 
 ## 새 화면에 연결할 때의 호출 순서
 
-기존 FE 함수는 [frontend/lib/api.ts](../frontend/lib/api.ts)에 있다. 화면 컴포넌트가 완성되면 함수 이름을 그대로 연결하고, 서버가 내려준 ID와 정책 버전을 사용한다. 현 로컬 구성은 `localhost:3000`의 FE에서 `localhost:8000`의 API를 호출한다.
+기존 FE 함수는 [frontend/lib/api.ts](../frontend/lib/api.ts)에 있다. 서버가 내려준 ID와 정책 버전을 사용하며, 온보딩 함수는 2026-10-21 백엔드 계약에 맞춘 후 연결해야 한다. 기존 로컬 구성은 `localhost:3000`의 FE에서 `localhost:8000`의 API를 호출한다.
 
 | 화면 단계 | 현재 쓸 수 있는 FE 함수 | 입력·상태 갱신 |
 | --- | --- | --- |
 | 시작·인증 | `getSession`, 개발용 `register`, `login`, `logout` | 세션을 조회해 쿠키·CSRF를 받는다. 개발용 로그인 후 세션을 재조회한다. 로그아웃 성공은 빈 `204`; 이어서 세션·보호 화면을 갱신한다. |
-| 정책·온보딩 선택 | `getPolicies`, `getTopics`, `getSubtopics`, `getSubtopic` | 실제 `policyVersion`, `topicId`, `subtopicId`를 확보한다. Topic 검색은 `getTopics({q})`, Subtopic 검색·더보기는 `getSubtopics(topicId, {q, cursor})`로 이어 간다. |
-| 온보딩 제출 | `onboard` | 실제 정책 항목과 선택 ID를 제출한다. 세션 회전 후 `getSession`으로 `active`·새 CSRF를 확인하고 홈 데이터 조회를 시작한다. |
+| 정책·온보딩 선택 | `getPolicies`, `getTopics` | 실제 `policyVersion`, `topicId`를 확보하고 Q1·Q2 각 1개를 선택한다. 세부 관심사 조회는 온보딩에 필요하지 않다. |
+| 온보딩 제출 | `onboard` (새 계약 반영 필요) | `/onboarding/complete`에 기존 프로필·동의·`topicId`와 `answers`를 제출하고 `subtopicIds`는 제외한다. 세션 회전 후 `getSession`으로 `active`·새 CSRF를 확인한다. |
 | 마이페이지·동의 | `getProfile`, `updateProfile`, `getConsents`, `updateConsents` | 닉네임·선택 동의 변경 후 관련 조회를 다시 실행한다. `updateProfile({profileImageId:null})`로 기존 이미지 연결 해제만 가능하며 업로드·새 이미지 연결은 아직 지원하지 않는다. |
 | 관심사·구독 | `getMyTopics`, `addMyTopic`, `getMySubtopics`, `subscribeSubtopic`, `unsubscribeSubtopic` | `getMyTopics({includeDeleted})` 조회가 가능하다. 추가에는 실제 Topic에 속한 Subtopic ID를 제출한다. 구독 해제의 `204`를 빈 응답으로 처리한다. |
 | 홈·글 상세 | `getFeed`, `getContent` | 활성 `topicId`로 피드를 조회하고 카드 `id`를 `contentId`로 전달한다. 상세에는 같은 `topicId`를 필수로 넘긴다. `nextCursor`가 있으면 이어서 가져온다. |
@@ -57,7 +59,7 @@
 
 클라이언트의 `ApiError.code`로 `AUTH_REQUIRED`, `ONBOARDING_REQUIRED`, `CSRF_INVALID`, `INVALID_CURSOR` 같은 상태를 분기한다. 만료된 CSRF가 확인되면 `getSession()`으로 현재 토큰을 다시 받은 뒤 사용자의 작업을 재시도한다. 화면에 없는 미구현 동작의 FE 호출 함수는 준비되어 있지 않다.
 
-정책 `type`은 네 가지 고정값으로 가정하지 않고 `getPolicies()`가 반환한 항목을 그대로 동의 입력에 사용한다. `OnboardingInput`은 소비자에게 `topicId`와 `subtopicIds`를 요구하고 크리에이터 입력에서는 두 필드를 제외한다. 로컬 테스트 화면은 Topic 또는 피드 Subtopic 필터가 바뀌면 이전 피드와 cursor를 지운다.
+정책 `type`은 네 가지 고정값으로 가정하지 않고 `getPolicies()`가 반환한 항목을 그대로 동의 입력에 사용한다. 현재 백엔드 온보딩은 `accountType=user`, 기존 프로필·동의 필드, `topicId`, `answers`를 사용한다. Q1은 `world/relationships/ost/goods/events/news`, Q2는 `releases/characters/restock/events` 중 각 단일 문자열이며 Q2는 알림 동의를 뜻하지 않는다. 기존 세부 관심사 데이터·`tap_topic`과 별도 구독 API는 유지한다. 로컬 테스트 화면은 Topic 또는 피드 Subtopic 필터가 바뀌면 이전 피드와 cursor를 지운다.
 
 ## Swagger UI 로컬 확인 순서
 
@@ -65,7 +67,7 @@
 
 1. **빠른 공개 글 확인:** `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=true`로 로컬 데모 사용자를 준비한다. `GET /api/v1/me/topics`의 활성 `topicId` → `GET /api/v1/topics/{topicId}/subtopics`의 `subtopicId` → `GET /api/v1/topics/{topicId}/feed`의 카드 `id` → `GET /api/v1/contents/{contentId}?topicId=...` 순서로 실행한다. 공개된 Agent 글도 같은 피드·상세에서 확인한다. 내부 초안은 개발용 Agent 실행 조회 경로를 사용한다.
 2. **실제 세션 흐름:** `ENABLE_DEV_AUTH_BYPASS=false`로 재시작한다. `GET /api/v1/auth/session`에서 `anonymous`와 `csrfToken`을 받는다. Swagger **Authorize → CsrfToken**에 넣고 개발용 가입·로그인을 실행한다. 세션을 다시 조회해 `onboarding_pending`과 새 토큰을 받는다.
-3. **온보딩:** 정책·Topic·Subtopic을 GET으로 읽고 `POST /api/v1/onboarding`을 실제 값으로 채워 실행한다. `201` 뒤 세션을 다시 조회해 `active`와 새 토큰을 확인한다. 같은 Topic 밖의 Subtopic은 제출할 수 없다.
+3. **온보딩:** 정책·Topic을 GET으로 읽고 `POST /api/v1/onboarding/complete`에 실제 값과 `answers`를 제출한다. `201` 응답의 답변과 `activeTopic.subtopicIds=[]`를 확인한 뒤 세션을 다시 조회해 `active`와 새 토큰을 받는다. 기존 `subtopicIds`, 답변 누락·배열·허용되지 않은 값은 422다.
 4. **화면 동작:** 프로필·동의·관심사 조회와 갱신 → 피드·상세 → O/X·좋아요·북마크 PUT 및 DELETE 순서로 실행한다. DELETE와 로그아웃의 `204`에는 본문이 없고, 변경 뒤 GET을 다시 호출해 결과를 본다.
 5. **계약 검사:** API-018의 선택 query는 `q`, `cursor`, `limit`이며 부모 필드가 없어야 한다. API-019 응답에도 부모 필드가 없어야 한다. 피드 cursor는 같은 필터에 사용하고, 상세와 반응 취소에는 `topicId`를 입력한다.
 
@@ -82,7 +84,7 @@ npm run build
 ## 이번 범위 밖과 결정이 필요한 항목
 
 - **새 공개 API:** API-023 Topic 삭제, API-034 공유 정보, API-041 저장함 목록은 현재 라우트가 없다. OAuth API-001/002, 계정 복구 API-010, 저장함 수정·상세·삭제, 채널 팔로우·DM·AI 대화, 설정·알림·신고·탈퇴도 별도 작업이다. 이번 로컬 정합화에서 새 공개 라우트나 빈 FE 스텁을 추가하지 않는다.
-- **온보딩 선택 수:** Figma는 세부 토픽 **5개 이상**, API-004는 소비자 **1개 이상**이다. 현재 영화 seed는 선택 가능한 Subtopic 두 개다. 화면 문구와 데이터 범위를 결정해야 하며, 서버 최소값을 임의로 올리지 않았다.
+- **온보딩 프론트 연결:** 선택 수는 Q1·Q2 각각 정확히 1개로 확정했다. 백엔드는 세부 관심사 선택을 답변 저장으로 대체했으며, 프론트 호출 경로·입출력 타입 반영과 실제 화면 연동은 후속 작업이다.
 - **홈 공급:** API-028은 현재 공개 글 최신순 조회다. 추천·광고·저장 재노출의 공급 로직, Home_AI의 “원하는 글 요청” 계약은 아직 없다. `Content_AI`의 글 질문·답변 계약과 동일하다고 가정하지 않는다.
 - **화면과 목록 계약:** Figma의 사람 구독 UI와 V1.1의 채널 팔로우, 번호 페이지 UI와 cursor 목록, 저장함 카드의 썸네일·작성자·시간, “21시 이후 알림허용”과 일반 문의의 필드는 별도 결정이 필요하다. 세부 화면 매핑은 [Figma API 백로그](FIGMA_API_V1_1_IMPLEMENTATION_BACKLOG.md)에 있다.
 - **자동 Agent 공급:** 이미 발행된 글은 API-028·029로 조회한다. 정기 실행을 위한 Celery·Redis와 실제 모델·외부 공급자 연동은 이번 API 계약 정리와 별도의 작업이다.

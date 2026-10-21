@@ -21,6 +21,8 @@ from app.models.chat import (
 )
 from app.models.content import Content, ContentSource, Draft
 from app.models.notification import Notification
+from app.models.oauth_attempt import OAuthAttempt
+from app.models.onboarding_answers import OnboardingAnswersRecord
 from app.models.user import UserAccount
 from app.models.v1 import (
     AuthSession,
@@ -53,6 +55,8 @@ __all__ = [
     "JudgmentLog",
     "LongTermMemory",
     "NotificationSetting",
+    "OAuthAttempt",
+    "OnboardingAnswersRecord",
     "Policy",
     "SavedItem",
     "SourceSite",

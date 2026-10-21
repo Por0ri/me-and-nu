@@ -31,7 +31,7 @@ DEV_USER_AUTH_PROVIDER = "kakao"
 
 
 async def ensure_dev_user(db: AsyncSession) -> UserAccount:
-    """Idempotently provision an onboarded consumer for local Swagger calls.
+    """Idempotently provision an onboarded user for local Swagger calls.
 
     A reserved provider identity keeps the account distinct from normal local
     email/password users. An email or provider-ID collision is never adopted.
@@ -74,7 +74,6 @@ async def ensure_dev_user(db: AsyncSession) -> UserAccount:
             provider_user_id=DEV_USER_PROVIDER_ID,
             email=DEV_USER_EMAIL,
             nickname="Swagger 데모 사용자",
-            signup_channel="consumer",
             account_status="active",
             birth_date=date(2000, 1, 1),
             auth_provider=DEV_USER_AUTH_PROVIDER,
@@ -93,7 +92,6 @@ async def ensure_dev_user(db: AsyncSession) -> UserAccount:
 
     if (
         user.account_status != "active"
-        or user.signup_channel != "consumer"
         or user.onboarding_completed_at is None
     ):
         raise RuntimeError("Swagger 데모 계정의 활성 상태 또는 온보딩 상태가 올바르지 않습니다.")

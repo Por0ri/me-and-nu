@@ -6,7 +6,6 @@ from app.core.exceptions import ApiError
 from app.repositories import catalog_repository as catalog_repo
 from app.repositories import content_repository as content_repo
 from app.schemas.feed import (
-    ChannelInfo,
     ContentDetail,
     DetailReaction,
     FeedCard,
@@ -157,15 +156,6 @@ async def get_content_detail(
     if source is None:
         raise ApiError(404, "CONTENT_NOT_FOUND", "콘텐츠 출처를 찾을 수 없습니다.")
     reaction, saved = await _state(db, user_id, tap.tap_id, content_id)
-    channel = None
-    if content.creator_channel_id is not None:
-        row = await content_repo.get_channel(db, content.creator_channel_id)
-        if row and row.channel_status == "active" and row.topic_id == topic_id:
-            channel = ChannelInfo(
-                channel_id=row.creator_channel_id,
-                name=row.channel_name,
-                topic_id=row.topic_id,
-            )
     is_original_ai = content.production_type == "ai" and content.source_draft_id is not None
     return ContentDetail(
         content_id=content_id,
@@ -190,5 +180,4 @@ async def get_content_detail(
             preference=preference_value(reaction.ox_feedback) if reaction else None,
             bookmarked=saved is not None,
         ),
-        channel=channel,
     )

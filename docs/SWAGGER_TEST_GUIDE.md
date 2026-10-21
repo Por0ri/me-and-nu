@@ -57,21 +57,25 @@ Swagger의 **개발용 Agent 결과 → GET `/api/v1/dev/agent-runs`**에서 실
 
 1. **인증·세션 → GET `/api/v1/auth/session`**을 실행합니다. 비로그인 상태도 200이며 `authenticated=false`, `sessionState=anonymous`, `csrfToken`이 반환됩니다. 이 요청이 익명 세션 쿠키도 발급합니다.
 2. 응답의 `csrfToken`을 복사하고 Swagger의 **Authorize** 버튼에서 `X-CSRF-Token` API key에 입력합니다. 토큰은 문서나 로그에 붙여 넣지 마세요.
-3. **개발용 인증 → POST `/api/v1/dev/auth/register`**로 새 이메일, 8자 이상의 비밀번호, 닉네임, `role=consumer`를 제출합니다. 새 회원은 201입니다. 이미 가입한 이메일이면 409이므로 기존 계정으로 로그인하거나 다른 이메일을 사용합니다.
+3. **개발용 인증 → POST `/api/v1/dev/auth/register`**로 새 이메일, 8자 이상의 비밀번호, 닉네임, `role=user`를 제출합니다. 새 회원은 201입니다. 이미 가입한 이메일이면 409이므로 기존 계정으로 로그인하거나 다른 이메일을 사용합니다.
 4. **POST `/api/v1/dev/auth/login`**을 같은 계정으로 실행합니다. 성공하면 200과 HttpOnly 쿠키가 발급됩니다.
 5. **GET `/api/v1/auth/session`**을 다시 실행합니다. `sessionState=onboarding_pending`을 확인하고 **새로 반환된 `csrfToken`으로 Authorize 값을 갱신**합니다. 로그인 과정에서 세션과 토큰이 바뀝니다.
 
-개발용 인증 경로는 `ENABLE_DEV_API=false`일 때 라우트와 OpenAPI에서 사라집니다. 운영 OAuth 시작·콜백은 이번 로컬 범위에 없습니다.
+개발용 인증 경로는 `ENABLE_DEV_API=false`일 때 라우트와 OpenAPI에서 사라집니다. OAuth 시작·콜백은 별도의 공개 경로로 등록되며 공급자 설정은 기본 비활성입니다. [OAuth 백엔드 단독 검증](OAUTH_T02_1_SETUP.md)의 앱 등록·마이그레이션·Swagger 절차를 따릅니다.
 
 ### 정책·Topic 조회와 온보딩
 
 1. **정책 → GET `/api/v1/policies`**의 `consentItems`에서 `type`, `policyVersion`, `required`를 확인합니다. `terms`와 `privacy`는 반드시 `agreed=true`로 제출합니다. `advertising`과 `marketing`은 선택입니다.
 2. **Topic → GET `/api/v1/topics`**에서 사용하려는 Topic의 실제 `id`를 기록합니다.
-3. **Subtopic → GET `/api/v1/topics/{topicId}/subtopics`**에 방금 조회한 Topic ID를 입력합니다. `items[].subtopicId`에서 같은 Topic의 Subtopic ID를 하나 이상 고릅니다. 필요하면 **GET `/api/v1/subtopics/{subtopicId}`**로 소속을 확인합니다.
-4. **온보딩 → POST `/api/v1/onboarding`**에 닉네임, `birthDate`, `accountType=consumer`, `profileImageId=null`, 정책의 실제 버전·동의 상태, 선택한 `topicId`와 `subtopicIds`를 제출합니다. 성공은 201입니다. 임의의 ID나 과거 버전 문자열을 그대로 붙여 넣지 마세요.
+3. Q1은 `world`, `relationships`, `ost`, `goods`, `events`, `news` 중 하나, Q2는 `releases`, `characters`, `restock`, `events` 중 하나를 고릅니다. 각 답변은 배열이 아닌 단일 문자열입니다. 세부 관심사 조회·선택은 온보딩에 필요하지 않습니다.
+4. **온보딩 → POST `/api/v1/onboarding/complete`**에 닉네임, `birthDate`, `accountType=user`, 정책의 실제 버전·동의 상태, 선택한 `topicId`와 `answers: {"q1":"world","q2":"releases"}`를 제출합니다. `profileImageId`와 기존 `subtopicIds`는 보내지 않습니다. 성공은 201이며 응답의 `answers`가 제출값과 같고 `activeTopic.subtopicIds=[]`인지 확인합니다. 임의의 ID나 과거 버전 문자열을 그대로 붙여 넣지 마세요.
 5. **GET `/api/v1/auth/session`**을 다시 실행해 `sessionState=active`, `onboardingCompleted=true`를 확인합니다. `csrfToken`이 바뀌었다면 Authorize 값도 갱신합니다.
 
-`profileImageId`는 현재 `null`만 지원합니다. 필수 동의 누락은 `REQUIRED_CONSENT_MISSING`, 버전 불일치는 `POLICY_VERSION_CONFLICT`, 다른 Topic의 Subtopic은 `SUBTOPIC_TOPIC_MISMATCH`, 중복 온보딩은 `ONBOARDING_ALREADY_COMPLETED` 오류로 확인할 수 있습니다.
+온보딩은 프로필 이미지 입력을 받지 않습니다. `profileImageId`는 `null`을 포함해 전송하면 422 `VALIDATION_ERROR`이므로 JSON에서 항목 자체를 제거합니다. 필수 동의 누락은 `REQUIRED_CONSENT_MISSING`, 버전 불일치는 `POLICY_VERSION_CONFLICT`, 중복 온보딩은 `ONBOARDING_ALREADY_COMPLETED` 오류로 확인할 수 있습니다. Q1·Q2 누락·배열·허용되지 않은 값 또는 기존 `subtopicIds` 제출도 422 `VALIDATION_ERROR`입니다. Q1·Q2 모두 `events`를 고르는 것은 허용하며, Q2는 알림 수신 동의가 아닙니다.
+
+프로필 이미지 입력 제거에는 DB 변경이나 추가 마이그레이션이 필요하지 않습니다. 이 변경은 온보딩에만 적용하며 별도 프로필 수정 API와 이미지 업로드 백로그는 변경하지 않습니다.
+
+2026-10-21 계약 변경은 `onboarding_answers` 추가 마이그레이션 `c0e5f3b8a124`가 필요합니다. 테스트 대상 DB의 적용 상태를 확인하고 서버를 재시작해 새 Swagger 요청을 사용합니다. 기존 세부 관심사 데이터와 아래 구독 API는 유지되며, 프론트 호출부는 별도로 갱신해야 합니다.
 
 ## 4. 프로필·구독·피드
 
@@ -79,7 +83,7 @@ Swagger의 **개발용 Agent 결과 → GET `/api/v1/dev/agent-runs`**에서 실
 2. **내 관심사 → GET `/api/v1/me/topics`**에서 활성 Topic을 확인합니다. 새 Topic을 추가하려면 앞의 조회 API로 실제 Topic/Subtopic ID를 얻고 **POST `/api/v1/me/topics`**에 `topicId`와 `subtopicIds`를 보냅니다.
 3. **GET `/api/v1/me/topics/{topicId}/subtopics`**에서 구독을 확인합니다. **PUT/DELETE `/api/v1/me/topics/{topicId}/subtopics/{subtopicId}`**로 설정·해제합니다. DELETE 성공은 본문 없는 204입니다.
 4. **피드 → GET `/api/v1/topics/{topicId}/feed`**에 활성 Topic ID를 사용합니다. 응답은 `sections[].contents[]`와 `nextCursor`입니다. `subtopicId` 필터는 해당 Topic의 ID로만 지정합니다. `nextCursor`가 있으면 동일 필터로 다음 페이지를 요청합니다.
-5. 피드 카드의 실제 `id`를 복사해 **콘텐츠 → GET `/api/v1/contents/{contentId}?topicId={topicId}`**를 호출합니다. 이 상세는 Agent의 Draft가 아닌 공개 Content입니다.
+5. 피드 카드의 실제 `id`를 복사해 **콘텐츠 → GET `/api/v1/contents/{contentId}?topicId={topicId}`**를 호출합니다. 이 상세는 Agent의 Draft가 아닌 공개 Content입니다. 응답과 Swagger의 Schema·Example Value에 `channel` 키가 없는지 확인합니다. 기존 DB에 채널이 연결된 콘텐츠도 동일합니다.
 
 로컬 seed에 공개 콘텐츠가 없거나 해당 Topic에 맞는 콘텐츠가 없으면 피드는 200과 빈 `contents`를 반환할 수 있습니다. 추천 알고리즘과 이벤트 로그가 아직 연결되지 않아 `recommendationReason=null`, `seen=false`일 수 있습니다.
 

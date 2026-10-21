@@ -4,6 +4,8 @@
 
 > JSON의 숫자 ID와 정책 버전 `v1`은 입력 형식을 보여주는 예시다. 팀원은 **자기 환경에서 GET으로 조회한 값**으로 바꾼다. 현재 서버가 실행 중이지 않으면 `/docs`를 열기 전에 백엔드와 PostgreSQL을 먼저 시작한다.
 
+2026-10-21 온보딩 계약 갱신: 세부 관심사 선택을 Q1·Q2 각 1개로 대체하고 프로필 이미지 입력을 제거했다. 아래 온보딩 예시는 새 계약이며, 답변 저장에는 대상 DB에 `c0e5f3b8a124` 마이그레이션이 적용되어 있어야 한다. 프로필 이미지 입력 제거 자체에는 DB 변경이나 추가 마이그레이션이 필요하지 않다. 프론트 호출부 갱신은 별도 작업이다.
+
 ## 1. 모든 작업에 공통인 Swagger 조작
 
 1. **[http://localhost:8000/docs](http://localhost:8000/docs)**를 연다. 세션 쿠키가 이어지도록 테스트 내내 `localhost`를 사용하고 `127.0.0.1`과 섞지 않는다.
@@ -38,8 +40,8 @@
 2. 화면 우상단 **Authorize** → **CsrfToken**에 `csrfToken`을 붙여 넣고 **Authorize**를 누른 뒤 창을 닫는다. `SessionCookie`는 입력하지 않는다.
 3. `개발용 인증` → `POST /api/v1/dev/auth/register`의 `Request body`에 아래 가입 JSON을 입력해 201을 확인한다. 이메일은 테스트마다 고유하게 바꾼다. 이어서 같은 계정으로 `POST /api/v1/dev/auth/login`을 실행해 200을 확인한다.
 4. `GET /api/v1/auth/session`을 다시 실행한다. `sessionState="onboarding_pending"`과 **새 `csrfToken`**을 확인하고 **Authorize → CsrfToken** 값을 교체한다.
-5. `GET /api/v1/policies`에서 **표시된 모든 동의 항목과 실제 `policyVersion`**을 기록한다. `GET /api/v1/topics`와 `GET /api/v1/topics/{topicId}/subtopics`에서 실제 Topic/Subtopic ID를 얻는다. Topic·Subtopic은 로그인 뒤, 온보딩 전에도 조회할 수 있다.
-6. `온보딩` → `POST /api/v1/onboarding`에 아래 JSON을 실제 ID·버전으로 바꿔 제출한다. **201**과 `onboardingCompleted=true`를 확인한다. 선택 동의도 배열에서 빼지 말고 원하지 않으면 `agreed:false`로 보낸다.
+5. `GET /api/v1/policies`에서 **표시된 모든 동의 항목과 실제 `policyVersion`**을 기록하고, `GET /api/v1/topics`에서 실제 Topic ID를 얻는다. Topic은 로그인 뒤, 온보딩 전에도 조회할 수 있다. Q1·Q2는 아래 허용값에서 각각 하나씩 고른다.
+6. `온보딩` → `POST /api/v1/onboarding/complete`에 아래 JSON을 실제 ID·버전과 선택한 답변으로 바꿔 제출한다. **201**, `onboardingCompleted=true`, 제출값과 같은 `answers`, `activeTopic.subtopicIds=[]`를 확인한다. 선택 동의도 배열에서 빼지 말고 원하지 않으면 `agreed:false`로 보낸다.
 7. 다시 `GET /api/v1/auth/session`을 실행해 `sessionState="active"`를 확인하고 새 `csrfToken`으로 **Authorize**를 갱신한다.
 8. 아래 전체 작업표에서 프로필·동의·관심사·피드·반응을 순서대로 실행한다. 오류 분기 422/404를 시험한다면 **로그아웃 전에** 실행한다.
 9. 마지막에 `POST /api/v1/auth/logout`을 실행해 **204**를 확인한다. 이어서 세션 GET은 `anonymous`, 보호된 사용자 GET은 **401 `AUTH_REQUIRED`**여야 한다.
@@ -47,7 +49,7 @@
 가입 입력 예시 (`POST /api/v1/dev/auth/register`):
 
 ```json
-{"email":"swagger.tester01@example.com","password":"ExamplePass!26","nickname":"테스트회원","role":"consumer"}
+{"email":"swagger.tester01@example.com","password":"ExamplePass!26","nickname":"테스트회원","role":"user"}
 ```
 
 로그인 입력 예시 (`POST /api/v1/dev/auth/login`):
@@ -56,16 +58,15 @@
 {"email":"swagger.tester01@example.com","password":"ExamplePass!26"}
 ```
 
-온보딩 입력 예시 (`POST /api/v1/onboarding`):
+온보딩 입력 예시 (`POST /api/v1/onboarding/complete`):
 
 ```json
 {
   "nickname": "테스트회원",
   "birthDate": "2000-01-01",
-  "accountType": "consumer",
-  "profileImageId": null,
+  "accountType": "user",
   "topicId": 1,
-  "subtopicIds": [1],
+  "answers": {"q1": "world", "q2": "releases"},
   "consents": [
     {"type":"terms","policyVersion":"v1","agreed":true},
     {"type":"privacy","policyVersion":"v1","agreed":true},
@@ -75,7 +76,12 @@
 }
 ```
 
-위 JSON은 로컬 seed의 형식 예시다. `GET /policies`가 반환한 항목이 달라졌다면 **그 항목 전부**를 제출한다. 필수 항목은 `agreed:true`여야 한다. Creator 계정은 온보딩 요청에서 `topicId`와 `subtopicIds`를 생략한다.
+위 JSON은 형식 예시다. `GET /policies`가 반환한 항목이 달라졌다면 **그 항목 전부**를 제출한다. 필수 항목은 `agreed:true`여야 한다. `accountType`은 `user`이고 `topicId`와 `answers`는 필수다. 온보딩에서는 프로필 이미지를 받지 않으므로 `profileImageId` 항목을 넣지 않는다. `null`을 포함해 전송하면 추가 필드 검증으로 422 `VALIDATION_ERROR`를 반환한다. 이 제거는 온보딩에만 적용하며 아래 별도 프로필 수정 API와 이미지 업로드 백로그는 변경하지 않는다.
+
+- Q1 허용값: `world`, `relationships`, `ost`, `goods`, `events`, `news`.
+- Q2 허용값: `releases`, `characters`, `restock`, `events`.
+- 각 질문은 단일 문자열 1개만 받으며, 누락·배열·허용되지 않은 값·추가 필드는 422다. 기존 `subtopicIds`를 제출해도 422다. 두 질문 모두 `events`를 선택할 수 있다.
+- Q2는 정보 선호도이며 알림·마케팅 동의가 아니다. 기존 세부 관심사와 구독 API는 유지하지만 신규 온보딩에서 세부 관심사를 자동 구독하지 않는다.
 
 ## 3. 전체 작업별 Swagger 입력·확인표
 
@@ -92,7 +98,7 @@
 | API-005 | 인증·세션 → `GET /api/v1/auth/session` | 없음 | **200** `authenticated`, `sessionState`, `onboardingCompleted`, `csrfToken` |
 | API-006 | 인증·세션 → `POST /api/v1/auth/logout` | 본문 없음. 모드 B의 현재 CSRF | **204** 본문 없음. 모드 B에서만 이후 보호 API 401 확인 |
 | API-011 | 정책 → `GET /api/v1/policies` | 없음. 비로그인도 가능 | **200** `consentItems[]`의 `type`, `policyVersion`, `required` 기록 |
-| API-004 | 온보딩 → `POST /api/v1/onboarding` | 위 온보딩 JSON. 모드 B의 `onboarding_pending` 세션·현재 CSRF | **201** `onboardingCompleted=true`, `activeTopic`; 이후 세션·CSRF 재조회 |
+| API-004 | 온보딩 → `POST /api/v1/onboarding/complete` | 위 온보딩 JSON. 모드 B의 `onboarding_pending` 세션·현재 CSRF | **201** `onboardingCompleted=true`, `answers`, `activeTopic.subtopicIds=[]`; 이후 세션·CSRF 재조회 |
 
 ### 사용자·Topic·Subtopic·관심사 — 12개
 
@@ -116,7 +122,7 @@
 | 명세 번호 | Swagger 태그 → 작업 | Try it out 입력 | 정상 Code · Response body 확인 |
 | --- | --- | --- | --- |
 | API-028 | 피드 → `GET /api/v1/topics/{topicId}/feed` | path **활성** `topicId`; 선택 query `subtopicId`, `cursor`, `limit`(1~100, 기본 20) | **200** `sections[].contents[].id`, `nextCursor`; 빈 피드도 200 가능 |
-| API-029 | 콘텐츠 → `GET /api/v1/contents/{contentId}` | path 카드의 `id`; **필수 query `topicId`** | **200** `contentId`, `displayMode`, `body`/`excerpt`, `myReaction` |
+| API-029 | 콘텐츠 → `GET /api/v1/contents/{contentId}` | path 카드의 `id`; **필수 query `topicId`** | **200** `contentId`, `displayMode`, `body`/`excerpt`, `myReaction`. 응답·Schema·Example Value에 `channel` 키 없음 |
 | API-035 | O/X 선호도 → `PUT /api/v1/contents/{contentId}/preference` | path `contentId`; JSON `{"topicId":1,"value":"positive"}` 또는 `negative` | **200** `value`; 상세 재조회에서 `myReaction.preference` 확인 |
 | API-036 | O/X 선호도 → `DELETE /api/v1/contents/{contentId}/preference` | path `contentId`; **필수 query `topicId`**. 본문 없음 | **204** 본문 없음; 상세 재조회에서 `preference=null` |
 | API-037 | 좋아요 → `PUT /api/v1/contents/{contentId}/like` | path `contentId`; JSON `{"topicId":1}` | **200** `liked=true`; 피드·상세 재조회 |
