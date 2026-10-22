@@ -4,8 +4,8 @@
 # 아직 서비스 DB 에는 안 붙었다. 가짜 유저 시뮬레이터(model/eval/feed_simulator.py)로 설계를 비교하는 단계라
 # 아래 숫자는 모두 출발값이다. 값은 시뮬레이터 연습 유저로 고른다.
 #
-# 글 표(feed)는 칸별 배열 dict 로 받는다: pos(작품의 카탈로그 위치) · type(유형 번호) · day(게시일) · until(노출 종료일)
-# 카탈로그 = v0.5 의 같이 본 횟수 표 작품 (인기 상위 3,000편, ctx["cw_rows"])
+# 글 표(feed)는 칸별 배열 dict 로 받는다: pos(작품의 카탈로그 위치. 작품이 없는 글은 -1) · type(유형 번호) · day(게시일) · until(노출 종료일)
+# 카탈로그 = v0.5 의 같이 본 횟수 표 작품 (ctx["cw_rows"]. 실험 문맥은 인기 상위 3,000편, 서비스 문맥(service.py)은 me;nu 작품 목록 전체)
 
 from dataclasses import dataclass, field
 
@@ -111,7 +111,7 @@ def rank_feed(state, feed, day, cfg, k=50):
     """오늘(day) 보여줄 글 번호 k개를 점수 순으로. 노출 기간이 지난 글, 아는 범위에서 이미 연 글·그만볼래요 한 글은 뺀다"""
     live = np.flatnonzero((feed["day"] <= day) & (feed["until"] >= day))
     pos, typ = feed["pos"][live], feed["type"][live]
-    s = cfg.w_work * (state.work_aff[pos] + cfg.work_feedback * np.tanh(state.work_ev[pos]))
+    s = np.where(pos >= 0, cfg.w_work * (state.work_aff[pos] + cfg.work_feedback * np.tanh(state.work_ev[pos])), 0.0)
     s = s + cfg.w_type * type_pref(state, cfg)[typ]
     s = s + cfg.w_fresh * np.exp(-(day - feed["day"][live]) / TAU[typ])
     shown = state.seen if "impression" in cfg.logs else state.served   # 노출 기록이 없으면 보낸 목록으로 짐작
@@ -131,10 +131,11 @@ def mark_served(state, order, cfg):
 
 def _signal(state, feed, c, w, cfg, catalog_ids):
     p, ty = feed["pos"][c], feed["type"][c]
-    state.work_ev[p] += w
+    if p >= 0:                                                    # 작품이 없는 글은 유형 취향에만
+        state.work_ev[p] += w
     state.type_ev[ty] += w
     state.type_n[ty] += 1
-    if cfg.add_liked_works and w > 0 and state.work_ev[p] >= cfg.liked_threshold:
+    if cfg.add_liked_works and w > 0 and p >= 0 and state.work_ev[p] >= cfg.liked_threshold:
         a = int(catalog_ids[p])
         if a not in set(state.history.anime.tolist()):            # v0.5 입력에 "본 작품"으로 더함
             h = state.history
