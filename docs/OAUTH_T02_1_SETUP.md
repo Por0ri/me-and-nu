@@ -266,6 +266,17 @@ http://localhost:8000/api/v1/auth/login/kakao/callback
 
 공급자 오류 원문·인가 코드·토큰은 브라우저 응답에 반영하지 않는다. 배포 시 서버·프록시의 callback 접근 로그도 쿼리 원문을 남기지 않도록 확인한다.
 
+2026-10-22 로그 보완: 앱 생성 시 `uvicorn.access`에 필터를 설치해
+`/api/v1/auth/login/{provider}/callback`의 쿼리 전체를 로그에서 제거한다.
+메서드·경로·응답 상태와 일반 API의 접근 로그는 유지하며, OAuth 검증에 사용하는
+원본 요청의 `code`·`state`는 변경하지 않는다. 별도 실행 옵션은 필요 없다.
+로그 필터와 OAuth API·설정·온보딩 답변 관련 테스트 149개가 통과했고,
+임시 localhost 포트의 실제 Uvicorn HTTP 요청에서도 가짜 콜백 값 제거를 확인했다.
+
+프록시는 별도로 확인한다. Caddy의 사이트 접근 로그가 비활성이어도 런타임 오류
+로그에 요청 URI가 포함될 수 있으므로 기본 오류 로그의 `request>uri` 필터도 점검한다.
+이 백엔드 수정만으로 서버 Caddy 설정까지 변경되지는 않는다.
+
 ## 후속 연결과 검증 범위
 
 - 프론트 연결 시에만 `OAUTH_FRONTEND_ORIGIN`을 채우고 `FRONTEND_ORIGINS`에 등록한다. 기존 SameSite=Lax 쿠키 방식은 같은 사이트의 HTTPS 구성에 맞춘다.

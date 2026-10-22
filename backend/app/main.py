@@ -9,9 +9,11 @@ from app.api.dev.agent_publication import router as dev_agent_publication_router
 from app.api.health import router as health_router
 from app.core.config import settings
 from app.core.exceptions import install_exception_handlers
+from app.core.oauth_logging import install_oauth_access_log_filter
 from app.core.redis import redis_lifespan
 
 def create_app(enable_dev_api: bool | None = None) -> FastAPI:
+    install_oauth_access_log_filter()
     dev_api_enabled = settings.enable_dev_api if enable_dev_api is None else enable_dev_api
     description = "현재 구현된 공개 API를 V1.1 계약에 맞춘 로컬 범위입니다. 미구현 V1.1 API는 등록되지 않습니다."
     if dev_api_enabled and settings.enable_dev_auth_bypass:
