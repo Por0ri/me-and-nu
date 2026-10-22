@@ -49,6 +49,13 @@ KEY_STAFF_ROLES = {"Director", "Chief Director", "Series Composition", "Music", 
                    "Original Creator", "Original Story"}
 WHOLE_WORK_ROLES = {"Script", "Screenplay"}  # 화수 표시가 없을 때만 (극장판 각본). 시리즈의 화별 각본가는 너무 많아서 뺌
 
+# 줄거리 취향 비중 (1-4b, EXP-27). ctx["T"](줄거리 임베딩, 작품 줄 순서)가 있을 때 취향 점수에 더한다. 0이면 안 씀
+TEXT_TASTE = 0.0
+
+# 빌려 오기 이웃을 "작품 정보 → 같이 본 패턴" 학습으로 찾을 때 설정 (1-4b2, EXP-28 채택. build_cf_borrow 기본 use 에 "learn")
+# feats: 학습 입력 ("feat" = 장르·태그·사람 정보, "text" = 줄거리 임베딩) / lam: 릿지 세기 / dim: 같이 본 패턴을 요약할 숫자 수
+LEARN = {"feats": ("feat",), "lam": 1.0, "dim": 64}
+
 # 다음 편 보너스. 최근에 본 시리즈일수록 크고, NEXT_TAU 일마다 약 1/e 로 줄어든다
 # 값은 EXP-04 에서 연습 3,000명으로 고름 (보너스 2~5, 기간 1~3년이면 비슷)
 NEXT_WEIGHT = 5.0
@@ -354,6 +361,17 @@ def genre_scores(user, ctx):
     return out
 
 
+def text_scores(user, ctx):
+    # 줄거리 취향: 본 작품들의 줄거리 벡터 합과 모든 작품 줄거리 벡터의 코사인 (음수는 0). 줄거리 없는 작품은 0
+    T = ctx["T"]
+    h = user["history"]
+    u = T[rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])].sum(axis=0)
+    n = math.sqrt(u @ u)
+    if n == 0:
+        return np.zeros(len(ctx["ids"]))
+    return np.clip(T @ u / n, 0, None)
+
+
 def rank_rows(rows, ctx, *keys):
     # 줄 번호들을 keys 순서대로 줄 세운다 (앞 key 가 우선, 작은 값이 앞). 마지막엔 인기 순위·작품 id
     order = np.lexsort((ctx["ids"][rows], ctx["pop_rank"][rows]) + tuple(reversed(keys)))
@@ -506,9 +524,40 @@ def _borrowed_rows(ctx, rows, kind):
     return cache[kind][q]
 
 
-def build_cf_borrow(ctx, missing_ids, k=10, use=("tag", "rec")):
+def content_matrix(ctx, rows, feats):
+    # 작품 정보 → 학습 입력. 묶음마다 길이 1로 맞춰 이어 붙인다 (feat = 장르·태그·사람 정보, text = 줄거리 임베딩)
+    parts = []
+    if "feat" in feats:
+        parts.append(ctx["X"][rows] / ctx["vnorm"][rows, None])
+    if "text" in feats and "T" in ctx:
+        parts.append(ctx["T"][rows])
+    return np.hstack(parts)
+
+
+def learned_sims(ctx, rows, donors, feats=None, lam=None, dim=None):
+    """작품 정보로 같이 본 패턴을 맞히게 학습해서, 기록 없는 작품(rows)과 기록 있는 작품(donors)의 유사도를 낸다.
+    1) donors 끼리의 같이 본 코사인 표를 작품마다 dim 개 숫자로 요약 (고유값 분해)
+    2) 작품 정보로 그 숫자를 맞히는 릿지 회귀 (작품 속성 → 행동 패턴 연결, Gantner 외 2010)
+    3) rows 의 숫자를 예측해 donors 와 코사인"""
+    feats = feats or LEARN["feats"]
+    lam = LEARN["lam"] if lam is None else lam
+    dim = dim or LEARN["dim"]
+    p = ctx["cw_pos"][donors]
+    S = ctx["cw_sim"]["cosine"][np.ix_(p, p)].astype(np.float64)
+    w, V = np.linalg.eigh(S)
+    top = np.argsort(-w)[:dim]
+    E = V[:, top] * np.sqrt(np.clip(w[top] + 1, 0, None))   # 대각을 1로 돌려 놓은 코사인 표 기준
+    F, Fq = content_matrix(ctx, donors, feats), content_matrix(ctx, rows, feats)
+    Eq = Fq @ (F.T @ np.linalg.solve(F @ F.T + lam * np.eye(len(donors)), E))
+    E = E / np.maximum(np.linalg.norm(E, axis=1, keepdims=True), 1e-12)
+    Eq = Eq / np.maximum(np.linalg.norm(Eq, axis=1, keepdims=True), 1e-12)
+    return Eq @ E.T
+
+
+def build_cf_borrow(ctx, missing_ids, k=10, use=("learn", "rec")):
     """기록 없는 작품마다 점수를 빌려 올 "기록 있는 비슷한 작품" k개와 무게를 정해 둔다.
-    tag = AniList 태그 코사인, rec = 커뮤니티 추천 세기 (build_rec 먼저). 둘 다 쓰면 무게를 더함"""
+    tag = 작품 특징 코사인 (장르·태그·사람 정보), text = 줄거리 임베딩 코사인 (ctx["T"] 가 있을 때),
+    learn = 작품 정보 → 같이 본 패턴 학습 (learned_sims), rec = 커뮤니티 추천 세기 (build_rec 먼저). 여러 개 쓰면 무게를 더함"""
     row, cw = ctx["row"], ctx["cw_rows"]
     missing = np.zeros(len(ctx["ids"]), dtype=bool)
     missing[[row[a] for a in missing_ids if a in row]] = True
@@ -519,6 +568,16 @@ def build_cf_borrow(ctx, missing_ids, k=10, use=("tag", "rec")):
     if "tag" in use:                                           # 작품 특징 코사인 (PEOPLE 이 있으면 사람 정보 포함)
         X, vn = ctx["X"], ctx["vnorm"]
         S = (X[rows] / vn[rows, None]) @ (X[donors] / vn[donors, None]).T
+        top = np.argpartition(-S, min(k, len(donors) - 1), axis=1)[:, :k]
+        for i in range(len(rows)):
+            W[i, top[i]] += np.clip(S[i, top[i]], 0, None)
+    if "text" in use and "T" in ctx:                           # 줄거리 임베딩 코사인 상위 k편 (줄거리 없는 작품은 0)
+        S = ctx["T"][rows] @ ctx["T"][donors].T
+        top = np.argpartition(-S, min(k, len(donors) - 1), axis=1)[:, :k]
+        for i in range(len(rows)):
+            W[i, top[i]] += np.clip(S[i, top[i]], 0, None)
+    if "learn" in use:                                         # 작품 정보 → 같이 본 패턴 학습으로 찾은 상위 k편 (LEARN 설정)
+        S = learned_sims(ctx, rows, donors)
         top = np.argpartition(-S, min(k, len(donors) - 1), axis=1)[:, :k]
         for i in range(len(rows)):
             W[i, top[i]] += np.clip(S[i, top[i]], 0, None)
@@ -570,6 +629,8 @@ def hybrid(user, ctx, beta, gamma, kind="recent", cf_kind=COWATCH_KIND, delta=0.
     delta > 0 이면 AniList 커뮤니티 추천도 섞는다 (build_rec 먼저. 추천으로 이어진 작품은 후보에 넣음)
     trend > 0 이면 최근 30일 인기를 더 섞는다 (전체 기간 인기를 쓰는 신규 유저 설정용, EXP-25. 최근 인기 300편은 후보에 넣음)"""
     s, p, c = genre_scores(user, ctx), pop_scores(user, ctx, kind), cowatch_scores(user, ctx, cf_kind)
+    if TEXT_TASTE and "T" in ctx:
+        s = s + TEXT_TASTE * text_scores(user, ctx)
     total = s + beta * p + gamma * c
     rows = np.unique(np.r_[pop_candidates(user, ctx, kind), ctx["cw_rows"]])
     if trend:

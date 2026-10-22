@@ -15,7 +15,9 @@
 #   python -m model.eval.feed_simulator logs     # 어떤 기록을 남기면 추천이 좋아지나 (연습 → 실전, 첫 7일)
 #   python -m model.eval.feed_simulator sens     # 가정을 하나씩 바꿔도 글 개수·남길 기록 결론이 유지되나 (실전, 첫 7일)
 #   python -m model.eval.feed_simulator tune     # v1 비중 고르기 (연습으로 고르고 실전으로 확인)
+#   python -m model.eval.feed_simulator eval     # 유저 테스트 평가 설계 (4-1): 섞어 보여 주기 vs 반으로 나누기, 몇 명 × 며칠이면 차이를 잡나
 
+import math
 import sys
 import time
 from collections import Counter
@@ -482,7 +484,172 @@ def tune_check():
     show("유형 취향 두 배 (좋아하는 유형 3.3배 · 싫어하는 유형 0.3배)", strong, "w_type", (0.25, 0.5, 1.0))
 
 
+# ## 5. 유저 테스트 평가 설계 (4-1)
+# v1 과 최신순을 한 피드에 섞어 보여 주고(팀 드래프트 인터리빙, Radlinski 외 2008) 접속마다 어느 쪽 글에 더 반응했는지 센다
+# 몇 명 × 며칠이면 "v1 이 낫다"를 잡는지(검정력)를 반으로 나눠 보여 주기(A/B)와 비교한다
+EVAL_USERS = (10, 20, 30, 50, 100)
+EVAL_DAYS = (3, 7, 14)
+EVAL_DRAWS = 500            # 인원·기간 칸마다 실전 유저 1,000명에서 뽑아 보는 횟수
+WIN_RULES = ("열람", "좋아요·저장", "반응 점수 합")   # 접속마다 이긴 팀을 정하는 기준
+
+
+def team_draft(a, b, k, rng):
+    # 두 팀이 번갈아 자기 순서에서 아직 안 뽑힌 가장 위 글을 넣는다. 뽑은 수가 같으면 동전으로 먼저 뽑을 팀을 정함
+    # 돌려줌: 섞은 순서, 글마다 넣은 팀 (0 = a, 1 = b)
+    lists, idx, picks = (a.tolist(), b.tolist()), [0, 0], [0, 0]
+    out, team, used = [], [], set()
+    while len(out) < k:
+        side = (0 if picks[0] < picks[1] else 1) if picks[0] != picks[1] else int(rng.random() < 0.5)
+        for s in (side, 1 - side):                     # 이 팀 글이 다 떨어지면 다른 팀이 마저 채움
+            while idx[s] < len(lists[s]) and lists[s][idx[s]] in used:
+                idx[s] += 1
+            if idx[s] < len(lists[s]):
+                side = s
+                break
+        else:
+            break
+        c = lists[side][idx[side]]
+        out.append(c)
+        team.append(side)
+        used.add(c)
+        picks[side] += 1
+    return np.array(out, dtype=np.int64), np.array(team, dtype=np.int8)
+
+
+def rule_scores(events, team, pos_of):
+    # 접속 하나에서 기준마다 팀별 점수 (team[pos_of[글]] = 그 글을 넣은 팀). 반응 점수 합은 v1 반응 점수 (읽은 정도가 열람을 대신함)
+    s = np.zeros((len(WIN_RULES), 2))
+    for kind, c, val in events:
+        side = team[pos_of[c]]
+        if kind == "open":
+            s[0, side] += 1
+        elif kind == "read":
+            key = "read_full" if val >= v1.READ_FULL else ("read_bounce" if val < v1.READ_BOUNCE else "read_some")
+            s[2, side] += v1.SIGNAL[key]
+        elif kind in ("like", "save", "more", "share", "less"):
+            s[2, side] += v1.SIGNAL[kind]
+            if kind in ("like", "save"):
+                s[1, side] += 1
+    return s
+
+
+def simulate_eval(world, feed, users, cfg, mode, seed=SEED, days=N_DAYS):
+    """mode: "mix" = v1(cfg) 과 최신순을 섞어 보여 줌 / "v1" · "latest" = 한쪽만 (A/B 의 한 그룹).
+    돌려줌: 이긴 접속 수 (유저 × 날 × 기준 × (v1 이김, 최신순 이김, 비김)), 점수 합 (유저 × 날 × 기준), 접속 수 (유저 × 날)"""
+    ctx, cat_ids, n_feed = world["ctx"], world["catalog_ids"], len(feed["day"])
+    wins = np.zeros((len(users), days, len(WIN_RULES), 3), dtype=np.int32)
+    score = np.zeros((len(users), days, len(WIN_RULES)))
+    n_sess = np.zeros((len(users), days), dtype=np.int32)
+    for ui, user in enumerate(users):
+        rng, mix_rng = np.random.default_rng([seed, ui, 7]), np.random.default_rng([seed, ui, 13])
+        seen = np.zeros(n_feed, dtype=np.int16)
+        opened = np.zeros(n_feed, dtype=bool)
+        state = None
+        if mode != "latest":
+            ob = user.onboard
+            state = v1.UserState(ob["history"], ob["genres"], ob["themes"], ob["types"], ob["t"], len(cat_ids), n_feed)
+            if user.base_aff is None or cfg.rank_scale not in user.base_aff:
+                v1.refresh_work_affinity(state, ctx, cfg)
+                user.base_aff = {**(user.base_aff or {}), cfg.rank_scale: state.work_aff}
+            state.work_aff, state.dirty = user.base_aff[cfg.rank_scale].copy(), False
+        for day in range(days):
+            if state is not None and state.dirty:
+                v1.refresh_work_affinity(state, ctx, cfg)
+            for _ in range(int(user.sessions[day])):
+                team = None
+                if mode == "latest":
+                    order = latest_first(feed, day)
+                else:
+                    order = v1.rank_feed(state, feed, day, cfg, FEED_LEN)
+                    if mode == "mix":
+                        order, team = team_draft(order, latest_first(feed, day), FEED_LEN, mix_rng)
+                    v1.mark_served(state, order, cfg)
+                gain = utility(user, feed, order, day, seen, opened)
+                events = browse(user, feed, order, gain, rng, seen, opened)
+                s = rule_scores(events, np.zeros(len(order), dtype=np.int8) if team is None else team,
+                                {c: i for i, c in enumerate(order.tolist())})
+                n_sess[ui, day] += 1
+                if mode == "mix":
+                    wins[ui, day, :, 0] += s[:, 0] > s[:, 1]
+                    wins[ui, day, :, 1] += s[:, 1] > s[:, 0]
+                    wins[ui, day, :, 2] += s[:, 0] == s[:, 1]
+                else:
+                    score[ui, day] += s[:, 0]
+                if state is not None:
+                    v1.learn(state, events, feed, cfg, cat_ids)
+    return wins, score, n_sess
+
+
+def sign_p(n_pos, n_neg):
+    # 부호 검정 (양쪽): v1 이 이긴 유저 수 vs 최신순이 이긴 유저 수가 반반에서 이만큼 벗어날 확률
+    n = n_pos + n_neg
+    if n == 0:
+        return 1.0
+    return min(1.0, 2 * sum(math.comb(n, i) for i in range(max(n_pos, n_neg), n + 1)) / 2 ** n)
+
+
+def power_mix(wins, n, days, r, rng, draws=EVAL_DRAWS):
+    # 섞어 보여 주기: 뽑은 n명마다 앞 days 일 동안 v1 이 이긴 접속이 더 많은지 → 유저 단위 부호 검정 (p < 0.05 이고 v1 쪽)
+    ok = 0
+    for _ in range(draws):
+        w = wins[rng.choice(len(wins), n, replace=False), :days, r].sum(axis=1)
+        pos, neg = int((w[:, 0] > w[:, 1]).sum()), int((w[:, 1] > w[:, 0]).sum())
+        ok += pos > neg and sign_p(pos, neg) < 0.05
+    return ok / draws
+
+
+def power_ab(score_a, sess_a, score_b, sess_b, n, days, r, rng, draws=EVAL_DRAWS, perms=1000):
+    # 반으로 나눠 보여 주기: n명을 반씩 v1 · 최신순 그룹으로 → 유저별 접속당 점수 평균을 비교 (순열 검정, p < 0.05 이고 v1 쪽)
+    ok = 0
+    for _ in range(draws):
+        pick = rng.choice(len(score_a), n, replace=False)
+        ga, gb = pick[: n // 2], pick[n // 2:]
+        sa, sb = sess_a[ga, :days].sum(axis=1), sess_b[gb, :days].sum(axis=1)
+        xa = score_a[ga, :days, r].sum(axis=1)[sa > 0] / sa[sa > 0]
+        xb = score_b[gb, :days, r].sum(axis=1)[sb > 0] / sb[sb > 0]
+        if len(xa) < 2 or len(xb) < 2:
+            continue
+        x, na = np.r_[xa, xb], len(xa)
+        lab = np.argsort(rng.random((perms, len(x))), axis=1) < na
+        diffs = (lab * x).sum(axis=1) / na - (~lab * x).sum(axis=1) / (len(x) - na)
+        obs = xa.mean() - xb.mean()
+        ok += obs > 0 and (np.abs(diffs) >= abs(obs)).mean() < 0.05
+    return ok / draws
+
+
+def eval_test():
+    # 4-1: 유저 테스트에서 v1 이 최신순보다 나은지 판단하는 법. 글 시작 300편 + 하루 30편, 실전 유저 1,000명, 14일
+    # 효과 2가지: v1 (반응 4종 + 노출 + 열람·읽기 학습) vs 최신순 / 더 약한 경우: v1 온보딩만 (기록 학습 없음) vs 최신순
+    # 기준 (미리 정함): 검정력 0.8 이상이 되는 가장 작은 인원 · 기간을 추천. 이김 기준은 그 인원에서 검정력이 높은 것
+    t0 = time.time()
+    world = build_world(N_SIM_USERS)
+    feed = make_feed(world, backlog_days=10, per_day=30)
+    test = world["users"][N_SIM_USERS // 2:]
+    print(f"실전 유저 {len(test):,}명 · 글 시작 300편 + 하루 30편 · {N_DAYS}일 · 준비 {time.time() - t0:.0f}초", flush=True)
+    _, lat_score, lat_sess = simulate_eval(world, feed, test, None, "latest")
+    print(f"최신순만 ({time.time() - t0:.0f}초)", flush=True)
+    for label, cfg in (("v1 (기록 학습) vs 최신순", v1.Config(logs=BEST_LOGS)), ("더 약한 경우: v1 온보딩만 vs 최신순", v1.Config())):
+        wins, _, _ = simulate_eval(world, feed, test, cfg, "mix")
+        _, v_score, v_sess = simulate_eval(world, feed, test, cfg, "v1")
+        print(f"\n== {label} ({time.time() - t0:.0f}초)")
+        tot = wins.sum(axis=(0, 1))
+        for r, name in enumerate(WIN_RULES):
+            a, b, tie = tot[r]
+            print(f"[{name}] 섞어 보여 준 접속 {a + b + tie:,}번 중 v1 이김 {a / (a + b + tie):.1%} · 최신순 이김 {b / (a + b + tie):.1%} "
+                  f"· 비김 {tie / (a + b + tie):.1%} (승부 난 접속 중 v1 {a / max(a + b, 1):.1%})")
+        rng = np.random.default_rng([SEED, 41])
+        for r, name in enumerate(WIN_RULES):
+            print(f"\n[{name}] 검정력 = \"v1 이 낫다\"를 잡는 비율 (섞기 / 반으로 나누기)\n인원\t" + "\t".join(f"{d}일" for d in EVAL_DAYS))
+            for n in EVAL_USERS:
+                cells = [f"{power_mix(wins, n, d, r, rng):.2f} / {power_ab(v_score, v_sess, lat_score, lat_sess, n, d, r, rng):.2f}"
+                         for d in EVAL_DAYS]
+                print(f"{n}명\t" + "\t".join(cells), flush=True)
+        print(f"({time.time() - t0:.0f}초)", flush=True)
+
+
 def main():
+    if sys.argv[1:2] == ["eval"]:
+        return eval_test()
     if sys.argv[1:2] == ["pool"]:
         return pool_test()
     if sys.argv[1:2] == ["tune"]:

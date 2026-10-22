@@ -15,6 +15,10 @@
 #   python -m model.eval.new_anime_test ease     # 위를 기록 많은 유저 설정에만 켠 그대로 다시 재고 짝지어 확인 (EXP-24)
 #   python -m model.eval.new_anime_test trend    # 신규 유저 설정에 최근 30일 인기(트렌딩)를 더 섞기 (EXP-25)
 #   python -m model.eval.new_anime_test people   # 작품 특징에 스튜디오·핵심 제작진·주연 성우 더하기 (EXP-26, 1-4 0단계)
+#   python -m model.eval.new_anime_test text     # 줄거리 임베딩으로 빌려 오기 이웃 · 취향 보강 (EXP-27, 1-4b. embed_descriptions.py 먼저)
+#   python -m model.eval.new_anime_test neighbors  # 방식별 비슷한 작품이 실제로 같이 본 작품인지 (EXP-27 원인 확인)
+#   python -m model.eval.new_anime_test learn    # 작품 정보 → 같이 본 패턴 학습으로 빌려 오기 이웃 찾기 (EXP-28, 1-4b2)
+#   python -m model.eval.new_anime_test age      # 같이 보는 패턴이 옛날 작품에도 도움이 되나 (정답 작품 나이별)
 
 import csv
 import json
@@ -268,7 +272,7 @@ def paired(h0, h1):
 
 
 def prepare():
-    # input_test 와 같은 문맥: 신작 같이 본 기록 지움 + 후보 쪽 빌려 오기(태그 + 커뮤니티 추천) 켬
+    # 신작 흉내 문맥: 신작 같이 본 기록 지움 + 지금 채택된 빌려 오기 켬 (EXP-28부터 학습 이웃 + 커뮤니티 추천)
     anime, data = t.load_anime(), t.load_interactions()
     cases = t.make_cases(data)
     anilist = t.load_anilist()
@@ -279,7 +283,7 @@ def prepare():
     ar.build_rec(ctx, load_rec_edges())
     new_ids = {a for a, v in anime.items() if v["start_date"] and NEW_FROM <= v["start_date"] < NEW_TO}
     new_ctx, _ = masked(ctx, new_ids)
-    ar.build_cf_borrow(new_ctx, new_ids, use=("tag", "rec"))
+    ar.build_cf_borrow(new_ctx, new_ids)
     ser = lambda a: ctx["series"].get(a, a)
     old_series = {ser(a) for a, v in anime.items() if v["start_date"] and v["start_date"] < NEW_FROM}
     is_new = lambda cs: np.array([c["target"] in new_ids for c in cs])
@@ -450,6 +454,235 @@ def people_check():
         print(f"+ 셋 다 {v}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
 
 
+TEXT_FILLS = [("작품 특징 (지금)", ("tag", "rec")), ("줄거리", ("text", "rec")), ("작품 특징 + 줄거리", ("tag", "text", "rec"))]
+TEXT_TASTES = (0.0, 0.25, 0.5, 1.0)   # 줄거리 취향 비중 후보
+
+
+def load_text(*ctxs):
+    # 줄거리 임베딩(embed_descriptions.py) → 작품 줄 순서에 맞춘 표 ctx["T"]. 줄거리 없는 작품은 0
+    # 평균 벡터를 빼고 다시 길이 1로 맞춘다 (문장 임베딩은 상관없는 글끼리도 코사인이 0.5 안팎이라 차이를 키움)
+    src = t.ROOT / "anilist"
+    ids = json.loads((src / "desc_emb_ids.json").read_text(encoding="utf-8"))["ids"]
+    emb = np.load(src / "desc_emb.npy").astype(np.float64)
+    mal_of = {}
+    with open(src / "media.jsonl", encoding="utf-8") as f:
+        for line in f:
+            for m in json.loads(line)["media"]:
+                if m["idMal"]:
+                    mal_of[m["id"]] = m["idMal"]
+    row = ctxs[0]["row"]
+    T = np.zeros((len(ctxs[0]["ids"]), emb.shape[1]))
+    for i, a in enumerate(ids):
+        if mal_of.get(a) in row:
+            T[row[mal_of[a]]] = emb[i]
+    has = np.flatnonzero(np.abs(T).sum(axis=1) > 0)
+    T[has] -= T[has].mean(axis=0)
+    T[has] /= np.linalg.norm(T[has], axis=1, keepdims=True)
+    for c in ctxs:
+        c["T"] = T
+    return len(has)
+
+
+def text_test():
+    # 1-4b (EXP-27): 줄거리 임베딩으로 (1) 빌려 오기 이웃 (2) 취향 점수를 보강하면 오르는가
+    # 고르는 기준 (미리 정함): (1) 이웃 방법은 연습 5,000명 기존 유저 · 신작 기록 없음 Hit@10 최고 (빌려 오기 효과는 기존 유저에서 남)
+    #   (2) 고른 이웃을 들고 줄거리 취향 비중은 연습 5,000명 신규 유저 (작품 1개 + 칩) · 신작 기록 없음 Hit@10 최고
+    # 채택 기준 (미리 정함): 실전 신작 기록 없음의 신규 유저 · 기존 유저 중 하나 이상 오르고 (우연일 확률 0.05 미만) 둘 다 안 떨어짐,
+    #   NDCG · 정답이 신작도 안 떨어짐. 작품 3개 · 기록 다 있는 상황 · 대표 점수(기존 유저 · 기록 다 있음)에서 의미 있게 안 떨어짐
+    t0 = time.time()
+    anime, anilist, cases, ctx, new_ctx, new_ids, is_new, is_ip = prepare()
+    n_text = load_text(ctx, new_ctx)
+    onb1 = [t.onboarding(c, anime, 1, 3, anilist, 3) for c in cases]
+    onb3 = [t.onboarding(c, anime, 3, 3, anilist, 3) for c in cases]
+    print(f"신작 기록 없음 · 빌려 오기 켬 · 줄거리 있는 시험 작품 {n_text:,}편 · 준비 {time.time() - t0:.0f}초")
+    head = "방법\t시리즈 Hit@10\tNDCG@10\t정답이 신작\t정답이 신규 IP\t추천 10개 중 신작 (앞 1,000명)"
+
+    def setup(use, taste):
+        ar.build_cf_borrow(new_ctx, new_ids, use=use)
+        ar.TEXT_TASTE = taste
+
+    try:
+        tune = cases[: t.TUNE_USERS]
+        print(f"\n[연습 {len(tune):,}명 · 기존 유저 · 신작 기록 없음 · (1) 빌려 오기 이웃]\n{head}")
+        best_fill, best_hit = TEXT_FILLS[0], -1.0
+        for name, use in TEXT_FILLS:
+            setup(use, 0.0)
+            h, row = measure(tune, new_ctx, ar.next_auto, new_ids, is_new, is_ip)
+            print(f"{name}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+            if h[:, 0].mean() > best_hit + 1e-9:
+                best_fill, best_hit = (name, use), h[:, 0].mean()
+        print(f"→ 고른 이웃: {best_fill[0]}", flush=True)
+        tune = onb1[: t.TUNE_USERS]
+        print(f"\n[연습 {len(tune):,}명 · 신규 유저 (작품 1개 + 칩) · 신작 기록 없음 · (2) 줄거리 취향 비중]\n{head}")
+        best_taste, best_hit = 0.0, -1.0
+        for w in TEXT_TASTES:
+            setup(best_fill[1], w)
+            h, row = measure(tune, new_ctx, ar.next_auto, new_ids, is_new, is_ip)
+            print(f"줄거리 취향 {w}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+            if h[:, 0].mean() > best_hit + 1e-9:
+                best_taste, best_hit = w, h[:, 0].mean()
+        print(f"→ 고른 비중: {best_taste}", flush=True)
+        if best_fill[0] == TEXT_FILLS[0][0] and best_taste == 0.0:
+            print("→ 둘 다 지금 방식이 가장 좋음 (효과 없음)")
+            return
+        chosen = f"{best_fill[0]} · 줄거리 취향 {best_taste}"
+        scenes = [("신규 유저 · 작품 1개 + 칩 · 신작 기록 없음", onb1, new_ctx),
+                  ("신규 유저 · 작품 3개 + 칩 · 신작 기록 없음", onb3, new_ctx),
+                  ("기존 유저 · 신작 기록 없음", cases, new_ctx)]
+        if best_taste:   # 기록 다 있는 문맥은 빌려 오기를 안 써서 줄거리 취향을 쓸 때만 달라짐
+            scenes += [("신규 유저 · 작품 1개 + 칩 · 기록 다 있음", onb1, ctx), ("기존 유저 · 기록 다 있음 (대표 점수)", cases, ctx)]
+        for scen, cs, c in scenes:
+            part = cs[t.TUNE_USERS:]
+            print(f"\n[실전 {len(part):,}명 · {scen}]\n{head}")
+            hs = []
+            for name, use, w in (("지금", TEXT_FILLS[0][1], 0.0), (chosen, best_fill[1], best_taste)):
+                setup(use, w)
+                h, row = measure(part, c, ar.next_auto, new_ids, is_new, is_ip)
+                hs.append(h)
+                print(f"{name}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+            print(f"짝 비교: {paired(*hs)}", flush=True)
+    finally:
+        ar.TEXT_TASTE = 0.0
+
+
+def neighbor_check():
+    # EXP-27 원인 확인: 방식마다 고른 "비슷한 작품 10개" 중 실제로 같이 많이 본 작품(같이 본 코사인 상위 50)이 몇 개인가
+    # 같이 본 기록 · 작품 특징 · 줄거리가 다 있는 옛날 작품끼리 비교 (기록 다 있는 문맥)
+    anime, anilist, cases, ctx, new_ctx, new_ids, is_new, is_ip = prepare()
+    load_text(ctx)
+    cw = ctx["cw_rows"]
+    idx = np.flatnonzero((np.abs(ctx["X"][cw]).sum(axis=1) > 0) & (np.abs(ctx["T"][cw]).sum(axis=1) > 0))
+    rows = cw[idx]
+    C = ctx["cw_sim"]["cosine"][np.ix_(idx, idx)].astype(np.float64)
+    np.fill_diagonal(C, -9)
+    k, g = 10, 50
+    truth = [set(r) for r in np.argpartition(-C, g, axis=1)[:, :g]]
+
+    def overlap(S):
+        np.fill_diagonal(S, -9)
+        top = np.argpartition(-S, k, axis=1)[:, :k]
+        return np.mean([len(set(top[i]) & truth[i]) for i in range(len(idx))])
+
+    def feat():
+        X = ctx["X"][rows] / ctx["vnorm"][rows, None]
+        return X @ X.T
+
+    print(f"비교 작품 {len(idx):,}편 · 무작위로 고르면 {k * g / len(idx):.2f}개 / {k}")
+    print(f"작품 특징 (장르·태그 + 사람 정보)\t{overlap(feat()):.2f}")
+    use_people({}, anilist, ctx, new_ctx, new_ids)
+    print(f"장르·태그만\t{overlap(feat()):.2f}")
+    T = ctx["T"][rows]
+    print(f"줄거리 임베딩\t{overlap(T @ T.T):.2f}")
+    pos = {r: i for i, r in enumerate(rows.tolist())}
+    hits = []
+    for i, r in enumerate(rows.tolist()):
+        ys = [pos[y] for y in np.asarray(ctx.get("rec", {}).get(r, ((), ()))[0]).tolist() if y in pos][:k]
+        if ys:
+            hits.append(len(set(ys) & truth[i]) / len(ys) * k)
+    print(f"커뮤니티 추천 (추천 있는 {len(hits):,}편, {k}개로 환산)\t{np.mean(hits):.2f}")
+
+
+LEARN_FEATS = [("특징", ("feat",)), ("줄거리", ("text",)), ("특징 + 줄거리", ("feat", "text"))]
+LEARN_LAMS = (0.1, 1.0, 10.0)
+LEARN_FILLS = [("작품 특징 (지금)", ("tag", "rec")), ("학습", ("learn", "rec")), ("작품 특징 + 학습", ("tag", "learn", "rec"))]
+
+
+def learn_test():
+    # 1-4b2 (EXP-28): 작품 정보 → 같이 본 패턴을 학습해서 기록 없는 신작의 빌려 오기 이웃을 찾으면 오르는가
+    # 1단계 (작품끼리): 기록 있는 작품을 5묶음으로 나눠 한 묶음씩 신작처럼 가리고 나머지로 학습 → 가린 작품의 이웃 10개 중
+    #   실제로 같이 많이 본 작품(같이 본 코사인 상위 50) 수. 고르는 기준 (미리 정함): 평균 최고 설정. 원래 특징 코사인보다 못하면 끝
+    # 2단계 (유저): 고르는 기준 = 연습 5,000명 기존 유저 · 신작 기록 없음 Hit@10 최고 (지금 / 학습 / 둘 다)
+    #   채택 기준 = 실전 기존 유저 · 신작 기록 없음 Hit@10 오르고 우연일 확률 0.05 미만, NDCG · 정답이 신작 안 떨어짐,
+    #   신규 유저 (작품 1개 · 3개 + 칩) 에서 의미 있게 안 떨어짐. 대표 점수는 빌려 오기를 안 써서 그대로
+    t0 = time.time()
+    anime, anilist, cases, ctx, new_ctx, new_ids, is_new, is_ip = prepare()
+    load_text(ctx, new_ctx)
+    cw = ctx["cw_rows"]
+    rows = cw[(np.abs(ctx["X"][cw]).sum(axis=1) > 0) & (np.abs(ctx["T"][cw]).sum(axis=1) > 0)]
+    fold = np.random.default_rng(0).permutation(len(rows)) % 5
+    k, g = 10, 50
+    Xn = lambda r: ctx["X"][r] / ctx["vnorm"][r, None]
+    scores = {}
+    for f in range(5):
+        tr, te = rows[fold != f], rows[fold == f]
+        C = ctx["cw_sim"]["cosine"][np.ix_(ctx["cw_pos"][te], ctx["cw_pos"][tr])].astype(np.float64)
+        truth = [set(r) for r in np.argpartition(-C, g, axis=1)[:, :g]]
+
+        def overlap(S):
+            top = np.argpartition(-S, k, axis=1)[:, :k]
+            return np.mean([len(set(top[i]) & truth[i]) for i in range(len(te))])
+
+        scores.setdefault("원래 특징 코사인 (지금)", []).append(overlap(Xn(te) @ Xn(tr).T))
+        scores.setdefault("원래 줄거리 코사인", []).append(overlap(ctx["T"][te] @ ctx["T"][tr].T))
+        for name, feats in LEARN_FEATS:
+            for lam in LEARN_LAMS:
+                scores.setdefault((name, feats, lam), []).append(overlap(ar.learned_sims(ctx, te, tr, feats, lam)))
+        print(f"  {f + 1}/5묶음 ({time.time() - t0:.0f}초)", flush=True)
+    print(f"\n[1단계 · 작품 {len(rows):,}편 · 5묶음 · 가린 작품의 이웃 10개 중 같이 많이 본 작품 수 (평균 ± 묶음 간 표준편차)]")
+    for key, v in scores.items():
+        label = key if isinstance(key, str) else f"학습 · {key[0]} · 세기 {key[2]}"
+        print(f"{label}\t{np.mean(v):.2f} ± {np.std(v):.2f}")
+    base = np.mean(scores["원래 특징 코사인 (지금)"])
+    best = max((key for key in scores if not isinstance(key, str)), key=lambda key: np.mean(scores[key]))
+    print(f"→ 고른 학습: {best[0]} · 세기 {best[2]} ({np.mean(scores[best]):.2f}개, 지금 {base:.2f}개)", flush=True)
+    if np.mean(scores[best]) <= base:
+        print("→ 학습이 원래 특징 코사인보다 못함 (2단계 안 함)")
+        return
+    old = dict(ar.LEARN)
+    ar.LEARN.update(feats=best[1], lam=best[2])
+    try:
+        head = "방법\t시리즈 Hit@10\tNDCG@10\t정답이 신작\t정답이 신규 IP\t추천 10개 중 신작 (앞 1,000명)"
+        tune = cases[: t.TUNE_USERS]
+        print(f"\n[2단계 · 연습 {len(tune):,}명 · 기존 유저 · 신작 기록 없음 · 빌려 오기 이웃]\n{head}")
+        best_fill, best_hit = LEARN_FILLS[0], -1.0
+        for name, use in LEARN_FILLS:
+            ar.build_cf_borrow(new_ctx, new_ids, use=use)
+            h, row = measure(tune, new_ctx, ar.next_auto, new_ids, is_new, is_ip)
+            print(f"{name}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+            if h[:, 0].mean() > best_hit + 1e-9:
+                best_fill, best_hit = (name, use), h[:, 0].mean()
+        print(f"→ 고른 이웃: {best_fill[0]}", flush=True)
+        if best_fill[0] == LEARN_FILLS[0][0]:
+            print("→ 지금 방식이 가장 좋음 (실전 안 함)")
+            return
+        onb1 = [t.onboarding(c, anime, 1, 3, anilist, 3) for c in cases]
+        onb3 = [t.onboarding(c, anime, 3, 3, anilist, 3) for c in cases]
+        for scen, cs in (("기존 유저 · 신작 기록 없음", cases), ("신규 유저 · 작품 1개 + 칩 · 신작 기록 없음", onb1),
+                         ("신규 유저 · 작품 3개 + 칩 · 신작 기록 없음", onb3)):
+            part = cs[t.TUNE_USERS:]
+            print(f"\n[실전 {len(part):,}명 · {scen}]\n{head}")
+            hs = []
+            for name, use in (LEARN_FILLS[0], best_fill):
+                ar.build_cf_borrow(new_ctx, new_ids, use=use)
+                h, row = measure(part, new_ctx, ar.next_auto, new_ids, is_new, is_ip)
+                hs.append(h)
+                print(f"{name}\t{row}\t({time.time() - t0:.0f}초)", flush=True)
+            print(f"짝 비교: {paired(*hs)}", flush=True)
+    finally:
+        ar.LEARN.clear()
+        ar.LEARN.update(old)
+
+
+def cowatch_by_age():
+    # 분석: 같이 보는 패턴(EASE · 같이 본 작품)은 옛날 작품을 나중에 따라잡아 볼 때도 도움이 되나 (실전 · 기록 다 있음)
+    # 정답 작품의 시작 연도로 나눠, 같이 보는 패턴을 켰을 때와 껐을 때(γ = 0)를 짝 비교
+    anime, anilist, cases, ctx, new_ctx, new_ids, is_new, is_ip = prepare()
+    test = cases[t.TUNE_USERS:]
+    start = lambda c: anime[c["target"]]["start_date"] or "9999"
+    groups = [("정답이 2017년 전 시작한 작품", [c for c in test if start(c) < "2017-01-01"]),
+              ("정답이 2017~2019년 작품", [c for c in test if "2017-01-01" <= start(c) < "2020-01-01"]),
+              ("정답이 2020~2021년 작품", [c for c in test if start(c) >= "2020-01-01"])]
+    for name, cs in groups:
+        on = case_hits(cs, ctx, ar.next_auto)
+        old = ar.WARM["gamma"], ar.COLD["gamma"]
+        ar.WARM["gamma"] = ar.COLD["gamma"] = 0.0
+        try:
+            off = case_hits(cs, ctx, ar.next_auto)
+        finally:
+            ar.WARM["gamma"], ar.COLD["gamma"] = old
+        print(f"{name} · {len(cs):,}문제 · 끔 {off[:, 0].mean():.2%} → 켬 {on[:, 0].mean():.2%} · {paired(off, on)}", flush=True)
+
+
 def main():
     if sys.argv[1:2] == ["cold"]:
         return cold_test()
@@ -463,6 +696,14 @@ def main():
         return people_test()
     if sys.argv[1:2] == ["people_check"]:
         return people_check()
+    if sys.argv[1:2] == ["text"]:
+        return text_test()
+    if sys.argv[1:2] == ["neighbors"]:
+        return neighbor_check()
+    if sys.argv[1:2] == ["learn"]:
+        return learn_test()
+    if sys.argv[1:2] == ["age"]:
+        return cowatch_by_age()
     if sys.argv[1:2] == ["fill"]:
         return fill_test()
     t0 = time.time()
