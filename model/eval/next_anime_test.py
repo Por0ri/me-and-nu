@@ -104,7 +104,7 @@ def load_interactions():
     """시청 기록을 칸별 배열로 읽는다. 처음 한 번 CSV 를 읽고 interactions.npz 로 저장해 두면 다음부터 빠르다.
     칸: user(유저 번호) · anime · status(상태 번호) · score · fav · t(시각, 초). user_ids[유저 번호] = 유저 id"""
     src, cache = DATA / "interactions.csv", DATA / "interactions.npz"
-    if cache.exists() and cache.stat().st_mtime >= src.stat().st_mtime:
+    if cache.exists() and (not src.exists() or cache.stat().st_mtime >= src.stat().st_mtime):   # CSV 없이 캐시만 옮긴 곳(GPU 서버)도
         with np.load(cache) as z:
             return {k: z[k] for k in z.files}
     users = {}

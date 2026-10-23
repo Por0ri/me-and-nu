@@ -23,10 +23,12 @@
 
 import csv
 import datetime as dt
+import http.client
 import json
 import pathlib
 import random
 import secrets
+import ssl
 import sys
 import time
 import urllib.error
@@ -97,8 +99,8 @@ def post(query, variables, stats, tries=5):
                     raise Skip(f"서버 오류 {e.code} {tries}번")
                 print(f"  서버 오류 {e.code} → {60 * errors}초 뒤 다시", flush=True)
                 time.sleep(60 * errors)
-        except (urllib.error.URLError, TimeoutError) as e:
-            offline += 1
+        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException, ssl.SSLError) as e:
+            offline += 1                                                     # 연결 끊김 · 재설정 (와이파이 · VPN 바뀔 때)
             wait = min(60 * offline, 300)
             print(f"  연결 오류 {e} → {wait}초 뒤 다시", flush=True)
             time.sleep(wait)
