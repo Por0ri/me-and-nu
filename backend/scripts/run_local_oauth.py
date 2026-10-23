@@ -1,4 +1,4 @@
-"""Prepare and run Kakao OAuth against an isolated database on this PC."""
+"""Prepare and run Kakao or Naver OAuth against an isolated database on this PC."""
 
 import argparse
 import asyncio
@@ -21,6 +21,7 @@ import uvicorn
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 DATABASE_NAME = "me_nu_oauth_local"
 DATABASE_MARKER = "me_nu isolated local OAuth test database"
+SUPPORTED_PROVIDERS = ("kakao", "naver")
 
 
 class SetupError(Exception):
@@ -38,7 +39,16 @@ def is_loopback(host: str | None) -> bool:
         return False
 
 
-def configure_environment(*, prepare: bool = False):
+def _selected_providers(provider: str) -> tuple[str, ...]:
+    if provider == "all":
+        return SUPPORTED_PROVIDERS
+    if provider not in SUPPORTED_PROVIDERS:
+        raise SetupError("Select an OAuth provider: kakao, naver, or all.")
+    return (provider,)
+
+
+def configure_environment(*, prepare: bool = False, provider: str = "kakao"):
+    selected = _selected_providers(provider)
     load_dotenv(BACKEND_ROOT / ".env", override=False)
     try:
         source = make_url(os.environ.get("DATABASE_URL", ""))
@@ -70,9 +80,11 @@ def configure_environment(*, prepare: bool = False):
         "ENABLE_DEV_AUTH_BYPASS": "false",
         "OAUTH_PUBLIC_API_ORIGIN": "http://localhost:8000",
         "OAUTH_FRONTEND_ORIGIN": "",
-        "KAKAO_OAUTH_ENABLED": "false" if prepare else "true",
-        "NAVER_OAUTH_ENABLED": "false",
     })
+    for name in SUPPORTED_PROVIDERS:
+        os.environ[f"{name.upper()}_OAUTH_ENABLED"] = (
+            "true" if not prepare and name in selected else "false"
+        )
     return target
 
 
@@ -104,9 +116,15 @@ def prepare_database(target) -> None:
     print(f"Prepared isolated database: {DATABASE_NAME}")
 
 
-def check_readiness(target) -> None:
+def check_readiness(target, *, provider: str = "kakao") -> None:
+    selected = _selected_providers(provider)
     missing = [
-        name for name in ("KAKAO_CLIENT_ID", "KAKAO_CLIENT_SECRET")
+        name
+        for name in (
+            f"{selected_provider.upper()}_{suffix}"
+            for selected_provider in selected
+            for suffix in ("CLIENT_ID", "CLIENT_SECRET")
+        )
         if not os.environ.get(name, "").strip()
     ]
     if missing:
@@ -134,12 +152,18 @@ def check_readiness(target) -> None:
         os.environ["REDIS_URL"], socket_connect_timeout=2, socket_timeout=2,
     ) as client:
         client.ping()
-    print(f"Database: {DATABASE_NAME} ({revision}); Redis: OK; Kakao credentials: configured")
-    print("Kakao console callback: http://localhost:8000/api/v1/auth/login/kakao/callback")
+    print(f"Database: {DATABASE_NAME} ({revision}); Redis: OK")
+    for name in selected:
+        print(f"{name.capitalize()} credentials: configured")
+        print(f"{name.capitalize()} console callback: http://localhost:8000/api/v1/auth/login/{name}/callback")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--provider", choices=(*SUPPORTED_PROVIDERS, "all"), default="kakao",
+        help="OAuth provider to enable and check (default: kakao); ignored during --prepare.",
+    )
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--prepare", action="store_true", help="Create/migrate only the dedicated local test DB.")
     action.add_argument("--check", action="store_true", help="Check local credentials, database and Redis without starting the API.")
@@ -147,11 +171,11 @@ def main() -> int:
     os.chdir(BACKEND_ROOT)
     sys.path.insert(0, str(BACKEND_ROOT))
     try:
-        target = configure_environment(prepare=args.prepare)
+        target = configure_environment(prepare=args.prepare, provider=args.provider)
         if args.prepare:
             prepare_database(target)
             return 0
-        check_readiness(target)
+        check_readiness(target, provider=args.provider)
         if args.check:
             return 0
         print("Local OAuth Swagger: http://localhost:8000/docs")

@@ -1,6 +1,25 @@
 # T02 OAuth 백엔드 설정과 연결 계약
 
-기준일: 2026-10-20, 로컬 검증 갱신: 2026-10-21. T02-1에서 시작해 프론트 작업 없이 OAuth 백엔드와 Q1·Q2 온보딩 저장을 구현했다. 별도 로컬 테스트 DB에 마이그레이션을 적용했으며, 실제 카카오 인증 → 온보딩 완료 → PostgreSQL 저장값 대조 → 로그아웃 후 재로그인까지 확인했다. 원격 OAuth 배포 검증은 별도다. 사용자 지시에 따라 이후 커밋·푸시는 `backend-labs`에서 진행하며, 머지는 별도 지시 전까지 수행하지 않는다.
+기준일: 2026-10-20, 카카오 로컬 검증 갱신: 2026-10-21, 네이버 실행기·로컬 전체 로그인 흐름 검증 갱신: 2026-10-23. T02-1에서 시작해 프론트 작업 없이 OAuth 백엔드와 Q1·Q2 온보딩 저장을 구현했다. 별도 로컬 테스트 DB에 마이그레이션을 적용했으며, 카카오와 네이버 모두 실제 인증 → 온보딩 완료 → PostgreSQL 저장값 대조 → 로그아웃 후 재로그인과 저장값 보존까지 확인했다. 원격 OAuth 배포 검증은 별도다. 사용자 지시에 따라 이후 커밋·푸시는 `backend-labs`에서 진행하며, 머지는 별도 지시 전까지 수행하지 않는다.
+
+## 2026-10-23 네이버 로컬 로그인 검증 결과
+
+- 사용자가 네이버 동의를 완료한 뒤 브라우저가 오류 query 없이 `http://localhost:8000/api/v1/auth/session`으로 복귀했다.
+- 응답에서 `authenticated=true`, `sessionState=onboarding_pending`, `onboardingCompleted=false`, `user=null`을 확인했다. 이는 소셜 인증을 마친 온보딩 미완료 상태다.
+- 페이지를 새로고침한 뒤에도 같은 인증 상태가 유지됐고, 로그인 전 익명 세션과 비교해 CSRF가 갱신됐음을 확인했다. 토큰·쿠키·인가 URL 원문은 기록하지 않는다.
+- 첫 로그인 단계에서는 네이버 OAuth 로그인과 로컬 세션 유지를 확인했다. 이어서 사용자 요청으로 진행한 온보딩과 로그아웃 후 재로그인 결과는 다음 기록을 따른다.
+
+## 2026-10-23 네이버 온보딩·로그아웃 후 재로그인 검증 결과
+
+- 같은 Edge 브라우저의 Swagger에서 `GET /api/v1/policies`와 `GET /api/v1/topics`를 실행했다. 정책 4종은 모두 `v1`의 로컬 테스트용 임시 문안이었으며, 활성 애니메이션 Topic은 `code=anime`, `id=2`였다.
+- 기존에 승인한 테스트 프로필 닉네임 `온보딩테스트`, 생년월일 `2000-01-01`, Q1 `ost`, Q2 `events`를 사용했다. 이용약관·개인정보는 `true`, 광고·마케팅은 `false`로 제출했다. 실제 서비스 약관이나 광고 수신 동의 문안을 사용한 검증은 아니다.
+- 최신 CSRF로 `POST /api/v1/onboarding/complete`를 실행해 `201`, `onboardingCompleted=true`, 제출한 Topic·답변을 확인했다. 이후 세션은 `authenticated=true`, `sessionState=active`, `onboardingCompleted=true`였고 CSRF가 교체됐다.
+- 완료 세션의 CSRF로 `POST /api/v1/auth/logout`을 실행해 `204`와 빈 응답 본문을 확인했다. 이어서 Swagger의 `GET /api/v1/auth/session`은 `200`, `authenticated=false`, `sessionState=anonymous`, `user=null`을 반환했다.
+- 새 익명 CSRF로 `POST /api/v1/auth/login/naver`에 `{"purpose":"signin"}`을 제출해 `200`과 새 인가 URL을 받았다. 같은 브라우저에서 실제 네이버 인증을 거쳐 오류 query 없이 로컬 `/api/v1/auth/session`으로 복귀했다. 기존 네이버 로그인 상태가 유지돼 별도 입력 화면은 나타나지 않았다. 서비스 로그아웃은 네이버 자체 로그아웃과 별개다.
+- 재로그인 직후와 새로고침 후 모두 동일 회원 ID, `authenticated=true`, `sessionState=active`, `onboardingCompleted=true`를 확인했다. 로그인 후 CSRF는 익명 세션 및 로그아웃 전 활성 세션의 값과 모두 달랐다. 토큰·쿠키·인가 URL 원문은 기록하지 않는다.
+- 전용 PostgreSQL DB `me_nu_oauth_local`의 관리 표식을 확인하고 읽기 전용 트랜잭션으로 재로그인 전후를 대조했다. 동일 네이버 식별자의 계정은 1개였고, 회원 ID·테스트 프로필·온보딩 완료 시각이 그대로 유지됐다. 공급자 식별자·이메일·프로필 원문은 검증 출력에 포함하지 않았다.
+- 활성 `anime` tap 1개, Q1 `ost`·Q2 `events`의 답변 1행, 세부 관심사 0행을 확인했다. 동의 이력은 `v1` 4행으로 필수 2종 `true`, 선택 2종 `false`였고 알림 설정의 `marketing=false`도 확인했다. 재로그인 전후 해당 행의 ID·값·시각이 모두 일치해 온보딩 데이터가 보존되고 중복 생성되지 않았음을 확인했다. 로그인 시각·OAuth 시도·세션처럼 인증 처리에 필요한 데이터는 불변 비교에서 제외했다.
+- 온보딩을 다시 제출하거나 계정을 초기화하지 않았다. 이번 검증에서 애플리케이션 코드·스키마·프론트·원격 환경은 변경하지 않았고 완료된 로컬 테스트 계정 데이터를 보존했다. 원격 OAuth 배포 검증은 수행하지 않았다.
 
 ## 2026-10-21 로컬 1단계 검증 결과
 
@@ -116,9 +135,10 @@ ROLLBACK;
 - 카카오·네이버 로그인, T01의 단일 `user` 회원 유형을 사용한다.
 - 식별 기준은 `(auth_provider, provider_user_id)`다. 이메일로 계정을 자동 연결하지 않는다.
 - **사용자 확정:** 신규 소셜 계정의 이메일이 기존 계정과 겹치면 가입을 중단하고 기존 가입 수단으로 로그인하도록 안내한다.
-- 프론트 작업·주소 결정은 보류한다. 프론트 없이 백엔드에서 인증 결과를 확인할 수 있다.
+- 프론트 서비스 URL은 사용자 확인으로 `https://me-nu.kr`로 확정했다. 프론트 작업은 보류하며, 로컬 검증은 프론트 없이 백엔드에서 인증 결과를 확인한다.
 - API 주소는 `https://api.test.me-nu.kr`이다. 2026-10-20 DNS A 조회와 TLS 검증을 포함한 `/health` 호출이 성공했고 `200 {"status":"ok"}`를 받았다. 신규 OAuth 코드의 배포 확인은 아니다.
-- 카카오 개발자 앱은 사용자가 생성했다. PC의 `backend/.env`에 키 두 개가 설정되어 있고 localhost callback이 등록됐다. 2026-10-21 실제 로컬 로그인 성공으로 현재 설정의 동작을 확인했다. 네이버 등록은 후속 작업이다.
+- 카카오 개발자 앱은 사용자가 생성했다. PC의 `backend/.env`에 키 두 개가 설정되어 있고 localhost callback이 등록됐다. 2026-10-21 실제 로컬 로그인 성공으로 현재 설정의 동작을 확인했다.
+- 2026-10-23 사용자가 네이버 앱 등록과 PC의 `backend/.env`에 `NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET` 입력을 완료했다고 보고했다. 개발자 콘솔·키 값을 직접 확인한 기록은 아니며, 이후 실제 네이버 로컬 로그인·온보딩·로그아웃 후 재로그인과 세션 유지를 위 브라우저 검증으로 확인했다.
 - 기존 세션 만료 30분은 유지한다. PRD의 30일 유지와 탈퇴용 재인증 정책은 후속 결정 사항이다.
 
 ## 구현된 계약
@@ -170,7 +190,7 @@ REST 방식이므로 JavaScript SDK 설정은 전제 조건이 아니다. 키는
 ### 네이버
 
 1. [Naver Developers](https://developers.naver.com/)에서 앱을 생성하고 **네이버 로그인**을 선택한다.
-2. PC 웹의 **서비스 URL**과 위 **Callback URL**을 등록한다. 서로 다른 항목이다. 프론트 주소가 미정이므로 최종 서비스 URL·공개 검수 자료는 후속 준비로 남긴다. 등록 화면에 임의의 프론트 주소를 확정하지 않는다.
+2. PC 웹의 **서비스 URL**은 `https://me-nu.kr`, **Callback URL**은 위 네이버 백엔드 주소로 등록한다. 서로 다른 항목이다. 로컬 테스트에는 `http://localhost:8000/api/v1/auth/login/naver/callback`도 추가한다.
 3. Client ID·Client Secret을 `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`에 설정한다.
 4. 개발 테스트는 앱 등록자 또는 등록된 관리자·테스터로 진행한다.
 5. 식별자 외 정보를 요청한다면 실제 사용 목적에 맞는 항목만 선택한다.
@@ -198,39 +218,55 @@ REST 방식이므로 JavaScript SDK 설정은 전제 조건이 아니다. 키는
 
 로컬 API를 사용하려면 `OAUTH_PUBLIC_API_ORIGIN=http://localhost:8000`, `SESSION_COOKIE_SECURE=false`로 설정하고 로컬 callback도 등록한다. 카카오는 공식 튜토리얼에서 localhost HTTP를 안내한다. 네이버 로컬 주소는 콘솔 등록 조건을 별도로 확인한다. 팀 테스트의 기준 주소는 위 HTTPS 도메인이다.
 
-## PC에서 카카오 로그인 테스트
+## PC에서 카카오·네이버 로그인 테스트
 
-Windows PowerShell에서 아래 전용 실행 스크립트를 사용한다. 기존 `backend/.env`의 DB 설정은 그대로 두며, 스크립트가 프로세스 안에서 테스트 DB와 세션 설정을 적용한다.
+Windows PowerShell에서 아래 전용 실행 스크립트를 사용한다. 기존 `backend/.env`를 재작성하지 않으며, 스크립트가 프로세스 안에서 테스트 DB·세션 설정과 선택한 공급자의 활성 상태를 적용한다. `--provider`를 생략하면 기존과 같이 카카오만 활성화한다.
+
+2026-10-23 실행기 테스트 66개가 통과했다. 공급자 선택·키 누락·격리·원본 설정 보존·CLI 분기를 확인했으며, DB·Redis·서버는 모의 객체로 대체했다. 실제 네이버 인증 성공을 확인한 결과는 아니다.
 
 ```powershell
 cd C:\Users\USER\me_nu\backend
 .\.venv\Scripts\python.exe scripts/run_local_oauth.py
 ```
 
+네이버만 사용하려면 준비 상태를 확인한 뒤 실행한다. `--check`는 서버를 시작하지 않는다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/run_local_oauth.py --provider naver --check
+.\.venv\Scripts\python.exe scripts/run_local_oauth.py --provider naver
+```
+
+| 옵션 | 활성 공급자·필수 키 검사 대상 |
+| --- | --- |
+| 생략 또는 `--provider kakao` | 카카오만 |
+| `--provider naver` | 네이버만. 카카오 키는 검사하지 않음 |
+| `--provider all` | 카카오·네이버 모두 |
+
 - 테스트 DB: 기존 로컬 PostgreSQL 안의 `me_nu_oauth_local`, revision `c0e5f3b8a124`.
 - 기존 DB `me_nu`는 revision `e7a4c2d9b812` 그대로 유지했다.
 - Redis 접두사 `me_nu_oauth_local`, 쿠키 `menu_oauth_local`을 사용한다.
-- `localhost:8000`으로 실행하고 카카오만 활성화한다. 개발용 인증 우회와 개발용 API는 비활성화한다.
+- `localhost:8000`으로 실행하고 선택한 공급자만 활성화한다. `.env`의 해당 `*_OAUTH_ENABLED`가 `false`여도 실행 프로세스에서는 선택 옵션을 따른다. 개발용 인증 우회와 개발용 API는 비활성화한다.
 - 프론트 복귀 주소는 비워 두고, callback의 code/state가 콘솔에 남지 않도록 접근 로그를 끈다.
 - 원격 DB·Redis 및 연결 대상 변경에 쓰일 수 있는 URL query 옵션을 거부한다. 테스트 DB 관리 표식이 없으면 마이그레이션·실행을 거부한다.
 - 이 실행 모드에서는 데이터와 로그인 세션이 기존 로컬 API와 분리된다. 온보딩 테스트용 약관 4개와 활성 `anime` Topic을 준비했다. 콘텐츠나 데모 회원은 이 준비 작업에 포함하지 않았다. Topic ID·정책 버전은 API 조회 결과를 사용한다.
 
-키가 없을 때는 `backend/.env`의 `KAKAO_CLIENT_ID`에 REST API 키, `KAKAO_CLIENT_SECRET`에 Client Secret을 넣는다. 키 값은 출력하거나 Git에 넣지 않는다. 나머지 OAuth 실행 설정은 이 스크립트가 적용한다.
+키가 없을 때는 `backend/.env`에 선택한 공급자의 키를 넣는다. 카카오는 `KAKAO_CLIENT_ID`에 REST API 키, `KAKAO_CLIENT_SECRET`에 Client Secret을 넣고, 네이버는 `NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET`을 사용한다. 키 값은 출력하거나 Git에 넣지 않는다. 나머지 OAuth 실행 설정은 이 스크립트가 적용한다.
 
-카카오 콘솔에는 아래 주소를 추가한다. 기존 테스트 서버 callback도 유지한다.
+각 공급자 콘솔에는 사용할 공급자의 아래 주소를 추가한다. 기존 테스트 서버 callback도 유지한다.
 
 ```text
 http://localhost:8000/api/v1/auth/login/kakao/callback
+http://localhost:8000/api/v1/auth/login/naver/callback
 ```
 
-상태 확인과 새 PC에서의 테스트 DB 준비 명령은 다음과 같다. `--prepare`는 기존 앱 DB를 변경하지 않고 전용 DB만 생성·마이그레이션한다.
+상태 확인과 새 PC에서의 테스트 DB 준비 명령은 다음과 같다. 아래 `--check`는 기본 공급자인 카카오를 확인하며, 네이버나 둘 다 확인하려면 각각 `--provider naver` 또는 `--provider all`을 함께 사용한다. `--prepare`는 기존 앱 DB를 변경하지 않고 전용 DB만 생성·마이그레이션한다. 준비 모드에서는 `--provider` 선택과 관계없이 모든 공급자가 비활성화되므로 OAuth 키가 필요 없다.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/run_local_oauth.py --check
 .\.venv\Scripts\python.exe scripts/run_local_oauth.py --prepare
 ```
 
-현재 PC에서는 DB 준비가 완료됐으므로 일반 실행만 하면 된다. 8000번 포트에 기존 API가 떠 있다면 해당 API를 실행한 터미널에서 종료한 후 실행한다. 서버 종료는 실행 터미널의 `Ctrl+C`를 사용한다.
+현재 PC에서는 DB 준비가 완료됐으므로 선택한 공급자의 `--check` 후 실행하면 된다. 먼저 8000번 포트의 기존 API 실행 여부와 공급자 설정을 확인하고 중복으로 시작하지 않는다. 공급자 선택을 바꿔 다시 실행해야 한다면 기존 API를 실행한 터미널의 `Ctrl+C`로 종료한 뒤 새 옵션으로 실행한다.
 
 브라우저에서 `http://localhost:8000/docs`를 열고 아래 수동 검증을 진행한다. 중간에 `127.0.0.1`이나 다른 브라우저 프로필로 바꾸지 않는다.
 
@@ -281,9 +317,9 @@ http://localhost:8000/api/v1/auth/login/kakao/callback
 
 - 프론트 연결 시에만 `OAUTH_FRONTEND_ORIGIN`을 채우고 `FRONTEND_ORIGINS`에 등록한다. 기존 SameSite=Lax 쿠키 방식은 같은 사이트의 HTTPS 구성에 맞춘다.
 - 화면 복귀 경로는 Pivot 설계의 신규 `/pivot/consent`, 완료 `/pivot/home`, 실패 `/pivot/login?error=...`다. 이번에 프론트 파일을 변경하거나 원격 브랜치를 병합하지 않았다.
-- 기존 자동 테스트는 공급자 통신을 대체하고 DB 동작은 SQLite 메모리로 확인한다. 실제 카카오 OAuth의 로컬 브라우저 검증은 위 2026-10-21 결과를 따른다. 실제 PostgreSQL 동시 요청 경합과 원격 쿠키·프록시는 추가 검증 대상이다.
-- 검증: 기존 OAuth·인증 자동 테스트 268개 통과, 로컬 실행 스크립트의 DB·Redis 격리 및 원본 환경파일 보존 테스트 18개 통과.
+- 기존 자동 테스트는 공급자 통신을 대체하고 DB 동작은 SQLite 메모리로 확인한다. 실제 카카오 OAuth의 로컬 브라우저 검증은 위 2026-10-21, 네이버는 2026-10-23 결과를 따른다. 실제 PostgreSQL 동시 요청 경합과 원격 쿠키·프록시는 추가 검증 대상이다.
+- 기존 검증 기록: OAuth·인증 자동 테스트 268개와 로컬 실행기 테스트 18개가 통과했다. 2026-10-23에는 공급자 선택 검증을 추가해 로컬 실행기 테스트 66개가 통과했다.
 - 초기 로컬 PostgreSQL·Redis 점검에서는 API/DB/Redis 상태, Swagger, 익명 세션, CSRF 거절, 카카오 인가 URL 생성, 로그인 취소 시 state 소비, state 재사용 거절, 로그아웃을 확인했다. 이후 실제 회원 로그인 확인은 위 2026-10-21 검증 기록에 추가했다.
-- 재인증·탈퇴 복구, 30일 로그인 유지, 네이버 실계정 검증 및 프론트 연결은 후속 작업이다. 실제 카카오 로그인 세션에서 온보딩 완료와 Q1·Q2 PostgreSQL 저장, 완료 회원의 로그아웃 후 재로그인 및 저장값 보존까지 확인했다.
+- 재인증·탈퇴 복구, 30일 로그인 유지, 프론트 연결 및 원격 OAuth 배포 검증은 후속 작업이다. 실제 카카오와 네이버 로그인 세션에서 온보딩 완료와 Q1·Q2 PostgreSQL 저장, 완료 회원의 로그아웃 후 재로그인·새로고침에 따른 세션 유지 및 저장값 보존까지 확인했다. 각 공급자의 검증 범위는 위 날짜별 기록을 따른다.
 
 계약 근거: [API-001](https://app.notion.com/p/3f704c45a9618129aac0fb2b55c85e71), [API-002](https://app.notion.com/p/3f704c45a96181208b87d1d534f49876), [카카오 REST](https://developers.kakao.com/docs/ko/kakaologin/rest-api), [네이버 인증 API](https://developers.naver.com/docs/login/api/api.md). 원본의 프론트 경로는 최종 확인 대상이며, 백엔드 단독 복귀 방식은 이번 작업에서 추가한 계약이다.
