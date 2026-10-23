@@ -17,6 +17,7 @@
 #
 #   python model/scripts/fetch_anilist_lists.py 100        # 시범: 100명
 #   python model/scripts/fetch_anilist_lists.py 10000      # 이어서 1만 명까지 (중간에 끊겨도 다시 돌리면 이어서)
+#   python model/scripts/fetch_anilist_lists.py --watch    # 다른 창에서 진행 상황 보기 (1분마다)
 #   python model/scripts/fetch_anilist_lists.py --finish   # 다 받은 뒤: 진짜 유저 번호가 든 진행 파일 지우기
 #   → model/data/anilist_users/entries.csv (커밋 안 함)
 
@@ -68,10 +69,13 @@ class Skip(Exception):
 
 
 def post(query, variables, stats, tries=5):
+    # 서버 오류가 tries 번 이어지면 그 명단 · 유저만 건너뜀 (Skip). 연결이 끊긴 동안은 최대 5분 간격으로 될 때까지 기다림
+    # (요청이 AniList 에 안 닿으니 부담 없음. 밤새 와이파이가 끊겨도 멈추지 않게)
     body = json.dumps({"query": query, "variables": variables}).encode("utf-8")
     req = urllib.request.Request(URL, data=body, headers={
         "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "menu-recommender-research/0.1"})
-    for attempt in range(tries):
+    errors = offline = 0
+    while True:
         time.sleep(max(0.0, stats.get("last", 0.0) + PAUSE - time.time()))   # 앞 요청 시작에서 PAUSE 초가 지나야 보냄
         stats["last"] = time.time()
         stats["requests"] += 1
@@ -88,12 +92,23 @@ def post(query, variables, stats, tries=5):
             elif e.code == 400:                            # 요청이 틀림 → 조용히 넘기지 않고 멈춤
                 raise RuntimeError(f"요청 오류 400: {e.read()[:300]!r}")
             else:
-                print(f"  서버 오류 {e.code} → {60 * (attempt + 1)}초 뒤 다시", flush=True)
-                time.sleep(60 * (attempt + 1))
+                errors += 1
+                if errors >= tries:
+                    raise Skip(f"서버 오류 {e.code} {tries}번")
+                print(f"  서버 오류 {e.code} → {60 * errors}초 뒤 다시", flush=True)
+                time.sleep(60 * errors)
         except (urllib.error.URLError, TimeoutError) as e:
-            print(f"  연결 오류 {e} → {60 * (attempt + 1)}초 뒤 다시", flush=True)
-            time.sleep(60 * (attempt + 1))
-    raise RuntimeError(f"{tries}번 시도해도 실패 → 멈춤 (다시 돌리면 이어서)")
+            offline += 1
+            wait = min(60 * offline, 300)
+            print(f"  연결 오류 {e} → {wait}초 뒤 다시", flush=True)
+            time.sleep(wait)
+
+
+def save(prog):
+    # 진행 파일을 임시 파일에 쓴 뒤 바꿔 넣음 (쓰는 중에 꺼져도 파일이 깨지지 않게)
+    tmp = PROGRESS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(prog), encoding="utf-8")
+    tmp.replace(PROGRESS)
 
 
 def frame():
@@ -145,6 +160,35 @@ def fetch_user(uid, stats):
         chunk += 1
 
 
+def watch():
+    # 다른 창에서 진행 상황을 1분마다 보여 준다. 진행 파일의 숫자만 읽음 (유저 번호는 안 보여 줌). Ctrl+C 로 끝내도 수집은 계속됨
+    seen = []
+    while True:
+        try:
+            prog = json.loads(PROGRESS.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            print(f"[{time.strftime('%H:%M')}] 진행 파일 없음 (수집이 끝났거나 아직 시작 전)", flush=True)
+            time.sleep(60)
+            continue
+        now, kept = time.time(), prog["kept"]
+        seen = [s for s in seen if now - s[0] <= 3600] + [(now, kept)]     # 최근 1시간으로 속도 계산
+        span, done = now - seen[0][0], kept - seen[0][1]
+        bar = "#" * int(30 * kept / MAX_USERS) + "-" * (30 - int(30 * kept / MAX_USERS))
+        if kept >= MAX_USERS:
+            speed = "다 받음!"
+        elif span < 120:
+            speed = "속도 재는 중 (2분 뒤부터 보임)"
+        elif done == 0:
+            speed = f"최근 {span / 60:.0f}분 동안 그대로 → 와이파이 · 노트북 덮개 확인"
+        else:
+            left = (MAX_USERS - kept) / (done / span)
+            speed = (f"시간당 {done / span * 3600:,.0f}명 · 남은 시간 약 {left / 3600:.1f}시간 "
+                     f"(끝 예상 {time.strftime('%m/%d %H:%M', time.localtime(now + left))})")
+        print(f"[{time.strftime('%H:%M')}] 받은 유저 {kept:,}/{MAX_USERS:,} ({kept / MAX_USERS:.0%}) [{bar}] · "
+              f"시도 {len(prog['tried']):,} · {speed}", flush=True)
+        time.sleep(60)
+
+
 def finish():
     if PROGRESS.exists():
         SLICES.write_text(json.dumps(json.loads(PROGRESS.read_text(encoding="utf-8"))["slices"]), encoding="utf-8")
@@ -158,6 +202,8 @@ def finish():
 def main():
     if sys.argv[1:2] == ["--finish"]:
         return finish()
+    if sys.argv[1:2] == ["--watch"]:
+        return watch()
     target = min(int(sys.argv[1]) if len(sys.argv) > 1 else 100, MAX_USERS)
     OUT.mkdir(parents=True, exist_ok=True)
     prog = json.loads(PROGRESS.read_text(encoding="utf-8")) if PROGRESS.exists() else {
@@ -194,7 +240,7 @@ def main():
                     prog["slices"].append([media, week.isoformat(), last, p, len(found)])
                 except (Skip, RuntimeError) as e:
                     print(f"  명단 {media} · {week} 건너뜀 ({e})", flush=True)
-                PROGRESS.write_text(json.dumps(prog), encoding="utf-8")
+                save(prog)
                 continue
             uid = rng.choice(pool)                                           # 후보 중 무작위로
             tried.add(uid)
@@ -208,13 +254,14 @@ def main():
                     w.writerows([key, *r] for r in rows)
                     f.flush()
                     prog["kept"] += 1
-            except Skip:
-                pass
-            PROGRESS.write_text(json.dumps(prog), encoding="utf-8")         # 한 명마다 저장 (끊겨도 같은 유저를 두 번 안 받음)
+            except Skip as e:
+                if "서버" in str(e):
+                    print(f"  유저 건너뜀 ({e})", flush=True)
+            save(prog)                                                       # 한 명마다 저장 (끊겨도 같은 유저를 두 번 안 받음)
             if len(prog["tried"]) % 10 == 0 or prog["kept"] >= target:
                 print(f"  받은 유저 {prog['kept']:,}/{target:,} · 시도 {len(prog['tried']):,} · 명단 {len(prog['slices']):,}개"
                       f" · 이번 요청 {stats['requests']:,}번 · {(time.time() - t0) / 60:.0f}분", flush=True)
-    PROGRESS.write_text(json.dumps(prog), encoding="utf-8")
+    save(prog)
     print(f"끝: 받은 유저 {prog['kept']:,}명 · 시도 {len(prog['tried']):,}명 · 본 명단 {len(prog['slices']):,}개 · "
           f"후보 {len(prog['pool']):,}명 · 이번 요청 {stats['requests']:,}번 · {(time.time() - t0) / 60:.0f}분 → {ENTRIES}")
 

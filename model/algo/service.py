@@ -120,10 +120,19 @@ def anilist_events():
 
 
 # ## 3. 문맥
-def build(histories=None, no_record=None):
-    """me;nu 작품 목록 위의 v0.5 문맥. 실험 문맥에 더해 work_of(작품 → me;nu 작품 번호) · rep_of(me;nu 작품 번호 → 대표 작품) ·
-    works(me;nu 작품 정보) · no_record(같이 본 기록을 안 쓴 작품)를 넣는다.
-    histories: 같이 본 작품을 셀 기록 (기본: MAL 기록). no_record: 기록을 지우고 빌려 올 작품 (기본: 2022년 이후 · MAL 번호 없음)"""
+def build():
+    """서비스 문맥 = 기본 문맥 + MAL 기록으로 센 같이 본 작품 (2022년 이후 · MAL 번호 없는 작품은 기록을 지우고 빌려 옴)"""
+    ctx = base()
+    entries = ctx["entries"]
+    no_record = {e["anilist_id"] for e in entries if e["year"] >= NO_COWATCH_FROM or not e["mal_id"]}
+    add_cowatch(ctx, mal_histories(entries), no_record)
+    return ctx
+
+
+def base(popularity=None, events=None):
+    """me;nu 작품 목록 위의 v0.5 문맥에서 같이 본 작품만 뺀 것 (add_cowatch 로 붙임). 실험 문맥에 더해
+    work_of(작품 → me;nu 작품 번호) · rep_of(me;nu 작품 번호 → 대표 작품) · works(me;nu 작품 정보) · entries(작품 목록)를 넣는다.
+    popularity: 작품 → 인기 (기본: AniList popularity). events: 최근 인기용 (작품 배열, 시각 배열) (기본: AniList 유저 표본)"""
     entries, works = load_catalog()
     ids = {e["anilist_id"] for e in entries}
     anilist, year = load_features(ids)
@@ -139,25 +148,31 @@ def build(histories=None, no_record=None):
     for e in sorted(entries, key=lambda e: (-e["popularity"], e["anilist_id"])):
         rep.setdefault(e["menu_work_id"], e["anilist_id"])
     series = {e["anilist_id"]: rep[e["menu_work_id"]] for e in entries}
-    ctx = ar.build_context(anime, series, {e["anilist_id"]: e["popularity"] for e in entries}, anilist,
-                           events=anilist_events())
+    if popularity is None:
+        popularity = {e["anilist_id"]: e["popularity"] for e in entries}
+    ctx = ar.build_context(anime, series, popularity, anilist, events=anilist_events() if events is None else events)
     if "recent_cum" not in ctx:                                  # 최근 인기 재료가 없으면 0
         ctx["recent_cum"], ctx["recent_d0"] = np.zeros((2, len(ctx["ids"])), dtype=np.int32), 0
+    ar.build_rec(ctx, rec_edges(ids))
+    ctx.update(work_of={e["anilist_id"]: e["menu_work_id"] for e in entries}, rep_of=rep, works=works,
+               entries=entries, anilist=anilist)
+    return ctx
 
-    ar.build_cowatch(ctx, mal_histories(entries) if histories is None else histories, n_items=len(ctx["ids"]))
-    if no_record is None:
-        no_record = {e["anilist_id"] for e in entries if e["year"] >= NO_COWATCH_FROM or not e["mal_id"]}
-    pos = ctx["cw_pos"][ar.rows_of(ctx, sorted(no_record))]
+
+def add_cowatch(ctx, histories, no_record=None, lam=None):
+    """같이 본 작품 · EASE · 빌려 오기를 붙인다 (목록 전체 작품). no_record: 기록을 지우고 빌려 올 작품.
+    안 주면 기록이 하나도 없는 작품. ctx["no_record"] 에 남김. lam: EASE 규제 세기 (기본 anime_ranker.EASE_LAMBDA)"""
+    ar.build_cowatch(ctx, histories, n_items=len(ctx["ids"]))
     C = ctx["cw_count"]
+    if no_record is None:
+        no_record = set(ctx["ids"][ctx["cw_rows"][np.diag(C) == 0]].tolist())
+    pos = ctx["cw_pos"][ar.rows_of(ctx, sorted(no_record))]
     C[pos, :] = 0                                                # 일부만 있는 기록은 지운다 (new_anime_test.masked 와 같음)
     C[:, pos] = 0
     ctx["cw_sim"] = ar.cowatch_sims(C, ctx["cw_users"])
-    ar.build_ease(ctx)
-    ar.build_rec(ctx, rec_edges(ids))
+    ar.build_ease(ctx, ar.EASE_LAMBDA if lam is None else lam)
     ar.build_cf_borrow(ctx, no_record)
-    ctx.update(work_of={e["anilist_id"]: e["menu_work_id"] for e in entries}, rep_of=rep, works=works,
-               no_record=no_record)
-    return ctx
+    ctx["no_record"] = no_record
 
 
 def onboarding_user(ctx, menu_work_ids, genres, themes, t):

@@ -7,7 +7,7 @@
 #    → model/data/feed_preview/index.html (커밋 안 함)
 #
 #   python model/scripts/preview_feed.py "…/Downloads/ani_menu_local.sqlite3"
-#   python model/scripts/preview_feed.py "…" --all                  # 품질 검수 대기 글도 넣기
+#   python model/scripts/preview_feed.py "…" --all                  # 검수 대기 · 탈락 글도 넣기 (모델 시험용)
 #   python model/scripts/preview_feed.py "…" --today 2026-11-25     # 다른 날 기준 (노출 기간 확인용)
 
 import argparse
@@ -20,6 +20,7 @@ import sqlite3
 import sys
 import time
 import webbrowser
+from collections import Counter
 from datetime import date, datetime
 
 import numpy as np
@@ -44,6 +45,9 @@ ol{margin:0;padding-left:22px;font-size:13px;line-height:1.7}
 """
 
 
+STATE = {"ready": "피드 대기", "held_for_quality_review": "검수 대기", "rejected": "탈락"}
+
+
 def esc(x):
     return html.escape(str(x))
 
@@ -52,16 +56,27 @@ def day_of(s):
     return date.fromisoformat(s[:10]) if s else None
 
 
-def load_posts(db, include_held):
-    """에이전트 글 → service.make_feed 에 넣을 dict 목록. 발표일 = 원문 발표일 중 가장 늦은 날 (없으면 만든 날)"""
+def load_posts(db, include_all):
+    """에이전트 글 → service.make_feed 에 넣을 dict 목록. 발표일 = 원문 발표일 중 가장 늦은 날 (없으면 만든 날)
+    include_all: 피드 대기(ready)뿐 아니라 검수 대기 · 탈락 글까지 (모델 시험용. 탈락은 대부분 글 표현 문제라 작품 · 유형 · 날짜는 쓸 수 있음).
+    탈락했다가 다시 만들어져 피드 대기열에 있는 글은 피드 대기열 쪽만 씀"""
     primary = {}
     for rid, wid in db.execute("select request_id, menu_work_id from content_work_links order by is_primary desc, sort_order"):
         primary.setdefault(rid, wid)
+    rows = db.execute("select request_id, topic, content_type, status, queued_at, valid_until, purge_at, event_start, event_end, "
+                      "package_json from feed_queue order by queued_at").fetchall()
+    if include_all:
+        have = {r[0] for r in rows}
+        made = dict(db.execute("select request_id, created_at from content_drafts"))
+        for rid, topic, ctype, archived, pj in db.execute(
+                "select request_id, topic, content_type, archived_at, package_json from rejected_archive order by archived_at"):
+            if rid not in have:
+                pk = json.loads(pj)
+                rows.append((rid, topic, ctype, "rejected", made.get(rid) or archived, pk.get("feed_valid_until"),
+                             pk.get("purge_at"), pk.get("event_start"), pk.get("event_end"), pj))
     posts = []
-    for rid, topic, ctype, status, queued, until, purge, ev0, ev1, pj in db.execute(
-            "select request_id, topic, content_type, status, queued_at, valid_until, purge_at, event_start, event_end, "
-            "package_json from feed_queue order by queued_at"):
-        if status != "ready" and not include_held:
+    for rid, topic, ctype, status, queued, until, purge, ev0, ev1, pj in rows:
+        if status != "ready" and not include_all:
             continue
         pubs = [s["published_at"] for s in json.loads(pj).get("sources") or [] if s.get("published_at")]
         published = max(day_of(x) for x in pubs) if pubs else day_of(queued)
@@ -103,7 +118,7 @@ def entry_name(ctx, a):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("db")
-    ap.add_argument("--all", action="store_true", help="품질 검수 대기 글도 넣기")
+    ap.add_argument("--all", action="store_true", help="검수 대기 · 탈락 글도 넣기 (모델 시험용)")
     ap.add_argument("--today", default=date.today().isoformat())
     args = ap.parse_args()
     today = date.fromisoformat(args.today)
@@ -158,7 +173,9 @@ def main():
                         f"{' · 같이 본 기록 없음 (2022년 이후)' if a in ctx['no_record'] else ''}</span>"
                         for a in user["history"].anime.tolist())
         table = "".join(
-            f"<tr><td class=n>{rank}</td><td>{esc(post['topic'])}</td><td>{esc(labels.get(post['type'], post['type']))}</td>"
+            f"<tr><td class=n>{rank}</td><td>{esc(post['topic'])}"
+            + (f" <span class=meta>({STATE.get(post['status'], post['status'])})</span>" if post["status"] != "ready" else "")
+            + f"</td><td>{esc(labels.get(post['type'], post['type']))}</td>"
             f"<td>{esc(work_name(ctx, post['menu_work_id']))}<br><span class=meta>{rank_of(post['menu_work_id'])}</span></td>"
             + "".join(f"<td class=n>{x:.2f}</td>" for x in parts) + f"<td class=n><b>{sum(parts):.2f}</b></td></tr>"
             for rank, post, parts in rows)
@@ -173,7 +190,7 @@ def main():
             f"<th>작품 취향</th><th>유형 취향</th><th>새 글</th><th>합계</th></tr>{table}</table></div>")
 
     post_rows = "".join(
-        f"<tr><td>{esc(p['topic'])}</td><td>{esc(labels.get(p['type'], p['type']))}</td><td>{esc(work_name(ctx, p['menu_work_id']))}</td>"
+        f"<tr><td>{esc(p['topic'])}</td><td>{STATE.get(p['status'], p['status'])}</td><td>{esc(labels.get(p['type'], p['type']))}</td><td>{esc(work_name(ctx, p['menu_work_id']))}</td>"
         f"<td>{p['published']}</td><td>{p['event'][0] or '-'} ~ {p['event'][1] or '-'}</td><td>{p['until']}</td>"
         f"<td class=warn>{esc(' · '.join(p['notes']))}</td></tr>" for p in posts)
     users_n = len({line.split(",", 1)[0] for line in open(service.ANILIST_USERS, encoding="utf-8")}) - 1 \
@@ -183,9 +200,10 @@ def main():
             f"<div class=box><div class=meta>작품 {len(ctx['ids']):,}편 (시리즈 {len(ctx['works']):,}개) · "
             f"같이 본 기록: MAL {ctx['cw_users']:,}명 · 2022년 이후 작품 {len(ctx['no_record']):,}편은 비슷한 작품에서 빌려 옴 · "
             f"최근 인기: AniList 유저 표본 {users_n:,}명의 최근 30일 기록 {int(recent.sum()):,}건<br>"
-            f"글 {len(posts)}개 ({'검수 대기 포함' if args.all else '피드 대기(ready)만'}) · 오늘 노출 중 {live}개 · "
+            f"글 {len(posts)}개 (" + " · ".join(f"{STATE.get(k, k)} {v}" for k, v in Counter(p["status"] for p in posts).items())
+            + f") · 오늘 노출 중 {live}개 · "
             f"v1 설정: 출발값 (작품 취향 {cfg.w_work} · 유형 취향 {cfg.w_type} · 새 글 {cfg.w_fresh})</div>"
-            f"<h3>글 → 피드 (노출 기간 = 모델 규칙)</h3><table><tr><th>글</th><th>유형</th><th>작품</th><th>발표일</th>"
+            f"<h3>글 → 피드 (노출 기간 = 모델 규칙)</h3><table><tr><th>글</th><th>상태</th><th>유형</th><th>작품</th><th>발표일</th>"
             f"<th>행사 · 발매</th><th>노출 끝</th><th>메모</th></tr>{post_rows}</table></div>"
             f"{''.join(sections)}</body></html>")
     OUT.mkdir(parents=True, exist_ok=True)

@@ -16,6 +16,7 @@
 #   python -m model.eval.feed_simulator sens     # 가정을 하나씩 바꿔도 글 개수·남길 기록 결론이 유지되나 (실전, 첫 7일)
 #   python -m model.eval.feed_simulator tune     # v1 비중 고르기 (연습으로 고르고 실전으로 확인)
 #   python -m model.eval.feed_simulator eval     # 유저 테스트 평가 설계 (4-1): 섞어 보여 주기 vs 반으로 나누기, 몇 명 × 며칠이면 차이를 잡나
+#   python -m model.eval.feed_simulator refresh  # 반응을 접속마다 반영 vs 하루 한 번 반영 (서비스 계산 주기, EXP-30)
 
 import math
 import sys
@@ -240,8 +241,11 @@ def latest_first(feed, day):
     return live[np.lexsort((-live, -feed["day"][live]))][:FEED_LEN]
 
 
-def simulate(world, feed, users, cfg, seed=SEED, days=N_DAYS):
-    """cfg=None 이면 최신순. 날짜별 평균 (정답 대비 RBP, 접속당 본 글 · 좋은 글 열람 · 그만볼래요)"""
+def simulate(world, feed, users, cfg, seed=SEED, days=N_DAYS, update="visit"):
+    """cfg=None 이면 최신순. 날짜별 평균 (정답 대비 RBP, 접속당 본 글 · 좋은 글 열람 · 그만볼래요)
+    update: v1 순서를 언제 다시 계산하나 (EXP-30). visit = 접속마다 (반응 · 본 글을 바로 반영) /
+    daily = 하루 한 번 (그날은 같은 순서) / daily_filter = 하루 한 번 + 접속 때 이미 연 글 · 그만볼래요 한 글만 뺌 /
+    daily_seen = daily_filter + 오늘 이미 보여 준 글은 뒤로"""
     ctx, cat_ids, n_feed = world["ctx"], world["catalog_ids"], len(feed["day"])
     tot = {k: np.zeros(N_DAYS) for k in ("nrbp", "sessions", "views", "good_opens", "less", "bad_views", "repeats")}
     tot["events"] = Counter()                                        # 기록 종류별 개수 (읽기는 끝까지 읽은 것만)
@@ -263,11 +267,22 @@ def simulate(world, feed, users, cfg, seed=SEED, days=N_DAYS):
             if state is not None and state.dirty:
                 v1.refresh_work_affinity(state, ctx, cfg)
             live = np.flatnonzero((feed["day"] <= day) & (feed["until"] >= day))
+            daily = v1.rank_feed(state, feed, day, cfg, 2 * FEED_LEN) if state is not None and update != "visit" else None
+            seen0 = state.seen.copy() if daily is not None else None                # 오늘 접속 전까지 보여 준 횟수
             for _ in range(int(user.sessions[day])):
                 if cfg is None:
                     order = latest_first(feed, day)
                 else:
-                    order = v1.rank_feed(state, feed, day, cfg, FEED_LEN)
+                    if daily is None:
+                        order = v1.rank_feed(state, feed, day, cfg, FEED_LEN)
+                    elif update == "daily":
+                        order = daily[:FEED_LEN]
+                    else:                                            # 서버가 아는 연 글 · 그만볼래요 글만 빼기
+                        order = daily[~(state.opened[daily] | state.blocked[daily])]
+                        if update == "daily_seen":                   # + 오늘 이미 보여 준 글은 뒤로 (노출 기록으로 서버가 앎)
+                            shown = state.seen[order] > seen0[order]
+                            order = np.r_[order[~shown], order[shown]]
+                        order = order[:FEED_LEN]
                     v1.mark_served(state, order, cfg)
                 gain = utility(user, feed, order, day, seen, opened)
                 best = utility(user, feed, live, day, seen, opened)     # 정답: 진짜 관심 순으로 놓았을 때
@@ -484,6 +499,28 @@ def tune_check():
     show("유형 취향 두 배 (좋아하는 유형 3.3배 · 싫어하는 유형 0.3배)", strong, "w_type", (0.25, 0.5, 1.0))
 
 
+REFRESH = [("접속마다 다시 계산", "visit"), ("하루 한 번 + 연 글 · 그만볼래요 빼기", "daily_filter"), ("하루 한 번 그대로", "daily"),
+           ("(결과 보고 추가) 하루 한 번 + 빼기 + 오늘 보여 준 글 뒤로", "daily_seen")]
+
+
+def refresh_test():
+    # EXP-30: 반응을 언제 반영하나. 서비스가 v1 순서를 하루 한 번(배치)만 계산하면 접속마다 계산할 때보다 얼마나 나빠지나
+    # 접속마다 = 지금 시뮬레이터 (작품 취향은 온보딩으로 한 번, 반응 · 본 글은 접속마다). 실전 유저, EXP-22와 같은 조건
+    # 기준 (미리 정함): "하루 한 번 + 빼기" RBP가 접속마다의 95% 이상이고 접속당 다시 본 글이 1장 넘게 늘지 않으면 하루 한 번으로 충분
+    t0 = time.time()
+    world = build_world(N_SIM_USERS)
+    feed = make_feed(world, backlog_days=10, per_day=30)
+    test = world["users"][N_SIM_USERS // 2:]
+    week = np.arange(7)
+    print(f"실전 유저 {len(test):,}명 · 글 시작 300편 + 하루 30편 · 첫 7일 · v1 출발값 · 기록 = 반응 4종 + 노출 + 열람·읽기")
+    print("방법	RBP	접속당 좋은 글 열람	접속당 다시 본 글	접속당 싫은 글 노출	100접속당 그만볼래요")
+    rows = [("(참고) 최신순", None, "visit")] + [(name, v1.Config(logs=BEST_LOGS), mode) for name, mode in REFRESH]
+    for name, cfg, mode in rows:
+        s = summary(simulate(world, feed, test, cfg, days=7, update=mode), week)
+        print(f"{name}	{s['정답 대비 RBP']:.4f}	{s['접속당 좋은 글 열람']:.2f}	{s['접속당 다시 본 글']:.1f}	"
+              f"{s['접속당 싫은 글 노출']:.2f}	{s['100접속당 그만볼래요']:.2f}	({time.time() - t0:.0f}초)", flush=True)
+
+
 # ## 5. 유저 테스트 평가 설계 (4-1)
 # v1 과 최신순을 한 피드에 섞어 보여 주고(팀 드래프트 인터리빙, Radlinski 외 2008) 접속마다 어느 쪽 글에 더 반응했는지 센다
 # 몇 명 × 며칠이면 "v1 이 낫다"를 잡는지(검정력)를 반으로 나눠 보여 주기(A/B)와 비교한다
@@ -650,6 +687,8 @@ def eval_test():
 def main():
     if sys.argv[1:2] == ["eval"]:
         return eval_test()
+    if sys.argv[1:2] == ["refresh"]:
+        return refresh_test()
     if sys.argv[1:2] == ["pool"]:
         return pool_test()
     if sys.argv[1:2] == ["tune"]:
