@@ -1,6 +1,29 @@
 # T02 OAuth 백엔드 설정과 연결 계약
 
-기준일: 2026-10-20, 카카오 로컬 검증 갱신: 2026-10-21, 네이버 실행기·로컬 전체 로그인 흐름 검증 갱신: 2026-10-23. T02-1에서 시작해 프론트 작업 없이 OAuth 백엔드와 Q1·Q2 온보딩 저장을 구현했다. 별도 로컬 테스트 DB에 마이그레이션을 적용했으며, 카카오와 네이버 모두 실제 인증 → 온보딩 완료 → PostgreSQL 저장값 대조 → 로그아웃 후 재로그인과 저장값 보존까지 확인했다. 원격 OAuth 배포 검증은 별도다. 사용자 지시에 따라 이후 커밋·푸시는 `backend-labs`에서 진행하며, 머지는 별도 지시 전까지 수행하지 않는다.
+기준일: 2026-10-20, 카카오 로컬 검증 갱신: 2026-10-21, 네이버 실행기·로컬 및 원격 전체 로그인 흐름 검증 갱신: 2026-10-23. T02-1에서 시작해 프론트 작업 없이 OAuth 백엔드와 Q1·Q2 온보딩 저장을 구현했다. 별도 로컬 테스트 DB에 마이그레이션을 적용했으며, 카카오와 네이버 모두 실제 인증 → 온보딩 완료 → PostgreSQL 저장값 대조 → 로그아웃 후 재로그인과 저장값 보존까지 확인했다. 원격 API도 기존 코드·이미지에 네이버 설정을 반영한 뒤 실제 로그인 → 온보딩 완료 → 로그아웃 후 동일 회원 재로그인과 새로고침 후 세션 유지를 확인했다. 원격에서는 API 응답으로 프로필·동의·관심 분야의 보존을 대조했으며, 이 후속 검증에서 DB를 직접 조회하지는 않았다. 사용자 지시에 따라 이후 커밋·푸시는 `backend-labs`에서 진행하며, 머지는 별도 지시 전까지 수행하지 않는다.
+
+## 2026-10-23 네이버 원격 설정 적용과 로그인 검증 결과
+
+- `https://api.test.me-nu.kr`의 공개 상태와 SSH 읽기 전용 점검으로 네이버 비활성·키 미설정을 확인했다. 이후 사용자 명시 승인으로 PC의 `backend/.env`에서 네이버 Client ID·Client Secret만 서버의 `deploy/.env`에 값 출력 없이 전달했다. 원격 환경파일은 보호된 백업을 남긴 뒤 권한 `0600`을 유지해 갱신했다.
+- `NAVER_OAUTH_ENABLED=true`를 적용하고 CORS 오타를 수정해 `FRONTEND_ORIGINS=https://api.test.me-nu.kr,https://me-nu.kr`로 설정했다. 기존 카카오 설정은 유지했다. `OAUTH_PUBLIC_API_ORIGIN=https://api.test.me-nu.kr`, 빈 `OAUTH_FRONTEND_ORIGIN`으로 백엔드 단독 검증을 진행했다.
+- 배포 커밋 `53a2bf2`와 기존 API 이미지 ID를 유지하고 API 컨테이너만 재생성해 `healthy`를 확인했다. PostgreSQL·Redis·migrate 컨테이너 ID는 그대로였으며 `git pull`, 머지, 이미지 빌드, 마이그레이션 실행은 하지 않았다.
+- `/health`, `/health/db`, `/health/redis`가 모두 `200`으로 정상 응답했다. `Origin: https://me-nu.kr`의 CORS 사전 요청은 `200`, 해당 출처의 `Access-Control-Allow-Origin`, `Access-Control-Allow-Credentials: true`를 반환했다.
+- 원격 Swagger에서 `GET /api/v1/auth/session`의 `200`·익명 상태를 확인하고 해당 CSRF로 `POST /api/v1/auth/login/naver`를 실행해 `200`을 받았다. 인가 URL의 callback은 `https://api.test.me-nu.kr/api/v1/auth/login/naver/callback`이었다.
+- 같은 브라우저에서 실제 네이버 인증이 자동으로 이어져 오류 query 없이 원격 `/api/v1/auth/session`으로 복귀했다. `authenticated=true`, `sessionState=onboarding_pending`, `onboardingCompleted=false`, `user=null`을 확인했다. 새로고침 후에도 유지됐고 로그인 전 익명 세션과 비교해 CSRF가 갱신됐다. 토큰·쿠키·인가 URL·공급자 프로필 원문은 기록하지 않는다.
+- 원격 DB revision은 이미 최신 `c0e5f3b8a124`였고, 현재 정책 버전은 `test-v1`, 활성 `anime` Topic ID는 `1`이었다. 로컬의 `v1`·Topic ID `2`를 원격 요청에 그대로 사용하지 않는다.
+- 최초 원격 설정 적용 단계에서는 실제 네이버 로그인과 세션 유지까지만 확인했다. 이후 사용자 요청으로 진행한 원격 온보딩·로그아웃 후 재로그인 결과는 다음 기록을 따른다.
+
+## 2026-10-23 네이버 원격 온보딩·로그아웃 후 재로그인 검증 결과
+
+- 같은 Edge 브라우저의 `https://api.test.me-nu.kr/docs`에서 `GET /api/v1/policies`와 `GET /api/v1/topics`를 실행했다. 정책 4종은 모두 실제 서비스 약관이 아닌 `test-v1`의 테스트용 임시 안내였으며, 활성 애니메이션 Topic은 `code=anime`, `id=1`이었다.
+- 기존에 승인한 테스트 프로필 닉네임 `온보딩테스트`, 생년월일 `2000-01-01`, Q1 `ost`, Q2 `events`를 사용했다. 이용약관·개인정보는 `true`, 광고·마케팅은 `false`로 제출했다. 실제 서비스 약관이나 광고 수신 동의 문안을 사용한 검증은 아니다.
+- 최신 CSRF로 Swagger의 `POST /api/v1/onboarding/complete`를 실행해 `201`, `user.id=2`, `onboardingCompleted=true`를 확인했다. 응답의 `activeTopic.id=1`, `activeTopic.code=anime`, 빈 `subtopicIds`, `answers={"q1":"ost","q2":"events"}`가 제출값과 일치했다. 후속 세션 조회는 `authenticated=true`, `sessionState=active`, `onboardingCompleted=true`였고 CSRF가 교체됐다.
+- 로그아웃 전과 재로그인 후 읽기 전용 API `GET /api/v1/users/me`, `GET /api/v1/users/me/consents`, `GET /api/v1/me/topics` 응답을 대조했다. 전체 프로필 객체가 일치했고, 정책 4종의 `test-v1` 버전·동의값·기록 시각이 모두 유지됐다. 관심 분야 응답에도 활성 `anime` 1개와 빈 세부 관심사 목록이 동일하게 유지됐다. 이메일 등 개인 프로필 원문은 검증 기록에 포함하지 않는다.
+- 완료 세션의 최신 CSRF로 Swagger의 `POST /api/v1/auth/logout`을 실행해 `204`와 빈 응답 본문을 확인했다. 이어서 같은 Swagger에서 조회한 `GET /api/v1/auth/session`은 `200`, `authenticated=false`, `sessionState=anonymous`, `user=null`이었다.
+- 새 익명 CSRF로 `POST /api/v1/auth/login/naver`에 `{"purpose":"signin"}`을 제출해 `200`과 새 인가 URL을 받았다. 같은 브라우저의 기존 네이버 로그인 상태로 실제 인증이 자동 진행됐고, 오류 query 없이 원격 `/api/v1/auth/session`으로 복귀했다. 서비스 로그아웃은 네이버 자체 로그아웃과 별개다.
+- 재로그인 직후와 새로고침 후 모두 기존 회원 `user.id=2`, `authenticated=true`, `sessionState=active`, `onboardingCompleted=true`를 확인했다. 로그인 후 CSRF는 익명 세션 및 로그아웃 전 활성 세션의 값과 모두 달랐다. 토큰·쿠키·인가 URL 원문은 기록하지 않는다.
+- 재로그인 후 토큰이 포함되지 않은 `/api/v1/me/topics`의 관심 분야 응답 화면을 캡처해 검증 자료로 저장했다.
+- 온보딩을 다시 제출하거나 계정을 초기화하지 않았다. 이 후속 검증에서는 서버 설정·코드·스키마·배포 상태를 변경하지 않았고 머지도 하지 않았다. DB 직접 조회는 수행하지 않았으므로 Q1·Q2의 재로그인 전후 DB 저장값과 행 수는 별도로 검증하지 않았다. 위 프로필·동의·관심 분야 보존 확인은 실제 API 응답 대조 결과다.
 
 ## 2026-10-23 네이버 로컬 로그인 검증 결과
 
@@ -9,7 +32,7 @@
 - 페이지를 새로고침한 뒤에도 같은 인증 상태가 유지됐고, 로그인 전 익명 세션과 비교해 CSRF가 갱신됐음을 확인했다. 토큰·쿠키·인가 URL 원문은 기록하지 않는다.
 - 첫 로그인 단계에서는 네이버 OAuth 로그인과 로컬 세션 유지를 확인했다. 이어서 사용자 요청으로 진행한 온보딩과 로그아웃 후 재로그인 결과는 다음 기록을 따른다.
 
-## 2026-10-23 네이버 온보딩·로그아웃 후 재로그인 검증 결과
+## 2026-10-23 네이버 로컬 온보딩·로그아웃 후 재로그인 검증 결과
 
 - 같은 Edge 브라우저의 Swagger에서 `GET /api/v1/policies`와 `GET /api/v1/topics`를 실행했다. 정책 4종은 모두 `v1`의 로컬 테스트용 임시 문안이었으며, 활성 애니메이션 Topic은 `code=anime`, `id=2`였다.
 - 기존에 승인한 테스트 프로필 닉네임 `온보딩테스트`, 생년월일 `2000-01-01`, Q1 `ost`, Q2 `events`를 사용했다. 이용약관·개인정보는 `true`, 광고·마케팅은 `false`로 제출했다. 실제 서비스 약관이나 광고 수신 동의 문안을 사용한 검증은 아니다.
@@ -19,7 +42,7 @@
 - 재로그인 직후와 새로고침 후 모두 동일 회원 ID, `authenticated=true`, `sessionState=active`, `onboardingCompleted=true`를 확인했다. 로그인 후 CSRF는 익명 세션 및 로그아웃 전 활성 세션의 값과 모두 달랐다. 토큰·쿠키·인가 URL 원문은 기록하지 않는다.
 - 전용 PostgreSQL DB `me_nu_oauth_local`의 관리 표식을 확인하고 읽기 전용 트랜잭션으로 재로그인 전후를 대조했다. 동일 네이버 식별자의 계정은 1개였고, 회원 ID·테스트 프로필·온보딩 완료 시각이 그대로 유지됐다. 공급자 식별자·이메일·프로필 원문은 검증 출력에 포함하지 않았다.
 - 활성 `anime` tap 1개, Q1 `ost`·Q2 `events`의 답변 1행, 세부 관심사 0행을 확인했다. 동의 이력은 `v1` 4행으로 필수 2종 `true`, 선택 2종 `false`였고 알림 설정의 `marketing=false`도 확인했다. 재로그인 전후 해당 행의 ID·값·시각이 모두 일치해 온보딩 데이터가 보존되고 중복 생성되지 않았음을 확인했다. 로그인 시각·OAuth 시도·세션처럼 인증 처리에 필요한 데이터는 불변 비교에서 제외했다.
-- 온보딩을 다시 제출하거나 계정을 초기화하지 않았다. 이번 검증에서 애플리케이션 코드·스키마·프론트·원격 환경은 변경하지 않았고 완료된 로컬 테스트 계정 데이터를 보존했다. 원격 OAuth 배포 검증은 수행하지 않았다.
+- 온보딩을 다시 제출하거나 계정을 초기화하지 않았다. 이 로컬 검증 단계에서 애플리케이션 코드·스키마·프론트·원격 환경은 변경하지 않았고 완료된 로컬 테스트 계정 데이터를 보존했다. 이후 진행한 원격 OAuth 설정 적용과 검증은 위 별도 기록을 따른다.
 
 ## 2026-10-21 로컬 1단계 검증 결과
 
@@ -136,9 +159,9 @@ ROLLBACK;
 - 식별 기준은 `(auth_provider, provider_user_id)`다. 이메일로 계정을 자동 연결하지 않는다.
 - **사용자 확정:** 신규 소셜 계정의 이메일이 기존 계정과 겹치면 가입을 중단하고 기존 가입 수단으로 로그인하도록 안내한다.
 - 프론트 서비스 URL은 사용자 확인으로 `https://me-nu.kr`로 확정했다. 프론트 작업은 보류하며, 로컬 검증은 프론트 없이 백엔드에서 인증 결과를 확인한다.
-- API 주소는 `https://api.test.me-nu.kr`이다. 2026-10-20 DNS A 조회와 TLS 검증을 포함한 `/health` 호출이 성공했고 `200 {"status":"ok"}`를 받았다. 신규 OAuth 코드의 배포 확인은 아니다.
+- API 주소는 `https://api.test.me-nu.kr`이다. 2026-10-20 DNS A 조회와 TLS 검증을 포함한 `/health` 호출이 성공했고 `200 {"status":"ok"}`를 받았다. 이후 2026-10-23 기존 배포 코드에 네이버 설정을 적용해 원격 실제 로그인과 세션 유지를 확인했다.
 - 카카오 개발자 앱은 사용자가 생성했다. PC의 `backend/.env`에 키 두 개가 설정되어 있고 localhost callback이 등록됐다. 2026-10-21 실제 로컬 로그인 성공으로 현재 설정의 동작을 확인했다.
-- 2026-10-23 사용자가 네이버 앱 등록과 PC의 `backend/.env`에 `NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET` 입력을 완료했다고 보고했다. 개발자 콘솔·키 값을 직접 확인한 기록은 아니며, 이후 실제 네이버 로컬 로그인·온보딩·로그아웃 후 재로그인과 세션 유지를 위 브라우저 검증으로 확인했다.
+- 2026-10-23 사용자가 네이버 앱 등록과 PC의 `backend/.env`에 `NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET` 입력을 완료했다고 보고했다. 이후 실제 네이버 로컬 로그인·온보딩·로그아웃 후 재로그인과 세션 유지를 확인했고, 사용자 승인으로 같은 키를 서버에 반영해 원격 로그인도 확인했다. 개발자 콘솔을 직접 점검한 기록은 아니다.
 - 기존 세션 만료 30분은 유지한다. PRD의 30일 유지와 탈퇴용 재인증 정책은 후속 결정 사항이다.
 
 ## 구현된 계약
@@ -214,7 +237,7 @@ REST 방식이므로 JavaScript SDK 설정은 전제 조건이 아니다. 키는
 | `SESSION_COOKIE_SECURE` | HTTPS에서는 `true` (배포 Compose 고정) |
 | `ENABLE_DEV_AUTH_BYPASS` | `false` |
 
-활성 공급자의 키·시크릿 누락, 잘못된 origin, 원격 API의 Secure 쿠키 누락은 설정 오류로 거절한다. 두 공급자를 동시에 활성화할 필요는 없다. 원격 서버에 이 설정을 직접 적용하지는 않았다.
+활성 공급자의 키·시크릿 누락, 잘못된 origin, 원격 API의 Secure 쿠키 누락은 설정 오류로 거절한다. 두 공급자를 동시에 활성화할 필요는 없다. 2026-10-23 원격 서버에는 기존 카카오 설정을 유지한 채 네이버 키·활성화와 CORS 수정을 적용했다. 상세 검증 범위는 위 원격 기록을 따른다.
 
 로컬 API를 사용하려면 `OAUTH_PUBLIC_API_ORIGIN=http://localhost:8000`, `SESSION_COOKIE_SECURE=false`로 설정하고 로컬 callback도 등록한다. 카카오는 공식 튜토리얼에서 localhost HTTP를 안내한다. 네이버 로컬 주소는 콘솔 등록 조건을 별도로 확인한다. 팀 테스트의 기준 주소는 위 HTTPS 도메인이다.
 
@@ -276,9 +299,9 @@ http://localhost:8000/api/v1/auth/login/naver/callback
 
 세션이 Redis 모드여도 OAuth 시도는 PostgreSQL에서 처리하므로 마이그레이션이 필요하다. 회원 테이블의 기존 소셜 식별 컬럼·UNIQUE는 재사용한다.
 
-직전 revision은 T01의 `a8c3d1f6e902`다. `upgrade head`에는 기존 `signup_channel` 제거도 포함되므로 서버의 현재 revision과 적용 범위를 확인한 뒤 배포 절차를 따른다. 별도 로컬 테스트 DB에만 적용했으며, 기존 로컬 DB와 원격 서버 DB에는 적용하지 않았다.
+직전 revision은 T01의 `a8c3d1f6e902`다. `upgrade head`에는 기존 `signup_channel` 제거도 포함되므로 서버의 현재 revision과 적용 범위를 확인한 뒤 배포 절차를 따른다. 최초 검증에서는 별도 로컬 테스트 DB에만 적용했으며, 기존 로컬 DB와 원격 서버 DB에는 적용하지 않았다.
 
-2026-10-21 후속 revision `c0e5f3b8a124`는 `tap`별 Q1·Q2를 저장하는 `onboarding_answers`를 추가한다. 전용 로컬 테스트 DB에는 적용됐고, 원본 `me_nu`는 `e7a4c2d9b812`로 유지했다. `--prepare`는 전용 DB 마이그레이션만 수행하며 약관·Topic을 자동 생성하지 않는다.
+2026-10-21 후속 revision `c0e5f3b8a124`는 `tap`별 Q1·Q2를 저장하는 `onboarding_answers`를 추가한다. 전용 로컬 테스트 DB에는 적용됐고, 원본 `me_nu`는 `e7a4c2d9b812`로 유지했다. 2026-10-23 원격 점검에서 서버 DB도 이미 `c0e5f3b8a124`임을 확인했으며 이번 설정 적용 과정에서는 마이그레이션을 실행하지 않았다. `--prepare`는 전용 DB 마이그레이션만 수행하며 약관·Topic을 자동 생성하지 않는다.
 
 ## 프론트 없이 확인하는 순서
 
@@ -317,9 +340,9 @@ http://localhost:8000/api/v1/auth/login/naver/callback
 
 - 프론트 연결 시에만 `OAUTH_FRONTEND_ORIGIN`을 채우고 `FRONTEND_ORIGINS`에 등록한다. 기존 SameSite=Lax 쿠키 방식은 같은 사이트의 HTTPS 구성에 맞춘다.
 - 화면 복귀 경로는 Pivot 설계의 신규 `/pivot/consent`, 완료 `/pivot/home`, 실패 `/pivot/login?error=...`다. 이번에 프론트 파일을 변경하거나 원격 브랜치를 병합하지 않았다.
-- 기존 자동 테스트는 공급자 통신을 대체하고 DB 동작은 SQLite 메모리로 확인한다. 실제 카카오 OAuth의 로컬 브라우저 검증은 위 2026-10-21, 네이버는 2026-10-23 결과를 따른다. 실제 PostgreSQL 동시 요청 경합과 원격 쿠키·프록시는 추가 검증 대상이다.
+- 기존 자동 테스트는 공급자 통신을 대체하고 DB 동작은 SQLite 메모리로 확인한다. 실제 카카오 OAuth의 로컬 브라우저 검증은 위 2026-10-21, 네이버의 로컬·원격 전체 로그인 흐름은 2026-10-23 결과를 따른다. 원격 HTTPS 쿠키·프록시를 통한 로그인·온보딩·로그아웃 후 재로그인과 세션 유지는 확인했으며, 실제 PostgreSQL 동시 요청 경합은 추가 검증 대상이다.
 - 기존 검증 기록: OAuth·인증 자동 테스트 268개와 로컬 실행기 테스트 18개가 통과했다. 2026-10-23에는 공급자 선택 검증을 추가해 로컬 실행기 테스트 66개가 통과했다.
 - 초기 로컬 PostgreSQL·Redis 점검에서는 API/DB/Redis 상태, Swagger, 익명 세션, CSRF 거절, 카카오 인가 URL 생성, 로그인 취소 시 state 소비, state 재사용 거절, 로그아웃을 확인했다. 이후 실제 회원 로그인 확인은 위 2026-10-21 검증 기록에 추가했다.
-- 재인증·탈퇴 복구, 30일 로그인 유지, 프론트 연결 및 원격 OAuth 배포 검증은 후속 작업이다. 실제 카카오와 네이버 로그인 세션에서 온보딩 완료와 Q1·Q2 PostgreSQL 저장, 완료 회원의 로그아웃 후 재로그인·새로고침에 따른 세션 유지 및 저장값 보존까지 확인했다. 각 공급자의 검증 범위는 위 날짜별 기록을 따른다.
+- 재인증·탈퇴 복구, 30일 로그인 유지, 프론트 연결 및 원격 Q1·Q2의 DB 직접 대조는 후속 작업이다. 로컬에서는 실제 카카오와 네이버 로그인 세션으로 온보딩 완료와 Q1·Q2 PostgreSQL 저장, 완료 회원의 로그아웃 후 재로그인·새로고침에 따른 세션 유지 및 저장값 보존까지 확인했다. 원격 네이버도 온보딩 완료·로그아웃 후 동일 회원 재로그인과 세션 유지를 확인했고, API 응답으로 프로필·동의·관심 분야 보존을 대조했다. 각 환경·공급자의 검증 범위는 위 날짜별 기록을 따른다.
 
 계약 근거: [API-001](https://app.notion.com/p/3f704c45a9618129aac0fb2b55c85e71), [API-002](https://app.notion.com/p/3f704c45a96181208b87d1d534f49876), [카카오 REST](https://developers.kakao.com/docs/ko/kakaologin/rest-api), [네이버 인증 API](https://developers.naver.com/docs/login/api/api.md). 원본의 프론트 경로는 최종 확인 대상이며, 백엔드 단독 복귀 방식은 이번 작업에서 추가한 계약이다.
