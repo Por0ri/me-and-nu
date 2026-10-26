@@ -21,6 +21,7 @@ function load(relative, dependencies = {}, extras = {}) {
 }
 const plain = value => JSON.parse(JSON.stringify(value));
 const c = load('/lib/pivot/consent.ts');
+const pivotSession = load('/lib/pivot/session.ts');
 const required = { type: 'new_required_policy', policyVersion: '2026-10-v3', required: true, text: 'Dynamic required policy' };
 const optional = { type: 'marketing', policyVersion: 'v2', required: false, text: 'Optional policy' };
 const policies = [required, optional];
@@ -70,7 +71,7 @@ for (const [name, input] of [
 let reads = 0;
 const s = load('/lib/pivot/services.ts', {
   '@/lib/api': { apiBaseUrl: 'http://localhost:8000', getSession() { reads++; }, getPolicies() { reads++; } },
-  './consent': c,
+  './consent': c, './session': pivotSession,
 }, { window: { location: { hostname: 'localhost' } } });
 test('Explicit local opt-in accepts loopback backend only', () => {
   assert.equal(s.isLocalApiAllowed(true, 'localhost', 'http://127.0.0.1:8000'), true);
@@ -85,15 +86,7 @@ for (const [name, enabled, browserHost, baseUrl] of [
   ['file scheme', true, 'localhost', 'file:///localhost'],
   ['invalid URL', true, 'localhost', 'invalid'],
 ]) test('API guard rejects ' + name, () => assert.equal(s.isLocalApiAllowed(enabled, browserHost, baseUrl), false));
-const session = { authenticated: true, sessionState: 'onboarding_pending', onboardingCompleted: false, user: { id: 12, accountType: 'consumer' } };
-test('Only a real pending Consumer session passes the gate', () => {
-  assert.equal(s.isPendingConsumer(session), true);
-  for (const invalid of [null, { ...session, authenticated: false }, { ...session, onboardingCompleted: true },
-    { ...session, sessionState: 'active' }, { ...session, user: { id: 12, accountType: 'business' } },
-    { ...session, user: { id: 0, accountType: 'consumer' } }]) {
-    assert.equal(s.isPendingConsumer(invalid), false);
-  }
-});
+const session = { authenticated: true, sessionState: 'onboarding_pending', onboardingCompleted: false, user: null, csrfToken: 'test-csrf' };
 test('Disabled configuration never calls session/policy API', async () => {
   await assert.rejects(s.restorePivotSession(), /아직 연결/);
   await assert.rejects(s.loadPivotPolicies(), /아직 연결/);
@@ -147,7 +140,7 @@ test('Only an exact public true flag enables API reads', async () => {
   for (const flag of [undefined, 'false', 'TRUE', '1', ' true ']) {
     let calls = 0;
     const guarded = load('/lib/pivot/services.ts', {
-      '@/lib/api': { apiBaseUrl:'http://localhost:8000', getSession(){ calls++; }, getPolicies(){ calls++; } }, './consent': c,
+      '@/lib/api': { apiBaseUrl:'http://localhost:8000', getSession(){ calls++; }, getPolicies(){ calls++; } }, './consent': c, './session': pivotSession,
     }, { window:{location:{hostname:'localhost'}}, process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:flag}} });
     await assert.rejects(guarded.restorePivotSession());
     await assert.rejects(guarded.loadPivotPolicies());
@@ -157,7 +150,7 @@ test('Only an exact public true flag enables API reads', async () => {
 test('A missing browser window fails closed without API reads', async () => {
   let calls = 0;
   const server = load('/lib/pivot/services.ts', {
-    '@/lib/api': {apiBaseUrl:'http://localhost:8000',getSession(){calls++;},getPolicies(){calls++;}}, './consent': c,
+    '@/lib/api': {apiBaseUrl:'http://localhost:8000',getSession(){calls++;},getPolicies(){calls++;}}, './consent': c, './session': pivotSession,
   }, {process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:'true'}}});
   assert.equal(server.canUsePivotApi(), false);
   await assert.rejects(server.restorePivotSession());
@@ -167,17 +160,29 @@ test('Allowed service reads return the session and validate dynamic policy data'
   const calls = [];
   let response = {consentItems:policies};
   const connected = load('/lib/pivot/services.ts', {
-    '@/lib/api': {apiBaseUrl:'http://localhost:8000',async getSession(){calls.push('session');return session;},async getPolicies(){calls.push('policies');return response;}}, './consent': c,
+    '@/lib/api': {apiBaseUrl:'http://localhost:8000',async getSession(){calls.push('session');return session;},async getPolicies(){calls.push('policies');return response;}}, './consent': c, './session': pivotSession,
   }, {window:{location:{hostname:'localhost'}},process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:'true'}}});
-  assert.equal(await connected.restorePivotSession(), session);
+  assert.deepEqual(plain(await connected.restorePivotSession()), session);
   assert.deepEqual(plain(await connected.loadPivotPolicies()), policies);
   response = {consentItems:[]};
   await assert.rejects(connected.loadPivotPolicies(), /약관 목록/);
   assert.deepEqual(calls, ['session','policies','policies']);
 });
-test('Invalid session IDs and incomplete users cannot enter onboarding', () => {
-  for (const id of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, '12', NaN, undefined]) {
-    assert.equal(s.isPendingConsumer({...session,user:{id,accountType:'consumer'}}), false);
+test('Session restore rejects malformed responses and propagates transport failures without a fallback', async () => {
+  let response;
+  let failure;
+  const connected = load('/lib/pivot/services.ts', {
+    '@/lib/api': { apiBaseUrl: 'http://localhost:8000', async getSession() {
+      if (failure) throw failure;
+      return response;
+    } }, './consent': c, './session': pivotSession,
+  }, { window: { location: { hostname: 'localhost' } }, process: { env: { NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API: 'true' } } });
+  for (response of [null, {}, { ...session, csrfToken: '' }, { ...session, user: { id: 12, accountType: 'consumer' } }]) {
+    await assert.rejects(connected.restorePivotSession(), /로그인 상태 응답/);
   }
-  assert.equal(s.isPendingConsumer({...session,user:null}), false);
+  response = { ...session, authenticated: false, sessionState: 'anonymous' };
+  assert.equal(pivotSession.isPendingOnboarding(await connected.restorePivotSession()), false, 'Expired cookie restored as anonymous stays outside onboarding');
+  for (failure of [Object.assign(new Error('expired'), { status: 401 }), new Error('offline')]) {
+    await assert.rejects(connected.restorePivotSession(), error => error === failure);
+  }
 });

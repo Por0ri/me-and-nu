@@ -1,5 +1,6 @@
-import { apiBaseUrl, getPolicies, getSession, type Session } from "@/lib/api";
+import { apiBaseUrl, getPolicies, getSession } from "@/lib/api";
 import { validatePolicies } from "./consent";
+import { parsePivotSession, type PivotSession } from "./session";
 
 export type SnsProvider = "kakao" | "naver";
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -21,14 +22,11 @@ export function canUsePivotApi(): boolean {
 function requireLocalApi() {
   if (!canUsePivotApi()) throw new Error("약관과 세션을 확인할 로컬 서버가 아직 연결되지 않았어요.");
 }
-export function isPendingConsumer(session: Session | null): boolean {
-  return session?.authenticated === true && session.sessionState === "onboarding_pending" &&
-    session.onboardingCompleted === false && session.user?.accountType === "consumer" &&
-    Number.isSafeInteger(session.user.id) && session.user.id > 0;
-}
-export async function restorePivotSession() {
+export async function restorePivotSession(): Promise<PivotSession> {
   requireLocalApi();
-  return getSession();
+  const session = parsePivotSession(await getSession());
+  if (!session) throw new Error("로그인 상태 응답을 확인하지 못했어요. 다시 로그인해 주세요.");
+  return session;
 }
 export async function loadPivotPolicies() {
   requireLocalApi();

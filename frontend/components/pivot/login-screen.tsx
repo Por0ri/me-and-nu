@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { isPendingConsumer, startSnsLogin, type SnsProvider } from "@/lib/pivot/services";
+import { startSnsLogin, type SnsProvider } from "@/lib/pivot/services";
+import { isPendingOnboarding } from "@/lib/pivot/session";
 import { usePivotSession } from "./pivot-session";
 import { PivotAsset, PivotBrand, PivotFrame, PrimaryButton } from "./pivot-ui";
 import styles from "./pivot.module.css";
@@ -13,8 +14,8 @@ export function LoginScreen({ preview = false, onDemoContinue }: { preview?: boo
   const { state, refresh } = usePivotSession();
   const [message, setMessage] = useState("");
   useEffect(() => {
-    if (!preview && !demo && isPendingConsumer(state.session)) router.replace("/pivot/consent");
-  }, [preview, demo, state.session, router]);
+    if (!preview && !demo && state.status === "ready" && isPendingOnboarding(state.session)) router.replace("/pivot/consent");
+  }, [preview, demo, state.status, state.session, router]);
   async function login(provider: SnsProvider) {
     if (demo) {
       setMessage(`${provider === "kakao" ? "카카오" : "네이버"} 로그인 UI를 확인했어요. 실제 로그인은 진행되지 않아요. 아래 시연용 버튼으로 계속해 주세요.`);

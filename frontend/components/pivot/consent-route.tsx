@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { isPendingConsumer } from "@/lib/pivot/services";
+import { isPendingOnboarding } from "@/lib/pivot/session";
 import { usePivotSession } from "./pivot-session";
 import { ConsentScreen } from "./consent-screen";
 import { PivotBrand, PivotFrame } from "./pivot-ui";
@@ -11,7 +11,7 @@ import styles from "./pivot.module.css";
 export function ConsentRoute() {
   const router = useRouter();
   const { state, refresh, rememberDraft, draft } = usePivotSession();
-  if (isPendingConsumer(state.session)) return <ConsentScreen initialDraft={draft ?? undefined} onContinue={(nextDraft) => { rememberDraft(nextDraft); router.push("/pivot/onboarding"); }} />;
+  if (state.status === "ready" && isPendingOnboarding(state.session)) return <ConsentScreen initialDraft={draft ?? undefined} onContinue={(nextDraft) => { rememberDraft(nextDraft); router.push("/pivot/onboarding"); }} />;
   const message = state.status === "loading" ? "로그인 상태를 확인하고 있어요."
     : state.session?.sessionState === "active" ? "이미 가입된 계정이에요. 기존 서비스에서 계속 이용해 주세요."
     : state.session?.sessionState === "restoration_pending" ? "계정 복원을 먼저 확인해 주세요."

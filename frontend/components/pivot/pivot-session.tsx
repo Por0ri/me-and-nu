@@ -2,12 +2,13 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useReducer, type Dispatch, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { API_UNAUTHORIZED_EVENT, type Session } from "@/lib/api";
+import { API_UNAUTHORIZED_EVENT } from "@/lib/api";
+import type { PivotSession } from "@/lib/pivot/session";
 import { canUsePivotApi, restorePivotSession } from "@/lib/pivot/services";
 import type { ConsentDraft } from "@/lib/pivot/consent";
 import { initialOnboardingState, onboardingReducer, type OnboardingState, type OnboardingAction } from "@/lib/pivot/onboarding";
 
-type SessionState = { status: "loading" | "ready" | "error" | "disconnected"; session: Session | null; message?: string };
+type SessionState = { status: "loading" | "ready" | "error" | "disconnected"; session: PivotSession | null; message?: string };
 type ContextValue = { state: SessionState; refresh: () => void; draft: ConsentDraft | null; rememberDraft: (draft: ConsentDraft) => void; onboarding: OnboardingState; dispatchOnboarding: Dispatch<OnboardingAction> };
 const Context = createContext<ContextValue | null>(null);
 const isolatedSession: ContextValue = {
