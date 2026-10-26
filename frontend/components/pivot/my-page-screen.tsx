@@ -51,7 +51,7 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved }: {
   const profile = state.status === "ready" && state.profile.origin === (demo ? "demo" : "service") ? state.profile : null;
   return <main ref={screen} className={`${homeStyles.screen} ${styles.screen}`} data-my-state={state.status} data-my-mode={demo ? "demo" : "service"}
     aria-busy={state.status === "loading"}>
-    <HomeHeader title="마이페이지" showMascot={false} />
+    <HomeHeader title="마이페이지" showMascot={false} onNotice={setNotice} />
     <div className={styles.content}>
       <p className={styles.intro}>내 정보와 설정을 관리해보세요</p>
       {profile ? <>
@@ -89,7 +89,7 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved }: {
         {state.status === "error" ? <button type="button" className={homeStyles.button} onClick={onRetry}>다시 시도</button> : null}
       </section>}
     </div>
-    <HomeNavigation active="my" onHome={onHome} onSaved={onSaved} hideAI />
+    <HomeNavigation active="my" onHome={onHome} onSaved={onSaved} hideAI onNotice={setNotice} />
     {notice ? <p role="status" className={homeStyles.pendingNotice}>{notice}</p> : null}
     {accountDialog ? <DemoAccountDialog action={accountDialog} onClose={() => setAccountDialog(null)} /> : null}
   </main>;

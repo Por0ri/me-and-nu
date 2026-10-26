@@ -77,15 +77,15 @@ test('Removing all Demo bookmarks produces a real empty state without reseeding'
   saved.cards.forEach(card => source.toggle(card));
   const states = []; await createSavedRequestController(source, state => states.push(state)).load();
   assert.deepEqual(states.map(s => s.status), ['loading', 'empty']);
-  const html = render(states.at(-1)); assert.match(html, /아직 저장한 콘텐츠가 없어요/);
-  assert.match(html, /HOME에서 둘러보기/); assert.doesNotMatch(html, /data-saved-content=/);
+  const html = render(states.at(-1)); assert.match(html, /저장한 콘텐츠가 아직 없어요/);
+  assert.match(html, /콘텐츠 보러가기/); assert.doesNotMatch(html, /data-saved-content=/);
   assert.equal((await source.load(options())).saved.cards.length, 0);
 });
 test('Service stays unconfigured and shows no Demo or empty-list success', async () => {
   const states = []; await createSavedRequestController(pendingSavedSource, state => states.push(state)).load();
   assert.deepEqual(states.map(s => s.status), ['loading', 'unconfigured']);
   const html = render(states.at(-1), false);
-  assert.match(html, /저장한 콘텐츠 화면을 준비/); assert.doesNotMatch(html, /Demo|하이큐|아직 저장한|data-saved-content/);
+  assert.match(html, /저장한 콘텐츠 화면을 준비/); assert.doesNotMatch(html, /Demo|하이큐|저장한 콘텐츠가 아직 없어요|콘텐츠 보러가기|data-saved-content/);
 });
 test('Cross-source data, duplicate content IDs and malformed identities fail closed', async () => {
   const ready = await createDemoSavedSource().load(options());
@@ -130,6 +130,10 @@ test('Saved UI distinguishes states, exposes one SAVE selection and escapes miss
   for (const state of [{ status: 'loading' }, { status: 'empty' }, { status: 'error', message: '실패 안내' }, { status: 'unconfigured', message: '연결 안내' }]) {
     const markup = render(state); assert.match(markup, new RegExp('data-saved-state="' + state.status + '"'));
     assert.doesNotMatch(markup, /data-saved-content=/);
+    if (state.status === 'empty') {
+      assert.match(markup, /저장한 콘텐츠가 아직 없어요/); assert.match(markup, /콘텐츠 보러가기/);
+      assert.match(markup, /src="\/pivot\/home\/chrome\/mascot.png"/);
+    } else assert.doesNotMatch(markup, /콘텐츠 보러가기|mascot.png/);
   }
   const card = { postId: 'post', contentId: 'content', title: '<script>unsafe</script>' };
   const fallback = renderToStaticMarkup(React.createElement(SavedContentCard, { card, onViewDetail() {} }));
@@ -149,10 +153,11 @@ test('Saved return snapshots are scoped to pathname and source and reject unsafe
   for (const bad of [null, { ...snapshot, path: '/pivot/home' }, { ...snapshot, kind: 'service' }, { ...snapshot, scrollY: -1 }, { ...snapshot, scrollY: Infinity }, { ...snapshot, scrollY: '120' }, { ...snapshot, focusContentId: 12 }]) assert.equal(readSavedReturn(bad, snapshot.path, 'demo'), null);
   assert.equal(readHomeReturn({ path: snapshot.path, kind: 'demo', scrollY: 0, query: '', focusContentId: '', tracks: [], focusNavigation: 'external' }, snapshot.path, 'demo'), null);
 });
-test('Saved reuses exact Figma assets and records the 158 by 203 geometry', () => {
+test('Saved records the latest list and empty frames and reuses exact Figma assets', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public/pivot/saved/sources.json'), 'utf8'));
-  assert.equal(manifest.nodeId, '1363:8604'); assert.equal(manifest.layout.columns, 2);
-  assert.equal(manifest.layout.cardWidth, 158); assert.equal(manifest.layout.cardHeight, 203);
+  assert.equal(manifest.nodeId, '1569:8811'); assert.equal(manifest.emptyNodeId, '1363:9389');
+  assert.equal(manifest.layout.columns, 2); assert.equal(manifest.layout.panelWidth, 327);
+  assert.equal(manifest.layout.cardWidth, 148); assert.equal(manifest.layout.cardHeight, 184.661);
   for (const asset of manifest.assets) {
     const bytes = fs.readFileSync(path.join(root, 'public', asset.path));
     assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), asset.sha256);

@@ -59,7 +59,9 @@
 .slide { min-width: 0; height: 100%; scroll-snap-align: start; scroll-snap-stop: always; overflow: hidden; border-radius: 8px; }
 .slide figure { position: relative; height: 100%; margin: 0; }
 .slideControls { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
-.slideButton { pointer-events: auto; width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 8px; background: rgb(39 39 42 / 70%); color: white; font-size: 12px; opacity: 0; }
+/* Keep the 44px arrows 4px above the reaction stack when a narrow card moves it up.
+   179px = stack reserve (153px) + gap (4px) + half the arrow height (22px). */
+.slideButton { position: relative; top: min(0px, calc(50% - 179px)); pointer-events: auto; width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 8px; background: rgb(39 39 42 / 70%); color: white; font-size: 12px; opacity: 0; }
 .card:focus-within .slideButton, .slideButton:focus-visible { opacity: 1; }
 @media (hover: hover) { .card:hover .slideButton { opacity: 1; } }
 .slideButton:disabled { pointer-events: none; }
@@ -68,13 +70,17 @@
 .indicator { display: grid; place-items: center; width: 24px; height: 44px; border: 0; border-radius: 8px; padding: 0; background: transparent; }
 .indicator span { width: 5px; height: 5px; border-radius: 50%; background: #d4d4d8; box-shadow: 0 0 2px #27272a; }
 .indicator[aria-current="true"] span { width: 13px; border-radius: 4px; background: #efe7ff; }
-.actions { position: absolute; right: 4px; top: calc(64.2157% - 3.5px); display: flex; flex-direction: column; }
-.actions button { display: grid; place-items: center; width: 44px; height: 35px; padding: 0; border: 0; border-radius: 8px; background: transparent; }
+/* Reserve 3 x 35px reactions + 4px gap + the unchanged 44px Detail target.
+   Put all 7px of reaction padding above each 28px face: at 375px the faces
+   stay at Figma y=262..360 while their full 44x35px targets end at y=360. */
+.actions { position: absolute; right: 4px; top: min(calc(64.2157% - 7px), calc(100% - 153px)); display: flex; flex-direction: column; }
+.actions button { display: grid; place-items: center; width: 44px; height: 35px; padding: 7px 0 0; border: 0; border-radius: 8px; background: transparent; }
 .actions button > span { display: grid; place-items: center; width: 28px; height: 28px; }
 .actionCircle { border-radius: 50%; background: rgb(192 192 186 / 48%); }
 .actionCircle[data-bookmarked="true"] { background: #7043b4; }
-.detail { position: absolute; right: 2px; bottom: 2px; }
-.detailButton { display: grid; place-items: center; width: 88px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: transparent; }
+/* Lower the full target 2px; bottom padding keeps its visible face at y=372. */
+.detail { position: absolute; right: 2px; bottom: 0; }
+.detailButton { display: grid; place-items: center; width: 88px; height: 44px; padding: 0 0 4px; border: 0; border-radius: 8px; background: transparent; }
 .detailButton > span { display: flex; align-items: center; justify-content: center; width: 68px; height: 24px; border-radius: 8px; background: rgb(239 231 255 / 88%); color: var(--home-ink); font-size: 11px; line-height: 16px; white-space: nowrap; }
 .detailButton img { flex: none; max-width: none; }
 .detailHelp, .actionNotice { position: absolute; z-index: 2; bottom: 52px; right: 10px; width: min(260px, calc(100vw - 80px)); margin: 0; padding: 12px; border-radius: 8px; box-shadow: 0 2px 12px #0002; background: white; color: var(--home-ink); font-size: 12px; line-height: 19px; }
@@ -87,7 +93,8 @@
 .navigation [aria-current="page"] > span { background: #efe7ff; font-weight: 600; }
 .aiButton { position: absolute; right: 34px; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; }
 .aiButton img { position: absolute; left: -8px; top: 0; max-width: none; }
-.pendingNotice { position: fixed; z-index: 8; left: 50%; bottom: 76px; width: min(327px, calc(100vw - 48px)); margin: 0; padding: 12px; transform: translateX(-50%); border-radius: 8px; background: white; box-shadow: 0 2px 12px #0002; color: var(--home-ink); font-size: 12px; line-height: 19px; pointer-events: auto; }
+/* Informational status only: let clicks, swipes and scrolling reach the content below. */
+.pendingNotice { position: fixed; z-index: 8; left: 50%; bottom: 76px; width: min(327px, calc(100vw - 48px)); margin: 0; padding: 12px; transform: translateX(-50%); border-radius: 8px; background: white; box-shadow: 0 2px 12px #0002; color: var(--home-ink); font-size: 12px; line-height: 19px; pointer-events: none; }
 @media (max-width: 340px) { .navigation { left: calc(50% - 20px); width: 180px; padding-inline: 6px; } .aiButton { right: 16px; } .brand { gap: 6px; } .headerMascot { right: 51px; } }
 @media (prefers-reduced-motion: reduce) { .slideTrack { scroll-behavior: auto; } .screen button { transition: none; } }
 .status { padding: 32px 20px; border: 1px solid var(--home-line); border-radius: 12px; background: var(--home-surface); text-align: center; font-size: 14px; line-height: 23px; }

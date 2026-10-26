@@ -5,7 +5,9 @@ import { orderedHomeSlides, type HomeCardModel, type HomeDetailHandler, type Hom
 import { demoBookmarkNotice, type DemoBookmarkControls } from "@/lib/pivot/saved";
 import styles from "./home.module.css";
 
-export function HomeHeader({ title = "홈", showMascot = true }: { title?: string; showMascot?: boolean } = {}) {
+type HomeNotice = { message: string; postId?: string };
+
+export function HomeHeader({ title = "홈", showMascot = true, onNotice }: { title?: string; showMascot?: boolean; onNotice?: (message: string) => void } = {}) {
   const [notice, setNotice] = useState("");
   return <header className={styles.header} data-home-header="">
     <p className={styles.brand}>
@@ -15,25 +17,26 @@ export function HomeHeader({ title = "홈", showMascot = true }: { title?: strin
     <h1 className={styles.srOnly} tabIndex={-1}>{title}</h1>
     {showMascot ? <div className={styles.headerMascot} aria-hidden="true"><img src="/pivot/home/chrome/mascot.png" alt="" /></div> : null}
     <button type="button" className={styles.notification} aria-label="알림" aria-disabled="true"
-      onClick={() => setNotice("알림 기능은 준비 중이에요.")}><img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} /></button>
+      onClick={() => (onNotice ?? setNotice)("알림 기능은 준비 중이에요.")}><img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} /></button>
     {notice ? <p className={styles.pendingNotice} role="status">{notice}</p> : null}
   </header>;
 }
 
-export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI = false }: {
+export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI = false, onNotice }: {
   onHome?: () => void; onMy?: () => void; onSaved?: () => void; active?: "home" | "my" | "saved"; hideAI?: boolean;
+  onNotice?: (message: string) => void;
 } = {}) {
   const [notice, setNotice] = useState("");
   return <div className={styles.bottomBar}>
     <nav aria-label="주요 메뉴" className={styles.navigation}>
       <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } window.scrollTo({ top: 0, behavior: "instant" }); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
       <button type="button" data-saved-navigation="" aria-current={active === "saved" ? "page" : undefined}
-        aria-disabled={!onSaved && active !== "saved" || undefined} onClick={() => { if (active === "saved") { onSaved?.(); return; } if (onSaved) onSaved(); else setNotice("SAVE 화면은 준비 중이에요. 저장은 수행하지 않아요."); }}><span>SAVE</span></button>
+        aria-disabled={!onSaved && active !== "saved" || undefined} onClick={() => { if (active === "saved") { onSaved?.(); return; } if (onSaved) onSaved(); else (onNotice ?? setNotice)("SAVE 화면은 준비 중이에요. 저장은 수행하지 않아요."); }}><span>SAVE</span></button>
       <button type="button" data-my-navigation="" aria-current={active === "my" ? "page" : undefined}
-        aria-disabled={!onMy && active !== "my" || undefined} onClick={() => { if (active === "my") return; if (onMy) onMy(); else setNotice("MY 화면은 준비 중이에요."); }}><span>MY</span></button>
+        aria-disabled={!onMy && active !== "my" || undefined} onClick={() => { if (active === "my") return; if (onMy) onMy(); else (onNotice ?? setNotice)("MY 화면은 준비 중이에요."); }}><span>MY</span></button>
     </nav>
     {!hideAI ? <button type="button" className={styles.aiButton} aria-label="AI 콘텐츠 탐색" aria-disabled="true"
-      onClick={() => setNotice("AI 콘텐츠 탐색은 준비 중이에요.")}><img src="/pivot/home/chrome/ai.svg" alt="" /></button> : null}
+      onClick={() => (onNotice ?? setNotice)("AI 콘텐츠 탐색은 준비 중이에요.")}><img src="/pivot/home/chrome/ai.svg" alt="" /></button> : null}
     {notice ? <p className={styles.pendingNotice} role="status">{notice}</p> : null}
   </div>;
 }
@@ -59,12 +62,20 @@ function HomeSlideImage({ image }: { image: HomeSlideModel["image"] }) {
     : <div className={styles.imagePlaceholder} role="img" aria-label="이미지 준비 중">이미지 준비 중</div>;
 }
 
-export function HomeCard({ card, demo, onViewDetail, bookmarks }: { card: HomeCardModel; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: DemoBookmarkControls }) {
+export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice }: {
+  card: HomeCardModel; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: DemoBookmarkControls;
+  notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void;
+}) {
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const [detailRequested, setDetailRequested] = useState(false);
-  const [actionNotice, setActionNotice] = useState("");
+  const [localActionNotice, setLocalActionNotice] = useState("");
+  const actionNotice = notice ? (notice.postId === card.id ? notice.message : "") : localActionNotice;
+  function setActionNotice(message: string) {
+    if (onNotice) onNotice({ message, postId: card.id });
+    else setLocalActionNotice(message);
+  }
   const slides = orderedHomeSlides(card.slides);
   const current = Math.max(0, Math.min(active, slides.length - 1));
   const target = { postId: card.id, contentId: card.detailContentId };
@@ -148,10 +159,13 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks }: { card: HomeCa
   </article>;
 }
 
-export function HomeFeed({ cards, demo, onViewDetail, bookmarks }: { cards: readonly HomeCardModel[]; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: DemoBookmarkControls }) {
+export function HomeFeed({ cards, demo, onViewDetail, bookmarks, notice, onNotice }: {
+  cards: readonly HomeCardModel[]; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: DemoBookmarkControls;
+  notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void;
+}) {
   return <section aria-label="콘텐츠 피드" className={styles.feed}>
     <h2 className={styles.srOnly}>콘텐츠 피드</h2>
-    <ul>{cards.map((card) => <li key={card.id}><HomeCard card={card} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} /></li>)}</ul>
+    <ul>{cards.map((card) => <li key={card.id}><HomeCard card={card} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={onNotice} /></li>)}</ul>
   </section>;
 }
 
@@ -176,15 +190,19 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onRetry, on
   onSaved?: () => void;
   bookmarks?: DemoBookmarkControls;
 }) {
+  // Keep only the latest feedback, at its existing screen or card location.
+  const [notice, setNotice] = useState<HomeNotice>({ message: "" });
+  function pending(message: string) { setNotice({ message }); }
   return <main className={styles.screen} data-home-state={state.status} aria-busy={state.status === "loading"}>
-    <HomeHeader />
+    <HomeHeader onNotice={pending} />
     {demo ? <aside className={styles.demoNotice} aria-label="시연용 피드 안내">
       <strong>시연용 예시 피드</strong>
       <p>실제 추천 결과가 아니에요. 선택한 답변과 관계없이 같은 예시를 보여드려요.</p>
     </aside> : null}
     <WorkSearchField value={query} onChange={onQueryChange} />
-    {state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} /> : <HomeStatus state={state} onRetry={onRetry} />}
+    {state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} /> : <HomeStatus state={state} onRetry={onRetry} />}
     {demo && onRestart ? <footer className={styles.footer}><button type="button" onClick={onRestart} className={styles.button}>처음부터 시연</button></footer> : null}
-    <HomeNavigation onMy={onMy} onSaved={onSaved} />
+    <HomeNavigation onMy={onMy} onSaved={onSaved} onNotice={pending} />
+    {notice.message && !notice.postId ? <p className={styles.pendingNotice} role="status">{notice.message}</p> : null}
   </main>;
 }
