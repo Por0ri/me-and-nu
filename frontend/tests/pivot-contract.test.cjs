@@ -73,9 +73,11 @@ const s = load('/lib/pivot/services.ts', {
   '@/lib/api': { apiBaseUrl: 'http://localhost:8000', getSession() { reads++; }, getPolicies() { reads++; } },
   './consent': c, './session': pivotSession,
 }, { window: { location: { hostname: 'localhost' } } });
-test('Explicit local opt-in accepts loopback backend only', () => {
-  assert.equal(s.isLocalApiAllowed(true, 'localhost', 'http://127.0.0.1:8000'), true);
-  assert.equal(s.isLocalApiAllowed(true, '[::1]', 'http://[::1]:8000'), true);
+test('Explicit local opt-in accepts matching loopback hosts across ports', () => {
+  for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+    const browserUrl = new URL('http://' + host + ':3000');
+    assert.equal(s.isLocalApiAllowed(true, browserUrl.hostname, 'http://' + host + ':8000'), true);
+  }
 });
 for (const [name, enabled, browserHost, baseUrl] of [
   ['disabled flag', false, 'localhost', 'http://localhost:8000'],
@@ -126,15 +128,47 @@ test('An empty policy list never enables progression', () => {
   assert.deepEqual(plain(c.consentSummary([], {})), { all:false, partial:false, canContinue:false });
 });
 for (const [name, browserHost, baseUrl] of [
-  ['loopback HTTPS', 'localhost', 'https://127.0.0.1:8000'],
-  ['IPv4 browser', '127.0.0.1', 'http://localhost:8000'],
+  ['loopback HTTPS', 'localhost', 'https://localhost:8000'],
+  ['IPv4 browser', '127.0.0.1', 'http://127.0.0.1:8000'],
   ['IPv6 browser and backend', '[::1]', 'http://[::1]:8000'],
+  ['bare IPv6 browser hostname', '::1', 'http://[::1]:8000'],
+  ['URL-normalized IPv6 loopback', '[::1]', 'http://[0:0:0:0:0:0:0:1]:8000'],
 ]) test('API guard allows ' + name + ' with opt-in', () => assert.equal(s.isLocalApiAllowed(true, browserHost, baseUrl), true));
 for (const [name, browserHost, baseUrl] of [
+  ['localhost browser with IPv4 API', 'localhost', 'http://127.0.0.1:8000'],
+  ['IPv4 browser with localhost API', '127.0.0.1', 'http://localhost:8000'],
+  ['localhost browser with IPv6 API', 'localhost', 'http://[::1]:8000'],
+  ['IPv6 browser with localhost API', '[::1]', 'http://localhost:8000'],
+  ['IPv4 browser with IPv6 API', '127.0.0.1', 'http://[::1]:8000'],
+  ['bare IPv6 browser with IPv4 API', '::1', 'http://127.0.0.1:8000'],
+  ['matching remote hosts', 'api.example.test', 'https://api.example.test'],
+  ['matching non-loopback IPv6', '[::2]', 'http://[::2]:8000'],
+  ['IPv4-mapped IPv6', '[::ffff:7f00:1]', 'http://[::ffff:127.0.0.1]:8000'],
+  ['username-only credentials', 'localhost', 'http://user@localhost:8000'],
+  ['password-only credentials', 'localhost', 'http://:secret@localhost:8000'],
+  ['unbracketed IPv6 URL', '::1', 'http://::1:8000'],
   ['browser host suffix', 'localhost.example.test', 'http://localhost:8000'],
   ['FTP loopback', 'localhost', 'ftp://localhost:8000'],
   ['relative URL', 'localhost', '/api'],
 ]) test('API guard rejects ' + name, () => assert.equal(s.isLocalApiAllowed(true, browserHost, baseUrl), false));
+
+test('Mixed loopback hosts never call session/policy API even with explicit opt-in', async () => {
+  for (const [browserHost, apiBaseUrl] of [
+    ['localhost', 'http://127.0.0.1:8000'],
+    ['127.0.0.1', 'http://localhost:8000'],
+    ['::1', 'http://localhost:8000'],
+  ]) {
+    let calls = 0;
+    const guarded = load('/lib/pivot/services.ts', {
+      '@/lib/api': { apiBaseUrl, getSession() { calls++; }, getPolicies() { calls++; } },
+      './consent': c, './session': pivotSession,
+    }, { window: { location: { hostname: browserHost } }, process: { env: { NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API: 'true' } } });
+    assert.equal(guarded.canUsePivotApi(), false);
+    await assert.rejects(guarded.restorePivotSession(), /아직 연결/);
+    await assert.rejects(guarded.loadPivotPolicies(), /아직 연결/);
+    assert.equal(calls, 0);
+  }
+});
 
 test('Only an exact public true flag enables API reads', async () => {
   for (const flag of [undefined, 'false', 'TRUE', '1', ' true ']) {

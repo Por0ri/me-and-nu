@@ -5,11 +5,13 @@ import { parsePivotSession, type PivotSession } from "./session";
 export type SnsProvider = "kakao" | "naver";
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** Slice A can only read an explicitly enabled loopback backend. */
+/** Requires explicit opt-in and matching loopback hosts; CORS/cookie/CSRF checks still apply. */
 export function isLocalApiAllowed(enabled: boolean, browserHost: string, baseUrl: string): boolean {
   try {
     const url = new URL(baseUrl);
-    return enabled && loopbackHosts.has(browserHost) && loopbackHosts.has(url.hostname) &&
+    // URL.hostname brackets IPv6; normalize only the bare loopback equivalent.
+    const hostname = browserHost === "::1" ? "[::1]" : browserHost;
+    return enabled && loopbackHosts.has(hostname) && url.hostname === hostname &&
       (url.protocol === "http:" || url.protocol === "https:") &&
       !url.username && !url.password;
   } catch { return false; }
