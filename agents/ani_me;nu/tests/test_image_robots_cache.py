@@ -29,3 +29,67 @@ def test_image_batch_reuses_robots_policy_but_still_enforces_it(monkeypatch) -> 
             _check_robots(client, "https://example.com/private/three.jpg", source, cache)
 
     assert requests == ["https://example.com/robots.txt"]
+
+
+def test_allowlisted_cdn_redirects_robots_check_to_publisher_policy(monkeypatch) -> None:
+    from ani_menu_agent.models import SourceEvidence
+
+    source = SourceEvidence(
+        id="anime_corner",
+        title="Same-work review article",
+        url="https://animecorner.me/cyberpunk-review/",
+        publisher="Anime Corner",
+        role="editorial",
+        allowed_asset_hosts=["static.animecorner.me"],
+    )
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if request.url.host == "static.animecorner.me":
+            return httpx.Response(302, headers={"location": "https://animecorner.me/"})
+        return httpx.Response(200, text="User-agent: *\nAllow: /")
+
+    monkeypatch.setattr(
+        "ani_menu_agent.agents.image.download._validate_public_https", lambda *_args: None
+    )
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        _check_robots(
+            client,
+            "https://static.animecorner.me/2026/10/visual.png",
+            source,
+            {},
+        )
+
+    assert requests == [
+        "https://static.animecorner.me/robots.txt",
+        "https://animecorner.me/robots.txt",
+    ]
+
+
+def test_unrelated_cdn_robots_redirect_stays_blocked(monkeypatch) -> None:
+    from ani_menu_agent.models import SourceEvidence
+
+    source = SourceEvidence(
+        id="anime_corner",
+        title="Same-work review article",
+        url="https://animecorner.me/cyberpunk-review/",
+        publisher="Anime Corner",
+        role="editorial",
+        allowed_asset_hosts=["static.animecorner.me"],
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "https://another.example/"})
+
+    monkeypatch.setattr(
+        "ani_menu_agent.agents.image.download._validate_public_https", lambda *_args: None
+    )
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ImageDownloadError, match="robots.txt"):
+            _check_robots(
+                client,
+                "https://static.animecorner.me/2026/10/visual.png",
+                source,
+                {},
+            )

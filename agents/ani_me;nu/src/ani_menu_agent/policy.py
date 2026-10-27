@@ -6,13 +6,12 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class EditorialPolicy:
     brand_name: str = "me;nu"
-    # A single-image official source can still support a compact carousel:
-    # image-led cover + one editorial-graphic ending. Wider decks need more art.
-    min_cards: int = 2
+    # Every carousel must have a cover, at least one detail card, and a payoff.
+    min_cards: int = 3
     max_cards: int = 10
     default_event_retention_days: int = 30
     default_content_validity_days: int = 90
-    max_review_failures: int = 3
+    max_review_failures: int = 4
     min_official_sources: int = 1
     max_title_chars: int = 42
     max_body_chars: int = 120
@@ -24,9 +23,16 @@ class EditorialPolicy:
     logical_card_height: int = 408
     image_quality_target_dpr: float = 4.0
     max_image_upscale: float = 1.25
+    # Small official portraits can occupy a meaningful area in a contain spotlight;
+    # 2x is the compromise between usable visual scale and preserving sharpness.
+    # Transparent cutouts and other layouts keep the stricter general limit above.
+    max_low_res_spotlight_upscale: float = 2.0
     # Explicit product-risk decision from the owner: public official images may be used
     # editorially after provenance checks. This setting does not grant legal permission.
     allow_public_official_image_risk: bool = True
+    # Additionally accepts attributed public imagery embedded in the exact
+    # registered same-work editorial page. This is not a license or permission.
+    allow_public_editorial_image_risk: bool = True
 
 
 POLICY = EditorialPolicy()

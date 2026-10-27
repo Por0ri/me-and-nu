@@ -1,33 +1,37 @@
-# 수집 사이트와 정보
+# 자동수집 출처
 
-| 사이트 | 수집·확인할 정보 |
-|---|---|
-| [AnimeSchedule](https://animeschedule.net/jpnrss.xml) | 신작·방영 일정 후보 |
-| [애니플러스](https://www.aniplustv.com/) | 국내 방영·행사·콜라보 |
-| [애니플러스 뉴스](https://news.aniplustv.com/) | 국내 애니메이션 소식 |
-| [Crunchyroll Announcements](https://www.crunchyroll.com/news/announcements) | 해외 방영·서비스 발표 |
-| [HIDIVE Press](https://news.hidive.com/press) | 해외 방영·서비스 발표 |
-| [Bilibili Global](https://www.bilibili.tv/en) | 아시아권 공개·방영 정보 |
-| [Muse Asia YouTube](https://www.youtube.com/@MuseAsia) | 아시아권 공개·방영 정보 |
-| [Ani-One Asia YouTube](https://www.youtube.com/@AniOneAsia) | 아시아권 공개·방영 정보 |
-| [MyAnimeList News](https://myanimelist.net/news) | 신작·성우·제작 소식 후보 |
-| [Anime News Network](https://www.animenewsnetwork.com/) | 신작·성우·제작 소식 후보 |
-| [Animenomics](https://news.animenomics.com/) | 애니메이션 산업·비즈니스 소식 |
-| [Anime Hack 이벤트 캘린더](https://anime.eiga.com/event/) | 일본 행사 일정 후보 |
-| [Anime! Anime! 굿즈](https://animeanime.jp/category/news/goods/latest/) | 굿즈 소식 후보 |
-| [Animate Times 굿즈](https://www.animatetimes.com/goods/) | 굿즈 소식 후보 |
-| [AmiAmi](https://www.amiami.com/eng/) | 예약·재판 상품 후보 |
-| [애니뉴잉](https://aninewing.com/newsboard) | 국내 애니메이션 소식 후보 |
-| [온나다](https://onnada.com/) | 국내 애니메이션 편성·정보 후보 |
-| [루리웹 애니 게시판](https://m.ruliweb.com/family/211/board/300015) | 팬 관심사·질문·반응 |
-| [Reddit r/anime](https://www.reddit.com/r/anime/) | 해외 팬 관심사·질문·반응 |
-| [더쿠 애니/만화](https://theqoo.net/) | 팬덤 밈·반응 참고용. 약관 검토 전 자동 수집 비활성 |
-| [디시인사이드 애니메이션 관련 갤러리](https://gall.dcinside.com/) | 팬덤 밈·반응 참고용. 사전 서면 동의 전 자동 수집 금지 |
-| [아카라이브 애니메이션 채널](https://arca.live/) | 팬덤 밈·반응 참고용. 약관·접근 검토 전 자동 수집 비활성 |
-| [에펨코리아 애니메이션 게시판](https://www.fmkorea.com/ani) | 팬덤 밈·반응 참고용. 약관·접근 검토 전 자동 수집 비활성 |
-| [LiveChart](https://www.livechart.me/) | 방영 일정 후보 |
-| [AniList GraphQL API](https://graphql.anilist.co) | 방영 일정 후보 |
+출처 등록부는 `config/sources.json`, 출처별 유형 연결은 `config/source_type_map.json`에서 관리합니다. 출처 상태가 `active`이면 설정된 자동 수집기가 접근할 수 있고, `trend_only`는 유머용 주제 신호만 허용합니다. `terms_review`, `technical_review`, `permission_required`, `setup_required`, `blocked`, `later`는 자동 호출하지 않습니다.
 
-수집 연결기는 RSS·공개 API·HTML 목록을 지원합니다. `discover`는 허용된 활성 출처만 호출합니다. 커뮤니티 게시물·이미지는 자동 복제하지 않고 관심도 참고용으로만 다룹니다. 새 네 곳은 현재 `manual` 방식으로 등록되어 자동 접근 대상이 아닙니다. 같은 호스트에는 기본 2초 간격을 두며, robots.txt·약관·사이트 정책이 허용하지 않으면 중단합니다.
+## 유형별 생성 근거 승인 현황
 
-`terms_review`, `permission_required`, `technical_review`, `setup_required`, `blocked`, `later` 상태는 자동 호출하지 않습니다. 특히 LiveChart의 차단을 우회하지 않으며 YouTube 채널은 실제 채널 ID로 만든 RSS URL이 등록되기 전까지 보류합니다. 자동 예약 실행은 아직 없고, 현재 후보 수집은 `discover` 명령으로 실행합니다. 최종 정보는 공식 1차 출처에서 다시 검증해야 합니다.
+2026-10-23 기준, 등록 상태와 구현된 어댑터를 기준으로 11개 유형 모두 자동 수집 경로가 3개 이상 연결돼 있습니다. 이 수치는 설정/코드상 경로의 개수이지, 각 출처가 지금 실제로 유효한 후보나 검증 사실을 반환한다는 보증은 아닙니다. 실시간 응답과 유효 후보 수는 유형·작품별로 별도 점검해야 합니다. 발견용 RSS는 후보 발견용이며 생성 근거 수에 포함하지 않습니다.
+
+| 유형 | 승인 출처 수 |
+|---|---:|
+| news | 7 |
+| event | 5 |
+| guide | 7 |
+| people | 6 |
+| goods | 5 |
+| behind | 3 |
+| review | 3 |
+| humor | 3 |
+| character | 9 |
+| curation | 4 |
+| music | 7 |
+
+상세 출처 목록과 집계 기준은 [유형별 출처 라우팅](SOURCE_TYPE_ROUTING.md)을 참고하세요. 최신 설정은 `uv run ani-menu source-routing`으로 확인할 수 있습니다.
+
+## 발견 출처와 원문 출처
+
+AnimeSchedule RSS와 PR TIMES RSS는 자동으로 후보를 찾는 `discovery` 출처입니다. RSS 항목 URL은 후보의 원문 링크로 보관하며, RSS 자체를 공식 생성 근거로 취급하지 않습니다. 후보는 등록된 활성 원문 출처의 개별 페이지에서 다시 확인해야 생성 단계로 넘어갈 수 있습니다.
+
+작품 가이드·캐릭터의 작품별 검색은 `--work-title`을 받아 Kitsu 공개 API, 영어·일본어 Wikipedia 읽기 API, ANN Encyclopedia 검색으로 수행합니다. Kitsu의 공개 GET API와 MediaWiki 검색/읽기 API는 현재 호출 테스트에서 API 키 없이 응답했습니다. Kitsu·Wikipedia·ANN은 작품 권리자의 공식 발표처가 아니라 `reference` 성격이므로, 행사·신작·상품 등 시의성 높은 발표 근거로 사용하지 않습니다. Shueisha와 Kodansha 홈 목록은 기업 공지·PDF 등 무관 후보가 나와 현재 생성용으로 비활성화했습니다.
+
+등록된 공식·편집 사이트는 유형 라우팅과 실제 승인 상태를 함께 확인해야 합니다. 출처가 등록되어 있거나 후보 목록에 등장한다는 이유만으로 자동 수집 대상이 되지 않습니다. 출처 활성화 전에는 사이트 응답, robots 경로, 실제 추출 가능성, 역할과 지원 유형을 점검합니다. 작품 공식 이미지가 필요한 경우 이미지 호스트 허용 목록과 별도 권리 검토도 확인합니다.
+
+## 유머/커뮤니티 신호
+
+Mastodon.social, Mastodon.online, mstdn.jp의 공개 태그 타임라인은 `trend_only` 유머 출처입니다. 작품명이 지정되면 해당 작품 해시태그 타임라인을 조회합니다. 수집기는 공개·비민감·원글만 후보로 삼고 답글·부스트·봇 태그·계정 정보·미디어는 제외합니다. 생성에 필요한 짧은 본문과 원문 링크/게시 시각만 임시 보관하며 30일 뒤 만료됩니다. 이를 사실 근거 또는 전체 팬덤 여론으로 취급하지 않고, 결과물은 원문을 복사하지 않는 토론·유머 소재의 재구성으로 한정합니다. 실제 공개 설정은 인스턴스별 요청 시 다시 확인합니다.
+
+더쿠·디시인사이드·아카라이브·에펨코리아는 현재 승인된 자동 수집 출처가 아닙니다. 사이트 차단이나 로그인·CAPTCHA를 우회하지 않으며, 필요한 권한이나 별도 API 키가 생기기 전까지 이 상태를 유지합니다.

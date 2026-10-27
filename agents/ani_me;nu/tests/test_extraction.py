@@ -13,6 +13,14 @@ from ani_menu_agent.extraction import (
     extract_page_capture,
 )
 from ani_menu_agent.models import Fact
+from ani_menu_agent.sources.models import Source, SourceRegistry
+
+
+def test_fact_type_schema_discourages_unclassified_general_facts() -> None:
+    description = FactCandidate.model_fields["fact_type"].description or ""
+
+    assert "Use general only when" in description
+    assert "event_schedule" in description
 
 
 def test_japanese_date_range_inherits_year_for_end_date() -> None:
@@ -31,6 +39,10 @@ def test_event_date_parser_handles_korean_and_abbreviated_range_endpoints() -> N
         "2026-10-23",
         "2026-10-27",
     ]
+
+
+def test_event_date_parser_uses_source_year_when_quote_omits_it() -> None:
+    assert _date_in_quote("開催日：10月17日（土）", default_year=2026) == ["2026-10-17"]
 
 
 def test_only_facts_with_verbatim_source_evidence_are_verified() -> None:
@@ -100,6 +112,35 @@ def test_single_day_event_date_is_stored_as_both_period_endpoints() -> None:
     assert _verified_event_dates(extracted) == ("2026-10-20", "2026-10-20")
 
 
+def test_single_day_event_date_can_use_source_publication_year() -> None:
+    extracted = PageFactExtraction(
+        topic="上映イベント",
+        event_start="2026-10-17",
+        event_start_evidence_quote="開催日：10月17日（土）",
+        facts=[
+            FactCandidate(
+                statement="上映イベントは10月17日に開かれる。",
+                evidence_quote="開催日：10月17日（土）",
+                fact_type="event_schedule",
+            )
+        ],
+    )
+
+    assert _verified_event_dates(extracted, default_year=2026) == (
+        "2026-10-17",
+        "2026-10-17",
+    )
+    assert _verified_event_dates_from_facts(
+        _evidence_backed_facts(
+            extracted,
+            "official",
+            "開催日：10月17日（土）",
+            "date-context",
+        ),
+        default_year=2026,
+    ) == ("2026-10-17", "2026-10-17")
+
+
 def test_single_day_goods_release_is_stored_as_both_period_endpoints() -> None:
     fact = Fact(
         id="release",
@@ -148,6 +189,7 @@ def test_capture_extraction_builds_package_without_live_api(
                 "id": "official-image-1",
                 "url": "https://orb-cafe.com/wp-content/uploads/2026/09/frieren.webp",
                 "alt_text": "프리렌 키 비주얼",
+                "source_page_title": "Frieren Collaboration Cafe Goods",
             }
         ],
     }
@@ -197,6 +239,24 @@ def test_capture_extraction_builds_package_without_live_api(
             region_policy="kr_first",
         ),
     )
+    monkeypatch.setattr(
+        "ani_menu_agent.extraction.load_source_registry",
+        lambda: SourceRegistry(
+            version=1,
+            sources=[
+                Source(
+                    id="orb_cafe_official",
+                    name="Test official source",
+                    url="https://orb-cafe.com/",
+                    category="official_event",
+                    role="primary",
+                    collection="html",
+                    status="active",
+                    region="JP",
+                )
+            ],
+        ),
+    )
 
     package, usage = extract_page_capture(path)
     assert package.event_start == "2026-10-10"
@@ -206,7 +266,9 @@ def test_capture_extraction_builds_package_without_live_api(
     assert package.event_region == "overseas"
     assert package.facts[0].verified is True
     assert package.images[0].official is True
-    assert package.images[0].source_description == "프리렌 키 비주얼"
+    assert package.images[0].source_description == (
+        "프리렌 키 비주얼 Frieren Collaboration Cafe Goods"
+    )
     assert package.term_glossary[0].korean == "장송의 프리렌"
     assert package.images[0].related_fact_ids == []
     assert usage["model"] == "test-model"
@@ -232,6 +294,26 @@ def test_event_term_category_is_valid() -> None:
     )
 
     assert extracted.term_glossary[0].category == "event"
+
+
+def test_nested_source_details_preserve_cast_name_and_role() -> None:
+    cast = [{"name": "우에다 레이나", "role": "메토데"}]
+    candidate = FactCandidate(
+        statement="우에다 레이나가 메토데 역을 맡았다.",
+        evidence_quote="メトーデ役は上田麗奈。",
+        fact_type="cast",
+        details={"cast": {"list": cast}},
+    )
+    fact = Fact(
+        id="cast-1",
+        statement=candidate.statement,
+        source_ids=["frieren_official"],
+        verified=True,
+        fact_type=candidate.fact_type,
+        details=candidate.details,
+    )
+
+    assert fact.details["cast"]["list"][0] == {"name": "우에다 레이나", "role": "메토데"}
 
 
 def test_japanese_city_evidence_fills_overseas_event_metadata() -> None:
@@ -282,6 +364,47 @@ def test_quote_verified_schedule_facts_supply_missing_period_endpoints() -> None
     assert _verified_event_dates_from_facts(facts) == ("2026-11-20", "2026-12-20")
 
 
+def test_single_installation_date_is_not_extended_by_rain_delay_dates() -> None:
+    facts = [
+        Fact(
+            id="installation-day",
+            statement="설치는 2026년 10월 21일 시작 예정이다.",
+            source_ids=["official"],
+            verified=True,
+            time_sensitive=True,
+            fact_type="event_date",
+            details={"source_quote": "設置開始日 2026年10月21日(水)(予定)"},
+        ),
+        Fact(
+            id="rain-delay",
+            statement="비가 오면 10월 26일 또는 28일에 설치한다.",
+            source_ids=["official"],
+            verified=True,
+            time_sensitive=True,
+            fact_type="event_schedule",
+            details={"source_quote": "※雨天の場合は、10月26日(月)または28日(水)に設置"},
+        ),
+    ]
+
+    assert _verified_event_dates_from_facts(facts, default_year=2026) == (
+        "2026-10-21",
+        "2026-10-21",
+    )
+
+
+def test_schedule_quote_dates_are_recovered_without_structured_date_fields() -> None:
+    fact = Fact(
+        id="schedule-only-quote",
+        statement="공식 온라인 행사가 열린다.",
+        source_ids=["official"],
+        verified=True,
+        fact_type="event_schedule",
+        details={"source_quote": "2026年10月31日(土) 19:00 開催"},
+    )
+
+    assert _verified_event_dates_from_facts([fact]) == ("2026-10-31", "2026-10-31")
+
+
 def test_quote_backed_los_angeles_venue_is_classified_as_overseas() -> None:
     fact = Fact(
         id="la-location",
@@ -317,6 +440,44 @@ def test_event_location_fact_type_is_used_for_country_inference() -> None:
     )
 
     location, country, region = _infer_event_location_from_facts([fact], quote)
+
+    assert location == fact.statement
+    assert country == "Japan"
+    assert region == "overseas"
+
+
+def test_nationwide_animate_event_quote_is_classified_as_japan() -> None:
+    fact = Fact(
+        id="animate-nationwide-location",
+        statement="전국 애니메이트 매장과 애니메이트 통신판매에서 진행된다.",
+        source_ids=["frieren_official"],
+        verified=True,
+        fact_type="event_location",
+        details={"source_quote": "【開催店舗】全国アニメイト、アニメイト通販"},
+    )
+
+    location, country, region = _infer_event_location_from_facts(
+        [fact], fact.details["source_quote"]
+    )
+
+    assert location == fact.statement
+    assert country == "Japan"
+    assert region == "overseas"
+
+
+def test_quote_backed_umeda_venue_is_classified_as_japan() -> None:
+    fact = Fact(
+        id="umeda-sky-building-location",
+        statement="행사 장소는 우메다 스카이 빌딩 공중정원 전망대다.",
+        source_ids=["my_hero_academia_official"],
+        verified=True,
+        fact_type="event_location",
+        details={"source_quote": "梅田スカイビル・空中庭園展望台"},
+    )
+
+    location, country, region = _infer_event_location_from_facts(
+        [fact], fact.details["source_quote"]
+    )
 
     assert location == fact.statement
     assert country == "Japan"
