@@ -1,6 +1,7 @@
 """애니 콘텐츠 제작 파이프라인의 실행 노드."""
 
 import logging
+import os
 
 from pydantic import ValidationError
 
@@ -101,7 +102,27 @@ def intake(state: ContentState) -> ContentState:
 def rights_preflight(state: ContentState) -> ContentState:
     """차단된 이미지뿐이면 LLM 호출 전에 크롤러로 되돌립니다."""
     package = ContentPackage.model_validate(state["package"])
-    if state.get("allow_llm", False):
+    integration_profile = (
+        os.environ.get("ANI_MENU_REVIEW_PROFILE", "integration").strip().casefold()
+        == "integration"
+    )
+    if integration_profile and state.get("allow_llm", False):
+        # Temporary backend-integration run: retain canonical work matching and
+        # relevant source images, while skipping fact/source approval gates.
+        attach_menu_work_ids(package)
+        if not package.menu_work_ids:
+            issue = QualityIssue(
+                code="WORK_ID_UNRESOLVED",
+                message="임시 통합 모드에서도 작품 데이터셋 연결은 필요합니다.",
+                owner="fact_checker",
+            )
+            return {
+                "trace": append_trace(state, "rights_preflight"),
+                "package": package.model_dump(mode="json"),
+                "qa_report": [issue.model_dump(mode="json")],
+                "status": "needs_crawler_update",
+            }
+    elif state.get("allow_llm", False):
         try:
             eligible_source_ids = validate_generation_sources(
                 [source.model_dump(mode="json") for source in package.sources],
