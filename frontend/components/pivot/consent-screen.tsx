@@ -80,7 +80,7 @@ function ConsentView({ model, preview = false, onContinue }: ConsentScreenProps 
       <p id="consent-feedback" className={styles.consentFeedback} role="status" aria-live="polite">
         {model.reachedBoundary ? preview
           ? "미리보기 선택을 확인했어요. 가입이나 서버 저장은 진행되지 않아요."
-          : "약관 선택을 확인했어요. 관심 분야 선택으로 이동해요." : ""}
+          : "약관 선택을 확인했어요. 기본 정보 입력으로 이동해요." : ""}
       </p>
     </div>
     {opened && <PolicyDialog policy={opened} onClose={() => setOpened(null)} />}

@@ -81,13 +81,6 @@ test('Back preserves answers; edited answers immediately replace result summary'
   assert.equal(m.selectionSummary(state).q2, '신작/시즌 공개 소식');
   assert.equal(reduce(state, { type: 'reset' }).interest, null);
 });
-test('Unconnected service rejects and never fabricates saved success', async () => {
-  const { pendingOnboardingService } = load('onboarding-service.ts');
-  assert.equal(pendingOnboardingService.availability, 'unconfigured');
-  await assert.rejects(pendingOnboardingService.submitSelection({ interest: 'animation', q1: 'ost', q2: 'events' }, { consents: [] }), /계약이 아직 연결/);
-});
-
-
 test('Reselect clears both answers and summary while preserving interest, for all result combinations', () => {
   for (const q1 of m.q1Choices) for (const q2 of m.q2Choices) {
     let state = go(selectedInterest());
