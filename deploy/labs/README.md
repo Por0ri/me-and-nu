@@ -21,7 +21,7 @@ DB/Redis 비밀번호는 초기화 시 각각 새 난수로 생성한다. 앱은
 
 ## 준비 및 첫 실행
 
-새 디렉터리에 검토한 `backend-labs` 커밋을 체크아웃한다(예: `/home/ubuntu/apps/me-and-nu-labs`). 기존 서버 체크아웃에서 브랜치를 변경하거나 기존 `.env`를 복사하지 않는다. Docker Engine과 Compose v2, Python 3, Bash가 필요하다. Docker 권한이 없는 Ubuntu 계정은 아래 helper를 `sudo bash ...`로 실행한다. 초기화는 일반 사용자로 실행하고 `.env`의 접근 권한은 0600을 유지한다.
+새 디렉터리에 검토한 `backend-labs` 커밋을 체크아웃한다. 실제 Labs 서버 경로는 `/home/ubuntu/apps/me-nu-labs`다. 기존 서버 체크아웃에서 브랜치를 변경하거나 기존 `.env`를 복사하지 않는다. Docker Engine과 Compose v2, Python 3, Bash가 필요하다. Docker 권한이 없는 Ubuntu 계정은 아래 helper를 `sudo bash ...`로 실행한다. 초기화는 일반 사용자로 실행하고 `.env`의 접근 권한은 0600을 유지한다.
 
 ```bash
 git rev-parse HEAD

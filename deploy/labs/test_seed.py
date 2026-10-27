@@ -14,13 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 # app.db.__init__ imports the runtime session module. Its lazy engine must have
 # an inert target, regardless of the caller's environment; no connection is made.
 os.environ["DATABASE_URL"] = "postgresql+psycopg://unused:unused@127.0.0.1:1/never_used"
-from app.models import AgentRun, AuthSession, ConsentHistory, Content, ContentSource, ContentTag, Draft, Policy, SavedItem, Subtopic, Tap, Topic, UserAccount
+from app.models import AgentRun, AuthSession, ConsentHistory, Content, ContentReaction, ContentSource, ContentTag, Draft, Policy, SavedItem, Subtopic, Tap, Topic, UserAccount
 from app.services import feed_service
 
 spec = importlib.util.spec_from_file_location("labs_seed", Path(__file__).with_name("seed.py"))
 seed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(seed)
-MODELS = (AgentRun, AuthSession, ConsentHistory, Content, ContentSource, ContentTag, Draft, Policy, SavedItem, Subtopic, Tap, Topic, UserAccount)
+MODELS = (AgentRun, AuthSession, ConsentHistory, Content, ContentReaction, ContentSource, ContentTag, Draft, Policy, SavedItem, Subtopic, Tap, Topic, UserAccount)
 
 
 class AsyncAdapter:
@@ -28,6 +28,7 @@ class AsyncAdapter:
         self.session, self.fail_second = session, fail_second
     async def scalar(self, statement): return self.session.scalar(statement)
     async def scalars(self, statement): return self.session.scalars(statement)
+    async def execute(self, statement): return self.session.execute(statement)
     async def get(self, model, identity): return self.session.get(model, identity)
     def add(self, row): self.session.add(row)
     async def flush(self):
