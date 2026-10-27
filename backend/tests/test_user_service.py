@@ -16,7 +16,6 @@ async def test_authenticate_user_accepts_valid_password(
         user_id=1,
         email="test@example.com",
         nickname="테스터",
-        signup_channel="consumer",
         auth_provider="local",
         hashed_password=hash_password("test1234"),
     )
@@ -43,7 +42,6 @@ async def test_authenticate_user_rejects_invalid_password(
         user_id=1,
         email="test@example.com",
         nickname="테스터",
-        signup_channel="consumer",
         auth_provider="local",
         hashed_password=hash_password("test1234"),
     )
@@ -71,7 +69,6 @@ async def test_authenticate_user_rejects_social_account_password_login(
         provider_user_id="social-user-1",
         email="test@example.com",
         nickname="테스터",
-        signup_channel="consumer",
         auth_provider="kakao",
         hashed_password=None,
     )
@@ -99,7 +96,6 @@ async def test_register_user_commits_hashed_password(
         user_id=1,
         email="test@example.com",
         nickname="테스터",
-        signup_channel="consumer",
         auth_provider="local",
         hashed_password="stored-hash",
     )
@@ -122,7 +118,7 @@ async def test_register_user_commits_hashed_password(
     create_kwargs = create_user_mock.await_args.kwargs
     assert create_kwargs["email"] == "test@example.com"
     assert create_kwargs["nickname"] == "테스터"
-    assert create_kwargs["signup_channel"] == "consumer"
+    assert "signup_channel" not in create_kwargs
     assert create_kwargs["hashed_password"] != "test1234"
     db.commit.assert_awaited_once()
     db.refresh.assert_awaited_once_with(user)

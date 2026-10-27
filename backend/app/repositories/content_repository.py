@@ -8,11 +8,11 @@ from app.models import (
     ContentReaction,
     ContentSource,
     ContentTag,
-    CreatorChannel,
     SavedItem,
     SourceSite,
     Subtopic,
 )
+from app.repositories.carousel_repository import public_content_condition
 
 
 async def get_public_content(db: AsyncSession, content_id: int, topic_id: int) -> Content | None:
@@ -20,8 +20,7 @@ async def get_public_content(db: AsyncSession, content_id: int, topic_id: int) -
         select(Content).where(
             Content.content_id == content_id,
             Content.topic_id == topic_id,
-            Content.status == "active",
-            Content.deleted_at.is_(None),
+            public_content_condition(),
         )
     )
 
@@ -30,8 +29,7 @@ async def get_visible_content(db: AsyncSession, content_id: int) -> Content | No
     return await db.scalar(
         select(Content).where(
             Content.content_id == content_id,
-            Content.status == "active",
-            Content.deleted_at.is_(None),
+            public_content_condition(),
         )
     )
 
@@ -47,8 +45,7 @@ async def list_public_contents(
     sort_time = func.coalesce(Content.published_at, Content.created_at)
     statement = select(Content).where(
         Content.topic_id == topic_id,
-        Content.status == "active",
-        Content.deleted_at.is_(None),
+        public_content_condition(),
         select(ContentSource.content_source_id)
         .where(ContentSource.content_id == Content.content_id)
         .exists(),
@@ -83,6 +80,18 @@ async def get_primary_source(
     return (await db.execute(statement)).first()
 
 
+async def list_content_sources(
+    db: AsyncSession, content_id: int
+) -> list[tuple[ContentSource, SourceSite | None]]:
+    statement = (
+        select(ContentSource, SourceSite)
+        .outerjoin(SourceSite, ContentSource.source_site_id == SourceSite.source_site_id)
+        .where(ContentSource.content_id == content_id)
+        .order_by(ContentSource.citation_order.asc().nullslast(), ContentSource.content_source_id)
+    )
+    return list((await db.execute(statement)).all())
+
+
 async def list_content_subtopic_ids(db: AsyncSession, content_id: int) -> list[int]:
     statement = select(ContentTag.subtopic_id).where(ContentTag.content_id == content_id)
     return list((await db.scalars(statement.order_by(ContentTag.subtopic_id))).all())
@@ -96,10 +105,6 @@ async def list_content_subtopic_names(db: AsyncSession, content_id: int) -> list
         .order_by(Subtopic.subtopic_id)
     )
     return list((await db.scalars(statement)).all())
-
-
-async def get_channel(db: AsyncSession, channel_id: int) -> CreatorChannel | None:
-    return await db.get(CreatorChannel, channel_id)
 
 
 async def get_reaction(

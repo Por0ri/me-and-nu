@@ -125,6 +125,9 @@ class Content(Base):
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    feed_valid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     content_type: Mapped[str | None] = mapped_column(String(30))
     difficulty_level: Mapped[int | None] = mapped_column(SmallInteger)
     promotional_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))

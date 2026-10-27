@@ -6,6 +6,7 @@ from sqlalchemy import String, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Content, ContentSource, SavedItem, Tap, Topic
+from app.repositories.carousel_repository import public_content_condition
 
 
 async def list_saved_bookmarks(
@@ -34,8 +35,7 @@ async def list_saved_bookmarks(
             Topic.is_active.is_(True),
             Content.topic_id == Tap.topic_id,
             SavedItem.status.in_(("kept", "resurface_off")),
-            Content.status == "active",
-            Content.deleted_at.is_(None),
+            public_content_condition(),
             select(ContentSource.content_source_id)
             .where(ContentSource.content_id == Content.content_id)
             .exists(),

@@ -1141,8 +1141,8 @@ html:has(.consumer-mock .ob-consent) { scrollbar-gutter: auto; }
 html:has(.consumer-mock :is(.ob-account-type, .ob-topic)) { scrollbar-gutter: auto; }
 .consumer-mock .ui-onboarding .ob-account-type .ob-choice-intro { position: relative; left: 0.5px; }
 .consumer-mock .ui-onboarding .ob-account-type .ob-choice-intro h1 {
-  width: 172px;
-  height: 30px;
+  width: auto;
+  min-height: 30px;
   margin-inline: auto;
   font-family: "SUIT", "Pretendard", sans-serif;
   white-space: nowrap;

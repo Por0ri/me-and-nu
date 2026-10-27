@@ -9,15 +9,17 @@ from app.api.dev.agent_publication import router as dev_agent_publication_router
 from app.api.health import router as health_router
 from app.core.config import settings
 from app.core.exceptions import install_exception_handlers
+from app.core.oauth_logging import install_oauth_access_log_filter
 from app.core.redis import redis_lifespan
 
 def create_app(enable_dev_api: bool | None = None) -> FastAPI:
+    install_oauth_access_log_filter()
     dev_api_enabled = settings.enable_dev_api if enable_dev_api is None else enable_dev_api
     description = "현재 구현된 공개 API를 V1.1 계약에 맞춘 로컬 범위입니다. 미구현 V1.1 API는 등록되지 않습니다."
     if dev_api_enabled and settings.enable_dev_auth_bypass:
         description += " 로컬 Swagger 테스트 모드: 로그인과 CSRF 입력 없이 전용 데모 사용자로 보호 API를 호출할 수 있습니다."
     else:
-        description += " 개발용 로그인 후 /auth/session의 csrfToken을 Swagger Authorize에 입력하세요."
+        description += " /auth/session의 csrfToken을 Swagger Authorize에 입력하세요. 소셜 로그인은 공급자 설정 후 /auth/login/{provider}에서 시작하며, 활성화된 개발용 로그인도 사용할 수 있습니다."
     api = FastAPI(
         title="큐레이팅 플랫폼 REST API",
         version="1.1.0-local",

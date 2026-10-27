@@ -26,7 +26,7 @@ from app.services.user_service import EmailAlreadyRegisteredError
 def auth_environment(monkeypatch: pytest.MonkeyPatch):
     user = UserAccount(
         user_id=23, email="local@example.com", nickname="공룡",
-        signup_channel="consumer", auth_provider="local",
+        auth_provider="local",
         hashed_password="hashed-password", account_status="active",
     )
     db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
@@ -112,13 +112,13 @@ def test_dev_registration_requires_csrf_and_uses_dev_path(auth_environment, monk
     client, user, _, _ = auth_environment
     register = AsyncMock(return_value=user)
     monkeypatch.setattr(dev_auth, "register_user", register)
-    payload = {"email": "local@example.com", "password": "password123", "nickname": "공룡", "role": "consumer"}
+    payload = {"email": "local@example.com", "password": "password123", "nickname": "공룡", "role": "user"}
     assert client.post("/api/v1/auth/register", json=payload).status_code == 404
     csrf = _anonymous_csrf(client)
     assert client.post("/api/v1/dev/auth/register", json=payload).status_code == 403
     response = client.post("/api/v1/dev/auth/register", json=payload, headers={"X-CSRF-Token": csrf})
     assert response.status_code == 201
-    assert response.json() == {"id": 23, "email": "local@example.com", "nickname": "공룡", "accountType": "consumer"}
+    assert response.json() == {"id": 23, "email": "local@example.com", "nickname": "공룡", "accountType": "user"}
     register.assert_awaited_once()
 
 
@@ -135,6 +135,21 @@ def test_dev_register_duplicate_and_invalid_role(auth_environment, monkeypatch):
     assert invalid.json()["code"] == "VALIDATION_ERROR"
     assert invalid.json()["fields"][0]["code"] == "VALIDATION_ERROR"
     assert "requestId" not in invalid.json()
+
+
+@pytest.mark.parametrize("legacy_role", ["consumer", "creator"])
+def test_dev_registration_rejects_legacy_account_types(auth_environment, monkeypatch, legacy_role):
+    client, _, _, _ = auth_environment
+    register = AsyncMock()
+    monkeypatch.setattr(dev_auth, "register_user", register)
+    csrf = _anonymous_csrf(client)
+    response = client.post(
+        "/api/v1/dev/auth/register",
+        json={"email": "local@example.com", "password": "password123", "nickname": "공룡", "role": legacy_role},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 422
+    register.assert_not_awaited()
 
 
 def test_malformed_json_uses_common_400_error(auth_environment):
@@ -179,7 +194,7 @@ def test_login_session_logout_and_expiration(auth_environment):
         headers={"X-CSRF-Token": csrf},
     )
     assert login.status_code == 200
-    assert login.json()["user"]["accountType"] == "consumer"
+    assert login.json()["user"]["accountType"] == "user"
     current = client.get("/api/v1/auth/session")
     assert current.json()["authenticated"] is True
     assert current.json()["sessionState"] == "onboarding_pending"
@@ -222,7 +237,10 @@ def test_profile_patch_contract(auth_environment):
     )
     client.cookies.set(settings.session_cookie_name, raw)
     csrf = csrf_token_for_session(raw)
-    assert client.get("/api/v1/users/me").json()["userId"] == user.user_id
+    profile = client.get("/api/v1/users/me")
+    assert profile.status_code == 200
+    assert profile.json()["userId"] == user.user_id
+    assert "birthDate" not in profile.json()
     assert client.patch("/api/v1/users/me", json={}, headers={"X-CSRF-Token": csrf}).status_code == 422
     missing_image = client.patch("/api/v1/users/me", json={"profileImageId": 501}, headers={"X-CSRF-Token": csrf})
     assert missing_image.status_code == 404
@@ -230,16 +248,31 @@ def test_profile_patch_contract(auth_environment):
     patched = client.patch("/api/v1/users/me", json={"nickname": "새 이름"}, headers={"X-CSRF-Token": csrf})
     assert patched.status_code == 200
     assert patched.json()["nickname"] == "새 이름"
-    assert patched.json()["accountType"] == "consumer"
+    assert patched.json()["accountType"] == "user"
+    assert "birthDate" not in patched.json()
     assert patched.headers["cache-control"] == "private, no-store"
+
+
+def test_swagger_omits_birth_date_and_age_confirmation_contracts():
+    schema = app.openapi()
+    onboarding = schema["components"]["schemas"]["OnboardingRequest"]
+    assert set(onboarding["properties"]) == {
+        "nickname", "accountType", "consents", "topicId", "answers",
+    }
+    assert set(onboarding["required"]) == set(onboarding["properties"])
+    assert onboarding["additionalProperties"] is False
+    profile = schema["components"]["schemas"]["ProfileResponse"]
+    assert "birthDate" not in profile["properties"]
+    assert "birthDate" not in profile.get("required", [])
 
 
 def test_v11_nickname_length_is_checked_after_trimming():
     nickname = " " + "가" * 30 + " "
     onboarding = OnboardingRequest.model_validate({
         "nickname": nickname,
-        "birthDate": "2000-01-01",
-        "accountType": "creator",
+        "accountType": "user",
+        "topicId": 1,
+        "answers": {"q1": "world", "q2": "releases"},
         "consents": [{"type": "terms", "policyVersion": "v1", "agreed": True}],
     })
     profile = ProfilePatchRequest.model_validate({"nickname": nickname})

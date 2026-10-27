@@ -2,7 +2,11 @@
 
 Next.js, FastAPI, PostgreSQL, Redis 기반 로컬 V1 테스트 프로젝트입니다. 공개 API의 기본 경로는 `/api/v1`이며 응답 JSON은 camelCase를 사용합니다. 일반 인증은 서버 세션과 HttpOnly 쿠키, 변경 요청은 `X-CSRF-Token`을 사용합니다. `SESSION_BACKEND=redis`이면 세션을 Redis에 저장하며 사용자 데이터는 PostgreSQL에 유지합니다. 로컬 Swagger 테스트용 로그인 우회도 제공합니다.
 
-팀 테스트 서버용 Dockerfile, 독립 Compose 설정, 환경변수 준비와 실행 순서는 [백엔드 배포 안내](deploy/README.md)를 참고하세요. OAuth 연결 전에는 개발용 인증을 끈 상태로 API·PostgreSQL·Redis 연결과 공개 API를 확인합니다.
+2026-10-28 통합 브랜치에는 작품 1~5개 → 작품 기반 장르·소재 1개 이상 → 소비 유형 1개의 온보딩 V2 DB·API와 Pivot 프론트가 구현되어 있습니다. 서비스가 독립적으로 보관하는 캐러셀 DB·조회 API와 내부 적재 경로도 추가했습니다. [캐러셀 DB·API 계약](docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [실작품 30개 카탈로그](docs/ONBOARDING_CATALOG_SOURCES_2026-10-28.md), [프론트 연결 검증](docs/ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md), [온보딩 계약과 적용 절차](docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [PostgreSQL ERD SQL](docs/erd/current_schema.sql), [API 목록](docs/API_V1_1_LOCAL_ALIGNMENT.md)을 참고하세요. 모델은 38개 테이블이며 공개 V1 API는 36개입니다. 캐러셀 프론트 연결과 기존 테스트/Labs 서버 적용은 별도 단계입니다.
+
+**생년월일 수집·저장·연령 확인 정책은 통합 후 결정합니다.** 현재 API의 `birthDate` 미지원 계약과 기존 DB 컬럼 상태를 유지합니다. 새 Pivot 가입 화면은 닉네임만 수집하며 생년월일을 입력·전송하지 않습니다. 새 온보딩 migration은 생년월일 삭제와 독립되어 있습니다. 레거시 Consumer 경로와 생년월일 유틸리티는 이번 연결 범위에 포함하지 않습니다.
+
+팀 테스트 서버용 Dockerfile, 독립 Compose 설정, 환경변수 준비와 실행 순서는 [백엔드 배포 안내](deploy/README.md)를 참고하세요. 카카오·네이버 OAuth 백엔드와 프론트 없이 확인하는 절차는 [OAuth 설정 안내](docs/OAUTH_T02_1_SETUP.md)에 정리했습니다. 기본 예제의 OAuth 설정은 비활성이며, 이미 구성된 환경의 앱 등록·DB 적용·배포 상태는 각 환경 기록을 확인하세요.
 
 ## 준비
 
@@ -29,13 +33,15 @@ docker compose up -d postgres redis
 cd backend
 if (!(Test-Path .venv)) { py -m venv .venv }
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m alembic upgrade f4b8c1d9a620
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
 .\.venv\Scripts\python.exe scripts/run_local_api.py
 ```
 
 Windows에서는 위 실행 스크립트가 PostgreSQL 비동기 연결에 맞는 이벤트 루프를 사용합니다. 자동 재시작은 하지 않으므로 코드 변경 후에는 기존 서버를 종료하고 다시 실행하세요. 이미 `http://localhost:8000/health/db`가 정상 응답하면 서버가 실행 중입니다. 같은 8000번 포트로 중복 실행하면 Windows에서 `WinError 10013` 또는 `10048`이 발생할 수 있습니다.
+
+API의 회원 유형은 `user` 하나입니다. 이 서비스 반영 후보의 Alembic head와 명시적 migration target은 `f4b8c1d9a620` 하나이며 온보딩 V2 `e3a7b9c2d451`의 자식입니다. 생년월일 삭제 `d2f6a9c4e731` 파일은 제외했고, 기존 생년월일 컬럼과 값은 보존합니다. 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 위 revision을 명시합니다. 과거 d2가 이미 적용된 DB는 이 후보에 해당 migration 이력이 없으므로 별도 이력 검토 없이 자동 업그레이드하지 않습니다. 환경별 실제 revision을 먼저 확인하세요. 이 저장소의 설정 변경만으로 DB 적용이나 배포가 이루어지지는 않습니다.
 
 `app.seeds.v1_local`은 정책, 영화 Topic·Subtopic, 로컬 공개 콘텐츠를 멱등적으로 준비합니다. `app.seeds.dev_user`는 로컬 테스트용 데모 사용자를 준비합니다. 기존 영화 Agent와 저장 로직은 별개입니다. 서버 실행 중 [Swagger UI](http://localhost:8000/docs), [OpenAPI JSON](http://localhost:8000/openapi.json), [ReDoc](http://localhost:8000/redoc)을 확인할 수 있습니다.
 
@@ -60,7 +66,7 @@ npm run dev
 
 1. 개발용 회원가입과 로그인. 화면은 첫 변경 요청 전 익명 세션을 조회해 CSRF 토큰을 확보합니다.
 2. 로그인 후 세션 조회, 정책·Topic·Subtopic 조회.
-3. consumer는 실제 조회한 Topic과 Subtopic을 선택하고, 필수 정책에 동의한 뒤 온보딩 제출.
+3. 기존 화면의 `answers:{q1,q2}`는 v1 호환 경로로 유지됩니다. 새 Pivot 가입 화면은 작품 검색 → 작품 기반 장르·소재 선택 → 소비 유형 1개 → `answers.version=2` 완료 요청으로 연결했습니다. 작품·태그 사전이 먼저 필요하며, 생년월일 입력·전송은 정책 결정 전까지 보류합니다.
 4. 내 프로필과 Topic·Subtopic 구독 확인. 필요하면 닉네임 수정 또는 새 Topic 추가.
 5. 활성 Topic의 피드와 콘텐츠 상세 조회. 실제 콘텐츠 ID를 선택합니다.
 6. O/X, 좋아요, 북마크 설정·취소 후 피드와 상세에 상태가 반영되는지 확인.
@@ -85,10 +91,10 @@ npm run typecheck
 npm run build
 ```
 
-마이그레이션의 `downgrade -1` 검증은 데이터 손실 위험이 있으므로 기존 DB에서 실행하지 않습니다. 별도 테스트 DB에서 `upgrade head → downgrade -1 → upgrade head` 순서를 사용합니다.
+온보딩 migration 검증은 분리된 테스트 DB에서 명시적 revision으로 수행합니다. V2 답변이나 선택 데이터가 존재하면 해당 migration의 downgrade가 변경 전에 중단됩니다. 기존 서비스 DB에서 자동 downgrade를 실행하지 않습니다. 실제 PostgreSQL 검증은 `ONBOARDING_TEST_DATABASE_URL`로 별도 로컬 `onboarding_test` DB를 지정한 뒤 `tests/test_onboarding_v2_postgres.py`를 실행합니다.
 
 ## 현재 범위와 이후 연결 지점
 
-이번 로컬 범위는 세션·정책·온보딩·프로필·Topic/Subtopic·구독·피드·콘텐츠 상세·O/X·좋아요·북마크입니다. Redis는 익명·로그인 세션 저장에 적용되었습니다. 조회 캐시와 Celery 작업 큐는 아직 연결하지 않았습니다. 공개 콘텐츠는 DB에서 조회하고, 추천 이유와 노출 여부는 추천·이벤트 로그가 연결되기 전의 기본값입니다. OAuth 공급자 통신과 추천 알고리즘은 이후 구현 범위입니다. 내부 AgentRun은 공개 API가 아니며, 추후 `/chat/*` 서비스가 내부 Agent 실행과 저장 결과를 연결합니다.
+현재 로컬 구현 범위는 세션·OAuth·정책·온보딩·프로필·Topic/Subtopic·구독·피드·콘텐츠 상세·O/X·좋아요·북마크·저장 목록·AI 대화·운영공지입니다. Redis는 익명·로그인 세션 저장에 적용되었으며 조회 캐시와 Celery 작업 큐는 아직 연결하지 않았습니다. 공개 콘텐츠는 DB에서 조회하고, 추천 이유와 노출 여부는 추천·이벤트 로그가 연결되기 전의 기본값입니다. AI 대화는 LLM 설정과 현재 분야의 공개 콘텐츠 근거가 필요하며 내부 AgentRun 조회와 구분합니다. 2026-10-28 통합 작업 공간에서는 실제 Kakao 로그인·V2 온보딩·피드·상세·북마크·로그아웃과 재접근 차단을 확인했습니다. Naver는 로그인 폼 도달까지만 확인했으며 자세한 결과와 후보 재검증 상태는 [서비스 흐름 검증](docs/SERVICE_FLOW_E2E_2026-10-28.md)을 따릅니다. 과거 원격 결과는 [OAuth 안내](docs/OAUTH_T02_1_SETUP.md)와 [Labs 배포 기록](docs/BACKEND_LABS_ENVIRONMENT_2026-10-27.md)에 보존합니다. 이번 후보 준비에서 원격 push·배포는 하지 않았습니다.
 
 오류는 `{ "code": "...", "message": "..." }` 형식입니다. 주요 상태 코드는 조회 200, 생성 201, 성공한 삭제·로그아웃 204, 인증 없음 401, CSRF 또는 온보딩 필요 403, 미존재 404, 중복·상태 충돌 409, 입력·cursor 오류 422입니다.

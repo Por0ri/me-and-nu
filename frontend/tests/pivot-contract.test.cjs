@@ -1,0 +1,285 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const test = require('node:test');
+const assert = require('node:assert/strict');
+// Promoted from the original 23 temporary Slice A contract checks.
+const root = require('node:path').resolve(__dirname, '..');
+const ts = require(root + '/node_modules/typescript');
+function load(relative, dependencies = {}, extras = {}) {
+  const mod = { exports: {} };
+  const code = ts.transpileModule(fs.readFileSync(root + relative, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  vm.runInNewContext(code, {
+    module: mod, exports: mod.exports, URL, process: { env: {} },
+    require(name) {
+      if (!(name in dependencies)) throw new Error('Unexpected import: ' + name);
+      return dependencies[name];
+    }, ...extras,
+  }, { filename: relative });
+  return mod.exports;
+}
+const plain = value => JSON.parse(JSON.stringify(value));
+const c = load('/lib/pivot/consent.ts');
+const required = { type: 'new_required_policy', policyVersion: '2026-10-v3', required: true, text: 'Dynamic required policy' };
+const optional = { type: 'marketing', policyVersion: 'v2', required: false, text: 'Optional policy' };
+const policies = [required, optional];
+test('Unknown dynamic policy keeps server ID, requirement and version', () => {
+  assert.deepEqual(plain(c.validatePolicies(policies)), policies);
+  assert.equal(c.policyLabel(required), required.type);
+});
+test('Required consent blocks draft until selected', () => {
+  assert.equal(c.consentSummary(policies, {}).canContinue, false);
+  assert.throws(() => c.createConsentDraft(policies, {}), /필수/);
+});
+test('Optional refusal is valid and is included in draft', () => {
+  const selection = { [c.policyKey(required)]: true };
+  assert.deepEqual(plain(c.createConsentDraft(policies, selection)), { consents: [
+    { type: required.type, policyVersion: required.policyVersion, agreed: true },
+    { type: optional.type, policyVersion: optional.policyVersion, agreed: false },
+  ] });
+  assert.equal(c.consentSummary(policies, selection).all, false);
+  assert.equal(c.consentSummary(policies, selection).partial, true);
+});
+test('Version changes revoke old consent', () => {
+  const old = c.selectAll(policies, true);
+  const revised = [{ ...required, policyVersion: '2026-10-v4' }, optional];
+  const next = c.reconcileSelection(revised, old);
+  assert.equal(c.consentSummary(revised, next).canContinue, false);
+  assert.equal(next[c.policyKey(optional)], true);
+  assert.equal(Object.hasOwn(next, c.policyKey(required)), false);
+});
+test('New required policy blocks and removed policies disappear', () => {
+  const added = { ...required, type: 'additional_required' };
+  const next = c.reconcileSelection([optional, added], c.selectAll(policies, true));
+  assert.equal(c.consentSummary([optional, added], next).canContinue, false);
+  assert.equal(Object.hasOwn(next, c.policyKey(required)), false);
+});
+test('Select all and clear all produce correct CTA state', () => {
+  assert.equal(c.consentSummary(policies, c.selectAll(policies, true)).all, true);
+  assert.equal(c.consentSummary(policies, c.selectAll(policies, false)).canContinue, false);
+});
+for (const [name, input] of [
+  ['empty response', []], ['missing response', null],
+  ['duplicate policy type', [required, { ...required, policyVersion: 'other' }]],
+  ['missing policy version', [{ ...required, policyVersion: '' }]],
+  ['non-boolean required flag', [{ ...required, required: 'true' }]],
+  ['missing policy text', [{ ...required, text: '' }]],
+]) test('Fail closed: ' + name, () => assert.throws(() => c.validatePolicies(input)));
+
+let reads = 0;
+const s = load('/lib/pivot/services.ts', {
+  '@/lib/api': { apiBaseUrl: 'http://localhost:8000', getSession() { reads++; }, getPolicies() { reads++; } },
+  './consent': c,
+}, { window: { location: { hostname: 'localhost', origin: 'http://localhost:3000' } } });
+test('Explicit local opt-in accepts the same loopback hostname only', () => {
+  assert.equal(s.isLocalApiAllowed(true, 'localhost', 'http://localhost:8000'), true);
+  assert.equal(s.isLocalApiAllowed(true, 'localhost', 'http://127.0.0.1:8000'), false);
+  assert.equal(s.isLocalApiAllowed(true, '[::1]', 'http://[::1]:8000'), true);
+});
+for (const [name, enabled, browserHost, baseUrl] of [
+  ['disabled flag', false, 'localhost', 'http://localhost:8000'],
+  ['remote browser', true, 'menu.example', 'http://localhost:8000'],
+  ['remote backend', true, 'localhost', 'https://api.example.test'],
+  ['lookalike host', true, 'localhost', 'http://localhost.example.test'],
+  ['embedded credentials', true, 'localhost', 'http://user:secret@localhost:8000'],
+  ['file scheme', true, 'localhost', 'file:///localhost'],
+  ['invalid URL', true, 'localhost', 'invalid'],
+]) test('API guard rejects ' + name, () => assert.equal(s.isLocalApiAllowed(enabled, browserHost, baseUrl), false));
+const session = { authenticated: true, sessionState: 'onboarding_pending', onboardingCompleted: false, user: null };
+test('A pending account without public user details passes the onboarding gate', () => {
+  assert.equal(s.isPendingConsumer(session), true);
+  for (const invalid of [null, { ...session, authenticated: false }, { ...session, onboardingCompleted: true },
+    { ...session, sessionState: 'active' }, { ...session, user: { id: 12, accountType: 'business' } },
+    { ...session, user: { id: 0, accountType: 'consumer' } }]) {
+    assert.equal(s.isPendingConsumer(invalid), false);
+  }
+});
+test('Disabled configuration never calls session/policy API', async () => {
+  await assert.rejects(s.restorePivotSession(), /아직 연결/);
+  await assert.rejects(s.loadPivotPolicies(), /아직 연결/);
+  assert.equal(reads, 0);
+});
+test('Disabled origins cannot start either SNS provider', async () => {
+  await assert.rejects(s.startSnsLogin('kakao'), /아직 연결/);
+  await assert.rejects(s.startSnsLogin('naver'), /아직 연결/);
+  assert.equal(reads, 0);
+});
+
+for (const [name, input] of [
+  ['non-array object', {}], ['null item', [null]], ['missing fields', [{}]],
+  ['blank policy type', [{ ...required, type: '   ' }]],
+  ['blank version', [{ ...required, policyVersion: '   ' }]],
+  ['blank text', [{ ...required, text: '   ' }]],
+  ['oversized policy type', [{ ...required, type: 'x'.repeat(51) }]],
+  ['oversized version', [{ ...required, policyVersion: 'x'.repeat(51) }]],
+  ['non-string text', [{ ...required, text: 1 }]],
+]) test('Additional malformed policy: ' + name, () => assert.throws(() => c.validatePolicies(input)));
+
+test('Policy validation returns independent item copies', () => {
+  const validated = c.validatePolicies(policies);
+  assert.notEqual(validated[0], required);
+  validated[0].text = 'Changed copy';
+  assert.equal(required.text, 'Dynamic required policy');
+});
+test('Policy keys distinguish delimiter characters', () => {
+  assert.notEqual(c.policyKey({type:'a:b',policyVersion:'c'}), c.policyKey({type:'a',policyVersion:'b:c'}));
+});
+test('Truthy non-boolean consent is rejected and unknown choices are omitted', () => {
+  assert.equal(c.consentSummary(policies, { [c.policyKey(required)]: 'true' }).canContinue, false);
+  const selected = { ...c.selectAll(policies, true), unknown: true };
+  assert.equal(c.createConsentDraft(policies, selected).consents.length, 2);
+});
+test('An empty policy list never enables progression', () => {
+  assert.deepEqual(plain(c.consentSummary([], {})), { all:false, partial:false, canContinue:false });
+});
+for (const [name, browserHost, baseUrl] of [
+  ['loopback HTTPS', 'localhost', 'https://localhost:8000'],
+  ['IPv4 browser', '127.0.0.1', 'http://127.0.0.1:8000'],
+  ['IPv6 browser and backend', '[::1]', 'http://[::1]:8000'],
+]) test('API guard allows ' + name + ' with opt-in', () => assert.equal(s.isLocalApiAllowed(true, browserHost, baseUrl), true));
+for (const [name, browserHost, baseUrl] of [
+  ['browser host suffix', 'localhost.example.test', 'http://localhost:8000'],
+  ['FTP loopback', 'localhost', 'ftp://localhost:8000'],
+  ['relative URL', 'localhost', '/api'],
+]) test('API guard rejects ' + name, () => assert.equal(s.isLocalApiAllowed(true, browserHost, baseUrl), false));
+
+test('Only an exact public true flag enables API reads', async () => {
+  for (const flag of [undefined, 'false', 'TRUE', '1', ' true ']) {
+    let calls = 0;
+    const guarded = load('/lib/pivot/services.ts', {
+      '@/lib/api': { apiBaseUrl:'http://localhost:8000', getSession(){ calls++; }, getPolicies(){ calls++; } }, './consent': c,
+    }, { window:{location:{hostname:'localhost',origin:'http://localhost:3000'}}, process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:flag}} });
+    await assert.rejects(guarded.restorePivotSession());
+    await assert.rejects(guarded.loadPivotPolicies());
+    assert.equal(calls, 0);
+  }
+});
+test('A missing browser window fails closed without API reads', async () => {
+  let calls = 0;
+  const server = load('/lib/pivot/services.ts', {
+    '@/lib/api': {apiBaseUrl:'http://localhost:8000',getSession(){calls++;},getPolicies(){calls++;}}, './consent': c,
+  }, {process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:'true'}}});
+  assert.equal(server.canUsePivotApi(), false);
+  await assert.rejects(server.restorePivotSession());
+  assert.equal(calls, 0);
+});
+test('Allowed service reads return the session and validate dynamic policy data', async () => {
+  const calls = [];
+  let response = {consentItems:policies};
+  const connected = load('/lib/pivot/services.ts', {
+    '@/lib/api': {apiBaseUrl:'http://localhost:8000',async getSession(){calls.push('session');return session;},async getPolicies(){calls.push('policies');return response;}}, './consent': c,
+  }, {window:{location:{hostname:'localhost',origin:'http://localhost:3000'}},process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:'true'}}});
+  assert.equal(await connected.restorePivotSession(), session);
+  assert.deepEqual(plain(await connected.loadPivotPolicies()), policies);
+  response = {consentItems:[]};
+  await assert.rejects(connected.loadPivotPolicies(), /약관 목록/);
+  assert.deepEqual(calls, ['session','policies','policies']);
+});
+test('The old pending user DTO cannot be mistaken for the current onboarding contract', () => {
+  for (const id of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, '12', NaN, undefined]) {
+    assert.equal(s.isPendingConsumer({...session,user:{id,accountType:'consumer'}}), false);
+  }
+  assert.equal(s.isPendingConsumer({...session,user:null}), true);
+});
+
+const remotePairs = [
+  ['https://test.me-nu.kr', 'https://api.test.me-nu.kr'],
+  ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr'],
+];
+test('Remote API access keeps the staging and backend-labs environments paired', () => {
+  for (const [frontend, api] of remotePairs) {
+    assert.equal(s.isPivotApiAllowed(false, frontend, api), true);
+  }
+  for (const [frontend, api] of [
+    ['https://labs.me-nu.kr', 'https://api.test.me-nu.kr'],
+    ['https://test.me-nu.kr', 'https://api.labs.me-nu.kr'],
+    ['https://preview.vercel.app', 'https://api.test.me-nu.kr'],
+    ['https://preview.vercel.app', 'https://api.labs.me-nu.kr'],
+    ['https://me-nu.kr', 'https://api.test.me-nu.kr'],
+    ['https://me-nu.kr', 'https://api.labs.me-nu.kr'],
+    ['https://test.me-nu.kr.example.com', 'https://api.test.me-nu.kr'],
+    ['https://labs.me-nu.kr.example.com', 'https://api.labs.me-nu.kr'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr.example.com'],
+    ['https://test.me-nu.kr', 'https://api.test.me-nu.kr:444'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr:444'],
+    ['https://test.me-nu.kr', 'https://api.test.me-nu.kr/path'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr/path'],
+    ['https://test.me-nu.kr', 'https://api.test.me-nu.kr?proxy=other'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr?proxy=other'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr#fragment'],
+    ['https://labs.me-nu.kr', 'https://user:password@api.labs.me-nu.kr'],
+    ['http://test.me-nu.kr', 'https://api.test.me-nu.kr'],
+    ['http://labs.me-nu.kr', 'https://api.labs.me-nu.kr'],
+    ['http://localhost:3000', 'http://127.0.0.1:8000'],
+    ['http://localhost:3000', 'https://localhost:8000'],
+  ]) assert.equal(s.isPivotApiAllowed(true, frontend, api), false, `${frontend} -> ${api}`);
+  assert.equal(s.isPivotApiAllowed(true, 'http://localhost:3000', 'http://localhost:8000'), true);
+  assert.equal(s.isPivotApiAllowed(false, 'http://localhost:3000', 'http://localhost:8000'), false);
+});
+
+test('Session routes use current user accounts without manufacturing onboarding completion', () => {
+  const active = {authenticated:true, sessionState:'active', onboardingCompleted:true, user:{id:7, accountType:'user'}};
+  assert.equal(s.isActiveSession(active), true);
+  assert.equal(s.resolvePivotSessionRoute(active, '/pivot/login'), '/pivot/home');
+  assert.equal(s.resolvePivotSessionRoute(active, '/pivot/consent'), '/pivot/home');
+  assert.equal(s.resolvePivotSessionRoute(active, '/pivot/home'), null);
+  assert.equal(s.resolvePivotSessionRoute(session, '/pivot/home'), '/pivot/consent');
+  assert.equal(s.resolvePivotSessionRoute(session, '/pivot/consent'), null);
+  assert.equal(s.resolvePivotSessionRoute(null, '/pivot/home'), '/pivot/login');
+  for (const invalid of [session, {...active, user:null}, {...active, onboardingCompleted:false},
+    {...active, user:{id:7,accountType:'consumer'}}, {...active, user:{id:0,accountType:'user'}}]) {
+    assert.equal(s.isActiveSession(invalid), false);
+  }
+});
+
+function providerUrl(provider, base = 'https://api.test.me-nu.kr') {
+  const url = new URL(provider === 'kakao' ? 'https://kauth.kakao.com/oauth/authorize' : 'https://nid.naver.com/oauth2.0/authorize');
+  url.search = new URLSearchParams({response_type:'code', client_id:'fixture-client', state:'fixture-state', redirect_uri:`${base}/api/v1/auth/login/${provider}/callback`}).toString();
+  return url.href;
+}
+for (const [frontend, api] of remotePairs) for (const provider of ['kakao', 'naver']) test(`${provider} OAuth on ${frontend} uses its paired API callback`, async () => {
+  const calls = [];
+  const authorizationUrl = providerUrl(provider, api);
+  const connected = load('/lib/pivot/services.ts', {
+    '@/lib/api': {
+      apiBaseUrl:api,
+      async getSession() { calls.push('session'); return {csrfToken:'new-current-token'}; },
+      async apiRequest(path, options) { calls.push({path, options}); return {authorizationUrl}; },
+    }, './consent': c,
+  }, {window:{location:{origin:frontend, assign(url){calls.push({navigate:url});}}}});
+  await connected.startSnsLogin(provider);
+  assert.deepEqual(plain(calls), ['session', {path:`/api/v1/auth/login/${provider}`, options:{method:'POST',body:'{"purpose":"signin"}'}}, {navigate:authorizationUrl}]);
+});
+
+test('OAuth does not navigate if session lookup or login POST fails', async () => {
+  for (const failure of ['session', 'post']) {
+    const calls = [];
+    const connected = load('/lib/pivot/services.ts', {
+      '@/lib/api': {apiBaseUrl:'https://api.test.me-nu.kr',
+        async getSession() {calls.push('session'); if(failure==='session') throw Error('unavailable');},
+        async apiRequest() {calls.push('post'); throw Error('unavailable');}}, './consent':c,
+    }, {window:{location:{origin:'https://test.me-nu.kr',assign(){calls.push('navigate');}}}});
+    await assert.rejects(connected.startSnsLogin('kakao'), /unavailable/);
+    assert.deepEqual(calls, failure === 'session' ? ['session'] : ['session','post']);
+  }
+});
+
+test('OAuth navigation rejects arbitrary hosts, wrong callback and unexpected schemes', () => {
+  for (const bad of [null, 'javascript:alert(1)', providerUrl('naver'),
+    providerUrl('kakao').replace('kauth.kakao.com', 'kauth.kakao.com.evil.test'),
+    providerUrl('kakao', 'https://other.example'),
+    providerUrl('kakao').replace('https:', 'http:')]) {
+    assert.throws(() => s.validateAuthorizationUrl(bad, 'kakao', 'https://api.test.me-nu.kr'));
+  }
+  assert.match(s.oauthErrorMessage('AUTH_CANCELLED'), /취소/);
+  assert.equal(s.oauthErrorMessage(null), '');
+  assert.doesNotMatch(s.oauthErrorMessage('<script>untrusted</script>'), /script|untrusted/);
+});
+
+test('OAuth callbacks cannot cross between staging and backend-labs', () => {
+  for (const provider of ['kakao', 'naver']) {
+    assert.throws(() => s.validateAuthorizationUrl(providerUrl(provider, 'https://api.test.me-nu.kr'), provider, 'https://api.labs.me-nu.kr'));
+    assert.throws(() => s.validateAuthorizationUrl(providerUrl(provider, 'https://api.labs.me-nu.kr'), provider, 'https://api.test.me-nu.kr'));
+  }
+});

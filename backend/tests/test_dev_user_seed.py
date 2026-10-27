@@ -82,7 +82,7 @@ async def test_dev_user_seed_creates_reserved_identity_and_is_idempotent(monkeyp
     assert user.provider_user_id == dev_user.DEV_USER_PROVIDER_ID
     assert user.hashed_password is None
     assert user.account_status == "active"
-    assert user.signup_channel == "consumer"
+    assert user.account_type == "user"
     assert user.onboarding_completed_at is not None
     tap = next(item for item in db.added if isinstance(item, Tap))
     tap_topic = next(item for item in db.added if isinstance(item, TapTopic))
@@ -120,7 +120,6 @@ async def test_dev_user_seed_rejects_email_collision_without_mutation(monkeypatc
         auth_provider="local",
         hashed_password="existing-hash",
         nickname="기존 사용자",
-        signup_channel="consumer",
         account_status="active",
     )
     db = FakeAsyncSession([topic, subtopic, existing])

@@ -32,7 +32,7 @@ def test_unknown_origin_is_not_allowed():
 
 def test_unsupported_content_type_keeps_cors_error_visible():
     response = client.post(
-        "/api/v1/onboarding",
+        "/api/v1/onboarding/complete",
         content="{}",
         headers={"Origin": "http://localhost:3000", "Content-Type": "text/plain"},
     )

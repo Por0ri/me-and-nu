@@ -3,7 +3,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi.testclient import TestClient
 
+from app.api.deps import require_onboarding
+from app.db.session import get_db
+from app.main import create_app
 from app.services import feed_service
 
 
@@ -29,6 +33,7 @@ def _content(*, production_type: str, source_draft_id: int | None):
 @pytest.fixture(autouse=True)
 def _stub_subtopic_names(monkeypatch):
     monkeypatch.setattr(feed_service.content_repo, "list_content_subtopic_names", AsyncMock(return_value=["액션"]))
+    monkeypatch.setattr(feed_service.content_repo, "list_content_sources", AsyncMock(return_value=[]))
 
 
 def _mock_detail_dependencies(monkeypatch, content):
@@ -39,17 +44,40 @@ def _mock_detail_dependencies(monkeypatch, content):
     monkeypatch.setattr(feed_service.content_repo, "list_content_subtopic_ids", AsyncMock(return_value=[12]))
 
 
-@pytest.mark.asyncio
-async def test_published_original_ai_content_exposes_full_body(monkeypatch):
-    _mock_detail_dependencies(monkeypatch, _content(production_type="ai", source_draft_id=88))
+@pytest.mark.parametrize("creator_channel_id", [None, 91])
+def test_published_original_ai_detail_exposes_full_body_without_channel(monkeypatch, creator_channel_id):
+    content = _content(production_type="ai", source_draft_id=88)
+    content.creator_channel_id = creator_channel_id
+    _mock_detail_dependencies(monkeypatch, content)
+    monkeypatch.setattr(
+        feed_service,
+        "_state",
+        AsyncMock(return_value=(SimpleNamespace(is_liked=True, ox_feedback="O"), SimpleNamespace(saved_item_id=5))),
+    )
+    app = create_app(enable_dev_api=False)
 
-    detail = await feed_service.get_content_detail(object(), user_id=1, topic_id=1, content_id=301)
+    async def override_db():
+        yield object()
 
-    response = detail.model_dump(by_alias=True)
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[require_onboarding] = lambda: SimpleNamespace(user_id=1)
+    with TestClient(app) as client:
+        result = client.get("/api/v1/contents/301?topicId=1")
+
+    assert result.status_code == 200
+    response = result.json()
+    assert "channel" not in response
+    assert response["contentId"] == 301
+    assert response["topicId"] == 1
+    assert response["title"] == content.title
     assert response["productionType"] == "ai"
     assert response["displayMode"] == "full_body"
     assert response["body"] == "첫 문단\n<script>alert('plain text')</script>"
     assert response["excerpt"] == "영화 글의 요약"
+    assert response["sourceUrl"] == "https://example.com/source"
+    assert response["publisher"] == "출처"
+    assert response["share"]["url"] == "https://example.com/source"
+    assert response["myReaction"] == {"liked": True, "preference": "positive", "bookmarked": True}
 
 
 @pytest.mark.asyncio

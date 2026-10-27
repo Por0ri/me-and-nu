@@ -10,7 +10,7 @@ from app.schemas.common import CamelModel
 
 class NotificationItem(CamelModel):
     notification_id: int
-    type: str
+    type: Literal["system_notice"]
     title: str
     body: str
     topic_id: int | None = None
@@ -23,8 +23,8 @@ class NotificationItem(CamelModel):
 
 class NotificationsResponse(CamelModel):
     model_config = ConfigDict(json_schema_extra={"example": {"items": [{
-        "notificationId": 701, "type": "topic_new_post", "title": "영화 분야 새 글",
-        "body": "전장의 중심에 선 한 사람", "topicId": 1, "contentId": 37, "imageUrl": None,
+        "notificationId": 701, "type": "system_notice", "title": "서비스 운영 공지",
+        "body": "me;nu 서비스 운영에 관한 안내입니다.", "topicId": None, "contentId": None, "imageUrl": None,
         "isRead": False, "readAt": None, "createdAt": "2026-09-28T09:00:00Z",
     }], "nextCursor": None}})
     items: list[NotificationItem]

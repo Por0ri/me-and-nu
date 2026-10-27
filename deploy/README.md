@@ -1,6 +1,6 @@
 # 팀 테스트용 백엔드 배포
 
-FastAPI, PostgreSQL 17 + pgvector, Redis를 한 서버에서 실행하는 준비 구성입니다. OAuth는 포함하지 않으므로 현재는 공개 API와 상태 확인까지만 사용할 수 있습니다. 프런트엔드 로그인·온보딩·인증이 필요한 기능의 통합 테스트는 OAuth 연결 후 진행합니다.
+FastAPI, PostgreSQL 17 + pgvector, Redis를 한 서버에서 실행하는 준비 구성입니다. OAuth는 기본 비활성이며, 앱 키·마이그레이션 준비 후 [OAuth 설정과 백엔드 단독 검증](../docs/OAUTH_T02_1_SETUP.md)에 따라 활성화할 수 있습니다. 프런트엔드의 새 화면 연결은 후속 작업입니다.
 
 Lightsail 초기 구성, 이미지 저장소 분리, 서버 증설 조건과 이전 절차는 [아키텍처와 증설 계획](ARCHITECTURE.md)을 참고하세요.
 
@@ -54,7 +54,7 @@ docker compose --env-file deploy/.env -f compose.deploy.yaml build
 docker compose --env-file deploy/.env -f compose.deploy.yaml up -d --wait --wait-timeout 180
 ```
 
-PostgreSQL이 준비되면 `migrate`가 `python -m alembic upgrade head`를 한 번 실행합니다. 마이그레이션이 성공하고 PostgreSQL·Redis가 정상인 경우 API가 시작됩니다. `migrate`가 종료 코드 0으로 멈춰 있는 것은 정상입니다. 마이그레이션 실패 시 로그를 확인하고 원인을 해결한 뒤 재실행합니다.
+PostgreSQL이 준비되면 `migrate`가 `python -m alembic upgrade f4b8c1d9a620`를 실행합니다. 온보딩 V2 e3와 서비스 캐러셀을 포함하는 이 후보의 유일한 head이며, 생년월일 삭제 d2 파일은 제외했습니다. 대상 고정을 위해 `upgrade head/heads`로 변경하지 않습니다. 대상 DB의 기존 revision을 확인하고 검증한 이미지로 적용합니다. 과거 d2가 이미 적용된 DB는 별도 migration 이력 검토가 필요하며 이 후보만으로 자동 업그레이드하지 않습니다. 마이그레이션이 성공하고 PostgreSQL·Redis가 정상인 경우 API가 시작됩니다. `migrate`가 종료 코드 0으로 멈춰 있는 것은 정상입니다. 마이그레이션 실패 시 로그를 확인하고 원인을 해결한 뒤 재실행합니다. 이 설정 변경만으로 서버 배포나 DB 적용이 이루어지지는 않습니다.
 
 이미지는 백엔드 코드와 마이그레이션을 포함합니다. Agent 실행 코드, Git 이력·적재 도구, 프런트엔드는 포함하지 않습니다. `agent_contents`, `agent_interests`, `content_images`, 영화 Agent 실행 명령은 이 이미지의 지원 범위가 아닙니다.
 

@@ -33,7 +33,6 @@ export default function AuthIntegrationTest() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nickname, setNickname] = useState("");
-  const [role, setRole] = useState<"consumer" | "creator">("consumer");
   const [birthDate, setBirthDate] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [policies, setPolicies] = useState<Policy[]>([]);
@@ -111,25 +110,18 @@ export default function AuthIntegrationTest() {
         agreed: Boolean(consents[policy.type]),
       })),
     };
-    let input: OnboardingInput;
-    if (role === "consumer") {
-      if (topicId === null || selectedSubtopicIds.length === 0) {
-        setResult({ title: "온보딩", error: "Topic과 Subtopic을 하나 이상 선택해 주세요." });
-        return;
-      }
-      input = { ...common, accountType: "consumer", topicId, subtopicIds: selectedSubtopicIds };
-    } else {
-      input = { ...common, accountType: "creator" };
+    if (topicId === null || selectedSubtopicIds.length === 0) {
+      setResult({ title: "온보딩", error: "Topic과 Subtopic을 하나 이상 선택해 주세요." });
+      return;
     }
+    const input: OnboardingInput = { ...common, accountType: "user", topicId, subtopicIds: selectedSubtopicIds };
     void run("온보딩", async () => {
       const response = await onboard(input);
       setSession(await getSession());
       setProfile(await getProfile());
       setMyTopics(await getMyTopics());
-      if (role === "consumer" && topicId !== null) {
-        const own = await getMySubtopics(topicId);
-        setMySubtopicIds(own.items.map((item) => item.subtopicId));
-      }
+      const own = await getMySubtopics(topicId);
+      setMySubtopicIds(own.items.map((item) => item.subtopicId));
       return response;
     });
   }
@@ -207,18 +199,13 @@ export default function AuthIntegrationTest() {
             <label className="text-xs text-slate-300">비밀번호<input className={field} type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
             <label className="text-xs text-slate-300">닉네임<input className={field} value={nickname} onChange={(event) => setNickname(event.target.value)} /></label>
             <label className="text-xs text-slate-300">계정 유형
-              <select className={field} value={role} onChange={(event) => setRole(event.target.value as "consumer" | "creator")}>
-                <option value="consumer">consumer</option><option value="creator">creator</option>
-              </select>
+              <input className={field} value="user (일반 회원)" readOnly />
             </label>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button className={button} disabled={disabled} onClick={() => void run("회원가입", () => register({ email, password, nickname, role }))}>회원가입</button>
+            <button className={button} disabled={disabled} onClick={() => void run("회원가입", () => register({ email, password, nickname, role: "user" }))}>회원가입</button>
             <button className={button} disabled={disabled} onClick={() => void run("로그인", async () => {
               const response = await login({ email, password });
-              if (response.user.accountType === "consumer" || response.user.accountType === "creator") {
-                setRole(response.user.accountType);
-              }
               setSession(await getSession());
               return response;
             })}>로그인</button>
@@ -258,7 +245,7 @@ export default function AuthIntegrationTest() {
             ))}
           </div>
           <div className="mt-3">
-            <p className="text-xs text-slate-400">Subtopic 선택 (consumer 온보딩에는 1개 이상)</p>
+            <p className="text-xs text-slate-400">Subtopic 선택 (온보딩 API에는 1개 이상)</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {subtopics.map((subtopic) => (
                 <label key={subtopic.subtopicId} className="rounded-lg border border-white/10 px-2 py-1 text-sm">

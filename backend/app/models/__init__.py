@@ -20,7 +20,13 @@ from app.models.chat import (
     UserOperation,
 )
 from app.models.content import Content, ContentSource, Draft
+from app.models.content_slide import ContentSlide
 from app.models.notification import Notification
+from app.models.oauth_attempt import OAuthAttempt
+from app.models.onboarding_answers import OnboardingAnswersRecord
+from app.models.onboarding_catalog import (
+    Entity, EntityExternalId, PreferenceTag, EntityTag, TapEntity, TapPreferenceTag,
+)
 from app.models.user import UserAccount
 from app.models.v1 import (
     AuthSession,
@@ -47,12 +53,21 @@ __all__ = [
     "Content",
     "ContentReaction",
     "ContentSource",
+    "ContentSlide",
     "ContentTag",
     "CreatorChannel",
     "Draft",
     "JudgmentLog",
     "LongTermMemory",
     "NotificationSetting",
+    "OAuthAttempt",
+    "OnboardingAnswersRecord",
+    "Entity",
+    "EntityExternalId",
+    "PreferenceTag",
+    "EntityTag",
+    "TapEntity",
+    "TapPreferenceTag",
     "Policy",
     "SavedItem",
     "SourceSite",

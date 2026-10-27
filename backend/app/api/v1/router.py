@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.auth.router import router as auth_router
+from app.api.v1.auth.oauth import router as oauth_router
 from app.api.v1.chat.router import router as chat_router
 from app.api.v1.contents.router import router as contents_router
 from app.api.v1.me.topics import router as my_topics_router
@@ -17,6 +18,7 @@ from app.api.v1.users.me.router import router as profile_router
 
 router = APIRouter()
 router.include_router(auth_router)
+router.include_router(oauth_router)
 router.include_router(onboarding_router)
 router.include_router(policies_router)
 router.include_router(topics_router)

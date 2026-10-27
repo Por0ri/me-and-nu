@@ -66,7 +66,6 @@ async def get_dev_auth_context(db: AsyncSession) -> AuthContext:
         or user.auth_provider != DEV_USER_AUTH_PROVIDER
         or user.provider_user_id != DEV_USER_PROVIDER_ID
         or user.hashed_password is not None
-        or user.signup_channel != "consumer"
         or user.account_status != "active"
         or user.onboarding_completed_at is None
     ):

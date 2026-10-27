@@ -1,0 +1,67 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "page": "범수님",
+  "nodeId": "1569:8811",
+  "emptyNodeId": "1363:9389",
+  "verifiedAt": "2026-10-23",
+  "section": "165:3390",
+  "layout": {
+    "viewportWidth": 375,
+    "columns": 2,
+    "panelWidth": 327,
+    "panelRadius": 8,
+    "cardWidth": 148,
+    "cardHeight": 184.661,
+    "columnGap": 8,
+    "rowGap": 12,
+    "radius": 3.621,
+    "sideInset": 24
+  },
+  "emptyLayout": {
+    "panelWidth": 327,
+    "topPadding": 36,
+    "gap": 16,
+    "buttonWidth": 222,
+    "buttonHeight": 35.303,
+    "mascotClipWidth": 146.25,
+    "mascotClipHeight": 78.116
+  },
+  "contentLimitation": "The Figma raw card image is identical to slide-1.png and already contains editorial text and a gradient. Do not duplicate its text with HTML. Text-free originals and per-content description data are unavailable; keep the canonical three Demo cards and the existing SavedCard model.",
+  "assets": [
+    {
+      "path": "/pivot/home/slide-1.png",
+      "source": "1569:8855 (raw image SHA-256 matched)",
+      "width": 297,
+      "height": 371,
+      "sha256": "6703fc4f2d1780bd35b68d118d4112510ac3b193c78a6a0a1a5b740769c99700"
+    },
+    {
+      "path": "/pivot/home/slide-5.png",
+      "source": "canonical-demo-reading",
+      "width": 297,
+      "height": 371,
+      "sha256": "dcfc2b11c203f5a94fa580364854bdfbb44546c9a12b8e023411055929af301e"
+    },
+    {
+      "path": "/pivot/home/chrome/logo.svg",
+      "source": "1569:8831",
+      "width": 103,
+      "height": 20.5862,
+      "sha256": "ad1b65d00f4d2ffc9aae292bd0cc97566d6ebc830266472664a32b3c8c1de3d4"
+    },
+    {
+      "path": "/pivot/home/chrome/mascot.png",
+      "source": "1363:9401",
+      "width": 1448,
+      "height": 1086,
+      "sha256": "ce71b1804e9afc4a2f24be9905aaf4e7716bf5f15297169a1f1359b4e759c807"
+    },
+    {
+      "path": "/pivot/home/chrome/notification.svg",
+      "source": "594:1659",
+      "width": 24,
+      "height": 24,
+      "sha256": "71468b9cb5180821c7c6457f7a69fa2ae914ab93c682a9cad6c0d0cf14e3766e"
+    }
+  ]
+}

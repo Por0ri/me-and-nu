@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.redis import get_redis
 from app.db.session import get_db
 from app.main import create_app
-from app.models import AuthSession, UserAccount
+from app.models import AuthSession, OnboardingAnswersRecord, Tap, TapTopic, UserAccount
 from app.services import onboarding_service
 
 
@@ -54,7 +54,6 @@ def redis_auth_environment(monkeypatch):
         user_id=23,
         email="local@example.com",
         nickname="공룡",
-        signup_channel="consumer",
         auth_provider="local",
         account_status="active",
     )
@@ -271,6 +270,18 @@ def prepare_onboarding(environment, monkeypatch):
     monkeypatch.setattr(onboarding_service, "lock_user", AsyncMock(return_value=environment.user))
     monkeypatch.setattr(
         onboarding_service,
+        "find_active_topic",
+        AsyncMock(return_value=SimpleNamespace(topic_id=1, topic_code="movie", topic_name="영화")),
+    )
+
+    async def assign_tap_id():
+        for call in environment.database.add.call_args_list:
+            if isinstance(call.args[0], Tap):
+                call.args[0].tap_id = 101
+
+    environment.database.flush.side_effect = assign_tap_id
+    monkeypatch.setattr(
+        onboarding_service,
         "get_current_policies",
         AsyncMock(return_value={"terms": SimpleNamespace(policy_version="v1", is_required=True)}),
     )
@@ -278,14 +289,16 @@ def prepare_onboarding(environment, monkeypatch):
     return current.json()["csrfToken"], pending_token
 
 
-def onboarding_request(environment, csrf):
+def onboarding_request(environment, csrf, **changes):
     return environment.client.post(
-        "/api/v1/onboarding",
+        "/api/v1/onboarding/complete",
         json={
             "nickname": "새 이름",
-            "birthDate": "2000-01-01",
-            "accountType": "creator",
+            "accountType": "user",
+            "topicId": 1,
+            "answers": {"q1": "world", "q2": "releases"},
             "consents": [{"type": "terms", "policyVersion": "v1", "agreed": True}],
+            **changes,
         },
         headers={"X-CSRF-Token": csrf},
     )
@@ -297,12 +310,21 @@ def test_redis_onboarding_rotates_pending_session(redis_auth_environment, monkey
     response = onboarding_request(environment, csrf)
     assert response.status_code == 201
     assert response.json()["onboardingCompleted"] is True
+    assert response.json()["activeTopic"] == {
+        "id": 1, "code": "movie", "name": "영화", "subtopicIds": [],
+    }
+    assert response.json()["answers"] == {"q1": "world", "q2": "releases"}
+    tap = next(call.args[0] for call in environment.database.add.call_args_list if isinstance(call.args[0], Tap))
+    answers = next(call.args[0] for call in environment.database.add.call_args_list if isinstance(call.args[0], OnboardingAnswersRecord))
+    assert (tap.user_id, tap.topic_id) == (23, 1)
+    assert (answers.tap_id, answers.q1_choice, answers.q2_choice) == (101, "world", "releases")
+    assert not any(isinstance(call.args[0], TapTopic) for call in environment.database.add.call_args_list)
     active_token = environment.client.cookies.get(settings.session_cookie_name)
     assert active_token != pending_token
     assert len(environment.redis.values) == 1
     current = environment.client.get("/api/v1/auth/session")
     assert current.json()["sessionState"] == "active"
-    assert current.json()["user"] == {"id": 23, "accountType": "creator"}
+    assert current.json()["user"] == {"id": 23, "accountType": "user"}
     assert environment.client.get("/api/v1/users/me").status_code == 200
     use_cookie(environment.client, pending_token)
     assert environment.client.get("/api/v1/users/me").status_code == 401
@@ -323,6 +345,45 @@ def test_redis_onboarding_failure_rolls_back_without_cookie(redis_auth_environme
     assert_no_sql_sessions(environment)
 
 
+def test_user_onboarding_requires_active_catalog_topic(redis_auth_environment, monkeypatch):
+    environment = redis_auth_environment
+    csrf, pending_token = prepare_onboarding(environment, monkeypatch)
+    monkeypatch.setattr(onboarding_service, "find_active_topic", AsyncMock(return_value=None))
+
+    response = onboarding_request(environment, csrf)
+    assert response.status_code == 404
+    assert response.json()["code"] == "TOPIC_NOT_FOUND"
+    assert environment.client.cookies.get(settings.session_cookie_name) == pending_token
+    assert environment.user.onboarding_completed_at is None
+    environment.database.add.assert_not_called()
+    environment.database.commit.assert_not_awaited()
+    environment.database.rollback.assert_awaited_once()
+    assert len(environment.redis.values) == 1
+
+
+@pytest.mark.parametrize("changes", [
+    {"answers": None}, {"answers": {"q1": "world"}},
+    {"answers": {"q1": ["world"], "q2": "releases"}},
+    {"answers": {"q1": "world", "q2": ["releases", "events"]}},
+    {"answers": {"q1": "releases", "q2": "world"}},
+    {"subtopicIds": [11]},
+])
+def test_onboarding_invalid_answers_leave_pending_session_and_user_unchanged(
+    redis_auth_environment, monkeypatch, changes,
+):
+    environment = redis_auth_environment
+    csrf, pending_token = prepare_onboarding(environment, monkeypatch)
+    response = onboarding_request(environment, csrf, **changes)
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert "set-cookie" not in response.headers
+    assert environment.client.cookies.get(settings.session_cookie_name) == pending_token
+    assert environment.user.onboarding_completed_at is None
+    environment.database.add.assert_not_called()
+    environment.database.commit.assert_not_awaited()
+    assert len(environment.redis.values) == 1
+
+
 def test_onboarding_commit_failure_removes_unissued_redis_session(redis_auth_environment, monkeypatch):
     environment = redis_auth_environment
     csrf, pending_token = prepare_onboarding(environment, monkeypatch)
@@ -333,5 +394,31 @@ def test_onboarding_commit_failure_removes_unissued_redis_session(redis_auth_env
     assert "set-cookie" not in response.headers
     assert environment.client.cookies.get(settings.session_cookie_name) == pending_token
     assert not environment.redis.values
+    environment.database.rollback.assert_awaited_once()
+    assert_no_sql_sessions(environment)
+
+
+def test_answer_flush_failure_keeps_pending_redis_session_for_retry(redis_auth_environment, monkeypatch):
+    environment = redis_auth_environment
+    csrf, pending_token = prepare_onboarding(environment, monkeypatch)
+    assign_tap_id = environment.database.flush.side_effect
+
+    async def fail_answer_flush():
+        if any(isinstance(call.args[0], OnboardingAnswersRecord) for call in environment.database.add.call_args_list):
+            raise RuntimeError("Answer insert failed")
+        await assign_tap_id()
+
+    environment.database.flush.side_effect = fail_answer_flush
+    environment.redis.delete.reset_mock()
+    environment.redis.set.reset_mock()
+    response = onboarding_request(environment, csrf)
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert "set-cookie" not in response.headers
+    assert environment.client.cookies.get(settings.session_cookie_name) == pending_token
+    environment.redis.delete.assert_not_awaited()
+    environment.redis.set.assert_not_awaited()
+    assert len(environment.redis.values) == 1
+    environment.database.commit.assert_not_awaited()
     environment.database.rollback.assert_awaited_once()
     assert_no_sql_sessions(environment)

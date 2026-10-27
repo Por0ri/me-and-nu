@@ -1,0 +1,22 @@
+/* Figma section 165:3390, character set 879:3903. */
+.screen { position: relative; }
+.background { position: absolute; top: 234px; left: calc(50% - 187.5px); width: 375px; height: 375px; max-width: none; transform: rotate(180deg); pointer-events: none; }
+.intro { position: relative; margin: 156px 18px 0; text-align: center; }
+.intro h1 { margin: 0; color: #3f3f46; font-size: 24px; font-weight: 700; line-height: 34px; word-break: keep-all; }
+.intro p { margin: 5px 0 0; color: #71717a; font-size: 14px; line-height: 20px; word-break: keep-all; }
+.figure { position: relative; display: flex; flex-direction: column; align-items: center; gap: 43.2px; width: 227.7px; margin: 52px auto 0; }
+.character { position: relative; width: 227.7px; height: 252.9px; }
+.character img { position: absolute; left: 0; top: 4.98%; width: 100%; height: 90.04%; max-width: none; }
+.character img:nth-child(2) { top: 0; height: 100%; object-fit: cover; }
+.character[data-image-state="pending"] img, .character[data-image-state="failed"] img { visibility: hidden; }
+.imageFallback { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 16px; color: #71717a; text-align: center; font-size: 14px; line-height: 20px; }
+.dots { position: relative; width: 46.44px; height: 8.64px; }
+.dots img { position: absolute; inset: 0; max-width: none; }
+.notice { margin: 16px 24px 0; color: #71717a; text-align: center; font-size: 12px; line-height: 18px; }
+.actions { position: relative; margin: auto 24px 24px; padding-top: 24px; }
+@media (max-height: 700px) {
+  .intro { margin-top: 48px; }
+  .background { top: 105px; }
+  .figure { margin-top: 24px; margin-bottom: -61px; transform: scale(.8); transform-origin: top center; }
+}
+@media (prefers-reduced-motion: reduce) { .screen, .figure, .character img { animation: none; transition: none; } }

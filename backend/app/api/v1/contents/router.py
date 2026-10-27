@@ -37,6 +37,34 @@ async def get_content(
     return await feed_service.get_content_detail(db, current_user.user_id, topic_id, content_id)
 
 
+@router.get(
+    "/{contentId}/slides/{page}/image",
+    response_class=Response,
+    tags=["콘텐츠"],
+    summary="공개 캐러셀 슬라이드 이미지 조회",
+    description="온보딩을 마친 사용자의 활성 Topic에 속한 공개·미만료 콘텐츠의 PNG를 반환합니다.",
+    responses={
+        **COMMON_ERRORS,
+        200: {"description": "PNG 이미지", "content": {"image/png": {"schema": {"type": "string", "format": "binary"}}}},
+        404: {"model": ErrorResponse, "description": "CONTENT_NOT_FOUND 또는 TOPIC_NOT_FOUND"},
+    },
+)
+async def get_content_slide_image(
+    current_user: Annotated[UserAccount, Depends(require_onboarding)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    content_id: Annotated[int, Path(alias="contentId", gt=0, le=9223372036854775807)],
+    page: Annotated[int, Path(ge=1, le=10)],
+    topic_id: Annotated[int, Query(alias="topicId", gt=0, le=9223372036854775807)],
+) -> Response:
+    image = await feed_service.get_content_slide_image(
+        db, current_user.user_id, topic_id, content_id, page
+    )
+    return Response(
+        image, media_type="image/png",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @router.put(
     "/{contentId}/preference",
     response_model=PreferenceResponse,

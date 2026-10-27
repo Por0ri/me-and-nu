@@ -1,48 +1,97 @@
-from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Discriminator, Field, Tag, field_validator
 
 from app.schemas.common import CamelModel
 from app.schemas.policy import ConsentInput
+
+ConsumptionType = Literal["world", "relationships", "ost", "goods", "events", "news"]
+CatalogId = Annotated[int, Field(strict=True, gt=0, le=9223372036854775807)]
+
+
+class OnboardingAnswers(CamelModel):
+    """Required single choices for Q1/Q2 at onboarding completion.
+
+    Choice IDs match the current UI and are not topic/subtopic database IDs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    q1: Literal["world", "relationships", "ost", "goods", "events", "news"] = Field(
+        description="Q1에서 정확히 1개 선택한 값. 배열·미선택은 허용하지 않습니다."
+    )
+    q2: Literal["releases", "characters", "restock", "events"] = Field(
+        description="Q2에서 정확히 1개 선택한 값. 배열·미선택은 허용하지 않습니다."
+    )
+
+
+class OnboardingAnswersV2(CamelModel):
+    """Explicit work/tag preferences; IDs have set rather than ranking semantics."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[2]
+    favorite_entity_ids: list[CatalogId] = Field(min_length=1, max_length=5)
+    preference_tag_ids: list[CatalogId] = Field(min_length=1)
+    consumption_type: ConsumptionType
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def strict_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("version은 정수 2여야 합니다.")
+        return value
+
+    @field_validator("favorite_entity_ids", "preference_tag_ids")
+    @classmethod
+    def unique_ids(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("같은 ID를 중복 선택할 수 없습니다.")
+        return value
+
+
+def _answer_version(value: object) -> str:
+    if isinstance(value, OnboardingAnswersV2):
+        return "v2"
+    if isinstance(value, dict) and "version" in value:
+        return "v2"
+    return "v1"
+
+
+VersionedAnswers = Annotated[
+    Annotated[OnboardingAnswers, Tag("v1")] | Annotated[OnboardingAnswersV2, Tag("v2")],
+    Discriminator(_answer_version),
+]
 
 
 class OnboardingRequest(CamelModel):
     model_config = ConfigDict(extra="forbid")
 
     nickname: str = Field(min_length=1, max_length=30)
-    birth_date: date
-    account_type: Literal["consumer", "creator"]
+    account_type: Literal["user"]
     consents: list[ConsentInput] = Field(min_length=1)
-    profile_image_id: int | None = Field(default=None, gt=0)
-    topic_id: int | None = Field(default=None, gt=0)
-    subtopic_ids: list[int] | None = None
+    topic_id: CatalogId
+    answers: VersionedAnswers
+
+    @field_validator("answers", mode="before")
+    @classmethod
+    def validate_answer_version(cls, value: object) -> object:
+        # Validate the selected branch before union parsing, so public error
+        # locations remain answers.favoriteEntityIds instead of answers.v2.*.
+        if isinstance(value, (OnboardingAnswers, OnboardingAnswersV2)):
+            return value
+        model = OnboardingAnswersV2 if _answer_version(value) == "v2" else OnboardingAnswers
+        return model.model_validate(value)
 
     @field_validator("nickname", mode="before")
     @classmethod
     def trim_nickname(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
-    @model_validator(mode="after")
-    def validate_topic_choice(self) -> "OnboardingRequest":
-        self.nickname = self.nickname.strip()
-        if not self.nickname:
-            raise ValueError("nickname을 입력해 주세요.")
-        if self.account_type == "consumer":
-            if self.topic_id is None or not self.subtopic_ids:
-                raise ValueError("소비자는 Topic과 Subtopic을 하나 이상 선택해야 합니다.")
-            if any(value <= 0 for value in self.subtopic_ids):
-                raise ValueError("subtopicIds에는 양의 정수만 사용할 수 있습니다.")
-            if len(set(self.subtopic_ids)) != len(self.subtopic_ids):
-                raise ValueError("subtopicIds에 중복이 있습니다.")
-        elif self.topic_id is not None or self.subtopic_ids is not None:
-            raise ValueError("크리에이터 온보딩에는 Topic 선택값을 보내지 않습니다.")
-        return self
-
 
 class OnboardingUser(CamelModel):
     id: int
-    account_type: str
+    account_type: Literal["user"]
 
 
 class ActiveTopic(CamelModel):
@@ -56,3 +105,50 @@ class OnboardingResponse(CamelModel):
     user: OnboardingUser
     onboarding_completed: bool
     active_topic: ActiveTopic | None
+    answers: VersionedAnswers
+
+
+class OnboardingWork(CamelModel):
+    entity_id: int
+    name: str
+    aliases: list[str]
+    image_url: str | None
+    release_year: int | None
+    media_format: str | None
+    selectable: bool
+    unavailable_reason: Literal["PREFERENCE_TAGS_NOT_READY"] | None = None
+
+
+class OnboardingWorksResponse(CamelModel):
+    items: list[OnboardingWork]
+    next_cursor: str | None = None
+
+
+class PreferenceOptionsRequest(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topic_id: CatalogId
+    entity_ids: list[CatalogId] = Field(min_length=1, max_length=5)
+
+    @field_validator("entity_ids")
+    @classmethod
+    def unique_ids(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("같은 ID를 중복 선택할 수 없습니다.")
+        return value
+
+
+class PreferenceOption(CamelModel):
+    tag_id: int
+    kind: Literal["genre", "theme"]
+    code: str
+    label: str
+    source_entity_ids: list[int]
+
+
+class PreferenceOptionsResponse(CamelModel):
+    entity_ids: list[int]
+    genres: list[PreferenceOption]
+    themes: list[PreferenceOption]
+    min_selections: Literal[1] = 1
+    max_selections: None = None
