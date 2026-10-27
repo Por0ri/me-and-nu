@@ -1,0 +1,16 @@
+/* Saved list 1569:8811 / empty 1363:9389. Shared disclosure replaces the iOS status bar. */
+.grid, .empty { border-radius: 8px; background: var(--home-surface); box-shadow: 0 0 2px #e0bafb; }
+/* Center Figma's 304px grid in its 327px panel; shrink both columns on narrow screens. */
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 8px; margin: 8px 0 0; padding: 12px 11.5px; list-style: none; }
+.grid li { min-width: 0; }
+.card { display: block; width: 100%; aspect-ratio: 148 / 184.661; overflow: hidden; padding: 0; border: 0; border-radius: 3.621px; background: var(--home-surface); box-shadow: 0 0 .905px #e0bafb; text-align: left; }
+.card > img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.placeholder { display: flex; flex-direction: column; justify-content: center; gap: 12px; width: 100%; height: 100%; padding: 12px; background: #efe7ff; color: #52525b; font-size: 12px; line-height: 18px; }
+.empty { display: flex; flex-direction: column; align-items: center; gap: 16px; margin-top: 20px; padding: 36px 12px 0; overflow: hidden; }
+.empty p { width: 100%; margin: 0; padding-inline: 6px; color: #3f3f46; font-size: 12px; font-weight: 600; line-height: 18px; text-align: center; }
+.empty .emptyButton { display: flex; align-items: center; justify-content: center; width: 222px; max-width: 100%; min-height: 35.303px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--home-accent); color: #fafafa; font-size: 10.862px; font-weight: 600; line-height: 16.294px; }
+.emptyMascot { position: relative; flex: none; width: 146.25px; height: 78.116px; overflow: hidden; pointer-events: none; }
+.emptyMascot img { position: absolute; left: 1.11%; top: -53.89%; width: 97.78%; height: 153.89%; max-width: none; }
+.demoHelp { margin: 16px 0 0; color: #71717a; font-size: 11px; line-height: 16px; }
+.status { margin-top: 16px; }
+@media (prefers-reduced-motion: reduce) { .card { transition: none; } }

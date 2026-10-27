@@ -1,0 +1,139 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "sectionNodeId": "165:3390",
+  "screenNodeId": "987:2594",
+  "componentNodeId": "879:3903",
+  "characterStyle": "Latest section reference; final brand art approval is not inferred.",
+  "assets": [
+    {
+      "file": "phase-1.png",
+      "nodeId": "879:3905",
+      "width": 512,
+      "height": 512,
+      "sha256": "C607E484FEEF8C5AA369664937EB0CC0B088AB40B3AE1AEB671C55A9967559F1",
+      "sourceSha256": "3E5990977E6FFBBCF2DA06D7B26575C1EBFFB3A518A50C3A33B5CDE462644682",
+      "bytes": 167851,
+      "optimization": {
+        "tool": "sharp 0.35.5 / libvips 8.18.7",
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "adaptiveFiltering": true,
+        "palette": false,
+        "preserveAlpha": true,
+        "preserveAspectRatio": true,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 827255,
+        "width": 512,
+        "height": 512,
+        "bytes": 167851,
+        "sourceSha256": "3E5990977E6FFBBCF2DA06D7B26575C1EBFFB3A518A50C3A33B5CDE462644682",
+        "outputSha256": "C607E484FEEF8C5AA369664937EB0CC0B088AB40B3AE1AEB671C55A9967559F1"
+      }
+    },
+    {
+      "file": "dots-1.svg",
+      "sha256": "B5BEE1CD9E7390F1B4A4117011B67201A10F4167F02255FC8EB9ED0F475751C2",
+      "bytes": 962,
+      "nodeId": "879:3906",
+      "note": "Reused existing SVG: rendered dot artwork matches the latest Figma variant."
+    },
+    {
+      "file": "phase-2.png",
+      "nodeId": "879:3911",
+      "width": 512,
+      "height": 512,
+      "sha256": "96099AB503DA74227E2CFBAC9D0EEE51FFAB3635E5A1FD2043CA711F289CBC58",
+      "sourceSha256": "9DAD1DDF5F4BDE1149E5F722849F1F52607FE0BFEEBB4C12A98A99150D2358C9",
+      "bytes": 148049,
+      "optimization": {
+        "tool": "sharp 0.35.5 / libvips 8.18.7",
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "adaptiveFiltering": true,
+        "palette": false,
+        "preserveAlpha": true,
+        "preserveAspectRatio": true,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 734751,
+        "width": 512,
+        "height": 512,
+        "bytes": 148049,
+        "sourceSha256": "9DAD1DDF5F4BDE1149E5F722849F1F52607FE0BFEEBB4C12A98A99150D2358C9",
+        "outputSha256": "96099AB503DA74227E2CFBAC9D0EEE51FFAB3635E5A1FD2043CA711F289CBC58"
+      }
+    },
+    {
+      "file": "dots-2.svg",
+      "sha256": "3C4AD436B34AA5B30F183B241F016DB495A5748DAF03CB675F216DB97A781D41",
+      "bytes": 960,
+      "nodeId": "879:3912",
+      "note": "Reused existing SVG: rendered dot artwork matches the latest Figma variant."
+    },
+    {
+      "file": "phase-3.png",
+      "nodeId": "879:3917",
+      "width": 512,
+      "height": 512,
+      "sha256": "8AC732023E949F210C5BBD2C405D01941912EE664BC554C0EDCD1079EAF29206",
+      "sourceSha256": "DD75A289DB072D3D8B9B115759634BC3ADED943E440BFDA8C657DED602A0A502",
+      "bytes": 145656,
+      "optimization": {
+        "tool": "sharp 0.35.5 / libvips 8.18.7",
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "adaptiveFiltering": true,
+        "palette": false,
+        "preserveAlpha": true,
+        "preserveAspectRatio": true,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 655318,
+        "width": 512,
+        "height": 512,
+        "bytes": 145656,
+        "sourceSha256": "DD75A289DB072D3D8B9B115759634BC3ADED943E440BFDA8C657DED602A0A502",
+        "outputSha256": "8AC732023E949F210C5BBD2C405D01941912EE664BC554C0EDCD1079EAF29206"
+      }
+    },
+    {
+      "file": "dots-3.svg",
+      "sha256": "BDF121F7D52339BE304A790C599F78637078DEF14EE9EEE72EF591AFDD139364",
+      "bytes": 960,
+      "nodeId": "879:3918",
+      "note": "Reused existing SVG: rendered dot artwork matches the latest Figma variant."
+    },
+    {
+      "file": "background.svg",
+      "sha256": "E574037E5A22E5B7388B2C6CB4380497400B835A320CCF749826865E062383D5",
+      "bytes": 534,
+      "nodeId": "987:2595"
+    }
+  ],
+  "display": {
+    "width": 227.7,
+    "height": 252.9,
+    "sourceAspectRatio": "1:1",
+    "phases": {
+      "1": {
+        "imageHeightPercent": 90.04,
+        "imageTopPercent": 4.98,
+        "objectFit": "fill"
+      },
+      "2": {
+        "imageHeightPercent": 100,
+        "imageTopPercent": 0,
+        "objectFit": "cover"
+      },
+      "3": {
+        "imageHeightPercent": 90.04,
+        "imageTopPercent": 4.98,
+        "objectFit": "fill"
+      }
+    }
+  }
+}

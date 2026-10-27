@@ -1,0 +1,52 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "page": "범수님",
+  "nodeId": "1272:3834",
+  "assets": [
+    {
+      "path": "/pivot/home/chrome/logo.svg",
+      "figmaAsset": "2bc8b88c-abb7-4168-a21b-d67dbed27ea2",
+      "sha256": "ad1b65d00f4d2ffc9aae292bd0cc97566d6ebc830266472664a32b3c8c1de3d4"
+    },
+    {
+      "path": "/pivot/home/chrome/notification.svg",
+      "figmaAsset": "fa2ce08e-7b1c-474f-b6e1-c9f7df5de867",
+      "sha256": "71468b9cb5180821c7c6457f7a69fa2ae914ab93c682a9cad6c0d0cf14e3766e"
+    },
+    {
+      "path": "/pivot/home/chrome/save.svg",
+      "figmaAsset": "639b1eaa-cb07-415b-a8e4-6a52611b77f3",
+      "sha256": "51661be471c3cc8dbf7d7cf77efae8371250720bb34c05f382dc16e44e153efe"
+    },
+    {
+      "path": "/pivot/home/chrome/like.svg",
+      "figmaAsset": "6c29042d-8060-48ea-9b87-843014acf9ce",
+      "sha256": "dc7beb75d52d249f75f3f76d6d2ed225ed13a457d1b554b1cda33045a4b2cdeb"
+    },
+    {
+      "path": "/pivot/home/chrome/mascot.png",
+      "figmaAsset": "d9143b5c-9e51-4227-9f23-4af3c5a34418",
+      "sha256": "ce71b1804e9afc4a2f24be9905aaf4e7716bf5f15297169a1f1359b4e759c807"
+    },
+    {
+      "path": "/pivot/home/chrome/share.svg",
+      "figmaAsset": "979435f6-3fce-41ce-9ba9-d65fb046ea61",
+      "sha256": "1da70ea6342e05fb500d8182af7bd31e920ae6abb567a66e9f9cba6b4949a495"
+    },
+    {
+      "path": "/pivot/home/chrome/detail-arrow.svg",
+      "figmaAsset": "bffd29f8-3b5e-48b2-9a51-7278f5177620",
+      "sha256": "f22068fdf74ee3c096316d6e8735f790025e34ede8865a8fee38329d1d037fd5"
+    },
+    {
+      "path": "/pivot/home/chrome/search.svg",
+      "figmaAsset": "a11fb30c-b143-41d0-8278-8cca9bedd750",
+      "sha256": "49b194c1fc98b5847d1e5733e602462d7ee4b1ca0acfefed01643060108e53e8"
+    },
+    {
+      "path": "/pivot/home/chrome/ai.svg",
+      "figmaAsset": "58c1cb36-d3a8-4731-989a-579ddb5ceee2",
+      "sha256": "4f2d69dcf36aeb8014e94c07796c22e99069702f12f83b4b5e85aa2fb342e62d"
+    }
+  ]
+}

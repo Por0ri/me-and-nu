@@ -1,0 +1,371 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "assets": [
+    {
+      "file": "splash-imgOutline.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgOutline"
+    },
+    {
+      "file": "splash-imgBatteryEnd.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgBatteryEnd"
+    },
+    {
+      "file": "splash-imgWifi.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgWifi"
+    },
+    {
+      "file": "splash-imgIconMobileSignal.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgIconMobileSignal"
+    },
+    {
+      "file": "splash-imgImage24.png",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "imgImage24",
+      "sourceSha256": "9F863FE8B338B3E7F49C2C2F1A6C3BF23ED8EE7D69AF88F4F56DDC4022D3F046",
+      "sha256": "D951B0D6BB8AA08AAF008D50226CEFF53E93142E6E58E613C779D6CDFBCA56CE",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 840,
+        "height": 840,
+        "sourceWidth": 1254,
+        "sourceHeight": 1254,
+        "sourceBytes": 1106227,
+        "bytes": 138290
+      }
+    },
+    {
+      "file": "splash-img.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "img"
+    },
+    {
+      "file": "splash-img1.svg",
+      "screen": "splash",
+      "nodeId": "339:1392",
+      "variable": "img1"
+    },
+    {
+      "file": "splash-img4Vectorized.svg",
+      "screen": "splash",
+      "nodeId": "1011:4116",
+      "variable": "img4Vectorized",
+      "sourceVariable": "imgGroup9",
+      "sha256": "1C12520689BF030D3AABB89CA844C623F1474ADAAA04B5D5A15A08CF8C6CE807",
+      "bytes": 5356,
+      "viewBox": "0 0 140 27.9811"
+    },
+    {
+      "file": "login-imgOutline.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgOutline"
+    },
+    {
+      "file": "login-imgBatteryEnd.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgBatteryEnd"
+    },
+    {
+      "file": "login-imgWifi.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgWifi"
+    },
+    {
+      "file": "login-imgIconMobileSignal.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgIconMobileSignal"
+    },
+    {
+      "file": "login-imgImage26.png",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgImage26",
+      "sourceSha256": "7FF549B3E822A3191B43F4890042D0DD1FF909C840FF6FA6629D47416E3CA03B",
+      "sha256": "7F9AB18C668B915A9CFCD8666172A7C506B04B84DCED12274AC2CCE5166D2274",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 510,
+        "height": 668,
+        "sourceWidth": 1096,
+        "sourceHeight": 1435,
+        "sourceBytes": 1551635,
+        "bytes": 95720
+      }
+    },
+    {
+      "file": "login-img2.png",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "img2",
+      "sourceSha256": "DC75FEE7F54BEF6DF4D1D4C42870DBAE24AEF36929225DF8D617AFA52FD6E3DC",
+      "sha256": "6B4121173AF68BA7F7E429AC320E88CBB2A713E298E24AE036A0A7B2A760B6E3",
+      "optimization": {
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "width": 924,
+        "height": 121,
+        "sourceWidth": 1264,
+        "sourceHeight": 165,
+        "sourceBytes": 81102,
+        "bytes": 27215
+      }
+    },
+    {
+      "file": "login-img.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "img"
+    },
+    {
+      "file": "login-img1.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "img1"
+    },
+    {
+      "file": "login-img4Vectorized.svg",
+      "screen": "login",
+      "nodeId": "1011:4088",
+      "variable": "img4Vectorized",
+      "sourceVariable": "imgGroup9",
+      "sha256": "1C12520689BF030D3AABB89CA844C623F1474ADAAA04B5D5A15A08CF8C6CE807",
+      "bytes": 5356,
+      "viewBox": "0 0 140 27.9811"
+    },
+    {
+      "file": "login-imgRoundedRectangle2.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgRoundedRectangle2"
+    },
+    {
+      "file": "login-imgShape1.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgShape1"
+    },
+    {
+      "file": "login-imgPolygon3.svg",
+      "screen": "login",
+      "nodeId": "339:1357",
+      "variable": "imgPolygon3"
+    },
+    {
+      "file": "consent-imgOutline.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgOutline"
+    },
+    {
+      "file": "consent-imgBatteryEnd.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgBatteryEnd"
+    },
+    {
+      "file": "consent-imgWifi.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgWifi"
+    },
+    {
+      "file": "consent-imgIconMobileSignal.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgIconMobileSignal"
+    },
+    {
+      "file": "consent-imgChevronForward.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgChevronForward"
+    },
+    {
+      "file": "consent-imgStateOff.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "imgStateOff"
+    },
+    {
+      "file": "consent-img.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "img"
+    },
+    {
+      "file": "consent-img1.svg",
+      "screen": "consent",
+      "nodeId": "100:2503",
+      "variable": "img1"
+    },
+    {
+      "file": "consent-img4Vectorized.svg",
+      "screen": "consent",
+      "nodeId": "1011:4043",
+      "variable": "img4Vectorized",
+      "sourceVariable": "imgGroup9",
+      "sha256": "1C12520689BF030D3AABB89CA844C623F1474ADAAA04B5D5A15A08CF8C6CE807",
+      "bytes": 5356,
+      "viewBox": "0 0 140 27.9811"
+    },
+    {
+      "file": "accepted-imgOutline.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgOutline"
+    },
+    {
+      "file": "accepted-imgBatteryEnd.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgBatteryEnd"
+    },
+    {
+      "file": "accepted-imgWifi.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgWifi"
+    },
+    {
+      "file": "accepted-imgIconMobileSignal.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgIconMobileSignal"
+    },
+    {
+      "file": "accepted-imgChevronForward.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgChevronForward"
+    },
+    {
+      "file": "accepted-imgStateOn.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "imgStateOn"
+    },
+    {
+      "file": "accepted-img.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "img"
+    },
+    {
+      "file": "accepted-img1.svg",
+      "screen": "accepted",
+      "nodeId": "165:2619",
+      "variable": "img1"
+    },
+    {
+      "file": "accepted-img4Vectorized.svg",
+      "screen": "accepted",
+      "nodeId": "1011:4075",
+      "variable": "img4Vectorized",
+      "sourceVariable": "imgGroup9",
+      "sha256": "1C12520689BF030D3AABB89CA844C623F1474ADAAA04B5D5A15A08CF8C6CE807",
+      "bytes": 5356,
+      "viewBox": "0 0 140 27.9811"
+    },
+    {
+      "screen": "splash",
+      "nodeId": "987:2507",
+      "variable": "imgImage28",
+      "file": "splash-imgImage28.png",
+      "sha256": "A3C6390811943586B0F44E24B259FE07FD1FB98CD7791F109A6832E40F7DF6BF",
+      "sourceSha256": "CE71B1804E9AFC4A2F24BE9905AAF4E7716BF5F15297169A1F1359B4E759C807",
+      "bytes": 355993,
+      "optimization": {
+        "tool": "sharp 0.35.5 / libvips 8.18.7",
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "adaptiveFiltering": true,
+        "palette": false,
+        "preserveAlpha": true,
+        "preserveAspectRatio": true,
+        "sourceWidth": 1448,
+        "sourceHeight": 1086,
+        "sourceBytes": 907716,
+        "width": 960,
+        "height": 720,
+        "bytes": 355993,
+        "sourceSha256": "CE71B1804E9AFC4A2F24BE9905AAF4E7716BF5F15297169A1F1359B4E759C807",
+        "outputSha256": "A3C6390811943586B0F44E24B259FE07FD1FB98CD7791F109A6832E40F7DF6BF"
+      }
+    },
+    {
+      "screen": "login",
+      "nodeId": "987:2480",
+      "variable": "imgImage36",
+      "file": "login-imgImage36.png",
+      "sha256": "7B51C29BBCEFC6F8C25C76DB794C6EDD36D651A5C1DD0BFA0FB932B5B2BE1AB9",
+      "sourceSha256": "575180A86248D6520A19226A8B29A7D5E6D95D9D255C13A2CBB73C90D6470846",
+      "bytes": 205693,
+      "optimization": {
+        "tool": "sharp 0.35.5 / libvips 8.18.7",
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "adaptiveFiltering": true,
+        "palette": false,
+        "preserveAlpha": true,
+        "preserveAspectRatio": true,
+        "sourceWidth": 1122,
+        "sourceHeight": 1402,
+        "sourceBytes": 1001991,
+        "width": 510,
+        "height": 637,
+        "bytes": 205693,
+        "sourceSha256": "575180A86248D6520A19226A8B29A7D5E6D95D9D255C13A2CBB73C90D6470846",
+        "outputSha256": "7B51C29BBCEFC6F8C25C76DB794C6EDD36D651A5C1DD0BFA0FB932B5B2BE1AB9"
+      }
+    },
+    {
+      "screen": "splash",
+      "nodeId": "1011:4113",
+      "variable": "decorationExport",
+      "file": "splash-decoration.png",
+      "note": "Static Figma decoration-node export including shader fill; no runtime shader added.",
+      "sha256": "0D51B5C702D4F9F1A1D8D6EC84271E8CE7BAA03347CCBA1D41246B4D1EE20969",
+      "sourceSha256": "879057CA2940DE11942ADFB20CA96255D9B7F6A855FDD5367C58C8071AAD227D",
+      "bytes": 81612,
+      "optimization": {
+        "tool": "sharp 0.35.5 / libvips 8.18.7",
+        "format": "PNG",
+        "kernel": "lanczos3",
+        "compressionLevel": 9,
+        "adaptiveFiltering": true,
+        "palette": false,
+        "preserveAlpha": true,
+        "preserveAspectRatio": true,
+        "sourceWidth": 375,
+        "sourceHeight": 375,
+        "sourceBytes": 89875,
+        "width": 375,
+        "height": 375,
+        "bytes": 81612,
+        "sourceSha256": "879057CA2940DE11942ADFB20CA96255D9B7F6A855FDD5367C58C8071AAD227D",
+        "outputSha256": "0D51B5C702D4F9F1A1D8D6EC84271E8CE7BAA03347CCBA1D41246B4D1EE20969",
+        "lossless": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "nodeId": "1091:2947",
+  "archive": "Moving-gradient-source.zip",
+  "archiveSha256": "5bcc11d11caa494986e4e30438c6beaf90cbd70b8aa5c6e6ea690d72068ebe87",
+  "mainTsSha256": "82a74b9f2f936064df8f6b6d8f1db5c1861dfad5c12d3c3baf4f411855647dc5",
+  "setupRenderSha256": "2ba048e40ba9320dee4ff0e215c556dd28f750787caf1c19b1a57bc83d8c7ac6",
+  "hashNormalization": "setup through render, excluding defineProperties; CRLF normalized to LF",
+  "adaptation": "main.ts contains JavaScript syntax. Replaced only figma:shaders editor registration import with a no-op; WGSL, setup, render and metadata retained.",
+  "presentation": "375px circle; base #FFFDFA to #F6EDFD; shader opacity 0.2; straight-alpha output premultiplied in a separate presentation pass",
+  "performance": "Original mesh and 4x MSAA; backing DPR capped at 1.5; max 30fps and one in-flight frame; 2500ms initialization watchdog",
+  "fallback": "/pivot/splash-decoration.png for reduced motion, hidden document, unsupported GPU, initialization failure or device error"
+}
