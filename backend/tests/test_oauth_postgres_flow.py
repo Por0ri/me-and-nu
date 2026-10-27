@@ -6,7 +6,7 @@ remain real. SQLite does not verify PostgreSQL row-lock or concurrency behavior.
 """
 
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -80,7 +80,7 @@ class AsyncSqliteSession:
 
 
 @pytest.fixture
-def postgres_flow(monkeypatch):
+def postgres_flow(monkeypatch, request):
     for name, value in {
         "session_backend": "postgres", "redis_url": None,
         "enable_dev_auth_bypass": False, "session_cookie_secure": False,
@@ -115,6 +115,12 @@ def postgres_flow(monkeypatch):
             if len(table.primary_key.columns) == 1 and isinstance(column.type, Integer):
                 column.type = Integer()
     metadata.create_all(engine)
+    legacy_birth_date = getattr(request, "param", False)
+    if legacy_birth_date:
+        # The new ORM must work during the rollout before the old nullable
+        # database column is dropped. This is an isolated in-memory database.
+        with engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE user_account ADD COLUMN birth_date DATE")
     failure = SimpleNamespace(enabled=False, answers_insert=False)
 
     async def database():
@@ -130,7 +136,10 @@ def postgres_flow(monkeypatch):
     api.dependency_overrides[oauth.get_oauth_provider_client] = lambda: provider
     try:
         with TestClient(api, follow_redirects=False, raise_server_exceptions=False) as client:
-            yield SimpleNamespace(client=client, engine=engine, provider=provider, failure=failure)
+            yield SimpleNamespace(
+                client=client, engine=engine, provider=provider, failure=failure,
+                legacy_birth_date=legacy_birth_date,
+            )
     finally:
         engine.dispose()
 
@@ -234,17 +243,18 @@ def pending_onboarding(flow):
     return current["csrfToken"], flow.client.cookies.get(settings.session_cookie_name)
 
 
-def signup_request(flow, csrf, answers):
+def signup_request(flow, csrf, answers, **extra):
     return flow.client.post(
         "/api/v1/onboarding/complete",
         json={
-            "nickname": "선택 저장 회원", "birthDate": "2000-01-01",
+            "nickname": "선택 저장 회원",
             "accountType": "user", "topicId": 1, "answers": answers,
             "consents": [
                 {"type": "terms", "policyVersion": "v1", "agreed": True},
                 {"type": "privacy", "policyVersion": "v1", "agreed": True},
                 {"type": "marketing", "policyVersion": "v1", "agreed": False},
             ],
+            **extra,
         },
         headers={"X-CSRF-Token": csrf},
     )
@@ -268,7 +278,6 @@ def test_onboarding_persists_answers_without_subtopics_and_rotates_session(onboa
     with Session(flow.engine) as session:
         user = session.scalar(select(UserAccount))
         assert user.nickname == "선택 저장 회원"
-        assert user.birth_date == date(2000, 1, 1)
         assert user.onboarding_completed_at is not None
         tap = session.scalar(select(Tap))
         assert (tap.user_id, tap.topic_id) == (user.user_id, 1)
@@ -293,6 +302,90 @@ def test_onboarding_persists_answers_without_subtopics_and_rotates_session(onboa
         assert session.scalar(select(func.count()).select_from(ConsentHistory)) == 3
 
 
+@pytest.mark.parametrize("extra", [
+    {"birthDate": "2000-01-01"}, {"birthDate": None},
+    {"birth_date": "2000-01-01"}, {"ageConfirmed": True},
+])
+def test_onboarding_rejects_birth_date_and_age_fields_without_writing(onboarding_flow, extra):
+    flow = onboarding_flow
+    csrf, pending_token = pending_onboarding(flow)
+    response = signup_request(flow, csrf, {"q1": "ost", "q2": "events"}, **extra)
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert "set-cookie" not in response.headers
+    assert flow.client.cookies.get(settings.session_cookie_name) == pending_token
+    with Session(flow.engine) as session:
+        user = session.scalar(select(UserAccount))
+        assert user.nickname == "회원" and user.onboarding_completed_at is None
+        for model in (Tap, OnboardingAnswersRecord, ConsentHistory, NotificationSetting):
+            assert session.scalar(select(func.count()).select_from(model)) == 0
+    assert flow.client.get("/api/v1/auth/session").json()["sessionState"] == "onboarding_pending"
+
+
+@pytest.mark.parametrize("postgres_flow", [False, True], indirect=True)
+def test_onboarding_profile_and_relogin_work_with_or_without_legacy_birth_column(onboarding_flow):
+    flow = onboarding_flow
+    csrf, _ = pending_onboarding(flow)
+    if flow.legacy_birth_date:
+        with flow.engine.begin() as connection:
+            connection.exec_driver_sql("UPDATE user_account SET birth_date = '2020-01-01'")
+    answers = {"q1": "ost", "q2": "events"}
+    response = signup_request(flow, csrf, answers)
+    assert response.status_code == 201, response.text
+    user_id = response.json()["user"]["id"]
+    active = flow.client.get("/api/v1/auth/session").json()
+    assert active["sessionState"] == "active" and active["onboardingCompleted"] is True
+
+    profile = flow.client.get("/api/v1/users/me")
+    assert profile.status_code == 200
+    assert profile.json()["userId"] == user_id
+    assert "birthDate" not in profile.json()
+    updated = flow.client.patch(
+        "/api/v1/users/me", json={"nickname": "수정된 회원"},
+        headers={"X-CSRF-Token": active["csrfToken"]},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["nickname"] == "수정된 회원"
+    assert "birthDate" not in updated.json()
+
+    def stored_onboarding():
+        with Session(flow.engine) as session:
+            user = session.get(UserAccount, user_id)
+            tap = session.scalar(select(Tap).where(Tap.user_id == user_id))
+            record = session.get(OnboardingAnswersRecord, tap.tap_id)
+            consents = tuple(
+                (row.consent_history_id, row.consent_type, row.is_agreed, row.created_at)
+                for row in session.scalars(select(ConsentHistory).order_by(ConsentHistory.consent_history_id))
+            )
+            return (
+                user.user_id, user.nickname, user.onboarding_completed_at,
+                tap.tap_id, record.q1_choice, record.q2_choice, record.created_at, consents,
+            )
+
+    before = stored_onboarding()
+    assert before[4:6] == ("ost", "events")
+    assert flow.client.post(
+        "/api/v1/auth/logout", headers={"X-CSRF-Token": active["csrfToken"]},
+    ).status_code == 204
+    assert flow.client.get("/api/v1/auth/session").json()["authenticated"] is False
+    returned = callback(flow, begin_login(flow))
+    assert returned.status_code == 303
+    assert returned.headers["location"] == "http://localhost:3000/pivot/home"
+    current = flow.client.get("/api/v1/auth/session").json()
+    assert current["user"]["id"] == user_id
+    assert current["sessionState"] == "active" and current["onboardingCompleted"] is True
+    assert stored_onboarding() == before
+    with Session(flow.engine) as session:
+        assert session.scalar(select(func.count()).select_from(UserAccount)) == 1
+        assert session.scalar(select(func.count()).select_from(OnboardingAnswersRecord)) == 1
+        assert session.scalar(select(func.count()).select_from(ConsentHistory)) == 3
+    if flow.legacy_birth_date:
+        with flow.engine.connect() as connection:
+            # Removing the field from the application stops collection/access;
+            # only the separate migration deletes an existing database value.
+            assert connection.exec_driver_sql("SELECT birth_date FROM user_account").scalar_one() == "2020-01-01"
+
+
 @pytest.mark.parametrize("failure_stage", ["answers_insert", "enabled"])
 def test_failed_onboarding_rolls_back_answers_profile_consents_and_session(onboarding_flow, failure_stage):
     flow = onboarding_flow
@@ -307,7 +400,7 @@ def test_failed_onboarding_rolls_back_answers_profile_consents_and_session(onboa
     assert flow.client.cookies.get(settings.session_cookie_name) == pending_token
     with Session(flow.engine) as session:
         user = session.scalar(select(UserAccount))
-        assert user.nickname == "회원" and user.birth_date is None
+        assert user.nickname == "회원"
         assert user.onboarding_completed_at is None
         for model in (Tap, TapTopic, OnboardingAnswersRecord, ConsentHistory, NotificationSetting):
             assert session.scalar(select(func.count()).select_from(model)) == 0
@@ -340,7 +433,7 @@ def test_answer_database_constraints_reject_invalid_choices(onboarding_flow, inv
         })
     column, value = next(iter(invalid.items()))
     expected_error = (
-        f"NOT NULL constraint failed: onboarding_answers.{column}" if value is None
+        "CHECK constraint failed: ck_onboarding_answers_version_shape" if value is None
         else f"CHECK constraint failed: ck_onboarding_answers_{column}"
     )
     assert expected_error in str(caught.value.orig)

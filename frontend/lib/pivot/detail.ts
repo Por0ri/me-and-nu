@@ -1,14 +1,17 @@
-import type { HomeDetailTarget } from "./home";
+import type { HomeDetailTarget, HomeSlideModel } from "./home";
+import type { ContentImage, PublicationMetadata, PublicSource } from "./carousel-data";
 
 // FE reading model, deliberately independent of any future server DTO.
-export type DetailArticle = HomeDetailTarget & {
+export type DetailArticle = HomeDetailTarget & PublicationMetadata & {
   origin: "demo" | "service";
   work?: string;
   title: string;
   bookmarked?: boolean;
   displayMode?: "full_body" | "link_excerpt";
   sourceUrl?: string;
-  image?: { src: string; alt: string };
+  image?: ContentImage;
+  slides?: readonly HomeSlideModel[];
+  sources?: readonly PublicSource[];
   sections: readonly { heading?: string; paragraphs: readonly string[] }[];
 };
 export type DetailLoadResult =

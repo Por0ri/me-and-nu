@@ -1,7 +1,9 @@
 "use client";
 import { Fragment, useEffect, useRef, useState, type Dispatch, type ImgHTMLAttributes } from "react";
 import assetManifest from "@/public/pivot/bc-sources.json";
-import { q1Choices, q2Choices, canAdvance, isSelectionComplete, selectionSummary, type OnboardingAction, type OnboardingState } from "@/lib/pivot/onboarding";
+import { q1Choices, canAdvance, isStateComplete, selectionSummary, type OnboardingAction, type OnboardingState } from "@/lib/pivot/onboarding";
+import { serviceCatalog, demoCatalog } from "@/lib/pivot/onboarding-catalog";
+import { QuestionProgress, WorksQuestion, TagsQuestion } from "./onboarding-catalog-screens";
 import { PivotFrame, PrimaryButton } from "./pivot-ui";
 import { useOnboardingNavigation } from "./use-onboarding-navigation";
 import styles from "./onboarding.module.css";
@@ -10,19 +12,6 @@ function Asset({ screen, variable, ...props }: { screen: string; variable: strin
   const asset = assetManifest.assets.find((item) => item.screen === screen && item.variable === variable);
   if (!asset) throw new Error("Missing local Figma asset: " + screen + "/" + variable);
   return <img src={"/pivot/" + asset.file} alt="" aria-hidden="true" {...props} />;
-}
-function Back({ onBack, busy }: { onBack: () => void; busy: boolean }) {
-  return <button type="button" className={styles.back} aria-label="이전 단계" onClick={onBack} disabled={busy}>
-    <Asset screen="q1" variable="imgChevronBackward" width={24} height={24} />
-  </button>;
-}
-function Progress({ step, onBack, busy }: { step: 1 | 2; onBack: () => void; busy: boolean }) {
-  return <nav className={styles.navigation} aria-label="온보딩 화면 탐색">
-    <Back onBack={onBack} busy={busy} />
-    <div className={styles.progress} role="progressbar" aria-label="기본 질문 진행 상태" aria-valuemin={0} aria-valuemax={2} aria-valuenow={step}>
-      <i /><i className={step === 2 ? styles.filled : ""} />
-    </div><span aria-hidden="true">{step}/2</span>
-  </nav>;
 }
 type NavigationProps = { onBack: () => void; onNext: () => void; busy: boolean };
 type SubmissionProps = { submitting: boolean; error: string; onSubmit: () => void; onEditProfile: () => void; recovery?: { label: string; onClick: () => void } };
@@ -51,24 +40,19 @@ export function InterestScreen({ selected, onToggle, onNext, busy, chrome = fals
     <div className={styles.actions}>{onEditProfile && <button type="button" className={styles.reselect} onClick={onEditProfile} disabled={busy}>기본 정보 수정하기</button>}<PrimaryButton disabled={!selected || busy} onClick={onNext}>애니메이션 선택하고 시작하기</PrimaryButton></div>
   </PivotFrame>;
 }
-export function QuestionScreen({ question, value, onChoose, onBack, onNext, busy, chrome = false }: NavigationProps & { question: 1 | 2; value: string | null; onChoose: (value: string) => void; chrome?: boolean }) {
-  const screen = "q" + question + (value ? "-on" : "");
+export function QuestionScreen({ value, onChoose, onBack, onNext, busy, chrome = false }: NavigationProps & { value: string | null; onChoose: (value: string) => void; chrome?: boolean }) {
+  const screen = "q1" + (value ? "-on" : "");
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
-    <Progress step={question} onBack={onBack} busy={busy} />
+    <QuestionProgress step={3} onBack={onBack} busy={busy} />
     <section className={styles.questionBody} aria-labelledby="question-heading">
-      <h1 id="question-heading" tabIndex={-1}><span>Q{question}.</span>
-        {question === 1 ? "덕질할 때 주로 무엇을 하나요?" : <>가장 놓치고 싶지 않은 정보는<br />무엇인가요?</>}
-      </h1>
-      <p className={styles.questionDescription}>{question === 1 ? "가장 많이 하는 것을 하나만 선택해주세요" : "하나만 선택해주세요"}</p>
-      <fieldset className={question === 1 ? styles.q1Grid : styles.q2List}>
-        <legend className={styles.srOnly}>Q{question} 답변 하나 선택</legend>
-        {question === 1 ? q1Choices.map((choice) => <label key={choice.id} className={[styles.choice, styles.q1Card, value === choice.id ? styles.selected : ""].join(" ")}>
-          <input type="radio" name="q1" aria-label={choice.lines.join(" ")} value={choice.id} checked={value === choice.id} onChange={() => onChoose(choice.id)} disabled={busy} />
+      <h1 id="question-heading" tabIndex={-1}><span>Q3.</span>어떻게 덕질하세요?</h1>
+      <p className={styles.questionDescription}>가장 많이 하는 것을 하나만 선택해주세요.</p>
+      <fieldset className={styles.q1Grid}>
+        <legend className={styles.srOnly}>Q3 소비 유형 하나 선택</legend>
+        {q1Choices.map((choice) => <label key={choice.id} className={[styles.choice, styles.q1Card, value === choice.id ? styles.selected : ""].join(" ")}>
+          <input type="radio" name="consumptionType" aria-label={choice.lines.join(" ")} value={choice.id} checked={value === choice.id} onChange={() => onChoose(choice.id)} disabled={busy} />
           <Asset screen={screen} variable={choice.asset} width={76} height={66} />
           <span>{choice.lines.map((line, index) => <Fragment key={line}>{index > 0 && <br />}{line}</Fragment>)}</span>
-        </label>) : q2Choices.map((choice) => <label key={choice.id} className={[styles.choice, styles.q2Card, value === choice.id ? styles.selected : ""].join(" ")}>
-          <input type="radio" name="q2" aria-label={choice.label} value={choice.id} checked={value === choice.id} onChange={() => onChoose(choice.id)} disabled={busy} />
-          <Asset screen={screen} variable={choice.asset} width={44} height={44} /><span>{choice.label}</span>
         </label>)}
       </fieldset>
     </section>
@@ -88,10 +72,11 @@ export function ResultScreen({ state, onReselect, busy, mode, onRestart, onDemoH
       <h1 id="result-heading" tabIndex={-1}>{mode === "service" ? <>마지막으로<br />선택을 확인해주세요</> : <>취향에 맞는<br />피드가 준비됐어요!</>}</h1>
       <div className={styles.resultMascot}><Asset screen="result" variable="imgImage28" /></div>
       <div className={styles.summary} aria-label="선택 답변 요약">
-        <div className={styles.summaryIntro}><h2>초기 추천 기준</h2><p>선택해주신 2가지 답변을 바탕으로 콘텐츠를 추천할게요</p></div>
+        <div className={styles.summaryIntro}><h2>선택한 취향</h2><p>좋아하는 작품, 장르·소재, 소비 유형을 확인해주세요.</p></div>
         <div className={styles.summaryRows}>
-          <div className={styles.summaryRow}><Asset screen="result" variable="img2" width={29} height={29} /><span className={styles.summaryLabel}>주로 찾는 정보</span><strong className={styles.answerTag}>{summary.q1}</strong></div>
-          <div className={styles.summaryRow}><Asset screen="result" variable="img3" width={29} height={29} /><span className={styles.summaryLabel}>놓치고 싶지 않은 소식</span><strong className={styles.answerTag}>{summary.q2}</strong></div>
+          <div className={styles.summaryRow}><span className={styles.summaryLabel}>좋아하는 작품</span><strong className={styles.answerTag}>{summary.works}</strong></div>
+          <div className={styles.summaryRow}><span className={styles.summaryLabel}>장르·소재</span><strong className={styles.answerTag}>{summary.tags}</strong></div>
+          <div className={styles.summaryRow}><Asset screen="result" variable="img2" width={29} height={29} /><span className={styles.summaryLabel}>소비 유형</span><strong className={styles.answerTag}>{summary.consumption}</strong></div>
         </div>
       </div>
       <p className={styles.connectionNotice}>{mode === "service" ? "가입을 완료하면 선택한 취향을 저장하고 콘텐츠를 보여드릴게요." : <>{mode === "demo" ? "시연용 결과예요. " : ""}실제 추천 피드·가입·서버 저장은 아직 연결되지 않았어요.</>}</p>
@@ -99,7 +84,7 @@ export function ResultScreen({ state, onReselect, busy, mode, onRestart, onDemoH
     <div className={styles.actions}>
       <button type="button" className={styles.reselect} onClick={onReselect} disabled={busy}>다시 선택하기</button>
       {mode === "service" && submission && <button type="button" className={styles.reselect} onClick={submission.onEditProfile} disabled={busy}>기본 정보 수정하기</button>}
-      <PrimaryButton disabled={!isSelectionComplete(state) || busy || (mode === "service" && (!submission || !!submission.recovery))} onClick={() => {
+      <PrimaryButton disabled={!isStateComplete(state) || busy || (mode === "service" && (!submission || !!submission.recovery))} onClick={() => {
         if (mode === "service") submission?.onSubmit();
         else if (mode === "demo" && onDemoHome) onDemoHome(); else setHomeNotice(true);
       }} aria-describedby="home-feedback">{mode === "service" ? submission?.submitting ? "가입을 완료하고 있어요…" : "가입 완료하고 콘텐츠 보기" : "콘텐츠 보러가기"}</PrimaryButton>
@@ -118,10 +103,12 @@ export function OnboardingFlow({ state, dispatch, onExit, mode, onRestart, onDem
   }, [state.step]);
   const busy = navigation.busy || (mode === "service" && submission?.submitting === true);
   const shared = { onBack: navigation.back, onNext: navigation.advance, busy, chrome };
+  const catalogProps = { ...shared, state, dispatch, catalog: mode === "service" ? serviceCatalog : demoCatalog, demo: mode !== "service", message: submission?.error };
   return <div ref={region} className={styles.flow}>
     {state.step === "interest" ? <InterestScreen {...shared} selected={state.interest === "animation"} onToggle={() => dispatch({ type: "toggle-interest" })} onEditProfile={mode === "service" ? submission?.onEditProfile : undefined} />
-      : state.step === "q1" ? <QuestionScreen {...shared} question={1} value={state.q1} onChoose={(value) => dispatch({ type: "choose-q1", value })} />
-      : state.step === "q2" ? <QuestionScreen {...shared} question={2} value={state.q2} onChoose={(value) => dispatch({ type: "choose-q2", value })} />
+      : state.step === "q1" ? <WorksQuestion {...catalogProps} />
+      : state.step === "q2" ? <TagsQuestion {...catalogProps} />
+      : state.step === "q3" ? <QuestionScreen {...shared} value={state.consumptionType} onChoose={(value) => dispatch({ type: "choose-consumption", value })} />
       : <ResultScreen state={state} onReselect={navigation.reselect} busy={busy} mode={mode} onRestart={onRestart} onDemoHome={onDemoHome} chrome={chrome} submission={submission} />}
     <span className={styles.srOnly} role="status" aria-live="polite">{navigation.busy ? "다음 화면으로 이동 중" : canAdvance(state) ? "선택 완료. 다음 단계로 이동할 수 있어요." : ""}</span>
   </div>;

@@ -3,6 +3,7 @@ import { requirePivotApi } from "./services";
 import type { DetailArticle, DetailDataSource } from "./detail";
 import type { HomeDetailTarget } from "./home";
 import { optionalImage, requireTitle, safeSourceUrl, serviceContentId } from "./service-data";
+import { mapCarouselSlides, mapContentSources, publicationMetadata } from "./carousel-data";
 
 export function mapContentDetail(content: ContentDetail, target: HomeDetailTarget): DetailArticle {
   if (!content || content.contentId !== serviceContentId(target) || content.topicId !== target.topicId ||
@@ -12,8 +13,11 @@ export function mapContentDetail(content: ContentDetail, target: HomeDetailTarge
   const text = content.displayMode === "full_body" ? content.body : content.excerpt;
   if (text !== null && typeof text !== "string") throw new Error("Invalid article text");
   const paragraphs = (text ?? "").split(/\r?\n\s*\r?\n/).map((value) => value.trim()).filter(Boolean);
+  const slides = mapCarouselSlides(content.slides, content.contentId, content.topicId);
   return {
-    ...target, origin: "service", title, image: optionalImage(content.imageUrl, title),
+    ...target, ...publicationMetadata(content), origin: "service", title,
+    image: slides[0]?.image ?? optionalImage(content.imageUrl, title),
+    slides, sources: mapContentSources(content.sources),
     sections: paragraphs.length ? [{ paragraphs }] : [],
     bookmarked: content.myReaction.bookmarked, displayMode: content.displayMode,
     sourceUrl: safeSourceUrl(content.sourceUrl),

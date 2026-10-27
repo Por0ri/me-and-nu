@@ -1,4 +1,3 @@
-from datetime import date
 from typing import Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -9,7 +8,6 @@ from app.schemas.common import CamelModel
 class ProfileResponse(CamelModel):
     user_id: int
     nickname: str
-    birth_date: date | None
     email: str | None
     profile_image_id: int | None = None
     profile_image_url: str | None = None

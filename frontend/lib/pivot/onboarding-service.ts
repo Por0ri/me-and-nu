@@ -1,37 +1,26 @@
 import { ApiError, apiRequest, getSession, getTopics, type ConsentInput, type Session, type TopicsResponse } from "@/lib/api";
-import { getAgeEligibility, validateBirthdate } from "@/lib/onboarding/birthdate";
 import type { ConsentDraft } from "./consent";
 import { isSelectionComplete, type UiSelection } from "./onboarding";
 import { isActiveSession, isPendingConsumer, requirePivotApi } from "./services";
 
-export type OnboardingProfile = { nickname: string; birthDate: string };
+export type OnboardingProfile = { nickname: string };
 export type OnboardingProfileValidation =
   | { valid: true; profile: OnboardingProfile }
   | { valid: false; errors: Partial<Record<keyof OnboardingProfile, string>> };
 
-/** Match Python's Unicode character count and the backend's UTC calendar age check. */
-export function validateOnboardingProfile(profile: OnboardingProfile, referenceDate = new Date()): OnboardingProfileValidation {
+/** Birth-date collection and age policy remain deferred; only nickname is collected. */
+export function validateOnboardingProfile(profile: OnboardingProfile): OnboardingProfileValidation {
   const errors: Partial<Record<keyof OnboardingProfile, string>> = {};
   const nickname = typeof profile?.nickname === "string" ? profile.nickname.trim() : "";
   if (!nickname || [...nickname].length > 30) errors.nickname = "닉네임을 1~30자로 입력해 주세요.";
-  const birthDate = typeof profile?.birthDate === "string" ? profile.birthDate : "";
-  // The existing calendar helper uses local date components; supply the backend's UTC day.
-  const calendarDay = new Date(referenceDate.getUTCFullYear(), referenceDate.getUTCMonth(), referenceDate.getUTCDate(), 12);
-  const birth = validateBirthdate(birthDate, calendarDay);
-  if (!birth.valid) {
-    errors.birthDate = birth.reason === "required" ? "생년월일을 입력해 주세요."
-      : birth.reason === "future" ? "미래 날짜는 생년월일로 입력할 수 없어요." : "올바른 생년월일을 입력해 주세요.";
-  } else if (getAgeEligibility(birthDate, calendarDay) !== "eligible") {
-    errors.birthDate = "만 14세 이상부터 가입할 수 있어요.";
-  }
-  return Object.keys(errors).length ? { valid: false, errors } : { valid: true, profile: { nickname, birthDate } };
+  return Object.keys(errors).length ? { valid: false, errors } : { valid: true, profile: { nickname } };
 }
 
 export type OnboardingCompleteInput = OnboardingProfile & {
   accountType: "user";
   consents: ConsentInput[];
   topicId: number;
-  answers: { q1: UiSelection["q1"]; q2: UiSelection["q2"] };
+  answers: { version: 2; favoriteEntityIds: number[]; preferenceTagIds: number[]; consumptionType: UiSelection["consumptionType"] };
 };
 export type OnboardingCompleteResponse = {
   user: { id: number; accountType: "user" };
@@ -74,7 +63,7 @@ function copyConsents(consent: ConsentDraft): ConsentInput[] {
   });
 }
 
-function animeTopicId(response: TopicsResponse): number {
+export function animeTopicId(response: TopicsResponse): number {
   const matches = Array.isArray(response?.topics) ? response.topics.filter((topic) => topic?.code === "anime") : [];
   if (matches.length !== 1 || !Number.isSafeInteger(matches[0].id) || matches[0].id <= 0) {
     throw new Error("애니메이션 관심 분야를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
@@ -83,9 +72,11 @@ function animeTopicId(response: TopicsResponse): number {
 }
 
 function validateCompletion(response: OnboardingCompleteResponse, input: OnboardingCompleteInput): void {
+  const sameIds = (actual: unknown, expected: number[]) => Array.isArray(actual) && actual.length === expected.length && new Set(actual).size === actual.length && actual.every(id => expected.includes(id));
   if (response?.onboardingCompleted !== true || response.user?.accountType !== "user" ||
     !Number.isSafeInteger(response.user?.id) || response.user.id <= 0 || response.activeTopic?.id !== input.topicId ||
-    response.answers?.q1 !== input.answers.q1 || response.answers?.q2 !== input.answers.q2) {
+    response.answers?.version !== 2 || response.answers?.consumptionType !== input.answers.consumptionType ||
+    !sameIds(response.answers?.favoriteEntityIds, input.answers.favoriteEntityIds) || !sameIds(response.answers?.preferenceTagIds, input.answers.preferenceTagIds)) {
     throw new Error("가입 완료 응답을 확인하지 못했어요. 다시 확인해 주세요.");
   }
 }
@@ -94,17 +85,16 @@ function validateCompletion(response: OnboardingCompleteResponse, input: Onboard
 export function createOnboardingService(
   api: OnboardingApi = defaultApi,
   guard: () => void = requirePivotApi,
-  now: () => Date = () => new Date(),
 ): OnboardingSubmissionService {
   let pending: Promise<OnboardingCompletion> | null = null;
 
   async function submit(selection: UiSelection, consent: ConsentDraft, profile: OnboardingProfile): Promise<OnboardingCompletion> {
     guard();
-    const validated = validateOnboardingProfile(profile, now());
-    if (!validated.valid) throw new Error(validated.errors.nickname ?? validated.errors.birthDate);
-    if (!selection || !isSelectionComplete(selection)) throw new Error("관심 분야와 두 답변을 모두 선택해 주세요.");
+    const validated = validateOnboardingProfile(profile);
+    if (!validated.valid) throw new Error(validated.errors.nickname);
+    if (!selection || !isSelectionComplete(selection)) throw new Error("작품, 장르·소재, 소비 유형을 모두 선택해 주세요.");
     const consents = copyConsents(consent);
-    const answers = { q1: selection.q1, q2: selection.q2 };
+    const answers: OnboardingCompleteInput["answers"] = { version: 2, favoriteEntityIds: [...selection.favoriteEntityIds], preferenceTagIds: [...selection.preferenceTagIds], consumptionType: selection.consumptionType };
     const before = await api.getSession();
     if (isActiveSession(before)) return { session: before, recovered: true };
     if (!isPendingConsumer(before)) {
@@ -112,6 +102,7 @@ export function createOnboardingService(
         before?.authenticated ? "STATE_CONFLICT" : "AUTH_REQUIRED");
     }
     const topicId = animeTopicId(await api.getTopics());
+    if (topicId !== selection.topicId) throw new Error("관심 분야가 변경됐어요. 작품부터 다시 선택해 주세요.");
     const input: OnboardingCompleteInput = { ...validated.profile, accountType: "user", consents, topicId, answers };
     let response: OnboardingCompleteResponse;
     try {

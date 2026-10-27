@@ -20,7 +20,8 @@ from app.models import (
 
 
 EXPECTED_COLUMNS = {
-    "user_account": 14,
+    # Matches the inherited ORM; legacy DB birth_date remains policy-deferred.
+    "user_account": 13,
     "topic": 7,
     "subtopic": 7,
     "source_site": 12,
@@ -31,7 +32,7 @@ EXPECTED_COLUMNS = {
     "agent_run_source": 9,
     "draft": 16,
     "judgment_log": 14,
-    "content": 25,
+    "content": 26,
     "content_source": 9,
 }
 

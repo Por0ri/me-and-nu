@@ -1,12 +1,13 @@
 import { getBookmarks, getMyTopics, type SavedBookmark } from "@/lib/api";
 import { requirePivotApi } from "./services";
 import type { SavedCard, SavedDataSource } from "./saved";
-import { activeTopicId, isPositiveId, LIST_PAGE_SIZE, MAX_LIST_PAGES, nextPageCursor, optionalImage, requireTitle } from "./service-data";
+import { activeTopicId, isPositiveId, LIST_PAGE_SIZE, MAX_LIST_PAGES, nextPageCursor, requireTitle } from "./service-data";
+import { mapCoverImage } from "./carousel-data";
 
 export function mapSavedCard(item: SavedBookmark, topicId: number): SavedCard {
   if (!item || !isPositiveId(item.contentId) || item.topicId !== topicId) throw new Error("Invalid saved identity");
   const title = requireTitle(item.title);
-  return { postId: String(item.contentId), contentId: String(item.contentId), topicId, title, image: optionalImage(item.imageUrl, title) };
+  return { postId: String(item.contentId), contentId: String(item.contentId), topicId, title, image: mapCoverImage(item.imageUrl, title, item.contentId, topicId) };
 }
 
 export function createServiceSavedSource(

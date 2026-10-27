@@ -21,11 +21,21 @@ def test_alembic_configuration_is_initialized():
     assert Path(script.dir).resolve() == Path("alembic").resolve()
 
 
-def test_alembic_revision_chain_has_single_v1_head():
+def test_alembic_revision_chain_has_single_service_head_without_birth_date_removal():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["c0e5f3b8a124"]
+    assert script.get_heads() == ["f4b8c1d9a620"]
+    carousel = script.get_revision("f4b8c1d9a620")
+    assert carousel.down_revision == "e3a7b9c2d451"
+    assert carousel.dependencies is None
+    onboarding_v2 = script.get_revision("e3a7b9c2d451")
+    assert onboarding_v2.down_revision == "c0e5f3b8a124"
+    assert onboarding_v2.dependencies is None
+    assert "onboarding_v2" in onboarding_v2.branch_labels
+    assert "d2f6a9c4e731" not in {
+        revision.revision for revision in script.walk_revisions(base="base", head="f4b8c1d9a620")
+    }
     assert script.get_revision("c0e5f3b8a124").down_revision == (
         "b9d4e2a7f013"
     )
@@ -105,6 +115,24 @@ def test_alembic_ini_does_not_contain_database_credentials():
 
     assert "driver://user:pass" not in config_text
     assert "DATABASE_URL" in config_text
+
+
+def test_carousel_migration_offline_sql_preserves_downgrade_guard(monkeypatch):
+    revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("f4b8c1d9a620").module
+    buffer = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(context))
+    revision.upgrade()
+    revision.downgrade()
+    sql = buffer.getvalue()
+    assert "CREATE TABLE content_slide" in sql and "image_data BYTEA" in sql
+    assert "birth_date" not in sql and "user_account" not in sql
+    lock = sql.index("LOCK TABLE content_slide, content IN ACCESS EXCLUSIVE MODE")
+    guard = sql.index("RAISE EXCEPTION")
+    deletion = sql.index("DROP TABLE content_slide")
+    assert lock < guard < deletion
 
 
 def test_topic_rename_migration_compiles_upgrade_and_downgrade_sql(

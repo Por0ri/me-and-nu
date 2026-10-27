@@ -16,7 +16,6 @@ def test_user_model_columns():
         "email",
         "nickname",
         "account_status",
-        "birth_date",
         "auth_provider",
         "hashed_password",
         "profile_image_url",

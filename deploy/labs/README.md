@@ -36,7 +36,7 @@ sudo bash deploy/labs/labs.sh seed-apply
 
 `init`은 기존 `.env`를 덮어쓰지 않는다. 기본 공급자 플래그는 모두 `false`다. `check`는 로컬 Compose 렌더링만 수행하며 실제 비밀번호/해석된 설정을 출력하지 않는다. 매 helper 동작 전에 프로젝트, URL, DB, Redis, 쿠키, 네트워크, 볼륨, 포트, 리소스 상한을 검사한다. Compose 설정을 합치거나 임의 플래그를 전달하지 않는다. `docker compose config` 원문에는 비밀번호가 포함되므로 작업 기록에 출력하지 않는다.
 
-`up`은 PostgreSQL/Redis의 healthcheck와 `alembic upgrade head` 성공 후 API를 기동한다. `seed`는 PostgreSQL 읽기 전용 트랜잭션으로 계획만 출력하고 `seed-apply`만 기록한다. seed는 별도 `tools` profile로 평상시 자동 실행되지 않는다. 실패한 migration/seed는 원인을 해결한 뒤 같은 Labs helper로 재실행한다. DB/Redis의 호스트 포트는 노출하지 않는다.
+`up`은 PostgreSQL/Redis의 healthcheck와 명시적 `alembic upgrade f4b8c1d9a620` 성공 후 API를 기동한다. 이는 온보딩 V2 e3와 서비스 캐러셀을 포함하는 이 후보의 유일한 head이며, 생년월일 삭제 d2 파일은 제외했다. 대상 고정을 위해 `upgrade head/heads`로 바꾸지 않는다. 과거 d2가 이미 적용된 DB는 별도 migration 이력 검토 후에만 적용 경로를 정한다. `seed`는 PostgreSQL 읽기 전용 트랜잭션으로 계획만 출력하고 `seed-apply`만 기록한다. 이 Labs seed에는 V2 작품·태그 사전이나 캐러셀이 없으므로 검토된 별도 적재가 필요하다. seed는 별도 `tools` profile로 평상시 자동 실행되지 않는다. 실패한 migration/seed는 원인을 해결한 뒤 같은 Labs helper로 재실행한다. DB/Redis의 호스트 포트는 노출하지 않는다. 이 설정 변경은 실제 배포나 DB 적용을 실행한 것이 아니다.
 
 이미지 빌드에 붙인 SHA가 실제 체크아웃과 일치해야 한다. 런타임 CPU 제한이 이미지 빌드에 적용되지는 않으므로 기존 서비스 부하를 확인한 뒤 빌드한다. 기존 앱이 사용하는 저장소/태그를 재태깅하지 않는다. 볼륨 생성 후 `.env`의 저장소 비밀번호만 임의로 바꾸면 기존 볼륨의 인증값과 불일치한다.
 
@@ -73,7 +73,9 @@ https://api.labs.me-nu.kr/api/v1/auth/login/naver/callback
 
 정책 문안은 내부 동의 저장 기능의 검증용으로만 제공한다. 공개 서비스의 정식 약관을 대신하지 않는다. seed는 회원, 동의 이력, 관심 Topic 구독, 인증 세션을 만들지 않는다. 기존 테스트 환경 회원도 Labs에서는 신규 회원이다.
 
-첫 회원가입은 [Labs 로그인 화면](https://labs.me-nu.kr/pivot/login)에서 완료한다. Swagger에서 회원을 먼저 만들 필요가 없다.
+다음은 2026-10-27 기존 Labs 화면 검증 당시의 절차다. 2026-10-28 통합 브랜치의 V2 DB·API 구현이 이 화면에 배포됐다는 의미가 아니다. 생년월일 수집 방식은 계속 보류하며, 기존 FE의 birthDate 전송과 현재 API의 422 계약 불일치가 남아 있다. 신규 V2 API 검증은 [온보딩 명세](../../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)를 따른다. 아래 과거 화면의 생년월일·연령 입력을 새 정책으로 해석하지 않는다.
+
+당시 첫 회원가입은 [Labs 로그인 화면](https://labs.me-nu.kr/pivot/login)에서 진행했다.
 
 1. 카카오 또는 네이버로 로그인한다. 새 계정은 약관 화면으로 이동한다.
 2. 약관 내용을 읽고 본인이 동의할 항목을 선택한다. 선택 약관은 거절해도 가입할 수 있다.

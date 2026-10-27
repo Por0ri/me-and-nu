@@ -4,6 +4,7 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { sourceAssetHash } = require('./helpers/source-asset-hash.cjs');
 const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
@@ -326,7 +327,7 @@ test('H2-B chrome and authored Splash pose assets retain their recorded hashes',
     assert.equal(manifest.page, '범수님');
     for (const asset of manifest.assets) {
       const bytes = fs.readFileSync(path.join(root, 'public', asset.path));
-      assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), asset.sha256);
+      assert.equal(sourceAssetHash(asset.path, bytes), asset.sha256);
     }
   }
 });

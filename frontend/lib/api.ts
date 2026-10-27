@@ -70,10 +70,22 @@ export type MyTopicsResponse = { topics: MyTopic[] };
 export type MySubtopic = { subtopicId: number; name: string; order: number; subscribedAt: string };
 export type MySubtopicsResponse = { items: MySubtopic[]; orderingBasis: string };
 export type MyReaction = { liked: boolean; preference: Preference | null; bookmarked?: boolean };
+export type CarouselBox = { x: number; y: number; width: number; height: number };
+export type CarouselLayout = {
+  template: string; fitMode: string; backgroundStyle: "blur" | "palette" | "gradient";
+  imageBox: CarouselBox; copyBox: CarouselBox; textOverlayBox: CarouselBox;
+  imageScale: number; imageOffsetY: number; contrastMode: string; blurBackground: boolean;
+};
+export type ContentSlide = {
+  imageUrl: string; page: number; role: string; eyebrow: string;
+  titleLines: string[]; bodySentences: string[]; layout: CarouselLayout; width: number; height: number;
+};
+export type ContentSource = { url: string; title: string | null; publisher: string | null; role: string; citationOrder: number | null };
 export type FeedCard = {
   kind: string; id: number; topicId: number; recommendationId: number | null;
   title: string; productionType: "human" | "ai" | "hybrid";
   summary: string | null; imageUrl: string | null;
+  slides?: ContentSlide[];
   sourceName: string; sourceUrl: string; publishedAt: string | null;
   saved: boolean; savedItemId: number | null; recommendationReason: string | null;
   subtopicNames?: string[];
@@ -92,6 +104,8 @@ export type ContentDetail = {
   productionType: "human" | "ai" | "hybrid";
   excerpt: string | null; body: string | null; contentType: string | null;
   imageUrl: string | null;
+  slides?: ContentSlide[];
+  sources?: ContentSource[];
   subtopicIds: number[];
   subtopicNames?: string[];
   practicalInfo: { startsAt: string | null; endsAt: string | null; ageLimit: string | null; preparation: string | null; price: string | null };
@@ -165,16 +179,21 @@ function query(params: Record<string, string | number | boolean | undefined | nu
 }
 
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  init.signal?.throwIfAborted();
   const method = (init.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD" && !csrfToken) await getSession();
+  init.signal?.throwIfAborted();
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (method !== "GET" && method !== "HEAD" && csrfToken) headers.set("X-CSRF-Token", csrfToken);
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init, headers, credentials: "include", cache: "no-store",
   });
+  init.signal?.throwIfAborted();
   if (response.status === 204) return undefined as T;
   const payload: unknown = await response.json().catch(() => null);
+  // A cancelled read must not expire a newer session via a late 401 response.
+  init.signal?.throwIfAborted();
   if (!response.ok) {
     const error = payload as ErrorPayload | null;
     if (response.status === 401 || error?.code === "CSRF_INVALID") csrfToken = null;

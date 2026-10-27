@@ -40,14 +40,20 @@ export function OnboardingRoute() {
       if (!mounted.current) return;
       if (code === "POLICY_VERSION_CONFLICT" || code === "REQUIRED_CONSENT_MISSING") {
         setError("약관을 다시 확인해야 해요. 최신 약관을 확인한 뒤 가입을 완료해주세요."); setRecovery("consent");
-      } else if (code === "AGE_RESTRICTED") {
-        setError("만 14세 이상 가입할 수 있어요. 생년월일을 확인해주세요."); setProfileReady(false);
       } else if (code === "STATE_CONFLICT" || code === "ONBOARDING_ALREADY_COMPLETED") {
         setError("로그인 상태를 다시 확인해야 해요."); setRecovery("session");
       } else if (code === "CSRF_INVALID") {
         setError("로그인 확인 정보가 갱신됐어요. 가입 완료 버튼을 다시 눌러주세요.");
       } else if (code === "TOPIC_NOT_FOUND") {
         setError("선택한 관심 분야를 확인하지 못했어요. 잠시 후 다시 시도해주세요.");
+      } else if (code === "VALIDATION_ERROR") {
+        if (reason instanceof ApiError && reason.fields?.some(field => field.field === "nickname")) {
+          setError("닉네임을 다시 확인해주세요."); setProfileReady(false);
+        } else {
+          setError("선택한 작품과 장르·소재를 다시 확인해주세요.");
+          dispatchOnboarding({ type: "back", from: "result" });
+          dispatchOnboarding({ type: "back", from: "q3" });
+        }
       } else {
         setError("가입 완료를 확인하지 못했어요. 입력한 내용은 유지돼요. 잠시 후 다시 시도해주세요.");
       }

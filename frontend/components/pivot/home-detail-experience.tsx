@@ -19,9 +19,9 @@ import { SavedController } from "./saved-controller";
 const noSubscribe = () => () => {};
 const noSnapshot = () => 0;
 
-export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, demoBookmarks, onRestart }: {
+export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, demoBookmarks, onRestart, onLogout }: {
   homeSource: HomeDataSource; detailSource: DetailDataSource; mySource?: MyPageDataSource; savedSource?: SavedDataSource;
-  demoBookmarks?: DemoBookmarkControls; onRestart?: () => void;
+  demoBookmarks?: DemoBookmarkControls; onRestart?: () => void; onLogout?: () => Promise<void>;
 }) {
   const params = useSearchParams();
   const detailOpen = params.get("view") === "detail";
@@ -183,6 +183,6 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     <div ref={savedList} hidden={!savedOpen}>
       {savedOpen || (detailFromSaved && (detailOpen || myOpen)) ? <SavedController source={connectedSavedSource} onHome={backToHome} onMy={openMy} onViewDetail={openDetail} onReady={restoreSaved} /> : null}
     </div>
-    {myOpen ? <MyPageController source={mySource.kind === homeSource.kind ? mySource : pendingMyPageSource} onHome={backToHome} onSaved={openSaved} /> : null}
+    {myOpen ? <MyPageController source={mySource.kind === homeSource.kind ? mySource : pendingMyPageSource} onHome={backToHome} onSaved={openSaved} onLogout={homeSource.kind === "service" ? onLogout : undefined} /> : null}
   </>;
 }

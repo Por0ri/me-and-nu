@@ -104,7 +104,8 @@ test('expired session emits the authentication event and does not fall back to d
   const fixture = createApiFixture(); fixture.rotate('active');
   const modules = browserModules(fixture); const api = modules.load('lib/api.ts');
   await api.getSession(); fixture.rotate('anonymous');
-  await assert.rejects(modules.load('lib/pivot/home-service.ts').createServiceHomeSource().load({ signal: new AbortController().signal }), error => error.status === 401);
+  const result = await modules.load('lib/pivot/home-service.ts').createServiceHomeSource().load({ signal: new AbortController().signal });
+  assert.equal(result.status, 'error'); assert.equal(result.reason, 'unauthorized');
   assert.deepEqual(modules.events, ['api:unauthorized']);
   assert.equal((await api.getSession()).user, null);
 });
@@ -128,4 +129,21 @@ test('concurrent initial session reads share one request and one CSRF for the fi
   assert.equal(start.csrf, 'fixture-anonymous-csrf');
   assert.match(start.cookie, /fixture_session=fixture-anonymous/);
   assert.equal(new URL(modules.browser.redirect).hostname, 'kauth.kakao.com');
+});
+
+test('logout uses the active session CSRF, preserves failures, and refreshes anonymous CSRF after success', async () => {
+  const fixture = createApiFixture(); fixture.rotate('active');
+  const modules = browserModules(fixture); const api = modules.load('lib/api.ts');
+  await api.getSession();
+  fixture.state.failNext = { method: 'POST', path: '/api/v1/auth/logout', status: 503 };
+  await assert.rejects(api.logout(), error => error.status === 503);
+  assert.equal((await api.getSession()).sessionState, 'active');
+  await api.logout();
+  const request = fixture.requests.filter(item => item.path === '/api/v1/auth/logout').at(-1);
+  assert.equal(request.method, 'POST'); assert.equal(request.csrf, 'fixture-active-csrf');
+  assert.match(request.cookie, /fixture_session=fixture-active/);
+  assert.equal((await api.getSession()).sessionState, 'anonymous');
+  await modules.load('lib/pivot/services.ts').startSnsLogin('kakao');
+  const nextLogin = fixture.requests.find(item => item.path === '/api/v1/auth/login/kakao');
+  assert.equal(nextLogin.csrf, 'fixture-anonymous-csrf');
 });

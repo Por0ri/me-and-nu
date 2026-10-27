@@ -72,7 +72,7 @@ async def test_new_social_user_is_normalized_and_requires_onboarding(memory_db):
     assert user.auth_provider == "kakao"
     assert user.provider_user_id == "provider-user-1"
     assert user.account_type == "user" and user.account_status == "active"
-    assert user.hashed_password is user.birth_date is user.profile_image_url is None
+    assert user.hashed_password is user.profile_image_url is None
     assert user.onboarding_completed_at is None
     memory_db.commit.assert_not_awaited()
 

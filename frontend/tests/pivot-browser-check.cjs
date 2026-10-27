@@ -5,11 +5,22 @@ const assert = require('node:assert/strict');
 const { chromium } = require(process.env.PIVOT_PLAYWRIGHT_MODULE || 'playwright');
 const base = process.argv[2] || 'http://127.0.0.1:3100';
 const out = process.argv[3] || path.join(require('node:os').tmpdir(), 'pivot-browser-check');
-const session = {authenticated:true,sessionState:'onboarding_pending',onboardingCompleted:false,user:{id:12,accountType:'consumer'},csrfToken:'local-test-only'};
+const session = {authenticated:true,sessionState:'onboarding_pending',onboardingCompleted:false,user:null,csrfToken:'local-test-only'};
 const policies = [
  {type:'terms',policyVersion:'test-v1',required:true,text:'Local test terms'},
  {type:'privacy',policyVersion:'test-v2',required:true,text:'Local test privacy'},
  {type:'marketing',policyVersion:'test-v3',required:false,text:'Local optional policy'},
+];
+// Explicit intercepted UI fixtures, independent of the bundled demo catalog.
+const onboardingWorks = [
+ {entityId:901,name:'별빛 우체국',aliases:[],imageUrl:null,releaseYear:null,mediaFormat:null,selectable:true,unavailableReason:null},
+ {entityId:902,name:'구름 정원의 로봇',aliases:[],imageUrl:null,releaseYear:null,mediaFormat:null,selectable:true,unavailableReason:null},
+];
+const onboardingTags = [
+ {tagId:911,kind:'genre',code:'fantasy',label:'판타지',sourceEntityIds:[901]},
+ {tagId:912,kind:'genre',code:'adventure',label:'모험',sourceEntityIds:[901,902]},
+ {tagId:913,kind:'theme',code:'friendship',label:'우정',sourceEntityIds:[901,902]},
+ {tagId:914,kind:'theme',code:'robot',label:'로봇',sourceEntityIds:[902]},
 ];
 const mode = process.argv[4] || 'development';
 const motion = process.argv[5] || 'reduce';
@@ -48,6 +59,14 @@ async function advance(page) {
  const button = page.getByRole('button',{name:'선택 완료',exact:true});
  await button.click();
 }
+async function chooseWork(page, label) {
+ await page.getByRole('searchbox',{name:'작품 검색',exact:true}).fill(label);
+ const button=page.getByRole('list',{name:'작품 검색 결과',exact:true}).getByRole('button').filter({hasText:label});
+ await button.click();
+ await page.waitForFunction(label=>[...document.querySelectorAll('ul[aria-label="작품 검색 결과"] button')].some(b=>b.textContent.includes(label)&&b.getAttribute('aria-pressed')==='true'),label);
+}
+async function advanceWorks(page) { await page.getByRole('button',{name:'선택한 작품으로 다음',exact:true}).click(); }
+async function advanceTags(page) { await page.getByRole('button',{name:'장르·소재 선택 완료',exact:true}).click(); }
 async function pauseClock(page) {
  await page.clock.pauseAt(await page.evaluate(()=>Date.now()+100));
 }
@@ -59,10 +78,11 @@ async function quickResult(page) {
  const interest=page.getByRole('checkbox',{name:'애니메이션',exact:true});
  assert.equal(await interest.isChecked(),false); await interest.focus(); await page.keyboard.press('Space');
  await page.getByRole('button',{name:'애니메이션 선택하고 시작하기'}).click();
- assert.equal(await page.locator('input[name=q1]:checked').count(),0);
- await choose(page,'q1','world'); await advance(page);
- assert.equal(await page.locator('input[name=q2]:checked').count(),0);
- await choose(page,'q2','characters'); await advance(page);
+ assert.equal(await page.getByRole('list',{name:'선택한 작품',exact:true}).locator('li').count(),0);
+ await chooseWork(page,'별빛 우체국'); await advanceWorks(page);
+ await page.getByRole('checkbox',{name:'우정',exact:true}).check(); await advanceTags(page);
+ assert.equal(await page.locator('input[name=consumptionType]:checked').count(),0);
+ await choose(page,'consumptionType','world'); await advance(page);
  await page.waitForFunction(()=>!document.querySelector('button[aria-describedby="home-feedback"]').disabled);
 }
 
@@ -89,25 +109,29 @@ async function reselectFlow(page,stem) {
  // Navigation deliberately locks for 200ms after each transition.
  await page.waitForFunction(()=>!document.querySelector('button').disabled && [...document.querySelectorAll('button')].some(b=>b.textContent==='다시 선택하기'&&!b.disabled));
  await reselect.focus();await page.keyboard.press('Enter');
- await page.locator('input[name=q1]').first().waitFor();await headingFocused(page);
- assert.equal(await page.locator('input[name=q1]:checked').count(),0);
+ await page.getByRole('searchbox',{name:'작품 검색',exact:true}).waitFor();await headingFocused(page);
+ assert.equal(await page.getByRole('list',{name:'선택한 작품',exact:true}).locator('li').count(),0);
  assert.equal(await page.getByLabel('선택 답변 요약').count(),0);
- assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
+ assert.equal(await page.getByRole('button',{name:'선택한 작품으로 다음',exact:true}).isDisabled(),true);
  await page.getByRole('button',{name:'이전 단계'}).click();
  assert.equal(await page.getByRole('checkbox',{name:'애니메이션',exact:true}).isChecked(),true);
  assert.equal(await page.getByRole('button',{name:'이전 단계'}).count(),0,'Interest has no ordinary Back');
  await page.getByRole('button',{name:'애니메이션 선택하고 시작하기'}).click();
- await page.locator('input[name=q1]').first().waitFor();
- assert.equal(await page.locator('input[name=q1]:checked').count(),0);
- const input=page.locator('input[name=q1][value=goods]');await input.focus();await page.keyboard.press('Space');
+ await page.getByRole('searchbox',{name:'작품 검색',exact:true}).waitFor();
+ assert.equal(await page.getByRole('list',{name:'선택한 작품',exact:true}).locator('li').count(),0);
+ await chooseWork(page,'구름 정원의 로봇');await advanceWorks(page);await headingFocused(page);
+ await page.getByRole('checkbox',{name:'로봇',exact:true}).waitFor();
+ assert.equal(await page.locator('fieldset input[type=checkbox]:checked').count(),0);
+ assert.equal(await page.getByRole('button',{name:'장르·소재 선택 완료',exact:true}).isDisabled(),true);
+ await page.getByRole('checkbox',{name:'로봇',exact:true}).check();await advanceTags(page);await headingFocused(page);
+ assert.equal(await page.locator('input[name=consumptionType]:checked').count(),0);
+ assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
+ const input=page.locator('input[name=consumptionType][value=goods]');await input.focus();await page.keyboard.press('Space');
  assert.equal(await input.locator('..').evaluate(e=>getComputedStyle(e).outlineWidth),'3px');
  await advance(page);await headingFocused(page);
- assert.equal(await page.locator('input[name=q2]:checked').count(),0);
- assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
- await choose(page,'q2','restock');await advance(page);await headingFocused(page);
  const summary=await page.getByLabel('선택 답변 요약').innerText();
- assert.match(summary,/굿즈 구매 정보/);assert.match(summary,/굿즈 출시 및 재입고 정보/);
- assert.doesNotMatch(summary,/관련 OST|신작\/시즌 공개 소식/);
+ assert.match(summary,/굿즈 구매 정보/);assert.match(summary,/구름 정원의 로봇/);assert.match(summary,/장르·소재[\s\S]*로봇/);
+ assert.doesNotMatch(summary,/관련 OST|별빛 우체국/);
  await snapshot(page,stem+'-reselected-result');
 }
 
@@ -123,27 +147,48 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
  await snapshot(page,stem+'-interest');
  await page.getByRole('button',{name:'애니메이션 선택하고 시작하기'}).click();
  await headingFocused(page);
- assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
- await choose(page,'q1','world');
- await page.keyboard.press('ArrowRight');
- await page.waitForFunction(()=>document.querySelector('input[name=q1]:checked')?.value==='relationships');
- assert.equal(await page.locator('input[name=q1]:checked').count(),1);
- assert.equal(await page.locator('input[name=q1]:checked').locator('..').evaluate(e=>getComputedStyle(e).outlineWidth),'3px');
+ assert.equal(await page.getByRole('button',{name:'선택한 작품으로 다음',exact:true}).isDisabled(),true);
+ assert.equal(await page.getByRole('progressbar').getAttribute('aria-valuemax'),'3');
+ await chooseWork(page,'별빛 우체국');
+ assert.equal(await page.getByRole('list',{name:'선택한 작품',exact:true}).locator('li').count(),1);
  await snapshot(page,stem+'-q1');
- await advance(page); await headingFocused(page);
+ await advanceWorks(page); await headingFocused(page);
  assert.equal(await page.getByRole('progressbar').getAttribute('aria-valuenow'),'2');
- assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
- await choose(page,'q2','events');
+ await page.getByRole('checkbox',{name:'우정',exact:true}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'장르·소재 선택 완료',exact:true}).isDisabled(),true);
+ await page.getByRole('checkbox',{name:'우정',exact:true}).check();
  await snapshot(page,stem+'-q2');
- // Ordinary Q2 → Q1 → Q2 navigation preserves both answers.
+ // Back alone retains selections; changing Q1 requires a new Q2 selection.
  await page.getByRole('button',{name:'이전 단계'}).click();
- await page.locator('input[name=q1]').first().waitFor();
- assert.equal(await page.locator('input[name=q1]:checked').inputValue(),'relationships');
- await choose(page,'q1','ost'); await advance(page);
- assert.equal(await page.locator('input[name=q2]:checked').inputValue(),'events');
- await choose(page,'q2','releases'); await advance(page);
+ assert.equal(await page.getByRole('list',{name:'선택한 작품',exact:true}).locator('li').count(),1);
+ await advanceWorks(page);
+ await page.getByRole('checkbox',{name:'우정',exact:true}).waitFor();
+ assert.equal(await page.getByRole('checkbox',{name:'우정',exact:true}).isChecked(),true);
+ await page.getByRole('button',{name:'이전 단계'}).click();
+ await chooseWork(page,'구름 정원의 로봇');
+ assert.equal(await page.getByRole('list',{name:'선택한 작품',exact:true}).locator('li').count(),2);
+ assert.match(await page.locator('main').innerText(),/장르·소재 선택을 초기화/);
+ await advanceWorks(page);
+ await page.getByRole('checkbox',{name:'모험',exact:true}).waitFor();
+ assert.equal(await page.locator('fieldset input[type=checkbox]:checked').count(),0);
+ await page.getByRole('checkbox',{name:'모험',exact:true}).check();await advanceTags(page);await headingFocused(page);
+ assert.equal(await page.getByRole('progressbar').getAttribute('aria-valuenow'),'3');
+ assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
+ await choose(page,'consumptionType','world');await page.keyboard.press('ArrowRight');
+ await page.waitForFunction(()=>document.querySelector('input[name=consumptionType]:checked')?.value==='relationships');
+ assert.equal(await page.locator('input[name=consumptionType]:checked').count(),1);
+ assert.equal(await page.locator('input[name=consumptionType]:checked').locator('..').evaluate(e=>getComputedStyle(e).outlineWidth),'3px');
+ await snapshot(page,stem+'-q3');
+ await page.getByRole('button',{name:'이전 단계'}).click();
+ await page.getByRole('checkbox',{name:'모험',exact:true}).waitFor();
+ assert.equal(await page.getByRole('checkbox',{name:'모험',exact:true}).isChecked(),true);
+ await advanceTags(page);
+ assert.equal(await page.locator('input[name=consumptionType]:checked').inputValue(),'relationships');
+ await choose(page,'consumptionType','ost');await advance(page);
  assert.match(await page.getByLabel('선택 답변 요약').innerText(),/관련 OST/);
- assert.match(await page.getByLabel('선택 답변 요약').innerText(),/신작\/시즌 공개 소식/);
+ assert.match(await page.getByLabel('선택 답변 요약').innerText(),/별빛 우체국/);
+ assert.match(await page.getByLabel('선택 답변 요약').innerText(),/구름 정원의 로봇/);
+ assert.match(await page.getByLabel('선택 답변 요약').innerText(),/모험/);
  await snapshot(page,stem+'-result');
  await reselectFlow(page,stem);
  if (enterHome) {
@@ -196,8 +241,10 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
   await page.clock.resume();
   return titles;
  }
- await page.getByRole('button',{name:'콘텐츠 보러가기'}).click();
- assert.match(await page.locator('#home-feedback').innerText(),/저장.*않/);
+ // This visual fixture stops before the real completion write; the separate
+ // service integration check covers persisted signup and rotated sessions.
+ await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent==='가입 완료하고 콘텐츠 보기'&&!button.disabled));
+ assert.equal(await page.getByRole('button',{name:'가입 완료하고 콘텐츠 보기',exact:true}).isEnabled(),true);
 }
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:process.env.PIVOT_BROWSER_CHANNEL||'msedge'});
@@ -212,10 +259,19 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    await context.route('**/*',async route=>{
     const req=route.request(),url=new URL(req.url());
     if(url.pathname.startsWith('/api/')) {
+     const headers={'Access-Control-Allow-Origin':base,'Access-Control-Allow-Credentials':'true','Access-Control-Allow-Headers':'content-type,x-csrf-token','Access-Control-Allow-Methods':'GET,POST,OPTIONS'};
+     if(req.method()==='OPTIONS') {await route.fulfill({status:204,headers});return;}
      requests.push({method:req.method(),url:req.url()});
      const currentSession=standaloneSession?{...session,authenticated:false,sessionState:'anonymous',onboardingCompleted:false,user:null}:session;
-     const payload=url.pathname==='/api/v1/auth/session'?currentSession:url.pathname==='/api/v1/policies'?{consentItems:policies}:null;
-     await route.fulfill({status:payload?200:500,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base,'Access-Control-Allow-Credentials':'true'},body:JSON.stringify(payload)});return;
+     let payload=url.pathname==='/api/v1/auth/session'?currentSession:url.pathname==='/api/v1/policies'?{consentItems:policies}:null;
+     if(url.pathname==='/api/v1/topics') payload={topics:[{id:900,code:'anime',name:'애니메이션'}]};
+     if(url.pathname==='/api/v1/onboarding/works') payload={items:onboardingWorks.filter(work=>work.name.includes((url.searchParams.get('q')||'').trim())),nextCursor:null};
+     if(url.pathname==='/api/v1/onboarding/preference-options') {
+      const ids=req.postDataJSON().entityIds;
+      const tags=onboardingTags.map(tag=>({...tag,sourceEntityIds:tag.sourceEntityIds.filter(id=>ids.includes(id))})).filter(tag=>tag.sourceEntityIds.length);
+      payload={entityIds:ids,genres:tags.filter(tag=>tag.kind==='genre'),themes:tags.filter(tag=>tag.kind==='theme'),minSelections:1,maxSelections:null};
+     }
+     await route.fulfill({status:payload?200:500,contentType:'application/json',headers,body:JSON.stringify(payload)});return;
     }
     if(url.origin!==new URL(base).origin) {external.push(req.url());await route.abort();return;}
     if(/^\/pivot\/loading\/phase-[123]\.png$/.test(url.pathname)) {
@@ -463,12 +519,12 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    results.push({viewport,scenario:'service Home unconfigured; no Mock fallback; input only; API and Consumer isolation',apiRequests:0,status:'pass'});
    // Every design preview remains reachable and network-isolated.
    if(mode !== 'production' && mode !== 'approved-preview') {
-   for(const screen of ['splash','login','consent','interest','q1','q2','result']) {
+   for(const screen of ['splash','login','consent','interest','q1','q2','q3','result']) {
     await page.goto(base+'/pivot/preview?screen='+screen);
     await page.locator('main h1').waitFor();await snapshot(page,prefix+'-preview-'+screen);
    }
    assert.deepEqual(requests,[]);
-   results.push({viewport,scenario:'all seven preview screens',apiRequests:0,status:'pass'});
+   results.push({viewport,scenario:'all eight preview screens',apiRequests:0,status:'pass'});
    }
    if(mode === 'development' || mode === 'approved-preview') {
     await page.goto(base+'/pivot/consent');
@@ -480,7 +536,7 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    }
    await page.goto(base+'/pivot/onboarding');
    await page.getByRole('heading',{name:'온보딩 확인'}).waitFor();
-   assert.equal(await page.locator('input[name=q1]').count(),0,'Missing consent draft blocks onboarding');
+   assert.equal(await page.getByRole('searchbox',{name:'작품 검색',exact:true}).count(),0,'Missing consent draft blocks onboarding');
    await page.goto(base+'/pivot/consent');
    await page.getByRole('checkbox',{name:'마케팅 수신 동의',exact:true}).waitFor();
    await page.getByRole('checkbox',{name:'서비스 설명 및 이용약관',exact:true}).check();
@@ -489,6 +545,9 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    assert.equal(await page.getByRole('button',{name:'시작하기',exact:true}).isEnabled(),true);
    await page.getByRole('button',{name:'시작하기',exact:true}).evaluate(b=>{b.click();b.click();});
    await page.waitForURL('**/pivot/onboarding');
+   await page.getByRole('textbox',{name:'닉네임',exact:true}).fill('브라우저 검증 회원');
+   assert.equal(await page.locator('input[type=date]').count(),0,'Birth-date collection remains deferred');
+   await page.getByRole('button',{name:'취향 선택하기',exact:true}).click();
    await questionFlow(page,prefix+'-service');
    const serviceText=await page.locator('main').innerText();
    assert.doesNotMatch(serviceText,/시연|미리보기|피드 연결 대기|새 Home/);
@@ -496,7 +555,7 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    assert.equal(pushes.length,1,'Consent double click must cause one route transition');
    assert.ok(requests.some(r=>r.url.endsWith('/api/v1/auth/session')),'Service control proves local API opt-in is on');
    assert.ok(requests.some(r=>r.url.endsWith('/api/v1/policies')));
-   assert.equal(requests.filter(r=>r.method!=='GET').length,0,'No onboarding writes are implemented');
+   assert.ok(requests.filter(r=>r.method!=='GET').every(r=>r.method==='POST'&&new URL(r.url).pathname==='/api/v1/onboarding/preference-options'),'Only read-only candidate POSTs occur before explicit completion');
    await page.evaluate(()=>window.dispatchEvent(new Event('api:unauthorized')));
    await page.getByRole('heading',{name:'온보딩 확인'}).waitFor();
    assert.equal(await page.getByLabel('선택 답변 요약').count(),0);

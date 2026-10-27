@@ -123,6 +123,7 @@ def test_selects_isolated_resources_without_rewriting_original_dotenv(tmp_path, 
         "ENABLE_DEV_AUTH_BYPASS=true\n"
         "OAUTH_PUBLIC_API_ORIGIN=https://api.example.com\n"
         "OAUTH_FRONTEND_ORIGIN=https://app.example.com\n"
+        "FRONTEND_ORIGINS=https://app.example.com\n"
         "KAKAO_OAUTH_ENABLED=true\n"
         "NAVER_OAUTH_ENABLED=true\n"
         + "".join(f"{name}={value}\n" for name, value in SYNTHETIC_CREDENTIALS.items())
@@ -146,6 +147,7 @@ def test_selects_isolated_resources_without_rewriting_original_dotenv(tmp_path, 
     assert runner.os.environ["DATABASE_ECHO"] == "false"
     assert runner.os.environ["OAUTH_PUBLIC_API_ORIGIN"] == "http://localhost:8000"
     assert runner.os.environ["OAUTH_FRONTEND_ORIGIN"] == ""
+    assert runner.os.environ["FRONTEND_ORIGINS"] == "https://app.example.com"
     for name in ("kakao", "naver"):
         enabled = not prepare and name in PROVIDERS[provider]
         assert runner.os.environ[f"{name.upper()}_OAUTH_ENABLED"] == ("true" if enabled else "false")
@@ -237,13 +239,14 @@ def test_readiness_requires_only_selected_credentials_and_prints_safe_callbacks(
     })
     target = make_url(LOCAL_DATABASE_URL).set(database=runner.DATABASE_NAME)
     scripts = MagicMock()
-    scripts.get_current_head.return_value = "test_head"
+    scripts.get_revision.return_value.revision = "test_head"
     monkeypatch.setattr(runner.ScriptDirectory, "from_config", MagicMock(return_value=scripts))
     engine = MagicMock()
     connection = engine.connect.return_value.__enter__.return_value
     connection.execute.return_value.scalar_one.side_effect = [
-        runner.DATABASE_MARKER, "test_head", "oauth_attempt",
+        runner.DATABASE_MARKER, "oauth_attempt",
     ]
+    connection.execute.return_value.scalars.return_value = ["test_head"]
     monkeypatch.setattr(runner, "create_engine", MagicMock(return_value=engine))
     redis = MagicMock()
     client = redis.__enter__.return_value
@@ -294,7 +297,7 @@ def test_cli_check_passes_provider_without_starting_server(
 
     assert runner.main() == 0
 
-    configure.assert_called_once_with(prepare=False, provider=expected_provider)
+    configure.assert_called_once_with(prepare=False, provider=expected_provider, frontend_origin="")
     expected_target = make_url(LOCAL_DATABASE_URL).set(database=runner.DATABASE_NAME)
     check.assert_called_once_with(expected_target, provider=expected_provider)
     prepare.assert_not_called()
@@ -317,7 +320,7 @@ def test_cli_prepare_disables_oauth_without_requiring_credentials_or_starting_se
 
     assert runner.main() == 0
 
-    configure.assert_called_once_with(prepare=True, provider=provider)
+    configure.assert_called_once_with(prepare=True, provider=provider, frontend_origin="")
     expected_target = make_url(LOCAL_DATABASE_URL).set(database=runner.DATABASE_NAME)
     prepare.assert_called_once_with(expected_target)
     check.assert_not_called()
@@ -379,7 +382,7 @@ def test_readiness_rejects_unmanaged_database_before_schema_or_redis_access(monk
     })
     target = make_url(LOCAL_DATABASE_URL).set(database=runner.DATABASE_NAME)
     scripts = MagicMock()
-    scripts.get_current_head.return_value = "test_head"
+    scripts.get_revision.return_value.revision = "test_head"
     monkeypatch.setattr(runner.ScriptDirectory, "from_config", MagicMock(return_value=scripts))
     engine = MagicMock()
     connection = engine.connect.return_value.__enter__.return_value
@@ -393,3 +396,131 @@ def test_readiness_rejects_unmanaged_database_before_schema_or_redis_access(monk
     assert "shobj_description" in str(connection.execute.call_args.args[0])
     runner.Redis.from_url.assert_not_called()
     engine.dispose.assert_called_once()
+
+
+@pytest.mark.parametrize("origin", [
+    "http://localhost:3000", "http://localhost:5173", "http://localhost:65535", "http://localhost:8000",
+])
+@pytest.mark.parametrize("prepare", [False, True])
+def test_frontend_option_scopes_cors_and_preserves_isolation_and_dotenv(tmp_path, origin, prepare):
+    original = (
+        f"DATABASE_URL={LOCAL_DATABASE_URL}\nREDIS_URL={LOCAL_REDIS_URL}\n"
+        "FRONTEND_ORIGINS=https://existing.example.com\n"
+        "OAUTH_FRONTEND_ORIGIN=https://existing.example.com\n"
+        "ENABLE_DEV_API=true\nENABLE_DEV_AUTH_BYPASS=true\n"
+    ).encode()
+    env_file = tmp_path / ".env"
+    env_file.write_bytes(original)
+
+    target = runner.configure_environment(prepare=prepare, provider="all", frontend_origin=origin)
+
+    assert target.database == runner.DATABASE_NAME
+    assert target.host == "localhost"
+    assert runner.os.environ["OAUTH_PUBLIC_API_ORIGIN"] == "http://localhost:8000"
+    assert runner.os.environ["OAUTH_FRONTEND_ORIGIN"] == origin
+    assert runner.os.environ["FRONTEND_ORIGINS"].split(",") == list(dict.fromkeys(("http://localhost:8000", origin)))
+    assert runner.os.environ["ENABLE_DEV_API"] == runner.os.environ["ENABLE_DEV_AUTH_BYPASS"] == "false"
+    assert runner.os.environ["SESSION_COOKIE_NAME"] == "menu_oauth_local"
+    assert runner.os.environ["SESSION_COOKIE_SECURE"] == "false"
+    assert runner.os.environ["REDIS_KEY_PREFIX"] == runner.DATABASE_NAME
+    assert runner.os.environ["KAKAO_OAUTH_ENABLED"] == runner.os.environ["NAVER_OAUTH_ENABLED"] == ("false" if prepare else "true")
+    assert env_file.read_bytes() == original
+    runner.create_engine.assert_not_called()
+    runner.Redis.from_url.assert_not_called()
+
+
+@pytest.mark.parametrize("origin", [
+    "https://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000",
+    "http://localhost.example.com:3000", "https://test.me-nu.kr",
+    "http://user:secret@localhost:3000", "http://localhost:3000@other.example.com",
+    "http://localhost:3000/", "http://localhost:3000/pivot/home",
+    "http://localhost:3000?", "http://localhost:3000?token=secret", "http://localhost:3000#",
+    "http://localhost", "http://localhost:0", "http://localhost:65536", "http://localhost:abc",
+    " http://localhost:3000", "http://local\thost:3000", "http://localhost:3000\\evil",
+])
+@pytest.mark.parametrize("prepare", [False, True])
+def test_invalid_frontend_is_rejected_before_dotenv_or_environment_changes(monkeypatch, origin, prepare):
+    set_connection_urls()
+    before = runner.os.environ.copy()
+    dotenv = MagicMock()
+    monkeypatch.setattr(runner, "load_dotenv", dotenv)
+
+    with pytest.raises(runner.SetupError, match="http://localhost:<port>") as error:
+        runner.configure_environment(prepare=prepare, frontend_origin=origin)
+
+    assert "secret" not in str(error.value)
+    assert runner.os.environ == before
+    dotenv.assert_not_called()
+    runner.create_engine.assert_not_called()
+    runner.Redis.from_url.assert_not_called()
+
+
+@pytest.mark.parametrize("action", [[], ["--check"], ["--prepare"]])
+def test_cli_rejects_remote_frontend_before_preparing_checking_or_starting(monkeypatch, cli_environment, capsys, action):
+    monkeypatch.setattr(runner.sys, "argv", [
+        "run_local_oauth.py", *action, "--frontend-origin", "http://user:secret@remote.example.com:3000",
+    ])
+    before = runner.os.environ.copy()
+    prepare, check = MagicMock(), MagicMock()
+    monkeypatch.setattr(runner, "prepare_database", prepare)
+    monkeypatch.setattr(runner, "check_readiness", check)
+
+    assert runner.main() == 1
+
+    assert runner.os.environ == before
+    assert "--frontend-origin" in capsys.readouterr().err
+    prepare.assert_not_called()
+    check.assert_not_called()
+    runner.uvicorn.Server.assert_not_called()
+    runner.create_engine.assert_not_called()
+    runner.Redis.from_url.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["--check", "--prepare"])
+def test_cli_frontend_option_keeps_check_and_prepare_modes_server_free(monkeypatch, cli_environment, action):
+    monkeypatch.setattr(runner.sys, "argv", [
+        "run_local_oauth.py", action, "--provider", "all", "--frontend-origin", "http://localhost:3000",
+    ])
+    prepare, check = MagicMock(), MagicMock()
+    monkeypatch.setattr(runner, "prepare_database", prepare)
+    monkeypatch.setattr(runner, "check_readiness", check)
+
+    assert runner.main() == 0
+
+    assert runner.os.environ["OAUTH_FRONTEND_ORIGIN"] == "http://localhost:3000"
+    assert runner.os.environ["FRONTEND_ORIGINS"] == "http://localhost:8000,http://localhost:3000"
+    if action == "--prepare":
+        prepare.assert_called_once()
+        check.assert_not_called()
+        assert runner.os.environ["KAKAO_OAUTH_ENABLED"] == runner.os.environ["NAVER_OAUTH_ENABLED"] == "false"
+    else:
+        check.assert_called_once()
+        prepare.assert_not_called()
+    runner.uvicorn.Server.assert_not_called()
+
+
+def test_cli_frontend_option_reaches_loopback_server_with_isolated_settings(monkeypatch, cli_environment):
+    monkeypatch.setattr(runner.sys, "argv", [
+        "run_local_oauth.py", "--provider", "all", "--frontend-origin", "http://localhost:3000",
+    ])
+    check = MagicMock()
+    monkeypatch.setattr(runner, "check_readiness", check)
+    config = MagicMock()
+    server = MagicMock()
+    server.serve.return_value = object()
+    monkeypatch.setattr(runner.uvicorn, "Config", config)
+    monkeypatch.setattr(runner.uvicorn, "Server", MagicMock(return_value=server))
+    # Never create an event loop or a listening socket in this control-flow test.
+    monkeypatch.setattr(runner.asyncio, "Runner", MagicMock())
+    monkeypatch.setattr(runner.asyncio, "run", MagicMock())
+
+    assert runner.main() == 0
+
+    check.assert_called_once_with(make_url(LOCAL_DATABASE_URL).set(database=runner.DATABASE_NAME), provider="all")
+    config.assert_called_once_with("app.main:app", host="localhost", port=8000, access_log=False)
+    server.serve.assert_called_once_with()
+    assert runner.os.environ["OAUTH_FRONTEND_ORIGIN"] == "http://localhost:3000"
+    assert runner.os.environ["FRONTEND_ORIGINS"] == "http://localhost:8000,http://localhost:3000"
+    assert runner.os.environ["ENABLE_DEV_API"] == runner.os.environ["ENABLE_DEV_AUTH_BYPASS"] == "false"
+    runner.create_engine.assert_not_called()
+    runner.Redis.from_url.assert_not_called()

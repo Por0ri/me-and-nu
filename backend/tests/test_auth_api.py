@@ -237,7 +237,10 @@ def test_profile_patch_contract(auth_environment):
     )
     client.cookies.set(settings.session_cookie_name, raw)
     csrf = csrf_token_for_session(raw)
-    assert client.get("/api/v1/users/me").json()["userId"] == user.user_id
+    profile = client.get("/api/v1/users/me")
+    assert profile.status_code == 200
+    assert profile.json()["userId"] == user.user_id
+    assert "birthDate" not in profile.json()
     assert client.patch("/api/v1/users/me", json={}, headers={"X-CSRF-Token": csrf}).status_code == 422
     missing_image = client.patch("/api/v1/users/me", json={"profileImageId": 501}, headers={"X-CSRF-Token": csrf})
     assert missing_image.status_code == 404
@@ -246,14 +249,27 @@ def test_profile_patch_contract(auth_environment):
     assert patched.status_code == 200
     assert patched.json()["nickname"] == "새 이름"
     assert patched.json()["accountType"] == "user"
+    assert "birthDate" not in patched.json()
     assert patched.headers["cache-control"] == "private, no-store"
+
+
+def test_swagger_omits_birth_date_and_age_confirmation_contracts():
+    schema = app.openapi()
+    onboarding = schema["components"]["schemas"]["OnboardingRequest"]
+    assert set(onboarding["properties"]) == {
+        "nickname", "accountType", "consents", "topicId", "answers",
+    }
+    assert set(onboarding["required"]) == set(onboarding["properties"])
+    assert onboarding["additionalProperties"] is False
+    profile = schema["components"]["schemas"]["ProfileResponse"]
+    assert "birthDate" not in profile["properties"]
+    assert "birthDate" not in profile.get("required", [])
 
 
 def test_v11_nickname_length_is_checked_after_trimming():
     nickname = " " + "가" * 30 + " "
     onboarding = OnboardingRequest.model_validate({
         "nickname": nickname,
-        "birthDate": "2000-01-01",
         "accountType": "user",
         "topicId": 1,
         "answers": {"q1": "world", "q2": "releases"},

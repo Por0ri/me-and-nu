@@ -19,6 +19,9 @@ import uvicorn
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND_ROOT))
+from app.db.migration_policy import SERVICE_SCHEMA_REVISION, service_schema_ready
+
 DATABASE_NAME = "me_nu_oauth_local"
 DATABASE_MARKER = "me_nu isolated local OAuth test database"
 SUPPORTED_PROVIDERS = ("kakao", "naver")
@@ -47,8 +50,31 @@ def _selected_providers(provider: str) -> tuple[str, ...]:
     return (provider,)
 
 
-def configure_environment(*, prepare: bool = False, provider: str = "kakao"):
+def _local_frontend_origin(value: str) -> str:
+    """Accept only a canonical localhost HTTP origin with an explicit port."""
+    if value == "":
+        return value
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "localhost"
+            or port is None
+            or not 1 <= port <= 65535
+            or value != f"http://localhost:{port}"
+        ):
+            raise ValueError
+    except ValueError:
+        raise SetupError(
+            "--frontend-origin must be http://localhost:<port> without a path, credentials, query, or fragment."
+        ) from None
+    return value
+
+
+def configure_environment(*, prepare: bool = False, provider: str = "kakao", frontend_origin: str = ""):
     selected = _selected_providers(provider)
+    frontend_origin = _local_frontend_origin(frontend_origin)
     load_dotenv(BACKEND_ROOT / ".env", override=False)
     try:
         source = make_url(os.environ.get("DATABASE_URL", ""))
@@ -79,8 +105,12 @@ def configure_environment(*, prepare: bool = False, provider: str = "kakao"):
         "ENABLE_DEV_API": "false",
         "ENABLE_DEV_AUTH_BYPASS": "false",
         "OAUTH_PUBLIC_API_ORIGIN": "http://localhost:8000",
-        "OAUTH_FRONTEND_ORIGIN": "",
+        "OAUTH_FRONTEND_ORIGIN": frontend_origin,
     })
+    if frontend_origin:
+        os.environ["FRONTEND_ORIGINS"] = ",".join(dict.fromkeys((
+            "http://localhost:8000", frontend_origin,
+        )))
     for name in SUPPORTED_PROVIDERS:
         os.environ[f"{name.upper()}_OAUTH_ENABLED"] = (
             "true" if not prepare and name in selected else "false"
@@ -112,7 +142,7 @@ def prepare_database(target) -> None:
                 raise SetupError("The test DB name is already in use by an unmanaged database; no migration was run.")
     finally:
         engine.dispose()
-    command.upgrade(Config(str(BACKEND_ROOT / "alembic.ini")), "head")
+    command.upgrade(Config(str(BACKEND_ROOT / "alembic.ini")), SERVICE_SCHEMA_REVISION)
     print(f"Prepared isolated database: {DATABASE_NAME}")
 
 
@@ -132,7 +162,7 @@ def check_readiness(target, *, provider: str = "kakao") -> None:
 
     expected = ScriptDirectory.from_config(
         Config(str(BACKEND_ROOT / "alembic.ini"))
-    ).get_current_head()
+    ).get_revision(SERVICE_SCHEMA_REVISION).revision
     engine = create_engine(target, connect_args={"connect_timeout": 5})
     try:
         with engine.connect() as connection:
@@ -142,9 +172,9 @@ def check_readiness(target, *, provider: str = "kakao") -> None:
             )).scalar_one()
             if marker != DATABASE_MARKER:
                 raise SetupError("This is not the test DB managed by the local OAuth runner.")
-            revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            revisions = set(connection.execute(text("SELECT version_num FROM alembic_version")).scalars())
             table = connection.execute(text("SELECT to_regclass('public.oauth_attempt')")).scalar_one()
-            if revision != expected or table is None:
+            if not service_schema_ready(revisions, expected) or table is None:
                 raise SetupError("The local test DB needs migration. Run this script with --prepare.")
     finally:
         engine.dispose()
@@ -152,7 +182,7 @@ def check_readiness(target, *, provider: str = "kakao") -> None:
         os.environ["REDIS_URL"], socket_connect_timeout=2, socket_timeout=2,
     ) as client:
         client.ping()
-    print(f"Database: {DATABASE_NAME} ({revision}); Redis: OK")
+    print(f"Database: {DATABASE_NAME} ({', '.join(sorted(revisions))}); Redis: OK")
     for name in selected:
         print(f"{name.capitalize()} credentials: configured")
         print(f"{name.capitalize()} console callback: http://localhost:8000/api/v1/auth/login/{name}/callback")
@@ -164,6 +194,10 @@ def main() -> int:
         "--provider", choices=(*SUPPORTED_PROVIDERS, "all"), default="kakao",
         help="OAuth provider to enable and check (default: kakao); ignored during --prepare.",
     )
+    parser.add_argument(
+        "--frontend-origin", default="",
+        help="Optional http://localhost:<port> for FE callbacks and CORS; default returns to the API session endpoint.",
+    )
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--prepare", action="store_true", help="Create/migrate only the dedicated local test DB.")
     action.add_argument("--check", action="store_true", help="Check local credentials, database and Redis without starting the API.")
@@ -171,11 +205,15 @@ def main() -> int:
     os.chdir(BACKEND_ROOT)
     sys.path.insert(0, str(BACKEND_ROOT))
     try:
-        target = configure_environment(prepare=args.prepare, provider=args.provider)
+        target = configure_environment(
+            prepare=args.prepare, provider=args.provider, frontend_origin=args.frontend_origin,
+        )
         if args.prepare:
             prepare_database(target)
             return 0
         check_readiness(target, provider=args.provider)
+        if args.frontend_origin:
+            print(f"Local OAuth frontend: {args.frontend_origin}")
         if args.check:
             return 0
         print("Local OAuth Swagger: http://localhost:8000/docs")

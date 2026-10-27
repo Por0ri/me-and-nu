@@ -37,7 +37,7 @@ const topics = { topics: [
   { id: 42, code: 'anime', status: 'active', deletedAt: null },
   { id: 99, code: 'anime', status: 'deleted', deletedAt: '2026-01-01' },
 ] };
-const feedCard = (id = 17) => ({ id, topicId: 42, title: '테스트 기사', summary: '실제 요약', imageUrl: null, saved: false });
+const feedCard = (id = 17) => ({ kind: 'content', id, topicId: 42, title: '테스트 기사', summary: '실제 요약', imageUrl: null, saved: false });
 const target = { postId: '17', contentId: '17', topicId: 42 };
 const content = overrides => ({ contentId: 17, topicId: 42, title: '테스트 기사', imageUrl: null,
   displayMode: 'full_body', body: '첫 문단\n\n다음 문단', excerpt: '발췌문',
@@ -74,7 +74,7 @@ test('Mismatched feed Topics and malformed IDs are rejected', async () => {
     assert.throws(() => mapFeedCard(card, 42));
   }
   const source = createServiceHomeSource({ async getMyTopics() { return topics; }, async getFeed() { return { selectedTopicId: 8, sections: [], nextCursor: null }; } }, allow);
-  await assert.rejects(source.load(options()), /Invalid feed response/);
+  assert.equal((await source.load(options())).reason, 'invalid-response');
 });
 
 test('Detail preserves Topic and respects excerpt-only responses without exposing body', () => {

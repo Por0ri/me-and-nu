@@ -6,7 +6,10 @@ from app.models import Topic, UserAccount
 
 async def lock_user(db: AsyncSession, user_id: int) -> UserAccount | None:
     result = await db.execute(
-        select(UserAccount).where(UserAccount.user_id == user_id).with_for_update()
+        select(UserAccount)
+        .where(UserAccount.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return result.scalar_one_or_none()
 

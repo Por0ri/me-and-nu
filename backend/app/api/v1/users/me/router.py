@@ -17,7 +17,6 @@ def profile_response(user: UserAccount) -> ProfileResponse:
     return ProfileResponse(
         user_id=user.user_id,
         nickname=user.nickname,
-        birth_date=user.birth_date,
         email=user.email,
         profile_image_id=None,
         profile_image_url=None,
@@ -29,7 +28,7 @@ def profile_response(user: UserAccount) -> ProfileResponse:
     "",
     response_model=ProfileResponse,
     summary="내 프로필 조회",
-    description="완료된 로그인 세션의 본인 프로필만 반환합니다. 온보딩 전에는 403입니다.",
+    description="완료된 로그인 세션의 본인 프로필만 반환합니다. 온보딩 전에는 403입니다. 생년월일(birthDate)은 응답에 포함하지 않습니다.",
     responses=COMMON_ERRORS,
 )
 async def get_profile(
@@ -42,7 +41,7 @@ async def get_profile(
     "",
     response_model=ProfileResponse,
     summary="내 프로필 정정",
-    description="nickname과 profileImageId만 수정합니다. 이미지 업로드 API가 아직 없으므로 profileImageId는 null만 사용할 수 있습니다. X-CSRF-Token이 필요합니다.",
+    description="nickname과 profileImageId만 수정합니다. 이미지 업로드 API가 아직 없으므로 profileImageId는 null만 사용할 수 있습니다. birthDate는 null을 포함해 전송하면 422이며 응답에도 포함하지 않습니다. X-CSRF-Token이 필요합니다.",
     responses={**COMMON_ERRORS, 404: {"description": "프로필 이미지 없음", "content": {"application/json": {"example": {"code": "IMAGE_NOT_FOUND", "message": "프로필 이미지 업로드 기능이 아직 제공되지 않습니다."}}}}},
 )
 async def patch_profile(

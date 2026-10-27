@@ -17,7 +17,7 @@ from app.core.exceptions import ApiError
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
-from app.models import Content, ContentSource, SavedItem, Tap, Topic
+from app.models import Content, ContentSlide, ContentSource, SavedItem, Tap, Topic
 from app.repositories import bookmark_repository
 from app.services import bookmark_service
 from app.services.cursor import encode_cursor
@@ -185,7 +185,7 @@ async def test_bookmarks_empty_and_unowned_topic(monkeypatch):
 @pytest.mark.asyncio
 async def test_repository_filters_full_saved_scope_before_pagination(monkeypatch):
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    tables = [Topic.__table__, Tap.__table__, Content.__table__, ContentSource.__table__, SavedItem.__table__]
+    tables = [Topic.__table__, Tap.__table__, Content.__table__, ContentSlide.__table__, ContentSource.__table__, SavedItem.__table__]
     # The production JSONB default has PostgreSQL's :: cast. Only the test
     # SQLite DDL needs a portable default; every fixture supplies saved_tags.
     with monkeypatch.context() as patch:

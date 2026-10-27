@@ -4,6 +4,7 @@ import { useId, useRef, useState } from "react";
 import { orderedHomeSlides, type HomeCardModel, type HomeDetailHandler, type HomeSlideModel, type HomeState } from "@/lib/pivot/home";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
+import { ContentCarousel } from "./content-carousel";
 import styles from "./home.module.css";
 
 type HomeNotice = { message: string; postId?: string };
@@ -78,6 +79,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
     else setLocalActionNotice(message);
   }
   const slides = orderedHomeSlides(card.slides);
+  const serviceCarousel = !demo && slides.some((slide) => !!slide.layout || slide.image?.protected);
   const current = Math.max(0, Math.min(active, slides.length - 1));
   const target = { postId: card.id, contentId: card.detailContentId, ...(card.topicId === undefined ? {} : { topicId: card.topicId }) };
   const canBookmark = !!bookmarks && (demo ? bookmarks.kind === "demo" : bookmarks.kind === "service" && !!card.topicId);
@@ -104,11 +106,11 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
     element.scrollTo({ left: index * element.clientWidth });
   }
   return <article className={styles.card} aria-labelledby={`${id}-title`} data-home-post={card.id}>
-    <div className={demo ? styles.srOnly : styles.serviceTitle}>
+    <div className={styles.srOnly}>
       {demo ? <p className={styles.exampleLabel}>시연용 콘텐츠</p> : null}
       <h3 id={`${id}-title`}>{card.title}</h3>
     </div>
-    {slides.length ? <>
+    {serviceCarousel ? <ContentCarousel key={card.id} slides={slides} title={card.title} labelledBy={`${id}-title`} scope="home" /> : slides.length ? <>
       <div className={styles.carousel} role="region" aria-roledescription="캐러셀" aria-labelledby={`${id}-title`}>
         <div id={`${id}-track`} ref={track} className={styles.slideTrack} tabIndex={0} data-home-track=""
           aria-label="좌우로 슬라이드 탐색" aria-describedby={`${id}-help`}
@@ -127,7 +129,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
             aria-roledescription="슬라이드" aria-label={`${index + 1} / ${slides.length}`} data-home-slide={slide.id}>
             <figure>
               <HomeSlideImage key={slide.image?.src ?? "missing"} image={slide.image} />
-              <figcaption className={demo && slide.image ? styles.srOnly : `${styles.summary} ${!demo ? styles.serviceSummary : ""}`}>{slide.description}</figcaption>
+              <figcaption className={slide.image ? styles.srOnly : styles.summary}>{slide.description}</figcaption>
             </figure>
           </div>)}
         </div>

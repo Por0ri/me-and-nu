@@ -8,9 +8,9 @@ const { createApiFixture } = require('./helpers/pivot-api-fixture.cjs');
 const root = path.resolve(__dirname, '..');
 const plain = value => JSON.parse(JSON.stringify(value));
 const completePath = '/api/v1/onboarding/complete';
-const selection = { interest: 'animation', q1: 'ost', q2: 'events' };
+const selection = { interest: 'animation', topicId: 271, favoriteEntityIds: [101, 102], preferenceTagIds: [201, 301], consumptionType: 'ost' };
 // Synthetic test input only; this file never contacts Labs or a real account.
-const profile = { nickname: '  로컬 검증 회원  ', birthDate: '2000-02-29' };
+const profile = { nickname: '  로컬 검증 회원  ' };
 
 // The complete API client, consent mapper, onboarding service, and bookmark
 // controls share one module graph. Only the HTTP/browser boundary is replaced.
@@ -67,9 +67,7 @@ async function pendingFlow(options = {}) {
   const session = await api.getSession();
   assert.equal(session.sessionState, 'onboarding_pending');
   assert.equal(session.user, null, 'pending accounts have no public user details');
-  const service = modules.load('lib/pivot/onboarding-service.ts').createOnboardingService(
-    undefined, undefined, () => new Date('2026-10-27T12:00:00Z'),
-  );
+  const service = modules.load('lib/pivot/onboarding-service.ts').createOnboardingService();
   async function consent(optionalAgreed = false) {
     const policies = await modules.load('lib/pivot/services.ts').loadPivotPolicies();
     const consentModule = modules.load('lib/pivot/consent.ts');
@@ -91,13 +89,13 @@ for (const optionalAgreed of [false, true]) {
     assert.equal(flow.fixture.state.onboardingCompletions, 1);
     const post = completions(flow.fixture)[0];
     assert.deepEqual(post.body, {
-      nickname: '로컬 검증 회원', birthDate: '2000-02-29', accountType: 'user', topicId: 271,
+      nickname: '로컬 검증 회원', accountType: 'user', topicId: 271,
       consents: [
         { type: 'terms', policyVersion: 'fixture-v1', agreed: true },
         { type: 'privacy', policyVersion: 'fixture-v2', agreed: true },
         { type: 'marketing', policyVersion: 'fixture-v1', agreed: optionalAgreed },
       ],
-      answers: { q1: 'ost', q2: 'events' },
+      answers: { version: 2, favoriteEntityIds: [101, 102], preferenceTagIds: [201, 301], consumptionType: 'ost' },
     });
     assert.equal(post.csrf, 'fixture-onboarding_pending-csrf');
     assert.equal(post.cookie, 'fixture_session=fixture-onboarding_pending');
@@ -189,4 +187,39 @@ test('a refreshed completed session does not submit the old onboarding form agai
   assert.equal(result.session.sessionState, 'active');
   assert.equal(completions(flow.fixture).length, 1);
   assert.equal(flow.fixture.state.onboardingCompletions, 1);
+});
+
+test('search → candidate union → all tags → completion uses real catalog IDs and the current CSRF',async()=>{
+  const flow=await pendingFlow();
+  const catalog=flow.modules.load('lib/pivot/onboarding-catalog.ts').serviceCatalog;
+  const topicId=await catalog.resolveTopic();
+  assert.equal(topicId,271);
+  assert.equal((await catalog.search(topicId,'')).items.length,0);
+  const works=await catalog.search(topicId,'Fixture Anime');
+  assert.equal(works.items.length,6);
+  assert.equal(works.items.at(-1).selectable,false);
+  flow.fixture.state.csrf='fixture-new-pending-csrf';
+  const candidates=await catalog.options(topicId,[102,101]);
+  assert.deepEqual(plain(candidates.entityIds),[101,102]);
+  const tags=[...candidates.genres,...candidates.themes];
+  assert.equal(tags.length,12);
+  assert.equal(candidates.maxSelections,null);
+  assert.equal(flow.fixture.state.onboardingCompletions,0);
+  assert.equal(flow.fixture.state.onboarding,null,'candidate lookup must never save a partial signup');
+  assert.equal(flow.fixture.requests.at(-1).csrf,'fixture-new-pending-csrf');
+  const result=await flow.service.submitSelection({...selection,favoriteEntityIds:[102,101],preferenceTagIds:tags.map(tag=>tag.tagId)},await flow.consent(),profile);
+  assert.equal(result.session.sessionState,'active');
+  assert.equal(flow.fixture.state.onboarding.answers.preferenceTagIds.length,12);
+  assert.equal(Object.hasOwn(flow.fixture.state.onboarding,'birthDate'),false);
+});
+
+test('a candidate removed after selection is rejected at completion and cannot fabricate signup success',async()=>{
+  const flow=await pendingFlow();
+  const catalog=flow.modules.load('lib/pivot/onboarding-catalog.ts').serviceCatalog;
+  await catalog.options(271,[101,102]);
+  flow.fixture.tags.splice(flow.fixture.tags.findIndex(tag=>tag.tagId===301),1);
+  await assert.rejects(flow.service.submitSelection(selection,await flow.consent(),profile),error=>error.code==='VALIDATION_ERROR');
+  assert.equal(flow.fixture.state.phase,'onboarding_pending');
+  assert.equal(flow.fixture.state.onboardingCompletions,0);
+  assert.equal(flow.fixture.state.onboarding,null);
 });

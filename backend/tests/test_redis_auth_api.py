@@ -294,7 +294,6 @@ def onboarding_request(environment, csrf, **changes):
         "/api/v1/onboarding/complete",
         json={
             "nickname": "새 이름",
-            "birthDate": "2000-01-01",
             "accountType": "user",
             "topicId": 1,
             "answers": {"q1": "world", "q2": "releases"},

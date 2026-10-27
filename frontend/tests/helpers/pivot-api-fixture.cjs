@@ -16,6 +16,21 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
     { type: 'privacy', policyVersion: 'fixture-v2', required: true, text: '통합 테스트용 개인정보 안내' },
     { type: 'marketing', policyVersion: 'fixture-v1', required: false, text: '통합 테스트용 선택 동의' },
   ];
+  const works = Array.from({length: 6}, (_, index) => ({
+    entityId: 101 + index, name: `테스트 작품 ${index + 1}`, aliases: [`Fixture Anime ${index + 1}`],
+    imageUrl: null, releaseYear: 2020 + index, mediaFormat: 'TV', selectable: index !== 5,
+    unavailableReason: index === 5 ? 'PREFERENCE_TAGS_NOT_READY' : null,
+  }));
+  const tags = [
+    {tagId:201,kind:'genre',code:'fantasy',label:'판타지',sourceEntityIds:[101,102,103,104,105]},
+    {tagId:301,kind:'theme',code:'friendship',label:'우정',sourceEntityIds:[101,102]},
+    ...Array.from({length: 10},(_,index) => ({tagId:302+index,kind:'theme',code:`fixture_theme_${index}`,label:`테스트 소재 ${index+1}`,sourceEntityIds:[102]})),
+  ];
+  const validIds = (ids, max = Infinity) => Array.isArray(ids) && ids.length >= 1 && ids.length <= max
+    && ids.every(id => Number.isSafeInteger(id) && id > 0) && new Set(ids).size === ids.length;
+  const validWorks = ids => validIds(ids,5) && ids.every(id => works.some(work => work.entityId === id && work.selectable));
+  const options = ids => tags.filter(tag => tag.sourceEntityIds.some(id => ids.includes(id)))
+    .map(tag => ({...tag,sourceEntityIds:tag.sourceEntityIds.filter(id => ids.includes(id))}));
   function rotate(phase) {
     state.phase = phase;
     state.cookie = `fixture-${phase}`;
@@ -27,28 +42,21 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
       csrfToken: state.csrf };
   }
   const error = (status, code, message = code) => ({ status, body: { code, message } });
-  function validDate(value) {
-    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-    const date = new Date(`${value}T00:00:00Z`);
-    return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
-  }
   function validateOnboarding(data) {
     const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
       && Object.keys(value).sort().join(',') === [...keys].sort().join(',');
-    if (!exactKeys(data, ['nickname', 'birthDate', 'accountType', 'consents', 'topicId', 'answers'])
+    if (!exactKeys(data, ['nickname', 'accountType', 'consents', 'topicId', 'answers'])
       || typeof data.nickname !== 'string' || !data.nickname.trim() || [...data.nickname.trim()].length > 30
-      || !validDate(data.birthDate) || data.accountType !== 'user' || !Number.isSafeInteger(data.topicId) || data.topicId <= 0
-      || !exactKeys(data.answers, ['q1', 'q2'])
-      || !['world', 'relationships', 'ost', 'goods', 'events', 'news'].includes(data.answers.q1)
-      || !['releases', 'characters', 'restock', 'events'].includes(data.answers.q2)
+      || data.accountType !== 'user' || !Number.isSafeInteger(data.topicId) || data.topicId <= 0
+      || !exactKeys(data.answers, ['version', 'favoriteEntityIds', 'preferenceTagIds', 'consumptionType'])
+      || data.answers.version !== 2 || !validWorks(data.answers.favoriteEntityIds)
+      || !validIds(data.answers.preferenceTagIds)
+      || !data.answers.preferenceTagIds.every(id => options(data.answers.favoriteEntityIds).some(tag => tag.tagId === id))
+      || !['world', 'relationships', 'ost', 'goods', 'events', 'news'].includes(data.answers.consumptionType)
       || !Array.isArray(data.consents) || data.consents.some(item => !exactKeys(item, ['type', 'policyVersion', 'agreed'])
         || typeof item.type !== 'string' || typeof item.policyVersion !== 'string' || typeof item.agreed !== 'boolean')) {
       return error(422, 'VALIDATION_ERROR');
     }
-    const [year, month, day] = today.split('-').map(Number);
-    const [birthYear, birthMonth, birthDay] = data.birthDate.split('-').map(Number);
-    const age = year - birthYear - Number(month < birthMonth || (month === birthMonth && day < birthDay));
-    if (age < 14) return error(403, 'AGE_RESTRICTED');
     const types = new Set(data.consents.map(item => item.type));
     if (types.size !== data.consents.length || data.consents.some(item => !policies.some(policy => policy.type === item.type))) return error(422, 'VALIDATION_ERROR');
     if (types.size !== policies.length) return error(422, 'REQUIRED_CONSENT_MISSING');
@@ -91,16 +99,30 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
     if (!normalized.get('cookie')?.includes(`fixture_session=${state.cookie}`)) return error(401, 'AUTH_REQUIRED');
     if (state.phase === 'anonymous') return error(401, 'AUTH_REQUIRED');
     if (method === 'GET' && url.pathname === '/api/v1/topics') return { status: 200, body: { topics: state.topics ? [{ id: topic.id, code: topic.code, name: topic.name }] : [] } };
+    if (url.pathname === '/api/v1/onboarding/works' && method === 'GET') {
+      if (state.phase !== 'onboarding_pending') return error(409, 'ONBOARDING_ALREADY_COMPLETED');
+      if (url.searchParams.get('topicId') !== String(topic.id) || !state.topics) return error(404, 'TOPIC_NOT_FOUND');
+      const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+      const after = Number(url.searchParams.get('cursor') || 0);
+      const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit') || 20)));
+      const matching = q ? works.filter(work => work.entityId > after && [work.name,...work.aliases].some(name => name.toLowerCase().includes(q))) : [];
+      const items = matching.slice(0,limit);
+      return {status:200,body:{items,nextCursor:matching.length > limit ? String(items.at(-1).entityId) : null}};
+    }
+    if (url.pathname === '/api/v1/onboarding/preference-options' && method === 'POST') {
+      if (state.phase !== 'onboarding_pending') return error(409, 'ONBOARDING_ALREADY_COMPLETED');
+      if (data?.topicId !== topic.id || !state.topics) return error(404, 'TOPIC_NOT_FOUND');
+      if (!validWorks(data?.entityIds)) return error(422, 'VALIDATION_ERROR');
+      const candidates = options(data.entityIds);
+      return {status:200,body:{entityIds:[...data.entityIds].sort((a,b)=>a-b),genres:candidates.filter(tag=>tag.kind==='genre'),themes:candidates.filter(tag=>tag.kind==='theme'),minSelections:1,maxSelections:null}};
+    }
     if (method === 'POST' && url.pathname === '/api/v1/onboarding/complete') {
-      if (strictOnboarding) {
-        if (state.phase !== 'onboarding_pending') return error(409, 'ONBOARDING_ALREADY_COMPLETED');
-        const invalid = validateOnboarding(data);
-        if (invalid) return invalid;
-      } else if (state.phase !== 'onboarding_pending' || data?.accountType !== 'user' || data?.topicId !== topic.id ||
-        !data?.nickname || !data?.birthDate || !data?.answers?.q1 || !data?.answers?.q2 || 'subtopicIds' in data || 'profileImageId' in data) return error(422, 'VALIDATION_ERROR');
+      if (state.phase !== 'onboarding_pending') return error(409, 'ONBOARDING_ALREADY_COMPLETED');
+      const invalid = validateOnboarding(data);
+      if (invalid) return invalid;
       state.onboardingCompletions++;
       state.onboarding = JSON.parse(JSON.stringify(data));
-      rotate('active'); return { status: 201, headers: { 'Set-Cookie': cookie() }, body: { user: { id: 12, accountType: 'user' }, onboardingCompleted: true, activeTopic: topic, answers: data.answers } };
+      rotate('active'); return { status: 201, headers: { 'Set-Cookie': cookie() }, body: { user: { id: 12, accountType: 'user' }, onboardingCompleted: true, activeTopic: {...topic,subtopicIds:[]}, answers: {...data.answers,favoriteEntityIds:[...data.answers.favoriteEntityIds].sort((a,b)=>a-b),preferenceTagIds:[...data.answers.preferenceTagIds].sort((a,b)=>a-b)} } };
     }
     if (state.phase !== 'active') return error(403, 'ONBOARDING_REQUIRED');
     if (method === 'GET' && url.pathname === '/api/v1/me/topics') return { status: 200, body: { topics: state.topics ? [topic] : [] } };
@@ -157,6 +179,6 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(port), 'localhost', resolve); });
     return server;
   }
-  return { state, requests, topic, contents, policies, rotate, dispatch, listen };
+  return { state, requests, topic, contents, policies, works, tags, rotate, dispatch, listen };
 }
 module.exports = { createApiFixture };

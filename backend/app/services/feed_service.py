@@ -5,8 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ApiError
 from app.repositories import catalog_repository as catalog_repo
 from app.repositories import content_repository as content_repo
+from app.repositories import carousel_repository as carousel_repo
 from app.schemas.feed import (
     ContentDetail,
+    ContentSlideResponse,
+    ContentSourceResponse,
     DetailReaction,
     FeedCard,
     FeedResponse,
@@ -28,7 +31,27 @@ def content_notices(content) -> list[dict[str, str]]:
     basis = content.ai_judgment_basis if isinstance(content.ai_judgment_basis, dict) else {}
     if basis.get("preview") is True:
         notices.append({"code": "DEV_PREVIEW", "message": "개발용 미리보기"})
+    if carousel_repo.is_carousel(content):
+        notices.append({"code": "AI_GENERATED", "message": "AI가 생성한 콘텐츠입니다."})
     return notices
+
+
+def slide_image_url(content_id: int, topic_id: int, page: int) -> str:
+    return f"/api/v1/contents/{content_id}/slides/{page}/image?topicId={topic_id}"
+
+
+async def _slides(db: AsyncSession, content) -> list[ContentSlideResponse]:
+    if not carousel_repo.is_carousel(content):
+        return []
+    return [
+        ContentSlideResponse(
+            image_url=slide_image_url(content.content_id, content.topic_id, row.page),
+            page=row.page, role=row.role, eyebrow=row.eyebrow,
+            title_lines=row.title_lines, body_sentences=row.body_sentences,
+            layout=row.layout_json, width=row.image_width, height=row.image_height,
+        )
+        for row in await carousel_repo.list_slides(db, content.content_id)
+    ]
 
 
 async def require_active_tap(db: AsyncSession, user_id: int, topic_id: int):
@@ -102,6 +125,7 @@ async def get_feed(
                 production_type=content.production_type,
                 summary=content.summary,
                 image_url=content.image_url,
+                slides=await _slides(db, content),
                 source_name=source[1],
                 source_url=source[0],
                 published_at=content.published_at,
@@ -162,8 +186,17 @@ async def get_content_detail(
         topic_id=topic_id,
         title=content.title,
         image_url=content.image_url,
+        slides=await _slides(db, content),
         production_type=content.production_type,
         source_url=source[0],
+        sources=[
+            ContentSourceResponse(
+                url=row.source_url, title=row.source_title,
+                publisher=site.media_name if site else None,
+                role=row.source_role, citation_order=row.citation_order,
+            )
+            for row, site in await content_repo.list_content_sources(db, content_id)
+        ],
         publisher=source[1],
         published_at=content.published_at,
         display_mode="full_body" if is_original_ai else "link_excerpt",
@@ -181,3 +214,18 @@ async def get_content_detail(
             bookmarked=saved is not None,
         ),
     )
+
+
+async def get_content_slide_image(
+    db: AsyncSession, user_id: int, topic_id: int, content_id: int, page: int
+) -> bytes:
+    await require_active_tap(db, user_id, topic_id)
+    content = await content_repo.get_public_content(db, content_id, topic_id)
+    if content is None or not carousel_repo.is_carousel(content):
+        raise ApiError(404, "CONTENT_NOT_FOUND", "콘텐츠를 찾을 수 없습니다.")
+    if await _source_or_none(db, content_id) is None:
+        raise ApiError(404, "CONTENT_NOT_FOUND", "콘텐츠 출처를 찾을 수 없습니다.")
+    image = await carousel_repo.get_slide_image(db, content_id, page)
+    if image is None:
+        raise ApiError(404, "CONTENT_NOT_FOUND", "콘텐츠 이미지를 찾을 수 없습니다.")
+    return bytes(image)

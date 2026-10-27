@@ -11,15 +11,15 @@ export function OnboardingProfileScreen({ profile, onChange, onContinue, onBack,
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const form = useRef<HTMLFormElement>(null);
-  const [touched, setTouched] = useState({ nickname: false, birthDate: false });
+  const [touched, setTouched] = useState(false);
   const validation = validateOnboardingProfile(profile);
   const errors = validation.valid ? {} : validation.errors;
   useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); heading.current?.focus({ preventScroll: true }); }, []);
   function next(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setTouched({ nickname: true, birthDate: true });
+    setTouched(true);
     if (!validation.valid) {
-      form.current?.querySelector<HTMLInputElement>(validation.errors.nickname ? "#onboarding-nickname" : "#onboarding-birthdate")?.focus();
+      form.current?.querySelector<HTMLInputElement>("#onboarding-nickname")?.focus();
       return;
     }
     onContinue(validation.profile);
@@ -33,18 +33,10 @@ export function OnboardingProfileScreen({ profile, onChange, onContinue, onBack,
         <div className={styles.profileField}>
           <label htmlFor="onboarding-nickname">닉네임</label>
           <input id="onboarding-nickname" name="nickname" autoComplete="nickname" value={profile.nickname} required
-            onChange={(event) => onChange({ ...profile, nickname: event.target.value })} onBlur={() => setTouched((old) => ({ ...old, nickname: true }))}
-            aria-invalid={touched.nickname && !!errors.nickname} aria-describedby="nickname-hint nickname-error" />
+            onChange={(event) => onChange({ nickname: event.target.value })} onBlur={() => setTouched(true)}
+            aria-invalid={touched && !!errors.nickname} aria-describedby="nickname-hint nickname-error" />
           <p id="nickname-hint">1~30자로 입력해주세요.</p>
-          <p id="nickname-error" className={styles.fieldError} role="alert">{touched.nickname ? errors.nickname : ""}</p>
-        </div>
-        <div className={styles.profileField}>
-          <label htmlFor="onboarding-birthdate">생년월일</label>
-          <input id="onboarding-birthdate" name="birthDate" type="date" autoComplete="bday" value={profile.birthDate} required
-            onChange={(event) => onChange({ ...profile, birthDate: event.target.value })} onBlur={() => setTouched((old) => ({ ...old, birthDate: true }))}
-            aria-invalid={touched.birthDate && !!errors.birthDate} aria-describedby="birthdate-hint birthdate-error" />
-          <p id="birthdate-hint">만 14세 이상 가입할 수 있어요. 정확한 생년월일을 입력해주세요.</p>
-          <p id="birthdate-error" className={styles.fieldError} role="alert">{touched.birthDate ? errors.birthDate : ""}</p>
+          <p id="nickname-error" className={styles.fieldError} role="alert">{touched ? errors.nickname : ""}</p>
         </div>
         {message && <p className={styles.fieldError} role="alert">{message}</p>}
       </section>

@@ -6,7 +6,6 @@ provider user ID. The caller owns the transaction for ``ensure_dev_user``.
 
 import asyncio
 import sys
-from datetime import date
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,7 +74,6 @@ async def ensure_dev_user(db: AsyncSession) -> UserAccount:
             email=DEV_USER_EMAIL,
             nickname="Swagger 데모 사용자",
             account_status="active",
-            birth_date=date(2000, 1, 1),
             auth_provider=DEV_USER_AUTH_PROVIDER,
             hashed_password=None,
             onboarding_completed_at=utcnow(),

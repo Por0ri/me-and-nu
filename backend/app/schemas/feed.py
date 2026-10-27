@@ -11,6 +11,49 @@ class MyReaction(CamelModel):
     preference: Literal["positive", "negative"] | None = None
 
 
+class SlideBox(CamelModel):
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+
+class SlideLayout(CamelModel):
+    # Only presentation fields cross the public boundary, including inside boxes.
+    template: str = Field(default="split", max_length=50)
+    fit_mode: str = Field(default="contain_blur", max_length=50)
+    background_style: Literal["blur", "palette", "gradient"] = "blur"
+    image_box: SlideBox
+    copy_box: SlideBox
+    text_overlay_box: SlideBox = Field(
+        default_factory=lambda: SlideBox(x=0.06, y=0.67, width=0.88, height=0.29)
+    )
+    image_scale: float = Field(default=1.0, ge=0.5, le=1.5)
+    image_offset_y: float = Field(default=0.0, ge=-0.3, le=0.3)
+    contrast_mode: str = Field(default="scrim_required", max_length=50)
+    blur_background: bool = False
+
+
+class ContentSlideResponse(CamelModel):
+    image_url: str
+    page: int
+    role: str
+    eyebrow: str
+    title_lines: list[str]
+    body_sentences: list[str]
+    layout: SlideLayout
+    width: int
+    height: int
+
+
+class ContentSourceResponse(CamelModel):
+    url: str
+    title: str | None = None
+    publisher: str | None = None
+    role: str
+    citation_order: int | None = None
+
+
 class FeedCard(CamelModel):
     kind: Literal["content"] = "content"
     id: int
@@ -20,6 +63,7 @@ class FeedCard(CamelModel):
     production_type: Literal["human", "ai", "hybrid"]
     summary: str | None = None
     image_url: str | None = None
+    slides: list[ContentSlideResponse] = Field(default_factory=list)
     source_name: str
     source_url: str
     published_at: datetime | None = None
@@ -72,8 +116,10 @@ class ContentDetail(CamelModel):
     topic_id: int
     title: str
     image_url: str | None = None
+    slides: list[ContentSlideResponse] = Field(default_factory=list)
     production_type: Literal["human", "ai", "hybrid"]
     source_url: str
+    sources: list[ContentSourceResponse] = Field(default_factory=list)
     publisher: str
     published_at: datetime | None
     display_mode: str = "link_excerpt"

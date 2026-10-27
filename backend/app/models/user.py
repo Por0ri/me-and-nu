@@ -1,10 +1,9 @@
-from datetime import date, datetime
+from datetime import datetime
 from typing import Literal
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
-    Date,
     DateTime,
     Index,
     String,
@@ -34,7 +33,6 @@ class UserAccount(Base):
         default="active",
         server_default="active",
     )
-    birth_date: Mapped[date | None] = mapped_column(Date)
     auth_provider: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

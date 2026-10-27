@@ -22,13 +22,12 @@ const apiModule = {ApiError};
 const services = load('lib/pivot/services.ts', {'@/lib/api':apiModule, './consent':{}});
 const service = load('lib/pivot/onboarding-service.ts', {
   '@/lib/api':apiModule,
-  '@/lib/onboarding/birthdate':load('lib/onboarding/birthdate.ts'),
   './onboarding':load('lib/pivot/onboarding.ts'), './services':services,
 });
 const plain = value => JSON.parse(JSON.stringify(value));
-const today = () => new Date('2026-10-27T00:30:00Z');
-const profile = {nickname:'  새로운 회원  ',birthDate:'2000-02-29'};
-const selection = {interest:'animation',q1:'ost',q2:'events'};
+const profile = {nickname:'  새로운 회원  '};
+const selection = {interest:'animation',topicId:83,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionType:'ost'};
+const answers = {version:2,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionType:'ost'};
 const consent = {consents:[
   {type:'terms',policyVersion:'terms-2026',agreed:true},
   {type:'privacy',policyVersion:'privacy-2026',agreed:true},
@@ -37,7 +36,7 @@ const consent = {consents:[
 const pending = {authenticated:true,sessionState:'onboarding_pending',onboardingCompleted:false,user:null,csrfToken:'before'};
 const active = {authenticated:true,sessionState:'active',onboardingCompleted:true,user:{id:51,accountType:'user'},csrfToken:'rotated'};
 const topics = {topics:[{id:12,code:'movie',name:'영화'},{id:83,code:'anime',name:'애니메이션'}]};
-const response = {user:active.user,onboardingCompleted:true,activeTopic:{id:83,code:'anime',name:'애니메이션',subtopicIds:[]},answers:{q1:'ost',q2:'events'}};
+const response = {user:active.user,onboardingCompleted:true,activeTopic:{id:83,code:'anime',name:'애니메이션',subtopicIds:[]},answers};
 
 function setup(overrides = {}, guard = () => {}) {
   const calls = [];
@@ -48,33 +47,31 @@ function setup(overrides = {}, guard = () => {}) {
     async complete(input) {calls.push({input:plain(input)}); return response;},
     ...overrides,
   };
-  return {calls,service:service.createOnboardingService(api,guard,today)};
+  return {calls,service:service.createOnboardingService(api,guard)};
 }
 
 test('Profile validation trims nicknames and counts Unicode code points like the backend', () => {
-  assert.deepEqual(plain(service.validateOnboardingProfile(profile,today())), {valid:true,profile:{nickname:'새로운 회원',birthDate:'2000-02-29'}});
-  assert.equal(service.validateOnboardingProfile({...profile,nickname:'😀'.repeat(30)},today()).valid,true);
-  assert.equal(service.validateOnboardingProfile({...profile,nickname:'😀'.repeat(31)},today()).valid,false);
-  assert.equal(service.validateOnboardingProfile({...profile,nickname:'  '},today()).valid,false);
+  assert.deepEqual(plain(service.validateOnboardingProfile(profile)), {valid:true,profile:{nickname:'새로운 회원'}});
+  assert.equal(service.validateOnboardingProfile({...profile,nickname:'😀'.repeat(30)}).valid,true);
+  assert.equal(service.validateOnboardingProfile({...profile,nickname:'😀'.repeat(31)}).valid,false);
+  assert.equal(service.validateOnboardingProfile({...profile,nickname:'  '}).valid,false);
 });
 
-test('Birth date validation follows real calendar dates and the UTC fourteenth birthday', () => {
-  for (const birthDate of ['', '2026-10-28', '2026-02-29', '1900-02-29', '2012-10-28', '2000-13-01', '0000-01-01']) {
-    assert.equal(service.validateOnboardingProfile({...profile,birthDate},today()).valid,false,birthDate);
+test('Deferred birth-date input is neither validated as an age policy nor carried into the profile DTO', async () => {
+  for (const birthDate of [undefined, '', 'invalid', '2099-01-01']) {
+    assert.deepEqual(plain(service.validateOnboardingProfile({...profile,birthDate})), {valid:true,profile:{nickname:'새로운 회원'}});
+    const app = setup();
+    await app.service.submitSelection(selection,consent,{...profile,birthDate});
+    assert.equal(Object.hasOwn(app.calls.find(call => call.input).input, 'birthDate'),false);
   }
-  assert.equal(service.validateOnboardingProfile({...profile,birthDate:'2012-10-27'},today()).valid,true);
-  // It is already Oct 27 in Korea, but the backend still uses UTC Oct 26.
-  assert.equal(service.validateOnboardingProfile({...profile,birthDate:'2012-10-27'},new Date('2026-10-26T16:00:00Z')).valid,false);
-  assert.equal(service.validateOnboardingProfile({...profile,birthDate:'2012-02-29'},new Date('2026-02-28T12:00:00Z')).valid,false);
-  assert.equal(service.validateOnboardingProfile({...profile,birthDate:'2012-02-29'},new Date('2026-03-01T00:00:00Z')).valid,true);
 });
 
 test('Completion resolves the current anime ID and sends only the current backend DTO', async () => {
   const app = setup();
   const result = await app.service.submitSelection(selection,consent,profile);
   assert.deepEqual(app.calls, ['session','topics',{input:{
-    nickname:'새로운 회원',birthDate:'2000-02-29',accountType:'user',topicId:83,
-    consents:consent.consents,answers:{q1:'ost',q2:'events'},
+    nickname:'새로운 회원',accountType:'user',topicId:83,
+    consents:consent.consents,answers,
   }},'session']);
   assert.equal(result.session,active);
   assert.equal(result.recovered,false);
@@ -163,7 +160,12 @@ test('Guard and malformed input failures occur before any session or API calls',
   assert.deepEqual(denied.calls,[]);
   for (const [choice,draft,person] of [
     [selection,consent,{...profile,nickname:''}],
-    [{...selection,q1:'invalid'},consent,profile],
+    [{...selection,consumptionType:'invalid'},consent,profile],
+    [{...selection,favoriteEntityIds:[]},consent,profile],
+    [{...selection,favoriteEntityIds:[1,2,3,4,5,6]},consent,profile],
+    [{...selection,favoriteEntityIds:[101,101]},consent,profile],
+    [{...selection,preferenceTagIds:[]},consent,profile],
+    [{...selection,preferenceTagIds:[201,'301']},consent,profile],
     [selection,{consents:[]},profile],
     [selection,{consents:[consent.consents[0],consent.consents[0]]},profile],
     [selection,{consents:[{...consent.consents[0],agreed:'true'}]},profile],
@@ -175,10 +177,23 @@ test('Guard and malformed input failures occur before any session or API calls',
 });
 
 test('Invalid completion payloads and an unconfirmed active session do not fabricate success', async () => {
-  for (const result of [{...response,answers:{q1:'world',q2:'events'}},{...response,activeTopic:{...response.activeTopic,id:1}},null]) {
+  for (const result of [{...response,answers:{...answers,consumptionType:'world'}},{...response,answers:{...answers,version:1}},
+    {...response,answers:{...answers,favoriteEntityIds:[101,101]}},{...response,answers:{...answers,preferenceTagIds:[201,999]}},
+    {...response,activeTopic:{...response.activeTopic,id:1}},null]) {
     const app = setup({async complete(){return result;}});
     await assert.rejects(app.service.submitSelection(selection,consent,profile), /완료 응답/);
   }
   const app = setup({async getSession(){return pending;}});
   await assert.rejects(app.service.submitSelection(selection,consent,profile), /로그인 상태/);
+});
+
+test('Completion accepts set-equivalent IDs regardless of response order', async () => {
+  const app = setup({async complete(){return {...response,answers:{...answers,favoriteEntityIds:[102,101],preferenceTagIds:[301,201]}};}});
+  assert.equal((await app.service.submitSelection(selection,consent,profile)).recovered,false);
+});
+
+test('A changed anime Topic invalidates the earlier catalog selection before posting', async () => {
+  const app = setup();
+  await assert.rejects(app.service.submitSelection({...selection,topicId:999},consent,profile),/관심 분야/);
+  assert.deepEqual(app.calls,['session','topics']);
 });

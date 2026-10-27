@@ -192,6 +192,7 @@ class Tap(Base):
 
     __table_args__ = (
         UniqueConstraint("tap_id", "user_id", name="uq_tap_id_user_id"),
+        UniqueConstraint("tap_id", "topic_id", name="uq_tap_id_topic_id"),
         Index(
             "uq_tap_active_user_topic",
             "user_id",

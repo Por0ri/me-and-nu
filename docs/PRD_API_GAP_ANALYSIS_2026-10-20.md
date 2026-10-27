@@ -2,6 +2,10 @@
 
 기준일: 2026-10-20, 한국 시각. 코드: 로컬 `main`, `8df21b9`.
 
+**2026-10-27 최신 사용자 지시:** 생년월일을 어떻게 받을지는 통합 완료 후 결정한다. 수집·저장·연령 확인 방식은 미확정이며, 생년월일 관련 프론트 변경과 DB 마이그레이션 추가 적용은 보류한다.
+
+**현재 로컬 코드 계약:** API-004 요청 및 API-007·008 응답에서 `birthDate`가 제거되어 있고 온보딩에 전송하면 `null`도 포함해 422다. 연령 확인 대체 필드는 없으며 닉네임·동의·Topic·Q1/Q2·완료 상태는 유지한다. 기존 삭제 revision은 `d2f6a9c4e731`(이전 `c0e5f3b8a124`)이다. 이 코드와 아래 과거 기록은 최종 수집 정책이 아니며, 환경별 실제 적용 상태는 [정합화 기록](ERD_API_ALIGNMENT_2026-10-27.md)을 따른다.
+
 **2026-10-21 온보딩 후속 반영:** API-004는 `POST /api/v1/onboarding/complete`에서 기존 세부 관심사 선택을 Q1·Q2 각각 1개 저장으로 대체했다. `answers: {q1,q2}`가 필수이며 `subtopicIds` 요청은 거절한다. 닉네임·생년월일·`accountType=user`·동의·프로필 이미지·Topic 입력은 유지한다. 답변용 `onboarding_answers` 추가 마이그레이션은 `c0e5f3b8a124`이며 실제 적용 상태는 환경별로 확인한다. 프론트는 수정하지 않아 호출 계약·화면 연결이 남아 있다. 아래 전체 API 집계와 다른 영역의 상태는 최초 대조일 기준이다.
 
 **관리자 전용 API를 제외한 V1.3 계약 72개 중 31개는 라우트가 있고 41개는 없다.** 기존 라우트에도 계정 유형, 추천, AI, 알림 등의 보완이 필요하다. 우선 구현할 범위는 최신 PRD의 1차 요구이며, 후속 기능과 차수 미정 기능은 구분한다.
@@ -84,7 +88,7 @@ PRD 사본에서 **FR-601~612의 12개 기능·35개 세부 요구가 2026-10-19
 
 | API | 기능 / PRD 관련 기능 | 메서드와 경로 | 상태 | 구현 내용 또는 남은 작업 |
 | --- | --- | --- | --- | --- |
-| [API-004](https://app.notion.com/3f704c45a96181efba2fdaddb843c5e8) | 회원·기본 프로필 생성(온보딩 일괄 제출)<br>FR-002·004·1204 | `POST /onboarding/complete` | 부분 | 2026-10-21: 온보딩 대기 세션의 프로필·동의·Topic·Q1/Q2 저장. 만 14세·동의·활성 Topic 검증, accountType=user. 필수 answers, subtopicIds 요청은 422. 응답 answers 및 activeTopic.subtopicIds=[]. 이미지 연결 미지원·프론트 계약 갱신 필요. |
+| [API-004](https://app.notion.com/3f704c45a96181efba2fdaddb843c5e8) | 회원·기본 프로필 생성(온보딩 일괄 제출)<br>FR-002·004·1204 | `POST /onboarding/complete` | 부분 | 2026-10-27 로컬 코드: 온보딩 대기 세션의 닉네임·동의·Topic·Q1/Q2 저장. 동의·활성 Topic 검증, accountType=user. 필수 answers, birthDate·subtopicIds·profileImageId 요청은 422. 응답 answers 및 activeTopic.subtopicIds=[]. 생년월일 수집·연령 확인 방식은 통합 완료 후 결정하며 현재 코드·프론트의 계약 차이는 별도 기록한다. |
 | [API-005](https://app.notion.com/3f704c45a96181a88acce1a8f10e4d6a) | 현재 세션·온보딩 상태 조회<br>FR-001 | `GET /auth/session` | 불일치 | 세션/CSRF/온보딩 상태 조회 구현. accountType이 consumer/creator이며 로그인 유지 기본값 30분. |
 | [API-006](https://app.notion.com/3f704c45a9618149866cd91caeb07fed) | 로그아웃<br>보조 계약 | `POST /auth/logout` | 구현 | 현재 세션·쿠키 폐기, 반복 로그아웃 204. |
 | [API-007](https://app.notion.com/3f704c45a9618163b001f267a48a935e) | 내 프로필 조회<br>FR-206 | `GET /users/me` | 부분·불일치 | 내 정보 조회 구현. profileImageId/Url은 항상 null, accountType 구형. |

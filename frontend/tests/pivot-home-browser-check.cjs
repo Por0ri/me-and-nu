@@ -8,7 +8,7 @@ const out = process.argv[3] || path.join(require('node:os').tmpdir(), 'pivot-hom
 const results = [];
 fs.mkdirSync(out, { recursive: true });
 
-async function enterDemo(page, q1 = 'world', q2 = 'characters') {
+async function enterDemo(page, consumptionType = 'world') {
   await page.goto(base + '/pivot/demo');
   await page.getByRole('button', { name: '로그인 없이 시연 계속하기' }).click();
   await page.getByRole('checkbox', { name: '모두 동의합니다' }).check();
@@ -16,9 +16,12 @@ async function enterDemo(page, q1 = 'world', q2 = 'characters') {
   await page.getByRole('checkbox', { name: '애니메이션', exact: true }).focus();
   await page.keyboard.press('Space');
   await page.getByRole('button', { name: '애니메이션 선택하고 시작하기' }).click();
-  await page.locator(`input[name=q1][value=${q1}]`).locator('..').tap();
-  await page.getByRole('button', { name: '선택 완료', exact: true }).click();
-  await page.locator(`input[name=q2][value=${q2}]`).locator('..').tap();
+  await page.getByRole('searchbox', {name:'작품 검색',exact:true}).fill('별빛');
+  await page.getByRole('list', {name:'작품 검색 결과',exact:true}).getByRole('button').filter({hasText:'별빛 우체국'}).click();
+  await page.getByRole('button', {name:'선택한 작품으로 다음',exact:true}).click();
+  await page.getByRole('checkbox', {name:'우정',exact:true}).check();
+  await page.getByRole('button', {name:'장르·소재 선택 완료',exact:true}).click();
+  await page.locator(`input[name=consumptionType][value=${consumptionType}]`).locator('..').tap();
   await page.getByRole('button', { name: '선택 완료', exact: true }).click();
   await page.getByRole('button', { name: '콘텐츠 보러가기' }).click();
   await page.locator('main[data-home-state="ready"]').waitFor();
@@ -186,7 +189,7 @@ if (require.main === module) (async () => {
             'Returning to the feed start preserves every post position');
           await page.screenshot({ path: path.join(out, name + '.png'), fullPage: true });
           // A different full onboarding cycle must still return the same fixed feed.
-          await enterDemo(page, 'goods', 'restock');
+          await enterDemo(page, 'goods');
           assert.deepEqual(await posts.locator('h3').allTextContents(), titles);
           await indicator(posts.nth(0), 0, 5); await indicator(posts.nth(1), 0, 3); await indicator(posts.nth(2), 0, 2);
           failImage = true; await enterDemo(page);

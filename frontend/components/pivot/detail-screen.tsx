@@ -5,6 +5,7 @@ import type { DetailArticle, DetailState } from "@/lib/pivot/detail";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { HomeNavigation } from "./home-screen";
+import { ContentCover, ContentMetadata } from "./content-carousel";
 import homeStyles from "./home.module.css";
 import styles from "./detail.module.css";
 
@@ -64,9 +65,10 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
           </button>)}
       </div>
     </header>
-    <h1 ref={heading} tabIndex={-1} className={demo ? homeStyles.srOnly : styles.serviceTitle}>{state.status === "ready" ? [state.article.work, state.article.title].filter(Boolean).join(" · ") : "콘텐츠 상세"}</h1>
+    <h1 ref={heading} tabIndex={-1} className={homeStyles.srOnly}>{state.status === "ready" ? [state.article.work, state.article.title].filter(Boolean).join(" · ") : "콘텐츠 상세"}</h1>
     {state.status === "ready" ? <article aria-label={state.article.title} data-detail-content={state.article.contentId} data-detail-post={state.article.postId}>
-      <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />
+      {!demo && state.article.slides?.length ? <ContentCover key={state.article.contentId}
+        slides={state.article.slides} title={state.article.title} /> : <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />}
       <div className={styles.body}>
         {state.article.sections.map((section, index) => <section key={index} className={styles.section}>
           {section.heading ? <h2>{section.heading}</h2> : null}
@@ -75,6 +77,17 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
         {!demo && state.article.displayMode === "link_excerpt" && state.article.sourceUrl ? <p className={styles.sourceLink}>
           <a href={state.article.sourceUrl} target="_blank" rel="noopener noreferrer">원문에서 계속 읽기</a>
         </p> : null}
+        {!demo ? <footer data-detail-publication="">
+        <ContentMetadata productionType={state.article.productionType} notices={state.article.notices}
+          publishedAt={state.article.publishedAt} publisher={state.article.publisher} />
+        {state.article.sources?.length || state.article.sourceUrl ? <section className={styles.sources} aria-label="콘텐츠 출처">
+          <h2>출처</h2>
+          <ul>{(state.article.sources?.length ? state.article.sources : [{ url: state.article.sourceUrl!, title: "원문 출처", publisher: state.article.publisher }]).map((source, index) =>
+            <li key={`${source.url}-${index}`}><a href={source.url} target="_blank" rel="noopener noreferrer">
+              {source.title || source.publisher || new URL(source.url).hostname}
+            </a>{source.publisher && source.title !== source.publisher ? <span>{source.publisher}</span> : null}</li>)}</ul>
+        </section> : null}
+        </footer> : null}
         {demo ? <section className={styles.feedback} aria-labelledby="detail-feedback-title">
           <h2 id="detail-feedback-title">이런 글, 더 보고 싶으세요?</h2>
           <div className={styles.feedbackButtons}>

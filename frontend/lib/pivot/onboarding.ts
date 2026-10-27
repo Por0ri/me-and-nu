@@ -1,4 +1,4 @@
-// UI-only choices from Figma. These IDs are not backend topic/subtopic IDs.
+// Existing consumption choices move to Q3. Their codes are not catalog IDs.
 export const q1Choices = [
   { id: "world", lines: ["설정과 세계관을", "파고든다"], summary: "설정과 세계관", asset: "imgFrame303" },
   { id: "relationships", lines: ["캐릭터의 관계성과", "감정선에 빠진다"], summary: "캐릭터 관계성", asset: "imgFrame304" },
@@ -15,53 +15,86 @@ export const q2Choices = [
 ] as const;
 export type Q1Choice = typeof q1Choices[number]["id"];
 export type Q2Choice = typeof q2Choices[number]["id"];
-export type OnboardingStep = "interest" | "q1" | "q2" | "result";
-export type UiSelection = { interest: "animation"; q1: Q1Choice; q2: Q2Choice };
-export type OnboardingState = { step: OnboardingStep; interest: "animation" | null; q1: Q1Choice | null; q2: Q2Choice | null };
+export type OnboardingWork = { entityId: number; name: string; aliases: string[]; imageUrl: string | null; releaseYear: number | null; mediaFormat: string | null; selectable: boolean; unavailableReason: string | null };
+export type PreferenceOption = { tagId: number; kind: "genre" | "theme"; code: string; label: string; sourceEntityIds: number[] };
+export type OnboardingStep = "interest" | "q1" | "q2" | "q3" | "result";
+export type UiSelection = { interest: "animation"; topicId: number; favoriteEntityIds: number[]; preferenceTagIds: number[]; consumptionType: Q1Choice };
+export type OnboardingState = { step: OnboardingStep; interest: "animation" | null; topicId: number | null; favoriteWorks: OnboardingWork[]; preferenceOptions: PreferenceOption[]; preferenceTagIds: number[]; optionsKey: string | null; consumptionType: Q1Choice | null };
 export type OnboardingAction =
   | { type: "toggle-interest" }
-  | { type: "choose-q1"; value: string }
-  | { type: "choose-q2"; value: string }
+  | { type: "set-topic"; topicId: number }
+  | { type: "toggle-work"; work: OnboardingWork }
+  | { type: "invalidate-options" }
+  | { type: "set-options"; topicId: number; entityIds: number[]; options: PreferenceOption[] }
+  | { type: "toggle-tag"; tagId: number }
+  | { type: "choose-consumption"; value: string }
   | { type: "advance" | "back"; from: OnboardingStep }
   | { type: "reselect"; from: "result" }
   | { type: "reset" };
-export const initialOnboardingState = (): OnboardingState => ({ step: "interest", interest: null, q1: null, q2: null });
+export const initialOnboardingState = (): OnboardingState => ({ step: "interest", interest: null, topicId: null, favoriteWorks: [], preferenceOptions: [], preferenceTagIds: [], optionsKey: null, consumptionType: null });
 const isQ1 = (value: unknown): value is Q1Choice => q1Choices.some((choice) => choice.id === value);
-const isQ2 = (value: unknown): value is Q2Choice => q2Choices.some((choice) => choice.id === value);
-export function isSelectionComplete(state: Pick<OnboardingState, "interest" | "q1" | "q2">): boolean {
-  return state.interest === "animation" && isQ1(state.q1) && isQ2(state.q2);
+export const validId = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0;
+export const selectionKey = (ids: number[]) => [...ids].sort((a, b) => a - b).join(",");
+export function workFormatLabel(format: string | null): string {
+  return ({ SERIES: "시리즈", TV: "TV 애니메이션", TV_SHORT: "단편 시리즈", MOVIE: "극장판", OVA: "OVA", ONA: "웹 애니메이션", SPECIAL: "스페셜", MUSIC: "뮤직비디오", "예시": "예시" } as Record<string, string>)[format ?? ""] ?? "애니메이션";
+}
+const validIds = (ids: unknown, max = Infinity): ids is number[] => Array.isArray(ids) && ids.length >= 1 && ids.length <= max && ids.every(validId) && new Set(ids).size === ids.length;
+export function isSelectionComplete(selection: UiSelection): boolean {
+  return selection?.interest === "animation" && validId(selection.topicId) && validIds(selection.favoriteEntityIds, 5) && validIds(selection.preferenceTagIds) && isQ1(selection.consumptionType);
+}
+export function hasCurrentOptions(state: OnboardingState): boolean {
+  return state.favoriteWorks.length > 0 && state.optionsKey === selectionKey(state.favoriteWorks.map(work => work.entityId));
+}
+export function isStateComplete(state: OnboardingState): boolean {
+  return state.interest === "animation" && validId(state.topicId) && validIds(state.favoriteWorks.map(work => work.entityId), 5) && hasCurrentOptions(state) && validIds(state.preferenceTagIds) && state.preferenceTagIds.every(id => state.preferenceOptions.some(tag => tag.tagId === id)) && isQ1(state.consumptionType);
 }
 export function canAdvance(state: OnboardingState): boolean {
   if (state.step === "interest") return state.interest === "animation";
-  if (state.step === "q1") return state.interest === "animation" && isQ1(state.q1);
-  if (state.step === "q2") return isSelectionComplete(state);
+  if (state.step === "q1") return state.interest === "animation" && validId(state.topicId) && validIds(state.favoriteWorks.map(work => work.entityId), 5);
+  if (state.step === "q2") return hasCurrentOptions(state) && validIds(state.preferenceTagIds) && state.preferenceTagIds.every(id => state.preferenceOptions.some(tag => tag.tagId === id));
+  if (state.step === "q3") return isStateComplete(state);
   return false;
 }
 export function onboardingReducer(state: OnboardingState, action: OnboardingAction): OnboardingState {
   if (action.type === "reset") return initialOnboardingState();
-  // Only explicit result reselection clears answers; ordinary back preserves them.
+  // Ordinary back preserves answers. A changed work set invalidates its tag union.
   if (action.type === "reselect") return state.step === action.from
-    ? { ...state, step: "q1", q1: null, q2: null } : state;
+    ? { ...initialOnboardingState(), step: "q1", interest: state.interest, topicId: state.topicId } : state;
   if (action.type === "toggle-interest") return state.step === "interest"
     ? { ...state, interest: state.interest ? null : "animation" } : state;
-  if (action.type === "choose-q1") return state.step === "q1" && isQ1(action.value) ? { ...state, q1: action.value } : state;
-  if (action.type === "choose-q2") return state.step === "q2" && isQ2(action.value) ? { ...state, q2: action.value } : state;
+  if (action.type === "set-topic") return !validId(action.topicId) || action.topicId === state.topicId ? state
+    : { ...initialOnboardingState(), step: state.step === "interest" ? "interest" : "q1", interest: state.interest, topicId: action.topicId };
+  if (action.type === "toggle-work") {
+    if (state.step !== "q1" || !validId(action.work.entityId) || !action.work.selectable) return state;
+    const exists = state.favoriteWorks.some(work => work.entityId === action.work.entityId);
+    if (!exists && state.favoriteWorks.length >= 5) return state;
+    return { ...state, favoriteWorks: exists ? state.favoriteWorks.filter(work => work.entityId !== action.work.entityId) : [...state.favoriteWorks, action.work], preferenceOptions: [], preferenceTagIds: [], optionsKey: null };
+  }
+  if (action.type === "invalidate-options") return { ...state, optionsKey: null };
+  if (action.type === "set-options") {
+    if (state.step !== "q2" || action.topicId !== state.topicId || selectionKey(action.entityIds) !== selectionKey(state.favoriteWorks.map(work => work.entityId))) return state;
+    return { ...state, preferenceOptions: action.options, optionsKey: selectionKey(action.entityIds), preferenceTagIds: state.preferenceTagIds.filter(id => action.options.some(tag => tag.tagId === id)) };
+  }
+  if (action.type === "toggle-tag") return state.step !== "q2" || !hasCurrentOptions(state) || !state.preferenceOptions.some(tag => tag.tagId === action.tagId) ? state
+    : { ...state, preferenceTagIds: state.preferenceTagIds.includes(action.tagId) ? state.preferenceTagIds.filter(id => id !== action.tagId) : [...state.preferenceTagIds, action.tagId] };
+  if (action.type === "choose-consumption") return state.step === "q3" && isQ1(action.value) ? { ...state, consumptionType: action.value } : state;
   // Stale or double-dispatched navigation can never skip a step.
   if (action.from !== state.step) return state;
   if (action.type === "advance") {
     if (!canAdvance(state)) return state;
-    return { ...state, step: state.step === "interest" ? "q1" : state.step === "q1" ? "q2" : "result" };
+    return { ...state, step: state.step === "interest" ? "q1" : state.step === "q1" ? "q2" : state.step === "q2" ? "q3" : "result" };
   }
-  if (action.type === "back") return { ...state, step: state.step === "result" ? "q2" : state.step === "q2" ? "q1" : "interest" };
+  if (action.type === "back") return { ...state, step: state.step === "result" ? "q3" : state.step === "q3" ? "q2" : state.step === "q2" ? "q1" : "interest" };
   return state;
 }
 export function buildSelectionDraft(state: OnboardingState): UiSelection {
-  if (state.interest !== "animation" || !isQ1(state.q1) || !isQ2(state.q2)) throw new Error("관심 분야와 두 답변을 모두 선택해 주세요.");
-  return { interest: state.interest, q1: state.q1, q2: state.q2 };
+  if (!isStateComplete(state)) throw new Error("작품, 장르·소재, 소비 유형을 모두 선택해 주세요.");
+  return { interest: "animation", topicId: state.topicId!, favoriteEntityIds: state.favoriteWorks.map(work => work.entityId), preferenceTagIds: [...state.preferenceTagIds], consumptionType: state.consumptionType! };
 }
 export function selectionSummary(state: OnboardingState) {
   return {
-    q1: q1Choices.find((choice) => choice.id === state.q1)?.summary ?? "",
-    q2: q2Choices.find((choice) => choice.id === state.q2)?.summary ?? "",
+    works: state.favoriteWorks.map(work => work.name).join(" · "),
+    tags: state.preferenceOptions.filter(tag => state.preferenceTagIds.includes(tag.tagId)).map(tag => tag.label).join(" · "),
+    consumption: q1Choices.find((choice) => choice.id === state.consumptionType)?.summary ?? "",
   };
 }

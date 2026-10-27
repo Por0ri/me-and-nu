@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import type { HomeDetailHandler } from "@/lib/pivot/home";
 import type { SavedCard, SavedState } from "@/lib/pivot/saved";
 import { HomeHeader, HomeNavigation } from "./home-screen";
+import { ProtectedSlideImage } from "./content-carousel";
 import homeStyles from "./home.module.css";
 import styles from "./saved.module.css";
 
@@ -13,7 +14,7 @@ export function SavedContentCard({ card, onViewDetail }: { card: SavedCard; onVi
     aria-labelledby={id} onClick={() => onViewDetail({ postId: card.postId, contentId: card.contentId, ...(card.topicId === undefined ? {} : { topicId: card.topicId }) })}>
     <span id={id} className={homeStyles.srOnly}>{card.title} 자세히 보기</span>
     {/* Existing covers already contain editorial text and a gradient. Do not overlay duplicate copy. */}
-    {card.image?.src && !failed ? <img src={card.image.src} alt="" width={148} height={185} loading="lazy" draggable={false} onError={() => setFailed(true)} />
+    {card.image?.protected ? <ProtectedSlideImage key={card.image.src} src={card.image.src} alt="" retryable={false} /> : card.image?.src && !failed ? <img src={card.image.src} alt="" width={148} height={185} loading="lazy" draggable={false} onError={() => setFailed(true)} />
       : <span className={styles.placeholder}><span>이미지 준비 중</span><span>{card.title}</span></span>}
   </button>;
 }

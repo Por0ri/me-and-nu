@@ -1,0 +1,1268 @@
+{
+  "topicCode": "anime",
+  "demo": false,
+  "tags": [
+    {
+      "kind": "genre",
+      "code": "action",
+      "displayName": "액션",
+      "sortOrder": 1
+    },
+    {
+      "kind": "genre",
+      "code": "adventure",
+      "displayName": "모험",
+      "sortOrder": 2
+    },
+    {
+      "kind": "genre",
+      "code": "fantasy",
+      "displayName": "판타지",
+      "sortOrder": 3
+    },
+    {
+      "kind": "genre",
+      "code": "comedy",
+      "displayName": "코미디",
+      "sortOrder": 4
+    },
+    {
+      "kind": "genre",
+      "code": "drama",
+      "displayName": "드라마",
+      "sortOrder": 5
+    },
+    {
+      "kind": "genre",
+      "code": "romance",
+      "displayName": "로맨스",
+      "sortOrder": 6
+    },
+    {
+      "kind": "genre",
+      "code": "mystery",
+      "displayName": "미스터리",
+      "sortOrder": 7
+    },
+    {
+      "kind": "genre",
+      "code": "thriller",
+      "displayName": "스릴러",
+      "sortOrder": 8
+    },
+    {
+      "kind": "genre",
+      "code": "science_fiction",
+      "displayName": "SF·공상과학",
+      "sortOrder": 9
+    },
+    {
+      "kind": "genre",
+      "code": "sports",
+      "displayName": "스포츠",
+      "sortOrder": 10
+    },
+    {
+      "kind": "theme",
+      "code": "school",
+      "displayName": "학교생활",
+      "sortOrder": 1
+    },
+    {
+      "kind": "theme",
+      "code": "friendship",
+      "displayName": "우정",
+      "sortOrder": 2
+    },
+    {
+      "kind": "theme",
+      "code": "family",
+      "displayName": "가족",
+      "sortOrder": 3
+    },
+    {
+      "kind": "theme",
+      "code": "growth",
+      "displayName": "성장",
+      "sortOrder": 4
+    },
+    {
+      "kind": "theme",
+      "code": "supernatural",
+      "displayName": "초자연",
+      "sortOrder": 5
+    },
+    {
+      "kind": "theme",
+      "code": "superpowers",
+      "displayName": "초능력",
+      "sortOrder": 6
+    },
+    {
+      "kind": "theme",
+      "code": "heroes",
+      "displayName": "히어로",
+      "sortOrder": 7
+    },
+    {
+      "kind": "theme",
+      "code": "journey",
+      "displayName": "여행",
+      "sortOrder": 8
+    },
+    {
+      "kind": "theme",
+      "code": "survival",
+      "displayName": "생존",
+      "sortOrder": 9
+    },
+    {
+      "kind": "theme",
+      "code": "military",
+      "displayName": "군사",
+      "sortOrder": 10
+    },
+    {
+      "kind": "theme",
+      "code": "mind_games",
+      "displayName": "두뇌전",
+      "sortOrder": 11
+    },
+    {
+      "kind": "theme",
+      "code": "ninja",
+      "displayName": "닌자",
+      "sortOrder": 12
+    },
+    {
+      "kind": "theme",
+      "code": "body_swap",
+      "displayName": "몸 바뀜",
+      "sortOrder": 13
+    },
+    {
+      "kind": "theme",
+      "code": "other_world",
+      "displayName": "이세계",
+      "sortOrder": 14
+    },
+    {
+      "kind": "theme",
+      "code": "time_loop",
+      "displayName": "타임루프",
+      "sortOrder": 15
+    },
+    {
+      "kind": "theme",
+      "code": "music",
+      "displayName": "음악",
+      "sortOrder": 16
+    },
+    {
+      "kind": "theme",
+      "code": "volleyball",
+      "displayName": "배구",
+      "sortOrder": 17
+    },
+    {
+      "kind": "theme",
+      "code": "espionage",
+      "displayName": "첩보",
+      "sortOrder": 18
+    },
+    {
+      "kind": "theme",
+      "code": "science",
+      "displayName": "과학",
+      "sortOrder": 19
+    },
+    {
+      "kind": "theme",
+      "code": "civilization",
+      "displayName": "문명 재건",
+      "sortOrder": 20
+    },
+    {
+      "kind": "theme",
+      "code": "historical",
+      "displayName": "역사적 배경",
+      "sortOrder": 21
+    },
+    {
+      "kind": "theme",
+      "code": "letters",
+      "displayName": "편지",
+      "sortOrder": 22
+    },
+    {
+      "kind": "theme",
+      "code": "work",
+      "displayName": "직업생활",
+      "sortOrder": 23
+    },
+    {
+      "kind": "theme",
+      "code": "mecha",
+      "displayName": "로봇",
+      "sortOrder": 24
+    },
+    {
+      "kind": "theme",
+      "code": "space",
+      "displayName": "우주",
+      "sortOrder": 25
+    },
+    {
+      "kind": "theme",
+      "code": "bounty_hunters",
+      "displayName": "현상금 사냥",
+      "sortOrder": 26
+    },
+    {
+      "kind": "theme",
+      "code": "dungeons",
+      "displayName": "던전",
+      "sortOrder": 27
+    },
+    {
+      "kind": "theme",
+      "code": "time_travel",
+      "displayName": "시간 여행",
+      "sortOrder": 28
+    }
+  ],
+  "works": [
+    {
+      "provider": "menu_work",
+      "externalId": "1",
+      "name": "진격의 거인",
+      "aliases": [
+        "進撃の巨人",
+        "진격의거인"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "survival"
+        },
+        {
+          "kind": "theme",
+          "code": "military"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "2",
+      "name": "귀멸의 칼날",
+      "aliases": [
+        "鬼滅の刃",
+        "귀멸의칼날"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2019,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "family"
+        },
+        {
+          "kind": "theme",
+          "code": "supernatural"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "3",
+      "name": "주술회전",
+      "aliases": [
+        "呪術廻戦",
+        "주술 회전"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2020,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "supernatural"
+        },
+        {
+          "kind": "theme",
+          "code": "school"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "4",
+      "name": "데스노트",
+      "aliases": [
+        "DEATH NOTE",
+        "데스 노트"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2006,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "mystery"
+        },
+        {
+          "kind": "genre",
+          "code": "thriller"
+        },
+        {
+          "kind": "theme",
+          "code": "mind_games"
+        },
+        {
+          "kind": "theme",
+          "code": "supernatural"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "5",
+      "name": "나의 히어로 아카데미아",
+      "aliases": [
+        "僕のヒーローアカデミア",
+        "나의히어로아카데미아"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "heroes"
+        },
+        {
+          "kind": "theme",
+          "code": "school"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "6",
+      "name": "헌터×헌터",
+      "aliases": [
+        "HUNTER×HUNTER",
+        "헌터X헌터",
+        "헌터 × 헌터",
+        "헌터헌터"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "adventure"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        },
+        {
+          "kind": "theme",
+          "code": "journey"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "7",
+      "name": "원펀맨",
+      "aliases": [
+        "ワンパンマン",
+        "원 펀맨",
+        "ONE PUNCH MAN"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "comedy"
+        },
+        {
+          "kind": "theme",
+          "code": "heroes"
+        },
+        {
+          "kind": "theme",
+          "code": "superpowers"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "10",
+      "name": "강철의 연금술사",
+      "aliases": [
+        "鋼の錬金術師",
+        "강철의연금술사",
+        "FULLMETAL ALCHEMIST"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "adventure"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "family"
+        },
+        {
+          "kind": "theme",
+          "code": "journey"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "11",
+      "name": "나루토",
+      "aliases": [
+        "NARUTO",
+        "나루토 질풍전"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "adventure"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        },
+        {
+          "kind": "theme",
+          "code": "growth"
+        },
+        {
+          "kind": "theme",
+          "code": "ninja"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "13",
+      "name": "목소리의 형태",
+      "aliases": [
+        "聲の形",
+        "목소리의형태"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2016,
+      "mediaFormat": "MOVIE",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "theme",
+          "code": "school"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        },
+        {
+          "kind": "theme",
+          "code": "growth"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "14",
+      "name": "너의 이름은.",
+      "aliases": [
+        "君の名は。",
+        "너의 이름은",
+        "너의이름은"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2016,
+      "mediaFormat": "MOVIE",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "romance"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "school"
+        },
+        {
+          "kind": "theme",
+          "code": "body_swap"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "15",
+      "name": "체인소 맨",
+      "aliases": [
+        "チェンソーマン",
+        "체인소맨",
+        "CHAINSAW MAN"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2022,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "supernatural"
+        },
+        {
+          "kind": "theme",
+          "code": "superpowers"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "18",
+      "name": "모브사이코 100",
+      "aliases": [
+        "モブサイコ100",
+        "모브 사이코 100",
+        "모브사이코100"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "comedy"
+        },
+        {
+          "kind": "theme",
+          "code": "superpowers"
+        },
+        {
+          "kind": "theme",
+          "code": "school"
+        },
+        {
+          "kind": "theme",
+          "code": "growth"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "19",
+      "name": "Re:제로부터 시작하는 이세계 생활",
+      "aliases": [
+        "Re:ゼロから始める異世界生活",
+        "리제로",
+        "리제로부터 시작하는 이세계 생활"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "genre",
+          "code": "thriller"
+        },
+        {
+          "kind": "theme",
+          "code": "other_world"
+        },
+        {
+          "kind": "theme",
+          "code": "time_loop"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "20",
+      "name": "4월은 너의 거짓말",
+      "aliases": [
+        "四月は君の嘘",
+        "4월은너의거짓말"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "genre",
+          "code": "romance"
+        },
+        {
+          "kind": "theme",
+          "code": "music"
+        },
+        {
+          "kind": "theme",
+          "code": "school"
+        },
+        {
+          "kind": "theme",
+          "code": "growth"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "24",
+      "name": "하이큐!!",
+      "aliases": [
+        "ハイキュー!!",
+        "하이큐"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2014,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "sports"
+        },
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "theme",
+          "code": "volleyball"
+        },
+        {
+          "kind": "theme",
+          "code": "school"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "26",
+      "name": "스파이 패밀리",
+      "aliases": [
+        "SPY×FAMILY",
+        "SPYxFAMILY",
+        "SPY x FAMILY",
+        "스파이패밀리"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "comedy"
+        },
+        {
+          "kind": "theme",
+          "code": "family"
+        },
+        {
+          "kind": "theme",
+          "code": "espionage"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "27",
+      "name": "카구야 님은 고백받고 싶어",
+      "aliases": [
+        "かぐや様は告らせたい",
+        "카구야님은 고백받고 싶어",
+        "카구야 님은 고백받고 싶어 ~천재들의 연애 두뇌전~"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "romance"
+        },
+        {
+          "kind": "genre",
+          "code": "comedy"
+        },
+        {
+          "kind": "theme",
+          "code": "school"
+        },
+        {
+          "kind": "theme",
+          "code": "mind_games"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "28",
+      "name": "닥터 스톤",
+      "aliases": [
+        "Dr.STONE",
+        "닥터스톤",
+        "Dr. STONE"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "adventure"
+        },
+        {
+          "kind": "genre",
+          "code": "science_fiction"
+        },
+        {
+          "kind": "theme",
+          "code": "science"
+        },
+        {
+          "kind": "theme",
+          "code": "civilization"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "29",
+      "name": "빈란드 사가",
+      "aliases": [
+        "ヴィンランド・サガ",
+        "VINLAND SAGA",
+        "빈란드사가"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "theme",
+          "code": "historical"
+        },
+        {
+          "kind": "theme",
+          "code": "journey"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "30",
+      "name": "바이올렛 에버가든",
+      "aliases": [
+        "ヴァイオレット・エヴァーガーデン",
+        "바이올렛에버가든",
+        "Violet Evergarden"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2018,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "letters"
+        },
+        {
+          "kind": "theme",
+          "code": "growth"
+        },
+        {
+          "kind": "theme",
+          "code": "work"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "32",
+      "name": "토라도라!",
+      "aliases": [
+        "とらドラ！",
+        "토라도라"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "romance"
+        },
+        {
+          "kind": "genre",
+          "code": "comedy"
+        },
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "theme",
+          "code": "school"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "38",
+      "name": "이 멋진 세계에 축복을!",
+      "aliases": [
+        "この素晴らしい世界に祝福を！",
+        "코노스바",
+        "이멋진세계에축복을"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "comedy"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "genre",
+          "code": "adventure"
+        },
+        {
+          "kind": "theme",
+          "code": "other_world"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "39",
+      "name": "코드 기아스 반역의 를르슈",
+      "aliases": [
+        "コードギアス 反逆のルルーシュ",
+        "코드기아스",
+        "코드 기아스"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "science_fiction"
+        },
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "theme",
+          "code": "mecha"
+        },
+        {
+          "kind": "theme",
+          "code": "mind_games"
+        },
+        {
+          "kind": "theme",
+          "code": "military"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "42",
+      "name": "신세기 에반게리온",
+      "aliases": [
+        "新世紀エヴァンゲリオン",
+        "에반게리온",
+        "신세기에반게리온"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "science_fiction"
+        },
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "theme",
+          "code": "mecha"
+        },
+        {
+          "kind": "theme",
+          "code": "survival"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "43",
+      "name": "장송의 프리렌",
+      "aliases": [
+        "葬送のフリーレン",
+        "프리렌",
+        "장송의프리렌"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2023,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "genre",
+          "code": "adventure"
+        },
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "theme",
+          "code": "journey"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "45",
+      "name": "센과 치히로의 행방불명",
+      "aliases": [
+        "千と千尋の神隠し",
+        "센과치히로의행방불명",
+        "센과 치히로"
+      ],
+      "imageUrl": null,
+      "releaseYear": 2001,
+      "mediaFormat": "MOVIE",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "genre",
+          "code": "adventure"
+        },
+        {
+          "kind": "theme",
+          "code": "other_world"
+        },
+        {
+          "kind": "theme",
+          "code": "growth"
+        },
+        {
+          "kind": "theme",
+          "code": "family"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "47",
+      "name": "카우보이 비밥",
+      "aliases": [
+        "カウボーイビバップ",
+        "카우보이비밥",
+        "COWBOY BEBOP"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "science_fiction"
+        },
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "theme",
+          "code": "space"
+        },
+        {
+          "kind": "theme",
+          "code": "bounty_hunters"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "54",
+      "name": "나 혼자만 레벨업",
+      "aliases": [
+        "俺だけレベルアップな件",
+        "나혼자만레벨업",
+        "SOLO LEVELING"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "fantasy"
+        },
+        {
+          "kind": "theme",
+          "code": "dungeons"
+        },
+        {
+          "kind": "theme",
+          "code": "growth"
+        },
+        {
+          "kind": "theme",
+          "code": "superpowers"
+        }
+      ]
+    },
+    {
+      "provider": "menu_work",
+      "externalId": "56",
+      "name": "도쿄 리벤저스",
+      "aliases": [
+        "東京リベンジャーズ",
+        "도쿄리벤저스",
+        "TOKYO REVENGERS"
+      ],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "SERIES",
+      "isActive": true,
+      "tags": [
+        {
+          "kind": "genre",
+          "code": "action"
+        },
+        {
+          "kind": "genre",
+          "code": "thriller"
+        },
+        {
+          "kind": "genre",
+          "code": "drama"
+        },
+        {
+          "kind": "theme",
+          "code": "time_travel"
+        },
+        {
+          "kind": "theme",
+          "code": "friendship"
+        }
+      ]
+    }
+  ]
+}

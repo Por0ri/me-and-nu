@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { demoPolicies, type DemoState } from "@/lib/pivot/demo";
-import { initialOnboardingState, isSelectionComplete, onboardingReducer } from "@/lib/pivot/onboarding";
+import { initialOnboardingState, isStateComplete, onboardingReducer } from "@/lib/pivot/onboarding";
 import { mockHomeSource } from "@/lib/pivot/home-mock";
 import { mockDetailSourceForPreview } from "@/lib/pivot/detail-mock";
 import { mockMyPageSource } from "@/lib/pivot/my-page-mock";
@@ -33,7 +33,7 @@ export function DemoFlow({ initialHome = false, detailPreview }: { initialHome?:
     setState({ step: "splash", consent: null });
   }
   function showLoading() {
-    if (onboarding.step !== "result" || !isSelectionComplete(onboarding)) return;
+    if (onboarding.step !== "result" || !isStateComplete(onboarding)) return;
     setState((previous) => previous.step === "onboarding" ? { ...previous, step: "loading" } : previous);
   }
   const showHome = useCallback(() => setState((previous) => previous.step === "loading" ? { ...previous, step: "home" } : previous), []);

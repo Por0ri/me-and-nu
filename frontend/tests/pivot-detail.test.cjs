@@ -4,6 +4,7 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { sourceAssetHash } = require('./helpers/source-asset-hash.cjs');
 const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
@@ -137,6 +138,6 @@ test('Every Detail static asset is local and retains the Figma source hash', () 
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public/pivot/detail/sources.json'), 'utf8').replace(/^\uFEFF/, ''));
   for (const asset of manifest.assets) {
     const bytes = fs.readFileSync(path.join(root, 'public', asset.path)); assert.ok(bytes.length);
-    assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), asset.sha256);
+    assert.equal(sourceAssetHash(asset.path, bytes), asset.sha256);
   }
 });

@@ -1,9 +1,10 @@
 import { isDetailTarget } from "./detail";
 import type { HomeDetailTarget } from "./home";
+import type { ContentImage } from "./carousel-data";
 import { serviceContentId } from "./service-data";
 
 // A service card keeps its Topic so opening or removing it uses the same scope.
-export type SavedCard = HomeDetailTarget & { title: string; image?: { src: string; alt: string } };
+export type SavedCard = HomeDetailTarget & { title: string; image?: ContentImage };
 export type SavedList = { origin: "demo" | "service"; cards: readonly SavedCard[] };
 export type SavedLoadResult = { status: "ready"; saved: SavedList } | { status: "unconfigured"; message: string };
 export type SavedState = SavedLoadResult | { status: "loading" } | { status: "empty" } | { status: "error"; message: string };

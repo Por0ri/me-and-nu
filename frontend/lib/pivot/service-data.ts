@@ -15,6 +15,7 @@ export function serviceContentId(target: HomeDetailTarget): number | null {
 /** Use the member's active anime Topic when present; never infer a database ID. */
 export function activeTopicId(response: MyTopicsResponse): number | null {
   if (!response || !Array.isArray(response.topics)) throw new Error("Invalid Topic response");
+  if (response.topics.some(topic => !topic || !isPositiveId(topic.id) || typeof topic.status !== "string")) throw new Error("Invalid Topic identity");
   const active = response.topics.filter((topic) => topic.status === "active" && topic.deletedAt === null);
   if (active.some((topic) => !isPositiveId(topic.id))) throw new Error("Invalid Topic identity");
   return (active.find((topic) => topic.code === "anime") ?? active[0])?.id ?? null;
@@ -22,8 +23,12 @@ export function activeTopicId(response: MyTopicsResponse): number | null {
 
 export function optionalImage(value: string | null | undefined, alt: string) {
   if (!value) return undefined;
+  if (typeof value !== "string" || value !== value.trim() || /[\u0000-\u0020\\]/.test(value)) return undefined;
   try {
     const url = new URL(value);
+    // Service slide routes require identity checks and credentialed blob loading.
+    // They must never fall through to the legacy public-image renderer.
+    if (/^\/api\/v1\/contents\/[^/]+\/slides\//.test(url.pathname)) return undefined;
     if ((url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password) {
       return { src: url.href, alt };
     }

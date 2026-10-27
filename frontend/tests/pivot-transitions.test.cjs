@@ -3,6 +3,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { sourceAssetHash } = require('./helpers/source-asset-hash.cjs');
 const crypto = require('node:crypto');
 const ts = require('typescript');
 const React = require('react');
@@ -300,7 +301,7 @@ test('All scoped loading assets are present and retain their recorded source has
   for (const asset of manifest.assets) {
     const content = fs.readFileSync(path.join(folder, asset.file));
     assert.ok(content.length > 0);
-    assert.equal(crypto.createHash('sha256').update(content).digest('hex').toUpperCase(), asset.sha256);
+    assert.equal(sourceAssetHash(asset.file, content).toUpperCase(), asset.sha256);
     if (asset.file.endsWith('.png')) {
       assert.equal(content.readUInt32BE(16), 512);
       assert.equal(content.readUInt32BE(20), 512);

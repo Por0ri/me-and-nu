@@ -4,6 +4,7 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { sourceAssetHash } = require('./helpers/source-asset-hash.cjs');
 const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
@@ -162,7 +163,7 @@ test('Saved records the latest list and empty frames and reuses exact Figma asse
   assert.equal(manifest.layout.cardWidth, 148); assert.equal(manifest.layout.cardHeight, 184.661);
   for (const asset of manifest.assets) {
     const bytes = fs.readFileSync(path.join(root, 'public', asset.path));
-    assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), asset.sha256);
+    assert.equal(sourceAssetHash(asset.path, bytes), asset.sha256);
     if (asset.path.endsWith('.png')) { assert.equal(bytes.readUInt32BE(16), asset.width); assert.equal(bytes.readUInt32BE(20), asset.height); }
   }
 });

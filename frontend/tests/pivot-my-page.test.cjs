@@ -4,6 +4,7 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { sourceAssetHash } = require('./helpers/source-asset-hash.cjs');
 const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
@@ -116,9 +117,82 @@ test('My Page assets retain their source hashes; shared chrome is an exact Figma
   for (const asset of manifest.assets) {
     const bytes = fs.readFileSync(path.join(root, 'public', asset.path));
     assert.ok(bytes.length > 0);
-    assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), asset.sha256);
+    assert.equal(sourceAssetHash(asset.path, bytes), asset.sha256);
     const opening = bytes.toString('utf8').match(/<svg[^>]*>/)[0];
     assert.match(opening, new RegExp('width="' + asset.width + '"'));
     assert.match(opening, new RegExp('height="' + asset.height + '"'));
   }
+});
+
+function interactiveModule(file, replacements = {}) {
+  const hooks = []; let cursor = 0;
+  const react = { ...React,
+    useRef(initial) { const index = cursor++; return hooks[index] ??= { current: initial }; },
+    useState(initial) { const index = cursor++; hooks[index] ??= { value: typeof initial === 'function' ? initial() : initial };
+      return [hooks[index].value, value => { hooks[index].value = typeof value === 'function' ? value(hooks[index].value) : value; }]; },
+    useReducer(reducer, argument, initialize) { const index = cursor++; hooks[index] ??= { value: initialize ? initialize(argument) : argument };
+      return [hooks[index].value, action => { hooks[index].value = reducer(hooks[index].value, action); }]; },
+    useCallback: callback => callback, useEffect() {},
+  };
+  const mod = { exports: {} };
+  const output = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
+  } }).outputText;
+  vm.runInNewContext(output, { module: mod, exports: mod.exports, require(name) {
+    if (Object.hasOwn(replacements, name)) return replacements[name];
+    if (name === 'react') return react;
+    if (name === 'react/jsx-runtime') return require(name);
+    if (name.endsWith('.module.css')) return { default: new Proxy({}, { get: (_, key) => String(key) }), __esModule: true };
+    const relative = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(file), name);
+    return load(relative + (fs.existsSync(path.join(root, relative + '.tsx')) ? '.tsx' : '.ts'));
+  } });
+  return { exports: mod.exports, draw(component, props) { cursor = 0; return component(props); } };
+}
+const descendants = node => !node || typeof node !== 'object' ? [] : [node, ...React.Children.toArray(node.props?.children).flatMap(descendants)];
+const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+test('Service logout is available without a profile, blocks duplicate clicks and permits an explicit retry after failure', async () => {
+  let resolve, reject, calls = 0;
+  const pending = new Promise((yes, no) => { resolve = yes; reject = no; });
+  const fixture = interactiveModule('components/pivot/my-page-screen.tsx');
+  const props = { state: { status: 'unconfigured', message: '프로필 연결 준비 중' }, demo: false, onHome() {}, onRetry() {},
+    onLogout() { calls++; return calls === 1 ? pending : Promise.resolve(); } };
+  const draw = () => fixture.draw(fixture.exports.PivotMyPageScreen, props);
+  const logout = tree => descendants(tree).find(node => node.type === 'button' && React.Children.toArray(node.props.children).includes('로그아웃'));
+  let tree = draw(); assert.ok(logout(tree));
+  const click = logout(tree).props.onClick; click(); click();
+  assert.equal(calls, 1);
+  tree = draw(); assert.equal(logout(tree).props.disabled, true); assert.equal(logout(tree).props['aria-busy'], true);
+  reject(new Error('private API diagnostics')); await nextTurn(); tree = draw();
+  assert.equal(logout(tree).props.disabled, false);
+  assert.ok(descendants(tree).some(node => node.props?.role === 'status' && node.props.children === '로그아웃하지 못했어요. 잠시 후 다시 시도해주세요.'));
+  logout(tree).props.onClick(); await nextTurn(); assert.equal(calls, 2);
+  resolve();
+});
+
+test('Session logout clears personal state and replaces the route only after API success; failed attempts keep the session', async () => {
+  const active = { authenticated: true, sessionState: 'active', onboardingCompleted: true,
+    user: { id: 7, accountType: 'user' }, csrfToken: 'fixture-active' };
+  const replacements = [], requests = [];
+  const router = { replace: route => replacements.push(route) };
+  const fixture = interactiveModule('components/pivot/pivot-session.tsx', {
+    'next/navigation': { usePathname: () => '/pivot/home', useRouter: () => router },
+    '@/lib/api': { API_UNAUTHORIZED_EVENT: 'api:unauthorized', logout() {
+      let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+      requests.push({ resolve, reject }); return promise;
+    } },
+    '@/lib/pivot/services': { canUsePivotApi: () => true, isActiveSession: session => session === active },
+  });
+  const Connected = fixture.exports.PivotSessionProvider({ children: null }).type;
+  const draw = () => fixture.draw(Connected, { children: null }).props.value;
+  let context = draw(); context.completeOnboarding(active); context.rememberDraft({ fixture: true }); context.rememberProfile({ nickname: '개인 입력' });
+  context = draw(); const first = context.logout(), duplicate = context.logout();
+  assert.equal(first, duplicate); assert.equal(requests.length, 1);
+  assert.equal(draw().state.session, active); assert.deepEqual(replacements, []);
+  requests[0].reject(new Error('503')); await assert.rejects(first); context = draw();
+  assert.equal(context.state.session, active); assert.equal(context.profile.nickname, '개인 입력'); assert.ok(context.draft);
+  assert.deepEqual(replacements, []);
+  const second = context.logout(); requests[1].resolve(); await second; context = draw();
+  assert.equal(context.state.session, null); assert.equal(context.draft, null); assert.equal(context.profile.nickname, '');
+  assert.equal(context.onboarding.interest, null); assert.deepEqual(replacements, ['/pivot/login']);
 });
