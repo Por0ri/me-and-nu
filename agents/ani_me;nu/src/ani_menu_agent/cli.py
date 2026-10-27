@@ -1285,7 +1285,7 @@ def crawl_generate(
             profile = get_type_crawler(content_type).profile
             type_signal_checks = profile_signal_checks(
                 profile,
-                f"{candidate.get('title', '')}\n{capture.title}\n{capture.text}",
+                f"{payload.get('title', '')}\n{capture.title}\n{capture.text}",
             )
             payload["content_type"] = content_type
             payload["type_capture_checks"] = type_signal_checks
@@ -2053,7 +2053,7 @@ def collect_page(
         Path,
         typer.Option("--output", "-o"),
     ] = Path("data/collected/pages/latest.json"),
-    max_images: Annotated[int, typer.Option("--max-images", min=0, max=30)] = 20,
+    max_images: Annotated[int, typer.Option("--max-images", min=0, max=100)] = 100,
     event_end: Annotated[
         str | None,
         typer.Option("--event-end", help="행사 종료일 YYYY-MM-DD (미지정 시 수집 후 30일 보관)"),

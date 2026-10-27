@@ -12,6 +12,7 @@ from ani_menu_agent.image_selection import assign_distinct_images
 from ani_menu_agent.layout_engine import build_cards, reflow_for_composition
 from ani_menu_agent.models import ContentPackage, CopyCard, QualityIssue
 from ani_menu_agent.policy import POLICY
+from ani_menu_agent.quality import check_copy, check_sources
 from ani_menu_agent.source_policy import (
     supported_content_types_for_sources,
     validate_generation_sources,
@@ -376,6 +377,36 @@ def copy_writer(state: ContentState) -> ContentState:
         else:
             package.event_start = None
             package.event_end = None
+    if not existing_cards:
+        # Catch copy-only defects before layout and image rendering. These issues have
+        # enough evidence to repair in the copy writer and do not require recrawling.
+        preview_package = package.model_copy(
+            update={"cards": build_cards(generated_cards, package.images)}
+        )
+        preflight_issues = [
+            issue
+            for issue in [*check_sources(preview_package), *check_copy(preview_package)]
+            if issue.code in {"SOURCE_PUBLICATION_DATE_SHOWN", "PROTECTED_PHRASE_LOST"}
+        ]
+        if preflight_issues:
+            revision_pages = sorted(
+                {issue.page for issue in preflight_issues if issue.page is not None}
+            )
+            if revision_pages:
+                current_cards = [card.model_dump(mode="json") for card in generated_cards]
+                revised = generate_copy_deck(
+                    package,
+                    issues=preflight_issues,
+                    existing_cards=current_cards,
+                    revision_pages=revision_pages,
+                    requested_content_type=requested_content_type,
+                )
+                generated_cards = _merge_copy_revision(
+                    current_cards,
+                    revised.deck.cards,
+                    revision_pages,
+                )
+                usage_records.append(revised.usage.model_dump(mode="json"))
     if any(
         len(" ".join(card.body_sentences).strip()) > POLICY.max_body_chars
         for card in generated_cards

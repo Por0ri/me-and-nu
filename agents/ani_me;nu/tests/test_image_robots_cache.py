@@ -67,6 +67,50 @@ def test_allowlisted_cdn_redirects_robots_check_to_publisher_policy(monkeypatch)
     ]
 
 
+def test_allowlisted_cdn_403_uses_publisher_robots_policy(monkeypatch) -> None:
+    from ani_menu_agent.models import SourceEvidence
+
+    source = SourceEvidence(
+        id="prtimes_release_pages",
+        title="Official press release",
+        url="https://prtimes.jp/main/html/rd/p/000000001.000000001.html",
+        publisher="PR TIMES",
+        is_official=True,
+        role="primary",
+        allowed_asset_hosts=["prcdn.freetls.fastly.net"],
+    )
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if request.url.host == "prcdn.freetls.fastly.net":
+            return httpx.Response(403)
+        return httpx.Response(
+            200,
+            text=(
+                "User-agent: *\n"
+                "Allow: /\n"
+                "Disallow: /im/action.php?run=html&page=releaseimage\n"
+            ),
+        )
+
+    monkeypatch.setattr(
+        "ani_menu_agent.agents.image.download._validate_public_https", lambda *_args: None
+    )
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        _check_robots(
+            client,
+            "https://prcdn.freetls.fastly.net/release_image/1/2/image.jpg",
+            source,
+            {},
+        )
+
+    assert requests == [
+        "https://prcdn.freetls.fastly.net/robots.txt",
+        "https://prtimes.jp/robots.txt",
+    ]
+
+
 def test_unrelated_cdn_robots_redirect_stays_blocked(monkeypatch) -> None:
     from ani_menu_agent.models import SourceEvidence
 

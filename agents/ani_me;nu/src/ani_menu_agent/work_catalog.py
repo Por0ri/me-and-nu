@@ -15,6 +15,8 @@ from ani_menu_agent.models import (
 )
 from ani_menu_agent.sources import load_source_registry
 
+_CATALOG_DIRECTORY = Path(__file__).resolve().parents[2] / "data" / "reference"
+
 _KOREAN_TITLE_PARTICLES = (
     "에서",
     "으로",
@@ -53,7 +55,7 @@ _COLLABORATION_MARKER = re.compile(
 @lru_cache(maxsize=1)
 def load_work_catalog() -> list[dict[str, Any]]:
     """Load canonical works without collapsing sequel/entry rows into one work."""
-    catalog = Path(__file__).resolve().parents[2] / "data" / "reference" / "menu_works.csv"
+    catalog = _CATALOG_DIRECTORY / "menu_works.csv"
     if not catalog.is_file():
         return []
     with catalog.open(encoding="utf-8-sig", newline="") as stream:
@@ -68,21 +70,73 @@ def load_work_catalog() -> list[dict[str, Any]]:
 
 
 @lru_cache(maxsize=1)
-def _aliases() -> list[tuple[str, int]]:
-    catalog = Path(__file__).resolve().parents[2] / "data" / "reference"
-    aliases: dict[str, int] = {}
-    canonical = catalog / "menu_works.csv"
-    if not canonical.is_file():
+def load_work_entries() -> list[dict[str, Any]]:
+    """Load season/movie AniList entries and retain their canonical series ID."""
+    entries_path = _CATALOG_DIRECTORY / "menu_work_entries.csv"
+    valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
+    if not entries_path.is_file():
         return []
-    with canonical.open(encoding="utf-8-sig", newline="") as stream:
+    entries = []
+    with entries_path.open(encoding="utf-8-sig", newline="") as stream:
         for row in csv.DictReader(stream):
-            work_id = int(row["menu_work_id"])
-            # Canonical work titles take precedence over entry-level title variants.
-            for key in ("title_ko", "title_romaji", "title_english", "title_native"):
-                value = (row.get(key) or "").strip()
-                if value:
-                    aliases[value.casefold()] = work_id
-    return sorted(((name, work_id) for name, work_id in aliases.items()), key=lambda x: -len(x[0]))
+            try:
+                work_id = int(row["menu_work_id"])
+                anilist_id = int(row["anilist_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if work_id not in valid_work_ids:
+                continue
+            entries.append({**row, "anilist_id": anilist_id, "menu_work_id": work_id})
+    return entries
+
+
+@lru_cache(maxsize=1)
+def _work_parent_overrides() -> dict[int, int]:
+    """Load curated franchise-level links for standalone catalog works."""
+    path = _CATALOG_DIRECTORY / "menu_work_parent_overrides.csv"
+    if not path.is_file():
+        return {}
+    valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
+    overrides: dict[int, int] = {}
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            try:
+                child_id = int(row["menu_work_id"])
+                parent_id = int(row["parent_menu_work_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if child_id in valid_work_ids and parent_id in valid_work_ids and child_id != parent_id:
+                overrides[child_id] = parent_id
+    return overrides
+
+
+def _franchise_work_id(work_id: int) -> int:
+    """Resolve curated child-work links to their top-level franchise ID."""
+    overrides = _work_parent_overrides()
+    seen: set[int] = set()
+    while work_id in overrides and work_id not in seen:
+        seen.add(work_id)
+        work_id = overrides[work_id]
+    return work_id
+
+
+@lru_cache(maxsize=1)
+def _aliases() -> list[tuple[str, int]]:
+    """Index canonical and entry-level titles, excluding cross-series collisions."""
+    aliases: dict[str, set[int]] = {}
+    for row in load_work_catalog() + load_work_entries():
+        work_id = _franchise_work_id(int(row["menu_work_id"]))
+        for key in ("title_ko", "title_romaji", "title_english", "title_native"):
+            value = re.sub(r"\s+", " ", (row.get(key) or "").strip().casefold())
+            if value:
+                aliases.setdefault(value, set()).add(work_id)
+    # A title reused by different series is not enough evidence for an entity link.
+    unique_aliases = [
+        (name, next(iter(work_ids)))
+        for name, work_ids in aliases.items()
+        if len(work_ids) == 1
+    ]
+    return sorted(unique_aliases, key=lambda item: -len(item[0]))
 
 
 @lru_cache(maxsize=1)

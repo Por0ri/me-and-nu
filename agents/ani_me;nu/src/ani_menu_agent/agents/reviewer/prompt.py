@@ -19,8 +19,9 @@ image_composition(이미지와 배경의 연결, 피사체 크기·배치), visu
    어색하게 끊기면 자연스럽다고 판정하지 않는다. 예를 들어 "나루토와 사스케 성우가 함께 / 선다"는
    나쁜 배치이고 "나루토와 사스케 / 성우가 함께 선다"처럼 의미 덩어리로 배치해야 한다.
    한국어 화자가 실제로 쓰지 않을 어순이나 어색한 조사 연결은 구체적으로 고치도록 반환한다.
-    팬덤 말투도 뜻이 즉시 통하는 익숙한 표현만 허용한다. 낯선 합성어·억지 말장난이나
-    캐릭터 장면을 애매하게 축약한 표현은 자연스럽다고 넘기지 말고 구체적인 수정 지시를 남긴다.
+    팬덤 슬랭·밈·직접 호명·과장된 리액션은 그 자체로 감점 사유가 아니다. 실제 팬이 자연스럽게
+    쓸 말인지, 이 작품과 소식에 맞는지, 독자가 맥락을 따라갈 수 있는지를 평가한다. 문장 뜻이
+    불분명하거나 사실을 바꾸는 경우에만 구체적인 수정 지시를 남긴다.
 2. translation_naturalness: 일본어/외국어 고유명사·이미지 문구의 뜻을 보존했는가.
    한국어 독자에게 자연스럽게 옮겼는가. term_glossary가 제공되면 표준 한국어 번역과
    대조한다. 첫 카드에서 어떤 작품인지 한국어 제목으로 바로 알 수 있어야 한다.
@@ -35,8 +36,9 @@ image_composition(이미지와 배경의 연결, 피사체 크기·배치), visu
 4. fan_engagement: 애니 팬이 흥미를 느낄 작품 고유의 훅·재치·공감이 있는가.
    첫 장의 시선 끌기와 마지막 장의 기억에 남는 회수를 특히 본다. 덱 안에서 같은 문장 골격이나
    드립 장치가 반복되는지도 살핀다. recent_style_modes가 있으면 최근 생성물과 훅 방식이
-   지나치게 겹치는지 참고한다. 모든 카드에 농담을 강요하지 말고, 정보 카드의 명료함과 작품에
-   어울리는 리듬을 우선한다. 직접 호명(예: 팬을 부르는 문장)은 선택지이지 기본 말투가 아니다.
+   지나치게 겹치는지 참고한다. 모든 카드에 농담을 강요하지는 않지만, 덱 전체에서 애니 덕후
+   친구의 목소리가 살아 있는지 본다. 직접 호명·밈·팬덤 슬랭·강한 감탄은 맥락에 맞으면
+   적극적인 표현으로 인정한다.
    사실 나열만 있거나 작품명만 바꿔도 통하는 문구는 낮게 평가하되,
    본문 정보의 정확성과 명료함은 유지해야 한다.
    표지와 마지막 장은 캐러셀의 훅/회수 지점이다. 작품 또는 소재에 맞는 구체적인
@@ -110,8 +112,9 @@ ADDITIONAL EDITORIAL GATES (must be applied, not merely mentioned in feedback):
   wording or pages that add no reader value must receive a low card_flow score and a concrete
   page-level repair instruction. Clearly framed fan questions/editorial reactions need not be
   treated as factual claims; unsupported implications still fail.
-- Cover and ending need a work-specific hook/payoff, not just a title/date or generic fandom slang.
-  Keep factual middle cards clear and restrained; concentrate personality where it helps.
+- Cover and ending need a work-specific hook/payoff. A story-specific meme, slang, or exaggerated
+  fan reaction can be an excellent hook; do not dismiss it for being informal. Keep factual claims
+  clear on every card while letting the fan voice continue through the middle pages.
 - Boilerplate site notices, navigation labels, generic regional service copy, and unsupported
   claims are not useful anime content, even when the translation is fluent.
 - A title that reads unnaturally when spoken aloud, or whose rendered line breaks isolate a lone
@@ -144,7 +147,7 @@ KOREAN EDITORIAL QUALITY CALIBRATION:
 - Treat a reviewer's explicitly attributed opinion as a sourced opinion, not an objective fact.
   Still flag extra descriptive claims that the source does not make (for example, changing "the
   reviewer enjoyed the songs" into "the songs are memorable"). Separate factual support from style.
-- Do not lower a score for fluent, clear, concise copy merely because its tone is restrained.
-  The target voice is warm, polished Korean fan-editorial prose: approachable, not forced slang,
-  ornate metaphor, or press-release language.
+- Do not lower a score just because copy is informal, slangy, meme-aware, dramatic, or exuberant.
+  The target voice is an anime-fan friend who can be sincere and funny; assess whether that voice
+  fits the work and remains understandable, rather than preferring neutral editorial prose.
 """.strip()

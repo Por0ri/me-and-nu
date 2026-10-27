@@ -7,6 +7,8 @@ from ani_menu_agent.storage import AgentRepository
 from ani_menu_agent.work_catalog import (
     _registered_work_titles,
     attach_menu_work_ids,
+    load_work_entries,
+    resolve_title_work_ids,
     resolve_work_matches,
 )
 
@@ -81,6 +83,28 @@ def test_unknown_work_title_is_not_guessed() -> None:
     attach_menu_work_ids(package)
 
     assert package.menu_work_ids == []
+
+
+def test_entry_catalog_maps_anilist_seasons_and_movies_to_series_work_id() -> None:
+    entries = load_work_entries()
+    final_chapter = next(row for row in entries if row["anilist_id"] == 146984)
+    infinity_castle = next(row for row in entries if row["anilist_id"] == 178788)
+
+    assert final_chapter["menu_work_id"] == 1
+    assert infinity_castle["menu_work_id"] == 2
+    assert resolve_title_work_ids(
+        "Shingeki no Kyojin: The Final Season - Kanketsu-hen Zenpen"
+    ) == [1]
+    assert resolve_title_work_ids(
+        "Kimetsu no Yaiba: Mugenjou-hen Movie 1 - Akaza Sairai"
+    ) == [2]
+
+
+def test_franchise_spinoff_title_resolves_to_parent_series_id() -> None:
+    junior_high = next(row for row in load_work_entries() if row["anilist_id"] == 21281)
+
+    assert junior_high["menu_work_id"] == 748
+    assert resolve_title_work_ids("Attack on Titan: Junior High") == [1]
 
 
 def test_registered_original_work_title_is_tried_after_unmatched_korean_title(

@@ -143,20 +143,30 @@ def _check_robots(
                 if robots_cache is not None:
                     robots_cache[robots_url] = None
                 return
-            if response.is_redirect:
+            use_publisher_policy = response.is_redirect
+            source_host = _host(str(source.url))
+            asset_host = _host(url)
+            if response.status_code in {401, 403}:
+                # Some explicitly allowlisted publisher CDNs deny access to
+                # their own robots.txt while serving the linked image assets.
+                # In that case, consult only the registered source page's
+                # robots policy; never infer permission from the CDN error.
+                if asset_host != source_host and _host_is_allowed(asset_host, source):
+                    use_publisher_policy = True
+                else:
+                    raise ImageDownloadError(
+                        f"robots.txt 확인 실패: HTTP {response.status_code}"
+                    )
+            if use_publisher_policy:
                 # Some publisher CDNs redirect /robots.txt to the publisher
-                # homepage instead of serving a CDN policy. For an explicitly
-                # allowlisted asset host, consult the article publisher's
-                # robots.txt; never follow an unrelated redirect target.
+                # homepage instead of serving a CDN policy. A 401/403 from an
+                # allowlisted CDN uses the same publisher-policy fallback.
                 location = response.headers.get("location")
-                source_host = _host(str(source.url))
-                asset_host = _host(url)
                 target_host = _host(urljoin(robots_url, location or ""))
                 if (
-                    not location
+                    asset_host == source_host
                     or not _host_is_allowed(asset_host, source)
-                    or asset_host == source_host
-                    or target_host != source_host
+                    or (response.is_redirect and (not location or target_host != source_host))
                 ):
                     raise ImageDownloadError(
                         f"robots.txt 확인 실패: HTTP {response.status_code}"

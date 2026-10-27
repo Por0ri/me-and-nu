@@ -50,6 +50,43 @@ def _publication_date_variants(value: str | None) -> tuple[date | None, set[str]
     return parsed, variants
 
 
+def _card_cites_source_date_as_scheduled_fact(
+    package: ContentPackage,
+    card,
+    source_id: str,
+    publication_date: date,
+) -> bool:
+    """A valid event/sales date may coincide with the article's publication date."""
+    from ani_menu_agent.extraction import _date_in_quote
+
+    scheduled_fact_types = {
+        "event_schedule",
+        "event_period",
+        "event_date",
+        "product_release",
+        "release",
+        "release_date",
+        "goods_release",
+        "sales_start",
+    }
+    facts_by_id = {fact.id: fact for fact in package.facts}
+    for fact_id in card.fact_ids:
+        fact = facts_by_id.get(fact_id)
+        if (
+            fact is None
+            or not fact.verified
+            or source_id not in fact.source_ids
+            or fact.fact_type.strip().lower() not in scheduled_fact_types
+        ):
+            continue
+        quote = str(fact.details.get("source_quote") or "")
+        if publication_date.isoformat() in _date_in_quote(
+            quote, default_year=publication_date.year
+        ):
+            return True
+    return False
+
+
 def _has_korean_translation_before_japanese_original(text: str, japanese_start: int) -> bool:
     """Only allow Japanese immediately inside a Korean-first parenthetical name."""
     prefix = text[max(0, japanese_start - 60) : japanese_start]
@@ -130,14 +167,19 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
             publication_date, date_variants = _publication_date_variants(source.published_at)
             if publication_date and publication_date not in event_dates and date_variants:
                 for card, card_text in normalized_cards:
-                    if any(variant in card_text for variant in date_variants):
+                    if (
+                        any(variant in card_text for variant in date_variants)
+                        and not _card_cites_source_date_as_scheduled_fact(
+                            package, card, source.id, publication_date
+                        )
+                    ):
                         issues.append(
                             _issue(
                                 "SOURCE_PUBLICATION_DATE_SHOWN",
                                 "원문 발표일은 카드에 표기하지 마세요. 행사 시작·종료일과 "
                                 "겹치지 않는 원문 게시 날짜가 본문에 들어 있습니다.",
                                 card.page,
-                                "fact_checker",
+                                "copy_writer",
                             )
                         )
             has_current_claim = any(
@@ -1130,7 +1172,6 @@ SCORE_THRESHOLDS = {"pass": 85, "card_minimum": 75, "safety_minimum_per_card": 4
 FACT_BLOCKERS = {
     "SOURCE_NO_OFFICIAL",
     "SOURCE_NOT_HTTPS",
-    "SOURCE_PUBLICATION_DATE_SHOWN",
     "FACT_SOURCE_MISSING",
     "FACT_UNVERIFIED",
     "CAMPAIGN_DETAILS_MISSING",

@@ -353,7 +353,9 @@ class TypeCrawlerAgent:
                     sources=[evidence],
                 )
                 package.menu_work_ids = resolve_menu_work_ids(package)
-                for image_url in capture.image_urls[:3]:
+                # Persist the full image set found on each source article so
+                # later content generation can choose the most relevant assets.
+                for image_url in capture.image_urls:
                     image_id = hashlib.sha1(str(image_url).encode()).hexdigest()[:16]
                     package.images.append(
                         ImageAsset(

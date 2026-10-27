@@ -21,7 +21,7 @@ from ani_menu_agent.sources.models import Source
 
 MAX_PAGE_BYTES = 5 * 1024 * 1024
 MAX_ROBOTS_BYTES = 256 * 1024
-MAX_IMAGE_URLS = 30
+MAX_IMAGE_URLS = 100
 MAX_RELATED_IMAGE_PAGES = 4
 
 
@@ -400,23 +400,14 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
                 urljoin(page_url, str(tag.get("src") or tag.get("data-src") or ""))
             ).path.casefold()
         ]
-    scoped_urls = {
-        urljoin(page_url, str(value))
-        for tag in scoped_images
-        for value in (
-            tag.get("src"),
-            tag.get("data-src"),
-            tag.get("data-original"),
-            tag.get("data-lazy-src"),
-        )
-        if value
-    }
-    if scope is soup or not scoped_urls:
-        for tag in soup.find_all("meta", attrs={"property": "og:image"}):
-            image_url = tag.get("content")
-            if image_url:
-                absolute_url = urljoin(page_url, str(image_url))
-                scores[absolute_url] = max(scores.get(absolute_url, 0), 100)
+    # Keep the article's social/hero image as an additional candidate even when
+    # the body also contains images. Many publishers expose the original asset
+    # only through Open Graph metadata.
+    for tag in soup.find_all("meta", attrs={"property": "og:image"}):
+        image_url = tag.get("content")
+        if image_url:
+            absolute_url = urljoin(page_url, str(image_url))
+            scores[absolute_url] = max(scores.get(absolute_url, 0), 100)
     for tag in scoped_images:
         if _is_linked_to_another_news_article(tag, page_url):
             continue
@@ -425,20 +416,31 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
         )
         base_score = min(40, int(declared_size**0.5 / 20))
         candidates = [
-            tag.get("src"),
-            tag.get("data-src"),
-            tag.get("data-original"),
-            tag.get("data-lazy-src"),
-        ]
-        for srcset_key in ("srcset", "data-srcset"):
-            srcset = tag.get(srcset_key) or ""
-            # Prefer the largest declared rendition; descriptor values are hints only.
-            entries = [item.strip().split() for item in str(srcset).split(",") if item.strip()]
-            entries.sort(key=lambda item: _srcset_width(item[-1] if len(item) > 1 else ""))
-            candidates.extend(
-                (item[0], min(60, _srcset_width(item[-1] if len(item) > 1 else "") // 20))
-                for item in reversed(entries)
+            tag.get(key)
+            for key in (
+                "src",
+                "data-src",
+                "data-original",
+                "data-lazy-src",
+                "data-original-src",
+                "data-image",
+                "data-echo",
+                "data-actualsrc",
             )
+        ]
+
+        for srcset_key in ("srcset", "data-srcset"):
+            best = _largest_srcset_candidate(tag.get(srcset_key))
+            if best:
+                candidates.append(best)
+        picture = tag.find_parent("picture")
+        if picture:
+            for source_tag in picture.find_all("source"):
+                best = _largest_srcset_candidate(
+                    source_tag.get("srcset") or source_tag.get("data-srcset")
+                )
+                if best:
+                    candidates.append(best)
         description = str(tag.get("alt") or tag.get("title") or "").strip()
         for candidate in candidates:
             if not candidate:
@@ -467,6 +469,13 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
             scores[absolute_url] = max(scores.get(absolute_url, 0), score)
             if description:
                 descriptions[absolute_url] = description[:300]
+    # Some publishers render article/gallery visuals as CSS backgrounds instead
+    # of <img> tags. Collect those only from the selected article body.
+    for tag in scope.select("[style]"):
+        style = str(tag.get("style") or "")
+        for raw_url in re.findall(r"url\((?:['\"])?(.*?)(?:['\"])?\)", style, re.IGNORECASE):
+            absolute_url = urljoin(page_url, raw_url.strip())
+            scores[absolute_url] = max(scores.get(absolute_url, 0), 20)
     # Apply the CMS rendition upgrade consistently to metadata/OG images too;
     # those can otherwise re-introduce a small duplicate before the article body
     # image with the larger URL is reached.
@@ -621,6 +630,16 @@ def _srcset_width(descriptor: str) -> int:
         return 0
 
 
+def _largest_srcset_candidate(srcset: object) -> tuple[str, int] | None:
+    entries = [item.strip().split() for item in str(srcset or "").split(",") if item.strip()]
+    if not entries:
+        return None
+    # Save the best rendition for each image source instead of every
+    # thumbnail/retina variant, avoiding duplicate resolutions in the asset pool.
+    best = max(entries, key=lambda item: _srcset_width(item[-1] if len(item) > 1 else ""))
+    return best[0], min(60, _srcset_width(best[-1] if len(best) > 1 else "") // 20)
+
+
 def _related_image_page_candidates(soup: BeautifulSoup, page_url: str) -> list[str]:
     """Find a few same-site article/gallery pages; never follow off-domain links."""
     current = urlparse(page_url)
@@ -686,7 +705,7 @@ def collect_official_page(
     extracted = _extract_article_text(html, final_url, soup)
     image_urls, image_alt_text = _image_candidates(soup, final_url)
     seed_image_urls = image_urls
-    image_urls = seed_image_urls[:3]
+    image_urls = list(seed_image_urls)
     image_source_pages = {candidate: final_url for candidate in image_urls}
     image_source_titles = {candidate: title for candidate in image_urls}
     related_candidates = (
@@ -704,16 +723,13 @@ def collect_official_page(
         related_title = _page_title(related_soup)
         related_pages.append(related_final_url)
         related_urls, related_alt_text = _image_candidates(related_soup, related_final_url)
-        related_urls = related_urls[:10]
         for candidate in related_urls:
             image_source_pages.setdefault(candidate, related_final_url)
             image_source_titles.setdefault(candidate, related_title)
         related_image_urls.extend(related_urls)
         image_alt_text.update(related_alt_text)
-    # Ensure linked article/gallery assets enter the saved candidate pool before the
-    # low-priority remainder of a news listing can consume the CLI's image limit.
+    # Keep every seed-page image before images from optional linked galleries.
     image_urls.extend(related_image_urls)
-    image_urls.extend(seed_image_urls[3:])
 
     allowed = _approved_hosts(source)
     unique_images: list[HttpUrl] = []
