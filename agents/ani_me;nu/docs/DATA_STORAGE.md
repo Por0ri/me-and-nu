@@ -18,7 +18,7 @@ CSV는 초기 작품 카탈로그 가져오기용 입력 데이터로만 취급�
 
 | 담당 | 저장 레코드 | 중요 필드 |
 |---|---|---|
-| 정보 에이전트 | `source`, `fact`, `discovery_candidate` | 출처 URL·발행자·공식 여부·확인 시각, fact와 source 연결, 행사 시작/종료일, 지역, 검증 상태 |
+| 정보 에이전트 | `source`, `fact`, `discovery_candidate`, `source_candidate` | 출처 URL·발행자·공식 여부·확인 시각, fact와 source 연결, 행사 시작/종료일, 지역, 검증 상태; 새 사이트 후보는 별도 유형별 자동수집 테스트와 등록 상태 |
 | 유머 에이전트 | `trend_source`, `humor_idea` | 탐색 출처, 원문 복제 대신 요약된 아이디어, 관련 작품/사실 연결, 편집 검토 상태 |
 | 이미지 에이전트 | `image_asset` + `image_blobs` | SHA-256 저장 키·크기·MIME 타입·원본 포맷, BYTEA 바이너리, 출처 URL, 권리 상태/근거, 연결 fact, OCR 언어·문구·한국어 설명 |
 
@@ -26,7 +26,7 @@ CSV는 초기 작품 카탈로그 가져오기용 입력 데이터로만 취급�
 적재합니다. 생성 에이전트는 렌더링 직후 결과를 `generated_pending_review` 상태로
 `content_drafts`와 `content_cards`에 저장하고,
 통과한 콘텐츠는 `feed_queue`에도 적재합니다. `generate-db`는 같은 `request_id`의 `source`, 검증된
-`fact`/`humor_idea`, `image_asset`만 읽습니다. `discovery_candidate`와 `official_page_capture`는
+`fact`/`humor_idea`, `image_asset`만 읽습니다. `discovery_candidate`, `source_candidate`, `official_page_capture`는
 검증되지 않은 원문/발견 후보이므로 생성 입력에서 제외됩니다. 정보성 패키지는 공식 1차 출처,
 `verified=true` 팩트, 팩트별 출처 연결을 모두 만족해야 생성 조회가 가능합니다.
 
