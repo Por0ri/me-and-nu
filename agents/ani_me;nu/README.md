@@ -49,7 +49,7 @@ uv run ani-menu generate-db <request_id> --kind information
 
 11개 유형별 자동 생성 근거는 `uv run ani-menu generation-readiness`에서 확인합니다. 이 명령은 유형별 승인된 자동 출처와 검증 팩트/유머 신호를 보여줍니다. 발견 후보는 미검증 자료라 생성 근거로 세지 않으며, 생성 실행도 출처 상태·작품 `menu_work_id`·유형-출처 연결을 다시 확인합니다. 현재 활성 자동 출처가 발견용 RSS뿐이면 공식 원문 확인 전에는 정보 콘텐츠를 생성하지 않습니다.
 
-오프라인 구조 시험은 `uv run ani-menu graph-smoke`, 전체 테스트는 `uv run pytest`입니다. fixture 시험은 실제 콘텐츠 언어 검수나 게시 승인을 대신하지 않습니다. API 키가 없으면 최종 reviewer는 통과 판정을 내리지 않고 검수를 대기합니다. 로컬 개발은 SQLite에 저장하고, 팀 PostgreSQL은 명시적으로 backend를 선택했을 때만 사용합니다. 이미지는 SHA-256으로 중복 저장을 막습니다.
+오프라인 구조 시험은 `uv run ani-menu graph-smoke`, 전체 테스트는 `uv run pytest`입니다. fixture 시험은 실제 콘텐츠 언어 검수나 게시 승인을 대신하지 않습니다. API 키가 없으면 최종 reviewer는 통과 판정을 내리지 않고 검수를 대기합니다. 검수 기본값은 `standard`이며, 기존 실행 환경에 `ANI_MENU_REVIEW_PROFILE=integration`이 남아 있어도 출처·품질 검수와 게시 승인 조건을 생략하지 않습니다. 로컬 개발은 SQLite에 저장하고, 팀 PostgreSQL은 명시적으로 backend를 선택했을 때만 사용합니다. 이미지는 SHA-256으로 중복 저장을 막습니다.
 
 카드 생성을 시작하기 전에 기존 초안·게시 대기·탈락 보관 콘텐츠를 확인합니다. 같은 공식 원문 URL이거나 같은 작품에서 출처 제목 또는 핵심 사실이 겹치는 고확도 중복은 `duplicate_skipped`로 기록하고 새 카드 생성과 피드 적재를 건너뜁니다. SQLite 임시 저장소를 쓸 때는 실행 환경에서 `ANI_MENU_DATABASE_BACKEND=sqlite`와 `ANI_MENU_DATABASE_PATH=data/ani_menu_local.sqlite3`를 지정합니다.
 
