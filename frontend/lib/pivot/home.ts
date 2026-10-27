@@ -10,10 +10,11 @@ export type HomeCardModel = {
   id: string;
   title: string;
   detailContentId: string;
+  topicId?: string;
   slides: readonly HomeSlideModel[];
 };
 
-export type HomeDetailTarget = { postId: string; contentId: string };
+export type HomeDetailTarget = { postId: string; contentId: string; topicId?: string };
 export type HomeDetailHandler = (target: HomeDetailTarget) => void;
 
 /** Keep source data immutable; display order is explicit rather than inferred from IDs. */

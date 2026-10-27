@@ -125,7 +125,28 @@ async function capture(page, name) {
           await capture(page, 'detail-missing-image-' + name);
           await context.unroute('**/pivot/home/slide-1.png');
           await page.goto(base + '/pivot/home?view=detail&postId=demo-home-story&contentId=demo-content-story&detailState=empty');
+          await detailReady(page, 'not-found');
+          const serviceUrl = base + '/pivot/home?view=detail&postId=301&contentId=301&topicId=9';
+          await page.goto(serviceUrl);
           await detailReady(page, 'unconfigured');
+          await page.reload(); await detailReady(page, 'unconfigured');
+          assert.equal(new URL(page.url()).searchParams.get('topicId'), '9');
+          await page.locator('[data-detail-state]').getByRole('button', { name: 'MY', exact: true }).click();
+          await page.locator('[data-my-state="unconfigured"]').waitFor();
+          assert.equal(new URL(page.url()).searchParams.get('topicId'), '9');
+          await page.locator('[data-my-state]').getByRole('button', { name: 'SAVE', exact: true }).click();
+          await page.locator('[data-saved-state="unconfigured"]').waitFor();
+          assert.equal(new URL(page.url()).searchParams.get('topicId'), '9');
+          await page.reload(); await page.locator('[data-saved-state="unconfigured"]').waitFor();
+          await page.goBack(); await page.locator('[data-my-state="unconfigured"]').waitFor();
+          await page.goBack(); await page.locator('[data-detail-state="unconfigured"]').waitFor({ state: 'visible' });
+          assert.equal(new URL(page.url()).searchParams.get('topicId'), '9');
+          await page.goForward(); await page.locator('[data-my-state="unconfigured"]').waitFor();
+          assert.equal(new URL(page.url()).searchParams.get('topicId'), '9');
+          for (const query of ['postId=301&contentId=301', 'postId=301&contentId=0&topicId=9', 'postId=301&contentId=301&topicId=9007199254740992']) {
+            await page.goto(base + '/pivot/home?view=detail&' + query); await detailReady(page, 'not-found');
+          }
+          await page.goto(serviceUrl); await detailReady(page, 'unconfigured');
           assert.equal(await page.locator('[data-detail-content]').count(), 0);
           assert.equal(await page.getByRole('button', { name: '더 볼래요' }).count(), 0);
           assert.equal(await page.locator('body').innerText().then(text => /시연용|하이큐/.test(text)), false);

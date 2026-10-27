@@ -78,7 +78,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
   }
   const slides = orderedHomeSlides(card.slides);
   const current = Math.max(0, Math.min(active, slides.length - 1));
-  const target = { postId: card.id, contentId: card.detailContentId };
+  const target = { postId: card.id, contentId: card.detailContentId, topicId: card.topicId };
   const canBookmark = demo && bookmarks?.kind === "demo";
   // Only explicit button/keyboard navigation writes scroll position. Native touch
   // and momentum are left to CSS Scroll Snap; onScroll only observes the position.
@@ -149,7 +149,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
       <button type="button" className={styles.detailButton} data-home-detail={card.detailContentId}
         aria-label={`${card.title} 자세히 보기`} aria-describedby={!onViewDetail ? `${id}-detail-help` : undefined}
         onClick={() => {
-          if (onViewDetail) onViewDetail({ postId: card.id, contentId: card.detailContentId });
+          if (onViewDetail) onViewDetail(target);
           else setDetailRequested(true);
         }}><span>자세히 보기<img src="/pivot/home/chrome/detail-arrow.svg" alt="" width={8} height={9} /></span></button>
       {!onViewDetail ? <p id={`${id}-detail-help`} className={detailRequested ? styles.detailHelp : styles.srOnly} role="status">

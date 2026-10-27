@@ -105,7 +105,7 @@ test('Reads active Topics before feed with cookies, no cache, shared abort signa
   assert.deepEqual(c.states.map(s => s.status), ['loading', 'ready']);
   const home = plain(c.states.at(-1).home);
   assert.equal(home.origin, 'service');
-  assert.deepEqual(home.cards.map(c => [c.id, c.detailContentId]), [['1', '1'], ['2', '2']]);
+  assert.deepEqual(home.cards.map(c => [c.id, c.detailContentId, c.topicId]), [['1', '1', '1'], ['2', '2', '1']]);
   assert.deepEqual(home.cards.map(c => c.title), ['테스트 콘텐츠 1', '테스트 콘텐츠 2']);
   assert.deepEqual(home.cards.map(c => c.slides.length), [1, 1]);
   assert.deepEqual(home.cards[0].slides[0], { id: '1-cover', order: 1, description: '테스트 요약 1', image: { src: 'https://images.example.test/1.png', alt: '테스트 콘텐츠 1' } });
@@ -125,6 +125,21 @@ test('Uses first active non-deleted Topic in BE order, never a hard-coded 1', as
   const c = e.controller(); await c.load();
   assert.match(e.requests[1].url, /\/topics\/9\/feed$/);
   assert.equal(c.states.at(-1).home.cards[0].detailContentId, '40');
+  assert.equal(c.states.at(-1).home.cards[0].topicId, '9');
+});
+
+test('Feed preserves exact content/Topic IDs, never bookmark or recommendation IDs', () => {
+  const map = environment().load('lib/pivot/home-service.ts').homeFromFeed;
+  for (const topicId of [1, 9, Number.MAX_SAFE_INTEGER]) {
+    const home = map(feed([content(301, { topicId, savedItemId: 888, recommendationId: 999 })], { selectedTopicId: topicId }), topicId);
+    assert.deepEqual(plain(home.cards.map(c => [c.id, c.detailContentId, c.topicId])), [['301', '301', String(topicId)]]);
+  }
+  for (const bad of [undefined, null, '1', 0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => map(feed([content(301, { topicId: bad })], { selectedTopicId: bad }), bad), /Invalid Home response/);
+    assert.throws(() => map(feed([content(bad)]), 1), /Invalid Home response/);
+    assert.throws(() => map(feed([content(301, { topicId: bad })]), 1), /Invalid Home response/);
+  }
+  assert.throws(() => map(feed([content(301), content(301, { topicId: 9 })]), 1), /Invalid Home response/);
 });
 
 test('Missing image/summary stays missing; sections preserve order and duplicate content IDs render once', () => {
@@ -267,11 +282,12 @@ test('Service single-slide controls keep IDs for existing Detail navigation and 
   assert.deepEqual(writes, []);
   track.props.onScroll({ currentTarget: { clientWidth: 327, scrollLeft: 0 } });
   nodes.find(n => n.props?.['data-home-detail'] === '1').props.onClick();
-  assert.deepEqual(targets, [{ postId: '1', contentId: '1' }]);
+  assert.deepEqual(targets, [{ postId: '1', contentId: '1', topicId: '1' }]);
   const href = e.load('lib/pivot/detail-navigation.ts').detailHref('/pivot/home', targets[0]);
-  assert.equal(href, '/pivot/home?view=detail&postId=1&contentId=1');
-  const detail = await e.load('lib/pivot/detail-service.ts').pendingDetailSource.load({ target: targets[0], signal: new AbortController().signal });
-  assert.equal(detail.status, 'unconfigured');
+  assert.equal(href, '/pivot/home?view=detail&postId=1&contentId=1&topicId=1');
+  const states = [];
+  await e.load('lib/pivot/detail.ts').createDetailRequestController(e.load('lib/pivot/detail-service.ts').pendingDetailSource, state => states.push(state)).load(targets[0]);
+  assert.equal(states.at(-1).status, 'unconfigured');
   assert.equal(e.requests.length, 2);
 });
 

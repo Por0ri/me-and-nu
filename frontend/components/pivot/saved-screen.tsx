@@ -10,7 +10,7 @@ import styles from "./saved.module.css";
 export function SavedContentCard({ card, onViewDetail }: { card: SavedCard; onViewDetail: HomeDetailHandler }) {
   const id = useId(); const [failed, setFailed] = useState(false);
   return <button type="button" className={styles.card} data-saved-content={card.contentId} data-saved-post={card.postId}
-    aria-labelledby={id} onClick={() => onViewDetail({ postId: card.postId, contentId: card.contentId })}>
+    aria-labelledby={id} onClick={() => onViewDetail({ postId: card.postId, contentId: card.contentId, topicId: card.topicId })}>
     <span id={id} className={homeStyles.srOnly}>{card.title} 자세히 보기</span>
     {/* Existing covers already contain editorial text and a gradient. Do not overlay duplicate copy. */}
     {card.image?.src && !failed ? <img src={card.image.src} alt="" width={148} height={185} loading="lazy" draggable={false} onError={() => setFailed(true)} />

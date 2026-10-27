@@ -11,14 +11,14 @@ export function DetailController({ source, target, onBack, onMy, onSaved, onHome
   source: DetailDataSource; target: HomeDetailTarget; onBack: () => void; onMy?: () => void; onSaved?: () => void; onHome?: () => void;
   fromSaved?: boolean; bookmarks?: DemoBookmarkControls;
 }) {
-  const [request, setRequest] = useState<{ source: DetailDataSource; postId: string; contentId: string; state: DetailState }>();
+  const [request, setRequest] = useState<HomeDetailTarget & { source: DetailDataSource; state: DetailState }>();
   const [attempt, setAttempt] = useState(0);
-  const { postId, contentId } = target;
+  const { postId, contentId, topicId } = target;
   useEffect(() => {
-    const controller = createDetailRequestController(source, (state) => setRequest({ source, postId, contentId, state }));
-    void controller.load({ postId, contentId });
+    const controller = createDetailRequestController(source, (state) => setRequest({ source, postId, contentId, topicId, state }));
+    void controller.load({ postId, contentId, topicId });
     return () => controller.cancel();
-  }, [source, postId, contentId, attempt]);
-  const state = request?.source === source && request.postId === postId && request.contentId === contentId ? request.state : loading;
-  return <PivotDetailScreen key={`${postId}:${contentId}`} state={state} demo={source.kind === "demo"} onBack={onBack} onMy={onMy} onSaved={onSaved} onHome={onHome} fromSaved={fromSaved} bookmarks={bookmarks} onRetry={() => setAttempt((value) => value + 1)} />;
+  }, [source, postId, contentId, topicId, attempt]);
+  const state = request?.source === source && request.postId === postId && request.contentId === contentId && request.topicId === topicId ? request.state : loading;
+  return <PivotDetailScreen key={`${postId}:${contentId}:${topicId ?? ""}`} state={state} demo={source.kind === "demo"} onBack={onBack} onMy={onMy} onSaved={onSaved} onHome={onHome} fromSaved={fromSaved} bookmarks={bookmarks} onRetry={() => setAttempt((value) => value + 1)} />;
 }

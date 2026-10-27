@@ -267,8 +267,8 @@ export function getFeed(
 ): Promise<FeedResponse> {
   return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`, request);
 }
-export function getContent(contentId: number, topicId: number): Promise<ContentDetail> {
-  return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`);
+export function getContent(contentId: number, topicId: number, request: { signal?: AbortSignal } = {}): Promise<ContentDetail> {
+  return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`, request);
 }
 export function setPreference(contentId: number, topicId: number, value: Preference): Promise<PreferenceResponse> {
   return apiRequest(`/api/v1/contents/${contentId}/preference`, { method: "PUT", body: JSON.stringify({ topicId, value }) });

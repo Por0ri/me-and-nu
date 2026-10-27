@@ -21,13 +21,13 @@ function positiveId(value: unknown): value is number {
 
 /** A feed image is one display slide, not an assumed BE slides/recommendation contract. */
 export function homeFromFeed(response: FeedResponse, topicId: number): HomeViewModel {
-  if (!response || response.selectedTopicId !== topicId || !Array.isArray(response.sections)) invalidResponse();
+  if (!positiveId(topicId) || !response || response.selectedTopicId !== topicId || !Array.isArray(response.sections)) invalidResponse();
   const cards: HomeCardModel[] = [];
   const seen = new Set<number>();
   for (const section of response.sections) {
     if (!section || !Array.isArray(section.contents)) invalidResponse();
     for (const content of section.contents) {
-      if (!content || content.kind !== "content" || !positiveId(content.id) || content.topicId !== topicId ||
+      if (!content || content.kind !== "content" || !positiveId(content.id) || !positiveId(content.topicId) || content.topicId !== topicId ||
           typeof content.title !== "string" ||
           (content.summary != null && typeof content.summary !== "string") ||
           (content.imageUrl != null && typeof content.imageUrl !== "string")) invalidResponse();
@@ -35,7 +35,7 @@ export function homeFromFeed(response: FeedResponse, topicId: number): HomeViewM
       seen.add(content.id);
       const id = String(content.id);
       cards.push({
-        id, title: content.title, detailContentId: id,
+        id, title: content.title, detailContentId: id, topicId: String(content.topicId),
         slides: [{
           id: `${id}-cover`, order: 1, description: content.summary ?? "",
           ...(content.imageUrl?.trim() ? { image: { src: content.imageUrl, alt: content.title } } : {}),

@@ -249,7 +249,7 @@ async function production(page, viewport, api, external, errors) {
         await saved.getByRole('button', { name: 'MY', exact: true }).click(); await page.locator('[data-my-state="unconfigured"]').waitFor();
         await page.locator('[data-my-state]').getByRole('button', { name: 'HOME', exact: true }).click(); await page.locator('[data-home-state="unconfigured"]').waitFor({ state: 'visible' });
         await page.locator('[data-home-state]').getByRole('button', { name: 'SAVE', exact: true }).click(); await savedReady(page, 'unconfigured');
-        await page.goto(base + '/pivot/home?view=detail&from=saved&postId=demo-home-story&contentId=demo-content-story'); await detailReady(page, 'unconfigured');
+        await page.goto(base + '/pivot/home?view=detail&from=saved&postId=301&contentId=301&topicId=9'); await detailReady(page, 'unconfigured');
         assert.equal(await detail.getByRole('button', { name: '저장', exact: true }).getAttribute('aria-disabled'), 'true');
         await detail.getByRole('button', { name: '뒤로가기', exact: true }).click(); await savedReady(page, 'unconfigured');
         assert.deepEqual(api, []); assert.deepEqual(external, []); assert.deepEqual(errors, []);

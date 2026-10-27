@@ -12,7 +12,9 @@ export type HomeReturnSnapshot = {
 
 // Local pathname and encoded identifiers only; no user-supplied redirect URL.
 export function detailHref(path: string, target: HomeDetailTarget): string {
-  return `${path}?${new URLSearchParams({ view: "detail", postId: target.postId, contentId: target.contentId })}`;
+  const query = new URLSearchParams({ view: "detail", postId: target.postId, contentId: target.contentId });
+  if (target.topicId !== undefined) query.set("topicId", target.topicId);
+  return `${path}?${query}`;
 }
 export function readHomeReturn(value: unknown, path: string, kind: "demo" | "service"): HomeReturnSnapshot | null {
   if (!value || typeof value !== "object") return null;

@@ -104,10 +104,15 @@ const dependencies = {
     pendingHomeSource: { kind: 'service', configured: false },
     createServiceHomeSource: readSession => ({ kind: 'service', configured: true, readSession }),
   },
-  '@/lib/pivot/detail-service': { pendingDetailSource: { kind: 'service' } },
+  '@/lib/pivot/detail-service': {
+    pendingDetailSource: { kind: 'service', configured: false },
+    createServiceDetailSource: readSession => ({ kind: 'service', configured: true, readSession }),
+  },
   './home-detail-experience': { HomeDetailExperience: ({ homeSource, detailSource }) => {
     assert.equal(homeSource.kind, 'service');
     assert.equal(detailSource.kind, 'service');
+    assert.equal(detailSource.configured, homeSource.configured);
+    if (detailSource.configured) assert.equal(detailSource.readSession().sessionState, 'active');
     if (homeSource.configured) assert.equal(homeSource.readSession().sessionState, 'active');
     return React.createElement('p', null, homeSource.configured ? 'service-content-connected' : 'service-content-unconfigured');
   } },
