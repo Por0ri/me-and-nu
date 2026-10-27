@@ -1,15 +1,28 @@
 """애니 콘텐츠 제작 파이프라인의 실행 노드."""
 
+import logging
+import os
+
 from pydantic import ValidationError
 
 from ani_menu_agent.agents.common import append_trace
+from ani_menu_agent.agents.content_generation.art_director import plan_card_art
+from ani_menu_agent.config import get_settings
 from ani_menu_agent.generation import generate_copy_deck
 from ani_menu_agent.image_selection import assign_distinct_images
-from ani_menu_agent.layout_engine import build_cards
+from ani_menu_agent.layout_engine import build_cards, reflow_for_composition
 from ani_menu_agent.models import ContentPackage, CopyCard, QualityIssue
 from ani_menu_agent.policy import POLICY
+from ani_menu_agent.quality import check_copy, check_sources
+from ani_menu_agent.source_policy import (
+    supported_content_types_for_sources,
+    validate_generation_sources,
+)
 from ani_menu_agent.state import ContentState
 from ani_menu_agent.storage import AgentRepository
+from ani_menu_agent.work_catalog import attach_menu_work_ids
+
+logger = logging.getLogger(__name__)
 
 
 def _merge_copy_revision(
@@ -50,30 +63,17 @@ def _normalize_structural_roles(cards: list[CopyCard]) -> list[CopyCard]:
 
 
 def _cover_image_issue(package: ContentPackage) -> QualityIssue | None:
-    final_page = max((card.page for card in package.cards), default=0)
-    graphic_pages = [card.page for card in package.cards if card.visual_mode == "editorial_graphic"]
-    missing_cards = [
-        card
-        for card in package.cards
-        if (
-            card.visual_mode != "source_image"
-            or card.image_id not in {image.id for image in package.images}
-        )
-        and not (
-            card.role == "ending"
-            and card.page == final_page
-            and graphic_pages == [final_page]
-        )
-    ]
-    if missing_cards:
-        missing_page = missing_cards[0].page
+    cover = next((card for card in package.cards if card.role == "cover"), None)
+    if cover is None or cover.visual_mode != "source_image" or cover.image_id not in {
+        image.id for image in package.images
+    }:
         return QualityIssue(
-            code="SOURCE_IMAGE_MISSING",
+            code="COVER_SOURCE_IMAGE_MISSING",
             message=(
-                "정보형 캐러셀 표지에 사용할 공식 원본 이미지가 없습니다. "
-                "공식 이미지 자료를 다시 수집한 뒤 표지를 생성하세요."
+                "표지에 사용할 관련 출처 이미지가 없습니다. "
+                "원문 또는 동일 작품의 공식 이미지를 다시 수집하세요."
             ),
-            page=missing_page,
+            page=cover.page if cover else None,
             owner="image_curator",
         )
     return None
@@ -102,16 +102,123 @@ def intake(state: ContentState) -> ContentState:
 def rights_preflight(state: ContentState) -> ContentState:
     """차단된 이미지뿐이면 LLM 호출 전에 크롤러로 되돌립니다."""
     package = ContentPackage.model_validate(state["package"])
-    from ani_menu_agent.image_selection import distinct_editorial_images
+    integration_profile = (
+        os.environ.get("ANI_MENU_REVIEW_PROFILE", "integration").strip().casefold()
+        == "integration"
+    )
+    if integration_profile and state.get("allow_llm", False):
+        # Temporary backend-integration run: retain canonical work matching and
+        # relevant source images, while skipping fact/source approval gates.
+        attach_menu_work_ids(package)
+        if not package.menu_work_ids:
+            issue = QualityIssue(
+                code="WORK_ID_UNRESOLVED",
+                message="임시 통합 모드에서도 작품 데이터셋 연결은 필요합니다.",
+                owner="fact_checker",
+            )
+            return {
+                "trace": append_trace(state, "rights_preflight"),
+                "package": package.model_dump(mode="json"),
+                "qa_report": [issue.model_dump(mode="json")],
+                "status": "needs_crawler_update",
+            }
+    elif state.get("allow_llm", False):
+        try:
+            eligible_source_ids = validate_generation_sources(
+                [source.model_dump(mode="json") for source in package.sources],
+                [fact.model_dump(mode="json") for fact in package.facts],
+                package.content_kind,
+            )
+        except ValueError as exc:
+            issue = QualityIssue(
+                code="SOURCE_APPROVAL_REQUIRED",
+                message=str(exc),
+                owner="fact_checker",
+            )
+            return {
+                "trace": append_trace(state, "rights_preflight"),
+                "package": package.model_dump(mode="json"),
+                "qa_report": [issue.model_dump(mode="json")],
+                "status": "needs_crawler_update",
+            }
+        attach_menu_work_ids(package)
+        if not package.menu_work_ids:
+            issue = QualityIssue(
+                code="WORK_ID_UNRESOLVED",
+                message=(
+                    "원문 제목과 등록 출처의 작품 매핑에서 menu_work_id를 확인하지 못했습니다. "
+                    "작품 ID 없는 콘텐츠는 추천 피드에 적재하지 않습니다."
+                ),
+                owner="fact_checker",
+            )
+            return {
+                "trace": append_trace(state, "rights_preflight"),
+                "package": package.model_dump(mode="json"),
+                "qa_report": [issue.model_dump(mode="json")],
+                "status": "needs_crawler_update",
+            }
+        if not supported_content_types_for_sources(eligible_source_ids):
+            issue = QualityIssue(
+                code="CONTENT_TYPE_SOURCE_UNSUPPORTED",
+                message="검증된 출처 조합에 연결된 콘텐츠 유형이 없습니다.",
+                owner="fact_checker",
+            )
+            return {
+                "trace": append_trace(state, "rights_preflight"),
+                "package": package.model_dump(mode="json"),
+                "qa_report": [issue.model_dump(mode="json")],
+                "status": "needs_crawler_update",
+            }
+        verified_fact_count = sum(fact.verified for fact in package.facts)
+        if package.content_kind.value == "information" and verified_fact_count == 0:
+            issue = QualityIssue(
+                code="FACT_DIVERSITY_LOW",
+                message=(
+                    f"서로 다른 검증 사실이 {verified_fact_count}개뿐이라 "
+                    f"최소 {POLICY.min_cards}장으로 구성할 수 없습니다. "
+                    "원문 근거를 더 수집하거나 이 후보를 건너뜁니다."
+                ),
+                owner="fact_checker",
+            )
+            return {
+                "trace": append_trace(state, "rights_preflight"),
+                "package": package.model_dump(mode="json"),
+                "qa_report": [issue.model_dump(mode="json")],
+                "status": "needs_crawler_update",
+            }
+    from ani_menu_agent.image_selection import (
+        cover_usable_editorial_images,
+        distinct_editorial_images,
+    )
 
-    eligible_images = distinct_editorial_images(package.images, package.sources)
-    required_images = max(POLICY.min_cards - 1, len(package.cards) - 1)
-    if len(eligible_images) < required_images:
+    cover_images = cover_usable_editorial_images(
+        package.images, package.sources, package
+    )
+    if not cover_images:
         issue = QualityIssue(
             code="SOURCE_IMAGE_POOL_INSUFFICIENT",
             message=(
-                f"Only {len(eligible_images)} distinct usable images are available for "
-                f"{required_images} cards; collect more relevant official images."
+                "표지에 쓸 수 있는 출처 확인 이미지가 없습니다. "
+                "원문 또는 동일 작품의 공식 이미지를 수집하세요."
+            ),
+            owner="image_curator",
+        )
+        return {
+            "trace": append_trace(state, "rights_preflight"),
+            "package": package.model_dump(mode="json"),
+            "qa_report": [issue.model_dump(mode="json")],
+            "status": "needs_crawler_update",
+        }
+    eligible_images = distinct_editorial_images(
+        package.images, package.sources, package
+    )
+    if len(eligible_images) < POLICY.min_cards:
+        issue = QualityIssue(
+            code="SOURCE_IMAGE_POOL_INSUFFICIENT",
+            message=(
+                f"Only {len(eligible_images)} distinct relevant images are eligible, but at least "
+                f"{POLICY.min_cards} are needed because every card requires real anime art. "
+                "Collect more same-work images; never fill the gap with geometric placeholders."
             ),
             owner="image_curator",
         )
@@ -126,10 +233,24 @@ def rights_preflight(state: ContentState) -> ContentState:
 
 def copy_writer(state: ContentState) -> ContentState:
     package = ContentPackage.model_validate(state["package"])
+    requested_content_type = state.get("requested_content_type")
+    if requested_content_type == "goods":
+        # A mixed shop roundup can contain a giveaway campaign beside products.
+        # Do not let campaign facts leak into a goods carousel; those need their
+        # own event-type package and complete participation details.
+        package.content_type = "goods"
+        package.facts = [
+            fact
+            for fact in package.facts
+            if fact.fact_type.strip().lower() not in {"campaign", "promotion"}
+        ]
+        package.event_start = None
+        package.event_end = None
     revising_copy = (
         state.get("allow_llm", False)
         and state.get("needs_revision", False)
-        and state.get("revision_owner") == "copy_writer"
+        and "copy_writer"
+        in (state.get("revision_owners") or [state.get("revision_owner")])
     )
     if package.cards and not revising_copy:
         return {"trace": append_trace(state, "copy_writer"), "status": "copy_supplied"}
@@ -199,6 +320,7 @@ def copy_writer(state: ContentState) -> ContentState:
             existing_cards=existing_cards,
             revision_pages=revision_pages,
             revision_attempt=state.get("review_failures", 0) if revising_copy else 0,
+            requested_content_type=state.get("requested_content_type"),
         )
         generated_cards = generated.deck.cards
         if not existing_cards or not revision_pages:
@@ -239,6 +361,7 @@ def copy_writer(state: ContentState) -> ContentState:
             issues=size_issues,
             existing_cards=current_cards,
             revision_pages=revision_pages,
+            requested_content_type=state.get("requested_content_type"),
         )
         generated_cards = _merge_copy_revision(
             current_cards,
@@ -247,6 +370,64 @@ def copy_writer(state: ContentState) -> ContentState:
         )
         usage_records.append(revised.usage.model_dump(mode="json"))
     generated_cards = _normalize_structural_roles(generated_cards)
+    if requested_content_type == "goods":
+        from ani_menu_agent.extraction import _date_in_quote
+
+        used_fact_ids = {fact_id for card in generated_cards for fact_id in card.fact_ids}
+        release_periods: set[tuple[str, str]] = set()
+        release_types = {
+            "release",
+            "product_release",
+            "release_date",
+            "goods_release",
+            "sales_start",
+        }
+        for fact in package.facts:
+            if not fact.verified or fact.id not in used_fact_ids:
+                continue
+            if fact.fact_type.strip().lower() not in release_types:
+                continue
+            quote = str(fact.details.get("source_quote") or "")
+            dates = sorted(set(_date_in_quote(quote)))
+            if len(dates) == 1:
+                release_periods.add((dates[0], dates[0]))
+            elif len(dates) >= 2:
+                release_periods.add((dates[0], dates[-1]))
+        if len(release_periods) == 1:
+            package.event_start, package.event_end = next(iter(release_periods))
+        else:
+            package.event_start = None
+            package.event_end = None
+    if not existing_cards:
+        # Catch copy-only defects before layout and image rendering. These issues have
+        # enough evidence to repair in the copy writer and do not require recrawling.
+        preview_package = package.model_copy(
+            update={"cards": build_cards(generated_cards, package.images)}
+        )
+        preflight_issues = [
+            issue
+            for issue in [*check_sources(preview_package), *check_copy(preview_package)]
+            if issue.code in {"SOURCE_PUBLICATION_DATE_SHOWN", "PROTECTED_PHRASE_LOST"}
+        ]
+        if preflight_issues:
+            revision_pages = sorted(
+                {issue.page for issue in preflight_issues if issue.page is not None}
+            )
+            if revision_pages:
+                current_cards = [card.model_dump(mode="json") for card in generated_cards]
+                revised = generate_copy_deck(
+                    package,
+                    issues=preflight_issues,
+                    existing_cards=current_cards,
+                    revision_pages=revision_pages,
+                    requested_content_type=requested_content_type,
+                )
+                generated_cards = _merge_copy_revision(
+                    current_cards,
+                    revised.deck.cards,
+                    revision_pages,
+                )
+                usage_records.append(revised.usage.model_dump(mode="json"))
     if any(
         len(" ".join(card.body_sentences).strip()) > POLICY.max_body_chars
         for card in generated_cards
@@ -265,10 +446,39 @@ def copy_writer(state: ContentState) -> ContentState:
 
 def layout_director(state: ContentState) -> ContentState:
     package = ContentPackage.model_validate(state["package"])
+    if (
+        state.get("needs_revision")
+        and "layout_director"
+        in (state.get("revision_owners") or [state.get("revision_owner")])
+        and package.cards
+    ):
+        copies = [
+            CopyCard.model_validate(card.model_dump(exclude={"layout"}))
+            for card in package.cards
+        ]
+        package.cards = build_cards(copies, package.images)
+        composition_pages = {
+            int(issue["page"])
+            for issue in state.get("qa_report", [])
+            if issue.get("code") == "IMAGE_COMPOSITION_REJECTED" and issue.get("page")
+        }
+        package.cards = reflow_for_composition(
+            package.cards, package.images, composition_pages
+        )
+        return {
+            "trace": append_trace(state, "layout_director"),
+            "package": package.model_dump(mode="json"),
+            "status": (
+                "layout_rebuilt_for_composition"
+                if composition_pages
+                else "layout_rebuilt_without_crop"
+            ),
+        }
     if not state.get("draft_cards"):
         if (
             state.get("needs_revision")
-            and state.get("revision_owner") == "layout_director"
+            and "layout_director"
+            in (state.get("revision_owners") or [state.get("revision_owner")])
             and package.cards
         ):
             copies = [
@@ -284,18 +494,83 @@ def layout_director(state: ContentState) -> ContentState:
         return {"trace": append_trace(state, "layout_director"), "status": "layout_supplied"}
     copies = [CopyCard.model_validate(card) for card in state["draft_cards"]]
     copies = assign_distinct_images(copies, package)
-    package.cards = build_cards(copies, package.images)
+    missing_pages = [
+        card.page
+        for card in copies
+        if card.visual_mode != "source_image"
+        or card.image_id.startswith("missing-source-image-")
+    ]
+    if missing_pages:
+        return {
+            "trace": append_trace(state, "layout_director"),
+            "package": package.model_dump(mode="json"),
+            "qa_report": [
+                QualityIssue(
+                    code=(
+                        "COVER_SOURCE_IMAGE_MISSING"
+                        if missing_pages[0] == min(card.page for card in copies)
+                        else "SOURCE_IMAGE_MISSING"
+                    ),
+                    message=(
+                        "Real related anime images are missing for card(s): "
+                        f"{', '.join(map(str, missing_pages))}."
+                    ),
+                    page=missing_pages[0],
+                    owner="image_curator",
+                ).model_dump(mode="json")
+            ],
+            "status": "needs_crawler_update",
+        }
+    baseline_cards = build_cards(copies, package.images)
+    art_directions = {}
+    usage_records = list(state.get("usage_records", []))
+    settings = get_settings()
+    visual_layout_plan_attempted = bool(state.get("visual_layout_plan_attempted", False))
+    if (
+        not visual_layout_plan_attempted
+        and state.get("allow_llm", False)
+        and settings.visual_layout_enabled
+        and settings.openai_api_key
+    ):
+        visual_layout_plan_attempted = True
+        try:
+            art_directions, visual_usage = plan_card_art(
+                package,
+                baseline_cards,
+                model_name=settings.visual_layout_model,
+                api_key=settings.openai_api_key,
+                get_image_bytes=AgentRepository().get_image_bytes,
+            )
+            if visual_usage is not None:
+                usage_records.append(visual_usage.model_dump(mode="json"))
+            if not art_directions:
+                logger.warning(
+                    "Vision layout planner returned no complete plan; using deterministic layouts."
+                )
+        except Exception:
+            # This is a visual enhancement only; a model outage must not block
+            # the content workflow or relax any reviewer checks.
+            logger.exception("Vision layout planning failed; using deterministic layouts.")
+    package.cards = (
+        build_cards(copies, package.images, art_directions=art_directions)
+        if art_directions
+        else baseline_cards
+    )
     cover_issue = _cover_image_issue(package)
     if cover_issue:
         return {
             "trace": append_trace(state, "layout_director"),
             "package": package.model_dump(mode="json"),
+            "usage_records": usage_records,
+            "visual_layout_plan_attempted": visual_layout_plan_attempted,
             "qa_report": [cover_issue.model_dump(mode="json")],
             "status": "needs_crawler_update",
         }
     return {
         "trace": append_trace(state, "layout_director"),
         "package": package.model_dump(mode="json"),
+        "usage_records": usage_records,
+        "visual_layout_plan_attempted": visual_layout_plan_attempted,
         "status": "layout_planned",
     }
 
@@ -307,6 +582,30 @@ def repair_visual_assignments(state: ContentState) -> ContentState:
         CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
     ]
     repaired = assign_distinct_images(copies, package)
+    missing_pages = [
+        card.page
+        for card in repaired
+        if card.visual_mode != "source_image"
+        or card.image_id.startswith("missing-source-image-")
+    ]
+    if missing_pages:
+        return {
+            "trace": append_trace(state, "visual_repair"),
+            "package": package.model_dump(mode="json"),
+            "qa_report": [
+                QualityIssue(
+                    code="SOURCE_IMAGE_MISSING",
+                    message=(
+                        "시각 검수에서 제외한 이미지를 대체할 자료가 부족합니다. "
+                        f"페이지 {', '.join(map(str, missing_pages))}의 동일 작품 이미지를 "
+                        "더 수집하세요."
+                    ),
+                    page=missing_pages[0],
+                    owner="image_curator",
+                ).model_dump(mode="json")
+            ],
+            "status": "needs_crawler_update",
+        }
     package.cards = build_cards(repaired, package.images)
     cover_issue = _cover_image_issue(package)
     if cover_issue:

@@ -1,25 +1,159 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
-from ani_menu_agent.agents.reviewer.agent import _score_language
+from ani_menu_agent.agents.content_generation.graph import (
+    _route_after_layout,
+    _route_generation_entry,
+)
+from ani_menu_agent.agents.reviewer.agent import (
+    _review_message_content,
+    _score_language,
+    _select_revision_owner,
+    _select_revision_owners,
+    _visual_issues,
+    review_content,
+)
 from ani_menu_agent.graph import build_graph, route_after_content_generation
 from ani_menu_agent.models import (
+    ContentPackage,
     CopyCard,
     CopyDeck,
+    DetailArticleDraft,
+    Fact,
     GenerationResult,
     LanguageReview,
+    QualityIssue,
+    SourceEvidence,
     UsageRecord,
 )
-from ani_menu_agent.nodes import _merge_copy_revision, _remove_copy_pages, route_review
+from ani_menu_agent.nodes import (
+    _merge_copy_revision,
+    _remove_copy_pages,
+    rights_preflight,
+    route_review,
+)
 
 SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sample_content.json"
 GENERATION_SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "generation_input.json"
+
+
+def test_revision_owner_prioritizes_visual_then_copy_and_layout_repairs() -> None:
+    issues = [
+        QualityIssue(code="COVER_EMPTY_GAP", message="cover gap", owner="layout_director"),
+        QualityIssue(code="LANGUAGE_KOREAN_NATURALNESS", message="copy", owner="copy_writer"),
+        QualityIssue(
+            code="IMAGE_VISION_MISMATCH", message="relevance", owner="image_curator"
+        ),
+    ]
+
+    assert _select_revision_owner(issues, prior_failures=0) == "image_curator"
+    assert _select_revision_owner(issues, prior_failures=1) == "copy_writer"
+    assert _select_revision_owners(issues) == [
+        "copy_writer",
+        "image_curator",
+        "layout_director",
+    ]
+
+
+def test_multi_owner_revision_starts_with_copy_then_repairs_images_and_detail() -> None:
+    issues = [
+        QualityIssue(code="LANGUAGE_KOREAN_NATURALNESS", message="copy", owner="copy_writer"),
+        QualityIssue(code="IMAGE_VISION_MISMATCH", message="image", owner="image_curator"),
+        QualityIssue(code="DETAIL_BODY_FACTUAL_SUPPORT", message="detail", owner="detail_writer"),
+    ]
+    state = {
+        "needs_revision": True,
+        "revision_owner": "image_curator",
+        "revision_owners": _select_revision_owners(issues),
+    }
+
+    assert _route_generation_entry(state) == "copy_writer"
+    assert _route_after_layout(state) == "visual_repair"
+
+
+def test_composition_feedback_routes_to_layout_without_rejecting_relevant_art() -> None:
+    package = ContentPackage.model_validate(json.loads(SAMPLE.read_text(encoding="utf-8")))
+    review_data = _review_fixture(len(package.cards))
+    review_data["cards"][0].update(
+        {"image_relevance": 5, "image_composition": 3}
+    )
+
+    issues = _visual_issues(LanguageReview.model_validate(review_data), package)
+
+    assert [issue.code for issue in issues] == ["IMAGE_COMPOSITION_REJECTED"]
+    assert issues[0].owner == "layout_director"
+    assert package.images[0].vision_review_rejected is False
+    assert _select_revision_owner(issues, prior_failures=0) == "layout_director"
+    assert _route_generation_entry(
+        {"needs_revision": True, "revision_owner": "layout_director"}
+    ) == "layout_director"
+
+
+def test_copy_revision_handles_composition_when_both_need_revision() -> None:
+    issues = [
+        QualityIssue(
+            code="IMAGE_COMPOSITION_REJECTED",
+            message="relevant cover is too small",
+            owner="layout_director",
+        ),
+        QualityIssue(
+            code="LANGUAGE_KOREAN_NATURALNESS",
+            message="rewrite awkward phrase",
+            owner="copy_writer",
+        ),
+    ]
+
+    assert _select_revision_owner(issues, prior_failures=1) == "copy_writer"
+
+
+def test_revision_owner_falls_back_to_layout_when_copy_and_image_pass() -> None:
+    issues = [QualityIssue(code="COVER_EMPTY_GAP", message="cover gap", owner="layout_director")]
+
+    assert _select_revision_owner(issues, prior_failures=2) == "layout_director"
 
 
 def test_content_generation_routes_sparse_image_decks_back_to_crawler() -> None:
     assert route_after_content_generation({"status": "needs_crawler_update"}) == (
         "crawler_update_required"
     )
+
+
+def test_live_generation_preflight_blocks_discovery_only_source_before_llm() -> None:
+    package = ContentPackage(
+        request_id="discovery-only-preflight",
+        topic="새 애니메이션 발표",
+        content_kind="information",
+        sources=[
+            SourceEvidence(
+                id="prtimes_rss",
+                title="새 애니메이션 발표",
+                url="https://prtimes.jp/main/html/rd/p/000000001.000000001.html",
+                publisher="PR TIMES",
+                is_official=False,
+                role="discovery",
+            )
+        ],
+        facts=[
+            Fact(
+                id="discovery-fact",
+                statement="새 애니메이션 발표가 있었다.",
+                source_ids=["prtimes_rss"],
+                verified=True,
+            )
+        ],
+    )
+
+    result = rights_preflight(
+        {
+            "package": package.model_dump(mode="json"),
+            "trace": [],
+            "allow_llm": True,
+        }
+    )
+
+    assert result["status"] == "needs_crawler_update"
+    assert result["qa_report"][0]["code"] == "SOURCE_APPROVAL_REQUIRED"
     assert route_after_content_generation({"status": "generated_pending_review"}) == (
         "reviewer_agent"
     )
@@ -42,6 +176,9 @@ def _review_fixture(pages: int) -> dict:
                 "safety_blocker": False,
                 "safety_category": None,
                 "feedback": "오프라인 시험 fixture",
+                "image_relevance": 5,
+                "image_composition": 5,
+                "visual_feedback": "이미지가 주제에 맞고 장면 자막이 없습니다.",
             }
             for page in range(1, pages + 1)
         ],
@@ -77,6 +214,7 @@ def test_graph_uses_independent_reviewer_without_approving_fixture_for_feed(monk
         "rights_preflight",
         "copy_writer",
         "layout_director",
+        "detail_writer",
         "review_agent",
     ]
 
@@ -136,6 +274,148 @@ def test_low_translation_naturalness_fails_language_gate() -> None:
     assert safety_score == 10
     assert card_scores[1] >= 75
     assert any(issue.code == "LANGUAGE_TRANSLATION_NATURALNESS" for issue in issues)
+
+
+def test_visual_reviewer_ignores_subtitles_but_keeps_other_checks(monkeypatch) -> None:
+    package = ContentPackage.model_validate(json.loads(SAMPLE.read_text(encoding="utf-8")))
+    original = package.images[0]
+    package.images.append(
+        original.model_copy(
+            update={
+                "id": f"{original.id}-thumbnail-variant",
+                "url": f"{original.url}?width=580",
+            }
+        )
+    )
+    review_data = _review_fixture(len(package.cards))
+    review_data["cards"][0].update(
+        {
+            # Backward-compatible payloads may still contain this retired field.
+            "contains_anime_subtitles": True,
+            "image_relevance": 2,
+            "image_composition": 3,
+            "visual_feedback": "장면에 영어 대사가 박혀 있고 행사 주제와도 직접 맞지 않습니다.",
+        }
+    )
+    review = LanguageReview.model_validate(review_data)
+
+    issues = _visual_issues(review, package)
+
+    assert {issue.code for issue in issues} == {
+        "IMAGE_VISION_MISMATCH",
+        "IMAGE_COMPOSITION_REJECTED",
+    }
+    assert package.images[0].vision_review_rejected is True
+    assert package.images[-1].vision_review_rejected is True
+
+
+def test_visual_rejections_survive_reviewer_state_transition(monkeypatch) -> None:
+    package = ContentPackage.model_validate(json.loads(SAMPLE.read_text(encoding="utf-8")))
+    review_data = _review_fixture(len(package.cards))
+    review_data["cards"][0].update(
+        {"image_relevance": 2, "visual_feedback": "다른 주제 이미지"}
+    )
+
+    class StructuredModel:
+        def invoke(self, _messages):
+            return {"parsed": LanguageReview.model_validate(review_data), "raw": None}
+
+    class ChatModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def with_structured_output(self, *_args, **_kwargs):
+            return StructuredModel()
+
+    class RepositoryStub:
+        def persist_generated_content(self, *_args):
+            return None
+
+        def get_image_bytes(self, _key):
+            return None
+
+        def recent_copy_examples(self, **_kwargs):
+            return []
+
+        def active_content_types(self):
+            return []
+
+    monkeypatch.setattr("ani_menu_agent.agents.reviewer.agent.ChatOpenAI", ChatModel)
+    monkeypatch.setattr(
+        "ani_menu_agent.agents.reviewer.agent.get_settings",
+        lambda: SimpleNamespace(openai_api_key="test-key", model_name="test-model"),
+    )
+    monkeypatch.setattr("ani_menu_agent.agents.reviewer.agent.AgentRepository", RepositoryStub)
+
+    result = review_content(
+        {"package": package.model_dump(mode="json"), "trace": [], "usage_records": []}
+    )
+
+    assert result["package"]["images"][0]["vision_review_rejected"] is True
+
+
+def test_vision_review_attaches_rendered_image_bytes(monkeypatch) -> None:
+    package = ContentPackage.model_validate(json.loads(SAMPLE.read_text(encoding="utf-8")))
+    for card in package.cards:
+        card.rendered_image_key = f"rendered-{card.page}"
+
+    class RepositoryStub:
+        def get_image_bytes(self, key):
+            return (b"png-bytes-" + key.encode(), "image/png")
+
+        def recent_copy_examples(self, **_kwargs):
+            return []
+
+        def active_content_types(self):
+            return []
+
+    monkeypatch.setattr("ani_menu_agent.agents.reviewer.agent.AgentRepository", RepositoryStub)
+
+    parts, attached_pages, missing_pages = _review_message_content(package)
+
+    assert attached_pages == [1, 2, 3, 4]
+    assert missing_pages == []
+    assert [part["type"] for part in parts[1:]] == ["image_url"] * 4
+    assert parts[1]["image_url"]["detail"] == "original"
+
+
+def test_merely_adequate_korean_and_card_flow_do_not_pass_quality_gate() -> None:
+    review = LanguageReview.model_validate(
+        {
+            "content_type_fit": 5,
+            "cards": [
+                {
+                    "page": 1,
+                    "korean_naturalness": 3,
+                    "translation_naturalness": 4,
+                    "reader_clarity": 4,
+                    "fan_engagement": 4,
+                    "card_flow": 3,
+                    "safety_respect": 5,
+                    "safety_blocker": False,
+                    "safety_category": None,
+                },
+                {
+                    "page": 2,
+                    "korean_naturalness": 4,
+                    "translation_naturalness": 4,
+                    "reader_clarity": 4,
+                    "fan_engagement": 4,
+                    "card_flow": 4,
+                    "safety_respect": 5,
+                    "safety_blocker": False,
+                    "safety_category": None,
+                },
+            ],
+        }
+    )
+
+    _, _, _, issues = _score_language(review)
+
+    assert {issue.code for issue in issues} >= {
+        "LANGUAGE_KOREAN_NATURALNESS",
+        "LANGUAGE_CARD_FLOW",
+    }
 
 
 def test_low_fan_engagement_fails_language_gate() -> None:
@@ -224,7 +504,7 @@ def test_safety_issue_is_a_non_compensable_reviewer_blocker() -> None:
     }
 
 
-def test_third_review_failure_archives_instead_of_retrying_again() -> None:
+def test_fourth_review_failure_archives_after_one_targeted_extra_repair() -> None:
     assert route_review({"review_failures": 1, "editorial_decision": "revise"}) == (
         "revision_checkpoint"
     )
@@ -232,6 +512,9 @@ def test_third_review_failure_archives_instead_of_retrying_again() -> None:
         "revision_checkpoint"
     )
     assert route_review({"review_failures": 3, "editorial_decision": "revise"}) == (
+        "revision_checkpoint"
+    )
+    assert route_review({"review_failures": 4, "editorial_decision": "revise"}) == (
         "archive_rejected"
     )
 
@@ -324,7 +607,7 @@ def test_visual_repair_preserves_copy_and_uses_each_source_image_only_once() -> 
     source_images = [card.image_id for card in repaired.cards if card.visual_mode == "source_image"]
 
     assert result["status"] == "visuals_repaired"
-    assert result["trace"] == ["visual_repair"]
+    assert result["trace"] == ["visual_repair", "detail_writer"]
     assert len(source_images) == len(set(source_images))
     assert [card.title_lines for card in repaired.cards] == titles_before
 
@@ -373,7 +656,44 @@ def test_empty_cards_use_structured_generation_path(monkeypatch) -> None:
     )
     generated = GenerationResult(deck=deck, usage=UsageRecord(model="test"))
     monkeypatch.setattr(
+        "ani_menu_agent.nodes.validate_generation_sources",
+        lambda *_args: {"official_event"},
+    )
+    monkeypatch.setattr(
+        "ani_menu_agent.nodes.supported_content_types_for_sources",
+        lambda _source_ids: {"event"},
+    )
+
+    def assign_test_work_id(test_package):
+        test_package.menu_work_ids = [123]
+        return test_package
+
+    monkeypatch.setattr("ani_menu_agent.nodes.attach_menu_work_ids", assign_test_work_id)
+    monkeypatch.setattr(
         "ani_menu_agent.nodes.generate_copy_deck", lambda package, **kwargs: generated
+    )
+
+    class FakeDetailStructured:
+        def invoke(self, _messages):
+            return {
+                "parsed": DetailArticleDraft(
+                    body="행사 정보를 바탕으로 준비할 내용을 차근차근 살펴볼 수 있습니다. " * 12,
+                    fact_ids=["f1", "f2", "f3"],
+                ),
+                "raw": SimpleNamespace(usage_metadata={"input_tokens": 12, "output_tokens": 10}),
+            }
+
+    class FakeDetailModel:
+        def with_structured_output(self, *_args, **_kwargs):
+            return FakeDetailStructured()
+
+    monkeypatch.setattr(
+        "ani_menu_agent.agents.content_generation.detail_writer.ChatOpenAI",
+        lambda **_kwargs: FakeDetailModel(),
+    )
+    monkeypatch.setattr(
+        "ani_menu_agent.agents.content_generation.detail_writer.get_settings",
+        lambda: SimpleNamespace(openai_api_key="test-key", model_name="test-model"),
     )
     result = build_graph().invoke(
         {
@@ -392,6 +712,9 @@ def test_empty_cards_use_structured_generation_path(monkeypatch) -> None:
     assert len(result["package"]["cards"]) == 4
     assert result["editorial_decision"] == "offline_fixture_passed"
     assert result["package"]["editorial_angle"].startswith("팬들이 기다린")
+    assert len(result["package"]["detail_body"]) >= 180
+    assert result["package"]["detail_fact_ids"] == ["f1", "f2", "f3"]
+    assert result["package"]["detail_source_ids"] == ["official_event"]
 
 
 def test_offline_fixture_uses_no_llm(monkeypatch) -> None:
