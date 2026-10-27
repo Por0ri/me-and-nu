@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, us
 import { usePathname } from "next/navigation";
 import { API_UNAUTHORIZED_EVENT } from "@/lib/api";
 import type { PivotSession } from "@/lib/pivot/session";
-import { canUsePivotApi, restorePivotSession } from "@/lib/pivot/services";
+import { canUsePivotApi, isIsolatedPivotPath, restorePivotSession } from "@/lib/pivot/services";
 import type { ConsentDraft } from "@/lib/pivot/consent";
 import { initialOnboardingState, onboardingReducer, type OnboardingState, type OnboardingAction } from "@/lib/pivot/onboarding";
 
@@ -19,11 +19,12 @@ const isolatedSession: ContextValue = {
 
 export function PivotSessionProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const isolated = ["/pivot/preview", "/pivot/demo", "/pivot/home"].some((path) => pathname === path || pathname.startsWith(`${path}/`));
-  // Preview, demo and the disconnected H1 Home never mount API session listeners.
+  const isolated = isIsolatedPivotPath(pathname);
+  // Demonstration routes never mount API session listeners. Entering Home
+  // remounts the service provider to read the cookie issued by the BE callback.
   return isolated
     ? <Context.Provider value={isolatedSession}>{children}</Context.Provider>
-    : <ConnectedPivotSessionProvider>{children}</ConnectedPivotSessionProvider>;
+    : <ConnectedPivotSessionProvider key={pathname === "/pivot/home" ? "home" : "auth"}>{children}</ConnectedPivotSessionProvider>;
 }
 function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>({ status: "loading", session: null });
@@ -31,7 +32,12 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
   const [draft, setDraft] = useState<ConsentDraft | null>(null);
   const [onboarding, dispatchOnboarding] = useReducer(onboardingReducer, undefined, initialOnboardingState);
   const epoch = useRef(0);
-  const refresh = useCallback(() => { setDraft(null); dispatchOnboarding({ type: "reset" }); setState({ status: "loading", session: null }); setAttempt((value) => value + 1); }, []);
+  const refresh = useCallback(() => { epoch.current++; setDraft(null); dispatchOnboarding({ type: "reset" }); setState({ status: "loading", session: null }); setAttempt((value) => value + 1); }, []);
+  useEffect(() => {
+    const restore = (event: PageTransitionEvent) => { if (event.persisted) refresh(); };
+    window.addEventListener("pageshow", restore);
+    return () => window.removeEventListener("pageshow", restore);
+  }, [refresh]);
   useEffect(() => {
     const request = ++epoch.current;
     if (!canUsePivotApi()) {

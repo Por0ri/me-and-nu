@@ -186,9 +186,19 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export async function getSession(): Promise<Session> {
-  const session = await apiRequest<Session>("/api/v1/auth/session");
+  csrfToken = null;
+  const session = await apiRequest<Session>("/api/v1/auth/session", { redirect: "error" });
+  if (!session || typeof session.csrfToken !== "string" || !session.csrfToken.trim()) {
+    throw new ApiError("로그인 상태 응답을 확인하지 못했어요.", 200, "INVALID_SESSION");
+  }
   csrfToken = session.csrfToken;
   return session;
+}
+export function startOAuthLogin(provider: "kakao" | "naver"): Promise<{ authorizationUrl: string }> {
+  if (provider !== "kakao" && provider !== "naver") throw new Error("지원하지 않는 로그인 방식이에요.");
+  return apiRequest(`/api/v1/auth/login/${provider}`, {
+    method: "POST", body: JSON.stringify({ purpose: "signin" }), redirect: "error",
+  });
 }
 export function register(input: RegisterInput): Promise<DevUser> {
   return apiRequest("/api/v1/dev/auth/register", { method: "POST", body: JSON.stringify(input) });

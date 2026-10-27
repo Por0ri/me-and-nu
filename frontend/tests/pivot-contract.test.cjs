@@ -94,9 +94,9 @@ test('Disabled configuration never calls session/policy API', async () => {
   await assert.rejects(s.loadPivotPolicies(), /아직 연결/);
   assert.equal(reads, 0);
 });
-test('Both unintegrated SNS providers reject without successful login', async () => {
-  await assert.rejects(s.startSnsLogin('kakao'), /카카오 로그인을 준비/);
-  await assert.rejects(s.startSnsLogin('naver'), /네이버 로그인을 준비/);
+test('Both SNS providers reject without API opt-in', async () => {
+  await assert.rejects(s.startSnsLogin('kakao'), /아직 연결/);
+  await assert.rejects(s.startSnsLogin('naver'), /아직 연결/);
   assert.equal(reads, 0);
 });
 

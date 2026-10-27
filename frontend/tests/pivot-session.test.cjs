@@ -100,6 +100,13 @@ const dependencies = {
   './pivot-ui': { PivotFrame: frame, PivotBrand: () => null, PivotAsset: () => null, PrimaryButton: ({ children }) => React.createElement('button', null, children) },
   './consent-screen': { ConsentScreen: () => React.createElement('p', null, 'consent-flow') },
   './onboarding-screens': { OnboardingFlow: () => React.createElement('p', null, 'onboarding-flow') },
+  '@/lib/pivot/home-service': { pendingHomeSource: { kind: 'service' } },
+  '@/lib/pivot/detail-service': { pendingDetailSource: { kind: 'service' } },
+  './home-detail-experience': { HomeDetailExperience: ({ homeSource, detailSource }) => {
+    assert.equal(homeSource.kind, 'service');
+    assert.equal(detailSource.kind, 'service');
+    return React.createElement('p', null, 'service-content-unconfigured');
+  } },
   './pivot.module.css': { __esModule: true, default: {} },
 };
 function loadComponent(file) {
@@ -116,6 +123,7 @@ function loadComponent(file) {
 const { ConsentRoute } = loadComponent('consent-route.tsx');
 const { OnboardingRoute } = loadComponent('onboarding-route.tsx');
 const { LoginScreen } = loadComponent('login-screen.tsx');
+const { HomeRoute } = loadComponent('home-route.tsx');
 function render(component, session, { status = 'ready', draft = { consents: [] }, props = {} } = {}) {
   view = { state: { status, session }, draft, onboarding: {}, refresh() {}, rememberDraft() {}, dispatchOnboarding() {} };
   effects = [];
@@ -146,7 +154,9 @@ test('Anonymous, expired, completed, restoration and malformed sessions cannot u
 test('Service login redirects a restored pending session; demo and preview keep their own flow', () => {
   render(LoginScreen, pending);
   assert.deepEqual(redirects, ['/pivot/consent']);
-  for (const session of [null, anonymous, active, { ...pending, user: active.user }]) {
+  render(LoginScreen, active);
+  assert.deepEqual(redirects, ['/pivot/home']);
+  for (const session of [null, anonymous, { ...pending, user: active.user }]) {
     render(LoginScreen, session);
     assert.deepEqual(redirects, []);
   }
@@ -155,5 +165,44 @@ test('Service login redirects a restored pending session; demo and preview keep 
   render(LoginScreen, pending, { props: { preview: true } });
   assert.deepEqual(redirects, []);
   assert.match(render(LoginScreen, pending, { props: { onDemoContinue() {} } }), /로그인 없이 시연 계속하기/);
+  assert.deepEqual(redirects, []);
+});
+
+test('Home permits a validated active user, separating login success from pending content', () => {
+  const html = render(HomeRoute, active);
+  assert.match(html, /로그인이 확인/);
+  assert.match(html, /콘텐츠는 아직 연결 준비/);
+  assert.match(html, /service-content-unconfigured/);
+  assert.deepEqual(redirects, []);
+  for (const session of [anonymous, pending, { ...active, sessionState: 'restoration_pending' },
+    { ...active, authenticated: false }, { ...active, onboardingCompleted: false },
+    { ...active, user: null }, { ...active, user: { id: 12, accountType: 'consumer' } }]) {
+    assert.doesNotMatch(render(HomeRoute, session), /service-content-unconfigured|로그인이 확인/);
+  }
+});
+
+test('Home routes anonymous/expired to login, pending null-user to consent, and restoration to a notice', () => {
+  for (const session of [anonymous, null]) {
+    render(HomeRoute, session);
+    assert.deepEqual(redirects, ['/pivot/login']);
+  }
+  render(HomeRoute, pending);
+  assert.deepEqual(redirects, ['/pivot/consent']);
+  for (const session of [{ ...pending, sessionState: 'restoration_pending' }, { ...active, sessionState: 'restoration_pending' }]) {
+    assert.match(render(HomeRoute, session), /계정 복원/);
+    assert.deepEqual(redirects, []);
+  }
+});
+
+test('Home loading/error never show stale authenticated content; errors offer retry, offline mode stays unconfigured', () => {
+  assert.match(render(HomeRoute, active, { status: 'loading' }), /로그인 상태를 확인하고/);
+  assert.deepEqual(redirects, []);
+  const error = render(HomeRoute, active, { status: 'error' });
+  assert.match(error, /로그인 상태 다시 확인/);
+  assert.doesNotMatch(error, /service-content-unconfigured|로그인이 확인/);
+  assert.deepEqual(redirects, []);
+  const disconnected = render(HomeRoute, null, { status: 'disconnected' });
+  assert.match(disconnected, /service-content-unconfigured/);
+  assert.doesNotMatch(disconnected, /로그인이 확인/);
   assert.deepEqual(redirects, []);
 });
