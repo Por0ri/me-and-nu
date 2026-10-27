@@ -183,16 +183,34 @@ test('The old pending user DTO cannot be mistaken for the current onboarding con
   assert.equal(s.isPendingConsumer({...session,user:null}), true);
 });
 
-test('Remote API access is limited to the approved staging pair', () => {
-  assert.equal(s.isPivotApiAllowed(false, 'https://test.me-nu.kr', 'https://api.test.me-nu.kr'), true);
+const remotePairs = [
+  ['https://test.me-nu.kr', 'https://api.test.me-nu.kr'],
+  ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr'],
+];
+test('Remote API access keeps the staging and backend-labs environments paired', () => {
+  for (const [frontend, api] of remotePairs) {
+    assert.equal(s.isPivotApiAllowed(false, frontend, api), true);
+  }
   for (const [frontend, api] of [
+    ['https://labs.me-nu.kr', 'https://api.test.me-nu.kr'],
+    ['https://test.me-nu.kr', 'https://api.labs.me-nu.kr'],
     ['https://preview.vercel.app', 'https://api.test.me-nu.kr'],
+    ['https://preview.vercel.app', 'https://api.labs.me-nu.kr'],
     ['https://me-nu.kr', 'https://api.test.me-nu.kr'],
+    ['https://me-nu.kr', 'https://api.labs.me-nu.kr'],
     ['https://test.me-nu.kr.example.com', 'https://api.test.me-nu.kr'],
+    ['https://labs.me-nu.kr.example.com', 'https://api.labs.me-nu.kr'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr.example.com'],
     ['https://test.me-nu.kr', 'https://api.test.me-nu.kr:444'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr:444'],
     ['https://test.me-nu.kr', 'https://api.test.me-nu.kr/path'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr/path'],
     ['https://test.me-nu.kr', 'https://api.test.me-nu.kr?proxy=other'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr?proxy=other'],
+    ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr#fragment'],
+    ['https://labs.me-nu.kr', 'https://user:password@api.labs.me-nu.kr'],
     ['http://test.me-nu.kr', 'https://api.test.me-nu.kr'],
+    ['http://labs.me-nu.kr', 'https://api.labs.me-nu.kr'],
     ['http://localhost:3000', 'http://127.0.0.1:8000'],
     ['http://localhost:3000', 'https://localhost:8000'],
   ]) assert.equal(s.isPivotApiAllowed(true, frontend, api), false, `${frontend} -> ${api}`);
@@ -220,16 +238,16 @@ function providerUrl(provider, base = 'https://api.test.me-nu.kr') {
   url.search = new URLSearchParams({response_type:'code', client_id:'fixture-client', state:'fixture-state', redirect_uri:`${base}/api/v1/auth/login/${provider}/callback`}).toString();
   return url.href;
 }
-for (const provider of ['kakao', 'naver']) test(`${provider} OAuth refreshes CSRF session, posts signin, then navigates the same browser`, async () => {
+for (const [frontend, api] of remotePairs) for (const provider of ['kakao', 'naver']) test(`${provider} OAuth on ${frontend} uses its paired API callback`, async () => {
   const calls = [];
-  const authorizationUrl = providerUrl(provider);
+  const authorizationUrl = providerUrl(provider, api);
   const connected = load('/lib/pivot/services.ts', {
     '@/lib/api': {
-      apiBaseUrl:'https://api.test.me-nu.kr',
+      apiBaseUrl:api,
       async getSession() { calls.push('session'); return {csrfToken:'new-current-token'}; },
       async apiRequest(path, options) { calls.push({path, options}); return {authorizationUrl}; },
     }, './consent': c,
-  }, {window:{location:{origin:'https://test.me-nu.kr', assign(url){calls.push({navigate:url});}}}});
+  }, {window:{location:{origin:frontend, assign(url){calls.push({navigate:url});}}}});
   await connected.startSnsLogin(provider);
   assert.deepEqual(plain(calls), ['session', {path:`/api/v1/auth/login/${provider}`, options:{method:'POST',body:'{"purpose":"signin"}'}}, {navigate:authorizationUrl}]);
 });
@@ -257,4 +275,11 @@ test('OAuth navigation rejects arbitrary hosts, wrong callback and unexpected sc
   assert.match(s.oauthErrorMessage('AUTH_CANCELLED'), /취소/);
   assert.equal(s.oauthErrorMessage(null), '');
   assert.doesNotMatch(s.oauthErrorMessage('<script>untrusted</script>'), /script|untrusted/);
+});
+
+test('OAuth callbacks cannot cross between staging and backend-labs', () => {
+  for (const provider of ['kakao', 'naver']) {
+    assert.throws(() => s.validateAuthorizationUrl(providerUrl(provider, 'https://api.test.me-nu.kr'), provider, 'https://api.labs.me-nu.kr'));
+    assert.throws(() => s.validateAuthorizationUrl(providerUrl(provider, 'https://api.labs.me-nu.kr'), provider, 'https://api.test.me-nu.kr'));
+  }
 });

@@ -3,8 +3,10 @@ import { validatePolicies } from "./consent";
 
 export type SnsProvider = "kakao" | "naver";
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const stagingFrontend = "https://test.me-nu.kr";
-const stagingApi = "https://api.test.me-nu.kr";
+const approvedRemoteApis = new Map([
+  ["https://test.me-nu.kr", "https://api.test.me-nu.kr"],
+  ["https://labs.me-nu.kr", "https://api.labs.me-nu.kr"],
+]);
 
 function isBareOrigin(url: URL): boolean {
   return !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
@@ -20,13 +22,13 @@ export function isLocalApiAllowed(enabled: boolean, browserHost: string, baseUrl
   } catch { return false; }
 }
 
-/** The staging pair is deliberate; arbitrary Vercel previews are not approved API origins. */
+/** Keep each approved frontend paired with its own API; arbitrary previews stay disconnected. */
 export function isPivotApiAllowed(localEnabled: boolean, browserOrigin: string, baseUrl: string): boolean {
   try {
     const browser = new URL(browserOrigin);
     const api = new URL(baseUrl);
     if (!isBareOrigin(browser) || !isBareOrigin(api)) return false;
-    if (browser.origin === stagingFrontend && api.origin === stagingApi) return true;
+    if (approvedRemoteApis.get(browser.origin) === api.origin) return true;
     return browser.protocol === api.protocol && isLocalApiAllowed(localEnabled, browser.hostname, baseUrl);
   } catch { return false; }
 }

@@ -1,0 +1,162 @@
+# Standalone backend-labs stack. Use deploy/labs/labs.sh, never merge with staging.
+name: me-nu-labs
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-environment: &environment
+  MENU_DEPLOYMENT_ENV: labs
+  DATABASE_URL: "postgresql+psycopg://me_nu_labs:${LABS_POSTGRES_PASSWORD:?Use deploy/labs/.env}@postgres:5432/me_nu_labs"
+  DATABASE_ECHO: "false"
+  SESSION_BACKEND: redis
+  REDIS_URL: "redis://:${LABS_REDIS_PASSWORD:?Use deploy/labs/.env}@redis:6379/0"
+  REDIS_KEY_PREFIX: me_nu_labs
+  REDIS_SOCKET_TIMEOUT_SECONDS: "0.5"
+  REDIS_MAX_CONNECTIONS: "10"
+  FRONTEND_ORIGINS: "https://labs.me-nu.kr,https://api.labs.me-nu.kr"
+  ENABLE_DEV_API: "false"
+  ENABLE_DEV_AUTH_BYPASS: "false"
+  SESSION_COOKIE_NAME: menu_labs_session
+  SESSION_EXPIRE_MINUTES: "30"
+  SESSION_COOKIE_SECURE: "true"
+  FORWARDED_ALLOW_IPS: ${LABS_FORWARDED_ALLOW_IPS:-127.0.0.1}
+  OAUTH_FRONTEND_ORIGIN: "https://labs.me-nu.kr"
+  OAUTH_PUBLIC_API_ORIGIN: "https://api.labs.me-nu.kr"
+  OAUTH_STATE_TTL_SECONDS: "600"
+  KAKAO_OAUTH_ENABLED: ${LABS_KAKAO_OAUTH_ENABLED:-false}
+  KAKAO_CLIENT_ID: ${LABS_KAKAO_CLIENT_ID:-}
+  KAKAO_CLIENT_SECRET: ${LABS_KAKAO_CLIENT_SECRET:-}
+  NAVER_OAUTH_ENABLED: ${LABS_NAVER_OAUTH_ENABLED:-false}
+  NAVER_CLIENT_ID: ${LABS_NAVER_CLIENT_ID:-}
+  NAVER_CLIENT_SECRET: ${LABS_NAVER_CLIENT_SECRET:-}
+  # This environment tests login/content/bookmarks; it does not invoke paid agents.
+  TMDB_KEY: ""
+  LLM_KEY: ""
+
+x-backend: &backend
+  image: me-nu-backend-labs:${LABS_IMAGE_TAG:?Set the exact 40-character Git commit}
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  environment: *environment
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging: *logging
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: "0.50"
+    pids_limit: 128
+    shm_size: 128m
+    environment:
+      POSTGRES_USER: me_nu_labs
+      POSTGRES_DB: me_nu_labs
+      POSTGRES_PASSWORD: ${LABS_POSTGRES_PASSWORD:?Use deploy/labs/.env}
+    command: [postgres, -c, shared_buffers=128MB, -c, max_connections=40]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U me_nu_labs -d me_nu_labs"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    logging: *logging
+
+  redis:
+    image: redis:8.2-alpine
+    restart: unless-stopped
+    mem_limit: 192m
+    cpus: "0.25"
+    pids_limit: 32
+    environment:
+      REDISCLI_AUTH: ${LABS_REDIS_PASSWORD:?Use deploy/labs/.env}
+    command:
+      - redis-server
+      - --requirepass
+      - ${LABS_REDIS_PASSWORD:?Use deploy/labs/.env}
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - always
+      - --maxmemory
+      - 64mb
+      - --maxmemory-policy
+      - noeviction
+    volumes: [redis-data:/data]
+    networks: [data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    logging: *logging
+
+  migrate:
+    <<: *backend
+    command: [python, -m, alembic, upgrade, head]
+    restart: "no"
+    mem_limit: 256m
+    cpus: "0.25"
+    pids_limit: 64
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [data]
+    healthcheck:
+      disable: true
+
+  api:
+    <<: *backend
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: "0.75"
+    pids_limit: 128
+    ports: ["127.0.0.1:8001:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [data, egress]
+    stop_grace_period: 30s
+
+  seed:
+    <<: *backend
+    profiles: [tools]
+    entrypoint: [python, /opt/labs/seed.py]
+    command: []
+    restart: "no"
+    mem_limit: 256m
+    cpus: "0.25"
+    pids_limit: 64
+    environment:
+      <<: *environment
+      PYTHONPATH: /app
+    volumes:
+      - ./deploy/labs/seed.py:/opt/labs/seed.py:ro
+    networks: [data]
+    healthcheck:
+      disable: true
+
+volumes:
+  postgres-data: {}
+  redis-data: {}
+
+networks:
+  data:
+    internal: true
+  egress: {}
