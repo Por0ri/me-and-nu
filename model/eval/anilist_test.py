@@ -14,6 +14,7 @@
 #   python -m model.eval.anilist_test info       # 시험지 정보 (문제 수 · 목록 밖 정답 · 정답 쏠림)
 #   python -m model.eval.anilist_test cowatch    # 같이 본 작품 재료 비교: MAL (지금 서비스) / AniList 표본 / 둘 다
 #   python -m model.eval.anilist_test people both  # 사람 정보 빼 보기 (같이 본 작품 재료: mal · anilist · both)
+#   python -m model.eval.anilist_test sparse     # 1-3b: 기록 적은 작품도 빌려 오기 (① 같은 시기 · ② 시간 분리)
 #   … --users 100                                  # 앞 100명만 (코드 확인용. 결과 숫자는 안 봄)
 #
 # 명단 겹침: 표본은 "그 주에 그 작품을 다 본 사람" 명단에서 뽑았다. 정답이 표본을 뽑은 명단(작품 · 주)과 겹치면
@@ -114,12 +115,24 @@ def stats_histories(users, cases, catalog):
     return out
 
 
-def prepare():
+def split_stats(users, catalog):
+    # 시간 분리: 모든 유저의 TARGET_FROM 전 기록 (시험 유저도 정답 전이 아니라 이날 전까지만). 정답 기간 기록을 통계에 안 씀
+    hi = day_secs(TARGET_FROM)
+    out = []
+    for u in users.values():
+        m = (u["t"] < hi) & np.isin(u["anime"], catalog)
+        if m.any():
+            out.append(history(u, m))
+    return out
+
+
+def prepare(split=False):
+    # split: 통계 (인기 · 같이 본 작품)를 시간 분리 기록으로 (EXP-35 ②). 최근 30일 인기는 그대로 정답 시각 전 기록
     users = load_users(LIMIT)
     entries, _ = service.load_catalog()
     catalog = np.array(sorted(e["anilist_id"] for e in entries), dtype=np.int64)
     cases, outside = make_cases(users, catalog)
-    stats = stats_histories(users, cases, catalog)
+    stats = split_stats(users, catalog) if split else stats_histories(users, cases, catalog)
     pop = Counter()
     for h in stats:
         pop.update(set(h.anime.tolist()))
@@ -168,24 +181,34 @@ def info():
 VARIANTS = {"mal": "MAL (지금 서비스)", "anilist": "AniList 표본만", "both": "MAL + AniList"}
 
 
-def variants(ctx, stats, names=tuple(VARIANTS)):
+def sources(ctx, stats):
+    """같이 본 작품 재료 → (기록, 지우고 빌려 올 작품) · MAL 유저 수. variants 와 anilist_bench (딥러닝 학습 기록)가 같이 씀"""
+    mal = service.mal_histories(ctx["entries"])
+    no_mal = service.no_mal_ids(ctx["entries"])
+    return {"mal": (mal, no_mal), "anilist": (stats, None), "both": (service.without(mal, no_mal) + stats, None)}, len(mal)
+
+
+def variants(ctx, stats, names=tuple(VARIANTS), src=None):
     """같이 본 작품 재료만 다른 문맥들 (인기 · 최근 인기 · 작품 특징은 같음).
     MAL: 2022년 이후 작품 기록은 지우고 빌려 옴 (지금 서비스) / AniList 표본: 시험 유저는 정답 전 기록만 /
     MAL + AniList: MAL 의 2022년 이후 작품 기록만 빼고 합침. 기록이 하나도 없는 작품은 빌려 옴.
-    EASE 규제 세기는 기록 유저 수에 비례 (MAL 47,999명 = 500. 같은 기록을 두 배로 늘리면 같은 결과가 나오게)"""
-    mal = service.mal_histories(ctx["entries"])
-    no_mal = {e["anilist_id"] for e in ctx["entries"] if e["year"] >= service.NO_COWATCH_FROM or not e["mal_id"]}
-    drop = np.array(sorted(no_mal), dtype=np.int64)
-    mal_old = [ar.History(*(col[keep] for col in h)) for h in mal for keep in [~np.isin(h.anime, drop)] if keep.any()]
-    sources = {"mal": (mal, no_mal), "anilist": (stats, None), "both": (mal_old + stats, None)}
+    EASE 규제 세기는 기록 유저 수에 비례 (MAL 47,999명 = 500. 같은 기록을 두 배로 늘리면 같은 결과가 나오게).
+    이름 뒤에 ":k" 를 붙이면 (예: "both:30") 같이 본 유저가 k명 미만인 작품도 기록 대신 빌려 옴 (1-3b)"""
+    src, n_mal = sources(ctx, stats) if src is None else src
     out = {}
     for key in names:
-        hs, nr = sources[key]
+        base, _, k = key.partition(":")
+        hs, nr = src[base]
         out[key] = c = dict(ctx)
-        service.add_cowatch(c, hs, nr, lam=ar.EASE_LAMBDA * len(hs) / len(mal))
-        print(f"{VARIANTS[key]}: 기록 {c['cw_users']:,}명 · EASE 규제 {ar.EASE_LAMBDA * len(hs) / len(mal):.0f} · "
-              f"기록 없어 빌려 온 작품 {len(c['no_record']):,}편")
+        service.add_cowatch(c, hs, nr, lam=ar.EASE_LAMBDA * len(hs) / n_mal, min_users=int(k or 1))
+        print(f"{label(key)}: 기록 {c['cw_users']:,}명 · EASE 규제 {ar.EASE_LAMBDA * len(hs) / n_mal:.0f} · "
+              f"기록 없거나 적어 빌려 온 작품 {len(c['no_record']):,}편")
     return out
+
+
+def label(key):
+    base, _, k = key.partition(":")
+    return VARIANTS[base] + (f" · {k}명 미만 빌려 옴" if k else "")
 
 
 def compare(ctxs, cases, new, ip, over, base, model=ar.next_auto):
@@ -215,7 +238,7 @@ def cowatch_test():
     t0 = time.time()
     users, cases, outside, stats, ctx = prepare()
     new, ip, over = kinds(ctx, cases)
-    ctxs = {VARIANTS[k]: c for k, c in variants(ctx, stats).items()}
+    ctxs = {label(k): c for k, c in variants(ctx, stats).items()}
     print(f"문제 {len(cases):,}개 · 준비 {time.time() - t0:.0f}초\n")
     compare(ctxs, cases, new, ip, over, VARIANTS["mal"])
 
@@ -236,6 +259,23 @@ def people_test(key):
     compare({"사람 정보 있음 (지금)": on, "사람 정보 없음": off}, cases, new, ip, over, "사람 정보 있음 (지금)")
 
 
+SPARSE_K = (10, 30, 100, 300)      # 1-3b: 같이 본 유저가 이 수 미만인 작품은 빌려 옴
+
+
+def sparse_test():
+    # 1-3b (EXP-37): MAL + AniList 에서 기록이 적은 작품은 적은 기록 대신 비슷한 작품에서 빌려 오면,
+    # 기록이 묵어도 (② 시간 분리) MAL 보다 안 떨어지는가. ① 같은 시기 · ② 시간 분리 둘 다
+    names = ("mal", "both") + tuple(f"both:{k}" for k in SPARSE_K)
+    for split in (False, True):
+        t0 = time.time()
+        print(f"===== {'② 시간 분리 (통계 · 같이 본 작품 = 2026-01-01 전 기록만)' if split else '① 같은 시기'} =====")
+        users, cases, outside, stats, ctx = prepare(split)
+        new, ip, over = kinds(ctx, cases)
+        ctxs = {label(k): c for k, c in variants(ctx, stats, names).items()}
+        print(f"문제 {len(cases):,}개 · 준비 {time.time() - t0:.0f}초\n")
+        compare(ctxs, cases, new, ip, over, VARIANTS["mal"])
+
+
 def main():
     global LIMIT
     args = sys.argv[1:]
@@ -246,7 +286,7 @@ def main():
     mode = args[0] if args else "info"
     if mode == "people":
         return people_test(args[1] if len(args) > 1 else "both")
-    {"info": info, "cowatch": cowatch_test}[mode]()
+    {"info": info, "cowatch": cowatch_test, "sparse": sparse_test}[mode]()
 
 
 if __name__ == "__main__":

@@ -62,9 +62,9 @@ def log(msg):
 
 # ## 1. 준비: 시험지 · 입력
 class Bench:
+    fold = False    # True 면 LightGCN 이 모든 장면에서 고른 작품으로 유저 벡터를 계산 (학습 기록에 없는 시험 유저, anilist_bench)
+
     def __init__(self, smoke=False):
-        self.dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        torch.set_num_threads(int(os.environ["OMP_NUM_THREADS"]))
         anime, data = t.load_anime(), t.load_interactions()
         cases = t.make_cases(data)
         anilist = t.load_anilist()
@@ -72,17 +72,29 @@ class Bench:
         ctx = t.build_context(cases, anime, t.load_series(anime), anilist, data=data, stats=stats)
         ar.build_cowatch(ctx, stats)
         ar.build_ease(ctx)
+        n_tune = t.TUNE_USERS
         if smoke:
             cases = cases[:600] + cases[t.TUNE_USERS:t.TUNE_USERS + 600]
             keep = {id(c["history"]) for c in cases}
             stats = [h for h in stats if id(h) in keep] + [h for h in stats if id(h) not in keep][:4000]
-            self.n_tune = 600
-        else:
-            self.n_tune = t.TUNE_USERS
-        self.ctx, self.anime, self.stats = ctx, anime, stats
-        self.U = ctx["cw_rows"]                                   # 후보 작품 줄 (인기 상위 3,000편)
+            n_tune = 600
+        self.setup(ctx, stats, {"기록 전체": cases, "신규 유저": [t.onboarding(c, anime, 1, 3, anilist, 3) for c in cases]},
+                   n_tune)
+
+    @classmethod
+    def from_parts(cls, ctx, stats, scenes, n_tune):
+        # 다른 시험지로 같은 비교 (anilist_bench). ctx: 같이 본 작품까지 붙은 문맥, stats: 학습 기록, scenes: 장면 → 문제들
+        bench = cls.__new__(cls)
+        bench.setup(ctx, stats, scenes, n_tune)
+        return bench
+
+    def setup(self, ctx, stats, scenes, n_tune):
+        self.dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        torch.set_num_threads(int(os.environ["OMP_NUM_THREADS"]))
+        self.ctx, self.stats, self.n_tune = ctx, stats, n_tune
+        self.U = ctx["cw_rows"]                                   # 후보 작품 줄 (MAL 시험: 인기 상위 3,000편)
         self.n = len(self.U)
-        self.scenes = {"기록 전체": cases, "신규 유저": [t.onboarding(c, anime, 1, 3, anilist, 3) for c in cases]}
+        self.scenes = scenes
         rng = np.random.default_rng(SEED)
         self.train_pos = [self.positions(h) for h in stats]       # 학습 유저마다 후보 작품 위치 (본 작품)
         self.train_seq = [self.sequence(h, rng) for h in stats]
@@ -164,6 +176,14 @@ class Bench:
             c = np.where(upos >= 0, scores[i][np.maximum(upos, 0)], 0.0)
             table[id(cs[i]["history"])] = picks + ar.rank_rows(rows, self.ctx, -(b + gamma * c))
         return case_hits([cs[i] for i in idx], self.ctx, lambda user, ctx: table[id(user["history"])])
+
+
+def measure(bench, scene, scores):
+    # 한 장면: 혼자 · v0.5 에 넣기 (비중 γ 는 연습으로) 맞힘 → (혼자 {연습, 실전}, 넣기 {연습, 실전}, γ)
+    u = unit(scores)
+    alone = {p: bench.hits(scene, scores, p) for p in ("연습", "실전")}
+    g = max(GAMMAS, key=lambda g: (bench.dropin(scene, u, g, "연습")[:, 0].mean(), -g))
+    return alone, {p: bench.dropin(scene, u, g, p) for p in ("연습", "실전")}, g
 
 
 def unit(s):
@@ -386,7 +406,7 @@ def train_gcn(bench, layers, epochs, seed=SEED):
         return total / n
 
     def evaluate():
-        s = gcn_scores(bench, model, "기록 전체")
+        s = gcn_scores(bench, model, "기록 전체", deg_i)
         return bench.hits("기록 전체", s, "연습")[:, 0].mean(), snapshot(model)
 
     label = f"LightGCN {layers}층" + (f" · 씨앗 {seed}" if seed != SEED else "")
@@ -403,7 +423,7 @@ def gcn_scores(bench, model, scene, deg_i=None):
     nu = model.nu
     items = final[nu:]
     cs = bench.scenes[scene]
-    if scene == "기록 전체":
+    if scene == "기록 전체" and not bench.fold:
         uid = torch.tensor([bench.user_of[id(c["history"])] for c in cs], device=bench.dev)
         return (final[uid] @ items.T).cpu().numpy()
     deg = torch.as_tensor(np.maximum(deg_i, 1), device=bench.dev, dtype=torch.float32)
@@ -486,11 +506,7 @@ def main(smoke=False, mode="all"):
         # 두 장면 점수가 정해진 모델: 혼자 · v0.5 안에 넣기 (γ 연습으로) 를 재고 기록
         r = {"계열": family, "고른 값": chosen, "학습 초": round(sec, 1), "비고": note}
         for scene in (S1, S2):
-            s = sc[scene]
-            u = unit(s)
-            alone = {p: bench.hits(scene, s, p) for p in ("연습", "실전")}
-            g = max(GAMMAS, key=lambda g: (bench.dropin(scene, u, g, "연습")[:, 0].mean(), -g))
-            dropin = {p: bench.dropin(scene, u, g, p) for p in ("연습", "실전")}
+            alone, dropin, g = measure(bench, scene, sc[scene])
             seen = bench.seen[scene][bench.part(scene, "실전")]
             ref = {p: bench.v05[scene][bench.part(scene, p)] for p in ("연습", "실전")}
             d = pstats(ref["실전"], dropin["실전"])

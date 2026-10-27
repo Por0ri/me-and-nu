@@ -9,8 +9,10 @@
 # - 인기: AniList popularity (그 작품을 목록에 담은 사람 수)
 # - 최근 인기: AniList 유저 표본(fetch_anilist_lists.py)에서 최근 30일 안에 목록을 고친 기록 수. 표본이 없으면 0
 #   (표본 원본은 12/31까지 지우기로 약속 → 그 뒤엔 AniList trending 이나 me;nu 기록으로 바꿔야 함)
-# - 같이 본 작품 · EASE: MAL 시청 기록을 AniList 번호로 바꿔서 센다. MAL 표본은 2022-03 에 모아서
-#   2022년 이후 작품은 기록이 없거나 일부뿐 → 기록을 지우고 비슷한 작품에서 빌려 온다 (EXP-23 · 28과 같은 방식)
+# - 같이 본 작품 · EASE: MAL 시청 기록 (AniList 번호로 바꿈) + AniList 유저 표본 (EXP-36 · 37). MAL 표본은 2022-03 에 모아서
+#   2022년 이후 작품은 기록이 없거나 일부뿐 → MAL 에선 그 작품 기록을 빼고 AniList 표본 기록으로 센다.
+#   같이 본 유저가 100명 미만인 작품은 비슷한 작품에서 빌려 온다 (EXP-23 · 28과 같은 방식). build(cowatch="mal") = MAL 만
+#   (표본 원본은 12/31 삭제 약속 → 그 전에 같이 본 횟수 표만 저장해 두고 그걸로 계산해야 함)
 # - 커뮤니티 추천: AniList recommendations (links.jsonl)
 
 import csv
@@ -105,6 +107,27 @@ def mal_histories(entries):
     return [ar.History(t[a:b], anime[a:b], status[a:b], score[a:b], fav[a:b]) for a, b in zip(starts, ends)]
 
 
+def anilist_histories(entries):
+    """AniList 유저 표본 → 유저마다 History (목록 안 작품, 모든 기록). 같이 본 작품 재료 (EXP-36). 표본이 없으면 빈 목록
+    (원본은 12/31 삭제 약속 → 그 전에 같이 본 횟수 표로 바꿔 둬야 함)"""
+    if not ANILIST_USERS.exists():
+        return []
+    from model.eval.anilist_test import history, load_users
+    ids = np.array(sorted(e["anilist_id"] for e in entries), dtype=np.int64)
+    return [history(u, m) for u in load_users().values() for m in [np.isin(u["anime"], ids)] if m.any()]
+
+
+def no_mal_ids(entries):
+    # MAL 같이 본 기록을 안 쓰는 작품: 2022년 이후 · MAL 번호 없음 (위 설명)
+    return {e["anilist_id"] for e in entries if e["year"] >= NO_COWATCH_FROM or not e["mal_id"]}
+
+
+def without(histories, ids):
+    # 기록에서 ids 작품을 뺌. 남는 기록이 없는 유저는 뺌
+    drop = np.array(sorted(ids), dtype=np.int64)
+    return [ar.History(*(col[keep] for col in h)) for h in histories for keep in [~np.isin(h.anime, drop)] if keep.any()]
+
+
 def anilist_events():
     """AniList 유저 표본 → (작품 번호 배열, 목록을 마지막으로 고친 시각 배열). 최근 인기용. 표본이 없으면 None"""
     if not ANILIST_USERS.exists():
@@ -120,12 +143,24 @@ def anilist_events():
 
 
 # ## 3. 문맥
-def build():
-    """서비스 문맥 = 기본 문맥 + MAL 기록으로 센 같이 본 작품 (2022년 이후 · MAL 번호 없는 작품은 기록을 지우고 빌려 옴)"""
+COWATCH = "both"     # 같이 본 작품 재료 기본값 (EXP-37)
+MIN_USERS = 100      # 같이 본 유저가 이 수 미만인 작품은 적은 기록 대신 비슷한 작품에서 빌려 옴 (EXP-37, 10 · 30 · 100 · 300 중)
+
+
+def build(cowatch=COWATCH, min_users=MIN_USERS):
+    """서비스 문맥 = 기본 문맥 + 같이 본 작품. cowatch:
+    "both" (기본, EXP-37) = MAL (2022년 이후 · MAL 번호 없는 작품 기록은 뺌) + AniList 표본. 같이 본 유저가 min_users 명 미만인
+      작품은 빌려 옴 (기록이 묵어도 버팀, EXP-35 ②). EASE 규제는 기록 유저 수에 비례 (anilist_test.variants 와 같음)
+    "mal" = MAL 기록만 (2022년 이후 · MAL 번호 없는 작품은 기록을 지우고 빌려 옴). 표본이 없으면 이쪽"""
     ctx = base()
     entries = ctx["entries"]
-    no_record = {e["anilist_id"] for e in entries if e["year"] >= NO_COWATCH_FROM or not e["mal_id"]}
-    add_cowatch(ctx, mal_histories(entries), no_record)
+    mal, no_mal = mal_histories(entries), no_mal_ids(entries)
+    al = anilist_histories(entries) if cowatch == "both" else []
+    if al:
+        hs = without(mal, no_mal) + al
+        add_cowatch(ctx, hs, lam=ar.EASE_LAMBDA * len(hs) / len(mal), min_users=min_users)
+    else:
+        add_cowatch(ctx, mal, no_mal)
     return ctx
 
 
@@ -159,13 +194,14 @@ def base(popularity=None, events=None):
     return ctx
 
 
-def add_cowatch(ctx, histories, no_record=None, lam=None):
+def add_cowatch(ctx, histories, no_record=None, lam=None, min_users=1):
     """같이 본 작품 · EASE · 빌려 오기를 붙인다 (목록 전체 작품). no_record: 기록을 지우고 빌려 올 작품.
-    안 주면 기록이 하나도 없는 작품. ctx["no_record"] 에 남김. lam: EASE 규제 세기 (기본 anime_ranker.EASE_LAMBDA)"""
+    안 주면 기록한 유저가 min_users 명 미만인 작품 (기본 1 = 기록이 하나도 없는 작품. 기록이 적은 작품도 빌려 오기, 1-3b).
+    ctx["no_record"] 에 남김. lam: EASE 규제 세기 (기본 anime_ranker.EASE_LAMBDA)"""
     ar.build_cowatch(ctx, histories, n_items=len(ctx["ids"]))
     C = ctx["cw_count"]
     if no_record is None:
-        no_record = set(ctx["ids"][ctx["cw_rows"][np.diag(C) == 0]].tolist())
+        no_record = set(ctx["ids"][ctx["cw_rows"][np.diag(C) < min_users]].tolist())
     pos = ctx["cw_pos"][ar.rows_of(ctx, sorted(no_record))]
     C[pos, :] = 0                                                # 일부만 있는 기록은 지운다 (new_anime_test.masked 와 같음)
     C[:, pos] = 0
