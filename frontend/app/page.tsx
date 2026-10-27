@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import ApiHealthCheck from "@/components/ApiHealthCheck";
 import AuthIntegrationTest from "@/components/AuthIntegrationTest";
 import ContentBrowser from "@/components/ContentBrowser";
@@ -11,7 +13,13 @@ const checks = [
   ["반응", "O/X·좋아요·북마크 설정과 취소"],
 ];
 
-export default function Home() {
+export default async function Home() {
+  const host = (await headers()).get("host")?.toLowerCase();
+  // Route selection only, not authentication or API access control.
+  if (host === "test.me-nu.kr") {
+    redirect("/pivot/login");
+  }
+
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl px-5 py-12 sm:px-8 lg:py-20">
       <header className="mb-10">
