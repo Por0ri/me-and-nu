@@ -4,25 +4,6 @@ from __future__ import annotations
 
 from ani_menu_agent.models import ContentPackage
 
-AI_DISCLOSURE_TEXT = "이 콘텐츠는 출처를 기반하여 AI로 생성한 콘텐츠입니다."
-
-
-def render_detail_markdown(package: ContentPackage) -> str:
-    """Build the reader-facing detail article, source list, and required disclosure."""
-    lines = [package.detail_body.strip(), "", "## 출처", ""]
-    allowed_source_ids = set(package.detail_source_ids)
-    seen_sources: set[str] = set()
-    for source in package.sources:
-        if allowed_source_ids and source.id not in allowed_source_ids:
-            continue
-        url = str(source.url)
-        if url in seen_sources:
-            continue
-        seen_sources.add(url)
-        lines.append(f"- [{source.publisher} — {source.title}]({url})")
-    lines.extend(["", AI_DISCLOSURE_TEXT, ""])
-    return "\n".join(lines).rstrip() + "\n"
-
 
 def render_markdown(package: ContentPackage) -> str:
     """Export cards without making Markdown the canonical storage format."""
@@ -73,14 +54,5 @@ def render_markdown(package: ContentPackage) -> str:
                             f"  - 출처: [{source.publisher} — {source.title}]({source.url})"
                         )
             lines.append("")
-
-    if package.detail_body.strip():
-        lines.extend(["## 자세히 보기", "", render_detail_markdown(package)])
-    else:
-        lines.extend(["## 출처", ""])
-        for source in package.sources:
-            url = str(source.url)
-            lines.append(f"- [{source.publisher} — {source.title}]({url})")
-        lines.extend(["", AI_DISCLOSURE_TEXT, ""])
 
     return "\n".join(lines).rstrip() + "\n"

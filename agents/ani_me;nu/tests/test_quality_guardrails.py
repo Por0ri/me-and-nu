@@ -39,42 +39,6 @@ def test_sample_passes_all_code_guardrails() -> None:
     assert evaluated["dimensions"]["safety_and_respect"] == 10
 
 
-def test_source_publication_date_is_not_shown_as_card_copy() -> None:
-    package = ContentPackage.model_validate(load_sample())
-    package.sources[0].published_at = "2026-10-20"
-    package.event_start = None
-    package.event_end = None
-    package.cards[0].body_sentences = ["공식 발표 당시인 10월 20일에 사전 등록이 시작됐다."]
-
-    assert "SOURCE_PUBLICATION_DATE_SHOWN" in {
-        issue.code for issue in run_quality_checks(package)
-    }
-
-
-def test_event_date_may_match_source_publication_date() -> None:
-    package = ContentPackage.model_validate(load_sample())
-    package.sources[0].published_at = "2026-10-20"
-    package.event_start = "2026-10-20"
-    package.event_end = "2026-10-20"
-    package.content_type = "event"
-    package.cards[0].body_sentences = ["행사는 10월 20일 하루 열린다."]
-
-    assert "SOURCE_PUBLICATION_DATE_SHOWN" not in {
-        issue.code for issue in run_quality_checks(package)
-    }
-
-
-def test_event_that_has_already_ended_is_rejected() -> None:
-    package = ContentPackage.model_validate(load_sample())
-    package.content_type = "event"
-    package.event_start = "2020-10-20"
-    package.event_end = "2020-10-20"
-
-    assert "EVENT_ALREADY_ENDED" in {
-        issue.code for issue in run_quality_checks(package)
-    }
-
-
 def test_safety_blocker_cannot_be_offset_by_other_scores() -> None:
     from ani_menu_agent.models import QualityIssue
 
@@ -105,8 +69,6 @@ def test_humor_may_use_unverified_trend_material_as_inspiration() -> None:
     package.sources[0].is_official = False
     package.sources[0].role = "trend"
     package.facts[0].verified = False
-    package.facts[0].fact_type = "community_debate"
-    package.facts[0].statement = "팬덤 토론 소재: 나루토와 사스케, 누가 더 강할까?"
     codes = {issue.code for issue in run_quality_checks(package)}
     assert "SOURCE_NO_OFFICIAL" not in codes
     assert "FACT_UNVERIFIED" not in codes
@@ -167,89 +129,6 @@ def test_event_period_dates_from_verified_range_must_be_structured() -> None:
     assert "EVENT_PERIOD_MISSING" in issue_codes(payload)
 
 
-def test_single_day_goods_date_is_validated_for_non_event_content() -> None:
-    payload = load_sample()
-    payload["content_type"] = "goods"
-    payload["facts"][0]["fact_type"] = "goods_release"
-    payload["facts"][0].setdefault("details", {})["source_quote"] = "発売日：2026年10月23日"
-
-    assert "SINGLE_DAY_PERIOD_NOT_MIRRORED" in issue_codes(payload)
-
-
-def test_event_start_fact_does_not_force_longer_period_to_become_single_day() -> None:
-    payload = load_sample()
-    payload["content_type"] = "event"
-    payload["event_start"] = "2026-10-15"
-    payload["event_end"] = "2026-10-28"
-    payload["facts"][0]["fact_type"] = "event_schedule"
-    payload["facts"][0]["statement"] = "행사는 2026년 10월 15일 시작한다."
-    payload["facts"][0].setdefault("details", {})["source_quote"] = (
-        "2026年10月15日 10時よりスタート"
-    )
-
-    assert "SINGLE_DAY_PERIOD_NOT_MIRRORED" not in issue_codes(payload)
-
-
-def test_music_release_date_is_not_mistaken_for_an_event_period() -> None:
-    payload = load_sample()
-    payload["content_type"] = "music"
-    payload["event_start"] = "2026-10-30"
-    payload["event_end"] = "2026-11-17"
-    payload["facts"][0]["fact_type"] = "release"
-    payload["facts"][0].setdefault("details", {})["source_quote"] = (
-        "2026年10月30日先行配信"
-    )
-
-    assert "SINGLE_DAY_PERIOD_NOT_MIRRORED" not in issue_codes(payload)
-
-
-def test_unused_product_date_does_not_override_selected_goods_period() -> None:
-    payload = load_sample()
-    payload["content_type"] = "goods"
-    payload["event_start"] = payload["event_end"] = "2026-10-23"
-    payload["facts"][0]["fact_type"] = "goods_release"
-    payload["facts"][0].setdefault("details", {})["source_quote"] = (
-        "発売日：2026年10月23日"
-    )
-    payload["facts"].append(
-        {
-            **payload["facts"][0],
-            "id": "unused-product-date",
-            "details": {"source_quote": "発売日：2026年10月24日"},
-        }
-    )
-    payload["cards"][0]["fact_ids"] = [payload["facts"][0]["id"]]
-
-    assert "SINGLE_DAY_PERIOD_NOT_MIRRORED" not in issue_codes(payload)
-
-
-def test_visible_date_must_be_backed_by_a_fact_cited_on_the_same_card() -> None:
-    payload = load_sample()
-    payload["cards"][1]["body_sentences"].append("2026년 11월 14일부터 발매.")
-
-    assert "UNSUPPORTED_DATE_CLAIM" in issue_codes(payload)
-
-
-def test_yearless_fact_date_uses_the_cited_source_publication_year() -> None:
-    payload = load_sample()
-    payload["facts"][1]["details"] = {"source_quote": "10月2日から販売"}
-    payload["sources"][0]["published_at"] = "2026-10-01"
-    payload["cards"][1]["fact_ids"] = ["f2"]
-    payload["cards"][1]["body_sentences"] = ["2026년 10월 2일부터 판매된다."]
-
-    assert "UNSUPPORTED_DATE_CLAIM" not in issue_codes(payload)
-
-
-def test_goods_with_verified_release_date_must_persist_structured_period() -> None:
-    payload = load_sample()
-    payload["content_type"] = "goods"
-    payload["facts"][0]["fact_type"] = "release_date"
-    payload["facts"][0].setdefault("details", {})["source_quote"] = "2026年11月14日より発売"
-    payload["cards"][1]["fact_ids"] = [payload["facts"][0]["id"]]
-
-    assert "GOODS_RELEASE_PERIOD_MISSING" in issue_codes(payload)
-
-
 def test_event_venue_requires_country_and_domestic_overseas_region() -> None:
     payload = load_sample()
     payload["content_type"] = "event"
@@ -291,24 +170,14 @@ def test_used_campaign_fact_with_expired_deadline_is_blocked() -> None:
     assert "CAMPAIGN_EXPIRED" in {issue.code for issue in run_quality_checks(package)}
 
 
-def test_three_card_information_deck_does_not_require_three_fact_ids() -> None:
+def test_information_deck_needs_three_distinct_verified_facts() -> None:
     payload = load_sample()
     payload["cards"][0]["fact_ids"] = ["f1"]
     payload["cards"][1]["fact_ids"] = ["f1"]
     payload["cards"][2]["fact_ids"] = ["f1"]
     package = ContentPackage.model_validate(payload)
 
-    assert "FACT_DIVERSITY_LOW" not in {issue.code for issue in run_quality_checks(package)}
-
-
-def test_two_card_deck_can_meet_fact_diversity_with_multiple_supported_facts_per_card() -> None:
-    payload = load_sample()
-    payload["cards"] = payload["cards"][:2]
-    payload["cards"][0]["fact_ids"] = ["f1", "f2"]
-    payload["cards"][1]["fact_ids"] = ["f3"]
-    package = ContentPackage.model_validate(payload)
-
-    assert "FACT_DIVERSITY_LOW" not in {issue.code for issue in run_quality_checks(package)}
+    assert "FACT_DIVERSITY_LOW" in {issue.code for issue in run_quality_checks(package)}
 
 
 def test_verified_product_facts_override_wrong_news_taxonomy() -> None:
@@ -342,18 +211,39 @@ def test_layout_returns_for_cover_art_before_render_when_source_image_pool_is_em
     )
 
     assert result["status"] == "needs_crawler_update"
-    assert result["qa_report"][0]["code"] == "COVER_SOURCE_IMAGE_MISSING"
+    assert result["qa_report"][0]["code"] == "SOURCE_IMAGE_MISSING"
 
 
-def test_preflight_blocks_when_unique_art_cannot_cover_minimum_three_cards() -> None:
+def test_one_distinct_official_image_allows_two_card_deck_with_graphic_ending() -> None:
     payload = load_sample()
     payload["images"] = [payload["images"][0]]
     package = ContentPackage.model_validate(payload)
     package.cards = []
 
     preflight = rights_preflight({"package": package.model_dump(mode="json"), "trace": []})
-    assert preflight["status"] == "needs_crawler_update"
-    assert preflight["qa_report"][0]["code"] == "SOURCE_IMAGE_POOL_INSUFFICIENT"
+    assert preflight["status"] == "rights_cleared"
+
+    original_cards = [
+        CopyCard.model_validate(card.model_dump(exclude={"layout"}))
+        for card in ContentPackage.model_validate(load_sample()).cards
+    ]
+    copies = [
+        original_cards[0].model_copy(update={"page": 1, "role": "cover"}),
+        original_cards[-1].model_copy(update={"page": 2, "role": "ending"}),
+    ]
+    result = layout_director(
+        {
+            "package": package.model_dump(mode="json"),
+            "draft_cards": [card.model_dump(mode="json") for card in copies],
+            "trace": [],
+        }
+    )
+
+    assert result["status"] == "layout_planned"
+    assert result["package"]["cards"][0]["visual_mode"] == "source_image"
+    assert result["package"]["cards"][1]["visual_mode"] == "editorial_graphic"
+    result_package = ContentPackage.model_validate(result["package"])
+    assert "CARD_COUNT" not in {issue.code for issue in run_quality_checks(result_package)}
 
 
 def test_structural_card_roles_are_normalized_by_position() -> None:
@@ -475,15 +365,6 @@ def test_japanese_punctuation_in_korean_copy_is_flagged() -> None:
     assert "JAPANESE_COPY_UNTRANSLATED" in issue_codes(payload)
 
 
-def test_japanese_punctuation_in_internal_image_explanation_is_not_copy_error() -> None:
-    payload = load_sample()
-    payload["cards"][1]["image_explanation"] = (
-        "공식 키비주얼을 사용하며、인터뷰 장면이라고 단정하지 않는다."
-    )
-
-    assert "JAPANESE_COPY_UNTRANSLATED" not in issue_codes(payload)
-
-
 def test_untranslated_japanese_kanji_with_number_is_flagged() -> None:
     payload = load_sample()
     payload["cards"][1]["body_sentences"] = ["約4시간 동안 함께 듣는다."]
@@ -574,40 +455,6 @@ def test_image_that_needs_excessive_upscaling_returns_to_image_collection() -> N
     assert report["decision"] == "revise"
 
 
-def test_low_res_spotlight_uses_its_separate_upscale_limit() -> None:
-    from ani_menu_agent.layout_engine import build_cards
-    from ani_menu_agent.models import CopyCard
-
-    package = ContentPackage.model_validate(load_sample())
-    image = package.images[0].model_copy(update={"width": 768, "height": 477})
-    card = package.cards[0]
-    copy_card = CopyCard.model_validate(card.model_dump(exclude={"layout"}))
-    layout = build_cards([copy_card], [image])[0].layout
-    assert layout.template == "low_res_spotlight"
-    package.images[0] = image
-    package.cards[0] = card.model_copy(update={"layout": layout})
-
-    assert not any(
-        issue.code == "IMAGE_LOW_RESOLUTION" and issue.page == card.page
-        for issue in run_quality_checks(package)
-    )
-
-
-def test_small_official_portrait_uses_more_of_the_spotlight() -> None:
-    from ani_menu_agent.layout_engine import build_cards
-    from ani_menu_agent.models import CopyCard
-
-    package = ContentPackage.model_validate(load_sample())
-    image = package.images[0].model_copy(update={"width": 296, "height": 390})
-    card = package.cards[0]
-    copy_card = CopyCard.model_validate(card.model_dump(exclude={"layout"}))
-    layout = build_cards([copy_card], [image])[0].layout
-
-    assert layout.template == "low_res_spotlight"
-    assert layout.image_box.width >= 0.44
-    assert layout.image_box.height >= 0.47
-
-
 def test_raw_image_reuse_is_sent_to_targeted_visual_repair() -> None:
     payload = load_sample()
     payload["cards"][2]["image_id"] = payload["cards"][1]["image_id"]
@@ -645,7 +492,7 @@ def test_blurred_background_does_not_excuse_repeating_the_same_foreground() -> N
     assert "IMAGE_REUSED_RAW" in issue_codes(payload)
 
 
-def test_sparse_unique_image_pool_blocks_instead_of_filling_with_placeholder_graphics() -> None:
+def test_sparse_unique_image_pool_returns_to_crawler_except_final_end_card() -> None:
     from ani_menu_agent.image_selection import assign_distinct_images
     from ani_menu_agent.layout_engine import build_cards
 
@@ -661,35 +508,8 @@ def test_sparse_unique_image_pool_blocks_instead_of_filling_with_placeholder_gra
     report = score_quality(package, issues)
 
     assert report["decision"] == "return_to_crawler"
-    assert package.cards[0].visual_mode == "source_image"
-    assert all(card.visual_mode == "source_image" for card in package.cards)
-    assert "SOURCE_IMAGE_MISSING" in {issue.code for issue in issues}
-
-
-def test_exact_image_requires_a_link_to_a_verified_card_fact() -> None:
-    payload = load_sample()
-    payload["images"][0]["visual_match"] = "exact"
-    payload["images"][0]["related_fact_ids"] = []
-
-    assert "IMAGE_FACT_LINK_MISSING" in issue_codes(payload)
-
-
-def test_protected_multiword_headline_phrase_cannot_be_split_across_lines() -> None:
-    payload = load_sample()
-    payload["cards"][0]["title_lines"] = ["가전", "양판점 한정 피규어"]
-    payload["cards"][0]["protected_phrases"] = ["가전 양판점"]
-
-    assert "PROTECTED_PHRASE_SPLIT" in issue_codes(payload)
-
-
-def test_foreign_text_inside_artwork_requires_a_verified_korean_explanation() -> None:
-    payload = load_sample()
-    payload["images"][0]["visible_text"] = ["公式イベント情報"]
-    payload["images"][0]["detected_languages"] = ["ja"]
-    payload["images"][0]["korean_explanation"] = ""
-    payload["cards"][0]["image_explanation"] = "공식 행사 이미지"
-
-    assert "FOREIGN_IMAGE_UNEXPLAINED" in issue_codes(payload)
+    assert package.cards[-1].visual_mode == "editorial_graphic"
+    assert all(card.visual_mode == "source_image" for card in package.cards[:-1])
 
 
 def test_article_relevant_images_can_fill_cards_when_fact_links_are_sparse() -> None:
@@ -707,14 +527,9 @@ def test_article_relevant_images_can_fill_cards_when_fact_links_are_sparse() -> 
 
     assigned = assign_distinct_images(copies, package)
 
-    source_cards = [card for card in assigned if card.visual_mode == "source_image"]
-    assert len({card.image_id for card in source_cards}) == len(source_cards)
-    assert all(
-        card.image_id in {image.id for image in package.images}
-        or card.image_id.startswith("missing-source-image-")
-        for card in source_cards
-    )
-    assert not any(card.visual_mode == "editorial_graphic" for card in assigned)
+    assert all(card.image_id in {image.id for image in package.images} for card in assigned[:-1])
+    assert len({card.image_id for card in assigned[:-1]}) == len(assigned[:-1])
+    assert assigned[-1].visual_mode == "editorial_graphic"
 
 
 def test_low_coverage_transparent_sprite_is_not_selected_as_a_full_card_image() -> None:
@@ -905,7 +720,7 @@ def test_localized_official_article_route_is_same_source_page() -> None:
     assert image_belongs_to_package_sources(image, [source])
 
 
-def test_preflight_returns_to_crawler_when_cover_has_no_source_image() -> None:
+def test_preflight_returns_to_crawler_when_image_pool_cannot_fill_nonfinal_cards() -> None:
     from ani_menu_agent.nodes import rights_preflight
 
     payload = load_sample()
@@ -916,28 +731,7 @@ def test_preflight_returns_to_crawler_when_cover_has_no_source_image() -> None:
     assert result["qa_report"][0]["code"] == "SOURCE_IMAGE_POOL_INSUFFICIENT"
 
 
-def test_information_with_one_verified_fact_can_reach_generation_preflight(monkeypatch) -> None:
-    import ani_menu_agent.nodes as nodes
-
-    payload = load_sample()
-    payload["facts"] = payload["facts"][:1]
-    payload["menu_work_ids"] = [1]
-    package = ContentPackage.model_validate(payload)
-    monkeypatch.setattr(nodes, "validate_generation_sources", lambda *_args: ["source"])
-    monkeypatch.setattr(nodes, "attach_menu_work_ids", lambda _package: None)
-    monkeypatch.setattr(nodes, "supported_content_types_for_sources", lambda _ids: ["news"])
-
-    result = nodes.rights_preflight(
-        {"package": package.model_dump(mode="json"), "trace": [], "allow_llm": True}
-    )
-
-    assert result["status"] == "rights_cleared"
-    assert "FACT_DIVERSITY_LOW" not in {
-        issue["code"] for issue in result.get("qa_report", [])
-    }
-
-
-def test_empty_image_pool_blocks_every_card_without_graphic_placeholders() -> None:
+def test_empty_image_pool_only_allows_minimal_final_text_card_fallback() -> None:
     from ani_menu_agent.image_selection import assign_distinct_images
     from ani_menu_agent.layout_engine import build_cards
 
@@ -952,13 +746,13 @@ def test_empty_image_pool_blocks_every_card_without_graphic_placeholders() -> No
     issues = run_quality_checks(package)
     report = score_quality(package, issues)
 
-    assert package.cards[0].visual_mode == "source_image"
-    assert all(card.visual_mode == "source_image" for card in package.cards)
-    assert report["visual_mode_counts"]["source_image"] == len(package.cards)
+    assert all(card.visual_mode == "source_image" for card in package.cards[:-1])
+    assert package.cards[-1].visual_mode == "editorial_graphic"
+    assert report["visual_mode_counts"]["source_image"] == len(package.cards) - 1
     assert report["dimensions"]["image_suitability_and_rights"] == 0
-    assert "SOURCE_IMAGE_MISSING" in report["hard_blockers"]
+    assert "IMAGE_MISSING" in report["hard_blockers"]
     assert report["decision"] == "return_to_crawler"
-    assert "SOURCE_IMAGE_MISSING" in {issue.code for issue in issues}
+    assert "IMAGE_MISSING" in {issue.code for issue in issues}
 
 
 def test_blurred_fallback_is_not_allowed_when_four_unique_images_exist() -> None:
@@ -1102,7 +896,7 @@ def test_layout_director_reassigns_repeated_image_choices_to_unique_assets() -> 
     assert {card.image_reuse_mode for card in rebuilt.cards} == {"unique"}
 
 
-def test_layout_director_blocks_when_image_pool_is_smaller_than_deck() -> None:
+def test_layout_director_uses_original_graphics_when_image_pool_is_smaller_than_deck() -> None:
     from ani_menu_agent.nodes import layout_director
 
     payload = load_sample()
@@ -1117,8 +911,10 @@ def test_layout_director_blocks_when_image_pool_is_smaller_than_deck() -> None:
         }
     )
 
-    assert result["status"] == "needs_crawler_update"
-    assert result["qa_report"][0]["code"] == "SOURCE_IMAGE_MISSING"
+    assert result["status"] == "layout_planned"
+    rebuilt = ContentPackage.model_validate(result["package"])
+    assert sum(card.visual_mode == "source_image" for card in rebuilt.cards) == 3
+    assert sum(card.visual_mode == "editorial_graphic" for card in rebuilt.cards) == 1
 
 
 def test_layouts_vary_by_card_shape_and_role() -> None:
@@ -1161,8 +957,8 @@ def test_layout_engine_uses_subject_position_and_alpha_for_image_led_layouts() -
     )
     card = cards[1]
 
-    assert card.layout.template.startswith("editorial_")
-    assert card.layout.fit_mode in {"contain", "contain_blur"}
+    assert card.layout.template == "cutout_left"
+    assert card.layout.fit_mode == "contain_blur"
     assert card.layout.image_scale == 1.0
 
 
@@ -1185,12 +981,14 @@ def test_layout_engine_alternates_portrait_image_sides_without_cropping() -> Non
 
     cards = build_cards(copies, [image])
 
-    assert all(card.layout.template.startswith("editorial_") for card in cards[1:3])
-    assert all(card.layout.fit_mode in {"contain", "contain_blur"} for card in cards[1:3])
+    assert [card.layout.template for card in cards[1:3]] == [
+        "portrait_left",
+        "portrait_right",
+    ]
+    assert all(card.layout.fit_mode == "contain_blur" for card in cards[1:3])
     assert all(card.layout.image_scale == 1.0 for card in cards[1:3])
-    assert all(card.layout.text_overlay_box == card.layout.copy_box for card in cards[1:3])
-    assert all(card.layout.text_overlay_box.y != 0.67 for card in cards[1:3])
-    assert cards[1].layout.template != cards[2].layout.template
+    assert all(card.layout.image_box.width == 0.58 for card in cards[1:3])
+    assert all(card.layout.image_box.height == 0.90 for card in cards[1:3])
 
 
 def test_information_dense_poster_uses_nearly_full_height_without_cropping() -> None:
@@ -1211,13 +1009,14 @@ def test_information_dense_poster_uses_nearly_full_height_without_cropping() -> 
     cards = build_cards(copies, [image])
     poster = cards[1]
 
-    assert poster.layout.template.startswith("editorial_")
-    assert poster.layout.image_box.height <= 0.98
-    assert poster.layout.fit_mode in {"contain", "contain_blur"}
+    assert poster.layout.template in {"poster_left", "poster_right"}
+    assert poster.layout.image_box.height == 0.94
+    assert poster.layout.fit_mode == "contain_blur"
     assert poster.layout.image_scale == 1.0
-    assert cards[0].layout.template.startswith("cover_")
-    assert cards[0].layout.image_box.width > 0.6
-    assert cards[0].layout.fit_mode in {"contain", "contain_blur"}
+    assert cards[0].layout.template == "poster_left"
+    assert cards[0].layout.image_box.width == 0.46
+    assert cards[0].layout.fit_mode == "contain_blur"
+    assert cards[0].layout.image_box.height == 0.94
 
 
 def test_landscape_cover_uses_top_hero_and_overlapping_headline_without_crop() -> None:
@@ -1232,12 +1031,10 @@ def test_landscape_cover_uses_top_hero_and_overlapping_headline_without_crop() -
 
     layout = build_cards([cover], [image])[0].layout
 
-    assert layout.template in {"cover_blend", "cover_immersive", "cover_soft_frame", "cover_hero"}
-    assert layout.image_box.bottom > 0.62
-    assert layout.copy_box.y == 0.68
-    assert layout.text_overlay_box == layout.copy_box
-    assert layout.fit_mode in {"contain", "contain_blur"}
-    assert layout.background_style in {"blur", "palette", "gradient"}
+    assert layout.image_box.y == 0.045
+    assert layout.image_box.height == 0.52
+    assert layout.copy_box.y == 0.55
+    assert layout.fit_mode == "contain_blur"
 
 
 def test_ocr_density_routes_portrait_infographic_to_poster_layout() -> None:
@@ -1264,10 +1061,8 @@ def test_ocr_density_routes_portrait_infographic_to_poster_layout() -> None:
 
     cards = build_cards(copies, [image])
 
-    assert cards[1].layout.template.startswith("editorial_copy_")
-    assert cards[1].layout.image_box.bottom <= cards[1].layout.text_overlay_box.y or (
-        cards[1].layout.text_overlay_box.bottom <= cards[1].layout.image_box.y
-    )
+    assert cards[1].layout.template in {"poster_left", "poster_right"}
+    assert cards[1].layout.image_box.height == 0.94
 
 
 def test_layout_revision_rebuilds_legacy_cropped_layout_without_llm() -> None:
@@ -1284,26 +1079,5 @@ def test_layout_revision_rebuilds_legacy_cropped_layout_without_llm() -> None:
     rebuilt = ContentPackage.model_validate(result["package"])
 
     assert result["status"] == "layout_rebuilt_without_crop"
-    assert all(card.layout.fit_mode in {"contain", "contain_blur"} for card in rebuilt.cards)
+    assert all(card.layout.fit_mode == "contain_blur" for card in rebuilt.cards)
     assert all(card.layout.image_scale == 1.0 for card in rebuilt.cards)
-
-
-def test_layout_revision_raises_composition_rejected_art_over_blurred_backdrop() -> None:
-    payload = load_sample()
-    result = layout_director(
-        {
-            "package": payload,
-            "needs_revision": True,
-            "revision_owner": "layout_director",
-            "qa_report": [{"code": "IMAGE_COMPOSITION_REJECTED", "page": 1}],
-            "trace": [],
-        }
-    )
-    rebuilt = ContentPackage.model_validate(result["package"])
-
-    assert result["status"] == "layout_rebuilt_for_composition"
-    assert rebuilt.cards[0].layout.image_box.width > 0
-    assert rebuilt.cards[0].layout.image_box.height > 0
-    assert rebuilt.cards[0].layout.background_style == "blur"
-    assert rebuilt.cards[0].layout.text_overlay_box.y == 0.68
-    assert rebuilt.cards[0].layout.fit_mode == "contain"

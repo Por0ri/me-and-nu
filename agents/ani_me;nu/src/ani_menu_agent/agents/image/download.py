@@ -32,20 +32,10 @@ def _host(value: str) -> str:
 
 def _source_for_image(package: ContentPackage, image: ImageAsset) -> SourceEvidence:
     page_host = _host(str(image.source_url))
-    sources = list(package.sources)
-    if image.provenance_source and all(
-        str(source.url) != str(image.provenance_source.url) for source in sources
-    ):
-        sources.append(image.provenance_source)
-    for source in sources:
-        if image.official and source.is_official and source.role == "primary":
-            if _host_is_allowed(page_host, source):
-                return source
-        if (
-            not image.official
-            and source.role in {"editorial", "reference"}
-            and image.public_editorial_source_matches([source])
-        ):
+    for source in package.sources:
+        if not source.is_official or source.role != "primary":
+            continue
+        if _host_is_allowed(page_host, source):
             return source
     raise ImageDownloadError("공식 1차 출처와 연결되지 않은 이미지라 다운로드를 보류했습니다.")
 
@@ -143,65 +133,6 @@ def _check_robots(
                 if robots_cache is not None:
                     robots_cache[robots_url] = None
                 return
-            use_publisher_policy = response.is_redirect
-            source_host = _host(str(source.url))
-            asset_host = _host(url)
-            if response.status_code in {401, 403}:
-                # Some explicitly allowlisted publisher CDNs deny access to
-                # their own robots.txt while serving the linked image assets.
-                # In that case, consult only the registered source page's
-                # robots policy; never infer permission from the CDN error.
-                if asset_host != source_host and _host_is_allowed(asset_host, source):
-                    use_publisher_policy = True
-                else:
-                    raise ImageDownloadError(
-                        f"robots.txt 확인 실패: HTTP {response.status_code}"
-                    )
-            if use_publisher_policy:
-                # Some publisher CDNs redirect /robots.txt to the publisher
-                # homepage instead of serving a CDN policy. A 401/403 from an
-                # allowlisted CDN uses the same publisher-policy fallback.
-                location = response.headers.get("location")
-                target_host = _host(urljoin(robots_url, location or ""))
-                if (
-                    asset_host == source_host
-                    or not _host_is_allowed(asset_host, source)
-                    or (response.is_redirect and (not location or target_host != source_host))
-                ):
-                    raise ImageDownloadError(
-                        f"robots.txt 확인 실패: HTTP {response.status_code}"
-                    )
-                robots_url = f"{urlparse(str(source.url)).scheme}://{source_host}/robots.txt"
-                _validate_public_https(robots_url, source)
-                with client.stream("GET", robots_url) as canonical_response:
-                    if canonical_response.status_code in {404, 410}:
-                        if robots_cache is not None:
-                            robots_cache[robots_url] = None
-                        return
-                    if canonical_response.status_code != 200:
-                        raise ImageDownloadError(
-                            "CDN robots.txt redirects to the publisher, but its policy "
-                            "could not be read."
-                        )
-                    chunks: list[bytes] = []
-                    size = 0
-                    for chunk in canonical_response.iter_bytes():
-                        size += len(chunk)
-                        if size > MAX_ROBOTS_BYTES:
-                            raise ImageDownloadError(
-                                "publisher robots.txt exceeds the 256KB safety limit."
-                            )
-                        chunks.append(chunk)
-                parser = RobotFileParser(robots_url)
-                parser.parse(b"".join(chunks).decode("utf-8", errors="replace").splitlines())
-                if robots_cache is not None:
-                    robots_cache[robots_url] = parser
-                    robots_cache[f"{parsed.scheme}://{parsed.netloc}/robots.txt"] = parser
-                if not parser.can_fetch("me-nu-content-agent", url):
-                    raise ImageDownloadError(
-                        "publisher robots.txt does not allow this public image path."
-                    )
-                return
             if response.status_code != 200:
                 raise ImageDownloadError(f"robots.txt 확인 실패: HTTP {response.status_code}")
             chunks: list[bytes] = []
@@ -269,12 +200,9 @@ def download_image(
     """이미지를 검증해 메모리에서 PostgreSQL 적재 단계로 전달합니다."""
     if not image.url:
         raise ImageDownloadError("다운로드할 이미지 URL이 없습니다.")
-    if not image.eligible_for_editorial_use(
+    if not image.official or not image.eligible_for_editorial_use(
         package.sources,
-        allow_risk_accepted=(
-            POLICY.allow_public_official_image_risk
-            or POLICY.allow_public_editorial_image_risk
-        ),
+        allow_risk_accepted=POLICY.allow_public_official_image_risk,
     ):
         raise ImageDownloadError(
             "공식 출처 또는 me;nu 사용 근거가 확인되지 않아 다운로드하지 않습니다."

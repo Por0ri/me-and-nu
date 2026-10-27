@@ -4,8 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
-from ani_menu_agent.models import ContentType
-
 
 class Source(BaseModel):
     """하나의 정보 출처."""
@@ -14,8 +12,7 @@ class Source(BaseModel):
     name: str
     url: HttpUrl
     category: str
-    content_types: list[ContentType] = Field(default_factory=list)
-    role: Literal["primary", "editorial", "reference", "discovery", "trend"]
+    role: Literal["primary", "discovery", "trend"]
     collection: Literal["api", "rss", "html", "youtube_rss", "manual"]
     status: Literal[
         "active",
@@ -34,7 +31,6 @@ class Source(BaseModel):
     allowed_asset_hosts: list[str] = Field(default_factory=list)
     feed_url: HttpUrl | None = None
     min_interval_seconds: float = Field(default=2.0, ge=0.0, le=3600.0)
-    discovery_enabled: bool = True
 
     @model_validator(mode="after")
     def validate_status(self) -> "Source":
@@ -47,6 +43,8 @@ class Source(BaseModel):
             raise ValueError("trend 출처는 trend_only 또는 검토 대기 상태여야 합니다.")
         if self.status == "active" and self.collection == "manual":
             raise ValueError("active 출처에는 자동 수집 방식이 필요합니다.")
+        if self.category == "community_trend" and self.collection != "manual":
+            raise ValueError("권한 확인 전 커뮤니티 트렌드 출처는 수동 방식만 허용됩니다.")
         return self
 
 

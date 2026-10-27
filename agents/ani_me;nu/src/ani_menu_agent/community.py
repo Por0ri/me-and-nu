@@ -37,20 +37,13 @@ def to_humor_package(signal: CommunityTrendInput) -> ContentPackage:
     )
     if source is None:
         raise ValueError(f"등록된 커뮤니티 출처가 아닙니다: {signal.source_id}")
-    if (
-        source.role != "trend"
-        or source.status != "trend_only"
-        or source.collection == "manual"
-        or "humor" not in {item.value for item in source.content_types}
-    ):
-        raise ValueError("자동 수집 승인된 유머 출처만 생성 근거로 사용할 수 있습니다.")
 
     expected_host = (urlparse(str(source.url)).hostname or "").lower().rstrip(".")
     actual_host = (urlparse(str(signal.source_url)).hostname or "").lower().rstrip(".")
     if actual_host != expected_host and not actual_host.endswith(f".{expected_host}"):
         raise ValueError("참고 링크의 도메인이 등록된 커뮤니티 출처와 다릅니다.")
 
-    source_id = source.id
+    source_id = f"community:{source.id}"
     observed_at = signal.observed_at or datetime.now(UTC)
     if observed_at.tzinfo is None:
         observed_at = observed_at.replace(tzinfo=UTC)
@@ -84,11 +77,7 @@ def to_humor_package(signal: CommunityTrendInput) -> ContentPackage:
                 source_ids=[source_id],
                 verified=False,
                 fact_type="community_trend",
-                details={
-                    "topic": signal.topic,
-                    "observed_at": observed_at.isoformat(),
-                    "source_url": str(signal.source_url),
-                },
+                details={"topic": signal.topic, "observed_at": observed_at.isoformat()},
             )
         ],
         status="draft",

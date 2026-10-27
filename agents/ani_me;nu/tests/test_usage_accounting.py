@@ -59,9 +59,6 @@ def test_reviewer_returns_its_usage_record(monkeypatch) -> None:
                 "safety_blocker": False,
                 "safety_category": None,
                 "feedback": "자연스럽습니다.",
-                "image_relevance": 5,
-                "image_composition": 5,
-                "visual_feedback": "이미지가 주제에 맞고 장면 자막이 없습니다.",
             }
             for page in range(1, 4)
         ],
@@ -95,10 +92,6 @@ def test_reviewer_returns_its_usage_record(monkeypatch) -> None:
     monkeypatch.setattr(
         "ani_menu_agent.agents.reviewer.agent.AgentRepository.persist_generated_content",
         lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        "ani_menu_agent.agents.reviewer.agent.AgentRepository.get_image_bytes",
-        lambda _self, _key: (b"test-image", "image/png"),
     )
 
     result = review_content(
