@@ -154,6 +154,7 @@ export class ApiError extends Error {
 export const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 export const API_UNAUTHORIZED_EVENT = "api:unauthorized";
 let csrfToken: string | null = null;
+let sessionRequest: Promise<Session> | null = null;
 
 function query(params: Record<string, string | number | boolean | undefined | null>): string {
   const search = new URLSearchParams();
@@ -163,7 +164,7 @@ function query(params: Record<string, string | number | boolean | undefined | nu
   return search.size ? `?${search}` : "";
 }
 
-async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD" && !csrfToken) await getSession();
   const headers = new Headers(init.headers);
@@ -188,10 +189,15 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T;
 }
 
-export async function getSession(): Promise<Session> {
-  const session = await apiRequest<Session>("/api/v1/auth/session");
-  csrfToken = session.csrfToken;
-  return session;
+export function getSession(): Promise<Session> {
+  // Concurrent first reads (including Strict Mode) must share one cookie issuance.
+  if (!sessionRequest) {
+    sessionRequest = apiRequest<Session>("/api/v1/auth/session").then((session) => {
+      csrfToken = session.csrfToken;
+      return session;
+    }).finally(() => { sessionRequest = null; });
+  }
+  return sessionRequest;
 }
 export function register(input: RegisterInput): Promise<DevUser> {
   return apiRequest("/api/v1/dev/auth/register", { method: "POST", body: JSON.stringify(input) });
@@ -234,8 +240,8 @@ export function getProfile(): Promise<Profile> { return apiRequest("/api/v1/user
 export function updateProfile(input: { nickname: string; profileImageId?: null } | { nickname?: string; profileImageId: null }): Promise<Profile> {
   return apiRequest("/api/v1/users/me", { method: "PATCH", body: JSON.stringify(input) });
 }
-export function getMyTopics(options: { includeDeleted?: boolean } = {}): Promise<MyTopicsResponse> {
-  return apiRequest(`/api/v1/me/topics${query(options)}`);
+export function getMyTopics(options: { includeDeleted?: boolean } = {}, init: Pick<RequestInit, "signal"> = {}): Promise<MyTopicsResponse> {
+  return apiRequest(`/api/v1/me/topics${query(options)}`, init);
 }
 export function addMyTopic(topicId: number, subtopicIds: number[]): Promise<{ topic: MyTopic }> {
   return apiRequest("/api/v1/me/topics", { method: "POST", body: JSON.stringify({ topicId, subtopicIds }) });
@@ -251,11 +257,12 @@ export function unsubscribeSubtopic(topicId: number, subtopicId: number): Promis
 }
 export function getFeed(
   topicId: number, options: { subtopicId?: number; cursor?: string; limit?: number } = {},
+  init: Pick<RequestInit, "signal"> = {},
 ): Promise<FeedResponse> {
-  return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`);
+  return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`, init);
 }
-export function getContent(contentId: number, topicId: number): Promise<ContentDetail> {
-  return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`);
+export function getContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal"> = {}): Promise<ContentDetail> {
+  return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`, init);
 }
 export function setPreference(contentId: number, topicId: number, value: Preference): Promise<PreferenceResponse> {
   return apiRequest(`/api/v1/contents/${contentId}/preference`, { method: "PUT", body: JSON.stringify({ topicId, value }) });
@@ -277,8 +284,9 @@ export function unbookmarkContent(contentId: number, topicId: number): Promise<v
 }
 export function getBookmarks(
   options: { q?: string; topicId?: number; cursor?: string; limit?: number } = {},
+  init: Pick<RequestInit, "signal"> = {},
 ): Promise<BookmarksResponse> {
-  return apiRequest(`/api/v1/users/me/bookmarks${query(options)}`);
+  return apiRequest(`/api/v1/users/me/bookmarks${query(options)}`, init);
 }
 export function createChatSession(topicId: number, anchorContentId?: number): Promise<ChatSessionResponse> {
   return apiRequest("/api/v1/chat/sessions", { method: "POST", body: JSON.stringify({ topicId, anchorContentId }) });

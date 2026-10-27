@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createHomeRequestController, type HomeDataSource, type HomeDetailHandler, type HomeState } from "@/lib/pivot/home";
-import type { DemoBookmarkControls } from "@/lib/pivot/saved";
+import type { BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { PivotHomeScreen } from "./home-screen";
 
 const loading: HomeState = { status: "loading" };
@@ -10,7 +10,7 @@ const loading: HomeState = { status: "loading" };
 export function HomeController({ source, onRestart, onViewDetail, onReady, restoreQuery, onMy, onSaved, bookmarks }: {
   source: HomeDataSource; onRestart?: () => void; onViewDetail?: HomeDetailHandler; onReady?: () => void; restoreQuery?: string;
   onMy?: () => void;
-  onSaved?: () => void; bookmarks?: DemoBookmarkControls;
+  onSaved?: () => void; bookmarks?: BookmarkControls;
 }) {
   const [request, setRequest] = useState<{ source: HomeDataSource; state: HomeState }>({ source, state: loading });
   const [attempt, setAttempt] = useState(0);

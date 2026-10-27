@@ -1,4 +1,4 @@
-// FE display models only. These are not the final Pivot API or recommendation contract.
+// Display models shared by Demo and the authenticated API adapter.
 export type HomeSlideModel = {
   id: string;
   order: number;
@@ -10,10 +10,12 @@ export type HomeCardModel = {
   id: string;
   title: string;
   detailContentId: string;
+  topicId?: number;
+  saved?: boolean;
   slides: readonly HomeSlideModel[];
 };
 
-export type HomeDetailTarget = { postId: string; contentId: string };
+export type HomeDetailTarget = { postId: string; contentId: string; topicId?: number };
 export type HomeDetailHandler = (target: HomeDetailTarget) => void;
 
 /** Keep source data immutable; display order is explicit rather than inferred from IDs. */

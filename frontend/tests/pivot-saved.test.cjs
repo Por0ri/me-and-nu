@@ -17,6 +17,8 @@ function load(file) {
   } }).outputText;
   vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, structuredClone,
     require(name) {
+      if (name === '@/lib/api') return {};
+      if (name === './services') return { requirePivotApi() { throw new Error('Test origin not enabled'); } };
       if (name === 'react' || name === 'react/jsx-runtime') return require(name);
       if (name.endsWith('.module.css')) return { default: new Proxy({}, { get: (_, key) => String(key) }), __esModule: true };
       const relative = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(file), name);
@@ -81,11 +83,11 @@ test('Removing all Demo bookmarks produces a real empty state without reseeding'
   assert.match(html, /콘텐츠 보러가기/); assert.doesNotMatch(html, /data-saved-content=/);
   assert.equal((await source.load(options())).saved.cards.length, 0);
 });
-test('Service stays unconfigured and shows no Demo or empty-list success', async () => {
+test('A blocked Service origin shows no Demo or empty-list success', async () => {
   const states = []; await createSavedRequestController(pendingSavedSource, state => states.push(state)).load();
-  assert.deepEqual(states.map(s => s.status), ['loading', 'unconfigured']);
+  assert.deepEqual(states.map(s => s.status), ['loading', 'error']);
   const html = render(states.at(-1), false);
-  assert.match(html, /저장한 콘텐츠 화면을 준비/); assert.doesNotMatch(html, /Demo|하이큐|저장한 콘텐츠가 아직 없어요|콘텐츠 보러가기|data-saved-content/);
+  assert.match(html, /저장 목록을 불러오지 못했어요/); assert.doesNotMatch(html, /Demo|하이큐|저장한 콘텐츠가 아직 없어요|콘텐츠 보러가기|data-saved-content/);
 });
 test('Cross-source data, duplicate content IDs and malformed identities fail closed', async () => {
   const ready = await createDemoSavedSource().load(options());
@@ -104,7 +106,7 @@ test('Transport failure remains an error without a Mock fallback and can retry i
   let fail = true; const states = [];
   const controller = createSavedRequestController({ kind: 'service', async load() {
     if (fail) throw new Error('private transport detail');
-    return { status: 'ready', saved: { origin: 'service', cards: [{ postId: 'actual-post', contentId: 'actual-content', title: 'Adapter fixture' }] } };
+    return { status: 'ready', saved: { origin: 'service', cards: [{ postId: '17', contentId: '17', topicId: 42, title: 'Adapter fixture' }] } };
   } }, state => states.push(state));
   await controller.load(); assert.equal(states.at(-1).status, 'error');
   assert.doesNotMatch(render(states.at(-1), false), /private transport|하이큐/);

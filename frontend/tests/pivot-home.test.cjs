@@ -20,6 +20,8 @@ function load(relative) {
   } }).outputText;
   vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, structuredClone,
     require(name) {
+      if (name === '@/lib/api') return {};
+      if (name === './services') return { requirePivotApi() { throw new Error('Test origin not enabled'); } };
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return require(name);
       if (name.endsWith('.module.css')) return { default: new Proxy({}, { get: (_, key) => String(key) }), __esModule: true };
@@ -59,11 +61,11 @@ function render(state, demo = true) {
   }));
 }
 
-test('Service remains unconfigured and renders no Mock cards or demo controls', async () => {
+test('A blocked Service origin renders an error without Mock cards or demo controls', async () => {
   assert.equal(pendingHomeSource.kind, 'service');
   const states = [];
   await createHomeRequestController(pendingHomeSource, state => states.push(state)).load();
-  assert.deepEqual(states.map(state => state.status), ['loading', 'unconfigured']);
+  assert.deepEqual(states.map(state => state.status), ['loading', 'error']);
   assert.doesNotMatch(render(states.at(-1), false), /시연용|<article|처음부터 시연/);
 });
 

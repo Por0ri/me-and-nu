@@ -11,6 +11,9 @@
 .cover, .coverPlaceholder { display: block; width: 100%; height: auto; aspect-ratio: 327 / 408; border-radius: 8px; object-fit: cover; box-shadow: 0 0 2px #e0bafb; position: relative; z-index: 1; }
 .coverPlaceholder { display: grid; place-items: center; background: #efe7ff; font-size: 14px; }
 .body { margin-top: -8px; padding: 16px 8px; border-radius: 0 0 8px 8px; background: white; font-size: 14px; line-height: 20px; }
+.serviceTitle { margin: 12px 0 20px; font-size: 20px; line-height: 30px; }
+.sourceLink { margin: 20px 0 0; }
+.sourceLink a { color: var(--pivot-primary, #7043b4); text-decoration: underline; }
 .section + .section { margin-top: 20px; }
 .section h2, .section p { margin: 0; font-size: 14px; line-height: 20px; font-weight: 400; }
 .section p + p { margin-top: 12px; }

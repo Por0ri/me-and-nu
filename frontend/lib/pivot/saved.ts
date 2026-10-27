@@ -1,7 +1,8 @@
 import { isDetailTarget } from "./detail";
 import type { HomeDetailTarget } from "./home";
+import { serviceContentId } from "./service-data";
 
-// FE list model; no bookmark API/DTO or persistence contract is assumed.
+// A service card keeps its Topic so opening or removing it uses the same scope.
 export type SavedCard = HomeDetailTarget & { title: string; image?: { src: string; alt: string } };
 export type SavedList = { origin: "demo" | "service"; cards: readonly SavedCard[] };
 export type SavedLoadResult = { status: "ready"; saved: SavedList } | { status: "unconfigured"; message: string };
@@ -11,7 +12,7 @@ export interface SavedDataSource {
   load(options: { signal: AbortSignal }): Promise<SavedLoadResult>;
   subscribe?(listener: () => void): () => void;
 }
-// Only the explicitly injected Demo store can enable bookmark buttons.
+// Demo controls stay local; authenticated writes use separate service controls.
 export interface DemoBookmarkControls {
   readonly kind: "demo";
   has(target: HomeDetailTarget): boolean;
@@ -38,8 +39,11 @@ export function createSavedRequestController(source: SavedDataSource, publish: (
         const ids = new Set<string>();
         if (list.origin !== source.kind || !Array.isArray(list.cards) || list.cards.some((card) => {
           if (!card || typeof card.postId !== "string" || typeof card.contentId !== "string" || !isDetailTarget(card)
-            || typeof card.title !== "string" || !card.title.trim() || ids.has(card.contentId)) return true;
-          ids.add(card.contentId); return false;
+            || typeof card.title !== "string" || !card.title.trim()
+            || (source.kind === "service" && serviceContentId(card) === null)) return true;
+          const identity = source.kind === "service" ? `${card.topicId}:${card.contentId}` : card.contentId;
+          if (ids.has(identity)) return true;
+          ids.add(identity); return false;
         })) throw new Error("Saved source or identity mismatch");
         publish(list.cards.length ? result : { status: "empty" });
       } catch {

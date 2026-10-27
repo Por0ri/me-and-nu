@@ -2,7 +2,8 @@
 
 import { useId, useRef, useState } from "react";
 import { orderedHomeSlides, type HomeCardModel, type HomeDetailHandler, type HomeSlideModel, type HomeState } from "@/lib/pivot/home";
-import { demoBookmarkNotice, type DemoBookmarkControls } from "@/lib/pivot/saved";
+import { demoBookmarkNotice } from "@/lib/pivot/saved";
+import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import styles from "./home.module.css";
 
 type HomeNotice = { message: string; postId?: string };
@@ -63,7 +64,7 @@ function HomeSlideImage({ image }: { image: HomeSlideModel["image"] }) {
 }
 
 export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice }: {
-  card: HomeCardModel; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: DemoBookmarkControls;
+  card: HomeCardModel; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: BookmarkControls;
   notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void;
 }) {
   const id = useId();
@@ -78,8 +79,23 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
   }
   const slides = orderedHomeSlides(card.slides);
   const current = Math.max(0, Math.min(active, slides.length - 1));
-  const target = { postId: card.id, contentId: card.detailContentId };
-  const canBookmark = demo && bookmarks?.kind === "demo";
+  const target = { postId: card.id, contentId: card.detailContentId, ...(card.topicId === undefined ? {} : { topicId: card.topicId }) };
+  const canBookmark = !!bookmarks && (demo ? bookmarks.kind === "demo" : bookmarks.kind === "service" && !!card.topicId);
+  const saved = canBookmark && bookmarkValue(bookmarks!, target, card.saved);
+  const saving = canBookmark && bookmarkPending(bookmarks, target);
+  async function toggleBookmark() {
+    if (!canBookmark || !bookmarks || saving) return;
+    if (bookmarks.kind === "demo") {
+      bookmarks.toggle(target); setActionNotice(demoBookmarkNotice(saved)); return;
+    }
+    setActionNotice(saved ? "저장을 취소하고 있어요." : "저장하고 있어요.");
+    try {
+      const nowSaved = await bookmarks.toggle(target, card.saved);
+      setActionNotice(nowSaved ? "저장했어요." : "저장을 취소했어요.");
+    } catch (error) {
+      setActionNotice(error instanceof Error ? error.message : "저장하지 못했어요. 다시 시도해 주세요.");
+    }
+  }
   // Only explicit button/keyboard navigation writes scroll position. Native touch
   // and momentum are left to CSS Scroll Snap; onScroll only observes the position.
   function goTo(index: number) {
@@ -88,7 +104,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
     element.scrollTo({ left: index * element.clientWidth });
   }
   return <article className={styles.card} aria-labelledby={`${id}-title`} data-home-post={card.id}>
-    <div className={styles.srOnly}>
+    <div className={demo ? styles.srOnly : styles.serviceTitle}>
       {demo ? <p className={styles.exampleLabel}>시연용 콘텐츠</p> : null}
       <h3 id={`${id}-title`}>{card.title}</h3>
     </div>
@@ -111,7 +127,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
             aria-roledescription="슬라이드" aria-label={`${index + 1} / ${slides.length}`} data-home-slide={slide.id}>
             <figure>
               <HomeSlideImage key={slide.image?.src ?? "missing"} image={slide.image} />
-              <figcaption className={slide.image ? styles.srOnly : styles.summary}>{slide.description}</figcaption>
+              <figcaption className={demo && slide.image ? styles.srOnly : `${styles.summary} ${!demo ? styles.serviceSummary : ""}`}>{slide.description}</figcaption>
             </figure>
           </div>)}
         </div>
@@ -135,13 +151,15 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
     <div className={styles.actions} role="group" aria-label={`${card.title} 반응 기능`}>
       {([['share', '공유'], ['like', '좋아요'], ['save', '저장']] as const).map(([icon, label]) =>
         <button key={icon} type="button" aria-label={label} aria-disabled={icon === "save" && canBookmark ? undefined : true}
-          aria-pressed={icon === "save" && canBookmark ? bookmarks.has(target) : undefined}
-          data-demo-bookmark={icon === "save" && canBookmark ? card.detailContentId : undefined}
+          aria-pressed={icon === "save" && canBookmark ? saved : undefined}
+          aria-busy={icon === "save" && saving || undefined} disabled={icon === "save" && saving}
+          data-demo-bookmark={icon === "save" && canBookmark && demo ? card.detailContentId : undefined}
+          data-service-bookmark={icon === "save" && canBookmark && !demo ? card.detailContentId : undefined}
           onClick={() => {
-            if (icon === "save" && canBookmark) { const saved = bookmarks.has(target); bookmarks.toggle(target); setActionNotice(demoBookmarkNotice(saved)); }
+            if (icon === "save" && canBookmark) { void toggleBookmark(); }
             else setActionNotice(`${label} 기능은 준비 중이에요. 아직 반영되지 않아요.`);
           }}>
-          <span className={icon === "share" ? undefined : styles.actionCircle} data-bookmarked={icon === "save" && canBookmark ? bookmarks.has(target) : undefined}><img src={`/pivot/home/chrome/${icon}.svg`} alt="" width={icon === "share" ? 28 : 24} height={icon === "share" ? 28 : 24} /></span>
+          <span className={icon === "share" ? undefined : styles.actionCircle} data-bookmarked={icon === "save" && canBookmark ? saved : undefined}><img src={`/pivot/home/chrome/${icon}.svg`} alt="" width={icon === "share" ? 28 : 24} height={icon === "share" ? 28 : 24} /></span>
         </button>)}
     </div>
     {actionNotice ? <p role="status" className={styles.actionNotice}>{actionNotice}</p> : null}
@@ -149,7 +167,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
       <button type="button" className={styles.detailButton} data-home-detail={card.detailContentId}
         aria-label={`${card.title} 자세히 보기`} aria-describedby={!onViewDetail ? `${id}-detail-help` : undefined}
         onClick={() => {
-          if (onViewDetail) onViewDetail({ postId: card.id, contentId: card.detailContentId });
+          if (onViewDetail) onViewDetail(target);
           else setDetailRequested(true);
         }}><span>자세히 보기<img src="/pivot/home/chrome/detail-arrow.svg" alt="" width={8} height={9} /></span></button>
       {!onViewDetail ? <p id={`${id}-detail-help`} className={detailRequested ? styles.detailHelp : styles.srOnly} role="status">
@@ -160,7 +178,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
 }
 
 export function HomeFeed({ cards, demo, onViewDetail, bookmarks, notice, onNotice }: {
-  cards: readonly HomeCardModel[]; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: DemoBookmarkControls;
+  cards: readonly HomeCardModel[]; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: BookmarkControls;
   notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void;
 }) {
   return <section aria-label="콘텐츠 피드" className={styles.feed}>
@@ -188,7 +206,7 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onRetry, on
   onViewDetail?: HomeDetailHandler;
   onMy?: () => void;
   onSaved?: () => void;
-  bookmarks?: DemoBookmarkControls;
+  bookmarks?: BookmarkControls;
 }) {
   // Keep only the latest feedback, at its existing screen or card location.
   const [notice, setNotice] = useState<HomeNotice>({ message: "" });

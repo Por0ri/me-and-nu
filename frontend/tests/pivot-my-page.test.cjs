@@ -15,7 +15,7 @@ function load(file) {
   const output = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
-  vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController,
+  vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, URL, process: { env: {} },
     require(name) {
       if (name === 'react' || name === 'react/jsx-runtime') return require(name);
       if (name.endsWith('.module.css')) return { default: new Proxy({}, { get: (_, key) => String(key) }), __esModule: true };

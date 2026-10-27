@@ -1,10 +1,48 @@
-import type { DetailDataSource } from "./detail";
+import { ApiError, getContent, type ContentDetail } from "@/lib/api";
+import { requirePivotApi } from "./services";
+import type { DetailArticle, DetailDataSource } from "./detail";
+import type { HomeDetailTarget } from "./home";
+import { optionalImage, requireTitle, safeSourceUrl, serviceContentId } from "./service-data";
 
-// Integration seam only. Endpoint, auth, wire DTO, error codes and mapping await
-// the BE contract. No request and no Mock fallback in the Service path.
-export const pendingDetailSource: DetailDataSource = {
-  kind: "service",
-  async load() {
-    return { status: "unconfigured", message: "콘텐츠 상세 서비스를 준비하고 있어요. 아직 글을 불러올 수 없어요." };
-  },
-};
+export function mapContentDetail(content: ContentDetail, target: HomeDetailTarget): DetailArticle {
+  if (!content || content.contentId !== serviceContentId(target) || content.topicId !== target.topicId ||
+    typeof content.myReaction?.bookmarked !== "boolean") throw new Error("Invalid detail identity or bookmark state");
+  if (content.displayMode !== "full_body" && content.displayMode !== "link_excerpt") throw new Error("Unsupported display mode");
+  const title = requireTitle(content.title);
+  const text = content.displayMode === "full_body" ? content.body : content.excerpt;
+  if (text !== null && typeof text !== "string") throw new Error("Invalid article text");
+  const paragraphs = (text ?? "").split(/\r?\n\s*\r?\n/).map((value) => value.trim()).filter(Boolean);
+  return {
+    ...target, origin: "service", title, image: optionalImage(content.imageUrl, title),
+    sections: paragraphs.length ? [{ paragraphs }] : [],
+    bookmarked: content.myReaction.bookmarked, displayMode: content.displayMode,
+    sourceUrl: safeSourceUrl(content.sourceUrl),
+  };
+}
+
+export function createServiceDetailSource(
+  api: { getContent: typeof getContent } = { getContent },
+  guard: () => void = requirePivotApi,
+): DetailDataSource {
+  return {
+    kind: "service",
+    async load(target, { signal }) {
+      guard(); signal.throwIfAborted();
+      const contentId = serviceContentId(target);
+      if (contentId === null) return { status: "not-found" };
+      try {
+        const content = await api.getContent(contentId, target.topicId!, { signal });
+        signal.throwIfAborted();
+        return { status: "ready", article: mapContentDetail(content, target) };
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404 && (error.code === "CONTENT_NOT_FOUND" || error.code === "TOPIC_NOT_FOUND")) {
+          return { status: "not-found" };
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+export const serviceDetailSource = createServiceDetailSource();
+export const pendingDetailSource = serviceDetailSource;

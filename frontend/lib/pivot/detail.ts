@@ -3,8 +3,11 @@ import type { HomeDetailTarget } from "./home";
 // FE reading model, deliberately independent of any future server DTO.
 export type DetailArticle = HomeDetailTarget & {
   origin: "demo" | "service";
-  work: string;
+  work?: string;
   title: string;
+  bookmarked?: boolean;
+  displayMode?: "full_body" | "link_excerpt";
+  sourceUrl?: string;
   image?: { src: string; alt: string };
   sections: readonly { heading?: string; paragraphs: readonly string[] }[];
 };
@@ -20,7 +23,8 @@ export interface DetailDataSource {
 export type DetailState = DetailLoadResult | { status: "loading" } | { status: "error"; message: string };
 
 export function isDetailTarget(target: HomeDetailTarget): boolean {
-  return [target.postId, target.contentId].every((id) => /^[a-zA-Z0-9_-]{1,128}$/.test(id));
+  return [target.postId, target.contentId].every((id) => typeof id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(id)) &&
+    (target.topicId === undefined || (Number.isSafeInteger(target.topicId) && target.topicId > 0));
 }
 
 export function createDetailRequestController(source: DetailDataSource, publish: (state: DetailState) => void) {
@@ -39,10 +43,12 @@ export function createDetailRequestController(source: DetailDataSource, publish:
         if (request !== generation || controller.signal.aborted) return;
         if (result.status === "ready") {
           const article = result.article;
-          if (article.origin !== source.kind || article.postId !== target.postId || article.contentId !== target.contentId) {
+          if (article.origin !== source.kind || article.postId !== target.postId || article.contentId !== target.contentId || article.topicId !== target.topicId) {
             throw new Error("Detail identity or origin mismatch");
           }
-          publish(article.sections.some((section) => section.paragraphs.some((text) => text.trim())) ? result : { status: "empty" });
+          const hasText = article.sections.some((section) => section.paragraphs.some((text) => text.trim()));
+          const hasSourceExcerpt = article.origin === "service" && article.displayMode === "link_excerpt" && !!article.sourceUrl;
+          publish(hasText || hasSourceExcerpt ? result : { status: "empty" });
         } else publish(result);
       } catch {
         if (request === generation && !controller.signal.aborted) publish({ status: "error", message: "글을 불러오지 못했어요. 다시 시도해 주세요." });

@@ -17,6 +17,8 @@ function load(file) {
   } }).outputText;
   vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, structuredClone, URLSearchParams,
     require(name) {
+      if (name === '@/lib/api') return {};
+      if (name === './services') return { requirePivotApi() { throw new Error('Test origin not enabled'); } };
       if (name === 'react' || name === 'react/jsx-runtime') return require(name);
       if (name.endsWith('.module.css')) return { default: new Proxy({}, { get: (_, key) => String(key) }), __esModule: true };
       const relative = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(file), name);
@@ -69,10 +71,10 @@ test('Malformed IDs stop before the data source, including script and oversized 
   }
   assert.equal(calls, 0);
 });
-test('Service remains unconfigured without a Mock fallback or Demo feedback', async () => {
+test('A blocked Service origin never falls back to Mock articles or Demo feedback', async () => {
   const states = [];
   await createDetailRequestController(pendingDetailSource, state => states.push(state)).load(target);
-  assert.deepEqual(states.map(s => s.status), ['loading', 'unconfigured']);
+  assert.deepEqual(states.map(s => s.status), ['loading', 'error']);
   assert.doesNotMatch(render(states.at(-1), false), /data-detail-content|하이큐|더 볼래요|Demo 선택/);
   assert.doesNotMatch(fs.readFileSync(path.join(root, 'lib/pivot/detail-service.ts'), 'utf8'), /from.*mock|fetch\(/);
 });

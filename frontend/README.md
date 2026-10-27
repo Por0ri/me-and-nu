@@ -2,6 +2,23 @@
 
 FastAPI·PostgreSQL V1 API의 공개 피드와 콘텐츠 상세를 브라우저에서 볼 수 있습니다. 개발용 API 점검 화면도 홈 하단에 유지합니다.
 
+## Pivot 기존 회원 API 연결
+
+`codex/fe-be-integration`의 `/pivot/login` → `/pivot/home`은 온보딩을 완료한 기존 회원의 실제 OAuth·세션과 피드·상세·북마크·Saved API를 사용합니다. 로그인 후에는 서버가 내려주는 활성 Topic ID를 사용하며, 저장 성공 후 홈·상세·저장 목록을 갱신합니다. 새로고침하면 서버의 저장 상태를 다시 조회합니다. 요청 실패를 데모 데이터나 저장 성공으로 대체하지 않습니다.
+
+허용된 테스트 환경은 `https://test.me-nu.kr` → `https://api.test.me-nu.kr`입니다. 해당 프런트의 빌드 환경변수는 `NEXT_PUBLIC_API_BASE_URL=https://api.test.me-nu.kr`이며, 백엔드의 CORS·OAuth 복귀 origin도 실제 프런트 주소와 일치해야 합니다. 임의의 `vercel.app` 주소에서 API 쿠키가 전송된다고 가정하지 않습니다. 이 브랜치 작업은 서버 설정 변경이나 배포를 수행하지 않습니다.
+
+로컬에서는 `.env.local`에 아래 값을 설정하고, 같은 `localhost` 호스트의 별도 백엔드를 준비합니다. 실제 소셜 로그인 검증에는 공급자에 등록된 로컬 callback이 필요합니다. 공급자 키는 프런트 환경변수에 넣지 않습니다.
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true
+```
+
+신규 계정은 `user:null`인 가입 대기 세션을 올바르게 판별해 약관 화면으로 안내합니다. **신규 가입 완료 제출, My 전체 기능, 추천·Agent 실행, 여러 장 카드뉴스는 이 통합 범위에 포함하지 않습니다.** `/pivot/demo`와 `/pivot/preview`는 실제 세션·API와 분리된 화면 확인용 경로입니다.
+
+검증 명령은 `npm test`, `npm run typecheck`, `npm run build`입니다. 테스트 전용 API fixture와 실제 화면의 연결을 확인하려면 로컬 Next 서버를 `NEXT_PUBLIC_API_BASE_URL=http://localhost:8180`, `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`로 3180 포트에 실행한 뒤 `node tests/pivot-service-browser-check.cjs`를 사용합니다. Playwright와 Chrome이 필요하며, 별도 설치된 Playwright는 `PIVOT_PLAYWRIGHT_MODULE`, 브라우저 실행 파일은 `PIVOT_BROWSER_EXECUTABLE`로 지정할 수 있습니다. 이 fixture는 테스트에서만 OAuth 공급자 이동을 대체하며 실제 사용자·원격 DB를 변경하지 않습니다. 외부 `node_modules`를 연결한 로컬 작업 폴더에서는 Next 실행에 `--webpack` 옵션을 사용합니다.
+
 ## Consumer 온보딩 실제 API 연결
 
 최신 `main`의 온보딩 화면을 유지하고, `NEXT_PUBLIC_CONSUMER_DATA_MODE=api`이면 실제 FastAPI·PostgreSQL을 사용합니다.

@@ -71,9 +71,10 @@ let reads = 0;
 const s = load('/lib/pivot/services.ts', {
   '@/lib/api': { apiBaseUrl: 'http://localhost:8000', getSession() { reads++; }, getPolicies() { reads++; } },
   './consent': c,
-}, { window: { location: { hostname: 'localhost' } } });
-test('Explicit local opt-in accepts loopback backend only', () => {
-  assert.equal(s.isLocalApiAllowed(true, 'localhost', 'http://127.0.0.1:8000'), true);
+}, { window: { location: { hostname: 'localhost', origin: 'http://localhost:3000' } } });
+test('Explicit local opt-in accepts the same loopback hostname only', () => {
+  assert.equal(s.isLocalApiAllowed(true, 'localhost', 'http://localhost:8000'), true);
+  assert.equal(s.isLocalApiAllowed(true, 'localhost', 'http://127.0.0.1:8000'), false);
   assert.equal(s.isLocalApiAllowed(true, '[::1]', 'http://[::1]:8000'), true);
 });
 for (const [name, enabled, browserHost, baseUrl] of [
@@ -85,8 +86,8 @@ for (const [name, enabled, browserHost, baseUrl] of [
   ['file scheme', true, 'localhost', 'file:///localhost'],
   ['invalid URL', true, 'localhost', 'invalid'],
 ]) test('API guard rejects ' + name, () => assert.equal(s.isLocalApiAllowed(enabled, browserHost, baseUrl), false));
-const session = { authenticated: true, sessionState: 'onboarding_pending', onboardingCompleted: false, user: { id: 12, accountType: 'consumer' } };
-test('Only a real pending Consumer session passes the gate', () => {
+const session = { authenticated: true, sessionState: 'onboarding_pending', onboardingCompleted: false, user: null };
+test('A pending account without public user details passes the onboarding gate', () => {
   assert.equal(s.isPendingConsumer(session), true);
   for (const invalid of [null, { ...session, authenticated: false }, { ...session, onboardingCompleted: true },
     { ...session, sessionState: 'active' }, { ...session, user: { id: 12, accountType: 'business' } },
@@ -99,9 +100,9 @@ test('Disabled configuration never calls session/policy API', async () => {
   await assert.rejects(s.loadPivotPolicies(), /아직 연결/);
   assert.equal(reads, 0);
 });
-test('Both unintegrated SNS providers reject without successful login', async () => {
-  await assert.rejects(s.startSnsLogin('kakao'), /카카오 로그인을 준비/);
-  await assert.rejects(s.startSnsLogin('naver'), /네이버 로그인을 준비/);
+test('Disabled origins cannot start either SNS provider', async () => {
+  await assert.rejects(s.startSnsLogin('kakao'), /아직 연결/);
+  await assert.rejects(s.startSnsLogin('naver'), /아직 연결/);
   assert.equal(reads, 0);
 });
 
@@ -133,8 +134,8 @@ test('An empty policy list never enables progression', () => {
   assert.deepEqual(plain(c.consentSummary([], {})), { all:false, partial:false, canContinue:false });
 });
 for (const [name, browserHost, baseUrl] of [
-  ['loopback HTTPS', 'localhost', 'https://127.0.0.1:8000'],
-  ['IPv4 browser', '127.0.0.1', 'http://localhost:8000'],
+  ['loopback HTTPS', 'localhost', 'https://localhost:8000'],
+  ['IPv4 browser', '127.0.0.1', 'http://127.0.0.1:8000'],
   ['IPv6 browser and backend', '[::1]', 'http://[::1]:8000'],
 ]) test('API guard allows ' + name + ' with opt-in', () => assert.equal(s.isLocalApiAllowed(true, browserHost, baseUrl), true));
 for (const [name, browserHost, baseUrl] of [
@@ -148,7 +149,7 @@ test('Only an exact public true flag enables API reads', async () => {
     let calls = 0;
     const guarded = load('/lib/pivot/services.ts', {
       '@/lib/api': { apiBaseUrl:'http://localhost:8000', getSession(){ calls++; }, getPolicies(){ calls++; } }, './consent': c,
-    }, { window:{location:{hostname:'localhost'}}, process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:flag}} });
+    }, { window:{location:{hostname:'localhost',origin:'http://localhost:3000'}}, process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:flag}} });
     await assert.rejects(guarded.restorePivotSession());
     await assert.rejects(guarded.loadPivotPolicies());
     assert.equal(calls, 0);
@@ -168,16 +169,92 @@ test('Allowed service reads return the session and validate dynamic policy data'
   let response = {consentItems:policies};
   const connected = load('/lib/pivot/services.ts', {
     '@/lib/api': {apiBaseUrl:'http://localhost:8000',async getSession(){calls.push('session');return session;},async getPolicies(){calls.push('policies');return response;}}, './consent': c,
-  }, {window:{location:{hostname:'localhost'}},process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:'true'}}});
+  }, {window:{location:{hostname:'localhost',origin:'http://localhost:3000'}},process:{env:{NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API:'true'}}});
   assert.equal(await connected.restorePivotSession(), session);
   assert.deepEqual(plain(await connected.loadPivotPolicies()), policies);
   response = {consentItems:[]};
   await assert.rejects(connected.loadPivotPolicies(), /약관 목록/);
   assert.deepEqual(calls, ['session','policies','policies']);
 });
-test('Invalid session IDs and incomplete users cannot enter onboarding', () => {
+test('The old pending user DTO cannot be mistaken for the current onboarding contract', () => {
   for (const id of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, '12', NaN, undefined]) {
     assert.equal(s.isPendingConsumer({...session,user:{id,accountType:'consumer'}}), false);
   }
-  assert.equal(s.isPendingConsumer({...session,user:null}), false);
+  assert.equal(s.isPendingConsumer({...session,user:null}), true);
+});
+
+test('Remote API access is limited to the approved staging pair', () => {
+  assert.equal(s.isPivotApiAllowed(false, 'https://test.me-nu.kr', 'https://api.test.me-nu.kr'), true);
+  for (const [frontend, api] of [
+    ['https://preview.vercel.app', 'https://api.test.me-nu.kr'],
+    ['https://me-nu.kr', 'https://api.test.me-nu.kr'],
+    ['https://test.me-nu.kr.example.com', 'https://api.test.me-nu.kr'],
+    ['https://test.me-nu.kr', 'https://api.test.me-nu.kr:444'],
+    ['https://test.me-nu.kr', 'https://api.test.me-nu.kr/path'],
+    ['https://test.me-nu.kr', 'https://api.test.me-nu.kr?proxy=other'],
+    ['http://test.me-nu.kr', 'https://api.test.me-nu.kr'],
+    ['http://localhost:3000', 'http://127.0.0.1:8000'],
+    ['http://localhost:3000', 'https://localhost:8000'],
+  ]) assert.equal(s.isPivotApiAllowed(true, frontend, api), false, `${frontend} -> ${api}`);
+  assert.equal(s.isPivotApiAllowed(true, 'http://localhost:3000', 'http://localhost:8000'), true);
+  assert.equal(s.isPivotApiAllowed(false, 'http://localhost:3000', 'http://localhost:8000'), false);
+});
+
+test('Session routes use current user accounts without manufacturing onboarding completion', () => {
+  const active = {authenticated:true, sessionState:'active', onboardingCompleted:true, user:{id:7, accountType:'user'}};
+  assert.equal(s.isActiveSession(active), true);
+  assert.equal(s.resolvePivotSessionRoute(active, '/pivot/login'), '/pivot/home');
+  assert.equal(s.resolvePivotSessionRoute(active, '/pivot/consent'), '/pivot/home');
+  assert.equal(s.resolvePivotSessionRoute(active, '/pivot/home'), null);
+  assert.equal(s.resolvePivotSessionRoute(session, '/pivot/home'), '/pivot/consent');
+  assert.equal(s.resolvePivotSessionRoute(session, '/pivot/consent'), null);
+  assert.equal(s.resolvePivotSessionRoute(null, '/pivot/home'), '/pivot/login');
+  for (const invalid of [session, {...active, user:null}, {...active, onboardingCompleted:false},
+    {...active, user:{id:7,accountType:'consumer'}}, {...active, user:{id:0,accountType:'user'}}]) {
+    assert.equal(s.isActiveSession(invalid), false);
+  }
+});
+
+function providerUrl(provider, base = 'https://api.test.me-nu.kr') {
+  const url = new URL(provider === 'kakao' ? 'https://kauth.kakao.com/oauth/authorize' : 'https://nid.naver.com/oauth2.0/authorize');
+  url.search = new URLSearchParams({response_type:'code', client_id:'fixture-client', state:'fixture-state', redirect_uri:`${base}/api/v1/auth/login/${provider}/callback`}).toString();
+  return url.href;
+}
+for (const provider of ['kakao', 'naver']) test(`${provider} OAuth refreshes CSRF session, posts signin, then navigates the same browser`, async () => {
+  const calls = [];
+  const authorizationUrl = providerUrl(provider);
+  const connected = load('/lib/pivot/services.ts', {
+    '@/lib/api': {
+      apiBaseUrl:'https://api.test.me-nu.kr',
+      async getSession() { calls.push('session'); return {csrfToken:'new-current-token'}; },
+      async apiRequest(path, options) { calls.push({path, options}); return {authorizationUrl}; },
+    }, './consent': c,
+  }, {window:{location:{origin:'https://test.me-nu.kr', assign(url){calls.push({navigate:url});}}}});
+  await connected.startSnsLogin(provider);
+  assert.deepEqual(plain(calls), ['session', {path:`/api/v1/auth/login/${provider}`, options:{method:'POST',body:'{"purpose":"signin"}'}}, {navigate:authorizationUrl}]);
+});
+
+test('OAuth does not navigate if session lookup or login POST fails', async () => {
+  for (const failure of ['session', 'post']) {
+    const calls = [];
+    const connected = load('/lib/pivot/services.ts', {
+      '@/lib/api': {apiBaseUrl:'https://api.test.me-nu.kr',
+        async getSession() {calls.push('session'); if(failure==='session') throw Error('unavailable');},
+        async apiRequest() {calls.push('post'); throw Error('unavailable');}}, './consent':c,
+    }, {window:{location:{origin:'https://test.me-nu.kr',assign(){calls.push('navigate');}}}});
+    await assert.rejects(connected.startSnsLogin('kakao'), /unavailable/);
+    assert.deepEqual(calls, failure === 'session' ? ['session'] : ['session','post']);
+  }
+});
+
+test('OAuth navigation rejects arbitrary hosts, wrong callback and unexpected schemes', () => {
+  for (const bad of [null, 'javascript:alert(1)', providerUrl('naver'),
+    providerUrl('kakao').replace('kauth.kakao.com', 'kauth.kakao.com.evil.test'),
+    providerUrl('kakao', 'https://other.example'),
+    providerUrl('kakao').replace('https:', 'http:')]) {
+    assert.throws(() => s.validateAuthorizationUrl(bad, 'kakao', 'https://api.test.me-nu.kr'));
+  }
+  assert.match(s.oauthErrorMessage('AUTH_CANCELLED'), /취소/);
+  assert.equal(s.oauthErrorMessage(null), '');
+  assert.doesNotMatch(s.oauthErrorMessage('<script>untrusted</script>'), /script|untrusted/);
 });

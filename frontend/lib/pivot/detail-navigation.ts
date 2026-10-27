@@ -12,7 +12,12 @@ export type HomeReturnSnapshot = {
 
 // Local pathname and encoded identifiers only; no user-supplied redirect URL.
 export function detailHref(path: string, target: HomeDetailTarget): string {
-  return `${path}?${new URLSearchParams({ view: "detail", postId: target.postId, contentId: target.contentId })}`;
+  const params = new URLSearchParams({ view: "detail", postId: target.postId, contentId: target.contentId });
+  if (target.topicId !== undefined) {
+    if (!Number.isSafeInteger(target.topicId) || target.topicId <= 0) throw new Error("Invalid Topic identity");
+    params.set("topicId", String(target.topicId));
+  }
+  return `${path}?${params}`;
 }
 export function readHomeReturn(value: unknown, path: string, kind: "demo" | "service"): HomeReturnSnapshot | null {
   if (!value || typeof value !== "object") return null;

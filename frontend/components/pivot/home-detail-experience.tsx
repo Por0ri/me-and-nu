@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import type { HomeDataSource, HomeDetailTarget } from "@/lib/pivot/home";
 import type { DetailDataSource } from "@/lib/pivot/detail";
@@ -9,6 +9,7 @@ import type { MyPageDataSource } from "@/lib/pivot/my-page";
 import { pendingMyPageSource } from "@/lib/pivot/my-page-service";
 import type { DemoBookmarkControls, SavedDataSource } from "@/lib/pivot/saved";
 import { pendingSavedSource } from "@/lib/pivot/saved-service";
+import { createServiceBookmarkControls } from "@/lib/pivot/bookmark-service";
 import { readSavedReturn, type SavedReturnSnapshot } from "@/lib/pivot/saved-navigation";
 import { HomeController } from "./home-controller";
 import { DetailController } from "./detail-controller";
@@ -29,6 +30,9 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const detailFromSaved = params.get("from") === "saved";
   const postId = params.get("postId") ?? "";
   const contentId = params.get("contentId") ?? "";
+  const topicParam = params.get("topicId");
+  const parsedTopic = topicParam && /^[1-9]\d*$/.test(topicParam) ? Number(topicParam) : undefined;
+  const topicId = Number.isSafeInteger(parsedTopic) ? parsedTopic : undefined;
   const home = useRef<HTMLDivElement>(null);
   const savedList = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
@@ -36,7 +40,18 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const restoreFrame = useRef<number>(0);
   const [restoreQuery, setRestoreQuery] = useState<string>();
   const safeSavedSource = savedSource.kind === homeSource.kind ? savedSource : pendingSavedSource;
-  const bookmarks = homeSource.kind === "demo" && safeSavedSource.kind === "demo" && demoBookmarks?.kind === "demo" ? demoBookmarks : undefined;
+  const [serviceBookmarks] = useState(() => createServiceBookmarkControls());
+  const bookmarks = homeSource.kind === "demo" && safeSavedSource.kind === "demo" && demoBookmarks?.kind === "demo" ? demoBookmarks
+    : homeSource.kind === "service" ? serviceBookmarks : undefined;
+  const connectedSavedSource = useMemo<SavedDataSource>(() => safeSavedSource.kind === "service" ? {
+    kind: "service",
+    load: (options) => safeSavedSource.load(options),
+    subscribe(listener) {
+      const original = safeSavedSource.subscribe?.(listener);
+      const mutations = serviceBookmarks.subscribeChanges(listener);
+      return () => { original?.(); mutations(); };
+    },
+  } : safeSavedSource, [safeSavedSource, serviceBookmarks]);
   useSyncExternalStore(bookmarks?.subscribe ?? noSubscribe, bookmarks?.getSnapshot ?? noSnapshot, noSnapshot);
   const restoreHome = useCallback(() => {
     if (detailOpen || myOpen || savedOpen) return;
@@ -82,7 +97,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     else if (savedOpen) restoreSaved();
     else restoreHome();
     return () => cancelAnimationFrame(restoreFrame.current);
-  }, [detailOpen, myOpen, savedOpen, postId, contentId, restoreHome, restoreSaved]);
+  }, [detailOpen, myOpen, savedOpen, postId, contentId, topicId, restoreHome, restoreSaved]);
   function captureHome(focusContentId: string, focusNavigation?: "my" | "saved"): HomeReturnSnapshot {
     return {
       path: window.location.pathname, kind: homeSource.kind, scrollY: window.scrollY,
@@ -138,6 +153,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     // Retain Detail identity and origin while navigating between SAVE and MY.
     if ((detailOpen || myOpen || savedOpen) && postId && contentId) {
       query.set("postId", postId); query.set("contentId", contentId);
+      if (topicId !== undefined) query.set("topicId", String(topicId));
       if (detailFromSaved) query.set("from", "saved");
     }
     window.history.pushState({ ...history, pivotMyBack: next === "my" && atHome, pivotSavedBack: next === "saved" && atHome }, "", `${window.location.pathname}?${query}`);
@@ -162,10 +178,10 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
       <HomeController source={homeSource} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} bookmarks={bookmarks} />
     </div>
     <div ref={detail} hidden={!detailOpen}>
-      {detailOpen || ((myOpen || savedOpen) && postId && contentId) ? <DetailController source={detailSource} target={{ postId, contentId }} onBack={backFromDetail} onHome={backToHome} onMy={openMy} onSaved={openSaved} fromSaved={detailFromSaved} bookmarks={bookmarks} /> : null}
+      {detailOpen || ((myOpen || savedOpen) && postId && contentId) ? <DetailController source={detailSource} target={{ postId, contentId, ...(topicId === undefined ? {} : { topicId }) }} onBack={backFromDetail} onHome={backToHome} onMy={openMy} onSaved={openSaved} fromSaved={detailFromSaved} bookmarks={bookmarks} /> : null}
     </div>
     <div ref={savedList} hidden={!savedOpen}>
-      {savedOpen || (detailFromSaved && (detailOpen || myOpen)) ? <SavedController source={safeSavedSource} onHome={backToHome} onMy={openMy} onViewDetail={openDetail} onReady={restoreSaved} /> : null}
+      {savedOpen || (detailFromSaved && (detailOpen || myOpen)) ? <SavedController source={connectedSavedSource} onHome={backToHome} onMy={openMy} onViewDetail={openDetail} onReady={restoreSaved} /> : null}
     </div>
     {myOpen ? <MyPageController source={mySource.kind === homeSource.kind ? mySource : pendingMyPageSource} onHome={backToHome} onSaved={openSaved} /> : null}
   </>;

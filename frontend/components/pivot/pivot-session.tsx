@@ -1,9 +1,9 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useReducer, type Dispatch, type ReactNode } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { API_UNAUTHORIZED_EVENT, type Session } from "@/lib/api";
-import { canUsePivotApi, restorePivotSession } from "@/lib/pivot/services";
+import { canUsePivotApi, resolvePivotSessionRoute, restorePivotSession } from "@/lib/pivot/services";
 import type { ConsentDraft } from "@/lib/pivot/consent";
 import { initialOnboardingState, onboardingReducer, type OnboardingState, type OnboardingAction } from "@/lib/pivot/onboarding";
 
@@ -18,13 +18,15 @@ const isolatedSession: ContextValue = {
 
 export function PivotSessionProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const isolated = ["/pivot/preview", "/pivot/demo", "/pivot/home"].some((path) => pathname === path || pathname.startsWith(`${path}/`));
-  // Preview, demo and the disconnected H1 Home never mount API session listeners.
+  const isolated = ["/pivot/preview", "/pivot/demo"].some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  // Design previews and demos never read or change the real browser session.
   return isolated
     ? <Context.Provider value={isolatedSession}>{children}</Context.Provider>
     : <ConnectedPivotSessionProvider>{children}</ConnectedPivotSessionProvider>;
 }
 function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
   const [state, setState] = useState<SessionState>({ status: "loading", session: null });
   const [attempt, setAttempt] = useState(0);
   const [draft, setDraft] = useState<ConsentDraft | null>(null);
@@ -52,6 +54,17 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
     window.addEventListener(API_UNAUTHORIZED_EVENT, clear);
     return () => window.removeEventListener(API_UNAUTHORIZED_EVENT, clear);
   }, []);
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    const target = resolvePivotSessionRoute(state.session, pathname);
+    if (target) router.replace(target);
+  }, [state.status, state.session, pathname, router]);
+  useEffect(() => {
+    // Back/forward restoration after provider navigation must re-read rotated cookies.
+    const restored = (event: PageTransitionEvent) => { if (event.persisted) refresh(); };
+    window.addEventListener("pageshow", restored);
+    return () => window.removeEventListener("pageshow", restored);
+  }, [refresh]);
   return <Context.Provider value={{ state, refresh, draft, rememberDraft: setDraft, onboarding, dispatchOnboarding }}>{children}</Context.Provider>;
 }
 export function usePivotSession() {

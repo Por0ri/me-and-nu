@@ -10,7 +10,7 @@ import styles from "./saved.module.css";
 export function SavedContentCard({ card, onViewDetail }: { card: SavedCard; onViewDetail: HomeDetailHandler }) {
   const id = useId(); const [failed, setFailed] = useState(false);
   return <button type="button" className={styles.card} data-saved-content={card.contentId} data-saved-post={card.postId}
-    aria-labelledby={id} onClick={() => onViewDetail({ postId: card.postId, contentId: card.contentId })}>
+    aria-labelledby={id} onClick={() => onViewDetail({ postId: card.postId, contentId: card.contentId, ...(card.topicId === undefined ? {} : { topicId: card.topicId }) })}>
     <span id={id} className={homeStyles.srOnly}>{card.title} 자세히 보기</span>
     {/* Existing covers already contain editorial text and a gradient. Do not overlay duplicate copy. */}
     {card.image?.src && !failed ? <img src={card.image.src} alt="" width={148} height={185} loading="lazy" draggable={false} onError={() => setFailed(true)} />
@@ -26,7 +26,7 @@ export function PivotSavedScreen({ state, demo, onHome, onMy, onViewDetail, onRe
     aria-busy={state.status === "loading"}>
     <HomeHeader title="저장한 콘텐츠" showMascot={false} />
     {list ? <ul className={styles.grid} aria-label="저장한 콘텐츠 목록">
-      {list.cards.map((card) => <li key={card.contentId}><SavedContentCard key={card.image?.src ?? "missing"} card={card} onViewDetail={onViewDetail} /></li>)}
+      {list.cards.map((card) => <li key={`${card.topicId ?? "demo"}:${card.contentId}`}><SavedContentCard key={card.image?.src ?? "missing"} card={card} onViewDetail={onViewDetail} /></li>)}
     </ul> : state.status === "empty" ? <section className={styles.empty} aria-label="저장 목록 상태">
       <p role="status">저장한 콘텐츠가 아직 없어요</p>
       <button type="button" className={styles.emptyButton} onClick={onHome}>콘텐츠 보러가기</button>

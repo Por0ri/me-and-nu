@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { DetailArticle, DetailState } from "@/lib/pivot/detail";
-import { demoBookmarkNotice, type DemoBookmarkControls } from "@/lib/pivot/saved";
+import { demoBookmarkNotice } from "@/lib/pivot/saved";
+import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { HomeNavigation } from "./home-screen";
 import homeStyles from "./home.module.css";
 import styles from "./detail.module.css";
@@ -17,14 +18,29 @@ function DetailImage({ article }: { article: DetailArticle }) {
 
 export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved, onHome, fromSaved = false, bookmarks }: {
   state: DetailState; demo: boolean; onBack: () => void; onRetry: () => void; onMy?: () => void; onSaved?: () => void; onHome?: () => void;
-  fromSaved?: boolean; bookmarks?: DemoBookmarkControls;
+  fromSaved?: boolean; bookmarks?: BookmarkControls;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const [notice, setNotice] = useState("");
   const [feedback, setFeedback] = useState<"more" | "stop" | null>(null);
   const [aiExpanded, setAiExpanded] = useState(false);
-  const target = state.status === "ready" ? { postId: state.article.postId, contentId: state.article.contentId } : null;
-  const canBookmark = demo && bookmarks?.kind === "demo" && !!target;
+  const target = state.status === "ready" ? { postId: state.article.postId, contentId: state.article.contentId,
+    ...(state.article.topicId === undefined ? {} : { topicId: state.article.topicId }) } : null;
+  const canBookmark = !!target && !!bookmarks && (demo ? bookmarks.kind === "demo" : bookmarks.kind === "service" && !!target.topicId);
+  const initialSaved = state.status === "ready" && state.article.bookmarked === true;
+  const saved = canBookmark && bookmarkValue(bookmarks!, target!, initialSaved);
+  const saving = canBookmark && bookmarkPending(bookmarks, target!);
+  async function toggleBookmark() {
+    if (!canBookmark || !bookmarks || !target || saving) return;
+    if (bookmarks.kind === "demo") { bookmarks.toggle(target); setNotice(demoBookmarkNotice(saved)); return; }
+    setNotice(saved ? "저장을 취소하고 있어요." : "저장하고 있어요.");
+    try {
+      const nowSaved = await bookmarks.toggle(target, initialSaved);
+      setNotice(nowSaved ? "저장했어요." : "저장을 취소했어요.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "저장하지 못했어요. 다시 시도해 주세요.");
+    }
+  }
   useEffect(() => { heading.current?.focus({ preventScroll: true }); }, [state.status]);
   return <main className={styles.screen} data-detail-state={state.status} aria-busy={state.status === "loading"}>
     <header className={styles.header}>
@@ -34,19 +50,21 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
       <div className={styles.actions}>
         {([['share', '공유'], ['like', '좋아요'], ['save', '저장']] as const).map(([icon, label]) =>
           <button key={icon} type="button" className={styles.iconButton} aria-label={label} aria-disabled={icon === "save" && canBookmark ? undefined : true}
-            aria-pressed={icon === "save" && canBookmark ? bookmarks.has(target) : undefined}
-            data-demo-bookmark={icon === "save" && canBookmark ? target.contentId : undefined}
+            aria-pressed={icon === "save" && canBookmark ? saved : undefined}
+            aria-busy={icon === "save" && saving || undefined} disabled={icon === "save" && saving}
+            data-demo-bookmark={icon === "save" && canBookmark && demo ? target!.contentId : undefined}
+            data-service-bookmark={icon === "save" && canBookmark && !demo ? target!.contentId : undefined}
             onClick={() => {
-              if (icon === "save" && canBookmark) { const saved = bookmarks.has(target); bookmarks.toggle(target); setNotice(demoBookmarkNotice(saved)); }
+              if (icon === "save" && canBookmark) { void toggleBookmark(); }
               else setNotice(`${label} 기능은 준비 중이에요. 아직 반영되지 않아요.`);
             }}>
-            <span className={icon === "share" ? styles.plainIcon : styles.circle} data-bookmarked={icon === "save" && canBookmark ? bookmarks.has(target) : undefined}>
+            <span className={icon === "share" ? styles.plainIcon : styles.circle} data-bookmarked={icon === "save" && canBookmark ? saved : undefined}>
               <img src={`/pivot/home/chrome/${icon}.svg`} alt="" width={icon === "share" ? 28 : 24} height={icon === "share" ? 28 : 24} />
             </span>
           </button>)}
       </div>
     </header>
-    <h1 ref={heading} tabIndex={-1} className={homeStyles.srOnly}>{state.status === "ready" ? `${state.article.work} · ${state.article.title}` : "콘텐츠 상세"}</h1>
+    <h1 ref={heading} tabIndex={-1} className={demo ? homeStyles.srOnly : styles.serviceTitle}>{state.status === "ready" ? [state.article.work, state.article.title].filter(Boolean).join(" · ") : "콘텐츠 상세"}</h1>
     {state.status === "ready" ? <article aria-label={state.article.title} data-detail-content={state.article.contentId} data-detail-post={state.article.postId}>
       <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />
       <div className={styles.body}>
@@ -54,6 +72,9 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
           {section.heading ? <h2>{section.heading}</h2> : null}
           {section.paragraphs.map((paragraph, paragraphIndex) => <p key={paragraphIndex}>{paragraph}</p>)}
         </section>)}
+        {!demo && state.article.displayMode === "link_excerpt" && state.article.sourceUrl ? <p className={styles.sourceLink}>
+          <a href={state.article.sourceUrl} target="_blank" rel="noopener noreferrer">원문에서 계속 읽기</a>
+        </p> : null}
         {demo ? <section className={styles.feedback} aria-labelledby="detail-feedback-title">
           <h2 id="detail-feedback-title">이런 글, 더 보고 싶으세요?</h2>
           <div className={styles.feedbackButtons}>
