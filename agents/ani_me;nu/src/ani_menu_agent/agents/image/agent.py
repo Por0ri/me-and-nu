@@ -15,24 +15,18 @@ from ani_menu_agent.vision import detect_alpha_subject_box
 
 def image_curator(state: ContentState) -> ContentState:
     package = ContentPackage.model_validate(state["package"])
-    repository = state.get("repository") or AgentRepository()
     download_errors: list[str] = []
     robots_cache: dict[str, RobotFileParser | None] = {}
     for index, image in enumerate(package.images):
-        image_sources = list(package.sources)
-        if image.provenance_source and all(
-            str(source.url) != str(image.provenance_source.url) for source in image_sources
-        ):
-            image_sources.append(image.provenance_source)
         if (
             POLICY.allow_public_official_image_risk
             and image.rights_status == RightsStatus.NEEDS_REVIEW
             and image.official
-            and image.public_official_source_matches(image_sources)
+            and image.public_official_source_matches(package.sources)
         ):
             source = next(
                 source
-                for source in image_sources
+                for source in package.sources
                 if source.is_official
                 and source.role == "primary"
                 and image.public_official_source_matches([source])
@@ -44,27 +38,6 @@ def image_curator(state: ContentState) -> ContentState:
                     "rights_checked_at": image.rights_checked_at or datetime.now(UTC).isoformat(),
                     "attribution_text": image.attribution_text.strip()
                     or f"공식 이미지 출처: {source.publisher} · {source.title}",
-                }
-            )
-        elif (
-            POLICY.allow_public_editorial_image_risk
-            and image.rights_status == RightsStatus.NEEDS_REVIEW
-            and not image.official
-            and image.public_editorial_source_matches(image_sources)
-        ):
-            source = next(
-                source
-                for source in image_sources
-                if source.role in {"editorial", "reference"}
-                and image.public_editorial_source_matches([source])
-            )
-            image = image.model_copy(
-                update={
-                    "rights_status": RightsStatus.PUBLIC_EDITORIAL_RISK_ACCEPTED,
-                    "rights_evidence_url": image.source_url,
-                    "rights_checked_at": image.rights_checked_at or datetime.now(UTC).isoformat(),
-                    "attribution_text": image.attribution_text.strip()
-                    or f"이미지 출처: {source.publisher} · {source.title}",
                 }
             )
         local_path = Path(image.local_path) if image.local_path else None
@@ -79,16 +52,9 @@ def image_curator(state: ContentState) -> ContentState:
                     "download_error": None,
                 }
             )
-        elif image.storage_key and repository.get_image_bytes(image.storage_key):
-            image = image.model_copy(
-                update={"download_status": "downloaded", "download_error": None}
-            )
         elif image.url and not image.eligible_for_editorial_use(
-            image_sources,
-            allow_risk_accepted=(
-                POLICY.allow_public_official_image_risk
-                or POLICY.allow_public_editorial_image_risk
-            ),
+            package.sources,
+            allow_risk_accepted=POLICY.allow_public_official_image_risk,
         ):
             image = image.model_copy(
                 update={
@@ -123,7 +89,7 @@ def image_curator(state: ContentState) -> ContentState:
             if path.is_file():
                 image.subject_box = detect_alpha_subject_box(path)
         package.images[index] = image
-    persisted = repository.persist_images(package)
+    persisted = AgentRepository().persist_images(package)
     result: ContentState = {
         "trace": append_trace(state, "image_curator"),
         "status": "images_curated",

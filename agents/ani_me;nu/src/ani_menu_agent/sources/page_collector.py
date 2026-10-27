@@ -7,7 +7,7 @@ import json
 import re
 import socket
 from datetime import UTC, datetime
-from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -15,13 +15,12 @@ import trafilatura
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, HttpUrl
 
-from ani_menu_agent.models import StructuredWorkReference
 from ani_menu_agent.sources.http_policy import pace_host
 from ani_menu_agent.sources.models import Source
 
 MAX_PAGE_BYTES = 5 * 1024 * 1024
 MAX_ROBOTS_BYTES = 256 * 1024
-MAX_IMAGE_URLS = 100
+MAX_IMAGE_URLS = 30
 MAX_RELATED_IMAGE_PAGES = 4
 
 
@@ -112,11 +111,6 @@ def _published_date_from_html(soup: BeautifulSoup) -> str | None:
     return None
 
 
-class PageOutboundLink(BaseModel):
-    url: HttpUrl
-    text: str = ""
-
-
 class SourcePageCapture(BaseModel):
     source_id: str
     title: str
@@ -127,67 +121,9 @@ class SourcePageCapture(BaseModel):
     image_urls: list[HttpUrl]
     image_alt_text: dict[str, str] = Field(default_factory=dict)
     image_source_pages: dict[str, str] = Field(default_factory=dict)
-    image_source_titles: dict[str, str] = Field(default_factory=dict)
-    outbound_links: list[PageOutboundLink] = Field(default_factory=list)
-    structured_work_references: list[StructuredWorkReference] = Field(default_factory=list)
     related_image_pages: list[HttpUrl] = Field(default_factory=list)
     excerpt_truncated: bool = False
     status: str = "unverified_capture"
-
-
-def _article_outbound_links(soup: BeautifulSoup, page_url: str) -> list[PageOutboundLink]:
-    """Capture external links only from an explicit article body for provenance routing."""
-    scope = None
-    for selector in (
-        '[itemprop="articleBody"]',
-        ".news_detail_cont",
-        ".entry-content",
-        ".post-content",
-        ".article-content",
-        ".article-body",
-        "article",
-    ):
-        scope = soup.select_one(selector)
-        if scope:
-            break
-    if scope is None:
-        return []
-
-    page_host = (urlparse(page_url).hostname or "").lower().rstrip(".")
-    links: list[PageOutboundLink] = []
-    seen: set[str] = set()
-    for anchor in scope.select("a[href]"):
-        href = str(anchor.get("href") or "").strip()
-        if not href or href.startswith(("#", "mailto:", "javascript:")):
-            continue
-        absolute = urljoin(page_url, href)
-        parsed = urlparse(absolute)
-        host = (parsed.hostname or "").lower().rstrip(".")
-        sensitive_query_keys = {
-            "token", "access_token", "auth", "authorization", "session", "sessionid",
-            "csrf", "email", "user", "account", "code", "state",
-        }
-        query_keys = {key.casefold() for key in parse_qs(parsed.query)}
-        if (
-            parsed.scheme != "https"
-            or not host
-            or parsed.username
-            or parsed.password
-            or host == page_host
-            or query_keys & sensitive_query_keys
-            or absolute in seen
-        ):
-            continue
-        seen.add(absolute)
-        links.append(
-            PageOutboundLink(
-                url=absolute,
-                text=re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))[:200],
-            )
-        )
-        if len(links) >= 100:
-            break
-    return links
 
 
 def _approved_hosts(source: Source) -> set[str]:
@@ -195,77 +131,6 @@ def _approved_hosts(source: Source) -> set[str]:
         (urlparse(str(source.url)).hostname or "").lower().rstrip("."),
         *[host.lower().rstrip(".") for host in source.allowed_asset_hosts],
     }
-
-
-def _page_title(soup: BeautifulSoup) -> str:
-    for selector in ({"property": "og:title"}, {"name": "twitter:title"}):
-        tag = soup.find("meta", attrs=selector)
-        if tag and tag.get("content"):
-            return str(tag["content"]).strip()[:300]
-    return soup.title.get_text(" ", strip=True)[:300] if soup.title else ""
-
-
-def _structured_work_references(soup: BeautifulSoup) -> list[StructuredWorkReference]:
-    """Read only schema.org about/mentions labels, never arbitrary page prose."""
-    references: list[StructuredWorkReference] = []
-    seen: set[tuple[str, str, str]] = set()
-
-    def add(relation: str, value: object) -> None:
-        values = value if isinstance(value, list) else [value]
-        for item in values:
-            if isinstance(item, str):
-                name, url = item.strip(), None
-            elif isinstance(item, dict):
-                name = str(item.get("name") or item.get("alternateName") or "").strip()
-                url_value = item.get("url") or item.get("@id")
-                url = str(url_value).strip() if isinstance(url_value, str) else None
-            else:
-                continue
-            if not name:
-                continue
-            key = (relation, name.casefold(), url or "")
-            if key in seen:
-                continue
-            seen.add(key)
-            try:
-                references.append(
-                    StructuredWorkReference(relation=relation, name=name[:500], url=url)
-                )
-            except ValueError:
-                references.append(
-                    StructuredWorkReference(relation=relation, name=name[:500])
-                )
-
-    def visit(value: object) -> None:
-        if isinstance(value, dict):
-            for key in ("about", "mentions"):
-                if key in value:
-                    add("about" if key == "about" else "mention", value[key])
-            # JSON-LD commonly wraps article objects in @graph. Walk nested
-            # containers only; names outside about/mentions are not work signals.
-            for key, child in value.items():
-                if key in {"@graph", "@included"}:
-                    visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-
-    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
-        raw = script.string or script.get_text()
-        if not raw:
-            continue
-        try:
-            visit(json.loads(raw))
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-    for node in soup.select('[itemprop="about"], [itemprop="mentions"]'):
-        relation = "about" if node.get("itemprop") == "about" else "mention"
-        name = str(node.get("content") or node.get_text(" ", strip=True)).strip()
-        url = str(node.get("href") or node.get("resource") or "").strip() or None
-        if name:
-            add(relation, {"name": name, "url": url} if url else name)
-    return references[:40]
 
 
 def _is_decorative_image_url(url: str) -> bool:
@@ -311,7 +176,7 @@ def _get_html(url: str, source: Source, timeout: float) -> tuple[str, str]:
                     location = response.headers.get("location")
                     if not location:
                         raise ValueError("출처 페이지의 리다이렉트 주소가 비어 있습니다.")
-                    current_url = _secure_redirect_target(current_url, location)
+                    current_url = urljoin(current_url, location)
                     continue
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").lower()
@@ -330,24 +195,6 @@ def _get_html(url: str, source: Source, timeout: float) -> tuple[str, str]:
                 encoding = response.encoding or "utf-8"
                 return b"".join(chunks).decode(encoding, errors="replace"), current_url
     raise ValueError("페이지 리다이렉트 횟수가 제한을 초과했습니다.")
-
-
-def _secure_redirect_target(current_url: str, location: str) -> str:
-    """Keep same-host canonical redirects on HTTPS without visiting HTTP."""
-    target = urljoin(current_url, location)
-    current = urlparse(current_url)
-    redirected = urlparse(target)
-    current_host = (current.hostname or "").lower().rstrip(".")
-    redirected_host = (redirected.hostname or "").lower().rstrip(".")
-    if (
-        current.scheme == "https"
-        and redirected.scheme == "http"
-        and current_host
-        and current_host == redirected_host
-        and redirected.port in {None, 80}
-    ):
-        return redirected._replace(scheme="https", netloc=redirected.hostname).geturl()
-    return target
 
 
 def _check_robots(client: httpx.Client, url: str, source: Source) -> None:
@@ -383,31 +230,23 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
     scope = _article_content_scope(soup)
 
     scoped_images = scope.find_all("img")
-    parsed_page = urlparse(page_url)
-    character_path = re.fullmatch(
-        r"/character/([^/]+)/index\.html?", parsed_page.path, re.IGNORECASE
-    )
-    if (parsed_page.hostname or "").lower() == "one-piece.com" and character_path:
-        # ONE PIECE character detail pages append a long recommendation rail
-        # containing other crew members' portraits. Keep only art under this
-        # character's own slug so unrelated characters cannot be selected for
-        # the deck just because they are embedded in the same HTML document.
-        slug_segment = f"/{character_path.group(1).casefold()}/"
-        scoped_images = [
-            tag
-            for tag in scoped_images
-            if slug_segment in urlparse(
-                urljoin(page_url, str(tag.get("src") or tag.get("data-src") or ""))
-            ).path.casefold()
-        ]
-    # Keep the article's social/hero image as an additional candidate even when
-    # the body also contains images. Many publishers expose the original asset
-    # only through Open Graph metadata.
-    for tag in soup.find_all("meta", attrs={"property": "og:image"}):
-        image_url = tag.get("content")
-        if image_url:
-            absolute_url = urljoin(page_url, str(image_url))
-            scores[absolute_url] = max(scores.get(absolute_url, 0), 100)
+    scoped_urls = {
+        urljoin(page_url, str(value))
+        for tag in scoped_images
+        for value in (
+            tag.get("src"),
+            tag.get("data-src"),
+            tag.get("data-original"),
+            tag.get("data-lazy-src"),
+        )
+        if value
+    }
+    if scope is soup or not scoped_urls:
+        for tag in soup.find_all("meta", attrs={"property": "og:image"}):
+            image_url = tag.get("content")
+            if image_url:
+                absolute_url = urljoin(page_url, str(image_url))
+                scores[absolute_url] = max(scores.get(absolute_url, 0), 100)
     for tag in scoped_images:
         if _is_linked_to_another_news_article(tag, page_url):
             continue
@@ -416,31 +255,20 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
         )
         base_score = min(40, int(declared_size**0.5 / 20))
         candidates = [
-            tag.get(key)
-            for key in (
-                "src",
-                "data-src",
-                "data-original",
-                "data-lazy-src",
-                "data-original-src",
-                "data-image",
-                "data-echo",
-                "data-actualsrc",
-            )
+            tag.get("src"),
+            tag.get("data-src"),
+            tag.get("data-original"),
+            tag.get("data-lazy-src"),
         ]
-
         for srcset_key in ("srcset", "data-srcset"):
-            best = _largest_srcset_candidate(tag.get(srcset_key))
-            if best:
-                candidates.append(best)
-        picture = tag.find_parent("picture")
-        if picture:
-            for source_tag in picture.find_all("source"):
-                best = _largest_srcset_candidate(
-                    source_tag.get("srcset") or source_tag.get("data-srcset")
-                )
-                if best:
-                    candidates.append(best)
+            srcset = tag.get(srcset_key) or ""
+            # Prefer the largest declared rendition; descriptor values are hints only.
+            entries = [item.strip().split() for item in str(srcset).split(",") if item.strip()]
+            entries.sort(key=lambda item: _srcset_width(item[-1] if len(item) > 1 else ""))
+            candidates.extend(
+                (item[0], min(60, _srcset_width(item[-1] if len(item) > 1 else "") // 20))
+                for item in reversed(entries)
+            )
         description = str(tag.get("alt") or tag.get("title") or "").strip()
         for candidate in candidates:
             if not candidate:
@@ -469,13 +297,6 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
             scores[absolute_url] = max(scores.get(absolute_url, 0), score)
             if description:
                 descriptions[absolute_url] = description[:300]
-    # Some publishers render article/gallery visuals as CSS backgrounds instead
-    # of <img> tags. Collect those only from the selected article body.
-    for tag in scope.select("[style]"):
-        style = str(tag.get("style") or "")
-        for raw_url in re.findall(r"url\((?:['\"])?(.*?)(?:['\"])?\)", style, re.IGNORECASE):
-            absolute_url = urljoin(page_url, raw_url.strip())
-            scores[absolute_url] = max(scores.get(absolute_url, 0), 20)
     # Apply the CMS rendition upgrade consistently to metadata/OG images too;
     # those can otherwise re-introduce a small duplicate before the article body
     # image with the larger URL is reached.
@@ -546,58 +367,6 @@ def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
         or ""
     )
     if extracted.strip():
-        # Character indexes often encode their actual facts in linked cards
-        # (name, birthday, affiliation, bounty, voice actor), which a prose
-        # extractor treats as navigation and silently drops. Preserve only
-        # same-site character-detail anchors that visibly include structured
-        # profile fields; unrelated menus and bare links are excluded.
-        parsed_page = urlparse(page_url)
-        if (
-            (parsed_page.hostname or "").lower() == "one-piece.com"
-            and parsed_page.path.rstrip("/").lower() == "/story/index.html"
-        ):
-            arc_rows: list[str] = []
-            seen_arcs: set[str] = set()
-            for anchor in _article_content_scope(soup).select('a[href*="/story/"]'):
-                href = urlparse(urljoin(page_url, str(anchor.get("href", ""))))
-                row = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True)).strip()
-                if (
-                    (href.hostname or "").lower() != (parsed_page.hostname or "").lower()
-                    or href.path.rstrip("/").lower() == parsed_page.path.rstrip("/").lower()
-                    or len(row) < 12
-                    or not re.search(r"原作.*\d+巻.*アニメ.*\d+話", row)
-                    or row in seen_arcs
-                ):
-                    continue
-                seen_arcs.add(row)
-                arc_rows.append(row)
-                if len(arc_rows) >= 50:
-                    break
-            if arc_rows:
-                extracted = "\n".join(arc_rows)
-        if re.search(r"/characters?/(?:index\.html)?/?$", parsed_page.path, re.IGNORECASE):
-            profile_rows: list[str] = []
-            seen_rows: set[str] = set()
-            for anchor in _article_content_scope(soup).select('a[href*="/character/"]'):
-                href = urlparse(urljoin(page_url, str(anchor.get("href", ""))))
-                if (href.hostname or "").lower() != (parsed_page.hostname or "").lower():
-                    continue
-                if href.path.rstrip("/").lower() == parsed_page.path.rstrip("/").lower():
-                    continue
-                row = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True)).strip()
-                if (
-                    len(row) < 16
-                    or len(row) > 500
-                    or not re.search(r"懸賞金|誕生日|悪魔の実|声優|組織", row)
-                    or row in seen_rows
-                ):
-                    continue
-                seen_rows.add(row)
-                profile_rows.append(row)
-                if len(profile_rows) >= 60:
-                    break
-            if profile_rows:
-                extracted = "\n".join(profile_rows)
         return extracted
 
     scope = _article_content_scope(soup)
@@ -628,16 +397,6 @@ def _srcset_width(descriptor: str) -> int:
         return int(value[:-1]) if value.endswith("w") else int(float(value[:-1]) * 1000)
     except (ValueError, IndexError):
         return 0
-
-
-def _largest_srcset_candidate(srcset: object) -> tuple[str, int] | None:
-    entries = [item.strip().split() for item in str(srcset or "").split(",") if item.strip()]
-    if not entries:
-        return None
-    # Save the best rendition for each image source instead of every
-    # thumbnail/retina variant, avoiding duplicate resolutions in the asset pool.
-    best = max(entries, key=lambda item: _srcset_width(item[-1] if len(item) > 1 else ""))
-    return best[0], min(60, _srcset_width(best[-1] if len(best) > 1 else "") // 20)
 
 
 def _related_image_page_candidates(soup: BeautifulSoup, page_url: str) -> list[str]:
@@ -683,31 +442,33 @@ def collect_official_page(
     *,
     timeout: float = 20.0,
     expand_related_pages: bool = True,
-    allow_discovery_page: bool = False,
 ) -> SourcePageCapture:
-    """Read one approved page; discovery pages are link-resolution context only."""
-    if (
-        source.status != "active"
-        or source.role not in {"primary", "editorial", "reference"}
-        and not (allow_discovery_page and source.role == "discovery")
-        or source.collection != "html"
-    ):
+    """자동 수집 허용된 primary/html 출처의 한 페이지를 읽습니다."""
+    if source.status != "active" or source.role != "primary" or source.collection != "html":
         raise ValueError(
-            "HTML 수집은 승인된 primary/editorial/reference 출처 또는 "
-            "링크 해석 목적으로 명시 허용한 discovery 출처만 가능합니다."
+            "HTML 자동 수집은 status=active, role=primary, collection=html인 출처만 허용됩니다."
         )
     html, final_url = _get_html(url, source, timeout)
     soup = BeautifulSoup(html, "html.parser")
-    title = _page_title(soup)
+    title = ""
+    for selector in (
+        {"property": "og:title"},
+        {"name": "twitter:title"},
+    ):
+        tag = soup.find("meta", attrs=selector)
+        if tag and tag.get("content"):
+            title = str(tag["content"]).strip()
+            break
+    if not title and soup.title and soup.title.string:
+        title = soup.title.string.strip()
 
     published_at = _published_date_from_html(soup)
 
     extracted = _extract_article_text(html, final_url, soup)
     image_urls, image_alt_text = _image_candidates(soup, final_url)
     seed_image_urls = image_urls
-    image_urls = list(seed_image_urls)
+    image_urls = seed_image_urls[:3]
     image_source_pages = {candidate: final_url for candidate in image_urls}
-    image_source_titles = {candidate: title for candidate in image_urls}
     related_candidates = (
         _related_image_page_candidates(soup, final_url) if expand_related_pages else []
     )
@@ -720,16 +481,17 @@ def collect_official_page(
             # One inaccessible related page should not discard evidence from the seed page.
             continue
         related_soup = BeautifulSoup(related_html, "html.parser")
-        related_title = _page_title(related_soup)
         related_pages.append(related_final_url)
         related_urls, related_alt_text = _image_candidates(related_soup, related_final_url)
+        related_urls = related_urls[:10]
         for candidate in related_urls:
             image_source_pages.setdefault(candidate, related_final_url)
-            image_source_titles.setdefault(candidate, related_title)
         related_image_urls.extend(related_urls)
         image_alt_text.update(related_alt_text)
-    # Keep every seed-page image before images from optional linked galleries.
+    # Ensure linked article/gallery assets enter the saved candidate pool before the
+    # low-priority remainder of a news listing can consume the CLI's image limit.
     image_urls.extend(related_image_urls)
+    image_urls.extend(seed_image_urls[3:])
 
     allowed = _approved_hosts(source)
     unique_images: list[HttpUrl] = []
@@ -767,286 +529,6 @@ def collect_official_page(
             str(image_url): image_source_pages.get(str(image_url), final_url)
             for image_url in unique_images
         },
-        image_source_titles={
-            str(image_url): image_source_titles.get(str(image_url), title)
-            for image_url in unique_images
-        },
-        outbound_links=_article_outbound_links(soup, final_url),
-        structured_work_references=_structured_work_references(soup),
         related_image_pages=[HttpUrl(page) for page in related_pages],
         excerpt_truncated=len(extracted) > excerpt_limit,
-    )
-
-
-def collect_reference_page(
-    source: Source,
-    url: str,
-    *,
-    timeout: float = 20.0,
-) -> SourcePageCapture:
-    """Fetch one approved Kitsu or Wikipedia record and normalize it for extraction."""
-    if source.status != "active" or source.role != "reference" or source.collection != "api":
-        raise ValueError("Only active reference API sources can use the reference collector.")
-    _validate_url(url, source)
-    parsed = urlparse(url)
-    fetched_at = datetime.now(UTC).isoformat()
-    structured_work_references: list[StructuredWorkReference] = []
-    headers = {
-        "Accept": "application/vnd.api+json, application/json",
-        "User-Agent": "me-nu-content-agent/0.3 (https://github.com/Por0ri/me-and-nu)",
-    }
-    with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
-        if (
-            source.category == "kitsu_anime_catalog"
-            and re.fullmatch(r"/api/edge/media-characters/\d+", parsed.path)
-        ):
-            pace_host(url, source.min_interval_seconds)
-            response = client.get(url)
-            response.raise_for_status()
-            if len(response.content) > MAX_PAGE_BYTES:
-                raise ValueError("Kitsu API response exceeds the 5MB collection limit.")
-            payload = response.json()
-            data = payload.get("data")
-            if not isinstance(data, dict):
-                raise ValueError("Kitsu returned no character relationship record.")
-            resources = {
-                (str(item.get("type")), str(item.get("id"))): item
-                for item in payload.get("included", [])
-                if isinstance(item, dict)
-            }
-            relationships = data.get("relationships") or {}
-            character_ref = (relationships.get("character") or {}).get("data") or {}
-            media_ref = (relationships.get("media") or {}).get("data") or {}
-            character = resources.get(
-                (str(character_ref.get("type", "characters")), str(character_ref.get("id", "")))
-            )
-            media = resources.get(
-                (str(media_ref.get("type", "anime")), str(media_ref.get("id", "")))
-            )
-            char_attrs = (character or {}).get("attributes") or {}
-            media_attrs = (media or {}).get("attributes") or {}
-            title = str(char_attrs.get("canonicalName") or "Kitsu character")
-            media_title = str(media_attrs.get("canonicalTitle") or "").strip()
-            if media_title:
-                structured_work_references.append(
-                    StructuredWorkReference(relation="about", name=media_title)
-                )
-            text = json.dumps(
-                {
-                    "record_type": "anime_character_reference",
-                    "character_name": title,
-                    "alternate_names": char_attrs.get("names"),
-                    "description": BeautifulSoup(
-                        str(char_attrs.get("description") or ""), "html.parser"
-                    ).get_text(" ", strip=True)[:3000],
-                    "character_role_in_work": (data.get("attributes") or {}).get("role"),
-                    "work_title": media_attrs.get("canonicalTitle"),
-                    "work_titles": media_attrs.get("titles"),
-                    "source_updated_at": char_attrs.get("updatedAt"),
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            canonical = url
-        elif (
-            source.category == "kitsu_anime_catalog"
-            and parsed.path == "/api/edge/anime"
-            and parse_qs(parsed.query).get("sort") == ["-averageRating"]
-        ):
-            query = parse_qs(parsed.query)
-            try:
-                limit = int((query.get("page[limit]") or ["20"])[0])
-            except ValueError as exc:
-                raise ValueError("Kitsu page limit is invalid.") from exc
-            if not 1 <= limit <= 20:
-                raise ValueError("Kitsu rating pages are limited to 20 works.")
-            pace_host(url, source.min_interval_seconds)
-            response = client.get(url)
-            response.raise_for_status()
-            if len(response.content) > MAX_PAGE_BYTES:
-                raise ValueError("Kitsu API response exceeds the 5MB collection limit.")
-            payload = response.json()
-            fields = []
-            for row in (payload.get("data") or [])[:limit]:
-                attrs = row.get("attributes") or {}
-                if not attrs.get("canonicalTitle") or attrs.get("averageRating") is None:
-                    continue
-                structured_work_references.append(
-                    StructuredWorkReference(
-                        relation="mention", name=str(attrs["canonicalTitle"])
-                    )
-                )
-                fields.append(
-                    {
-                        "rank": attrs.get("ratingRank"),
-                        "work_title": attrs.get("canonicalTitle"),
-                        "average_rating": attrs.get("averageRating"),
-                        "rating_count": attrs.get("userCount"),
-                        "source_updated_at": attrs.get("updatedAt"),
-                        "work_url": f"https://kitsu.io/anime/{row.get('id')}",
-                    }
-                )
-            if not fields:
-                raise ValueError("Kitsu returned no rating-ranked works.")
-            title = "Kitsu 사용자 평점 랭킹"
-            text = json.dumps(fields, ensure_ascii=False, indent=2)
-            canonical = url
-        elif source.category == "kitsu_anime_catalog":
-            character_match = re.fullmatch(r"/api/edge/media-characters/(\d+)", parsed.path)
-            ranking = parsed.path == "/api/edge/anime" and parse_qs(parsed.query).get(
-                "sort"
-            ) == ["-averageRating"]
-            anime_match = re.fullmatch(r"/anime/(\d+)/?", parsed.path)
-            if not (character_match or ranking or anime_match):
-                raise ValueError(
-                    "Kitsu reference URL is outside the approved anime/character routes."
-                )
-            endpoint = url if character_match or ranking else (
-                f"{str(source.url).rstrip('/')}/{anime_match.group(1)}"
-            )
-            _validate_url(endpoint, source)
-            pace_host(endpoint, source.min_interval_seconds)
-            response = client.get(endpoint)
-            response.raise_for_status()
-            if len(response.content) > MAX_PAGE_BYTES:
-                raise ValueError("Kitsu API response exceeds the 5MB collection limit.")
-            payload = response.json()
-            if character_match:
-                data = payload.get("data")
-                if not isinstance(data, dict):
-                    raise ValueError("Kitsu returned no character relationship record.")
-                included = payload.get("included") or []
-                resources = {
-                    (str(item.get("type")), str(item.get("id"))): item
-                    for item in included
-                    if isinstance(item, dict)
-                }
-                relationships = data.get("relationships") or {}
-                character_ref = (relationships.get("character") or {}).get("data") or {}
-                media_ref = (relationships.get("media") or {}).get("data") or {}
-                character = resources.get(
-                    (str(character_ref.get("type", "characters")), str(character_ref.get("id", "")))
-                )
-                media = resources.get(
-                    (str(media_ref.get("type", "anime")), str(media_ref.get("id", "")))
-                )
-                char_attrs = (character or {}).get("attributes") or {}
-                media_attrs = (media or {}).get("attributes") or {}
-                title = str(char_attrs.get("canonicalName") or "Kitsu character")
-                text = json.dumps(
-                    {
-                        "record_type": "anime_character_reference",
-                        "character_name": title,
-                        "alternate_names": char_attrs.get("names"),
-                        "description": BeautifulSoup(
-                            str(char_attrs.get("description") or ""), "html.parser"
-                        ).get_text(" ", strip=True)[:3000],
-                        "character_role_in_work": (data.get("attributes") or {}).get("role"),
-                        "work_title": media_attrs.get("canonicalTitle"),
-                        "work_titles": media_attrs.get("titles"),
-                        "source_updated_at": char_attrs.get("updatedAt"),
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            elif ranking:
-                rows = payload.get("data") or []
-                fields = []
-                for row in rows[:20]:
-                    attrs = row.get("attributes") or {}
-                    if not attrs.get("canonicalTitle") or attrs.get("averageRating") is None:
-                        continue
-                    fields.append(
-                        {
-                            "rank": attrs.get("ratingRank"),
-                            "work_title": attrs.get("canonicalTitle"),
-                            "average_rating": attrs.get("averageRating"),
-                            "rating_count": attrs.get("userCount"),
-                            "source_updated_at": attrs.get("updatedAt"),
-                            "work_url": f"https://kitsu.io/anime/{row.get('id')}",
-                        }
-                    )
-                if not fields:
-                    raise ValueError("Kitsu returned no rating-ranked works.")
-                title = "Kitsu 사용자 평점 랭킹"
-                text = json.dumps(fields, ensure_ascii=False, indent=2)
-            else:
-                data = payload.get("data")
-                if not isinstance(data, dict):
-                    raise ValueError("Kitsu returned no anime detail record.")
-                attrs = data.get("attributes") or {}
-                fields = {
-                    key: attrs.get(key)
-                    for key in (
-                        "canonicalTitle",
-                        "titles",
-                        "subtype",
-                        "startDate",
-                        "endDate",
-                        "episodeCount",
-                        "episodeLength",
-                        "status",
-                        "ageRating",
-                        "averageRating",
-                        "ratingRank",
-                        "popularityRank",
-                        "synopsis",
-                    )
-                    if attrs.get(key) is not None
-                }
-                title = str(
-                    attrs.get("canonicalTitle") or fields.get("titles") or "Kitsu anime"
-                )
-                for work_title in dict.fromkeys(
-                    [title, *(str(value) for value in (fields.get("titles") or {}).values())]
-                ):
-                    if work_title.strip():
-                        structured_work_references.append(
-                            StructuredWorkReference(relation="about", name=work_title.strip())
-                        )
-                text = json.dumps(fields, ensure_ascii=False, indent=2)
-            canonical = url
-        elif source.category == "wikipedia_reference":
-            if not parsed.path.startswith("/wiki/"):
-                raise ValueError("Wikipedia reference URLs must identify one /wiki/ article.")
-            title = unquote(parsed.path.removeprefix("/wiki/")).replace("_", " ")
-            if not title:
-                raise ValueError("Wikipedia reference URL has no article title.")
-            params = {
-                "action": "query",
-                "prop": "extracts|info",
-                "explaintext": "1",
-                "inprop": "url",
-                "titles": title,
-                "redirects": "1",
-                "format": "json",
-                "formatversion": "2",
-            }
-            endpoint = str(source.url)
-            pace_host(endpoint, source.min_interval_seconds)
-            response = client.get(endpoint, params=params)
-            response.raise_for_status()
-            pages = response.json().get("query", {}).get("pages", [])
-            page = next(
-                (row for row in pages if isinstance(row, dict) and not row.get("missing")),
-                None,
-            )
-            if page is None or not str(page.get("extract", "")).strip():
-                raise ValueError("Wikipedia returned no article extract for this title.")
-            title = str(page.get("title") or title)
-            canonical = str(page.get("fullurl") or url)
-            text = str(page["extract"])[:24_000]
-        else:
-            raise ValueError(f"Unsupported reference API adapter: {source.category}")
-
-    return SourcePageCapture(
-        source_id=source.id,
-        title=title,
-        url=HttpUrl(canonical),
-        fetched_at=fetched_at,
-        text=text,
-        image_urls=[],
-        structured_work_references=structured_work_references,
-        status="unverified_capture",
-        excerpt_truncated=len(text) >= 24_000,
     )

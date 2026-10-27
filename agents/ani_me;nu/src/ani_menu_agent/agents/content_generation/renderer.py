@@ -86,57 +86,24 @@ def _background(image: Image.Image, style: str = "blur") -> Image.Image:
         round(channel * 0.42 + shade * 0.58)
         for channel, shade in zip(mean, (12, 16, 25), strict=True)
     )
-    # Keep the image's own colors and shapes present across the whole canvas.
-    # A flat palette/gradient used to make the source look like a thumbnail
-    # pasted above a separate black panel. The blurred extension is derived
-    # from the same artwork, so it reads as an intentional full-bleed treatment.
-    blurred = ImageOps.fit(
+    if style == "palette":
+        return Image.new("RGBA", (CARD_WIDTH, CARD_HEIGHT), (*dark_palette, 255))
+
+    backdrop = ImageOps.fit(
         source.convert("RGB"),
         (CARD_WIDTH, CARD_HEIGHT),
         method=Image.Resampling.LANCZOS,
-    ).filter(ImageFilter.GaussianBlur(radius=68))
-    palette = Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT), (*dark_palette, 255))
-    if style == "palette":
-        return Image.blend(blurred, palette, 0.22).convert("RGBA")
-    if style == "gradient":
-        canvas = Image.new("RGBA", (CARD_WIDTH, CARD_HEIGHT), (0, 0, 0, 255))
-        draw = ImageDraw.Draw(canvas)
-        top = tuple(
-            round(channel * 0.66 + shade * 0.34)
-            for channel, shade in zip(mean, (22, 28, 42), strict=True)
-        )
-        middle = tuple(
-            round(channel * 0.35 + shade * 0.65)
-            for channel, shade in zip(mean, (12, 17, 27), strict=True)
-        )
-        bottom = (8, 11, 17)
-        for row in range(CARD_HEIGHT):
-            position = row / max(1, CARD_HEIGHT - 1)
-            if position < 0.58:
-                ratio = position / 0.58
-                color = tuple(
-                    round(a * (1 - ratio) + b * ratio)
-                    for a, b in zip(top, middle, strict=True)
-                )
-            else:
-                ratio = (position - 0.58) / 0.42
-                color = tuple(
-                    round(a * (1 - ratio) + b * ratio)
-                    for a, b in zip(middle, bottom, strict=True)
-                )
-            draw.line((0, row, CARD_WIDTH, row), fill=(*color, 255))
-        # A light image-derived wash prevents a hard seam around the sharp art
-        # while the gradient still protects the HTML copy zone.
-        return Image.blend(blurred, canvas.convert("RGB"), 0.36).convert("RGBA")
-
-    return Image.blend(blurred, palette, 0.16).convert("RGBA")
+    ).filter(ImageFilter.GaussianBlur(radius=82))
+    backdrop = Image.blend(
+        backdrop,
+        Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT), (*dark_palette, 255)),
+        0.52,
+    )
+    return backdrop.convert("RGBA")
 
 
 def _editorial_graphic_background(page: int, role: str, copy_text: str = "") -> Image.Image:
-    """Legacy entry point retained only to fail closed; anime cards require source art."""
-    raise ValueError("Anime content cards require a real, relevant source image.")
-
-    # Unreachable historical experiment; production must never generate placeholders.
+    """Draw original geometric editorial art when no distinct official image is available."""
     accents = _GRAPHIC_ACCENTS
     accent = accents[(page - 1) % len(accents)]
     top = (24 + page * 3 % 15, 27 + page * 5 % 13, 39 + page * 7 % 18)
@@ -147,67 +114,24 @@ def _editorial_graphic_background(page: int, role: str, copy_text: str = "") -> 
         ratio = y / max(1, CARD_HEIGHT - 1)
         color = tuple(round(top[i] * (1 - ratio) + bottom[i] * ratio) for i in range(3))
         gradient_draw.line((0, y, CARD_WIDTH, y), fill=(*color, 255))
+    # The sole no-image exception is a minimal final takeaway card: no fake icons,
+    # timelines, cast pictograms, or random geometric stand-ins.
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    for row in range(4):
+        for column in range(8):
+            x = (32 + column * 38) * RENDER_SCALE
+            y = (28 + row * 28) * RENDER_SCALE
+            draw.ellipse(
+                (x, y, x + 2 * RENDER_SCALE, y + 2 * RENDER_SCALE),
+                fill=(*accent, 75),
+            )
+    return canvas
+
+    # Legacy motifs below are intentionally unreachable; they are not valid fallbacks.
     draw = ImageDraw.Draw(canvas, "RGBA")
     motif = (page - 1) % 5
     normalized_copy = copy_text.casefold()
-    location_terms = ("장소", "위치", "현장", "도쿄", "오사카", "이케부쿠로")
-    if any(term in normalized_copy for term in location_terms):
-        # Map-like streets and a pin make location details legible without
-        # pretending to depict a real venue or map.
-        road = (255, 255, 255, 48)
-        for points in (
-            ((18, 112), (98, 76), (174, 113), (244, 68), (320, 98)),
-            ((34, 183), (105, 148), (190, 181), (268, 137), (320, 155)),
-            ((90, 35), (118, 96), (102, 155), (137, 231)),
-            ((244, 28), (214, 89), (239, 148), (205, 226)),
-        ):
-            draw.line(
-                [(x * RENDER_SCALE, y * RENDER_SCALE) for x, y in points],
-                fill=road,
-                width=9 * RENDER_SCALE,
-                joint="curve",
-            )
-        pin_x, pin_y = 164 * RENDER_SCALE, 92 * RENDER_SCALE
-        draw.ellipse(
-            (pin_x - 30 * RENDER_SCALE, pin_y - 30 * RENDER_SCALE,
-             pin_x + 30 * RENDER_SCALE, pin_y + 30 * RENDER_SCALE),
-            fill=(*accent, 235),
-            outline=(255, 255, 255, 230),
-            width=4 * RENDER_SCALE,
-        )
-        draw.polygon(
-            ((pin_x - 20 * RENDER_SCALE, pin_y + 15 * RENDER_SCALE),
-             (pin_x + 20 * RENDER_SCALE, pin_y + 15 * RENDER_SCALE),
-             (pin_x, pin_y + 58 * RENDER_SCALE)),
-            fill=(*accent, 235),
-        )
-        draw.ellipse(
-            (pin_x - 8 * RENDER_SCALE, pin_y - 8 * RENDER_SCALE,
-             pin_x + 8 * RENDER_SCALE, pin_y + 8 * RENDER_SCALE),
-            fill=(255, 255, 255, 245),
-        )
-    elif any(term in normalized_copy for term in ("굿즈", "상품", "가격", "구성", "세트", "구매")):
-        # A small set of abstract package silhouettes suggests a product spread,
-        # never a specific licensed item that the source did not show.
-        for index, (x, y, width, height) in enumerate(
-            ((52, 72, 68, 92), (138, 43, 82, 121), (240, 84, 60, 80))
-        ):
-            fill = (*_GRAPHIC_ACCENTS[(page + index) % len(_GRAPHIC_ACCENTS)], 218)
-            rect = (x * RENDER_SCALE, y * RENDER_SCALE,
-                    (x + width) * RENDER_SCALE, (y + height) * RENDER_SCALE)
-            draw.rounded_rectangle(rect, radius=13 * RENDER_SCALE, fill=fill,
-                                   outline=(255, 255, 255, 180), width=2 * RENDER_SCALE)
-            draw.rounded_rectangle(
-                ((x + 13) * RENDER_SCALE, (y + 17) * RENDER_SCALE,
-                 (x + width - 13) * RENDER_SCALE, (y + 22) * RENDER_SCALE),
-                radius=3 * RENDER_SCALE, fill=(255, 255, 255, 220),
-            )
-            draw.ellipse(
-                ((x + width // 2 - 8) * RENDER_SCALE, (y + 40) * RENDER_SCALE,
-                 (x + width // 2 + 8) * RENDER_SCALE, (y + 56) * RENDER_SCALE),
-                fill=(255, 255, 255, 195),
-            )
-    elif any(term in normalized_copy for term in ("팸플릿", "티켓", "좌석", "입장객")):
+    if any(term in normalized_copy for term in ("팸플릿", "티켓", "좌석", "입장객")):
         # An event pass is a useful visual metaphor for ticket/gift details, not a blank frame.
         panel = (38 * RENDER_SCALE, 48 * RENDER_SCALE, 289 * RENDER_SCALE, 194 * RENDER_SCALE)
         draw.rounded_rectangle(panel, radius=18 * RENDER_SCALE, fill=(*accent, 225))
@@ -270,10 +194,7 @@ def _editorial_graphic_background(page: int, role: str, copy_text: str = "") -> 
                  x+13*RENDER_SCALE+badge_radius, y-25*RENDER_SCALE+badge_radius),
                 fill=(*top, 255),
             )
-    elif any(
-        term in normalized_copy
-        for term in ("일정", "기간", "날짜", "공연", "개최", "시작", "입장")
-    ):
+    elif any(term in normalized_copy for term in ("일정", "공연", "개최", "시작", "입장")):
         # Schedule cards receive a timeline motif instead of generic decoration.
         line_y = 122 * RENDER_SCALE
         draw.rounded_rectangle(
@@ -437,61 +358,13 @@ def _content_badge(package: ContentPackage) -> str:
 
 
 def _bottom_scrim() -> Image.Image:
-    """Fade artwork into a legible but still image-connected HTML copy area."""
+    """Add a full-height, continuous scrim; never start it at a visible horizontal edge."""
     gradient = Image.new("RGBA", (CARD_WIDTH, CARD_HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(gradient)
-    fade_start = 0.48
     for row in range(CARD_HEIGHT):
-        progress = max(0.0, (row / max(1, CARD_HEIGHT - 1) - fade_start) / (1 - fade_start))
-        alpha = int(222 * progress**0.9)
+        progress = row / max(1, CARD_HEIGHT - 1)
+        alpha = int(184 * progress**1.8)
         draw.line((0, row, CARD_WIDTH, row), fill=(5, 7, 10, alpha))
-    return gradient
-
-
-def _copy_scrim(layout) -> Image.Image:
-    """Add a soft, directional matte under the frontend-owned HTML copy zone."""
-    box = layout.text_overlay_box
-    gradient = Image.new("RGBA", (CARD_WIDTH, CARD_HEIGHT), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(gradient)
-    left = int(box.x * CARD_WIDTH)
-    top = int(box.y * CARD_HEIGHT)
-    right = int((box.x + box.width) * CARD_WIDTH)
-    bottom = int(box.bottom * CARD_HEIGHT)
-    color = (5, 7, 10)
-
-    if box.y >= 0.50:
-        fade_start = max(0, top - int(0.17 * CARD_HEIGHT))
-        span = max(1, CARD_HEIGHT - fade_start)
-        for y in range(fade_start, CARD_HEIGHT):
-            progress = (y - fade_start) / span
-            alpha = int(218 * progress**0.82)
-            draw.line((0, y, CARD_WIDTH, y), fill=(*color, alpha))
-    elif box.bottom <= 0.43:
-        fade_end = min(CARD_HEIGHT, bottom + int(0.18 * CARD_HEIGHT))
-        span = max(1, fade_end)
-        for y in range(fade_end):
-            progress = 1 - y / span
-            alpha = int(205 * max(0.0, progress) ** 0.85)
-            draw.line((0, y, CARD_WIDTH, y), fill=(*color, alpha))
-    elif box.x < 0.30:
-        fade_end = min(CARD_WIDTH, right + int(0.22 * CARD_WIDTH))
-        span = max(1, fade_end)
-        for x in range(fade_end):
-            progress = 1 - x / span
-            alpha = int(210 * max(0.0, progress) ** 0.82)
-            draw.line((x, 0, x, CARD_HEIGHT), fill=(*color, alpha))
-    elif box.x + box.width > 0.70:
-        fade_start = max(0, left - int(0.22 * CARD_WIDTH))
-        span = max(1, CARD_WIDTH - fade_start)
-        for x in range(fade_start, CARD_WIDTH):
-            progress = (x - fade_start) / span
-            alpha = int(210 * progress**0.82)
-            draw.line((x, 0, x, CARD_HEIGHT), fill=(*color, alpha))
-    else:
-        # Fallback for centered copy zones: a vertical matte localized to its band.
-        for y in range(top, bottom):
-            alpha = int(198 * min(1.0, (y - top + 1) / max(1, bottom - top) * 3))
-            draw.line((0, y, CARD_WIDTH, y), fill=(*color, alpha))
     return gradient
 
 
@@ -505,22 +378,20 @@ def _paste_uncropped(
     x = left + (width - contained.width) // 2
     y = top + (height - contained.height) // 2
 
-    # Blend the sharp artwork into its same-source bleed instead of outlining
-    # it like a rectangular photo tile. A proportional, gently feathered mask
-    # scales with the image while leaving its central detail crisp.
-    feather = max(1, min(min(contained.size) // 3, max(24, min(contained.size) // 10)))
-    edge_mask = Image.new("L", contained.size, 255)
-    mask_draw = ImageDraw.Draw(edge_mask)
-    for inset in range(feather):
-        progress = inset / max(1, feather - 1)
-        alpha = round(255 * progress**0.72)
-        mask_draw.rectangle(
-            (inset, inset, contained.width - inset - 1, contained.height - inset - 1),
-            fill=alpha,
-        )
-    edge_mask = edge_mask.filter(ImageFilter.GaussianBlur(radius=max(3, feather // 7)))
-    contained.putalpha(edge_mask)
+    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    shadow_draw.rectangle(
+        (x - 9, y - 9, x + contained.width + 9, y + contained.height + 9),
+        fill=(0, 0, 0, 118),
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=18))
+    canvas.alpha_composite(shadow)
     canvas.alpha_composite(contained, (x, y))
+    ImageDraw.Draw(canvas).rectangle(
+        (x, y, x + contained.width - 1, y + contained.height - 1),
+        outline=(255, 255, 255, 105),
+        width=2,
+    )
 
 
 def _paste_cutout(
@@ -867,17 +738,24 @@ def render_card_png(
     image: ImageAsset | None,
     image_bytes: bytes | None,
 ) -> bytes:
-    """Render a text-free 1308×1632 image plate for frontend HTML copy overlays."""
-    if card.visual_mode == "editorial_graphic":
-        raise ValueError("Decorative placeholder graphics are not valid anime content imagery.")
+    """Render one crop-safe 1308×1632 feed card at 4× the logical canvas size."""
     foreground = _image_from_bytes(image_bytes) if image_bytes is not None else None
     canvas = (
-        _background(foreground, card.layout.background_style)
+        _editorial_graphic_background(
+            card.page,
+            card.role,
+            " ".join([card.eyebrow, *card.title_lines, *card.body_sentences]),
+        )
+        if card.visual_mode == "editorial_graphic"
+        else _background(foreground, card.layout.background_style)
         if foreground is not None
         else None
     )
     if canvas is None:
         raise ValueError(f"{card.page}장에 표시할 이미지 또는 편집 그래픽이 없습니다.")
+    image_accent = _artwork_accent(foreground, card.page)
+    draw = ImageDraw.Draw(canvas)
+
     box = card.layout.image_box
     pixel_box = (
         int(box.x * CARD_WIDTH),
@@ -891,9 +769,65 @@ def render_card_png(
         ):
             _paste_uncropped(canvas, foreground, pixel_box)
 
-    # The PNG carries art and a directional contrast treatment only; HTML owns all copy.
-    canvas.alpha_composite(_copy_scrim(card.layout))
+    # Keep the scrim continuous from the top so it cannot read as a separate text panel.
+    canvas.alpha_composite(_bottom_scrim())
 
+    draw = ImageDraw.Draw(canvas)
+    brand_font = _font(10 * RENDER_SCALE, bold=True)
+    small_font = _font(6 * RENDER_SCALE)
+    label = _content_badge(package)
+    label_font = _font(6 * RENDER_SCALE, bold=True)
+    draw.text(
+        (14 * RENDER_SCALE, 10 * RENDER_SCALE),
+        "me;nu",
+        font=brand_font,
+        fill=(255, 255, 255, 245),
+    )
+    label_width = _text_width(draw, label, label_font)
+    pill = (
+        CARD_WIDTH - 14 * RENDER_SCALE - label_width - 10 * RENDER_SCALE,
+        10 * RENDER_SCALE,
+        CARD_WIDTH - 14 * RENDER_SCALE,
+        23 * RENDER_SCALE,
+    )
+    draw.rounded_rectangle(
+        pill,
+        radius=6 * RENDER_SCALE,
+        fill=(8, 10, 13, 128),
+        outline=(*image_accent, 210),
+        width=RENDER_SCALE,
+    )
+    draw.text(
+        (pill[0] + 5 * RENDER_SCALE, 12 * RENDER_SCALE),
+        label,
+        font=label_font,
+        fill=(*image_accent, 255),
+    )
+
+    _draw_copy(canvas, card, package, image_accent)
+
+    sources = {source.id: source for source in package.sources}
+    related = [
+        sources[fact_source_id]
+        for fact in package.facts
+        if fact.id in card.fact_ids
+        for fact_source_id in fact.source_ids
+        if fact_source_id in sources
+    ]
+    publisher = (
+        related[0].publisher
+        if related
+        else package.sources[0].publisher
+        if package.sources
+        else "공식 출처"
+    )
+    footer_draw = ImageDraw.Draw(canvas)
+    footer_draw.text(
+        (14 * RENDER_SCALE, CARD_HEIGHT - 14 * RENDER_SCALE),
+        f"출처: {publisher[:28]}",
+        font=small_font,
+        fill=(238, 235, 231, 205),
+    )
     output = io.BytesIO()
     canvas.convert("RGB").save(output, format="PNG", optimize=True)
     return output.getvalue()
@@ -909,7 +843,8 @@ def render_package_cards(
     rendered: dict[int, bytes] = {}
     for card in package.cards:
         if card.visual_mode == "editorial_graphic":
-            raise ValueError(f"Decorative placeholder graphics are not valid for card {card.page}.")
+            rendered[card.page] = render_card_png(package, card, None, None)
+            continue
         image = images.get(card.image_id)
         if image is None:
             raise ValueError(f"{card.page}장에 연결된 원본 이미지가 없습니다: {card.image_id}")
