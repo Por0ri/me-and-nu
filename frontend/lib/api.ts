@@ -161,6 +161,7 @@ function query(params: Record<string, string | number | boolean | undefined | nu
 }
 
 async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  init.signal?.throwIfAborted();
   const method = (init.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD" && !csrfToken) await getSession();
   const headers = new Headers(init.headers);
@@ -171,6 +172,8 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (response.status === 204) return undefined as T;
   const payload: unknown = await response.json().catch(() => null);
+  // A cancelled read must not expire a newer session via a late 401 response.
+  init.signal?.throwIfAborted();
   if (!response.ok) {
     const error = payload as ErrorPayload | null;
     if (response.status === 401 || error?.code === "CSRF_INVALID") csrfToken = null;
@@ -241,8 +244,10 @@ export function getProfile(): Promise<Profile> { return apiRequest("/api/v1/user
 export function updateProfile(input: { nickname: string; profileImageId?: null } | { nickname?: string; profileImageId: null }): Promise<Profile> {
   return apiRequest("/api/v1/users/me", { method: "PATCH", body: JSON.stringify(input) });
 }
-export function getMyTopics(options: { includeDeleted?: boolean } = {}): Promise<MyTopicsResponse> {
-  return apiRequest(`/api/v1/me/topics${query(options)}`);
+export function getMyTopics(
+  options: { includeDeleted?: boolean } = {}, request: { signal?: AbortSignal } = {},
+): Promise<MyTopicsResponse> {
+  return apiRequest(`/api/v1/me/topics${query(options)}`, request);
 }
 export function addMyTopic(topicId: number, subtopicIds: number[]): Promise<{ topic: MyTopic }> {
   return apiRequest("/api/v1/me/topics", { method: "POST", body: JSON.stringify({ topicId, subtopicIds }) });
@@ -258,8 +263,9 @@ export function unsubscribeSubtopic(topicId: number, subtopicId: number): Promis
 }
 export function getFeed(
   topicId: number, options: { subtopicId?: number; cursor?: string; limit?: number } = {},
+  request: { signal?: AbortSignal } = {},
 ): Promise<FeedResponse> {
-  return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`);
+  return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`, request);
 }
 export function getContent(contentId: number, topicId: number): Promise<ContentDetail> {
   return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`);

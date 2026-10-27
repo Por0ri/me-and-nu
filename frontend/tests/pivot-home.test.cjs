@@ -18,7 +18,7 @@ function load(relative) {
   const output = ts.transpileModule(fs.readFileSync(path.join(root, relative), 'utf8'), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
-  vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, structuredClone,
+  vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, structuredClone, process: { env: {} },
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return require(name);

@@ -100,12 +100,16 @@ const dependencies = {
   './pivot-ui': { PivotFrame: frame, PivotBrand: () => null, PivotAsset: () => null, PrimaryButton: ({ children }) => React.createElement('button', null, children) },
   './consent-screen': { ConsentScreen: () => React.createElement('p', null, 'consent-flow') },
   './onboarding-screens': { OnboardingFlow: () => React.createElement('p', null, 'onboarding-flow') },
-  '@/lib/pivot/home-service': { pendingHomeSource: { kind: 'service' } },
+  '@/lib/pivot/home-service': {
+    pendingHomeSource: { kind: 'service', configured: false },
+    createServiceHomeSource: readSession => ({ kind: 'service', configured: true, readSession }),
+  },
   '@/lib/pivot/detail-service': { pendingDetailSource: { kind: 'service' } },
   './home-detail-experience': { HomeDetailExperience: ({ homeSource, detailSource }) => {
     assert.equal(homeSource.kind, 'service');
     assert.equal(detailSource.kind, 'service');
-    return React.createElement('p', null, 'service-content-unconfigured');
+    if (homeSource.configured) assert.equal(homeSource.readSession().sessionState, 'active');
+    return React.createElement('p', null, homeSource.configured ? 'service-content-connected' : 'service-content-unconfigured');
   } },
   './pivot.module.css': { __esModule: true, default: {} },
 };
@@ -168,16 +172,15 @@ test('Service login redirects a restored pending session; demo and preview keep 
   assert.deepEqual(redirects, []);
 });
 
-test('Home permits a validated active user, separating login success from pending content', () => {
+test('Home connects the service only for a validated active user', () => {
   const html = render(HomeRoute, active);
-  assert.match(html, /로그인이 확인/);
-  assert.match(html, /콘텐츠는 아직 연결 준비/);
-  assert.match(html, /service-content-unconfigured/);
+  assert.doesNotMatch(html, /콘텐츠는 아직 연결 준비/);
+  assert.match(html, /service-content-connected/);
   assert.deepEqual(redirects, []);
   for (const session of [anonymous, pending, { ...active, sessionState: 'restoration_pending' },
     { ...active, authenticated: false }, { ...active, onboardingCompleted: false },
     { ...active, user: null }, { ...active, user: { id: 12, accountType: 'consumer' } }]) {
-    assert.doesNotMatch(render(HomeRoute, session), /service-content-unconfigured|로그인이 확인/);
+    assert.doesNotMatch(render(HomeRoute, session), /service-content-(?:connected|unconfigured)/);
   }
 });
 
@@ -199,7 +202,7 @@ test('Home loading/error never show stale authenticated content; errors offer re
   assert.deepEqual(redirects, []);
   const error = render(HomeRoute, active, { status: 'error' });
   assert.match(error, /로그인 상태 다시 확인/);
-  assert.doesNotMatch(error, /service-content-unconfigured|로그인이 확인/);
+  assert.doesNotMatch(error, /service-content-(?:connected|unconfigured)/);
   assert.deepEqual(redirects, []);
   const disconnected = render(HomeRoute, null, { status: 'disconnected' });
   assert.match(disconnected, /service-content-unconfigured/);

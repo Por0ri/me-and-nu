@@ -28,7 +28,14 @@ export type HomeViewModel = {
 
 export type HomeLoadResult =
   | { status: "ready"; home: HomeViewModel }
+  | HomeLoadError
   | { status: "unconfigured"; message: string };
+
+export type HomeLoadError = {
+  status: "error";
+  reason: "unauthorized" | "forbidden" | "network" | "invalid-response" | "server";
+  message: string;
+};
 
 export interface HomeDataSource {
   readonly kind: "demo" | "service";
@@ -39,7 +46,7 @@ export type HomeState =
   | { status: "loading" }
   | { status: "ready"; home: HomeViewModel }
   | { status: "empty" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; reason?: HomeLoadError["reason"] }
   | { status: "unconfigured"; message: string };
 
 /** Instance-local request lifecycle. Cancellation also guards sources that ignore abort. */
@@ -56,7 +63,7 @@ export function createHomeRequestController(source: HomeDataSource, publish: (st
       try {
         const result = await source.load({ signal: controller.signal });
         if (request !== generation || controller.signal.aborted) return;
-        if (result.status === "unconfigured") {
+        if (result.status !== "ready") {
           publish(result);
         } else {
           // A miswired service source must never present demo fixtures as a live feed.
