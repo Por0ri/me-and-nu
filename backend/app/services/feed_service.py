@@ -214,12 +214,14 @@ async def _recommended_feed(
             db, round_.recommendation_round_id, topic_id
         )
     ]
+    latest = await recommendation_repo.latest_content_ids(db, topic_id, as_of, LATEST_POOL)
     ordered = order_feed(
         ranked,
-        await recommendation_repo.latest_content_ids(db, topic_id, as_of, LATEST_POOL),
+        latest,
         opened=await recommendation_repo.opened_content_ids(db, tap.tap_id, as_of),
         negative=await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id, as_of),
         shown_today=await recommendation_repo.shown_content_ids(db, tap.tap_id, _kst_day_start(as_of), as_of),
+        main_work=await recommendation_repo.main_works(db, [slot.content_id for slot in ranked] + latest),
     )
     page = ordered[offset:offset + limit]
     contents = await recommendation_repo.contents_by_id(db, [slot.content_id for slot in page])

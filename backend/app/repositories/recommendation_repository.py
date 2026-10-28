@@ -6,7 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
-    Content, ContentReaction, ContentSource, RecommendationItem, RecommendationRound, UserEvent,
+    Content, ContentEntityLink, ContentReaction, ContentSource, RecommendationItem, RecommendationRound,
+    UserEvent,
 )
 from app.repositories.carousel_repository import public_content_condition
 
@@ -98,6 +99,18 @@ async def negative_content_ids(db: AsyncSession, user_id: int, tap_id: int, as_o
         )
     )
     return set(rows.scalars().all())
+
+
+async def main_works(db: AsyncSession, content_ids: list[int]) -> dict[int, int]:
+    """Main work (sort_order 1) of each content that has one."""
+    if not content_ids:
+        return {}
+    rows = await db.execute(
+        select(ContentEntityLink.content_id, ContentEntityLink.entity_id).where(
+            ContentEntityLink.content_id.in_(content_ids), ContentEntityLink.sort_order == 1,
+        )
+    )
+    return {content_id: entity_id for content_id, entity_id in rows.all()}
 
 
 async def contents_by_id(db: AsyncSession, content_ids: list[int]) -> dict[int, Content]:

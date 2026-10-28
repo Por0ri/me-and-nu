@@ -10,12 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
 from app.models import (
-    Content, ContentReaction, ContentSlide, ContentSource, ContentTag, RecommendationItem,
-    RecommendationRound, SavedItem, Tap, Topic, UserAccount, UserEvent,
+    Content, ContentEntityLink, ContentReaction, ContentSlide, ContentSource, ContentTag, Entity,
+    RecommendationItem, RecommendationRound, SavedItem, Tap, Topic, UserAccount, UserEvent,
 )
 from app.services import feed_service
 from app.services.cursor import encode_cursor
-from app.services.feed_ranking import FeedSlot, order_feed
+from app.services.feed_ranking import FeedSlot, order_feed, spread_works
 from test_fe_integration_seed import AsyncAdapter
 
 
@@ -23,7 +23,7 @@ NOW = datetime(2026, 11, 2, 3, tzinfo=timezone.utc)          # 12:00 in Seoul
 TODAY, YESTERDAY = NOW.date(), NOW.date() - timedelta(days=1)
 REASON = "요즘 보는 하이큐!! 관련 글"
 MODELS = (Topic, UserAccount, Tap, Content, ContentSlide, ContentSource, ContentTag, ContentReaction,
-          SavedItem, RecommendationRound, RecommendationItem, UserEvent)
+          SavedItem, RecommendationRound, RecommendationItem, UserEvent, Entity, ContentEntityLink)
 
 
 def test_order_keeps_rank_drops_opened_and_disliked_and_moves_seen_to_back():
@@ -34,6 +34,28 @@ def test_order_keeps_rank_drops_opened_and_disliked_and_moves_seen_to_back():
     assert ordered[0] == FeedSlot(507, 4)
     assert ordered[1] == FeedSlot(508)            # newest-first fallback has no recommendation
     assert ordered[2] == FeedSlot(503, 1, REASON)
+
+
+def ids(slots):
+    return [slot.content_id for slot in slots]
+
+
+def test_spread_puts_another_work_between_repeats():
+    works = {1: 10, 2: 10, 3: 20, 4: 10}
+    assert ids(spread_works([FeedSlot(1), FeedSlot(2), FeedSlot(3), FeedSlot(4)], works)) == [1, 3, 2, 4]
+
+
+def test_spread_never_pulls_a_card_shown_today_forward_but_continues_behind_it():
+    works = {1: 10, 2: 10, 3: 20}
+    ranked = [FeedSlot(1), FeedSlot(2), FeedSlot(3)]
+    # 3 would break the 1-2 repeat, but it was shown today.
+    assert ids(order_feed(ranked, [], opened=set(), negative=set(), shown_today={3}, main_work=works)) == [1, 2, 3]
+    # Among cards shown today, the spread continues from the last fresh card.
+    assert ids(order_feed(ranked, [], opened=set(), negative=set(), shown_today={2, 3}, main_work=works)) == [1, 3, 2]
+
+
+def test_cards_without_a_main_work_never_count_as_repeats():
+    assert ids(spread_works([FeedSlot(1), FeedSlot(2), FeedSlot(3)], {3: 10})) == [1, 2, 3]
 
 
 @pytest.fixture
@@ -143,6 +165,24 @@ async def test_recommended_pages_follow_rules_and_ignore_impressions_while_scrol
     assert cards(third) == [(502, None, None), (503, 101, REASON)]
     assert third.next_cursor is None
     assert first.sections[0].type == "recommended"
+
+
+@pytest.mark.asyncio
+async def test_feed_spreads_cards_about_the_same_main_work(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    with engine.begin() as connection:
+        connection.execute(Entity.__table__.insert(), [
+            {"entity_id": 901, "topic_id": 1, "name": "하이큐!!", "aliases": []},
+            {"entity_id": 902, "topic_id": 1, "name": "나루토", "aliases": []},
+        ])
+        connection.execute(ContentEntityLink.__table__.insert(), [
+            {"content_id": content_id, "entity_id": entity_id, "topic_id": 1, "link_method": "carousel",
+             "sort_order": 1}
+            for content_id, entity_id in [(507, 901), (508, 901), (506, 902)]
+        ])
+
+    # Without links the order is 507 508 506 504 502 503 (see the paging test).
+    assert [card[0] for card in cards(await feed(engine, limit=6))] == [507, 506, 508, 504, 502, 503]
 
 
 @pytest.mark.asyncio

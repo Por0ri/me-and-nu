@@ -114,6 +114,7 @@ def test_activity_requires_login_completed_onboarding_and_csrf(api):
     {"events": [_event(1, topicId="1")]},
     {"events": [_event(1, clientEventId="not-a-uuid")]},
     {"events": [_event(1, value={"activeMs": -1})]},
+    {"events": [_event(1, value={"visibleMs": -5})]},
     {"events": [_event(1, value={"dwell": 3})]},                     # unknown measurement
     {"events": [_event(1, debateId=3)]},
     {"events": [_event(1)], "topicId": 1},
@@ -150,7 +151,7 @@ async def test_record_events_skips_resends_rejects_foreign_rows_and_keeps_first_
     db = SimpleNamespace(commit=AsyncMock())
     minute = timedelta(minutes=1)
     request = ActivityEventsRequest.model_validate({"events": [
-        _event(1, recommendationItemId=901, occurredAt=(NOW - minute).isoformat()),
+        _event(1, recommendationItemId=901, occurredAt=(NOW - minute).isoformat(), value={"visibleMs": 3500}),
         _event(1, recommendationItemId=901),                                         # same id in the batch
         _event(2, recommendationItemId=901, occurredAt=(NOW - 2 * minute).isoformat()),
         _event(3, "open", 502, recommendationItemId=902),                            # another Tap's recommendation
@@ -166,7 +167,8 @@ async def test_record_events_skips_resends_rejects_foreign_rows_and_keeps_first_
     assert [row["client_event_id"] for row in inserted] == [UUID(_id(1)), UUID(_id(2)), UUID(_id(6))]
     assert {row["tap_id"] for row in inserted} == {11}
     assert {row["data_source"] for row in inserted} == {"production"}
-    assert inserted[0]["event_value"] == {}
+    assert inserted[0]["event_value"] == {"visible_ms": 3500}
+    assert inserted[1]["event_value"] == {}
     assert inserted[2]["occurred_at"] == NOW          # device clock a day ahead
     assert inserted[2]["event_value"] == {"active_ms": 1200}
     mark_impressed.assert_awaited_once_with(db, {901: NOW - 2 * minute})

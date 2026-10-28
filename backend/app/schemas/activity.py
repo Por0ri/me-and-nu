@@ -22,6 +22,10 @@ class ActivityEventValue(CamelModel):
     )
     view_mode: Literal["card", "list"] | None = None
     session_id: str | None = Field(default=None, min_length=1, max_length=64, description="브라우저 탐색 세션 ID")
+    visible_ms: int | None = Field(
+        default=None, strict=True, ge=0, le=86_400_000,
+        description="impression: 카드가 화면에 머문 시간. 카드가 화면을 벗어날 때 함께 보냄",
+    )
     active_ms: int | None = Field(default=None, strict=True, ge=0, le=86_400_000, description="open: 실제로 보인 시간")
     scroll_pct: float | None = Field(default=None, ge=0, le=100, description="open: 최대 읽은 비율(%)")
     body_chars: int | None = Field(default=None, strict=True, ge=0, le=1_000_000, description="open: 본문 글자 수")
