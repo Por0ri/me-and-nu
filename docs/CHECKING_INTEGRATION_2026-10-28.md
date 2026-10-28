@@ -1,6 +1,6 @@
 # Checking 통합 브랜치 — 2026-10-28
 
-`Checking`은 작업 브랜치의 변경을 모아 QA한 뒤 `main` PR을 준비하는 로컬 통합 브랜치다. **사본을 제외한 실제 Checking 작업 공간에서 프론트 테스트·타입 검사·프로덕션 빌드를 통과했다.** 이 문서는 사본 제외와 함께 통합 커밋의 범위·검증 결과를 기록한다.
+`Checking`은 작업 브랜치의 변경을 모아 QA한 뒤 `main` PR을 준비하는 통합 브랜치다. **사본을 제외한 실제 Checking 작업 공간에서 프론트 테스트·타입 검사·프로덕션 빌드를 통과했다.** 이후 사용자 요청으로 GitHub에 게시하고 팀 검증용 도메인과 전용 환경 연결을 진행했다. 이 문서는 통합 커밋의 범위와 검증 결과를 기록한다.
 
 ## 생성 기준과 범위
 
@@ -29,4 +29,6 @@
 
 브랜치 추가만으로 main의 실수 머지를 막을 수는 없다. main의 PR 필수, 검토 승인·필수 CI, 직접 push 제한은 별도 보호 설정으로 검토할 사항이며 **이번에는 설정하지 않았다.**
 
-Checking은 원격 upstream이 없는 로컬 브랜치다. 원격 push·main merge·배포는 하지 않았다. Vercel의 Checking 연결 여부도 확인하지 않았으므로 향후 원격 push를 배포와 무관한 작업으로 간주하지 않는다.
+`Checking`은 `origin/Checking`을 추적한다. 사용자 요청에 따라 `97a2496` 통합 커밋과 `26d3410` 전용 배포 구성을 원격에 게시했다. Vercel Preview의 `Checking` 브랜치에는 `checking.me-nu.kr`과 `NEXT_PUBLIC_API_BASE_URL=https://api.checking.me-nu.kr`을 연결했다. Checking push는 프론트 자동 배포를 유발하므로 팀에 공유할 상태만 게시한다. 백엔드는 전용 서버 경로에서 검증한 이미지 SHA를 지정해 별도로 갱신한다.
+
+`main`과 원격 `backend-labs` 참조 및 기존 환경은 변경하지 않았다. 실제 Checking 배포와 외부 접근 검증 결과는 [Checking 배포 기록](CHECKING_DEPLOYMENT_2026-10-28.md)을 따른다. 배포 절차와 초기화 보호 조건은 [Checking 배포 안내](../deploy/checking/README.md)에 있다.
