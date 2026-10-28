@@ -28,6 +28,8 @@ from array import array
 from collections import Counter
 from datetime import datetime
 
+import zlib
+
 import numpy as np
 
 from model.algo import anime_ranker
@@ -185,22 +187,68 @@ ANILIST_CHIP_GENRES = {"Action", "Adventure", "Comedy", "Drama", "Fantasy", "Hor
 THEME_CHIPS = {"Isekai", "Magic", "Super Power", "Swordplay", "Revenge", "Tragedy", "Gore", "Post-Apocalyptic",
                "Survival", "School", "Time Manipulation", "Coming of Age", "Iyashikei", "War", "Crime",
                "Virtual World"}
+# 칩 목록 줄인 안 (장르 15 · 테마 15). 칩 하나가 AniList 장르 · 태그 여러 개일 수 있음 (고르면 그 안의 것을 다 넣음)
+GENRE_CHIPS_15 = {g: (g,) for g in ANILIST_CHIP_GENRES - {"Mahou Shoujo", "Horror", "Thriller"}} | {
+    "Horror/Thriller": ("Horror", "Thriller")}
+THEME_CHIPS_15 = {x: (x,) for x in THEME_CHIPS - {"Isekai", "Virtual World"}} | {
+    "Isekai/Virtual World": ("Isekai", "Virtual World")}
+# 화면 확정 목록: 장르 16 (마법소녀만 뺌) · 소재 19 (시험용 후보 16 + 하렘 · 무술 · 던전)
+# 더한 3개는 연습 유저의 "남들보다 특히 많이 본 소재" 순위 위쪽에서 사용자가 고름 (EXP-33 추가 3)
+GENRE_CHIPS_16 = {g: (g,) for g in ANILIST_CHIP_GENRES - {"Mahou Shoujo"}}
+THEME_CHIPS_19 = {x: (x,) for x in THEME_CHIPS | {"Female Harem", "Martial Arts", "Dungeon"}}
+# "더 보기" 후보 24개 (첫 묶음 = me;nu 작품 3% 이상 18개, 둘째 = 3% 아래 6개, 확정 전)
+MORE_THEME_CHIPS = {"Demons": ("Demons",), "Politics": ("Politics",), "Military": ("Military",),
+                    "Gods/Mythology": ("Gods", "Mythology"), "Historical": ("Historical",), "Space/Aliens": ("Space", "Aliens"),
+                    "Ghost/Youkai": ("Ghost", "Youkai"), "Dragons": ("Dragons",), "Food": ("Food",), "Idol": ("Idol",),
+                    "Otaku Culture": ("Otaku Culture",), "Samurai/Ninja": ("Samurai", "Ninja"), "Detective": ("Detective",),
+                    "Vampire": ("Vampire",), "Royal Affairs": ("Royal Affairs",), "Delinquents": ("Delinquents",),
+                    "Zombie": ("Zombie",), "Cyberpunk": ("Cyberpunk",), "Death Game": ("Death Game",),
+                    "Espionage": ("Espionage",), "Band": ("Band",), "Steampunk": ("Steampunk",), "Gambling": ("Gambling",),
+                    "Parenthood": ("Parenthood",)}
+THEME_CHIPS_ALL = THEME_CHIPS_19 | MORE_THEME_CHIPS
 
 
-def onboarding(case, anime, n=1, n_genres=3, anilist=None, n_themes=0):
+def onboarding(case, anime, n=1, n_genres=3, anilist=None, n_themes=0, genre_chips=None, theme_chips=None, noise=(0, 0)):
+    # genre_chips · theme_chips: {칩: (AniList 이름, ...)}. 안 주면 칩 하나 = 이름 하나 (ANILIST_CHIP_GENRES · THEME_CHIPS)
+    # n_genres · n_themes 가 음수면 칩을 전부 고름. noise = (장르, 소재) 아무 칩이나 더 고르는 개수 ("막 누르기" 흉내, 유저마다 고정된 난수)
     h = case["history"]
     watched = h.anime[np.isin(h.status, WATCHED)].tolist()
     top = lambda c, k: [x for x, _ in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))[:k]]
     if anilist is None:
         genres = Counter(g for a in watched for g in anime.get(a, {}).get("genres", ()) if g in CHIP_GENRES)
-    else:
+    elif genre_chips is None:
         genres = Counter(g for a in watched for g in anilist.get(a, {}).get("genres", ()) if g in ANILIST_CHIP_GENRES)
+    else:   # 합친 칩은 작품마다 한 번만 셈
+        genres = Counter()
+        for a in watched:
+            have = set(anilist.get(a, {}).get("genres", ()))
+            genres.update(c for c, gs in genre_chips.items() if have.intersection(gs))
     themes = Counter()
     for a in watched:  # 테마는 관련도 % 만큼 센다
-        for tag, w in (anilist or {}).get(a, {}).get("tags", {}).items():
-            if tag in THEME_CHIPS:
-                themes[tag] += w
-    return {**shorten(case, n), "genres": top(genres, n_genres), "themes": top(themes, n_themes)}
+        tags = (anilist or {}).get(a, {}).get("tags", {})
+        if theme_chips is None:
+            for tag, w in tags.items():
+                if tag in THEME_CHIPS:
+                    themes[tag] += w
+        else:   # 합친 칩은 그 안의 태그 중 가장 높은 관련도
+            for c, ts in theme_chips.items():
+                w = max(tags.get(x, 0) for x in ts)
+                if w:
+                    themes[c] += w
+    g_pool = list(genre_chips) if genre_chips is not None else sorted(ANILIST_CHIP_GENRES if anilist is not None else CHIP_GENRES)
+    t_pool = list(theme_chips) if theme_chips is not None else sorted(THEME_CHIPS)
+    g = list(g_pool) if n_genres < 0 else top(genres, n_genres)
+    th = list(t_pool) if n_themes < 0 else top(themes, n_themes)
+    if any(noise):
+        rng = np.random.default_rng(zlib.crc32(np.ascontiguousarray(h.anime).tobytes()))
+        for picked, pool, m in ((g, g_pool, noise[0]), (th, t_pool, noise[1])):
+            rest = [c for c in pool if c not in picked]
+            picked += [rest[i] for i in rng.permutation(len(rest))[:m]]
+    if genre_chips is not None:
+        g = [x for c in g for x in genre_chips[c]]
+    if theme_chips is not None:
+        th = [x for c in th for x in theme_chips[c]]
+    return {**shorten(case, n), "genres": g, "themes": th}
 
 
 def stats_histories(data, cases):
