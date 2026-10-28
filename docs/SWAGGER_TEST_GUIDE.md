@@ -4,7 +4,7 @@
 
 **생년월일 정책 보류 유지 (2026-10-27~28):** 수집·저장·연령 확인 방식은 통합 완료 후 결정합니다. 새 Pivot은 닉네임만 수집하고 생년월일 입력·검사·전송을 보류합니다. 생년월일 삭제 migration을 새로 적용하지 않으며 레거시 Consumer 화면·유틸리티는 기존 상태를 유지합니다.
 
-**2026-10-28 V2 로컬 구현:** 작품 검색 → 장르·소재 후보 → 소비 유형을 Pivot 화면까지 연결했습니다. 온보딩 도입 migration은 `e3a7b9c2d451`이며 부모는 `c0e5f3b8a124`입니다. 현재 서비스 target은 캐러셀 확장을 포함한 e3의 자식 `f4b8c1d9a620`입니다. 기존 생년월일 삭제 `d2f6a9c4e731`과 분리한 복수 head이므로 준비 명령은 정확한 f4 revision을 사용합니다. `upgrade head` 또는 `upgrade heads`로 바꾸지 않습니다. 실제 작품 30개로 수행한 기존 가입 검증은 [프론트 연결 기록](ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md), 새 캐러셀 계약과 검증 범위는 [캐러셀 DB·API 문서](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. main 병합·푸시·원격 배포는 하지 않았습니다.
+**2026-10-28 V2 로컬 구현:** 작품 검색 → 장르·소재 후보 → 소비 유형을 Pivot 화면까지 연결했습니다. 온보딩 도입 migration은 `e3a7b9c2d451`이며 부모는 `c0e5f3b8a124`입니다. 현재 서비스 target은 캐러셀 확장 `f4b8c1d9a620`에 추천 연결 표 4개를 더한 자식 `150a601074af`입니다. 기존 생년월일 삭제 `d2f6a9c4e731`과 분리한 복수 head이므로 준비 명령은 정확한 150a revision을 사용합니다. `upgrade head` 또는 `upgrade heads`로 바꾸지 않습니다. 실제 작품 30개로 수행한 기존 가입 검증은 [프론트 연결 기록](ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md), 새 캐러셀 계약과 검증 범위는 [캐러셀 DB·API 문서](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. main 병합·푸시·원격 배포는 하지 않았습니다.
 
 아래 요청 예시는 현재 로컬 코드용입니다. 이 코드에서는 온보딩에 `birthDate`나 연령 확인값을 받지 않고 `GET/PATCH /api/v1/users/me` 응답에도 `birthDate`가 없습니다. 기존 삭제 revision은 `d2f6a9c4e731`(이전 `c0e5f3b8a124`)이며 삭제된 값은 downgrade로 복원되지 않습니다. 실제 테스트는 대상 환경의 배포 계약과 [DB 적용 상태](ERD_API_ALIGNMENT_2026-10-27.md)를 확인한 뒤 진행합니다. 현재 코드 상태는 최종 수집 정책을 뜻하지 않습니다.
 
@@ -18,7 +18,7 @@ Swagger에서 로그인 없이 기능을 확인하려면 로컬 개발 전용 �
 # 저장소 루트
 docker compose up -d postgres
 cd backend
-.\.venv\Scripts\python.exe -m alembic upgrade f4b8c1d9a620
+.\.venv\Scripts\python.exe -m alembic upgrade 150a601074af
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
 .\.venv\Scripts\python.exe scripts/run_local_api.py
@@ -32,9 +32,9 @@ Windows용 실행 스크립트는 PostgreSQL 비동기 연결에 맞는 이벤�
 
 ### V2 작품 카탈로그 준비
 
-위 `v1_local`·`dev_user` seed만으로 작품·장르·소재 사전이 준비되지는 않습니다. V2 테스트에는 활성 anime Topic과 그 Topic의 작품·활성 태그 매핑이 필요합니다. [실작품 시작 카탈로그](ONBOARDING_CATALOG_SOURCES_2026-10-28.md)는 `backend/app/seeds/onboarding_catalog_starter.json`에 작품 30개·태그 38개·연결 140개로 준비했습니다. 실제 PostgreSQL 적재와 반복 적재의 변경 0건도 확인했습니다. 대상 DB명을 확인한 뒤 [적재 도구 안내](ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md#5-검토한-카탈로그의-적재-도구)에 따라 미리보기 후 적용합니다. 실작품 JSON에는 `--demo`를 붙이지 않습니다. 별도로 남아 있는 `[DEMO]` JSON은 명시적으로 선택하는 합성 fixture입니다.
+위 `v1_local`·`dev_user` seed만으로 작품·장르·소재 사전이 준비되지는 않습니다. V2 테스트에는 활성 anime Topic과 그 Topic의 작품·활성 태그(칩)가 필요하고, 힌트(`sourceEntityIds`)까지 보려면 작품·태그 연결도 필요합니다. [실작품 시작 카탈로그](ONBOARDING_CATALOG_SOURCES_2026-10-28.md)는 `backend/app/seeds/onboarding_catalog_starter.json`에 작품 30개·태그 38개·연결 140개로 준비했습니다. 실제 PostgreSQL 적재와 반복 적재의 변경 0건도 확인했습니다. 대상 DB명을 확인한 뒤 [적재 도구 안내](ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md#5-검토한-카탈로그의-적재-도구)에 따라 미리보기 후 적용합니다. 실작품 JSON에는 `--demo`를 붙이지 않습니다. 별도로 남아 있는 `[DEMO]` JSON은 명시적으로 선택하는 합성 fixture입니다.
 
-검색 결과가 없거나 모든 작품이 `selectable:false`이면 임의 ID·태그로 가입을 통과시키지 말고 해당 Topic의 카탈로그를 확인합니다. 새 조회 두 개도 `onboarding_pending` 전용이므로 이미 완료된 데모 사용자의 인증 우회 모드에서는 V2 온보딩을 검증할 수 없습니다.
+검색 결과가 없거나 장르·소재 칩이 비어 있으면 임의 ID·태그로 가입을 통과시키지 말고 해당 Topic의 카탈로그를 확인합니다. 새 조회 두 개도 `onboarding_pending` 전용이므로 이미 완료된 데모 사용자의 인증 우회 모드에서는 V2 온보딩을 검증할 수 없습니다.
 
 ## 2. 로그인 없이 기능 테스트
 
@@ -101,8 +101,8 @@ Swagger의 **개발용 Agent 결과 → GET `/api/v1/dev/agent-runs`**에서 실
 1. **정책 → GET `/api/v1/policies`**의 `consentItems`에서 모든 `type`, 실제 `policyVersion`, `required`를 확인합니다. 필수 항목은 `agreed=true`, 원하지 않는 선택 항목은 `agreed=false`로 제출합니다. 예시의 과거 정책 버전을 그대로 쓰지 않습니다.
 2. **Topic → GET `/api/v1/topics`**에서 사용하려는 Topic의 실제 `id`를 기록합니다.
 3. **온보딩 → GET `/api/v1/onboarding/works`**에 실제 `topicId`, 작품명·별칭 일부를 `q`로 입력합니다. `limit`은 기본 20, 범위 1~50입니다. 빈 검색어는 빈 목록입니다. 응답 `items[]`에서 `selectable:true`인 작품을 1~5개 고르고 실제 `entityId`를 기록합니다. `nextCursor`는 같은 Topic·검색어의 다음 페이지에서만 사용합니다.
-4. **POST `/api/v1/onboarding/preference-options`**에 `{"topicId": 실제 숫자, "entityIds": [선택한 작품 ID들]}`을 JSON 숫자로 입력합니다. 현재 pending 세션과 Authorize의 CSRF가 필요합니다. 응답 `genres`·`themes` 합계에서 최소 1개를 선택하고 `tagId`를 기록합니다. 최대 선택 수는 없으며 종류별로 하나씩 고를 필요도 없습니다. 후보 조회만으로 선택·동의·답변을 저장하지 않습니다.
-5. Q3 `consumptionType`은 `world`, `relationships`, `ost`, `goods`, `events`, `news` 중 정확히 1개를 고릅니다. Q1 작품을 바꾸면 후보를 다시 조회하고 현재 후보에 있는 태그만 남깁니다.
+4. **POST `/api/v1/onboarding/preference-options`**에 `{"topicId": 실제 숫자, "entityIds": [선택한 작품 ID들]}`을 JSON 숫자로 입력합니다. 현재 pending 세션과 Authorize의 CSRF가 필요합니다. 응답 `genres`·`themes`는 켜진 칩 전체이며 고른 작품에 붙은 칩은 `sourceEntityIds`에 그 작품 ID가 들어 있습니다. 합쳐서 최소 1개를 선택하고 `tagId`를 기록합니다. 종류별 최대 7개이며 종류별로 하나씩 고를 필요는 없습니다. 후보 조회만으로 선택·동의·답변을 저장하지 않습니다.
+5. Q3 `consumptionType`은 `world`, `relationships`, `ost`, `goods`, `events`, `news` 중 정확히 1개를 고릅니다. Q1 작품을 바꾸면 힌트(`sourceEntityIds`)만 달라지므로 다시 조회합니다. 이미 고른 태그는 켜진 칩이면 그대로 유효합니다.
 6. **POST `/api/v1/onboarding/complete`**에 닉네임, `accountType:user`, 실제 정책 동의, `topicId`와 아래 V2 `answers`를 제출합니다. 전체 JSON은 [Swagger 조작법의 V2 예시](SWAGGER_UI_OPERATION_GUIDE.md#b-신규-계정부터-로그아웃까지)를 참고합니다. 성공은 201이며 `answers.version=2`, 선택 ID 집합·소비 유형 일치, `activeTopic.subtopicIds=[]`를 확인합니다. ID 배열은 응답에서 오름차순으로 반환됩니다.
 7. **GET `/api/v1/auth/session`**을 다시 실행해 `sessionState=active`, `onboardingCompleted=true`를 확인하고 교체된 `csrfToken`으로 Authorize를 갱신합니다. 완료된 계정의 상태나 답변을 초기화하여 테스트를 반복하지 않습니다.
 
@@ -117,7 +117,7 @@ V2 답변 부분 예시입니다. `101`, `102`, `201`, `301`은 형식 설명용
 }
 ```
 
-온보딩의 `topicId`와 작품·태그 ID는 양의 BIGINT JSON 정수이며 문자열·실수·bool은 거절합니다. `version`도 정수 2만 허용합니다. 작품 0개/6개·중복·미존재·비활성·다른 Topic·태그 미준비 작품, 태그 0개·중복·현재 후보 밖, 잘못된 소비 유형은 422 `VALIDATION_ERROR`입니다. `fields[].field`의 `answers.favoriteEntityIds`, `answers.preferenceTagIds`, `answers.consumptionType` 등을 확인합니다. 후보 조회 후 카탈로그가 바뀌면 완료 단계의 재검증에서 거절될 수 있으므로 후보를 다시 조회합니다.
+온보딩의 `topicId`와 작품·태그 ID는 양의 BIGINT JSON 정수이며 문자열·실수·bool은 거절합니다. `version`도 정수 2만 허용합니다. 작품 0개/6개·중복·미존재·비활성·다른 Topic, 태그 0개·중복·꺼진 칩·한 종류 8개 이상, 잘못된 소비 유형은 422 `VALIDATION_ERROR`입니다. `fields[].field`의 `answers.favoriteEntityIds`, `answers.preferenceTagIds`, `answers.consumptionType` 등을 확인합니다. 후보 조회 후 카탈로그가 바뀌면 완료 단계의 재검증에서 거절될 수 있으므로 후보를 다시 조회합니다.
 
 `profileImageId`, `subtopicIds`, `birthDate`는 `null`도 포함해 전송하면 422이므로 항목 자체를 제거합니다. 필수 동의 누락은 `REQUIRED_CONSENT_MISSING`, 정책 버전 불일치는 `POLICY_VERSION_CONFLICT`, 중복 완료는 `ONBOARDING_ALREADY_COMPLETED`입니다. Q2 태그와 Q3 소비 유형은 알림·마케팅 동의가 아닙니다.
 

@@ -57,7 +57,7 @@ Windows 기존 SVG checkout의 CRLF 때문에 원본 asset hash 검사 5개가 �
 
 ## 적용 절차와 후속 범위
 
-이 문서의 최초 가입 검증은 e3 온보딩 revision을 기준으로 수행했다. 후속 서비스 전체의 명시적 target은 e3를 포함하는 **`f4b8c1d9a620`**이며 [캐러셀 DB·API 문서](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따른다. 현재 서비스 후보는 f4 단일 head이고 생년월일 삭제 d2 파일을 제외했다. 대상 환경과 활성 `anime` Topic을 먼저 확인한다. 검토한 카탈로그는 아래 명령으로 미리보고, 저장할 때만 같은 대상에 `--apply`를 추가한다.
+이 문서의 최초 가입 검증은 e3 온보딩 revision을 기준으로 수행했다. 후속 서비스 전체의 명시적 target은 e3·캐러셀 f4를 포함하는 **`150a601074af`**이며 [캐러셀 DB·API 문서](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따른다. 현재 서비스 후보는 150a 단일 head이고 생년월일 삭제 d2 파일을 제외했다. 대상 환경과 활성 `anime` Topic을 먼저 확인한다. 검토한 카탈로그는 아래 명령으로 미리보고, 저장할 때만 같은 대상에 `--apply`를 추가한다.
 
 ```powershell
 # backend 디렉터리. 실제 대상 환경과 DB명 확인이 먼저다.

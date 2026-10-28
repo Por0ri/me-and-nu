@@ -133,7 +133,7 @@
 
 [AniList 공식 API 이용 조건](https://docs.anilist.co/guide/terms-of-use)은 데이터 대량 수집·저장 서비스로의 이용 및 일부 경쟁 서비스 이용을 제한한다. 이번에는 AniList API를 호출하지 않고 원시 태그·인기도·이미지의 대량 동기화도 만들지 않았다. 향후 해당 공급자를 자동 적재 원천으로 쓰려면 실제 서비스 용도와 이용 조건을 먼저 검토한다. 이는 현재 수작업 시작 카탈로그를 중단시키는 승인 요청이 아니다.
 
-이 JSON은 현행 [카탈로그 적재 도구](../backend/app/seeds/onboarding_catalog.py)로 미리보기 후 저장할 수 있다. 활성 `anime` Topic과 온보딩 V2 스키마가 필요하다. e3(`e3a7b9c2d451`)는 온보딩 도입 revision이며 후속 서비스 전체의 명시적 target은 e3를 포함하는 **`f4b8c1d9a620`**이다. [캐러셀 migration 안내](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 참고하고 생년월일 삭제 d2를 함께 적용하지 않는다. 실작품 목록이므로 `--demo`를 붙이지 않는다. DB명은 실제 검증 대상과 정확히 일치시킨다.
+이 JSON은 현행 [카탈로그 적재 도구](../backend/app/seeds/onboarding_catalog.py)로 미리보기 후 저장할 수 있다. 활성 `anime` Topic과 온보딩 V2 스키마가 필요하다. e3(`e3a7b9c2d451`)는 온보딩 도입 revision이며 후속 서비스 전체의 명시적 target은 e3·캐러셀 f4를 포함하는 **`150a601074af`**이다. [캐러셀 migration 안내](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 참고하고 생년월일 삭제 d2를 함께 적용하지 않는다. 실작품 목록이므로 `--demo`를 붙이지 않는다. DB명은 실제 검증 대상과 정확히 일치시킨다.
 
 ```powershell
 # backend 디렉터리. 아래 DB명은 대상 환경에 맞게 지정한다.

@@ -8,19 +8,19 @@
 
 **생년월일 정책 보류 유지 (2026-10-27~28):** 수집·저장·연령 확인 방식은 통합 완료 후 결정한다. 새 Pivot 흐름은 닉네임만 수집하고 생년월일 입력·검사·전송을 보류한다. 생년월일 삭제 migration을 새로 적용하지 않으며 레거시 Consumer 화면·유틸리티는 기존 상태를 유지한다.
 
-**현재 로컬 코드 계약:** 온보딩은 `nickname`, `accountType:user`, `consents`, `topicId`, `answers`를 받는다. 새 답변은 `{version:2,favoriteEntityIds,preferenceTagIds,consumptionType}`이며 기존 `{q1,q2}`와 혼합하지 않는다. `birthDate`·`profileImageId`·`subtopicIds`는 `null`도 포함해 422다. 프로필의 birthDate 미지원도 유지한다. 온보딩 도입 revision `e3a7b9c2d451`과 자식 캐러셀 revision `f4b8c1d9a620`은 보류된 생년월일 삭제 d2와 독립되어 있다. 현재 서비스 target은 f4를 명시하며 [DB·API 확장 계약](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)을 따른다. Pivot 제출에서는 생년월일을 제외해 기존 422 불일치를 해소했다. 이를 레거시 Consumer 전체의 계약 갱신이나 최종 생년월일 정책으로 해석하지 않는다.
+**현재 로컬 코드 계약:** 온보딩은 `nickname`, `accountType:user`, `consents`, `topicId`, `answers`를 받는다. 새 답변은 `{version:2,favoriteEntityIds,preferenceTagIds,consumptionType}`이며 기존 `{q1,q2}`와 혼합하지 않는다. `birthDate`·`profileImageId`·`subtopicIds`는 `null`도 포함해 422다. 프로필의 birthDate 미지원도 유지한다. 온보딩 도입 revision `e3a7b9c2d451`과 자식 캐러셀 revision `f4b8c1d9a620`은 보류된 생년월일 삭제 d2와 독립되어 있다. 현재 서비스 target은 f4에 추천 연결 표 4개를 더한 자식 `150a601074af`를 명시하며 [DB·API 확장 계약](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)을 따른다. Pivot 제출에서는 생년월일을 제외해 기존 422 불일치를 해소했다. 이를 레거시 Consumer 전체의 계약 갱신이나 최종 생년월일 정책으로 해석하지 않는다.
 
 **2026-10-21 과거 온보딩 변경:** 당시 API-004는 `POST /api/v1/onboarding/complete`에서 `subtopicIds` 대신 필수 `answers: {"q1":"world","q2":"releases"}`를 받도록 변경됐다. Q1·Q2 각각 단일 허용값을 저장하는 revision은 `c0e5f3b8a124`다. 당시 프론트 수정은 포함하지 않았으며, 현재 Pivot은 위 V2 계약으로 연결되어 있다. 당시 두 질문과 아래 2026-09-29 검증 수치를 현재 Pivot 계약으로 사용하지 않는다.
 
-## 현재 API 대조 — 36개 (기존 번호 33개 + 온보딩 2개 + 캐러셀 이미지 1개)
+## 현재 API 대조 — 37개 (기존 번호 34개 + 온보딩 2개 + 캐러셀 이미지 1개)
 
 | 번호 | 메서드와 공개 경로 | 상태 | 로컬에서 확인할 계약과 범위 |
 | --- | --- | --- | --- |
 | API-001 | `POST /api/v1/auth/login/{provider}` | 구현 | 카카오·네이버 로그인 시작. 세션·CSRF와 공급자 설정이 필요하다. |
 | API-002 | `GET /api/v1/auth/login/{provider}/callback` | 구현 | state·브라우저 바인딩 검증, 계정 연결, 세션 발급·리다이렉트. |
-| API-004 | `POST /api/v1/onboarding/complete` | **부분** | `201`, 닉네임·동의·Topic과 버전별 답변·선택을 원자적으로 저장. v2는 작품 1~5개·현재 후보 태그 1개 이상·소비 유형 1개. v1은 기존 q1/q2. `answers`와 `activeTopic.subtopicIds=[]` 반환. pending 세션·CSRF 필요, 세션 교체 유지. |
-| 신규 Q1 | `GET /api/v1/onboarding/works` | 구현 | pending 세션. topicId/q/cursor/limit으로 활성 애니 작품 이름·별칭 검색. 빈 검색어는 빈 목록. 사전 미준비 작품은 selectable=false. |
-| 신규 Q2 | `POST /api/v1/onboarding/preference-options` | 구현 | pending 세션·CSRF. `{topicId,entityIds}`로 유효 작품 1~5개를 검사하고 장르·소재 합집합과 sourceEntityIds 반환. 선택 저장 없음. |
+| API-004 | `POST /api/v1/onboarding/complete` | **부분** | `201`, 닉네임·동의·Topic과 버전별 답변·선택을 원자적으로 저장. v2는 작품 1~5개·현재 켜진 장르·소재 칩 1개 이상(종류별 7개까지)·소비 유형 1개. v1은 기존 q1/q2. `answers`와 `activeTopic.subtopicIds=[]` 반환. pending 세션·CSRF 필요, 세션 교체 유지. |
+| 신규 Q1 | `GET /api/v1/onboarding/works` | 구현 | pending 세션. topicId/q/cursor/limit으로 활성 애니 작품 이름·별칭 검색. 빈 검색어는 빈 목록. 검색된 활성 작품은 모두 selectable=true. |
+| 신규 Q2 | `POST /api/v1/onboarding/preference-options` | 구현 | pending 세션·CSRF. `{topicId,entityIds}`로 유효 작품 1~5개를 검사하고 켜진 장르·소재 칩 전체와 힌트용 sourceEntityIds, maxSelectionsPerKind(7) 반환. 선택 저장 없음. |
 | API-005 | `GET /api/v1/auth/session` | **부분** | 비로그인도 `200`과 익명 세션 쿠키·`csrfToken`을 받는다. 응답 모델은 `restoration_pending`을 허용하지만 계정 복구 절차(API-010)는 아직 없다. |
 | API-006 | `POST /api/v1/auth/logout` | 정합 | 현재 세션 폐기, `204` 빈 본문. 유효 세션의 변경 요청에는 CSRF가 필요하다. |
 | API-007 | `GET /api/v1/users/me` | 정합 | 온보딩 완료 사용자의 프로필 조회. 응답에 `birthDate`가 없다. |
@@ -36,9 +36,10 @@
 | API-025 | `GET /api/v1/me/topics/{topicId}/subtopics` | 정합 | 해당 Topic의 내 Subtopic 구독 목록. |
 | API-026 | `PUT /api/v1/me/topics/{topicId}/subtopics/{subtopicId}` | 정합 | 해당 Topic에 속한 Subtopic을 구독하고 `200`을 반환한다. |
 | API-027 | `DELETE /api/v1/me/topics/{topicId}/subtopics/{subtopicId}` | 정합 | 구독 해제, `204` 빈 본문. |
-| API-028 | `GET /api/v1/topics/{topicId}/feed` | **부분** | 공개 콘텐츠의 로컬 피드를 `200`과 `sections[]`·`nextCursor`로 조회한다. 카드에 `slides[]` 추가, 기존 글은 빈 배열. 확인된 검토·3~10장 완성·미만료 캐러셀만 공개한다. 현재 최신순이며 추천·광고·저장 재노출 공급 로직은 없다. |
+| API-028 | `GET /api/v1/topics/{topicId}/feed` | **부분** | 공개 콘텐츠의 로컬 피드를 `200`과 `sections[]`·`nextCursor`로 조회한다. 카드에 `slides[]` 추가, 기존 글은 빈 배열. 확인된 검토·3~10장 완성·미만료 캐러셀만 공개한다. 오늘(KST, 없으면 어제) 추천 결과가 있으면 그 순서 다음에 나머지 공개 글을 최신순으로 잇고 카드에 `recommendationId`·`reason`을 채운다. 연 글·그만볼래요 글은 빼고, 오늘 노출된 글은 뒤로 보내고, 같은 대표 작품 글은 연달아 두지 않는다. 추천 결과가 없거나 세부 주제 피드면 최신순이다. 광고·저장 재노출 공급은 없다. |
 | API-029 | `GET /api/v1/contents/{contentId}` | 정합 | **필수 query `topicId`**와 함께 공개 글 상세 조회. `slides[]`·전체 `sources[]` 추가. 기존 `body`·`imageUrl`·`sourceUrl`·`displayMode` 유지, 승인된 AI 원본은 `full_body`. |
 | 신규 이미지 | `GET /api/v1/contents/{contentId}/slides/{page}/image` | 구현 | **필수 query `topicId`**, page 1~10. 세션·온보딩·활성 Topic·공개/만료 조건 확인 후 `image/png`. private/no-store, nosniff. 불완전·보류·거절·만료·없는 장은 404. |
+| API-033 | `POST /api/v1/users/me/activity-events` | 구현 | 온보딩 완료 세션·CSRF. 노출·열람·좋아요·저장·선호·카드 넘김 등 13종 활동을 한 번에 1~100개 기록한다. 이벤트마다 `clientEventId`(UUID)로 중복을 막고 `saved`·`duplicated`·`rejected` 개수를 반환한다. 노출은 화면에 머문 시간 `visibleMs`를 받는다. 추천 계산의 재료다. |
 | API-035 | `PUT /api/v1/contents/{contentId}/preference` | 정합 | 본문 `{ "topicId": 1, "value": "positive" }` 또는 `negative`; `200`. |
 | API-036 | `DELETE /api/v1/contents/{contentId}/preference` | 정합 | **필수 query `topicId`**, `204` 빈 본문. |
 | API-037 | `PUT /api/v1/contents/{contentId}/like` | 정합 | 본문 `{ "topicId": 1 }`, `200`. |
@@ -105,7 +106,7 @@ npm run build
 
 - **새 공개 API:** API-023 Topic 삭제, API-034 공유 정보, 계정 복구 API-010, 저장함 전용 수정·상세·삭제, 채널 팔로우·DM·설정·신고·탈퇴는 후속이다. 기존 OAuth, 저장 목록(API-041), AI 대화 3개, 운영공지 3개와 신규 온보딩 조회 2개는 위 표의 구현 범위에 포함한다.
 - **온보딩 운영 전 확인:** Pivot의 V2 화면 연결은 완료됐다. 레거시 Consumer의 온보딩 계약 갱신, 실제 OAuth 공급자 신규 가입, 실서비스 적용·배포는 이번 로컬 검증과 구분한다. 생년월일 정책은 계속 보류한다. 실작품 시작 카탈로그의 표기·연도·이미지 결측 및 확장 기준은 [출처 문서](ONBOARDING_CATALOG_SOURCES_2026-10-28.md)를 따른다.
-- **홈 공급:** API-028은 현재 공개 글 최신순 조회다. 추천·광고·저장 재노출의 공급 로직, Home_AI의 “원하는 글 요청” 계약은 아직 없다. `Content_AI`의 글 질문·답변 계약과 동일하다고 가정하지 않는다.
+- **홈 공급:** API-028은 추천 결과 표(`recommendation_round`·`recommendation_item`)에 오늘(없으면 어제) 결과가 있으면 그 순서를 쓰고, 없으면 공개 글 최신순이다. 이 표를 채우는 하루 한 번 모델 계산은 아직 연결 전이다. 광고·저장 재노출의 공급 로직, Home_AI의 “원하는 글 요청” 계약은 아직 없다. `Content_AI`의 글 질문·답변 계약과 동일하다고 가정하지 않는다.
 - **화면과 목록 계약:** Figma의 사람 구독 UI와 V1.1의 채널 팔로우, 번호 페이지 UI와 cursor 목록, 저장함 카드의 썸네일·작성자·시간, “21시 이후 알림허용”과 일반 문의의 필드는 별도 결정이 필요하다. 세부 화면 매핑은 [Figma API 백로그](FIGMA_API_V1_1_IMPLEMENTATION_BACKLOG.md)에 있다.
 - **Agent 공급:** 캐러셀 파일 묶음의 서비스 import CLI와 검토된 묶음의 공개 조회는 구현 범위다. 기본 import는 dry-run이며 승인 기록 없이 저장하면 pending_review로 보관한다. producer 코드·DB는 변경하지 않았고 정기 자동 공급, 공개 검토·승인 API, 프론트 렌더링은 별도 후속 작업이다. 기존 영화 Agent 실행·발행 경로와 혼용하지 않는다.
 
