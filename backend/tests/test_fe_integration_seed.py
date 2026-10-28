@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     AgentRun, Content, ContentSlide, ContentReaction, ContentSource, ContentTag, Draft,
-    Policy, SavedItem, Subtopic, Tap, Topic, UserAccount,
+    Policy, RecommendationRound, SavedItem, Subtopic, Tap, Topic, UserAccount,
 )
 from app.seeds import fe_integration as seed
 from app.services import bookmark_service, feed_service, reaction_service
@@ -55,7 +55,7 @@ class AsyncAdapter:
 
 
 MODELS = (Topic, Subtopic, AgentRun, Draft, Content, ContentSlide, ContentSource, ContentTag,
-          UserAccount, Policy, SavedItem, ContentReaction, Tap)
+          UserAccount, Policy, SavedItem, ContentReaction, Tap, RecommendationRound)
 
 
 @pytest.fixture

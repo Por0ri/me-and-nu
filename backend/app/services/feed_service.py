@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,6 +6,7 @@ from app.core.exceptions import ApiError
 from app.repositories import catalog_repository as catalog_repo
 from app.repositories import content_repository as content_repo
 from app.repositories import carousel_repository as carousel_repo
+from app.repositories import recommendation_repository as recommendation_repo
 from app.schemas.feed import (
     ContentDetail,
     ContentSlideResponse,
@@ -18,6 +19,11 @@ from app.schemas.feed import (
     ShareInfo,
 )
 from app.services.cursor import decode_cursor, encode_cursor
+from app.services.feed_ranking import FeedSlot, order_feed
+
+KST = timezone(timedelta(hours=9))
+# Newest public contents considered after the day's ranked list (the model ranks 100).
+LATEST_POOL = 500
 
 
 def preference_value(value: str | None) -> str | None:
@@ -79,74 +85,76 @@ async def _state(db: AsyncSession, user_id: int, tap_id: int, content_id: int):
     return reaction, saved
 
 
-async def get_feed(
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _kst_day_start(moment: datetime) -> datetime:
+    """Start of the service day (Asia/Seoul, no daylight saving) as a UTC time."""
+    local = moment.astimezone(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    return local.astimezone(timezone.utc)
+
+
+def _reason_text(reason) -> str | None:
+    text = reason.get("text") if isinstance(reason, dict) else None
+    return text if isinstance(text, str) and text.strip() else None
+
+
+def _cursor_version(cursor: str):
+    try:
+        return decode_cursor(cursor, expected={}).get("v")
+    except ApiError:
+        return None
+
+
+async def _card(
     db: AsyncSession,
-    user_id: int,
-    topic_id: int,
+    content,
     *,
-    subtopic_id: int | None,
-    cursor: str | None,
-    limit: int,
-) -> FeedResponse:
-    tap = await require_active_tap(db, user_id, topic_id)
-    selected_subtopic = None
-    if subtopic_id is not None:
-        selected_subtopic = await catalog_repo.get_subtopic(db, subtopic_id)
-        if selected_subtopic is None or selected_subtopic.topic_id != topic_id:
-            raise ApiError(422, "SUBTOPIC_TOPIC_MISMATCH", "Subtopic이 Topic에 속하지 않습니다.")
-    context = {"v": 1, "userId": user_id, "topicId": topic_id, "subtopicId": subtopic_id}
-    after = None
-    if cursor is not None:
-        payload = decode_cursor(cursor, expected=context)
-        try:
-            stamp = datetime.fromisoformat(payload["publishedAt"])
-            content_id = payload["contentId"]
-            if stamp.tzinfo is None or not isinstance(content_id, int) or isinstance(content_id, bool) or content_id <= 0:
-                raise ValueError("bad position")
-            after = (stamp, content_id)
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.") from exc
-    rows = await content_repo.list_public_contents(
-        db, topic_id, subtopic_id=subtopic_id, after=after, limit=limit + 1
+    topic_id: int,
+    tap_id: int,
+    user_id: int,
+    recommendation_id: int | None = None,
+    reason: str | None = None,
+) -> FeedCard | None:
+    source = await _source_or_none(db, content.content_id)
+    if source is None:
+        return None
+    reaction, saved = await _state(db, user_id, tap_id, content.content_id)
+    return FeedCard(
+        id=content.content_id,
+        topic_id=topic_id,
+        recommendation_id=recommendation_id,
+        title=content.title,
+        production_type=content.production_type,
+        summary=content.summary,
+        image_url=content.image_url,
+        slides=await _slides(db, content),
+        source_name=source[1],
+        source_url=source[0],
+        published_at=content.published_at,
+        saved=saved is not None,
+        saved_item_id=saved.saved_item_id if saved else None,
+        recommendation_reason=reason,
+        subtopic_names=await content_repo.list_content_subtopic_names(db, content.content_id),
+        is_promotional=content.is_sponsored,
+        notices=content_notices(content),
+        my_reaction=MyReaction(
+            liked=bool(reaction and reaction.is_liked),
+            preference=preference_value(reaction.ox_feedback) if reaction else None,
+        ),
     )
-    has_more = len(rows) > limit
-    page = rows[:limit]
-    cards: list[FeedCard] = []
-    for content in page:
-        source = await _source_or_none(db, content.content_id)
-        if source is None:
-            continue
-        reaction, saved = await _state(db, user_id, tap.tap_id, content.content_id)
-        cards.append(
-            FeedCard(
-                id=content.content_id,
-                topic_id=topic_id,
-                title=content.title,
-                production_type=content.production_type,
-                summary=content.summary,
-                image_url=content.image_url,
-                slides=await _slides(db, content),
-                source_name=source[1],
-                source_url=source[0],
-                published_at=content.published_at,
-                saved=saved is not None,
-                saved_item_id=saved.saved_item_id if saved else None,
-                subtopic_names=await content_repo.list_content_subtopic_names(db, content.content_id),
-                is_promotional=content.is_sponsored,
-                notices=content_notices(content),
-                my_reaction=MyReaction(
-                    liked=bool(reaction and reaction.is_liked),
-                    preference=preference_value(reaction.ox_feedback) if reaction else None,
-                ),
-            )
-        )
-    next_cursor = None
-    if has_more and page:
-        last = page[-1]
-        stamp = last.published_at or last.created_at
-        next_cursor = encode_cursor(
-            {**context, "publishedAt": stamp.isoformat(), "contentId": last.content_id}
-        )
+
+
+def _feed_response(
+    topic_id: int,
+    cards: list[FeedCard],
+    next_cursor: str | None,
+    *,
+    cursor: str | None,
+    subtopic_id: int | None = None,
+    selected_subtopic=None,
+) -> FeedResponse:
     sections = []
     if cards:
         sections = [
@@ -166,6 +174,124 @@ async def get_feed(
         sections=sections,
         next_cursor=next_cursor,
         empty_reason=empty_reason,
+    )
+
+
+async def _recommended_feed(
+    db: AsyncSession, user_id: int, topic_id: int, tap, *, cursor: str | None, limit: int
+) -> FeedResponse | None:
+    """Home feed in the day's recommended order (EXP-30 visit rules); None without a round.
+
+    The first page fixes the snapshot time, and later pages reuse it from the
+    cursor, so impressions recorded while scrolling do not reshuffle pages.
+    Yesterday's round covers the hours before today's batch has run.
+    """
+    context = {"v": 2, "userId": user_id, "topicId": topic_id, "subtopicId": None}
+    if cursor is None:
+        as_of, offset = _now(), 0
+        today = as_of.astimezone(KST).date()
+        round_ = await recommendation_repo.latest_round(db, tap.tap_id, [today, today - timedelta(days=1)])
+        if round_ is None:
+            return None
+    else:
+        payload = decode_cursor(cursor, expected=context)
+        try:
+            as_of = datetime.fromisoformat(payload["asOf"])
+            round_id, offset = payload["roundId"], payload["offset"]
+            if as_of.tzinfo is None or any(
+                not isinstance(value, int) or isinstance(value, bool) or value <= 0
+                for value in (round_id, offset)
+            ):
+                raise ValueError("bad position")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.") from exc
+        round_ = await recommendation_repo.get_round(db, round_id, tap.tap_id)
+        if round_ is None:
+            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.")
+    ranked = [
+        FeedSlot(content_id, item_id, _reason_text(reason))
+        for content_id, item_id, reason in await recommendation_repo.ranked_items(
+            db, round_.recommendation_round_id, topic_id
+        )
+    ]
+    ordered = order_feed(
+        ranked,
+        await recommendation_repo.latest_content_ids(db, topic_id, as_of, LATEST_POOL),
+        opened=await recommendation_repo.opened_content_ids(db, tap.tap_id, as_of),
+        negative=await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id, as_of),
+        shown_today=await recommendation_repo.shown_content_ids(db, tap.tap_id, _kst_day_start(as_of), as_of),
+    )
+    page = ordered[offset:offset + limit]
+    contents = await recommendation_repo.contents_by_id(db, [slot.content_id for slot in page])
+    cards: list[FeedCard] = []
+    for slot in page:
+        content = contents.get(slot.content_id)
+        card = None if content is None else await _card(
+            db, content, topic_id=topic_id, tap_id=tap.tap_id, user_id=user_id,
+            recommendation_id=slot.recommendation_item_id, reason=slot.reason,
+        )
+        if card is not None:
+            cards.append(card)
+    next_cursor = None
+    if offset + limit < len(ordered):
+        next_cursor = encode_cursor({
+            **context, "roundId": round_.recommendation_round_id,
+            "asOf": as_of.isoformat(), "offset": offset + limit,
+        })
+    return _feed_response(topic_id, cards, next_cursor, cursor=cursor)
+
+
+async def get_feed(
+    db: AsyncSession,
+    user_id: int,
+    topic_id: int,
+    *,
+    subtopic_id: int | None,
+    cursor: str | None,
+    limit: int,
+) -> FeedResponse:
+    tap = await require_active_tap(db, user_id, topic_id)
+    selected_subtopic = None
+    if subtopic_id is not None:
+        selected_subtopic = await catalog_repo.get_subtopic(db, subtopic_id)
+        if selected_subtopic is None or selected_subtopic.topic_id != topic_id:
+            raise ApiError(422, "SUBTOPIC_TOPIC_MISMATCH", "Subtopic이 Topic에 속하지 않습니다.")
+    elif cursor is None or _cursor_version(cursor) == 2:
+        recommended = await _recommended_feed(db, user_id, topic_id, tap, cursor=cursor, limit=limit)
+        if recommended is not None:
+            return recommended
+    context = {"v": 1, "userId": user_id, "topicId": topic_id, "subtopicId": subtopic_id}
+    after = None
+    if cursor is not None:
+        payload = decode_cursor(cursor, expected=context)
+        try:
+            stamp = datetime.fromisoformat(payload["publishedAt"])
+            content_id = payload["contentId"]
+            if stamp.tzinfo is None or not isinstance(content_id, int) or isinstance(content_id, bool) or content_id <= 0:
+                raise ValueError("bad position")
+            after = (stamp, content_id)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.") from exc
+    rows = await content_repo.list_public_contents(
+        db, topic_id, subtopic_id=subtopic_id, after=after, limit=limit + 1
+    )
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    cards: list[FeedCard] = []
+    for content in page:
+        card = await _card(db, content, topic_id=topic_id, tap_id=tap.tap_id, user_id=user_id)
+        if card is not None:
+            cards.append(card)
+    next_cursor = None
+    if has_more and page:
+        last = page[-1]
+        stamp = last.published_at or last.created_at
+        next_cursor = encode_cursor(
+            {**context, "publishedAt": stamp.isoformat(), "contentId": last.content_id}
+        )
+    return _feed_response(
+        topic_id, cards, next_cursor,
+        cursor=cursor, subtopic_id=subtopic_id, selected_subtopic=selected_subtopic,
     )
 
 
