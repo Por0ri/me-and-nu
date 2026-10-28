@@ -1,0 +1,8 @@
+# 줄거리 임베딩 전용 (model/scripts/embed_descriptions.py, 1-4b). 백엔드·실험 환경과 따로 설치한다 (약 805MB)
+#   uv venv --python 3.12 <환경 경로>
+#   uv pip install --python <환경 경로>/Scripts/python.exe torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+#   uv pip install --python <환경 경로>/Scripts/python.exe -r model/requirements-embed.txt
+# PyTorch 는 CPU 전용판을 위 주소에서 먼저 받는다 (그래픽카드용은 2GB 넘음)
+# 임베딩 모델 BAAI/bge-small-en-v1.5 (약 130MB) 는 처음 실행할 때 Hugging Face 에서 받아 캐시에 둔다
+sentence-transformers==6.1.0
+numpy>=2.0
