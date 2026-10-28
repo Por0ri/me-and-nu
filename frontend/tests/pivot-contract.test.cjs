@@ -186,10 +186,14 @@ test('The old pending user DTO cannot be mistaken for the current onboarding con
 const remotePairs = [
   ['https://test.me-nu.kr', 'https://api.test.me-nu.kr'],
   ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr'],
+  ['https://checking.me-nu.kr', 'https://api.checking.me-nu.kr'],
 ];
-test('Remote API access keeps the staging and backend-labs environments paired', () => {
+test('Remote API access keeps staging, backend-labs and Checking environments paired', () => {
   for (const [frontend, api] of remotePairs) {
     assert.equal(s.isPivotApiAllowed(false, frontend, api), true);
+    for (const [, otherApi] of remotePairs) {
+      if (otherApi !== api) assert.equal(s.isPivotApiAllowed(true, frontend, otherApi), false);
+    }
   }
   for (const [frontend, api] of [
     ['https://labs.me-nu.kr', 'https://api.test.me-nu.kr'],
@@ -211,6 +215,19 @@ test('Remote API access keeps the staging and backend-labs environments paired',
     ['https://labs.me-nu.kr', 'https://user:password@api.labs.me-nu.kr'],
     ['http://test.me-nu.kr', 'https://api.test.me-nu.kr'],
     ['http://labs.me-nu.kr', 'https://api.labs.me-nu.kr'],
+    ['https://preview.vercel.app', 'https://api.checking.me-nu.kr'],
+    ['https://me-nu.kr', 'https://api.checking.me-nu.kr'],
+    ['https://checking.me-nu.kr.example.com', 'https://api.checking.me-nu.kr'],
+    ['https://checking.me-nu.kr', 'https://api.checking.me-nu.kr.example.com'],
+    ['https://checking.me-nu.kr', 'https://api.checking.me-nu.kr:444'],
+    ['https://checking.me-nu.kr', 'https://api.checking.me-nu.kr/path'],
+    ['https://checking.me-nu.kr', 'https://api.checking.me-nu.kr?proxy=other'],
+    ['https://checking.me-nu.kr', 'https://api.checking.me-nu.kr#fragment'],
+    ['https://checking.me-nu.kr', 'https://user:password@api.checking.me-nu.kr'],
+    ['https://user:password@checking.me-nu.kr', 'https://api.checking.me-nu.kr'],
+    ['https://checking.me-nu.kr/path', 'https://api.checking.me-nu.kr'],
+    ['http://checking.me-nu.kr', 'https://api.checking.me-nu.kr'],
+    ['https://checking.me-nu.kr', 'http://api.checking.me-nu.kr'],
     ['http://localhost:3000', 'http://127.0.0.1:8000'],
     ['http://localhost:3000', 'https://localhost:8000'],
   ]) assert.equal(s.isPivotApiAllowed(true, frontend, api), false, `${frontend} -> ${api}`);
@@ -277,9 +294,10 @@ test('OAuth navigation rejects arbitrary hosts, wrong callback and unexpected sc
   assert.doesNotMatch(s.oauthErrorMessage('<script>untrusted</script>'), /script|untrusted/);
 });
 
-test('OAuth callbacks cannot cross between staging and backend-labs', () => {
+test('OAuth callbacks cannot cross between staging, backend-labs and Checking', () => {
   for (const provider of ['kakao', 'naver']) {
-    assert.throws(() => s.validateAuthorizationUrl(providerUrl(provider, 'https://api.test.me-nu.kr'), provider, 'https://api.labs.me-nu.kr'));
-    assert.throws(() => s.validateAuthorizationUrl(providerUrl(provider, 'https://api.labs.me-nu.kr'), provider, 'https://api.test.me-nu.kr'));
+    for (const [, api] of remotePairs) for (const [, otherApi] of remotePairs) {
+      if (api !== otherApi) assert.throws(() => s.validateAuthorizationUrl(providerUrl(provider, api), provider, otherApi));
+    }
   }
 });
