@@ -25,7 +25,10 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["f4b8c1d9a620"]
+    assert script.get_heads() == ["150a601074af"]
+    recommendation = script.get_revision("150a601074af")
+    assert recommendation.down_revision == "f4b8c1d9a620"
+    assert recommendation.dependencies is None
     carousel = script.get_revision("f4b8c1d9a620")
     assert carousel.down_revision == "e3a7b9c2d451"
     assert carousel.dependencies is None
@@ -34,7 +37,7 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     assert onboarding_v2.dependencies is None
     assert "onboarding_v2" in onboarding_v2.branch_labels
     assert "d2f6a9c4e731" not in {
-        revision.revision for revision in script.walk_revisions(base="base", head="f4b8c1d9a620")
+        revision.revision for revision in script.walk_revisions(base="base", head="150a601074af")
     }
     assert script.get_revision("c0e5f3b8a124").down_revision == (
         "b9d4e2a7f013"
@@ -132,6 +135,32 @@ def test_carousel_migration_offline_sql_preserves_downgrade_guard(monkeypatch):
     lock = sql.index("LOCK TABLE content_slide, content IN ACCESS EXCLUSIVE MODE")
     guard = sql.index("RAISE EXCEPTION")
     deletion = sql.index("DROP TABLE content_slide")
+    assert lock < guard < deletion
+
+
+def test_recommendation_migration_is_additive_and_guards_downgrade(monkeypatch):
+    revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("150a601074af").module
+    buffer = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(context))
+    revision.upgrade()
+    upgrade_sql = buffer.getvalue()
+    for table in ("content_entity_link", "recommendation_round", "recommendation_item", "user_event"):
+        assert f"CREATE TABLE {table}" in upgrade_sql
+    assert "client_event_id UUID NOT NULL" in upgrade_sql
+    assert "uq_user_event_client_event_id UNIQUE (client_event_id)" in upgrade_sql
+    assert "FOREIGN KEY(tap_id, user_id) REFERENCES tap (tap_id, user_id)" in upgrade_sql
+    assert "score DOUBLE PRECISION" in upgrade_sql
+    # Only new tables: existing tables and the deferred birth-date column stay untouched.
+    assert "ALTER TABLE" not in upgrade_sql and "birth_date" not in upgrade_sql
+
+    revision.downgrade()
+    sql = buffer.getvalue()
+    lock = sql.index("LOCK TABLE user_event, recommendation_item, recommendation_round, content_entity_link")
+    guard = sql.index("RAISE EXCEPTION")
+    deletion = sql.index("DROP TABLE user_event")
     assert lock < guard < deletion
 
 

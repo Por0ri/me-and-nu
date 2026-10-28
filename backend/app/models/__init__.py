@@ -27,6 +27,9 @@ from app.models.onboarding_answers import OnboardingAnswersRecord
 from app.models.onboarding_catalog import (
     Entity, EntityExternalId, PreferenceTag, EntityTag, TapEntity, TapPreferenceTag,
 )
+from app.models.recommendation import (
+    ContentEntityLink, RecommendationItem, RecommendationRound, UserEvent,
+)
 from app.models.user import UserAccount
 from app.models.v1 import (
     AuthSession,
@@ -68,6 +71,10 @@ __all__ = [
     "EntityTag",
     "TapEntity",
     "TapPreferenceTag",
+    "ContentEntityLink",
+    "RecommendationRound",
+    "RecommendationItem",
+    "UserEvent",
     "Policy",
     "SavedItem",
     "SourceSite",

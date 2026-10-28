@@ -16,7 +16,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 DATABASE = "me_nu_checking"
-REVISION = "f4b8c1d9a620"
+REVISION = "150a601074af"
 POLICY_VERSION = "checking-20261028-v1"
 POLICIES = (
     {"policy_type": "terms", "title": "[Checking 테스트] 서비스 이용약관", "is_required": True,
@@ -112,7 +112,7 @@ def run(*, database_url: str, expected_database: str, deployment: str, apply: bo
                 raise BootstrapError("Connected database/user differs from the dedicated Checking target.")
             revisions = connection.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
             if revisions != [REVISION]:
-                raise BootstrapError("Checking bootstrap requires migration f4b8c1d9a620 exactly.")
+                raise BootstrapError("Checking bootstrap requires migration 150a601074af exactly.")
             now = datetime.now(timezone.utc)
             plan = build_plan(connection, now)
             if apply:
