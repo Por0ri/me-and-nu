@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import AgentRun, Content, ContentSource, Draft, Topic
 from app.models.content_slide import ContentSlide
+from app.repositories.content_work_repository import link_carousel_works
 
 METHOD = "carousel_import_v1"
 MAX_PNG_BYTES = 20 * 1024 * 1024
@@ -489,7 +490,11 @@ async def run(*, bundle: PreparedBundle, expected_database: str, apply: bool = F
         async with async_sessionmaker(engine, expire_on_commit=False)() as db, db.begin():
             if not apply:
                 await db.execute(text("SET TRANSACTION READ ONLY"))
-            return await import_bundle(db, bundle, apply=apply)
+            report = await import_bundle(db, bundle, apply=apply)
+            if apply:
+                # Same transaction: work numbers that are not in the catalog yet are reported.
+                report["work_links"] = await link_carousel_works(db)
+            return report
     finally:
         await engine.dispose()
 
