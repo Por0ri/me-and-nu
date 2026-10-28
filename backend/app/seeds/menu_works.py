@@ -1,11 +1,16 @@
-"""Load the me;nu work catalog into the service work dictionary (entity).
+"""Load the me;nu work catalog and onboarding chips into the service DB.
 
 model/catalog/menu_works.csv is the source of truth for work numbers and
 titles; the model side maintains it. Works are matched by entity_external_id
 (provider=menu_work), never by title. A work with a Korean title is active and
 searchable in onboarding; the rest stay inactive so contents can still link to
-them. Genre/theme mappings (entity_tag) and images are left untouched. After the
-works, carousel contents get their missing content_entity_link rows.
+them. Images are left untouched.
+
+model/catalog/chips.csv lists every AniList genre/tag; rows with show=main or
+more become the onboarding genre/theme chips (preference_tag) and every other
+chip of the topic is deactivated, never deleted. work_chips.csv then replaces
+each me;nu work's chip links (entity_tag) used for the onboarding hint. After
+that, carousel contents get their missing content_entity_link rows.
 
 Preview is the default. Select the database explicitly with --expected-database;
 --apply commits everything atomically.
@@ -19,19 +24,22 @@ import csv
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 import sys
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import Entity, EntityExternalId, Topic
+from app.models import Entity, EntityExternalId, EntityTag, PreferenceTag, Topic
 from app.repositories.content_work_repository import MENU_WORK_PROVIDER, link_carousel_works
 
 
 CATALOG_DIR = Path(__file__).resolve().parents[3] / "model" / "catalog"
 TOPIC_CODE = "anime"
+SHOWN = ("main", "more")
+_CODE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 class MenuWorksError(ValueError):
@@ -152,6 +160,122 @@ async def seed_works(db, works: list[MenuWork], *, apply: bool = False) -> dict:
     return report
 
 
+@dataclass(frozen=True)
+class Chip:
+    kind: str
+    code: str
+    display_name: str
+    sort_order: int
+    show: str
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.kind, self.code
+
+
+def load_chips(path: Path) -> list[Chip]:
+    chips, seen = [], set()
+    for line, row in enumerate(_read(path), start=2):
+        kind, code, show = (row.get(key, "").strip() for key in ("kind", "code", "show"))
+        name, check = (row.get("display_name") or "").strip(), (row.get("name_check") or "").strip()
+        if kind not in ("genre", "theme") or not _CODE.match(code) or len(code) > 100 or (kind, code) in seen:
+            raise MenuWorksError(f"{path.name} line {line}: kind and a unique lowercase code are required.")
+        if show not in (*SHOWN, "off"):
+            raise MenuWorksError(f"{path.name} line {line}: show must be main, more or off.")
+        # A shown chip needs a reviewed screen name: filled, and no pending name_check ("입력 필요").
+        if show in SHOWN and (not name or len(name) > 100 or check):
+            raise MenuWorksError(f"{path.name} line {line}: a shown chip needs a reviewed display_name.")
+        try:
+            sort_order = int(row.get("sort_order") or 0)
+        except ValueError:
+            raise MenuWorksError(f"{path.name} line {line}: sort_order must be an integer.") from None
+        seen.add((kind, code))
+        chips.append(Chip(kind, code, name, sort_order, show))
+    if not any(chip.show in SHOWN for chip in chips):
+        raise MenuWorksError(f"{path.name} has no shown chips.")
+    return chips
+
+
+def load_work_chips(path: Path, chips: list[Chip]) -> dict[str, set[tuple[str, str]]]:
+    """menu_work_id (text) → chip keys; every key must exist in chips.csv."""
+    known, links = {chip.key for chip in chips}, {}
+    for line, row in enumerate(_read(path), start=2):
+        number = (row.get("menu_work_id") or "").strip()
+        key = ((row.get("kind") or "").strip(), (row.get("code") or "").strip())
+        if not number.isdigit() or key not in known:
+            raise MenuWorksError(f"{path.name} line {line}: a work number and a chip from chips.csv are required.")
+        links.setdefault(number, set()).add(key)
+    return links
+
+
+async def seed_chips(
+    db, chips: list[Chip], work_chips: dict[str, set[tuple[str, str]]], *, apply: bool = False
+) -> dict:
+    """Preview or sync chips and me;nu work links; caller owns the transaction.
+
+    Chips not shown are deactivated so earlier user selections stay valid. Only
+    menu_work entities get their links replaced; other entities keep theirs. A
+    preview counts links of works that already exist.
+    """
+    topic = await db.scalar(select(Topic).where(Topic.topic_code == TOPIC_CODE))
+    if topic is None or not topic.is_active:
+        raise MenuWorksError("An existing active anime topic is required.")
+    statement = select(PreferenceTag).where(
+        PreferenceTag.topic_id == topic.topic_id, PreferenceTag.kind.in_(("genre", "theme")),
+    )
+    if apply:
+        # Entities were locked first by seed_works; tags follow in stable ID order.
+        statement = statement.order_by(PreferenceTag.tag_id).with_for_update()
+    existing = {(tag.kind, tag.code): tag for tag in (await db.scalars(statement)).all()}
+    shown = {chip.key: chip for chip in chips if chip.show in SHOWN}
+    report = {"chips_shown": len(shown), "chips_created": 0, "chips_updated": 0,
+              "chips_deactivated": [], "links_added": 0, "links_removed": 0}
+    for key, chip in shown.items():
+        tag = existing.get(key)
+        values = {"display_name": chip.display_name, "sort_order": chip.sort_order, "is_active": True}
+        if tag is None:
+            report["chips_created"] += 1
+            if apply:
+                tag = PreferenceTag(topic_id=topic.topic_id, kind=chip.kind, code=chip.code, **values)
+                db.add(tag)
+                existing[key] = tag
+        elif any(getattr(tag, field) != value for field, value in values.items()):
+            report["chips_updated"] += 1
+            if apply:
+                for field, value in values.items():
+                    setattr(tag, field, value)
+    for key, tag in sorted(existing.items()):
+        if key not in shown and tag.is_active:
+            report["chips_deactivated"].append(f"{key[0]}:{key[1]}")
+            if apply:
+                tag.is_active = False
+    if apply:
+        await db.flush()
+    tag_id = {key: tag.tag_id for key, tag in existing.items() if key in shown and tag.tag_id is not None}
+    entities = dict((await db.execute(
+        select(EntityExternalId.external_id, EntityExternalId.entity_id)
+        .where(EntityExternalId.provider == MENU_WORK_PROVIDER)
+    )).all())
+    current: dict[int, set[int]] = {}
+    for entity_id, linked in (await db.execute(
+        select(EntityTag.entity_id, EntityTag.tag_id).where(EntityTag.entity_id.in_(list(entities.values())))
+    )).all():
+        current.setdefault(entity_id, set()).add(linked)
+    for number, entity_id in sorted(entities.items(), key=lambda item: item[1]):
+        desired = {tag_id[key] for key in work_chips.get(number, ()) if key in tag_id}
+        stale, missing = current.get(entity_id, set()) - desired, desired - current.get(entity_id, set())
+        report["links_removed"] += len(stale)
+        report["links_added"] += len(missing)
+        if apply and stale:
+            await db.execute(delete(EntityTag).where(EntityTag.entity_id == entity_id, EntityTag.tag_id.in_(stale)))
+        if apply:
+            for linked in sorted(missing):
+                db.add(EntityTag(entity_id=entity_id, tag_id=linked, topic_id=topic.topic_id))
+    if apply:
+        await db.flush()
+    return report
+
+
 def validate_target(database_url: str, expected_database: str) -> None:
     try:
         url = make_url(database_url)
@@ -162,8 +286,8 @@ def validate_target(database_url: str, expected_database: str) -> None:
         raise MenuWorksError("An explicitly matching PostgreSQL database is required.")
 
 
-async def run(*, works: list[MenuWork], expected_database: str, apply: bool = False,
-              database_url: str | None = None) -> dict:
+async def run(*, works: list[MenuWork], chips: list[Chip], work_chips: dict[str, set[tuple[str, str]]],
+              expected_database: str, apply: bool = False, database_url: str | None = None) -> dict:
     if database_url is None:
         from app.core.config import settings
         database_url = settings.database_url
@@ -177,6 +301,7 @@ async def run(*, works: list[MenuWork], expected_database: str, apply: bool = Fa
             else:
                 await db.execute(text("SET TRANSACTION READ ONLY"))
             report = await seed_works(db, works, apply=apply)
+            report["chips"] = await seed_chips(db, chips, work_chips, apply=apply)
             if apply:
                 report["work_links"] = await link_carousel_works(db)
             return report
@@ -189,14 +314,17 @@ def main() -> None:
     parser.add_argument("--works", type=Path, default=CATALOG_DIR / "menu_works.csv")
     parser.add_argument("--entries", type=Path, default=CATALOG_DIR / "menu_work_entries.csv",
                         help="Season/movie rows; used only to tell movies from series.")
+    parser.add_argument("--chips", type=Path, default=CATALOG_DIR / "chips.csv")
+    parser.add_argument("--work-chips", type=Path, default=CATALOG_DIR / "work_chips.csv")
     parser.add_argument("--expected-database", required=True, help="Exact target database name, never a URL.")
     parser.add_argument("--database-url", help="Explicit service DB URL; never printed.")
     parser.add_argument("--apply", action="store_true", help="Commit all changes atomically; default is read-only.")
     args = parser.parse_args()
     try:
         works = load_works(args.works, args.entries)
-        task = run(works=works, expected_database=args.expected_database, apply=args.apply,
-                   database_url=args.database_url)
+        chips = load_chips(args.chips)
+        task = run(works=works, chips=chips, work_chips=load_work_chips(args.work_chips, chips),
+                   expected_database=args.expected_database, apply=args.apply, database_url=args.database_url)
         if sys.platform == "win32":
             with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
                 report = runner.run(task)

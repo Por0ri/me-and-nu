@@ -234,3 +234,80 @@ async def test_carousel_links_keep_package_order_and_report_unknown_works(engine
         later = await link_carousel_works(AsyncAdapter(session))
         assert links(session)[1] == (main, "999", 2, "carousel")
     assert later["links_added"] == 1 and later["unresolved_menu_work_ids"] == [3]
+
+
+CHIPS_HEADER = "kind,code,anilist_name,category,works_pct,display_name,name_check,show,sort_order"
+
+
+@pytest.fixture
+def chip_files(tmp_path):
+    chips = write_csv(tmp_path / "chips.csv", CHIPS_HEADER, [
+        "genre,comedy,Comedy,Genre,48.4,코미디,,main,1",
+        "genre,action,Action,Genre,40.0,액션,,main,2",
+        "genre,sci_fi,Sci-Fi,Genre,10.0,SF,,main,3",
+        "theme,school,School,Setting-Scene,30.1,학원,,main,1",
+        "genre,ecchi,Ecchi,Genre,13.0,,입력 필요,off,100",
+    ])
+    links = write_csv(tmp_path / "work_chips.csv", "menu_work_id,kind,code", [
+        "1,genre,comedy", "1,genre,action", "1,theme,school", "1,genre,ecchi",
+        "14,theme,school", "2000,genre,action",
+    ])
+    return chips, links
+
+
+@pytest.mark.parametrize("row", [
+    "genre,horror,Horror,Genre,1.0,,,main,3",           # a shown chip needs a screen name
+    "genre,horror,Horror,Genre,1.0,호러,입력 필요,main,3",  # and its name must be reviewed
+    "genre,Horror,Horror,Genre,1.0,호러,,main,3",        # codes are lowercase
+    "genre,horror,Horror,Genre,1.0,호러,,maybe,3",       # unknown show value
+    "genre,comedy,Comedy,Genre,1.0,코미디,,main,3",      # duplicate chip
+])
+def test_load_chips_rejects_unreviewed_or_malformed_rows(tmp_path, chip_files, row):
+    chips, _ = chip_files
+    rows = chips.read_text(encoding="utf-8-sig").strip().splitlines()[1:] + [row]
+    with pytest.raises(seed.MenuWorksError):
+        seed.load_chips(write_csv(tmp_path / "bad_chips.csv", CHIPS_HEADER, rows))
+
+
+@pytest.mark.asyncio
+async def test_seed_chips_shows_catalog_chips_turns_off_others_and_replaces_work_links(engine, catalog, chip_files):
+    chips = seed.load_chips(chip_files[0])
+    work_chips = seed.load_work_chips(chip_files[1], chips)
+    with Session(engine) as session, session.begin():
+        starter = add_entity(session, 1)
+        demo = add_entity(session, "fixture-1", name="[DEMO] 가상 작품", provider="demo")
+        old = {code: PreferenceTag(topic_id=1, kind=kind, code=code, display_name=label)
+               for kind, code, label in [("genre", "action", "액션(starter)"), ("theme", "letters", "편지")]}
+        session.add_all(old.values())
+        session.flush()
+        session.add_all([EntityTag(entity_id=starter.entity_id, tag_id=old["letters"].tag_id, topic_id=1),
+                         EntityTag(entity_id=demo.entity_id, tag_id=old["letters"].tag_id, topic_id=1)])
+        demo_id = demo.entity_id
+
+    with Session(engine) as session, session.begin():
+        await seed.seed_works(AsyncAdapter(session), seed.load_works(*catalog), apply=True)
+        report = await seed.seed_chips(AsyncAdapter(session), chips, work_chips, apply=True)
+    assert {key: report[key] for key in ("chips_shown", "chips_created", "chips_updated", "chips_deactivated")} == {
+        "chips_shown": 4, "chips_created": 3, "chips_updated": 1, "chips_deactivated": ["theme:letters"],
+    }
+
+    with Session(engine) as session:
+        tags = {tag.code: tag for tag in session.scalars(select(PreferenceTag))}
+        assert (tags["action"].display_name, tags["action"].is_active, tags["letters"].is_active) == ("액션", True, False)
+        linked = session.execute(
+            select(EntityExternalId.external_id, PreferenceTag.code)
+            .join(EntityTag, EntityTag.entity_id == EntityExternalId.entity_id)
+            .join(PreferenceTag, PreferenceTag.tag_id == EntityTag.tag_id)
+        ).all()
+        by_work = {}
+        for number, code in linked:
+            by_work.setdefault(number, set()).add(code)
+        # Off chips (ecchi) are never linked; the demo work keeps its own link.
+        assert by_work == {"1": {"comedy", "action", "school"}, "14": {"school"}, "2000": {"action"},
+                           "fixture-1": {"letters"}}
+        assert session.scalar(select(func.count()).select_from(EntityTag).where(EntityTag.entity_id == demo_id)) == 1
+
+    with Session(engine) as session, session.begin():
+        again = await seed.seed_chips(AsyncAdapter(session), chips, work_chips, apply=True)
+    assert (again["chips_created"], again["chips_updated"], again["chips_deactivated"],
+            again["links_added"], again["links_removed"]) == (0, 0, [], 0, 0)
