@@ -49,7 +49,7 @@ cd backend
 
 ### 온보딩 V2와 v1 호환 (2026-10-28)
 
-신규 흐름은 `GET /api/v1/onboarding/works?topicId=...&q=...`로 작품을 1~5개 선택하고, `POST /api/v1/onboarding/preference-options`에 `{topicId,entityIds}`를 보내 장르·소재 후보를 받습니다. 후보 합집합에서 1개 이상(고정 상한 없음)을 선택하고 기존 여섯 소비 유형 중 하나를 제출합니다. 두 조회는 가입 대기 세션을 사용하며 POST에는 CSRF가 필요합니다.
+신규 흐름은 `GET /api/v1/onboarding/works?topicId=...&q=...`로 작품을 1~5개 선택하고, `POST /api/v1/onboarding/preference-options`에 `{topicId,entityIds}`를 보내 활성 장르·소재 칩 전체를 받습니다. 선택 작품에 붙은 칩은 `sourceEntityIds`로 출처 작품을 알려 힌트로 씁니다. 칩은 장르·소재 합쳐 1개 이상, 종류별 7개까지 선택하고 기존 여섯 소비 유형 중 하나를 제출합니다. 두 조회는 가입 대기 세션을 사용하며 POST에는 CSRF가 필요합니다.
 
 완료 요청의 새 답변은 `answers:{version:2,favoriteEntityIds:[...],preferenceTagIds:[...],consumptionType:"world"}`입니다. 기존 프로필·정책·Topic 입력과 세션 교체는 유지합니다. 현재 카탈로그를 재검증한 뒤 답변·선택·동의·Tap을 함께 저장합니다. `entity` 등 신규 6개 테이블과 기존 `onboarding_answers` 버전 조건의 도입 revision은 `e3a7b9c2d451`입니다. 현재 서비스 target과 유일한 head는 캐러셀 확장을 포함하는 자식 `f4b8c1d9a620`이며 [적용 경로](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 따릅니다. 생년월일 삭제 d2 파일은 이 후보에 포함하지 않습니다.
 

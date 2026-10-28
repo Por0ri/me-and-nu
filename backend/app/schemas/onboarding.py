@@ -152,3 +152,5 @@ class PreferenceOptionsResponse(CamelModel):
     themes: list[PreferenceOption]
     min_selections: Literal[1] = 1
     max_selections: None = None
+    # EXP-33 cap per kind; completion rejects more (onboarding_catalog_service.MAX_TAGS_PER_KIND).
+    max_selections_per_kind: Literal[7] = 7
