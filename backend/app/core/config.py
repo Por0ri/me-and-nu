@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     # 외부 서비스 키 (없으면 해당 기능만 꺼진다)
     tmdb_key: str | None = Field(default=None, repr=False)
     llm_key: str | None = Field(default=None, repr=False)
+    # 활동 기록(user_event)의 출처. 실서비스 서버만 production으로 둔다
+    event_data_source: Literal["production", "local_demo", "automated_test", "imported"] = "local_demo"
 
     @model_validator(mode="after")
     def validate_session_backend(self) -> "Settings":
