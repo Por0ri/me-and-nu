@@ -130,7 +130,9 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
         inferred.add("news")
     if "news" in inferred and re.search(r"announce|announcement|announced|発表|解禁|決定", title):
         inferred.discard("guide")
-    if source.role == "editorial" and source.category not in {"review", "curation"}:
+    if source.role == "editorial" and source.category not in {
+        "review", "curation", "event", "goods"
+    }:
         inferred.discard("news")
     if not inferred and "news" in available and source.role in {"primary", "discovery"}:
         inferred.add("news")
@@ -310,7 +312,6 @@ def parse_mastodon_tag_timeline(payload: list[dict], source: Source) -> list[Dis
     counts: Counter[str] = Counter()
     timestamps: list[str] = []
     items: list[DiscoveryItem] = []
-    humor_tags = {"meme", "memes", "shitpost", "shitposting", "humor", "funny", "discussion"}
     news_tags = {"animenews", "news", "newanime", "pressrelease", "newsrelease", "ニュース"}
     automation_tags = {"bot", "bots", "autopost", "automated", "rssbot", "feedbot"}
     for status in payload:
@@ -354,27 +355,10 @@ def parse_mastodon_tag_timeline(payload: list[dict], source: Source) -> list[Dis
         body = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "", body)
         body = re.sub(r"\s+", " ", body).strip()
         work_titles = _catalog_work_titles_for_tags(tags) or _catalog_work_titles_in_text(body)
-        discussion_pattern = re.compile(
-            r"\b(?:vs\.?|versus|who would win|who wins|what do you think|meme|funny|"
-            r"hot take|theory|favorite|favourite|best character|underrated|overrated|"
-            r"does anyone|anyone else|which character|who is stronger)\b"
-            r"|누가.{0,12}(?:이겨|이길|더 강)|어떻게 생각|떡밥|밈|ㅋㅋ|ㅎㅎ|웃기|최애|누가 더"
-            r"|どっち|どちら|勝つ|強い|どう思|ネタ|ｗｗ|草|笑",
-            re.IGNORECASE,
-        )
-        engagement = int(status.get("favourites_count") or 0) + int(
-            status.get("reblogs_count") or 0
-        )
-        has_discussion_signal = (
-            bool(normalized_tags & humor_tags)
-            or bool(discussion_pattern.search(body))
-            or engagement >= 3
-        )
         if (
             not work_titles
-            or not has_discussion_signal
             or normalized_tags & news_tags
-            or len(body) < 60
+            or len(body) < 40
         ):
             continue
         title = f"{work_titles[0]} 팬덤 토론"

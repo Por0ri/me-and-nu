@@ -106,12 +106,10 @@ def image_belongs_to_package_sources(
         return False
     if same_source_page:
         return True
-    # Every event/goods card is about a specific real-world event or product.
-    # Generic same-franchise artwork is not a visual match; only imagery from
-    # the cited page itself (accepted above) may be used until explicit
-    # same-event/product provenance is available.
-    if package is not None and package.content_type in {"event", "goods"}:
-        return False
+    # A source-page event/product image wins when available. If the article has
+    # no usable visual, exact-work catalog art is still a valid fallback for
+    # the cover and supporting cards. Context-specific assets from another
+    # article were rejected above, so a different product/event cannot leak in.
     provenance = image.provenance_source
     if (
         package is not None

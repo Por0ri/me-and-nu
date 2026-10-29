@@ -49,7 +49,7 @@ def _register(
 # Evidence, attribution, rights, and safety are non-negotiable publication gates.
 _register(
     (
-        "SOURCE_NO_OFFICIAL", "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
+        "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
         "EVENT_ALREADY_ENDED", "COPY_UNGROUNDED", "SOURCE_STALE",
         "EVENT_PUBLICATION_DATE_SHOWN", "UNSUPPORTED_DATE_CLAIM",
         "SOURCE_PUBLICATION_DATE_SHOWN", "SOURCE_APPROVAL_REQUIRED",
@@ -60,6 +60,14 @@ _register(
         'correct work; do not invent or silently alter facts.'
     ),
     check="both", severity="blocker", owner="crawler", on_fail="return_to_crawler",
+)
+_register(
+    ("SOURCE_NO_OFFICIAL",),
+    (
+        'An official first-party source is not required when the facts use an active, '
+        'approved source registered for this content type.'
+    ),
+    check="code", severity="warning", owner="crawler",
 )
 _register(
     ("FACT_DIVERSITY_LOW",),

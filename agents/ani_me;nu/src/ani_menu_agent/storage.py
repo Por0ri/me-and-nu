@@ -770,12 +770,17 @@ class AgentRepository:
     def persist_information(self, package: ContentPackage) -> int:
         count = 0
         for source in package.sources:
+            source_payload = source.model_dump(mode="json")
+            source_payload["menu_work_ids"] = list(package.menu_work_ids)
+            source_payload["work_match_evidence"] = [
+                item.model_dump(mode="json") for item in package.work_match_evidence
+            ]
             self.upsert_record(
                 agent_type="information",
                 record_id=f"source:{package.request_id}:{source.id}",
                 record_kind="source",
                 package=package,
-                payload=source.model_dump(mode="json"),
+                payload=source_payload,
             )
             count += 1
         for fact in package.facts:
@@ -792,12 +797,17 @@ class AgentRepository:
     def persist_humor(self, package: ContentPackage) -> int:
         count = 0
         for source in package.sources:
+            source_payload = source.model_dump(mode="json")
+            source_payload["menu_work_ids"] = list(package.menu_work_ids)
+            source_payload["work_match_evidence"] = [
+                item.model_dump(mode="json") for item in package.work_match_evidence
+            ]
             self.upsert_record(
                 agent_type="humor",
                 record_id=f"source:{package.request_id}:{source.id}",
                 record_kind="trend_source",
                 package=package,
-                payload=source.model_dump(mode="json"),
+                payload=source_payload,
                 status="trend_only",
             )
             count += 1
@@ -1109,12 +1119,22 @@ class AgentRepository:
         sources = []
         facts = []
         images = []
+        persisted_work_ids: list[int] = []
+        persisted_work_evidence = []
         eligible_rows = []
         for row in rows:
             record_kind = row["record_kind"]
             payload = json.loads(row["payload_json"])
             if record_kind in {"source", "trend_source"}:
                 sources.append(payload)
+                for raw_work_id in payload.get("menu_work_ids", []):
+                    try:
+                        work_id = int(raw_work_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if work_id not in persisted_work_ids:
+                        persisted_work_ids.append(work_id)
+                persisted_work_evidence.extend(payload.get("work_match_evidence", []))
                 eligible_rows.append(row)
             elif record_kind == "fact":
                 if content_kind == "information" and payload.get("verified") is not True:
@@ -1192,6 +1212,39 @@ class AgentRepository:
             event_location, event_country, event_region = _infer_event_location_from_facts(
                 fact_models, evidence_text
             )
+        from ani_menu_agent.models import WorkMatchEvidence
+        from ani_menu_agent.work_catalog import load_work_catalog
+
+        valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
+        persisted_work_ids = [
+            work_id for work_id in persisted_work_ids if work_id in valid_work_ids
+        ]
+        work_evidence = []
+        seen_evidence = set()
+        for raw_evidence in persisted_work_evidence:
+            try:
+                evidence = WorkMatchEvidence.model_validate(raw_evidence)
+            except (TypeError, ValueError):
+                continue
+            if evidence.menu_work_id not in valid_work_ids:
+                continue
+            signature = (
+                evidence.menu_work_id,
+                evidence.basis,
+                evidence.matched_value,
+                evidence.evidence_url,
+            )
+            if signature not in seen_evidence:
+                seen_evidence.add(signature)
+                work_evidence.append(evidence)
+        if work_evidence:
+            evidence_ids = list(dict.fromkeys(item.menu_work_id for item in work_evidence))
+            # The stored work evidence is authoritative only when its IDs agree
+            # with the stored package mapping; reject stale or partial metadata.
+            if persisted_work_ids and set(evidence_ids) == set(persisted_work_ids):
+                persisted_work_ids = evidence_ids
+            else:
+                work_evidence = []
         package = ContentPackage(
             request_id=request_id,
             topic=meta["topic"],
@@ -1209,6 +1262,8 @@ class AgentRepository:
             sources=sources,
             facts=facts,
             images=images,
+            menu_work_ids=persisted_work_ids,
+            work_match_evidence=work_evidence,
         )
         attach_menu_work_ids(package)
         if not package.menu_work_ids:
@@ -2021,18 +2076,23 @@ class AgentRepository:
                 package.pop("event_country", None)
             for field in hidden_package_fields:
                 package.pop(field, None)
-            if package.get("detail_body"):
-                detail_package = ContentPackage.model_validate(package)
-                detail_markdown = render_detail_markdown(detail_package)
-                package["detail_markdown"] = detail_markdown
-                # Keep the long-form article as a distinct frontend contract, not
-                # something inferred by concatenating per-card HTML copy.
-                package["detail_article"] = {
-                    "body": package.get("detail_body", ""),
-                    "fact_ids": package.get("detail_fact_ids", []),
-                    "source_ids": package.get("detail_source_ids", []),
-                    "markdown": detail_markdown,
-                }
+            detail_package = ContentPackage.model_validate(package)
+            detail_markdown = render_detail_markdown(detail_package)
+            article_body = package.get("detail_body", "")
+            # The feed payload's display field is complete; retain the clean prose
+            # separately for editors that need to re-render the article section.
+            package["detail_body"] = detail_markdown
+            package["detail_markdown"] = detail_markdown
+            # Frontend detail view should use reader_text/markdown so source credits
+            # and the AI disclosure are always shown after the article body.
+            package["detail_article"] = {
+                "body": detail_markdown,
+                "article_body": article_body,
+                "fact_ids": package.get("detail_fact_ids", []),
+                "source_ids": package.get("detail_source_ids", []),
+                "reader_text": detail_markdown,
+                "markdown": detail_markdown,
+            }
             result.append(dict(row) | {"package": package})
         return result
 

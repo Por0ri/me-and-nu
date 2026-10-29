@@ -16,6 +16,7 @@ from ani_menu_agent.models import (
     DetailArticleDraft,
     UsageRecord,
 )
+from ani_menu_agent.prompts import BRAND_CONTEXT
 from ani_menu_agent.review_rules import make_issue, prompt_rules
 from ani_menu_agent.state import ContentState
 
@@ -34,10 +35,9 @@ so. Keep each sentence traceable to the fact IDs that support it; if a sentence 
 remove it or label it clearly as a question/opinion without making it sound announced. For
 information content, use only verified facts. For humor content,
 frame fan interpretations as opinions or playful possibilities, never as confirmed facts.
-Write as me;nu's anime-fan friend: someone who knows and cares about the work, reacts sincerely,
-and can be witty, playful, dramatic, or use fandom slang when the story invites it. Do not flatten
-the article into press-release prose. Let the voice show through without making every paragraph a
-joke or claiming personal experiences. Translate for meaning, not sound alone. When an
+{BRAND_CONTEXT}
+Let that same fan voice carry through the detail article; do not flatten it into press-release
+prose. Translate for meaning, not sound alone. When an
 English/Japanese name or nickname carries a source-language pun, preserve its readable Korean
 name and explain the original spelling and meaning briefly at first mention, only when the source
 supports that reading. Read each sentence aloud and make its subject, action, and referent clear.
@@ -51,7 +51,7 @@ separate paragraph or clearly labeled list. Never imply that two programs share 
 phrases like “뿐 아니라” or “이곳에서도” unless the supplied facts explicitly confirm the overlap.
 Do not include a source list or AI disclosure in the body; those are rendered below the body.
 Write roughly 300–700 Korean characters in 2–5 readable paragraphs. Avoid filler and repetition.
-""".strip()
+""".strip().replace("{BRAND_CONTEXT}", BRAND_CONTEXT)
 
 DETAIL_WRITER_PROMPT += "\n\nCANONICAL DETAIL RULES:\n" + prompt_rules(
     check="both", owners={"detail_writer", "crawler"}

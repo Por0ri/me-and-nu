@@ -115,6 +115,8 @@ class WorkMatchEvidence(BaseModel):
     menu_work_id: int = Field(gt=0)
     basis: Literal[
         "article_title",
+        "headline_character",
+        "kitsu_catalog_title",
         "source_registry",
         "structured_about",
         "structured_mention",

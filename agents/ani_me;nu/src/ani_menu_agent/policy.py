@@ -18,7 +18,6 @@ class EditorialPolicy:
     default_event_retention_days: int = 30
     default_content_validity_days: int = 90
     max_review_failures: int = 4
-    min_official_sources: int = 1
     max_title_chars: int = 42
     max_body_chars: int = 60
     # End cards may carry a compact fact recap plus a punchline; 54 was

@@ -56,6 +56,7 @@ from ani_menu_agent.work_catalog import (
     resolve_menu_work_ids,
     resolve_work_matches,
 )
+from ani_menu_agent.work_catalog_registration import register_unmatched_work_from_kitsu
 from ani_menu_agent.work_type_coverage import build_work_type_coverage, find_work_ids
 
 app = typer.Typer(no_args_is_help=True)
@@ -154,16 +155,9 @@ def _add_same_work_catalog_images(
     package: ContentPackage,
     sources,
     max_images: int,
-    *,
-    requested_content_type: str | None = None,
 ) -> int:
-    """Resolve exact works, supplementing only content types where generic art fits."""
+    """Add exact-work catalog art for supporting cards when article art is sparse."""
     package.menu_work_ids = resolve_menu_work_ids(package)
-    effective_type = requested_content_type or package.content_type
-    if effective_type in {"event", "goods"}:
-        # Event/product covers and detail art must describe the real-world
-        # event or item; generic franchise art repeatedly failed visual QA.
-        return 0
     if not package.menu_work_ids or len(package.images) >= max_images:
         return 0
     kitsu_source = next(
@@ -1166,13 +1160,26 @@ def crawl_generate(
             candidate_work_ids = list(
                 dict.fromkeys(item.menu_work_id for item in work_match_evidence)
             )
+            if not candidate_work_ids:
+                new_work_evidence = register_unmatched_work_from_kitsu(
+                    [str(candidate.get("title") or ""), identity_preflight_capture.title],
+                    structured_references=identity_preflight_capture.structured_work_references,
+                )
+                if new_work_evidence:
+                    work_match_evidence = [new_work_evidence]
+                    candidate_work_ids = [new_work_evidence.menu_work_id]
+                    console.print(
+                        f"새 애니메이션 카탈로그 등록: {new_work_evidence.matched_value} "
+                        f"→ menu_work_id {new_work_evidence.menu_work_id}"
+                    )
     if candidate_id and not candidate_work_ids:
         repository = AgentRepository()
         record_unresolved = getattr(repository, "mark_discovery_work_unresolved", None)
         if callable(record_unresolved):
             record_unresolved(
                 candidate_id,
-                "후보 제목과 등록된 출처 작품명으로 작품 카탈로그 ID를 확정하지 못함",
+                "등록 작품명·구조화된 작품 정보·활성 Kitsu 카탈로그 제목을 확인했지만 "
+                "정확하고 유일한 작품 매칭이 없어 새 ID를 만들지 않음",
             )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(
@@ -1205,7 +1212,8 @@ def crawl_generate(
                     "source_url": str(candidate.get("url") or url),
                     "reason": (
                         "approved title, source mapping, structured metadata, and registered "
-                        "official-link evidence did not resolve to a catalog work"
+                        "official-link evidence did not resolve a work; no unique exact anime "
+                        "title was confirmed by the active Kitsu catalog, so no new ID was created"
                     ),
                 },
                 ensure_ascii=False,
@@ -1284,6 +1292,18 @@ def crawl_generate(
             candidate_work_ids = list(
                 dict.fromkeys(item.menu_work_id for item in work_match_evidence)
             )
+        if not candidate_work_ids:
+            new_work_evidence = register_unmatched_work_from_kitsu(
+                [str(candidate.get("title") or "") if candidate_id else "", capture.title],
+                structured_references=capture.structured_work_references,
+            )
+            if new_work_evidence:
+                work_match_evidence = [new_work_evidence]
+                candidate_work_ids = [new_work_evidence.menu_work_id]
+                console.print(
+                    f"새 애니메이션 카탈로그 등록: {new_work_evidence.matched_value} "
+                    f"→ menu_work_id {new_work_evidence.menu_work_id}"
+                )
         payload["menu_work_ids"] = candidate_work_ids
         payload["work_match_evidence"] = [
             item.model_dump(mode="json") for item in work_match_evidence
@@ -1366,7 +1386,6 @@ def crawl_generate(
             package,
             registry.sources,
             max_images,
-            requested_content_type=content_type,
         )
         if catalog_image_count:
             console.print(
@@ -1518,6 +1537,14 @@ def _crawl_generate_humor_candidate(candidate: dict, output: Path) -> dict:
     summary = " ".join(str(candidate.get("summary") or "").split())
     source_url = str(candidate.get("url") or "")
     work_ids = _candidate_menu_work_ids(candidate, source)
+    if not work_ids and topic:
+        new_work_evidence = register_unmatched_work_from_kitsu([topic])
+        if new_work_evidence:
+            work_ids = [new_work_evidence.menu_work_id]
+            console.print(
+                f"새 애니메이션 카탈로그 등록: {new_work_evidence.matched_value} "
+                f"→ menu_work_id {new_work_evidence.menu_work_id}"
+            )
     humor_signals = profile_signal_checks(
         get_type_crawler(ContentKind.HUMOR.value).profile,
         f"{topic}\n{summary}",
@@ -1590,7 +1617,6 @@ def _crawl_generate_humor_candidate(candidate: dict, output: Path) -> dict:
         package,
         registry.sources,
         20,
-        requested_content_type=ContentKind.HUMOR.value,
     )
     repository.prepare_lifecycle(package)
     research_humor({"package": package.model_dump(mode="json"), "trace": []})

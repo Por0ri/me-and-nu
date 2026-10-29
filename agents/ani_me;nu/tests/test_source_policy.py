@@ -115,3 +115,30 @@ def test_active_reference_database_is_valid_for_supported_catalog_facts() -> Non
     validate_content_type_source_support("guide", eligible)
     with pytest.raises(ValueError):
         validate_content_type_source_support("event", eligible)
+
+
+@pytest.mark.parametrize(
+    ("source_id", "url", "content_type"),
+    [
+        ("anime_hack_events", "https://anime.eiga.com/news/127701", "event"),
+        ("eeo_events", "https://eeo.today/media/2026/10/28/407578/", "event"),
+        ("anime_anime_goods", "https://animeanime.jp/article/2026/10/29/104305.html", "goods"),
+        ("inside_goods", "https://www.inside-games.jp/article/2026/10/29/190017.html", "goods"),
+    ],
+)
+def test_credible_editorial_event_and_goods_articles_can_support_facts(
+    source_id: str, url: str, content_type: str
+) -> None:
+    source = {
+        "id": source_id,
+        "url": url,
+        "role": "editorial",
+        "is_official": False,
+    }
+
+    eligible = validate_generation_sources(
+        [source], [_fact(source_id)], ContentKind.INFORMATION
+    )
+
+    assert eligible == {source_id}
+    validate_content_type_source_support(content_type, eligible)

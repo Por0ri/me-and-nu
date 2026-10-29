@@ -771,6 +771,41 @@ def test_html_listing_rejects_site_navigation_outside_configured_board_path() ->
     assert items[0].title == "이번 분기 신작 이야기"
 
 
+def test_work_specific_public_post_does_not_need_trend_tags_or_engagement() -> None:
+    source = Source(
+        id="mastodon_social_anime",
+        name="Mastodon test",
+        url="https://mastodon.social/api/v1/timelines/tag/anime",
+        category="community_trend",
+        role="trend",
+        collection="api",
+        status="trend_only",
+        region="global",
+    )
+    post = {
+        "id": "123",
+        "url": "https://mastodon.social/@fan/123",
+        "visibility": "public",
+        "sensitive": False,
+        "created_at": "2026-10-29T00:00:00Z",
+        "content": (
+            "<p>Naruto has so many characters I still want to talk about. "
+            "Kakashi's quiet moments always stay with me, especially when Team 7 "
+            "finally understands each other.</p>"
+        ),
+        "tags": [{"name": "Naruto"}],
+        "favourites_count": 0,
+        "reblogs_count": 0,
+    }
+
+    items = parse_mastodon_tag_timeline([post], source)
+
+    post_items = [item for item in items if item.is_community_post]
+    assert len(post_items) == 1
+    assert str(post_items[0].title).startswith("\ub098\ub8e8\ud1a0")
+    assert str(post_items[0].url) == "https://mastodon.social/@fan/123"
+
+
 def test_region_policy_is_configurable() -> None:
     items = [
         DiscoveryItem(

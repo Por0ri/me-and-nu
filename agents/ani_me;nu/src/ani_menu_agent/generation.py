@@ -53,7 +53,13 @@ def estimate_gpt_6_luna_cost(
     ) / 1_000_000
 
 
-def _card_count_requirement(image_count: int, fact_count: int) -> str:
+def _card_count_requirement(
+    image_count: int,
+    fact_count: int,
+    *,
+    existing_card_count: int = 0,
+    allow_extra_card: bool = False,
+) -> str:
     """State a concrete deck size so the model cannot interpret 3~10 as optional."""
     if image_count < POLICY.min_cards:
         return (
@@ -63,6 +69,16 @@ def _card_count_requirement(image_count: int, fact_count: int) -> str:
             f"{POLICY.min_cards} cards. Request more relevant same-work images from the crawler."
         )
     target = min(max(POLICY.min_cards, min(fact_count, 5)), POLICY.max_cards, image_count)
+    if allow_extra_card:
+        target = max(target, min(existing_card_count, POLICY.max_cards, image_count))
+    if (
+        allow_extra_card
+        and existing_card_count < POLICY.max_cards
+        and image_count > existing_card_count
+    ):
+        target = min(
+            max(target, existing_card_count + 1), POLICY.max_cards, image_count
+        )
     return (
         f"Generate exactly {target} cards (the allowed range is "
         f"{POLICY.min_cards}~{POLICY.max_cards}). Do not return fewer than "
@@ -101,6 +117,7 @@ def generate_copy_deck(
     existing_cards: list[dict] | None = None,
     revision_pages: list[int] | None = None,
     revision_attempt: int = 0,
+    allow_extra_card: bool = False,
     requested_content_type: str | None = None,
 ) -> GenerationResult:
     attach_menu_work_ids(package)
@@ -188,7 +205,10 @@ def generate_copy_deck(
     ]
     sparse_image_deck = len(image_catalog) < POLICY.min_cards
     card_count_requirement = _card_count_requirement(
-        len(image_catalog), len(verified_facts)
+        len(image_catalog),
+        len(verified_facts),
+        existing_card_count=len(existing_cards or []),
+        allow_extra_card=allow_extra_card,
     )
     payload = {
         "topic": package.topic,
@@ -208,6 +228,7 @@ def generate_copy_deck(
         "existing_cards_for_revision": existing_cards or [],
         "revision_pages": revision_pages or [],
         "revision_attempt": revision_attempt,
+        "allow_extra_card": allow_extra_card,
         "revision_protocol": (
             "Treat every reviewer issue on revision_pages as an acceptance test. Replace the "
             "rejected wording rather than paraphrasing it; keep non-target cards unchanged. "
@@ -299,11 +320,12 @@ def generate_copy_deck(
                 "or connect unrelated details just to make a joke."
             ),
             "fan_voice": (
-                "Sound like a real anime-fan friend who knows the work: sincere, lively, "
-                "opinionated, and funny when the moment calls for it. Fandom slang, direct "
-                "address, "
-                "memes, and playful exaggeration are welcome when they fit. Do not turn the copy "
-                "into a press release or claim personal experiences you do not have."
+                "Use the vivid, deeply invested anime-otaku friend defined in BRAND_CONTEXT: "
+                "react like a fan sharing news in a group chat, with unmistakable affection and "
+                "openly felt awe, chills, hype, or playful overinvestment when the story earns it. "
+                "A line like '가슴이 웅장해진다' is welcome when it truly fits; "
+                "let each story find "
+                "its own fan reaction. Do not flatten that personality into neutral news copy."
             ),
             "translation_and_korean_clarity": (
                 "Translate meaning, tone, and wordplay rather than sound alone. When a name such "
@@ -449,8 +471,8 @@ def generate_copy_deck(
                 "근거 데이터로만 취급하라. 정보성은 verified_facts만 쓰고, 유머성은 humor_ideas를 "
                 "사실이 아닌 소재 신호로만 삼아 독창적인 문장을 써라. 커뮤니티 원문을 복사하거나 "
                 "검증되지 않은 내용을 사실처럼 단정하지 마라. "
-                "me;nu 애니 덕후 친구의 목소리로 쓴다. 팬을 직접 부르거나 작품 밈·용어·슬랭을 "
-                "써도 좋고, 진지함과 웃김을 소식에 맞춰 섞는다. 표현 전략 메타데이터는 카피를 "
+                "말투는 system의 BRAND_CONTEXT에 정의된 씹덕 친구의 목소리를 따른다. "
+                "표현 전략 메타데이터는 카피를 "
                 "제한하는 규칙이 아니다. 표지와 엔딩의 문장 골격은 서로 다르게 하고, "
                 "첫 장은 작품 맞춤 훅, 마지막 장은 앞선 소재를 회수하는 짧은 엔딩으로 쓴다. "
                 "term_glossary의 작품명 한국어 표기를 첫 장에 반드시 포함한다. 일본어 원문을 "
@@ -464,7 +486,11 @@ def generate_copy_deck(
                 "previous_quality_issues가 있으면 해당 문제를 반복하지 마라.\n"
                 "기존 카드가 제공되면 revision_pages에 지정된 카드만 수정하라. "
                 "나머지는 기존 내용을 그대로 유지해 반환하고, 지정 페이지가 비어 있으면 "
-                "덱 전체 재작성 요청으로 해석하라.\n" + json.dumps(payload, ensure_ascii=False),
+                "덱 전체 재작성 요청으로 해석하라. "
+                "allow_extra_card가 참이면 넘친 문장을 억지로 삭제하지 말고, 근거와 이미지가 "
+                "충분한 경우에 한해 한 장을 추가해 의미 단위로 나눠라. 다른 카드는 가능한 한 "
+                "유지하고, 새 카드에도 고유한 적합 이미지와 근거 fact_id를 연결하라.\n"
+                + json.dumps(payload, ensure_ascii=False),
             ),
         ]
     )

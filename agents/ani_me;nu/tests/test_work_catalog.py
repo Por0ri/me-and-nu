@@ -8,6 +8,7 @@ from ani_menu_agent.work_catalog import (
     _registered_work_titles,
     attach_menu_work_ids,
     load_work_entries,
+    load_work_franchises,
     resolve_title_work_ids,
     resolve_work_matches,
 )
@@ -98,6 +99,19 @@ def test_entry_catalog_maps_anilist_seasons_and_movies_to_series_work_id() -> No
     assert resolve_title_work_ids(
         "Kimetsu no Yaiba: Mugenjou-hen Movie 1 - Akaza Sairai"
     ) == [2]
+
+
+def test_yugioh_franchise_keeps_distinct_series_work_ids() -> None:
+    gx = next(row for row in load_work_entries() if row["anilist_id"] == 482)
+    dm = next(row for row in load_work_entries() if row["anilist_id"] == 481)
+
+    assert dm["menu_work_id"] == 602
+    assert gx["menu_work_id"] == 2323
+    assert resolve_title_work_ids("■遊☆戯☆王デュエルモンスターズGX 20th Remaster") == [2323]
+    assert resolve_title_work_ids("Yu-Gi-Oh! Duel Monsters") == [602]
+    assert resolve_title_work_ids("Yu-Gi-Oh! GX") == [2323]
+    assert load_work_franchises()[602] == "yu-gi-oh"
+    assert load_work_franchises()[2323] == "yu-gi-oh"
 
 
 def test_franchise_spinoff_title_resolves_to_parent_series_id() -> None:

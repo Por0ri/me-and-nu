@@ -7,7 +7,7 @@ class EventCrawlerAgent(TypeCrawlerAgent):
 
     profile = CrawlerProfile(
         content_type=ContentType.EVENT,
-        source_roles=frozenset({"primary", "discovery"}),
+        source_roles=frozenset({"primary", "editorial", "discovery"}),
         purpose="event title, host, venue, country and explicit start/end period",
         asset_page_limit=3,
         required_signals=(

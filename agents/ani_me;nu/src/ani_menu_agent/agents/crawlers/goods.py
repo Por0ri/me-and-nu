@@ -7,7 +7,7 @@ class GoodsCrawlerAgent(TypeCrawlerAgent):
 
     profile = CrawlerProfile(
         content_type=ContentType.GOODS,
-        source_roles=frozenset({"primary", "discovery"}),
+        source_roles=frozenset({"primary", "editorial", "discovery"}),
         purpose="product-specific identity, official release/preorder dates and price",
         asset_page_limit=3,
         required_signals=(

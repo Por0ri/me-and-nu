@@ -277,7 +277,7 @@ def rights_preflight(state: ContentState) -> ContentState:
             "status": "needs_crawler_update",
         }
     eligible_images = distinct_editorial_images(
-        package.images, package.sources, package
+        package.images, package.sources, package, card_role="detail"
     )
     if len(eligible_images) < POLICY.min_cards:
         issue = make_issue(
@@ -415,7 +415,9 @@ def copy_writer(state: ContentState) -> ContentState:
                 code="BODY_TOO_LONG",
                 message=(
                     f"본문을 {POLICY.max_body_chars}자 이내로 줄이세요. 핵심 사실은 보존하고 "
-                    "세부 사항은 덜어내며, 다른 카드는 수정하지 마세요."
+                    "부연 설명은 자세히 보기 본문으로 옮기세요. 같은 내용을 길게 바꿔 쓰지 "
+                    "말고 문장을 다시 구성하세요. 근거와 이미지가 충분하면 한 장을 추가해 "
+                    "의미 단위로 나누고, 다른 카드 내용은 가능한 한 유지하세요."
                 ),
                 page=card.page,
 
@@ -427,14 +429,12 @@ def copy_writer(state: ContentState) -> ContentState:
             package,
             issues=size_issues,
             existing_cards=current_cards,
-            revision_pages=revision_pages,
+            revision_pages=[],
+            revision_attempt=_attempt + 1,
+            allow_extra_card=True,
             requested_content_type=state.get("requested_content_type"),
         )
-        generated_cards = _merge_copy_revision(
-            current_cards,
-            revised.deck.cards,
-            revision_pages,
-        )
+        generated_cards = revised.deck.cards
         usage_records.append(revised.usage.model_dump(mode="json"))
     generated_cards = _normalize_structural_roles(generated_cards)
     if requested_content_type == "goods":

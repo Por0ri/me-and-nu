@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import re
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from ani_menu_agent.models import (
     WorkMatchEvidence,
 )
 from ani_menu_agent.sources import load_source_registry
+from ani_menu_agent.work_aliases import find_named_works
 
 _CATALOG_DIRECTORY = Path(__file__).resolve().parents[2] / "data" / "reference"
 
@@ -111,13 +113,46 @@ def _franchise_work_id(work_id: int) -> int:
 
 
 @lru_cache(maxsize=1)
+def load_work_franchises() -> dict[int, str]:
+    """Return franchise labels without changing a work's canonical menu_work_id."""
+    path = _CATALOG_DIRECTORY / "menu_work_franchises.csv"
+    if not path.is_file():
+        return {}
+    valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
+    franchises: dict[int, str] = {}
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            try:
+                work_id = int(row["menu_work_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            franchise_id = (row.get("franchise_id") or "").strip()
+            if work_id in valid_work_ids and franchise_id:
+                franchises[work_id] = franchise_id
+    return franchises
+
+
+def _normalize_catalog_title(value: str) -> str:
+    """Normalize typography variants while retaining title words and boundaries."""
+    normalized = unicodedata.normalize("NFKC", value).casefold().replace("☆", "")
+    normalized = re.sub(
+        r"(?<=[\u3040-\u30ff\u3400-\u9fff])\s+(?=[\u3040-\u30ff\u3400-\u9fff])",
+        "",
+        normalized,
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+@lru_cache(maxsize=1)
 def _aliases() -> list[tuple[str, int]]:
     """Index canonical and entry-level titles, excluding cross-series collisions."""
     aliases: dict[str, set[int]] = {}
     for row in load_work_catalog() + load_work_entries():
+        # Curated child spin-offs may resolve to a parent work, while separate
+        # series in the same franchise (such as Yu-Gi-Oh! GX) keep their own ID.
         work_id = _franchise_work_id(int(row["menu_work_id"]))
         for key in ("title_ko", "title_romaji", "title_english", "title_native"):
-            value = re.sub(r"\s+", " ", (row.get(key) or "").strip().casefold())
+            value = _normalize_catalog_title(row.get(key) or "")
             if value:
                 aliases.setdefault(value, set()).add(work_id)
     # A title reused by different series is not enough evidence for an entity link.
@@ -154,12 +189,16 @@ def _match_title_work_ids(title: str) -> list[int]:
     # Normalize colons to spaces while keeping word boundaries and sequel suffixes
     # strict. For example, "Another World" must not also link to the unrelated
     # one-word title "Another" merely because it is a substring.
-    normalized_title = re.sub(r"\s+", " ", re.sub(r"[:：]+", " ", title.casefold())).strip()
+    normalized_title = re.sub(
+        r"\s+", " ", re.sub(r"[:：]+", " ", _normalize_catalog_title(title))
+    ).strip()
     found: list[tuple[int, int, int, int]] = []
     for alias, work_id in aliases:
         if len(alias.strip()) < 3:
             continue
-        normalized_alias = re.sub(r"\s+", " ", re.sub(r"[:：]+", " ", alias.casefold())).strip()
+        normalized_alias = re.sub(
+            r"\s+", " ", re.sub(r"[:：]+", " ", _normalize_catalog_title(alias))
+        ).strip()
         start = normalized_title.find(normalized_alias)
         while start >= 0:
             end = start + len(normalized_alias)
@@ -205,8 +244,31 @@ def _match_title_work_ids(title: str) -> list[int]:
 
 
 def _headline_names_multiple_works(title: str, work_ids: list[int]) -> bool:
-    """Allow multiple IDs only when the same headline names multiple catalog works."""
-    return len(set(work_ids)) > 1 and len(_match_title_work_ids(title or "")) > 1
+    """Allow multiple IDs only when a headline explicitly describes collaboration."""
+    return (
+        len(set(work_ids)) > 1
+        and len(_match_title_work_ids(title or "")) > 1
+        and bool(_COLLABORATION_MARKER.search(title or ""))
+    )
+
+
+_COLLABORATION_MARKER = re.compile(
+    r"\b(?:collab(?:oration)?|crossover|cross-over|team-up)\b|"
+    r"콜라보(?:레이션)?|협업|합작|크로스오버|コラボ(?:レーション)?|クロスオーバー|×",
+    re.IGNORECASE,
+)
+
+
+def _headline_character_work_ids(title: str) -> list[int]:
+    """Resolve character aliases in a headline; multiple works require collab wording."""
+    matches = [
+        match for match in find_named_works(title or "")
+        if match.kind == "character"
+    ]
+    ids = list(dict.fromkeys(match.menu_work_id for match in matches))
+    if len(ids) > 1 and not _COLLABORATION_MARKER.search(title or ""):
+        return ids[:1]
+    return ids
 
 
 def resolve_title_work_ids(title: str) -> list[int]:
@@ -259,6 +321,29 @@ def resolve_work_matches(
         matched = evidence_for(str(title or "").strip(), "article_title", 0.99)
         if matched:
             return matched
+
+    # Headline character names are the first fallback when the headline omits
+    # a catalog work title. Theme-song and artist aliases are intentionally
+    # excluded until their Japanese-name coverage is reliable.
+    for title in titles or []:
+        title = str(title or "").strip()
+        character_work_ids = _headline_character_work_ids(title)
+        if not character_work_ids:
+            continue
+        matches_by_id = {
+            match.menu_work_id: match
+            for match in find_named_works(title)
+            if match.kind == "character"
+        }
+        return [
+            WorkMatchEvidence(
+                menu_work_id=work_id,
+                basis="headline_character",
+                matched_value=matches_by_id[work_id].name,
+                confidence=0.92,
+            )
+            for work_id in character_work_ids
+        ]
 
     registered_sources = {
         source.id: source for source in load_source_registry().sources
@@ -372,17 +457,18 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
         explicit_title_ids = list(dict.fromkeys(
             item.menu_work_id
             for item in package.work_match_evidence
-            if item.basis == "article_title" and item.menu_work_id in valid_ids
+            if item.basis in {"article_title", "headline_character"}
+            and item.menu_work_id in valid_ids
         ))
-        if len(explicit_title_ids) > 1:
-            return explicit_title_ids
         multi_work_title = next(
             (evidence.title for evidence in package.sources
              if len(_match_title_work_ids(evidence.title or "")) > 1),
             "",
         )
-        if _headline_names_multiple_works(multi_work_title, evidence_ids):
-            return evidence_ids
+        if (
+            _headline_names_multiple_works(multi_work_title, evidence_ids)
+        ):
+            return explicit_title_ids or evidence_ids
         return evidence_ids[:1]
 
     registered_titles = _registered_work_titles()
@@ -400,10 +486,6 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
     for evidence in primary_first:
         # Match all explicit works in the actual publisher title first.
         append_title_matches(evidence.title)
-        # Source registry mapping supplies a reliable representative when an
-        # official article's headline does not repeat the franchise title.
-        for registered_title in registered_titles.get(evidence.id, ()):
-            append_title_matches(registered_title)
     multi_work_title = next(
         (
             evidence.title
@@ -412,9 +494,28 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
         ),
         "",
     )
-    if multi_work_title:
+    if multi_work_title and _headline_names_multiple_works(
+        multi_work_title, _match_title_work_ids(multi_work_title)
+    ):
         return _match_title_work_ids(multi_work_title)
-    return ordered[:1]
+    if ordered:
+        return ordered[:1]
+
+    # Character names are checked in publisher titles only; body copy,
+    # extracted facts, and song/artist aliases are excluded.
+    for evidence in primary_first:
+        ids = _headline_character_work_ids(evidence.title or "")
+        if ids:
+            return ids
+
+    # Source registry mapping supplies a reliable representative when neither
+    # the title nor a headline character alias identified the work.
+    for evidence in primary_first:
+        for registered_title in registered_titles.get(evidence.id, ()):
+            append_title_matches(registered_title)
+    if ordered:
+        return ordered[:1]
+    return []
 
 
 def attach_menu_work_ids(package: ContentPackage) -> ContentPackage:

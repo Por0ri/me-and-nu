@@ -119,11 +119,6 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
     issues: list[QualityIssue] = []
     source_ids = {source.id for source in package.sources}
     used_fact_ids = {fact_id for card in package.cards for fact_id in card.fact_ids}
-    official_count = sum(source.is_official for source in package.sources)
-    editorial_count = sum(source.role == "editorial" for source in package.sources)
-    reference_count = sum(source.role == "reference" for source in package.sources)
-    editorial_content_type = package.content_type in {"review", "curation", "humor"}
-    reference_content_type = package.content_type in {"guide", "people", "character", "curation"}
     event_dates = {
         parsed
         for value in (package.event_start, package.event_end)
@@ -131,20 +126,6 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
         for parsed, _variants in [_publication_date_variants(value)]
         if parsed
     }
-    if (
-        package.content_kind == ContentKind.INFORMATION
-        and official_count < POLICY.min_official_sources
-        and not (editorial_content_type and editorial_count > 0)
-        and not (reference_content_type and reference_count > 0)
-    ):
-        issues.append(
-            _issue(
-                "SOURCE_NO_OFFICIAL",
-                "정보 콘텐츠는 공식 1차 출처가 필요하며, 리뷰·큐레이션·사실형 유머는 "
-                "허용된 편집 출처를 사용할 수 있습니다.",
-
-            )
-        )
     for source in package.sources:
         if urlparse(str(source.url)).scheme != "https":
             issues.append(
@@ -1145,7 +1126,7 @@ SCORE_THRESHOLDS = {
 }
 
 FACT_BLOCKERS = {
-    "SOURCE_NO_OFFICIAL", "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
+    "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
     "CAMPAIGN_DETAILS_MISSING", "COPY_UNGROUNDED", "SOURCE_STALE", "EVENT_ALREADY_ENDED",
     "FACT_DIVERSITY_LOW", "UNSUPPORTED_DATE_CLAIM", "SOURCE_PUBLICATION_DATE_SHOWN",
     "EVENT_PERIOD_MISSING", "GOODS_RELEASE_PERIOD_MISSING",

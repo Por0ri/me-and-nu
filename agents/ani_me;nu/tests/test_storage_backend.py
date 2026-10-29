@@ -9,6 +9,7 @@ from ani_menu_agent.models import (
     ImageAsset,
     RightsStatus,
     SourceEvidence,
+    WorkMatchEvidence,
 )
 from ani_menu_agent.storage import AgentRepository, _classify_legacy_reference_art
 
@@ -382,6 +383,59 @@ def test_load_content_package_preserves_requested_type_before_image_supplement(
     assert loaded.images == []
 
 
+def test_source_record_keeps_work_match_evidence_across_db_reload(monkeypatch, tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        ANI_MENU_DATABASE_BACKEND="sqlite",
+        ANI_MENU_DATABASE_PATH=str(tmp_path / "kakashi-work-match.sqlite3"),
+    )
+    monkeypatch.setattr("ani_menu_agent.storage.get_settings", lambda: settings)
+    repository = AgentRepository()
+    source = SourceEvidence(
+        id="kitsu_anime_catalog",
+        title="Kakashi Hatake",
+        url="https://kitsu.io/api/edge/media-characters/21732?include=character,media",
+        publisher="Kitsu Anime Catalog API",
+        is_official=False,
+        role="reference",
+        region="global",
+    )
+    package = ContentPackage(
+        request_id="crawl-kakashi-evidence",
+        topic="카카시 프로필",
+        content_kind=ContentKind.INFORMATION,
+        content_type="character",
+        menu_work_ids=[11],
+        work_match_evidence=[
+            WorkMatchEvidence(
+                menu_work_id=11,
+                basis="article_title",
+                matched_value="Naruto: Shippuuden",
+                evidence_url="https://kitsu.io/api/edge/media/1555",
+                confidence=0.99,
+            )
+        ],
+        sources=[source],
+        facts=[
+            Fact(
+                id="kakashi-fact",
+                statement="Kakashi is a character in Naruto: Shippuuden.",
+                source_ids=[source.id],
+                verified=True,
+                fact_type="character_profile",
+            )
+        ],
+    )
+    repository.persist_information(package)
+
+    loaded = repository.load_content_package(
+        package.request_id, "information", content_type="character"
+    )
+
+    assert loaded.menu_work_ids == [11]
+    assert loaded.work_match_evidence[0].matched_value == "Naruto: Shippuuden"
+
+
 def test_non_ready_retry_holds_existing_feed_queue_item(monkeypatch, tmp_path) -> None:
     settings = Settings(
         _env_file=None,
@@ -618,7 +672,7 @@ def test_feed_payload_exposes_country_code_but_hides_internal_region_and_expiry(
     assert (
         payload["detail_markdown"]
         .rstrip()
-        .endswith("이 콘텐츠는 출처를 기반하여 AI로 생성한 콘텐츠입니다.")
+        .endswith("이 콘텐츠는 원문과 확인된 자료를 바탕으로 AI를 활용해 생성·정리했습니다.")
     )
 
 

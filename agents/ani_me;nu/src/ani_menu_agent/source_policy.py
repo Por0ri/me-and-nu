@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -26,15 +27,24 @@ def _host_matches(url: str, registered_url: str) -> bool:
     )
 
 
+def _is_federated_public_post(url: str) -> bool:
+    """Mastodon timelines can return public posts hosted on another instance."""
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and bool(
+        re.fullmatch(r"/@[^/]+/\d+", parsed.path)
+        or re.fullmatch(r"/users/[^/]+/statuses/\d+", parsed.path)
+    )
+
+
 def validate_generation_sources(
     sources: list[Any], facts: list[dict[str, Any]], content_kind: str | ContentKind
 ) -> set[str]:
     """Reject evidence collected under a source that is not currently approved.
 
     Discovery leads are not evidence. Information facts require an active first-party
-    source, or an active editorial source for review, curation, or factual humor
-    material. Community humor facts require an approved automated trend signal.
-    This also invalidates stale records.
+    source, or an active editorial source for attributed review, curation, event, goods,
+    or factual humor coverage. Community humor facts require an approved automated trend
+    signal. This also invalidates stale records.
     """
     kind = ContentKind(content_kind)
     registry = {source.id: source for source in load_source_registry().sources}
@@ -45,8 +55,13 @@ def validate_generation_sources(
         if configured is None:
             continue
         source_url = str(_value(record, "url", ""))
-        if not source_url.startswith("https://") or not _host_matches(
-            source_url, str(configured.url)
+        is_federated_trend = (
+            kind == ContentKind.HUMOR
+            and configured.role == "trend"
+            and _is_federated_public_post(source_url)
+        )
+        if not source_url.startswith("https://") or not (
+            _host_matches(source_url, str(configured.url)) or is_federated_trend
         ):
             continue
         if kind == ContentKind.INFORMATION:
@@ -61,7 +76,8 @@ def validate_generation_sources(
                 approved = (
                     configured.status == "active"
                     and bool(editorial_types)
-                    and editorial_types <= {"review", "curation", "humor", "people"}
+                    and editorial_types
+                    <= {"review", "curation", "humor", "people", "event", "goods"}
                     and _value(record, "is_official", False) is False
                     and _value(record, "role", "") == "editorial"
                 )
