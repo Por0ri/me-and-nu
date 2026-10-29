@@ -7,11 +7,13 @@ import io
 import json
 import mimetypes
 import os
+import re
 import sqlite3
 import sys
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo
 
 from PIL import Image
@@ -19,13 +21,95 @@ from PIL import Image
 from ani_menu_agent.agents.content_generation.renderer import OUTPUT_IMAGE_SIZE
 from ani_menu_agent.config import get_settings
 from ani_menu_agent.duplicate_detection import duplicate_reason
-from ani_menu_agent.models import CONTENT_TYPE_LABELS, ContentPackage
+from ani_menu_agent.image_selection import image_visual_keys
+from ani_menu_agent.markdown_export import render_detail_markdown
+from ani_menu_agent.models import (
+    CONTENT_TYPE_LABELS,
+    ContentPackage,
+    ImageAsset,
+    RightsStatus,
+    SourceEvidence,
+)
 from ani_menu_agent.policy import POLICY
-from ani_menu_agent.work_catalog import attach_menu_work_ids
+from ani_menu_agent.source_policy import validate_generation_sources
+from ani_menu_agent.sources import load_source_registry
+from ani_menu_agent.work_catalog import attach_menu_work_ids, resolve_menu_work_ids
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _card_overlay_json(card) -> str:
+    """Make the page-to-image/text relationship explicit for frontend consumers."""
+    return json.dumps(
+        {
+            "page": card.page,
+            "image_key": card.rendered_image_key,
+            "image_id": card.image_id,
+            "visual_mode": card.visual_mode,
+            "layout_template": card.layout.template,
+            "image_region": card.layout.image_box.model_dump(mode="json"),
+            "copy_region": card.layout.copy_box.model_dump(mode="json"),
+            "text_region": card.layout.text_overlay_box.model_dump(mode="json"),
+            "eyebrow": card.eyebrow,
+            "title_lines": card.title_lines,
+            "body_sentences": card.body_sentences,
+        },
+        ensure_ascii=False,
+    )
+
+
+_CONTEXT_SPECIFIC_ART_RE = re.compile(
+    r"\b(?:goods?|merch(?:andise)?|product|figure|plush|popup|pop[\s-]?up|"
+    r"event|campaign|collab(?:oration)?|exhibition|ticket)\b|"
+    r"グッズ|商品|物販|ポップアップ|コラボ|展覧会|フィギュア|ぬいぐるみ|アクスタ",
+    re.IGNORECASE,
+)
+_FAN_MADE_ART_RE = re.compile(
+    r"\b(?:fan[\s-]?(?:art|made)|meme)\b|ファンアート|二次創作|ミーム",
+    re.IGNORECASE,
+)
+
+
+def _classify_legacy_reference_art(
+    image: ImageAsset,
+    source: SourceEvidence,
+    *,
+    source_role: str,
+    origin_content_type: str | None,
+) -> ImageAsset | None:
+    """Conservatively label old official same-work images missing asset metadata.
+
+    Older rows predate ``asset_kind`` and deserialize as ``unknown``. Keep those
+    rows useful for general same-work editorial cards, but never let a known
+    event/goods source become a generic anime illustration.
+    """
+    if image.asset_kind != "unknown":
+        return image
+    if source_role != "primary" or origin_content_type in {"event", "goods"}:
+        return None
+    context = " ".join(
+        (
+            source.title,
+            str(source.url),
+            image.source_description,
+            str(image.url or ""),
+        )
+    )
+    context = unquote(context)
+    if _CONTEXT_SPECIFIC_ART_RE.search(context) or _FAN_MADE_ART_RE.search(context):
+        return None
+    image_path = unquote(urlparse(str(image.url or "")).path).casefold()
+    source_path = unquote(urlparse(str(source.url)).path).casefold()
+    kind = (
+        "character_art"
+        if re.search(r"/characters?/", f"{source_path} {image_path}")
+        else "official_key_visual"
+    )
+    return image.model_copy(
+        update={"asset_kind": kind, "asset_metadata_confidence": 0.4}
+    )
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -329,6 +413,7 @@ class AgentRepository:
                     image_explanation TEXT NOT NULL,
                     layout_json TEXT NOT NULL,
                     rendered_image_key TEXT,
+                    overlay_json TEXT NOT NULL DEFAULT '{}',
                     PRIMARY KEY (request_id, page)
                 );
                 CREATE TABLE IF NOT EXISTS content_work_links (
@@ -376,6 +461,7 @@ class AgentRepository:
                 "content_cards": {
                     "rendered_image_key": "TEXT",
                     "visual_mode": "TEXT NOT NULL DEFAULT 'source_image'",
+                    "overlay_json": "TEXT NOT NULL DEFAULT '{}'",
                 },
             }
             if self.dialect == "sqlite":
@@ -449,6 +535,9 @@ class AgentRepository:
                 )
             # The public taxonomy is now `review`; migrate legacy package and index values.
             connection.execute("DELETE FROM content_types WHERE type_code='review_analysis'")
+            # `behind` remains a model alias so old payloads can be read, but it is
+            # no longer an active feed type; new and legacy records route as humor.
+            connection.execute("UPDATE content_types SET active=0 WHERE type_code='behind'")
             for table in ("content_drafts", "feed_queue", "rejected_archive"):
                 country_column = "event_country" if table != "rejected_archive" else "NULL"
                 rows = connection.execute(
@@ -468,6 +557,9 @@ class AgentRepository:
                     if row["content_type"] == "review_analysis":
                         code = "review"
                         package.content_type = code
+                    elif code == "behind":
+                        code = "humor"
+                        package.content_type = code
                     if code != row["content_type"] or country != row["event_country"]:
                         if table == "rejected_archive":
                             connection.execute(
@@ -482,6 +574,36 @@ class AgentRepository:
                                 "WHERE request_id=?",
                                 (code, country, package.model_dump_json(), row["request_id"]),
                             )
+            for row in connection.execute(
+                "SELECT agent_type, record_id, payload_json FROM agent_records"
+            ).fetchall():
+                try:
+                    payload = json.loads(row["payload_json"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                changed = False
+                if payload.get("content_type") == "behind":
+                    payload["content_type"] = "humor"
+                    changed = True
+                payload_content_types = payload.get("content_types")
+                if isinstance(payload_content_types, list) and "behind" in payload_content_types:
+                    payload["content_types"] = list(
+                        dict.fromkeys(
+                            "humor" if code == "behind" else code
+                            for code in payload_content_types
+                        )
+                    )
+                    changed = True
+                if changed:
+                    connection.execute(
+                        "UPDATE agent_records SET payload_json=? "
+                        "WHERE agent_type=? AND record_id=?",
+                        (
+                            json.dumps(payload, ensure_ascii=False),
+                            row["agent_type"],
+                            row["record_id"],
+                        ),
+                    )
             for table in ("content_drafts", "feed_queue", "rejected_archive"):
                 rows = connection.execute(
                     f"SELECT request_id, package_json FROM {table} WHERE content_type IS NULL"
@@ -567,6 +689,29 @@ class AgentRepository:
     def prepare_lifecycle(self, package: ContentPackage) -> ContentPackage:
         return prepare_package_lifecycle(package)
 
+    def get_work_content_counts(self) -> dict[int, dict[str, int]]:
+        """Return generated/ready counts per canonical work; this never caps generation."""
+        query = """
+            SELECT links.menu_work_id,
+                   COUNT(DISTINCT drafts.request_id) AS draft_count,
+                   COUNT(DISTINCT queue.request_id) AS ready_count
+            FROM content_work_links AS links
+            LEFT JOIN content_drafts AS drafts
+              ON drafts.request_id = links.request_id
+            LEFT JOIN feed_queue AS queue
+              ON queue.request_id = links.request_id AND queue.status = 'ready'
+            GROUP BY links.menu_work_id
+        """
+        with self.connect() as connection:
+            rows = connection.execute(query).fetchall()
+        return {
+            int(row["menu_work_id"]): {
+                "draft_count": int(row["draft_count"] or 0),
+                "ready_count": int(row["ready_count"] or 0),
+            }
+            for row in rows
+        }
+
     def upsert_record(
         self,
         *,
@@ -625,12 +770,17 @@ class AgentRepository:
     def persist_information(self, package: ContentPackage) -> int:
         count = 0
         for source in package.sources:
+            source_payload = source.model_dump(mode="json")
+            source_payload["menu_work_ids"] = list(package.menu_work_ids)
+            source_payload["work_match_evidence"] = [
+                item.model_dump(mode="json") for item in package.work_match_evidence
+            ]
             self.upsert_record(
                 agent_type="information",
                 record_id=f"source:{package.request_id}:{source.id}",
                 record_kind="source",
                 package=package,
-                payload=source.model_dump(mode="json"),
+                payload=source_payload,
             )
             count += 1
         for fact in package.facts:
@@ -647,12 +797,17 @@ class AgentRepository:
     def persist_humor(self, package: ContentPackage) -> int:
         count = 0
         for source in package.sources:
+            source_payload = source.model_dump(mode="json")
+            source_payload["menu_work_ids"] = list(package.menu_work_ids)
+            source_payload["work_match_evidence"] = [
+                item.model_dump(mode="json") for item in package.work_match_evidence
+            ]
             self.upsert_record(
                 agent_type="humor",
                 record_id=f"source:{package.request_id}:{source.id}",
                 record_kind="trend_source",
                 package=package,
-                payload=source.model_dump(mode="json"),
+                payload=source_payload,
                 status="trend_only",
             )
             count += 1
@@ -872,34 +1027,79 @@ class AgentRepository:
                     "FROM rejected_archive"
                 ).fetchall()
             )
+        baseline_path = get_settings().duplicate_baseline_path
+        if baseline_path and self.dialect == "sqlite":
+            baseline = Path(baseline_path).expanduser().resolve()
+            current = self.path.resolve() if self.path else None
+            if baseline.is_file() and baseline != current:
+                try:
+                    readonly = sqlite3.connect(f"{baseline.as_uri()}?mode=ro", uri=True, timeout=10)
+                    readonly.row_factory = sqlite3.Row
+                    try:
+                        for table in ("content_drafts", "feed_queue"):
+                            try:
+                                rows.extend(
+                                    readonly.execute(
+                                        "SELECT request_id, topic, package_json, status "
+                                        f"FROM {table}"
+                                    ).fetchall()
+                                )
+                            except sqlite3.OperationalError:
+                                continue
+                        try:
+                            rows.extend(
+                                readonly.execute(
+                                    "SELECT request_id, topic, package_json, "
+                                    "'rejected_archived' AS status FROM rejected_archive"
+                                ).fetchall()
+                            )
+                        except sqlite3.OperationalError:
+                            pass
+                    finally:
+                        readonly.close()
+                except sqlite3.Error as exc:
+                    raise RuntimeError(
+                        "중복 기준 SQLite를 읽지 못해 생성을 안전하게 진행할 수 없습니다: "
+                        f"{baseline}"
+                    ) from exc
         seen: set[str] = set()
         for row in rows:
             request_id = str(row["request_id"])
             if request_id in seen:
                 continue
             seen.add(request_id)
-            if (
-                retry_same_request
-                and request_id == package.request_id
-                and row["status"]
-                in {
-                    "needs_crawler_update",
-                    "rejected_archived",
-                    "review_returned",
-                    "held_for_quality_review",
-                }
-            ):
-                continue
             try:
                 existing = json.loads(row["package_json"])
             except (TypeError, json.JSONDecodeError):
                 continue
+            retryable_status = row["status"] in {
+                "generated_pending_review",
+                "needs_crawler_update",
+                "rejected_archived",
+                "review_returned",
+                "held_for_quality_review",
+            }
+            if retry_same_request and retryable_status:
+                if request_id == package.request_id:
+                    continue
+                retryable_duplicate_reasons = {
+                    "same_source_url",
+                    "same_work_and_near_identical_source_title",
+                    "same_work_and_overlapping_core_facts",
+                }
+                if duplicate_reason(package, existing) in retryable_duplicate_reasons:
+                    continue
             reason = duplicate_reason(package, existing)
             if reason:
                 return {"request_id": request_id, "topic": str(row["topic"]), "reason": reason}
         return None
 
-    def load_content_package(self, request_id: str, content_kind: str) -> ContentPackage:
+    def load_content_package(
+        self,
+        request_id: str,
+        content_kind: str,
+        content_type: str | None = None,
+    ) -> ContentPackage:
         """Load generation inputs from crawler-owned records, never from discovery captures."""
         if content_kind not in {"information", "humor"}:
             raise ValueError("content_kind는 information 또는 humor여야 합니다.")
@@ -919,12 +1119,22 @@ class AgentRepository:
         sources = []
         facts = []
         images = []
+        persisted_work_ids: list[int] = []
+        persisted_work_evidence = []
         eligible_rows = []
         for row in rows:
             record_kind = row["record_kind"]
             payload = json.loads(row["payload_json"])
             if record_kind in {"source", "trend_source"}:
                 sources.append(payload)
+                for raw_work_id in payload.get("menu_work_ids", []):
+                    try:
+                        work_id = int(raw_work_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if work_id not in persisted_work_ids:
+                        persisted_work_ids.append(work_id)
+                persisted_work_evidence.extend(payload.get("work_match_evidence", []))
                 eligible_rows.append(row)
             elif record_kind == "fact":
                 if content_kind == "information" and payload.get("verified") is not True:
@@ -950,6 +1160,16 @@ class AgentRepository:
                 "생성 가능한 사실/아이디어가 없습니다. discovery_candidate와 "
                 "official_page_capture는 검증된 콘텐츠 자료가 아닙니다."
             )
+        # Refresh the captured source's approved asset CDN from the current
+        # source registry. This lets an approved editorial publisher's own
+        # image CDN be fetched without treating it as official artwork.
+        configured_sources = {source.id: source for source in load_source_registry().sources}
+        for source in sources:
+            configured = configured_sources.get(source.get("id", ""))
+            if configured and configured.status == "active":
+                source["allowed_asset_hosts"] = sorted(
+                    set(source.get("allowed_asset_hosts", [])) | set(configured.allowed_asset_hosts)
+                )
         valid_until = next(
             (row["valid_until"] for row in eligible_rows if row["valid_until"]), None
         )
@@ -964,10 +1184,7 @@ class AgentRepository:
                 raise ValueError(
                     f"팩트 {fact.get('id')}의 DB 출처가 없습니다: {', '.join(sorted(missing))}"
                 )
-        if content_kind == "information" and not any(
-            source.get("is_official") and source.get("role") == "primary" for source in sources
-        ):
-            raise ValueError("정보 콘텐츠는 공식 1차 출처가 DB에 있어야 합니다.")
+        validate_generation_sources(sources, facts, content_kind)
 
         meta = eligible_rows[0]
         event_start = meta["event_start"]
@@ -995,10 +1212,44 @@ class AgentRepository:
             event_location, event_country, event_region = _infer_event_location_from_facts(
                 fact_models, evidence_text
             )
-        return ContentPackage(
+        from ani_menu_agent.models import WorkMatchEvidence
+        from ani_menu_agent.work_catalog import load_work_catalog
+
+        valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
+        persisted_work_ids = [
+            work_id for work_id in persisted_work_ids if work_id in valid_work_ids
+        ]
+        work_evidence = []
+        seen_evidence = set()
+        for raw_evidence in persisted_work_evidence:
+            try:
+                evidence = WorkMatchEvidence.model_validate(raw_evidence)
+            except (TypeError, ValueError):
+                continue
+            if evidence.menu_work_id not in valid_work_ids:
+                continue
+            signature = (
+                evidence.menu_work_id,
+                evidence.basis,
+                evidence.matched_value,
+                evidence.evidence_url,
+            )
+            if signature not in seen_evidence:
+                seen_evidence.add(signature)
+                work_evidence.append(evidence)
+        if work_evidence:
+            evidence_ids = list(dict.fromkeys(item.menu_work_id for item in work_evidence))
+            # The stored work evidence is authoritative only when its IDs agree
+            # with the stored package mapping; reject stale or partial metadata.
+            if persisted_work_ids and set(evidence_ids) == set(persisted_work_ids):
+                persisted_work_ids = evidence_ids
+            else:
+                work_evidence = []
+        package = ContentPackage(
             request_id=request_id,
             topic=meta["topic"],
             content_kind=content_kind,
+            content_type=content_type,
             audience_region=meta["region"],
             event_start=event_start,
             event_end=event_end,
@@ -1011,7 +1262,237 @@ class AgentRepository:
             sources=sources,
             facts=facts,
             images=images,
+            menu_work_ids=persisted_work_ids,
+            work_match_evidence=work_evidence,
         )
+        attach_menu_work_ids(package)
+        if not package.menu_work_ids:
+            raise ValueError(
+                "대표 작품을 제목에서 menu_work_id로 매칭하지 못했습니다. "
+                "작품 ID 없는 콘텐츠는 추천 피드에 적재하지 않습니다."
+            )
+        package.images = self._supplement_same_work_official_images(package)
+        return package
+
+    def _supplement_same_work_official_images(
+        self,
+        package: ContentPackage,
+        *,
+        max_images: int = 48,
+    ) -> list[ImageAsset]:
+        """Add reusable, provenance-checked public images for this exact work only.
+
+        Text sources remain untouched: these images are visual assets, not factual
+        citations. Assets must come from an active primary or editorial source,
+        match its allowed page/CDN hosts, and resolve to a package work ID.
+        """
+        # Event and product cards require imagery of that exact event or item.
+        # A same-franchise catalog image is not a valid substitute.
+        if package.content_type in {"event", "goods"}:
+            return package.images
+
+        registry = load_source_registry()
+        active_image_sources = {
+            source.id: source
+            for source in registry.sources
+            if source.status == "active"
+            and (
+                source.role in {"primary", "editorial"}
+                or (source.role == "reference" and source.category == "kitsu_anime_catalog")
+            )
+        }
+        if not active_image_sources:
+            return package.images
+
+        existing_keys = {key for image in package.images for key in image_visual_keys(image)}
+        image_rows_query = """
+            SELECT ? AS asset_store,
+                   image.request_id AS image_request_id,
+                   image.payload_json AS image_payload,
+                   source.payload_json AS source_payload,
+                   (SELECT draft.content_type
+                      FROM content_drafts AS draft
+                     WHERE draft.request_id = image.request_id
+                     LIMIT 1) AS origin_content_type
+              FROM agent_records AS image
+              LEFT JOIN agent_records AS source
+                ON source.request_id = image.request_id
+               AND source.record_kind = 'source'
+               AND source.agent_type IN ('information', 'humor')
+             WHERE image.agent_type = 'image'
+               AND image.record_kind = 'image_asset'
+               AND image.status NOT IN ('rejected', 'expired')
+               AND (source.status IS NULL OR source.status NOT IN ('rejected', 'expired'))
+             ORDER BY image.created_at DESC, image.record_id
+        """
+        rows = []
+        try:
+            with self.connect() as connection:
+                rows.extend(connection.execute(image_rows_query, ("workspace",)).fetchall())
+        except sqlite3.Error:
+            pass
+
+        # The generation workspace stays isolated. A configured duplicate-baseline
+        # database is only an optional, read-only image reference library; only
+        # source-proven assets resolving to this exact work are copied into the
+        # new package and persisted by the current workspace.
+        reference_path = os.environ.get("ANI_MENU_IMAGE_REFERENCE_PATH") or os.environ.get(
+            "ANI_MENU_DUPLICATE_BASELINE_PATH", ""
+        )
+        if reference_path:
+            try:
+                resolved_reference = Path(reference_path).resolve()
+                current_path = self.path.resolve()
+                if resolved_reference != current_path and resolved_reference.is_file():
+                    reference_uri = f"{resolved_reference.as_uri()}?mode=ro"
+                    with sqlite3.connect(reference_uri, uri=True) as connection:
+                        connection.row_factory = sqlite3.Row
+                        rows.extend(
+                            connection.execute(image_rows_query, ("reference",)).fetchall()
+                        )
+            except (OSError, sqlite3.Error, ValueError):
+                # A missing/unreadable reference library must not stop generation.
+                pass
+        if not rows:
+            return package.images
+
+        result = list(package.images)
+        seen_ids = {image.id for image in result}
+        source_work_cache: dict[tuple[str, str, str], list[int]] = {}
+        for row in rows:
+            if len(result) >= len(package.images) + max_images:
+                break
+            if row["image_request_id"] == package.request_id:
+                continue
+            try:
+                image_payload = json.loads(row["image_payload"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            source_payload = image_payload.get("provenance_source") or row["source_payload"]
+            if not source_payload:
+                continue
+            try:
+                source = SourceEvidence.model_validate(
+                    json.loads(source_payload)
+                    if isinstance(source_payload, str)
+                    else source_payload
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+            configured = active_image_sources.get(source.id)
+            if configured is None:
+                continue
+            source = source.model_copy(
+                update={
+                    "is_official": configured.role == "primary",
+                    "role": configured.role,
+                    "allowed_asset_hosts": configured.allowed_asset_hosts,
+                    "publisher": configured.name,
+                }
+            )
+            cache_key = (source.id, source.title, str(source.url))
+            work_ids = source_work_cache.get(cache_key)
+            if work_ids is None:
+                source_package = ContentPackage(
+                    request_id=f"image-source-{source.id}",
+                    topic=source.title,
+                    content_kind="information",
+                    sources=[source],
+                )
+                work_ids = resolve_menu_work_ids(source_package)
+                if not work_ids and image_payload.get("menu_work_ids"):
+                    work_ids = [int(value) for value in image_payload["menu_work_ids"]]
+                source_work_cache[cache_key] = work_ids
+            if not set(package.menu_work_ids).intersection(work_ids):
+                continue
+            try:
+                image = ImageAsset.model_validate(image_payload)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+            origin_content_type = row["origin_content_type"]
+            if image.asset_kind == "unknown":
+                image = _classify_legacy_reference_art(
+                    image,
+                    source,
+                    source_role=configured.role,
+                    origin_content_type=origin_content_type,
+                )
+                if image is None:
+                    continue
+            if row["asset_store"] == "reference":
+                # A baseline storage key points into the other database. Keep
+                # the public URL/provenance, but let the active workspace fetch
+                # and persist its own binary instead of retaining a dangling key.
+                image = image.model_copy(
+                    update={
+                        "storage_key": None,
+                        "local_path": None,
+                    }
+                )
+            matches_source = (
+                image.public_official_source_matches([source])
+                if configured.role == "primary"
+                else image.public_editorial_source_matches([source])
+            )
+            if not matches_source:
+                continue
+            if image.download_status not in {"downloaded", "available"}:
+                continue
+            if image.used_in_previous_content or image.official != (configured.role == "primary"):
+                continue
+            if image.rights_status == RightsStatus.NEEDS_REVIEW:
+                allowed = (
+                    POLICY.allow_public_official_image_risk
+                    if image.official
+                    else POLICY.allow_public_editorial_image_risk
+                )
+                if not allowed:
+                    continue
+                image = image.model_copy(
+                    update={
+                        "rights_status": (
+                            RightsStatus.OFFICIAL_PUBLIC_RISK_ACCEPTED
+                            if image.official
+                            else RightsStatus.PUBLIC_EDITORIAL_RISK_ACCEPTED
+                        ),
+                        "rights_evidence_url": image.source_url,
+                        "rights_checked_at": image.rights_checked_at or _utc_now().isoformat(),
+                        "attribution_text": image.attribution_text.strip()
+                        or f"이미지 출처: {source.publisher} · {source.title}",
+                    }
+                )
+            if not image.eligible_for_editorial_use(
+                [source],
+                allow_risk_accepted=(
+                    POLICY.allow_public_official_image_risk
+                    or POLICY.allow_public_editorial_image_risk
+                ),
+            ):
+                continue
+            if (
+                row["asset_store"] == "workspace"
+                and image.storage_key
+                and not self.get_image_bytes(image.storage_key)
+            ):
+                continue
+            image = image.model_copy(
+                update={
+                    "provenance_source": source,
+                    "menu_work_ids": work_ids,
+                    **(
+                        {"download_status": "pending"}
+                        if row["asset_store"] == "reference"
+                        else {}
+                    ),
+                }
+            )
+            keys = image_visual_keys(image)
+            if image.id in seen_ids or existing_keys.intersection(keys):
+                continue
+            result.append(image)
+            seen_ids.add(image.id)
+            existing_keys.update(keys)
+        return result
 
     def mark_request_status(self, request_id: str, status: str) -> int:
         with self.connect() as connection:
@@ -1032,6 +1513,16 @@ class AgentRepository:
                 record_kind = "trend_source" if is_trend else "discovery_candidate"
                 record_prefix = "trend" if is_trend else "discovery"
                 status = "trend_only" if is_trend else item.get("status", "discovery_only")
+                prior = connection.execute(
+                    "SELECT status, payload_json FROM agent_records "
+                    "WHERE agent_type=? AND record_id=?",
+                    (agent_type, f"{record_prefix}:{item['id']}"),
+                ).fetchone()
+                if prior and prior["status"] == "unresolved_work_id":
+                    previous_payload = json.loads(prior["payload_json"])
+                    if previous_payload.get("work_resolution"):
+                        payload["work_resolution"] = previous_payload["work_resolution"]
+                    status = "unresolved_work_id"
                 connection.execute(
                     """
                     INSERT INTO agent_records (
@@ -1062,8 +1553,180 @@ class AgentRepository:
                         now,
                     ),
                 )
+                if is_trend and item.get("is_community_post"):
+                    source_payload = {
+                        "id": item["source_id"],
+                        "title": item["title"],
+                        "url": item["url"],
+                        "publisher": "Mastodon public community post",
+                        "is_official": False,
+                        "published_at": item.get("published_at"),
+                        "role": "trend",
+                        "region": item.get("region", "global"),
+                    }
+                    idea_payload = {
+                        "id": f"idea:{item['id']}",
+                        "statement": str(item.get("summary", "")),
+                        "source_ids": [item["source_id"]],
+                        "verified": False,
+                        "time_sensitive": False,
+                        "fact_type": "community_opinion",
+                        "details": {
+                            "source_quote": str(item.get("summary", "")),
+                            "source_url": str(item["url"]),
+                            "attribution_policy": "paraphrase_without_author_identity",
+                        },
+                    }
+                    for record_id, record_kind, idea in (
+                        (
+                            f"source:{item['id']}:{item['source_id']}",
+                            "trend_source",
+                            source_payload,
+                        ),
+                        (f"idea:{item['id']}", "humor_idea", idea_payload),
+                    ):
+                        connection.execute(
+                            """
+                            INSERT INTO agent_records (
+                                agent_type, record_id, record_kind, request_id, topic, region,
+                                event_start, event_end, valid_until, expires_at, status,
+                                payload_json, created_at, updated_at
+                            ) VALUES ('humor', ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'trend_only', ?, ?, ?)
+                            ON CONFLICT(agent_type, record_id) DO UPDATE SET
+                                topic=excluded.topic, region=excluded.region,
+                                valid_until=excluded.valid_until, expires_at=excluded.expires_at,
+                                status=excluded.status, payload_json=excluded.payload_json,
+                                updated_at=excluded.updated_at
+                            """,
+                            (
+                                record_id,
+                                record_kind,
+                                item["id"],
+                                item["title"],
+                                item.get("region", "global"),
+                                item.get("published_at"),
+                                now,
+                                (_utc_now() + timedelta(days=30)).isoformat(),
+                                json.dumps(idea, ensure_ascii=False),
+                                now,
+                                now,
+                            ),
+                        )
                 count += 1
         return count
+
+    def mark_discovery_work_unresolved(self, candidate_id: str, reason: str) -> bool:
+        """Keep an unresolved work title searchable instead of treating it as a dead lead."""
+        now = _utc_now().isoformat()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT agent_type, record_id, payload_json FROM agent_records "
+                "WHERE request_id=? AND record_kind='discovery_candidate' "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (candidate_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            payload = json.loads(row["payload_json"])
+            payload["work_resolution"] = {
+                "status": "unresolved_work_id",
+                "reason": reason,
+                "recorded_at": now,
+            }
+            connection.execute(
+                "UPDATE agent_records SET status=?, payload_json=?, updated_at=? "
+                "WHERE agent_type=? AND record_id=?",
+                (
+                    "unresolved_work_id",
+                    json.dumps(payload, ensure_ascii=False),
+                    now,
+                    row["agent_type"],
+                    row["record_id"],
+                ),
+            )
+            return True
+
+    def load_discovery_candidate(self, candidate_id: str) -> dict[str, Any]:
+        """Load one lead by its discovery ID; it remains unverified until recaptured."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM agent_records "
+                "WHERE request_id=? AND record_kind='discovery_candidate' "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (candidate_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"발견 후보를 찾을 수 없습니다: {candidate_id}")
+        payload = json.loads(row["payload_json"])
+        if payload.get("id") != candidate_id or not payload.get("url"):
+            raise ValueError("DB 후보 레코드의 ID 또는 원문 URL이 올바르지 않습니다.")
+        return payload
+
+    def list_source_discovery_captures(self, limit: int = 1000) -> list[dict[str, Any]]:
+        """Return captured candidate pages for discovering previously unregistered hosts."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM agent_records "
+                "WHERE record_kind='official_page_capture' "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (max(1, min(limit, 5000)),),
+            ).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
+
+    def persist_source_candidate(self, candidate: dict[str, Any]) -> None:
+        """Save a new-site lead separately from individual article candidates."""
+        now = _utc_now().isoformat()
+        payload = dict(candidate)
+        candidate_id = str(payload["id"])
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_records (
+                    agent_type, record_id, record_kind, request_id, topic, region,
+                    expires_at, status, payload_json, created_at, updated_at
+                ) VALUES ('information', ?, 'source_candidate', ?, ?, 'global', ?, ?, ?, ?, ?)
+                ON CONFLICT(agent_type, record_id) DO UPDATE SET
+                    topic=excluded.topic, status=excluded.status,
+                    payload_json=excluded.payload_json, updated_at=excluded.updated_at
+                """,
+                (
+                    candidate_id,
+                    candidate_id,
+                    str(payload.get("host") or candidate_id),
+                    (_utc_now() + timedelta(days=3650)).isoformat(),
+                    str(payload.get("status") or "pending_validation"),
+                    json.dumps(payload, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+
+    def load_source_candidate(self, candidate_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM agent_records "
+                "WHERE record_id=? AND record_kind='source_candidate' LIMIT 1",
+                (candidate_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"출처 후보를 찾을 수 없습니다: {candidate_id}")
+        return json.loads(row["payload_json"])
+
+    def list_source_candidates(
+        self, *, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        query = (
+            "SELECT payload_json FROM agent_records WHERE record_kind='source_candidate'"
+        )
+        params: list[Any] = []
+        if status:
+            query += " AND status=?"
+            params.append(status)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(max(1, min(limit, 1000)))
+        with self.connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
 
     def persist_page_capture(
         self,
@@ -1075,8 +1738,34 @@ class AgentRepository:
         now = _utc_now().isoformat()
         page_url = str(capture["url"])
         record_id = f"page:{hashlib.sha1(page_url.encode('utf-8')).hexdigest()[:16]}"
+        crawl_request_id = f"crawl-{hashlib.sha1(page_url.encode('utf-8')).hexdigest()[:14]}"
+        current_image_ids = {
+            str(image.get("id"))
+            for image in capture.get("images", [])
+            if isinstance(image, dict) and image.get("id")
+        }
         title = str(capture.get("title") or page_url)
         with self.connect() as connection:
+            # A retry can recapture fewer assets than an earlier run. Remove
+            # stale per-request image records before extraction so old related-
+            # article images cannot silently re-enter the new package.
+            if current_image_ids:
+                image_record_ids = [
+                    f"image:{crawl_request_id}:{image_id}" for image_id in current_image_ids
+                ]
+                placeholders = ",".join("?" for _ in image_record_ids)
+                connection.execute(
+                    "DELETE FROM agent_records WHERE agent_type='image' "
+                    "AND record_kind='image_asset' AND request_id=? "
+                    f"AND record_id NOT IN ({placeholders})",
+                    (crawl_request_id, *image_record_ids),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM agent_records WHERE agent_type='image' "
+                    "AND record_kind='image_asset' AND request_id=?",
+                    (crawl_request_id,),
+                )
             connection.execute(
                 """
                 INSERT INTO agent_records (
@@ -1170,6 +1859,11 @@ class AgentRepository:
                     now,
                 ),
             )
+            if status != "ready_for_feed":
+                connection.execute(
+                    "UPDATE feed_queue SET status='held_for_quality_review' WHERE request_id=?",
+                    (package.request_id,),
+                )
             connection.execute(
                 "DELETE FROM content_cards WHERE request_id=?", (package.request_id,)
             )
@@ -1180,8 +1874,8 @@ class AgentRepository:
                     INSERT INTO content_cards (
                         request_id, page, role, eyebrow, title_lines_json, body_json,
                         fact_ids_json, image_id, visual_mode, image_explanation, layout_json,
-                        rendered_image_key
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        rendered_image_key, overlay_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         package.request_id,
@@ -1196,6 +1890,7 @@ class AgentRepository:
                         card.image_explanation,
                         card.layout.model_dump_json(),
                         card.rendered_image_key,
+                        _card_overlay_json(card),
                     ),
                 )
 
@@ -1312,8 +2007,8 @@ class AgentRepository:
                     INSERT INTO content_cards (
                         request_id, page, role, eyebrow, title_lines_json, body_json,
                         fact_ids_json, image_id, visual_mode, image_explanation, layout_json,
-                        rendered_image_key
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        rendered_image_key, overlay_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(request_id, page) DO UPDATE SET
                         role=excluded.role, eyebrow=excluded.eyebrow,
                         title_lines_json=excluded.title_lines_json,
@@ -1322,7 +2017,8 @@ class AgentRepository:
                         visual_mode=excluded.visual_mode,
                         image_explanation=excluded.image_explanation,
                         layout_json=excluded.layout_json,
-                        rendered_image_key=excluded.rendered_image_key
+                        rendered_image_key=excluded.rendered_image_key,
+                        overlay_json=excluded.overlay_json
                     """,
                     (
                         package.request_id,
@@ -1337,6 +2033,7 @@ class AgentRepository:
                         card.image_explanation,
                         card.layout.model_dump_json(),
                         card.rendered_image_key,
+                        _card_overlay_json(card),
                     ),
                 )
 
@@ -1379,6 +2076,23 @@ class AgentRepository:
                 package.pop("event_country", None)
             for field in hidden_package_fields:
                 package.pop(field, None)
+            detail_package = ContentPackage.model_validate(package)
+            detail_markdown = render_detail_markdown(detail_package)
+            article_body = package.get("detail_body", "")
+            # The feed payload's display field is complete; retain the clean prose
+            # separately for editors that need to re-render the article section.
+            package["detail_body"] = detail_markdown
+            package["detail_markdown"] = detail_markdown
+            # Frontend detail view should use reader_text/markdown so source credits
+            # and the AI disclosure are always shown after the article body.
+            package["detail_article"] = {
+                "body": detail_markdown,
+                "article_body": article_body,
+                "fact_ids": package.get("detail_fact_ids", []),
+                "source_ids": package.get("detail_source_ids", []),
+                "reader_text": detail_markdown,
+                "markdown": detail_markdown,
+            }
             result.append(dict(row) | {"package": package})
         return result
 

@@ -2,11 +2,93 @@ from bs4 import BeautifulSoup
 
 from ani_menu_agent.sources.models import Source
 from ani_menu_agent.sources.page_collector import (
+    _article_outbound_links,
+    _extract_article_text,
     _image_candidates,
     _is_decorative_image_url,
     _published_date_from_html,
+    _secure_redirect_target,
+    _structured_work_references,
     collect_official_page,
 )
+
+
+def test_character_index_keeps_structured_facts_from_profile_links() -> None:
+    html = (
+        "<html><body><main><h1>Character search</h1><p>Official profile index.</p>"
+        '<a href="/character/luffy/index.html">Monkey D. Luffy 懸賞金 30億ベリー '
+        "組織 麦わらの一味 誕生日 5月5日</a>"
+        '<a href="/character/zoro/index.html">Roronoa Zoro 懸賞金 11億1100万ベリー '
+        "組織 麦わらの一味 誕生日 11月11日</a>"
+        '<a href="/news/other/">Related news item</a></main></body></html>'
+    )
+    soup = BeautifulSoup(html, "html.parser")
+
+    text = _extract_article_text(html, "https://one-piece.com/character/index.html", soup)
+
+    assert "Monkey D. Luffy" in text
+    assert "30億ベリー" in text
+    assert "Roronoa Zoro" in text
+    assert "Related news item" not in text
+
+
+def test_external_original_links_are_extracted_only_from_article_body() -> None:
+    soup = BeautifulSoup(
+        '<html><body><nav><a href="https://official.example/nav">Official</a></nav>'
+        '<article><h1>Anime announcement</h1>'
+        '<a href="https://official.example/news/123">公式発表</a>'
+        '<a href="https://other.example/?session=secret">session</a>'
+        '<a href="https://other.example/article">related article</a></article>'
+        '<aside><a href="https://other.example/sidebar">sidebar</a></aside></body></html>',
+        "html.parser",
+    )
+
+    links = _article_outbound_links(soup, "https://aggregator.example/story/1")
+
+    assert [(str(link.url), link.text) for link in links] == [
+        ("https://official.example/news/123", "公式発表"),
+        ("https://other.example/article", "related article"),
+    ]
+
+
+def test_jsonld_collects_only_about_and_mentions_work_references() -> None:
+    html = '''<html><head><script type="application/ld+json">
+    {"@context":"https://schema.org","@graph":[
+      {"@type":"NewsArticle","headline":"Collaboration cafe announced",
+       "author":{"@type":"Person","name":"A. Writer"},
+       "about":{"@type":"CreativeWork","name":"Naruto",
+                "url":"https://example.com/naruto"},
+       "mentions":[{"@type":"CreativeWork","name":"Frieren"}]}
+    ]}
+    </script></head><body><article>Text mentions One Piece too.</article></body></html>'''
+    soup = BeautifulSoup(html, "html.parser")
+
+    references = _structured_work_references(soup)
+
+    assert [(item.relation, item.name) for item in references] == [
+        ("about", "Naruto"),
+        ("mention", "Frieren"),
+    ]
+    assert str(references[0].url) == "https://example.com/naruto"
+
+
+def test_one_piece_story_index_keeps_arc_episode_ranges() -> None:
+    html = (
+        "<html><body><main><p>Current story: Elbaf arc.</p>"
+        '<a href="/story/egghead/index.html">エッグヘッド編 原作 105巻1058話～111巻1126話 '
+        "アニメ 1089話〜1155話</a>"
+        '<a href="/story/land_of_wano2/index.html">ワノ国編 原作 90巻909話～105巻1057話 '
+        "アニメ 892話～1088話</a>"
+        '<a href="/news/related/">Related news</a></main></body></html>'
+    )
+    soup = BeautifulSoup(html, "html.parser")
+
+    text = _extract_article_text(html, "https://one-piece.com/story/index.html", soup)
+
+    assert "エッグヘッド編" in text
+    assert "105巻1058話" in text
+    assert "ワノ国編" in text
+    assert "Related news" not in text
 
 
 def test_decorative_site_assets_are_excluded_from_image_candidates() -> None:
@@ -15,6 +97,24 @@ def test_decorative_site_assets_are_excluded_from_image_candidates() -> None:
     assert not _is_decorative_image_url(
         "https://orb-cafe.com/wp-content/uploads/frieren_main_info_kv.webp"
     )
+
+
+def test_same_host_http_canonical_redirect_is_rewritten_to_https() -> None:
+    assert _secure_redirect_target(
+        "https://heroaca.com/news/28707",
+        "http://heroaca.com/news/28707/",
+    ) == "https://heroaca.com/news/28707/"
+
+
+def test_cross_host_or_nonstandard_http_redirect_is_not_upgraded() -> None:
+    assert _secure_redirect_target(
+        "https://heroaca.com/news/28707",
+        "http://other.example/news/28707/",
+    ) == "http://other.example/news/28707/"
+    assert _secure_redirect_target(
+        "https://heroaca.com/news/28707",
+        "http://heroaca.com:8080/news/28707/",
+    ) == "http://heroaca.com:8080/news/28707/"
 
 
 def test_image_candidates_ignore_sidebar_and_related_article_images() -> None:
@@ -29,7 +129,23 @@ def test_image_candidates_ignore_sidebar_and_related_article_images() -> None:
 
     image_urls, _ = _image_candidates(soup, "https://anime.example/news/123/")
 
-    assert image_urls == ["https://anime.example/uploads/event-main.jpg"]
+    assert "https://anime.example/uploads/event-main.jpg" in image_urls
+    assert "https://anime.example/assets/ogp.jpg" in image_urls
+    assert "https://anime.example/uploads/unrelated-recommendation.jpg" not in image_urls
+
+
+def test_one_piece_character_profile_excludes_other_character_recommendations() -> None:
+    soup = BeautifulSoup(
+        '<main><div class="el-pic-block__pic__inner">'
+        '<img src="/img/character/luffy/luffy_02.jpg"></div>'
+        '<div class="el-card-block__pic__inner">'
+        '<img src="/o/assets/images/anime/character/data/zoro/face.jpg"></div></main>',
+        "html.parser",
+    )
+
+    image_urls, _ = _image_candidates(soup, "https://one-piece.com/character/luffy/index.html")
+
+    assert image_urls == ["https://one-piece.com/img/character/luffy/luffy_02.jpg"]
 
 
 def test_specific_article_body_wins_over_broad_main_container() -> None:
@@ -129,7 +245,9 @@ def test_page_capture_follows_trusted_article_links_for_additional_official_imag
     </body></html>
     """
     detail_html = """
-    <html><head><meta property="og:image" content="/media/original-event-visual.webp"></head>
+    <html><head><title>Anime Pop-up Event</title>
+    <meta property="og:title" content="Anime Pop-up Event">
+    <meta property="og:image" content="/media/original-event-visual.webp"></head>
     <body><img src="/media/thumbnail-event.jpg" width="120" height="80" alt="행사 사진">
     </body></html>
     """
@@ -153,6 +271,8 @@ def test_page_capture_follows_trusted_article_links_for_additional_official_imag
         capture.image_source_pages["https://anime.example/media/original-event-visual.webp"]
         == "https://anime.example/news/2026/12345/"
     )
+    event_image_url = "https://anime.example/media/original-event-visual.webp"
+    assert capture.image_source_titles[event_image_url] == "Anime Pop-up Event"
 
 
 def test_page_capture_can_disable_related_images_for_content_generation(monkeypatch) -> None:
