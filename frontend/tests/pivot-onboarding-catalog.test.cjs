@@ -86,10 +86,20 @@ test('Work pages allow an empty result or explicit unselectable work but reject 
 test('Candidates are tied to the requested works, strict kinds and source IDs',()=>{
   const m=setup();
   assert.deepEqual(plain(m.validatePreferenceOptions(options,[101])),options);
-  for(const invalid of [{...options,entityIds:[102]},{...options,genres:[tag,tag]},
-    {...options,genres:[{...tag,kind:'theme'}]},{...options,genres:[{...tag,sourceEntityIds:[102]}]},
-    {...options,genres:[{...tag,sourceEntityIds:[101,101]}]},{...options,genres:[]},
+  for(const invalid of [null,{...options,entityIds:null},{...options,entityIds:['101']},
+    {...options,entityIds:[102]},{...options,entityIds:[]},{...options,entityIds:[101,101]},
+    {...options,genres:null},{...options,themes:{}},{...options,genres:[tag,tag]},
+    {...options,themes:[{...tag,kind:'theme'}]},
+    {...options,genres:[{...tag,tagId:0}]},{...options,genres:[{...tag,tagId:'201'}]},
+    {...options,genres:[{...tag,tagId:201.5}]},{...options,genres:[{...tag,tagId:Number.MAX_SAFE_INTEGER+1}]},
+    {...options,genres:[{...tag,kind:'theme'}]},{...options,themes:[{...tag,tagId:202,kind:'genre'}]},
+    {...options,genres:[{...tag,code:null}]},{...options,genres:[{...tag,label:' '}]},
+    {...options,genres:[{...tag,sourceEntityIds:undefined}]},{...options,genres:[{...tag,sourceEntityIds:null}]},
+    {...options,genres:[{...tag,sourceEntityIds:'101'}]},{...options,genres:[{...tag,sourceEntityIds:101}]},
+    {...options,genres:[{...tag,sourceEntityIds:{}}]},{...options,genres:[{...tag,sourceEntityIds:['101']}]},
+    {...options,genres:[{...tag,sourceEntityIds:[102]}]},{...options,genres:[{...tag,sourceEntityIds:[101,101]}]},
     {...options,minSelections:0},{...options,maxSelections:5}]) assert.throws(()=>m.validatePreferenceOptions(invalid,[101]));
+  assert.throws(()=>m.validatePreferenceOptions({...options,entityIds:[101,101]},[101,102]));
 });
 
 test('Candidates accept one genre or one theme and an uncapped set with both selected works represented',()=>{
@@ -98,4 +108,51 @@ test('Candidates accept one genre or one theme and an uncapped set with both sel
   assert.equal(m.validatePreferenceOptions({...options,entityIds:[102,101],genres:[],themes:many},[101,102]).themes.length,40);
   const theme={...options,genres:[],themes:[{...tag,kind:'theme'}]};
   assert.equal(m.validatePreferenceOptions(theme,[101]).genres.length,0);
+});
+
+test('Candidates accept empty sourceEntityIds alongside linked genre and theme hints',()=>{
+  const m=setup();
+  const response={...options,genres:[tag,{...tag,tagId:202,sourceEntityIds:[]}],
+    themes:[{...tag,tagId:203,kind:'theme',sourceEntityIds:[]}]};
+  assert.deepEqual(plain(m.validatePreferenceOptions(response,[101])),response);
+});
+
+test('Candidates do not require every selected work to have a linked chip',()=>{
+  const m=setup();
+  const response={...options,entityIds:[101,102]};
+  assert.deepEqual(plain(m.validatePreferenceOptions(response,[102,101])),response);
+});
+
+test('Candidates accept a selected work with no linked chips at all',()=>{
+  const m=setup();
+  const response={...options,genres:[{...tag,sourceEntityIds:[]}],
+    themes:[{...tag,tagId:202,kind:'theme',sourceEntityIds:[]}]};
+  assert.deepEqual(plain(m.validatePreferenceOptions(response,[101])),response);
+});
+
+test('Empty candidate groups do not impose a selected-work coverage requirement',()=>{
+  const m=setup();
+  const response={...options,genres:[]};
+  assert.deepEqual(plain(m.validatePreferenceOptions(response,[101])),response);
+});
+
+test('Candidates tolerate additive maxSelectionsPerKind metadata on the Checking response',()=>{
+  const m=setup();
+  const response={...options,maxSelectionsPerKind:7};
+  assert.deepEqual(plain(m.validatePreferenceOptions(response,[101])),response);
+});
+
+test('Catalog accepts the PR 14 response with all 16 genres and 19 themes plus a per-kind cap',async()=>{
+  // Contract fixture: source IDs are optional hints; work 102 has no linked chips.
+  const response={...options,entityIds:[101,102],maxSelectionsPerKind:7,
+    genres:Array.from({length:16},(_,index)=>({...tag,tagId:201+index,code:'genre_'+index,
+      sourceEntityIds:index===0?[101]:[]})),
+    themes:Array.from({length:19},(_,index)=>({...tag,tagId:301+index,kind:'theme',code:'theme_'+index,
+      sourceEntityIds:index===0?[101]:[]}))};
+  const m=setup({request:async()=>response});
+  const result=await m.serviceCatalog.options(83,[102,101]);
+  assert.deepEqual(plain(result),response);
+  assert.equal(result.genres.length,16);
+  assert.equal(result.themes.length,19);
+  assert.equal(result.maxSelectionsPerKind,7);
 });
