@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 from ani_menu_agent.agents.crawlers import get_type_crawler
 from ani_menu_agent.discovery import DiscoveryItem, _inferred_candidate_types, parse_html_listing
-from ani_menu_agent.models import ContentType
+from ani_menu_agent.models import CONTENT_TYPE_LABELS, ContentType
 from ani_menu_agent.sources.models import Source
 from ani_menu_agent.sources.page_collector import _get_html, collect_official_page
 from ani_menu_agent.sources.registry import (
@@ -27,7 +27,7 @@ _NON_PUBLISHER_HOSTS = {
     "t.co", "twitter.com", "x.com", "youtube.com", "youtu.be", "amazon.co.jp",
     "amazon.com", "rakuten.co.jp", "store.shopping.yahoo.co.jp",
 }
-_VALID_TYPE_CODES = {item.value for item in ContentType}
+_VALID_TYPE_CODES = {item.value for item in CONTENT_TYPE_LABELS}
 
 
 class SourceCandidate(BaseModel):

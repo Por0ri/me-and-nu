@@ -27,7 +27,6 @@ TYPE_ORDER = (
     "curation",
     "guide",
     "people",
-    "behind",
 )
 
 

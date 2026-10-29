@@ -105,10 +105,12 @@ FACT_TYPE_TO_CONTENT_TYPE = {
     "preorder": "goods",
     "reservation": "goods",
     "price": "goods",
-    "production": "behind",
-    "making": "behind",
-    "behind_the_scenes": "behind",
-    "production_note": "behind",
+    "production": "humor",
+    "production_behind": "humor",
+    "making": "humor",
+    "behind": "humor",
+    "behind_the_scenes": "humor",
+    "production_note": "humor",
     "review": "review",
     "review_opinion": "review",
     "opinion": "review",
@@ -277,7 +279,10 @@ def build_work_type_coverage(
                 and content_type in {item.value for item in source.content_types}
                 and (
                     source.role == "primary"
-                    or (source.role == "editorial" and content_type in {"review", "curation"})
+                    or (
+                        source.role == "editorial"
+                        and content_type in {"review", "curation", "humor"}
+                    )
                     or (
                         source.role == "reference"
                         and content_type in {"guide", "people", "character", "curation"}

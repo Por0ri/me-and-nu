@@ -88,15 +88,17 @@ def test_three_mastodon_apis_are_approved_trend_only_sources() -> None:
 
 def test_all_eleven_types_have_at_least_three_distinct_mapped_sources() -> None:
     registry = load_source_registry()
+    active_content_types = [item for item in ContentType if item != ContentType.BEHIND]
     assert all(
         sum(content_type in source.content_types for source in registry.sources) >= 3
-        for content_type in ContentType
+        for content_type in active_content_types
     )
 
 
 def test_all_eleven_types_have_at_least_three_approved_automatic_generation_sources() -> None:
     registry = load_source_registry()
-    for content_type in ContentType:
+    active_content_types = [item for item in ContentType if item != ContentType.BEHIND]
+    for content_type in active_content_types:
         eligible = []
         for source in registry.sources:
             if content_type not in source.content_types:
@@ -151,10 +153,10 @@ def test_sources_have_typed_capabilities_without_changing_collection_gate() -> N
     registry = load_source_registry()
     assert all(source.content_types for source in registry.sources)
     assert {item.value for source in registry.sources for item in source.content_types} <= {
-        "news", "event", "guide", "people", "goods", "behind", "review",
+        "news", "event", "guide", "people", "goods", "review",
         "humor", "character", "curation", "music",
     }
-    assert len({item.value for source in registry.sources for item in source.content_types}) == 11
+    assert len({item.value for source in registry.sources for item in source.content_types}) == 10
     community = {source.id: source for source in registry.community_sources}
     assert "humor" in {item.value for item in community["theqoo_anime_trend"].content_types}
     assert all(source.status != "active" for source in community.values())

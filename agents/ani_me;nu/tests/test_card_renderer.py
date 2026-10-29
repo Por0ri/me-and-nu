@@ -168,7 +168,7 @@ def test_square_image_led_cover_keeps_headline_below_source_artwork() -> None:
     layout = _image_led_cover_layout(image)
 
     assert layout.image_box.bottom <= layout.copy_box.y
-    assert layout.copy_box.y == 0.59
+    assert layout.copy_box.y == 0.68
 
 
 def test_low_resolution_landscape_cover_uses_crisp_side_by_side_layout() -> None:

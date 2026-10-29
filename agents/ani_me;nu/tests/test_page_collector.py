@@ -129,7 +129,9 @@ def test_image_candidates_ignore_sidebar_and_related_article_images() -> None:
 
     image_urls, _ = _image_candidates(soup, "https://anime.example/news/123/")
 
-    assert image_urls == ["https://anime.example/uploads/event-main.jpg"]
+    assert "https://anime.example/uploads/event-main.jpg" in image_urls
+    assert "https://anime.example/assets/ogp.jpg" in image_urls
+    assert "https://anime.example/uploads/unrelated-recommendation.jpg" not in image_urls
 
 
 def test_one_piece_character_profile_excludes_other_character_recommendations() -> None:

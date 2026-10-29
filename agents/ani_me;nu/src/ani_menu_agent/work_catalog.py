@@ -42,16 +42,6 @@ _SEQUEL_SUFFIX = re.compile(
     r"|\s*第?[0-9０-９一二三四五六七八九十]+期)",
     re.IGNORECASE,
 )
-_COLLABORATION_MARKER = re.compile(
-    r"\bcollab(?:oration)?\b|\bcrossover\b|\bcross-over\b|"
-    r"\bjoint(?:ly)?\b|\b合作\b|\bcollaborazione\b|"
-    r"\s+x\s+|×|"
-    r"\u00d7|\ud611\uc5c5|\ucf5c\ub77c\ubcf4|\ud569\uc791|"
-    r"\u30b3\u30e9\u30dc|\u30af\u30ed\u30b9\u30aa\u30fc\u30d0\u30fc",
-    re.IGNORECASE,
-)
-
-
 @lru_cache(maxsize=1)
 def load_work_catalog() -> list[dict[str, Any]]:
     """Load canonical works without collapsing sequel/entry rows into one work."""
@@ -214,9 +204,9 @@ def _match_title_work_ids(title: str) -> list[int]:
     return ordered
 
 
-def _is_explicit_multi_work_collaboration(title: str, work_ids: list[int]) -> bool:
-    """Only an explicit collaboration headline may associate multiple works."""
-    return len(set(work_ids)) > 1 and bool(_COLLABORATION_MARKER.search(title or ""))
+def _headline_names_multiple_works(title: str, work_ids: list[int]) -> bool:
+    """Allow multiple IDs only when the same headline names multiple catalog works."""
+    return len(set(work_ids)) > 1 and len(_match_title_work_ids(title or "")) > 1
 
 
 def resolve_title_work_ids(title: str) -> list[int]:
@@ -241,7 +231,7 @@ def resolve_work_matches(
         ids = _match_title_work_ids(title)
         if not ids:
             return []
-        if not _is_explicit_multi_work_collaboration(title, ids):
+        if not _headline_names_multiple_works(title, ids):
             ids = ids[:1]
         folded = title.casefold()
         aliases = [
@@ -350,17 +340,15 @@ def resolve_work_matches(
         unique: dict[int, WorkMatchEvidence] = {}
         for match in structured_matches:
             unique.setdefault(match.menu_work_id, match)
-        collaboration_title = next(
+        multi_work_title = next(
             (
                 str(title or "").strip()
                 for title in titles or []
-                if _COLLABORATION_MARKER.search(str(title or ""))
+                if len(_match_title_work_ids(str(title or ""))) > 1
             ),
             "",
         )
-        if not _is_explicit_multi_work_collaboration(
-            collaboration_title, list(unique)
-        ):
+        if not _headline_names_multiple_works(multi_work_title, list(unique)):
             return list(unique.values())[:1]
         return list(unique.values())
 
@@ -381,15 +369,19 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
             item.menu_work_id for item in package.work_match_evidence
             if item.menu_work_id in valid_ids
         ))
-        collaboration_title = next(
-            (
-                evidence.title
-                for evidence in package.sources
-                if _COLLABORATION_MARKER.search(evidence.title or "")
-            ),
+        explicit_title_ids = list(dict.fromkeys(
+            item.menu_work_id
+            for item in package.work_match_evidence
+            if item.basis == "article_title" and item.menu_work_id in valid_ids
+        ))
+        if len(explicit_title_ids) > 1:
+            return explicit_title_ids
+        multi_work_title = next(
+            (evidence.title for evidence in package.sources
+             if len(_match_title_work_ids(evidence.title or "")) > 1),
             "",
         )
-        if _is_explicit_multi_work_collaboration(collaboration_title, evidence_ids):
+        if _headline_names_multiple_works(multi_work_title, evidence_ids):
             return evidence_ids
         return evidence_ids[:1]
 
@@ -412,18 +404,16 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
         # official article's headline does not repeat the franchise title.
         for registered_title in registered_titles.get(evidence.id, ()):
             append_title_matches(registered_title)
-    collaboration_title = next(
+    multi_work_title = next(
         (
             evidence.title
             for evidence in primary_first
-            if _is_explicit_multi_work_collaboration(
-                evidence.title, _match_title_work_ids(evidence.title)
-            )
+            if len(_match_title_work_ids(evidence.title or "")) > 1
         ),
         "",
     )
-    if _is_explicit_multi_work_collaboration(collaboration_title, ordered):
-        return ordered
+    if multi_work_title:
+        return _match_title_work_ids(multi_work_title)
     return ordered[:1]
 
 

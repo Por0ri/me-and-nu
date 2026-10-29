@@ -678,7 +678,7 @@ def test_empty_cards_use_structured_generation_path(monkeypatch) -> None:
             return {
                 "parsed": DetailArticleDraft(
                     body="행사 정보를 바탕으로 준비할 내용을 차근차근 살펴볼 수 있습니다. " * 12,
-                    fact_ids=["f1", "f2", "f3"],
+                    fact_ids=["f1", "f2", "f3", "f4"],
                 ),
                 "raw": SimpleNamespace(usage_metadata={"input_tokens": 12, "output_tokens": 10}),
             }
@@ -713,7 +713,7 @@ def test_empty_cards_use_structured_generation_path(monkeypatch) -> None:
     assert result["editorial_decision"] == "offline_fixture_passed"
     assert result["package"]["editorial_angle"].startswith("팬들이 기다린")
     assert len(result["package"]["detail_body"]) >= 180
-    assert result["package"]["detail_fact_ids"] == ["f1", "f2", "f3"]
+    assert result["package"]["detail_fact_ids"] == ["f1", "f2", "f3", "f4"]
     assert result["package"]["detail_source_ids"] == ["official_event"]
 
 

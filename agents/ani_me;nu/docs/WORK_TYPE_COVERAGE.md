@@ -1,12 +1,12 @@
 # 작품 × 콘텐츠 유형 커버리지
 
-작품별로 11개 콘텐츠 유형의 출처 연결과 수집 진행 단계를 확인한다. 이 보고는 생성량을 제한하거나 작품별 균등 할당을 하지 않는다.
+작품별로 10개 콘텐츠 유형의 출처 연결과 수집 진행 단계를 확인한다. 제작 비하인드·메이킹 자료는 `humor` 유형에 포함한다. 이 보고는 생성량을 제한하거나 작품별 균등 할당을 하지 않는다.
 
 ```powershell
 # 전체 작품×유형 합계
 uv run ani-menu work-type-coverage
 
-# 특정 작품의 11개 유형 상세
+# 특정 작품의 10개 유형 상세
 uv run ani-menu work-type-coverage --work-title 나루토
 uv run ani-menu work-type-coverage --work-title 11
 ```
@@ -17,7 +17,7 @@ uv run ani-menu work-type-coverage --work-title 11
 - `후보탐색`: 그중 자동 후보 탐색이 켜진 출처 수
 - `검토대기`: 등록은 됐지만 아직 `active`가 아닌 출처 수
 - `발견 후보`: DB의 discovery 후보를 작품 제목/출처 연결로 매칭한 수. 원문 수집·검증 사실과 다르다.
-- `검증 사실`: `collected` 및 `verified=true`인 사실 중 `fact_type`을 11개 유형에 명확히 매핑할 수 있는 수
+- `검증 사실`: `collected` 및 `verified=true`인 사실 중 `fact_type`을 10개 유형에 명확히 매핑할 수 있는 수
 - `ready`: SQLite 피드 대기열에서 검수 통과 후 `ready` 상태인 콘텐츠 수
 
 `fact_type=general`처럼 유형이 불명확한 사실은 특정 유형의 검증 사실로 세지 않는다. 전체 합계는 작품×유형 연결 수의 합이므로, 다중 작품을 다루는 자료는 각 작품에 각각 반영될 수 있다. 출처 수나 후보 수만으로 실제 수집 가능성을 판정하지 말고, 원문 상세 페이지 테스트를 별도로 통과시킨다.

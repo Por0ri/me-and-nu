@@ -1,6 +1,5 @@
-"""Eleven type-specific crawler roles with shared collection infrastructure."""
+"""Ten type-specific crawler roles with shared collection infrastructure."""
 
-from ani_menu_agent.agents.crawlers.behind import BehindCrawlerAgent
 from ani_menu_agent.agents.crawlers.character import CharacterCrawlerAgent
 from ani_menu_agent.agents.crawlers.curation import CurationCrawlerAgent
 from ani_menu_agent.agents.crawlers.event import EventCrawlerAgent
@@ -20,7 +19,6 @@ TYPE_CRAWLER_AGENTS = {
         GuideCrawlerAgent,
         PeopleCrawlerAgent,
         GoodsCrawlerAgent,
-        BehindCrawlerAgent,
         ReviewCrawlerAgent,
         HumorCrawlerAgent,
         CharacterCrawlerAgent,

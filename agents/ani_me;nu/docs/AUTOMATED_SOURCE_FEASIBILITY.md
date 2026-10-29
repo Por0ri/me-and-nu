@@ -69,9 +69,8 @@
 | 작품 가이드 | 작품 공식 포털·출판사(Shueisha/Kodansha); AniList, ANN Encyclopedia, AniDB | 공식 페이지의 데이터만 저빈도 업데이트 후보. 색인 DB는 대량 동기화 대신 작품별 링크 lookup. AniList 대량수집 금지, ANN/AniDB는 API 이용조건 미확인 상태 유지 |
 | 인물 | 작품 공식 cast/staff, 81 Produce, Aoni Production; 성우 사업자 협의회, MANTAN/Natalie/Anime Corner | 소속사·작품 페이지 우선. 프로필 변경은 주간/월간 저빈도 점검 후보. 사진은 수집해도 공개 캐러셀에 사용하지 않음 |
 | 굿즈·발매 | BANDAI SPIRITS, Good Smile, Animate, Premium Bandai, Kotobukiya, MegaHouse; AmiAmi/매체/PR TIMES | 제조사·권리자 페이지의 공지/발매일/예약기간 업데이트 후보. Premium Bandai 검색·회원·주문 등 robots 차단 경로 접근 금지. 판매처 재고를 발매 사실로 확정하지 않음 |
-| 비하인드 | 제작사/방송사의 공식 메이킹·인터뷰; MANTAN, Natalie, Dengeki, ANN | 공식 인터뷰/영상 채널의 공개 RSS·목록이 확인될 때만 자동 발견. 2차 매체는 링크/메타데이터 후보, 인용문·영상/이미지 복사 금지 |
 | 리뷰·분석 | ANN Reviews, Anime Corner, Anime Feminist, Dengeki, Fandom Post | 리뷰 RSS/API가 확인되면 리뷰 URL·작성자·게시일만 후보화하고 평가는 `review`로 태깅. Fandom Post는 현재 403이라 제외. 비평 본문을 LLM 입력·재작성용으로 자동 전송하지 않음 |
-| 유머 | Reddit, 더쿠, 디시인사이드, 아카라이브, FMKorea | 일반 HTML 크롤러 금지. Reddit은 API 승인/조건/비용 확인 전 비활성, TheQoo는 `ai-input` 권한 미확인, DC/FMKorea는 범용 봇 조건 미충족, Arca는 robots 403. 운영자 허가 전 자동 수집 목록에서 제외 |
+| 유머 | Reddit, Bluesky 및 제작진 인터뷰·메이킹 자료를 제공하는 공식/편집 출처 | 커뮤니티는 승인된 API의 익명화 주제 신호만 트렌드 경로로 수집. 제작 비하인드·메이킹은 출처 역할과 상태를 확인한 원문을 통해 사실형 정보 경로로 수집·검수하며, 두 경로의 근거를 혼합하지 않음 |
 | 캐릭터 | 작품 공식 캐릭터 페이지; AniList/ANN/AniDB 색인 | 공식 작품 페이지에서 링크·필드 조회. 색인은 좁은 entity lookup에만 사용. AniList mass collection 금지, ANN/AniDB API 정책 확정 전 비활성 |
 | 큐레이션 | Crunchyroll Awards, Anime Trending, Anime Corner polls, AniList, MyAnimeList | 공개 집계 페이지에서 조사 주체·기간·표본·방법 정보도 함께 가져올 수 있을 때만. 특정 순위 숫자만 크롤링해 일반 팬덤 선호로 확대하지 않음. MAL API/승인 범위 확인 전 보류 |
 | 음악 | Lantis, King Records, Pony Canyon, Sony Music Japan, Aniplex, FlyingDog; ANN/MANTAN; Apple Music/Spotify | 레이블의 공식 뉴스/카탈로그 업데이트를 저빈도 감지하는 후보. 스트리밍 카탈로그는 지역별 발매 확인 보조. 서비스 API 조건, 재배포, 자켓/음원 권리 별도 검토; Apple/Spotify는 뉴스 출처 대체가 아님 |

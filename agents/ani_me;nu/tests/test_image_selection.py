@@ -164,6 +164,7 @@ def test_wide_low_resolution_art_is_enlarged_and_tucked_near_lower_copy() -> Non
 
     assert layout.template == "low_res_spotlight"
     assert layout.image_box.width >= 0.89
+    assert layout.image_box.y <= 0.20
     assert vertical_gap <= POLICY.max_cover_vertical_gap + 0.001
 
 

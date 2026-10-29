@@ -15,7 +15,7 @@ import httpx
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, HttpUrl
 
-from ani_menu_agent.models import ContentType
+from ani_menu_agent.models import CONTENT_TYPE_LABELS
 from ani_menu_agent.sources.http_policy import pace_host
 from ani_menu_agent.sources.models import Source
 from ani_menu_agent.sources.page_collector import _get_html
@@ -73,12 +73,6 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
             r"interview|voice actor|cast|staff|director|creator|artist|"
             r"声優|キャスト|出演者|スタッフ|監督|作者|作家|対談|インタビュー|コメント"
         ),
-        "behind": (
-            r"behind[ -]?the[ -]?scenes|making(?:[ -]?of)?|production notes|"
-            r"production interview|staff interview|production report|recording report|"
-            r"制作秘話|舞台裏|メイキング|制作現場|スタッフインタビュー|"
-            r"制作陣インタビュー|演出インタビュー|収録レポート|原画"
-        ),
         "review": r"review|レビュー|批評|感想",
         "curation": (
             r"poll|ranking|ranked|ratings?|ランキング|投票|アンケート|"
@@ -93,6 +87,15 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
     for type_code, pattern in patterns.items():
         if re.search(pattern, title):
             inferred.add(type_code)
+    if re.search(
+        r"behind[ -]?the[ -]?scenes|making(?:[ -]?of)?|production notes|"
+        r"production interview|staff interview|production report|recording report|"
+        r"\u5236\u4f5c\u79d8\u8a71|\u821e\u53f0\u88cf|\u30e1\u30a4\u30ad\u30f3\u30b0|"
+        r"\u5236\u4f5c\u904e\u7a0b|\u88fd\u4f5c\u9663|\ube44\ud558\uc778\ub4dc|"
+        r"\uba54\uc774\ud0b9|\uc81c\uc791\uc9c4\s*\uc778\ud130\ubdf0|\uc81c\uc791\s*\uacfc\uc815",
+        title,
+    ):
+        inferred.add("humor")
     if re.search(r"announce|announcement|announced|発表|解禁|決定|ニュース|news", title):
         inferred.add("news")
 
@@ -107,6 +110,7 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
         "event": "event",
         "kitsu_anime_catalog": "guide",
         "wikipedia_reference": "guide",
+        "wikidata_character_catalog": "character",
         "ann_encyclopedia": "guide",
     }
     if source.category in category_defaults:
@@ -163,7 +167,10 @@ def supports_discovery_adapter(source: Source, *, work_title: str | None = None)
                 return bool(work_title) or "curation" in {
                     item.value for item in source.content_types
                 }
-            return source.category == "wikipedia_reference" and bool(work_title)
+            return source.category in {
+                "wikipedia_reference",
+                "wikidata_character_catalog",
+            } and bool(work_title)
         return source.id == "anilist" and source.role in {"primary", "discovery"}
     return False
 
@@ -171,13 +178,15 @@ def supports_discovery_adapter(source: Source, *, work_title: str | None = None)
 def _collectable_sources_for_type(
     content_type: str | None,
     source_ids: set[str] | None = None,
+    work_title: str | None = None,
 ) -> dict[str, Source]:
-    if content_type is not None and content_type not in {item.value for item in ContentType}:
+    active_types = {item.value for item in CONTENT_TYPE_LABELS}
+    if content_type is not None and content_type not in active_types:
         raise ValueError(f"지원하지 않는 콘텐츠 유형입니다: {content_type}")
     return {
         source.id: source
         for source in load_source_registry().sources
-        if supports_discovery_adapter(source, work_title="adapter-check")
+        if supports_discovery_adapter(source, work_title=work_title or "adapter-check")
         if content_type is None or content_type in {item.value for item in source.content_types}
         if source_ids is None or source.id in source_ids
     }
@@ -587,6 +596,43 @@ def parse_wikipedia_search(payload: dict, source: Source, limit: int = 10) -> li
     return items
 
 
+def parse_wikidata_characters(
+    payload: dict, source: Source, limit: int = 20
+) -> list[DiscoveryItem]:
+    """Convert exact work-to-character relationships into reference leads."""
+    bindings = payload.get("results", {}).get("bindings", [])
+    items: list[DiscoveryItem] = []
+    seen: set[str] = set()
+    for binding in bindings:
+        character = binding.get("character", {}).get("value", "")
+        title = binding.get("characterLabel", {}).get("value", "").strip()
+        work_title = binding.get("workLabel", {}).get("value", "").strip()
+        if not character.startswith("http://www.wikidata.org/entity/") or not title:
+            continue
+        url = character.replace("http://", "https://", 1)
+        if url in seen:
+            continue
+        seen.add(url)
+        items.append(
+            DiscoveryItem(
+                id=_item_id(source.id, url),
+                title=title[:300],
+                url=url,
+                source_id=source.id,
+                content_types=_source_type_codes(source.id),
+                summary=(
+                    f"Wikidata character relationship for {work_title}; "
+                    "verify against a primary source."
+                ),
+                region=source.region,
+                source_role=source.role,
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
 def parse_ann_search(
     html: str,
     source: Source,
@@ -670,14 +716,17 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
     source_parsed = urlparse(str(source.url))
     source_host = (source_parsed.hostname or "").lower()
     source_page_path = source_parsed.path.rstrip("/").lower()
+    page_segments = [segment for segment in source_page_path.split("/") if segment]
     taxonomy_listing = any(
-        segment in {"category", "categories", "tag", "tags"}
-        for segment in source_page_path.split("/")
+        segment in {"category", "categories", "tag", "tags", "event", "events", "goods"}
+        for segment in page_segments
     )
     source_path = source_page_path
     if taxonomy_listing:
-        # Many CMS category pages link to root-level canonical article URLs.
-        source_path = ""
+        # Category archives often link to root-level canonical articles. Keep a
+        # /news prefix when the archive itself lives there, to avoid treating
+        # unrelated site navigation (e.g. /program or /movie) as story leads.
+        source_path = "/news" if "news" in page_segments and "category" not in page_segments else ""
     elif source_path.endswith((".html", ".htm", ".php", ".aspx")) or source_path.rsplit("/", 1)[
         -1
     ] in {"archive", "archives", "index", "latest", "all"}:
@@ -704,6 +753,8 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         "news",
         "page",
         "privacy",
+        "program",
+        "ranking",
         "search",
         "shop",
         "services",
@@ -711,6 +762,8 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         "tag",
         "tags",
         "terms",
+        "movie",
+        "movies",
     }
     navigation_titles = {
         "about",
@@ -768,6 +821,9 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         ):
             # These are navigation/user-ranking pages linked from the review
             # publisher, not review articles or usable poll results.
+            continue
+        if source.category in {"event", "goods"} and re.match(r"^/store(?:/|$)", path):
+            # Publisher store/CTA links are not editorial event or product leads.
             continue
         if path.endswith((".pdf", ".zip", ".xml", ".json", ".rss", ".mp4", ".mp3")):
             continue
@@ -1017,6 +1073,32 @@ def collect_candidates(
                         )
                         response.raise_for_status()
                         items.extend(parse_wikipedia_search(response.json(), rss_source, limit))
+                    elif rss_source.category == "wikidata_character_catalog":
+                        if not work_title:
+                            continue
+                        attempted = True
+                        title_literal = json.dumps(work_title, ensure_ascii=False)
+                        query = f"""
+                        SELECT DISTINCT ?work ?workLabel ?character ?characterLabel WHERE {{
+                          VALUES ?titleLabel {{ {title_literal}@en {title_literal}@ja }}
+                          ?work rdfs:label ?titleLabel;
+                                wdt:P674 ?character.
+                          SERVICE wikibase:label {{
+                            bd:serviceParam wikibase:language "en,ja".
+                          }}
+                        }}
+                        LIMIT {min(max(limit, 1), 50)}
+                        """
+                        _respect_interval(str(rss_source.url), rss_source.min_interval_seconds)
+                        response = client.get(
+                            str(rss_source.url),
+                            params={"query": query, "format": "json", "maxlag": 1},
+                            headers={"Accept": "application/sparql-results+json"},
+                        )
+                        response.raise_for_status()
+                        items.extend(
+                            parse_wikidata_characters(response.json(), rss_source, limit)
+                        )
                 elif rss_source.collection == "api" and rss_source.category == "community_trend":
                     timeline_url = str(rss_source.url)
                     if work_title:

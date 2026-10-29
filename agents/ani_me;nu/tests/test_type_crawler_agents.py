@@ -5,20 +5,20 @@ from ani_menu_agent.agents.crawlers import TYPE_CRAWLER_AGENTS, get_type_crawler
 from ani_menu_agent.agents.crawlers.base import profile_signal_checks
 from ani_menu_agent.agents.reviewer.graph import build_reviewer_agent
 from ani_menu_agent.discovery import DiscoveryItem
-from ani_menu_agent.models import ContentType
+from ani_menu_agent.models import CONTENT_TYPE_LABELS, ContentType
 from ani_menu_agent.sources.models import Source
 
 
-def test_exactly_eleven_type_crawler_roles_match_content_types() -> None:
-    assert len(TYPE_CRAWLER_AGENTS) == 11
-    assert set(TYPE_CRAWLER_AGENTS) == {item.value for item in ContentType}
-    assert len({agent.agent_id for agent in TYPE_CRAWLER_AGENTS.values()}) == 11
+def test_exactly_ten_active_type_crawler_roles_match_content_types() -> None:
+    assert len(TYPE_CRAWLER_AGENTS) == 10
+    assert set(TYPE_CRAWLER_AGENTS) == {item.value for item in CONTENT_TYPE_LABELS}
+    assert len({agent.agent_id for agent in TYPE_CRAWLER_AGENTS.values()}) == 10
 
 
 def test_existing_generation_and_review_agents_are_not_duplicated() -> None:
     assert callable(build_content_generation_agent)
     assert callable(build_reviewer_agent)
-    assert len(TYPE_CRAWLER_AGENTS) + 2 == 13
+    assert len(TYPE_CRAWLER_AGENTS) + 2 == 12
 
 
 def test_each_crawler_uses_only_sources_mapped_to_its_type() -> None:
@@ -96,24 +96,25 @@ def test_character_crawler_requires_a_work_title_without_collecting() -> None:
 
 
 def test_type_profiles_have_distinct_source_and_image_policies() -> None:
-    assert TYPE_CRAWLER_AGENTS["humor"].profile.source_roles == frozenset({"trend"})
-    assert TYPE_CRAWLER_AGENTS["humor"].profile.capture_primary_page_assets is False
+    assert TYPE_CRAWLER_AGENTS["humor"].profile.source_roles == frozenset(
+        {"trend", "primary", "editorial", "discovery"}
+    )
+    assert TYPE_CRAWLER_AGENTS["humor"].profile.capture_primary_page_assets is True
     assert TYPE_CRAWLER_AGENTS["review"].profile.source_roles == frozenset(
         {"editorial", "discovery"}
     )
     assert TYPE_CRAWLER_AGENTS["event"].profile.asset_page_limit == 3
 
 
-def test_all_eleven_profiles_match_representative_multilingual_type_evidence() -> None:
+def test_all_ten_profiles_match_representative_multilingual_type_evidence() -> None:
     examples = {
         "news": "New season announcement: broadcast starts in 2027.",
         "event": "Event period October 23 to 27 at the Shibuya venue.",
         "guide": "Episode story and character introductions for this work.",
         "people": "Voice actor cast credits and profile.",
         "goods": "Official goods product preorder and release price.",
-        "behind": "Production making-of interview with the animation staff.",
         "review": "Review and criticism by the author.",
-        "humor": "Anime fan discussion and poll.",
+        "humor": "Production making-of interview with the animation staff.",
         "character": "Anime character profile and birthday.",
         "curation": "Ranking poll based on 1,200 votes.",
         "music": "Anime soundtrack album release by the artist.",

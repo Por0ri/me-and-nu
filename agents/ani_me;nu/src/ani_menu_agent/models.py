@@ -25,7 +25,7 @@ class ContentType(StrEnum):
     GUIDE = "guide"
     PEOPLE = "people"
     GOODS = "goods"
-    BEHIND = "behind"
+    BEHIND = "behind"  # Legacy stored value; new content uses the humor type.
     REVIEW = "review"
     HUMOR = "humor"
     CHARACTER = "character"
@@ -39,7 +39,6 @@ CONTENT_TYPE_LABELS = {
     ContentType.GUIDE: "작품 가이드",
     ContentType.PEOPLE: "인물",
     ContentType.GOODS: "굿즈",
-    ContentType.BEHIND: "비하인드",
     ContentType.REVIEW: "리뷰 분석",
     ContentType.HUMOR: "유머",
     ContentType.CHARACTER: "캐릭터",
@@ -60,11 +59,14 @@ CONTENT_TYPE_GUIDANCE = {
     "people": "성우 출연작, 감독·작가·스튜디오 소개, OP·ED 아티스트 등 사람 중심 정보",
     "curation": "테마별 작품 모음, 취향 연결, 분기 결산·랭킹, 숨은 명작 추천",
     "goods": "피규어·굿즈 발매·예약, 블루레이·OST, 한정판·특전, 작품 콜라보 상품",
-    "behind": "제작 비하인드, 성지순례, 오마주·패러디 등 작품 제작·문화의 뒷이야기",
     "review": "작품 리뷰, 분기 신작 첫인상, 원작과 애니메이션 비교·분석",
     "character": "캐릭터 생일, 프로필, 작품에서 확인되는 TMI와 인물 중심 이야기",
     "music": "애니메이션 OST·BGM·주제가·삽입곡과 음악가 정보",
-    "humor": "작품 사실을 비틀지 않는 팬덤 유머·밈·재미있는 상황극",
+    "humor": (
+        "팬덤 유머·토론·밈과, 출처가 확인된 제작 비하인드·메이킹·성지순례·오마주 이야기. "
+        "커뮤니티 의견은 의견으로 다루고, 제작진 인터뷰와 공식 비하인드의 사실은 "
+        "근거에 맞춰 정확히 쓴다."
+    ),
 }
 
 
@@ -179,6 +181,8 @@ class ImageAsset(BaseModel):
     subject_hint: str = "center"
     subject_box: NormalizedBox | None = None
     fingerprint: str | None = None
+    derived_from_image_id: str | None = None
+    enhancement_model: str | None = None
     used_in_previous_content: bool = False
     related_fact_ids: list[str] = Field(default_factory=list)
     source_description: str = ""
@@ -451,6 +455,7 @@ class DetailBodyReview(BaseModel):
     naturalness: int = Field(ge=0, le=5)
     factual_support: int = Field(ge=0, le=5)
     coherence: int = Field(ge=0, le=5)
+    completeness: int = Field(ge=0, le=5)
     feedback: str = ""
 
 

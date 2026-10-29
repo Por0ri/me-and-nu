@@ -1,19 +1,23 @@
 """애니 콘텐츠 제작 파이프라인의 실행 노드."""
 
 import logging
-import os
 
 from pydantic import ValidationError
 
 from ani_menu_agent.agents.common import append_trace
 from ani_menu_agent.agents.content_generation.art_director import plan_card_art
+from ani_menu_agent.agents.content_generation.image_upscaler import (
+    UpscaleRejected,
+    upscale_source_image,
+)
 from ani_menu_agent.config import get_settings
 from ani_menu_agent.generation import generate_copy_deck
-from ani_menu_agent.image_selection import assign_distinct_images
+from ani_menu_agent.image_selection import _fits_card_resolution, assign_distinct_images
 from ani_menu_agent.layout_engine import build_cards, reflow_for_composition
 from ani_menu_agent.models import ContentPackage, CopyCard, QualityIssue
 from ani_menu_agent.policy import POLICY
 from ani_menu_agent.quality import check_copy, check_sources
+from ani_menu_agent.review_rules import make_issue
 from ani_menu_agent.source_policy import (
     supported_content_types_for_sources,
     validate_generation_sources,
@@ -23,6 +27,89 @@ from ani_menu_agent.storage import AgentRepository
 from ani_menu_agent.work_catalog import attach_menu_work_ids
 
 logger = logging.getLogger(__name__)
+_MAX_AI_UPSCALES_PER_DECK = 3
+
+
+def _estimated_usage_cost(state: ContentState) -> float:
+    return sum(
+        float(record.get("estimated_cost_usd", 0) or 0)
+        for record in state.get("usage_records", [])
+    )
+
+
+def _upscale_selected_assets(
+    copies: list[CopyCard], package: ContentPackage, repository: AgentRepository
+) -> tuple[list[CopyCard], list[dict], dict[str, str]]:
+    """Upscale selected source art only when its current layout exceeds resolution limits."""
+    settings = get_settings()
+    if settings.image_upscale_enabled and POLICY.image_model_cost_budget_usd <= 0:
+        logger.info("Skipping AI source-image upscale: the image-model budget is $0.00.")
+        return copies, [], {"budget": "skipped_image_model_cost_budget"}
+    if (
+        not settings.image_upscale_enabled
+        or not settings.openai_api_key
+        or POLICY.image_model_cost_budget_usd <= 0
+    ):
+        return copies, [], {}
+
+    images_by_id = {image.id: image for image in package.images}
+    replacements: dict[str, str] = {}
+    usage_records: list[dict] = []
+    results: dict[str, str] = {}
+    attempted_sources: set[str] = set()
+
+    for card in sorted(copies, key=lambda item: item.page):
+        image = images_by_id.get(card.image_id)
+        if image is None or _fits_card_resolution(
+            image, card, maximum_upscale=POLICY.max_image_upscale
+        ):
+            continue
+        source_id = image.derived_from_image_id or image.id
+        if source_id in attempted_sources:
+            continue
+        attempted_sources.add(source_id)
+        if len(attempted_sources) > _MAX_AI_UPSCALES_PER_DECK:
+            results[source_id] = "skipped_deck_upscale_limit"
+            continue
+        if image.derived_from_image_id:
+            results[source_id] = "already_upscaled_but_still_below_target"
+            continue
+        try:
+            enhanced, usage = upscale_source_image(
+                image,
+                get_image_bytes=repository.get_image_bytes,
+                api_key=settings.openai_api_key,
+                model=settings.image_edit_model,
+            )
+            usage_records.append(usage.model_dump(mode="json"))
+            if not _fits_card_resolution(enhanced, card):
+                results[source_id] = (
+                    f"rejected_insufficient_card_resolution:{enhanced.width}x{enhanced.height}"
+                )
+                continue
+            package.images.append(enhanced)
+            images_by_id[enhanced.id] = enhanced
+            replacements[image.id] = enhanced.id
+            results[source_id] = (
+                f"upscaled:{image.width}x{image.height}->{enhanced.width}x{enhanced.height}"
+            )
+        except UpscaleRejected as exc:
+            usage_records.append(exc.usage.model_dump(mode="json"))
+            logger.warning("Source image upscale rejected for %s (%s)", image.id, exc)
+            results[source_id] = f"rejected_preservation_guard:{exc}"
+        except Exception as exc:  # Enhancement is optional; keep the source and fail closed later.
+            logger.warning(
+                "Source image upscale rejected for %s (%s)", image.id, type(exc).__name__
+            )
+            results[source_id] = f"fallback_original:{type(exc).__name__}"
+
+    if replacements:
+        repository.persist_images(package)
+        copies = [
+            card.model_copy(update={"image_id": replacements.get(card.image_id, card.image_id)})
+            for card in copies
+        ]
+    return copies, usage_records, results
 
 
 def _merge_copy_revision(
@@ -67,14 +154,14 @@ def _cover_image_issue(package: ContentPackage) -> QualityIssue | None:
     if cover is None or cover.visual_mode != "source_image" or cover.image_id not in {
         image.id for image in package.images
     }:
-        return QualityIssue(
+        return make_issue(
             code="COVER_SOURCE_IMAGE_MISSING",
             message=(
                 "표지에 사용할 관련 출처 이미지가 없습니다. "
                 "원문 또는 동일 작품의 공식 이미지를 다시 수집하세요."
             ),
             page=cover.page if cover else None,
-            owner="image_curator",
+
         )
     return None
 
@@ -88,7 +175,7 @@ def intake(state: ContentState) -> ContentState:
             "trace": append_trace(state, "intake"),
             "status": "invalid_input",
             "qa_report": [
-                QualityIssue(code="INVALID_INPUT", message=str(exc), owner="intake").model_dump()
+                make_issue(code="INVALID_INPUT", message=str(exc)).model_dump()
             ],
         }
     return {
@@ -102,27 +189,7 @@ def intake(state: ContentState) -> ContentState:
 def rights_preflight(state: ContentState) -> ContentState:
     """차단된 이미지뿐이면 LLM 호출 전에 크롤러로 되돌립니다."""
     package = ContentPackage.model_validate(state["package"])
-    integration_profile = (
-        os.environ.get("ANI_MENU_REVIEW_PROFILE", "integration").strip().casefold()
-        == "integration"
-    )
-    if integration_profile and state.get("allow_llm", False):
-        # Temporary backend-integration run: retain canonical work matching and
-        # relevant source images, while skipping fact/source approval gates.
-        attach_menu_work_ids(package)
-        if not package.menu_work_ids:
-            issue = QualityIssue(
-                code="WORK_ID_UNRESOLVED",
-                message="임시 통합 모드에서도 작품 데이터셋 연결은 필요합니다.",
-                owner="fact_checker",
-            )
-            return {
-                "trace": append_trace(state, "rights_preflight"),
-                "package": package.model_dump(mode="json"),
-                "qa_report": [issue.model_dump(mode="json")],
-                "status": "needs_crawler_update",
-            }
-    elif state.get("allow_llm", False):
+    if state.get("allow_llm", False):
         try:
             eligible_source_ids = validate_generation_sources(
                 [source.model_dump(mode="json") for source in package.sources],
@@ -130,10 +197,10 @@ def rights_preflight(state: ContentState) -> ContentState:
                 package.content_kind,
             )
         except ValueError as exc:
-            issue = QualityIssue(
+            issue = make_issue(
                 code="SOURCE_APPROVAL_REQUIRED",
                 message=str(exc),
-                owner="fact_checker",
+
             )
             return {
                 "trace": append_trace(state, "rights_preflight"),
@@ -143,13 +210,13 @@ def rights_preflight(state: ContentState) -> ContentState:
             }
         attach_menu_work_ids(package)
         if not package.menu_work_ids:
-            issue = QualityIssue(
+            issue = make_issue(
                 code="WORK_ID_UNRESOLVED",
                 message=(
                     "원문 제목과 등록 출처의 작품 매핑에서 menu_work_id를 확인하지 못했습니다. "
                     "작품 ID 없는 콘텐츠는 추천 피드에 적재하지 않습니다."
                 ),
-                owner="fact_checker",
+
             )
             return {
                 "trace": append_trace(state, "rights_preflight"),
@@ -158,10 +225,10 @@ def rights_preflight(state: ContentState) -> ContentState:
                 "status": "needs_crawler_update",
             }
         if not supported_content_types_for_sources(eligible_source_ids):
-            issue = QualityIssue(
+            issue = make_issue(
                 code="CONTENT_TYPE_SOURCE_UNSUPPORTED",
                 message="검증된 출처 조합에 연결된 콘텐츠 유형이 없습니다.",
-                owner="fact_checker",
+
             )
             return {
                 "trace": append_trace(state, "rights_preflight"),
@@ -171,14 +238,14 @@ def rights_preflight(state: ContentState) -> ContentState:
             }
         verified_fact_count = sum(fact.verified for fact in package.facts)
         if package.content_kind.value == "information" and verified_fact_count == 0:
-            issue = QualityIssue(
+            issue = make_issue(
                 code="FACT_DIVERSITY_LOW",
                 message=(
                     f"서로 다른 검증 사실이 {verified_fact_count}개뿐이라 "
                     f"최소 {POLICY.min_cards}장으로 구성할 수 없습니다. "
                     "원문 근거를 더 수집하거나 이 후보를 건너뜁니다."
                 ),
-                owner="fact_checker",
+
             )
             return {
                 "trace": append_trace(state, "rights_preflight"),
@@ -195,13 +262,13 @@ def rights_preflight(state: ContentState) -> ContentState:
         package.images, package.sources, package
     )
     if not cover_images:
-        issue = QualityIssue(
+        issue = make_issue(
             code="SOURCE_IMAGE_POOL_INSUFFICIENT",
             message=(
                 "표지에 쓸 수 있는 출처 확인 이미지가 없습니다. "
                 "원문 또는 동일 작품의 공식 이미지를 수집하세요."
             ),
-            owner="image_curator",
+
         )
         return {
             "trace": append_trace(state, "rights_preflight"),
@@ -213,14 +280,14 @@ def rights_preflight(state: ContentState) -> ContentState:
         package.images, package.sources, package
     )
     if len(eligible_images) < POLICY.min_cards:
-        issue = QualityIssue(
+        issue = make_issue(
             code="SOURCE_IMAGE_POOL_INSUFFICIENT",
             message=(
                 f"Only {len(eligible_images)} distinct relevant images are eligible, but at least "
                 f"{POLICY.min_cards} are needed because every card requires real anime art. "
                 "Collect more same-work images; never fill the gap with geometric placeholders."
             ),
-            owner="image_curator",
+
         )
         return {
             "trace": append_trace(state, "rights_preflight"),
@@ -344,14 +411,14 @@ def copy_writer(state: ContentState) -> ContentState:
             break
         revision_pages = [card.page for card in oversized]
         size_issues = [
-            QualityIssue(
+            make_issue(
                 code="BODY_TOO_LONG",
                 message=(
                     f"본문을 {POLICY.max_body_chars}자 이내로 줄이세요. 핵심 사실은 보존하고 "
                     "세부 사항은 덜어내며, 다른 카드는 수정하지 마세요."
                 ),
                 page=card.page,
-                owner="copy_writer",
+
             )
             for card in oversized
         ]
@@ -462,14 +529,55 @@ def layout_director(state: ContentState) -> ContentState:
             for issue in state.get("qa_report", [])
             if issue.get("code") == "IMAGE_COMPOSITION_REJECTED" and issue.get("page")
         }
-        package.cards = reflow_for_composition(
-            package.cards, package.images, composition_pages
-        )
+        feedback_by_page = {
+            int(issue["page"]): issue["message"]
+            for issue in state.get("qa_report", [])
+            if issue.get("code") == "IMAGE_COMPOSITION_REJECTED"
+            and issue.get("page")
+            and issue.get("message")
+        }
+        settings = get_settings()
+        revision_plan_attempted = bool(state.get("visual_layout_revision_attempted", False))
+        usage_records = list(state.get("usage_records", []))
+        art_directions = {}
+        if (
+            composition_pages
+            and not revision_plan_attempted
+            and state.get("allow_llm", False)
+            and settings.visual_layout_enabled
+            and settings.openai_api_key
+        ):
+            revision_plan_attempted = True
+            try:
+                art_directions, visual_usage = plan_card_art(
+                    package,
+                    package.cards,
+                    model_name=settings.visual_layout_model,
+                    api_key=settings.openai_api_key,
+                    get_image_bytes=AgentRepository().get_image_bytes,
+                    feedback_by_page=feedback_by_page,
+                )
+                if visual_usage is not None:
+                    usage_records.append(visual_usage.model_dump(mode="json"))
+            except Exception:
+                logger.exception(
+                    "Vision composition repair planning failed; using deterministic reflow."
+                )
+        if art_directions:
+            package.cards = build_cards(
+                copies, package.images, art_directions=art_directions
+            )
+        else:
+            package.cards = reflow_for_composition(
+                package.cards, package.images, composition_pages
+            )
         return {
             "trace": append_trace(state, "layout_director"),
             "package": package.model_dump(mode="json"),
+            "usage_records": usage_records,
+            "visual_layout_revision_attempted": revision_plan_attempted,
             "status": (
-                "layout_rebuilt_for_composition"
+                "layout_replanned_for_composition"
                 if composition_pages
                 else "layout_rebuilt_without_crop"
             ),
@@ -493,6 +601,10 @@ def layout_director(state: ContentState) -> ContentState:
             }
         return {"trace": append_trace(state, "layout_director"), "status": "layout_supplied"}
     copies = [CopyCard.model_validate(card) for card in state["draft_cards"]]
+    repository = AgentRepository()
+    copies, upscale_usage, upscale_results = _upscale_selected_assets(
+        copies, package, repository
+    )
     copies = assign_distinct_images(copies, package)
     missing_pages = [
         card.page
@@ -504,8 +616,10 @@ def layout_director(state: ContentState) -> ContentState:
         return {
             "trace": append_trace(state, "layout_director"),
             "package": package.model_dump(mode="json"),
+            "usage_records": [*state.get("usage_records", []), *upscale_usage],
+            "image_upscale_results": upscale_results,
             "qa_report": [
-                QualityIssue(
+                make_issue(
                     code=(
                         "COVER_SOURCE_IMAGE_MISSING"
                         if missing_pages[0] == min(card.page for card in copies)
@@ -516,7 +630,7 @@ def layout_director(state: ContentState) -> ContentState:
                         f"{', '.join(map(str, missing_pages))}."
                     ),
                     page=missing_pages[0],
-                    owner="image_curator",
+
                 ).model_dump(mode="json")
             ],
             "status": "needs_crawler_update",
@@ -531,6 +645,8 @@ def layout_director(state: ContentState) -> ContentState:
         and state.get("allow_llm", False)
         and settings.visual_layout_enabled
         and settings.openai_api_key
+        and _estimated_usage_cost(state) + POLICY.revision_cost_reserve_usd
+        <= POLICY.max_content_llm_cost_usd
     ):
         visual_layout_plan_attempted = True
         try:
@@ -539,7 +655,7 @@ def layout_director(state: ContentState) -> ContentState:
                 baseline_cards,
                 model_name=settings.visual_layout_model,
                 api_key=settings.openai_api_key,
-                get_image_bytes=AgentRepository().get_image_bytes,
+                get_image_bytes=repository.get_image_bytes,
             )
             if visual_usage is not None:
                 usage_records.append(visual_usage.model_dump(mode="json"))
@@ -569,7 +685,8 @@ def layout_director(state: ContentState) -> ContentState:
     return {
         "trace": append_trace(state, "layout_director"),
         "package": package.model_dump(mode="json"),
-        "usage_records": usage_records,
+        "usage_records": [*usage_records, *upscale_usage],
+        "image_upscale_results": upscale_results,
         "visual_layout_plan_attempted": visual_layout_plan_attempted,
         "status": "layout_planned",
     }
@@ -593,7 +710,7 @@ def repair_visual_assignments(state: ContentState) -> ContentState:
             "trace": append_trace(state, "visual_repair"),
             "package": package.model_dump(mode="json"),
             "qa_report": [
-                QualityIssue(
+                make_issue(
                     code="SOURCE_IMAGE_MISSING",
                     message=(
                         "시각 검수에서 제외한 이미지를 대체할 자료가 부족합니다. "
@@ -601,7 +718,7 @@ def repair_visual_assignments(state: ContentState) -> ContentState:
                         "더 수집하세요."
                     ),
                     page=missing_pages[0],
-                    owner="image_curator",
+
                 ).model_dump(mode="json")
             ],
             "status": "needs_crawler_update",
@@ -635,7 +752,17 @@ def archive_rejected(state: ContentState) -> ContentState:
     """Archive a draft only after the independent reviewer exhausted its retry budget."""
     package = ContentPackage.model_validate(state["package"])
     issues = state.get("qa_report", [])
-    reason = "; ".join(issue.get("message", issue.get("code", "")) for issue in issues) or (
+    spend = _estimated_usage_cost(state)
+    cost_limit = POLICY.max_content_llm_cost_usd
+    cost_limited = spend > cost_limit or (
+        state.get("editorial_decision") != "approved_for_feed"
+        and spend + POLICY.revision_cost_reserve_usd > cost_limit
+    )
+    reason = (
+        f"LLM cost budget reached: estimated ${spend:.4f}; per-content limit ${cost_limit:.2f}."
+        if cost_limited
+        else "; ".join(issue.get("message", issue.get("code", "")) for issue in issues)
+    ) or (
         f"검수 기준 미달: 총점 {state.get('quality_score', 0)}, "
         f"판정 {state.get('quality_report', {}).get('decision', 'revise')}"
     )
@@ -695,11 +822,21 @@ def route_review(state: ContentState) -> str:
     if state.get("review_mode") == "offline_fixture":
         return "end"
     if decision == "approved_for_feed":
-        return "feed_queue"
+        return (
+            "feed_queue"
+            if _estimated_usage_cost(state) <= POLICY.max_content_llm_cost_usd
+            else "archive_rejected"
+        )
     if decision == "return_to_crawler":
         return "crawler_update_required"
     if decision == "review_required":
         return "end"
+    if (
+        decision == "revise"
+        and _estimated_usage_cost(state) + POLICY.revision_cost_reserve_usd
+        > POLICY.max_content_llm_cost_usd
+    ):
+        return "archive_rejected"
     if state.get("review_failures", 0) >= state.get("max_revision", POLICY.max_review_failures):
         return "archive_rejected"
     return "revision_checkpoint"

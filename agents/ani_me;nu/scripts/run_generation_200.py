@@ -513,11 +513,15 @@ def select_candidate_type(candidate: dict, type_codes: list[str], registry) -> s
             r"主題歌|サントラ|楽曲|アルバム|シングル|新曲|音楽|サウンドトラック|配信リリース",
         ),
         (
+            "humor",
+            r"making|production|制作秘話|舞台裏|メイキング|収録レポート|"
+            r"behind[ -]?the[ -]?scenes|staff interview",
+        ),
+        (
             "people",
             r"interview|voice actor|cast|staff|声優|キャスト|出演者|スタッフ|対談|インタビュー",
         ),
         ("character", r"character profile|birthday|誕生日|キャラクター紹介|人物紹介|キャラクター"),
-        ("behind", r"making|production|制作秘話|舞台裏|メイキング|収録レポート"),
         ("review", r"review|レビュー|批評|感想"),
         ("curation", r"ranking|ratings?|ランキング|投票|おすすめ|top anime"),
         ("guide", r"episode|story|season|guide|arc|各話|あらすじ|ストーリー|シーズン|編"),

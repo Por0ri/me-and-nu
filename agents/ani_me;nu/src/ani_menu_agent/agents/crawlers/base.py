@@ -1,4 +1,4 @@
-"""Shared LangGraph workflow for the eleven focused crawler agents."""
+"""Shared LangGraph workflow for the ten focused crawler agents."""
 
 from __future__ import annotations
 
@@ -250,8 +250,6 @@ class TypeCrawlerAgent:
                 reasons.append("non_https_candidate")
             if self.content_type.value not in item.content_types:
                 reasons.append("type_not_supported_by_candidate")
-            if self.content_type is ContentType.HUMOR and item.source_role != "trend":
-                reasons.append("not_a_community_trend_signal")
             if reasons:
                 rejected += 1
                 continue
@@ -345,7 +343,7 @@ class TypeCrawlerAgent:
                     topic=capture.title or item.title,
                     content_kind=(
                         ContentKind.HUMOR
-                        if self.content_type is ContentType.HUMOR
+                        if source.role == "trend"
                         else ContentKind.INFORMATION
                     ),
                     content_type=self.content_type.value,

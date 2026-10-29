@@ -216,12 +216,12 @@ def generate_copy_deck(
             "exact phrase and name the actor explicitly; for ending feedback, use a concrete "
             "work-specific fact from the supplied sources. Before returning, compare each issue "
             "against the revised card and confirm the criticized phrase is gone. "
-            "Every protected_phrase carried by a target card is mandatory: include it verbatim "
-            "in that card's title or body, or remove it from protected_phrases only when its "
-            "fact is explicitly moved to another card that states the same fact. Never omit a "
-            "venue, date, price, cast name, quantity, or eligibility condition. Before returning "
-            "the revision, compare every target card against its protected_phrases "
-            "and cited facts. "
+            "A target card's protected_phrases are exact required wording for that card only; "
+            "keep each phrase verbatim there. Do not force every source detail onto one card: "
+            "retain all verified event, sales, venue, date, price, quantity, and eligibility "
+            "details somewhere in the carousel or standalone detail article, and never invent "
+            "drop required information. Before returning, check card fact IDs against the detail "
+            "article's detail_fact_ids. "
             "For fan_engagement feedback, make the hook/payoff specific to the supplied work "
             "and facts, not a generic recap. "
             "For ending-flow feedback, never repeat a middle-card sentence or simply restate "
@@ -229,11 +229,11 @@ def generate_copy_deck(
             "way, without adding any unsupported claim. Keep a playful line when it has a real "
             "connection to the work or news; revise only a joke that depends on unrelated details. "
             "For Japanese-copy feedback, remove decorative Japanese fragments or pair a "
-            "necessary official name with Korean first and the "
-            "original in parentheses. Check repair examples against the current copy: if the "
-            "suggested replacement is identical to the current wording, do not repeat it as a fix; "
-            "use a different correct phrase; for future scheduled events, '개최된다' and "
-            "'진행된다' are natural alternatives."
+            "necessary official name with Korean first and the original in parentheses. "
+            "Check repair examples against the current copy: if the suggested replacement is "
+            "identical to the current wording, do not repeat it as a fix; use a different correct "
+            "phrase. For future scheduled events, use natural wording such as 'will be held' or "
+            "'will take place'."
             + (
                 " This is a repeated-failure attempt: the same issue remained after an earlier "
                 "revision, so make a materially different rewrite and verify each cited issue "
@@ -242,21 +242,16 @@ def generate_copy_deck(
                 else ""
             )
             if revision_pages
-            else "",
+            else ""
         ),
         "requirements": {
             "same_work_image_provenance": (
-                "Some visuals may be public images from the same work, embedded in a different "
-                "registered page than the factual article. "
+                "Some visuals may come from a different registered page than the factual article. "
                 "Use them only as artwork for the matched work, never as evidence for dates, "
-                "events, products, or claims. The cover for an event or goods story must use a "
-                "visual from its cited event/product page. Detail cards may use distinct generic "
-                "official artwork for the same work, but never another event visual or a different "
-                "product photo; clearly treat it as work artwork, not as a picture of the event or "
-                "product. When using general work artwork, do not make the page's main claim about "
-                "a specific event illustration, menu, or product design unless that exact item is "
-                "shown by a matching source-page image. Select visuals that fit the copy, "
-                "and do not repeat them."
+                "events, products, or claims. Event and goods covers must use a visual from the "
+                "matching event/product source page. Interior cards may use distinct general "
+                "official artwork for the same work, but must not imply it depicts a specific "
+                "event or product unless the matching source image confirms that."
             ),
             "card_count": card_count_requirement,
             "insufficient_image_pool": (
@@ -280,9 +275,10 @@ def generate_copy_deck(
                 "the headline without cropping it."
             ),
             "cover_teaser_not_duplicate": (
-                "The cover may name the event or tease its main appeal, but do not state the same "
-                "schedule, venue, participation rule, lineup, or price again on an interior card. "
-                "Give each interior card one distinct practical or fan-interest fact."
+                "The cover may name the event or tease its main appeal. Avoid repeating the same "
+                "schedule, venue, participation rule, lineup, or price on interior cards unless "
+                "repeating it is needed for clarity. Keep each interior card useful, and put the "
+                "complete verified conditions in the standalone detail article."
             ),
             "ending_payoff": (
                 "The last page must land a memorable fan-aware callback or punchline. Do not "
@@ -349,10 +345,11 @@ def generate_copy_deck(
                 "instead of fabricating or padding."
             ),
             "protected_fact_completeness": (
-                "Every protected phrase is required information, not a suggestion. Render it "
-                "verbatim in the same card's title or body; prioritize dates, venues, times, "
-                "prices, cast names, counts, and participation conditions. A missing protected "
-                "phrase is a blocking defect and must be repaired before returning the deck."
+                "A card's protected_phrases contain only exact phrases required on that card. "
+                "Render those phrases verbatim there. Keep the carousel concise, while preserving "
+                "all available verified dates, venues, times, prices, counts, and participation "
+                "conditions in the carousel or standalone detail article. A required source detail "
+                "must not disappear from the complete content package."
             ),
             "freshness_and_editorial_value": (
                 "Prioritize a timely, concrete anime-fan reason to care. Check dates and event "
@@ -375,7 +372,9 @@ def generate_copy_deck(
             ),
             "publication_date_policy": (
                 "Never print the source/article publication date on cards. When the source gives "
-                "an event or popup period, include its verified start and end dates in the copy."
+                "an event or popup period, include its verified start and end dates in the "
+                "carousel or standalone detail article; do not force the full schedule "
+                "onto one card."
             ),
             "natural_korean_copy": (
                 "Write idiomatic Korean, not a word-for-word translation. Prefer familiar Korean "

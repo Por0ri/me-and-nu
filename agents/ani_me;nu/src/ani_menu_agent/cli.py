@@ -39,6 +39,7 @@ from ani_menu_agent.models import (
     RightsStatus,
     SourceEvidence,
 )
+from ani_menu_agent.policy import POLICY
 from ani_menu_agent.quality import run_quality_checks, score_quality
 from ani_menu_agent.readiness import (
     is_automated_humor_post,
@@ -95,6 +96,16 @@ def _candidate_menu_work_ids(candidate: dict, source) -> list[int]:
     if matched:
         return list(dict.fromkeys(item.menu_work_id for item in matched))
     return resolve_menu_work_ids(package)
+
+
+def _candidate_host_matches_source(candidate_url: str, source_url: str) -> bool:
+    candidate_host = (urlparse(candidate_url).hostname or "").lower().rstrip(".")
+    registered_host = (urlparse(source_url).hostname or "").lower().rstrip(".")
+    return bool(
+        candidate_host
+        and registered_host
+        and (candidate_host == registered_host or candidate_host.endswith(f".{registered_host}"))
+    )
 
 
 def _registered_original_source_link(links, sources, content_type: str):
@@ -188,6 +199,10 @@ def _add_usage_summary(result: dict) -> dict:
         "estimated_cost_usd": round(
             sum(float(item.get("estimated_cost_usd", 0)) for item in records), 8
         ),
+        "per_content_budget_usd": POLICY.max_content_llm_cost_usd,
+        "budget_exceeded": sum(
+            float(item.get("estimated_cost_usd", 0)) for item in records
+        ) > POLICY.max_content_llm_cost_usd,
     }
     return result
 
@@ -239,6 +254,7 @@ def _run_generation_from_db(
     kind: ContentKind,
     fixture: Path | None = None,
     requested_content_type: str | None = None,
+    initial_usage_records: list[dict] | None = None,
 ) -> tuple[ContentPackage, dict]:
     """Load crawler records from PostgreSQL and run the existing generation graph."""
     repository = AgentRepository()
@@ -271,6 +287,7 @@ def _run_generation_from_db(
             "content_kind": package.content_kind.value,
             "requested_content_type": requested_content_type,
             "package": package.model_dump(mode="json"),
+            "usage_records": list(initial_usage_records or []),
             "trace": [],
             "revision_count": 0,
             "max_revision": get_settings().max_revision,
@@ -395,7 +412,7 @@ def work_type_coverage(
         typer.Option("--work-title", help="작품의 menu_work_id 또는 CSV에 등록된 정확한 작품명"),
     ] = None,
 ) -> None:
-    """작품별 11개 유형의 출처·후보·검증 사실·ready 커버리지를 확인합니다."""
+    """작품별 10개 유형의 출처·후보·검증 사실·ready 커버리지를 확인합니다."""
     catalog = load_work_catalog()
     if not catalog:
         raise typer.BadParameter("data/reference/menu_works.csv를 찾을 수 없습니다.")
@@ -654,7 +671,7 @@ def generation_readiness() -> None:
 
 @app.command("source-routing")
 def source_routing() -> None:
-    """11개 유형별 출처 매핑, 요청 승인, 생성 근거 승인 상태를 보여줍니다."""
+    """10개 유형별 출처 매핑, 요청 승인, 생성 근거 승인 상태를 보여줍니다."""
     registry = load_source_registry()
     table = Table(title="콘텐츠 유형별 출처 라우팅")
     table.add_column("유형")
@@ -690,7 +707,10 @@ def source_routing() -> None:
                 and source.collection != "manual"
                 and (
                     source.role == "primary"
-                    or (source.role == "editorial" and code.value in {"review", "curation"})
+                    or (
+                        source.role == "editorial"
+                        and code.value in {"review", "curation", "humor"}
+                    )
                     or (
                         source.role == "reference"
                         and code.value in {"guide", "people", "character", "curation"}
@@ -794,7 +814,7 @@ def crawl_ingest(
         has_official_primary = any(
             source.is_official and source.role == "primary" for source in package.sources
         )
-        has_editorial_primary = package.content_type in {"review", "curation"} and any(
+        has_editorial_primary = package.content_type in {"review", "curation", "humor"} and any(
             source.role == "editorial" for source in package.sources
         )
         if not (has_official_primary or has_editorial_primary):
@@ -974,6 +994,34 @@ def crawl_generate(
         matching_sources = [
             item for item in eligible_sources if item.id == candidate_source_id
         ] or eligible_sources
+        if not matching_sources:
+            discovery_source = next(
+                (item for item in registry.sources if item.id == candidate_source_id), None
+            )
+            direct_interview_sources = [
+                item
+                for item in registry.sources
+                if item.status == "active"
+                and item.role == "editorial"
+                and item.collection == "html"
+                and content_type == "people"
+                and "people" in {value.value for value in item.content_types}
+                and _candidate_host_matches_source(candidate_url, str(item.url))
+            ]
+            candidate_title = str(candidate.get("title") or "")
+            is_direct_interview = bool(
+                discovery_source
+                and re.search(
+                    r"\binterview\b|인터뷰|대담|インタビュー|対談|取材",
+                    candidate_title,
+                    re.IGNORECASE,
+                )
+            )
+            if is_direct_interview and len(direct_interview_sources) == 1:
+                # Directly conducted interviews are the original reporting for
+                # the interview itself. Keep discovery provenance, but do not
+                # require a second official publisher link before using it.
+                matching_sources = direct_interview_sources
         if not matching_sources:
             discovery_source = next(
                 (item for item in registry.sources if item.id == candidate_source_id), None
@@ -1412,11 +1460,11 @@ def crawl_generate(
             package.request_id,
             ContentKind.INFORMATION,
             requested_content_type=content_type,
+            initial_usage_records=[extraction_usage],
         )
     except (ValueError, RuntimeError) as exc:
         raise typer.BadParameter(f"DB 기반 콘텐츠 생성 단계에서 중단: {exc}") from exc
 
-    result["usage_records"] = [extraction_usage, *result.get("usage_records", [])]
     stage_timings.update(result.get("stage_timings_seconds", {}))
     stage_timings["total"] = round(perf_counter() - run_started, 3)
     result["stage_timings_seconds"] = stage_timings
@@ -1576,7 +1624,7 @@ def _crawl_generate_humor_candidate(candidate: dict, output: Path) -> dict:
 def crawl_type(
     content_type: Annotated[
         str,
-        typer.Option("--content-type", help="11개 유형 중 하나"),
+        typer.Option("--content-type", help="10개 유형 중 하나"),
     ],
     work_title: Annotated[str | None, typer.Option("--work-title")] = None,
     limit: Annotated[int, typer.Option("--limit", min=1, max=20)] = 10,
@@ -1626,7 +1674,7 @@ def crawl_type(
         file_token = hashlib.sha256(candidate_id.encode("utf-8")).hexdigest()[:12]
         result_path = run_folder / f"{index:02d}-{file_token}.json"
         try:
-            if content_type == ContentKind.HUMOR.value:
+            if content_type == ContentKind.HUMOR.value and candidate.get("source_role") == "trend":
                 outcome = _crawl_generate_humor_candidate(candidate, result_path)
                 if not result_path.exists():
                     result_path.write_text(
@@ -1912,7 +1960,7 @@ def discover(
     ] = "kr_first",
     content_type: Annotated[
         str | None,
-        typer.Option("--content-type", help="선택: 11개 유형 중 지정한 유형의 출처만 수집"),
+        typer.Option("--content-type", help="선택: 10개 유형 중 지정한 유형의 출처만 수집"),
     ] = None,
     capture_images: Annotated[
         bool,

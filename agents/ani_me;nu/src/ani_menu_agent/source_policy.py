@@ -32,8 +32,9 @@ def validate_generation_sources(
     """Reject evidence collected under a source that is not currently approved.
 
     Discovery leads are not evidence. Information facts require an active first-party
-    source, or an active editorial source for review/curation material. Humor facts
-    require an approved automated trend signal. This also invalidates stale records.
+    source, or an active editorial source for review, curation, or factual humor
+    material. Community humor facts require an approved automated trend signal.
+    This also invalidates stale records.
     """
     kind = ContentKind(content_kind)
     registry = {source.id: source for source in load_source_registry().sources}
@@ -60,7 +61,7 @@ def validate_generation_sources(
                 approved = (
                     configured.status == "active"
                     and bool(editorial_types)
-                    and editorial_types <= {"review", "curation"}
+                    and editorial_types <= {"review", "curation", "humor", "people"}
                     and _value(record, "is_official", False) is False
                     and _value(record, "role", "") == "editorial"
                 )

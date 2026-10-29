@@ -31,6 +31,9 @@ class ContentState(TypedDict, total=False):
     render_elapsed_seconds: float
     rendered_card_count: int
     visual_layout_plan_attempted: bool
+    visual_layout_revision_attempted: bool
+    image_edit_results: dict[str, str]
+    image_upscale_results: dict[str, str]
     rendered_image_keys: dict[str, str | None]
     editorial_decision: str
     rejection_reason: str

@@ -172,7 +172,12 @@ def is_editorially_composable(image: ImageAsset) -> bool:
     )
 
 
-def _fits_card_resolution(image: ImageAsset, card: CopyCard) -> bool:
+def _fits_card_resolution(
+    image: ImageAsset,
+    card: CopyCard,
+    *,
+    maximum_upscale: float | None = None,
+) -> bool:
     """Reject small assets for large placements; blur cannot make an upscaled hero sharp."""
     if image.width < 1 or image.height < 1:
         return False
@@ -187,12 +192,14 @@ def _fits_card_resolution(image: ImageAsset, card: CopyCard) -> bool:
         POLICY.logical_card_height * layout.image_box.height * POLICY.image_quality_target_dpr
     )
     upscale = min(target_width / image.width, target_height / image.height)
-    max_upscale = (
+    allowed_upscale = maximum_upscale or (
         POLICY.max_low_res_spotlight_upscale
         if layout.template == "low_res_spotlight"
+        else 2.5
+        if card.role == "cover"
         else POLICY.max_image_upscale
     )
-    return upscale <= max_upscale
+    return upscale <= allowed_upscale
 
 
 def _image_context_mismatch(image: ImageAsset, package: ContentPackage) -> bool:
@@ -272,22 +279,13 @@ def cover_usable_editorial_images(
     sources: list[SourceEvidence],
     package: ContentPackage | None = None,
 ) -> list[ImageAsset]:
-    """Keep only source images that can support a full-resolution cover placement."""
-    sample_card = CopyCard(
-        page=1,
-        role="cover",
-        eyebrow="공식 소식",
-        title_lines=["작품의 새 소식"],
-        body_sentences=["팬이 알아야 할 핵심 내용을 전합니다."],
-        image_id="cover-fit-probe",
-    )
+    """Keep relevant cover art available so layout/upscaling can try to use it."""
     return [
         image
         for image in distinct_editorial_images(
             images, sources, package, card_role="cover"
         )
         if max(image.width, image.height) >= MIN_COVER_SOURCE_EDGE
-        if _fits_card_resolution(image, sample_card)
     ]
 
 

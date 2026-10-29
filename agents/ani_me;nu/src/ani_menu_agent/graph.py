@@ -5,6 +5,7 @@ from langgraph.graph import END, START, StateGraph
 from ani_menu_agent.agents.content_generation.graph import build_content_generation_agent
 from ani_menu_agent.agents.reviewer.graph import build_reviewer_agent
 from ani_menu_agent.nodes import (
+    _estimated_usage_cost,
     archive_rejected,
     crawler_update_required,
     feed_queue,
@@ -16,6 +17,7 @@ from ani_menu_agent.nodes import (
     route_revision,
     route_rights_preflight,
 )
+from ani_menu_agent.policy import POLICY
 from ani_menu_agent.state import ContentState
 
 
@@ -51,6 +53,7 @@ def build_graph():
         {
             "reviewer_agent": "reviewer_agent",
             "crawler_update_required": "crawler_update_required",
+            "archive_rejected": "archive_rejected",
         },
     )
     graph.add_conditional_edges(
@@ -73,8 +76,11 @@ def build_graph():
 
 def route_after_content_generation(state: ContentState) -> str:
     """Do not render/review a deck when unique image material must be recollected."""
-    return (
-        "crawler_update_required"
-        if state.get("status") == "needs_crawler_update"
-        else "reviewer_agent"
-    )
+    if state.get("status") == "needs_crawler_update":
+        return "crawler_update_required"
+    if (
+        _estimated_usage_cost(state) + POLICY.revision_cost_reserve_usd
+        > POLICY.max_content_llm_cost_usd
+    ):
+        return "archive_rejected"
+    return "reviewer_agent"

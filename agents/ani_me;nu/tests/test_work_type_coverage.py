@@ -152,7 +152,6 @@ def test_fact_type_taxonomy_covers_each_non_humor_content_type() -> None:
         "guide",
         "people",
         "goods",
-        "behind",
         "review",
         "character",
         "curation",
@@ -160,7 +159,8 @@ def test_fact_type_taxonomy_covers_each_non_humor_content_type() -> None:
     }
 
     assert expected <= set(FACT_TYPE_TO_CONTENT_TYPE.values())
-    assert "humor" not in FACT_TYPE_TO_CONTENT_TYPE.values()
+    assert FACT_TYPE_TO_CONTENT_TYPE["production"] == "humor"
+    assert FACT_TYPE_TO_CONTENT_TYPE["making"] == "humor"
 
 
 def test_malformed_expiry_fails_closed() -> None:

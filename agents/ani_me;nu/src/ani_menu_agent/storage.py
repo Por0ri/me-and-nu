@@ -535,6 +535,9 @@ class AgentRepository:
                 )
             # The public taxonomy is now `review`; migrate legacy package and index values.
             connection.execute("DELETE FROM content_types WHERE type_code='review_analysis'")
+            # `behind` remains a model alias so old payloads can be read, but it is
+            # no longer an active feed type; new and legacy records route as humor.
+            connection.execute("UPDATE content_types SET active=0 WHERE type_code='behind'")
             for table in ("content_drafts", "feed_queue", "rejected_archive"):
                 country_column = "event_country" if table != "rejected_archive" else "NULL"
                 rows = connection.execute(
@@ -554,6 +557,9 @@ class AgentRepository:
                     if row["content_type"] == "review_analysis":
                         code = "review"
                         package.content_type = code
+                    elif code == "behind":
+                        code = "humor"
+                        package.content_type = code
                     if code != row["content_type"] or country != row["event_country"]:
                         if table == "rejected_archive":
                             connection.execute(
@@ -568,6 +574,36 @@ class AgentRepository:
                                 "WHERE request_id=?",
                                 (code, country, package.model_dump_json(), row["request_id"]),
                             )
+            for row in connection.execute(
+                "SELECT agent_type, record_id, payload_json FROM agent_records"
+            ).fetchall():
+                try:
+                    payload = json.loads(row["payload_json"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                changed = False
+                if payload.get("content_type") == "behind":
+                    payload["content_type"] = "humor"
+                    changed = True
+                payload_content_types = payload.get("content_types")
+                if isinstance(payload_content_types, list) and "behind" in payload_content_types:
+                    payload["content_types"] = list(
+                        dict.fromkeys(
+                            "humor" if code == "behind" else code
+                            for code in payload_content_types
+                        )
+                    )
+                    changed = True
+                if changed:
+                    connection.execute(
+                        "UPDATE agent_records SET payload_json=? "
+                        "WHERE agent_type=? AND record_id=?",
+                        (
+                            json.dumps(payload, ensure_ascii=False),
+                            row["agent_type"],
+                            row["record_id"],
+                        ),
+                    )
             for table in ("content_drafts", "feed_queue", "rejected_archive"):
                 rows = connection.execute(
                     f"SELECT request_id, package_json FROM {table} WHERE content_type IS NULL"

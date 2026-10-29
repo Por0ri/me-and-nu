@@ -1,7 +1,7 @@
 # 콘텐츠 유형별 출처 후보 목록
 
 > 조사 기준일: 2026-10-21
-> 목적: 콘텐츠 11개 유형의 출처 후보를 넓게 모으고, 사실 확인용·후보 발견용·트렌드 참고용을 분리한다.
+> 목적: 현재 활성 10개 유형의 출처 후보를 넓게 모으고, 사실 확인용·후보 발견용·트렌드 참고용을 분리한다.
 > 주의: 이 목록은 **수집 후보 목록이지 자동 수집 허가 목록이 아니다.** 각 도메인·피드별 이용약관, robots.txt, 요청 빈도, 이미지 권리, 개인정보 조건을 검토하기 전에는 자동 수집을 활성화하지 않는다. 작품 소식의 최종 사실은 가능한 한 권리자·제작사·배급사·행사 주최자 등 1차 원문에서 확인한다.
 
 ## 출처 역할
@@ -13,7 +13,7 @@
 
 한 사이트가 여러 유형에 쓰일 수 있다. 실제 적격성은 `콘텐츠 유형 + 작품 연관성 + 출처 역할 + 국가/지역 + 자동수집 상태`를 함께 확인한다. 이미지의 권리와 사용 가능성은 본문 출처와 별도로 기록한다.
 
-## 11개 유형별 후보
+## 10개 유형별 후보
 
 | 유형 | 1차 사실 출처 후보 | 발견·색인·보조 후보 | 적합한 활용 / 주의 |
 |---|---|---|---|
@@ -22,9 +22,8 @@
 | **작품 가이드 (`guide`)** | 해당 작품 공식 사이트; 원작 출판사 공식 작품 페이지(예: [Shueisha](https://www.shueisha.co.jp/), [Kodansha](https://www.kodansha.co.jp/)); 제작사·방송사 공식 작품 소개 | [AniList](https://anilist.co/) 작품별 외부 링크; [Anime News Network Encyclopedia](https://www.animenewsnetwork.com/encyclopedia/); [AniDB](https://anidb.net/) | 입문 가이드·정주행 순서·세계관·용어 정리는 공식 자료로 고유명사·설정을 교차 확인. 색인 DB의 서술은 최종 근거로 사용하지 않음. |
 | **인물 (`people`)** | 작품 공식 캐스트·스태프 페이지; 성우·감독·작가의 소속사/본인 공식 프로필; 예: [일본 성우 사업자 협의회 회원 목록](https://sei-yu.net/member/), [81 Produce](https://www.81produce.co.jp/), [Aoni Production](https://www.aoni.co.jp/) | [MANTANWEB](https://mantan-web.jp/); [Comic Natalie](https://natalie.mu/comic); [Anime Corner 인터뷰](https://animecorner.me/category/anime/) | 배역·소속·프로필은 공식 프로필/작품 크레딧에서 확인. 인터뷰는 발언 맥락·게시일을 보존하고 인용문을 길게 복제하지 않음. |
 | **굿즈·발매 (`goods`)** | 상품 제조사·권리자·공식 스토어: [BANDAI SPIRITS 보도자료](https://www.bandaispirits.co.jp/press/), [Good Smile Company 뉴스](https://www.goodsmile.com/en/news), [Animate](https://www.animate.co.jp/), [Premium Bandai](https://p-bandai.jp/), [Kotobukiya](https://www.kotobukiya.co.jp/), [MegaHouse](https://www.megahouse.co.jp/) | [AmiAmi](https://www.amiami.com/eng/), [Anime! Anime!](https://animeanime.jp/), [Animate Times](https://www.animatetimes.com/), [PR TIMES 애니 태그](https://prtimes.jp/topics/keywords/anime) | 제조사/권리자 발표를 우선. 판매처의 상품 페이지는 가격·예약·판매 기간 후보 확인에 쓰되 판매 지역·재고·예약 종료를 원문에서 검증. |
-| **비하인드 (`behind`)** | 제작사·방송사·공식 작품 채널의 제작진 코멘터리·메이킹·특집 인터뷰; [도에이 애니메이션](https://www.toei-anim.co.jp/); [TOHO animation](https://tohoanimation.jp/); [Bandai Namco Filmworks](https://www.bnfw.co.jp/) | [MANTANWEB](https://mantan-web.jp/); [Comic Natalie](https://natalie.mu/comic); [Dengeki Online](https://dengekionline.com/); [Anime News Network](https://www.animenewsnetwork.com/) | 실제 제작 참여자 인터뷰·메이킹 중심. 출처가 확인하지 않은 제작 비화·팬 추측을 사실처럼 쓰지 않음. |
 | **리뷰·분석 (`review`)** | 작품 자체의 공식 공개자료(작품 정보·에피소드·발매 정보) | [Anime News Network Reviews](https://www.animenewsnetwork.com/reviews/); [Anime Corner 리뷰/칼럼](https://animecorner.me/category/anime/); [Anime Feminist](https://www.animefeminist.com/); [The Fandom Post](https://www.fandompost.com/) | 매체 리뷰는 **비평/의견 출처**로만 사용하고 사실과 평가를 분리. 리뷰 문장 복제 대신 출처를 링크하고 자체 분석을 작성. 리뷰 태그는 `review`. |
-| **유머 (`humor`)** | 원본 밈을 만든 권리자/제작사 공식 채널(공식 패러디·캠페인인 경우) | Reddit 애니 커뮤니티, 더쿠, 디시인사이드, 아카라이브, 에펨코리아 등은 **수동·허가 확인 후 트렌드 참고 후보** | 일반 게시글·짤·밈 이미지는 자동 수집·재사용하지 않음. 익명화된 주제 신호만 편집자가 확인해 새로 구성. 플랫폼 약관/API/커뮤니티 규칙을 각각 검토. |
+| **유머 (`humor`)** | 공식 작품·제작사 채널의 제작진 코멘터리·메이킹·인터뷰; [도에이 애니메이션](https://www.toei-anim.co.jp/); [TOHO animation](https://tohoanimation.jp/); [Bandai Namco Filmworks](https://www.bnfw.co.jp/); 공식 패러디·캠페인 | [MANTANWEB](https://mantan-web.jp/); [Comic Natalie](https://natalie.mu/comic); [Dengeki Online](https://dengekionline.com/); [Anime News Network](https://www.animenewsnetwork.com/); Reddit·Bluesky 등 승인된 공개 커뮤니티 API | 커뮤니티는 익명화한 화제 신호만 사용하고 사실과 분리. 제작 비하인드·메이킹은 제작 참여자의 발언이나 공식 자료가 확인되는 경우에만 사실형 `information` 경로로 작성. |
 | **캐릭터 (`character`)** | 작품 공식 캐릭터 소개; 원작 출판사·제작위원회 공식 설정/프로필 | [AniList](https://anilist.co/) 외부 링크 색인; [Anime News Network Encyclopedia](https://www.animenewsnetwork.com/encyclopedia/); [AniDB](https://anidb.net/) | 이름·소속·관계·생일·설정은 공식 프로필에서 확인. 팬 위키·DB는 용어/공식 페이지를 찾는 색인 이상의 권위를 부여하지 않음. |
 | **큐레이션 (`curation`)** | 조사 주체가 공개한 표본·집계방법이 있는 시상식·공식 조사 | [Crunchyroll Anime Awards](https://www.crunchyroll.com/animeawards); [Anime Trending](https://anitrendz.com/); [Anime Corner](https://animecorner.me/category/anime/); [AniList](https://anilist.co/); [MyAnimeList](https://myanimelist.net/) | 랭킹·투표는 조사기간, 표본, 투표자 범위를 함께 표기. 한 사이트의 인기순위를 전체 팬덤 선호처럼 일반화하지 않음. 자체 큐레이션은 내부 작품 데이터와 명시적 기준으로 생성. |
 | **음악 (`music`)** | 작품·음반사·아티스트 공식 발표: [Lantis](https://www.lantis.jp/); [King Records](https://kingrecords.net/); [Pony Canyon](https://news.ponycanyon.co.jp/); [Sony Music Japan](https://www.sonymusic.co.jp/); [Aniplex](https://www.aniplex.co.jp/); [FlyingDog](https://www.jvcmusic.co.jp/flyingdog/) | [Anime News Network](https://www.animenewsnetwork.com/); [MANTANWEB](https://mantan-web.jp/); [Apple Music](https://music.apple.com/); [Spotify](https://open.spotify.com/) | 곡명·아티스트·발매일·타이업은 음반사/아티스트/작품 공식 발표 우선. 스트리밍 카탈로그는 발매 확인 보조이며 지역별 제공 차이를 구분. |
@@ -43,7 +42,7 @@
 
 ```text
 source_id
-content_types[]          # 11개 유형 중 해당 출처가 다룰 수 있는 범위
+content_types[]          # 10개 활성 유형 중 해당 출처가 다룰 수 있는 범위
 role                     # primary / discovery / trend / index
 work_ids[]               # 특정 작품 출처면 menu_work_id 연결, 일반 출처면 비움
 country_scope[]          # 출처/행사 적용 국가. 독자 국가와 구분
@@ -62,7 +61,7 @@ freshness_policy
 ## 다음 검증 단계
 
 1. `menu_works.csv`의 모든 작품 ID와 작품별 공식 사이트 후보를 연결한다.
-2. 각 후보 URL을 11개 콘텐츠 유형에 매핑한다. 하나의 출처가 여러 유형을 지원할 수 있다.
+2. 각 후보 URL을 10개 활성 콘텐츠 유형에 매핑한다. 제작 비하인드 후보는 `humor`로 분류하며, 하나의 출처가 여러 유형을 지원할 수 있다.
 3. 도메인 소유/운영 주체, 약관, robots.txt, 피드/API, 접근 빈도, 언어, 지역 범위를 확인한다.
 4. 자동 수집은 권한·기술 확인이 끝난 소스만 활성화한다. 나머지는 후보 탐색 또는 수동 확인으로 둔다.
 5. 이미지 호스트·권리 상태는 별도 검증하고, 출처의 공식성만으로 이미지 재사용을 허가하지 않는다.

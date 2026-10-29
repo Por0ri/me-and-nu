@@ -10,6 +10,7 @@ dependencies = [
   "feedparser>=6.0",
   "httpx>=0.28",
   "langchain-openai>=1.0",
+  "openai>=2.0",
   "langgraph>=1.0",
   "langsmith>=0.4",
   "lxml>=6.0",

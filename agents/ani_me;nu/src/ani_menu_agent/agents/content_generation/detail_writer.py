@@ -14,15 +14,16 @@ from ani_menu_agent.models import (
     ContentKind,
     ContentPackage,
     DetailArticleDraft,
-    QualityIssue,
     UsageRecord,
 )
+from ani_menu_agent.review_rules import make_issue, prompt_rules
 from ani_menu_agent.state import ContentState
 
 DETAIL_WRITER_PROMPT = """
 You write the standalone long-form article shown when a reader taps “자세히 보기”.
 Write fluent, natural Korean prose that adds context and explains the verified material;
-do not merely concatenate or paraphrase the carousel cards sentence by sentence.
+aim for clear, polished Korean fan-editorial prose. Do not merely concatenate or paraphrase
+the carousel cards sentence by sentence.
 
 Use only the supplied package facts and card copy. Do not invent dates, places, prices,
 quotes, production details, motives, or announcements. Return every fact ID that materially
@@ -51,6 +52,10 @@ phrases like “뿐 아니라” or “이곳에서도” unless the supplied fa
 Do not include a source list or AI disclosure in the body; those are rendered below the body.
 Write roughly 300–700 Korean characters in 2–5 readable paragraphs. Avoid filler and repetition.
 """.strip()
+
+DETAIL_WRITER_PROMPT += "\n\nCANONICAL DETAIL RULES:\n" + prompt_rules(
+    check="both", owners={"detail_writer", "crawler"}
+)
 
 
 def _detail_writer_revision_issues(raw_issues: list) -> list[dict]:
@@ -81,10 +86,10 @@ def write_detail_body(state: ContentState) -> ContentState:
 
     settings = get_settings()
     if not settings.openai_api_key:
-        issue = QualityIssue(
+        issue = make_issue(
             code="DETAIL_BODY_LLM_REQUIRED",
             message="자세히 보기용 상세글 생성에 LLM API 키가 필요합니다.",
-            owner="detail_writer",
+
         )
         return {
             "trace": append_trace(state, "detail_writer"),
@@ -179,10 +184,10 @@ def write_detail_body(state: ContentState) -> ContentState:
 
     draft = response.get("parsed")
     if draft is None:
-        issue = QualityIssue(
+        issue = make_issue(
             code="DETAIL_BODY_OUTPUT_INVALID",
             message="상세글 작성 결과의 형식이 올바르지 않습니다.",
-            owner="detail_writer",
+
         )
         return {
             "trace": append_trace(state, "detail_writer"),

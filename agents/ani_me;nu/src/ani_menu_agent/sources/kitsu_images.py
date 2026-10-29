@@ -16,7 +16,9 @@ from ani_menu_agent.work_catalog import load_work_catalog
 
 MAX_IMAGES = 20
 MAX_CHARACTERS_PER_WORK = 12
-MAX_EPISODES_PER_WORK = 24
+# Kitsu's documented maximum page size is 20. Larger values fail the episode
+# relationship request, which silently removes a useful source of scene art.
+MAX_EPISODES_PER_WORK = 20
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
 

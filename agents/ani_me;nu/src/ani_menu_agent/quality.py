@@ -18,17 +18,15 @@ from ani_menu_agent.policy import (
     GENERIC_HUMOR_TERMS,
     POLICY,
 )
+from ani_menu_agent.review_rules import RULES, decision_metadata, make_issue, score_penalty
 
 
 def _issue(
     code: str,
     message: str,
     page: int | None = None,
-    owner: str = "editor",
-    severity: str = "error",
 ) -> QualityIssue:
-    return QualityIssue(code=code, message=message, page=page, owner=owner, severity=severity)
-
+    return make_issue(code=code, message=message, page=page)
 
 def _publication_date_variants(value: str | None) -> tuple[date | None, set[str]]:
     if not value:
@@ -124,7 +122,7 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
     official_count = sum(source.is_official for source in package.sources)
     editorial_count = sum(source.role == "editorial" for source in package.sources)
     reference_count = sum(source.role == "reference" for source in package.sources)
-    editorial_content_type = package.content_type in {"review", "curation"}
+    editorial_content_type = package.content_type in {"review", "curation", "humor"}
     reference_content_type = package.content_type in {"guide", "people", "character", "curation"}
     event_dates = {
         parsed
@@ -142,14 +140,15 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
         issues.append(
             _issue(
                 "SOURCE_NO_OFFICIAL",
-                "정보 콘텐츠는 공식 1차 출처가, 리뷰·큐레이션은 편집 출처가 필요합니다.",
-                owner="fact_checker",
+                "정보 콘텐츠는 공식 1차 출처가 필요하며, 리뷰·큐레이션·사실형 유머는 "
+                "허용된 편집 출처를 사용할 수 있습니다.",
+
             )
         )
     for source in package.sources:
         if urlparse(str(source.url)).scheme != "https":
             issues.append(
-                _issue("SOURCE_NOT_HTTPS", f"HTTPS가 아닌 출처: {source.url}", owner="fact_checker")
+                _issue("SOURCE_NOT_HTTPS", f"HTTPS가 아닌 출처: {source.url}")
             )
         if source.published_at:
             try:
@@ -179,7 +178,6 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                                 "원문 발표일은 카드에 표기하지 마세요. 행사 시작·종료일과 "
                                 "겹치지 않는 원문 게시 날짜가 본문에 들어 있습니다.",
                                 card.page,
-                                "copy_writer",
                             )
                         )
             has_current_claim = any(
@@ -196,7 +194,7 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                         "SOURCE_STALE",
                         "시의성 사실의 원문 게시일이 90일을 넘었습니다. "
                         "최신 공지/상태를 재확인하거나 상시 정보로 다시 분류하세요.",
-                        owner="fact_checker",
+
                     )
                 )
     if package.content_type == "event" and package.event_end:
@@ -210,7 +208,7 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                     "EVENT_ALREADY_ENDED",
                     "행사 종료일이 지났습니다. 종료된 행사를 진행 예정처럼 생성하지 말고 "
                     "최신 후보를 사용하세요.",
-                    owner="fact_checker",
+
                 )
             )
     for fact in package.facts:
@@ -220,7 +218,7 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                 _issue(
                     "FACT_SOURCE_MISSING",
                     f"사실 {fact.id}의 출처가 없습니다: {missing}",
-                    owner="fact_checker",
+
                 )
             )
         if fact.id in used_fact_ids and fact.fact_type.strip().lower() in {
@@ -252,12 +250,11 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                         "이미 종료된 캠페인/프로모션 사실을 현재형 콘텐츠에 사용했습니다. "
                         "해당 카드를 삭제하거나 명확한 회고형 콘텐츠로 다시 기획하세요.",
                         next(card.page for card in package.cards if fact.id in card.fact_ids),
-                        "fact_checker",
                     )
                 )
         if package.content_kind == ContentKind.INFORMATION and not fact.verified:
             issues.append(
-                _issue("FACT_UNVERIFIED", f"미검증 사실: {fact.statement}", owner="fact_checker")
+                _issue("FACT_UNVERIFIED", f"미검증 사실: {fact.statement}")
             )
         if fact.fact_type == "campaign" and fact.id in used_fact_ids:
             required = {"participation_steps", "prize", "deadline", "region"}
@@ -267,7 +264,7 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                     _issue(
                         "CAMPAIGN_DETAILS_MISSING",
                         f"응모 정보의 필수 항목이 빠졌습니다: {', '.join(missing)}",
-                        owner="fact_checker",
+
                     )
                 )
     return issues
@@ -288,7 +285,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     ),
                     "표지에는 관련 출처 이미지가 필요합니다.",
                     card.page,
-                    "image_curator",
                 )
             )
             continue
@@ -300,7 +296,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "SOURCE_IMAGE_MISSING",
                     "A real, relevant anime image is required for every card.",
                     card.page,
-                    "image_curator",
                 )
             )
             continue
@@ -311,7 +306,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "IMAGE_MISSING",
                     f"이미지 {card.image_id}를 찾을 수 없습니다.",
                     card.page,
-                    "copy_writer",
                 )
             )
             continue
@@ -322,7 +316,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "이미지가 콘텐츠 원문 또는 같은 작품의 출처가 확인된 공식 이미지가 아닙니다. "
                     "다른 작품 이미지나 출처가 불명확한 이미지는 사용할 수 없습니다.",
                     card.page,
-                    "image_curator",
                 )
             )
         if image.width > 0 and image.height > 0:
@@ -349,7 +342,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                         "원본 이미지 해상도가 카드 표시 크기에 부족합니다. "
                         "더 큰 공식 원본을 수집하세요.",
                         card.page,
-                        "image_curator",
                     )
                 )
         if (
@@ -365,7 +357,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "FOREIGN_IMAGE_UNEXPLAINED",
                     "이미지 속 외국어 핵심 내용을 한국어로 설명해야 합니다.",
                     card.page,
-                    "copy_writer",
                 )
             )
         if image.visual_match == "exact" and not image.related_fact_ids:
@@ -377,7 +368,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                         "relationship."
                     ),
                     card.page,
-                    "image_curator",
                 )
             )
         elif image.visual_match == "exact" and not set(card.fact_ids).intersection(
@@ -388,7 +378,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "IMAGE_FACT_MISMATCH",
                     "이미지와 카드가 설명하는 사실이 연결되지 않습니다.",
                     card.page,
-                    "image_curator",
                 )
             )
         if image.download_status == "failed":
@@ -397,7 +386,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "IMAGE_DOWNLOAD_FAILED",
                     image.download_error or "이미지 파일을 내려받지 못했습니다.",
                     card.page,
-                    "image_curator",
                 )
             )
         if not image.eligible_for_editorial_use(
@@ -411,7 +399,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "IMAGE_RIGHTS_REVIEW",
                     "승인된 공개 이미지 출처와 귀속 정보가 확인되지 않았습니다.",
                     card.page,
-                    "image_curator",
                 )
             )
         key = image_visual_key(image)
@@ -425,7 +412,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "IMAGE_USED_BEFORE",
                     "이전 콘텐츠에서 사용한 이미지입니다.",
                     card.page,
-                    "image_curator",
                 )
             )
         if image.has_alpha and image.subject_box is None:
@@ -434,7 +420,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "SUBJECT_BOX_MISSING",
                     "투명 이미지의 피사체 안전 영역이 계산되지 않았습니다.",
                     card.page,
-                    "image_curator",
                 )
             )
 
@@ -450,7 +435,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "가로 배너·장식용 자산은 카드 이미지로 쓸 수 없습니다. "
                     "장면이나 작품 비주얼을 다시 수집하세요.",
                     card.page,
-                    "image_curator",
                 )
             )
         keys = image_visual_keys(image)
@@ -463,7 +447,6 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                     "같은 원본 이미지를 여러 카드의 주 이미지로 반복했습니다. "
                     "다른 공식 이미지를 수집해야 합니다.",
                     card.page,
-                    "image_curator",
                 )
             )
     return issues
@@ -507,7 +490,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "移대뱶???곸뿭???ъ슜???좎쭨瑜?洹쇨굅 fact_id濡?媛由ы궎?꽌?쇰줈 ?쇱튂?섏? "
                     "?딆뒿?덈떎. ?좎쭨 ?ъ떎瑜??ㅼ떆 ?몄슜?섍굅??湲곗? ?녿뒗 ?좎쭨瑜?젣嫄고븯?몄슂.",
                     card.page,
-                    "fact_checker",
                 )
             )
     if not package.content_type:
@@ -515,7 +497,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
             _issue(
                 "CONTENT_TYPE_MISSING",
                 "추천 알고리즘용 대표 콘텐츠 유형을 지정해야 합니다.",
-                owner="copy_writer",
+
             )
         )
     evidence_type = infer_strong_content_type(package)
@@ -525,7 +507,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                 "CONTENT_TYPE_MISMATCH",
                 f"검증된 자료 유형은 {evidence_type}에 가깝지만 현재 분류는 "
                 f"{package.content_type or '미분류'}입니다. 자료 목적에 맞게 다시 분류하세요.",
-                owner="copy_writer",
+
             )
         )
     if package.content_type == "event":
@@ -540,7 +522,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "EVENT_PERIOD_MISSING",
                     "원문에 행사 기간의 양 끝 날짜가 있으므로 시작일과 종료일을 모두 "
                     "확인해 DB에 저장해야 합니다.",
-                    owner="fact_checker",
+
                 )
             )
         has_venue_fact = any(
@@ -552,7 +534,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                 _issue(
                     "EVENT_LOCATION_MISSING",
                     "검증된 행사 장소가 있으므로 장소명을 구조화해 DB에 저장해야 합니다.",
-                    owner="fact_checker",
+
                 )
             )
         if has_venue_fact and not package.event_country:
@@ -560,7 +542,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                 _issue(
                     "EVENT_COUNTRY_MISSING",
                     "검증된 행사 장소의 국가를 확인해 DB에 저장해야 합니다.",
-                    owner="fact_checker",
+
                 )
             )
         if has_venue_fact and package.event_region not in {"domestic", "overseas"}:
@@ -568,7 +550,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                 _issue(
                     "EVENT_REGION_MISSING",
                     "검증된 행사 장소를 한국 기준 국내/해외로 분류해 DB에 저장해야 합니다.",
-                    owner="fact_checker",
+
                 )
             )
     if package.content_type in {"event", "goods"}:
@@ -631,7 +613,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         "SINGLE_DAY_PERIOD_NOT_MIRRORED",
                         "원문이 하루 일정/발매일을 가리키므로 event_start와 event_end에 "
                         "같은 날짜를 저장하세요.",
-                        owner="fact_checker",
+
                     )
                 )
                 break
@@ -666,7 +648,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "하나의 굿즈 콘텐츠에 서로 다른 발매일이 섞였습니다. "
                     "같은 발매일의 상품만 남기고 "
                     "그 날짜를 시작일·종료일에 똑같이 저장하세요.",
-                    owner="fact_checker",
+
                 )
             )
         if all_verified_release_dates and (not package.event_start or not package.event_end):
@@ -675,7 +657,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "GOODS_RELEASE_PERIOD_MISSING",
                     "怨듭떇 ?먮Ц???곹뭹 諛쒕ℓ?쇱씠 ?뺤씤?섏뿀?쇰?濡?goods "
                     "?좎쭨瑜?DB ???ν빐???⑸땲??",
-                    owner="fact_checker",
+
                 )
             )
     if not POLICY.min_cards <= len(package.cards) <= POLICY.max_cards:
@@ -696,7 +678,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "FACT_DIVERSITY_LOW",
                     "카드뉴스에 활용된 검증 사실이 3개 미만입니다. 한 가지 사실을 늘려 쓰지 말고 "
                     "서로 다른 근거를 더 수집하거나 이 자료를 후보에서 제외하세요.",
-                    owner="fact_checker",
+
                 )
             )
     if package.cards:
@@ -708,7 +690,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "COVER_ROLE_MISSING",
                     "첫 장은 작품명과 핵심 훅을 담는 cover 역할이어야 합니다.",
                     first.page,
-                    "copy_writer",
                 )
             )
         if last.role != "ending":
@@ -717,7 +698,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "ENDING_ROLE_MISSING",
                     "마지막 장은 앞선 소재를 회수하는 ending 역할이어야 합니다.",
                     last.page,
-                    "copy_writer",
                 )
             )
 
@@ -738,7 +718,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "여러 행사 날짜를 제목에 몰아 넣지 마세요. 장소별 기간을 각각 짝지어 "
                     "상세 카드에 배치하세요.",
                     card.page,
-                    "copy_writer",
                 )
             )
         if card.page == 1:
@@ -749,7 +728,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                             "WORK_TITLE_NOT_KOREAN",
                             f"첫 장에 작품의 한국어 제목이 없습니다: {term.korean}",
                             card.page,
-                            "copy_writer",
                         )
                     )
         for term in package.term_glossary:
@@ -760,7 +738,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         "애니메이션 분기 용어 クール은 ‘최종 쿨’처럼 ‘쿨’로 번역하세요 "
                         "(‘쿠르’ 금지).",
                         card.page,
-                        "copy_writer",
                     )
                 )
             if term.original not in text:
@@ -774,7 +751,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         f"일본어 표기 앞에 자연스러운 한국어 번역을 붙이세요: "
                         f"{term.korean} ({term.original})",
                         card.page,
-                        "copy_writer",
                     )
                 )
         for match in re.finditer(r"[ぁ-ヿ]+|[、。]|[\u3400-\u9fff]+", text):
@@ -791,7 +767,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "한국어로 옮기세요: "
                     f"{japanese_run}",
                     card.page,
-                    "copy_writer",
                 )
             )
         if not title and not body:
@@ -800,7 +775,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "IMAGE_ONLY_PAGE",
                     "텍스트 없이 이미지만 있는 페이지입니다.",
                     card.page,
-                    "copy_writer",
                 )
             )
         if len(title) > POLICY.max_title_chars:
@@ -809,7 +783,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "TITLE_TOO_LONG",
                     "제목이 너무 길어 어절 단절 위험이 있습니다.",
                     card.page,
-                    "copy_writer",
                 )
             )
         if len(body) > POLICY.max_body_chars:
@@ -818,7 +791,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "BODY_TOO_LONG",
                     "본문이 카드 한 장의 정보량을 초과했습니다.",
                     card.page,
-                    "copy_writer",
                 )
             )
         if any(term in text for term in AGENT_MONOLOGUE_TERMS):
@@ -827,7 +799,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "AGENT_MONOLOGUE",
                     "독자에게 필요 없는 에이전트 혼잣말이 포함됐습니다.",
                     card.page,
-                    "copy_writer",
                 )
             )
         if any(
@@ -847,7 +818,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "확인 업무를 독자에게 넘깁니다. "
                     "확보한 사실을 직접 전달하거나 해당 내용을 제외해야 합니다.",
                     card.page,
-                    "copy_writer",
                 )
             )
         missing_facts = sorted(set(card.fact_ids) - fact_ids)
@@ -857,7 +827,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     "COPY_UNGROUNDED",
                     f"근거 없는 fact_id가 있습니다: {missing_facts}",
                     card.page,
-                    "fact_checker",
                 )
             )
         for phrase in card.protected_phrases:
@@ -867,7 +836,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         "PROTECTED_PHRASE_LOST",
                         f"보호 구절이 본문에 없습니다: {phrase}",
                         card.page,
-                        "copy_writer",
                     )
                 )
             elif not any(phrase in line for line in card.title_lines) and phrase in title:
@@ -876,7 +844,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         "PROTECTED_PHRASE_SPLIT",
                         f"보호 구절이 제목 줄 사이에서 갈라졌습니다: {phrase}",
                         card.page,
-                        "copy_writer",
                     )
                 )
 
@@ -893,7 +860,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         "CARD_REDUNDANT",
                         "앞 카드와 근거 사실이 중복됩니다.",
                         card.page,
-                        "copy_writer",
                     )
                 )
             seen_signatures.add(signature)
@@ -913,7 +879,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                             "중간 카드가 앞 카드의 근거 사실을 반복합니다. "
                             "새 근거·새 정보가 있는 카드로 다시 구성하세요.",
                             card.page,
-                            "copy_writer",
                         )
                     )
                 seen_interior_facts.update(card.fact_ids)
@@ -927,8 +892,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         f"마지막 장의 제목과 본문 합계가 {POLICY.max_ending_chars}자를 넘었습니다. "
                         "핵심 사실은 유지하고 엔딩 문구를 짧게 다듬으세요.",
                         ending.page,
-                        "copy_writer",
-                        severity="warning",
+
                     )
                 )
             if any(term in ending_text for term in GENERIC_HUMOR_TERMS):
@@ -937,7 +901,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         "ENDING_GENERIC",
                         "작품명만 바꿔도 성립하는 상투적 드립입니다.",
                         ending.page,
-                        "copy_writer",
                     )
                 )
             if any(mark in ending_text for mark in EXCESSIVE_PUNCTUATION):
@@ -946,7 +909,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         "ENDING_LOUD",
                         "데드팬 결말에 과한 감탄·웃음 표시가 있습니다.",
                         ending.page,
-                        "copy_writer",
                     )
                 )
     return issues
@@ -967,7 +929,6 @@ def check_layout(package: ContentPackage) -> list[QualityIssue]:
                     "BOX_OVERFLOW",
                     "이미지 또는 글자 영역이 카드 밖으로 나갑니다.",
                     card.page,
-                    "layout_director",
                 )
             )
         integrated_overlay_layout = layout.copy_box == layout.text_overlay_box
@@ -995,7 +956,6 @@ def check_layout(package: ContentPackage) -> list[QualityIssue]:
                     "EDGE_ATTACHED_IMAGE",
                     "일반 카드의 이미지가 화면 가장자리에 너무 붙어 있습니다.",
                     card.page,
-                    "layout_director",
                 )
             )
         text_region = layout.text_overlay_box
@@ -1005,16 +965,21 @@ def check_layout(package: ContentPackage) -> list[QualityIssue]:
             or text_region.height < 0.18
             or text_region.x + text_region.width > 1.001
             or text_region.bottom > 1.001
-            or (is_cover and text_region.y < 0.60)
+            or (
+                is_cover
+                and not (
+                    text_region.y < 0.40
+                    or text_region.y >= 0.60
+                )
+            )
         )
         if invalid_region:
             issues.append(
                 _issue(
                     "TEXT_OVERLAY_SAFE_AREA_INVALID",
                     "HTML 텍스트 영역이 너무 작거나 카드 밖에 있습니다. "
-                    "커버는 하단 영역을 사용해야 합니다.",
+                    "커버는 상단 또는 하단 영역을 사용해야 합니다.",
                     card.page,
-                    "layout_director",
                 )
             )
         overlaps = not (
@@ -1030,7 +995,6 @@ def check_layout(package: ContentPackage) -> list[QualityIssue]:
                     "IMAGE_COPY_REGION_OVERLAP",
                     "커버 이외 페이지에서 이미지 영역과 HTML 텍스트 영역이 겹칩니다.",
                     card.page,
-                    "layout_director",
                 )
             )
         gap = layout.copy_box.y - layout.image_box.bottom
@@ -1040,7 +1004,6 @@ def check_layout(package: ContentPackage) -> list[QualityIssue]:
                     "COVER_EMPTY_GAP",
                     f"표지 이미지와 제목 사이 여백이 큽니다({gap:.2f}).",
                     card.page,
-                    "layout_director",
                 )
             )
         if (
@@ -1054,7 +1017,6 @@ def check_layout(package: ContentPackage) -> list[QualityIssue]:
                     "이미지 잘림 가능성이 있는 배치입니다. "
                     "원본 비율·크기·중앙 배치로 수정해야 합니다.",
                     card.page,
-                    "layout_director",
                 )
             )
         if layout.contrast_mode not in {"dark_on_light", "light_on_dark", "scrim_required"}:
@@ -1063,7 +1025,6 @@ def check_layout(package: ContentPackage) -> list[QualityIssue]:
                     "CONTRAST_UNKNOWN",
                     "텍스트 대비 방식이 지정되지 않았습니다.",
                     card.page,
-                    "layout_director",
                 )
             )
         if (
@@ -1091,7 +1052,6 @@ def check_layout(package: ContentPackage) -> list[QualityIssue]:
                         "SUBJECT_CLIPPED",
                         "확대·이동 뒤 피사체의 머리, 발 또는 좌우 끝이 안전 영역을 벗어납니다.",
                         card.page,
-                        "layout_director",
                     )
                 )
     return issues
@@ -1107,18 +1067,29 @@ def check_detail_body(package: ContentPackage) -> list[QualityIssue]:
             _issue(
                 "DETAIL_BODY_LENGTH",
                 "자세히 보기 글은 180~3000자 범위여야 합니다.",
-                owner="detail_writer",
+
             )
         )
     facts_by_id = {fact.id: fact for fact in package.facts}
     source_ids = {source.id for source in package.sources}
+    card_fact_ids = {fact_id for card in package.cards for fact_id in card.fact_ids}
+    unlinked_card_facts = card_fact_ids - set(package.detail_fact_ids)
+    if unlinked_card_facts:
+        issues.append(
+            _issue(
+                "DETAIL_BODY_FACT_LINK_MISSING",
+                "Detail article is missing card fact IDs: "
+                + ", ".join(sorted(unlinked_card_facts)),
+
+            )
+        )
     unknown_fact_ids = sorted(set(package.detail_fact_ids) - facts_by_id.keys())
     if not package.detail_fact_ids or unknown_fact_ids:
         issues.append(
             _issue(
                 "DETAIL_BODY_FACT_LINK_MISSING",
                 "상세글에 연결된 근거 팩트가 없거나 존재하지 않는 팩트 ID가 있습니다.",
-                owner="detail_writer",
+
             )
         )
     for fact_id in set(package.detail_fact_ids) & facts_by_id.keys():
@@ -1128,7 +1099,7 @@ def check_detail_body(package: ContentPackage) -> list[QualityIssue]:
                 _issue(
                     "DETAIL_BODY_FACT_UNVERIFIED",
                     f"상세글이 미검증 정보 팩트를 참조합니다: {fact_id}",
-                    owner="detail_writer",
+
                 )
             )
         if not set(fact.source_ids) & source_ids:
@@ -1136,7 +1107,7 @@ def check_detail_body(package: ContentPackage) -> list[QualityIssue]:
                 _issue(
                     "DETAIL_BODY_SOURCE_MISSING",
                     f"상세글 근거 팩트에 연결된 출처가 없습니다: {fact_id}",
-                    owner="detail_writer",
+
                 )
             )
     expected_source_ids = {
@@ -1150,7 +1121,7 @@ def check_detail_body(package: ContentPackage) -> list[QualityIssue]:
             _issue(
                 "DETAIL_BODY_SOURCE_LINK_MISSING",
                 "상세글에 연결된 근거 출처 목록이 불완전합니다.",
-                owner="detail_writer",
+
             )
         )
     return issues
@@ -1167,20 +1138,20 @@ def run_quality_checks(package: ContentPackage) -> list[QualityIssue]:
     ]
 
 
-SCORE_THRESHOLDS = {"pass": 85, "card_minimum": 75, "safety_minimum_per_card": 4}
+SCORE_THRESHOLDS = {
+    "pass": POLICY.quality_pass_score,
+    "card_minimum": POLICY.quality_card_minimum_score,
+    "safety_minimum_per_card": POLICY.safety_minimum_per_card,
+}
 
 FACT_BLOCKERS = {
-    "SOURCE_NO_OFFICIAL",
-    "SOURCE_NOT_HTTPS",
-    "FACT_SOURCE_MISSING",
-    "FACT_UNVERIFIED",
-    "CAMPAIGN_DETAILS_MISSING",
-    "COPY_UNGROUNDED",
-    "SOURCE_STALE",
-    "EVENT_ALREADY_ENDED",
-    "FACT_DIVERSITY_LOW",
+    "SOURCE_NO_OFFICIAL", "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
+    "CAMPAIGN_DETAILS_MISSING", "COPY_UNGROUNDED", "SOURCE_STALE", "EVENT_ALREADY_ENDED",
+    "FACT_DIVERSITY_LOW", "UNSUPPORTED_DATE_CLAIM", "SOURCE_PUBLICATION_DATE_SHOWN",
+    "EVENT_PERIOD_MISSING", "GOODS_RELEASE_PERIOD_MISSING",
+    "MULTIPLE_GOODS_RELEASE_DATES",
 }
-IMAGE_BLOCKERS = {
+IMAGE_ISSUE_CODES = {
     "IMAGE_MISSING",
     "IMAGE_RENDER_MISSING",
     "IMAGE_LOW_RESOLUTION",
@@ -1199,53 +1170,6 @@ IMAGE_BLOCKERS = {
     "COVER_SOURCE_IMAGE_MISSING",
     "SOURCE_IMAGE_MISSING",
 }
-REPAIRABLE_IMAGE_BLOCKERS = {
-    "IMAGE_LOW_RESOLUTION",
-    "IMAGE_FACT_MISMATCH",
-    "IMAGE_REUSED_RAW",
-    "IMAGE_VISION_MISMATCH",
-    "IMAGE_COMPOSITION_REJECTED",
-}
-LAYOUT_BLOCKERS = {
-    "BOX_OVERFLOW",
-    "IMAGE_CROP_RISK",
-    "SUBJECT_CLIPPED",
-    "IMAGE_ONLY_PAGE",
-    "CARD_COUNT",
-}
-STORY_BLOCKERS = {
-    "COVER_ROLE_MISSING",
-    "ENDING_ROLE_MISSING",
-    "CONTENT_TYPE_MISSING",
-    "CONTENT_TYPE_MISMATCH",
-    "CARD_FACT_REUSED",
-    "DETAIL_BODY_MISSING",
-    "DETAIL_BODY_LENGTH",
-    "DETAIL_BODY_FACT_LINK_MISSING",
-    "DETAIL_BODY_FACT_UNVERIFIED",
-    "DETAIL_BODY_SOURCE_MISSING",
-    "DETAIL_BODY_SOURCE_LINK_MISSING",
-}
-SAFETY_BLOCKERS = {"SAFETY_HARMFUL_CONTENT"}
-
-ISSUE_PENALTIES = {
-    "EDGE_ATTACHED_IMAGE": 5,
-    "COVER_EMPTY_GAP": 4,
-    "CONTRAST_UNKNOWN": 6,
-    "FOREIGN_IMAGE_UNEXPLAINED": 8,
-    "TITLE_TOO_LONG": 6,
-    "BODY_TOO_LONG": 6,
-    "AGENT_MONOLOGUE": 5,
-    "RESEARCH_DELEGATED_TO_USER": 7,
-    "PROTECTED_PHRASE_LOST": 8,
-    "PROTECTED_PHRASE_SPLIT": 8,
-    "CARD_REDUNDANT": 6,
-    "ENDING_TOO_LONG": 4,
-    "ENDING_GENERIC": 6,
-    "ENDING_LOUD": 3,
-}
-
-
 def score_quality(
     package: ContentPackage,
     issues: list[QualityIssue],
@@ -1257,14 +1181,12 @@ def score_quality(
 ) -> dict[str, object]:
     """Score deterministic checks and a separate reviewer language assessment."""
     active_thresholds = thresholds or SCORE_THRESHOLDS
-    fact_issues = [issue for issue in issues if issue.code in FACT_BLOCKERS]
-    image_issues = [issue for issue in issues if issue.code in IMAGE_BLOCKERS]
-    layout_issues = [
-        issue
-        for issue in issues
-        if issue.owner == "layout_director" or issue.code in LAYOUT_BLOCKERS
+    hard_blockers, actionable_issues, routes_to_crawler = decision_metadata(issues)
+    scored_issues = [issue for issue in issues if RULES[issue.code].severity != "warning"]
+    fact_issues = [
+        issue for issue in scored_issues
+        if issue.code in FACT_BLOCKERS and RULES[issue.code].severity == "blocker"
     ]
-    copy_issues = [issue for issue in issues if issue.owner == "copy_writer"]
 
     evidence_score = 25 if not fact_issues else 0
     used_image_ids = {card.image_id for card in package.cards}
@@ -1275,6 +1197,11 @@ def score_quality(
         for image in package.images
     )
     source_image_card_count = sum(card.visual_mode == "source_image" for card in package.cards)
+    image_issues = [
+        issue
+        for issue in scored_issues
+        if issue.code in IMAGE_ISSUE_CODES and RULES[issue.code].severity == "blocker"
+    ]
     image_score = (
         0
         if image_issues
@@ -1285,40 +1212,16 @@ def score_quality(
         else 15
     )
     crop_codes = {"IMAGE_CROP_RISK", "SUBJECT_CLIPPED"}
-    image_visibility_score = 0 if any(issue.code in crop_codes for issue in issues) else 10
-    if any(issue.code in LAYOUT_BLOCKERS for issue in issues):
-        readability_score = 0
-    else:
-        readability_penalty = 6 * len(layout_issues) + sum(
-            ISSUE_PENALTIES.get(issue.code, 4)
-            for issue in copy_issues
-            if issue.code
-            in {
-                "FOREIGN_IMAGE_UNEXPLAINED",
-                "TITLE_TOO_LONG",
-                "BODY_TOO_LONG",
-                "PROTECTED_PHRASE_LOST",
-                "PROTECTED_PHRASE_SPLIT",
-            }
+    image_visibility_score = (
+        0
+        if any(
+            issue.code in crop_codes and RULES[issue.code].severity == "blocker"
+            for issue in scored_issues
         )
-        readability_score = max(0, 15 - readability_penalty)
-    editorial_score = max(
-        0,
-        5
-        - sum(
-            ISSUE_PENALTIES.get(issue.code, 0)
-            for issue in issues
-            if issue.code
-            in {
-                "AGENT_MONOLOGUE",
-                "RESEARCH_DELEGATED_TO_USER",
-                "CARD_REDUNDANT",
-                "ENDING_TOO_LONG",
-                "ENDING_GENERIC",
-                "ENDING_LOUD",
-            }
-        ),
+        else 10
     )
+    readability_score = 15
+    editorial_score = 5
     scores = {
         "evidence_and_accuracy": evidence_score,
         "image_suitability_and_rights": image_score,
@@ -1328,7 +1231,12 @@ def score_quality(
         "structure_and_style_rules": editorial_score,
         "safety_and_respect": safety_score or 0,
     }
-    total = sum(scores.values())
+    revision_deductions = sum(
+        score_penalty(issue.code)
+        for issue in issues
+        if RULES[issue.code].severity == "revise"
+    )
+    total = max(0, sum(scores.values()) - revision_deductions)
     visual_mode_counts = {
         "source_image": sum(card.visual_mode == "source_image" for card in package.cards),
         "editorial_graphic": sum(card.visual_mode == "editorial_graphic" for card in package.cards),
@@ -1337,9 +1245,12 @@ def score_quality(
     card_scores: dict[str, int] = {}
     for card in package.cards:
         page_issues = [issue for issue in issues if issue.page == card.page]
-        penalty = sum(ISSUE_PENALTIES.get(issue.code, 12) for issue in page_issues)
-        blocking_codes = IMAGE_BLOCKERS | LAYOUT_BLOCKERS | STORY_BLOCKERS
-        if any(issue.code in blocking_codes for issue in page_issues):
+        penalty = sum(
+            score_penalty(issue.code)
+            for issue in page_issues
+            if RULES[issue.code].severity == "revise"
+        )
+        if any(RULES[issue.code].severity == "blocker" for issue in page_issues):
             penalty = max(penalty, 30)
         rule_score = max(0, 100 - penalty)
         language_card_score = (card_language_scores or {}).get(card.page)
@@ -1348,34 +1259,28 @@ def score_quality(
             language_card_score if language_card_score is not None else rule_score,
         )
 
-    codes = {issue.code for issue in issues}
-    hard_blockers = sorted(
-        codes
-        & (FACT_BLOCKERS | IMAGE_BLOCKERS | LAYOUT_BLOCKERS | STORY_BLOCKERS | SAFETY_BLOCKERS)
-    )
     lowest_card = min(card_scores.values(), default=100)
-    if any(issue.code in FACT_BLOCKERS for issue in issues):
+    warnings = sorted(
+        issue.code for issue in issues if RULES[issue.code].severity == "warning"
+    )
+    if hard_blockers and routes_to_crawler:
         decision = "return_to_crawler"
-    elif any(issue.code in IMAGE_BLOCKERS - REPAIRABLE_IMAGE_BLOCKERS for issue in issues):
-        decision = "return_to_crawler"
-    elif any(issue.code in REPAIRABLE_IMAGE_BLOCKERS for issue in issues):
+    elif hard_blockers:
         decision = "revise"
-    elif language_score is None and not hard_blockers:
+    elif language_score is None:
         decision = "pending_language_review"
     elif (
-        hard_blockers
-        or total < active_thresholds["pass"]
+        total < active_thresholds["pass"]
         or lowest_card < active_thresholds["card_minimum"]
     ):
-        decision = "revise"
-    elif any(issue.severity in {"error", "critical"} for issue in issues):
-        decision = "revise"
+        decision = "return_to_crawler" if routes_to_crawler else "revise"
     else:
         decision = "pass_candidate"
 
     return {
         "total": total,
         "maximum": 100,
+        "revision_deductions": revision_deductions,
         "thresholds": active_thresholds,
         "dimensions": scores,
         "accepted_image_risk_count": risk_accepted_count,
@@ -1388,6 +1293,9 @@ def score_quality(
         "card_scores": card_scores,
         "lowest_card_score": lowest_card,
         "hard_blockers": hard_blockers,
+        "actionable_issues": actionable_issues,
+        "warnings": warnings,
+        "routes_to_crawler": routes_to_crawler,
         "decision": decision,
         "note": (
             "이미지는 원본 비율로 전부 보여야 합니다. "

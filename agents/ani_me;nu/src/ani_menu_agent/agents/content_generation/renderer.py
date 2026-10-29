@@ -99,37 +99,11 @@ def _background(image: Image.Image, style: str = "blur") -> Image.Image:
     if style == "palette":
         return Image.blend(blurred, palette, 0.22).convert("RGBA")
     if style == "gradient":
-        canvas = Image.new("RGBA", (CARD_WIDTH, CARD_HEIGHT), (0, 0, 0, 255))
-        draw = ImageDraw.Draw(canvas)
-        top = tuple(
-            round(channel * 0.66 + shade * 0.34)
-            for channel, shade in zip(mean, (22, 28, 42), strict=True)
-        )
-        middle = tuple(
-            round(channel * 0.35 + shade * 0.65)
-            for channel, shade in zip(mean, (12, 17, 27), strict=True)
-        )
-        bottom = (8, 11, 17)
-        for row in range(CARD_HEIGHT):
-            position = row / max(1, CARD_HEIGHT - 1)
-            if position < 0.58:
-                ratio = position / 0.58
-                color = tuple(
-                    round(a * (1 - ratio) + b * ratio)
-                    for a, b in zip(top, middle, strict=True)
-                )
-            else:
-                ratio = (position - 0.58) / 0.42
-                color = tuple(
-                    round(a * (1 - ratio) + b * ratio)
-                    for a, b in zip(middle, bottom, strict=True)
-                )
-            draw.line((0, row, CARD_WIDTH, row), fill=(*color, 255))
-        # A light image-derived wash prevents a hard seam around the sharp art
-        # while the gradient still protects the HTML copy zone.
-        return Image.blend(blurred, canvas.convert("RGB"), 0.36).convert("RGBA")
+        # Keep the full-card fill source-derived; the actual gradient belongs
+        # only under the bottom HTML copy zone, added by _copy_scrim.
+        return Image.blend(blurred, palette, 0.10).convert("RGBA")
 
-    return Image.blend(blurred, palette, 0.16).convert("RGBA")
+    return Image.blend(blurred, palette, 0.12).convert("RGBA")
 
 
 def _editorial_graphic_background(page: int, role: str, copy_text: str = "") -> Image.Image:
@@ -464,7 +438,7 @@ def _copy_scrim(layout) -> Image.Image:
         span = max(1, CARD_HEIGHT - fade_start)
         for y in range(fade_start, CARD_HEIGHT):
             progress = (y - fade_start) / span
-            alpha = int(218 * progress**0.82)
+            alpha = int(150 * progress**0.90)
             draw.line((0, y, CARD_WIDTH, y), fill=(*color, alpha))
     elif box.bottom <= 0.43:
         fade_end = min(CARD_HEIGHT, bottom + int(0.18 * CARD_HEIGHT))
@@ -495,6 +469,25 @@ def _copy_scrim(layout) -> Image.Image:
     return gradient
 
 
+def _soften_copy_zone(canvas: Image.Image, layout) -> Image.Image:
+    """Apply a faint source-preserving blur only behind bottom HTML copy."""
+    box = layout.text_overlay_box
+    if box.y < 0.50:
+        return canvas
+
+    top = max(0, int((box.y - 0.14) * CARD_HEIGHT))
+    copy_top = max(top + 1, int(box.y * CARD_HEIGHT))
+    mask = Image.new("L", (CARD_WIDTH, CARD_HEIGHT), 0)
+    draw = ImageDraw.Draw(mask)
+    for y in range(top, CARD_HEIGHT):
+        progress = min(1.0, (y - top) / (copy_top - top))
+        draw.line((0, y, CARD_WIDTH, y), fill=int(76 * progress))
+
+    blurred = canvas.filter(ImageFilter.GaussianBlur(radius=max(10, CARD_HEIGHT // 90)))
+    canvas.paste(blurred, (0, 0), mask)
+    return canvas
+
+
 def _paste_uncropped(
     canvas: Image.Image,
     image: Image.Image,
@@ -508,7 +501,7 @@ def _paste_uncropped(
     # Blend the sharp artwork into its same-source bleed instead of outlining
     # it like a rectangular photo tile. A proportional, gently feathered mask
     # scales with the image while leaving its central detail crisp.
-    feather = max(1, min(min(contained.size) // 3, max(24, min(contained.size) // 10)))
+    feather = max(1, min(min(contained.size) // 3, max(48, min(contained.size) // 5)))
     edge_mask = Image.new("L", contained.size, 255)
     mask_draw = ImageDraw.Draw(edge_mask)
     for inset in range(feather):
@@ -891,9 +884,20 @@ def render_card_png(
         ):
             _paste_uncropped(canvas, foreground, pixel_box)
 
-    # The PNG carries art and a directional contrast treatment only; HTML owns all copy.
+    # The PNG carries art and a localized bottom contrast treatment; HTML owns all copy.
+    canvas = _soften_copy_zone(canvas, card.layout)
     canvas.alpha_composite(_copy_scrim(card.layout))
 
+    output = io.BytesIO()
+    canvas.convert("RGB").save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+def render_review_preview(base_png: bytes, card: CardSpec, package: ContentPackage) -> bytes:
+    """Create an in-memory copy-overlay mock for review; never persist it as the card PNG."""
+    with Image.open(io.BytesIO(base_png)) as opened:
+        canvas = opened.convert("RGBA")
+    _draw_copy(canvas, card, package, _artwork_accent(canvas, card.page))
     output = io.BytesIO()
     canvas.convert("RGB").save(output, format="PNG", optimize=True)
     return output.getvalue()

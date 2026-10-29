@@ -8,6 +8,7 @@ from ani_menu_agent.discovery import (
     parse_html_listing,
     parse_mastodon_tag_timeline,
     parse_release_rss,
+    parse_wikidata_characters,
     rank_candidates,
     supports_discovery_adapter,
 )
@@ -25,6 +26,90 @@ def test_parse_anime_schedule() -> None:
     assert len(items) == 1
     assert items[0].source_id == "anime_schedule_rss"
     assert items[0].title == "Episode 1 is out"
+
+
+def test_event_and_goods_archive_paths_allow_canonical_article_urls() -> None:
+    source = Source(
+        id="goods_archive",
+        name="Goods archive",
+        url="https://publisher.example/goods/",
+        category="goods",
+        content_types=[ContentType.GOODS],
+        role="discovery",
+        collection="html",
+        status="active",
+        region="JP",
+        discovery_enabled=True,
+    )
+    html = """
+    <main>
+      <article>
+        <a href="/article/2026/figure-release">Anime figure announced for October</a>
+      </article>
+      <article><a href="/article/ranking">Access ranking</a></article>
+      <a href="/store/101">Click the banner for details</a>
+    </main>
+    """
+
+    items = parse_html_listing(html, source)
+
+    assert [str(item.url) for item in items] == [
+        "https://publisher.example/article/2026/figure-release"
+    ]
+
+
+def test_event_archive_accepts_articles_outside_the_archive_path() -> None:
+    source = Source(
+        id="event_archive",
+        name="Event archive",
+        url="https://publisher.example/news/event/",
+        category="event",
+        content_types=[ContentType.EVENT],
+        role="discovery",
+        collection="html",
+        status="active",
+        region="JP",
+        discovery_enabled=True,
+    )
+    html = (
+        '<article><a href="/news/2026/collab-event">'
+        'Anime collaboration event announced</a></article>'
+    )
+
+    items = parse_html_listing(html, source)
+
+    assert len(items) == 1
+    assert str(items[0].url) == "https://publisher.example/news/2026/collab-event"
+
+
+def test_wikidata_character_parser_keeps_work_link_and_deduplicates() -> None:
+    source = Source(
+        id="wikidata_character_catalog",
+        name="Wikidata character references",
+        url="https://query.wikidata.org/sparql",
+        category="wikidata_character_catalog",
+        content_types=[ContentType.CHARACTER],
+        role="reference",
+        collection="api",
+        status="active",
+        region="global",
+    )
+    binding = {
+        "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q25929253"},
+        "workLabel": {"type": "literal", "value": "Naruto"},
+        "character": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1740"},
+        "characterLabel": {"type": "literal", "value": "Sasuke Uchiha"},
+    }
+
+    items = parse_wikidata_characters(
+        {"results": {"bindings": [binding, binding]}}, source
+    )
+
+    assert len(items) == 1
+    assert items[0].title == "Sasuke Uchiha"
+    assert str(items[0].url) == "https://www.wikidata.org/entity/Q1740"
+    assert items[0].content_types == ["character"]
+    assert "Naruto" in items[0].summary
 
 
 def test_mastodon_trend_parser_stores_only_aggregated_tags_not_post_text_or_accounts() -> None:
@@ -280,7 +365,7 @@ def test_type_filter_only_selects_sources_mapped_to_that_type(monkeypatch) -> No
     assert set(active) == {"news_feed"}
 
 
-def test_official_staff_interview_is_classified_as_people_and_behind() -> None:
+def test_official_staff_interview_is_classified_as_people_and_humor() -> None:
     from ani_menu_agent.discovery import _inferred_candidate_types
 
     source = Source(
@@ -288,7 +373,7 @@ def test_official_staff_interview_is_classified_as_people_and_behind() -> None:
         name="Official staff interviews",
         url="https://official.example/news/",
         category="official_news",
-        content_types=[ContentType.PEOPLE, ContentType.BEHIND],
+        content_types=[ContentType.PEOPLE, ContentType.HUMOR],
         role="primary",
         collection="html",
         status="active",
@@ -299,10 +384,10 @@ def test_official_staff_interview_is_classified_as_people_and_behind() -> None:
         title="制作陣インタビュー：演出の舞台裏",
         url="https://official.example/news/interview-1",
         source_id=source.id,
-        content_types=["people", "behind"],
+        content_types=["people", "humor"],
     )
 
-    assert _inferred_candidate_types(item, source) == {"people", "behind"}
+    assert _inferred_candidate_types(item, source) == {"people", "humor"}
 
 
 def test_japanese_plush_and_lottery_release_is_classified_as_goods() -> None:
