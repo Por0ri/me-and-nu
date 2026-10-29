@@ -28,14 +28,15 @@
 ```text
 c0e5f3b8a124
 └─ e3a7b9c2d451  온보딩 V2
-   └─ f4b8c1d9a620  캐러셀 DB/API — 유일한 head와 명시적 target
+   └─ f4b8c1d9a620  캐러셀 DB/API
+      └─ 150a601074af  추천 연결 표 4개 — 지금의 유일한 head와 명시적 target
 ```
 
 대상 환경과 변경 승인을 별도로 확인한 뒤 적용할 명령은 다음과 같다. 이 문서 갱신 과정에서는 실행하지 않는다.
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe -m alembic upgrade f4b8c1d9a620
+.\.venv\Scripts\python.exe -m alembic upgrade 150a601074af
 ```
 
 이 후보는 f4 단일 head이며 생년월일 삭제 d2 파일을 제외했다. e3는 온보딩의 도입 revision이고 f4는 e3를 포함한다. 현재 대상 revision을 고정하기 위해 `upgrade head/heads` 대신 f4를 명시한다. 기존 생년월일 컬럼과 값은 보존하며, ORM에 없는 열이 autogenerate에서 삭제되지 않도록 보호한다. 과거 통합 작업 공간에는 d2 분기가 있었지만, 이미 d2가 적용된 DB를 이 후보만으로 자동 업그레이드할 수 있다고 해석하지 않는다. 해당 이력은 별도 검토하며 임의로 stamp·컬럼 재생성·값 추정을 하지 않는다. 최신 ORM의 DDL은 [current_schema.sql](erd/current_schema.sql)에서 확인하되 기존 DB에 실행하는 migration SQL로 사용하지 않는다.

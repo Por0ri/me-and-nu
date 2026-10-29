@@ -6,7 +6,7 @@
 
 2026-10-21 당시 온보딩 계약은 세부 관심사를 Q1·Q2 각 1개로 대체하고 프로필 이미지 입력을 제거한 V1 형식이다. 당시 추가 revision은 `c0e5f3b8a124`였으며 V1 답변은 호환 분기로 유지한다. 프로필 이미지 입력 제거 자체에는 DB 변경이 필요하지 않았다.
 
-**2026-10-28 온보딩 V2:** 작품 1~5개 → 작품의 장르·소재에서 1개 이상 → 소비 유형 1개를 받는다. 아래 기본 흐름은 V2이고 별도로 V1 호환 예시를 제공한다. 온보딩 도입 revision은 `e3a7b9c2d451`이며 현재 서비스 DB 준비에는 캐러셀 확장을 포함한 자식 **`f4b8c1d9a620`**을 명시한다. 생년월일 삭제 d2와는 별도 분기이므로 `upgrade head`나 `upgrade heads`를 사용하지 않는다. [V2 구현 명세](ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)와 [캐러셀 migration 안내](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 따른다.
+**2026-10-28 온보딩 V2:** 작품 1~5개 → 장르·소재 칩 1개 이상(종류별 7개까지, 고른 작품에 붙은 칩은 힌트) → 소비 유형 1개를 받는다. 아래 기본 흐름은 V2이고 별도로 V1 호환 예시를 제공한다. 온보딩 도입 revision은 `e3a7b9c2d451`이며 현재 서비스 DB 준비에는 캐러셀 확장 `f4b8c1d9a620`에 추천 연결 표 4개를 더한 **`150a601074af`**를 명시한다. 생년월일 삭제 d2와는 별도 분기이므로 `upgrade head`나 `upgrade heads`를 사용하지 않는다. [V2 구현 명세](ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)와 [캐러셀 migration 안내](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 따른다.
 
 **생년월일 정책 보류 유지 (2026-10-27~28):** 수집·저장·연령 확인 방식은 통합 완료 후 결정한다. 새 Pivot은 닉네임만 수집하고 생년월일 입력·검사·전송을 보류한다. 생년월일 삭제 migration을 새로 적용하지 않으며 레거시 Consumer 화면·유틸리티는 기존 상태를 유지한다.
 
@@ -50,7 +50,7 @@
 4. `GET /api/v1/auth/session`을 다시 실행한다. `sessionState="onboarding_pending"`과 **새 `csrfToken`**을 확인하고 **Authorize → CsrfToken** 값을 교체한다.
 5. `GET /api/v1/policies`에서 **표시된 모든 동의 항목과 실제 `policyVersion`**을 기록하고, `GET /api/v1/topics`에서 카탈로그가 준비된 실제 Topic ID를 얻는다. Topic은 로그인 뒤, 온보딩 전에도 조회할 수 있다.
 6. `온보딩` → `GET /api/v1/onboarding/works`의 query `topicId`와 검색어 `q`를 입력한다. `limit`은 기본 20, 최대 50이다. `items[]`에서 `selectable:true`인 작품을 1~5개 고르고 실제 `entityId`를 기록한다. 작품명·별칭을 검색하며 빈 검색어는 빈 목록이다. 다음 페이지는 같은 Topic·검색어와 반환된 `nextCursor`를 사용한다.
-7. `POST /api/v1/onboarding/preference-options`에 아래 후보 요청을 실제 작품 ID로 바꿔 입력한다. **현재 pending 세션과 CSRF**가 필요하다. `genres`와 `themes` 전체에서 최소 1개를 고르고 실제 `tagId`를 기록한다. 최대 선택 수는 없고 두 종류를 각각 선택할 필요도 없다. 작품을 바꿨다면 후보를 다시 조회한다.
+7. `POST /api/v1/onboarding/preference-options`에 아래 후보 요청을 실제 작품 ID로 바꿔 입력한다. **현재 pending 세션과 CSRF**가 필요하다. `genres`와 `themes` 전체에서 최소 1개를 고르고 실제 `tagId`를 기록한다. 종류별 최대 7개이며 두 종류를 각각 선택할 필요는 없다. 작품을 바꿨다면 힌트가 달라지므로 다시 조회한다.
 8. `POST /api/v1/onboarding/complete`에 아래 V2 JSON을 실제 Topic·작품·태그·정책 버전과 소비 유형으로 바꿔 제출한다. **201**, `onboardingCompleted=true`, `answers.version=2`, 선택 ID 집합·소비 유형 일치, `activeTopic.subtopicIds=[]`를 확인한다. 선택 동의도 배열에서 빼지 말고 원하지 않으면 `agreed:false`로 보낸다. 답변의 ID 배열은 오름차순으로 반환된다.
 9. 다시 `GET /api/v1/auth/session`을 실행해 `sessionState="active"`를 확인하고 새 `csrfToken`으로 **Authorize**를 갱신한다. 완료된 계정으로 작품 검색·후보 조회·완료를 다시 요청하면 409이므로 기존 계정의 답변이나 완료 상태를 초기화하지 않는다.
 10. 아래 주요 작업표에서 프로필·동의·관심사·피드·반응을 순서대로 실행한다. 해당 보호 API의 오류 분기 422/404를 시험한다면 **로그아웃 전에** 실행한다.
@@ -76,7 +76,7 @@
 {"topicId":1,"entityIds":[101,102]}
 ```
 
-200 응답은 `entityIds`, `genres[]`, `themes[]`, `minSelections:1`, `maxSelections:null`을 포함한다. 각 후보의 `tagId`, `kind`, `code`, `label`, `sourceEntityIds`를 확인한다. 같은 태그는 하나로 합쳐지고 출처 작품 ID를 함께 반환한다. 이 POST는 선택·동의·답변을 저장하지 않는다.
+200 응답은 `entityIds`, `genres[]`, `themes[]`, `minSelections:1`, `maxSelections:null`, `maxSelectionsPerKind:7`을 포함한다. `genres[]`·`themes[]`는 켜진 칩 전체이며 각 칩의 `tagId`, `kind`, `code`, `label`, `sourceEntityIds`를 확인한다. `sourceEntityIds`는 고른 작품 중 그 칩이 붙은 작품 ID이고 없으면 빈 배열이다. 이 POST는 선택·동의·답변을 저장하지 않는다.
 
 V2 온보딩 입력 예시 (`POST /api/v1/onboarding/complete`). 작품·태그 ID와 정책 버전은 형식 예시이며 위 조회 결과로 바꾼다.
 
@@ -102,11 +102,11 @@ V2 온보딩 입력 예시 (`POST /api/v1/onboarding/complete`). 작품·태그 
 
 위 JSON은 형식 예시다. `GET /policies`가 반환한 항목이 달라졌다면 **그 항목 전부**를 제출한다. 필수 항목은 `agreed:true`여야 한다. `accountType`은 `user`이고 `topicId`와 `answers`는 필수다. 온보딩에서는 프로필 이미지를 받지 않으므로 `profileImageId` 항목을 넣지 않는다. `null`을 포함해 전송하면 추가 필드 검증으로 422 `VALIDATION_ERROR`를 반환한다. 이 제거는 온보딩에만 적용하며 아래 별도 프로필 수정 API와 이미지 업로드 백로그는 변경하지 않는다.
 
-- Q1은 현재 선택 가능한 작품 ID 1~5개, Q2는 그 작품의 현재 장르·소재 후보 ID 1개 이상이다. 중복 ID는 거절하며 Q2의 고정 최대 개수는 없다.
+- Q1은 현재 선택 가능한 작품 ID 1~5개, Q2는 현재 켜진 장르·소재 칩 ID 1개 이상이며 종류별 7개까지다. 중복 ID는 거절한다.
 - `topicId`와 ID 배열의 원소는 양의 BIGINT JSON 정수다. 문자열·실수·bool·범위 초과는 422다. `version`은 정수 2만 허용한다.
 - Q3 `consumptionType`은 `world`, `relationships`, `ost`, `goods`, `events`, `news` 중 단일 문자열이다. 누락·배열·다른 값은 422다.
 - `birthDate`, `profileImageId`, `subtopicIds` 등 추가 필드는 null도 포함해 422다. Q2/Q3는 알림·마케팅 동의가 아니며 신규 온보딩에서 세부 관심사를 자동 구독하지 않는다.
-- 작품 검색에서 `selectable:false`이면 `unavailableReason=PREFERENCE_TAGS_NOT_READY`다. 현재 활성 태그 매핑이 없는 작품을 선택해 후보 계산이나 완료를 요청하면 422다. 후보 조회 이후 카탈로그가 바뀌어도 완료 단계에서 다시 검증한다.
+- 검색된 활성 작품은 모두 `selectable:true`다. 칩이 붙지 않은 작품을 골라도 칩 목록은 그대로 오고 힌트(`sourceEntityIds`)만 빈 배열이다. 한 종류를 8개 이상 고르면 완료 요청이 422다. 후보 조회 이후 카탈로그가 바뀌어도 완료 단계에서 다시 검증한다.
 
 ### C. 기존 V1 답변 호환 확인
 
@@ -141,7 +141,7 @@ Pivot은 정책 동의와 닉네임 입력 뒤 Q1 작품 검색·선택 → Q2 �
 | API-006 | 인증·세션 → `POST /api/v1/auth/logout` | 본문 없음. 모드 B의 현재 CSRF | **204** 본문 없음. 모드 B에서만 이후 보호 API 401 확인 |
 | API-011 | 정책 → `GET /api/v1/policies` | 없음. 비로그인도 가능 | **200** `consentItems[]`의 `type`, `policyVersion`, `required` 기록 |
 | — | 온보딩 → `GET /api/v1/onboarding/works` | pending 세션, 필수 query `topicId`, 선택 `q`, `cursor`, `limit`(1~50, 기본 20) | **200** `items[].entityId`, `selectable`, `unavailableReason`, `nextCursor`. 빈 검색어는 빈 목록 |
-| — | 온보딩 → `POST /api/v1/onboarding/preference-options` | `{"topicId":1,"entityIds":[101,102]}`를 실제 ID로 교체. pending 세션·현재 CSRF | **200** `genres`, `themes`, `sourceEntityIds`, `minSelections:1`, `maxSelections:null`; 선택 미저장 |
+| — | 온보딩 → `POST /api/v1/onboarding/preference-options` | `{"topicId":1,"entityIds":[101,102]}`를 실제 ID로 교체. pending 세션·현재 CSRF | **200** `genres`, `themes`(켜진 칩 전체), `sourceEntityIds`(힌트), `minSelections:1`, `maxSelections:null`, `maxSelectionsPerKind:7`; 선택 미저장 |
 | API-004 | 온보딩 → `POST /api/v1/onboarding/complete` | 위 V2 JSON 또는 구분한 V1 JSON. pending 세션·현재 CSRF | **201** `onboardingCompleted=true`, 버전에 맞는 `answers`, `activeTopic.subtopicIds=[]`; 이후 세션·CSRF 재조회 |
 
 ### 사용자·Topic·Subtopic·관심사 — 12개

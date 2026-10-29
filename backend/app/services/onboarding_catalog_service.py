@@ -1,4 +1,11 @@
-"""Search works and validate the current, curated preference-tag union."""
+"""Search works, list the curated genre/theme chips and validate V2 selections.
+
+Q2 offers every active chip of the Topic. Chips linked to the chosen works carry
+their sourceEntityIds so the screen can suggest them first; any active chip may
+be selected, up to seven genres and seven themes.
+"""
+
+from collections import Counter
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +17,10 @@ from app.schemas.onboarding import (
     PreferenceOption, PreferenceOptionsResponse,
 )
 from app.services.cursor import decode_cursor, encode_cursor
+
+# EXP-33: more than seven chips per kind lowered the ranking score. Same value
+# as PreferenceOptionsResponse.max_selections_per_kind.
+MAX_TAGS_PER_KIND = 7
 
 
 def invalid_selection(field: str, message: str) -> ApiError:
@@ -39,41 +50,41 @@ async def works(
         return OnboardingWorksResponse(items=[])
     rows = await repo.search_works(db, topic_id, query=query, after_id=after_id, limit=limit + 1)
     page = rows[:limit]
-    links = await repo.list_active_tag_links(db, topic_id, [row.entity_id for row in page]) if page else []
-    selectable = {link.entity_id for link, _ in links}
+    # Q2 no longer depends on the chosen works' chips, so every active work can be chosen.
     return OnboardingWorksResponse(
         items=[OnboardingWork(
             entity_id=row.entity_id, name=row.name, aliases=row.aliases,
             image_url=row.image_url, release_year=row.release_year,
-            media_format=row.media_format, selectable=row.entity_id in selectable,
-            unavailable_reason=None if row.entity_id in selectable else "PREFERENCE_TAGS_NOT_READY",
+            media_format=row.media_format, selectable=True,
         ) for row in page],
         next_cursor=encode_cursor({**context, "after": page[-1].entity_id}) if len(rows) > limit else None,
     )
 
 
-async def preference_options(
-    db: AsyncSession, topic_id: int, entity_ids: list[int], *,
-    field: str = "entityIds", lock: bool = False, check_topic: bool = True,
-) -> PreferenceOptionsResponse:
-    if check_topic:
-        await _require_topic(db, topic_id)
+async def _require_works(
+    db: AsyncSession, topic_id: int, entity_ids: list[int], *, field: str, lock: bool = False,
+) -> set[int]:
     selected = set(entity_ids)
     if not 1 <= len(entity_ids) <= 5 or len(selected) != len(entity_ids):
         raise invalid_selection(field, "서로 다른 작품을 1~5개 선택해 주세요.")
     entities = await repo.find_active_works(db, topic_id, entity_ids, lock=lock)
     if {entity.entity_id for entity in entities} != selected:
         raise invalid_selection(field, "선택할 수 없는 작품이 있습니다. 현재 작품 목록을 다시 확인해 주세요.")
-    links = await repo.list_active_tag_links(db, topic_id, entity_ids, lock=lock)
-    if {link.entity_id for link, _ in links} != selected:
-        raise invalid_selection(field, "장르·소재가 준비되지 않은 작품이 있습니다. 다른 작품을 선택해 주세요.")
-    options: dict[int, PreferenceOption] = {}
-    for link, tag in links:
-        if tag.tag_id not in options:
-            options[tag.tag_id] = PreferenceOption(
-                tag_id=tag.tag_id, kind=tag.kind, code=tag.code,
-                label=tag.display_name, source_entity_ids=[],
-            )
+    return selected
+
+
+async def preference_options(
+    db: AsyncSession, topic_id: int, entity_ids: list[int], *, field: str = "entityIds",
+) -> PreferenceOptionsResponse:
+    await _require_topic(db, topic_id)
+    selected = await _require_works(db, topic_id, entity_ids, field=field)
+    options = {
+        tag.tag_id: PreferenceOption(
+            tag_id=tag.tag_id, kind=tag.kind, code=tag.code, label=tag.display_name, source_entity_ids=[],
+        )
+        for tag in await repo.list_active_tags(db, topic_id)
+    }
+    for link, tag in await repo.list_active_tag_links(db, topic_id, entity_ids):
         options[tag.tag_id].source_entity_ids.append(link.entity_id)
     return PreferenceOptionsResponse(
         entity_ids=sorted(selected),
@@ -88,13 +99,16 @@ async def validate_v2_selection(
     # Shared locks last until the owning completion transaction commits. This
     # prevents a catalogue edit between validation and persistence; historical
     # preferences remain untouched by later catalogue edits.
-    options = await preference_options(
-        db, topic_id, answers.favorite_entity_ids,
-        field="answers.favoriteEntityIds", lock=True, check_topic=False,
+    await _require_works(
+        db, topic_id, answers.favorite_entity_ids, field="answers.favoriteEntityIds", lock=True,
     )
-    allowed = {option.tag_id for option in (*options.genres, *options.themes)}
-    if not set(answers.preference_tag_ids) <= allowed:
+    tags = await repo.find_active_tags(db, topic_id, answers.preference_tag_ids, lock=True)
+    if {tag.tag_id for tag in tags} != set(answers.preference_tag_ids):
         raise invalid_selection(
             "answers.preferenceTagIds",
-            "선택한 작품의 현재 장르·소재 후보만 선택할 수 있습니다. 후보를 다시 확인해 주세요.",
+            "현재 선택할 수 있는 장르·소재만 선택할 수 있습니다. 목록을 다시 확인해 주세요.",
+        )
+    if max(Counter(tag.kind for tag in tags).values()) > MAX_TAGS_PER_KIND:
+        raise invalid_selection(
+            "answers.preferenceTagIds", f"장르와 소재는 각각 {MAX_TAGS_PER_KIND}개까지 선택할 수 있습니다.",
         )

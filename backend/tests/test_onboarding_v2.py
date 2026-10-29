@@ -199,7 +199,7 @@ def test_search_handles_blank_aliases_literal_wildcards_and_inactive_rows(v2_flo
     assert_no_onboarding_writes(flow)
 
 
-def test_search_pagination_is_stable_scoped_and_marks_ineligible_works(v2_flow):
+def test_search_pagination_is_stable_scoped_and_lets_untagged_works_be_chosen(v2_flow):
     flow = v2_flow
     pending_onboarding(flow)
     first = flow.client.get("/api/v1/onboarding/works", params={"topicId": 1, "q": "hero", "limit": 2})
@@ -208,9 +208,8 @@ def test_search_pagination_is_stable_scoped_and_marks_ineligible_works(v2_flow):
     cursor = first.json()["nextCursor"]
     second = flow.client.get("/api/v1/onboarding/works", params={"topicId": 1, "q": " HERO ", "limit": 2, "cursor": cursor})
     assert [row["entityId"] for row in second.json()["items"]] == [13, 15]
-    unavailable = second.json()["items"][0]
-    assert unavailable["selectable"] is False
-    assert unavailable["unavailableReason"] == "PREFERENCE_TAGS_NOT_READY"
+    untagged = second.json()["items"][0]
+    assert untagged["selectable"] is True and untagged["unavailableReason"] is None
     for changed in ({"topicId": 2, "q": "hero"}, {"topicId": 1, "q": "alias"}):
         result = flow.client.get("/api/v1/onboarding/works", params={**changed, "cursor": cursor})
         assert result.status_code == 422 and result.json()["code"] == "INVALID_CURSOR"
@@ -220,22 +219,34 @@ def test_search_pagination_is_stable_scoped_and_marks_ineligible_works(v2_flow):
         assert flow.client.get("/api/v1/onboarding/works", params={"topicId": 1, "q": "hero", "limit": limit}).status_code == 422
 
 
-def test_candidates_union_is_deduplicated_sorted_and_read_only(v2_flow):
+def test_options_list_every_active_chip_with_work_sources_and_are_read_only(v2_flow):
     flow = v2_flow
     csrf, _ = pending_onboarding(flow)
     response = candidates(flow, csrf)
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["entityIds"] == [11, 12]
-    assert [tag["tagId"] for tag in body["genres"]] == [102, 101]
+    # Every active chip in display order; inactive 104 and other-Topic 201 stay out.
+    assert [tag["tagId"] for tag in body["genres"]] == [102, 101, 105]
     assert [tag["tagId"] for tag in body["themes"]] == [103]
-    assert body["genres"][1]["sourceEntityIds"] == [11, 12]
-    assert body["minSelections"] == 1 and body["maxSelections"] is None
+    assert [tag["sourceEntityIds"] for tag in body["genres"]] == [[12], [11, 12], []]
+    assert body["themes"][0]["sourceEntityIds"] == [11]
+    assert body["minSelections"] == 1 and body["maxSelections"] is None and body["maxSelectionsPerKind"] == 7
     assert_no_onboarding_writes(flow)
 
 
-@pytest.mark.parametrize("entity_ids", [[999], [14], [21], [13], [11, 13], [11, 11]])
-def test_candidate_rejects_unknown_inactive_other_topic_unready_and_duplicate_works(v2_flow, entity_ids):
+def test_options_accept_a_work_without_chips(v2_flow):
+    flow = v2_flow
+    csrf, _ = pending_onboarding(flow)
+    response = candidates(flow, csrf, [13])
+    assert response.status_code == 200, response.text
+    options = response.json()["genres"] + response.json()["themes"]
+    assert [tag["tagId"] for tag in options] == [102, 101, 105, 103]
+    assert all(tag["sourceEntityIds"] == [] for tag in options)
+
+
+@pytest.mark.parametrize("entity_ids", [[999], [14], [21], [11, 11]])
+def test_candidate_rejects_unknown_inactive_other_topic_and_duplicate_works(v2_flow, entity_ids):
     flow = v2_flow
     csrf, _ = pending_onboarding(flow)
     response = candidates(flow, csrf, entity_ids)
@@ -277,23 +288,37 @@ def test_v2_completion_atomically_persists_selections_and_rotates_session(v2_flo
     assert signup_request(flow, csrf, v2_answers()).status_code == 409
 
 
-def test_all_available_tags_and_five_works_can_be_selected(v2_flow):
-    flow = v2_flow
+def add_chips(flow, kind, tag_ids):
     with Session(flow.engine) as session:
-        for tag_id in range(300, 360):
-            session.add(PreferenceTag(tag_id=tag_id, topic_id=1, kind="theme", code=f"tag-{tag_id}", display_name=f"소재 {tag_id}", is_active=True))
-        session.flush()
-        for tag_id in range(300, 360):
-            session.add(EntityTag(entity_id=11, tag_id=tag_id, topic_id=1))
+        for tag_id in tag_ids:
+            session.add(PreferenceTag(tag_id=tag_id, topic_id=1, kind=kind, code=f"tag-{tag_id}", display_name=f"칩 {tag_id}", is_active=True))
         session.commit()
+
+
+def test_seven_chips_per_kind_and_five_works_can_be_selected(v2_flow):
+    flow = v2_flow
+    add_chips(flow, "genre", range(300, 304))
+    add_chips(flow, "theme", range(400, 406))
     csrf, _ = pending_onboarding(flow)
     selected = [11, 12, 15, 16, 17]
     options = candidates(flow, csrf, selected).json()
+    assert (len(options["genres"]), len(options["themes"])) == (7, 7)
     all_tags = [option["tagId"] for option in options["genres"] + options["themes"]]
-    assert len(all_tags) == 63
     response = signup_request(flow, csrf, v2_answers(favoriteEntityIds=selected, preferenceTagIds=all_tags))
     assert response.status_code == 201, response.text
     assert set(response.json()["answers"]["preferenceTagIds"]) == set(all_tags)
+
+
+@pytest.mark.parametrize("kind", ["genre", "theme"])
+def test_more_than_seven_chips_of_one_kind_are_rejected(v2_flow, kind):
+    flow = v2_flow
+    add_chips(flow, kind, range(300, 308))
+    csrf, token = pending_onboarding(flow)
+    response = signup_request(flow, csrf, v2_answers(preferenceTagIds=list(range(300, 308))))
+    assert response.status_code == 422, response.text
+    assert response.json()["fields"][0]["field"] == "answers.preferenceTagIds"
+    assert flow.client.cookies.get(settings.session_cookie_name) == token
+    assert_no_onboarding_writes(flow)
 
 
 @pytest.mark.parametrize("tag_id", [101, 103])
@@ -311,16 +336,23 @@ def test_one_work_and_one_genre_or_theme_satisfy_minimum_selection(v2_flow, tag_
         assert session.scalar(select(func.count()).select_from(TapPreferenceTag)) == 1
 
 
+def test_any_active_chip_and_an_untagged_work_can_be_saved(v2_flow):
+    flow = v2_flow
+    csrf, _ = pending_onboarding(flow)
+    # 13 has no chips and 105 is linked to no chosen work: both are valid choices.
+    response = signup_request(flow, csrf, v2_answers(favoriteEntityIds=[13], preferenceTagIds=[105]))
+    assert response.status_code == 201, response.text
+    with Session(flow.engine) as session:
+        assert set(session.scalars(select(TapPreferenceTag.tag_id))) == {105}
+
+
 @pytest.mark.parametrize("changes,field", [
     ({"favoriteEntityIds": [999]}, "answers.favoriteEntityIds"),
     ({"favoriteEntityIds": [14]}, "answers.favoriteEntityIds"),
     ({"favoriteEntityIds": [21]}, "answers.favoriteEntityIds"),
-    ({"favoriteEntityIds": [13]}, "answers.favoriteEntityIds"),
     ({"preferenceTagIds": [999]}, "answers.preferenceTagIds"),
     ({"preferenceTagIds": [104]}, "answers.preferenceTagIds"),
-    ({"preferenceTagIds": [105]}, "answers.preferenceTagIds"),
     ({"preferenceTagIds": [201]}, "answers.preferenceTagIds"),
-    ({"favoriteEntityIds": [12], "preferenceTagIds": [103]}, "answers.preferenceTagIds"),
     ({"favoriteEntityIds": []}, "answers.favoriteEntityIds"),
     ({"preferenceTagIds": [101, 101]}, "answers.preferenceTagIds"),
 ])
@@ -338,7 +370,6 @@ def test_v2_invalid_selection_never_writes_partial_onboarding(v2_flow, changes, 
 @pytest.mark.parametrize("catalogue_change,field", [
     ("UPDATE entity SET is_active = 0 WHERE entity_id = 11", "answers.favoriteEntityIds"),
     ("UPDATE preference_tag SET is_active = 0 WHERE tag_id = 103", "answers.preferenceTagIds"),
-    ("DELETE FROM entity_tag WHERE entity_id = 11 AND tag_id = 103", "answers.preferenceTagIds"),
 ])
 def test_completion_revalidates_catalogue_after_candidate_preview(v2_flow, catalogue_change, field):
     flow = v2_flow

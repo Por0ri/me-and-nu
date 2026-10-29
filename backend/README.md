@@ -35,7 +35,7 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 # 저장소 루트에서 docker compose up -d postgres redis를 먼저 실행
 cd backend
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m alembic upgrade f4b8c1d9a620
+.\.venv\Scripts\python.exe -m alembic upgrade 150a601074af
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
 .\.venv\Scripts\python.exe scripts/run_local_api.py
@@ -49,9 +49,9 @@ cd backend
 
 ### 온보딩 V2와 v1 호환 (2026-10-28)
 
-신규 흐름은 `GET /api/v1/onboarding/works?topicId=...&q=...`로 작품을 1~5개 선택하고, `POST /api/v1/onboarding/preference-options`에 `{topicId,entityIds}`를 보내 장르·소재 후보를 받습니다. 후보 합집합에서 1개 이상(고정 상한 없음)을 선택하고 기존 여섯 소비 유형 중 하나를 제출합니다. 두 조회는 가입 대기 세션을 사용하며 POST에는 CSRF가 필요합니다.
+신규 흐름은 `GET /api/v1/onboarding/works?topicId=...&q=...`로 작품을 1~5개 선택하고, `POST /api/v1/onboarding/preference-options`에 `{topicId,entityIds}`를 보내 활성 장르·소재 칩 전체를 받습니다. 선택 작품에 붙은 칩은 `sourceEntityIds`로 출처 작품을 알려 힌트로 씁니다. 칩은 장르·소재 합쳐 1개 이상, 종류별 7개까지 선택하고 기존 여섯 소비 유형 중 하나를 제출합니다. 두 조회는 가입 대기 세션을 사용하며 POST에는 CSRF가 필요합니다.
 
-완료 요청의 새 답변은 `answers:{version:2,favoriteEntityIds:[...],preferenceTagIds:[...],consumptionType:"world"}`입니다. 기존 프로필·정책·Topic 입력과 세션 교체는 유지합니다. 현재 카탈로그를 재검증한 뒤 답변·선택·동의·Tap을 함께 저장합니다. `entity` 등 신규 6개 테이블과 기존 `onboarding_answers` 버전 조건의 도입 revision은 `e3a7b9c2d451`입니다. 현재 서비스 target과 유일한 head는 캐러셀 확장을 포함하는 자식 `f4b8c1d9a620`이며 [적용 경로](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 따릅니다. 생년월일 삭제 d2 파일은 이 후보에 포함하지 않습니다.
+완료 요청의 새 답변은 `answers:{version:2,favoriteEntityIds:[...],preferenceTagIds:[...],consumptionType:"world"}`입니다. 기존 프로필·정책·Topic 입력과 세션 교체는 유지합니다. 현재 카탈로그를 재검증한 뒤 답변·선택·동의·Tap을 함께 저장합니다. `entity` 등 신규 6개 테이블과 기존 `onboarding_answers` 버전 조건의 도입 revision은 `e3a7b9c2d451`입니다. 현재 서비스 target과 유일한 head는 캐러셀 확장 `f4b8c1d9a620`에 추천 연결 표 4개를 더한 자식 `150a601074af`이며 [적용 경로](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 따릅니다. 생년월일 삭제 d2 파일은 이 후보에 포함하지 않습니다.
 
 카탈로그는 검토된 JSON을 `python -m app.seeds.onboarding_catalog --file <JSON> --expected-database <DB명>`으로 먼저 확인합니다. 기본은 dry-run이며 `--apply`만 저장합니다. [실작품 시작 카탈로그](app/seeds/onboarding_catalog_starter.json)는 대표작 30개·장르/소재 38개이며 [출처·선정 기준](../docs/ONBOARDING_CATALOG_SOURCES_2026-10-28.md)을 함께 관리합니다. 별도의 두 가상 작품 예시는 개발용 `--demo`에 한정됩니다. [JSON·API 상세 계약](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)과 [Pivot 연결 검증](../docs/ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md)을 참고하세요.
 
@@ -59,7 +59,7 @@ cd backend
 
 `POST /api/v1/onboarding/complete`는 `nickname`, `accountType=user`, `consents`, `topicId`와 함께 필수 `answers: {"q1":"world","q2":"releases"}`를 받습니다. Q1은 `world`, `relationships`, `ost`, `goods`, `events`, `news` 중 하나, Q2는 `releases`, `characters`, `restock`, `events` 중 하나의 문자열입니다. 배열·누락·다른 필드는 거절하며, 기존 `subtopicIds`는 온보딩 요청에서 제거되어 보내면 422입니다.
 
-**생년월일 결정 보류:** 통합 완료 후 결정하며 현재 로컬 구현을 최종 정책으로 해석하지 않습니다. 온보딩과 캐러셀 migration은 기존 생년월일 컬럼과 값을 보존합니다. d2 삭제 파일은 후보에서 제외했고, 배포 Compose와 로컬 OAuth helper는 현재 서비스 target `f4b8c1d9a620`을 명시적으로 선택합니다. 과거 d2가 이미 적용된 DB는 해당 이력을 임의로 수정하지 않으며, 이 후보만으로의 자동 업그레이드는 별도 검토 대상입니다. 구성 파일의 변경은 실제 migration·배포 실행을 뜻하지 않습니다.
+**생년월일 결정 보류:** 통합 완료 후 결정하며 현재 로컬 구현을 최종 정책으로 해석하지 않습니다. 온보딩과 캐러셀 migration은 기존 생년월일 컬럼과 값을 보존합니다. d2 삭제 파일은 후보에서 제외했고, 배포 Compose와 로컬 OAuth helper는 현재 서비스 target `150a601074af`를 명시적으로 선택합니다. 과거 d2가 이미 적용된 DB는 해당 이력을 임의로 수정하지 않으며, 이 후보만으로의 자동 업그레이드는 별도 검토 대상입니다. 구성 파일의 변경은 실제 migration·배포 실행을 뜻하지 않습니다.
 
 현재 로컬 코드에서는 생년월일 수집·저장과 연령 확인 절차가 제거되어 있습니다. `birthDate`는 `null`도 포함해 전송하면 422 `VALIDATION_ERROR`이며 연령 확인용 대체 필드도 받지 않습니다. `GET/PATCH /api/v1/users/me` 응답에도 `birthDate`가 없습니다. 닉네임·동의·Topic·Q1/Q2·완료 상태와 OAuth 인증은 유지합니다.
 

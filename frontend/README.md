@@ -29,7 +29,7 @@ NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true
 - 생년월일 정책은 보류합니다. 새 Pivot 가입에서는 생년월일을 입력·보관·전송하거나 연령 조건을 새로 적용하지 않습니다. 이전 Consumer 화면과 날짜 유틸리티는 별도 레거시 경로로 남겨두며 기존 DB의 생년월일 상태를 바꾸지 않습니다.
 - `/pivot/demo`, 개발용 `/pivot/preview`는 명시적인 가상 작품 fixture를 사용하고 실제 세션·저장 API에 접근하지 않습니다. 서비스 화면은 오류를 데모 카탈로그로 대체하지 않습니다.
 
-서비스 사용 전 온보딩 도입 revision `e3a7b9c2d451`을 포함하는 현재 target **`f4b8c1d9a620`**과 활성 `anime` Topic, 검토된 실제 작품 카탈로그를 준비해야 합니다. [온보딩 V2 명세](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)와 [캐러셀 DB·API 안내](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. 브라우저와 API 모두 같은 `localhost` 호스트를 쓰고 `NEXT_PUBLIC_API_BASE_URL`과 `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`를 실행 시 설정합니다. 실제 OAuth·약관 검증은 해당 개발 환경 설정을 사용합니다.
+서비스 사용 전 온보딩 도입 revision `e3a7b9c2d451`과 캐러셀 `f4b8c1d9a620`을 포함하는 현재 target **`150a601074af`**와 활성 `anime` Topic, 검토된 실제 작품 카탈로그를 준비해야 합니다. [온보딩 V2 명세](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)와 [캐러셀 DB·API 안내](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. 브라우저와 API 모두 같은 `localhost` 호스트를 쓰고 `NEXT_PUBLIC_API_BASE_URL`과 `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`를 실행 시 설정합니다. 실제 OAuth·약관 검증은 해당 개발 환경 설정을 사용합니다.
 
 검증 명령은 `npm test`, `npm run typecheck`, `npm run build -- --webpack`입니다. 관리 worktree에서 기존 설치 디렉터리를 junction으로 재사용할 경우 webpack 빌드로 확인하며 원본 checkout의 빌드 산출물을 변경하지 않습니다.
 
@@ -154,7 +154,7 @@ npm run dev
 
 브라우저의 HttpOnly 쿠키가 정상 전달되려면 두 주소 모두 `localhost`를
 사용해야 합니다. `localhost`와 `127.0.0.1`을 섞지 마세요. 백엔드 실행 전
-대상 DB를 확인한 뒤 `alembic upgrade f4b8c1d9a620`와 `python -m app.seeds.v1_local`을 사용합니다. 이 후보에는 f4 head만 있고 생년월일 삭제 d2 파일은 없습니다. 적용 revision을 고정하기 위해 `upgrade head`나 `upgrade heads`로 바꾸지 않습니다.
+대상 DB를 확인한 뒤 `alembic upgrade 150a601074af`와 `python -m app.seeds.v1_local`을 사용합니다. 이 후보에는 150a head만 있고 생년월일 삭제 d2 파일은 없습니다. 적용 revision을 고정하기 위해 `upgrade head`나 `upgrade heads`로 바꾸지 않습니다.
 Swagger 수동 절차는 [가이드](../docs/SWAGGER_TEST_GUIDE.md)에 있습니다.
 
 ## Vercel 연결

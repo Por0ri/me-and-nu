@@ -8,11 +8,11 @@
 
 | 단계 | 구현 계약 | 서버 검증 |
 | --- | --- | --- |
-| Q1 | 좋아하는 애니 작품 검색 후 1~5개 선택 | 고유한 양의 정수 작품 ID. 활성·같은 Topic·현재 활성 장르/소재 매핑이 있는 작품만 허용. |
-| Q2 | Q1 작품의 장르·소재 후보에서 1개 이상 선택 | 후보 합집합의 고유한 양의 정수 태그 ID. 장르·소재 전체를 합쳐 최소 1개이며 고정 최대 개수 없음. |
+| Q1 | 좋아하는 애니 작품 검색 후 1~5개 선택 | 고유한 양의 정수 작품 ID. 활성·같은 Topic 작품만 허용하며 장르/소재 연결 여부와 무관. |
+| Q2 | 장르·소재 칩에서 1개 이상 선택 (Q1 작품에 붙은 칩은 힌트) | 같은 Topic의 켜진 칩의 고유한 양의 정수 태그 ID. 장르·소재를 합쳐 최소 1개, 종류별 최대 7개. |
 | Q3 | “어떻게 덕질하세요?”에서 정확히 1개 선택 | 기존 Q1의 6개 코드를 `consumptionType`으로 재사용. |
 
-Q2는 장르와 소재를 각각 하나 이상 고르는 조건이 아니다. 제공된 유효 후보를 모두 선택할 수 있으며, 중복 ID·자유 입력·후보 밖 태그는 허용하지 않는다. 작품과 태그 배열은 집합 의미로 취급하며 완료 응답은 ID 오름차순으로 반환한다.
+Q2는 장르와 소재를 각각 하나 이상 고르는 조건이 아니다. 켜진 칩이면 Q1 작품과 무관하게 선택할 수 있고 종류별 7개까지다(추천 실험에서 7개까지는 3개와 차이가 없고 10개는 순위 점수가 떨어졌다). 중복 ID·자유 입력·꺼진 칩은 허용하지 않는다. 작품과 태그 배열은 집합 의미로 취급하며 완료 응답은 ID 오름차순으로 반환한다.
 
 | `consumptionType` | 표시 의미 |
 | --- | --- |
@@ -41,7 +41,7 @@ Q2는 장르와 소재를 각각 하나 이상 고르는 조건이 아니다. �
 
 `entity`, `preference_tag`, `tap`의 `(PK,topic_id)` UNIQUE와 연결 테이블의 복합 FK가 다른 Topic의 작품·태그·Tap 연결을 차단한다. 회원은 기존 `tap.user_id`로 결정한다. 새 API는 요청에서 `userId`나 임의 `tapId`를 받지 않는다.
 
-Tap 물리 삭제 시 답변과 작품·태그 선택은 CASCADE된다. 작품·태그 사전 참조는 RESTRICT이며 비활성화로 기존 선택을 보존한다. 카탈로그 변경 이후 이미 저장한 취향을 자동 삭제하지 않는다. Q1/Q2의 행 개수와 현재 후보 조건은 완료 트랜잭션의 서비스 검증이 담당하고, PK는 중복 연결을 막는다.
+Tap 물리 삭제 시 답변과 작품·태그 선택은 CASCADE된다. 작품·태그 사전 참조는 RESTRICT이며 비활성화로 기존 선택을 보존한다. 카탈로그 변경 이후 이미 저장한 취향을 자동 삭제하지 않는다. Q1/Q2의 행 개수와 현재 칩 조건은 완료 트랜잭션의 서비스 검증이 담당하고, PK는 중복 연결을 막는다.
 
 ```mermaid
 erDiagram
@@ -59,7 +59,7 @@ erDiagram
     TAP ||--o| ONBOARDING_ANSWERS : records
 ```
 
-그림의 `0..N`은 기존 회원·일반 Tap도 포함한 물리 구조다. 신규 V2 완료에는 작품 1~5개, 태그 1개 이상의 서비스 조건이 적용된다. Topic 일치는 위의 복합 FK로 강제한다.
+그림의 `0..N`은 기존 회원·일반 Tap도 포함한 물리 구조다. 신규 V2 완료에는 작품 1~5개, 태그 1개 이상(종류별 7개까지)의 서비스 조건이 적용된다. Topic 일치는 위의 복합 FK로 강제한다.
 
 | 답변 버전 | `q1_choice/q2_choice` | `consumption_type` | 선택 연결 |
 | --- | --- | --- | --- |
@@ -70,7 +70,7 @@ erDiagram
 
 ## 3. API 계약
 
-새 공개 API 2개를 추가하고 완료 API를 확장했다. **온보딩 V2 연결 당시** 등록 수는 공개 V1 35개 + 상태 확인 3개, 개발 API 사용 시 6개 추가 / 총 44개였다. 후속 캐러셀 이미지 GET 하나를 더한 현재 등록 수는 **공개 V1 36개 + 상태 확인 3개**, 개발 API 사용 시 **6개 추가 / 총 45개**이며 [최신 표](API_V1_1_LOCAL_ALIGNMENT.md)를 따른다. 라우트 등록과 실제 배포·실계정 검증은 별개다.
+새 공개 API 2개를 추가하고 완료 API를 확장했다. **온보딩 V2 연결 당시** 등록 수는 공개 V1 35개 + 상태 확인 3개, 개발 API 사용 시 6개 추가 / 총 44개였다. 후속 캐러셀 이미지 GET과 활동 기록 POST(API-033)를 더한 현재 등록 수는 **공개 V1 37개 + 상태 확인 3개**, 개발 API 사용 시 **6개 추가 / 총 46개**이며 [최신 표](API_V1_1_LOCAL_ALIGNMENT.md)를 따른다. 라우트 등록과 실제 배포·실계정 검증은 별개다.
 
 ### 3.1 작품 검색
 
@@ -82,7 +82,7 @@ erDiagram
 - `name`과 `aliases` 배열의 각 문자열을 대소문자 구분 없이 부분 검색한다. `%`, `_`, 역슬래시는 와일드카드가 아닌 문자로 검색한다.
 - 선택 query `limit`: 기본 20, 범위 1~50. 검색 페이지 크기이며 Q1 최대 선택 개수와 다르다.
 - 선택 query `cursor`: 최대 2,048자. 작품 `entity_id` 오름차순으로 이어 간다. cursor는 검색 리소스·Topic·정규화한 검색어에 바인딩된다. 다른 Topic·검색어에 재사용하거나 잘못된 cursor를 보내면 `422 INVALID_CURSOR`다. `limit`은 다음 페이지에서 바꿀 수 있다.
-- 활성 작품만 반환한다. 현재 활성 장르·소재 매핑이 없는 작품은 검색 결과에 표시하되 `selectable:false`, `unavailableReason:"PREFERENCE_TAGS_NOT_READY"`로 반환한다.
+- 활성 작품만 반환한다. Q2가 작품의 장르·소재 연결에 묶이지 않으므로 검색된 작품은 모두 `selectable:true`, `unavailableReason:null`이다. 두 필드는 기존 화면 호환을 위해 남긴다.
 
 응답의 `items[]` 필드:
 
@@ -90,18 +90,18 @@ erDiagram
 | --- | --- |
 | `entityId`, `name`, `aliases` | 내부 작품 ID, 작품명, 별칭 배열 |
 | `imageUrl`, `releaseYear`, `mediaFormat` | nullable 이미지 주소·출시 연도·형식. 동명 작품 구분에 사용 |
-| `selectable` | 현재 온보딩 선택 가능 여부 |
-| `unavailableReason` | 선택 가능하면 null, 매핑 미준비면 `PREFERENCE_TAGS_NOT_READY` |
+| `selectable` | 현재 온보딩 선택 가능 여부. 검색된 활성 작품은 항상 true |
+| `unavailableReason` | 항상 null. 예전 값 `PREFERENCE_TAGS_NOT_READY`는 더 쓰지 않는다 |
 
 응답 최상위는 `items`, `nextCursor`다. 결과가 없으면 빈 배열을 반환하며 검색만으로 사용자 선택을 저장하지 않는다.
 
-### 3.2 장르·소재 후보 계산
+### 3.2 장르·소재 칩 목록과 힌트
 
 `POST /api/v1/onboarding/preference-options`
 
 `onboarding_pending` 세션과 `X-CSRF-Token`이 필요하다. 요청은 `{topicId,entityIds:[...]}`이며 추가 필드는 거절한다. `topicId`와 배열의 ID는 양의 정수이며 bool·문자열·소수·BIGINT 범위 밖 값을 거절한다. 작품은 1~5개, 중복 불가다.
 
-선택 작품 각각이 같은 Topic 소속의 활성 작품이고 활성 장르·소재 매핑을 하나 이상 가져야 한다. 유효하지 않은 작품이 하나라도 있으면 `422 VALIDATION_ERROR`, `fields[].field="entityIds"`를 반환한다. 후보 계산은 선택·동의·온보딩 답변을 저장하지 않는다.
+선택 작품 각각이 같은 Topic 소속의 활성 작품이어야 한다. 장르·소재 연결이 없는 작품도 된다. 유효하지 않은 작품이 하나라도 있으면 `422 VALIDATION_ERROR`, `fields[].field="entityIds"`를 반환한다. 조회는 선택·동의·온보딩 답변을 저장하지 않는다.
 
 다음 ID는 응답 구조를 설명하는 예시이며 실제 API에서 조회한 ID를 사용한다.
 
@@ -109,17 +109,19 @@ erDiagram
 {
   "entityIds": [101, 102],
   "genres": [
-    {"tagId": 201, "kind": "genre", "code": "action", "label": "액션", "sourceEntityIds": [101, 102]}
+    {"tagId": 201, "kind": "genre", "code": "action", "label": "액션", "sourceEntityIds": [101, 102]},
+    {"tagId": 202, "kind": "genre", "code": "romance", "label": "로맨스", "sourceEntityIds": []}
   ],
   "themes": [
     {"tagId": 301, "kind": "theme", "code": "school", "label": "학원", "sourceEntityIds": [102]}
   ],
   "minSelections": 1,
-  "maxSelections": null
+  "maxSelections": null,
+  "maxSelectionsPerKind": 7
 }
 ```
 
-후보는 `tagId`로 중복 제거하며 각 종류 안에서 `sort_order`, `tag_id` 순으로 정렬한다. `sourceEntityIds`는 해당 태그를 제공한 선택 작품 ID다. Pivot은 모든 후보를 표시하며 고정 최대 선택 수를 두지 않는다. Q1을 바꾸면 기존 Q2 선택을 초기화하고 안내한 뒤 후보를 다시 조회한다. Q1을 바꾸지 않고 Q2로 돌아오면 현재 후보를 재검증해 아직 유효한 선택을 유지하고 후보 밖 선택만 해제한다.
+응답은 같은 Topic의 켜진 칩 전체이며 각 종류 안에서 `sort_order`, `tag_id` 순으로 정렬한다. `sourceEntityIds`는 그 칩이 붙은 선택 작품 ID이고, 붙은 작품이 없으면 빈 배열이다. 화면은 이 값으로 고른 작품과 관련된 칩을 힌트로 먼저 보여 줄 수 있다. 칩은 장르·소재 각각 `maxSelectionsPerKind`(7)개까지 고를 수 있다. 작품↔칩 연결은 `model/catalog/work_chips.csv`(시리즈 안에서 그 칩이 붙은 편들의 인기 합이 절반 이상일 때 연결)를 [작품 목록 명령](../backend/app/seeds/menu_works.py)으로 넣는다. 지금 Pivot 화면은 Q1을 바꾸면 Q2 선택을 비우고 다시 조회하는 기존 동작이며, 힌트 표시와 종류별 7개 제한은 프론트 갱신 때 반영한다.
 
 ### 3.3 완료와 V1 호환
 
@@ -141,7 +143,7 @@ erDiagram
 ```
 
 - `version`은 정수 2만 허용한다. 문자열 `"2"`나 실수 `2.0`은 거절한다.
-- `favoriteEntityIds`: 고유한 양의 정수 1~5개. `preferenceTagIds`: 고유한 양의 정수 1개 이상, 고정 최대 개수 없음. bool·문자열·실수·BIGINT 범위 밖 값은 거절한다.
+- `favoriteEntityIds`: 고유한 양의 정수 1~5개. `preferenceTagIds`: 고유한 양의 정수 1개 이상, 장르·소재 각각 최대 7개. bool·문자열·실수·BIGINT 범위 밖 값은 거절한다.
 - `consumptionType`: 위 6개 문자열 중 정확히 1개. 누락·배열·다른 값은 거절한다.
 - 버전 없는 `answers:{q1,q2}`는 기존 V1 요청·응답으로 유지한다. 명시적인 `version:1`, V2 필드와 기존 Q1/Q2 혼합, 버전 없는 V2 필드는 거절한다.
 - `birthDate`, `profileImageId`, `subtopicIds`는 null도 포함해 422다. 생년월일 정책을 새로 확정한 것이 아니라 기존 로컬 API 계약을 유지한 것이다.
@@ -152,8 +154,8 @@ erDiagram
 
 1. 회원 행을 `FOR UPDATE`로 잠그고 이미 로드된 객체도 갱신하여 중복 완료를 재검사한다.
 2. 현재 정책·필수 동의·활성 Topic을 검증한다.
-3. V2 작품을 현재 사전에서 다시 조회하고, 작품·태그·매핑을 공유 잠금으로 보호한 상태에서 현재 Q2 후보를 재계산한다.
-4. 제출 태그가 현재 후보에 포함되는지 검사한다. 후보 조회 이후 작품/태그가 비활성화되거나 매핑이 바뀌면 완료 요청을 거절할 수 있다.
+3. V2 작품과 제출 태그를 현재 사전에서 다시 조회하고 공유 잠금으로 보호한다.
+4. 제출 태그가 같은 Topic의 켜진 칩인지, 종류별 7개 이하인지 검사한다. 조회 이후 작품·태그가 비활성화되면 완료 요청을 거절할 수 있다.
 5. 회원 프로필·완료 시각, Tap, 답변, 작품·태그 선택, 동의, 기본 알림 설정을 저장하고 flush한 뒤 기존 세션을 폐기·교체한다.
 6. DB 저장 실패 시 전체 rollback과 미발급 세션 정리를 수행한다. Redis와 PostgreSQL을 묶는 분산 트랜잭션은 아니므로 이전 세션 폐기 이후 장애 시 재로그인이 필요할 수 있다.
 
@@ -166,17 +168,18 @@ erDiagram
 ```text
 c0e5f3b8a124
   └─ e3a7b9c2d451  onboarding_v2 — 온보딩 도입 revision
-     └─ f4b8c1d9a620  캐러셀 DB/API — 유일한 head와 명시적 적용 대상
+     └─ f4b8c1d9a620  캐러셀 DB/API
+        └─ 150a601074af  추천 연결 표 4개 — 유일한 head와 명시적 적용 대상
 ```
 
-온보딩만 도입한 당시 업그레이드 대상은 `e3a7b9c2d451`이었다. 현재 서비스 전체의 명시적 target은 그 자식 **`f4b8c1d9a620`**이며 e3를 포함한다. [캐러셀 migration 안내](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)에 따라 대상 환경을 확인한다. 이 후보는 단일 head지만 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 f4를 명시한다. 아래 표는 **d2 파일이 있던 과거 통합 작업 공간에서 e3를 도입했을 당시**의 기록이며, 현재 후보가 d2 적용 DB의 자동 업그레이드를 지원한다는 뜻이 아니다.
+온보딩만 도입한 당시 업그레이드 대상은 `e3a7b9c2d451`이었다. 현재 서비스 전체의 명시적 target은 캐러셀 `f4b8c1d9a620`에 추천 연결 표 4개를 더한 **`150a601074af`**이며 e3를 포함한다. [캐러셀 migration 안내](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)에 따라 대상 환경을 확인한다. 이 후보는 단일 head지만 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 150a를 명시한다. 아래 표는 **d2 파일이 있던 과거 통합 작업 공간에서 e3를 도입했을 당시**의 기록이며, 현재 후보가 d2 적용 DB의 자동 업그레이드를 지원한다는 뜻이 아니다.
 
 | 시작 상태 | 온보딩 전용 업그레이드 후 |
 | --- | --- |
 | c0 또는 그 이전이며 생년월일 컬럼이 있는 DB | e3 서비스 분기로 업그레이드, 생년월일 컬럼·기존 값 보존 |
 | 이미 d2가 적용되어 생년월일 컬럼이 없는 DB | e3와 d2 두 revision 상태, 생년월일 컬럼을 재생성하거나 값을 추정하지 않음 |
 
-현재 `compose.deploy.yaml`, `compose.labs.yaml`의 migration 서비스와 `run_local_oauth.py`의 준비 경로는 e3를 포함하는 f4를 명시한다. 이미 d2가 적용된 DB는 후보에 해당 revision 파일이 없으므로 별도 이력 검토가 필요하다. readiness 판정과 migration 실행 가능 여부는 서로 다르다. 이 구성 변경 자체는 원격 migration 실행이나 배포 완료를 뜻하지 않는다.
+현재 `compose.deploy.yaml`, `compose.labs.yaml`의 migration 서비스와 `run_local_oauth.py`의 준비 경로는 e3·f4를 포함하는 150a를 명시한다. 이미 d2가 적용된 DB는 후보에 해당 revision 파일이 없으므로 별도 이력 검토가 필요하다. readiness 판정과 migration 실행 가능 여부는 서로 다르다. 이 구성 변경 자체는 원격 migration 실행이나 배포 완료를 뜻하지 않는다.
 
 모델에 없는 `user_account.birth_date`가 autogenerate의 DROP 후보로 섞이지 않도록 [migration_policy.py](../backend/app/db/migration_policy.py)의 `include_schema_object`를 Alembic의 온라인·오프라인 설정에 연결했다. 생성된 migration은 온보딩 범위와 생년월일 DDL 부재를 별도로 검토해야 한다.
 

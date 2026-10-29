@@ -328,7 +328,7 @@ http://localhost:8000/api/v1/auth/login/naver/callback
 
 세션이 Redis 모드여도 OAuth 시도는 PostgreSQL에서 처리하므로 마이그레이션이 필요하다. 회원 테이블의 기존 소셜 식별 컬럼·UNIQUE는 재사용한다.
 
-이 절의 최초 T02 revision 직전은 T01의 `a8c3d1f6e902`다. 당시 `upgrade head` 설명에는 기존 `signup_channel` 제거도 포함됐다. 현재 서비스 후보의 적용 대상은 `f4b8c1d9a620`으로 명시하며 서버의 현재 revision과 적용 범위를 먼저 확인한다. 최초 검증에서는 별도 로컬 테스트 DB에만 적용했으며, 기존 로컬 DB와 원격 서버 DB에는 적용하지 않았다.
+이 절의 최초 T02 revision 직전은 T01의 `a8c3d1f6e902`다. 당시 `upgrade head` 설명에는 기존 `signup_channel` 제거도 포함됐다. 현재 서비스 후보의 적용 대상은 `150a601074af`로 명시하며 서버의 현재 revision과 적용 범위를 먼저 확인한다. 최초 검증에서는 별도 로컬 테스트 DB에만 적용했으며, 기존 로컬 DB와 원격 서버 DB에는 적용하지 않았다.
 
 2026-10-21 후속 revision `c0e5f3b8a124`는 `tap`별 Q1·Q2를 저장하는 `onboarding_answers`를 추가한다. 전용 로컬 테스트 DB에는 적용됐고, 원본 `me_nu`는 `e7a4c2d9b812`로 유지했다. 2026-10-23 원격 점검에서 서버 DB도 이미 `c0e5f3b8a124`임을 확인했으며 이번 설정 적용 과정에서는 마이그레이션을 실행하지 않았다. `--prepare`는 전용 DB 마이그레이션만 수행하며 약관·Topic을 자동 생성하지 않는다.
 

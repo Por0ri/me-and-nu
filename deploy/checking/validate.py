@@ -116,8 +116,8 @@ def validate_config(config, values):
             raise GuardError("Backend containers must retain process and privilege isolation.")
         if service.get("entrypoint"):
             raise GuardError("Checking backend containers cannot override the reviewed entrypoint.")
-    if services["migrate"].get("command") != ["python", "-m", "alembic", "upgrade", "f4b8c1d9a620"]:
-        raise GuardError("Checking migration must target only f4b8c1d9a620; head/heads and DOB removal are forbidden.")
+    if services["migrate"].get("command") != ["python", "-m", "alembic", "upgrade", "150a601074af"]:
+        raise GuardError("Checking migration must target only 150a601074af; head/heads and DOB removal are forbidden.")
     if services["api"].get("command"):
         raise GuardError("Checking API must retain the reviewed Dockerfile command.")
     dependencies = services["api"].get("depends_on", {})

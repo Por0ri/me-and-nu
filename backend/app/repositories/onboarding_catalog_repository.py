@@ -68,6 +68,31 @@ async def find_active_works(
     return list((await db.execute(statement)).scalars().all())
 
 
+async def list_active_tags(db: AsyncSession, topic_id: int) -> list[PreferenceTag]:
+    """Every active genre/theme chip of the Topic in display order."""
+    statement = select(PreferenceTag).where(
+        PreferenceTag.topic_id == topic_id,
+        PreferenceTag.is_active.is_(True),
+        PreferenceTag.kind.in_(("genre", "theme")),
+    ).order_by(PreferenceTag.kind, PreferenceTag.sort_order, PreferenceTag.tag_id)
+    return list((await db.execute(statement)).scalars().all())
+
+
+async def find_active_tags(
+    db: AsyncSession, topic_id: int, tag_ids: list[int], *, lock: bool = False,
+) -> list[PreferenceTag]:
+    statement = select(PreferenceTag).where(
+        PreferenceTag.topic_id == topic_id,
+        PreferenceTag.tag_id.in_(tag_ids),
+        PreferenceTag.is_active.is_(True),
+        PreferenceTag.kind.in_(("genre", "theme")),
+    ).order_by(PreferenceTag.tag_id)
+    if lock:
+        # Same order as the catalogue importers: entities first, then tags by ID.
+        statement = statement.with_for_update(read=True)
+    return list((await db.execute(statement)).scalars().all())
+
+
 async def list_active_tag_links(
     db: AsyncSession, topic_id: int, entity_ids: list[int], *, lock: bool = False,
 ) -> list[tuple[EntityTag, PreferenceTag]]:

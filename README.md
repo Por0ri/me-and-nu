@@ -33,7 +33,7 @@ docker compose up -d postgres redis
 cd backend
 if (!(Test-Path .venv)) { py -m venv .venv }
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m alembic upgrade f4b8c1d9a620
+.\.venv\Scripts\python.exe -m alembic upgrade 150a601074af
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
 .\.venv\Scripts\python.exe scripts/run_local_api.py
@@ -41,7 +41,7 @@ if (!(Test-Path .venv)) { py -m venv .venv }
 
 Windows에서는 위 실행 스크립트가 PostgreSQL 비동기 연결에 맞는 이벤트 루프를 사용합니다. 자동 재시작은 하지 않으므로 코드 변경 후에는 기존 서버를 종료하고 다시 실행하세요. 이미 `http://localhost:8000/health/db`가 정상 응답하면 서버가 실행 중입니다. 같은 8000번 포트로 중복 실행하면 Windows에서 `WinError 10013` 또는 `10048`이 발생할 수 있습니다.
 
-API의 회원 유형은 `user` 하나입니다. 이 서비스 반영 후보의 Alembic head와 명시적 migration target은 `f4b8c1d9a620` 하나이며 온보딩 V2 `e3a7b9c2d451`의 자식입니다. 생년월일 삭제 `d2f6a9c4e731` 파일은 제외했고, 기존 생년월일 컬럼과 값은 보존합니다. 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 위 revision을 명시합니다. 과거 d2가 이미 적용된 DB는 이 후보에 해당 migration 이력이 없으므로 별도 이력 검토 없이 자동 업그레이드하지 않습니다. 환경별 실제 revision을 먼저 확인하세요. 이 저장소의 설정 변경만으로 DB 적용이나 배포가 이루어지지는 않습니다.
+API의 회원 유형은 `user` 하나입니다. 이 서비스 반영 후보의 Alembic head와 명시적 migration target은 추천 연결 표 4개를 더한 `150a601074af` 하나이며 캐러셀 `f4b8c1d9a620`과 온보딩 V2 `e3a7b9c2d451`을 포함합니다. 생년월일 삭제 `d2f6a9c4e731` 파일은 제외했고, 기존 생년월일 컬럼과 값은 보존합니다. 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 위 revision을 명시합니다. 과거 d2가 이미 적용된 DB는 이 후보에 해당 migration 이력이 없으므로 별도 이력 검토 없이 자동 업그레이드하지 않습니다. 환경별 실제 revision을 먼저 확인하세요. 이 저장소의 설정 변경만으로 DB 적용이나 배포가 이루어지지는 않습니다.
 
 `app.seeds.v1_local`은 정책, 영화 Topic·Subtopic, 로컬 공개 콘텐츠를 멱등적으로 준비합니다. `app.seeds.dev_user`는 로컬 테스트용 데모 사용자를 준비합니다. 기존 영화 Agent와 저장 로직은 별개입니다. 서버 실행 중 [Swagger UI](http://localhost:8000/docs), [OpenAPI JSON](http://localhost:8000/openapi.json), [ReDoc](http://localhost:8000/redoc)을 확인할 수 있습니다.
 

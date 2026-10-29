@@ -128,7 +128,8 @@ def api_pg(pg_schema, monkeypatch):
         db.flush()
         db.add_all([Entity(entity_id=i,topic_id=1,name=f"가상 작품 {i}",aliases=["Alias 100%_literal"] if i==1 else [],is_active=True) for i in (1,2,3)])
         db.add(Entity(entity_id=4,topic_id=2,name="다른 작품",aliases=[],is_active=True))
-        db.add_all([PreferenceTag(tag_id=i,topic_id=1,kind="genre" if i==1 else "theme",code=f"tag-{i}",display_name=f"소재 {i}",sort_order=i,is_active=True) for i in range(1,13)])
+        # Six genres and six themes: twelve chips stay within the cap of seven per kind.
+        db.add_all([PreferenceTag(tag_id=i,topic_id=1,kind="genre" if i<=6 else "theme",code=f"tag-{i}",display_name=f"칩 {i}",sort_order=i,is_active=True) for i in range(1,13)])
         db.flush()
         db.add_all([EntityTag(entity_id=1,tag_id=i,topic_id=1) for i in range(1,13)])
         db.add(EntityTag(entity_id=2,tag_id=1,topic_id=1))
@@ -165,11 +166,11 @@ def test_real_pg_search_candidates_and_atomic_completion(api_pg):
     second = client.get("/api/v1/onboarding/works",params={"topicId":1,"q":"가상","limit":1,"cursor":first["nextCursor"]}).json()
     assert [first["items"][0]["entityId"],second["items"][0]["entityId"]] == [1,2]
     all_works = client.get("/api/v1/onboarding/works",params={"topicId":1,"q":"가상"}).json()["items"]
-    assert all_works[2]["selectable"] is False
+    assert all(work["selectable"] for work in all_works)
     options = client.post("/api/v1/onboarding/preference-options",json={"topicId":1,"entityIds":[1,2]})
     assert options.status_code == 200, options.text
     assert options.json()["genres"][0]["sourceEntityIds"] == [1,2]
-    assert options.json()["maxSelections"] is None
+    assert options.json()["maxSelections"] is None and options.json()["maxSelectionsPerKind"] == 7
     with Session(engine) as db:
         assert db.scalar(select(func.count()).select_from(Tap)) == 0
         assert db.scalar(select(func.count()).select_from(ConsentHistory)) == 0

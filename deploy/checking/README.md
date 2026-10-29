@@ -11,7 +11,7 @@
 | 네트워크 | `me-nu-checking_data`(internal), `me-nu-checking_egress` |
 | Redis 키 접두사 / Secure 쿠키 | `me_nu_checking` / `menu_checking_session` |
 | 백엔드 이미지 | `me-nu-backend-checking:<40자리 커밋 SHA>` |
-| 서비스 마이그레이션 | `f4b8c1d9a620` |
+| 서비스 마이그레이션 | `150a601074af` |
 
 DB/Redis 비밀번호는 서버의 `init`에서 서로 다른 난수로 생성한다. 다른 환경의 회원·동의·세션·북마크·DB 덤프는 복사하지 않는다. API와 migration의 개발 인증 우회, 개발 API, LLM/TMDB/OpenAI 키는 비활성화돼 있다. 기존 에이전트 코드나 생년월일 정책은 바꾸지 않는다. DB의 기존 nullable `birth_date`와 값은 유지하며 물리 삭제 `d2`는 포함하지 않는다.
 
@@ -34,7 +34,7 @@ sudo bash deploy/checking/checking.sh status
 
 `build`는 추가로 `check-build`를 실행해 `CHECKING_IMAGE_TAG`가 현재 체크아웃의 실제 Git HEAD와 일치하는지, `backend/`에 staged/unstaged/untracked 변경이 없는지 확인한다. 불일치하면 이미지 빌드 전에 중단한다. Git 조회는 상속된 `GIT_*` 환경을 사용하지 않고 현재 체크아웃만 읽으며, sudo 소유권 차이를 위해 해당 경로에만 일회성 `safe.directory`를 지정한다. 전역 Git 설정은 변경하지 않는다. 일반 `check`·`up`·`status`·`stop`은 소스 빌드를 하지 않으므로 이 추가 검사 대상이 아니다. 빌드 도중에는 체크아웃을 변경하지 않는다.
 
-`up`은 저장소 healthcheck와 명시적 `alembic upgrade f4b8c1d9a620` 성공 후 API를 시작한다. `head/heads`로 바꾸지 않는다. `d2`가 적용된 과거 DB는 이 경로로 이전하지 않는다. DB/Redis 호스트 포트와 컨테이너 관리자 권한은 공개하지 않는다.
+`up`은 저장소 healthcheck와 명시적 `alembic upgrade 150a601074af` 성공 후 API를 시작한다. `head/heads`로 바꾸지 않는다. `d2`가 적용된 과거 DB는 이 경로로 이전하지 않는다. DB/Redis 호스트 포트와 컨테이너 관리자 권한은 공개하지 않는다.
 
 ## 정책·카탈로그·콘텐츠
 

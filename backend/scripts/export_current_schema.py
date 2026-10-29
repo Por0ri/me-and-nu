@@ -39,7 +39,7 @@ def render_schema() -> str:
         "-- Constraint names follow ORM metadata and can differ from migration history.",
         "-- Only SQL server defaults are emitted; Python defaults/onupdate are not triggers.",
         "-- Use Alembic migrations to change existing databases; do not apply this snapshot.",
-        "-- Service migration target: f4b8c1d9a620 (onboarding V2 + carousel); do not upgrade all heads.",
+        "-- Service migration target: 150a601074af (onboarding V2 + carousel + recommendation); do not upgrade all heads.",
         "-- Birth-date policy is deferred: existing birth_date columns/data are preserved.",
         "-- Absence of birth_date here describes ORM metadata, not approval to drop it.",
         "",

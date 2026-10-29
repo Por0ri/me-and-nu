@@ -34,6 +34,8 @@ def _content(*, production_type: str, source_draft_id: int | None):
 def _stub_subtopic_names(monkeypatch):
     monkeypatch.setattr(feed_service.content_repo, "list_content_subtopic_names", AsyncMock(return_value=["액션"]))
     monkeypatch.setattr(feed_service.content_repo, "list_content_sources", AsyncMock(return_value=[]))
+    # No recommendation round: the home feed stays newest-first in these tests.
+    monkeypatch.setattr(feed_service.recommendation_repo, "latest_round", AsyncMock(return_value=None))
 
 
 def _mock_detail_dependencies(monkeypatch, content):
