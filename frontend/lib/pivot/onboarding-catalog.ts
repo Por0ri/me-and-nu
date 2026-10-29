@@ -33,12 +33,11 @@ export function validatePreferenceOptions(value: PreferenceOptions, ids: number[
   for (const kind of ["genre", "theme"] as const) {
     for (const tag of kind === "genre" ? value.genres : value.themes) {
       if (!validId(tag?.tagId) || seen.has(tag.tagId) || tag.kind !== kind || typeof tag.code !== "string" ||
-        typeof tag.label !== "string" || !tag.label.trim() || !Array.isArray(tag.sourceEntityIds) || !tag.sourceEntityIds.length ||
+        typeof tag.label !== "string" || !tag.label.trim() || !Array.isArray(tag.sourceEntityIds) ||
         new Set(tag.sourceEntityIds).size !== tag.sourceEntityIds.length || !tag.sourceEntityIds.every(id => ids.includes(id))) fail();
       seen.add(tag.tagId);
     }
   }
-  if (ids.some(id => ![...value.genres, ...value.themes].some(tag => tag.sourceEntityIds.includes(id)))) fail();
   return value;
 }
 
