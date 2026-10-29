@@ -10,11 +10,14 @@ import re
 SEASON_RELATIONS = {"Sequel", "Prequel"}
 _TITLE_TAIL = re.compile(
     r"\s+(\d+(st|nd|rd|th)\s+season|season\s*\d+|part\s*\d+|final\s+season|the\s+movie|"
-    r"movie(\s*\d+)?|film|ova|ona|specials?|[ivx]+|\d+)$", re.I)
+    r"movie(\s*\d+)?|film|ovas?|ona|specials?|[ivx]+|\d+)$", re.I)
 
 
 def series_key(title):
-    t = re.sub(r"^gekijouban\s+", "", title.split(":")[0], flags=re.I)
+    head = title.split(":")[0]
+    if len(head.strip()) <= 3:  # "Re:Zero", "Re:CREATORS" 처럼 콜론 앞이 너무 짧으면 자르지 않는다 (다른 작품끼리 묶임)
+        head = title
+    t = re.sub(r"^gekijouban\s+", "", head, flags=re.I)
     prev = None
     while prev != t:  # 꼬리를 하나씩 떼어 낸다: "Shingeki no Kyojin Season 3 Part 2" → "Shingeki no Kyojin"
         prev = t

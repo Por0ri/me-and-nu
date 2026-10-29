@@ -39,6 +39,23 @@ NON_THEME_TAGS = {"Cast-Traits", "Cast-Main Cast", "Technical"}  # anilist_theme
 CHIP_WEIGHT = 1.0               # 온보딩에서 고른 장르·테마 하나 = 그런 작품 하나를 본 만큼
 GENRE_ALIAS = {"Suspense": "Thriller"}  # MAL 장르 이름 → AniList 장르 이름
 
+# 작품 특징에 더할 사람 정보 (1-4 0단계, EXP-26 채택). 묶음마다 비중, 비어 있으면 장르·태그만
+# studio: 애니 제작 주 스튜디오 / staff: 핵심 제작진 / voice: 주연 캐릭터의 일본 성우
+# 흔한 사람일수록 덜 친다 (× log(작품 수 / 그 사람이 붙은 작품 수) / log(작품 수)). 작품 1개에만 나오는 사람은 뺀다
+# 사람 정보는 작품 정보(anilist)에 studios · staff · voices 로 들어 있을 때만 쓰인다 (people_of)
+PEOPLE = {"studio": 1.0, "staff": 1.0, "voice": 1.0}
+PEOPLE_GROUPS = (("studio", "s:", "studios"), ("staff", "p:", "staff"), ("voice", "v:", "voices"))
+KEY_STAFF_ROLES = {"Director", "Chief Director", "Series Composition", "Music", "Character Design",
+                   "Original Creator", "Original Story"}
+WHOLE_WORK_ROLES = {"Script", "Screenplay"}  # 화수 표시가 없을 때만 (극장판 각본). 시리즈의 화별 각본가는 너무 많아서 뺌
+
+# 줄거리 취향 비중 (1-4b, EXP-27). ctx["T"](줄거리 임베딩, 작품 줄 순서)가 있을 때 취향 점수에 더한다. 0이면 안 씀
+TEXT_TASTE = 0.0
+
+# 빌려 오기 이웃을 "작품 정보 → 같이 본 패턴" 학습으로 찾을 때 설정 (1-4b2, EXP-28 채택. build_cf_borrow 기본 use 에 "learn")
+# feats: 학습 입력 ("feat" = 장르·태그·사람 정보, "text" = 줄거리 임베딩) / lam: 릿지 세기 / dim: 같이 본 패턴을 요약할 숫자 수
+LEARN = {"feats": ("feat",), "lam": 1.0, "dim": 64}
+
 # 다음 편 보너스. 최근에 본 시리즈일수록 크고, NEXT_TAU 일마다 약 1/e 로 줄어든다
 # 값은 EXP-04 에서 연습 3,000명으로 고름 (보너스 2~5, 기간 1~3년이면 비슷)
 NEXT_WEIGHT = 5.0
@@ -100,7 +117,39 @@ def build_vectors(anime, anilist, features=FEATURES):
         df = Counter(f for v in vec.values() for f in v)
         n = len(vec)
         vec = {a: {f: w * math.log(n / df[f]) for f, w in v.items() if df[f] < n} for a, v in vec.items()}
+    if PEOPLE:
+        add_people(vec, anilist)
     return vec
+
+
+def people_of(detail):
+    """AniList 상세 정보 한 작품(fetch_anilist.py detail) → 스튜디오 · 핵심 제작진 · 주연 성우 번호"""
+    studios = {e["node"]["id"] for e in (detail.get("studios") or {}).get("edges", [])
+               if e.get("isMain") and e["node"].get("isAnimationStudio")}
+    staff = set()
+    for e in (detail.get("staff") or {}).get("edges", []):
+        role = e.get("role") or ""
+        base = role.split(" (")[0]
+        if base in KEY_STAFF_ROLES or (base in WHOLE_WORK_ROLES and "(" not in role):
+            staff.add(e["node"]["id"])
+    voices = {v["id"] for e in (detail.get("characters") or {}).get("edges", []) if e.get("role") == "MAIN"
+              for v in e.get("voiceActors") or []}
+    return {"studios": studios, "staff": staff, "voices": voices}
+
+
+def add_people(vec, anilist):
+    # 작품 특징에 사람 정보를 PEOPLE 비중으로 더한다. 흔한 사람일수록 덜 치고, 작품 1개에만 나오는 사람은 뺀다
+    groups = [(g, p, k) for g, p, k in PEOPLE_GROUPS if PEOPLE.get(g)]
+    df = Counter(p + str(x) for m in anilist.values() for _, p, k in groups for x in m.get(k, ()))
+    n = sum(1 for m in anilist.values() if any(m.get(k) for _, _, k in groups))
+    if n < 2:
+        return
+    for a, m in anilist.items():
+        for g, p, k in groups:
+            for x in m.get(k, ()):
+                f = p + str(x)
+                if df[f] >= 2 and a in vec:
+                    vec[a][f] = PEOPLE[g] * math.log(n / df[f]) / math.log(n)
 
 
 def build_context(anime, series, popularity, anilist=None, features=FEATURES, events=None):
@@ -122,33 +171,40 @@ def build_context(anime, series, popularity, anilist=None, features=FEATURES, ev
         if a in anime:
             series_items[s].append(a)
 
-    # 작품 × 특징 표. 장르 취향은 이 표로 한 번에 계산한다
     anilist = anilist or {}
-    vec = build_vectors(anime, anilist, features)
-    feats = sorted({f for v in vec.values() for f in v})
-    col = {f: j for j, f in enumerate(feats)}
-    X = np.zeros((n, len(feats)))
-    for a, v in vec.items():
-        if a in row:
-            for f, w in v.items():
-                X[row[a], col[f]] = w
-    vnorm = np.sqrt((X * X).sum(axis=1))
-    vnorm[vnorm == 0] = 1.0
-
     adult = {a for a, v in anime.items() if v["genres"] & ADULT_GENRES}
     adult |= {a for a, m in anilist.items() if m["adult"]}
     start = {a: int(v["start_date"].replace("-", "")) for a, v in anime.items() if v["start_date"]}
 
     ctx = {
         "anime": anime, "ids": ids, "row": row, "series": series, "series_items": series_items,
-        "X": X, "vnorm": vnorm, "feature_col": col, "adult": adult, "start": start,
+        "adult": adult, "start": start,
         "by_popularity": by_popularity, "pop_rank": pop_rank,
         "pop_norm": np.log1p(pop_count) / math.log1p(max(pop_count.max(), 1)),
         "cand_rows": np.array([row[a] for a in by_popularity[:N_CANDIDATES]], dtype=np.int64),
     }
+    build_features(ctx, anilist, features)
     if events is not None:
         build_recent(ctx, *events)
     return ctx
+
+
+def build_features(ctx, anilist, features=FEATURES):
+    # 작품 × 특징 표. 장르 취향은 이 표로 한 번에 계산한다. 특징 설정(FEATURES · PEOPLE)을 바꾸면 다시 부른다
+    # 특징이 있는 작품 줄만 따로 모아 둔다 (Xf). 특징이 없는 작품은 취향 점수가 늘 0이라 계산을 건너뛴다
+    vec = build_vectors(ctx["anime"], anilist, features)
+    feats = sorted({f for v in vec.values() for f in v})
+    col = {f: j for j, f in enumerate(feats)}
+    row = ctx["row"]
+    X = np.zeros((len(ctx["ids"]), len(feats)))
+    for a, v in vec.items():
+        if a in row:
+            for f, w in v.items():
+                X[row[a], col[f]] = w
+    vnorm = np.sqrt((X * X).sum(axis=1))
+    has = np.flatnonzero(vnorm > 0)
+    vnorm[vnorm == 0] = 1.0
+    ctx.update(X=X, vnorm=vnorm, feature_col=col, feat_rows=has, Xf=X[has])
 
 
 def build_recent(ctx, anime_ids, seconds):
@@ -181,17 +237,22 @@ def build_cowatch(ctx, histories, n_items=COWATCH_ITEMS):
             p = pos[rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])]
             B[j, p[p >= 0]] = 1
         C += B.T @ B
+    ctx.update(cw_rows=uni, cw_pos=pos, cw_sim=cowatch_sims(C, len(histories)), cw_count=C, cw_users=len(histories))
+
+
+def cowatch_sims(C, n_users):
+    # 같이 본 사람 수 표 → 유사도 표들 (confidence · cosine · lift). 대각은 0
     d = np.diag(C).astype(np.float64)                    # 작품마다 본 사람 수
     Cd = C.astype(np.float64)
     with np.errstate(divide="ignore", invalid="ignore"):
         sims = {
             "confidence": np.nan_to_num(Cd / d[:, None]),
             "cosine": np.nan_to_num(Cd / np.sqrt(np.outer(d, d))),
-            "lift": np.nan_to_num(np.where(Cd >= LIFT_MIN_COUNT, Cd * len(histories) / np.outer(d, d), 0)),
+            "lift": np.nan_to_num(np.where(Cd >= LIFT_MIN_COUNT, Cd * n_users / np.outer(d, d), 0)),
         }
     for S in sims.values():
         np.fill_diagonal(S, 0)
-    ctx.update(cw_rows=uni, cw_pos=pos, cw_sim=sims, cw_count=C)
+    return sims
 
 
 def build_ease(ctx, lam=EASE_LAMBDA):
@@ -233,6 +294,30 @@ def build_als(ctx, histories, factors=ALS_FACTORS, reg=ALS_REG, alpha=ALS_ALPHA,
     ctx.update(als_Y=Y, als_YtY=Y.T @ Y, als_reg=reg, als_alpha=alpha)
 
 
+def build_rec(ctx, edges):
+    """AniList 커뮤니티 추천 ("이거 좋아하면 이것도", 유저 투표). edges: (작품 a, 추천 작품 b, 추천 수) 목록.
+    a → b 와 b → a 를 둘 다 잇고, 세기는 log(1 + 추천 수). 작품 줄마다 (이어진 줄 배열, 세기 배열)로 둔다"""
+    out = defaultdict(lambda: ([], []))
+    row = ctx["row"]
+    for a, b, n in edges:
+        if a in row and b in row and a != b and n > 0:
+            for x, y in ((a, b), (b, a)):
+                out[row[x]][0].append(row[y])
+                out[row[x]][1].append(math.log1p(n))
+    ctx["rec"] = {r: (np.array(ys, dtype=np.int64), np.array(ws)) for r, (ys, ws) in out.items()}
+
+
+def rec_scores(user, ctx):
+    # 본 작품들이 커뮤니티 추천으로 이어진 작품마다 세기를 더한다. 0~1 (그 유저의 1등이 1)
+    h = user["history"]
+    links = [ctx["rec"][r] for r in rows_of(ctx, h.anime[np.isin(h.status, WATCHED)]).tolist() if r in ctx["rec"]]
+    if not links:
+        return np.zeros(len(ctx["ids"]))
+    out = np.bincount(np.concatenate([y for y, _ in links]), weights=np.concatenate([w for _, w in links]),
+                      minlength=len(ctx["ids"]))
+    return out / out.max()
+
+
 def rows_of(ctx, anime_ids):
     # 작품 id 배열 → 줄 번호 배열 (작품 표에 없는 작품은 뺀다)
     ids = ctx["ids"]
@@ -270,7 +355,21 @@ def genre_scores(user, ctx):
         if j is not None:
             p[j] += CHIP_WEIGHT
     norm = math.sqrt(p @ p) or 1.0
-    return (ctx["X"] @ p) / (norm * ctx["vnorm"])  # 코사인 유사도
+    out = np.zeros(len(ctx["ids"]))                   # 특징이 없는 작품은 0
+    r = ctx["feat_rows"]
+    out[r] = (ctx["Xf"] @ p) / (norm * ctx["vnorm"][r])  # 코사인 유사도
+    return out
+
+
+def text_scores(user, ctx):
+    # 줄거리 취향: 본 작품들의 줄거리 벡터 합과 모든 작품 줄거리 벡터의 코사인 (음수는 0). 줄거리 없는 작품은 0
+    T = ctx["T"]
+    h = user["history"]
+    u = T[rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])].sum(axis=0)
+    n = math.sqrt(u @ u)
+    if n == 0:
+        return np.zeros(len(ctx["ids"]))
+    return np.clip(T @ u / n, 0, None)
 
 
 def rank_rows(rows, ctx, *keys):
@@ -373,13 +472,18 @@ def next_genre_pop(user, ctx, beta=POP_BETA, kind=POP_KIND, slots=NEXT_SLOTS):
 def cf_raw(user, ctx, kind=COWATCH_KIND):
     # 행동 기반 점수 (같이 본 횟수 표의 작품마다). kind: confidence · cosine · lift · ease → 본 작품 줄을 더함
     # confidence_max → 본 작품 줄 중 가장 큰 값 / als → 유저 벡터
+    # CF_INPUT 에 든 종류면 본 작품 중 같이 본 기록이 없는 작품을 "비슷한 작품들의 줄"(무게 평균)로 바꿔 넣는다 (EXP-24)
     h = user["history"]
-    p = ctx["cw_pos"][rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])]
+    rows = rows_of(ctx, h.anime[np.isin(h.status, WATCHED)])
+    p = ctx["cw_pos"][rows]
     p = p[p >= 0]
+    extra = _borrowed_rows(ctx, rows, kind) if CF_INPUT and kind in CF_INPUT and "cf_borrow" in ctx else None
     if kind == "confidence_max":
-        return ctx["cw_sim"]["confidence"][p].max(axis=0) if len(p) else np.zeros(len(ctx["cw_rows"]))
+        out = ctx["cw_sim"]["confidence"][p].max(axis=0) if len(p) else np.zeros(len(ctx["cw_rows"]))
+        return out if extra is None else np.maximum(out, extra.max(axis=0))
     if kind != "als":
-        return ctx["cw_sim"][kind][p].sum(axis=0)
+        out = ctx["cw_sim"][kind][p].sum(axis=0)
+        return out if extra is None else out + extra.sum(axis=0)
     if not len(p):
         return np.zeros(len(ctx["cw_rows"]))
     Y, Yi = ctx["als_Y"], ctx["als_Y"][np.unique(p)]
@@ -398,12 +502,113 @@ def next_cowatch(user, ctx, kind=COWATCH_KIND, slots=NEXT_SLOTS):
     return next_picks(user, ctx, slots) + cowatch(user, ctx, kind)
 
 
+CF_FILL = "borrow"   # 같이 본 기록이 없는 작품(ctx["cf_missing"])의 행동 기반 점수: None(0점) · "median" · "borrow". EXP-23에서 borrow 채택
+CF_INPUT = ("ease",)  # 유저가 본 작품 중 기록 없는 작품도 비슷한 작품으로 이어서 계산할 행동 기반 종류들. EXP-24에서 기록 많은 유저 설정(EASE)만 채택
+# 둘 다 build_cf_borrow 를 부른 문맥에서만 작동한다 (MAL 채점기는 기록 없는 작품을 정하지 않아서 결과 그대로).
+# 서비스에선 MAL 기록이 없는 작품(2022년 이후 작품) = 기록 없는 작품
+
+
+def _borrowed_rows(ctx, rows, kind):
+    # 본 작품 줄 번호 중 기록 없는 작품마다 "비슷한 작품 줄의 무게 평균" (build_cf_borrow 의 무게). 없으면 None
+    idx = ctx.get("cf_borrow_idx")
+    if idx is None:
+        idx = ctx["cf_borrow_idx"] = {r: i for i, r in enumerate(ctx["cf_borrow"][0].tolist())}
+    q = [idx[r] for r in rows.tolist() if r in idx]
+    if not q:
+        return None
+    cache = ctx.setdefault("cf_pseudo", {})
+    if kind not in cache:                       # 유사도 종류마다 한 번만 계산 (기록 없는 작품 × 같이 본 표 작품)
+        _, donors, W = ctx["cf_borrow"]
+        S = ctx["cw_sim"]["confidence" if kind == "confidence_max" else kind]
+        cache[kind] = W @ S[ctx["cw_pos"][donors]]
+    return cache[kind][q]
+
+
+def content_matrix(ctx, rows, feats):
+    # 작품 정보 → 학습 입력. 묶음마다 길이 1로 맞춰 이어 붙인다 (feat = 장르·태그·사람 정보, text = 줄거리 임베딩)
+    parts = []
+    if "feat" in feats:
+        parts.append(ctx["X"][rows] / ctx["vnorm"][rows, None])
+    if "text" in feats and "T" in ctx:
+        parts.append(ctx["T"][rows])
+    return np.hstack(parts)
+
+
+def learned_sims(ctx, rows, donors, feats=None, lam=None, dim=None):
+    """작품 정보로 같이 본 패턴을 맞히게 학습해서, 기록 없는 작품(rows)과 기록 있는 작품(donors)의 유사도를 낸다.
+    1) donors 끼리의 같이 본 코사인 표를 작품마다 dim 개 숫자로 요약 (고유값 분해)
+    2) 작품 정보로 그 숫자를 맞히는 릿지 회귀 (작품 속성 → 행동 패턴 연결, Gantner 외 2010)
+    3) rows 의 숫자를 예측해 donors 와 코사인"""
+    feats = feats or LEARN["feats"]
+    lam = LEARN["lam"] if lam is None else lam
+    dim = dim or LEARN["dim"]
+    p = ctx["cw_pos"][donors]
+    S = ctx["cw_sim"]["cosine"][np.ix_(p, p)].astype(np.float64)
+    w, V = np.linalg.eigh(S)
+    top = np.argsort(-w)[:dim]
+    E = V[:, top] * np.sqrt(np.clip(w[top] + 1, 0, None))   # 대각을 1로 돌려 놓은 코사인 표 기준
+    F, Fq = content_matrix(ctx, donors, feats), content_matrix(ctx, rows, feats)
+    Eq = Fq @ (F.T @ np.linalg.solve(F @ F.T + lam * np.eye(len(donors)), E))
+    E = E / np.maximum(np.linalg.norm(E, axis=1, keepdims=True), 1e-12)
+    Eq = Eq / np.maximum(np.linalg.norm(Eq, axis=1, keepdims=True), 1e-12)
+    return Eq @ E.T
+
+
+def build_cf_borrow(ctx, missing_ids, k=10, use=("learn", "rec")):
+    """기록 없는 작품마다 점수를 빌려 올 "기록 있는 비슷한 작품" k개와 무게를 정해 둔다.
+    tag = 작품 특징 코사인 (장르·태그·사람 정보), text = 줄거리 임베딩 코사인 (ctx["T"] 가 있을 때),
+    learn = 작품 정보 → 같이 본 패턴 학습 (learned_sims), rec = 커뮤니티 추천 세기 (build_rec 먼저). 여러 개 쓰면 무게를 더함"""
+    row, cw = ctx["row"], ctx["cw_rows"]
+    missing = np.zeros(len(ctx["ids"]), dtype=bool)
+    missing[[row[a] for a in missing_ids if a in row]] = True
+    donors = cw[~missing[cw]]                                  # 같이 본 표 안에서 기록이 있는 작품
+    col = {r: j for j, r in enumerate(donors.tolist())}
+    rows = np.flatnonzero(missing)
+    W = np.zeros((len(rows), len(donors)))                     # 기록 없는 작품 × 빌려 올 작품 무게
+    if "tag" in use:                                           # 작품 특징 코사인 (PEOPLE 이 있으면 사람 정보 포함)
+        X, vn = ctx["X"], ctx["vnorm"]
+        S = (X[rows] / vn[rows, None]) @ (X[donors] / vn[donors, None]).T
+        top = np.argpartition(-S, min(k, len(donors) - 1), axis=1)[:, :k]
+        for i in range(len(rows)):
+            W[i, top[i]] += np.clip(S[i, top[i]], 0, None)
+    if "text" in use and "T" in ctx:                           # 줄거리 임베딩 코사인 상위 k편 (줄거리 없는 작품은 0)
+        S = ctx["T"][rows] @ ctx["T"][donors].T
+        top = np.argpartition(-S, min(k, len(donors) - 1), axis=1)[:, :k]
+        for i in range(len(rows)):
+            W[i, top[i]] += np.clip(S[i, top[i]], 0, None)
+    if "learn" in use:                                         # 작품 정보 → 같이 본 패턴 학습으로 찾은 상위 k편 (LEARN 설정)
+        S = learned_sims(ctx, rows, donors)
+        top = np.argpartition(-S, min(k, len(donors) - 1), axis=1)[:, :k]
+        for i in range(len(rows)):
+            W[i, top[i]] += np.clip(S[i, top[i]], 0, None)
+    if "rec" in use:
+        for i, r in enumerate(rows.tolist()):
+            ys, ws = ctx.get("rec", {}).get(r, ((), ()))
+            for y, wv in zip(np.asarray(ys).tolist(), np.asarray(ws).tolist()):
+                if y in col:
+                    W[i, col[y]] += wv / max(ws)
+    keep = W.sum(axis=1) > 0
+    ctx["cf_missing"] = missing
+    ctx["cf_borrow"] = (rows[keep], donors, W[keep] / W[keep].sum(axis=1, keepdims=True))
+    ctx.pop("cf_borrow_idx", None)              # 다시 만들면 미리 계산한 것도 버림
+    ctx.pop("cf_pseudo", None)
+
+
 def cowatch_scores(user, ctx, kind=COWATCH_KIND):
     # 행동 기반 점수를 모든 작품에 대해 0~1 로 (그 유저의 1등 작품이 1). 같이 본 횟수 표 밖 작품은 0
+    # CF_FILL 이 있으면 기록 없는 작품도 0점으로 두지 않는다 (기록 있는 옛날 작품만 점수를 받아 신작이 밀리는 문제, EXP-21·23)
     raw = cf_raw(user, ctx, kind)
     out = np.zeros(len(ctx["ids"]))
     if raw.max() > 0:
         out[ctx["cw_rows"]] = raw / raw.max()
+    if CF_FILL and "cf_missing" in ctx:
+        miss = ctx["cf_missing"]
+        if CF_FILL == "median":
+            have = ctx["cw_rows"][~miss[ctx["cw_rows"]]]
+            out[miss] = np.median(out[have])
+        elif CF_FILL == "borrow":
+            rows, donors, W = ctx["cf_borrow"]
+            out[rows] = W @ out[donors]
     return out
 
 
@@ -411,27 +616,42 @@ def cowatch_scores(user, ctx, kind=COWATCH_KIND):
 # 기록이 적은 유저(신규)와 많은 유저는 강한 재료가 달라서 따로 고름 (연습 5,000명 기준, 값은 EXP-18 에서 확정)
 # - 기존 유저: 최근 30일 인기 β=0.35 + EASE γ=0.5 → 실전 33.01% (아이템 기반 CF 로는 27.53%)
 # - 신규 유저: 전체 기간 인기 β=1 + 같이 본 작품(가장 센 규칙 하나) γ=2 → 실전 18.55% (작품 1개 + 칩)
+#   + 최근 30일 인기 0.5 (trend, EXP-25) → 18.54% → 19.62%. 신작 기록이 없는 상황 15.22% → 17.84%
 # - 본 작품 7개 이하면 신규 유저 설정. 연습에서 7개까지는 신규 설정, 10개부터 EASE 가 이김 (EXP-16·18)
 # cf: 행동 기반 부분에 쓸 방법 (confidence · confidence_max = 아이템 기반 CF / ease / als)
 WARM = {"beta": 0.35, "gamma": 0.5, "kind": "recent", "cf": "ease"}            # 기록 많은 유저
-COLD = {"beta": 1.0, "gamma": 2.0, "kind": "all", "cf": "confidence_max"}      # 기록 적은 유저 (온보딩 직후)
+COLD = {"beta": 1.0, "gamma": 2.0, "kind": "all", "cf": "confidence_max", "trend": 0.5}  # 기록 적은 유저 (온보딩 직후)
 COLD_MAX_WATCHED = 7                                     # 본 작품이 이 개수 이하면 신규 유저 설정
 
 
-def hybrid(user, ctx, beta, gamma, kind="recent", cf_kind=COWATCH_KIND):
-    """취향 + 인기도 + 같이 본 작품 섞기 (EXP-14). cf_kind 로 같이 본 작품 대신 EASE·ALS 를 쓸 수 있다."""
+def hybrid(user, ctx, beta, gamma, kind="recent", cf_kind=COWATCH_KIND, delta=0.0, trend=0.0):
+    """취향 + 인기도 + 같이 본 작품 섞기 (EXP-14). cf_kind 로 같이 본 작품 대신 EASE·ALS 를 쓸 수 있다.
+    delta > 0 이면 AniList 커뮤니티 추천도 섞는다 (build_rec 먼저. 추천으로 이어진 작품은 후보에 넣음)
+    trend > 0 이면 최근 30일 인기를 더 섞는다 (전체 기간 인기를 쓰는 신규 유저 설정용, EXP-25. 최근 인기 300편은 후보에 넣음)"""
     s, p, c = genre_scores(user, ctx), pop_scores(user, ctx, kind), cowatch_scores(user, ctx, cf_kind)
+    if TEXT_TASTE and "T" in ctx:
+        s = s + TEXT_TASTE * text_scores(user, ctx)
+    total = s + beta * p + gamma * c
     rows = np.unique(np.r_[pop_candidates(user, ctx, kind), ctx["cw_rows"]])
-    return rank_rows(rows, ctx, -(s[rows] + beta * p[rows] + gamma * c[rows]))
+    if trend:
+        total = total + trend * pop_scores(user, ctx, "recent")
+        rows = np.unique(np.r_[rows, pop_candidates(user, ctx, "recent")])
+    if delta and "rec" in ctx:
+        r = rec_scores(user, ctx)
+        total = total + delta * r
+        rows = np.unique(np.r_[rows, np.flatnonzero(r > 0)])
+    return rank_rows(rows, ctx, -total[rows])
 
 
-def next_hybrid(user, ctx, beta=None, gamma=None, kind=None, slots=NEXT_SLOTS, cf_kind=None):
+def next_hybrid(user, ctx, beta=None, gamma=None, kind=None, slots=NEXT_SLOTS, cf_kind=None, delta=None, trend=None):
     """다음 편 자리 제한 + 조합 (EXP-14). 값을 안 주면 기존 유저 설정(WARM)."""
     beta = WARM["beta"] if beta is None else beta
     gamma = WARM["gamma"] if gamma is None else gamma
     kind = WARM["kind"] if kind is None else kind
     cf_kind = WARM["cf"] if cf_kind is None else cf_kind
-    return next_picks(user, ctx, slots) + hybrid(user, ctx, beta, gamma, kind, cf_kind)
+    delta = WARM.get("rec", 0.0) if delta is None else delta
+    trend = WARM.get("trend", 0.0) if trend is None else trend
+    return next_picks(user, ctx, slots) + hybrid(user, ctx, beta, gamma, kind, cf_kind, delta, trend)
 
 
 def next_auto(user, ctx, slots=NEXT_SLOTS):
@@ -439,7 +659,8 @@ def next_auto(user, ctx, slots=NEXT_SLOTS):
     기존 유저 설정은 EASE 를 쓰므로 build_cowatch → build_ease 를 먼저 불러 둔다."""
     n = int(np.isin(user["history"].status, WATCHED).sum())
     cfg = COLD if n <= COLD_MAX_WATCHED else WARM
-    return next_hybrid(user, ctx, cfg["beta"], cfg["gamma"], cfg["kind"], slots, cfg.get("cf", COWATCH_KIND))
+    return next_hybrid(user, ctx, cfg["beta"], cfg["gamma"], cfg["kind"], slots, cfg.get("cf", COWATCH_KIND),
+                       cfg.get("rec", 0.0), cfg.get("trend", 0.0))
 
 
 # ## 3. 최종 K개 고르기
