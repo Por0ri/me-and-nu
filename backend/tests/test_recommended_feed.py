@@ -1,10 +1,13 @@
 """Recommended home feed: EXP-30 visit rules, snapshot paging and newest-first fallback."""
 
+import base64
 from datetime import datetime, timedelta, timezone
+import struct
+from urllib.parse import quote
 import uuid
 
 import pytest
-from sqlalchemy import BigInteger, DefaultClause, Integer, JSON, MetaData, Uuid, create_engine, text
+from sqlalchemy import BigInteger, DefaultClause, Integer, JSON, MetaData, Uuid, create_engine, delete, text, update
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Session
 
@@ -222,3 +225,147 @@ async def test_recommended_cursor_is_bound_to_its_owner(engine, monkeypatch):
         with pytest.raises(ApiError) as exc:
             await feed(engine, user_id=user_id, cursor=cursor)
         assert exc.value.code == "INVALID_CURSOR"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["cancel_negative", "like_while_negative"])
+async def test_reaction_changes_do_not_reorder_an_existing_visit(engine, monkeypatch, change):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    first = await feed(engine)
+    assert [row[0] for row in cards(first)] == [507, 508]
+    with engine.begin() as connection:
+        statement = delete(ContentReaction) if change == "cancel_negative" else update(ContentReaction).values(
+            is_liked=True, updated_at=NOW + timedelta(minutes=1))
+        connection.execute(statement.where(ContentReaction.content_id == 505, ContentReaction.user_id == 7))
+    second = await feed(engine, cursor=first.next_cursor)
+    third = await feed(engine, cursor=second.next_cursor)
+    assert [row[0] for row in cards(second)] == [506, 504]
+    assert [row[0] for row in cards(third)] == [502, 503]
+    assert third.next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_new_dislike_is_hidden_without_skipping_the_next_card(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    first = await feed(engine)
+    with engine.begin() as connection:
+        connection.execute(ContentReaction.__table__.insert(), {
+            "user_id": 7, "tap_id": 11, "content_id": 506, "ox_feedback": "X",
+            "updated_at": NOW + timedelta(minutes=1),
+        })
+    second = await feed(engine, cursor=first.next_cursor)
+    third = await feed(engine, cursor=second.next_cursor)
+    assert [row[0] for row in cards(second)] == [504, 502]
+    assert [row[0] for row in cards(third)] == [503]
+    assert third.next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_hiding_a_consumed_card_does_not_shift_remaining_pages(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    first = await feed(engine)
+    with engine.begin() as connection:
+        connection.execute(update(Content).where(Content.content_id == 507).values(status="hidden"))
+    second = await feed(engine, cursor=first.next_cursor)
+    third = await feed(engine, cursor=second.next_cursor)
+    assert [row[0] for row in cards(second)] == [506, 504]
+    assert [row[0] for row in cards(third)] == [502, 503]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["hidden", "deleted", "expired", "no_source"])
+async def test_snapshot_rechecks_public_visibility_and_fills_the_page(engine, monkeypatch, change):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    first = await feed(engine)
+    with engine.begin() as connection:
+        if change == "no_source":
+            connection.execute(delete(ContentSource).where(ContentSource.content_id == 506))
+        else:
+            values = {"hidden": {"status": "hidden"}, "deleted": {"deleted_at": NOW},
+                      "expired": {"feed_valid_until": datetime(2000, 1, 1, tzinfo=timezone.utc)}}[change]
+            connection.execute(update(Content).where(Content.content_id == 506).values(**values))
+    second = await feed(engine, cursor=first.next_cursor)
+    assert [row[0] for row in cards(second)] == [504, 502]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_snapshot_ids_cannot_read_other_topics_or_hidden_content(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    first = await feed(engine)
+    context, _ = feed_service._decode_snapshot_cursor(first.next_cursor, {
+        "v": 3, "userId": 7, "topicId": 1, "subtopicId": None,
+    })
+    with engine.begin() as connection:
+        connection.execute(Topic.__table__.insert(), {"topic_id": 2, "topic_code": "other", "topic_name": "다른 분야"})
+        connection.execute(Content.__table__.insert(), {
+            "content_id": 601, "topic_id": 2, "title": "다른 분야 콘텐츠", "status": "active",
+        })
+        connection.execute(ContentSource.__table__.insert(), {"content_id": 601, "source_url": "https://example.com/601"})
+        connection.execute(update(Content).where(Content.content_id == 507).values(status="hidden"))
+    forged = feed_service._snapshot_cursor(context, [601, 507, 506, 504])
+    result = await feed(engine, cursor=forged)
+    assert [row[0] for row in cards(result)] == [506, 504]
+    assert all(row[1] is None for row in cards(result))
+    assert result.next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_snapshot_context_cannot_change_owner_topic_or_round_owner(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    first = await feed(engine)
+    context, remaining = feed_service._decode_snapshot_cursor(first.next_cursor, {
+        "v": 3, "userId": 7, "topicId": 1, "subtopicId": None,
+    })
+    for context_change in ({"userId": 8}, {"topicId": 2}, {"roundId": 999}):
+        with pytest.raises(ApiError) as exc:
+            await feed(engine, cursor=feed_service._snapshot_cursor(context | context_change, remaining))
+        assert exc.value.code == "INVALID_CURSOR"
+    # Even rewriting the user ID to the caller cannot grant another user's round.
+    with pytest.raises(ApiError) as exc:
+        await feed(engine, user_id=8, cursor=feed_service._snapshot_cursor(context | {"userId": 8}, remaining))
+    assert exc.value.code == "INVALID_CURSOR"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("packed", [
+    b"", b"not-eight", struct.pack(">Q", 0), struct.pack(">Q", 2**63),
+    struct.pack(">2Q", 506, 506), struct.pack(">601Q", *range(1, 602)),
+], ids=["empty", "misaligned", "zero", "above_bigint", "duplicate", "too_many"])
+async def test_snapshot_rejects_invalid_unbounded_or_duplicate_ids(engine, monkeypatch, packed):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    first = await feed(engine)
+    header = first.next_cursor.split(".")[0]
+    cursor = header + "." + base64.urlsafe_b64encode(packed).rstrip(b"=").decode("ascii")
+    with pytest.raises(ApiError) as exc:
+        await feed(engine, cursor=cursor)
+    assert exc.value.code == "INVALID_CURSOR"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cursor", [
+    "A" * (feed_service.MAX_FEED_CURSOR_LENGTH + 1),
+    encode_cursor({"v": 2, "userId": 7, "topicId": 1, "subtopicId": None,
+                   "roundId": 1, "asOf": NOW.isoformat(), "offset": 2}),
+], ids=["too_long", "legacy_v2"])
+async def test_oversized_and_legacy_offset_cursors_require_restart(engine, cursor):
+    with pytest.raises(ApiError) as exc:
+        await feed(engine, cursor=cursor)
+    assert exc.value.code == "INVALID_CURSOR"
+
+
+def test_snapshot_cursor_and_feed_query_stay_bounded_at_bigint_capacity():
+    maximum = 2**63 - 1
+    context = {"v": 3, "userId": maximum, "topicId": maximum, "subtopicId": None,
+               "roundId": maximum, "asOf": NOW.isoformat()}
+    remaining = list(range(maximum - 599, maximum + 1))
+    cursor = feed_service._snapshot_cursor(context, remaining)
+    assert len(cursor) <= feed_service.MAX_FEED_CURSOR_LENGTH
+    request_line = f"GET /api/v1/topics/{maximum}/feed?cursor={quote(cursor)}&limit=100 HTTP/1.1"
+    assert len(request_line.encode("ascii")) < 8192
+    parsed, restored = feed_service._decode_snapshot_cursor(cursor, {key: context[key] for key in ("v", "userId", "topicId", "subtopicId")})
+    assert restored == remaining and parsed == context
+
+    from app.main import create_app
+    parameters = create_app(enable_dev_api=False).openapi()["paths"]["/api/v1/topics/{topicId}/feed"]["get"]["parameters"]
+    schema = next(p["schema"] for p in parameters if p["name"] == "cursor")
+    assert next(option for option in schema["anyOf"] if option["type"] == "string")["maxLength"] == feed_service.MAX_FEED_CURSOR_LENGTH

@@ -125,8 +125,8 @@ export function ContentCover({ slides, title }: { slides: readonly HomeSlideMode
   </div> : null;
 }
 
-export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home" }: {
-  slides: readonly HomeSlideModel[]; title: string; labelledBy?: string; scope?: "home" | "detail";
+export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home", onSlideChange }: {
+  slides: readonly HomeSlideModel[]; title: string; labelledBy?: string; scope?: "home" | "detail"; onSlideChange?: (index: number) => void;
 }) {
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
@@ -146,7 +146,7 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
       aria-label="좌우로 슬라이드 탐색" aria-describedby={`${id}-help`}
       onScroll={(event) => {
         const element = event.currentTarget;
-        if (element.clientWidth) setActive(Math.round(element.scrollLeft / element.clientWidth));
+        if (element.clientWidth) { const index = Math.round(element.scrollLeft / element.clientWidth); setActive(index); onSlideChange?.(index); }
       }} onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
         const index = event.key === "ArrowRight" ? current + 1 : event.key === "ArrowLeft" ? current - 1

@@ -11,7 +11,7 @@ function factory() {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(`(function(require,module,exports){${code}\n})`, {})(
+  vm.runInNewContext(`(function(require,module,exports){${code}\n})`, { AbortController })(
     (name) => name === './services' ? { requirePivotApi() { throw new Error('unconfigured origin'); } } : {},
     module, module.exports,
   );
@@ -90,4 +90,10 @@ test('missing/unsafe identities and unapproved origins never call the mutation A
   }
   assert.throws(() => factory()(api).toggle(target), /unconfigured/);
   assert.equal(calls, 0);
+});
+
+test('bookmark records success only after verified authorization and cancellation rejects late results',async()=>{
+ let release,posted,changes=0;
+ const store=factory()({bookmarkContent:async(id,topic,init)=>{posted=init;return new Promise(resolve=>release=()=>resolve({contentId:id,topicId:topic}));},unbookmarkContent:async()=>{}},()=>{},()=>changes++,async()=>({headers:{'X-CSRF-Token':'verified'}}));
+ const pending=store.toggle(target);await new Promise(setImmediate);assert.equal(posted.headers['X-CSRF-Token'],'verified');store.cancel();assert.equal(posted.signal.aborted,true);release();await assert.rejects(pending);assert.equal(changes,0);assert.equal(store.has(target),false);
 });

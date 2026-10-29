@@ -80,7 +80,7 @@
 .actions button { display: grid; place-items: center; width: 44px; height: 35px; padding: 7px 0 0; border: 0; border-radius: 8px; background: transparent; }
 .actions button > span { display: grid; place-items: center; width: 28px; height: 28px; }
 .actionCircle { border-radius: 50%; background: rgb(192 192 186 / 48%); }
-.actionCircle[data-bookmarked="true"] { background: #7043b4; }
+.actionCircle[data-bookmarked="true"], .actionCircle[data-liked="true"] { background: #7043b4; }
 /* Lower the full target 2px; bottom padding keeps its visible face at y=372. */
 .detail { position: absolute; right: 2px; bottom: 0; }
 .detailButton { display: grid; place-items: center; width: 88px; height: 44px; padding: 0 0 4px; border: 0; border-radius: 8px; background: transparent; }

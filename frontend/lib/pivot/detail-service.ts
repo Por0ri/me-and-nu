@@ -20,6 +20,7 @@ export function mapContentDetail(content: ContentDetail, target: HomeDetailTarge
     slides, sources: mapContentSources(content.sources),
     sections: paragraphs.length ? [{ paragraphs }] : [],
     bookmarked: content.myReaction.bookmarked, displayMode: content.displayMode,
+    liked: content.myReaction.liked === true, preference: content.myReaction.preference ?? null,
     sourceUrl: safeSourceUrl(content.sourceUrl),
   };
 }

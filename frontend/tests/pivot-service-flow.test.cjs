@@ -147,3 +147,11 @@ test('logout uses the active session CSRF, preserves failures, and refreshes ano
   const nextLogin = fixture.requests.find(item => item.path === '/api/v1/auth/login/kakao');
   assert.equal(nextLogin.csrf, 'fixture-anonymous-csrf');
 });
+
+test('explicit verified CSRF stays request-scoped even if the global session token has changed',async()=>{
+ const fixture=createApiFixture();fixture.rotate('active');const modules=browserModules(fixture),api=modules.load('lib/api.ts');
+ await api.getSession();fixture.state.csrf='fixture-rotated-csrf';await api.getSession();
+ await assert.rejects(api.bookmarkContent(41,7,{headers:{'X-CSRF-Token':'fixture-active-csrf'}}),error=>error.status===403);
+ assert.equal(fixture.state.saved.size,0,'a stale owner token must not be overwritten with another session token');
+ await api.bookmarkContent(41,7,{headers:{'X-CSRF-Token':'fixture-rotated-csrf'}});assert.equal(fixture.state.saved.size,1);
+});

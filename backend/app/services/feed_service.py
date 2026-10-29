@@ -1,4 +1,7 @@
+import base64
+import binascii
 from datetime import datetime, timedelta, timezone
+import struct
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +27,12 @@ from app.services.feed_ranking import FeedSlot, order_feed
 KST = timezone(timedelta(hours=9))
 # Newest public contents considered after the day's ranked list (the model ranks 100).
 LATEST_POOL = 500
+# Up to 100 ranked cards plus 500 latest cards. IDs are packed once, separately
+# from the JSON header, so even BIGINT IDs stay below a 7 KB query value.
+MAX_SNAPSHOT_ITEMS = 600
+MAX_FEED_CURSOR_LENGTH = 7000
+MAX_CURSOR_HEADER_LENGTH = 512
+MAX_CONTENT_ID = 2**63 - 1
 
 
 def preference_value(value: str | None) -> str | None:
@@ -102,7 +111,7 @@ def _reason_text(reason) -> str | None:
 
 def _cursor_version(cursor: str):
     try:
-        return decode_cursor(cursor, expected={}).get("v")
+        return decode_cursor(cursor.partition(".")[0], expected={}).get("v")
     except ApiError:
         return None
 
@@ -177,69 +186,96 @@ def _feed_response(
     )
 
 
+def _snapshot_cursor(context: dict, remaining_ids: list[int]) -> str:
+    """The cursor carries positions only, never content or authorization data."""
+    packed = struct.pack(f">{len(remaining_ids)}Q", *remaining_ids)
+    ids = base64.urlsafe_b64encode(packed).rstrip(b"=").decode("ascii")
+    return encode_cursor(context) + "." + ids
+
+
+def _decode_snapshot_cursor(cursor: str, context: dict) -> tuple[dict, list[int]]:
+    try:
+        header, encoded_ids = cursor.split(".")
+        if len(header) > MAX_CURSOR_HEADER_LENGTH or not encoded_ids or len(encoded_ids) > MAX_SNAPSHOT_ITEMS * 8 * 4 // 3:
+            raise ValueError("bad cursor size")
+        payload = decode_cursor(header, expected=context)
+        as_of = datetime.fromisoformat(payload["asOf"])
+        round_id = payload["roundId"]
+        if as_of.tzinfo is None or type(round_id) is not int or not 0 < round_id <= MAX_CONTENT_ID:
+            raise ValueError("bad snapshot context")
+        packed = base64.b64decode(encoded_ids + "=" * (-len(encoded_ids) % 4), altchars=b"-_", validate=True)
+        if not packed or len(packed) % 8 or len(packed) > MAX_SNAPSHOT_ITEMS * 8:
+            raise ValueError("bad packed IDs")
+        ids = [value for (value,) in struct.iter_unpack(">Q", packed)]
+        if len(ids) != len(set(ids)) or any(not 0 < value <= MAX_CONTENT_ID for value in ids):
+            raise ValueError("bad content IDs")
+        return {**context, "roundId": round_id, "asOf": as_of.isoformat()}, ids
+    except (KeyError, TypeError, ValueError, binascii.Error, struct.error) as exc:
+        raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다. 피드를 새로 불러와 주세요.") from exc
+
+
 async def _recommended_feed(
     db: AsyncSession, user_id: int, topic_id: int, tap, *, cursor: str | None, limit: int
 ) -> FeedResponse | None:
-    """Home feed in the day's recommended order (EXP-30 visit rules); None without a round.
+    """Freeze the visit's order; always recheck current visibility and dislikes.
 
-    The first page fixes the snapshot time, and later pages reuse it from the
-    cursor, so impressions recorded while scrolling do not reshuffle pages.
-    Yesterday's round covers the hours before today's batch has run.
+    Later pages consume the remaining IDs, so changed reactions or hidden cards
+    cannot shift an offset. An old v2 cursor has no recoverable order and must
+    restart. Yesterday's round covers the hours before today's batch has run.
     """
-    context = {"v": 2, "userId": user_id, "topicId": topic_id, "subtopicId": None}
+    context = {"v": 3, "userId": user_id, "topicId": topic_id, "subtopicId": None}
     if cursor is None:
-        as_of, offset = _now(), 0
+        as_of = _now()
         today = as_of.astimezone(KST).date()
         round_ = await recommendation_repo.latest_round(db, tap.tap_id, [today, today - timedelta(days=1)])
         if round_ is None:
             return None
+        context.update(roundId=round_.recommendation_round_id, asOf=as_of.isoformat())
     else:
-        payload = decode_cursor(cursor, expected=context)
-        try:
-            as_of = datetime.fromisoformat(payload["asOf"])
-            round_id, offset = payload["roundId"], payload["offset"]
-            if as_of.tzinfo is None or any(
-                not isinstance(value, int) or isinstance(value, bool) or value <= 0
-                for value in (round_id, offset)
-            ):
-                raise ValueError("bad position")
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.") from exc
-        round_ = await recommendation_repo.get_round(db, round_id, tap.tap_id)
+        context, remaining_ids = _decode_snapshot_cursor(cursor, context)
+        round_ = await recommendation_repo.get_round(db, context["roundId"], tap.tap_id)
         if round_ is None:
-            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.")
+            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다. 피드를 새로 불러와 주세요.")
     ranked = [
         FeedSlot(content_id, item_id, _reason_text(reason))
         for content_id, item_id, reason in await recommendation_repo.ranked_items(
             db, round_.recommendation_round_id, topic_id
         )
     ]
-    latest = await recommendation_repo.latest_content_ids(db, topic_id, as_of, LATEST_POOL)
-    ordered = order_feed(
-        ranked,
-        latest,
-        opened=await recommendation_repo.opened_content_ids(db, tap.tap_id, as_of),
-        negative=await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id, as_of),
-        shown_today=await recommendation_repo.shown_content_ids(db, tap.tap_id, _kst_day_start(as_of), as_of),
-        main_work=await recommendation_repo.main_works(db, [slot.content_id for slot in ranked] + latest),
-    )
-    page = ordered[offset:offset + limit]
-    contents = await recommendation_repo.contents_by_id(db, [slot.content_id for slot in page])
-    cards: list[FeedCard] = []
-    for slot in page:
-        content = contents.get(slot.content_id)
-        card = None if content is None else await _card(
-            db, content, topic_id=topic_id, tap_id=tap.tap_id, user_id=user_id,
-            recommendation_id=slot.recommendation_item_id, reason=slot.reason,
+    negative = await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id)
+    if cursor is None:
+        latest = await recommendation_repo.latest_content_ids(db, topic_id, as_of, LATEST_POOL)
+        ordered = order_feed(
+            ranked, latest,
+            opened=await recommendation_repo.opened_content_ids(db, tap.tap_id, as_of),
+            negative=negative,
+            shown_today=await recommendation_repo.shown_content_ids(db, tap.tap_id, _kst_day_start(as_of), as_of),
+            main_work=await recommendation_repo.main_works(db, [slot.content_id for slot in ranked] + latest),
         )
-        if card is not None:
-            cards.append(card)
-    next_cursor = None
-    if offset + limit < len(ordered):
-        next_cursor = encode_cursor({
-            **context, "roundId": round_.recommendation_round_id,
-            "asOf": as_of.isoformat(), "offset": offset + limit,
-        })
+        remaining_ids = [slot.content_id for slot in ordered[:MAX_SNAPSHOT_ITEMS]]
+    # All metadata comes from the caller's round, not from the cursor. Public
+    # Topic membership is checked again even if a caller rewrites packed IDs.
+    ranked_by_id = {slot.content_id: slot for slot in ranked}
+    position = 0
+    cards: list[FeedCard] = []
+    while position < len(remaining_ids) and len(cards) < limit:
+        batch = remaining_ids[position:position + limit]
+        contents = await recommendation_repo.contents_by_id(db, batch, topic_id)
+        for content_id in batch:
+            position += 1
+            content = contents.get(content_id)
+            if content is None or content_id in negative:
+                continue
+            slot = ranked_by_id.get(content_id, FeedSlot(content_id))
+            card = await _card(
+                db, content, topic_id=topic_id, tap_id=tap.tap_id, user_id=user_id,
+                recommendation_id=slot.recommendation_item_id, reason=slot.reason,
+            )
+            if card is not None:
+                cards.append(card)
+            if len(cards) == limit:
+                break
+    next_cursor = _snapshot_cursor(context, remaining_ids[position:]) if position < len(remaining_ids) else None
     return _feed_response(topic_id, cards, next_cursor, cursor=cursor)
 
 
@@ -252,13 +288,15 @@ async def get_feed(
     cursor: str | None,
     limit: int,
 ) -> FeedResponse:
+    if cursor is not None and len(cursor) > MAX_FEED_CURSOR_LENGTH:
+        raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.")
     tap = await require_active_tap(db, user_id, topic_id)
     selected_subtopic = None
     if subtopic_id is not None:
         selected_subtopic = await catalog_repo.get_subtopic(db, subtopic_id)
         if selected_subtopic is None or selected_subtopic.topic_id != topic_id:
             raise ApiError(422, "SUBTOPIC_TOPIC_MISMATCH", "Subtopic이 Topic에 속하지 않습니다.")
-    elif cursor is None or _cursor_version(cursor) == 2:
+    elif cursor is None or _cursor_version(cursor) in {2, 3}:
         recommended = await _recommended_feed(db, user_id, topic_id, tap, cursor=cursor, limit=limit)
         if recommended is not None:
             return recommended

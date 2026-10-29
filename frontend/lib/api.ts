@@ -185,7 +185,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   init.signal?.throwIfAborted();
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  if (method !== "GET" && method !== "HEAD" && csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  if (method !== "GET" && method !== "HEAD" && csrfToken && !headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", csrfToken);
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init, headers, credentials: "include", cache: "no-store",
   });
@@ -283,23 +283,23 @@ export function getFeed(
 export function getContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal"> = {}): Promise<ContentDetail> {
   return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`, init);
 }
-export function setPreference(contentId: number, topicId: number, value: Preference): Promise<PreferenceResponse> {
-  return apiRequest(`/api/v1/contents/${contentId}/preference`, { method: "PUT", body: JSON.stringify({ topicId, value }) });
+export function setPreference(contentId: number, topicId: number, value: Preference, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<PreferenceResponse> {
+  return apiRequest(`/api/v1/contents/${contentId}/preference`, { ...init, method: "PUT", body: JSON.stringify({ topicId, value }) });
 }
-export function clearPreference(contentId: number, topicId: number): Promise<void> {
-  return apiRequest<void>(`/api/v1/contents/${contentId}/preference${query({ topicId })}`, { method: "DELETE" });
+export function clearPreference(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<void> {
+  return apiRequest<void>(`/api/v1/contents/${contentId}/preference${query({ topicId })}`, { ...init, method: "DELETE" });
 }
-export function likeContent(contentId: number, topicId: number): Promise<{ contentId: number; liked: boolean }> {
-  return apiRequest(`/api/v1/contents/${contentId}/like`, { method: "PUT", body: JSON.stringify({ topicId }) });
+export function likeContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<{ contentId: number; liked: boolean }> {
+  return apiRequest(`/api/v1/contents/${contentId}/like`, { ...init, method: "PUT", body: JSON.stringify({ topicId }) });
 }
-export function unlikeContent(contentId: number, topicId: number): Promise<void> {
-  return apiRequest<void>(`/api/v1/contents/${contentId}/like${query({ topicId })}`, { method: "DELETE" });
+export function unlikeContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<void> {
+  return apiRequest<void>(`/api/v1/contents/${contentId}/like${query({ topicId })}`, { ...init, method: "DELETE" });
 }
-export function bookmarkContent(contentId: number, topicId: number): Promise<BookmarkResponse> {
-  return apiRequest(`/api/v1/contents/${contentId}/bookmark`, { method: "PUT", body: JSON.stringify({ topicId }) });
+export function bookmarkContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<BookmarkResponse> {
+  return apiRequest(`/api/v1/contents/${contentId}/bookmark`, { ...init, method: "PUT", body: JSON.stringify({ topicId }) });
 }
-export function unbookmarkContent(contentId: number, topicId: number): Promise<void> {
-  return apiRequest<void>(`/api/v1/contents/${contentId}/bookmark${query({ topicId })}`, { method: "DELETE" });
+export function unbookmarkContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<void> {
+  return apiRequest<void>(`/api/v1/contents/${contentId}/bookmark${query({ topicId })}`, { ...init, method: "DELETE" });
 }
 export function getBookmarks(
   options: { q?: string; topicId?: number; cursor?: string; limit?: number } = {},

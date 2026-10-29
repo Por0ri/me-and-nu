@@ -55,6 +55,7 @@ async def ranked_items(db: AsyncSession, round_id: int, topic_id: int) -> list[t
         .join(Content, Content.content_id == RecommendationItem.content_id)
         .where(RecommendationItem.recommendation_round_id == round_id, *_visible(topic_id))
         .order_by(RecommendationItem.rank)
+        .limit(100)
     )
     return [(content_id, item_id, reason) for content_id, item_id, reason in rows.all()]
 
@@ -90,12 +91,12 @@ async def shown_content_ids(db: AsyncSession, tap_id: int, since: datetime, as_o
     return set(rows.scalars().all())
 
 
-async def negative_content_ids(db: AsyncSession, user_id: int, tap_id: int, as_of: datetime) -> set[int]:
-    """Current "그만볼래요" (O/X = X) reactions that existed at the snapshot time."""
+async def negative_content_ids(db: AsyncSession, user_id: int, tap_id: int) -> set[int]:
+    """Current dislikes; updated_at also changes on likes and is not history."""
     rows = await db.execute(
         select(ContentReaction.content_id).where(
             ContentReaction.user_id == user_id, ContentReaction.tap_id == tap_id,
-            ContentReaction.ox_feedback == "X", ContentReaction.updated_at <= as_of,
+            ContentReaction.ox_feedback == "X",
         )
     )
     return set(rows.scalars().all())
@@ -113,8 +114,8 @@ async def main_works(db: AsyncSession, content_ids: list[int]) -> dict[int, int]
     return {content_id: entity_id for content_id, entity_id in rows.all()}
 
 
-async def contents_by_id(db: AsyncSession, content_ids: list[int]) -> dict[int, Content]:
+async def contents_by_id(db: AsyncSession, content_ids: list[int], topic_id: int) -> dict[int, Content]:
     if not content_ids:
         return {}
-    rows = await db.scalars(select(Content).where(Content.content_id.in_(content_ids)))
+    rows = await db.scalars(select(Content).where(Content.content_id.in_(content_ids), *_visible(topic_id)))
     return {content.content_id: content for content in rows.all()}

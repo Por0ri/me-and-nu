@@ -6,6 +6,7 @@ import { demoBookmarkNotice } from "@/lib/pivot/saved";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { ContentCarousel } from "./content-carousel";
 import styles from "./home.module.css";
+import { useHomeExposure, useInteractions } from "./interaction-context";
 
 type HomeNotice = { message: string; postId?: string };
 
@@ -70,6 +71,9 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
 }) {
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
+  const article = useRef<HTMLElement>(null);
+  const interactions = useInteractions();
+
   const [active, setActive] = useState(0);
   const [detailRequested, setDetailRequested] = useState(false);
   const [localActionNotice, setLocalActionNotice] = useState("");
@@ -81,7 +85,19 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
   const slides = orderedHomeSlides(card.slides);
   const serviceCarousel = !demo && slides.some((slide) => !!slide.layout || slide.image?.protected);
   const current = Math.max(0, Math.min(active, slides.length - 1));
-  const target = { postId: card.id, contentId: card.detailContentId, ...(card.topicId === undefined ? {} : { topicId: card.topicId }) };
+  const target = { postId: card.id, contentId: card.detailContentId, ...(card.topicId === undefined ? {} : { topicId: card.topicId }), recommendationId: card.recommendationId, recommendationReason: card.recommendationReason };
+  const trackSlide = useHomeExposure(article, target, demo);
+  const canLike = !demo && !!interactions && !!card.topicId;
+  const reaction = interactions?.reactions.value(target, card);
+  const liking = canLike && interactions.reactions.isPending(target, "like");
+  async function toggleLike() {
+    if (!canLike || liking) return;
+    try { await interactions.reactions.toggleLike(target, card, "home_feed"); setActionNotice(interactions.reactions.value(target, card).liked ? "좋아요를 눌렀어요." : "좋아요를 취소했어요."); }
+    catch (error) { setActionNotice(error instanceof Error ? error.message : "좋아요를 저장하지 못했어요."); }
+  }
+  function recordSlide(index: number) {
+    trackSlide(index, slides.length);
+  }
   const canBookmark = !!bookmarks && (demo ? bookmarks.kind === "demo" : bookmarks.kind === "service" && !!card.topicId);
   const saved = canBookmark && bookmarkValue(bookmarks!, target, card.saved);
   const saving = canBookmark && bookmarkPending(bookmarks, target);
@@ -105,18 +121,18 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
     if (!element || index < 0 || index >= slides.length) return;
     element.scrollTo({ left: index * element.clientWidth });
   }
-  return <article className={styles.card} aria-labelledby={`${id}-title`} data-home-post={card.id}>
+  return <article ref={article} className={styles.card} aria-labelledby={`${id}-title`} data-home-post={card.id}>
     <div className={styles.srOnly}>
       {demo ? <p className={styles.exampleLabel}>시연용 콘텐츠</p> : null}
       <h3 id={`${id}-title`}>{card.title}</h3>
     </div>
-    {serviceCarousel ? <ContentCarousel key={card.id} slides={slides} title={card.title} labelledBy={`${id}-title`} scope="home" /> : slides.length ? <>
+    {serviceCarousel ? <ContentCarousel key={card.id} slides={slides} title={card.title} labelledBy={`${id}-title`} scope="home" onSlideChange={recordSlide} /> : slides.length ? <>
       <div className={styles.carousel} role="region" aria-roledescription="캐러셀" aria-labelledby={`${id}-title`}>
         <div id={`${id}-track`} ref={track} className={styles.slideTrack} tabIndex={0} data-home-track=""
           aria-label="좌우로 슬라이드 탐색" aria-describedby={`${id}-help`}
           onScroll={(event) => {
             const element = event.currentTarget;
-            if (element.clientWidth) setActive(Math.round(element.scrollLeft / element.clientWidth));
+            if (element.clientWidth) { const index = Math.round(element.scrollLeft / element.clientWidth); setActive(index); recordSlide(index); }
           }}
           onKeyDown={(event) => {
             if (event.target !== event.currentTarget) return;
@@ -152,16 +168,17 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
     </> : <p className={styles.noSlides} role="status">아직 표시할 슬라이드가 없어요.</p>}
     <div className={styles.actions} role="group" aria-label={`${card.title} 반응 기능`}>
       {([['share', '공유'], ['like', '좋아요'], ['save', '저장']] as const).map(([icon, label]) =>
-        <button key={icon} type="button" aria-label={label} aria-disabled={icon === "save" && canBookmark ? undefined : true}
-          aria-pressed={icon === "save" && canBookmark ? saved : undefined}
-          aria-busy={icon === "save" && saving || undefined} disabled={icon === "save" && saving}
+        <button key={icon} type="button" aria-label={label} aria-disabled={(icon === "save" && canBookmark) || (icon === "like" && canLike) ? undefined : true}
+          aria-pressed={icon === "save" && canBookmark ? saved : icon === "like" && canLike ? reaction?.liked === true : undefined}
+          aria-busy={(icon === "save" && saving) || (icon === "like" && liking) || undefined} disabled={(icon === "save" && saving) || (icon === "like" && liking)}
           data-demo-bookmark={icon === "save" && canBookmark && demo ? card.detailContentId : undefined}
           data-service-bookmark={icon === "save" && canBookmark && !demo ? card.detailContentId : undefined}
           onClick={() => {
             if (icon === "save" && canBookmark) { void toggleBookmark(); }
+            else if (icon === "like" && canLike) { void toggleLike(); }
             else setActionNotice(`${label} 기능은 준비 중이에요. 아직 반영되지 않아요.`);
           }}>
-          <span className={icon === "share" ? undefined : styles.actionCircle} data-bookmarked={icon === "save" && canBookmark ? saved : undefined}><img src={`/pivot/home/chrome/${icon}.svg`} alt="" width={icon === "share" ? 28 : 24} height={icon === "share" ? 28 : 24} /></span>
+          <span className={icon === "share" ? undefined : styles.actionCircle} data-bookmarked={icon === "save" && canBookmark ? saved : undefined} data-liked={icon === "like" && canLike ? reaction?.liked === true : undefined}><img src={`/pivot/home/chrome/${icon}.svg`} alt="" width={icon === "share" ? 28 : 24} height={icon === "share" ? 28 : 24} /></span>
         </button>)}
     </div>
     {actionNotice ? <p role="status" className={styles.actionNotice}>{actionNotice}</p> : null}

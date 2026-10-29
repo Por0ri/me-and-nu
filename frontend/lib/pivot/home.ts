@@ -23,10 +23,14 @@ export type HomeCardModel = PublicationMetadata & {
   detailContentId: string;
   topicId?: number;
   saved?: boolean;
+  liked?: boolean;
+  preference?: import("@/lib/api").Preference | null;
+  recommendationId?: number;
+  recommendationReason?: string;
   slides: readonly HomeSlideModel[];
 };
 
-export type HomeDetailTarget = { postId: string; contentId: string; topicId?: number };
+export type HomeDetailTarget = { postId: string; contentId: string; topicId?: number; recommendationId?: number; recommendationReason?: string };
 export type HomeDetailHandler = (target: HomeDetailTarget) => void;
 
 /** Keep source data immutable; display order is explicit rather than inferred from IDs. */

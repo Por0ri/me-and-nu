@@ -14,7 +14,7 @@
 #   ... --apply --every 30 --daily-at 06:00  # 켜 두기: 30초마다 새 가입자, 매일 06:00 부터는 그날 전체
 
 import argparse
-import csv
+import json
 import os
 import pathlib
 import re
@@ -23,14 +23,20 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-import psycopg
-from psycopg.types.json import Jsonb
-
 REPO = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-from model.algo import anime_ranker as ar  # noqa: E402
-from model.algo import content_v1 as v1  # noqa: E402
-from model.algo import service  # noqa: E402
+from model.algo.preflight import check_inputs, require_inputs  # noqa: E402
+from model.algo.preferences import apply_chip, load_chip_features, unmapped_summary  # noqa: E402
+
+try:
+    import psycopg
+    from psycopg.types.json import Jsonb
+    from model.algo import anime_ranker as ar, content_v1 as v1, service
+except ModuleNotFoundError as exc:
+    if exc.name not in {"numpy", "psycopg"}:
+        raise
+    raise SystemExit("Recommendation dependencies are missing. Install model/requirements.txt in a separate environment; "
+                     "run python -m model.algo.preflight for an offline input/dependency report.") from None
 
 KST = timezone(timedelta(hours=9))
 TOPIC = "anime"
@@ -68,9 +74,8 @@ def database_url(given, expected):
 
 
 def chip_names():
-    # (종류, 코드) → AniList 이름 (model/catalog/chips.csv)
-    with open(CHIPS, encoding="utf-8-sig", newline="") as f:
-        return {(r["kind"], r["code"]): r["anilist_name"] for r in csv.DictReader(f)}
+    # Exact catalog names plus explicit legacy aliases; stored IDs/kinds are unchanged.
+    return load_chip_features(CHIPS)
 
 
 def load_users(cur, topic_id, chips):
@@ -88,14 +93,10 @@ def load_users(cur, topic_id, chips):
     for tap, ext in cur.fetchall():
         if ext.isdigit():
             users[tap]["works"].append(int(ext))
-    cur.execute("""SELECT tp.tap_id, pt.kind, pt.code FROM tap_preference_tag tp JOIN preference_tag pt ON pt.tag_id = tp.tag_id
+    cur.execute("""SELECT tp.tap_id, pt.kind, pt.code, pt.display_name, pt.tag_id FROM tap_preference_tag tp JOIN preference_tag pt ON pt.tag_id = tp.tag_id
         WHERE tp.tap_id = ANY(%s) ORDER BY tp.tap_id, pt.kind, pt.sort_order""", (taps,))
-    for tap, kind, code in cur.fetchall():
-        name = chips.get((kind, code))
-        if name is None:                                            # chips.csv 에 없는 칩 (예: 예전 starter 태그)
-            users[tap]["unknown_chips"] += 1
-        else:
-            users[tap]["genres" if kind == "genre" else "themes"].append(name)
+    for tap, kind, code, label, tag_id in cur.fetchall():
+        apply_chip(users[tap], kind, code, label, tag_id, chips)
     cur.execute("SELECT tap_id, consumption_type, q1_choice, q2_choice FROM onboarding_answers WHERE tap_id = ANY(%s)", (taps,))
     for tap, *answers in cur.fetchall():
         users[tap]["answers"] = [a for a in answers if a]
@@ -235,6 +236,10 @@ def run_once(url, world, today, *, apply, replace, new_only, show):
                 return 0
             posts, index = load_posts(cur, row[0], today)
             visits = load_visits(cur, targets, index)
+        diagnostics = unmapped_summary({tap: users[tap] for tap in targets})
+        if diagnostics:
+            print("Unmapped preferences (original DB choices retained; no guessed model feature): "
+                  + json.dumps(diagnostics, ensure_ascii=False))
         feed = service.make_feed(posts, ctx)
         results = {tap: recommend(users[tap], visits[tap], ctx, feed, posts, day, t, cfg, catalog_ids) for tap in targets}
         live = int(((feed["day"] <= day) & (feed["until"] >= day)).sum())
@@ -254,7 +259,9 @@ def run_once(url, world, today, *, apply, replace, new_only, show):
 
 def main():
     ap = argparse.ArgumentParser(description="서비스 DB 유저마다 오늘 볼 글 순서를 계산해 추천 결과 표에 넣는다")
-    ap.add_argument("--expected-database", required=True, help="쓸 DB 이름 (주소 말고 이름만)")
+    ap.add_argument("--expected-database", help="쓸 DB 이름 (DB 모드에서 필수, 주소 말고 이름만)")
+    ap.add_argument("--preflight", action="store_true", help="입력/의존성 존재만 검사; DB·.env 접근 없음")
+    ap.add_argument("--self-test", action="store_true", help="합성 문맥 + 메모리 SQLite 저장 어댑터 검증; 실제 DB 접근 없음")
     ap.add_argument("--database-url", help="DB 주소 (화면에 안 찍음). 없으면 DATABASE_URL · backend/.env")
     ap.add_argument("--apply", action="store_true", help="DB 에 씀. 없으면 미리보기")
     ap.add_argument("--replace", action="store_true", help="오늘 추천을 지우고 다시 씀 (고칠 때만)")
@@ -263,10 +270,32 @@ def main():
     ap.add_argument("--daily-at", default="06:00", help="켜 두기: 이 시각(한국)부터 그날 전체 계산. 그 전엔 새 가입자만")
     ap.add_argument("--show", type=int, default=3, help="화면에 보여 줄 유저 수")
     args = ap.parse_args()
+    if args.preflight or args.self_test:
+        if (args.preflight and args.self_test) or args.apply or args.replace or args.every is not None or args.today or args.database_url or args.expected_database:
+            ap.error("--preflight / --self-test 는 서로 또는 DB 실행 인자와 같이 쓸 수 없음")
+        if args.preflight:
+            report = check_inputs()
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            raise SystemExit(0 if report["ready"] else 2)
+        from model.tests.storage_adapter import self_test
+        print(json.dumps(self_test(), ensure_ascii=False, indent=2))
+        return
+    if not args.expected_database:
+        ap.error("DB 모드에는 --expected-database 필요")
+    if args.every is not None and args.every <= 0:
+        ap.error("--every 는 1초 이상이어야 함")
     if args.every and (args.replace or args.today):
         ap.error("--every 는 --replace · --today 와 같이 못 씀")
-    if not re.fullmatch(r"\d{2}:\d{2}", args.daily_at):
-        ap.error("--daily-at 은 06:00 모양")
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", args.daily_at):
+        ap.error("--daily-at 은 유효한 24시간 시각 (예: 06:00)")
+    if args.today:
+        try:
+            date.fromisoformat(args.today)
+        except ValueError:
+            ap.error("--today 는 유효한 YYYY-MM-DD 날짜")
+    report = require_inputs()  # fail before database_url can read backend/.env
+    for warning in report["warnings"]:
+        print("Preflight: " + warning)
     url = database_url(args.database_url, args.expected_database)
     sys.stdout.reconfigure(line_buffering=True)                     # 켜 두기 모드에서도 기록이 바로 찍히게 (로그 파일 포함)
 

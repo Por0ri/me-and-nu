@@ -50,7 +50,7 @@ test('Home derives an active Topic and maps numeric IDs, saved state and one rea
       return { selectedTopicId: id, sections: [{ contents: [feedCard()] }], nextCursor: null }; } }, allow);
   const result = await source.load(init);
   assert.equal(calls[0][0], 42); assert.equal(result.home.origin, 'service');
-  assert.deepEqual(plain(result.home.cards[0]), { id: '17', detailContentId: '17', topicId: 42, title: '테스트 기사', saved: false,
+  assert.deepEqual(plain(result.home.cards[0]), { id: '17', detailContentId: '17', topicId: 42, title: '테스트 기사', saved: false, liked: false, preference: null,
     slides: [{ id: '17', order: 0, description: '실제 요약' }] });
 });
 
@@ -169,4 +169,11 @@ test('Origin checks run before requests and service URLs retain validated Topic 
   const url = new URL(detailHref('/pivot/home', target), 'https://test.me-nu.kr');
   assert.equal(url.searchParams.get('topicId'), '42'); assert.equal(url.searchParams.get('contentId'), '17');
   assert.throws(() => detailHref('/pivot/home', { ...target, topicId: -1 }), /Invalid Topic/);
+});
+
+test('Recommendation identity/reason and reactions survive feed and detail adapters', () => {
+ const card=mapFeedCard({...feedCard(), recommendationId:81, recommendationReason:'취향에 맞는 작품',myReaction:{liked:true,preference:'negative'}},42);
+ assert.equal(card.recommendationId,81);assert.equal(card.recommendationReason,'취향에 맞는 작품');assert.equal(card.liked,true);assert.equal(card.preference,'negative');
+ const article=mapContentDetail(content({myReaction:{bookmarked:true,liked:true,preference:'positive'}}),{...target,recommendationId:81,recommendationReason:card.recommendationReason});
+ assert.equal(article.recommendationId,81);assert.equal(article.recommendationReason,card.recommendationReason);assert.equal(article.liked,true);assert.equal(article.preference,'positive');
 });

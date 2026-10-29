@@ -11,6 +11,7 @@ export interface ServiceBookmarkControls {
   subscribe(listener: () => void): () => void;
   subscribeChanges(listener: () => void): () => void;
   getSnapshot(): number;
+  cancel(): void;
 }
 export type BookmarkControls = DemoBookmarkControls | ServiceBookmarkControls;
 
@@ -24,12 +25,13 @@ function identity(target: HomeDetailTarget) {
 }
 
 /** One authenticated screen owns this store. Only successful writes replace server values. */
-export function createServiceBookmarkControls(api = { bookmarkContent, unbookmarkContent }, allow = requirePivotApi): ServiceBookmarkControls {
+export function createServiceBookmarkControls(api = { bookmarkContent, unbookmarkContent }, allow = requirePivotApi, onChange?: (target: HomeDetailTarget, saved: boolean) => void, authorize?: () => Promise<Pick<RequestInit, "headers">>): ServiceBookmarkControls {
   const saved = new Map<string, boolean>();
   const pending = new Map<string, Promise<boolean>>();
   const listeners = new Set<() => void>();
   const changes = new Set<() => void>();
-  let revision = 0;
+  let revision = 0, generation = 0;
+  const controllers = new Set<AbortController>();
   function emit() { revision++; listeners.forEach((listener) => listener()); }
   return {
     kind: "service",
@@ -41,19 +43,27 @@ export function createServiceBookmarkControls(api = { bookmarkContent, unbookmar
       const existing = pending.get(key);
       if (existing) return existing;
       const wasSaved = saved.get(key) ?? serverValue;
+      const epoch = generation, abort = new AbortController(); controllers.add(abort);
       // Start on the next microtask so the lock is visible before the request begins.
       const request = Promise.resolve().then(async () => {
-        if (wasSaved) await api.unbookmarkContent(contentId, topicId);
+        allow();
+        const signed = authorize ? await authorize() : {};
+        if (epoch !== generation || abort.signal.aborted) throw new Error("로그인 상태가변경되었어요.");
+        const init = { ...signed, signal: abort.signal };
+        if (wasSaved) await api.unbookmarkContent(contentId, topicId, init);
         else {
-          const result = await api.bookmarkContent(contentId, topicId);
+          const result = await api.bookmarkContent(contentId, topicId, init);
           if (result.contentId !== contentId || result.topicId !== topicId) {
             throw new Error("저장 결과를 확인할 수 없어요. 다시 시도해 주세요.");
           }
         }
+        if (epoch !== generation || abort.signal.aborted) throw new Error("로그인 상태가 변경되었어요.");
+        allow();
         saved.set(key, !wasSaved);
+        onChange?.(target, !wasSaved);
         changes.forEach((listener) => listener());
         return !wasSaved;
-      }).finally(() => { pending.delete(key); emit(); });
+      }).finally(() => { controllers.delete(abort); if (epoch === generation) { pending.delete(key); emit(); } });
       pending.set(key, request);
       emit();
       return request;
@@ -61,6 +71,7 @@ export function createServiceBookmarkControls(api = { bookmarkContent, unbookmar
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     subscribeChanges(listener) { changes.add(listener); return () => { changes.delete(listener); }; },
     getSnapshot() { return revision; },
+    cancel() { generation++; controllers.forEach(controller => controller.abort()); controllers.clear(); pending.clear(); saved.clear(); emit(); },
   };
 }
 

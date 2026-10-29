@@ -220,8 +220,8 @@ function cardHarness(card, onViewDetail) {
   const hooks = [], writes = [];
   const element = { clientWidth: 327, scrollTo(options) { writes.push(options); } };
   let cursor = 0, tree;
-  const react = { ...React, useId: () => card.id,
-    useRef() { return hooks[cursor++] ??= { current: element }; },
+  const react = { ...React, useId: () => card.id, useContext: () => null, useSyncExternalStore: () => 0, useEffect: () => {},
+    useRef(initial) { return hooks[cursor++] ??= { current: initial ?? element }; },
     useState(initial) {
       const index = cursor++;
       hooks[index] ??= { value: initial };

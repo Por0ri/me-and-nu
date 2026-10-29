@@ -7,6 +7,8 @@ export type DetailArticle = HomeDetailTarget & PublicationMetadata & {
   work?: string;
   title: string;
   bookmarked?: boolean;
+  liked?: boolean;
+  preference?: import("@/lib/api").Preference | null;
   displayMode?: "full_body" | "link_excerpt";
   sourceUrl?: string;
   image?: ContentImage;

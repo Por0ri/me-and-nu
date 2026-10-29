@@ -13,12 +13,12 @@ export function DetailController({ source, target, onBack, onMy, onSaved, onHome
 }) {
   const [request, setRequest] = useState<{ source: DetailDataSource; postId: string; contentId: string; topicId?: number; state: DetailState }>();
   const [attempt, setAttempt] = useState(0);
-  const { postId, contentId, topicId } = target;
+  const { postId, contentId, topicId, recommendationId, recommendationReason } = target;
   useEffect(() => {
     const controller = createDetailRequestController(source, (state) => setRequest({ source, postId, contentId, topicId, state }));
-    void controller.load({ postId, contentId, ...(topicId === undefined ? {} : { topicId }) });
+    void controller.load({ postId, contentId, ...(topicId === undefined ? {} : { topicId }), recommendationId, recommendationReason });
     return () => controller.cancel();
-  }, [source, postId, contentId, topicId, attempt]);
+  }, [source, postId, contentId, topicId, recommendationId, recommendationReason, attempt]);
   const state = request?.source === source && request.postId === postId && request.contentId === contentId && request.topicId === topicId ? request.state : loading;
   return <PivotDetailScreen key={`${topicId ?? "demo"}:${postId}:${contentId}`} state={state} demo={source.kind === "demo"} onBack={onBack} onMy={onMy} onSaved={onSaved} onHome={onHome} fromSaved={fromSaved} bookmarks={bookmarks} onRetry={() => setAttempt((value) => value + 1)} />;
 }

@@ -15,6 +15,7 @@ import { HomeController } from "./home-controller";
 import { DetailController } from "./detail-controller";
 import { MyPageController } from "./my-page-controller";
 import { SavedController } from "./saved-controller";
+import { InteractionViewContext, useInteractions } from "./interaction-context";
 
 const noSubscribe = () => () => {};
 const noSnapshot = () => 0;
@@ -24,6 +25,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   demoBookmarks?: DemoBookmarkControls; onRestart?: () => void; onLogout?: () => Promise<void>;
 }) {
   const params = useSearchParams();
+  const interactions = useInteractions();
   const detailOpen = params.get("view") === "detail";
   const myOpen = params.get("view") === "my";
   const savedOpen = params.get("view") === "saved";
@@ -40,7 +42,11 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const restoreFrame = useRef<number>(0);
   const [restoreQuery, setRestoreQuery] = useState<string>();
   const safeSavedSource = savedSource.kind === homeSource.kind ? savedSource : pendingSavedSource;
-  const [serviceBookmarks] = useState(() => createServiceBookmarkControls());
+  const [serviceBookmarks] = useState(() => createServiceBookmarkControls(undefined, interactions?.activity.assertOwner,
+    (target, saved) => interactions?.activity.record(target, saved ? "bookmark" : "bookmark_cancel", {
+      surface: new URLSearchParams(window.location.search).get("view") === "detail" ? "detail" : "home_feed",
+    }), interactions?.activity.authorize));
+  useEffect(() => () => serviceBookmarks.cancel(), [serviceBookmarks]);
   const bookmarks = homeSource.kind === "demo" && safeSavedSource.kind === "demo" && demoBookmarks?.kind === "demo" ? demoBookmarks
     : homeSource.kind === "service" ? serviceBookmarks : undefined;
   const connectedSavedSource = useMemo<SavedDataSource>(() => safeSavedSource.kind === "service" ? {
@@ -119,6 +125,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     };
   }
   function openDetail(target: HomeDetailTarget) {
+    interactions?.activity.remember(target);
     detailReturn.current = null;
     if (savedOpen) {
       const history = { ...storedSnapshots(), pivotDetailSaved: captureSaved(target.contentId) };
@@ -173,16 +180,16 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     if (window.history.state?.pivotDetailBack && history.pivotDetailSaved) window.history.back();
     else window.history.replaceState(history, "", `${window.location.pathname}?view=saved`);
   }
-  return <>
+  return <InteractionViewContext.Provider value={detailOpen ? "detail" : myOpen ? "my" : savedOpen ? "saved" : "home"}>
     <div ref={home} hidden={detailOpen || myOpen || savedOpen}>
       <HomeController source={homeSource} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} bookmarks={bookmarks} />
     </div>
     <div ref={detail} hidden={!detailOpen}>
-      {detailOpen || ((myOpen || savedOpen) && postId && contentId) ? <DetailController source={detailSource} target={{ postId, contentId, ...(topicId === undefined ? {} : { topicId }) }} onBack={backFromDetail} onHome={backToHome} onMy={openMy} onSaved={openSaved} fromSaved={detailFromSaved} bookmarks={bookmarks} /> : null}
+      {detailOpen || ((myOpen || savedOpen) && postId && contentId) ? <DetailController source={detailSource} target={{ postId, contentId, ...(topicId === undefined ? {} : { topicId }), ...interactions?.activity.metadata({ postId, contentId, topicId }) }} onBack={backFromDetail} onHome={backToHome} onMy={openMy} onSaved={openSaved} fromSaved={detailFromSaved} bookmarks={bookmarks} /> : null}
     </div>
     <div ref={savedList} hidden={!savedOpen}>
       {savedOpen || (detailFromSaved && (detailOpen || myOpen)) ? <SavedController source={connectedSavedSource} onHome={backToHome} onMy={openMy} onViewDetail={openDetail} onReady={restoreSaved} /> : null}
     </div>
     {myOpen ? <MyPageController source={mySource.kind === homeSource.kind ? mySource : pendingMyPageSource} onHome={backToHome} onSaved={openSaved} onLogout={homeSource.kind === "service" ? onLogout : undefined} /> : null}
-  </>;
+  </InteractionViewContext.Provider>;
 }

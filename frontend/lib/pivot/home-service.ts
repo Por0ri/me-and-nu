@@ -16,6 +16,9 @@ export function mapFeedCard(card: FeedCard, topicId: number): HomeCardModel {
   return {
     ...publicationMetadata(card),
     id, detailContentId: id, topicId, title, saved: card.saved,
+    liked: card.myReaction?.liked === true, preference: card.myReaction?.preference ?? null,
+    recommendationId: isPositiveId(card.recommendationId) ? card.recommendationId : undefined,
+    recommendationReason: typeof card.recommendationReason === "string" ? card.recommendationReason : undefined,
     slides: slides.length ? slides : [{ id, order: 0, description: card.summary ?? "", image: optionalImage(card.imageUrl, title) }],
   };
 }

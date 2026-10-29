@@ -6,7 +6,7 @@
 .actions .iconButton { width: 35px; }
 .circle, .plainIcon { display: grid; place-items: center; width: 28px; height: 28px; }
 .circle { background: rgb(192 192 186 / 48%); border-radius: 50%; }
-.circle[data-bookmarked="true"] { background: #7043b4; }
+.circle[data-bookmarked="true"], .circle[data-liked="true"] { background: #7043b4; }
 .circle img, .plainIcon img { flex: none; max-width: none; }
 .cover, .coverPlaceholder { display: block; width: 100%; height: auto; aspect-ratio: 327 / 408; border-radius: 8px; object-fit: cover; box-shadow: 0 0 2px #e0bafb; position: relative; z-index: 1; }
 .coverPlaceholder { display: grid; place-items: center; background: #efe7ff; font-size: 14px; }
