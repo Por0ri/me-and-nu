@@ -16,6 +16,7 @@ export const q2Choices = [
 export type Q1Choice = typeof q1Choices[number]["id"];
 export type Q2Choice = typeof q2Choices[number]["id"];
 export type OnboardingWork = { entityId: number; name: string; aliases: string[]; imageUrl: string | null; releaseYear: number | null; mediaFormat: string | null; selectable: boolean; unavailableReason: string | null };
+export const MAX_PREFERENCE_TAGS_PER_KIND = 7;
 export type PreferenceOption = { tagId: number; kind: "genre" | "theme"; code: string; label: string; sourceEntityIds: number[] };
 export type OnboardingStep = "interest" | "q1" | "q2" | "q3" | "result";
 export type UiSelection = { interest: "animation"; topicId: number; favoriteEntityIds: number[]; preferenceTagIds: number[]; consumptionType: Q1Choice };
@@ -38,26 +39,38 @@ export const selectionKey = (ids: number[]) => [...ids].sort((a, b) => a - b).jo
 export function workFormatLabel(format: string | null): string {
   return ({ SERIES: "시리즈", TV: "TV 애니메이션", TV_SHORT: "단편 시리즈", MOVIE: "극장판", OVA: "OVA", ONA: "웹 애니메이션", SPECIAL: "스페셜", MUSIC: "뮤직비디오", "예시": "예시" } as Record<string, string>)[format ?? ""] ?? "애니메이션";
 }
-const validIds = (ids: unknown, max = Infinity): ids is number[] => Array.isArray(ids) && ids.length >= 1 && ids.length <= max && ids.every(validId) && new Set(ids).size === ids.length;
+const validIds = (ids: unknown, max = Infinity, min = 1): ids is number[] => Array.isArray(ids) && ids.length >= min && ids.length <= max && ids.every(validId) && new Set(ids).size === ids.length;
+// The DTO contains IDs only. State validation and the backend check their current kinds.
 export function isSelectionComplete(selection: UiSelection): boolean {
-  return selection?.interest === "animation" && validId(selection.topicId) && validIds(selection.favoriteEntityIds, 5) && validIds(selection.preferenceTagIds) && isQ1(selection.consumptionType);
+  return selection?.interest === "animation" && validId(selection.topicId) && validIds(selection.favoriteEntityIds, 5) && validIds(selection.preferenceTagIds, MAX_PREFERENCE_TAGS_PER_KIND * 2, 2) && isQ1(selection.consumptionType);
 }
 export function hasCurrentOptions(state: OnboardingState): boolean {
   return state.favoriteWorks.length > 0 && state.optionsKey === selectionKey(state.favoriteWorks.map(work => work.entityId));
 }
+export function selectedPreferenceCount(state: OnboardingState, kind: PreferenceOption["kind"]): number {
+  return state.preferenceOptions.filter(tag => tag.kind === kind && state.preferenceTagIds.includes(tag.tagId)).length;
+}
+function hasRequiredPreferences(state: OnboardingState): boolean {
+  return hasCurrentOptions(state) && validIds(state.preferenceTagIds, MAX_PREFERENCE_TAGS_PER_KIND * 2, 2)
+    && state.preferenceTagIds.every(id => state.preferenceOptions.some(tag => tag.tagId === id))
+    && (["genre", "theme"] as const).every(kind => {
+      const count = selectedPreferenceCount(state, kind);
+      return count >= 1 && count <= MAX_PREFERENCE_TAGS_PER_KIND;
+    });
+}
 export function isStateComplete(state: OnboardingState): boolean {
-  return state.interest === "animation" && validId(state.topicId) && validIds(state.favoriteWorks.map(work => work.entityId), 5) && hasCurrentOptions(state) && validIds(state.preferenceTagIds) && state.preferenceTagIds.every(id => state.preferenceOptions.some(tag => tag.tagId === id)) && isQ1(state.consumptionType);
+  return state.interest === "animation" && validId(state.topicId) && validIds(state.favoriteWorks.map(work => work.entityId), 5) && hasRequiredPreferences(state) && isQ1(state.consumptionType);
 }
 export function canAdvance(state: OnboardingState): boolean {
   if (state.step === "interest") return state.interest === "animation";
   if (state.step === "q1") return state.interest === "animation" && validId(state.topicId) && validIds(state.favoriteWorks.map(work => work.entityId), 5);
-  if (state.step === "q2") return hasCurrentOptions(state) && validIds(state.preferenceTagIds) && state.preferenceTagIds.every(id => state.preferenceOptions.some(tag => tag.tagId === id));
+  if (state.step === "q2") return hasRequiredPreferences(state);
   if (state.step === "q3") return isStateComplete(state);
   return false;
 }
 export function onboardingReducer(state: OnboardingState, action: OnboardingAction): OnboardingState {
   if (action.type === "reset") return initialOnboardingState();
-  // Ordinary back preserves answers. A changed work set invalidates its tag union.
+  // Ordinary back preserves answers. A changed work set refreshes the catalog and its source hints.
   if (action.type === "reselect") return state.step === action.from
     ? { ...initialOnboardingState(), step: "q1", interest: state.interest, topicId: state.topicId } : state;
   if (action.type === "toggle-interest") return state.step === "interest"
@@ -75,8 +88,13 @@ export function onboardingReducer(state: OnboardingState, action: OnboardingActi
     if (state.step !== "q2" || action.topicId !== state.topicId || selectionKey(action.entityIds) !== selectionKey(state.favoriteWorks.map(work => work.entityId))) return state;
     return { ...state, preferenceOptions: action.options, optionsKey: selectionKey(action.entityIds), preferenceTagIds: state.preferenceTagIds.filter(id => action.options.some(tag => tag.tagId === id)) };
   }
-  if (action.type === "toggle-tag") return state.step !== "q2" || !hasCurrentOptions(state) || !state.preferenceOptions.some(tag => tag.tagId === action.tagId) ? state
-    : { ...state, preferenceTagIds: state.preferenceTagIds.includes(action.tagId) ? state.preferenceTagIds.filter(id => id !== action.tagId) : [...state.preferenceTagIds, action.tagId] };
+  if (action.type === "toggle-tag") {
+    const tag = state.preferenceOptions.find(option => option.tagId === action.tagId);
+    if (state.step !== "q2" || !hasCurrentOptions(state) || !tag) return state;
+    const selected = state.preferenceTagIds.includes(action.tagId);
+    if (!selected && selectedPreferenceCount(state, tag.kind) >= MAX_PREFERENCE_TAGS_PER_KIND) return state;
+    return { ...state, preferenceTagIds: selected ? state.preferenceTagIds.filter(id => id !== action.tagId) : [...state.preferenceTagIds, action.tagId] };
+  }
   if (action.type === "choose-consumption") return state.step === "q3" && isQ1(action.value) ? { ...state, consumptionType: action.value } : state;
   // Stale or double-dispatched navigation can never skip a step.
   if (action.from !== state.step) return state;
@@ -88,7 +106,7 @@ export function onboardingReducer(state: OnboardingState, action: OnboardingActi
   return state;
 }
 export function buildSelectionDraft(state: OnboardingState): UiSelection {
-  if (!isStateComplete(state)) throw new Error("작품, 장르·소재, 소비 유형을 모두 선택해 주세요.");
+  if (!isStateComplete(state)) throw new Error("작품과 소비 유형을 선택하고, 장르와 소재를 각각 1~7개 선택해 주세요.");
   return { interest: "animation", topicId: state.topicId!, favoriteEntityIds: state.favoriteWorks.map(work => work.entityId), preferenceTagIds: [...state.preferenceTagIds], consumptionType: state.consumptionType! };
 }
 export function selectionSummary(state: OnboardingState) {

@@ -29,8 +29,7 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
   const validIds = (ids, max = Infinity) => Array.isArray(ids) && ids.length >= 1 && ids.length <= max
     && ids.every(id => Number.isSafeInteger(id) && id > 0) && new Set(ids).size === ids.length;
   const validWorks = ids => validIds(ids,5) && ids.every(id => works.some(work => work.entityId === id && work.selectable));
-  const options = ids => tags.filter(tag => tag.sourceEntityIds.some(id => ids.includes(id)))
-    .map(tag => ({...tag,sourceEntityIds:tag.sourceEntityIds.filter(id => ids.includes(id))}));
+  const options = ids => tags.map(tag => ({...tag,sourceEntityIds:tag.sourceEntityIds.filter(id => ids.includes(id))}));
   function rotate(phase) {
     state.phase = phase;
     state.cookie = `fixture-${phase}`;
@@ -52,6 +51,7 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
       || data.answers.version !== 2 || !validWorks(data.answers.favoriteEntityIds)
       || !validIds(data.answers.preferenceTagIds)
       || !data.answers.preferenceTagIds.every(id => options(data.answers.favoriteEntityIds).some(tag => tag.tagId === id))
+      || !['genre','theme'].every(kind => { const count=options(data.answers.favoriteEntityIds).filter(tag => tag.kind === kind && data.answers.preferenceTagIds.includes(tag.tagId)).length; return count >= 1 && count <= 7; })
       || !['world', 'relationships', 'ost', 'goods', 'events', 'news'].includes(data.answers.consumptionType)
       || !Array.isArray(data.consents) || data.consents.some(item => !exactKeys(item, ['type', 'policyVersion', 'agreed'])
         || typeof item.type !== 'string' || typeof item.policyVersion !== 'string' || typeof item.agreed !== 'boolean')) {
@@ -114,7 +114,7 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
       if (data?.topicId !== topic.id || !state.topics) return error(404, 'TOPIC_NOT_FOUND');
       if (!validWorks(data?.entityIds)) return error(422, 'VALIDATION_ERROR');
       const candidates = options(data.entityIds);
-      return {status:200,body:{entityIds:[...data.entityIds].sort((a,b)=>a-b),genres:candidates.filter(tag=>tag.kind==='genre'),themes:candidates.filter(tag=>tag.kind==='theme'),minSelections:1,maxSelections:null}};
+      return {status:200,body:{entityIds:[...data.entityIds].sort((a,b)=>a-b),genres:candidates.filter(tag=>tag.kind==='genre'),themes:candidates.filter(tag=>tag.kind==='theme'),minSelections:2,minGenreSelections:1,minThemeSelections:1,maxSelections:null,maxSelectionsPerKind:7}};
     }
     if (method === 'POST' && url.pathname === '/api/v1/onboarding/complete') {
       if (state.phase !== 'onboarding_pending') return error(409, 'ONBOARDING_ALREADY_COMPLETED');

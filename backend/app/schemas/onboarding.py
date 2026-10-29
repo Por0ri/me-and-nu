@@ -32,7 +32,9 @@ class OnboardingAnswersV2(CamelModel):
 
     version: Literal[2]
     favorite_entity_ids: list[CatalogId] = Field(min_length=1, max_length=5)
-    preference_tag_ids: list[CatalogId] = Field(min_length=1)
+    preference_tag_ids: list[CatalogId] = Field(
+        min_length=2, description="같은 Topic의 활성 장르와 소재를 각각 1~7개 선택합니다."
+    )
     consumption_type: ConsumptionType
 
     @field_validator("version", mode="before")
@@ -150,7 +152,9 @@ class PreferenceOptionsResponse(CamelModel):
     entity_ids: list[int]
     genres: list[PreferenceOption]
     themes: list[PreferenceOption]
-    min_selections: Literal[1] = 1
+    min_selections: Literal[2] = 2
+    min_genre_selections: Literal[1] = 1
+    min_theme_selections: Literal[1] = 1
     max_selections: None = None
     # EXP-33 cap per kind; completion rejects more (onboarding_catalog_service.MAX_TAGS_PER_KIND).
     max_selections_per_kind: Literal[7] = 7

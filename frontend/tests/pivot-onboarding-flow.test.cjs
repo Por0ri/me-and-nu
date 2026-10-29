@@ -189,7 +189,7 @@ test('a refreshed completed session does not submit the old onboarding form agai
   assert.equal(flow.fixture.state.onboardingCompletions, 1);
 });
 
-test('search → candidate union → all tags → completion uses real catalog IDs and the current CSRF',async()=>{
+test('search → full Topic candidates → capped selections → completion uses real catalog IDs and the current CSRF',async()=>{
   const flow=await pendingFlow();
   const catalog=flow.modules.load('lib/pivot/onboarding-catalog.ts').serviceCatalog;
   const topicId=await catalog.resolveTopic();
@@ -204,13 +204,44 @@ test('search → candidate union → all tags → completion uses real catalog I
   const tags=[...candidates.genres,...candidates.themes];
   assert.equal(tags.length,12);
   assert.equal(candidates.maxSelections,null);
+  assert.equal(candidates.maxSelectionsPerKind,7);
+  assert.equal(candidates.minSelections,2);
+  assert.equal(candidates.minGenreSelections,1);
+  assert.equal(candidates.minThemeSelections,1);
   assert.equal(flow.fixture.state.onboardingCompletions,0);
   assert.equal(flow.fixture.state.onboarding,null,'candidate lookup must never save a partial signup');
   assert.equal(flow.fixture.requests.at(-1).csrf,'fixture-new-pending-csrf');
-  const result=await flow.service.submitSelection({...selection,favoriteEntityIds:[102,101],preferenceTagIds:tags.map(tag=>tag.tagId)},await flow.consent(),profile);
+  const chosen=[...candidates.genres,...candidates.themes.slice(0,7)];
+  const result=await flow.service.submitSelection({...selection,favoriteEntityIds:[102,101],preferenceTagIds:chosen.map(tag=>tag.tagId)},await flow.consent(),profile);
   assert.equal(result.session.sessionState,'active');
-  assert.equal(flow.fixture.state.onboarding.answers.preferenceTagIds.length,12);
+  assert.equal(flow.fixture.state.onboarding.answers.preferenceTagIds.length,8);
   assert.equal(Object.hasOwn(flow.fixture.state.onboarding,'birthDate'),false);
+});
+
+test('more than seven selections of either kind are rejected without partial signup',async()=>{
+  for(const kind of ['genre','theme']) {
+    const flow=await pendingFlow();
+    const original=flow.fixture.tags.find(tag=>tag.kind===kind);
+    const extra=Array.from({length:7},(_,i)=>({...original,tagId:801+i,code:'overflow_'+i,sourceEntityIds:[]}));
+    flow.fixture.tags.push(...extra);
+    const opposite=flow.fixture.tags.find(tag=>tag.kind!==kind);
+    await assert.rejects(flow.service.submitSelection({...selection,preferenceTagIds:[original.tagId,...extra.map(tag=>tag.tagId),opposite.tagId]},await flow.consent(),profile),error=>error.code==='VALIDATION_ERROR');
+    assert.equal(flow.fixture.state.phase,'onboarding_pending');
+    assert.equal(flow.fixture.state.onboardingCompletions,0);
+    assert.equal(flow.fixture.state.onboarding,null);
+  }
+});
+
+test('same-kind-only selections are rejected at completion without partial signup',async()=>{
+  for(const kind of ['genre','theme']) {
+    const flow=await pendingFlow();
+    const original=flow.fixture.tags.find(tag=>tag.kind===kind);
+    flow.fixture.tags.push({...original,tagId:999,code:'additional_'+kind});
+    await assert.rejects(flow.service.submitSelection({...selection,preferenceTagIds:[original.tagId,999]},await flow.consent(),profile),error=>error.code==='VALIDATION_ERROR');
+    assert.equal(flow.fixture.state.phase,'onboarding_pending');
+    assert.equal(flow.fixture.state.onboardingCompletions,0);
+    assert.equal(flow.fixture.state.onboarding,null);
+  }
 });
 
 test('a candidate removed after selection is rejected at completion and cannot fabricate signup success',async()=>{

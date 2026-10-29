@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type Dispatch } from "react";
 import { ApiError } from "@/lib/api";
 import { type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
-import { canAdvance, selectionKey, workFormatLabel, type OnboardingAction, type OnboardingState, type OnboardingWork } from "@/lib/pivot/onboarding";
+import { MAX_PREFERENCE_TAGS_PER_KIND, selectedPreferenceCount, canAdvance, selectionKey, workFormatLabel, type OnboardingAction, type OnboardingState, type OnboardingWork } from "@/lib/pivot/onboarding";
 import { PivotFrame, PrimaryButton } from "./pivot-ui";
 import styles from "./onboarding.module.css";
 
@@ -136,20 +136,20 @@ export function TagsQuestion({ state, dispatch, catalog, onBack, onNext, busy, c
     <QuestionProgress step={2} onBack={onBack} busy={busy} />
     <section className={styles.questionBody} aria-labelledby="question-heading">
       <h1 id="question-heading" tabIndex={-1}><span>Q2.</span>어떤 장르와 소재가 좋으세요?</h1>
-      <p className={styles.questionDescription}>선택한 작품에서 가져왔어요.<br />장르·소재를 합쳐 1개 이상, 원하는 만큼 골라주세요.</p>
+      <p className={styles.questionDescription}>애니메이션의 장르와 소재예요.<br />장르와 소재를 각각 1개 이상, 최대 {MAX_PREFERENCE_TAGS_PER_KIND}개씩 골라주세요.</p>
       {message && <p className={styles.catalogError} role="alert">{message}</p>}
       <p className={styles.catalogNotice}>{state.favoriteWorks.map(work => work.name).join(" · ")}</p>
       {loading ? <p className={styles.catalogNotice} role="status">장르·소재를 불러오고 있어요…</p> : error ? <div className={styles.catalogError} role="alert">{error}<button type="button" onClick={() => setAttempt(value => value + 1)}>다시 시도</button></div> : <>
         {pruned && <p className={styles.catalogNotice} role="status">현재 후보에서 빠진 선택을 해제했어요. 다시 확인해주세요.</p>}
         {(["genre", "theme"] as const).map(kind => <fieldset key={kind} className={styles.tagGroup}>
-          <legend>{kind === "genre" ? "장르" : "소재"}</legend>
+          <legend>{kind === "genre" ? "장르" : "소재"} · 1~{MAX_PREFERENCE_TAGS_PER_KIND}개 선택</legend>
           <div className={styles.tagChips}>{state.preferenceOptions.filter(tag => tag.kind === kind).map(tag => <label key={tag.tagId} className={`${styles.tagChip} ${state.preferenceTagIds.includes(tag.tagId) ? styles.selected : ""}`}>
-            <input type="checkbox" checked={state.preferenceTagIds.includes(tag.tagId)} onChange={() => dispatch({ type: "toggle-tag", tagId: tag.tagId })} disabled={busy} />
+            <input type="checkbox" checked={state.preferenceTagIds.includes(tag.tagId)} onChange={() => dispatch({ type: "toggle-tag", tagId: tag.tagId })} disabled={busy || (!state.preferenceTagIds.includes(tag.tagId) && selectedPreferenceCount(state, kind) >= MAX_PREFERENCE_TAGS_PER_KIND)} />
             <span>{tag.label}</span>
           </label>)}</div>
-          {!state.preferenceOptions.some(tag => tag.kind === kind) && <p className={styles.catalogNotice}>이 작품들의 {kind === "genre" ? "장르" : "소재"} 후보는 없어요.</p>}
+          {!state.preferenceOptions.some(tag => tag.kind === kind) && <p className={styles.catalogNotice}>{kind === "genre" ? "장르" : "소재"} 목록을 준비 중이에요. 지금은 다음 단계로 진행할 수 없어요.</p>}
         </fieldset>)}
-        <p className={styles.catalogNotice} role="status">{state.preferenceTagIds.length}개 선택했어요.</p>
+        <p className={styles.catalogNotice} role="status">장르 {selectedPreferenceCount(state, "genre")}/{MAX_PREFERENCE_TAGS_PER_KIND}개 · 소재 {selectedPreferenceCount(state, "theme")}/{MAX_PREFERENCE_TAGS_PER_KIND}개 선택했어요. 각각 1개 이상 선택해주세요.</p>
       </>}
     </section>
     <div className={styles.actions}><PrimaryButton disabled={busy || loading || !!error || !canAdvance(state)} onClick={onNext}>장르·소재 선택 완료</PrimaryButton></div>

@@ -2,7 +2,7 @@
 
 Next.js, FastAPI, PostgreSQL, Redis 기반 로컬 V1 테스트 프로젝트입니다. 공개 API의 기본 경로는 `/api/v1`이며 응답 JSON은 camelCase를 사용합니다. 일반 인증은 서버 세션과 HttpOnly 쿠키, 변경 요청은 `X-CSRF-Token`을 사용합니다. `SESSION_BACKEND=redis`이면 세션을 Redis에 저장하며 사용자 데이터는 PostgreSQL에 유지합니다. 로컬 Swagger 테스트용 로그인 우회도 제공합니다.
 
-2026-10-28 통합 브랜치에는 작품 1~5개 → 작품 기반 장르·소재 1개 이상 → 소비 유형 1개의 온보딩 V2 DB·API와 Pivot 프론트가 구현되어 있습니다. 서비스가 독립적으로 보관하는 캐러셀 DB·조회 API와 내부 적재 경로도 추가했습니다. [캐러셀 DB·API 계약](docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [실작품 30개 카탈로그](docs/ONBOARDING_CATALOG_SOURCES_2026-10-28.md), [프론트 연결 검증](docs/ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md), [온보딩 계약과 적용 절차](docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [PostgreSQL ERD SQL](docs/erd/current_schema.sql), [API 목록](docs/API_V1_1_LOCAL_ALIGNMENT.md)을 참고하세요. 모델은 38개 테이블이며 공개 V1 API는 36개입니다. 캐러셀 프론트 연결과 기존 테스트/Labs 서버 적용은 별도 단계입니다.
+2026-10-29 Checking 온보딩은 작품 1~5개 → Topic 전체 활성 칩에서 장르와 소재 각각 1~7개 → 소비 유형 1개를 받습니다. 이번 Q2 최소 선택 조건 변경은 코드에 반영하며 서비스 배포는 별도입니다. 서비스가 독립적으로 보관하는 캐러셀 DB·조회 API와 내부 적재 경로도 추가했습니다. [캐러셀 DB·API 계약](docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [실작품 30개 카탈로그](docs/ONBOARDING_CATALOG_SOURCES_2026-10-28.md), [프론트 연결 검증](docs/ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md), [온보딩 계약과 적용 절차](docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [PostgreSQL ERD SQL](docs/erd/current_schema.sql), [API 목록](docs/API_V1_1_LOCAL_ALIGNMENT.md)을 참고하세요. 모델은 38개 테이블이며 공개 V1 API는 36개입니다. 캐러셀 프론트 연결과 기존 테스트/Labs 서버 적용은 별도 단계입니다.
 
 **생년월일 수집·저장·연령 확인 정책은 통합 후 결정합니다.** 현재 API의 `birthDate` 미지원 계약과 기존 DB 컬럼 상태를 유지합니다. 새 Pivot 가입 화면은 닉네임만 수집하며 생년월일을 입력·전송하지 않습니다. 새 온보딩 migration은 생년월일 삭제와 독립되어 있습니다. 레거시 Consumer 경로와 생년월일 유틸리티는 이번 연결 범위에 포함하지 않습니다.
 

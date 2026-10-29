@@ -92,7 +92,7 @@ export function createOnboardingService(
     guard();
     const validated = validateOnboardingProfile(profile);
     if (!validated.valid) throw new Error(validated.errors.nickname);
-    if (!selection || !isSelectionComplete(selection)) throw new Error("작품, 장르·소재, 소비 유형을 모두 선택해 주세요.");
+    if (!selection || !isSelectionComplete(selection)) throw new Error("작품과 소비 유형을 선택하고, 장르와 소재를 각각 1~7개 선택해 주세요.");
     const consents = copyConsents(consent);
     const answers: OnboardingCompleteInput["answers"] = { version: 2, favoriteEntityIds: [...selection.favoriteEntityIds], preferenceTagIds: [...selection.preferenceTagIds], consumptionType: selection.consumptionType };
     const before = await api.getSession();

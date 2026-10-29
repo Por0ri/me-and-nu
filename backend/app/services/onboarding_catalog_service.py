@@ -2,7 +2,7 @@
 
 Q2 offers every active chip of the Topic. Chips linked to the chosen works carry
 their sourceEntityIds so the screen can suggest them first; any active chip may
-be selected, up to seven genres and seven themes.
+be selected, with one to seven genres and one to seven themes required.
 """
 
 from collections import Counter
@@ -108,7 +108,13 @@ async def validate_v2_selection(
             "answers.preferenceTagIds",
             "현재 선택할 수 있는 장르·소재만 선택할 수 있습니다. 목록을 다시 확인해 주세요.",
         )
-    if max(Counter(tag.kind for tag in tags).values()) > MAX_TAGS_PER_KIND:
+    counts = Counter(tag.kind for tag in tags)
+    if max(counts.values()) > MAX_TAGS_PER_KIND:
         raise invalid_selection(
             "answers.preferenceTagIds", f"장르와 소재는 각각 {MAX_TAGS_PER_KIND}개까지 선택할 수 있습니다.",
+        )
+    if counts["genre"] < 1 or counts["theme"] < 1:
+        raise invalid_selection(
+            "answers.preferenceTagIds",
+            "장르와 소재를 각각 최소 1개 선택해 주세요.",
         )

@@ -1,6 +1,6 @@
 # API V1.1 로컬 정합화와 화면 연결 기준
 
-**현재 구현 (2026-10-28):** Pivot 온보딩 화면을 작품 1~5개 → 선택 작품의 장르·소재 합계 1개 이상(고정 상한 없음) → 기존 Q1 옵션의 소비 유형 1개로 연결했다. 검색·후보·버전별 완료 API 계약은 [온보딩 V2 구현 명세](ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), 실제 화면 검증은 [프론트 연결 기록](ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md)을 따른다. [실작품 시작 카탈로그](ONBOARDING_CATALOG_SOURCES_2026-10-28.md)는 작품 30개·태그 38개·연결 140개다. 통합 브랜치의 로컬 구현이며 main 병합·푸시·배포는 하지 않았다. 기존 `answers:{q1,q2}`도 API의 V1 호환 경로로 유지한다.
+**현재 코드의 Q2 조건 (2026-10-29, 서비스 배포 별도):** Pivot 온보딩 화면을 작품 1~5개 → Topic 전체 활성 칩에서 장르와 소재 각각 1~7개 → 기존 Q1 옵션의 소비 유형 1개로 연결했다. 검색·후보·버전별 완료 API 계약은 [온보딩 V2 구현 명세](ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), 실제 화면 검증은 [프론트 연결 기록](ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md)을 따른다. [실작품 시작 카탈로그](ONBOARDING_CATALOG_SOURCES_2026-10-28.md)는 작품 30개·태그 38개·연결 140개다. 통합 브랜치의 로컬 구현이며 main 병합·푸시·배포는 하지 않았다. 기존 `answers:{q1,q2}`도 API의 V1 호환 경로로 유지한다.
 
 현재 코드 재확인: 2026-10-28, `codex/service-integration` 작업 공간 기준. 최초 2026-09-29에 [Notion API V1.1 명세서](https://app.notion.com/p/94604c45a961835bbd1601fc3ab15ac0), [FE 세션·공통 계약](https://app.notion.com/p/0ce04c45a96183a884988159b10ddc81)를 대조한 기록에 로컬 라우터·OpenAPI의 변경을 반영했다. 이번에는 외부 Notion 명세나 배포 서버를 재검증하지 않았다. V1.1 전체 요구사항의 구현 완료 판정은 아니다.
 
@@ -18,9 +18,9 @@
 | --- | --- | --- | --- |
 | API-001 | `POST /api/v1/auth/login/{provider}` | 구현 | 카카오·네이버 로그인 시작. 세션·CSRF와 공급자 설정이 필요하다. |
 | API-002 | `GET /api/v1/auth/login/{provider}/callback` | 구현 | state·브라우저 바인딩 검증, 계정 연결, 세션 발급·리다이렉트. |
-| API-004 | `POST /api/v1/onboarding/complete` | **부분** | `201`, 닉네임·동의·Topic과 버전별 답변·선택을 원자적으로 저장. v2는 작품 1~5개·현재 켜진 장르·소재 칩 1개 이상(종류별 7개까지)·소비 유형 1개. v1은 기존 q1/q2. `answers`와 `activeTopic.subtopicIds=[]` 반환. pending 세션·CSRF 필요, 세션 교체 유지. |
+| API-004 | `POST /api/v1/onboarding/complete` | **부분** | `201`, 닉네임·동의·Topic과 버전별 답변·선택을 원자적으로 저장. v2는 작품 1~5개·현재 켜진 장르·소재 각각 1~7개·소비 유형 1개. v1은 기존 q1/q2. `answers`와 `activeTopic.subtopicIds=[]` 반환. pending 세션·CSRF 필요, 세션 교체 유지. |
 | 신규 Q1 | `GET /api/v1/onboarding/works` | 구현 | pending 세션. topicId/q/cursor/limit으로 활성 애니 작품 이름·별칭 검색. 빈 검색어는 빈 목록. 검색된 활성 작품은 모두 selectable=true. |
-| 신규 Q2 | `POST /api/v1/onboarding/preference-options` | 구현 | pending 세션·CSRF. `{topicId,entityIds}`로 유효 작품 1~5개를 검사하고 켜진 장르·소재 칩 전체와 힌트용 sourceEntityIds, maxSelectionsPerKind(7) 반환. 선택 저장 없음. |
+| 신규 Q2 | `POST /api/v1/onboarding/preference-options` | 구현 | pending 세션·CSRF. `{topicId,entityIds}`로 유효 작품 1~5개를 검사하고 켜진 장르·소재 칩 전체와 힌트용 sourceEntityIds, minSelections(2), minGenreSelections(1), minThemeSelections(1), maxSelectionsPerKind(7) 반환. 선택 저장 없음. |
 | API-005 | `GET /api/v1/auth/session` | **부분** | 비로그인도 `200`과 익명 세션 쿠키·`csrfToken`을 받는다. 응답 모델은 `restoration_pending`을 허용하지만 계정 복구 절차(API-010)는 아직 없다. |
 | API-006 | `POST /api/v1/auth/logout` | 정합 | 현재 세션 폐기, `204` 빈 본문. 유효 세션의 변경 요청에는 CSRF가 필요하다. |
 | API-007 | `GET /api/v1/users/me` | 정합 | 온보딩 완료 사용자의 프로필 조회. 응답에 `birthDate`가 없다. |
@@ -69,7 +69,7 @@
 | 화면 단계 | 현재 쓸 수 있는 FE 함수 | 입력·상태 갱신 |
 | --- | --- | --- |
 | 시작·인증 | `getSession`, 개발용 `register`, `login`, `logout` | 세션을 조회해 쿠키·CSRF를 받는다. 개발용 로그인 후 세션을 재조회한다. 로그아웃 성공은 빈 `204`; 이어서 세션·보호 화면을 갱신한다. |
-| 정책·온보딩 선택 | `getPolicies`, `serviceCatalog.resolveTopic/search/options` | 실제 anime Topic과 작품 검색·후보 API 결과를 사용한다. Q1 작품 1~5개·Q2 태그 1개 이상·Q3 소비 유형 1개. 작품 변경 시 후보를 갱신하고 후보 밖 선택을 정리한다. |
+| 정책·온보딩 선택 | `getPolicies`, `serviceCatalog.resolveTopic/search/options` | 실제 anime Topic과 작품 검색·후보 API 결과를 사용한다. Q1 작품 1~5개·Q2 장르와 소재 각각 1~7개·Q3 소비 유형 1개. 작품 변경 시 후보를 갱신하고 후보 밖 선택을 정리한다. |
 | 온보딩 제출 | `serviceOnboardingService.submitSelection` | `/onboarding/complete`에 닉네임·`accountType:user`·동의·`topicId`와 V2 `answers`를 제출하고 `birthDate`·`profileImageId`·`subtopicIds`는 제외한다. 세션 회전 후 `getSession`으로 `active`·새 CSRF를 확인한다. 중복 클릭과 응답 유실 후 재확인도 처리한다. |
 | 마이페이지·동의 | `getProfile`, `updateProfile`, `getConsents`, `updateConsents` | 닉네임·선택 동의 변경 후 관련 조회를 다시 실행한다. `updateProfile({profileImageId:null})`로 기존 이미지 연결 해제만 가능하며 업로드·새 이미지 연결은 아직 지원하지 않는다. |
 | 관심사·구독 | `getMyTopics`, `addMyTopic`, `getMySubtopics`, `subscribeSubtopic`, `unsubscribeSubtopic` | `getMyTopics({includeDeleted})` 조회가 가능하다. 추가에는 실제 Topic에 속한 Subtopic ID를 제출한다. 구독 해제의 `204`를 빈 응답으로 처리한다. |

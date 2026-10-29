@@ -1,10 +1,13 @@
 import { apiRequest, getSession, getTopics } from "@/lib/api";
 import { animeTopicId } from "./onboarding-service";
-import { selectionKey, validId, type OnboardingWork, type PreferenceOption } from "./onboarding";
+import { MAX_PREFERENCE_TAGS_PER_KIND, selectionKey, validId, type OnboardingWork, type PreferenceOption } from "./onboarding";
 import { requirePivotApi } from "./services";
 
 export type WorkPage = { items: OnboardingWork[]; nextCursor: string | null };
-export type PreferenceOptions = { entityIds: number[]; genres: PreferenceOption[]; themes: PreferenceOption[]; minSelections: 1; maxSelections: null };
+export type PreferenceOptions = { entityIds: number[]; genres: PreferenceOption[]; themes: PreferenceOption[]; minSelections: 2; minGenreSelections: 1; minThemeSelections: 1; maxSelections: null; maxSelectionsPerKind: typeof MAX_PREFERENCE_TAGS_PER_KIND };
+type PreferenceOptionsPayload = Omit<PreferenceOptions, "minSelections" | "minGenreSelections" | "minThemeSelections" | "maxSelectionsPerKind"> & {
+  minSelections: number; minGenreSelections?: number; minThemeSelections?: number; maxSelectionsPerKind?: number;
+};
 export type OnboardingCatalog = {
   resolveTopic(): Promise<number>;
   search(topicId: number, q: string, cursor?: string, signal?: AbortSignal): Promise<WorkPage>;
@@ -25,10 +28,15 @@ export function validateWorkPage(value: WorkPage): WorkPage {
   }
   return value;
 }
-export function validatePreferenceOptions(value: PreferenceOptions, ids: number[]): PreferenceOptions {
+export function validatePreferenceOptions(value: PreferenceOptionsPayload, ids: number[]): PreferenceOptions {
+  // Checking frontend can roll out before the manually deployed backend. Normalize
+  // the complete old contract, but never accept partial or inconsistent minimums.
+  const legacyMinimums = value?.minSelections === 1 && value.minGenreSelections === undefined && value.minThemeSelections === undefined;
+  const currentMinimums = value?.minSelections === 2 && value.minGenreSelections === 1 && value.minThemeSelections === 1;
   if (!Array.isArray(value?.entityIds) || value.entityIds.length !== ids.length || !value.entityIds.every(validId) ||
     selectionKey(value.entityIds) !== selectionKey(ids) || !Array.isArray(value.genres) || !Array.isArray(value.themes) ||
-    value.minSelections !== 1 || value.maxSelections !== null) fail();
+    !(legacyMinimums || currentMinimums) || value.maxSelections !== null ||
+    (value.maxSelectionsPerKind !== MAX_PREFERENCE_TAGS_PER_KIND && !(legacyMinimums && value.maxSelectionsPerKind === undefined))) fail();
   const seen = new Set<number>();
   for (const kind of ["genre", "theme"] as const) {
     for (const tag of kind === "genre" ? value.genres : value.themes) {
@@ -38,7 +46,7 @@ export function validatePreferenceOptions(value: PreferenceOptions, ids: number[
       seen.add(tag.tagId);
     }
   }
-  return value;
+  return { ...value, minSelections: 2, minGenreSelections: 1, minThemeSelections: 1, maxSelectionsPerKind: MAX_PREFERENCE_TAGS_PER_KIND };
 }
 
 export const serviceCatalog: OnboardingCatalog = {
@@ -53,7 +61,7 @@ export const serviceCatalog: OnboardingCatalog = {
     requirePivotApi();
     // A retry must pick up the current CSRF token after a session refresh.
     await getSession();
-    return validatePreferenceOptions(await apiRequest<PreferenceOptions>("/api/v1/onboarding/preference-options", {
+    return validatePreferenceOptions(await apiRequest<PreferenceOptionsPayload>("/api/v1/onboarding/preference-options", {
       method: "POST", body: JSON.stringify({ topicId, entityIds }), signal,
     }), entityIds);
   },
@@ -74,7 +82,7 @@ export const demoCatalog: OnboardingCatalog = {
   async resolveTopic() { return 900; },
   async search(_topicId, q) { return { items: demoWorks.filter(work => `${work.name} ${work.aliases.join(" ")}`.includes(q.trim())), nextCursor: null }; },
   async options(_topicId, entityIds) {
-    const options = demoOptions.map(tag => ({ ...tag, sourceEntityIds: tag.sourceEntityIds.filter(id => entityIds.includes(id)) })).filter(tag => tag.sourceEntityIds.length);
-    return { entityIds, genres: options.filter(tag => tag.kind === "genre"), themes: options.filter(tag => tag.kind === "theme"), minSelections: 1, maxSelections: null };
+    const options = demoOptions.map(tag => ({ ...tag, sourceEntityIds: tag.sourceEntityIds.filter(id => entityIds.includes(id)) }));
+    return { entityIds, genres: options.filter(tag => tag.kind === "genre"), themes: options.filter(tag => tag.kind === "theme"), minSelections: 2, minGenreSelections: 1, minThemeSelections: 1, maxSelections: null, maxSelectionsPerKind: MAX_PREFERENCE_TAGS_PER_KIND };
   },
 };

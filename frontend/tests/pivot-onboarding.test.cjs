@@ -27,7 +27,7 @@ function q1() {
   state=reduce(state,{type:'set-topic',topicId:83});
   return go(state);
 }
-function q2(ids=[101],options=[tag()]) {
+function q2(ids=[101],options=[tag(),tag(301,'theme')]) {
   let state=q1();
   for(const id of ids) state=reduce(state,{type:'toggle-work',work:work(id)});
   state=go(state);
@@ -36,6 +36,7 @@ function q2(ids=[101],options=[tag()]) {
 function result(consumptionType='ost') {
   let state=q2();
   state=reduce(state,{type:'toggle-tag',tagId:201});
+  state=reduce(state,{type:'toggle-tag',tagId:301});
   state=go(state);
   return go(reduce(state,{type:'choose-consumption',value:consumptionType}));
 }
@@ -47,9 +48,11 @@ test('Interest selection and all three unanswered questions block progression',(
   assert.equal(go(state).step,'q1');
   state=go(reduce(state,{type:'toggle-work',work:work()}));
   assert.equal(go(state).step,'q2');
-  state=reduce(state,{type:'set-options',topicId:83,entityIds:[101],options:[tag()]});
+  state=reduce(state,{type:'set-options',topicId:83,entityIds:[101],options:[tag(),tag(301,'theme')]});
   assert.equal(go(state).step,'q2');
-  state=go(reduce(state,{type:'toggle-tag',tagId:201}));
+  state=reduce(state,{type:'toggle-tag',tagId:201});
+  assert.equal(go(state).step,'q2');
+  state=go(reduce(state,{type:'toggle-tag',tagId:301}));
   assert.equal(state.step,'q3');
   assert.equal(go(state).step,'q3');
 });
@@ -77,19 +80,59 @@ test('Invalid IDs, unavailable works and out-of-stage answers fail closed',()=>{
   assert.equal(reduce(tags,{type:'toggle-tag',tagId:999}),tags);
 });
 
-test('Q2 needs one tag total, accepts genre-only or theme-only and has no fixed cap',()=>{
+test('Q2 requires at least one genre and one theme and caps each kind at seven',()=>{
   for(const kind of ['genre','theme']) {
-    let state=q2([101],[tag(201,kind)]);
-    state=reduce(state,{type:'toggle-tag',tagId:201});
-    assert.equal(m.canAdvance(state),true,kind);
+    let state=q2([101],[tag(201,kind),tag(202,kind)]);
+    for(const tagId of [201,202]) state=reduce(state,{type:'toggle-tag',tagId});
+    assert.equal(m.canAdvance(state),false,kind);
+    assert.equal(go(state).step,'q2');
   }
-  const options=Array.from({length:40},(_,i)=>tag(201+i,'theme'));
+  const options=Array.from({length:40},(_,i)=>tag(201+i,i % 2 ? 'theme' : 'genre'));
   let state=q2([101],options);
   for(const option of options) state=reduce(state,{type:'toggle-tag',tagId:option.tagId});
-  assert.equal(state.preferenceTagIds.length,40);
+  assert.equal(state.preferenceTagIds.length,14);
+  assert.equal(m.selectedPreferenceCount(state,'genre'),7);
+  assert.equal(m.selectedPreferenceCount(state,'theme'),7);
+  assert.equal(reduce(state,{type:'toggle-tag',tagId:239}),state,'eighth genre is blocked');
+  assert.equal(reduce(state,{type:'toggle-tag',tagId:240}),state,'eighth theme is blocked');
   assert.equal(m.canAdvance(state),true);
   state=reduce(state,{type:'toggle-tag',tagId:201});
-  assert.equal(state.preferenceTagIds.length,39);
+  assert.equal(state.preferenceTagIds.length,13);
+  state=reduce(state,{type:'toggle-tag',tagId:239});
+  assert.equal(state.preferenceTagIds.length,14);
+});
+
+test('State completion rejects a tampered eighth selection of either kind',()=>{
+  for(const kind of ['genre','theme']) {
+    const opposite=kind==='genre'?'theme':'genre';
+    const options=[...Array.from({length:8},(_,i)=>tag(401+i,kind)),tag(501,opposite)];
+    const state={...result(),preferenceOptions:options,preferenceTagIds:options.map(option=>option.tagId)};
+    assert.equal(m.canAdvance({...state,step:'q2'}),false);
+    assert.equal(m.isStateComplete(state),false);
+    assert.throws(()=>m.buildSelectionDraft(state));
+  }
+});
+
+test('Removing the last selected tag of either kind blocks Q2 and final submission',()=>{
+  const completed=result();
+  assert.equal(m.isStateComplete(completed),true);
+  for(const missingKind of ['genre','theme']) {
+    let state=back(back(completed));
+    const tagId=missingKind==='genre'?201:301;
+    state=reduce(state,{type:'toggle-tag',tagId});
+    assert.equal(state.preferenceTagIds.includes(tagId),false,'deselection stays available');
+    assert.equal(m.canAdvance(state),false,missingKind);
+    assert.equal(go(state).step,'q2');
+    assert.equal(m.isStateComplete({...state,step:'result'}),false);
+    assert.throws(()=>m.buildSelectionDraft({...state,step:'result'}));
+    state=reduce(state,{type:'toggle-tag',tagId});
+    assert.equal(m.canAdvance(state),true);
+  }
+  for(const ids of [[],[201,999],[201,201],[301,999]]) {
+    const state={...completed,preferenceTagIds:ids};
+    assert.equal(m.isStateComplete(state),false);
+    assert.throws(()=>m.buildSelectionDraft(state));
+  }
 });
 
 test('Stale candidate responses cannot attach another work set or Topic to Q2',()=>{
@@ -102,7 +145,7 @@ test('Stale candidate responses cannot attach another work set or Topic to Q2',(
 test('Changing Q1 clears Q2 candidates and selected tags before recalculating',()=>{
   let state=back(back(back(result())));
   assert.equal(state.step,'q1');
-  assert.equal(state.preferenceTagIds.length,1);
+  assert.equal(state.preferenceTagIds.length,2);
   state=reduce(state,{type:'toggle-work',work:work(102)});
   assert.equal(state.optionsKey,null);
   assert.equal(state.preferenceTagIds.length,0);
@@ -112,13 +155,15 @@ test('Changing Q1 clears Q2 candidates and selected tags before recalculating',(
 });
 
 test('Refreshing Q2 blocks advancement and prunes tags no longer in the current candidates',()=>{
-  let state=q2([101],[tag(201),tag(202)]);
+  let state=q2([101],[tag(201),tag(202,'theme'),tag(203)]);
   state=reduce(state,{type:'toggle-tag',tagId:201});
   state=reduce(state,{type:'toggle-tag',tagId:202});
   state=reduce(state,{type:'invalidate-options'});
   assert.equal(m.canAdvance(state),false);
-  state=reduce(state,{type:'set-options',topicId:83,entityIds:[101],options:[tag(202)]});
+  state=reduce(state,{type:'set-options',topicId:83,entityIds:[101],options:[tag(202,'theme'),tag(203)]});
   assert.deepEqual(plain(state.preferenceTagIds),[202]);
+  assert.equal(m.canAdvance(state),false);
+  state=reduce(state,{type:'toggle-tag',tagId:203});
   assert.equal(m.canAdvance(state),true);
 });
 
@@ -128,7 +173,7 @@ for(const choice of m.q1Choices) test(`Q3 keeps one ${choice.id} choice and prod
   state=go(state);
   assert.equal(state.step,'result');
   assert.equal(m.selectionSummary(state).consumption,choice.summary);
-  assert.deepEqual(plain(m.buildSelectionDraft(state)),{interest:'animation',topicId:83,favoriteEntityIds:[101],preferenceTagIds:[201],consumptionType:choice.id});
+  assert.deepEqual(plain(m.buildSelectionDraft(state)),{interest:'animation',topicId:83,favoriteEntityIds:[101],preferenceTagIds:[201,301],consumptionType:choice.id});
 });
 
 test('Repeated stale navigation cannot skip a question',()=>{
@@ -145,7 +190,7 @@ test('Back retains selections, explicit result reselection clears them, stale re
   let state=result();
   for(const step of ['q3','q2','q1','interest']) {
     state=back(state); assert.equal(state.step,step);
-    assert.equal(state.favoriteWorks.length,1); assert.equal(state.preferenceTagIds.length,1);
+    assert.equal(state.favoriteWorks.length,1); assert.equal(state.preferenceTagIds.length,2);
     assert.equal(state.consumptionType,'ost');
   }
   state=reduce(result(),{type:'reselect',from:'result'});
@@ -165,5 +210,5 @@ test('A changed Topic resets old catalog selections and session reset clears per
 test('Incomplete or malformed drafts cannot be submitted',()=>{
   assert.throws(()=>m.buildSelectionDraft(m.initialOnboardingState()));
   const draft=m.buildSelectionDraft(result());
-  for(const invalid of [{...draft,favoriteEntityIds:[101,101]},{...draft,preferenceTagIds:[]},{...draft,preferenceTagIds:[201,'202']},{...draft,consumptionType:'releases'},{...draft,topicId:0}]) assert.equal(m.isSelectionComplete(invalid),false);
+  for(const invalid of [{...draft,favoriteEntityIds:[101,101]},{...draft,preferenceTagIds:[]},{...draft,preferenceTagIds:[201]},{...draft,preferenceTagIds:Array.from({length:15},(_,i)=>i+1)},{...draft,preferenceTagIds:[201,'202']},{...draft,consumptionType:'releases'},{...draft,topicId:0}]) assert.equal(m.isSelectionComplete(invalid),false);
 });

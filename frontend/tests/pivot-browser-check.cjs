@@ -80,7 +80,7 @@ async function quickResult(page) {
  await page.getByRole('button',{name:'애니메이션 선택하고 시작하기'}).click();
  assert.equal(await page.getByRole('list',{name:'선택한 작품',exact:true}).locator('li').count(),0);
  await chooseWork(page,'별빛 우체국'); await advanceWorks(page);
- await page.getByRole('checkbox',{name:'우정',exact:true}).check(); await advanceTags(page);
+ await page.getByRole('checkbox',{name:'우정',exact:true}).check(); await page.getByRole('checkbox',{name:'판타지',exact:true}).check(); await advanceTags(page);
  assert.equal(await page.locator('input[name=consumptionType]:checked').count(),0);
  await choose(page,'consumptionType','world'); await advance(page);
  await page.waitForFunction(()=>!document.querySelector('button[aria-describedby="home-feedback"]').disabled);
@@ -123,7 +123,7 @@ async function reselectFlow(page,stem) {
  await page.getByRole('checkbox',{name:'로봇',exact:true}).waitFor();
  assert.equal(await page.locator('fieldset input[type=checkbox]:checked').count(),0);
  assert.equal(await page.getByRole('button',{name:'장르·소재 선택 완료',exact:true}).isDisabled(),true);
- await page.getByRole('checkbox',{name:'로봇',exact:true}).check();await advanceTags(page);await headingFocused(page);
+ await page.getByRole('checkbox',{name:'로봇',exact:true}).check();await page.getByRole('checkbox',{name:'모험',exact:true}).check();await advanceTags(page);await headingFocused(page);
  assert.equal(await page.locator('input[name=consumptionType]:checked').count(),0);
  assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
  const input=page.locator('input[name=consumptionType][value=goods]');await input.focus();await page.keyboard.press('Space');
@@ -157,6 +157,8 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
  await page.getByRole('checkbox',{name:'우정',exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'장르·소재 선택 완료',exact:true}).isDisabled(),true);
  await page.getByRole('checkbox',{name:'우정',exact:true}).check();
+ assert.equal(await page.getByRole('button',{name:'장르·소재 선택 완료',exact:true}).isDisabled(),true);
+ await page.getByRole('checkbox',{name:'판타지',exact:true}).check();
  await snapshot(page,stem+'-q2');
  // Back alone retains selections; changing Q1 requires a new Q2 selection.
  await page.getByRole('button',{name:'이전 단계'}).click();
@@ -171,7 +173,9 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
  await advanceWorks(page);
  await page.getByRole('checkbox',{name:'모험',exact:true}).waitFor();
  assert.equal(await page.locator('fieldset input[type=checkbox]:checked').count(),0);
- await page.getByRole('checkbox',{name:'모험',exact:true}).check();await advanceTags(page);await headingFocused(page);
+ await page.getByRole('checkbox',{name:'모험',exact:true}).check();
+ assert.equal(await page.getByRole('button',{name:'장르·소재 선택 완료',exact:true}).isDisabled(),true);
+ await page.getByRole('checkbox',{name:'우정',exact:true}).check();await advanceTags(page);await headingFocused(page);
  assert.equal(await page.getByRole('progressbar').getAttribute('aria-valuenow'),'3');
  assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
  await choose(page,'consumptionType','world');await page.keyboard.press('ArrowRight');
@@ -268,8 +272,8 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
      if(url.pathname==='/api/v1/onboarding/works') payload={items:onboardingWorks.filter(work=>work.name.includes((url.searchParams.get('q')||'').trim())),nextCursor:null};
      if(url.pathname==='/api/v1/onboarding/preference-options') {
       const ids=req.postDataJSON().entityIds;
-      const tags=onboardingTags.map(tag=>({...tag,sourceEntityIds:tag.sourceEntityIds.filter(id=>ids.includes(id))})).filter(tag=>tag.sourceEntityIds.length);
-      payload={entityIds:ids,genres:tags.filter(tag=>tag.kind==='genre'),themes:tags.filter(tag=>tag.kind==='theme'),minSelections:1,maxSelections:null};
+      const tags=onboardingTags.map(tag=>({...tag,sourceEntityIds:tag.sourceEntityIds.filter(id=>ids.includes(id))}));
+      payload={entityIds:ids,genres:tags.filter(tag=>tag.kind==='genre'),themes:tags.filter(tag=>tag.kind==='theme'),minSelections:2,minGenreSelections:1,minThemeSelections:1,maxSelections:null,maxSelectionsPerKind:7};
      }
      await route.fulfill({status:payload?200:500,contentType:'application/json',headers,body:JSON.stringify(payload)});return;
     }

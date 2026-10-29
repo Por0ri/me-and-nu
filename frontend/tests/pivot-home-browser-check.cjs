@@ -20,6 +20,7 @@ async function enterDemo(page, consumptionType = 'world') {
   await page.getByRole('list', {name:'작품 검색 결과',exact:true}).getByRole('button').filter({hasText:'별빛 우체국'}).click();
   await page.getByRole('button', {name:'선택한 작품으로 다음',exact:true}).click();
   await page.getByRole('checkbox', {name:'우정',exact:true}).check();
+  await page.getByRole('checkbox', {name:'판타지',exact:true}).check();
   await page.getByRole('button', {name:'장르·소재 선택 완료',exact:true}).click();
   await page.locator(`input[name=consumptionType][value=${consumptionType}]`).locator('..').tap();
   await page.getByRole('button', { name: '선택 완료', exact: true }).click();

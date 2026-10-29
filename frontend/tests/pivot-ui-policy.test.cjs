@@ -37,8 +37,8 @@ function render(step, mode, answers = {}) {
   return renderToStaticMarkup(React.createElement(OnboardingFlow, {
     state: { ...initialOnboardingState(), step, interest: 'animation', topicId:83,
       favoriteWorks:[{entityId:101,name:'테스트 작품',aliases:[],imageUrl:null,releaseYear:2024,mediaFormat:'TV',selectable:true,unavailableReason:null}],
-      preferenceOptions:[{tagId:201,kind:'genre',code:'fantasy',label:'판타지',sourceEntityIds:[101]}],
-      preferenceTagIds:[201],optionsKey:'101',consumptionType:'ost',...answers },
+      preferenceOptions:[{tagId:201,kind:'genre',code:'fantasy',label:'판타지',sourceEntityIds:[101]},{tagId:301,kind:'theme',code:'friendship',label:'우정',sourceEntityIds:[101]}],
+      preferenceTagIds:[201,301],optionsKey:'101',consumptionType:'ost',...answers },
     dispatch() {}, onExit() {}, mode,
   }));
 }
@@ -47,6 +47,13 @@ for (const mode of ['demo', 'service']) {
     for (const step of ['interest', 'result']) assert.doesNotMatch(render(step, mode), /aria-label="이전 단계"/);
     for (const step of ['q1', 'q2','q3']) assert.equal((render(step, mode).match(/aria-label="이전 단계"/g) || []).length, 1);
     assert.match(render('result', mode), />다시 선택하기<\/button>/);
+  });
+  test(mode + ': Q2 explains the per-kind minimum and an incomplete result cannot be submitted', () => {
+    assert.match(render('q2', mode), /장르와 소재를 각각 1개 이상/);
+    for (const ids of [[], [201], [301]]) {
+      const html = render('result', mode, {preferenceTagIds: ids});
+      assert.match(html, /<button[^>]*disabled=""[^>]*aria-describedby="home-feedback"/);
+    }
   });
   test(mode + ': unanswered Q1/Q2/Q3 block CTA and contain no stale result summary', () => {
     for (const step of ['q1', 'q2','q3']) {

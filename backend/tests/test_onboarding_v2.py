@@ -41,6 +41,7 @@ def payload(answers):
     ("favoriteEntityIds", ["11"]), ("favoriteEntityIds", [11.0]),
     ("favoriteEntityIds", [0]), ("favoriteEntityIds", [-1]),
     ("favoriteEntityIds", [2**63]), ("preferenceTagIds", []),
+    ("preferenceTagIds", [101]),
     ("preferenceTagIds", [101, 101]), ("preferenceTagIds", ["101"]),
     ("preferenceTagIds", [False]), ("preferenceTagIds", [0]),
     ("consumptionType", []), ("consumptionType", "releases"),
@@ -72,7 +73,7 @@ def test_v1_v2_mixed_or_implicit_v2_answers_are_rejected(answers):
         OnboardingRequest.model_validate(payload(answers))
 
 
-def test_v1_response_shape_and_unbounded_v2_tag_list_are_preserved():
+def test_v1_shape_and_v2_schema_defer_per_kind_cap_to_catalogue():
     legacy = {"q1": "world", "q2": "releases"}
     assert OnboardingRequest.model_validate(payload(legacy)).answers.model_dump(by_alias=True) == legacy
     tags = list(range(1, 151))
@@ -231,7 +232,9 @@ def test_options_list_every_active_chip_with_work_sources_and_are_read_only(v2_f
     assert [tag["tagId"] for tag in body["themes"]] == [103]
     assert [tag["sourceEntityIds"] for tag in body["genres"]] == [[12], [11, 12], []]
     assert body["themes"][0]["sourceEntityIds"] == [11]
-    assert body["minSelections"] == 1 and body["maxSelections"] is None and body["maxSelectionsPerKind"] == 7
+    assert body["minSelections"] == 2 and body["maxSelections"] is None
+    assert body["minGenreSelections"] == 1 and body["minThemeSelections"] == 1
+    assert body["maxSelectionsPerKind"] == 7
     assert_no_onboarding_writes(flow)
 
 
@@ -314,45 +317,61 @@ def test_more_than_seven_chips_of_one_kind_are_rejected(v2_flow, kind):
     flow = v2_flow
     add_chips(flow, kind, range(300, 308))
     csrf, token = pending_onboarding(flow)
-    response = signup_request(flow, csrf, v2_answers(preferenceTagIds=list(range(300, 308))))
+    opposite_kind = 103 if kind == "genre" else 101
+    response = signup_request(flow, csrf, v2_answers(preferenceTagIds=[*range(300, 308), opposite_kind]))
     assert response.status_code == 422, response.text
     assert response.json()["fields"][0]["field"] == "answers.preferenceTagIds"
     assert flow.client.cookies.get(settings.session_cookie_name) == token
     assert_no_onboarding_writes(flow)
 
 
-@pytest.mark.parametrize("tag_id", [101, 103])
-def test_one_work_and_one_genre_or_theme_satisfy_minimum_selection(v2_flow, tag_id):
+def test_one_work_with_one_genre_and_one_theme_satisfies_minimum(v2_flow):
     flow = v2_flow
     csrf, _ = pending_onboarding(flow)
     response = signup_request(
-        flow, csrf, v2_answers(favoriteEntityIds=[11], preferenceTagIds=[tag_id]),
+        flow, csrf, v2_answers(favoriteEntityIds=[11], preferenceTagIds=[101, 103]),
     )
     assert response.status_code == 201, response.text
     assert response.json()["answers"]["favoriteEntityIds"] == [11]
-    assert response.json()["answers"]["preferenceTagIds"] == [tag_id]
+    assert response.json()["answers"]["preferenceTagIds"] == [101, 103]
     with Session(flow.engine) as session:
         assert session.scalar(select(func.count()).select_from(TapEntity)) == 1
-        assert session.scalar(select(func.count()).select_from(TapPreferenceTag)) == 1
+        assert session.scalar(select(func.count()).select_from(TapPreferenceTag)) == 2
+
+
+@pytest.mark.parametrize("tag_ids", [[], [101], [103], [101, 102], [103, 106]])
+def test_missing_preference_kind_rejects_without_partial_onboarding(v2_flow, tag_ids):
+    flow = v2_flow
+    if 106 in tag_ids:
+        add_chips(flow, "theme", [106])
+    csrf, token = pending_onboarding(flow)
+    response = signup_request(flow, csrf, v2_answers(preferenceTagIds=tag_ids))
+    assert response.status_code == 422, response.text
+    assert response.json()["fields"][0]["field"] == "answers.preferenceTagIds"
+    if len(tag_ids) >= 2:
+        assert "각각 최소 1개" in response.json()["fields"][0]["message"]
+    assert "set-cookie" not in response.headers
+    assert flow.client.cookies.get(settings.session_cookie_name) == token
+    assert_no_onboarding_writes(flow)
 
 
 def test_any_active_chip_and_an_untagged_work_can_be_saved(v2_flow):
     flow = v2_flow
     csrf, _ = pending_onboarding(flow)
     # 13 has no chips and 105 is linked to no chosen work: both are valid choices.
-    response = signup_request(flow, csrf, v2_answers(favoriteEntityIds=[13], preferenceTagIds=[105]))
+    response = signup_request(flow, csrf, v2_answers(favoriteEntityIds=[13], preferenceTagIds=[105, 103]))
     assert response.status_code == 201, response.text
     with Session(flow.engine) as session:
-        assert set(session.scalars(select(TapPreferenceTag.tag_id))) == {105}
+        assert set(session.scalars(select(TapPreferenceTag.tag_id))) == {105, 103}
 
 
 @pytest.mark.parametrize("changes,field", [
     ({"favoriteEntityIds": [999]}, "answers.favoriteEntityIds"),
     ({"favoriteEntityIds": [14]}, "answers.favoriteEntityIds"),
     ({"favoriteEntityIds": [21]}, "answers.favoriteEntityIds"),
-    ({"preferenceTagIds": [999]}, "answers.preferenceTagIds"),
-    ({"preferenceTagIds": [104]}, "answers.preferenceTagIds"),
-    ({"preferenceTagIds": [201]}, "answers.preferenceTagIds"),
+    ({"preferenceTagIds": [101, 999]}, "answers.preferenceTagIds"),
+    ({"preferenceTagIds": [101, 104]}, "answers.preferenceTagIds"),
+    ({"preferenceTagIds": [103, 201]}, "answers.preferenceTagIds"),
     ({"favoriteEntityIds": []}, "answers.favoriteEntityIds"),
     ({"preferenceTagIds": [101, 101]}, "answers.preferenceTagIds"),
 ])
@@ -370,6 +389,7 @@ def test_v2_invalid_selection_never_writes_partial_onboarding(v2_flow, changes, 
 @pytest.mark.parametrize("catalogue_change,field", [
     ("UPDATE entity SET is_active = 0 WHERE entity_id = 11", "answers.favoriteEntityIds"),
     ("UPDATE preference_tag SET is_active = 0 WHERE tag_id = 103", "answers.preferenceTagIds"),
+    ("UPDATE preference_tag SET kind = 'genre' WHERE tag_id = 103", "answers.preferenceTagIds"),
 ])
 def test_completion_revalidates_catalogue_after_candidate_preview(v2_flow, catalogue_change, field):
     flow = v2_flow
@@ -380,6 +400,17 @@ def test_completion_revalidates_catalogue_after_candidate_preview(v2_flow, catal
     response = signup_request(flow, csrf, v2_answers())
     assert response.status_code == 422 and response.json()["fields"][0]["field"] == field
     assert_no_onboarding_writes(flow)
+
+
+def test_work_tag_hint_removal_does_not_restrict_topic_chip_selection(v2_flow):
+    flow = v2_flow
+    csrf, _ = pending_onboarding(flow)
+    assert candidates(flow, csrf).status_code == 200
+    with flow.engine.begin() as connection:
+        connection.exec_driver_sql("DELETE FROM entity_tag WHERE entity_id = 11 AND tag_id = 103")
+    response = signup_request(flow, csrf, v2_answers())
+    assert response.status_code == 201, response.text
+    assert response.json()["answers"]["preferenceTagIds"] == [101, 103]
 
 
 @pytest.mark.parametrize("failure_stage", ["answers_insert", "enabled"])
