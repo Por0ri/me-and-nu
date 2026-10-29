@@ -8,6 +8,7 @@ import re
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 from urllib.parse import unquote, urlparse
 
 from langchain_openai import ChatOpenAI
@@ -30,16 +31,22 @@ from ani_menu_agent.sources import load_source_registry
 class FactCandidate(BaseModel):
     statement: str = Field(min_length=2, description="한국어로 쓴 단일 사실")
     evidence_quote: str = Field(min_length=3, description="캡처 원문에 그대로 있는 근거 문장")
-    fact_type: str = "general"
-    time_sensitive: bool = False
-    details: dict[str, str | int | float | bool | list[str | int | float] | None] = Field(
-        default_factory=dict
+    fact_type: str = Field(
+        default="general",
+        description=(
+            "Use a specific semantic type such as announcement, event_schedule, event_date, "
+            "event_location, episode, character_profile, cast, product, product_price, "
+            "production, review_opinion, recommendation, or music. Use general only when "
+            "the captured evidence cannot be assigned to a specific factual category."
+        ),
     )
+    time_sensitive: bool = False
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class PageFactExtraction(BaseModel):
     topic: str = Field(min_length=2)
-    term_glossary: list[TermTranslation] = Field(default_factory=list, max_length=30)
+    term_glossary: list[TermTranslation] = Field(default_factory=list, max_length=60)
     event_start: str | None = None
     event_start_evidence_quote: str = ""
     event_end: str | None = None
@@ -50,9 +57,9 @@ class PageFactExtraction(BaseModel):
     facts: list[FactCandidate] = Field(min_length=1, max_length=30)
 
 
-def _date_in_quote(quote: str) -> list[str]:
+def _date_in_quote(quote: str, default_year: int | None = None) -> list[str]:
     dates: list[str] = []
-    inherited_year: int | None = None
+    inherited_year: int | None = default_year
     inherited_month: int | None = None
     pattern = re.compile(
         r"(?:(20\d{2})\s*(?:年|년|[./-])\s*)?"
@@ -116,12 +123,14 @@ def _evidence_backed_facts(
     return facts
 
 
-def _verified_event_dates(extracted: PageFactExtraction) -> tuple[str | None, str | None]:
-    start_dates = _date_in_quote(extracted.event_start_evidence_quote)
+def _verified_event_dates(
+    extracted: PageFactExtraction, default_year: int | None = None
+) -> tuple[str | None, str | None]:
+    start_dates = _date_in_quote(extracted.event_start_evidence_quote, default_year)
     event_start = extracted.event_start
     if event_start and (not start_dates or event_start != start_dates[0]):
         event_start = None
-    end_dates = _date_in_quote(extracted.event_end_evidence_quote)
+    end_dates = _date_in_quote(extracted.event_end_evidence_quote, default_year)
     event_end = extracted.event_end
     if event_end and (not end_dates or event_end != end_dates[-1]):
         event_end = None
@@ -193,6 +202,12 @@ def _infer_event_location_from_facts(
             "名古屋",
             "아이치",
             "愛知",
+            "오사카",
+            "大阪",
+            "大阪府",
+            "우메다",
+            "梅田",
+            "梅田スカイビル",
             "교토",
             "京都",
             "후쿠오카",
@@ -201,6 +216,10 @@ def _infer_event_location_from_facts(
             "札幌",
             "요코하마",
             "横浜",
+            "日本全国",
+            "全国アニメイト",
+            "全国のアニメイト",
+            "アニメイト通販",
         ),
         "United States": (
             "미국",
@@ -267,20 +286,41 @@ def _infer_event_location_from_facts(
     return location_text, country_text, "unknown"
 
 
-def _verified_event_dates_from_facts(facts: list[Fact]) -> tuple[str | None, str | None]:
+def _verified_event_dates_from_facts(
+    facts: list[Fact], default_year: int | None = None
+) -> tuple[str | None, str | None]:
     """Use schedule endpoints only when their source quote contains those dates."""
     starts: list[str] = []
     ends: list[str] = []
+    conditional_reschedule_markers = (
+        "雨天の場合",
+        "雨天時",
+        "天候不良",
+        "우천 시",
+        "비가 오면",
+        "우천 시에는",
+        "in case of rain",
+        "rain date",
+    )
     for fact in facts:
         fact_type = fact.fact_type.strip().lower()
         quote = fact.details.get("source_quote")
+        quote_text = quote if isinstance(quote, str) else ""
         if (
             fact.verified
-            and fact_type in {"product_release", "release_date", "goods_release", "sales_start"}
-            and isinstance(quote, str)
+            and fact_type
+            in {
+                "release",
+                "product_release",
+                "release_date",
+                "goods_release",
+                "sales_start",
+                "event_date",
+            }
+            and quote_text
         ):
-            cited_dates = _date_in_quote(quote)
-            release_date = fact.details.get("release_date")
+            cited_dates = _date_in_quote(quote_text, default_year)
+            release_date = fact.details.get("release_date") or fact.details.get("date")
             if len(cited_dates) == 1 and (not release_date or release_date == cited_dates[0]):
                 starts.append(cited_dates[0])
                 ends.append(cited_dates[0])
@@ -293,17 +333,89 @@ def _verified_event_dates_from_facts(facts: list[Fact]) -> tuple[str | None, str
             "location",
         }:
             continue
-        quote = fact.details.get("source_quote")
-        if not isinstance(quote, str):
+        if not quote_text or any(
+            marker.casefold() in quote_text.casefold()
+            for marker in conditional_reschedule_markers
+        ):
             continue
-        cited_dates = set(_date_in_quote(quote))
+        cited_dates = sorted(set(_date_in_quote(quote_text, default_year)))
         start = fact.details.get("start") or fact.details.get("start_date")
         end = fact.details.get("end") or fact.details.get("end_date")
         if isinstance(start, str) and start in cited_dates:
             starts.append(start)
+        elif not isinstance(start, str) and cited_dates:
+            starts.append(cited_dates[0])
         if isinstance(end, str) and end in cited_dates:
             ends.append(end)
+        elif not isinstance(end, str) and cited_dates:
+            ends.append(cited_dates[-1])
     return min(starts) if starts else None, max(ends) if ends else None
+
+
+def _classify_image_asset(
+    *,
+    source_role: str,
+    image_url: str,
+    source_description: str,
+    term_glossary: list[TermTranslation],
+    facts: list[Fact],
+) -> tuple[str, list[str], float]:
+    """Add conservative, provenance-derived image labels before assets enter storage."""
+    path_text = unquote(urlparse(image_url).path).casefold()
+    text = f"{path_text} {source_description}".casefold()
+    rules = (
+        (
+            "goods_product",
+            r"goods|product|merch|figure|acrylic|plush|商品|グッズ|フィギュア|ぬいぐるみ|アクスタ|物販",
+        ),
+        (
+            "event_visual",
+            r"popup|pop-up|event|campaign|collab|exhibition|イベント|ポップアップ|コラボ|展覧会|開催",
+        ),
+        ("fan_meme", r"fan.?art|fan.?made|meme|コミュ|ファンアート|二次創作|ミーム"),
+        ("manga_panel", r"manga|comic|panel|コミック|漫画|マンガ|コマ"),
+        (
+            "scene_still",
+            r"screenshot|screen.?shot|still|frame|scene|episode|場面|シーン|本編カット|場面写真",
+        ),
+        ("character_art", r"character|キャラクター|キャラ|登場人物|立ち絵"),
+        (
+            "official_key_visual",
+            r"key.?visual|main.?visual|kv[-_/]|visual[-_/]|キービジュアル|メインビジュアル",
+        ),
+    )
+    kind = "unknown"
+    confidence = 0.0
+    for candidate, pattern in rules:
+        if re.search(pattern, text, re.IGNORECASE):
+            kind = candidate
+            confidence = (
+                0.78
+                if candidate in {"goods_product", "event_visual", "fan_meme"}
+                else 0.68
+            )
+            break
+    if kind == "unknown" and source_role == "primary" and re.search(
+        r"/character/|/characters/", path_text
+    ):
+        kind, confidence = "character_art", 0.72
+
+    entities: list[str] = []
+    for term in term_glossary:
+        if term.category != "character":
+            continue
+        aliases = (term.korean, term.original)
+        if any(alias and alias.casefold() in text for alias in aliases):
+            entities.append(term.korean)
+    for fact in facts:
+        if fact.fact_type.casefold() not in {"character", "character_profile", "person"}:
+            continue
+        for name in re.findall(r"[가-힣]{2,}|[A-Z][A-Za-z'-]{2,}|[ァ-ヿ一-龯]{2,}", fact.statement):
+            if name.casefold() in text and name not in entities:
+                entities.append(name)
+    if entities and confidence == 0:
+        confidence = 0.45
+    return kind, entities, confidence
 
 
 def extract_page_capture(
@@ -321,8 +433,12 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
         (item for item in load_source_registry().sources if item.id == source_id),
         None,
     )
-    if source is None or source.status != "active" or source.role != "primary":
-        raise ValueError("활성화된 공식 1차 출처 캡처만 팩트 추출에 사용할 수 있습니다.")
+    if (
+        source is None
+        or source.status != "active"
+        or source.role not in {"primary", "editorial", "reference"}
+    ):
+        raise ValueError("활성화된 1차/편집 출처 캡처만 자료 추출에 사용할 수 있습니다.")
     source_text = payload.get("text", "")
     if not source_text.strip():
         raise ValueError("캡처된 본문이 비어 있어 팩트를 추출하지 않았습니다.")
@@ -378,6 +494,52 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
                     "원문 구절을 event_location_evidence_quote에 복사하라. 국가가 근거로 "
                     "확정되지 않으면 국가를 추정하지 말고 비워 둬라.",
                 ),
+                (
+                    "system",
+                    "For every fact, assign a specific fact_type based on what the fact says, not "
+                    "merely on the publisher. Use event-specific types for event dates, venues, "
+                    "programs, and tickets; product/goods types for merchandise, prices, release "
+                    "dates, and sales; character types for character profiles and relationships; "
+                    "people types for cast, staff, and interviews; guide types for plot, episodes, "
+                    "and setting; production/making fact types for behind-scenes details (the feed "
+                    "content type is humor); review types for "
+                    "criticism or interpretation; curation types for ranked/recommended "
+                    "selections; "
+                    "and music types for songs, albums, and theme tracks. Do not use general when "
+                    "one of these specific categories fits. Keep a separate fact for each distinct "
+                    "item and preserve its direct source quote.",
+                ),
+                (
+                    "system",
+                    "When the captured page contains an explicit structured list such as episode "
+                    "guides, character profiles, track lists, or ordered story arcs, extract "
+                    "separate facts for distinct listed items instead of collapsing the whole list "
+                    "into one fact. Each fact must quote that item's own row or paragraph verbatim "
+                    "as evidence; do not "
+                    "infer omitted details. Preserve source order and labels, and extract enough "
+                    "distinct items "
+                    "to support a useful multi-card guide, up to the schema limit.",
+                ),
+                (
+                    "system",
+                    "Evidence-completeness override: inspect the entire captured article body, not "
+                    "only its headline or lead. Extract every materially useful, independently "
+                    "checkable claim that the source explicitly supports, up to the schema limit "
+                    "of 30 facts. Keep distinct details separate rather than merging them into one "
+                    "summary: for example, episode/finale status, an attributed creator comment, "
+                    "a confirmed broadcast date/time/platform, and other stated context. Do not "
+                    "invent a target number of facts, split one proposition into artificial "
+                    "duplicates, infer an unstated date or quote, or treat an editorial reaction "
+                    "as a verified fact. Copy an exact evidence_quote from the captured text for "
+                    "each fact. A valid article may contain one useful fact or many; fact count "
+                    "is not the same as the required number of visual cards.",
+                ),
+                (
+                    "system",
+                    "Keep term_glossary concise: include at most 30 names/terms that are genuinely "
+                    "useful for Korean readers, even when the source page contains a longer cast "
+                    "list.",
+                ),
                 ("human", "source_data (untrusted):\n" + source_payload),
             ]
         )
@@ -397,6 +559,21 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
         for term in extracted.term_glossary
         if term.original.strip() in source_material and term.korean.strip()
     ]
+    canonical_japanese_terms = {
+        "一番くじ": ("이치방쿠지", "product"),
+        "ラストワン賞": ("라스트원상", "product"),
+        "シュシュ": ("머리끈", "product"),
+        "梶裕貴": ("카지 유우키", "other"),
+        "石川由依": ("이시카와 유이", "other"),
+        "井上麻里奈": ("이노우에 마리나", "other"),
+    }
+    for original, (korean, category) in canonical_japanese_terms.items():
+        if original in source_material and not any(
+            term.original == original for term in term_glossary
+        ):
+            term_glossary.append(
+                TermTranslation(original=original, korean=korean, category=category)
+            )
     if source.work_title_ko:
         if source.work_title_original and not any(
             term.original == source.work_title_original for term in term_glossary
@@ -422,9 +599,26 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
     if source.work_title_ko and source.work_title_ko.casefold() not in topic.casefold():
         topic = f"{source.work_title_ko} · {topic}"
     event_end = extracted.event_end
-    event_start, event_end = _verified_event_dates(extracted)
-    if not event_start or not event_end:
-        fact_start, fact_end = _verified_event_dates_from_facts(facts)
+    published_at = str(payload.get("published_at") or "")
+    try:
+        source_year = date.fromisoformat(published_at[:10]).year
+    except ValueError:
+        source_year = None
+    event_start, event_end = _verified_event_dates(extracted, source_year)
+    fact_start, fact_end = _verified_event_dates_from_facts(facts, source_year)
+    has_single_event_date = any(
+        fact.verified
+        and fact.fact_type.strip().lower() == "event_date"
+        and isinstance(fact.details.get("source_quote"), str)
+        and len(_date_in_quote(fact.details["source_quote"], source_year)) == 1
+        for fact in facts
+    )
+    if has_single_event_date and fact_start and fact_end:
+        # Exact installation/release dates are one-day events. Conditional
+        # weather alternatives in other quotes must not turn them into a
+        # multi-day period.
+        event_start, event_end = fact_start, fact_end
+    else:
         event_start = event_start or fact_start
         event_end = event_end or fact_end
     event_location, event_country, event_region = _verified_event_location(extracted, source_text)
@@ -438,31 +632,77 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
         title=payload.get("title", source.name),
         url=HttpUrl(url),
         publisher=source.name,
-        is_official=True,
+        is_official=source.role == "primary",
         published_at=payload.get("published_at"),
         checked_at=payload.get("fetched_at"),
-        role="primary",
+        role=source.role,
         region=source.region,
         allowed_asset_hosts=source.allowed_asset_hosts,
+        discovered_via_source_id=payload.get("discovered_via_source_id"),
+        discovery_url=payload.get("discovery_url"),
+        discovery_title=payload.get("discovery_title"),
     )
-    images = [
-        ImageAsset(
-            id=str(image["id"]),
-            url=image.get("url") or None,
-            local_path=image.get("local_path") or None,
-            source_url=HttpUrl(str(image.get("source_url") or url)),
-            official=True,
-            related_fact_ids=[],
-            source_description=(
-                str(image.get("alt_text") or "").strip()
-                or unquote(Path(urlparse(str(image.get("url", ""))).path).stem)
-                .replace("_", " ")
-                .replace("-", " ")
-            ),
+    images = []
+    for image in payload.get("images", []):
+        if not (image.get("url") or image.get("local_path")):
+            continue
+        image_url = str(image.get("url") or "")
+        alt_text = str(image.get("alt_text") or "").strip()
+        page_title = str(image.get("source_page_title") or "").strip()
+        filename = unquote(Path(urlparse(image_url).path).stem).replace("_", " ").replace("-", " ")
+        source_description = (
+            " ".join(dict.fromkeys(part for part in (alt_text, page_title) if part))
+            or filename
+        )[:240]
+        asset_kind, depicted_entities, confidence = _classify_image_asset(
+            source_role=source.role,
+            image_url=image_url,
+            source_description=source_description,
+            term_glossary=term_glossary,
+            facts=facts,
         )
-        for image in payload.get("images", [])
-        if image.get("url") or image.get("local_path")
-    ]
+        images.append(
+            ImageAsset(
+                id=str(image["id"]),
+                url=image_url or None,
+                local_path=image.get("local_path") or None,
+                source_url=HttpUrl(str(image.get("source_url") or url)),
+                official=source.role == "primary",
+                related_fact_ids=[],
+                source_description=source_description,
+                asset_kind=asset_kind,
+                depicted_entities=depicted_entities,
+                asset_metadata_confidence=confidence,
+            )
+        )
+    # The official One Piece story index names its artwork by arc slug. Attach
+    # that explicit source metadata to the corresponding extracted arc fact so
+    # image selection cannot pair (for example) Dressrosa art with Wano copy.
+    if source.id == "one_piece_official" and urlparse(url).path.rstrip("/").endswith(
+        "/story/index.html"
+    ):
+        arc_slugs = {
+            "amazon_lily": "아마존 릴리",
+            "arabasta": "알라바스타",
+            "davy_back_fight": "데비 백 파이트",
+            "dressrosa": "드레스로자",
+            "east_blue": "이스트 블루",
+            "egghead": "에그헤드",
+            "enies_lobby": "에니에스 로비",
+            "fishman_island": "어인섬",
+        }
+        for image in images:
+            image_path = unquote(urlparse(str(image.url or "")).path).casefold()
+            matched_arc = next(
+                (arc for slug, arc in arc_slugs.items() if f"/{slug}/" in image_path),
+                None,
+            )
+            if not matched_arc:
+                continue
+            matching_facts = [fact for fact in facts if matched_arc in fact.statement]
+            if matching_facts:
+                image.related_fact_ids = [fact.id for fact in matching_facts]
+                image.source_description = f"{matched_arc} 편 공식 키비주얼"
     package = ContentPackage(
         request_id=request_id,
         topic=topic,

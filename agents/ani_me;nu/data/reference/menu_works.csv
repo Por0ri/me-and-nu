@@ -600,7 +600,7 @@ menu_work_id,title_ko,title_ko_source,title_ko_check,title_romaji,title_english,
 599,전생귀족의 이세계 모험록,wikidata,,Tensei Kizoku no Isekai Boukenroku: Jichou wo Shiranai Kamigami no Shito,The Aristocrat’s Otherworldly Adventure: Serving Gods Who Go Too Far,転生貴族の異世界冒険録 〜自重を知らない神々の使徒〜,2023,2023,1,87211,153332
 600,콥스 파티,manual,확인 필요,Corpse Party: Tortured Souls - Bougyakusareta Tamashii no Jukyou,Corpse Party,コープスパーティー Tortured Souls -暴虐された魂の呪叫-,2012,2013,2,87149,13807;15037
 601,,,입력 필요,TEXHNOLYZE,Texhnolyze,TEXHNOLYZE,2003,2003,1,87046,26
-602,유희왕 듀얼몬스터즈,wikidata,,Yu☆Gi☆Oh! Duel Monsters,Yu-Gi-Oh!,遊☆戯☆王　デュエルモンスターズ,1998,2016,8,86817,550;2006;481;482;1894;3972;6951;21265
+602,유희왕 듀얼몬스터즈,wikidata,,Yu☆Gi☆Oh! Duel Monsters,Yu-Gi-Oh! Duel Monsters,遊☆戯☆王　デュエルモンスターズ,2000,2016,4,86817,481;1894;6951;21265
 603,사신 도련님과 검은 메이드,manual,확인 필요,Shinigami Bocchan to Kuro Maid,The Duke of Death and His Maid,死神坊ちゃんと黒メイド,2021,2024,3,86645,129277;139435;169584
 604,우즈마키,manual,확인 필요,Uzumaki,Uzumaki,うずまき,2024,2024,1,86641,111314
 605,,,입력 필요,Tsuujou Kougeki ga Zentai Kougeki de Ni-kai Kougeki no Okaasan wa Suki desu ka?,Do You Love Your Mom and Her Two-Hit Multi-Target Attacks?,通常攻撃が全体攻撃で二回攻撃のお母さんは好きですか？,2019,2020,2,86569,104723;110445
@@ -2321,3 +2321,6 @@ menu_work_id,title_ko,title_ko_source,title_ko_check,title_romaji,title_english,
 2320,,,입력 필요,Furiko,Pendulum,振り子,2012,2012,1,7001,13629
 2321,파파와 KISS IN THE DARK,wikidata,,Papa to♥KISS IN THE DARK,Papa to Kiss in the Dark,パパと♥KISS IN THE DARK,2005,2005,1,6347,746
 2322,,,입력 필요,001,,001,2013,2013,1,5512,102065
+2323,유희왕 GX,catalog_entry,,Yu☆Gi☆Oh! Duel Monsters GX,Yu-Gi-Oh! GX,遊☆戯☆王デュエルモンスターズＧＸ,2004,2004,1,47668,482
+2324,유희왕 5D's,catalog_entry,,Yu☆Gi☆Oh! 5D's,Yu-Gi-Oh! 5D's,遊☆戯☆王5D's（ファイブディーズ）,2008,2008,1,32239,3972
+2325,유희왕,catalog_entry,,Yu☆Gi☆Oh!,,遊☆戯☆王,1998,1999,2,54491,550;2006

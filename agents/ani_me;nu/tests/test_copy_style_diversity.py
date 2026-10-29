@@ -61,7 +61,6 @@ def test_content_type_is_stored_and_queryable_for_feed_ranking(tmp_path: Path) -
         "guide",
         "people",
         "goods",
-        "behind",
         "review",
         "humor",
         "character",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, HttpUrl, model_validator
@@ -25,7 +25,7 @@ class ContentType(StrEnum):
     GUIDE = "guide"
     PEOPLE = "people"
     GOODS = "goods"
-    BEHIND = "behind"
+    BEHIND = "behind"  # Legacy stored value; new content uses the humor type.
     REVIEW = "review"
     HUMOR = "humor"
     CHARACTER = "character"
@@ -39,7 +39,6 @@ CONTENT_TYPE_LABELS = {
     ContentType.GUIDE: "작품 가이드",
     ContentType.PEOPLE: "인물",
     ContentType.GOODS: "굿즈",
-    ContentType.BEHIND: "비하인드",
     ContentType.REVIEW: "리뷰 분석",
     ContentType.HUMOR: "유머",
     ContentType.CHARACTER: "캐릭터",
@@ -60,11 +59,14 @@ CONTENT_TYPE_GUIDANCE = {
     "people": "성우 출연작, 감독·작가·스튜디오 소개, OP·ED 아티스트 등 사람 중심 정보",
     "curation": "테마별 작품 모음, 취향 연결, 분기 결산·랭킹, 숨은 명작 추천",
     "goods": "피규어·굿즈 발매·예약, 블루레이·OST, 한정판·특전, 작품 콜라보 상품",
-    "behind": "제작 비하인드, 성지순례, 오마주·패러디 등 작품 제작·문화의 뒷이야기",
     "review": "작품 리뷰, 분기 신작 첫인상, 원작과 애니메이션 비교·분석",
     "character": "캐릭터 생일, 프로필, 작품에서 확인되는 TMI와 인물 중심 이야기",
     "music": "애니메이션 OST·BGM·주제가·삽입곡과 음악가 정보",
-    "humor": "작품 사실을 비틀지 않는 팬덤 유머·밈·재미있는 상황극",
+    "humor": (
+        "팬덤 유머·토론·밈과, 출처가 확인된 제작 비하인드·메이킹·성지순례·오마주 이야기. "
+        "커뮤니티 의견은 의견으로 다루고, 제작진 인터뷰와 공식 비하인드의 사실은 "
+        "근거에 맞춰 정확히 쓴다."
+    ),
 }
 
 
@@ -74,6 +76,10 @@ class RightsStatus(StrEnum):
     HUMAN_APPROVED = "human_approved"
     # Business risk acceptance for publicly posted official images; this is not a license.
     OFFICIAL_PUBLIC_RISK_ACCEPTED = "official_public_risk_accepted"
+    # The project owner explicitly accepts limited editorial use of a public
+    # image embedded in a registered publisher's same-work article. This is
+    # still a risk decision, not a license or permission claim.
+    PUBLIC_EDITORIAL_RISK_ACCEPTED = "public_editorial_risk_accepted"
     NEEDS_REVIEW = "needs_review"
     BLOCKED = "blocked"
 
@@ -96,6 +102,37 @@ class SourceEvidence(BaseModel):
     role: str = "primary"
     region: str = "global"
     allowed_asset_hosts: list[str] = Field(default_factory=list)
+    # The source whose feed/listing surfaced the item is provenance, not fact
+    # evidence. url above remains the page actually used to support facts.
+    discovered_via_source_id: str | None = None
+    discovery_url: HttpUrl | None = None
+    discovery_title: str | None = None
+
+
+class WorkMatchEvidence(BaseModel):
+    """Auditable evidence used to attach a source/content item to a catalog work."""
+
+    menu_work_id: int = Field(gt=0)
+    basis: Literal[
+        "article_title",
+        "headline_character",
+        "kitsu_catalog_title",
+        "source_registry",
+        "structured_about",
+        "structured_mention",
+        "registered_official_link",
+    ]
+    matched_value: str = Field(min_length=1, max_length=500)
+    evidence_url: HttpUrl | None = None
+    confidence: float = Field(ge=0, le=1)
+
+
+class StructuredWorkReference(BaseModel):
+    """A work name explicitly marked as about/mentioned by page metadata."""
+
+    relation: Literal["about", "mention"]
+    name: str = Field(min_length=1, max_length=500)
+    url: HttpUrl | None = None
 
 
 class Fact(BaseModel):
@@ -105,9 +142,10 @@ class Fact(BaseModel):
     verified: bool = False
     time_sensitive: bool = False
     fact_type: str = "general"
-    details: dict[str, str | int | float | bool | list[str | int | float] | None] = Field(
-        default_factory=dict
-    )
+    # Source facts often contain structured nested data (e.g. cast members with
+    # both a name and role). Keep the complete JSON object instead of making a
+    # valid extraction fail when a nested object appears in a list.
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class TermTranslation(BaseModel):
@@ -132,6 +170,10 @@ class ImageAsset(BaseModel):
     file_size_bytes: int | None = Field(default=None, ge=0)
     content_bytes: bytes | None = Field(default=None, exclude=True, repr=False)
     source_url: HttpUrl
+    # A separate official page may supply same-work artwork for a text-only source.
+    # Keep that asset provenance distinct from fact sources shown in the article.
+    provenance_source: SourceEvidence | None = None
+    menu_work_ids: list[int] = Field(default_factory=list)
     official: bool = False
     rights_status: RightsStatus = RightsStatus.NEEDS_REVIEW
     width: int = Field(default=0, ge=0)
@@ -141,12 +183,30 @@ class ImageAsset(BaseModel):
     subject_hint: str = "center"
     subject_box: NormalizedBox | None = None
     fingerprint: str | None = None
+    derived_from_image_id: str | None = None
+    enhancement_model: str | None = None
     used_in_previous_content: bool = False
     related_fact_ids: list[str] = Field(default_factory=list)
     source_description: str = ""
+    asset_kind: Literal[
+        "official_key_visual",
+        "catalog_poster",
+        "catalog_cover",
+        "character_art",
+        "scene_still",
+        "manga_panel",
+        "goods_product",
+        "event_visual",
+        "fan_meme",
+        "editorial_photo",
+        "unknown",
+    ] = "unknown"
+    depicted_entities: list[str] = Field(default_factory=list)
+    asset_metadata_confidence: float = Field(default=0.0, ge=0, le=1)
     visual_match: str = "context"
     detected_languages: list[str] = Field(default_factory=list)
     visible_text: list[str] = Field(default_factory=list)
+    vision_review_rejected: bool = False
     korean_explanation: str = ""
     text_confidence: float = Field(default=0.0, ge=0, le=1)
     rights_evidence_url: HttpUrl | None = None
@@ -197,6 +257,42 @@ class ImageAsset(BaseModel):
                 return True
         return False
 
+    def public_editorial_source_matches(self, sources: list[SourceEvidence]) -> bool:
+        """Require an image embedded in the exact registered editorial page.
+
+        This narrowly supports the owner's project-use risk decision for
+        syndicated/public article imagery. It does not accept unrelated CDN
+        URLs, community uploads, or images from another article.
+        """
+        page_url = str(self.source_url)
+        page_host = (urlparse(page_url).hostname or "").lower().rstrip(".")
+        asset_host = (
+            (urlparse(str(self.url)).hostname or "").lower().rstrip(".") if self.url else ""
+        )
+        page_path = urlparse(page_url)._replace(query="", fragment="").geturl().rstrip("/")
+        for source in sources:
+            if source.is_official or source.role not in {"editorial", "reference"}:
+                continue
+            source_page = str(source.url)
+            source_path = urlparse(source_page)._replace(query="", fragment="").geturl().rstrip("/")
+            if page_path != source_path:
+                continue
+            allowed_hosts = {
+                (urlparse(source_page).hostname or "").lower().rstrip("."),
+                *(host.lower().rstrip(".") for host in source.allowed_asset_hosts),
+            }
+            if not any(
+                page_host == allowed or page_host.endswith(f".{allowed}")
+                for allowed in allowed_hosts
+            ):
+                continue
+            if any(
+                asset_host == allowed or asset_host.endswith(f".{allowed}")
+                for allowed in allowed_hosts
+            ):
+                return True
+        return False
+
     def eligible_for_editorial_use(
         self,
         sources: list[SourceEvidence],
@@ -204,13 +300,26 @@ class ImageAsset(BaseModel):
         allow_risk_accepted: bool,
     ) -> bool:
         """Separate actual permission clearance from the user's accepted editorial risk."""
+        eligible_sources = list(sources)
+        if self.provenance_source and all(
+            str(source.url) != str(self.provenance_source.url) for source in eligible_sources
+        ):
+            eligible_sources.append(self.provenance_source)
         if self.cleared_for_mennu:
             return True
         return (
             allow_risk_accepted
             and self.rights_status == RightsStatus.OFFICIAL_PUBLIC_RISK_ACCEPTED
             and self.official
-            and self.public_official_source_matches(sources)
+            and self.public_official_source_matches(eligible_sources)
+            and self.rights_evidence_url is not None
+            and self.rights_checked_at is not None
+            and bool(self.attribution_text.strip())
+        ) or (
+            allow_risk_accepted
+            and self.rights_status == RightsStatus.PUBLIC_EDITORIAL_RISK_ACCEPTED
+            and not self.official
+            and self.public_editorial_source_matches(eligible_sources)
             and self.rights_evidence_url is not None
             and self.rights_checked_at is not None
             and bool(self.attribution_text.strip())
@@ -231,9 +340,13 @@ class NormalizedBox(BaseModel):
 class LayoutSpec(BaseModel):
     template: str = "split"
     fit_mode: str = "contain_blur"
-    background_style: Literal["blur", "palette"] = "blur"
+    background_style: Literal["blur", "palette", "gradient"] = "blur"
     image_box: NormalizedBox
     copy_box: NormalizedBox
+    # Frontend AI places HTML inside this per-page normalized region.
+    text_overlay_box: NormalizedBox = Field(
+        default_factory=lambda: NormalizedBox(x=0.06, y=0.67, width=0.88, height=0.29)
+    )
     image_scale: float = Field(default=1.0, ge=0.5, le=1.5)
     image_offset_y: float = Field(default=0.0, ge=-0.3, le=0.3)
     contrast_mode: str = "scrim_required"
@@ -329,12 +442,23 @@ class CardLanguageReview(BaseModel):
         | None
     )
     feedback: str = ""
+    image_relevance: int = Field(default=5, ge=0, le=5)
+    image_composition: int = Field(default=5, ge=0, le=5)
+    visual_feedback: str = ""
 
     @model_validator(mode="after")
     def require_safety_category_for_blocker(self) -> CardLanguageReview:
         if self.safety_blocker and self.safety_category is None:
             raise ValueError("안전 차단 시 safety_category가 필요합니다.")
         return self
+
+
+class DetailBodyReview(BaseModel):
+    naturalness: int = Field(ge=0, le=5)
+    factual_support: int = Field(ge=0, le=5)
+    coherence: int = Field(ge=0, le=5)
+    completeness: int = Field(ge=0, le=5)
+    feedback: str = ""
 
 
 class LanguageReview(BaseModel):
@@ -344,6 +468,7 @@ class LanguageReview(BaseModel):
     content_type_feedback: str = ""
     cards: list[CardLanguageReview] = Field(min_length=2, max_length=10)
     summary: str = ""
+    detail_body_review: DetailBodyReview | None = None
 
 
 class UsageRecord(BaseModel):
@@ -363,6 +488,13 @@ class GenerationResult(BaseModel):
     usage: UsageRecord
 
 
+class DetailArticleDraft(BaseModel):
+    """Long-form detail copy, grounded in existing package facts."""
+
+    body: str = Field(min_length=180, max_length=3000)
+    fact_ids: list[str] = Field(min_length=1, max_length=40)
+
+
 class ContentPackage(BaseModel):
     request_id: str
     topic: str
@@ -370,6 +502,7 @@ class ContentPackage(BaseModel):
     content_type: str | None = None
     # Ordered work-dictionary IDs; index 0 is the representative work.
     menu_work_ids: list[int] = Field(default_factory=list)
+    work_match_evidence: list[WorkMatchEvidence] = Field(default_factory=list)
     audience_region: str = "KR"
     region_policy: str = "kr_first"
     event_start: str | None = None
@@ -390,6 +523,9 @@ class ContentPackage(BaseModel):
     facts: list[Fact] = Field(default_factory=list)
     images: list[ImageAsset] = Field(default_factory=list)
     cards: list[CardSpec] = Field(default_factory=list)
+    detail_body: str = ""
+    detail_fact_ids: list[str] = Field(default_factory=list)
+    detail_source_ids: list[str] = Field(default_factory=list)
     prior_image_fingerprints: list[str] = Field(default_factory=list)
     status: str = "draft"
 

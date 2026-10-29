@@ -14,6 +14,11 @@ data/discovered/
 data/assets/
 data/collected/
 data/input/
+data/experiments/
+# Name -> work dictionaries (scripts/build_work_match_data.py). Shared over Slack and kept
+# local; see data/reference/WORK_MATCH_DATA.md.
+data/reference/work_characters.csv
+data/reference/work_theme_songs.csv
 logs/
 tmp/
 *.sqlite3

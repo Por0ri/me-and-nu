@@ -2,14 +2,14 @@
 
 ## 요약
 
-서비스는 수집 에이전트 3개(정보·유머/토론·이미지), 콘텐츠 생성 에이전트 1개, 독립 평가·검수 에이전트 1개로 구성합니다. 따라서 역할은 총 5개입니다. 크롤링/적재 실행과 콘텐츠 생성 실행은 분리되어 있으며, 생성은 `request_id`로 DB에 저장된 자료만 읽습니다.
+상위 에이전트 역할은 유형별 크롤러 10개, 콘텐츠 생성 에이전트 1개, 독립 평가·검수 에이전트 1개로 총 12개입니다. 유머 크롤러는 커뮤니티 유머와 출처가 확인된 제작 비하인드·메이킹 자료를 함께 수집합니다. 정보·유머·이미지 모듈은 유형별 크롤러가 재사용하는 공통 기능이며 별도 상위 역할로 중복 계산하지 않습니다. 크롤링/적재 실행과 콘텐츠 생성 실행은 분리되어 있으며, 생성은 `request_id`로 DB에 저장된 자료만 읽습니다.
 
 ```mermaid
 flowchart LR
-  subgraph C[수집 실행]
-    INFO[정보 수집 에이전트]
-    HUMOR[유머·토론 수집 에이전트]
-    IMAGE[이미지 수집 에이전트]
+  subgraph C[유형별 크롤러 10개 · agents/crawlers]
+    TYPE[news · event · guide · people · goods\nreview · humor · character · curation · music]
+    COLLECT[공통 출처 검색·파싱 인프라]
+    TYPE --> COLLECT
   end
   DB[(PostgreSQL\n메타데이터 + image_blobs BYTEA)]
   subgraph PIPE[콘텐츠 생성 실행 · LangGraph]
@@ -28,9 +28,7 @@ flowchart LR
   CRAWL[별도 수집 보완 실행\n재수집·재적재 후 새 생성 요청]
   RIGHTS -->|부족| CRAWL
   REVIEW -->|출처·사실·권리 결함| CRAWL
-  INFO --> DB
-  HUMOR --> DB
-  IMAGE --> DB
+  COLLECT --> DB
   DB --> START
 ```
 
@@ -38,9 +36,9 @@ flowchart LR
 
 | 역할 | 구현 | 동작 |
 |---|---|---|
-| 정보 수집 | `agents/information/` | 방영·신작·행사 정보 후보와 사실별 출처를 구조화 |
-| 유머·토론 수집 | `agents/humor/` | 커뮤니티 소재·논점·유행 신호를 수집; 확인되지 않은 내용은 사실로 승격하지 않음 |
-| 이미지 수집 | `agents/image/` | 공식 이미지 후보·다운로드·출처·권리 상태·OCR/설명 메타데이터 관리 |
+| 유형별 크롤러 10개 | `agents/crawlers/{news,event,guide,people,goods,review,humor,character,curation,music}.py` | 유형에 연결된 승인 출처에서 후보를 수집하고 공통 수집 인프라를 호출. 유머는 커뮤니티 트렌드와 제작 비하인드 자료를 함께 다룸 |
+| 공통 출처 수집 모듈 | `discovery.py`, `sources/` | 유형별 크롤러가 공유하는 RSS/API/HTML 조회·파싱 기능 |
+| 이미지 처리 | `agents/image/`, `collect-page` | 이미지 페이지 캡처·다운로드·출처/권리 메타데이터 관리; 별도 상위 에이전트 역할이 아닌 공통 기능 |
 | 콘텐츠 생성 | `agents/content_generation/graph.py`, `generation.py`, `layout_engine.py` | 카드 카피와 fact/image ID 연결, 3~10장 배치 |
 | 평가·검수 | `agents/reviewer/` | 결정론적 검사와 독립 LLM 언어 평가를 묶어 승인·반환·보완·보관 |
 | 오케스트레이터 | `graph.py`, `nodes.py`, `state.py` | 권리 사전검사, 독립 그래프 연결, bounded retry와 최종 라우팅 |
@@ -48,9 +46,11 @@ flowchart LR
 
 각 역할별 책임과 폴더 사용법은 [`src/ani_menu_agent/agents/README.md`](../src/ani_menu_agent/agents/README.md)를 확인합니다.
 
+유형별 출처 매핑, 실행 방법 및 실제 후보 적재 결과는 [`TYPE_CRAWLER_AGENTS.md`](TYPE_CRAWLER_AGENTS.md)를 확인합니다.
+
 ## 실행 순서
 
-1. 수집 명령으로 후보 페이지/자료를 모으고 인용, 날짜, 출처, 권리 상태를 검사합니다.
+1. crawl-type --content-type <type>가 활성 유형별 크롤러 10개 중 하나를 실행하고, 해당 유형에 매핑된 자동 수집 출처에서 후보를 모읍니다. 후보별 원문을 다시 확인해 인용문 기반 팩트·날짜·출처를 구조화하고 이미지 수집/권리 정책을 적용합니다. 유머의 커뮤니티 소재는 trend_only 의견·토론 신호로 분리하고, 제작 비하인드·메이킹 소재는 검증된 사실형 정보 경로로 보냅니다.
 2. `crawl-ingest`가 구조화한 출처·fact·image 메타데이터와 원본 이미지 바이너리를 PostgreSQL에 적재합니다. HTML 페이지 수집은 `og:image`·반응형 원본 후보를 우선하고, 목록에서 발견한 동일 공식 도메인의 상세 페이지를 최대 4개까지 추가 확인합니다. 이미지 바이트는 SHA-256 키로 `image_blobs` 테이블에 저장되고, 메타데이터에는 원본 페이지 URL이 연결됩니다.
 3. 별도 생성 실행이 `request_id`로 검증된 자료를 조회합니다. 생성 중 웹 크롤링이나 이미지 재다운로드는 하지 않습니다.
 4. 생성 에이전트가 3~10장 카드 카피를 쓰고, 카드마다 연결할 사실과 시각 모드를 지정합니다. 사용 가능한 공식 이미지는 카드 간 중복 없이 한 번씩 쓰고, 남는 페이지는 자체 타이포그래피·정보 그래픽으로 채워 같은 원본을 반복하지 않습니다. 원본 이미지는 전체 표시(`contain`/`contain_blur`)를 기본으로 하고, 페이지마다 1308×1632px(327:408 비율, 4배) PNG를 개별 렌더링해 DB BLOB으로 적재합니다. 이 시점에 텍스트와 카드 메타데이터도 `generated_pending_review` 상태로 DB에 저장합니다. 검수 에이전트는 이 레코드를 갱신하며, 통과 콘텐츠만 피드 대기열에 넣습니다. 피드는 카드들을 하나로 이어 붙이지 않고 페이지 순서대로 좌우 캐러셀에 연결합니다.
@@ -69,9 +69,9 @@ flowchart LR
 | 구성과 문체 | 5 | 카드 중복, 불필요한 안내 문구, 카드 수·마무리 문체 |
 | 안전·존중 | 10 | 검수 LLM이 카드별 차별·혐오·성적 대상화·괴롭힘·위협 여부와 존중 표현을 평가 |
 
-정식 통과는 총점 85/100 이상이며 모든 카드가 75/100 이상이어야 합니다. 네 언어 항목 중 어느 하나라도 카드별 3/5 미만이거나 안전·존중 항목이 4/5 미만이면 총점과 무관하게 수정 반환합니다. 차별·혐오·성적 대상화·성희롱·미성년자 성적 대상화·특정 대상 괴롭힘/위협·현실 폭력 조장은 `SAFETY_HARMFUL_CONTENT` hard blocker로 처리합니다. 배점은 근거 25, 이미지 적합성/권리 15, 이미지 전체 노출 10, 가독성/레이아웃 15, 한국어/번역 20, 구성/문체 5, 안전/존중 10점입니다. 각 카드 점수는 해당 카드의 언어·안전 평가와 결정론적 규칙 점수 중 낮은 값으로 계산합니다.
+Pass requires an overall score of 68/100 and at least 55/100 per card. Language dimensions use a 2/5 minimum, while safety/respect remains 4/5 and harmful content is a non-compensable blocker. The score dimensions remain evidence 25, image suitability/rights 15, full image visibility 10, readability/layout 15, Korean/translation 20, structure/style 5, and safety/respect 10.
 
-점수로 상쇄할 수 없는 치명 차단 항목은 근거 미검증/출처 오류, 권리 미확인, 이미지 사실 불일치, 원본 이미지 잘림·확대·이동, 박스 초과, 카드 수 오류, 차별·혐오·성적 대상화·성희롱·미성년자 성적 대상화·특정 대상 괴롭힘/위협·현실 폭력 조장입니다. 안전·존중 점수는 카드별 4/5 미만이면 수정 반환합니다. 사실·이미지 근거 결함은 수집 보완으로 보냅니다. 수정 가능한 카피·레이아웃·안전 표현 오류는 생성으로 되돌립니다.
+Non-compensable blockers are unverified facts or source errors, unresolved image rights, image-fact mismatch, missing image render/review, invalid card count, and harmful or seriously disrespectful content. Crop, placement, spacing, and copy-layout defects are routed for repair and are not independent hard blockers.
 
 ## 수정 루프와 상태
 
@@ -81,7 +81,7 @@ stateDiagram-v2
   자료검사 --> 수집보완: 근거/권리/이미지 부적격
   자료검사 --> 생성: 통과
   생성 --> 독립검수
-  독립검수 --> 게시대기: 총점 ≥ 85, 카드별 ≥ 75, 치명 이슈 없음
+  독립검수 --> 게시대기: 총점 ≥ 68, 카드별 ≥ 55, 치명 이슈 없음
   독립검수 --> 생성: 카피/레이아웃 미달, 문제 카드만 수정 (실패 1~2회)
   독립검수 --> 시각수정: 해상도/중복/사실 연결 오류 (실패 1~2회)
   시각수정 --> 독립검수: 이미지 배정만 재계산·PNG 재생성

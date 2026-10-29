@@ -45,6 +45,10 @@ uv run ani-menu crawl-ingest data\input\<verified_package>.json
 uv run ani-menu generate-db <request_id> --kind information
 ```
 
+작품별 출처 공백과 DB 적재 현황은 `uv run ani-menu work-coverage`로 확인합니다. 이 진단은 출처가 부족한 작품을 보강 대상으로 찾기 위한 것이며, 작품별 콘텐츠 생성량을 균등 배분하거나 상한을 두지 않습니다. 자세한 기준은 [작품별 출처 커버리지](docs/WORK_COVERAGE.md)를 참고하세요.
+
+현재 활성 10개 유형별 자동 생성 근거는 `uv run ani-menu generation-readiness`에서 확인합니다. 제작 비하인드·메이킹은 `humor` 유형에 포함됩니다. 이 명령은 유형별 승인된 자동 출처와 검증 팩트/유머 신호를 보여줍니다. 발견 후보는 미검증 자료라 생성 근거로 세지 않으며, 생성 실행도 출처 상태·작품 `menu_work_id`·유형-출처 연결을 다시 확인합니다. 현재 활성 자동 출처가 발견용 RSS뿐이면 공식 원문 확인 전에는 정보 콘텐츠를 생성하지 않습니다.
+
 오프라인 구조 시험은 `uv run ani-menu graph-smoke`, 전체 테스트는 `uv run pytest`입니다. fixture 시험은 실제 콘텐츠 언어 검수나 게시 승인을 대신하지 않습니다. API 키가 없으면 최종 reviewer는 통과 판정을 내리지 않고 검수를 대기합니다. 로컬 개발은 SQLite에 저장하고, 팀 PostgreSQL은 명시적으로 backend를 선택했을 때만 사용합니다. 이미지는 SHA-256으로 중복 저장을 막습니다.
 
 카드 생성을 시작하기 전에 기존 초안·게시 대기·탈락 보관 콘텐츠를 확인합니다. 같은 공식 원문 URL이거나 같은 작품에서 출처 제목 또는 핵심 사실이 겹치는 고확도 중복은 `duplicate_skipped`로 기록하고 새 카드 생성과 피드 적재를 건너뜁니다. SQLite 임시 저장소를 쓸 때는 실행 환경에서 `ANI_MENU_DATABASE_BACKEND=sqlite`와 `ANI_MENU_DATABASE_PATH=data/ani_menu_local.sqlite3`를 지정합니다.
