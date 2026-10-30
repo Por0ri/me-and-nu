@@ -87,6 +87,19 @@
       "event",
       "goods"
     ],
+    "aniplus_shop": [
+      "event",
+      "goods"
+    ],
+    "toynews_kr": [
+      "news",
+      "event",
+      "goods"
+    ],
+    "cj_newsroom_kr": [
+      "news",
+      "event"
+    ],
     "crunchyroll_announcements": [
       "news",
       "event",
@@ -140,6 +153,13 @@
     "onnada": [
       "news",
       "guide"
+    ],
+    "agf_korea_official": [
+      "event"
+    ],
+    "animate_korea_shop": [
+      "event",
+      "goods"
     ],
     "ruliweb_anime_info": [
       "humor"
@@ -343,6 +363,14 @@
     ],
     "src_tamashiiweb_com": [
       "goods"
+    ],
+    "daewonmedia_kr": [
+      "news",
+      "event",
+      "goods"
+    ],
+    "recal_kr": [
+      "event"
     ]
   }
 }
