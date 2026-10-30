@@ -1,8 +1,9 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { orderedHomeSlides, type HomeCardModel, type HomeDetailHandler, type HomeSlideModel, type HomeState } from "@/lib/pivot/home";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
+import { dismissActionNotice } from "@/lib/pivot/action-notice";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { ContentCarousel } from "./content-carousel";
 import styles from "./home.module.css";
@@ -29,7 +30,15 @@ export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI 
   onHome?: () => void; onMy?: () => void; onSaved?: () => void; active?: "home" | "my" | "saved"; hideAI?: boolean;
   onNotice?: (message: string) => void;
 } = {}) {
-  const [notice, setNotice] = useState("");
+  const [localNotice, setLocalNotice] = useState({ message: "" });
+  const notice = localNotice.message;
+  function setNotice(message: string) { setLocalNotice({ message }); }
+  useEffect(() => {
+    if (onNotice) return;
+    return dismissActionNotice(localNotice.message, () => {
+      setLocalNotice(current => current === localNotice ? { message: "" } : current);
+    });
+  }, [localNotice, onNotice]);
   return <div className={styles.bottomBar}>
     <nav aria-label="주요 메뉴" className={styles.navigation}>
       <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } window.scrollTo({ top: 0, behavior: "instant" }); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
@@ -76,11 +85,18 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
 
   const [active, setActive] = useState(0);
   const [detailRequested, setDetailRequested] = useState(false);
-  const [localActionNotice, setLocalActionNotice] = useState("");
+  const [localNotice, setLocalNotice] = useState({ message: "" });
+  const localActionNotice = localNotice.message;
+  useEffect(() => {
+    if (onNotice) return;
+    return dismissActionNotice(localNotice.message, () => {
+      setLocalNotice(current => current === localNotice ? { message: "" } : current);
+    });
+  }, [localNotice, onNotice]);
   const actionNotice = notice ? (notice.postId === card.id ? notice.message : "") : localActionNotice;
   function setActionNotice(message: string) {
     if (onNotice) onNotice({ message, postId: card.id });
-    else setLocalActionNotice(message);
+    else setLocalNotice({ message });
   }
   const slides = orderedHomeSlides(card.slides);
   const serviceCarousel = !demo && slides.some((slide) => !!slide.layout || slide.image?.protected);
@@ -122,6 +138,9 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
     element.scrollTo({ left: index * element.clientWidth });
   }
   return <article ref={article} className={styles.card} aria-labelledby={`${id}-title`} data-home-post={card.id}>
+    {card.notices?.some(notice => notice.code === "DEV_PREVIEW") ? <p className={styles.previewBadge} data-content-preview="">
+      {card.notices.filter(notice => notice.code === "DEV_PREVIEW" || notice.code === "REVIEW_REQUIRED").map(notice => notice.message).join(" · ")}
+    </p> : null}
     <div className={styles.srOnly}>
       {demo ? <p className={styles.exampleLabel}>시연용 콘텐츠</p> : null}
       <h3 id={`${id}-title`}>{card.title}</h3>
@@ -229,6 +248,11 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onRetry, on
 }) {
   // Keep only the latest feedback, at its existing screen or card location.
   const [notice, setNotice] = useState<HomeNotice>({ message: "" });
+  useEffect(() => {
+    return dismissActionNotice(notice.message, () => {
+      setNotice(current => current === notice ? { message: "" } : current);
+    });
+  }, [notice]);
   function pending(message: string) { setNotice({ message }); }
   return <main className={styles.screen} data-home-state={state.status} aria-busy={state.status === "loading"}>
     <HomeHeader onNotice={pending} />

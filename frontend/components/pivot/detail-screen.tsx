@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { DetailArticle, DetailState } from "@/lib/pivot/detail";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
+import { dismissActionNotice } from "@/lib/pivot/action-notice";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { HomeNavigation } from "./home-screen";
 import { ContentCover, ContentMetadata } from "./content-carousel";
@@ -25,7 +26,14 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
   const heading = useRef<HTMLHeadingElement>(null);
   const article = useRef<HTMLElement>(null);
   const interactions = useInteractions();
-  const [notice, setNotice] = useState("");
+  const [noticeState, setNoticeState] = useState({ message: "" });
+  const notice = noticeState.message;
+  function setNotice(message: string) { setNoticeState({ message }); }
+  useEffect(() => {
+    return dismissActionNotice(noticeState.message, () => {
+      setNoticeState(current => current === noticeState ? { message: "" } : current);
+    });
+  }, [noticeState]);
   const [feedback, setFeedback] = useState<"more" | "stop" | null>(null);
   const [aiExpanded, setAiExpanded] = useState(false);
   const target = state.status === "ready" ? { postId: state.article.postId, contentId: state.article.contentId,

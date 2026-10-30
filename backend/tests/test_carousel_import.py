@@ -4,11 +4,13 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 from io import BytesIO
 import json
+from types import SimpleNamespace
 
 from PIL import Image
 import pytest
 from sqlalchemy import BigInteger, Column, Integer, JSON, MetaData, Table, create_engine, event, func, select
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from app.models import AgentRun, Content, ContentSource, Draft, Topic
@@ -403,3 +405,80 @@ def test_database_target_guard(url, name):
 
 def test_explicit_matching_postgresql_target():
     seed.validate_target("postgresql+psycopg://u:p@localhost/isolated", "isolated")
+
+
+@pytest.mark.parametrize("url,name", [
+    ("postgresql://u:p@db.example.com/checking_test", "checking_test"),
+    ("postgresql://u:p@localhost/checking", "checking"),
+    ("postgresql://u:p@localhost/checking_e2e?host=db.example.com", "checking_e2e"),
+    ("postgresql://u:p@localhost/checking_e2e?hostaddr=10.0.0.1", "checking_e2e"),
+    ("postgresql://u:p@localhost/checking_e2e", "other_e2e"),
+    ("postgresql://u:p@localhost/checking_e2e", ""),
+])
+def test_local_preview_target_rejects_remote_non_test_and_override_targets(url, name):
+    with pytest.raises(seed.CarouselImportError):
+        seed.validate_target(url, name, local_test_preview=True)
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+def test_local_preview_accepts_explicit_loopback_test_database(host):
+    seed.validate_target(f"postgresql+psycopg://u:p@{host}:55435/checking_live_e2e",
+                         "checking_live_e2e", local_test_preview=True)
+
+
+class LocalPreviewAdapter(AsyncAdapter):
+    """Exercise transactional importer logic in SQLite after separately testing the URL gate."""
+    def get_bind(self):
+        return SimpleNamespace(dialect=self.session.get_bind().dialect,
+                               url=make_url("postgresql://u:p@127.0.0.1/checking_live_e2e"))
+
+
+@pytest.mark.asyncio
+async def test_local_preview_is_visible_but_never_fabricates_quality_approval(engine, tmp_path, raw_bundle):
+    raw_bundle["items"][0]["reviewEvidence"] = {"decision": "revise", "total": 42, "review_mode": "llm"}
+    bundle = prepare(tmp_path, raw_bundle)
+    arguments = {"local_test_preview": True, "expected_database": "checking_live_e2e", "now": NOW}
+    with Session(engine) as session:
+        before = counts(session)
+        report = await seed.import_bundle(LocalPreviewAdapter(session), bundle, **arguments)
+        assert report["items"][0]["status"] == "active"
+        assert counts(session) == before and not session.new and not session.dirty
+    with Session(engine) as session, session.begin():
+        report = await seed.import_bundle(LocalPreviewAdapter(session), bundle, apply=True, **arguments)
+        assert report["created"] == 1
+        content = session.scalar(select(Content))
+        assert (content.status, content.judgment_status) == ("active", "needs_review")
+        assert content.ai_judgment_basis["operator_review"] is None
+        assert content.ai_judgment_basis["producer_review_is_approval"] is False
+        assert content.ai_judgment_basis["preview"] is True
+        assert content.ai_judgment_basis["local_test_preview"] == {
+            "database": "checking_live_e2e", "quality_approval": "not_reviewed"}
+        run = session.scalar(select(AgentRun))
+        assert run.output_payload["producer_review_evidence"] == raw_bundle["items"][0]["reviewEvidence"]
+        assert run.outcome == "on_hold" and session.scalar(select(Draft)).status == "checking"
+    with Session(engine) as session, session.begin():
+        before = counts(session)
+        report = await seed.import_bundle(LocalPreviewAdapter(session), bundle, apply=True, **arguments)
+        assert report["unchanged"] == 1 and counts(session) == before
+
+
+@pytest.mark.asyncio
+async def test_local_preview_cannot_be_combined_with_operator_approval(engine, tmp_path, raw_bundle):
+    bundle = prepare(tmp_path, raw_bundle)
+    approved = prepare(tmp_path, raw_bundle, [review(bundle.items[0])])
+    with Session(engine) as session, pytest.raises(seed.CarouselImportError):
+        await seed.import_bundle(LocalPreviewAdapter(session), approved, apply=True, now=NOW,
+                                 local_test_preview=True, expected_database="checking_live_e2e")
+        assert not session.new
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_preview", [True, False])
+async def test_retry_cannot_silently_change_publication_scope(engine, tmp_path, raw_bundle, initial_preview):
+    bundle = prepare(tmp_path, raw_bundle)
+    with Session(engine) as session, session.begin():
+        await seed.import_bundle(LocalPreviewAdapter(session), bundle, apply=True, now=NOW,
+                                 local_test_preview=initial_preview, expected_database="checking_live_e2e")
+    with Session(engine) as session, pytest.raises(seed.CarouselImportError), session.begin():
+        await seed.import_bundle(LocalPreviewAdapter(session), bundle, apply=True, now=NOW,
+                                 local_test_preview=not initial_preview, expected_database="checking_live_e2e")
