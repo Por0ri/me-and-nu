@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
       {
         source: "/",
         has: [{ type: "host", value: "checking\\.me-nu\\.kr" }],
-        destination: "/pivot/login",
+        destination: "/pivot",
         permanent: false,
       },
     ];

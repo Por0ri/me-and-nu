@@ -53,6 +53,8 @@ export function isActiveSession(session: Session | null): boolean {
     Number.isSafeInteger(session.user.id) && session.user.id > 0;
 }
 export function resolvePivotSessionRoute(session: Session | null, pathname: string): string | null {
+  // The intro owns its transition, including for accounts still onboarding.
+  if (pathname === "/pivot") return null;
   if (isActiveSession(session)) {
     return ["/pivot/login", "/pivot/consent", "/pivot/onboarding"].includes(pathname) ? "/pivot/home" : null;
   }
