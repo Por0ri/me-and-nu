@@ -12,6 +12,7 @@
 #   ... --apply                              # 오늘 추천이 없는 유저만 계산해서 씀
 #   ... --apply --replace                    # 오늘 추천을 지우고 다시 씀 (고칠 때만)
 #   ... --apply --every 30 --daily-at 06:00  # 켜 두기: 30초마다 새 가입자, 매일 06:00 부터는 그날 전체
+#   ... --context model/data/service_context.pkl.gz  # 서버: 원본 대신 통계 문맥 파일 (model/scripts/save_context.py)
 
 import argparse
 import json
@@ -269,12 +270,13 @@ def main():
     ap.add_argument("--every", type=int, help="켜 두기: N초마다 반복")
     ap.add_argument("--daily-at", default="06:00", help="켜 두기: 이 시각(한국)부터 그날 전체 계산. 그 전엔 새 가입자만")
     ap.add_argument("--show", type=int, default=3, help="화면에 보여 줄 유저 수")
+    ap.add_argument("--context", help="서버용 통계 문맥 파일 (save_context.py 로 만든 것). 주면 원본 자료 없이 이 파일로 계산")
     args = ap.parse_args()
     if args.preflight or args.self_test:
         if (args.preflight and args.self_test) or args.apply or args.replace or args.every is not None or args.today or args.database_url or args.expected_database:
             ap.error("--preflight / --self-test 는 서로 또는 DB 실행 인자와 같이 쓸 수 없음")
         if args.preflight:
-            report = check_inputs()
+            report = check_inputs(context=args.context)
             print(json.dumps(report, ensure_ascii=False, indent=2))
             raise SystemExit(0 if report["ready"] else 2)
         from model.tests.storage_adapter import self_test
@@ -293,15 +295,15 @@ def main():
             date.fromisoformat(args.today)
         except ValueError:
             ap.error("--today 는 유효한 YYYY-MM-DD 날짜")
-    report = require_inputs()  # fail before database_url can read backend/.env
+    report = require_inputs(args.context)  # fail before database_url can read backend/.env
     for warning in report["warnings"]:
         print("Preflight: " + warning)
     url = database_url(args.database_url, args.expected_database)
     sys.stdout.reconfigure(line_buffering=True)                     # 켜 두기 모드에서도 기록이 바로 찍히게 (로그 파일 포함)
 
     t0 = time.time()
-    ctx = service.build()
-    print(f"문맥 준비 {time.time() - t0:.0f}초 · 작품 {len(ctx['ids']):,} · 버전 {VERSION}")
+    ctx = service.load_context(args.context) if args.context else service.build()
+    print(f"문맥 준비 ({'파일' if args.context else '원본'}) {time.time() - t0:.0f}초 · 작품 {len(ctx['ids']):,} · 버전 {VERSION}")
     world = (ctx, v1.Config(logs=service.LOGS), ctx["ids"][ctx["cw_rows"]], chip_names())
     while True:
         now = datetime.now(KST)

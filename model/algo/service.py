@@ -16,9 +16,11 @@
 # - 커뮤니티 추천: AniList recommendations (links.jsonl)
 
 import csv
+import gzip
 import json
 import math
 import pathlib
+import pickle
 from datetime import timedelta
 
 import numpy as np
@@ -211,6 +213,47 @@ def add_cowatch(ctx, histories, no_record=None, lam=None, min_users=1):
     ar.build_ease(ctx, ar.EASE_LAMBDA if lam is None else lam)
     ar.build_cf_borrow(ctx, no_record)
     ctx["no_record"] = no_record
+
+
+# 서버용 문맥 파일: 서버에는 AniList · MAL 원본을 두지 않는다 (AniList 유저 표본은 원본을 PC 한 대에만 두고 12/31 삭제 약속).
+# 내 PC 에서 build() 한 문맥을 파일 하나로 저장하고 서버는 그 파일만 읽는다 (model/scripts/save_context.py).
+# 문맥에는 작품끼리 통계 (같이 본 횟수 · EASE · 작품 특징 · 최근 인기 합계)만 있어야 함 → 저장 전에 유저 단위 자료를 검사
+CONTEXT_VERSION = 1
+
+
+def check_no_user_rows(ctx):
+    """유저 기록 (History)이나 유저 수만큼 긴 배열이 문맥에 섞였으면 ValueError"""
+    n_users = int(ctx.get("cw_users") or 0)
+
+    def walk(v, path):
+        if isinstance(v, ar.History):
+            raise ValueError(f"유저 기록이 문맥에 있음: {path}")
+        if isinstance(v, np.ndarray) and n_users and n_users in v.shape:
+            raise ValueError(f"유저 수 ({n_users:,})만큼 긴 배열: {path} {v.shape}")
+        if isinstance(v, dict):
+            for k, x in v.items():
+                walk(x, f"{path}.{k}")
+        elif isinstance(v, (list, tuple)):
+            for i, x in enumerate(v):
+                walk(x, f"{path}[{i}]")
+
+    for k, v in ctx.items():
+        walk(v, k)
+
+
+def save_context(ctx, path):
+    check_no_user_rows(ctx)
+    with gzip.open(path, "wb", compresslevel=6) as f:
+        pickle.dump({"version": CONTEXT_VERSION, "ctx": ctx}, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_context(path):
+    # pickle 은 아무 파일이나 읽으면 위험 → save_context 로 우리가 만든 파일만 읽는다
+    with gzip.open(path, "rb") as f:
+        data = pickle.load(f)
+    if not isinstance(data, dict) or data.get("version") != CONTEXT_VERSION:
+        raise ValueError(f"문맥 파일 버전이 다름 (필요 {CONTEXT_VERSION}): {path}")
+    return data["ctx"]
 
 
 def onboarding_user(ctx, menu_work_ids, genres, themes, t):
