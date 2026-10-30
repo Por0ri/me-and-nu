@@ -314,8 +314,10 @@ LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})
 
 # 온보딩 답 → v1 유형. Q3(덕질 방식) 6개 = consumption_type · 예전(v1) 답의 q1, 그리고 예전 q2(받고 싶은 소식) 3개.
 # Q3 를 유형 10개 문장으로 바꾸면 답이 유형 코드로 오므로 표에 없는 코드는 그대로 씀
-ANSWER_TYPES = {"world": "guide", "relationships": "character", "ost": "music", "goods": "goods", "events": "event",
-                "news": "news", "releases": "news", "characters": "character", "restock": "goods"}
+# 화면 문장은 6개, 내부 유형은 10개 그대로 → 답 하나에 유형 여러 개 (10/30 결정. 비하인드는 유머에 합쳐서 behind 도 같이)
+ANSWER_TYPES = {"world": ("guide", "review"), "relationships": ("character", "people"), "ost": ("music",),
+                "goods": ("goods",), "events": ("event",), "news": ("news", "curation", "humor", "behind"),
+                "releases": ("news",), "characters": ("character",), "restock": ("goods",)}
 
 TYPE_LABELS = {"news": "소식", "event": "행사", "guide": "작품 가이드", "people": "인물", "curation": "큐레이션",
                "goods": "굿즈", "behind": "비하인드", "review": "리뷰", "character": "캐릭터", "music": "음악", "humor": "유머"}
@@ -331,12 +333,12 @@ REASONS = {
 
 
 def user_types(answers):
-    """온보딩 답 목록 → v1 유형 코드 목록 (순서 유지, 겹치면 하나)"""
+    """온보딩 답 목록 → v1 유형 코드 목록 (순서 유지, 겹치면 하나). 답 하나가 유형 여러 개일 수 있음"""
     out = []
     for a in answers:
-        t = ANSWER_TYPES.get(a, a)
-        if t in v1.TYPE_INDEX and t not in out:
-            out.append(t)
+        for t in ANSWER_TYPES.get(a, (a,)):
+            if t in v1.TYPE_INDEX and t not in out:
+                out.append(t)
     return out
 
 
