@@ -1,0 +1,373 @@
+﻿kind,code,anilist_name,category,works_pct,display_name,name_check,show,sort_order
+genre,comedy,Comedy,Genre,46.1,코미디,,main,1
+genre,action,Action,Genre,39.3,액션,,main,2
+genre,drama,Drama,Genre,34.5,드라마,,main,3
+genre,romance,Romance,Genre,33.9,로맨스,,main,4
+genre,fantasy,Fantasy,Genre,33.2,판타지,,main,5
+genre,slice_of_life,Slice of Life,Genre,25.6,일상,,main,6
+genre,adventure,Adventure,Genre,21.8,모험,,main,7
+genre,supernatural,Supernatural,Genre,20.3,초자연,,main,8
+genre,sci_fi,Sci-Fi,Genre,17.6,SF,,main,9
+genre,mystery,Mystery,Genre,10.8,미스터리,,main,10
+genre,psychological,Psychological,Genre,8.6,심리,,main,11
+genre,sports,Sports,Genre,5.0,스포츠,,main,12
+genre,horror,Horror,Genre,4.4,호러,,main,13
+genre,mecha,Mecha,Genre,4.3,로봇,,main,14
+genre,music,Music,Genre,3.8,음악,,main,15
+genre,thriller,Thriller,Genre,3.7,스릴러,,main,16
+genre,ecchi,Ecchi,Genre,12.4,,입력 필요,off,100
+genre,mahou_shoujo,Mahou Shoujo,Genre,1.9,,입력 필요,off,101
+theme,school,School,Setting-Scene,28.4,학원,,main,1
+theme,tragedy,Tragedy,Theme-Drama,0.0,비극,,main,2
+theme,magic,Magic,Theme-Fantasy,21.4,마법,,main,3
+theme,coming_of_age,Coming of Age,Theme-Drama,15.4,성장,,main,4
+theme,swordplay,Swordplay,Theme-Action,10.9,검술,,main,5
+theme,harem,Female Harem,Theme-Romance,11.6,하렘,,main,6
+theme,super_power,Super Power,Theme-Fantasy,13.1,초능력,,main,7
+theme,gore,Gore,Theme-Other,8.0,고어,,main,8
+theme,isekai,Isekai,Theme-Fantasy,9.2,이세계,,main,9
+theme,revenge,Revenge,Theme-Drama,4.1,복수,,main,10
+theme,war,War,Theme-Other,7.0,전쟁,,main,11
+theme,time_manipulation,Time Manipulation,Theme-Sci-Fi,0.0,시간 여행,,main,12
+theme,crime,Crime,Theme-Other,5.9,범죄,,main,13
+theme,iyashikei,Iyashikei,Theme-Slice of Life,6.8,힐링,,main,14
+theme,post_apocalyptic,Post-Apocalyptic,Setting-Universe,4.2,아포칼립스,,main,15
+theme,survival,Survival,Theme-Other,3.8,서바이벌,,main,16
+theme,martial_arts,Martial Arts,Theme-Action,3.4,무술,,main,17
+theme,dungeon,Dungeon,Setting-Scene,1.9,던전,,main,18
+theme,virtual_world,Virtual World,Setting-Universe,2.0,게임 세계,,main,19
+theme,male_protagonist,Male Protagonist,Cast-Main Cast,55.5,,입력 필요,off,102
+theme,female_protagonist,Female Protagonist,Cast-Main Cast,43.8,,입력 필요,off,103
+theme,heterosexual,Heterosexual,Theme-Romance,27.9,,입력 필요,off,104
+theme,primarily_female_cast,Primarily Female Cast,Cast-Main Cast,21.9,,입력 필요,off,105
+theme,ensemble_cast,Ensemble Cast,Cast-Main Cast,19.8,,입력 필요,off,106
+theme,primarily_teen_cast,Primarily Teen Cast,Cast-Main Cast,18.5,,입력 필요,off,107
+theme,primarily_adult_cast,Primarily Adult Cast,Cast-Main Cast,17.8,,입력 필요,off,108
+theme,urban_fantasy,Urban Fantasy,Setting-Universe,17.0,,입력 필요,off,109
+theme,urban,Urban,Setting-Scene,15.3,,입력 필요,off,110
+theme,shounen,Shounen,Demographic,14.9,,입력 필요,off,111
+theme,seinen,Seinen,Demographic,14.0,,입력 필요,off,112
+theme,episodic,Episodic,Technical,12.8,,입력 필요,off,113
+theme,primarily_male_cast,Primarily Male Cast,Cast-Main Cast,11.7,,입력 필요,off,114
+theme,philosophy,Philosophy,Theme-Other,9.5,,입력 필요,off,115
+theme,tsundere,Tsundere,Cast-Traits,9.4,,입력 필요,off,116
+theme,work,Work,Setting-Scene,9.0,,입력 필요,off,117
+theme,nudity,Nudity,Cast-Traits,8.9,,입력 필요,off,118
+theme,cute_girls_doing_cute_things,Cute Girls Doing Cute Things,Theme-Slice of Life,8.7,,입력 필요,off,119
+theme,parody,Parody,Theme-Comedy,8.5,,입력 필요,off,120
+theme,kuudere,Kuudere,Cast-Traits,8.5,,입력 필요,off,121
+theme,school_club,School Club,Setting-Scene,8.5,,입력 필요,off,122
+theme,slapstick,Slapstick,Theme-Comedy,8.2,,입력 필요,off,123
+theme,demons,Demons,Cast-Traits,8.1,,입력 필요,off,124
+theme,surreal_comedy,Surreal Comedy,Theme-Comedy,7.7,,입력 필요,off,125
+theme,guns,Guns,Theme-Action,7.7,,입력 필요,off,126
+theme,military,Military,Theme-Other-Organisations,7.1,,입력 필요,off,127
+theme,foreign,Foreign,Setting-Scene,6.7,,입력 필요,off,128
+theme,found_family,Found Family,Theme-Other,6.4,,입력 필요,off,129
+theme,anti_hero,Anti-Hero,Cast-Main Cast,6.4,,입력 필요,off,130
+theme,historical,Historical,Setting-Time,6.4,,입력 필요,off,131
+theme,family_life,Family Life,Theme-Slice of Life,6.3,,입력 필요,off,132
+theme,politics,Politics,Theme-Other,6.2,,입력 필요,off,133
+theme,shoujo,Shoujo,Demographic,6.2,,입력 필요,off,134
+theme,cgi,CGI,Technical,6.0,,입력 필요,off,135
+theme,love_triangle,Love Triangle,Theme-Romance,6.0,,입력 필요,off,136
+theme,rural,Rural,Setting-Scene,5.9,,입력 필요,off,137
+theme,henshin,Henshin,Theme-Fantasy,5.8,,입력 필요,off,138
+theme,animals,Animals,Theme-Other,5.5,,입력 필요,off,139
+theme,travel,Travel,Theme-Other,5.3,,입력 필요,off,140
+theme,lgbtq_themes,LGBTQ+ Themes,Theme-Other,5.2,,입력 필요,off,141
+theme,meta,Meta,Theme-Other,5.2,,입력 필요,off,142
+theme,medieval,Medieval,Setting-Time,4.4,,입력 필요,off,143
+theme,gods,Gods,Cast-Traits,4.3,,입력 필요,off,144
+theme,dystopian,Dystopian,Setting-Time,4.3,,입력 필요,off,145
+theme,robots,Robots,Cast-Traits,4.3,,입력 필요,off,146
+theme,mythology,Mythology,Theme-Fantasy,4.2,,입력 필요,off,147
+theme,kemonomimi,Kemonomimi,Cast-Traits,4.1,,입력 필요,off,148
+theme,aliens,Aliens,Cast-Traits,3.9,,입력 필요,off,149
+theme,otaku_culture,Otaku Culture,Theme-Other,3.9,,입력 필요,off,150
+theme,orphan,Orphan,Cast-Traits,3.8,,입력 필요,off,151
+theme,detective,Detective,Cast-Traits,3.7,,입력 필요,off,152
+theme,monster_girl,Monster Girl,Cast-Traits,3.7,,입력 필요,off,153
+theme,youkai,Youkai,Theme-Fantasy,3.7,,입력 필요,off,154
+theme,primarily_child_cast,Primarily Child Cast,Cast-Main Cast,3.6,,입력 필요,off,155
+theme,tomboy,Tomboy,Cast-Traits,3.6,,입력 필요,off,156
+theme,food,Food,Theme-Arts,3.6,,입력 필요,off,157
+theme,artificial_intelligence,Artificial Intelligence,Cast-Traits,3.5,,입력 필요,off,158
+theme,ojou_sama,Ojou-sama,Cast-Traits,3.4,,입력 필요,off,159
+theme,yuri,Yuri,Theme-Romance,3.4,,입력 필요,off,160
+theme,anthropomorphism,Anthropomorphism,Cast-Traits,3.3,,입력 필요,off,161
+theme,amnesia,Amnesia,Cast-Traits,3.1,,입력 필요,off,162
+theme,body_horror,Body Horror,Theme-Other,3.1,,입력 필요,off,163
+theme,video_games,Video Games,Theme-Game,3.0,,입력 필요,off,164
+theme,bullying,Bullying,Theme-Drama,3.0,,입력 필요,off,165
+theme,shapeshifting,Shapeshifting,Theme-Fantasy,3.0,,입력 필요,off,166
+theme,cute_boys_doing_cute_things,Cute Boys Doing Cute Things,Theme-Slice of Life,2.8,,입력 필요,off,167
+theme,rehabilitation,Rehabilitation,Theme-Drama,2.8,,입력 필요,off,168
+theme,educational,Educational,Theme-Other,2.8,,입력 필요,off,169
+theme,idol,Idol,Cast-Traits,2.8,,입력 필요,off,170
+theme,maids,Maids,Cast-Traits,2.7,,입력 필요,off,171
+theme,royal_affairs,Royal Affairs,Theme-Other,2.7,,입력 필요,off,172
+theme,assassins,Assassins,Theme-Other-Organisations,2.7,,입력 필요,off,173
+theme,dragons,Dragons,Cast-Traits,2.6,,입력 필요,off,174
+theme,satire,Satire,Theme-Comedy,2.6,,입력 필요,off,175
+theme,josei,Josei,Demographic,2.6,,입력 필요,off,176
+theme,police,Police,Theme-Other-Organisations,2.6,,입력 필요,off,177
+theme,space,Space,Setting-Universe,2.6,,입력 필요,off,178
+theme,witch,Witch,Cast-Traits,2.5,,입력 필요,off,179
+theme,chibi,Chibi,Theme-Other,2.5,,입력 필요,off,180
+theme,cohabitation,Cohabitation,Theme-Romance,2.5,,입력 필요,off,181
+theme,elf,Elf,Cast-Traits,2.5,,입력 필요,off,182
+theme,ghost,Ghost,Cast-Traits,2.5,,입력 필요,off,183
+theme,unrequited_love,Unrequited Love,Theme-Romance,2.4,,입력 필요,off,184
+theme,vampire,Vampire,Cast-Traits,2.4,,입력 필요,off,185
+theme,fugitive,Fugitive,Theme-Action,2.4,,입력 필요,off,186
+theme,coastal,Coastal,Setting-Scene,2.3,,입력 필요,off,187
+theme,denpa,Denpa,Theme-Other,2.3,,입력 필요,off,188
+theme,conspiracy,Conspiracy,Theme-Drama,2.3,,입력 필요,off,189
+theme,religion,Religion,Theme-Other,2.3,,입력 필요,off,190
+theme,disability,Disability,Cast-Traits,2.2,,입력 필요,off,191
+theme,environmental,Environmental,Theme-Other,2.2,,입력 필요,off,192
+theme,hikikomori,Hikikomori,Cast-Traits,2.2,,입력 필요,off,193
+theme,samurai,Samurai,Cast-Traits,2.2,,입력 필요,off,194
+theme,crossdressing,Crossdressing,Cast-Traits,2.1,,입력 필요,off,195
+theme,cyberpunk,Cyberpunk,Theme-Sci-Fi,2.1,,입력 필요,off,196
+theme,super_robot,Super Robot,Theme-Sci-Fi-Mecha,2.0,,입력 필요,off,197
+theme,teacher,Teacher,Cast-Traits,2.0,,입력 필요,off,198
+theme,drawing,Drawing,Theme-Arts,2.0,,입력 필요,off,199
+theme,battle_royale,Battle Royale,Theme-Action,1.9,,입력 필요,off,200
+theme,delinquents,Delinquents,Cast-Traits,1.9,,입력 필요,off,201
+theme,twins,Twins,Cast-Traits,1.9,,입력 필요,off,202
+theme,boys_love,Boys' Love,Theme-Romance,1.9,,입력 필요,off,203
+theme,class_struggle,Class Struggle,Theme-Drama,1.9,,입력 필요,off,204
+theme,real_robot,Real Robot,Theme-Sci-Fi-Mecha,1.9,,입력 필요,off,205
+theme,anachronism,Anachronism,Setting-Time,1.8,,입력 필요,off,206
+theme,kids,Kids,Demographic,1.8,,입력 필요,off,207
+theme,achronological_order,Achronological Order,Setting-Time,1.8,,입력 필요,off,208
+theme,adoption,Adoption,Theme-Other,1.8,,입력 필요,off,209
+theme,nekomimi,Nekomimi,Cast-Traits,1.8,,입력 필요,off,210
+theme,acting,Acting,Theme-Arts,1.7,,입력 필요,off,211
+theme,full_cgi,Full CGI,Technical,1.7,,입력 필요,off,212
+theme,kaiju,Kaiju,Theme-Fantasy,1.7,,입력 필요,off,213
+theme,gender_bending,Gender Bending,Theme-Other,1.7,,입력 필요,off,214
+theme,terrorism,Terrorism,Theme-Other,1.7,,입력 필요,off,215
+theme,band,Band,Theme-Arts-Music,1.6,,입력 필요,off,216
+theme,chuunibyou,Chuunibyou,Cast-Traits,1.6,,입력 필요,off,217
+theme,tokusatsu,Tokusatsu,Theme-Sci-Fi,1.6,,입력 필요,off,218
+theme,interspecies,Interspecies,Theme-Romance,1.6,,입력 필요,off,219
+theme,outdoor_activities,Outdoor Activities,Setting-Scene,1.6,,입력 필요,off,220
+theme,college,College,Setting-Scene,1.6,,입력 필요,off,221
+theme,death_game,Death Game,Theme-Other,1.6,,입력 필요,off,222
+theme,ninja,Ninja,Cast-Traits,1.6,,입력 필요,off,223
+theme,superhero,Superhero,Theme-Fantasy,1.6,,입력 필요,off,224
+theme,yandere,Yandere,Cast-Traits,1.6,,입력 필요,off,225
+theme,fairy_tale,Fairy Tale,Theme-Fantasy,1.5,,입력 필요,off,226
+theme,steampunk,Steampunk,Theme-Fantasy,1.5,,입력 필요,off,227
+theme,boarding_school,Boarding School,Setting-Scene,1.5,,입력 필요,off,228
+theme,gyaru,Gyaru,Cast-Traits,1.5,,입력 필요,off,229
+theme,male_harem,Male Harem,Theme-Romance,1.5,,입력 필요,off,230
+theme,curses,Curses,Theme-Fantasy,1.4,,입력 필요,off,231
+theme,gangs,Gangs,Theme-Other-Organisations,1.4,,입력 필요,off,232
+theme,parenthood,Parenthood,Theme-Slice of Life,1.4,,입력 필요,off,233
+theme,tanned_skin,Tanned Skin,Cast-Traits,1.4,,입력 필요,off,234
+theme,lost_civilization,Lost Civilization,Theme-Other,1.4,,입력 필요,off,235
+theme,medicine,Medicine,Theme-Other,1.4,,입력 필요,off,236
+theme,aviation,Aviation,Theme-Other-Vehicle,1.3,,입력 필요,off,237
+theme,creature_taming,Creature Taming,Theme-Other,1.3,,입력 필요,off,238
+theme,age_regression,Age Regression,Cast-Traits,1.2,,입력 필요,off,239
+theme,angels,Angels,Cast-Traits,1.2,,입력 필요,off,240
+theme,athletics,Athletics,Theme-Game-Sport,1.2,,입력 필요,off,241
+theme,cultivation,Cultivation,Theme-Fantasy,1.2,,입력 필요,off,242
+theme,marriage,Marriage,Theme-Other,1.2,,입력 필요,off,243
+theme,cyborg,Cyborg,Cast-Traits,1.2,,입력 필요,off,244
+theme,economics,Economics,Theme-Other,1.2,,입력 필요,off,245
+theme,ships,Ships,Theme-Other-Vehicle,1.2,,입력 필요,off,246
+theme,mafia,Mafia,Theme-Other-Organisations,1.2,,입력 필요,off,247
+theme,noir,Noir,Theme-Other,1.2,,입력 필요,off,248
+theme,slavery,Slavery,Theme-Other,1.2,,입력 필요,off,249
+theme,writing,Writing,Theme-Arts,1.2,,입력 필요,off,250
+theme,dancing,Dancing,Theme-Arts-Music,1.1,,입력 필요,off,251
+theme,dissociative_identities,Dissociative Identities,Cast-Traits,1.1,,입력 필요,off,252
+theme,musical_theater,Musical Theater,Theme-Arts-Music,1.1,,입력 필요,off,253
+theme,psychosexual,Psychosexual,Theme-Other,1.1,,입력 필요,off,254
+theme,bisexual,Bisexual,Cast-Traits,1.1,,입력 필요,off,255
+theme,espionage,Espionage,Theme-Action,1.1,,입력 필요,off,256
+theme,kingdom_management,Kingdom Management,Theme-Drama,1.1,,입력 필요,off,257
+theme,office_lady,Office Lady,Cast-Traits,1.1,,입력 필요,off,258
+theme,spearplay,Spearplay,Theme-Action,1.1,,입력 필요,off,259
+theme,archery,Archery,Theme-Action,1.0,,입력 필요,off,260
+theme,monster_boy,Monster Boy,Cast-Traits,1.0,,입력 필요,off,261
+theme,proxy_battle,Proxy Battle,Theme-Other,1.0,,입력 필요,off,262
+theme,arranged_marriage,Arranged Marriage,Cast-Traits,1.0,,입력 필요,off,263
+theme,cosmic_horror,Cosmic Horror,Theme-Other,1.0,,입력 필요,off,264
+theme,exorcism,Exorcism,Theme-Fantasy,1.0,,입력 필요,off,265
+theme,language_barrier,Language Barrier,Theme-Other,1.0,,입력 필요,off,266
+theme,villainess,Villainess,Cast-Traits,1.0,,입력 필요,off,267
+theme,bar,Bar,Setting-Scene,0.9,,입력 필요,off,268
+theme,femboy,Femboy,Cast-Traits,0.9,,입력 필요,off,269
+theme,memory_manipulation,Memory Manipulation,Theme-Other,0.9,,입력 필요,off,270
+theme,shrine_maiden,Shrine Maiden,Cast-Traits,0.9,,입력 필요,off,271
+theme,zombie,Zombie,Cast-Traits,0.9,,입력 필요,off,272
+theme,classic_literature,Classic Literature,Theme-Arts,0.9,,입력 필요,off,273
+theme,restaurant,Restaurant,Setting-Scene,0.9,,입력 필요,off,274
+theme,cult,Cult,Theme-Other-Organisations,0.9,,입력 필요,off,275
+theme,fairy,Fairy,Cast-Traits,0.9,,입력 필요,off,276
+theme,gambling,Gambling,Theme-Other,0.9,,입력 필요,off,277
+theme,pandemic,Pandemic,Theme-Other,0.9,,입력 필요,off,278
+theme,trains,Trains,Theme-Other-Vehicle,0.9,,입력 필요,off,279
+theme,yakuza,Yakuza,Theme-Other-Organisations,0.9,,입력 필요,off,280
+theme,motorcycles,Motorcycles,Theme-Other-Vehicle,0.8,,입력 필요,off,281
+theme,photography,Photography,Theme-Arts,0.8,,입력 필요,off,282
+theme,snowscape,Snowscape,Setting-Scene,0.8,,입력 필요,off,283
+theme,butler,Butler,Cast-Traits,0.8,,입력 필요,off,284
+theme,drugs,Drugs,Theme-Other,0.8,,입력 필요,off,285
+theme,incest,Incest,Theme-Romance,0.8,,입력 필요,off,286
+theme,mixed_media,Mixed Media,Technical,0.8,,입력 필요,off,287
+theme,reverse_isekai,Reverse Isekai,Theme-Fantasy,0.8,,입력 필요,off,288
+theme,baseball,Baseball,Theme-Game-Sport,0.7,,입력 필요,off,289
+theme,desert,Desert,Setting-Scene,0.7,,입력 필요,off,290
+theme,estranged_family,Estranged Family,Cast-Main Cast,0.7,,입력 필요,off,291
+theme,office,Office,Setting-Scene,0.7,,입력 필요,off,292
+theme,rock_music,Rock Music,Theme-Arts-Music,0.7,,입력 필요,off,293
+theme,suicide,Suicide,Theme-Drama,0.7,,입력 필요,off,294
+theme,wilderness,Wilderness,Setting-Scene,0.7,,입력 필요,off,295
+theme,card_battle,Card Battle,Theme-Game-Card & Board Game,0.7,,입력 필요,off,296
+theme,pirates,Pirates,Cast-Traits,0.7,,입력 필요,off,297
+theme,space_opera,Space Opera,Theme-Sci-Fi,0.7,,입력 필요,off,298
+theme,alchemy,Alchemy,Theme-Fantasy,0.6,,입력 필요,off,299
+theme,anthology,Anthology,Technical,0.6,,입력 필요,off,300
+theme,cars,Cars,Theme-Other-Vehicle,0.6,,입력 필요,off,301
+theme,cosplay,Cosplay,Cast-Traits,0.6,,입력 필요,off,302
+theme,fashion,Fashion,Theme-Arts,0.6,,입력 필요,off,303
+theme,football,Football,Theme-Game-Sport,0.6,,입력 필요,off,304
+theme,mermaid,Mermaid,Cast-Traits,0.6,,입력 필요,off,305
+theme,primarily_animal_cast,Primarily Animal Cast,Cast-Main Cast,0.6,,입력 필요,off,306
+theme,werewolf,Werewolf,Cast-Traits,0.6,,입력 필요,off,307
+theme,augmented_reality,Augmented Reality,Setting-Universe,0.6,,입력 필요,off,308
+theme,fitness,Fitness,Theme-Game-Sport,0.6,,입력 필요,off,309
+theme,inseki,Inseki,Theme-Romance,0.6,,입력 필요,off,310
+theme,nun,Nun,Cast-Traits,0.6,,입력 필요,off,311
+theme,prison,Prison,Setting-Scene,0.6,,입력 필요,off,312
+theme,swimming,Swimming,Theme-Game-Sport,0.6,,입력 필요,off,313
+theme,agriculture,Agriculture,Theme-Slice of Life,0.5,,입력 필요,off,314
+theme,astronomy,Astronomy,Theme-Other,0.5,,입력 필요,off,315
+theme,crossover,Crossover,Theme-Other,0.5,,입력 필요,off,316
+theme,skeleton,Skeleton,Cast-Traits,0.5,,입력 필요,off,317
+theme,basketball,Basketball,Theme-Game-Sport,0.5,,입력 필요,off,318
+theme,body_image,Body Image,Theme-Other,0.5,,입력 필요,off,319
+theme,goblin,Goblin,Cast-Traits,0.5,,입력 필요,off,320
+theme,homeless,Homeless,Cast-Traits,0.5,,입력 필요,off,321
+theme,no_dialogue,No Dialogue,Technical,0.5,,입력 필요,off,322
+theme,rotoscoping,Rotoscoping,Technical,0.5,,입력 필요,off,323
+theme,succubus,Succubus,Cast-Traits,0.5,,입력 필요,off,324
+theme,criminal_organization,Criminal Organization,Theme-Other-Organisations,0.4,,입력 필요,off,325
+theme,fake_relationship,Fake Relationship,Theme-Drama,0.4,,입력 필요,off,326
+theme,filmmaking,Filmmaking,Theme-Other,0.4,,입력 필요,off,327
+theme,necromancy,Necromancy,Theme-Fantasy,0.4,,입력 필요,off,328
+theme,pov,POV,Technical,0.4,,입력 필요,off,329
+theme,software_development,Software Development,Theme-Other,0.4,,입력 필요,off,330
+theme,transgender,Transgender,Cast-Traits,0.4,,입력 필요,off,331
+theme,ancient_china,Ancient China,Setting-Time,0.4,,입력 필요,off,332
+theme,aromantic,Aromantic,Cast-Traits,0.4,,입력 필요,off,333
+theme,chimera,Chimera,Cast-Traits,0.4,,입력 필요,off,334
+theme,exiled,Exiled,Theme-Other,0.4,,입력 필요,off,335
+theme,classical_music,Classical Music,Theme-Arts-Music,0.3,,입력 필요,off,336
+theme,hip_hop_music,Hip-hop Music,Theme-Arts-Music,0.3,,입력 필요,off,337
+theme,horticulture,Horticulture,Theme-Slice of Life,0.3,,입력 필요,off,338
+theme,inn,Inn,Setting-Scene,0.3,,입력 필요,off,339
+theme,prophecy,Prophecy,Theme-Other,0.3,,입력 필요,off,340
+theme,torture,Torture,Theme-Other,0.3,,입력 필요,off,341
+theme,acrobatics,Acrobatics,Theme-Game-Sport,0.3,,입력 필요,off,342
+theme,board_game,Board Game,Theme-Game,0.3,,입력 필요,off,343
+theme,eco_horror,Eco-Horror,Theme-Drama,0.3,,입력 필요,off,344
+theme,fishing,Fishing,Theme-Game-Sport,0.3,,입력 필요,off,345
+theme,konbini,Konbini,Setting-Scene,0.3,,입력 필요,off,346
+theme,matriarchy,Matriarchy,Theme-Other,0.3,,입력 필요,off,347
+theme,parkour,Parkour,Theme-Game-Sport,0.3,,입력 필요,off,348
+theme,polyamorous,Polyamorous,Theme-Romance,0.3,,입력 필요,off,349
+theme,rescue,Rescue,Theme-Other,0.3,,입력 필요,off,350
+theme,tanks,Tanks,Theme-Other-Vehicle,0.3,,입력 필요,off,351
+theme,vtuber,VTuber,Cast-Traits,0.3,,입력 필요,off,352
+theme,vocal_synth,Vocal Synth,Theme-Other,0.3,,입력 필요,off,353
+theme,camping,Camping,Setting-Scene,0.3,,입력 필요,off,354
+theme,dullahan,Dullahan,Cast-Traits,0.3,,입력 필요,off,355
+theme,elderly_protagonist,Elderly Protagonist,Cast-Main Cast,0.3,,입력 필요,off,356
+theme,mixed_gender_harem,Mixed Gender Harem,Theme-Romance,0.3,,입력 필요,off,357
+theme,tennis,Tennis,Theme-Game-Sport,0.3,,입력 필요,off,358
+theme,badminton,Badminton,Theme-Game-Sport,0.2,,입력 필요,off,359
+theme,biographical,Biographical,Theme-Other,0.2,,입력 필요,off,360
+theme,circus,Circus,Setting-Scene,0.2,,입력 필요,off,361
+theme,modeling,Modeling,Theme-Arts,0.2,,입력 필요,off,362
+theme,natural_disaster,Natural Disaster,Setting-Scene,0.2,,입력 필요,off,363
+theme,time_loop,Time Loop,Theme-Sci-Fi,0.2,,입력 필요,off,364
+theme,agender,Agender,Cast-Traits,0.2,,입력 필요,off,365
+theme,airsoft,Airsoft,Theme-Game-Sport,0.2,,입력 필요,off,366
+theme,autobiographical,Autobiographical,Theme-Other,0.2,,입력 필요,off,367
+theme,blackmail,Blackmail,Theme-Other,0.2,,입력 필요,off,368
+theme,boxing,Boxing,Theme-Game-Sport,0.2,,입력 필요,off,369
+theme,cannibalism,Cannibalism,Theme-Other,0.2,,입력 필요,off,370
+theme,clone,Clone,Cast-Traits,0.2,,입력 필요,off,371
+theme,e_sports,E-Sports,Theme-Game,0.2,,입력 필요,off,372
+theme,ice_sports,Ice Sports,Theme-Game-Sport,0.2,,입력 필요,off,373
+theme,mopeds,Mopeds,Theme-Other-Vehicle,0.2,,입력 필요,off,374
+theme,shogi,Shogi,Theme-Game-Card & Board Game,0.2,,입력 필요,off,375
+theme,volleyball,Volleyball,Theme-Game-Sport,0.2,,입력 필요,off,376
+theme,wrestling,Wrestling,Theme-Game-Sport,0.2,,입력 필요,off,377
+theme,wuxia,Wuxia,Theme-Fantasy,0.2,,입력 필요,off,378
+theme,ballet,Ballet,Theme-Arts,0.1,,입력 필요,off,379
+theme,calligraphy,Calligraphy,Theme-Arts,0.1,,입력 필요,off,380
+theme,centaur,Centaur,Cast-Traits,0.1,,입력 필요,off,381
+theme,cheerleading,Cheerleading,Theme-Game-Sport,0.1,,입력 필요,off,382
+theme,cycling,Cycling,Theme-Game-Sport,0.1,,입력 필요,off,383
+theme,firefighters,Firefighters,Theme-Other-Organisations,0.1,,입력 필요,off,384
+theme,indigenous_cultures,Indigenous Cultures,Theme-Other,0.1,,입력 필요,off,385
+theme,mahjong,Mahjong,Theme-Game-Card & Board Game,0.1,,입력 필요,off,386
+theme,makeup,Makeup,Theme-Arts,0.1,,입력 필요,off,387
+theme,metal_music,Metal Music,Theme-Arts-Music,0.1,,입력 필요,off,388
+theme,mountaineering,Mountaineering,Theme-Other,0.1,,입력 필요,off,389
+theme,rakugo,Rakugo,Theme-Arts,0.1,,입력 필요,off,390
+theme,scuba_diving,Scuba Diving,Theme-Game-Sport,0.1,,입력 필요,off,391
+theme,stop_motion,Stop Motion,Technical,0.1,,입력 필요,off,392
+theme,table_tennis,Table Tennis,Theme-Game-Sport,0.1,,입력 필요,off,393
+theme,triads,Triads,Theme-Other-Organisations,0.1,,입력 필요,off,394
+theme,achromatic,Achromatic,Technical,0.1,,입력 필요,off,395
+theme,advertisement,Advertisement,Technical,0.1,,입력 필요,off,396
+theme,asexual,Asexual,Cast-Traits,0.1,,입력 필요,off,397
+theme,brainwashing,Brainwashing,Theme-Other,0.1,,입력 필요,off,398
+theme,cowboys,Cowboys,Cast-Traits,0.1,,입력 필요,off,399
+theme,dinosaurs,Dinosaurs,Cast-Traits,0.1,,입력 필요,off,400
+theme,ero_guro,Ero Guro,Theme-Other,0.1,,입력 필요,off,401
+theme,fencing,Fencing,Theme-Game-Sport,0.1,,입력 필요,off,402
+theme,flash,Flash,Technical,0.1,,입력 필요,off,403
+theme,jazz_music,Jazz Music,Theme-Arts-Music,0.1,,입력 필요,off,404
+theme,lacrosse,Lacrosse,Theme-Game-Sport,0.1,,입력 필요,off,405
+theme,matchmaking,Matchmaking,Theme-Romance,0.1,,입력 필요,off,406
+theme,oiran,Oiran,Cast-Traits,0.1,,입력 필요,off,407
+theme,poker,Poker,Theme-Game-Card & Board Game,0.1,,입력 필요,off,408
+theme,pregnancy,Pregnancy,Theme-Other,0.1,,입력 필요,off,409
+theme,rugby,Rugby,Theme-Game-Sport,0.1,,입력 필요,off,410
+theme,skateboarding,Skateboarding,Theme-Game-Sport,0.1,,입력 필요,off,411
+theme,surfing,Surfing,Theme-Game-Sport,0.1,,입력 필요,off,412
+theme,veterinarian,Veterinarian,Cast-Traits,0.1,,입력 필요,off,413
+theme,vikings,Vikings,Cast-Traits,0.1,,입력 필요,off,414
+theme,american_football,American Football,Theme-Game-Sport,0.0,,입력 필요,off,415
+theme,bowling,Bowling,Theme-Game-Sport,0.0,,입력 필요,off,416
+theme,go,Go,Theme-Game-Card & Board Game,0.0,,입력 필요,off,417
+theme,golf,Golf,Theme-Game-Sport,0.0,,입력 필요,off,418
+theme,human_experimentation,Human Experimentation,Theme-Other,0.0,,입력 필요,off,419
+theme,kabuki,Kabuki,Theme-Arts,0.0,,입력 필요,off,420
+theme,karuta,Karuta,Theme-Game-Card & Board Game,0.0,,입력 필요,off,421
+theme,manzai,Manzai,Theme-Arts,0.0,,입력 필요,off,422
+theme,middle_east,Middle East,Setting-Scene,0.0,,입력 필요,off,423
+theme,sumo,Sumo,Theme-Game-Sport,0.0,,입력 필요,off,424
+theme,t_4_koma,4-koma,Technical,0.0,,입력 필요,off,425
+theme,afterlife,Afterlife,Setting-Universe,0.0,,입력 필요,off,426
+theme,age_gap,Age Gap,Theme-Romance,0.0,,입력 필요,off,427
+theme,alternate_universe,Alternate Universe,Setting-Universe,0.0,,입력 필요,off,428
+theme,body_swapping,Body Swapping,Theme-Fantasy,0.0,,입력 필요,off,429
+theme,cheating,Cheating,Theme-Romance,0.0,,입력 필요,off,430
+theme,handball,Handball,Theme-Game-Sport,0.0,,입력 필요,off,431
+theme,judo,Judo,Theme-Game-Sport,0.0,,입력 필요,off,432
+theme,puppetry,Puppetry,Technical,0.0,,입력 필요,off,433
+theme,reincarnation,Reincarnation,Theme-Other,0.0,,입력 필요,off,434
+theme,teens_love,Teens' Love,Theme-Romance,0.0,,입력 필요,off,435
+theme,time_skip,Time Skip,Setting-Time,0.0,,입력 필요,off,436

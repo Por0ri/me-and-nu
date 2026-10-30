@@ -2,10 +2,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.api.deps import require_csrf, require_onboarding
+from app.db.session import get_db
 from app.main import create_app
-from app.schemas.chat import ChatMessageCreate
+from app.schemas.chat import ChatMessageAccepted, ChatMessageCreate
 from app.services import chat_service
 
 
@@ -31,6 +34,79 @@ def test_chat_routes_are_registered():
 def test_blank_question_is_rejected():
     with pytest.raises(ValidationError):
         ChatMessageCreate(client_message_id="11111111-1111-4111-8111-111111111111", content="   ")
+
+
+def test_question_allows_500_korean_characters_after_trimming():
+    question = "가" * 500
+    message = ChatMessageCreate(
+        client_message_id="11111111-1111-4111-8111-111111111111",
+        content=f" \n{question}\t ",
+        selected_text="나" * 2000,
+    )
+    assert message.content == question
+    assert message.selected_text == "나" * 2000
+
+
+def test_question_rejects_501_korean_characters():
+    with pytest.raises(ValidationError) as error:
+        ChatMessageCreate(
+            client_message_id="11111111-1111-4111-8111-111111111111",
+            content="가" * 501,
+        )
+    assert error.value.errors()[0]["loc"] == ("content",)
+    assert error.value.errors()[0]["type"] == "string_too_long"
+
+
+@pytest.mark.parametrize("content", [None, 123, []])
+def test_non_string_question_returns_validation_error(content):
+    with pytest.raises(ValidationError):
+        ChatMessageCreate(
+            client_message_id="11111111-1111-4111-8111-111111111111",
+            content=content,
+        )
+
+
+def test_openapi_documents_question_and_selection_limits():
+    schema = create_app(enable_dev_api=False).openapi()["components"]["schemas"]["ChatMessageCreate"]
+    assert schema["properties"]["content"]["maxLength"] == 500
+    assert {"type": "string", "maxLength": 2000} in schema["properties"]["selectedText"]["anyOf"]
+
+
+@pytest.mark.parametrize("question,expected_status", [
+    (" \n" + "가" * 500 + "\t ", 202),
+    ("가" * 501, 422),
+    ("🙂" * 500, 202),
+    ("🙂" * 501, 422),
+    (" \n\t ", 422),
+])
+def test_question_http_boundary_validates_before_scheduling_answer(monkeypatch, question, expected_status):
+    api = create_app(enable_dev_api=False)
+    database = object()
+
+    async def override_database():
+        yield database
+
+    api.dependency_overrides[get_db] = override_database
+    api.dependency_overrides[require_onboarding] = lambda: SimpleNamespace(user_id=23)
+    api.dependency_overrides[require_csrf] = lambda: None
+    post_message = AsyncMock(return_value=(ChatMessageAccepted(user_message_id=10, job_id=11), False))
+    generate_answer = AsyncMock()
+    monkeypatch.setattr(chat_service, "post_message", post_message)
+    monkeypatch.setattr(chat_service, "generate_answer", generate_answer)
+    with TestClient(api) as client:
+        response = client.post("/api/v1/chat/sessions/1/messages", json={
+            "clientMessageId": "11111111-1111-4111-8111-111111111111",
+            "content": question,
+        })
+    assert response.status_code == expected_status
+    if expected_status == 202:
+        post_message.assert_awaited_once()
+        assert post_message.await_args.args[3].content == question.strip()
+        assert response.json()["jobId"] == 11
+    else:
+        post_message.assert_not_awaited()
+        assert response.json()["code"] == "VALIDATION_ERROR"
+    generate_answer.assert_not_awaited()
 
 
 @pytest.mark.asyncio

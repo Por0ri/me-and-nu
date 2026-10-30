@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from ani_menu_agent.agents.reviewer.agent import review_content
 from ani_menu_agent.cli import _add_usage_summary
 from ani_menu_agent.models import LanguageReview
+from ani_menu_agent.policy import POLICY
 
 SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "generation_input.json"
 
@@ -39,6 +40,8 @@ def test_usage_summary_adds_all_llm_stages() -> None:
         "output_tokens": 5,
         "total_tokens": 35,
         "estimated_cost_usd": 0.00003,
+        "per_content_budget_usd": POLICY.max_content_llm_cost_usd,
+        "budget_exceeded": False,
     }
 
 
@@ -59,6 +62,9 @@ def test_reviewer_returns_its_usage_record(monkeypatch) -> None:
                 "safety_blocker": False,
                 "safety_category": None,
                 "feedback": "자연스럽습니다.",
+                "image_relevance": 5,
+                "image_composition": 5,
+                "visual_feedback": "이미지가 주제에 맞고 장면 자막이 없습니다.",
             }
             for page in range(1, 4)
         ],
@@ -93,6 +99,10 @@ def test_reviewer_returns_its_usage_record(monkeypatch) -> None:
         "ani_menu_agent.agents.reviewer.agent.AgentRepository.persist_generated_content",
         lambda *_args, **_kwargs: None,
     )
+    monkeypatch.setattr(
+        "ani_menu_agent.agents.reviewer.agent.AgentRepository.get_image_bytes",
+        lambda _self, _key: (b"test-image", "image/png"),
+    )
 
     result = review_content(
         {
@@ -108,3 +118,14 @@ def test_reviewer_returns_its_usage_record(monkeypatch) -> None:
     ]
     assert result["usage_records"][-1]["input_tokens"] == 10
     assert result["usage_records"][-1]["estimated_cost_usd"] == 0.0000035
+
+
+def test_usage_summary_marks_only_totals_above_the_package_budget() -> None:
+    for total, exceeded in ((POLICY.max_content_llm_cost_usd, False),
+                            (POLICY.max_content_llm_cost_usd + 0.00001, True)):
+        records = [{"estimated_cost_usd": total}]
+        result = {"usage_records": records}
+        _add_usage_summary(result)
+        assert result["usage_summary"]["budget_exceeded"] is exceeded
+        assert result["usage_summary"]["per_content_budget_usd"] == POLICY.max_content_llm_cost_usd
+        assert result["usage_records"] == records

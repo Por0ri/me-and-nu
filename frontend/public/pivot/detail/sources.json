@@ -1,0 +1,46 @@
+{
+  "assets": [
+    {
+      "path": "/pivot/detail/back.svg",
+      "sha256": "0a1493572293571c1a22f9a7d1c8bfd43d54981a91dfc4a4a20533c076d6a9fb",
+      "node": "I1272:3728;1135:3258",
+      "name": "back"
+    },
+    {
+      "path": "/pivot/detail/ai.svg",
+      "sha256": "f083628471c971fcb40670d7cea725bac4fcec7414a68783111624e244cc6246",
+      "node": "I1272:3731;1206:2088",
+      "name": "ai"
+    },
+    {
+      "path": "/pivot/home/slide-1.png",
+      "sha256": "6703fc4f2d1780bd35b68d118d4112510ac3b193c78a6a0a1a5b740769c99700",
+      "node": "1272:3726",
+      "name": "cover"
+    },
+    {
+      "path": "/pivot/home/chrome/share.svg",
+      "sha256": "1da70ea6342e05fb500d8182af7bd31e920ae6abb567a66e9f9cba6b4949a495",
+      "node": "I1272:3728;1135:3245",
+      "name": "share"
+    },
+    {
+      "path": "/pivot/home/chrome/like.svg",
+      "sha256": "dc7beb75d52d249f75f3f76d6d2ed225ed13a457d1b554b1cda33045a4b2cdeb",
+      "node": "I1272:3728;1135:3247",
+      "name": "like"
+    },
+    {
+      "path": "/pivot/home/chrome/save.svg",
+      "sha256": "51661be471c3cc8dbf7d7cf77efae8371250720bb34c05f382dc16e44e153efe",
+      "node": "I1272:3728;1135:3249",
+      "name": "save"
+    }
+  ],
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "nodes": [
+    "1272:3720",
+    "1272:4128"
+  ],
+  "note": "Cover/share/like/save exactly match existing Home assets by SHA-256; reused without modification. OS status bar belongs to browser/device."
+}

@@ -1,0 +1,32 @@
+{
+  "topicCode": "anime",
+  "demo": true,
+  "tags": [
+    {"kind": "genre", "code": "demo_fantasy", "displayName": "가상 판타지", "sortOrder": 1},
+    {"kind": "genre", "code": "demo_adventure", "displayName": "가상 모험", "sortOrder": 2},
+    {"kind": "theme", "code": "demo_letters", "displayName": "가상 편지 배달", "sortOrder": 3},
+    {"kind": "theme", "code": "demo_cloud_garden", "displayName": "가상 구름 정원", "sortOrder": 4}
+  ],
+  "works": [
+    {
+      "provider": "demo",
+      "externalId": "onboarding-star-post-office-v1",
+      "name": "[DEMO] 가상 작품 별빛 우체국",
+      "aliases": ["가상 별빛 편지", "Demo Star Post Office"],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "DEMO",
+      "tags": [{"kind": "genre", "code": "demo_fantasy"}, {"kind": "theme", "code": "demo_letters"}]
+    },
+    {
+      "provider": "demo",
+      "externalId": "onboarding-cloud-garden-v1",
+      "name": "[DEMO] 가상 작품 구름 정원의 로봇",
+      "aliases": ["가상 구름 로봇", "Demo Cloud Garden Robot"],
+      "imageUrl": null,
+      "releaseYear": null,
+      "mediaFormat": "DEMO",
+      "tags": [{"kind": "genre", "code": "demo_adventure"}, {"kind": "theme", "code": "demo_cloud_garden"}]
+    }
+  ]
+}

@@ -1,8 +1,10 @@
+import { aiQuestionError } from "@/lib/ai-question";
+
 /** V1 browser client. The server owns the HttpOnly cookie; only CSRF lives in memory. */
-export type AccountType = "consumer" | "creator" | "admin";
+export type AccountType = "user";
 export type Preference = "positive" | "negative";
 export type DevUser = { id: number; email: string; nickname: string; accountType: AccountType };
-export type RegisterInput = { email: string; password: string; nickname: string; role: "consumer" | "creator" };
+export type RegisterInput = { email: string; password: string; nickname: string; role: "user" };
 export type LoginInput = { email: string; password: string };
 export type LoginResponse = { message: string; user: DevUser };
 export type Session = {
@@ -44,10 +46,11 @@ type OnboardingBase = {
   nickname: string;
   profileImageId?: null;
 };
-export type OnboardingInput = OnboardingBase & (
-  | { accountType: "consumer"; topicId: number; subtopicIds: number[] }
-  | { accountType: "creator"; topicId?: never; subtopicIds?: never }
-);
+export type OnboardingInput = OnboardingBase & {
+  accountType: "user";
+  topicId: number;
+  subtopicIds: number[];
+};
 export type OnboardingResponse = {
   user: { id: number; accountType: AccountType };
   onboardingCompleted: boolean;
@@ -67,10 +70,22 @@ export type MyTopicsResponse = { topics: MyTopic[] };
 export type MySubtopic = { subtopicId: number; name: string; order: number; subscribedAt: string };
 export type MySubtopicsResponse = { items: MySubtopic[]; orderingBasis: string };
 export type MyReaction = { liked: boolean; preference: Preference | null; bookmarked?: boolean };
+export type CarouselBox = { x: number; y: number; width: number; height: number };
+export type CarouselLayout = {
+  template: string; fitMode: string; backgroundStyle: "blur" | "palette" | "gradient";
+  imageBox: CarouselBox; copyBox: CarouselBox; textOverlayBox: CarouselBox;
+  imageScale: number; imageOffsetY: number; contrastMode: string; blurBackground: boolean;
+};
+export type ContentSlide = {
+  imageUrl: string; page: number; role: string; eyebrow: string;
+  titleLines: string[]; bodySentences: string[]; layout: CarouselLayout; width: number; height: number;
+};
+export type ContentSource = { url: string; title: string | null; publisher: string | null; role: string; citationOrder: number | null };
 export type FeedCard = {
   kind: string; id: number; topicId: number; recommendationId: number | null;
   title: string; productionType: "human" | "ai" | "hybrid";
   summary: string | null; imageUrl: string | null;
+  slides?: ContentSlide[];
   sourceName: string; sourceUrl: string; publishedAt: string | null;
   saved: boolean; savedItemId: number | null; recommendationReason: string | null;
   subtopicNames?: string[];
@@ -89,6 +104,8 @@ export type ContentDetail = {
   productionType: "human" | "ai" | "hybrid";
   excerpt: string | null; body: string | null; contentType: string | null;
   imageUrl: string | null;
+  slides?: ContentSlide[];
+  sources?: ContentSource[];
   subtopicIds: number[];
   subtopicNames?: string[];
   practicalInfo: { startsAt: string | null; endsAt: string | null; ageLimit: string | null; preparation: string | null; price: string | null };
@@ -127,7 +144,7 @@ export type ChatJob = {
   error: { code: string; message: string } | null;
 };
 export type NotificationItem = {
-  notificationId: number; type: string; title: string; body: string;
+  notificationId: number; type: "system_notice"; title: string; body: string;
   topicId: number | null; contentId: number | null; imageUrl: string | null;
   isRead: boolean; readAt: string | null; createdAt: string;
 };
@@ -151,6 +168,7 @@ export class ApiError extends Error {
 export const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 export const API_UNAUTHORIZED_EVENT = "api:unauthorized";
 let csrfToken: string | null = null;
+let sessionRequest: Promise<Session> | null = null;
 
 function query(params: Record<string, string | number | boolean | undefined | null>): string {
   const search = new URLSearchParams();
@@ -160,17 +178,22 @@ function query(params: Record<string, string | number | boolean | undefined | nu
   return search.size ? `?${search}` : "";
 }
 
-async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  init.signal?.throwIfAborted();
   const method = (init.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD" && !csrfToken) await getSession();
+  init.signal?.throwIfAborted();
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  if (method !== "GET" && method !== "HEAD" && csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  if (method !== "GET" && method !== "HEAD" && csrfToken && !headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", csrfToken);
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init, headers, credentials: "include", cache: "no-store",
   });
+  init.signal?.throwIfAborted();
   if (response.status === 204) return undefined as T;
   const payload: unknown = await response.json().catch(() => null);
+  // A cancelled read must not expire a newer session via a late 401 response.
+  init.signal?.throwIfAborted();
   if (!response.ok) {
     const error = payload as ErrorPayload | null;
     if (response.status === 401 || error?.code === "CSRF_INVALID") csrfToken = null;
@@ -185,10 +208,15 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T;
 }
 
-export async function getSession(): Promise<Session> {
-  const session = await apiRequest<Session>("/api/v1/auth/session");
-  csrfToken = session.csrfToken;
-  return session;
+export function getSession(): Promise<Session> {
+  // Concurrent first reads (including Strict Mode) must share one cookie issuance.
+  if (!sessionRequest) {
+    sessionRequest = apiRequest<Session>("/api/v1/auth/session").then((session) => {
+      csrfToken = session.csrfToken;
+      return session;
+    }).finally(() => { sessionRequest = null; });
+  }
+  return sessionRequest;
 }
 export function register(input: RegisterInput): Promise<DevUser> {
   return apiRequest("/api/v1/dev/auth/register", { method: "POST", body: JSON.stringify(input) });
@@ -231,8 +259,8 @@ export function getProfile(): Promise<Profile> { return apiRequest("/api/v1/user
 export function updateProfile(input: { nickname: string; profileImageId?: null } | { nickname?: string; profileImageId: null }): Promise<Profile> {
   return apiRequest("/api/v1/users/me", { method: "PATCH", body: JSON.stringify(input) });
 }
-export function getMyTopics(options: { includeDeleted?: boolean } = {}): Promise<MyTopicsResponse> {
-  return apiRequest(`/api/v1/me/topics${query(options)}`);
+export function getMyTopics(options: { includeDeleted?: boolean } = {}, init: Pick<RequestInit, "signal"> = {}): Promise<MyTopicsResponse> {
+  return apiRequest(`/api/v1/me/topics${query(options)}`, init);
 }
 export function addMyTopic(topicId: number, subtopicIds: number[]): Promise<{ topic: MyTopic }> {
   return apiRequest("/api/v1/me/topics", { method: "POST", body: JSON.stringify({ topicId, subtopicIds }) });
@@ -248,40 +276,44 @@ export function unsubscribeSubtopic(topicId: number, subtopicId: number): Promis
 }
 export function getFeed(
   topicId: number, options: { subtopicId?: number; cursor?: string; limit?: number } = {},
+  init: Pick<RequestInit, "signal"> = {},
 ): Promise<FeedResponse> {
-  return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`);
+  return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`, init);
 }
-export function getContent(contentId: number, topicId: number): Promise<ContentDetail> {
-  return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`);
+export function getContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal"> = {}): Promise<ContentDetail> {
+  return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`, init);
 }
-export function setPreference(contentId: number, topicId: number, value: Preference): Promise<PreferenceResponse> {
-  return apiRequest(`/api/v1/contents/${contentId}/preference`, { method: "PUT", body: JSON.stringify({ topicId, value }) });
+export function setPreference(contentId: number, topicId: number, value: Preference, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<PreferenceResponse> {
+  return apiRequest(`/api/v1/contents/${contentId}/preference`, { ...init, method: "PUT", body: JSON.stringify({ topicId, value }) });
 }
-export function clearPreference(contentId: number, topicId: number): Promise<void> {
-  return apiRequest<void>(`/api/v1/contents/${contentId}/preference${query({ topicId })}`, { method: "DELETE" });
+export function clearPreference(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<void> {
+  return apiRequest<void>(`/api/v1/contents/${contentId}/preference${query({ topicId })}`, { ...init, method: "DELETE" });
 }
-export function likeContent(contentId: number, topicId: number): Promise<{ contentId: number; liked: boolean }> {
-  return apiRequest(`/api/v1/contents/${contentId}/like`, { method: "PUT", body: JSON.stringify({ topicId }) });
+export function likeContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<{ contentId: number; liked: boolean }> {
+  return apiRequest(`/api/v1/contents/${contentId}/like`, { ...init, method: "PUT", body: JSON.stringify({ topicId }) });
 }
-export function unlikeContent(contentId: number, topicId: number): Promise<void> {
-  return apiRequest<void>(`/api/v1/contents/${contentId}/like${query({ topicId })}`, { method: "DELETE" });
+export function unlikeContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<void> {
+  return apiRequest<void>(`/api/v1/contents/${contentId}/like${query({ topicId })}`, { ...init, method: "DELETE" });
 }
-export function bookmarkContent(contentId: number, topicId: number): Promise<BookmarkResponse> {
-  return apiRequest(`/api/v1/contents/${contentId}/bookmark`, { method: "PUT", body: JSON.stringify({ topicId }) });
+export function bookmarkContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<BookmarkResponse> {
+  return apiRequest(`/api/v1/contents/${contentId}/bookmark`, { ...init, method: "PUT", body: JSON.stringify({ topicId }) });
 }
-export function unbookmarkContent(contentId: number, topicId: number): Promise<void> {
-  return apiRequest<void>(`/api/v1/contents/${contentId}/bookmark${query({ topicId })}`, { method: "DELETE" });
+export function unbookmarkContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<void> {
+  return apiRequest<void>(`/api/v1/contents/${contentId}/bookmark${query({ topicId })}`, { ...init, method: "DELETE" });
 }
 export function getBookmarks(
   options: { q?: string; topicId?: number; cursor?: string; limit?: number } = {},
+  init: Pick<RequestInit, "signal"> = {},
 ): Promise<BookmarksResponse> {
-  return apiRequest(`/api/v1/users/me/bookmarks${query(options)}`);
+  return apiRequest(`/api/v1/users/me/bookmarks${query(options)}`, init);
 }
 export function createChatSession(topicId: number, anchorContentId?: number): Promise<ChatSessionResponse> {
   return apiRequest("/api/v1/chat/sessions", { method: "POST", body: JSON.stringify({ topicId, anchorContentId }) });
 }
 export function sendChatMessage(sessionId: number, content: string, clientMessageId: string): Promise<{ userMessageId: number; jobId: number; status: string }> {
-  return apiRequest(`/api/v1/chat/sessions/${sessionId}/messages`, { method: "POST", body: JSON.stringify({ content, clientMessageId }) });
+  const validationError = aiQuestionError(content);
+  if (validationError) return Promise.reject(new Error(validationError));
+  return apiRequest(`/api/v1/chat/sessions/${sessionId}/messages`, { method: "POST", body: JSON.stringify({ content: content.trim(), clientMessageId }) });
 }
 export function getChatJob(jobId: number): Promise<ChatJob> {
   return apiRequest(`/api/v1/chat/jobs/${jobId}`);

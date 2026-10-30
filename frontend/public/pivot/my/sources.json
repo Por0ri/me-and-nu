@@ -1,0 +1,63 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "page": "범수님",
+  "nodeId": "1299:4600",
+  "assets": [
+    {
+      "path": "/pivot/my/chevron.svg",
+      "nodeId": "1299:4611",
+      "width": 16,
+      "height": 24,
+      "sha256": "3f76eedd16227aad0fd5517750ad47b98278f6b13d170673dbd0dc672c09a2fd"
+    },
+    {
+      "path": "/pivot/my/chevron-last.svg",
+      "nodeId": "1299:4626",
+      "width": 16,
+      "height": 24,
+      "sha256": "2746e63a159b3f034af44c1e6da9d22dbb00990f368322ccf8dd6c19842f722a"
+    },
+    {
+      "path": "/pivot/my/chevron-muted.svg",
+      "nodeId": "1299:4669",
+      "width": 16,
+      "height": 24,
+      "sha256": "28a8241cb70c39c322b33976003f7af47c4d0afe75a358686f240bf6cbc078d1"
+    },
+    {
+      "path": "/pivot/my/chevron-muted-last.svg",
+      "nodeId": "1299:4674",
+      "width": 16,
+      "height": 24,
+      "sha256": "6fefadb0adebd48bb8b08d5e8bf6029e01ab098c7aae5dee0f3e9cd517c2a662"
+    },
+    {
+      "path": "/pivot/my/switch-on.svg",
+      "nodeId": "1299:4696",
+      "width": 33,
+      "height": 18,
+      "sha256": "989eafb635201fcc4eb7de67063c9a602a16e611ca146cc6d6d73aeb0fa216e3"
+    },
+    {
+      "path": "/pivot/my/switch-off.svg",
+      "nodeId": "1299:4693",
+      "width": 33,
+      "height": 18,
+      "sha256": "495367bb7706228c4dc954ec20e31955a3cfb71bc125be877b2c0e1c196d4f97"
+    },
+    {
+      "path": "/pivot/home/chrome/logo.svg",
+      "nodeId": "1299:4678",
+      "width": 103,
+      "height": 20.5862,
+      "sha256": "ad1b65d00f4d2ffc9aae292bd0cc97566d6ebc830266472664a32b3c8c1de3d4"
+    },
+    {
+      "path": "/pivot/home/chrome/notification.svg",
+      "nodeId": "594:1659",
+      "width": 24,
+      "height": 24,
+      "sha256": "71468b9cb5180821c7c6457f7a69fa2ae914ab93c682a9cad6c0d0cf14e3766e"
+    }
+  ]
+}

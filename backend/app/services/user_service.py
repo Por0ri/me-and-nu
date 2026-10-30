@@ -32,7 +32,6 @@ async def register_user(
             db,
             email=email,
             nickname=register_request.nickname.strip(),
-            signup_channel=register_request.role,
             hashed_password=hash_password(register_request.password),
         )
         await db.commit()

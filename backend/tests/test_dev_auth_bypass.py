@@ -22,7 +22,6 @@ def test_local_dev_bypass_uses_demo_user_without_cookie_or_csrf(monkeypatch):
         user_id=99,
         email="swagger-demo@menu.invalid",
         nickname="Swagger 테스트",
-        signup_channel="consumer",
         account_status="active",
         auth_provider="kakao",
         provider_user_id="menu-swagger-demo-v1",

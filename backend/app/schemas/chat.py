@@ -7,7 +7,7 @@ from pydantic import ConfigDict, Field, field_validator
 
 from app.schemas.common import CamelModel
 
-AI_NOTICE = "AI가 생성한 답변입니다."
+AI_NOTICE = "AI가 생성한 답변입니다. 부정확한 내용이 포함될 수 있으니 출처와 근거를 확인해 주세요."
 
 
 class ChatSessionCreate(CamelModel):
@@ -26,15 +26,18 @@ class ChatSessionResponse(CamelModel):
 
 class ChatMessageCreate(CamelModel):
     client_message_id: uuid.UUID
-    content: str = Field(max_length=1000)
+    content: str = Field(max_length=500)
     selected_text: str | None = Field(default=None, max_length=2000)
 
-    @field_validator("content")
+    @field_validator("content", mode="before")
     @classmethod
-    def not_blank(cls, value: str) -> str:
-        if not value.strip():
+    def not_blank(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
             raise ValueError("질문을 입력해 주세요.")
-        return value.strip()
+        return value
 
 
 class ChatMessageAccepted(CamelModel):

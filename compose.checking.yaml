@@ -1,0 +1,145 @@
+# Standalone backend-checking stack. Use deploy/checking/checking.sh, never merge with staging.
+name: me-nu-checking
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-environment: &environment
+  MENU_DEPLOYMENT_ENV: checking
+  DATABASE_URL: "postgresql+psycopg://me_nu_checking:${CHECKING_POSTGRES_PASSWORD:?Use deploy/checking/.env}@postgres:5432/me_nu_checking"
+  DATABASE_ECHO: "false"
+  SESSION_BACKEND: redis
+  REDIS_URL: "redis://:${CHECKING_REDIS_PASSWORD:?Use deploy/checking/.env}@redis:6379/0"
+  REDIS_KEY_PREFIX: me_nu_checking
+  REDIS_SOCKET_TIMEOUT_SECONDS: "0.5"
+  REDIS_MAX_CONNECTIONS: "10"
+  FRONTEND_ORIGINS: "https://checking.me-nu.kr,https://api.checking.me-nu.kr"
+  ENABLE_DEV_API: "false"
+  ENABLE_DEV_AUTH_BYPASS: "false"
+  SESSION_COOKIE_NAME: menu_checking_session
+  SESSION_EXPIRE_MINUTES: "30"
+  SESSION_COOKIE_SECURE: "true"
+  FORWARDED_ALLOW_IPS: ${CHECKING_FORWARDED_ALLOW_IPS:-127.0.0.1}
+  OAUTH_FRONTEND_ORIGIN: "https://checking.me-nu.kr"
+  OAUTH_PUBLIC_API_ORIGIN: "https://api.checking.me-nu.kr"
+  OAUTH_STATE_TTL_SECONDS: "600"
+  KAKAO_OAUTH_ENABLED: ${CHECKING_KAKAO_OAUTH_ENABLED:-false}
+  KAKAO_CLIENT_ID: ${CHECKING_KAKAO_CLIENT_ID:-}
+  KAKAO_CLIENT_SECRET: ${CHECKING_KAKAO_CLIENT_SECRET:-}
+  NAVER_OAUTH_ENABLED: ${CHECKING_NAVER_OAUTH_ENABLED:-false}
+  NAVER_CLIENT_ID: ${CHECKING_NAVER_CLIENT_ID:-}
+  NAVER_CLIENT_SECRET: ${CHECKING_NAVER_CLIENT_SECRET:-}
+  # This environment tests login/content/bookmarks; it does not invoke paid agents.
+  TMDB_KEY: ""
+  LLM_KEY: ""
+  OPENAI_API_KEY: ""
+
+x-backend: &backend
+  image: me-nu-backend-checking:${CHECKING_IMAGE_TAG:?Set the exact 40-character Git commit}
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  environment: *environment
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging: *logging
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.35"
+    pids_limit: 128
+    shm_size: 128m
+    environment:
+      POSTGRES_USER: me_nu_checking
+      POSTGRES_DB: me_nu_checking
+      POSTGRES_PASSWORD: ${CHECKING_POSTGRES_PASSWORD:?Use deploy/checking/.env}
+    command: [postgres, -c, shared_buffers=128MB, -c, max_connections=30]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U me_nu_checking -d me_nu_checking"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    logging: *logging
+
+  redis:
+    image: redis:8.2-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: "0.15"
+    pids_limit: 32
+    environment:
+      REDISCLI_AUTH: ${CHECKING_REDIS_PASSWORD:?Use deploy/checking/.env}
+    command:
+      - redis-server
+      - --requirepass
+      - ${CHECKING_REDIS_PASSWORD:?Use deploy/checking/.env}
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - always
+      - --maxmemory
+      - 48mb
+      - --maxmemory-policy
+      - noeviction
+    volumes: [redis-data:/data]
+    networks: [data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    logging: *logging
+
+  migrate:
+    <<: *backend
+    command: [python, -m, alembic, upgrade, 150a601074af]
+    restart: "no"
+    mem_limit: 256m
+    cpus: "0.25"
+    pids_limit: 64
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [data]
+    healthcheck:
+      disable: true
+
+  api:
+    <<: *backend
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.50"
+    pids_limit: 128
+    ports: ["127.0.0.1:8002:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [data, egress]
+    stop_grace_period: 30s
+
+volumes:
+  postgres-data: {}
+  redis-data: {}
+
+networks:
+  data:
+    internal: true
+  egress: {}

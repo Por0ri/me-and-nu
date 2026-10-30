@@ -1,13 +1,19 @@
-from datetime import datetime
+import base64
+import binascii
+from datetime import datetime, timedelta, timezone
+import struct
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
 from app.repositories import catalog_repository as catalog_repo
 from app.repositories import content_repository as content_repo
+from app.repositories import carousel_repository as carousel_repo
+from app.repositories import recommendation_repository as recommendation_repo
 from app.schemas.feed import (
-    ChannelInfo,
     ContentDetail,
+    ContentSlideResponse,
+    ContentSourceResponse,
     DetailReaction,
     FeedCard,
     FeedResponse,
@@ -16,6 +22,17 @@ from app.schemas.feed import (
     ShareInfo,
 )
 from app.services.cursor import decode_cursor, encode_cursor
+from app.services.feed_ranking import FeedSlot, order_feed
+
+KST = timezone(timedelta(hours=9))
+# Newest public contents considered after the day's ranked list (the model ranks 100).
+LATEST_POOL = 500
+# Up to 100 ranked cards plus 500 latest cards. IDs are packed once, separately
+# from the JSON header, so even BIGINT IDs stay below a 7 KB query value.
+MAX_SNAPSHOT_ITEMS = 600
+MAX_FEED_CURSOR_LENGTH = 7000
+MAX_CURSOR_HEADER_LENGTH = 512
+MAX_CONTENT_ID = 2**63 - 1
 
 
 def preference_value(value: str | None) -> str | None:
@@ -29,7 +46,27 @@ def content_notices(content) -> list[dict[str, str]]:
     basis = content.ai_judgment_basis if isinstance(content.ai_judgment_basis, dict) else {}
     if basis.get("preview") is True:
         notices.append({"code": "DEV_PREVIEW", "message": "개발용 미리보기"})
+    if carousel_repo.is_carousel(content):
+        notices.append({"code": "AI_GENERATED", "message": "AI가 생성한 콘텐츠입니다."})
     return notices
+
+
+def slide_image_url(content_id: int, topic_id: int, page: int) -> str:
+    return f"/api/v1/contents/{content_id}/slides/{page}/image?topicId={topic_id}"
+
+
+async def _slides(db: AsyncSession, content) -> list[ContentSlideResponse]:
+    if not carousel_repo.is_carousel(content):
+        return []
+    return [
+        ContentSlideResponse(
+            image_url=slide_image_url(content.content_id, content.topic_id, row.page),
+            page=row.page, role=row.role, eyebrow=row.eyebrow,
+            title_lines=row.title_lines, body_sentences=row.body_sentences,
+            layout=row.layout_json, width=row.image_width, height=row.image_height,
+        )
+        for row in await carousel_repo.list_slides(db, content.content_id)
+    ]
 
 
 async def require_active_tap(db: AsyncSession, user_id: int, topic_id: int):
@@ -57,73 +94,76 @@ async def _state(db: AsyncSession, user_id: int, tap_id: int, content_id: int):
     return reaction, saved
 
 
-async def get_feed(
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _kst_day_start(moment: datetime) -> datetime:
+    """Start of the service day (Asia/Seoul, no daylight saving) as a UTC time."""
+    local = moment.astimezone(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    return local.astimezone(timezone.utc)
+
+
+def _reason_text(reason) -> str | None:
+    text = reason.get("text") if isinstance(reason, dict) else None
+    return text if isinstance(text, str) and text.strip() else None
+
+
+def _cursor_version(cursor: str):
+    try:
+        return decode_cursor(cursor.partition(".")[0], expected={}).get("v")
+    except ApiError:
+        return None
+
+
+async def _card(
     db: AsyncSession,
-    user_id: int,
-    topic_id: int,
+    content,
     *,
-    subtopic_id: int | None,
-    cursor: str | None,
-    limit: int,
-) -> FeedResponse:
-    tap = await require_active_tap(db, user_id, topic_id)
-    selected_subtopic = None
-    if subtopic_id is not None:
-        selected_subtopic = await catalog_repo.get_subtopic(db, subtopic_id)
-        if selected_subtopic is None or selected_subtopic.topic_id != topic_id:
-            raise ApiError(422, "SUBTOPIC_TOPIC_MISMATCH", "Subtopic이 Topic에 속하지 않습니다.")
-    context = {"v": 1, "userId": user_id, "topicId": topic_id, "subtopicId": subtopic_id}
-    after = None
-    if cursor is not None:
-        payload = decode_cursor(cursor, expected=context)
-        try:
-            stamp = datetime.fromisoformat(payload["publishedAt"])
-            content_id = payload["contentId"]
-            if stamp.tzinfo is None or not isinstance(content_id, int) or isinstance(content_id, bool) or content_id <= 0:
-                raise ValueError("bad position")
-            after = (stamp, content_id)
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.") from exc
-    rows = await content_repo.list_public_contents(
-        db, topic_id, subtopic_id=subtopic_id, after=after, limit=limit + 1
+    topic_id: int,
+    tap_id: int,
+    user_id: int,
+    recommendation_id: int | None = None,
+    reason: str | None = None,
+) -> FeedCard | None:
+    source = await _source_or_none(db, content.content_id)
+    if source is None:
+        return None
+    reaction, saved = await _state(db, user_id, tap_id, content.content_id)
+    return FeedCard(
+        id=content.content_id,
+        topic_id=topic_id,
+        recommendation_id=recommendation_id,
+        title=content.title,
+        production_type=content.production_type,
+        summary=content.summary,
+        image_url=content.image_url,
+        slides=await _slides(db, content),
+        source_name=source[1],
+        source_url=source[0],
+        published_at=content.published_at,
+        saved=saved is not None,
+        saved_item_id=saved.saved_item_id if saved else None,
+        recommendation_reason=reason,
+        subtopic_names=await content_repo.list_content_subtopic_names(db, content.content_id),
+        is_promotional=content.is_sponsored,
+        notices=content_notices(content),
+        my_reaction=MyReaction(
+            liked=bool(reaction and reaction.is_liked),
+            preference=preference_value(reaction.ox_feedback) if reaction else None,
+        ),
     )
-    has_more = len(rows) > limit
-    page = rows[:limit]
-    cards: list[FeedCard] = []
-    for content in page:
-        source = await _source_or_none(db, content.content_id)
-        if source is None:
-            continue
-        reaction, saved = await _state(db, user_id, tap.tap_id, content.content_id)
-        cards.append(
-            FeedCard(
-                id=content.content_id,
-                topic_id=topic_id,
-                title=content.title,
-                production_type=content.production_type,
-                summary=content.summary,
-                image_url=content.image_url,
-                source_name=source[1],
-                source_url=source[0],
-                published_at=content.published_at,
-                saved=saved is not None,
-                saved_item_id=saved.saved_item_id if saved else None,
-                subtopic_names=await content_repo.list_content_subtopic_names(db, content.content_id),
-                is_promotional=content.is_sponsored,
-                notices=content_notices(content),
-                my_reaction=MyReaction(
-                    liked=bool(reaction and reaction.is_liked),
-                    preference=preference_value(reaction.ox_feedback) if reaction else None,
-                ),
-            )
-        )
-    next_cursor = None
-    if has_more and page:
-        last = page[-1]
-        stamp = last.published_at or last.created_at
-        next_cursor = encode_cursor(
-            {**context, "publishedAt": stamp.isoformat(), "contentId": last.content_id}
-        )
+
+
+def _feed_response(
+    topic_id: int,
+    cards: list[FeedCard],
+    next_cursor: str | None,
+    *,
+    cursor: str | None,
+    subtopic_id: int | None = None,
+    selected_subtopic=None,
+) -> FeedResponse:
     sections = []
     if cards:
         sections = [
@@ -146,6 +186,155 @@ async def get_feed(
     )
 
 
+def _snapshot_cursor(context: dict, remaining_ids: list[int]) -> str:
+    """The cursor carries positions only, never content or authorization data."""
+    packed = struct.pack(f">{len(remaining_ids)}Q", *remaining_ids)
+    ids = base64.urlsafe_b64encode(packed).rstrip(b"=").decode("ascii")
+    return encode_cursor(context) + "." + ids
+
+
+def _decode_snapshot_cursor(cursor: str, context: dict) -> tuple[dict, list[int]]:
+    try:
+        header, encoded_ids = cursor.split(".")
+        if len(header) > MAX_CURSOR_HEADER_LENGTH or not encoded_ids or len(encoded_ids) > MAX_SNAPSHOT_ITEMS * 8 * 4 // 3:
+            raise ValueError("bad cursor size")
+        payload = decode_cursor(header, expected=context)
+        as_of = datetime.fromisoformat(payload["asOf"])
+        round_id = payload["roundId"]
+        if as_of.tzinfo is None or type(round_id) is not int or not 0 < round_id <= MAX_CONTENT_ID:
+            raise ValueError("bad snapshot context")
+        packed = base64.b64decode(encoded_ids + "=" * (-len(encoded_ids) % 4), altchars=b"-_", validate=True)
+        if not packed or len(packed) % 8 or len(packed) > MAX_SNAPSHOT_ITEMS * 8:
+            raise ValueError("bad packed IDs")
+        ids = [value for (value,) in struct.iter_unpack(">Q", packed)]
+        if len(ids) != len(set(ids)) or any(not 0 < value <= MAX_CONTENT_ID for value in ids):
+            raise ValueError("bad content IDs")
+        return {**context, "roundId": round_id, "asOf": as_of.isoformat()}, ids
+    except (KeyError, TypeError, ValueError, binascii.Error, struct.error) as exc:
+        raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다. 피드를 새로 불러와 주세요.") from exc
+
+
+async def _recommended_feed(
+    db: AsyncSession, user_id: int, topic_id: int, tap, *, cursor: str | None, limit: int
+) -> FeedResponse | None:
+    """Freeze the visit's order; always recheck current visibility and dislikes.
+
+    Later pages consume the remaining IDs, so changed reactions or hidden cards
+    cannot shift an offset. An old v2 cursor has no recoverable order and must
+    restart. Yesterday's round covers the hours before today's batch has run.
+    """
+    context = {"v": 3, "userId": user_id, "topicId": topic_id, "subtopicId": None}
+    if cursor is None:
+        as_of = _now()
+        today = as_of.astimezone(KST).date()
+        round_ = await recommendation_repo.latest_round(db, tap.tap_id, [today, today - timedelta(days=1)])
+        if round_ is None:
+            return None
+        context.update(roundId=round_.recommendation_round_id, asOf=as_of.isoformat())
+    else:
+        context, remaining_ids = _decode_snapshot_cursor(cursor, context)
+        round_ = await recommendation_repo.get_round(db, context["roundId"], tap.tap_id)
+        if round_ is None:
+            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다. 피드를 새로 불러와 주세요.")
+    ranked = [
+        FeedSlot(content_id, item_id, _reason_text(reason))
+        for content_id, item_id, reason in await recommendation_repo.ranked_items(
+            db, round_.recommendation_round_id, topic_id
+        )
+    ]
+    negative = await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id)
+    if cursor is None:
+        latest = await recommendation_repo.latest_content_ids(db, topic_id, as_of, LATEST_POOL)
+        ordered = order_feed(
+            ranked, latest,
+            opened=await recommendation_repo.opened_content_ids(db, tap.tap_id, as_of),
+            negative=negative,
+            shown_today=await recommendation_repo.shown_content_ids(db, tap.tap_id, _kst_day_start(as_of), as_of),
+            main_work=await recommendation_repo.main_works(db, [slot.content_id for slot in ranked] + latest),
+        )
+        remaining_ids = [slot.content_id for slot in ordered[:MAX_SNAPSHOT_ITEMS]]
+    # All metadata comes from the caller's round, not from the cursor. Public
+    # Topic membership is checked again even if a caller rewrites packed IDs.
+    ranked_by_id = {slot.content_id: slot for slot in ranked}
+    position = 0
+    cards: list[FeedCard] = []
+    while position < len(remaining_ids) and len(cards) < limit:
+        batch = remaining_ids[position:position + limit]
+        contents = await recommendation_repo.contents_by_id(db, batch, topic_id)
+        for content_id in batch:
+            position += 1
+            content = contents.get(content_id)
+            if content is None or content_id in negative:
+                continue
+            slot = ranked_by_id.get(content_id, FeedSlot(content_id))
+            card = await _card(
+                db, content, topic_id=topic_id, tap_id=tap.tap_id, user_id=user_id,
+                recommendation_id=slot.recommendation_item_id, reason=slot.reason,
+            )
+            if card is not None:
+                cards.append(card)
+            if len(cards) == limit:
+                break
+    next_cursor = _snapshot_cursor(context, remaining_ids[position:]) if position < len(remaining_ids) else None
+    return _feed_response(topic_id, cards, next_cursor, cursor=cursor)
+
+
+async def get_feed(
+    db: AsyncSession,
+    user_id: int,
+    topic_id: int,
+    *,
+    subtopic_id: int | None,
+    cursor: str | None,
+    limit: int,
+) -> FeedResponse:
+    if cursor is not None and len(cursor) > MAX_FEED_CURSOR_LENGTH:
+        raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.")
+    tap = await require_active_tap(db, user_id, topic_id)
+    selected_subtopic = None
+    if subtopic_id is not None:
+        selected_subtopic = await catalog_repo.get_subtopic(db, subtopic_id)
+        if selected_subtopic is None or selected_subtopic.topic_id != topic_id:
+            raise ApiError(422, "SUBTOPIC_TOPIC_MISMATCH", "Subtopic이 Topic에 속하지 않습니다.")
+    elif cursor is None or _cursor_version(cursor) in {2, 3}:
+        recommended = await _recommended_feed(db, user_id, topic_id, tap, cursor=cursor, limit=limit)
+        if recommended is not None:
+            return recommended
+    context = {"v": 1, "userId": user_id, "topicId": topic_id, "subtopicId": subtopic_id}
+    after = None
+    if cursor is not None:
+        payload = decode_cursor(cursor, expected=context)
+        try:
+            stamp = datetime.fromisoformat(payload["publishedAt"])
+            content_id = payload["contentId"]
+            if stamp.tzinfo is None or not isinstance(content_id, int) or isinstance(content_id, bool) or content_id <= 0:
+                raise ValueError("bad position")
+            after = (stamp, content_id)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다.") from exc
+    rows = await content_repo.list_public_contents(
+        db, topic_id, subtopic_id=subtopic_id, after=after, limit=limit + 1
+    )
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    cards: list[FeedCard] = []
+    for content in page:
+        card = await _card(db, content, topic_id=topic_id, tap_id=tap.tap_id, user_id=user_id)
+        if card is not None:
+            cards.append(card)
+    next_cursor = None
+    if has_more and page:
+        last = page[-1]
+        stamp = last.published_at or last.created_at
+        next_cursor = encode_cursor(
+            {**context, "publishedAt": stamp.isoformat(), "contentId": last.content_id}
+        )
+    return _feed_response(
+        topic_id, cards, next_cursor,
+        cursor=cursor, subtopic_id=subtopic_id, selected_subtopic=selected_subtopic,
+    )
+
+
 async def get_content_detail(
     db: AsyncSession, user_id: int, topic_id: int, content_id: int
 ) -> ContentDetail:
@@ -157,23 +346,23 @@ async def get_content_detail(
     if source is None:
         raise ApiError(404, "CONTENT_NOT_FOUND", "콘텐츠 출처를 찾을 수 없습니다.")
     reaction, saved = await _state(db, user_id, tap.tap_id, content_id)
-    channel = None
-    if content.creator_channel_id is not None:
-        row = await content_repo.get_channel(db, content.creator_channel_id)
-        if row and row.channel_status == "active" and row.topic_id == topic_id:
-            channel = ChannelInfo(
-                channel_id=row.creator_channel_id,
-                name=row.channel_name,
-                topic_id=row.topic_id,
-            )
     is_original_ai = content.production_type == "ai" and content.source_draft_id is not None
     return ContentDetail(
         content_id=content_id,
         topic_id=topic_id,
         title=content.title,
         image_url=content.image_url,
+        slides=await _slides(db, content),
         production_type=content.production_type,
         source_url=source[0],
+        sources=[
+            ContentSourceResponse(
+                url=row.source_url, title=row.source_title,
+                publisher=site.media_name if site else None,
+                role=row.source_role, citation_order=row.citation_order,
+            )
+            for row, site in await content_repo.list_content_sources(db, content_id)
+        ],
         publisher=source[1],
         published_at=content.published_at,
         display_mode="full_body" if is_original_ai else "link_excerpt",
@@ -190,5 +379,19 @@ async def get_content_detail(
             preference=preference_value(reaction.ox_feedback) if reaction else None,
             bookmarked=saved is not None,
         ),
-        channel=channel,
     )
+
+
+async def get_content_slide_image(
+    db: AsyncSession, user_id: int, topic_id: int, content_id: int, page: int
+) -> bytes:
+    await require_active_tap(db, user_id, topic_id)
+    content = await content_repo.get_public_content(db, content_id, topic_id)
+    if content is None or not carousel_repo.is_carousel(content):
+        raise ApiError(404, "CONTENT_NOT_FOUND", "콘텐츠를 찾을 수 없습니다.")
+    if await _source_or_none(db, content_id) is None:
+        raise ApiError(404, "CONTENT_NOT_FOUND", "콘텐츠 출처를 찾을 수 없습니다.")
+    image = await carousel_repo.get_slide_image(db, content_id, page)
+    if image is None:
+        raise ApiError(404, "CONTENT_NOT_FOUND", "콘텐츠 이미지를 찾을 수 없습니다.")
+    return bytes(image)

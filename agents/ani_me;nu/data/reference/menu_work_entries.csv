@@ -1705,12 +1705,12 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 13807,13807,600,OVA,2012,,Corpse Party: Missing Footage,,コープスパーティー Missing Footage,30522
 15037,15037,600,OVA,2013,콥스파티 -포학해진 영혼의 주문-,Corpse Party: Tortured Souls - Bougyakusareta Tamashii no Jukyou,Corpse Party,コープスパーティー Tortured Souls -暴虐された魂の呪叫-,87149
 26,26,601,TV,2003,,TEXHNOLYZE,Texhnolyze,TEXHNOLYZE,87046
-550,550,602,TV,1998,,Yu☆Gi☆Oh!,,遊☆戯☆王,54491
-2006,2006,602,MOVIE,1999,,Yu☆Gi☆Oh! (Movie),,遊☆戯☆王 (Movie),12646
-481,481,602,TV,2000,유희왕 듀얼몬스터즈,Yu☆Gi☆Oh! Duel Monsters,Yu-Gi-Oh!,遊☆戯☆王　デュエルモンスターズ,86817
-482,482,602,TV,2004,유희왕 GX,Yu☆Gi☆Oh! Duel Monsters GX,Yu-Gi-Oh! GX,遊☆戯☆王デュエルモンスターズＧＸ,47668
+550,550,2325,TV,1998,,Yu☆Gi☆Oh!,,遊☆戯☆王,54491
+2006,2006,2325,MOVIE,1999,,Yu☆Gi☆Oh! (Movie),,遊☆戯☆王 (Movie),12646
+481,481,602,TV,2000,유희왕 듀얼몬스터즈,Yu☆Gi☆Oh! Duel Monsters,Yu-Gi-Oh! Duel Monsters,遊☆戯☆王　デュエルモンスターズ,86817
+482,482,2323,TV,2004,유희왕 GX,Yu☆Gi☆Oh! Duel Monsters GX,Yu-Gi-Oh! GX,遊☆戯☆王デュエルモンスターズＧＸ,47668
 1894,1894,602,MOVIE,2004,유희왕 극장판,Yu☆Gi☆Oh!: Hikari no Pyramid,Yu-Gi-Oh! The Movie: Pyramid of Light,遊☆戯☆王　デュエルモンスターズ　光のピラミッド,18815
-3972,3972,602,TV,2008,유희왕 5D's,Yu☆Gi☆Oh! 5D's,Yu-Gi-Oh! 5D's,遊☆戯☆王5D's（ファイブディーズ）,32239
+3972,3972,2324,TV,2008,유희왕 5D's,Yu☆Gi☆Oh! 5D's,Yu-Gi-Oh! 5D's,遊☆戯☆王5D's（ファイブディーズ）,32239
 6951,6951,602,MOVIE,2010,유희왕 극장판 : 시공을 초월한 우정,Yu☆Gi☆Oh!: Chou Yuugou! Toki wo Koeta Kizuna,Yu-Gi-Oh! 3D: Bonds Beyond Time,劇場版 遊☆戯☆王 ～超融合! 時空を越えた絆～,15543
 21265,28771,602,MOVIE,2016,극장판 유희왕 더 다크 사이드 오브 디멘션즈,Yu☆Gi☆Oh!: THE DARK SIDE OF DIMENSIONS,Yu-Gi-Oh!: The Dark Side of Dimensions,遊☆戯☆王 THE DARK SIDE OF DIMENSIONS,20688
 129277,47257,603,TV,2021,,Shinigami Bocchan to Kuro Maid,The Duke of Death and His Maid,死神坊ちゃんと黒メイド,86645
@@ -3886,3 +3886,5 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 13629,13629,2320,SPECIAL,2012,,Furiko,Pendulum,振り子,7001
 746,746,2321,OVA,2005,파파와 KISS IN THE DARK,Papa to♥KISS IN THE DARK,Papa to Kiss in the Dark,パパと♥KISS IN THE DARK,6347
 102065,29978,2322,ONA,2013,,001,,001,5512
+140842,,2326,TV_SHORT,2022,치이카와,Chiikawa,Chiikawa,ちいかわ,12503
+202717,,2326,MOVIE,2026,극장판 치이카와: 인어 섬의 비밀,Chiikawa: Ningyo no Shima no Himitsu,Chiikawa the Movie: The Secret of Mermaid Island,映画ちいかわ 人魚の島のひみつ,3229

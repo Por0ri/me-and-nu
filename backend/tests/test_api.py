@@ -16,7 +16,7 @@ def test_public_v1_routes_replace_memory_content_crud():
         "/api/v1/auth/session",
         "/api/v1/auth/logout",
         "/api/v1/policies",
-        "/api/v1/onboarding",
+        "/api/v1/onboarding/complete",
         "/api/v1/users/me",
         "/api/v1/users/me/consents",
         "/api/v1/topics",
@@ -30,6 +30,7 @@ def test_public_v1_routes_replace_memory_content_crud():
         "/api/v1/contents/{contentId}/bookmark",
     }
     assert required <= set(paths)
+    assert "/api/v1/onboarding" not in paths
     assert "/api/v1/auth/me" not in paths
     assert "/api/v1/auth/login" not in paths
     assert "/api/v1/contents" not in paths
@@ -56,6 +57,10 @@ def test_openapi_exposes_camelcase_security_and_empty_204_contract():
     schema = response.json()
     assert {"SessionCookie", "CsrfToken"} <= set(schema["components"]["securitySchemes"])
     assert "topicId" in schema["components"]["schemas"]["TopicAction"]["properties"]
+    detail = schema["components"]["schemas"]["ContentDetail"]
+    assert "channel" not in detail["properties"]
+    assert "channel" not in detail["example"]
+    assert "ChannelInfo" not in schema["components"]["schemas"]
     delete = schema["paths"]["/api/v1/contents/{contentId}/like"]["delete"]
     assert "content" not in delete["responses"]["204"]
 

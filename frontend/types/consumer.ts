@@ -17,7 +17,7 @@ export type LoginResult = {
   signupStatus: SignupStatus;
 };
 
-export type AccountType = "consumer" | "creator";
+export type AccountType = "user";
 
 export type SubtopicOption = {
   id: string;

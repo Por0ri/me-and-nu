@@ -4,6 +4,58 @@ from __future__ import annotations
 
 from ani_menu_agent.models import ContentPackage
 
+AI_DISCLOSURE_TEXT = "이 콘텐츠는 원문과 확인된 자료를 바탕으로 AI를 활용해 생성·정리했습니다."
+
+
+def render_detail_markdown(package: ContentPackage) -> str:
+    """Build the complete reader-facing detail text with source credits and disclosure."""
+    lines = [package.detail_body.strip(), "", "## 출처", "", "원문", ""]
+    allowed_source_ids = set(package.detail_source_ids)
+    seen_sources: set[str] = set()
+    selected_sources = [
+        source for source in package.sources
+        if not allowed_source_ids or source.id in allowed_source_ids
+    ]
+    if not selected_sources:
+        selected_sources = package.sources
+    for source in selected_sources:
+        url = str(source.url)
+        if url in seen_sources:
+            continue
+        seen_sources.add(url)
+        lines.append(f"- [{source.publisher} — {source.title}]({url})")
+    if not seen_sources:
+        lines.append("- 원문 출처 정보가 없습니다.")
+
+    source_by_url = {str(source.url): source for source in package.sources}
+    used_image_ids = {card.image_id for card in package.cards if card.image_id}
+    used_images = [
+        image for image in package.images
+        if image.id in used_image_ids
+    ]
+    if not used_images and not package.cards:
+        used_images = package.images
+    lines.extend(["", "이미지", ""])
+    seen_image_sources: set[str] = set()
+    for image in used_images:
+        image_source = image.provenance_source or source_by_url.get(str(image.source_url))
+        url = str(image_source.url) if image_source else str(image.source_url)
+        if url in seen_image_sources:
+            continue
+        seen_image_sources.add(url)
+        if image_source:
+            label = f"{image_source.publisher} — {image_source.title}"
+        else:
+            label = image.source_description.strip() or "이미지 원문"
+        attribution = image.attribution_text.strip()
+        suffix = f" — {attribution}" if attribution and attribution not in label else ""
+        lines.append(f"- [{label}]({url}){suffix}")
+    if not seen_image_sources:
+        lines.append("- 사용 이미지의 별도 출처가 없습니다.")
+
+    lines.extend(["", "## AI 활용 안내", "", AI_DISCLOSURE_TEXT, ""])
+    return "\n".join(lines).rstrip() + "\n"
+
 
 def render_markdown(package: ContentPackage) -> str:
     """Export cards without making Markdown the canonical storage format."""
@@ -54,5 +106,7 @@ def render_markdown(package: ContentPackage) -> str:
                             f"  - 출처: [{source.publisher} — {source.title}]({source.url})"
                         )
             lines.append("")
+
+    lines.extend(["## 자세히 보기", "", render_detail_markdown(package)])
 
     return "\n".join(lines).rstrip() + "\n"

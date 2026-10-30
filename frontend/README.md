@@ -2,9 +2,48 @@
 
 FastAPI·PostgreSQL V1 API의 공개 피드와 콘텐츠 상세를 브라우저에서 볼 수 있습니다. 개발용 API 점검 화면도 홈 하단에 유지합니다.
 
-## Consumer 온보딩 실제 API 연결
+## Pivot 기존 회원 API 연결
 
-최신 `main`의 온보딩 화면을 유지하고, `NEXT_PUBLIC_CONSUMER_DATA_MODE=api`이면 실제 FastAPI·PostgreSQL을 사용합니다.
+이 문서의 구현·브라우저 검증은 `codex/service-integration`에서 수행했고, 현재 `codex/backend-labs-service`에는 에이전트 코드와 생년월일 삭제 migration을 제외한 서비스 변경만 반영 후보로 선별했습니다. 후보 자체의 재검증과 로컬 `backend-labs` 반영 상태는 [서비스 흐름 보고서](../docs/SERVICE_FLOW_E2E_2026-10-28.md)를 따릅니다. 기존 `codex/fe-be-integration`의 회원·저장 흐름에 원격 `feature/pivot-user-fe` 최신 tip `3f656eb`(2026-10-27 14:53:33 KST)의 홈 연결 변경을 선별 반영했습니다. `/pivot/login` → `/pivot/home`은 실제 OAuth·세션과 피드·상세·북마크·Saved API를 사용합니다. 로그인 후에는 서버가 내려주는 활성 Topic ID를 사용하며, 저장 성공 후 홈·상세·저장 목록을 갱신합니다. 새로고침하면 서버의 저장 상태를 다시 조회합니다. 요청 실패를 데모 데이터나 저장 성공으로 대체하지 않습니다.
+
+허용된 테스트 환경은 `https://test.me-nu.kr` → `https://api.test.me-nu.kr`입니다. 해당 프런트의 빌드 환경변수는 `NEXT_PUBLIC_API_BASE_URL=https://api.test.me-nu.kr`이며, 백엔드의 CORS·OAuth 복귀 origin도 실제 프런트 주소와 일치해야 합니다. 임의의 `vercel.app` 주소에서 API 쿠키가 전송된다고 가정하지 않습니다. 이 브랜치 작업은 서버 설정 변경이나 배포를 수행하지 않습니다.
+
+로컬에서는 `.env.local`에 아래 값을 설정하고, 같은 `localhost` 호스트의 별도 백엔드를 준비합니다. 실제 소셜 로그인 검증에는 공급자에 등록된 로컬 callback이 필요합니다. 공급자 키는 프런트 환경변수에 넣지 않습니다.
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true
+```
+
+신규 계정은 `user:null`인 가입 대기 세션을 판별해 약관 화면으로 안내합니다. 2026-10-28 신규 가입 제출은 아래 Pivot V2 흐름으로 연결했습니다. 추천·Agent 실행과 별도의 미구현 기능이 자동 완성된 것은 아닙니다. `/pivot/demo`와 `/pivot/preview`는 실제 세션·API와 분리된 화면 확인용 경로입니다.
+
+검증 명령은 `npm test`, `npm run typecheck`, `npm run build`입니다. 테스트 전용 API fixture와 실제 화면의 연결을 확인하려면 로컬 Next 서버를 `NEXT_PUBLIC_API_BASE_URL=http://localhost:8180`, `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`로 3180 포트에 실행한 뒤 `node tests/pivot-service-browser-check.cjs`를 사용합니다. Playwright와 Chrome이 필요하며, 별도 설치된 Playwright는 `PIVOT_PLAYWRIGHT_MODULE`, 브라우저 실행 파일은 `PIVOT_BROWSER_EXECUTABLE`로 지정할 수 있습니다. 이 fixture는 테스트에서만 OAuth 공급자 이동을 대체하며 실제 사용자·원격 DB를 변경하지 않습니다. 외부 `node_modules`를 연결한 로컬 작업 폴더에서는 Next 실행에 `--webpack` 옵션을 사용합니다.
+
+## Pivot 온보딩 V2 (2026-10-28)
+
+`codex/service-integration`의 신규 가입 경로는 `/pivot/login` → 약관 → 닉네임 → 애니메이션 분야 → 작품 검색(Q1) → 장르·소재(Q2) → 소비 유형(Q3) → 선택 확인입니다. Q1은 서버의 실제 작품 1~5개, Q2는 선택 작품의 후보 합집합에서 1개 이상(고정 상한 없음), Q3는 기존 Q1의 여섯 선택지 중 하나입니다. 이 변경은 로컬 작업 공간의 구현이며 main 병합·원격 배포를 포함하지 않습니다.
+
+- `GET /api/v1/onboarding/works`로 이름·별칭 검색 및 다음 페이지를 조회합니다. 검색어 변경 시 이전 요청을 취소하고 늦게 도착한 결과를 버립니다. 태그 미준비 작품은 선택할 수 없습니다.
+- `POST /api/v1/onboarding/preference-options`로 현재 후보를 조회합니다. 작품 변경 시 기존 태그 선택을 비우고 안내하며, Q2로 돌아오면 후보를 다시 확인하고 유효하지 않은 태그만 해제합니다. 오류 상태에서 다음 단계로 넘어가지 않습니다.
+- 완료는 `answers:{version:2,favoriteEntityIds,preferenceTagIds,consumptionType}`를 보냅니다. 응답의 ID 집합·소비 유형과 교체된 세션을 확인한 뒤 홈으로 이동합니다. 중복 클릭과 성공 응답 유실 시 재전송 방지를 유지합니다.
+- 생년월일 정책은 보류합니다. 새 Pivot 가입에서는 생년월일을 입력·보관·전송하거나 연령 조건을 새로 적용하지 않습니다. 이전 Consumer 화면과 날짜 유틸리티는 별도 레거시 경로로 남겨두며 기존 DB의 생년월일 상태를 바꾸지 않습니다.
+- `/pivot/demo`, 개발용 `/pivot/preview`는 명시적인 가상 작품 fixture를 사용하고 실제 세션·저장 API에 접근하지 않습니다. 서비스 화면은 오류를 데모 카탈로그로 대체하지 않습니다.
+
+서비스 사용 전 온보딩 도입 revision `e3a7b9c2d451`과 캐러셀 `f4b8c1d9a620`을 포함하는 현재 target **`150a601074af`**와 활성 `anime` Topic, 검토된 실제 작품 카탈로그를 준비해야 합니다. [온보딩 V2 명세](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)와 [캐러셀 DB·API 안내](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. 브라우저와 API 모두 같은 `localhost` 호스트를 쓰고 `NEXT_PUBLIC_API_BASE_URL`과 `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`를 실행 시 설정합니다. 실제 OAuth·약관 검증은 해당 개발 환경 설정을 사용합니다.
+
+검증 명령은 `npm test`, `npm run typecheck`, `npm run build -- --webpack`입니다. 관리 worktree에서 기존 설치 디렉터리를 junction으로 재사용할 경우 webpack 빌드로 확인하며 원본 checkout의 빌드 산출물을 변경하지 않습니다.
+
+## Pivot 서비스 캐러셀 (2026-10-28)
+
+홈은 서비스 API의 `slides[]`를 page순으로 넘기고 PNG 위에 카드별 제목·본문을 배치합니다. API 연결을 유지하면서 원래 `327:408` 카드 안의 우측 세로 반응·`자세히`·pagination 구성으로 복원했습니다. 상세는 첫 슬라이드의 보호 PNG·텍스트를 단일 표지로 쓰고 흰 독립 본문을 바로 이어 표시하며, 출처·AI 고지·게시일은 본문 하단에 둡니다. 상세 내 캐러셀 탐색은 제거하고 API의 전체 슬라이드는 유지합니다. 보호 이미지·저장·세션 연결과 기존 글·demo 경로를 유지하며 에이전트·백엔드 DB/API·생년월일 정책은 수정하지 않습니다.
+
+최초 UI 연결 당시의 **293개 테스트**·브라우저 확인은 디자인 복원 전 기록입니다. 이번 복원 후에는 **294개 테스트(실패·skip 0)**, 타입 검사, 로컬 webpack 프로덕션 빌드, 서버 재시작·health와 Chrome **390×844·1280×900**의 홈·상세·보호 이미지·저장·뒤로가기 재검증이 통과했고 페이지 오류는 0개였습니다. [프론트 캐러셀 연결·복원 기록](../docs/FRONTEND_CAROUSEL_INTEGRATION_2026-10-28.md)에 결과를 구분합니다. 실서비스 DB 적용·main 병합·배포를 포함하지 않습니다.
+
+계속 실행하는 localhost 환경의 접속·종료·화면 확인 순서는 [로컬 캐러셀 미리보기](../docs/LOCAL_CAROUSEL_PREVIEW_2026-10-28.md)를 따릅니다. 사용자가 허용한 3장·5장·10장 테스트 캐러셀과 실제 생성 콘텐츠를 구분하고, [테스트 데이터 인계·실제 콘텐츠 교체 절차](../docs/CAROUSEL_TEST_DATA_HANDOFF_2026-10-28.md)를 따릅니다. 로컬 helper의 로그인은 실제 소셜 OAuth·신규 가입 검증을 대신하지 않습니다.
+
+## Consumer 온보딩 실제 API 연결 (이전 경로 기록)
+
+아래는 이전 Consumer 경로의 기록입니다. 현재 Pivot V2 계약과 달리 구 경로·임시 생년월일·세부 관심사 제출을 사용하므로 새 온보딩 검증 경로로 사용하지 않습니다. 당시 `main`의 온보딩 화면을 유지하고, `NEXT_PUBLIC_CONSUMER_DATA_MODE=api`이면 실제 FastAPI·PostgreSQL을 사용하도록 구성했습니다.
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
@@ -25,7 +64,7 @@ NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true
 
 **임시 프로필:** 추가 입력 없이 닉네임 `로컬사용자{임의 문자열}`, 생년월일 `2000-01-01`을 생성합니다. 같은 화면에서 제출을 재시도하면 생성된 값을 재사용합니다. 온보딩 전 세션은 `user: null`이므로 사용자 ID에 의존하지 않습니다. 프론트와 API 주소가 모두 루프백(`localhost`, `127.0.0.1`, `[::1]`)일 때만 허용합니다. 구현 위치는 `lib/consumer-api/onboarding.ts`의 `createLocalOnboardingProfile`입니다. 이 값은 실제 SNS 개인정보가 아니며, 향후 소셜 로그인에서 확인된 정보로 교체해야 합니다.
 
-실제 소셜 로그인 연결은 후속 작업입니다. 로컬 시연이 활성화된 API 모드에서 비로그인 상태로 `/consumer`에 진입하면 로그인 화면으로 이동합니다. 자연어 관심사 해석·AI 대화는 아직 연결되지 않았습니다.
+실제 소셜 로그인 연결은 후속 작업입니다. 로컬 시연이 활성화된 API 모드에서 비로그인 상태로 `/consumer`에 진입하면 로그인 화면으로 이동합니다. 자연어 관심사 해석은 아직 연결되지 않았습니다. AI 대화는 API 모드에서 서버에 연결되며 질문은 최대 500자입니다.
 
 **API 시연 데이터 준비:** 기본 정책·데모 사용자 seed에 더해, `backend`에서 다음 명령으로 Agent 콘텐츠와 온보딩 관심사를 적재해야 합니다. 기본 seed만 있는 DB에는 현재 화면의 7개 선택지가 모두 준비되어 있지 않습니다.
 
@@ -115,7 +154,7 @@ npm run dev
 
 브라우저의 HttpOnly 쿠키가 정상 전달되려면 두 주소 모두 `localhost`를
 사용해야 합니다. `localhost`와 `127.0.0.1`을 섞지 마세요. 백엔드 실행 전
-`alembic upgrade head`와 `python -m app.seeds.v1_local`도 실행합니다.
+대상 DB를 확인한 뒤 `alembic upgrade 150a601074af`와 `python -m app.seeds.v1_local`을 사용합니다. 이 후보에는 150a head만 있고 생년월일 삭제 d2 파일은 없습니다. 적용 revision을 고정하기 위해 `upgrade head`나 `upgrade heads`로 바꾸지 않습니다.
 Swagger 수동 절차는 [가이드](../docs/SWAGGER_TEST_GUIDE.md)에 있습니다.
 
 ## Vercel 연결

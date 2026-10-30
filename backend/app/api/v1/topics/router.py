@@ -35,7 +35,7 @@ async def list_topics(
     response_model=FeedResponse,
     tags=["피드"],
     summary="내 Topic의 콘텐츠 피드 조회",
-    description="활성 Topic의 공개 콘텐츠를 최신순으로 반환합니다. 추천 식별자와 사유는 로컬 개발 범위에서 null입니다.",
+    description="활성 Topic의 공개 콘텐츠를 오늘(없으면 어제) 추천 순서로 반환하고, 추천이 없으면 최신순을 사용합니다. 추천 카드는 식별자와 사유를 포함합니다. nextCursor는 그대로 전달하며 INVALID_CURSOR이면 첫 페이지부터 다시 조회하세요.",
     responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "TOPIC_NOT_FOUND"}},
 )
 async def get_topic_feed(
@@ -43,7 +43,7 @@ async def get_topic_feed(
     db: Annotated[AsyncSession, Depends(get_db)],
     topic_id: Annotated[int, Path(alias="topicId", gt=0, description="현재 내 Topic ID")],
     subtopic_id: Annotated[int | None, Query(alias="subtopicId", gt=0, description="필터할 Subtopic ID")] = None,
-    cursor: Annotated[str | None, Query(description="이전 응답의 nextCursor")] = None,
+    cursor: Annotated[str | None, Query(max_length=feed_service.MAX_FEED_CURSOR_LENGTH, description="이전 응답의 nextCursor")] = None,
     limit: Annotated[int, Query(ge=1, le=100, description="카드 수, 기본 20")] = 20,
 ) -> FeedResponse:
     return await feed_service.get_feed(

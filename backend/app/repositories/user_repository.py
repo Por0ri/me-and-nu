@@ -26,13 +26,11 @@ async def create_user(
     *,
     email: str,
     nickname: str,
-    signup_channel: str,
     hashed_password: str,
 ) -> UserAccount:
     user = UserAccount(
         email=email,
         nickname=nickname,
-        signup_channel=signup_channel,
         auth_provider="local",
         hashed_password=hashed_password,
     )

@@ -1,0 +1,12 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "nodeId": "1011:3544",
+  "usage": "H2-A fixed FE demo examples only; embedded event dates/prices are design copy, not live information.",
+  "assets": [
+    { "path": "/pivot/home/slide-1.png", "state": "1", "figmaAsset": "06165e52-274b-4be4-8818-a30e13caa188", "sha256": "6703fc4f2d1780bd35b68d118d4112510ac3b193c78a6a0a1a5b740769c99700" },
+    { "path": "/pivot/home/slide-2.png", "state": "2", "figmaAsset": "23998493-5fce-49d7-a2b6-3b6509660f6c", "sha256": "dd670d10859cd895dc876983efa312325d4c513f72936e8a44b8c443aef4fc0f" },
+    { "path": "/pivot/home/slide-3.png", "state": "3", "figmaAsset": "5031c887-224d-488a-8e8a-358ea39e02bf", "sha256": "21641754af244fa681133e3f9cb571b53929b3312316524533d26b3cd05163b7" },
+    { "path": "/pivot/home/slide-4.png", "state": "4", "figmaAsset": "9b2a7d6e-95cc-49d6-9804-80f849904211", "sha256": "ea37befca2a878f589683a4a749aa61c51e01c0f5c00403d90cebed609b5afcc" },
+    { "path": "/pivot/home/slide-5.png", "state": "5", "figmaAsset": "c7a0698e-6166-4715-bcff-9997b3a7f127", "sha256": "dcfc2b11c203f5a94fa580364854bdfbb44546c9a12b8e023411055929af301e" }
+  ]
+}

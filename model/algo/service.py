@@ -17,6 +17,7 @@
 
 import csv
 import json
+import math
 import pathlib
 from datetime import timedelta
 
@@ -25,10 +26,11 @@ import numpy as np
 from model.algo import anime_ranker as ar
 from model.algo import content_v1 as v1
 
-DATA = pathlib.Path(__file__).resolve().parents[1] / "data"
+MODEL = pathlib.Path(__file__).resolve().parents[1]
+DATA = MODEL / "data"
 ANILIST = DATA / "anilist"
-ENTRIES = DATA / "menu_work_entries.csv"
-WORKS = DATA / "menu_works.csv"
+ENTRIES = MODEL / "catalog" / "menu_work_entries.csv"   # me;nu 작품 목록 (레포에 있음. 백엔드 seeds/menu_works.py 와 같은 파일)
+WORKS = MODEL / "catalog" / "menu_works.csv"
 ANILIST_USERS = DATA / "anilist_users" / "entries.csv"
 NO_COWATCH_FROM = 2022   # 이 해부터 시작한 작품은 MAL 같이 본 기록을 안 씀 (위 설명)
 
@@ -260,3 +262,81 @@ def work_affinity(state, ctx, cfg):
         if len(items) > 1:
             p = pos[[row[a] for a in items]]
             aff[pos[row[s]]] = aff[p[p >= 0]].max()
+
+
+# ## 5. 서비스 연결 (매일 추천 계산 = scripts/daily_recommend.py)
+# 유저 테스트 동안 알고리즘 · 비중은 고정. 서비스에 맞춰 바꾸는 건 아래 입력 대응표와 추천 이유 문구뿐
+
+LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
+
+# 온보딩 답 → v1 유형. Q3(덕질 방식) 6개 = consumption_type · 예전(v1) 답의 q1, 그리고 예전 q2(받고 싶은 소식) 3개.
+# Q3 를 유형 10개 문장으로 바꾸면 답이 유형 코드로 오므로 표에 없는 코드는 그대로 씀
+ANSWER_TYPES = {"world": "guide", "relationships": "character", "ost": "music", "goods": "goods", "events": "event",
+                "news": "news", "releases": "news", "characters": "character", "restock": "goods"}
+
+TYPE_LABELS = {"news": "소식", "event": "행사", "guide": "작품 가이드", "people": "인물", "curation": "큐레이션",
+               "goods": "굿즈", "behind": "비하인드", "review": "리뷰", "character": "캐릭터", "music": "음악", "humor": "유머"}
+
+# 카드에 보이는 추천 이유. 점수 조각 중 가장 큰 것으로 고름. {을} · {와} = 작품 이름 받침에 맞는 조사
+REASONS = {
+    "picked": "‘{work}’{을} 골라서 추천해요",           # 온보딩에서 고른 작품의 글
+    "cowatch": "‘{work}’{와} 함께 많이 본 작품이에요",   # 고른 작품을 본 사람이 많이 본 작품의 글
+    "taste": "취향에 맞는 작품이에요",                   # 그 밖에 작품 취향이 큰 글
+    "type": "관심 있는 {type} 글이에요",                 # 유형 취향이 큰 글
+    "fresh": "새로 올라온 글이에요",                     # 새 글 점수가 큰 글
+}
+
+
+def user_types(answers):
+    """온보딩 답 목록 → v1 유형 코드 목록 (순서 유지, 겹치면 하나)"""
+    out = []
+    for a in answers:
+        t = ANSWER_TYPES.get(a, a)
+        if t in v1.TYPE_INDEX and t not in out:
+            out.append(t)
+    return out
+
+
+def score_parts(state, feed, i, day, cfg):
+    """v1.rank_feed 와 같은 계산으로 글 i 의 점수 조각 (작품 취향, 유형 취향, 새 글, 이미 본 만큼 감점). 합 = 순위 점수"""
+    p, ty = int(feed["pos"][i]), int(feed["type"][i])
+    work = cfg.w_work * (float(state.work_aff[p]) + cfg.work_feedback * math.tanh(float(state.work_ev[p]))) if p >= 0 else 0.0
+    shown = state.seen if "impression" in cfg.logs else state.served
+    return (work, cfg.w_type * float(v1.type_pref(state, cfg)[ty]),
+            cfg.w_fresh * math.exp(-(day - int(feed["day"][i])) / float(v1.TAU[ty])), -cfg.w_seen * float(shown[i]))
+
+
+def _josa(word, pair):
+    # 받침에 맞는 조사 (pair = 받침 있을 때, 없을 때). 한글로 안 끝나면 둘 다 적음
+    last = [c for c in word if c.isalnum()][-1:]
+    if last and "가" <= last[0] <= "힣":
+        return pair[0] if (ord(last[0]) - 0xAC00) % 28 else pair[1]
+    return f"{pair[0]}({pair[1]})"
+
+
+def _cw_pos(ctx, w):
+    # me;nu 작품 번호 → 같이 본 횟수 표 위치 (시리즈 대표 작품 기준, 없으면 -1)
+    return int(ctx["cw_pos"][ctx["row"][ctx["rep_of"][w]]]) if w in ctx["rep_of"] else -1
+
+
+def reason(parts, work, picked, type_code, ctx):
+    """점수 조각 → 추천 이유 (text = 카드 문구). work: 글의 대표 작품 번호(없으면 None), picked: 온보딩에서 고른 작품 번호들.
+    작품 취향이 가장 크면: 고른 작품 → picked, 고른 작품과 같이 본 기록이 있으면 그중 가장 가까운 작품 → cowatch, 아니면 taste"""
+    kind, about = ("work", "type", "fresh")[int(np.argmax(parts[:3]))], None
+    if kind == "work" and work is None:
+        kind = "fresh"
+    elif kind == "work" and work in picked:
+        kind, about = "picked", work
+    elif kind == "work":
+        sim, q = ctx["cw_sim"][ar.COWATCH_KIND], _cw_pos(ctx, work)         # v0.5 가 같이 본 작품에 쓰는 유사도
+        near = [(float(sim[p, q]), m) for m in picked for p in [_cw_pos(ctx, m)] if p >= 0 and q >= 0]
+        top, m = max(near, default=(0.0, None))
+        kind, about = ("cowatch", m) if top > 0 else ("taste", None)
+    w = ctx["works"].get(about) or {}
+    name = w.get("title_ko") or w.get("title") or ""
+    if about is not None and not name:
+        kind, about = "taste", None
+    text = REASONS[kind].format(work=name, 을=_josa(name, ("을", "를")), 와=_josa(name, ("과", "와")),
+                                type=TYPE_LABELS.get(type_code, type_code))
+    return {"text": text, "kind": kind, "work": about,
+            "parts": {k: round(x, 4) for k, x in zip(("work", "type", "fresh", "seen"), parts)}}

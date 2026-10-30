@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ApiError
 from app.models import ConsentHistory, Policy
 from app.repositories.policy_repository import add_consent_history, get_current_policies, get_latest_consents
+from app.schemas.chat import AI_NOTICE
 from app.schemas.policy import (
     ChatRetention,
     ConsentHistoryItem,
@@ -49,7 +50,7 @@ async def get_policies(db: AsyncSession) -> PoliciesResponse:
             )
             for policy in sorted(policies.values(), key=lambda value: value.policy_id)
         ],
-        ai_notice="AI 기능은 현재 로컬 V1 테스트 범위에 포함되지 않습니다.",
+        ai_notice=AI_NOTICE,
         chat_retention=ChatRetention(),
     )
 

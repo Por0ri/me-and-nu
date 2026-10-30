@@ -87,7 +87,7 @@ async def get_session(
     return SessionResponse(
         authenticated=True,
         session_state=session.session_state,
-        user=SessionUser(id=user.user_id, account_type=user.signup_channel) if complete else None,
+        user=SessionUser(id=user.user_id, account_type=user.account_type) if complete else None,
         onboarding_completed=complete,
         csrf_token=csrf_token_for_session(context.raw_token),
     )
