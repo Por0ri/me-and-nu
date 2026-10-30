@@ -176,6 +176,48 @@
       "notes": "한국어 후보 발견 뒤 원 발표처를 확인한다."
     },
     {
+      "id": "aniplus_shop",
+      "name": "애니플러스샵",
+      "url": "https://shop.aniplustv.com/",
+      "category": "korea_official_goods",
+      "role": "primary",
+      "collection": "html",
+      "status": "active",
+      "region": "KR",
+      "discovery_enabled": true,
+      "min_interval_seconds": 10,
+      "allowed_asset_hosts": [
+        "bc8azosk4j.ecn.cdn.ofs.kr"
+      ],
+      "notes": "공식 한국 온라인 스토어. 공개 홈에서 콜라보 상품·전시 페이지 링크를 추출하고 상세 상품/행사 페이지에서 한국 가격과 조건을 확인한다. 2026-10-30 robots 및 목록 수집 확인. CDN 호스트는 현재 공개 페이지에서 관찰한 이미지 호스트이며, 실제 이벤트 개최지는 본문 근거로 별도 판정한다."
+    },
+    {
+      "id": "toynews_kr",
+      "name": "캐릭터 완구신문",
+      "url": "https://toynews.kr/",
+      "category": "korea_entertainment_trade_news",
+      "role": "editorial",
+      "collection": "html",
+      "status": "active",
+      "region": "KR",
+      "discovery_enabled": true,
+      "min_interval_seconds": 10,
+      "notes": "국내 캐릭터·완구 업계 전문 매체. 애니메이션 굿즈·콜라보·팝업·전시의 한국 유통 기사 후보에 사용한다. 기사 자체는 편집 보도이므로 주최사/판매처를 확인하고, 개최 장소와 KRW 가격은 각 기사 근거에서 별도로 추출한다. 2026-10-30 robots 준수 공개 목록 수집 확인."
+    },
+    {
+      "id": "cj_newsroom_kr",
+      "name": "CJ 뉴스룸",
+      "url": "https://cjnews.cj.net/",
+      "category": "korea_official_news",
+      "role": "primary",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "KR",
+      "discovery_enabled": true,
+      "min_interval_seconds": 10,
+      "notes": "CJ 계열의 한국 공식 발표 출처. 공개 홈은 수집되지만 현재 목록에서 일반 CJ 사업 기사와 탐색용 링크 비중이 높고, 애니메이션 전용 목록 경로를 확인하지 못해 자동 수집을 보류한다. CGV 애니메이션 공지용 좁은 목록 경로를 검증한 뒤 활성화한다."
+    },
+    {
       "id": "crunchyroll_announcements",
       "name": "Crunchyroll Announcements",
       "url": "https://www.crunchyroll.com/news/announcements",
@@ -348,6 +390,31 @@
       "status": "technical_review",
       "region": "KR",
       "notes": "접근 구조와 이용 조건을 확인할 때까지 자동 수집하지 않는다."
+    },
+    {
+      "id": "agf_korea_official",
+      "name": "AGF Korea Official Site",
+      "url": "https://www.agfkorea.com/event?idx=1",
+      "category": "korea_event",
+      "role": "primary",
+      "collection": "html",
+      "status": "active",
+      "region": "KR",
+      "notes": "Official AGF event information. Live public access and event details verified on 2026-10-30. Use as the primary source for AGF dates, venue, and participation details; it is not a general discovery feed.",
+      "discovery_enabled": false,
+      "min_interval_seconds": 10
+    },
+    {
+      "id": "animate_korea_shop",
+      "name": "애니메이트 코리아 온라인샵",
+      "url": "https://www.animate-onlineshop.co.kr/",
+      "category": "korea_goods",
+      "role": "primary",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "KR",
+      "min_interval_seconds": 10,
+      "notes": "한국 공식 온라인 스토어. robots는 상품·게시판 공개 경로를 허용하지만 현재 공용 목록 파서가 상품/이벤트 게시물 ID를 안정적으로 추출하지 못해 자동 수집은 보류한다. 상세 목록 어댑터와 이용 조건을 확인한 뒤 goods/event에 활성화한다."
     },
     {
       "id": "ruliweb_anime_info",
@@ -894,6 +961,32 @@
       "region": "global",
       "discovery_enabled": true,
       "notes": "자동 출처 후보 검증 통과. 발견용 페이지로만 사용하며 원문 근거로 직접 승인하지 않음. 검증일 2026-10-29T08:35:11.713356+00:00; 유형: goods"
+    },
+    {
+      "id": "daewonmedia_kr",
+      "name": "Daewon Media News & Events",
+      "url": "https://daewonmedia.com/board/news-event",
+      "category": "korea_official_news",
+      "role": "editorial",
+      "collection": "html",
+      "status": "active",
+      "region": "KR",
+      "discovery_enabled": true,
+      "min_interval_seconds": 10,
+      "notes": "Daewon Media official news and events listing. Collects the company's animation release, broadcast, merchandise, and event announcements. Listing and article detail pages verified accessible on 2026-10-30. Confirm dates, prices, venues, and third-party event details on the relevant organizer source."
+    },
+    {
+      "id": "recal_kr",
+      "name": "RE:CAL Korea Event Listings",
+      "url": "https://recal.kr/ko/c/offline",
+      "category": "event",
+      "role": "discovery",
+      "collection": "html",
+      "status": "active",
+      "region": "KR",
+      "discovery_enabled": true,
+      "min_interval_seconds": 30,
+      "notes": "Korean offline-event discovery listing. Repeatedly discover anime events, conventions, pop-ups, and exhibitions and collect their detail URLs. This is an editorial schedule aggregator, so use it for discovery and confirm dates, venues, prices, and participation terms with the organizer's official source. Listing and detail routes verified on 2026-10-30."
     }
   ]
 }

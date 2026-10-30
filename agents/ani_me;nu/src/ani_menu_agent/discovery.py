@@ -53,16 +53,20 @@ def _source_type_codes(source_id: str) -> list[str]:
 
 def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
     """Narrow broad source capabilities to the topic actually signaled by a candidate."""
-    title = f"{item.title} {urlparse(str(item.url)).path}".casefold()
+    # Classify the article topic from its headline, not the listing route.
+    # Broad paths such as /news-event otherwise make every article look like an event.
+    title = item.title.casefold()
     available = set(item.content_types)
     inferred: set[str] = set()
     patterns = {
         "event": (
             r"event|pop[ -]?up|exhibition|collab(?:oration)? caf[eé]|cafe|"
+            r"팝업|전시|전시회|展|행사|페어|티켓|관람|콜라보(?:레이션)? ?카페|오프라인 ?스토어|"
             r"フェア|開催|展覧|展示|催事|公演|舞台|コラボカフェ|イベント"
         ),
         "goods": (
-            r"goods|merch|figure|product|グッズ|フィギュア|一番くじ|くじ|ぬい|"
+            r"goods|merch|figure|product|굿즈|상품|피규어|완구|장난감|인형|블라인드박스|구매특전|한정판|"
+            r"グッズ|フィギュア|一番くじ|くじ|ぬい|"
             r"アクスタ|アクリルスタンド|発売|予約受付|販売|商品"
         ),
         "music": (
@@ -108,6 +112,8 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
         "music_label": "music",
         "goods": "goods",
         "event": "event",
+        "korea_entertainment_trade_news": "news",
+        "korea_official_news": "news",
         "kitsu_anime_catalog": "guide",
         "wikipedia_reference": "guide",
         "wikidata_character_catalog": "character",
@@ -131,7 +137,12 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
     if "news" in inferred and re.search(r"announce|announcement|announced|発表|解禁|決定", title):
         inferred.discard("guide")
     if source.role == "editorial" and source.category not in {
-        "review", "curation", "event", "goods"
+        "review",
+        "curation",
+        "event",
+        "goods",
+        "korea_entertainment_trade_news",
+        "korea_official_news",
     }:
         inferred.discard("news")
     if not inferred and "news" in available and source.role in {"primary", "discovery"}:
@@ -706,6 +717,12 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         for segment in page_segments
     )
     source_path = source_page_path
+    if source.id == "recal_kr" and source_page_path == "/ko/c/offline":
+        # RE:CAL's dedicated offline-event index links to records under a
+        # sibling path (/ko/e/offline/...), so the listing path is not a
+        # prefix of its event detail URLs. Keep discovery scoped to that
+        # event-record namespace instead of opening the broader site root.
+        source_path = "/ko/e/offline"
     if taxonomy_listing:
         # Category archives often link to root-level canonical articles. Keep a
         # /news prefix when the archive itself lives there, to avoid treating
@@ -765,6 +782,8 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         "vote now",
     }
     minimum_path_segments = 1 if not source_path else 2
+    if source.id == "recal_kr" and source_path == "/ko/e/offline":
+        minimum_path_segments = 4
 
     # Prefer article cards and main content so a page's nav/footer links do not
     # consume the candidate limit before actual stories are reached.

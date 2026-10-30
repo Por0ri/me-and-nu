@@ -135,7 +135,9 @@ class SourcePageCapture(BaseModel):
     status: str = "unverified_capture"
 
 
-def _article_outbound_links(soup: BeautifulSoup, page_url: str) -> list[PageOutboundLink]:
+def _article_outbound_links(
+    soup: BeautifulSoup, page_url: str, source_id: str | None = None
+) -> list[PageOutboundLink]:
     """Capture external links only from an explicit article body for provenance routing."""
     scope = None
     for selector in (
@@ -150,6 +152,10 @@ def _article_outbound_links(soup: BeautifulSoup, page_url: str) -> list[PageOutb
         scope = soup.select_one(selector)
         if scope:
             break
+    if scope is None and source_id == "recal_kr":
+        # RE:CAL renders event records in a Next.js <main> tree rather than an
+        # article element. Keep only explicitly labelled organizer/source links.
+        scope = soup.select_one("main")
     if scope is None:
         return []
 
@@ -158,6 +164,11 @@ def _article_outbound_links(soup: BeautifulSoup, page_url: str) -> list[PageOutb
     seen: set[str] = set()
     for anchor in scope.select("a[href]"):
         href = str(anchor.get("href") or "").strip()
+        link_text = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))
+        if source_id == "recal_kr" and not re.search(
+            r"official|\uacf5\uc2dd|\ucd9c\ucc98|\uacf5\uc9c0|\uc548\ub0b4", link_text, re.I
+        ):
+            continue
         if not href or href.startswith(("#", "mailto:", "javascript:")):
             continue
         absolute = urljoin(page_url, href)
@@ -182,7 +193,7 @@ def _article_outbound_links(soup: BeautifulSoup, page_url: str) -> list[PageOutb
         links.append(
             PageOutboundLink(
                 url=absolute,
-                text=re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))[:200],
+                text=link_text[:200],
             )
         )
         if len(links) >= 100:
@@ -203,6 +214,44 @@ def _page_title(soup: BeautifulSoup) -> str:
         if tag and tag.get("content"):
             return str(tag["content"]).strip()[:300]
     return soup.title.get_text(" ", strip=True)[:300] if soup.title else ""
+
+
+def _daewon_article_metadata(soup: BeautifulSoup) -> tuple[str | None, str | None]:
+    """Read the headline and publication date from Daewon Media's labelled detail row."""
+    detail = soup.select_one(".detail-box .list01")
+    if detail is None:
+        return None, None
+    text = re.sub(r"\s+", " ", detail.get_text(" ", strip=True))
+    match = re.search(
+        r"\uC81C\uBAA9\s*(.*?)\s*\uB0A0\uC9DC\s*(20\d{2}-\d{2}-\d{2})",
+        text,
+    )
+    if not match:
+        return None, None
+    headline = match.group(1).strip(" :：")
+    return (headline or None), match.group(2)
+
+
+def _aniplus_exhibition_title(soup: BeautifulSoup, page_url: str) -> str | None:
+    """Read the public exhibition title embedded in ANIPLUS's Next.js response."""
+    script = soup.find("script", id="__NEXT_DATA__")
+    if script is None:
+        return None
+    try:
+        payload = json.loads(script.string or script.get_text())
+    except (json.JSONDecodeError, TypeError):
+        return None
+    page_props = payload.get("props", {}).get("pageProps", {})
+    queries = page_props.get("dehydratedState", {}).get("queries", [])
+    page_idx = urlparse(page_url).path.rstrip("/").rsplit("/", 1)[-1]
+    for query in queries:
+        query_key = query.get("queryKey", [])
+        if not query_key or query_key[0] != "exhibition-list":
+            continue
+        for item in query.get("state", {}).get("data", {}).get("list", []):
+            if str(item.get("idx")) == page_idx and item.get("title"):
+                return str(item["title"]).strip()[:300]
+    return None
 
 
 def _structured_work_references(soup: BeautifulSoup) -> list[StructuredWorkReference]:
@@ -274,7 +323,18 @@ def _is_decorative_image_url(url: str) -> bool:
     return (
         path.endswith(".svg")
         or path.startswith("/assets/images/common/")
-        or any(token in filename for token in ("logo", "icon", "favicon", "search", "btn_menu"))
+        or any(
+            token in filename
+            for token in (
+                "logo",
+                "icon",
+                "favicon",
+                "search",
+                "btn_menu",
+                "site-image",
+                "shop_aniplus",
+            )
+        )
     )
 
 
@@ -380,7 +440,7 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
     """Extract article visuals, not unrelated navigation or recommendation images."""
     scores: dict[str, int] = {}
     descriptions: dict[str, str] = {}
-    scope = _article_content_scope(soup)
+    scope = _article_content_scope(soup, page_url)
 
     scoped_images = scope.find_all("img")
     parsed_page = urlparse(page_url)
@@ -515,8 +575,25 @@ def _is_linked_to_another_news_article(tag, page_url: str) -> bool:
     )
 
 
-def _article_content_scope(soup: BeautifulSoup):
+def _article_content_scope(soup: BeautifulSoup, page_url: str | None = None):
     """Prefer article-body containers over broad main/article wrappers with related content."""
+    if page_url:
+        parsed_page = urlparse(page_url)
+        if (
+            (parsed_page.hostname or "").lower() == "toynews.kr"
+            and parsed_page.path.startswith("/article/")
+        ):
+            view_content = soup.select_one("#viewConts, #subCtsGrp")
+            if view_content:
+                return view_content
+        if (
+            (parsed_page.hostname or "").lower() == "recal.kr"
+            and parsed_page.path.startswith("/ko/e/offline/")
+        ):
+            headline = soup.find("h1")
+            hero_section = headline.find_parent("section") if headline else None
+            if hero_section and hero_section.find("img"):
+                return hero_section
     for selector in (
         ".news_detail_cont",
         ".entry-content",
@@ -535,6 +612,19 @@ def _article_content_scope(soup: BeautifulSoup):
 
 def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
     """Extract prose from a known article body when the precision parser returns nothing."""
+    parsed_page = urlparse(page_url)
+    if (parsed_page.hostname or "").lower() == "toynews.kr" and parsed_page.path.startswith(
+        "/article/"
+    ):
+        # These pages place the article in image panels and generic extraction can
+        # mistake the site-wide weather strip for article facts.
+        view_content = soup.select_one("#viewConts, #subCtsGrp")
+        if view_content is not None:
+            lines = [
+                re.sub(r"\s+", " ", line).strip()
+                for line in view_content.get_text(separator="\n", strip=True).splitlines()
+            ]
+            return "\n".join(line for line in lines if line)
     extracted = (
         trafilatura.extract(
             html,
@@ -558,7 +648,7 @@ def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
         ):
             arc_rows: list[str] = []
             seen_arcs: set[str] = set()
-            for anchor in _article_content_scope(soup).select('a[href*="/story/"]'):
+            for anchor in _article_content_scope(soup, page_url).select('a[href*="/story/"]'):
                 href = urlparse(urljoin(page_url, str(anchor.get("href", ""))))
                 row = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True)).strip()
                 if (
@@ -578,7 +668,7 @@ def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
         if re.search(r"/characters?/(?:index\.html)?/?$", parsed_page.path, re.IGNORECASE):
             profile_rows: list[str] = []
             seen_rows: set[str] = set()
-            for anchor in _article_content_scope(soup).select('a[href*="/character/"]'):
+            for anchor in _article_content_scope(soup, page_url).select('a[href*="/character/"]'):
                 href = urlparse(urljoin(page_url, str(anchor.get("href", ""))))
                 if (href.hostname or "").lower() != (parsed_page.hostname or "").lower():
                     continue
@@ -600,7 +690,7 @@ def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
                 extracted = "\n".join(profile_rows)
         return extracted
 
-    scope = _article_content_scope(soup)
+    scope = _article_content_scope(soup, page_url)
     # Do not fall back to the whole document: that risks turning navigation,
     # recommendations, or site chrome into apparent article facts.
     if scope is soup:
@@ -645,7 +735,7 @@ def _related_image_page_candidates(soup: BeautifulSoup, page_url: str) -> list[s
     current = urlparse(page_url)
     allowed_hosts = {(current.hostname or "").lower().rstrip(".")}
     scored: dict[str, int] = {}
-    for anchor in _article_content_scope(soup).select("a[href]"):
+    for anchor in _article_content_scope(soup, page_url).select("a[href]"):
         href = str(anchor.get("href", "")).strip()
         if not href or href.startswith(("#", "mailto:", "javascript:")):
             continue
@@ -699,10 +789,23 @@ def collect_official_page(
     html, final_url = _get_html(url, source, timeout)
     soup = BeautifulSoup(html, "html.parser")
     title = _page_title(soup)
+    daewon_title = daewon_published_at = None
+    if source.id == "daewonmedia_kr":
+        daewon_title, daewon_published_at = _daewon_article_metadata(soup)
+        if daewon_title:
+            title = daewon_title
+    if source.id == "aniplus_shop":
+        title = _aniplus_exhibition_title(soup, final_url) or title
 
     published_at = _published_date_from_html(soup)
+    if source.id == "daewonmedia_kr":
+        published_at = published_at or daewon_published_at
 
     extracted = _extract_article_text(html, final_url, soup)
+    if source.id == "aniplus_shop" and len(extracted.strip()) < 20:
+        # The public SSR payload includes the campaign title, but product
+        # availability/details may be client-loaded. Keep only this explicit fact.
+        extracted = title
     image_urls, image_alt_text = _image_candidates(soup, final_url)
     seed_image_urls = image_urls
     image_urls = list(seed_image_urls)
@@ -771,7 +874,7 @@ def collect_official_page(
             str(image_url): image_source_titles.get(str(image_url), title)
             for image_url in unique_images
         },
-        outbound_links=_article_outbound_links(soup, final_url),
+        outbound_links=_article_outbound_links(soup, final_url, source.id),
         structured_work_references=_structured_work_references(soup),
         related_image_pages=[HttpUrl(page) for page in related_pages],
         excerpt_truncated=len(extracted) > excerpt_limit,

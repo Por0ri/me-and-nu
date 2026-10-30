@@ -221,6 +221,15 @@ def _match_title_work_ids(title: str) -> list[int]:
             ) and not right_separator_is_internal or normalized_title.startswith(
                 _KOREAN_TITLE_PARTICLES, end
             ) or bool(_SEQUEL_SUFFIX.match(normalized_title[end:]))
+            # A one-word English title at the end of a longer headline is weak
+            # evidence (e.g. "Chiikawa Mermaid Island" must not match ISLAND).
+            # Keep standalone titles and titles that begin with the work name;
+            # explicit multi-work collaboration headlines still use the normal
+            # collaboration guard below.
+            single_english_word = bool(re.fullmatch(r"[a-z0-9]+", normalized_alias))
+            if single_english_word and start > 0 and not _COLLABORATION_MARKER.search(title or ""):
+                start = normalized_title.find(normalized_alias, start + 1)
+                continue
             if left_boundary and right_boundary:
                 found.append((start, end, -len(normalized_alias), work_id))
                 break
