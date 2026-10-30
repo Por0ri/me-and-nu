@@ -13,6 +13,7 @@
 #   ... --apply --replace                    # 오늘 추천을 지우고 다시 씀 (고칠 때만)
 #   ... --apply --every 30 --daily-at 06:00  # 켜 두기: 30초마다 새 가입자, 매일 06:00 부터는 그날 전체
 #   ... --context model/data/service_context.pkl.gz  # 서버: 원본 대신 통계 문맥 파일 (model/scripts/save_context.py)
+#   ... --preview checking                     # 검토 전 미리보기 캐러셀도 (Checking. recommend.sh 가 API 설정을 보고 붙임)
 
 import argparse
 import json
@@ -48,11 +49,21 @@ CAROUSEL_METHOD = "carousel_import_v1"    # 백엔드 carousel_repository 와 �
 CHIPS = REPO / "model" / "catalog" / "chips.csv"
 
 # 피드에 보일 수 있는 글 (백엔드 recommendation_repository._visible 과 같은 조건)
+# 캐러셀 검수 = carousel_repository._carousel_review_condition: 미리보기가 아니면 검수 통과 (confirmed),
+# 검토 전 미리보기 (needs_review)는 그 범위가 켜졌을 때만 (--preview). 피드는 백엔드가 같은 조건으로 다시 거른다
+PREVIEW_SCOPES = {"checking": "checking_test_preview", "local": "local_test_preview"}
 VISIBLE = """(c.status = 'active' AND c.deleted_at IS NULL
     AND (c.feed_valid_until IS NULL OR c.feed_valid_until > now())
     AND EXISTS (SELECT 1 FROM content_source s WHERE s.content_id = c.content_id)
     AND (COALESCE(c.ai_judgment_basis ->> 'method', '') <> %(carousel)s OR (
-        c.judgment_status = 'confirmed' AND c.feed_valid_until IS NOT NULL
+        ((NOT COALESCE((c.ai_judgment_basis ->> 'preview')::boolean, false) AND c.judgment_status = 'confirmed')
+         OR (%(preview_scope)s::text IS NOT NULL AND COALESCE((c.ai_judgment_basis ->> 'preview')::boolean, false)
+             AND c.judgment_status = 'needs_review'
+             AND c.ai_judgment_basis -> %(preview_scope)s::text ->> 'database' = %(preview_database)s::text
+             AND c.ai_judgment_basis -> %(preview_scope)s::text ->> 'quality_approval' = 'not_reviewed'
+             AND (%(preview_scope)s::text <> 'checking_test_preview'
+                  OR c.ai_judgment_basis -> 'checking_test_preview' ->> 'environment' = 'checking')))
+        AND c.feed_valid_until IS NOT NULL
         AND (SELECT count(*) FROM content_slide sl WHERE sl.content_id = c.content_id) BETWEEN 3 AND 10
         AND (SELECT max(sl.page) FROM content_slide sl WHERE sl.content_id = c.content_id)
             = (SELECT count(*) FROM content_slide sl WHERE sl.content_id = c.content_id))))"""
@@ -104,16 +115,19 @@ def load_users(cur, topic_id, chips):
     return users
 
 
-def load_posts(cur, topic_id, today):
+def load_posts(cur, topic_id, today, preview=None):
     """유형이 있는 글 → (글 목록, content_id → 글 번호). v1 은 유형으로 점수를 매겨서 유형 없는 글은 뺌 (피드에선 추천 뒤 최신순).
-    지금 피드에 못 보이는 글도 넣음: 예전에 반응한 글의 작품 · 유형 취향은 반영해야 해서. 대신 노출 끝을 어제로 둬서 순위엔 안 나옴"""
+    지금 피드에 못 보이는 글도 넣음: 예전에 반응한 글의 작품 · 유형 취향은 반영해야 해서. 대신 노출 끝을 어제로 둬서 순위엔 안 나옴.
+    preview: (미리보기 범위, DB 이름) — 그 범위의 검토 전 미리보기 캐러셀도 보이는 글로 침 (main 의 --preview)"""
+    scope, database = preview or (None, None)
     cur.execute(f"""SELECT c.content_id, c.content_type, c.title, COALESCE(c.published_at, c.created_at), c.feed_valid_until,
         {VISIBLE},
         (SELECT x.external_id FROM content_entity_link l
            JOIN entity_external_id x ON x.entity_id = l.entity_id AND x.provider = 'menu_work'
           WHERE l.content_id = c.content_id ORDER BY l.sort_order LIMIT 1)
         FROM content c WHERE c.topic_id = %(topic)s AND c.content_type = ANY(%(types)s) ORDER BY c.content_id""",
-                {"carousel": CAROUSEL_METHOD, "topic": topic_id, "types": list(v1.TYPES)})
+                {"carousel": CAROUSEL_METHOD, "topic": topic_id, "types": list(v1.TYPES),
+                 "preview_scope": scope, "preview_database": database})
     posts = []
     for cid, ctype, title, published, valid_until, visible, work in cur.fetchall():
         pub = published.astimezone(KST).date()
@@ -213,8 +227,8 @@ def write(conn, results, posts, today, replace):
     return written
 
 
-def run_once(url, world, today, *, apply, replace, new_only, show):
-    """한 번 계산. new_only = 오늘 · 어제 추천이 둘 다 없는 유저만 (켜 두기 모드에서 매일 계산 시각 전)"""
+def run_once(url, world, today, *, apply, replace, new_only, show, preview=None):
+    """한 번 계산. new_only = 오늘 · 어제 추천이 둘 다 없는 유저만 (켜 두기 모드에서 매일 계산 시각 전). preview: load_posts 참고"""
     ctx, cfg, catalog_ids, chips = world
     day = today.toordinal() - 719163                                # service.make_feed 와 같은 날 번호
     t = ar.to_seconds(datetime(today.year, today.month, today.day))
@@ -235,7 +249,7 @@ def run_once(url, world, today, *, apply, replace, new_only, show):
             targets = [u for u in users if replace or (not have.get(u) if new_only else today not in have.get(u, ()))]
             if not targets:
                 return 0
-            posts, index = load_posts(cur, row[0], today)
+            posts, index = load_posts(cur, row[0], today, preview)
             visits = load_visits(cur, targets, index)
         diagnostics = unmapped_summary({tap: users[tap] for tap in targets})
         if diagnostics:
@@ -271,6 +285,9 @@ def main():
     ap.add_argument("--daily-at", default="06:00", help="켜 두기: 이 시각(한국)부터 그날 전체 계산. 그 전엔 새 가입자만")
     ap.add_argument("--show", type=int, default=3, help="화면에 보여 줄 유저 수")
     ap.add_argument("--context", help="서버용 통계 문맥 파일 (save_context.py 로 만든 것). 주면 원본 자료 없이 이 파일로 계산")
+    ap.add_argument("--preview", choices=sorted(PREVIEW_SCOPES),
+                    help="검토 전 미리보기 캐러셀도 보이는 글로 침 (백엔드 피드와 같게). checking = Checking 서버 미리보기가 켜졌을 때, "
+                         "local = 로컬 시험 DB")
     args = ap.parse_args()
     if args.preflight or args.self_test:
         if (args.preflight and args.self_test) or args.apply or args.replace or args.every is not None or args.today or args.database_url or args.expected_database:
@@ -299,7 +316,19 @@ def main():
     for warning in report["warnings"]:
         print("Preflight: " + warning)
     url = database_url(args.database_url, args.expected_database)
+    preview = None
+    if args.preview == "checking":                                  # 백엔드 carousel_preview: Checking 전용 DB 만
+        if args.expected_database != "me_nu_checking":
+            ap.error("--preview checking 은 me_nu_checking DB 에서만")
+        preview = (PREVIEW_SCOPES["checking"], "me_nu_checking")
+    elif args.preview == "local":                                   # 백엔드 local_test_database: 내 PC 시험 DB 만
+        host, name = urlsplit(url).hostname, args.expected_database
+        if host not in {"localhost", "127.0.0.1", "::1"} or not (name.startswith("test_") or name.endswith(("_test", "_e2e"))):
+            ap.error("--preview local 은 내 PC 의 시험 DB (이름 test_* · *_test · *_e2e)에서만")
+        preview = (PREVIEW_SCOPES["local"], name)
     sys.stdout.reconfigure(line_buffering=True)                     # 켜 두기 모드에서도 기록이 바로 찍히게 (로그 파일 포함)
+    if preview:
+        print(f"미리보기 글 포함: {preview[0]}")
 
     t0 = time.time()
     ctx = service.load_context(args.context) if args.context else service.build()
@@ -310,7 +339,7 @@ def main():
         today = date.fromisoformat(args.today) if args.today else now.date()
         try:
             run_once(url, world, today, apply=args.apply, replace=args.replace,
-                     new_only=bool(args.every) and now.strftime("%H:%M") < args.daily_at, show=args.show)
+                     new_only=bool(args.every) and now.strftime("%H:%M") < args.daily_at, show=args.show, preview=preview)
         except psycopg.OperationalError as e:
             if not args.every:
                 raise

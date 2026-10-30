@@ -24,14 +24,14 @@ network=me-nu-checking_data
 context=${RECOMMEND_CONTEXT:-/home/ubuntu/me-nu-model/service_context.pkl.gz}
 args=(--expected-database me_nu_checking --context /data/service_context.pkl.gz)
 
-api_database_url() {
+api_env() {  # 실행 중인 Checking API 컨테이너의 환경 값 하나 (화면에 안 찍음)
   local api
   api=$("${docker[@]}" ps -q --filter label=com.docker.compose.project=me-nu-checking --filter label=com.docker.compose.service=api)
   if [[ -z $api || $(wc -l <<<"$api") -ne 1 ]]; then
     printf '%s\n' 'Exactly one running Checking API container is required.' >&2
     exit 2
   fi
-  "${docker[@]}" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$api" | sed -n 's/^DATABASE_URL=//p'
+  "${docker[@]}" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$api" | sed -n "s/^$1=//p"
 }
 
 start() {  # 인자: docker run 옵션 · 이미지 · daily_recommend 인자
@@ -39,16 +39,22 @@ start() {  # 인자: docker run 옵션 · 이미지 · daily_recommend 인자
     printf '%s\n' "Context file is missing or unreadable: $context" >&2
     exit 2
   fi
-  DATABASE_URL=$(api_database_url)
+  DATABASE_URL=$(api_env DATABASE_URL)
   if [[ -z $DATABASE_URL ]]; then
     printf '%s\n' 'Could not read DATABASE_URL from the Checking API container.' >&2
     exit 2
   fi
   export DATABASE_URL
+  # API 가 검토 전 미리보기 캐러셀을 보여 주면 추천도 같이 본다 (설정을 바꾸면 recommend.sh up 다시)
+  local preview=()
+  local enabled
+  enabled=$(api_env CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED)
+  [[ ${enabled,,} == true ]] && preview=(--preview checking)
+  printf '%s\n' "Preview carousels included: $([[ ${#preview[@]} -gt 0 ]] && echo yes || echo no)"
   "${docker[@]}" run --network "$network" --memory 1536m --memory-swap 1536m --cpus 0.5 --pids-limit 64 \
     --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m --cap-drop ALL --security-opt no-new-privileges:true \
     --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
-    -v "$context:/data/service_context.pkl.gz:ro" -e DATABASE_URL "$@"
+    -v "$context:/data/service_context.pkl.gz:ro" -e DATABASE_URL "$@" ${preview[@]+"${preview[@]}"}
 }
 
 case "${1:-status}" in
