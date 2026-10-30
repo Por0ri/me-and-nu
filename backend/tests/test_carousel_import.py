@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 from app.models import AgentRun, Content, ContentSource, Draft, Topic
 from app.models.content_slide import ContentSlide
 from app.seeds import carousel_contents as seed
+from app.core.config import settings
+from test_checking_carousel_preview_config import CHECKING_CONFIG, configure_checking
 
 NOW = datetime(2026, 10, 28, 12, tzinfo=UTC)
 MODELS = (Topic, AgentRun, Draft, Content, ContentSource, ContentSlide)
@@ -482,3 +484,58 @@ async def test_retry_cannot_silently_change_publication_scope(engine, tmp_path, 
     with Session(engine) as session, pytest.raises(seed.CarouselImportError), session.begin():
         await seed.import_bundle(LocalPreviewAdapter(session), bundle, apply=True, now=NOW,
                                  local_test_preview=not initial_preview, expected_database="checking_live_e2e")
+
+
+class CheckingPreviewAdapter(AsyncAdapter):
+    def get_bind(self):
+        return SimpleNamespace(dialect=self.session.get_bind().dialect,
+                               url=make_url(CHECKING_CONFIG["database_url"]))
+
+
+@pytest.mark.asyncio
+async def test_checking_preview_preserves_qc_is_idempotent_and_cannot_promote_scope(engine, tmp_path, raw_bundle, monkeypatch):
+    configure_checking(monkeypatch, settings)
+    raw_bundle["items"][0]["reviewEvidence"] = {"decision": "revise", "total": 42, "review_mode": "llm"}
+    bundle = prepare(tmp_path, raw_bundle)
+    arguments = {"checking_test_preview": True, "expected_database": "me_nu_checking", "now": NOW}
+    with Session(engine) as session:
+        before = counts(session)
+        dry = await seed.import_bundle(CheckingPreviewAdapter(session), bundle, **arguments)
+        assert dry["publication_scope"] == "checking_test_preview" and dry["quality_approved"] is False
+        assert counts(session) == before and not session.new and not session.dirty
+    with Session(engine) as session, session.begin():
+        result = await seed.import_bundle(CheckingPreviewAdapter(session), bundle, apply=True, **arguments)
+        assert result["created"] == 1
+        content = session.scalar(select(Content))
+        assert (content.status, content.judgment_status) == ("active", "needs_review")
+        assert content.ai_judgment_basis["operator_review"] is None
+        assert content.ai_judgment_basis["preview"] is True
+        assert "local_test_preview" not in content.ai_judgment_basis
+        assert content.ai_judgment_basis["checking_test_preview"] == {
+            "database": "me_nu_checking", "environment": "checking", "quality_approval": "not_reviewed"}
+        run = session.scalar(select(AgentRun))
+        assert run.output_payload["package"] == raw_bundle["items"][0]["package"]
+        assert run.output_payload["producer_review_evidence"] == raw_bundle["items"][0]["reviewEvidence"]
+        assert run.outcome == "on_hold" and session.scalar(select(Draft)).status == "checking"
+    with Session(engine) as session, session.begin():
+        before = counts(session)
+        repeat = await seed.import_bundle(CheckingPreviewAdapter(session), bundle, apply=True, **arguments)
+        assert repeat["unchanged"] == 1 and counts(session) == before
+    with Session(engine) as session, pytest.raises(seed.CarouselImportError), session.begin():
+        await seed.import_bundle(CheckingPreviewAdapter(session), bundle, apply=True, now=NOW)
+    approved = prepare(tmp_path, raw_bundle, [review(bundle.items[0])])
+    with Session(engine) as session, pytest.raises(seed.CarouselImportError), session.begin():
+        await seed.import_bundle(CheckingPreviewAdapter(session), approved, apply=True, **arguments)
+
+
+def test_checking_import_requires_opt_in_exact_db_and_one_scope(monkeypatch):
+    configure_checking(monkeypatch, settings)
+    url = CHECKING_CONFIG["database_url"]
+    seed.validate_target(url, "me_nu_checking", checking_test_preview=True)
+    with pytest.raises(seed.CarouselImportError):
+        seed.validate_target(url, "me_nu_checking", checking_test_preview=True, local_test_preview=True)
+    with pytest.raises(seed.CarouselImportError):
+        seed.validate_target(url.replace("@postgres", "@remote"), "me_nu_checking", checking_test_preview=True)
+    monkeypatch.setattr(settings, "checking_carousel_test_preview_enabled", False)
+    with pytest.raises(seed.CarouselImportError):
+        seed.validate_target(url, "me_nu_checking", checking_test_preview=True)

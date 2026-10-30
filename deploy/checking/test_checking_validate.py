@@ -30,6 +30,7 @@ def values():
     {"CHECKING_FORWARDED_ALLOW_IPS": "0.0.0.0"}, {"CHECKING_FORWARDED_ALLOW_IPS": "127.0.0.0/8"},
     {"CHECKING_KAKAO_OAUTH_ENABLED": "true"}, {"CHECKING_NAVER_OAUTH_ENABLED": "yes"},
     {"DATABASE_URL": "postgresql://old/labs"}, {"CHECKING_NAVER_CLIENT_ID": "$(command)"},
+    {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "yes"},
 ])
 def test_unsafe_values_rejected(change):
     with pytest.raises(guard.GuardError):
@@ -68,6 +69,20 @@ def test_standalone_compose_is_isolated_and_bounded(rendered):
     assert sum(int(services[name]["mem_limit"]) for name in ("api", "postgres", "redis")) == 1152 * 1024**2
     assert sum(float(services[name]["cpus"]) for name in ("api", "postgres", "redis")) == 1.0
     assert set(services) == {"api", "postgres", "redis", "migrate"}
+
+
+def test_checking_preview_requires_matching_explicit_opt_in(rendered):
+    assert values()["CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED"] == "false"
+    enabled = values() | {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "true"}
+    guard.validate_values(enabled)
+    config = copy.deepcopy(rendered)
+    for name in ("api", "migrate"):
+        config["services"][name]["environment"]["CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED"] = "true"
+    guard.validate_config(config, enabled)
+    with pytest.raises(guard.GuardError, match="Carousel preview"):
+        guard.validate_config(config, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_CAROUSEL"):
+        guard.validate_values(values(), {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "true"})
 
 
 @pytest.mark.parametrize("change", [

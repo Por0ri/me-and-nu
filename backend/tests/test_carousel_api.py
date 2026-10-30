@@ -21,6 +21,7 @@ from app.models import AgentRun, Content, ContentSlide, ContentSource, Draft, Sa
 from app.repositories import bookmark_repository, carousel_repository, content_repository
 from app.services import feed_service, reaction_service
 from test_fe_integration_seed import AsyncAdapter, memory_db  # noqa: F401
+from test_checking_carousel_preview_config import configure_checking
 
 
 def png_bytes():
@@ -229,6 +230,65 @@ async def test_local_preview_keeps_expiry_media_and_withdrawal_gates(carousel_db
     else:
         changes["deleted_at"] = datetime.now(timezone.utc)
     carousel_db.session.execute(update(Content).where(Content.content_id == 103).values(**changes))
+    assert await content_repository.get_public_content(carousel_db.db, 103, 1) is None
+    assert await carousel_repository.get_slide_image(carousel_db.db, 103, 1) is None
+
+
+def set_checking_preview(carousel_db):
+    basis = {"method": "carousel_import_v1", "preview": True, "checking_test_preview": {
+        "database": "me_nu_checking", "environment": "checking", "quality_approval": "not_reviewed"}}
+    carousel_db.session.execute(update(Content).where(Content.content_id == 103).values(ai_judgment_basis=basis))
+    return basis
+
+
+@pytest.mark.asyncio
+async def test_checking_preview_shares_feed_detail_save_reaction_image_and_test_notices(carousel_db, monkeypatch):
+    configure_checking(monkeypatch, settings)
+    set_checking_preview(carousel_db)
+    feed = await feed_service.get_feed(carousel_db.db, 1, 1, subtopic_id=None, cursor=None, limit=20)
+    card = next(item for section in feed.sections for item in section.contents if item.id == 103)
+    assert {notice["code"] for notice in card.notices} >= {"REVIEW_REQUIRED", "DEV_PREVIEW", "AI_GENERATED"}
+    detail = await feed_service.get_content_detail(carousel_db.db, 1, 1, 103)
+    assert {notice["code"] for notice in detail.notices} >= {"REVIEW_REQUIRED", "DEV_PREVIEW", "AI_GENERATED"}
+    saved = await bookmark_repository.list_saved_bookmarks(carousel_db.db, 1, topic_id=1, q=None, after=None, limit=20)
+    assert 103 in [content.content_id for _, content in saved]
+    await reaction_service.set_bookmark(carousel_db.db, 1, 1, 103)
+    await reaction_service.set_like(carousel_db.db, 1, 1, 103)
+    assert await feed_service.get_content_slide_image(carousel_db.db, 1, 1, 103, 1) == carousel_db.png
+    # Turning off the explicit test scope hides the same stored rows everywhere.
+    monkeypatch.setattr(settings, "checking_carousel_test_preview_enabled", False)
+    assert await content_repository.get_public_content(carousel_db.db, 103, 1) is None
+    assert await carousel_repository.get_slide_image(carousel_db.db, 103, 1) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["production", "labs", "wrong_db", "url_override", "wrong_origin",
+    "wrong_marker", "approved", "local_marker", "expired", "missing_slide", "missing_sources", "hidden", "deleted"])
+async def test_checking_preview_cannot_escape_scope_or_skip_validity_gates(carousel_db, monkeypatch, case):
+    configure_checking(monkeypatch, settings)
+    basis = set_checking_preview(carousel_db)
+    changes = {}
+    if case == "production": monkeypatch.setattr(settings, "event_data_source", "production")
+    elif case == "labs": monkeypatch.setattr(settings, "menu_deployment_env", "labs")
+    elif case == "wrong_db": monkeypatch.setattr(settings, "database_url", settings.database_url.replace("/me_nu_checking", "/me_nu"))
+    elif case == "url_override": monkeypatch.setattr(settings, "database_url", settings.database_url + "?hostaddr=10.0.0.1")
+    elif case == "wrong_origin": monkeypatch.setattr(settings, "oauth_frontend_origin", "https://me-nu.kr")
+    elif case == "approved": changes["judgment_status"] = "confirmed"
+    elif case == "wrong_marker":
+        basis["checking_test_preview"]["database"] = "another"
+        changes["ai_judgment_basis"] = basis
+    elif case == "local_marker":
+        changes["ai_judgment_basis"] = {"method": "carousel_import_v1", "preview": True,
+            "local_test_preview": {"database": "me_nu_checking", "quality_approval": "not_reviewed"}}
+    elif case == "expired": changes["feed_valid_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    elif case == "missing_slide":
+        carousel_db.session.execute(delete(ContentSlide).where(ContentSlide.content_id == 103, ContentSlide.page == 2))
+    elif case == "missing_sources":
+        carousel_db.session.execute(delete(ContentSource).where(ContentSource.content_id == 103))
+    elif case == "hidden": changes["status"] = "hidden"
+    else: changes["deleted_at"] = datetime.now(timezone.utc)
+    if changes:
+        carousel_db.session.execute(update(Content).where(Content.content_id == 103).values(**changes))
     assert await content_repository.get_public_content(carousel_db.db, 103, 1) is None
     assert await carousel_repository.get_slide_image(carousel_db.db, 103, 1) is None
 

@@ -38,7 +38,11 @@ sudo bash deploy/checking/checking.sh status
 
 ## 정책·카탈로그·콘텐츠
 
-이 구성은 자동 seed를 실행하지 않는다. 최초 가입에는 검토한 정책과 활성 anime Topic, 온보딩 V2 작품·태그·연결 데이터가 필요하다. 팀이 피드를 보려면 검토된 서비스 콘텐츠도 별도로 적재해야 한다. 기존 카탈로그/캐러셀 importer의 dry-run·충돌 검사·별도 승인 계약을 사용하고 대상 DB가 `me_nu_checking`인지 확인한다. Labs 전용 seed는 대상 guard가 다르므로 실행하지 않는다. 테스트 콘텐츠는 모든 화면에서 테스트 자료임을 명확히 표시하고 실제 에이전트 생성·LLM 검수로 표현하지 않는다.
+이 구성은 자동 seed를 실행하지 않는다. 최초 가입에는 검토한 정책과 활성 anime Topic, 온보딩 V2 작품·태그·연결 데이터가 필요하다. 팀이 피드를 보려면 검토된 서비스 콘텐츠도 별도로 적재해야 한다. 기존 카탈로그/캐러셀 importer의 dry-run·충돌 검사·별도 승인 계약을 사용하고 대상 DB가 `me_nu_checking`인지 확인한다. Labs 전용 seed는 대상 guard가 다르므로 실행하지 않는다. 테스트 콘텐츠는 모든 화면에서 테스트 자료임을 명확히 표시하고, 합성 테스트 자료를 실제 에이전트 생성·LLM 검수 결과로 표현하지 않는다.
+
+실제 에이전트 산출물을 **검토 전 팀 미리보기**로 공유할 때는 서버의 전용 환경 파일에 `CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED=true`를 명시한다(기본값 `false`). 기존 환경 파일에도 이 키를 추가해야 배포 guard를 통과한다. API와 importer는 Checking 배포 식별자·고정 도메인·전용 DB/계정·컨테이너 endpoint·Secure 쿠키·개발 인증 비활성 조건을 함께 검사한다. 다른 환경에서는 이 플래그를 활성화할 수 없다.
+
+검증한 bundle/PNG만 Checking 실행 컨테이너에 전달한 뒤 `python -m app.seeds.carousel_contents --file <bundle.json> --expected-database me_nu_checking --checking-test-preview`로 dry-run하고, 동일 명령에 `--apply`를 추가해 적재한다. 로컬 사용자·세션·DB 파일이나 API 키는 전달하지 않는다. `--review-record-file`과 함께 사용할 수 없으며 `active / needs_review`, `checking_test_preview` 범위를 기록한다. 기존 QC 보류 결과와 원본 이미지·digest를 유지하고 승인 기록을 만들지 않는다. 피드·상세의 `개발용 미리보기`, `검토 필요`, `AI가 생성한 콘텐츠입니다.` 안내가 유지된다. 재실행은 동일 콘텐츠를 추가하지 않으며 플래그를 끄면 기존 미리보기 행도 공개 조회에서 제외된다.
 
 ## 도메인·TLS·FE·OAuth
 

@@ -5,6 +5,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.carousel_preview import checking_preview_database
 from app.models import Content, ContentSource
 from app.models.content_slide import ContentSlide
 
@@ -40,6 +41,15 @@ def _carousel_review_condition():
             basis["local_test_preview"]["database"].as_string() == database,
             basis["local_test_preview"]["quality_approval"].as_string() == "not_reviewed",
         )
+    checking_database = checking_preview_database(settings)
+    if checking_database:
+        preview_allowed = or_(preview_allowed, and_(
+            preview,
+            Content.judgment_status == "needs_review",
+            basis["checking_test_preview"]["database"].as_string() == checking_database,
+            basis["checking_test_preview"]["environment"].as_string() == "checking",
+            basis["checking_test_preview"]["quality_approval"].as_string() == "not_reviewed",
+        ))
     return or_(and_(~preview, Content.judgment_status == "confirmed"), preview_allowed)
 
 
@@ -53,7 +63,8 @@ def public_content_condition():
 
     Legacy publications keep their existing review behavior. Imported carousels
     require approval, except for explicitly marked previews in a matching local
-    test service. Both paths require 3..10 contiguous slides and a future expiry.
+    test service or the opted-in Checking stack. All paths require 3..10
+    contiguous slides and a future expiry.
     PNG decoding and hash verification are the import boundary's job.
     """
     count = (

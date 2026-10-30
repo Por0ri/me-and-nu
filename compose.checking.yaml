@@ -9,6 +9,7 @@ x-logging: &logging
 
 x-environment: &environment
   MENU_DEPLOYMENT_ENV: checking
+  CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED: ${CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED:-false}
   DATABASE_URL: "postgresql+psycopg://me_nu_checking:${CHECKING_POSTGRES_PASSWORD:?Use deploy/checking/.env}@postgres:5432/me_nu_checking"
   DATABASE_ECHO: "false"
   SESSION_BACKEND: redis

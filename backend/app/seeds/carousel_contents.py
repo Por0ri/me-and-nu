@@ -3,8 +3,8 @@
 Producer scores are never publication approval. An optional, separately supplied
 operator review record attests review of the exact digest; it is a trusted local
 operational input, not cryptographic proof that a review took place.
-An explicit local-test preview preserves unapproved status and original evidence;
-it is visible only in a matching, non-production loopback test service.
+Explicit test previews preserve unapproved status and original evidence. They
+are visible only in a matching local test service or the opted-in Checking stack.
 """
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import AgentRun, Content, ContentSource, Draft, Topic
+from app.core.carousel_preview import checking_preview_database
 from app.models.content_slide import ContentSlide
 from app.repositories.content_work_repository import link_carousel_works
 from app.repositories.carousel_repository import local_test_database
@@ -394,12 +395,20 @@ async def _verify_stored_copy(db, item: PreparedItem, run, draft, content) -> No
 
 
 async def import_bundle(db, bundle: PreparedBundle, *, apply: bool = False, now: datetime | None = None,
-                        local_test_preview: bool = False, expected_database: str | None = None) -> dict:
+                        local_test_preview: bool = False, checking_test_preview: bool = False,
+                        expected_database: str | None = None) -> dict:
     """Caller owns one transaction; no commit, download, producer import or DB access."""
-    if local_test_preview:
-        validate_target(str(db.get_bind().url), expected_database or "", local_test_preview=True)
+    if local_test_preview and checking_test_preview:
+        raise CarouselImportError("Choose exactly one test preview scope.")
+    preview_scope = "checking_test_preview" if checking_test_preview else "local_test_preview" if local_test_preview else None
+    preview_metadata = {"database": expected_database, "quality_approval": "not_reviewed"}
+    if checking_test_preview:
+        preview_metadata["environment"] = "checking"
+    if preview_scope:
+        validate_target(str(db.get_bind().url), expected_database or "",
+                        local_test_preview=local_test_preview, checking_test_preview=checking_test_preview)
         if bundle.reviews:
-            raise CarouselImportError("Local test preview cannot be combined with operator review records.")
+            raise CarouselImportError("Test preview cannot be combined with operator review records.")
     moment = now or datetime.now(UTC)
     if apply and db.get_bind().dialect.name == "postgresql":
         await db.execute(text("SELECT pg_advisory_xact_lock(20261028, 2)"))
@@ -423,31 +432,32 @@ async def import_bundle(db, bundle: PreparedBundle, *, apply: bool = False, now:
                 raise CarouselImportError("Existing import is incomplete; reconcile it before retrying.")
             await _verify_stored_copy(db, item, run, draft, content)
             previous_basis = content.ai_judgment_basis or {}
-            previous_preview = previous_basis.get("local_test_preview")
-            if (local_test_preview and (previous_basis.get("preview") is not True
-                    or previous_preview != {"database": expected_database, "quality_approval": "not_reviewed"}
+            other_scopes = {"local_test_preview", "checking_test_preview"} - {preview_scope}
+            if (preview_scope and (previous_basis.get("preview") is not True
+                    or previous_basis.get(preview_scope) != preview_metadata
+                    or any(previous_basis.get(scope) is not None for scope in other_scopes)
                     or previous_basis.get("operator_review") is not None)) or (
-                    not local_test_preview and (previous_preview is not None or previous_basis.get("preview") is True)):
+                    not preview_scope and (any(previous_basis.get(scope) is not None for scope in other_scopes)
+                                           or previous_basis.get("preview") is True)):
                 raise CarouselImportError("Existing import has a different publication scope; reconcile before changing it.")
             previous_review = (content.ai_judgment_basis or {}).get("operator_review")
         review, changed = _review_transition(previous_review, bundle.reviews.get(item.digest))
         plans.append((item, run, draft, content, review, changed))
     report = {"mode": "apply" if apply else "dry_run", "created": 0, "review_updated": 0, "unchanged": 0, "items": []}
-    if local_test_preview:
-        report["publication_scope"] = "local_test_preview"
+    if preview_scope:
+        report["publication_scope"] = preview_scope
         report["quality_approved"] = False
     for item, run, draft, content, review, changed in plans:
         status, judgment, draft_status, outcome = _state(review)
-        if local_test_preview:
-            # Expose only in the isolated test service; this is not a QC approval.
+        if preview_scope:
+            # Expose only in the explicit test service; this is not a QC approval.
             status, judgment, draft_status, outcome = "active", "needs_review", "checking", "on_hold"
         new = run is None
         report["created" if new else "review_updated" if changed else "unchanged"] += 1
         basis = {"method": METHOD, "digest": item.digest, "operator_review": review,
                  "producer_review_is_approval": False}
-        if local_test_preview:
-            basis.update({"preview": True, "local_test_preview": {
-                "database": expected_database, "quality_approval": "not_reviewed"}})
+        if preview_scope:
+            basis.update({"preview": True, preview_scope: preview_metadata})
         if apply and new:
             package = item.package
             run = AgentRun(topic_id=topic.topic_id, agent_code="carousel_import", agent_version="1",
@@ -494,7 +504,10 @@ async def import_bundle(db, bundle: PreparedBundle, *, apply: bool = False, now:
     return report
 
 
-def validate_target(database_url: str, expected_database: str, *, local_test_preview: bool = False) -> None:
+def validate_target(database_url: str, expected_database: str, *, local_test_preview: bool = False,
+                    checking_test_preview: bool = False) -> None:
+    if local_test_preview and checking_test_preview:
+        raise CarouselImportError("Choose exactly one test preview scope.")
     try:
         url = make_url(database_url)
     except (ValueError, TypeError, SQLAlchemyError):
@@ -504,20 +517,27 @@ def validate_target(database_url: str, expected_database: str, *, local_test_pre
         raise CarouselImportError("An explicitly matching PostgreSQL database is required.")
     if local_test_preview and local_test_database(database_url) != expected_database:
         raise CarouselImportError("Local test preview requires an explicit loopback test PostgreSQL database without URL overrides.")
+    if checking_test_preview:
+        from app.core.config import settings
+        if checking_preview_database(settings, database_url) != expected_database:
+            raise CarouselImportError("Checking test preview requires explicit opt-in and the isolated Checking database and runtime.")
 
 
 async def run(*, bundle: PreparedBundle, expected_database: str, apply: bool = False,
-              database_url: str | None = None, local_test_preview: bool = False) -> dict:
+              database_url: str | None = None, local_test_preview: bool = False,
+              checking_test_preview: bool = False) -> dict:
     if database_url is None:
         from app.core.config import settings
         database_url = settings.database_url
-    validate_target(database_url, expected_database, local_test_preview=local_test_preview)
+    validate_target(database_url, expected_database, local_test_preview=local_test_preview,
+                    checking_test_preview=checking_test_preview)
     engine = create_async_engine(database_url, echo=False)
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db, db.begin():
             if not apply:
                 await db.execute(text("SET TRANSACTION READ ONLY"))
             report = await import_bundle(db, bundle, apply=apply, local_test_preview=local_test_preview,
+                                         checking_test_preview=checking_test_preview,
                                          expected_database=expected_database)
             if apply:
                 # Same transaction: work numbers that are not in the catalog yet are reported.
@@ -534,13 +554,17 @@ def main() -> None:
     parser.add_argument("--expected-database", required=True)
     parser.add_argument("--database-url", help="Explicit service DB URL; never printed.")
     parser.add_argument("--apply", action="store_true", help="Atomically persist; default is read-only preview.")
-    parser.add_argument("--local-test-preview", action="store_true",
+    preview_modes = parser.add_mutually_exclusive_group()
+    preview_modes.add_argument("--local-test-preview", action="store_true",
                         help="Expose unapproved outputs only in a matching loopback test DB, visibly marked as preview.")
+    preview_modes.add_argument("--checking-test-preview", action="store_true",
+                        help="Expose unapproved outputs only in the opted-in, isolated Checking stack, visibly marked as preview.")
     args = parser.parse_args()
     try:
         bundle = load_bundle(args.file, review_record_file=args.review_record_file)
         task = run(bundle=bundle, expected_database=args.expected_database, apply=args.apply,
-                   database_url=args.database_url, local_test_preview=args.local_test_preview)
+                   database_url=args.database_url, local_test_preview=args.local_test_preview,
+                   checking_test_preview=args.checking_test_preview)
         if sys.platform == "win32":
             with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
                 report = runner.run(task)

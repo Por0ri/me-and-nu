@@ -15,6 +15,7 @@ KEYS = {
     "CHECKING_IMAGE_TAG", "CHECKING_POSTGRES_PASSWORD", "CHECKING_REDIS_PASSWORD", "CHECKING_FORWARDED_ALLOW_IPS",
     "CHECKING_KAKAO_OAUTH_ENABLED", "CHECKING_KAKAO_CLIENT_ID", "CHECKING_KAKAO_CLIENT_SECRET",
     "CHECKING_NAVER_OAUTH_ENABLED", "CHECKING_NAVER_CLIENT_ID", "CHECKING_NAVER_CLIENT_SECRET",
+    "CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED",
 }
 FIXED_ENV = {
     "MENU_DEPLOYMENT_ENV": "checking", "SESSION_BACKEND": "redis", "REDIS_KEY_PREFIX": "me_nu_checking",
@@ -40,6 +41,8 @@ def validate_values(values, environ=None):
             raise GuardError(f"An inherited {key} would override the checking file; unset it before continuing.")
     if not re.fullmatch(r"[0-9a-f]{40}", values["CHECKING_IMAGE_TAG"]):
         raise GuardError("CHECKING_IMAGE_TAG must identify the exact 40-character lowercase Git commit.")
+    if values["CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED"] not in ("true", "false"):
+        raise GuardError("CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED must be explicitly true or false.")
     passwords = [values[key] for key in ("CHECKING_POSTGRES_PASSWORD", "CHECKING_REDIS_PASSWORD")]
     if any(not re.fullmatch(r"[0-9a-f]{64}", value) or len(set(value)) < 8 for value in passwords) or passwords[0] == passwords[1]:
         raise GuardError("Generate two different random 64-character hex passwords for the checking stores.")
@@ -99,6 +102,8 @@ def validate_config(config, values):
             raise GuardError(f"{name} has an unsafe origin, session, or deployment setting.")
         if environment.get("DATABASE_URL") != expected_db or environment.get("REDIS_URL") != expected_redis:
             raise GuardError(f"{name} must use the private checking database and Redis.")
+        if environment.get("CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED") != values["CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED"]:
+            raise GuardError("Carousel preview must match the explicit Checking environment flag.")
         if service.get("image") != f"me-nu-backend-checking:{values['CHECKING_IMAGE_TAG']}":
             raise GuardError("The backend image must use the dedicated checking repository and commit tag.")
         build = service.get("build", {})
