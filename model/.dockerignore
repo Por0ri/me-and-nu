@@ -1,0 +1,7 @@
+# 추천 계산 이미지 (model/Dockerfile)에 넣는 것만 허용. 원본 데이터 (data/) · 실험 · 노트북은 빼고
+*
+!__init__.py
+!algo/
+!catalog/
+!scripts/
+**/__pycache__

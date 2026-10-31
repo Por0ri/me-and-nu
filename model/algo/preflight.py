@@ -5,10 +5,17 @@ import os
 from pathlib import Path
 
 
-def check_inputs(model_dir: Path | None = None, mal_dir: Path | None = None) -> dict:
+def check_inputs(model_dir: Path | None = None, mal_dir: Path | None = None, context: Path | str | None = None) -> dict:
     model_dir = model_dir or Path(__file__).resolve().parents[1]
     mal_dir = mal_dir or Path(os.environ.get("MAL_SAMPLE_DIR", model_dir / "data" / "mal_sample"))
     required = [model_dir / "catalog" / name for name in ("chips.csv", "menu_works.csv", "menu_work_entries.csv")]
+    if context:   # 서버: 원본 대신 통계 문맥 파일 하나 (algo/service.save_context)
+        required.append(Path(context))
+        missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
+        packages = [name for name in ("numpy", "psycopg") if importlib.util.find_spec(name) is None]
+        return {"ready": not missing and not packages, "missing_files": missing,
+                "missing_packages": packages, "warnings": [],
+                "limits": "Presence/size checks only; the context file's origin and the real DB integration are not verified."}
     required += [model_dir / "data" / "anilist" / name for name in
                  ("media.jsonl", "media_recent.jsonl", "detail.jsonl", "links.jsonl")]
     required.append(mal_dir / "anime.csv")
@@ -29,8 +36,8 @@ def check_inputs(model_dir: Path | None = None, mal_dir: Path | None = None) -> 
             "limits": "Presence/size checks only; data format, quality, memory and real DB integration are not verified."}
 
 
-def require_inputs() -> dict:
-    report = check_inputs()
+def require_inputs(context: Path | str | None = None) -> dict:
+    report = check_inputs(context=context)
     if not report["ready"]:
         lines = ["Recommendation preflight failed; no DB connection was attempted."]
         lines += [f"  missing input: {path}" for path in report["missing_files"]]

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Content, ContentEntityLink, ContentReaction, ContentSource, RecommendationItem, RecommendationRound,
-    UserEvent,
+    UserAccount, UserEvent,
 )
 from app.repositories.carousel_repository import public_content_condition
 
@@ -33,6 +33,26 @@ async def latest_round(
         .order_by(RecommendationRound.service_date.desc(), RecommendationRound.recommendation_round_id.desc())
         .limit(1)
     )
+
+
+async def work_contents(db: AsyncSession, topic_id: int, entity_ids: list[int]) -> list[tuple[Content, int]]:
+    """Visible contents linked to any of the works, newest first, each with its first linked work."""
+    rows = (await db.execute(
+        select(Content, ContentEntityLink.entity_id)
+        .join(ContentEntityLink, ContentEntityLink.content_id == Content.content_id)
+        .where(ContentEntityLink.entity_id.in_(entity_ids), *_visible(topic_id))
+        .order_by(Content.published_at.desc().nulls_last(), Content.content_id.desc(), ContentEntityLink.sort_order)
+    )).all()
+    found, seen = [], set()
+    for content, entity_id in rows:
+        if content.content_id not in seen:
+            seen.add(content.content_id)
+            found.append((content, entity_id))
+    return found
+
+
+async def onboarding_completed_at(db: AsyncSession, user_id: int) -> datetime | None:
+    return await db.scalar(select(UserAccount.onboarding_completed_at).where(UserAccount.user_id == user_id))
 
 
 async def get_round(db: AsyncSession, round_id: int, tap_id: int) -> RecommendationRound | None:

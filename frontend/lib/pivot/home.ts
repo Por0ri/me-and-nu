@@ -54,9 +54,14 @@ export type HomeLoadError = {
   message: string;
 };
 
+/** Work search: matching works' official names (even without cards) and their cards. */
+export type HomeSearchResult = { works: string[]; cards: HomeCardModel[] };
+
 export interface HomeDataSource {
   readonly kind: "demo" | "service";
   load(options: { signal: AbortSignal }): Promise<HomeLoadResult>;
+  /** Cards about works matching the query, shown above the feed. Demo has no search. */
+  search?(query: string, options: { signal: AbortSignal }): Promise<HomeSearchResult>;
 }
 
 export type HomeState =

@@ -98,6 +98,7 @@ export type FeedResponse = {
   nextCursor: string | null;
   emptyReason: string | null;
 };
+export type FeedSearchResponse = { selectedTopicId: number; query: string; works: string[]; contents: FeedCard[] };
 export type ContentDetail = {
   contentId: number; topicId: number; title: string; sourceUrl: string;
   publisher: string; publishedAt: string | null; displayMode: string;
@@ -279,6 +280,9 @@ export function getFeed(
   init: Pick<RequestInit, "signal"> = {},
 ): Promise<FeedResponse> {
   return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`, init);
+}
+export function searchFeed(topicId: number, q: string, init: Pick<RequestInit, "signal"> = {}): Promise<FeedSearchResponse> {
+  return apiRequest(`/api/v1/topics/${topicId}/search${query({ q })}`, init);
 }
 export function getContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal"> = {}): Promise<ContentDetail> {
   return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`, init);

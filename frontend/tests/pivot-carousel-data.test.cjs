@@ -140,6 +140,19 @@ test('Home preserves typed HTTP and transport error reasons', async () => {
   }
 });
 
+test('Work search asks for the active Topic and keeps the search reason without a recommendation id', async () => {
+  const calls = [], card = { ...feed(), recommendationReason: '‘하이큐!!’ 검색 결과예요' };
+  const api = (selectedTopicId, works = ['하이큐!!']) => ({ async getMyTopics() { return topics; }, async getFeed() {},
+    async searchFeed(topicId, q) { calls.push([topicId, q]); return { selectedTopicId, query: q, works, contents: [card] }; } });
+  const { works, cards } = await createServiceHomeSource(api(42), () => {}).search('하이큐', { signal: new AbortController().signal });
+  assert.deepEqual(calls, [[42, '하이큐']]); assert.deepEqual(plain(works), ['하이큐!!']);
+  assert.equal(cards.length, 1); assert.equal(cards[0].id, '17');
+  assert.equal(cards[0].recommendationReason, '‘하이큐!!’ 검색 결과예요'); assert.equal(cards[0].recommendationId, undefined);
+  for (const bad of [api(7), api(42, [17])]) {
+    await assert.rejects(createServiceHomeSource(bad, () => {}).search('하이큐', { signal: new AbortController().signal }));
+  }
+});
+
 test('Aborted API reads never dispatch a stale unauthorized event before or after JSON parsing', async () => {
   for (const phase of ['already', 'headers', 'json']) {
     const controller = new AbortController(), browser = new EventTarget(); let events = 0, calls = 0;

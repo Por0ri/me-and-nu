@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models import UserAccount
 from app.schemas.catalog import TopicsResponse
 from app.schemas.common import COMMON_ERRORS, ErrorResponse
-from app.schemas.feed import FeedResponse
+from app.schemas.feed import FeedResponse, FeedSearchResponse
 from app.services import catalog_service, feed_service
 
 router = APIRouter(prefix="/topics")
@@ -49,3 +49,20 @@ async def get_topic_feed(
     return await feed_service.get_feed(
         db, current_user.user_id, topic_id, subtopic_id=subtopic_id, cursor=cursor, limit=limit
     )
+
+
+@router.get(
+    "/{topicId}/search",
+    response_model=FeedSearchResponse,
+    tags=["피드"],
+    summary="작품 이름으로 콘텐츠 검색",
+    description="작품 이름이나 별칭에 검색어가 들어간 작품(띄어쓰기 무시)의 공개 콘텐츠를 오늘(없으면 어제) 추천 순서, 그다음 최신순으로 최대 20개 반환합니다. works는 맞는 작품의 정식 이름입니다(글이 없어도 채움). 홈은 이 카드를 피드 맨 위에 두고 아래로 원래 피드를 이어 보여 줍니다. 검색 카드는 recommendationId 없이 recommendationReason에 검색 결과 문구를 담습니다.",
+    responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "TOPIC_NOT_FOUND"}},
+)
+async def search_topic_contents(
+    current_user: Annotated[UserAccount, Depends(require_onboarding)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    topic_id: Annotated[int, Path(alias="topicId", gt=0, description="현재 내 Topic ID")],
+    q: Annotated[str, Query(min_length=1, max_length=50, description="작품 이름 검색어")],
+) -> FeedSearchResponse:
+    return await feed_service.search_feed(db, current_user.user_id, topic_id, q=q)

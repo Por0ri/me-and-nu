@@ -16,9 +16,11 @@
 # - 커뮤니티 추천: AniList recommendations (links.jsonl)
 
 import csv
+import gzip
 import json
 import math
 import pathlib
+import pickle
 from datetime import timedelta
 
 import numpy as np
@@ -213,6 +215,47 @@ def add_cowatch(ctx, histories, no_record=None, lam=None, min_users=1):
     ctx["no_record"] = no_record
 
 
+# 서버용 문맥 파일: 서버에는 AniList · MAL 원본을 두지 않는다 (AniList 유저 표본은 원본을 PC 한 대에만 두고 12/31 삭제 약속).
+# 내 PC 에서 build() 한 문맥을 파일 하나로 저장하고 서버는 그 파일만 읽는다 (model/scripts/save_context.py).
+# 문맥에는 작품끼리 통계 (같이 본 횟수 · EASE · 작품 특징 · 최근 인기 합계)만 있어야 함 → 저장 전에 유저 단위 자료를 검사
+CONTEXT_VERSION = 1
+
+
+def check_no_user_rows(ctx):
+    """유저 기록 (History)이나 유저 수만큼 긴 배열이 문맥에 섞였으면 ValueError"""
+    n_users = int(ctx.get("cw_users") or 0)
+
+    def walk(v, path):
+        if isinstance(v, ar.History):
+            raise ValueError(f"유저 기록이 문맥에 있음: {path}")
+        if isinstance(v, np.ndarray) and n_users and n_users in v.shape:
+            raise ValueError(f"유저 수 ({n_users:,})만큼 긴 배열: {path} {v.shape}")
+        if isinstance(v, dict):
+            for k, x in v.items():
+                walk(x, f"{path}.{k}")
+        elif isinstance(v, (list, tuple)):
+            for i, x in enumerate(v):
+                walk(x, f"{path}[{i}]")
+
+    for k, v in ctx.items():
+        walk(v, k)
+
+
+def save_context(ctx, path):
+    check_no_user_rows(ctx)
+    with gzip.open(path, "wb", compresslevel=6) as f:
+        pickle.dump({"version": CONTEXT_VERSION, "ctx": ctx}, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_context(path):
+    # pickle 은 아무 파일이나 읽으면 위험 → save_context 로 우리가 만든 파일만 읽는다
+    with gzip.open(path, "rb") as f:
+        data = pickle.load(f)
+    if not isinstance(data, dict) or data.get("version") != CONTEXT_VERSION:
+        raise ValueError(f"문맥 파일 버전이 다름 (필요 {CONTEXT_VERSION}): {path}")
+    return data["ctx"]
+
+
 def onboarding_user(ctx, menu_work_ids, genres, themes, t):
     """온보딩 → v0.5 유저. 고른 작품(시리즈)마다 대표 작품 하나를 "본 작품"으로 (시즌을 다 넣으면 본 작품 수가 부풀어
     기존 유저 설정으로 넘어감). t: 기준 시각 (초)"""
@@ -264,15 +307,29 @@ def work_affinity(state, ctx, cfg):
             aff[pos[row[s]]] = aff[p[p >= 0]].max()
 
 
+def genre_affinity(state, ctx):
+    """작품별 장르 · 소재 유사도 = v0.5 태그 취향과 같은 계산 (고른 작품의 장르 · 태그 + 칩, 코사인 0~1). 글은 시리즈 대표 자리를 봄"""
+    user = {"history": state.history, "t": state.t, "genres": state.genres, "themes": state.themes}
+    state.genre_sim = ar.genre_scores(user, ctx)[ctx["cw_rows"]].astype(np.float32)
+
+
 # ## 5. 서비스 연결 (매일 추천 계산 = scripts/daily_recommend.py)
-# 유저 테스트 동안 알고리즘 · 비중은 고정. 서비스에 맞춰 바꾸는 건 아래 입력 대응표와 추천 이유 문구뿐
+# 유저 테스트 동안 v1 비중은 고정. 서비스에 맞춰 바꾸는 건 아래 입력 대응표 · 장르 · 소재 가산 (W_GENRE) · 보여 줄 순서 규칙 (arrange) ·
+# 추천 이유 문구뿐 (W_GENRE · arrange 는 10/31 사용자 결정)
+
+# 글 점수의 작품 몫에 더하는 장르 · 소재 유사도 비중. 로컬 시험 계정 4명으로 고른 출발값 (1.0 부터 고른 유형 글이 줄어듦) → 테스트 뒤 다시 정함
+W_GENRE = 0.5
+# 이미 본 글 감점 (v1 출발값 0.3). 보고 안 연 감점이 작품 취향을 빠르게 덮어서 줄임. 같은 날 같은 글 노출은 한 번만 셈 (load_visits)
+W_SEEN = 0.1
 
 LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
 
 # 온보딩 답 → v1 유형. Q3(덕질 방식) 6개 = consumption_type · 예전(v1) 답의 q1, 그리고 예전 q2(받고 싶은 소식) 3개.
 # Q3 를 유형 10개 문장으로 바꾸면 답이 유형 코드로 오므로 표에 없는 코드는 그대로 씀
-ANSWER_TYPES = {"world": "guide", "relationships": "character", "ost": "music", "goods": "goods", "events": "event",
-                "news": "news", "releases": "news", "characters": "character", "restock": "goods"}
+# 화면 문장은 6개, 내부 유형은 10개 그대로 → 답 하나에 유형 여러 개 (10/30 결정. 비하인드는 유머에 합쳐서 behind 도 같이)
+ANSWER_TYPES = {"world": ("guide", "review"), "relationships": ("character", "people"), "ost": ("music",),
+                "goods": ("goods",), "events": ("event",), "news": ("news", "curation", "humor", "behind"),
+                "releases": ("news",), "characters": ("character",), "restock": ("goods",)}
 
 TYPE_LABELS = {"news": "소식", "event": "행사", "guide": "작품 가이드", "people": "인물", "curation": "큐레이션",
                "goods": "굿즈", "behind": "비하인드", "review": "리뷰", "character": "캐릭터", "music": "음악", "humor": "유머"}
@@ -288,19 +345,41 @@ REASONS = {
 
 
 def user_types(answers):
-    """온보딩 답 목록 → v1 유형 코드 목록 (순서 유지, 겹치면 하나)"""
+    """온보딩 답 목록 → v1 유형 코드 목록 (순서 유지, 겹치면 하나). 답 하나가 유형 여러 개일 수 있음"""
     out = []
     for a in answers:
-        t = ANSWER_TYPES.get(a, a)
-        if t in v1.TYPE_INDEX and t not in out:
-            out.append(t)
+        for t in ANSWER_TYPES.get(a, (a,)):
+            if t in v1.TYPE_INDEX and t not in out:
+                out.append(t)
     return out
 
 
+def arrange(order, feed, picked, ctx, seen=None):
+    """점수 순 글 번호 → 보여 줄 순서 (10/31 결정). Q1 에서 고른 작품 (같은 시리즈 포함)의 글 중 아직 안 본 글을 맨 위로.
+    seen: 글별 노출 횟수 → 한 번이라도 보고 안 연 글은 다음 계산부터 맨 위 고정에서 빠지고 점수 순서로 (연 글은 순위에서 빠짐).
+    맨 위 글 · 나머지 글 각각 안에서 같은 작품 글은 한 바퀴에 하나씩 (작품마다 가장 높은 글 → 두 번째 글 ...).
+    한 바퀴 안은 점수 순서 그대로. 작품 없는 글은 글마다 따로 침"""
+    mine = {_cw_pos(ctx, w) for w in picked} - {-1}
+    pinned = lambda i: int(feed["pos"][i]) in mine and (seen is None or not seen[i])
+
+    def rounds(items):
+        count, keyed = {}, []
+        for n, i in enumerate(items):
+            p = int(feed["pos"][i])
+            k = p if p >= 0 else ("post", i)
+            keyed.append((count.get(k, 0), n, i))
+            count[k] = count.get(k, 0) + 1
+        return [i for *_, i in sorted(keyed)]
+
+    return rounds([i for i in order if pinned(i)]) + rounds([i for i in order if not pinned(i)])
+
+
 def score_parts(state, feed, i, day, cfg):
-    """v1.rank_feed 와 같은 계산으로 글 i 의 점수 조각 (작품 취향, 유형 취향, 새 글, 이미 본 만큼 감점). 합 = 순위 점수"""
+    """v1.rank_feed 와 같은 계산으로 글 i 의 점수 조각 (작품 취향 (장르 · 소재 유사도 포함), 유형 취향, 새 글, 이미 본 만큼 감점). 합 = 순위 점수"""
     p, ty = int(feed["pos"][i]), int(feed["type"][i])
     work = cfg.w_work * (float(state.work_aff[p]) + cfg.work_feedback * math.tanh(float(state.work_ev[p]))) if p >= 0 else 0.0
+    if p >= 0 and cfg.w_genre and state.genre_sim is not None:
+        work += cfg.w_genre * float(state.genre_sim[p])
     shown = state.seen if "impression" in cfg.logs else state.served
     return (work, cfg.w_type * float(v1.type_pref(state, cfg)[ty]),
             cfg.w_fresh * math.exp(-(day - int(feed["day"][i])) / float(v1.TAU[ty])), -cfg.w_seen * float(shown[i]))
@@ -321,12 +400,13 @@ def _cw_pos(ctx, w):
 
 def reason(parts, work, picked, type_code, ctx):
     """점수 조각 → 추천 이유 (text = 카드 문구). work: 글의 대표 작품 번호(없으면 None), picked: 온보딩에서 고른 작품 번호들.
-    작품 취향이 가장 크면: 고른 작품 → picked, 고른 작품과 같이 본 기록이 있으면 그중 가장 가까운 작품 → cowatch, 아니면 taste"""
+    작품 취향이 가장 크면: 고른 작품 (같은 시리즈 포함) → picked, 고른 작품과 같이 본 기록이 있으면 그중 가장 가까운 작품 → cowatch, 아니면 taste"""
     kind, about = ("work", "type", "fresh")[int(np.argmax(parts[:3]))], None
+    mine = None if work is None else next((m for m in picked if m == work or 0 <= _cw_pos(ctx, m) == _cw_pos(ctx, work)), None)
     if kind == "work" and work is None:
         kind = "fresh"
-    elif kind == "work" and work in picked:
-        kind, about = "picked", work
+    elif kind == "work" and mine is not None:
+        kind, about = "picked", mine
     elif kind == "work":
         sim, q = ctx["cw_sim"][ar.COWATCH_KIND], _cw_pos(ctx, work)         # v0.5 가 같이 본 작품에 쓰는 유사도
         near = [(float(sim[p, q]), m) for m in picked for p in [_cw_pos(ctx, m)] if p >= 0 and q >= 0]
