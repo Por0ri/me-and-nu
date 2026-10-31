@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -77,6 +78,25 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(user["genres"], ["Music"])
         self.assertEqual(user["unmapped_chips"][0]["tag_id"], 42)
         self.assertEqual(user["answers"], ["ost"])
+
+    def test_load_visits_counts_one_impression_per_post_per_day(self):
+        at = datetime(2026, 10, 31, 3, tzinfo=timezone.utc)                # 12:00 in Seoul
+        events = [(1, "impression", 501, {"session_id": "a"}, at),
+                  (1, "impression", 501, {"session_id": "b"}, at + timedelta(hours=2)),   # same day, refreshed
+                  (1, "impression", 501, {"session_id": "c"}, at + timedelta(days=1))]
+
+        class Cursor:
+            def __init__(self):
+                self.rows = iter([events, [], []])
+
+            def execute(self, *_):
+                pass
+
+            def fetchall(self):
+                return next(self.rows)
+
+        visits = daily.load_visits(Cursor(), [1], {501: 0})[1]
+        self.assertEqual(sum(kind == "impression" for visit in visits for kind, *_ in visit), 2)
 
 
 class PreflightTests(unittest.TestCase):

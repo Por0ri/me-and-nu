@@ -319,6 +319,8 @@ def genre_affinity(state, ctx):
 
 # 글 점수의 작품 몫에 더하는 장르 · 소재 유사도 비중. 로컬 시험 계정 4명으로 고른 출발값 (1.0 부터 고른 유형 글이 줄어듦) → 테스트 뒤 다시 정함
 W_GENRE = 0.5
+# 이미 본 글 감점 (v1 출발값 0.3). 보고 안 연 감점이 작품 취향을 빠르게 덮어서 줄임. 같은 날 같은 글 노출은 한 번만 셈 (load_visits)
+W_SEEN = 0.1
 
 LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
 
@@ -352,11 +354,13 @@ def user_types(answers):
     return out
 
 
-def arrange(order, feed, picked, ctx):
-    """점수 순 글 번호 → 보여 줄 순서 (10/31 결정). Q1 에서 고른 작품 (같은 시리즈 포함)의 글을 맨 위로.
-    고른 작품 글 · 나머지 글 각각 안에서 같은 작품 글은 한 바퀴에 하나씩 (작품마다 가장 높은 글 → 두 번째 글 ...).
+def arrange(order, feed, picked, ctx, seen=None):
+    """점수 순 글 번호 → 보여 줄 순서 (10/31 결정). Q1 에서 고른 작품 (같은 시리즈 포함)의 글 중 아직 안 본 글을 맨 위로.
+    seen: 글별 노출 횟수 → 한 번이라도 보고 안 연 글은 다음 계산부터 맨 위 고정에서 빠지고 점수 순서로 (연 글은 순위에서 빠짐).
+    맨 위 글 · 나머지 글 각각 안에서 같은 작품 글은 한 바퀴에 하나씩 (작품마다 가장 높은 글 → 두 번째 글 ...).
     한 바퀴 안은 점수 순서 그대로. 작품 없는 글은 글마다 따로 침"""
     mine = {_cw_pos(ctx, w) for w in picked} - {-1}
+    pinned = lambda i: int(feed["pos"][i]) in mine and (seen is None or not seen[i])
 
     def rounds(items):
         count, keyed = {}, []
@@ -367,8 +371,7 @@ def arrange(order, feed, picked, ctx):
             count[k] = count.get(k, 0) + 1
         return [i for *_, i in sorted(keyed)]
 
-    return (rounds([i for i in order if int(feed["pos"][i]) in mine])
-            + rounds([i for i in order if int(feed["pos"][i]) not in mine]))
+    return rounds([i for i in order if pinned(i)]) + rounds([i for i in order if not pinned(i)])
 
 
 def score_parts(state, feed, i, day, cfg):

@@ -17,6 +17,10 @@ class ArrangeTests(unittest.TestCase):
     def test_picked_work_posts_come_first_in_score_order(self):
         self.assertEqual(service.arrange([0, 1, 2, 3], feed(1, 0, 2, 0), [101], CTX), [1, 3, 0, 2])
 
+    def test_a_picked_post_seen_before_loses_the_top_spot(self):
+        seen = np.array([1, 0, 0])
+        self.assertEqual(service.arrange([0, 1, 2], feed(0, 1, 0), [101], CTX, seen=seen), [2, 0, 1])
+
     def test_same_work_posts_wait_until_every_work_had_one(self):
         self.assertEqual(service.arrange([0, 1, 2, 3, 4], feed(0, 0, 1, 0, 2), [], CTX), [0, 2, 4, 1, 3])
 

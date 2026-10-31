@@ -145,8 +145,10 @@ def load_posts(cur, topic_id, today, preview=None):
 def load_visits(cur, taps, index):
     """기록 → 유저마다 접속 목록 [[(종류, 글 번호, 값), ...], ...] (시간 순, v1.learn 에 넣을 모양).
     활동 기록은 같은 session_id (없으면 같은 날)를 한 접속으로. 반응(좋아요 · 저장 · O/X)은 현재 상태 표에서 읽어 그날에 넣음.
-    읽은 비율 = 카드 넘긴 장 수 / 전체 장 수 · 상세 스크롤 비율 중 큰 값 (접속마다 글 하나에 한 번)"""
+    읽은 비율 = 카드 넘긴 장 수 / 전체 장 수 · 상세 스크롤 비율 중 큰 값 (접속마다 글 하나에 한 번).
+    노출은 같은 날 같은 글 한 번만 (새로고침 · 여러 번 접속이 본 글 감점과 무관심 신호를 쌓지 않게, 10/31)"""
     groups = {tap: {} for tap in taps}
+    shown_days = set()
 
     def visit(tap, key, at):
         g = groups[tap].setdefault(key, {"at": at, "events": [], "read": {}})
@@ -160,6 +162,11 @@ def load_visits(cur, taps, index):
         c, value = index.get(cid), value or {}
         if c is None:
             continue
+        if kind == "impression":
+            day_key = (tap, c, at.astimezone(KST).date())
+            if day_key in shown_days:
+                continue
+            shown_days.add(day_key)
         g = visit(tap, ("s", value["session_id"]) if value.get("session_id") else ("d", at.astimezone(KST).date()), at)
         ratio = None
         if kind == "card_swipe":
@@ -201,7 +208,7 @@ def recommend(user, visits, ctx, feed, posts, day, t, cfg, catalog_ids):
     if cfg.w_genre:
         service.genre_affinity(state, ctx)
     # 점수는 모든 글에 매기고, 보여 줄 순서 규칙 (고른 작품 먼저 · 같은 작품은 한 바퀴에 하나씩)을 적용한 뒤 TOP_N 개
-    order = service.arrange(v1.rank_feed(state, feed, day, cfg, k=len(posts)).tolist(), feed, user["works"], ctx)
+    order = service.arrange(v1.rank_feed(state, feed, day, cfg, k=len(posts)).tolist(), feed, user["works"], ctx, seen=state.seen)
     out = []
     for i in order[:TOP_N]:
         parts = service.score_parts(state, feed, i, day, cfg)
@@ -337,7 +344,7 @@ def main():
     t0 = time.time()
     ctx = service.load_context(args.context) if args.context else service.build()
     print(f"문맥 준비 ({'파일' if args.context else '원본'}) {time.time() - t0:.0f}초 · 작품 {len(ctx['ids']):,} · 버전 {VERSION}")
-    world = (ctx, v1.Config(logs=service.LOGS, w_genre=service.W_GENRE), ctx["ids"][ctx["cw_rows"]], chip_names())
+    world = (ctx, v1.Config(logs=service.LOGS, w_genre=service.W_GENRE, w_seen=service.W_SEEN), ctx["ids"][ctx["cw_rows"]], chip_names())
     while True:
         now = datetime.now(KST)
         today = date.fromisoformat(args.today) if args.today else now.date()
