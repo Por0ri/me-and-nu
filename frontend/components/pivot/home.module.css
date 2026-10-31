@@ -33,6 +33,11 @@
 .searchInput > img { flex: none; }
 .search input { display: block; width: 100%; min-width: 0; height: 34px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--home-ink); font-size: 14px; line-height: 20px; }
 .search input::placeholder { color: var(--home-muted); opacity: 1; }
+/* Search result notice: looks like the search box, floats below it with a small inset,
+   stays 4 s, then fades for 2 s without moving the feed. */
+.searchNotice { position: absolute; z-index: 7; top: calc(100% + 18px); left: 12px; right: 12px; margin: 0; padding: 10px 12px; border: 1px solid var(--home-line); border-radius: 8px; background: var(--home-surface); box-shadow: 0 1px 5px rgb(206 191 250 / 50%); color: var(--home-ink); font-size: 13px; line-height: 20px; text-align: center; white-space: pre-line; pointer-events: none; animation: searchNoticeFade 6s ease forwards; }
+@keyframes searchNoticeFade { 0%, 66.7% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .searchNotice { animation-timing-function: step-end; } }
 .feed > ul { display: flex; flex-direction: column; gap: 24px; list-style: none; padding: 0; margin: 0; }
 .feed li { min-width: 0; }
 .card { position: relative; min-width: 0; aspect-ratio: 327 / 408; border-radius: 8px; background: var(--home-surface); box-shadow: 0 0 2px #e0bafb; }

@@ -53,16 +53,29 @@ export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI 
   </div>;
 }
 
-export function WorkSearchField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+export type SearchNotice = { message: string; id: number };
+
+export function WorkSearchField({ value, onChange, onSubmit, notice, onNoticeEnd }: {
+  value: string; onChange: (value: string) => void; onSubmit?: (value: string) => void;
+  notice?: SearchNotice | null; onNoticeEnd?: () => void;
+}) {
   const id = useId();
   return <div role="search" aria-label="작품 검색" className={styles.search}>
     <label htmlFor={id} className={styles.srOnly}>작품 이름</label>
     <div className={styles.searchInput}>
       <img src="/pivot/home/chrome/search.svg" alt="" width={16} height={16} />
       <input id={id} type="search" value={value} onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          // Korean input: Enter that finishes a composing syllable is not a search.
+          if (onSubmit && event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit(value); }
+        }}
+        enterKeyHint={onSubmit ? "search" : undefined}
         placeholder="작품 이름으로 검색해보세요" aria-describedby={`${id}-help`} autoComplete="off" />
     </div>
-    <p id={`${id}-help`} className={styles.srOnly}>입력만 가능해요. 검색 기능은 준비 중이에요.</p>
+    <p id={`${id}-help`} className={styles.srOnly}>{onSubmit
+      ? "작품 이름을 쓰고 Enter를 누르면 그 작품 글을 피드 맨 위에 보여 드려요."
+      : "입력만 가능해요. 검색 기능은 준비 중이에요."}</p>
+    {notice ? <p key={notice.id} className={styles.searchNotice} role="status" onAnimationEnd={onNoticeEnd}>{notice.message}</p> : null}
   </div>;
 }
 
@@ -234,11 +247,14 @@ export function HomeStatus({ state, onRetry }: { state: Exclude<HomeState, { sta
   </section>;
 }
 
-export function PivotHomeScreen({ state, demo, query, onQueryChange, onRetry, onRestart, onViewDetail, onMy, onSaved, bookmarks }: {
+export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, searchNotice, onSearchNoticeEnd, onRetry, onRestart, onViewDetail, onMy, onSaved, bookmarks }: {
   state: HomeState;
   demo: boolean;
   query: string;
   onQueryChange: (value: string) => void;
+  onSearch?: (value: string) => void;
+  searchNotice?: SearchNotice | null;
+  onSearchNoticeEnd?: () => void;
   onRetry: () => void;
   onRestart?: () => void;
   onViewDetail?: HomeDetailHandler;
@@ -260,7 +276,7 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onRetry, on
       <strong>시연용 예시 피드</strong>
       <p>실제 추천 결과가 아니에요. 선택한 답변과 관계없이 같은 예시를 보여드려요.</p>
     </aside> : null}
-    <WorkSearchField value={query} onChange={onQueryChange} />
+    <WorkSearchField value={query} onChange={onQueryChange} onSubmit={onSearch} notice={searchNotice} onNoticeEnd={onSearchNoticeEnd} />
     {state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} /> : <HomeStatus state={state} onRetry={onRetry} />}
     {demo && onRestart ? <footer className={styles.footer}><button type="button" onClick={onRestart} className={styles.button}>처음부터 시연</button></footer> : null}
     <HomeNavigation onMy={onMy} onSaved={onSaved} onNotice={pending} />

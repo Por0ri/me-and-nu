@@ -1,4 +1,4 @@
-import { ApiError, getFeed, getMyTopics, type FeedCard, type Session } from "@/lib/api";
+import { ApiError, getFeed, getMyTopics, searchFeed, type FeedCard, type Session } from "@/lib/api";
 import { requirePivotApi } from "./services";
 import type { HomeCardModel, HomeDataSource, HomeLoadError } from "./home";
 import { invalidContentResponse, mapCarouselSlides, publicationMetadata } from "./carousel-data";
@@ -39,7 +39,7 @@ function loadError(error: unknown): HomeLoadError {
 }
 
 export function createServiceHomeSource(
-  api: { getMyTopics: typeof getMyTopics; getFeed: typeof getFeed } = { getMyTopics, getFeed },
+  api: { getMyTopics: typeof getMyTopics; getFeed: typeof getFeed; searchFeed?: typeof searchFeed } = { getMyTopics, getFeed, searchFeed },
   guard: () => void = requirePivotApi,
   readSession?: () => Session | null,
 ): HomeDataSource {
@@ -86,6 +86,20 @@ export function createServiceHomeSource(
         signal.throwIfAborted();
         return loadError(error);
       }
+    },
+    async search(q, { signal }) {
+      guard(); signal.throwIfAborted();
+      if (!api.searchFeed) return { works: [], cards: [] };
+      const topicResponse = await api.getMyTopics({}, { signal });
+      let topicId: number | null;
+      try { topicId = activeTopicId(topicResponse); } catch { invalidContentResponse(); }
+      if (topicId === null) return { works: [], cards: [] };
+      const id = topicId;
+      const response = await api.searchFeed(id, q, { signal });
+      signal.throwIfAborted();
+      if (!response || response.selectedTopicId !== id || !Array.isArray(response.contents) ||
+        !Array.isArray(response.works) || response.works.some((name) => typeof name !== "string")) invalidContentResponse();
+      return { works: response.works, cards: response.contents.map((item) => mapFeedCard(item, id)) };
     },
   };
 }
