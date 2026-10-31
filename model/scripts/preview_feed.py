@@ -245,10 +245,10 @@ def main():
         state = v1.UserState(user["history"], list(u["genres"]), [], list(u["content_types"]), now,
                              len(ctx["cw_rows"]), len(posts))
         service.work_affinity(state, ctx, cfg)
-        order = v1.rank_feed(state, feed, today_day, cfg, k=len(posts))
+        order = service.arrange(v1.rank_feed(state, feed, today_day, cfg, k=len(posts)).tolist(), feed, works, ctx)
         tp = v1.type_pref(state, cfg)
         rows = []
-        for rank, i in enumerate(order.tolist(), 1):
+        for rank, i in enumerate(order, 1):
             p, ty = int(feed["pos"][i]), int(feed["type"][i])
             parts = (cfg.w_work * (float(state.work_aff[p]) if p >= 0 else 0.0), cfg.w_type * tp[ty],
                      cfg.w_fresh * math.exp(-(today_day - feed["day"][i]) / v1.TAU[ty]))

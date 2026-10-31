@@ -198,8 +198,10 @@ def recommend(user, visits, ctx, feed, posts, day, t, cfg, catalog_ids):
     for events in visits:
         v1.learn(state, events, feed, cfg, catalog_ids)
     service.work_affinity(state, ctx, cfg)
+    # 점수는 모든 글에 매기고, 보여 줄 순서 규칙 (고른 작품 먼저 · 같은 작품은 한 바퀴에 하나씩)을 적용한 뒤 TOP_N 개
+    order = service.arrange(v1.rank_feed(state, feed, day, cfg, k=len(posts)).tolist(), feed, user["works"], ctx)
     out = []
-    for i in v1.rank_feed(state, feed, day, cfg, k=TOP_N).tolist():
+    for i in order[:TOP_N]:
         parts = service.score_parts(state, feed, i, day, cfg)
         out.append((i, sum(parts), service.reason(parts, posts[i]["menu_work_id"], user["works"], posts[i]["type"], ctx)))
     return out

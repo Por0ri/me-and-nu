@@ -308,7 +308,7 @@ def work_affinity(state, ctx, cfg):
 
 
 # ## 5. 서비스 연결 (매일 추천 계산 = scripts/daily_recommend.py)
-# 유저 테스트 동안 알고리즘 · 비중은 고정. 서비스에 맞춰 바꾸는 건 아래 입력 대응표와 추천 이유 문구뿐
+# 유저 테스트 동안 점수 계산 (v1 · 비중)은 고정. 서비스에 맞춰 바꾸는 건 아래 입력 대응표 · 보여 줄 순서 규칙 (arrange) · 추천 이유 문구뿐
 
 LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
 
@@ -342,6 +342,25 @@ def user_types(answers):
     return out
 
 
+def arrange(order, feed, picked, ctx):
+    """점수 순 글 번호 → 보여 줄 순서 (10/31 결정). Q1 에서 고른 작품 (같은 시리즈 포함)의 글을 맨 위로.
+    고른 작품 글 · 나머지 글 각각 안에서 같은 작품 글은 한 바퀴에 하나씩 (작품마다 가장 높은 글 → 두 번째 글 ...).
+    한 바퀴 안은 점수 순서 그대로. 작품 없는 글은 글마다 따로 침"""
+    mine = {_cw_pos(ctx, w) for w in picked} - {-1}
+
+    def rounds(items):
+        count, keyed = {}, []
+        for n, i in enumerate(items):
+            p = int(feed["pos"][i])
+            k = p if p >= 0 else ("post", i)
+            keyed.append((count.get(k, 0), n, i))
+            count[k] = count.get(k, 0) + 1
+        return [i for *_, i in sorted(keyed)]
+
+    return (rounds([i for i in order if int(feed["pos"][i]) in mine])
+            + rounds([i for i in order if int(feed["pos"][i]) not in mine]))
+
+
 def score_parts(state, feed, i, day, cfg):
     """v1.rank_feed 와 같은 계산으로 글 i 의 점수 조각 (작품 취향, 유형 취향, 새 글, 이미 본 만큼 감점). 합 = 순위 점수"""
     p, ty = int(feed["pos"][i]), int(feed["type"][i])
@@ -366,12 +385,13 @@ def _cw_pos(ctx, w):
 
 def reason(parts, work, picked, type_code, ctx):
     """점수 조각 → 추천 이유 (text = 카드 문구). work: 글의 대표 작품 번호(없으면 None), picked: 온보딩에서 고른 작품 번호들.
-    작품 취향이 가장 크면: 고른 작품 → picked, 고른 작품과 같이 본 기록이 있으면 그중 가장 가까운 작품 → cowatch, 아니면 taste"""
+    작품 취향이 가장 크면: 고른 작품 (같은 시리즈 포함) → picked, 고른 작품과 같이 본 기록이 있으면 그중 가장 가까운 작품 → cowatch, 아니면 taste"""
     kind, about = ("work", "type", "fresh")[int(np.argmax(parts[:3]))], None
+    mine = None if work is None else next((m for m in picked if m == work or 0 <= _cw_pos(ctx, m) == _cw_pos(ctx, work)), None)
     if kind == "work" and work is None:
         kind = "fresh"
-    elif kind == "work" and work in picked:
-        kind, about = "picked", work
+    elif kind == "work" and mine is not None:
+        kind, about = "picked", mine
     elif kind == "work":
         sim, q = ctx["cw_sim"][ar.COWATCH_KIND], _cw_pos(ctx, work)         # v0.5 가 같이 본 작품에 쓰는 유사도
         near = [(float(sim[p, q]), m) for m in picked for p in [_cw_pos(ctx, m)] if p >= 0 and q >= 0]
