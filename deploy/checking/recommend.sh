@@ -7,7 +7,7 @@
 #
 #   sudo bash deploy/checking/recommend.sh build     # 이미지 만들기 (이 폴더의 커밋 기준)
 #   sudo bash deploy/checking/recommend.sh preview   # 한 번 미리보기 (DB 에 안 씀)
-#   sudo bash deploy/checking/recommend.sh up        # 켜 두기: 30초마다 새 가입자, 매일 06:00 (한국)부터 그날 전체 → 추천 표에 씀
+#   sudo bash deploy/checking/recommend.sh up        # 켜 두기: 1초마다 새 가입자, 매일 06:00 (한국)부터 그날 전체 → 추천 표에 씀
 #   sudo bash deploy/checking/recommend.sh status | logs | stop
 #
 # 문맥 파일 위치는 RECOMMEND_CONTEXT 로 바꿀 수 있음 (기본 /home/ubuntu/me-nu-model/service_context.pkl.gz)
@@ -61,8 +61,9 @@ case "${1:-status}" in
   build) "${docker[@]}" build -f model/Dockerfile -t "$image:$(git rev-parse --short=12 HEAD)" -t "$image:latest" model ;;
   preview) start --rm "$image:latest" "${args[@]}" --show 3 ;;
   up)
+    # 새 가입자는 1초마다 확인: 앱이 온보딩 끝나고 약 1초 만에 피드를 열어서, 그 전에 추천이 있어야 첫 피드부터 추천 순서 (확인 한 번 약 0.06초)
     "${docker[@]}" rm -f "$name" >/dev/null 2>&1 || true
-    start --detach --name "$name" --restart unless-stopped "$image:latest" "${args[@]}" --apply --every 30 --daily-at 06:00 ;;
+    start --detach --name "$name" --restart unless-stopped "$image:latest" "${args[@]}" --apply --every 1 --daily-at 06:00 ;;
   status) "${docker[@]}" ps -a --filter "name=^${name}$" ;;
   logs) "${docker[@]}" logs --tail 50 "$name" ;;
   stop) "${docker[@]}" rm -f "$name" ;;
