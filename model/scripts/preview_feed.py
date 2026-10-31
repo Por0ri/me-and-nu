@@ -228,7 +228,7 @@ def main():
     posts = load_posts(db, args.all)
     feed = service.make_feed(posts, ctx)
     live = int(((feed["day"] <= today_day) & (feed["until"] >= today_day)).sum())
-    cfg = v1.Config()
+    cfg = v1.Config(w_genre=service.W_GENRE)
     names = {key: name for key, name, *_ in ENTITIES}
 
     tabs, panels = [], []
@@ -245,6 +245,7 @@ def main():
         state = v1.UserState(user["history"], list(u["genres"]), [], list(u["content_types"]), now,
                              len(ctx["cw_rows"]), len(posts))
         service.work_affinity(state, ctx, cfg)
+        service.genre_affinity(state, ctx)
         order = service.arrange(v1.rank_feed(state, feed, today_day, cfg, k=len(posts)).tolist(), feed, works, ctx)
         tp = v1.type_pref(state, cfg)
         rows = []

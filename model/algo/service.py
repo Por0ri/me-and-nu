@@ -307,8 +307,18 @@ def work_affinity(state, ctx, cfg):
             aff[pos[row[s]]] = aff[p[p >= 0]].max()
 
 
+def genre_affinity(state, ctx):
+    """작품별 장르 · 소재 유사도 = v0.5 태그 취향과 같은 계산 (고른 작품의 장르 · 태그 + 칩, 코사인 0~1). 글은 시리즈 대표 자리를 봄"""
+    user = {"history": state.history, "t": state.t, "genres": state.genres, "themes": state.themes}
+    state.genre_sim = ar.genre_scores(user, ctx)[ctx["cw_rows"]].astype(np.float32)
+
+
 # ## 5. 서비스 연결 (매일 추천 계산 = scripts/daily_recommend.py)
-# 유저 테스트 동안 점수 계산 (v1 · 비중)은 고정. 서비스에 맞춰 바꾸는 건 아래 입력 대응표 · 보여 줄 순서 규칙 (arrange) · 추천 이유 문구뿐
+# 유저 테스트 동안 v1 비중은 고정. 서비스에 맞춰 바꾸는 건 아래 입력 대응표 · 장르 · 소재 가산 (W_GENRE) · 보여 줄 순서 규칙 (arrange) ·
+# 추천 이유 문구뿐 (W_GENRE · arrange 는 10/31 사용자 결정)
+
+# 글 점수의 작품 몫에 더하는 장르 · 소재 유사도 비중. 로컬 시험 계정 4명으로 고른 출발값 (1.0 부터 고른 유형 글이 줄어듦) → 테스트 뒤 다시 정함
+W_GENRE = 0.5
 
 LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
 
@@ -362,9 +372,11 @@ def arrange(order, feed, picked, ctx):
 
 
 def score_parts(state, feed, i, day, cfg):
-    """v1.rank_feed 와 같은 계산으로 글 i 의 점수 조각 (작품 취향, 유형 취향, 새 글, 이미 본 만큼 감점). 합 = 순위 점수"""
+    """v1.rank_feed 와 같은 계산으로 글 i 의 점수 조각 (작품 취향 (장르 · 소재 유사도 포함), 유형 취향, 새 글, 이미 본 만큼 감점). 합 = 순위 점수"""
     p, ty = int(feed["pos"][i]), int(feed["type"][i])
     work = cfg.w_work * (float(state.work_aff[p]) + cfg.work_feedback * math.tanh(float(state.work_ev[p]))) if p >= 0 else 0.0
+    if p >= 0 and cfg.w_genre and state.genre_sim is not None:
+        work += cfg.w_genre * float(state.genre_sim[p])
     shown = state.seen if "impression" in cfg.logs else state.served
     return (work, cfg.w_type * float(v1.type_pref(state, cfg)[ty]),
             cfg.w_fresh * math.exp(-(day - int(feed["day"][i])) / float(v1.TAU[ty])), -cfg.w_seen * float(shown[i]))

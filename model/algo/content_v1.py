@@ -46,6 +46,7 @@ class Config:
     w_type: float = 0.5             # 유형 취향
     w_fresh: float = 0.3            # 최신성
     w_seen: float = 0.3             # 이미 보여준 횟수만큼 감점
+    w_genre: float = 0.0            # 작품의 장르 · 소재 유사도 (서비스만 씀: service.W_GENRE. 시뮬레이터 실험값 아님)
     served_depth: int = 10          # 노출 기록이 없을 때: 보낸 목록(recommendation_item)의 위쪽 몇 개를 봤다고 칠지
     work_feedback: float = 0.5      # 작품별 반응 합이 작품 취향에 더해지는 세기
     type_prior: float = 1.0         # 온보딩에서 고른 유형
@@ -66,6 +67,7 @@ class UserState:
     n_catalog: int
     n_feed: int
     work_aff: np.ndarray = None     # 카탈로그 작품별 v0.5 취향 (0~1)
+    genre_sim: np.ndarray = None    # 카탈로그 작품별 장르 · 소재 유사도 (0~1). w_genre 를 쓸 때 서비스가 채움
     dirty: bool = True              # 작품 입력이 바뀌어 v0.5 를 다시 돌려야 함
     work_ev: np.ndarray = field(init=False)   # 카탈로그 작품별 반응 점수 합
     type_ev: np.ndarray = field(init=False)   # 유형별 반응 점수 합
@@ -112,6 +114,8 @@ def rank_feed(state, feed, day, cfg, k=50):
     live = np.flatnonzero((feed["day"] <= day) & (feed["until"] >= day))
     pos, typ = feed["pos"][live], feed["type"][live]
     s = np.where(pos >= 0, cfg.w_work * (state.work_aff[pos] + cfg.work_feedback * np.tanh(state.work_ev[pos])), 0.0)
+    if cfg.w_genre and state.genre_sim is not None:
+        s = s + np.where(pos >= 0, cfg.w_genre * state.genre_sim[pos], 0.0)
     s = s + cfg.w_type * type_pref(state, cfg)[typ]
     s = s + cfg.w_fresh * np.exp(-(day - feed["day"][live]) / TAU[typ])
     shown = state.seen if "impression" in cfg.logs else state.served   # 노출 기록이 없으면 보낸 목록으로 짐작

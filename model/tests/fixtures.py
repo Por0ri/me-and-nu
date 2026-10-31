@@ -25,7 +25,7 @@ def build_synthetic_world(catalog_size: int = 320):
     ar.build_ease(ctx)
     ctx.update(rep_of={i: i for i in anime}, work_of={i: i for i in anime},
                works={i: {"title": f"synthetic-{i}"} for i in anime})
-    return (ctx, v1.Config(logs=service.LOGS), ctx["ids"][ctx["cw_rows"]],
+    return (ctx, v1.Config(logs=service.LOGS, w_genre=service.W_GENRE), ctx["ids"][ctx["cw_rows"]],
             load_chip_features(service.MODEL / "catalog" / "chips.csv"))
 
 

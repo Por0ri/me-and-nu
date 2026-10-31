@@ -198,6 +198,8 @@ def recommend(user, visits, ctx, feed, posts, day, t, cfg, catalog_ids):
     for events in visits:
         v1.learn(state, events, feed, cfg, catalog_ids)
     service.work_affinity(state, ctx, cfg)
+    if cfg.w_genre:
+        service.genre_affinity(state, ctx)
     # 점수는 모든 글에 매기고, 보여 줄 순서 규칙 (고른 작품 먼저 · 같은 작품은 한 바퀴에 하나씩)을 적용한 뒤 TOP_N 개
     order = service.arrange(v1.rank_feed(state, feed, day, cfg, k=len(posts)).tolist(), feed, user["works"], ctx)
     out = []
@@ -335,7 +337,7 @@ def main():
     t0 = time.time()
     ctx = service.load_context(args.context) if args.context else service.build()
     print(f"문맥 준비 ({'파일' if args.context else '원본'}) {time.time() - t0:.0f}초 · 작품 {len(ctx['ids']):,} · 버전 {VERSION}")
-    world = (ctx, v1.Config(logs=service.LOGS), ctx["ids"][ctx["cw_rows"]], chip_names())
+    world = (ctx, v1.Config(logs=service.LOGS, w_genre=service.W_GENRE), ctx["ids"][ctx["cw_rows"]], chip_names())
     while True:
         now = datetime.now(KST)
         today = date.fromisoformat(args.today) if args.today else now.date()
