@@ -92,7 +92,7 @@ def engine():
         ])
         connection.execute(UserAccount.__table__.insert(), [
             {"user_id": user_id, "nickname": f"사용자{user_id}", "auth_provider": "kakao",
-             "provider_user_id": str(user_id), "onboarding_completed_at": NOW}
+             "provider_user_id": str(user_id), "onboarding_completed_at": NOW - timedelta(days=1)}
             for user_id in (7, 8)
         ])
         connection.execute(Tap.__table__.insert(), [
@@ -214,6 +214,60 @@ async def test_yesterdays_round_covers_the_hours_before_todays_batch(engine, mon
         add_round(connection, 2, tap_id=22, day=YESTERDAY, items=[(502, 1, None)])
 
     assert cards(await feed(engine, user_id=8, limit=1)) == [(502, 201, None)]
+
+
+def just_onboarded(engine, user_id=8):
+    with engine.begin() as connection:
+        connection.execute(update(UserAccount).where(UserAccount.user_id == user_id)
+                           .values(onboarding_completed_at=NOW - timedelta(seconds=1)))
+
+
+def record_sleeps(monkeypatch):
+    sleeps = []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(feed_service, "_sleep", sleep)
+    return sleeps
+
+
+@pytest.mark.asyncio
+async def test_a_new_account_waits_briefly_for_its_first_round(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    just_onboarded(engine)
+    with engine.begin() as connection:
+        add_round(connection, 2, tap_id=22, day=TODAY, items=[(502, 1, None)])
+    sleeps, calls = record_sleeps(monkeypatch), []
+    original = feed_service.recommendation_repo.latest_round
+
+    async def latest_round(db, tap_id, service_dates):      # the recommender writes during the first wait
+        calls.append(tap_id)
+        return None if len(calls) == 1 else await original(db, tap_id, service_dates)
+
+    monkeypatch.setattr(feed_service.recommendation_repo, "latest_round", latest_round)
+
+    assert cards(await feed(engine, user_id=8, limit=1)) == [(502, 201, None)]
+    assert sleeps == [feed_service.FIRST_ROUND_POLL_SECONDS]
+
+
+@pytest.mark.asyncio
+async def test_a_new_account_without_a_round_falls_back_after_the_wait(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    just_onboarded(engine)
+    sleeps = record_sleeps(monkeypatch)
+
+    assert cards(await feed(engine, user_id=8)) == [(508, None, None), (507, None, None)]
+    assert len(sleeps) == feed_service.FIRST_ROUND_POLLS
+
+
+@pytest.mark.asyncio
+async def test_an_account_that_onboarded_earlier_does_not_wait(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    sleeps = record_sleeps(monkeypatch)
+
+    assert cards(await feed(engine, user_id=8)) == [(508, None, None), (507, None, None)]
+    assert sleeps == []
 
 
 @pytest.mark.asyncio

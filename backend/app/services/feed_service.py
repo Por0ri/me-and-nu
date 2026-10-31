@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 from datetime import datetime, timedelta, timezone
@@ -33,6 +34,12 @@ MAX_SNAPSHOT_ITEMS = 600
 MAX_FEED_CURSOR_LENGTH = 7000
 MAX_CURSOR_HEADER_LENGTH = 512
 MAX_CONTENT_ID = 2**63 - 1
+# A new account opens Home about a second after onboarding, while the recommender
+# (deploy/checking/recommend.sh) looks for new accounts every second. Waiting up
+# to about 3 s for that first round keeps even the first visit in ranked order.
+NEW_ACCOUNT_WINDOW = timedelta(minutes=1)
+FIRST_ROUND_POLLS = 12
+FIRST_ROUND_POLL_SECONDS = 0.25
 
 
 def preference_value(value: str | None) -> str | None:
@@ -96,6 +103,10 @@ async def _state(db: AsyncSession, user_id: int, tap_id: int, content_id: int):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
 
 
 def _kst_day_start(moment: datetime) -> datetime:
@@ -214,6 +225,23 @@ def _decode_snapshot_cursor(cursor: str, context: dict) -> tuple[dict, list[int]
         raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다. 피드를 새로 불러와 주세요.") from exc
 
 
+async def _first_round(db: AsyncSession, user_id: int, tap_id: int, as_of: datetime, service_dates: list):
+    """A new account's first round, waited for up to about 3 s; None keeps newest first."""
+    completed = await recommendation_repo.onboarding_completed_at(db, user_id)
+    if completed is None:
+        return None
+    if completed.tzinfo is None:            # SQLite fixtures lose timezone metadata
+        completed = completed.replace(tzinfo=timezone.utc)
+    if as_of - completed > NEW_ACCOUNT_WINDOW:
+        return None
+    for _ in range(FIRST_ROUND_POLLS):
+        await _sleep(FIRST_ROUND_POLL_SECONDS)
+        round_ = await recommendation_repo.latest_round(db, tap_id, service_dates)
+        if round_ is not None:
+            return round_
+    return None
+
+
 async def _recommended_feed(
     db: AsyncSession, user_id: int, topic_id: int, tap, *, cursor: str | None, limit: int
 ) -> FeedResponse | None:
@@ -221,13 +249,17 @@ async def _recommended_feed(
 
     Later pages consume the remaining IDs, so changed reactions or hidden cards
     cannot shift an offset. An old v2 cursor has no recoverable order and must
-    restart. Yesterday's round covers the hours before today's batch has run.
+    restart. Yesterday's round covers the hours before today's batch has run,
+    and a brand-new account briefly waits for its first round.
     """
     context = {"v": 3, "userId": user_id, "topicId": topic_id, "subtopicId": None}
     if cursor is None:
         as_of = _now()
         today = as_of.astimezone(KST).date()
-        round_ = await recommendation_repo.latest_round(db, tap.tap_id, [today, today - timedelta(days=1)])
+        service_dates = [today, today - timedelta(days=1)]
+        round_ = await recommendation_repo.latest_round(db, tap.tap_id, service_dates)
+        if round_ is None:
+            round_ = await _first_round(db, user_id, tap.tap_id, as_of, service_dates)
         if round_ is None:
             return None
         context.update(roundId=round_.recommendation_round_id, asOf=as_of.isoformat())
