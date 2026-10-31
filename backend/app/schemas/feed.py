@@ -93,6 +93,14 @@ class FeedResponse(CamelModel):
     empty_reason: str | None = None
 
 
+class FeedSearchResponse(CamelModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"selectedTopicId": 1, "query": "장송의프리렌", "works": ["장송의 프리렌"], "contents": []}})
+    selected_topic_id: int
+    query: str
+    works: list[str] = Field(default_factory=list, description="검색어에 맞는 작품의 정식 이름 (글이 없어도 채움)")
+    contents: list[FeedCard]
+
+
 class PracticalInfo(CamelModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None

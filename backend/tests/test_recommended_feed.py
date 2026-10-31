@@ -270,6 +270,59 @@ async def test_an_account_that_onboarded_earlier_does_not_wait(engine, monkeypat
     assert sleeps == []
 
 
+def link_works(engine):
+    with engine.begin() as connection:
+        connection.execute(Entity.__table__.insert(), [
+            {"entity_id": 901, "topic_id": 1, "entity_type": "anime", "name": "하이큐!!", "aliases": ["Haikyu!!"], "is_active": True},
+            {"entity_id": 902, "topic_id": 1, "entity_type": "anime", "name": "나루토", "aliases": [], "is_active": True},
+            {"entity_id": 903, "topic_id": 1, "entity_type": "anime", "name": "장송의 프리렌", "aliases": ["Sousou no Frieren"], "is_active": True},
+        ])
+        connection.execute(ContentEntityLink.__table__.insert(), [
+            {"content_id": content_id, "entity_id": entity_id, "topic_id": 1, "link_method": "carousel", "sort_order": 1}
+            for content_id, entity_id in [(503, 901), (505, 901), (507, 901), (508, 901), (506, 902)]
+        ])
+
+
+async def search(engine, q, user_id=7):
+    with Session(engine) as session:
+        return await feed_service.search_feed(AsyncAdapter(session), user_id, 1, q=q)
+
+
+@pytest.mark.asyncio
+async def test_search_shows_the_works_cards_in_todays_rank_then_newest(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+
+    result = await search(engine, " 하이큐 ")
+    # 503 and 507 are ranked today (1st, 4th), 508 is not; 505 was marked "그만볼래요".
+    assert [card.id for card in result.contents] == [503, 507, 508]
+    assert (result.query, result.works) == ("하이큐", ["하이큐!!"])
+    assert {card.recommendation_reason for card in result.contents} == {"‘하이큐!!’ 검색 결과예요"}
+    assert all(card.recommendation_id is None for card in result.contents)
+
+
+@pytest.mark.asyncio
+async def test_search_matches_aliases_and_returns_nothing_for_other_works(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+
+    assert [card.id for card in (await search(engine, "haikyu")).contents] == [503, 507, 508]
+    assert [card.id for card in (await search(engine, "나루토", user_id=8)).contents] == [506]
+    assert (await search(engine, "원피스")).works == (await search(engine, "원피스")).contents == []
+    assert (await search(engine, "   ")).contents == []
+
+
+@pytest.mark.asyncio
+async def test_search_ignores_spaces_and_names_a_work_without_cards(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+
+    assert [card.id for card in (await search(engine, "하이 큐")).contents] == [503, 507, 508]
+    frieren = await search(engine, "장송의프리렌")
+    assert (frieren.works, frieren.contents) == (["장송의 프리렌"], [])
+    assert (await search(engine, "sousounofrieren")).works == ["장송의 프리렌"]
+
+
 @pytest.mark.asyncio
 async def test_recommended_cursor_is_bound_to_its_owner(engine, monkeypatch):
     monkeypatch.setattr(feed_service, "_now", lambda: NOW)
