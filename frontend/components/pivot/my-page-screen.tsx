@@ -9,6 +9,13 @@ import styles from "./my-page.module.css";
 function Chevron({ muted = false, last = false }: { muted?: boolean; last?: boolean }) {
   return <img src={`/pivot/my/chevron${muted ? "-muted" : ""}${last ? "-last" : ""}.svg`} alt="" width={16} height={24} />;
 }
+// Temporary for the 2026-11 user test: its own box below 로그아웃, opening /pivot/taste.
+function TasteEditSection({ demo, onPending }: { demo: boolean; onPending: (label: string) => void }) {
+  return <MenuSection>
+    <button type="button" className={`${styles.row} ${styles.account}`}
+      onClick={() => demo ? onPending("취향 수정하기") : window.location.assign("/pivot/taste")}>취향 수정하기<Chevron muted last /></button>
+  </MenuSection>;
+}
 function MenuSection({ title, children }: { title?: string; children: ReactNode }) {
   return <section className={styles.card} aria-label={title ?? "계정 안내"}>
     {title ? <h2 className={styles.sectionTitle}>{title}</h2> : null}
@@ -96,6 +103,7 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
             disabled={label === "로그아웃" && loggingOut} aria-busy={label === "로그아웃" && loggingOut || undefined}
             onClick={() => demo ? setAccountDialog(label) : label === "로그아웃" && onLogout ? void logout() : pending(label)}>{label}<Chevron muted last={index === 1} /></button>)}
         </MenuSection>
+        <TasteEditSection demo={demo} onPending={pending} />
         <p id="my-demo-help" className={styles.help}>{demo
           ? "시연용 가상 프로필이에요. 알림 선택은 이 화면에서만 적용되며, 화면을 떠나거나 새로고침하면 초기화돼요."
           : "알림·프로필 변경과 회원탈퇴는 연결 준비 중이에요."}</p>
@@ -104,10 +112,13 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
           : state.status === "ready" ? "프로필을 표시할 수 없어요." : state.message}</p>
         {state.status === "error" ? <button type="button" className={homeStyles.button} onClick={onRetry}>다시 시도</button> : null}
       </section>}
-      {!profile && !demo && onLogout ? <MenuSection>
-        <button type="button" className={`${styles.row} ${styles.account}`} disabled={loggingOut} aria-busy={loggingOut || undefined}
-          onClick={() => void logout()}>로그아웃<Chevron muted last /></button>
-      </MenuSection> : null}
+      {!profile && !demo && onLogout ? <>
+        <MenuSection>
+          <button type="button" className={`${styles.row} ${styles.account}`} disabled={loggingOut} aria-busy={loggingOut || undefined}
+            onClick={() => void logout()}>로그아웃<Chevron muted last /></button>
+        </MenuSection>
+        <TasteEditSection demo={false} onPending={pending} />
+      </> : null}
     </div>
     <HomeNavigation active="my" onHome={onHome} onSaved={onSaved} hideAI onNotice={setNotice} />
     {notice ? <p role="status" className={homeStyles.pendingNotice}>{notice}</p> : null}

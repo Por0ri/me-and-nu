@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useRef, useState, type Dispatch, type ImgHTMLAttributes } from "react";
 import assetManifest from "@/public/pivot/bc-sources.json";
 import { q1Choices, canAdvance, isStateComplete, selectionSummary, type OnboardingAction, type OnboardingState } from "@/lib/pivot/onboarding";
-import { serviceCatalog, demoCatalog } from "@/lib/pivot/onboarding-catalog";
+import { serviceCatalog, demoCatalog, type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
 import { QuestionProgress, WorksQuestion, TagsQuestion } from "./onboarding-catalog-screens";
 import { PivotFrame, PrimaryButton } from "./pivot-ui";
 import { useOnboardingNavigation } from "./use-onboarding-navigation";
@@ -94,7 +94,8 @@ export function ResultScreen({ state, onReselect, busy, mode, onRestart, onDemoH
     </div>
   </PivotFrame>;
 }
-export function OnboardingFlow({ state, dispatch, onExit, mode, onRestart, onDemoHome, chrome = false, submission }: { state: OnboardingState; dispatch: Dispatch<OnboardingAction>; onExit: () => void; mode: "demo" | "service" | "preview"; onRestart?: () => void; onDemoHome?: () => void; chrome?: boolean; submission?: SubmissionProps }) {
+// catalog: the temporary My Page taste edit (/pivot/taste) searches through its member-only copy of the APIs.
+export function OnboardingFlow({ state, dispatch, onExit, mode, onRestart, onDemoHome, chrome = false, submission, catalog }: { state: OnboardingState; dispatch: Dispatch<OnboardingAction>; onExit: () => void; mode: "demo" | "service" | "preview"; onRestart?: () => void; onDemoHome?: () => void; chrome?: boolean; submission?: SubmissionProps; catalog?: OnboardingCatalog }) {
   const region = useRef<HTMLDivElement>(null);
   const navigation = useOnboardingNavigation(state, dispatch, onExit);
   useEffect(() => {
@@ -103,7 +104,7 @@ export function OnboardingFlow({ state, dispatch, onExit, mode, onRestart, onDem
   }, [state.step]);
   const busy = navigation.busy || (mode === "service" && submission?.submitting === true);
   const shared = { onBack: navigation.back, onNext: navigation.advance, busy, chrome };
-  const catalogProps = { ...shared, state, dispatch, catalog: mode === "service" ? serviceCatalog : demoCatalog, demo: mode !== "service", message: submission?.error };
+  const catalogProps = { ...shared, state, dispatch, catalog: catalog ?? (mode === "service" ? serviceCatalog : demoCatalog), demo: mode !== "service", message: submission?.error };
   return <div ref={region} className={styles.flow}>
     {state.step === "interest" ? <InterestScreen {...shared} selected={state.interest === "animation"} onToggle={() => dispatch({ type: "toggle-interest" })} onEditProfile={mode === "service" ? submission?.onEditProfile : undefined} />
       : state.step === "q1" ? <WorksQuestion {...catalogProps} />
