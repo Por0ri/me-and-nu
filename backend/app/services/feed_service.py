@@ -230,14 +230,19 @@ def _decode_snapshot_cursor(cursor: str, context: dict) -> tuple[dict, list[int]
         raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다. 피드를 새로 불러와 주세요.") from exc
 
 
+def _recent(moment: datetime | None, as_of: datetime) -> bool:
+    if moment is None:
+        return False
+    if moment.tzinfo is None:               # SQLite fixtures lose timezone metadata
+        moment = moment.replace(tzinfo=timezone.utc)
+    return as_of - moment <= NEW_ACCOUNT_WINDOW
+
+
 async def _first_round(db: AsyncSession, user_id: int, tap_id: int, as_of: datetime, service_dates: list):
-    """A new account's first round, waited for up to about 3 s; None keeps newest first."""
-    completed = await recommendation_repo.onboarding_completed_at(db, user_id)
-    if completed is None:
-        return None
-    if completed.tzinfo is None:            # SQLite fixtures lose timezone metadata
-        completed = completed.replace(tzinfo=timezone.utc)
-    if as_of - completed > NEW_ACCOUNT_WINDOW:
+    """A new account's first round, or the first after a My Page taste edit (which drops
+    the recent rounds), waited for up to about 3 s; None keeps newest first."""
+    if not _recent(await recommendation_repo.onboarding_completed_at(db, user_id), as_of) and not _recent(
+            await recommendation_repo.taste_edited_at(db, tap_id), as_of):
         return None
     for _ in range(FIRST_ROUND_POLLS):
         await _sleep(FIRST_ROUND_POLL_SECONDS)

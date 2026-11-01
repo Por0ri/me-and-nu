@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Content, ContentEntityLink, ContentReaction, ContentSource, RecommendationItem, RecommendationRound,
-    UserAccount, UserEvent,
+    TapPreferenceTag, UserAccount, UserEvent,
 )
 from app.repositories.carousel_repository import public_content_condition
 
@@ -53,6 +53,11 @@ async def work_contents(db: AsyncSession, topic_id: int, entity_ids: list[int]) 
 
 async def onboarding_completed_at(db: AsyncSession, user_id: int) -> datetime | None:
     return await db.scalar(select(UserAccount.onboarding_completed_at).where(UserAccount.user_id == user_id))
+
+
+async def taste_edited_at(db: AsyncSession, tap_id: int) -> datetime | None:
+    """Last save of the taste answers: a My Page edit re-inserts every chip row."""
+    return await db.scalar(select(func.max(TapPreferenceTag.created_at)).where(TapPreferenceTag.tap_id == tap_id))
 
 
 async def get_round(db: AsyncSession, round_id: int, tap_id: int) -> RecommendationRound | None:
