@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
 from app.models import (
-    Content, ContentEntityLink, ContentReaction, ContentSlide, ContentSource, ContentTag, Entity,
-    RecommendationItem, RecommendationRound, SavedItem, Tap, Topic, UserAccount, UserEvent,
+    Content, ContentEntityLink, ContentReaction, ContentSlide, ContentSource, ContentTag, Entity, PreferenceTag,
+    RecommendationItem, RecommendationRound, SavedItem, Tap, TapPreferenceTag, Topic, UserAccount, UserEvent,
 )
 from app.services import feed_service
 from app.services.cursor import encode_cursor
@@ -26,7 +26,7 @@ NOW = datetime(2026, 11, 2, 3, tzinfo=timezone.utc)          # 12:00 in Seoul
 TODAY, YESTERDAY = NOW.date(), NOW.date() - timedelta(days=1)
 REASON = "요즘 보는 하이큐!! 관련 글"
 MODELS = (Topic, UserAccount, Tap, Content, ContentSlide, ContentSource, ContentTag, ContentReaction,
-          SavedItem, RecommendationRound, RecommendationItem, UserEvent, Entity, ContentEntityLink)
+          SavedItem, RecommendationRound, RecommendationItem, UserEvent, Entity, ContentEntityLink, TapPreferenceTag)
 
 
 def test_order_keeps_rank_drops_opened_and_disliked_and_moves_seen_to_back():
@@ -268,6 +268,31 @@ async def test_an_account_that_onboarded_earlier_does_not_wait(engine, monkeypat
 
     assert cards(await feed(engine, user_id=8)) == [(508, None, None), (507, None, None)]
     assert sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_a_taste_edit_waits_briefly_for_the_rebuilt_round(engine, monkeypatch):
+    # A My Page taste edit re-inserts every chip row and drops the recent rounds.
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    with engine.begin() as connection:
+        connection.execute(PreferenceTag.__table__.insert(), [
+            {"tag_id": 101, "topic_id": 1, "kind": "genre", "code": "action", "display_name": "액션", "is_active": True},
+        ])
+        connection.execute(TapPreferenceTag.__table__.insert(), [
+            {"tap_id": 22, "tag_id": 101, "topic_id": 1, "created_at": NOW - timedelta(seconds=1)},
+        ])
+        add_round(connection, 2, tap_id=22, day=TODAY, items=[(502, 1, None)])
+    sleeps, calls = record_sleeps(monkeypatch), []
+    original = feed_service.recommendation_repo.latest_round
+
+    async def latest_round(db, tap_id, service_dates):      # the recommender rebuilds during the first wait
+        calls.append(tap_id)
+        return None if len(calls) == 1 else await original(db, tap_id, service_dates)
+
+    monkeypatch.setattr(feed_service.recommendation_repo, "latest_round", latest_round)
+
+    assert cards(await feed(engine, user_id=8, limit=1)) == [(502, 201, None)]
+    assert sleeps == [feed_service.FIRST_ROUND_POLL_SECONDS]
 
 
 def link_works(engine):
