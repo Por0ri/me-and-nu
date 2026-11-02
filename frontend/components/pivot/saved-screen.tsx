@@ -12,10 +12,15 @@ export function SavedContentCard({ card, onViewDetail }: { card: SavedCard; onVi
   const id = useId(); const [failed, setFailed] = useState(false);
   return <button type="button" className={styles.card} data-saved-content={card.contentId} data-saved-post={card.postId}
     aria-labelledby={id} onClick={() => onViewDetail({ postId: card.postId, contentId: card.contentId, ...(card.topicId === undefined ? {} : { topicId: card.topicId }) })}>
-    <span id={id} className={homeStyles.srOnly}>{card.title} 자세히 보기</span>
-    {/* Existing covers already contain editorial text and a gradient. Do not overlay duplicate copy. */}
+    {/* Keep legacy image text unobscured; Agent covers need a separate title. */}
+    <span className={styles.thumbnail}>
     {card.image?.protected ? <ProtectedSlideImage key={card.image.src} src={card.image.src} alt="" retryable={false} /> : card.image?.src && !failed ? <img src={card.image.src} alt="" width={148} height={185} loading="lazy" draggable={false} onError={() => setFailed(true)} />
-      : <span className={styles.placeholder}><span>이미지 준비 중</span><span>{card.title}</span></span>}
+      : <span className={styles.placeholder}>이미지 준비 중</span>}
+    </span>
+    <span id={id} className={styles.caption}>
+      <span className={styles.title} data-saved-title="">{card.title}</span>
+      <span className={homeStyles.srOnly}> 자세히 보기</span>
+    </span>
   </button>;
 }
 
