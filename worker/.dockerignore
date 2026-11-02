@@ -1,0 +1,8 @@
+*
+!requirements.txt
+!Dockerfile
+!flowerconfig.py
+!menu_worker/
+!menu_worker/*.py
+!tests/
+!tests/*.py
