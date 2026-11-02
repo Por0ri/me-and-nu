@@ -256,7 +256,9 @@ export async function onboard(input: OnboardingInput): Promise<OnboardingRespons
   csrfToken = null; // Onboarding rotates the cookie; the next write reloads its CSRF token.
   return result;
 }
-export function getProfile(): Promise<Profile> { return apiRequest("/api/v1/users/me"); }
+export function getProfile(options: { signal?: AbortSignal } = {}): Promise<Profile> {
+  return apiRequest("/api/v1/users/me", { signal: options.signal });
+}
 export function updateProfile(input: { nickname: string; profileImageId?: null } | { nickname?: string; profileImageId: null }): Promise<Profile> {
   return apiRequest("/api/v1/users/me", { method: "PATCH", body: JSON.stringify(input) });
 }
