@@ -1,4 +1,4 @@
-"""Local fake content queue CLI and durable DB-to-broker dispatcher."""
+"""Local content queue CLI and kind-scoped DB-to-broker dispatcher."""
 from __future__ import annotations
 
 import argparse
@@ -13,20 +13,34 @@ from menu_worker.job_contract import validate_input
 from menu_worker.job_store import JobConflict, JobStore
 
 
-def dispatch_once(store, publish=None) -> dict:
-    if publish is None:
+def job_route(kind):
+    if kind == "anime":
+        from menu_worker.anime_app import app
+        task, queue = "content.anime_probe", "anime-generation"
+    elif kind == "fake":
         from menu_worker.app import app
+        task, queue = "content.fake_generate", "content-generation"
+    else:
+        raise ValueError("Unknown dispatcher kind")
+    return app, task, queue
 
+
+def send_delivery(job_id, kind):
+    app, task, queue = job_route(kind)
+    return app.send_task(task, kwargs={"job_id": str(job_id)}, queue=queue)
+
+
+def dispatch_once(store, publish=None, *, expected_kind="fake") -> dict:
+    if publish is None:
         def publish(job_id):
-            return app.send_task("content.fake_generate", kwargs={"job_id": str(job_id)},
-                                 queue="content-generation").id
+            return send_delivery(job_id, expected_kind).id
 
-    recovered = store.recover_expired()
+    recovered = store.recover_expired(expected_kind=expected_kind)
     report = {"published": 0, "failed": 0, "recovered": recovered}
-    for job in store.list_pending():
+    for job in store.list_pending(expected_kind=expected_kind):
         try:
             task_id = publish(job["job_id"])
-            store.record_dispatched(job["job_id"], task_id)
+            store.record_dispatched(job["job_id"], task_id, expected_kind=expected_kind)
             report["published"] += 1
         except Exception:
             # The committed queued row is the retry source; publication is not completion.
@@ -53,6 +67,7 @@ def main(argv=None) -> int:
     submit.add_argument("--source", default="fixture")
     submit.add_argument("--url", required=True)
     submit.add_argument("--content-type", default="news")
+    submit.add_argument("--kind", choices=("fake", "anime"), help="Default: the current dispatcher's kind")
     for name in ("show", "cancel", "recover"):
         commands.add_parser(name).add_argument("--job-id", required=True)
     dispatch = commands.add_parser("dispatch")
@@ -60,16 +75,19 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         store = JobStore()
+        role = os.environ.get("CONTENT_JOB_KIND", "fake")
+        if role not in {"fake", "anime"}:
+            raise ValueError("Invalid CONTENT_JOB_KIND")
         if args.command == "init-db":
-            store.initialize()
-            result = {"schema": "content-jobs-v1", "initialized": True}
+            schema = store.initialize()
+            result = {"schema": f"content-jobs-v{schema['version']}", "initialized": True}
         elif args.command == "smoke":
             from menu_worker.job_checks import smoke
-            result = smoke(store)
+            result = smoke(store, kind=role)
         elif args.command == "submit":
             request = validate_input({"idempotency_key": args.idempotency_key, "source_id": args.source,
                                       "source_url": args.url, "content_type": args.content_type})
-            result = store.submit(request)
+            result = store.submit(request, job_kind=args.kind or role)
         elif args.command == "show":
             result = store.get(args.job_id)
             if result is None:
@@ -79,11 +97,12 @@ def main(argv=None) -> int:
             result = {"job_id": args.job_id, "cancelled": store.cancel(args.job_id)}
         elif args.command == "recover":
             from menu_worker.job_runner import run_job
-            store.recover_expired()
-            result = run_job(store, Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"]), args.job_id, recover=True)
+            store.recover_expired(expected_kind=role)
+            result = run_job(store, Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"]), args.job_id,
+                             recover=True, expected_kind=role)
         else:
             while True:
-                result = dispatch_once(store)
+                result = dispatch_once(store, expected_kind=role)
                 if not args.loop:
                     break
                 Path("/tmp/job-dispatcher.health").write_text(datetime.now(timezone.utc).isoformat())

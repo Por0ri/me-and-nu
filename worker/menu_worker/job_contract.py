@@ -1,4 +1,4 @@
-"""Immutable, fixture-only inputs for the first content-job queue."""
+"""Immutable fixture inputs for fake jobs and the anime routing probe."""
 from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
@@ -13,10 +13,17 @@ CONTENT_TYPES = frozenset({
 })
 FIXTURE_SCENARIOS = frozenset({"success", "held", "skipped", "fail", "slow"})
 INPUT_FIELDS = frozenset({"idempotency_key", "source_id", "source_url", "content_type"})
+JOB_KINDS = frozenset({"fake", "anime"})
 
 
 class JobInputError(ValueError):
     """A bounded input error that does not echo untrusted URLs or credentials."""
+
+
+def validate_job_kind(value: str) -> str:
+    if not isinstance(value, str) or value not in JOB_KINDS:
+        raise JobInputError("job_kind must be fake or anime")
+    return value
 
 
 def canonical_source_url(value: str) -> str:
@@ -68,11 +75,20 @@ class JobInput:
 
     @property
     def input_sha256(self) -> str:
+        return self.hash_for_kind("fake")
+
+    def hash_for_kind(self, job_kind: str) -> str:
+        validate_job_kind(job_kind)
         normalized = {
             "source_id": self.source_id,
             "source_url": self.canonical_url,
             "content_type": self.content_type,
         }
+        if job_kind == "anime":
+            if self.scenario != "success":
+                raise JobInputError("The anime routing probe requires a /success/ fixture URL")
+            normalized["job_kind"] = job_kind
+        # Keep the original fake serialization byte-for-byte for existing manifests and jobs.
         encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

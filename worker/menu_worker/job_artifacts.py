@@ -85,18 +85,30 @@ def generate_fake(root: Path, job: dict, pulse=lambda: None) -> None:
     producer_status = {"held": "held_for_quality_review", "skipped": "duplicate_skipped"}.get(
         scenario, "ready_for_feed"
     )
+    _write_simulation(root, job, pulse, producer="fake_ani_menu_agent", outcome=outcome,
+                      producer_status=producer_status, include_card=outcome != "skipped")
+
+
+def generate_anime_probe(root: Path, job: dict, pulse) -> None:
+    """Produce an execution receipt without loading a model or generating cards."""
+    _write_simulation(root, job, pulse, producer="anime_queue_probe", outcome="routing_verified",
+                      producer_status="anime_probe_completed", include_card=False)
+
+
+def _write_simulation(root, job, pulse, *, producer, outcome, producer_status, include_card):
     directory = artifact_directory(root, job, create=True)
     if (directory / "manifest.json").exists():
         raise ArtifactError("Generation output already exists")
     result = {
-        "artifact_version": 1, "producer": "fake_ani_menu_agent", "simulated": True,
+        "artifact_version": 1, "producer": producer, "simulated": True,
         "job_id": str(job["job_id"]), "generation_attempt_id": str(job["generation_attempt_id"]),
         "input_sha256": job["input_sha256"], "outcome": outcome, "producer_status": producer_status,
         "skip_reason": "duplicate" if outcome == "skipped" else None,
         "llm_calls": 0, "service_database_changed": False,
     }
-    files = {"result.json": _json(result), "agent.log": b"Fake agent only. No LLM or service import.\n"}
-    if outcome != "skipped":
+    log = f"{producer}: simulated execution, zero LLM calls.\n".encode()
+    files = {"result.json": _json(result), "agent.log": log}
+    if include_card:
         files["card-1.png"] = PIXEL
     for name, data in files.items():
         pulse()
@@ -134,8 +146,10 @@ def validate_artifacts(root: Path, job: dict) -> dict:
         result = json.loads(content["result.json"])
         if not isinstance(result, dict):
             raise ArtifactError("Result must be an object")
+        # Pre-v2 fake receipts use the original producer identity and file layout.
+        anime_probe = job.get("job_kind", "fake") == "anime"
         expected_identity = {
-            "artifact_version": 1, "producer": "fake_ani_menu_agent", "simulated": True,
+            "artifact_version": 1, "producer": "anime_queue_probe" if anime_probe else "fake_ani_menu_agent", "simulated": True,
             "job_id": str(job["job_id"]), "generation_attempt_id": str(job["generation_attempt_id"]),
             "input_sha256": job["input_sha256"], "llm_calls": 0, "service_database_changed": False,
         }
@@ -143,10 +157,12 @@ def validate_artifacts(root: Path, job: dict) -> dict:
             raise ArtifactError("Artifact identity mismatch")
         dispositions = {"ready_for_staging": "ready_for_feed", "held": "held_for_quality_review",
                         "skipped": "duplicate_skipped"}
+        if anime_probe:
+            dispositions = {"routing_verified": "anime_probe_completed"}
         if result.get("outcome") not in dispositions or result.get("producer_status") != dispositions[result["outcome"]]:
             raise ArtifactError("Invalid generation outcome")
-        if ("card-1.png" in files) != (result["outcome"] != "skipped"):
-            raise ArtifactError("Missing fixture card")
+        if ("card-1.png" in files) != (not anime_probe and result["outcome"] != "skipped"):
+            raise ArtifactError("Unexpected fixture card layout")
         if "card-1.png" in content and content["card-1.png"] != PIXEL:
             raise ArtifactError("Invalid fixture card")
         return {"outcome": result["outcome"], "producer_status": result["producer_status"],

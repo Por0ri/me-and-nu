@@ -349,6 +349,67 @@ class JobStorePostgresTests(unittest.TestCase):
                     self.assertEqual(job["error_code"], "artifact_verification_required")
                     self.assertIsNone(self.store.claim(job_id, lease_seconds=60))
 
+    def test_job_kind_is_immutable_and_part_of_idempotency(self):
+        request = self.candidate()
+        job = self.store.submit(request)
+        job_id = self.job_id(job)
+        self.assertEqual(job["job_kind"], "fake")
+        with self.assertRaises(self.JobConflict) as conflict:
+            self.store.submit(request, job_kind="anime")
+        self.assertEqual(conflict.exception.code, "idempotency_conflict")
+        self.assertEqual(str(conflict.exception.existing_job_id), job_id)
+        # The database also protects old producers and non-CLI writers.
+        with self.assertRaises(self.psycopg.errors.CheckViolation):
+            with self.connection() as connection:
+                connection.execute(
+                    "UPDATE public.content_generation_job SET job_kind='anime' WHERE job_id=%s",
+                    (job_id,),
+                )
+        self.assertEqual(self.store.get(job_id)["job_kind"], "fake")
+
+    def test_dispatch_claim_completion_and_recovery_are_fenced_by_kind(self):
+        fake_id = self.job_id(self.store.submit(self.candidate()))
+        anime_id = self.job_id(self.store.submit(self.candidate(
+            idempotency_key=f"{self.namespace}-anime",
+            source_url=f"https://example.invalid/success/{self.namespace}/anime",
+        ), job_kind="anime"))
+
+        for kind, own, other in (("fake", fake_id, anime_id), ("anime", anime_id, fake_id)):
+            with self.subTest(dispatch_kind=kind):
+                pending = {self.job_id(row) for row in self.store.list_pending(expected_kind=kind)}
+                self.assertIn(own, pending)
+                self.assertNotIn(other, pending)
+                self.assertFalse(self.store.record_dispatched(other, "incorrect-queue", expected_kind=kind))
+                self.assertIsNone(self.store.claim(other, expected_kind=kind))
+                self.assertEqual(self.store.get(other)["dispatch_count"], 0)
+
+        fake = self.store.claim(fake_id)  # v1 callers continue to select fake jobs.
+        anime = self.store.claim(anime_id, expected_kind="anime")
+        for wrong_kind, claim in (("anime", fake), ("fake", anime)):
+            with self.subTest(operation_kind=wrong_kind):
+                job_id, token = claim["job_id"], claim["claim_token"]
+                self.assertFalse(self.store.mark_generation_started(job_id, token, expected_kind=wrong_kind))
+                self.assertFalse(self.store.renew_lease(job_id, token, expected_kind=wrong_kind))
+                self.assertFalse(self.store.complete(
+                    job_id, token, execution_status="failed", error_code="incorrect_consumer",
+                    expected_kind=wrong_kind,
+                ))
+                job = self.store.get(job_id)
+                self.assertEqual(job["execution_status"], "running")
+                self.assertIsNone(job["generation_started_at"])
+
+        self.assertTrue(self.store.mark_generation_started(anime_id, anime["claim_token"], expected_kind="anime"))
+        self.expire(fake_id)
+        self.expire(anime_id)
+        self.store.recover_expired()
+        self.assertEqual(self.store.get(fake_id)["execution_status"], "queued")
+        self.assertEqual(self.store.get(anime_id)["execution_status"], "running")
+        self.store.recover_expired(expected_kind="anime")
+        self.assertEqual(self.store.get(anime_id)["execution_status"], "needs_attention")
+        self.assertIsNone(self.store.claim_recovery(anime_id))
+        recovered = self.store.claim_recovery(anime_id, expected_kind="anime")
+        self.assertEqual(recovered["generation_attempt_id"], anime["generation_attempt_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

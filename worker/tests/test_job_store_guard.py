@@ -20,11 +20,13 @@ class JobStoreGuardTests(unittest.TestCase):
             connect.assert_not_called()
 
     def test_test_database_needs_explicit_expected_name(self):
-        value = "postgresql://u:p@jobs-db/menu_content_jobs_test"
-        with self.assertRaises(JobStoreError):
-            JobStore(value)
-        store = JobStore(value, expected_database="menu_content_jobs_test")
-        self.assertEqual(store.expected_database, "menu_content_jobs_test")
+        for database in ("menu_content_jobs_test", "menu_content_jobs_migration_test"):
+            value = f"postgresql://u:p@jobs-db/{database}"
+            with self.subTest(database=database):
+                with self.assertRaises(JobStoreError):
+                    JobStore(value)
+                store = JobStore(value, expected_database=database)
+                self.assertEqual(store.expected_database, database)
 
     def test_application_database_environment_is_never_used(self):
         with patch.dict(os.environ, {"DATABASE_URL": "postgresql://private@service/private"}, clear=True):
@@ -54,6 +56,30 @@ class JobStoreGuardTests(unittest.TestCase):
         with patch("menu_worker.job_store.psycopg.connect") as connect:
             with self.assertRaises(ValueError):
                 store.complete(str(uuid4()), str(uuid4()), execution_status="succeeded")
+            connect.assert_not_called()
+
+    def test_unknown_worker_kind_cannot_scan_or_recover_all_queues(self):
+        store = JobStore("postgresql://u:p@jobs-db/menu_content_jobs")
+        with patch("menu_worker.job_store.psycopg.connect") as connect:
+            for method in (store.list_pending, store.recover_expired):
+                for invalid in (None, "*", "", "all"):
+                    with self.subTest(method=method.__name__, kind=invalid), self.assertRaises(ValueError):
+                        method(expected_kind=invalid)
+            connect.assert_not_called()
+
+    def test_probe_and_fake_results_cannot_be_misclassified(self):
+        store = JobStore("postgresql://u:p@jobs-db/menu_content_jobs")
+        job_id, token = str(uuid4()), str(uuid4())
+        invalid = (("fake", "succeeded", "routing_verified", "anime_probe_completed"),
+                   ("anime", "succeeded", "ready_for_staging", "ready_for_feed"),
+                   ("anime", "succeeded", "routing_verified", "ready_for_feed"),
+                   ("anime", "failed", "routing_verified", "anime_probe_completed"))
+        with patch("menu_worker.job_store.psycopg.connect") as connect:
+            for kind, status, outcome, original in invalid:
+                with self.subTest(kind=kind, outcome=outcome), self.assertRaises(ValueError):
+                    store.complete(job_id, token, expected_kind=kind, execution_status=status, outcome=outcome,
+                                   producer_status=original, artifact_path=f"jobs/{job_id}/attempts/{uuid4()}/result.json",
+                                   result_sha256="a" * 64)
             connect.assert_not_called()
 
 

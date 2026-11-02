@@ -13,11 +13,12 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
-from menu_worker.job_contract import JobInput, validate_input
+from menu_worker.job_contract import JobInput, validate_input, validate_job_kind
 
-DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test"})
+DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test", "menu_content_jobs_migration_test"})
 DATABASE_HOSTS = frozenset({"jobs-db", "localhost", "127.0.0.1", "::1"})
-SCHEMA_VERSION = 1
+MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql")
+SCHEMA_VERSION = len(MIGRATIONS)
 
 
 class JobStoreError(RuntimeError):
@@ -103,31 +104,35 @@ class JobStore:
             marker = connection.execute("SELECT to_regclass('public.menu_worker_schema') AS marker").fetchone()["marker"]
             if marker:
                 versions = connection.execute("SELECT version FROM public.menu_worker_schema").fetchall()
-                if versions != [{"version": SCHEMA_VERSION}]:
+                if len(versions) != 1 or versions[0]["version"] not in range(1, SCHEMA_VERSION + 1):
                     raise JobStoreError("Unsupported content-job schema version")
+                installed = versions[0]["version"]
                 for table in ("content_generation_job", "content_generation_attempt"):
                     exists = connection.execute("SELECT to_regclass(%s) AS name", ("public." + table,)).fetchone()["name"]
                     if not exists:
                         raise JobStoreError("Content-job schema is incomplete")
-                return {"version": SCHEMA_VERSION, "created": False}
-            existing = connection.execute(
-                "SELECT 1 FROM pg_tables WHERE schemaname='public' LIMIT 1"
-            ).fetchone()
-            if existing:
-                raise JobStoreError("Refusing to initialize a nonempty unversioned database")
-            migration = Path(__file__).with_name("migrations") / "001_content_jobs.sql"
-            connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
-        return {"version": SCHEMA_VERSION, "created": True}
+            else:
+                existing = connection.execute(
+                    "SELECT 1 FROM pg_tables WHERE schemaname='public' LIMIT 1"
+                ).fetchone()
+                if existing:
+                    raise JobStoreError("Refusing to initialize a nonempty unversioned database")
+                installed = 0
+            for filename in MIGRATIONS[installed:]:
+                migration = Path(__file__).with_name("migrations") / filename
+                connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
+        return {"version": SCHEMA_VERSION, "created": installed == 0}
 
-    def submit(self, request: JobInput | dict) -> dict:
+    def submit(self, request: JobInput | dict, *, job_kind: str = "fake") -> dict:
         request = request if isinstance(request, JobInput) else validate_input(request)
+        input_hash = request.hash_for_kind(job_kind)
         with self._connect() as connection:
             created = connection.execute(
                 """INSERT INTO public.content_generation_job
-                   (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,input_sha256)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING *""",
+                   (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,input_sha256,job_kind)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING *""",
                 (uuid4(), request.idempotency_key, request.source_id, request.source_url,
-                 request.canonical_url, request.content_type, request.input_sha256),
+                 request.canonical_url, request.content_type, input_hash, job_kind),
             ).fetchone()
             if created:
                 return {**_plain(created), "created": True}
@@ -135,7 +140,7 @@ class JobStore:
                 "SELECT * FROM public.content_generation_job WHERE idempotency_key=%s", (request.idempotency_key,)
             ).fetchone()
             if previous:
-                if previous["input_sha256"] != request.input_sha256:
+                if previous["job_kind"] != job_kind or previous["input_sha256"] != input_hash:
                     raise JobConflict("idempotency_conflict", previous["job_id"])
                 return {**_plain(previous), "created": False}
             previous = connection.execute(
@@ -155,32 +160,37 @@ class JobStore:
             ).fetchall()
             return _plain(row)
 
-    def list_pending(self, limit: int = 100) -> list[dict]:
+    def list_pending(self, limit: int = 100, *, expected_kind: str = "fake") -> list[dict]:
+        validate_job_kind(expected_kind)
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("limit must be from 1 to 1000")
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT * FROM public.content_generation_job WHERE execution_status='queued'
+                """SELECT * FROM public.content_generation_job WHERE job_kind=%s AND execution_status='queued'
                    AND generation_started_at IS NULL
                    AND (last_dispatched_at IS NULL OR last_dispatched_at < clock_timestamp() - INTERVAL '30 seconds')
-                   ORDER BY created_at LIMIT %s""", (limit,),
+                   ORDER BY created_at LIMIT %s""", (expected_kind, limit),
             ).fetchall()
             return _plain(rows)
 
-    def record_dispatched(self, job_id: str, task_id: str) -> bool:
+    def record_dispatched(self, job_id: str, task_id: str, *, expected_kind: str = "fake") -> bool:
+        validate_job_kind(expected_kind)
         with self._connect() as connection:
             return bool(connection.execute(
                 """UPDATE public.content_generation_job SET last_dispatched_at=CURRENT_TIMESTAMP,
                    dispatch_count=dispatch_count+1,last_task_id=%s,updated_at=CURRENT_TIMESTAMP
-                   WHERE job_id=%s AND execution_status='queued' AND generation_started_at IS NULL RETURNING job_id""",
-                (_task_id(task_id), _identity(job_id)),
+                   WHERE job_id=%s AND job_kind=%s AND execution_status='queued'
+                   AND generation_started_at IS NULL RETURNING job_id""",
+                (_task_id(task_id), _identity(job_id), expected_kind),
             ).fetchone())
 
-    def _claim(self, job_id: str, task_id: str | None, lease_seconds: int, *, recovery: bool) -> dict | None:
+    def _claim(self, job_id: str, task_id: str | None, lease_seconds: int, *, recovery: bool, expected_kind: str) -> dict | None:
+        validate_job_kind(expected_kind)
         lease_seconds, task_id = _lease(lease_seconds), _task_id(task_id)
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM public.content_generation_job WHERE job_id=%s FOR UPDATE", (_identity(job_id),)
+                "SELECT * FROM public.content_generation_job WHERE job_id=%s AND job_kind=%s FOR UPDATE",
+                (_identity(job_id), expected_kind),
             ).fetchone()
             expected = "needs_attention" if recovery else "queued"
             if not row or row["execution_status"] != expected:
@@ -206,20 +216,23 @@ class JobStore:
             ).fetchone()
             return {**_plain(row), "attempt_id": str(attempt), "mode": mode}
 
-    def claim(self, job_id: str, task_id: str | None = None, lease_seconds: int = 30) -> dict | None:
-        return self._claim(job_id, task_id, lease_seconds, recovery=False)
+    def claim(self, job_id: str, task_id: str | None = None, lease_seconds: int = 30,
+              *, expected_kind: str = "fake") -> dict | None:
+        return self._claim(job_id, task_id, lease_seconds, recovery=False, expected_kind=expected_kind)
 
-    def claim_recovery(self, job_id: str, task_id: str | None = None, lease_seconds: int = 30) -> dict | None:
-        return self._claim(job_id, task_id, lease_seconds, recovery=True)
+    def claim_recovery(self, job_id: str, task_id: str | None = None, lease_seconds: int = 30,
+                       *, expected_kind: str = "fake") -> dict | None:
+        return self._claim(job_id, task_id, lease_seconds, recovery=True, expected_kind=expected_kind)
 
-    def mark_generation_started(self, job_id: str, claim_token: str) -> bool:
+    def mark_generation_started(self, job_id: str, claim_token: str, *, expected_kind: str = "fake") -> bool:
+        validate_job_kind(expected_kind)
         with self._connect() as connection:
             row = connection.execute(
                 """UPDATE public.content_generation_job SET generation_started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
-                   WHERE job_id=%s AND claim_token=%s AND execution_status='running'
+                   WHERE job_id=%s AND claim_token=%s AND job_kind=%s AND execution_status='running'
                    AND lease_expires_at>clock_timestamp() AND generation_started_at IS NULL
                    AND current_attempt_id=generation_attempt_id RETURNING current_attempt_id""",
-                (_identity(job_id), _identity(claim_token)),
+                (_identity(job_id), _identity(claim_token), expected_kind),
             ).fetchone()
             if row:
                 connection.execute(
@@ -228,22 +241,32 @@ class JobStore:
                 )
             return bool(row)
 
-    def renew_lease(self, job_id: str, claim_token: str, lease_seconds: int = 30) -> bool:
+    def renew_lease(self, job_id: str, claim_token: str, lease_seconds: int = 30,
+                    *, expected_kind: str = "fake") -> bool:
+        validate_job_kind(expected_kind)
         with self._connect() as connection:
             return bool(connection.execute(
                 """UPDATE public.content_generation_job SET lease_expires_at=clock_timestamp() + (%s * INTERVAL '1 second'),
-                   updated_at=CURRENT_TIMESTAMP WHERE job_id=%s AND claim_token=%s AND execution_status='running'
+                   updated_at=CURRENT_TIMESTAMP WHERE job_id=%s AND claim_token=%s AND job_kind=%s AND execution_status='running'
                    AND lease_expires_at>clock_timestamp() RETURNING job_id""",
-                (_lease(lease_seconds), _identity(job_id), _identity(claim_token)),
+                (_lease(lease_seconds), _identity(job_id), _identity(claim_token), expected_kind),
             ).fetchone())
 
     def complete(self, job_id: str, claim_token: str, *, execution_status: str, outcome: str | None = None,
                  producer_status: str | None = None, artifact_path: str | None = None,
-                 result_sha256: str | None = None, error_code: str | None = None) -> bool:
+                 result_sha256: str | None = None, error_code: str | None = None,
+                 expected_kind: str = "fake") -> bool:
+        validate_job_kind(expected_kind)
         if execution_status not in {"succeeded", "failed", "needs_attention"}:
             raise ValueError("Unsupported completion status")
-        if outcome not in {None, "ready_for_staging", "held", "skipped"}:
-            raise ValueError("Unsupported producer outcome")
+        if expected_kind == "fake" and outcome not in {None, "ready_for_staging", "held", "skipped"}:
+            raise ValueError("Unsupported fake producer outcome")
+        if expected_kind == "anime":
+            if execution_status == "succeeded":
+                if (outcome, producer_status) != ("routing_verified", "anime_probe_completed"):
+                    raise ValueError("An anime probe can only record routing verification")
+            elif outcome is not None:
+                raise ValueError("An incomplete anime probe cannot record an outcome")
         for value in (producer_status, error_code):
             if value is not None and (not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", value)):
                 raise ValueError("Status and error codes must be bounded identifiers")
@@ -258,8 +281,8 @@ class JobStore:
         with self._connect() as connection:
             row = connection.execute(
                 """SELECT * FROM public.content_generation_job WHERE job_id=%s AND claim_token=%s
-                   AND execution_status='running' FOR UPDATE""",
-                (_identity(job_id), _identity(claim_token)),
+                   AND job_kind=%s AND execution_status='running' FOR UPDATE""",
+                (_identity(job_id), _identity(claim_token), expected_kind),
             ).fetchone()
             if not row:
                 return False
@@ -284,12 +307,13 @@ class JobStore:
             )
             return True
 
-    def recover_expired(self) -> dict[str, int]:
+    def recover_expired(self, *, expected_kind: str = "fake") -> dict[str, int]:
+        validate_job_kind(expected_kind)
         counts = {"queued": 0, "needs_attention": 0}
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT * FROM public.content_generation_job WHERE execution_status='running'
-                   AND lease_expires_at<=clock_timestamp() FOR UPDATE SKIP LOCKED"""
+                """SELECT * FROM public.content_generation_job WHERE job_kind=%s AND execution_status='running'
+                   AND lease_expires_at<=clock_timestamp() FOR UPDATE SKIP LOCKED""", (expected_kind,),
             ).fetchall()
             for row in rows:
                 started = row["generation_started_at"] is not None

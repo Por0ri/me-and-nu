@@ -23,9 +23,22 @@ class JobContractTests(unittest.TestCase):
         self.assertNotEqual(first.input_sha256, second.input_sha256)
 
     def test_execution_settings_cannot_be_smuggled_into_input(self):
-        for name in ("database_url", "agent_root", "review_mode", "mode", "credentials_file"):
+        for name in ("database_url", "agent_root", "review_mode", "mode", "credentials_file", "job_kind"):
             with self.subTest(name=name), self.assertRaises(JobInputError):
                 validate_input(self.request(**{name: "untrusted"}))
+
+    def test_v1_hash_still_matches_existing_fake_manifests(self):
+        request = validate_input(self.request())
+        v1_hash = "d60a72458c4d08da9f63c5bcfa906fe89c9cfb2b79e372745c2c33e01eaee55e"
+        self.assertEqual(request.input_sha256, v1_hash)
+        self.assertEqual(request.hash_for_kind("fake"), v1_hash)
+        self.assertNotEqual(request.hash_for_kind("anime"), v1_hash)
+
+    def test_only_success_fixture_can_enter_the_anime_probe(self):
+        for scenario in ("held", "skipped", "fail", "slow"):
+            request = validate_input(self.request(source_url=f"https://example.invalid/{scenario}/one"))
+            with self.subTest(scenario=scenario), self.assertRaises(JobInputError):
+                request.hash_for_kind("anime")
 
     def test_external_or_ambiguous_urls_are_rejected(self):
         for value in ("https://example.org/success/one", "http://example.invalid/success/one",

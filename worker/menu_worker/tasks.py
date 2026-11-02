@@ -14,7 +14,7 @@ def result_store() -> Redis:
     return Redis.from_url(settings.result_backend, socket_timeout=3, socket_connect_timeout=3)
 
 
-@app.task(bind=True, name="runtime.probe", max_retries=2, acks_late=True, reject_on_worker_lost=True)
+@app.task(bind=True, name="runtime.probe", shared=False, max_retries=2, acks_late=True, reject_on_worker_lost=True)
 def probe(self, label: str = "manual", delay_seconds: int = 0, failures_before_success: int = 0) -> dict:
     if not isinstance(label, str) or not 1 <= len(label) <= 80 or not label.isprintable():
         raise ValueError("label must be 1 to 80 printable characters")
@@ -28,7 +28,7 @@ def probe(self, label: str = "manual", delay_seconds: int = 0, failures_before_s
     return {"label": label, "task_id": self.request.id, "retries": self.request.retries}
 
 
-@app.task(bind=True, name="runtime.heartbeat", ignore_result=True, acks_late=True)
+@app.task(bind=True, name="runtime.heartbeat", shared=False, ignore_result=True, acks_late=True)
 def heartbeat(self) -> None:
     evidence = {"timestamp": datetime.now(timezone.utc).isoformat(), "task_id": self.request.id}
     with result_store() as client:

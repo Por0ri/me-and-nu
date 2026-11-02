@@ -23,7 +23,8 @@ def main():
             connection.execute("CREATE DATABASE menu_content_jobs_test")
     settings["dbname"] = "menu_content_jobs_test"
     os.environ["CONTENT_JOB_TEST_DATABASE_URL"] = make_conninfo(**settings)
-    suite = unittest.defaultTestLoader.discover(str(Path(__file__).parent), pattern="test_jobs_postgres.py")
+    os.environ["CONTENT_JOB_MIGRATION_TEST_ADMIN_URL"] = make_conninfo(**settings)
+    suite = unittest.defaultTestLoader.discover(str(Path(__file__).parent), pattern="test_jobs*postgres.py")
     return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
 
 
