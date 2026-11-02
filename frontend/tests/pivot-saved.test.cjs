@@ -174,3 +174,26 @@ test('Saved Service and Demo changes have no API, persistent storage or Consumer
   }
   assert.doesNotMatch(fs.readFileSync(path.join(root, 'lib/pivot/saved-service.ts'), 'utf8'), /from.*mock/);
 });
+
+test('Saved renders the canonical title once outside every cover, including protected and missing images', () => {
+  const title = '이미지 문구와 다른 실제 제목 <안전> ' + '긴제목'.repeat(30);
+  for (const image of [
+    undefined,
+    { src: '/pivot/home/slide-1.png', alt: 'legacy embedded copy' },
+    { src: '/agent-cover.png', alt: 'Agent image without text' },
+    { src: '/api/v1/contents/41/slides/1/image?topicId=7', alt: '', protected: true },
+  ]) {
+    const card = { postId: '41', contentId: '41', topicId: 7, title, image };
+    const html = renderToStaticMarkup(React.createElement(SavedContentCard, { card, onViewDetail() {} }));
+    const escaped = title.replace('<', '&lt;').replace('>', '&gt;');
+    assert.equal(html.split(escaped).length - 1, 1);
+    assert.ok(html.includes(`class="title" data-saved-title="">${escaped}</span>`));
+    assert.match(html, /class="thumbnail">[\s\S]*<\/span><span id="[^"]+" class="caption">/);
+    const labelledBy = html.match(/aria-labelledby="([^"]+)"/)[1];
+    assert.ok(html.includes(`id="${labelledBy}" class="caption"`));
+    assert.match(html, /class="srOnly"> 자세히 보기<\/span>/);
+    assert.doesNotMatch(html, /<안전>/);
+    if (image?.protected) assert.match(html, /data-carousel-image-state="loading"/);
+    if (!image) assert.match(html, /이미지 준비 중/);
+  }
+});
