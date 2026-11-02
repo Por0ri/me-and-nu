@@ -4,11 +4,11 @@ from kombu import Queue
 from menu_worker.config import load_settings
 
 settings = load_settings()
-app = Celery("menu_runtime", include=["menu_worker.tasks"])
+app = Celery("menu_runtime", include=["menu_worker.tasks", "menu_worker.job_tasks"])
 app.conf.update(
     broker_url=settings.broker_url,
     result_backend=settings.result_backend,
-    task_queues=(Queue("runtime"),),
+    task_queues=(Queue("runtime"), Queue("content-generation")),
     task_default_queue="runtime",
     task_create_missing_queues=False,
     task_serializer="json",
@@ -24,10 +24,11 @@ app.conf.update(
     worker_cancel_long_running_tasks_on_connection_loss=True,
     broker_connection_retry_on_startup=True,
     broker_connection_timeout=3,
-    # Only short, idempotent runtime probes exist. Revisit before adding agents.
-    broker_transport_options={"visibility_timeout": 30, "socket_timeout": 3, "socket_connect_timeout": 3},
-    result_backend_transport_options={"visibility_timeout": 30, "global_keyprefix": "menu-runtime:"},
-    visibility_timeout=30,
+    # Longer than the fake task hard limit (50s). DB claims still fence delivery.
+    # Real paid agents need a separate execution/timeout review before wiring in.
+    broker_transport_options={"visibility_timeout": 90, "socket_timeout": 3, "socket_connect_timeout": 3},
+    result_backend_transport_options={"visibility_timeout": 90, "global_keyprefix": "menu-runtime:"},
+    visibility_timeout=90,
     redis_socket_timeout=3,
     redis_socket_connect_timeout=3,
     result_expires=3600,

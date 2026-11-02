@@ -1,6 +1,7 @@
 """Role-specific probes. Errors never echo connection URLs or credentials."""
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import socket
 import sys
 from urllib.request import urlopen
@@ -10,10 +11,14 @@ from menu_worker.tasks import HEARTBEAT_KEY, result_store
 
 
 def check(role: str) -> bool:
-    if role == "worker":
-        name = f"runtime@{socket.gethostname()}"
+    if role in {"worker", "job-worker"}:
+        prefix = "runtime" if role == "worker" else "content"
+        name = f"{prefix}@{socket.gethostname()}"
         return any(reply.get(name, {}).get("ok") == "pong"
                    for reply in app.control.ping(destination=[name], timeout=3))
+    if role == "job-dispatcher":
+        stamp = datetime.fromisoformat(Path("/tmp/job-dispatcher.health").read_text())
+        return 0 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= 30
     if role == "beat":
         # This is end-to-end freshness: Beat dispatch AND Worker consumption.
         with result_store() as client:

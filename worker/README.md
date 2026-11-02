@@ -1,6 +1,6 @@
 # Celery Worker · Beat · Flower 로컬 실행 기반
 
-Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 독립 실행 환경이다. Python 3.12, Celery 5.6.3, Flower 2.2.0을 사용하며 Compose 프로젝트 이름은 `me-nu-worker`다. 실제 애니 콘텐츠 생성·검수·적재 작업은 후속 연결 범위다.
+Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 독립 실행 환경이다. Python 3.12, Celery 5.6.3, Flower 2.2.0을 사용하며 Compose 프로젝트 이름은 `me-nu-worker`다. 단건 콘텐츠 큐는 가짜 Agent로 접수·상태·저장·복구를 구현했다. 실제 애니 Agent·LLM·서비스 적재 연결은 후속 범위다.
 
 | 서비스 | 역할 |
 | --- | --- |
@@ -8,8 +8,12 @@ Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 �
 | `worker` | 점검용 작업 실행 |
 | `beat` | 기본 30초 간격으로 heartbeat 작업 전송 |
 | `flower` | Worker·작업 상태 조회. 로컬 접속·인증·읽기 전용 설정 사용 |
+| `jobs-db` | 전용 PostgreSQL 17. 콘텐츠 작업·실행 이력 저장, 호스트 포트 없음 |
+| `job-init` | 전용 DB의 버전 1 스키마 초기화 후 종료 |
+| `job-worker` | `content-generation` 큐의 가짜 Agent 실행, 동시 실행 1개 |
+| `job-dispatcher` | DB에 접수된 작업 전달 및 중단된 작업 상태 정리 |
 
-이 Compose는 API·PostgreSQL·콘텐츠 Agent·추천 모델을 실행하지 않는다. 기존 로그인 세션 Redis와도 분리되어 있다. Checking의 추천 컨테이너와 매일 추천 계산 일정은 기존 구성을 따른다.
+이 Compose는 콘텐츠 작업용 PostgreSQL을 별도로 실행한다. 서비스 API·서비스 PostgreSQL·실제 콘텐츠 Agent·추천 모델은 실행하지 않는다. 기존 로그인 세션 Redis와도 분리되어 있다. Checking의 추천 컨테이너와 매일 추천 계산 일정은 기존 구성을 따른다. 작업 이미지에는 기존 backend/model/agents 소스나 서비스 환경 파일이 포함되지 않는다.
 
 ## 시작
 
@@ -21,7 +25,7 @@ docker compose --env-file worker/.env -f compose.worker.yaml up -d --build --wai
 docker compose --env-file worker/.env -f compose.worker.yaml ps
 ```
 
-초기화 명령은 임의의 Flower 비밀번호를 생성해 `worker/.env`에 저장하며 기존 파일을 덮어쓰지 않는다. 이 파일은 Git에서 제외된다. Flower 접속 정보는 본인의 로컬 파일에서 확인한다.
+초기화 명령은 Flower와 전용 DB 비밀번호를 `worker/.env`에 저장한다. 기존 파일에는 누락된 `CONTENT_JOB_DB_PASSWORD`만 추가하며 기존 Flower 설정은 보존한다. 비밀번호는 출력하지 않는다. 파일은 Git에서 제외된다. DB 비밀번호는 최초 볼륨 초기화 때 적용되므로 볼륨을 만든 뒤 임의로 바꾸지 않는다. Flower 접속 정보는 본인의 로컬 파일에서 확인한다.
 
 [Flower](http://127.0.0.1:5555)는 기본적으로 `127.0.0.1:5555`에만 열린다. 로그인에는 `FLOWER_BASIC_AUTH`의 `사용자:비밀번호`를 사용한다. 포트가 이미 사용 중이면 `worker/.env`의 `FLOWER_PORT`를 바꾸고 위 기동 명령을 다시 실행한다. Redis는 호스트 포트를 열지 않는다.
 
@@ -70,9 +74,9 @@ Redis는 작업 전용 볼륨에 AOF를 저장하며 `appendfsync everysec`을 �
 
 ## 구현 범위
 
-현재 단계는 로컬 실행 기반이다. 서버 배포·도메인 연결·실제 콘텐츠 정기 생성은 포함하지 않는다. 콘텐츠 큐를 연결할 때는 다음 항목이 추가로 필요하다.
+현재 단계는 로컬 실행 기반과 가짜 Agent 단건 큐다. 서버 배포·도메인 연결·실제 콘텐츠 정기 생성은 포함하지 않는다. 실제 Agent를 연결할 때는 다음 항목이 추가로 필요하다.
 
-- 후보별 DB 작업 기록, 실행 점유와 중복 방지, 큐 전송 실패 복구.
+- 실제 출처 등록·입력 검증과 기존 콘텐츠 중복 검사 연결.
 - 기존 애니 Agent의 Python 3.12 실행 환경·한글 폰트·영속 출력 연결.
 - 생성 결과와 원본 PNG 보존, 기존 검수·bundle 검증·적재 계약 유지.
 - 유료 생성 재시도와 완료 결과 재적재의 분리, 후보·시도·비용 제한.
@@ -80,7 +84,60 @@ Redis는 작업 전용 볼륨에 AOF를 저장하며 `appendfsync everysec`을 �
 
 기존 `agent_run.queue_task_id`의 캐러셀 적재 식별자와 새 Celery 실행 ID는 별도로 관리해야 한다. 추천 계산을 Celery로 이전하는 작업은 이 실행 기반에 포함하지 않는다.
 
-현재 Worker는 동시 실행 1개이며 점검 작업의 soft/hard 제한은 15/20초, Redis visibility timeout은 30초다. 실제 장시간 Agent를 연결할 때는 실행 제한·재전달·중단 복구 정책을 함께 바꿔야 한다. 점검 작업의 재전달 설정을 유료 생성에 그대로 적용하지 않는다.
+각 Worker는 동시 실행 1개다. 점검 작업의 soft/hard 제한은 15/20초, 가짜 콘텐츠 작업은 45/50초, Redis visibility timeout은 90초다. 실제 장시간 Agent를 연결할 때는 실행 제한·재전달·중단 복구 정책을 함께 바꿔야 한다. 가짜 Agent의 성공 결과를 유료 생성 복구 검증으로 간주하지 않는다.
+
+## 가짜 Agent 단건 콘텐츠 큐
+
+먼저 위 시작 명령으로 환경을 기동한다. `job-init`이 종료 코드 0으로 끝나면 정상이다. 다음 한 줄은 실제 Redis·Worker를 통해 정상·보류·생략·실패와 중복 요청·중복 메시지를 확인한다. 실제 LLM 호출은 0회이며 테스트 작업 기록은 조회를 위해 보존한다.
+
+```powershell
+docker compose --env-file worker/.env -f compose.worker.yaml exec -T job-dispatcher python -m menu_worker.jobs smoke
+```
+
+직접 한 건을 접수하고 조회하려면 다음 명령을 사용한다. 같은 `demo-1` 입력으로 다시 실행하면 동일한 작업을 반환한다. 새 작업은 요청 키와 URL의 `demo-1`을 함께 변경한다.
+
+```powershell
+$job = docker compose --env-file worker/.env -f compose.worker.yaml exec -T job-dispatcher python -m menu_worker.jobs submit --idempotency-key demo-1 --source fixture --url https://example.invalid/success/demo-1 --content-type news | ConvertFrom-Json
+$job.job_id
+docker compose --env-file worker/.env -f compose.worker.yaml exec -T job-dispatcher python -m menu_worker.jobs show --job-id $job.job_id
+```
+
+입력은 `idempotency_key`, `source_id`, `source_url`, `content_type` 네 개로 고정한다. `fixture` 출처와 `https://example.invalid/시나리오/식별자` URL만 허용한다. 이 주소는 네트워크로 요청하지 않는다. 활성 콘텐츠 유형 10개를 허용하며 서버 경로·모델·자격 증명은 입력할 수 없다.
+
+| URL 시나리오 | `execution_status` | `outcome` |
+| --- | --- | --- |
+| `/success/demo-1` | `succeeded` | `ready_for_staging` |
+| `/held/demo-2` | `succeeded` | `held` |
+| `/skipped/demo-3` | `succeeded` | `skipped` |
+| `/fail/demo-4` | `failed` | null |
+| `/slow/demo-5` | 약 20초 동안 `running`, 이후 `succeeded` | `ready_for_staging` |
+
+같은 요청 키에 다른 입력은 `idempotency_conflict`, 다른 키로 같은 정규화 URL을 제출하면 `candidate_exists`와 기존 작업 ID를 반환한다. `utm_*`, `fbclid`, `gclid`는 URL 중복 판단에서 제외한다. 현재 실제 Agent 식별자가 URL 기반이므로 유형만 바꿔 동일 URL을 다시 접수할 수 없다.
+
+DB의 `content_generation_job`이 영속 상태의 기준이며 `content_generation_attempt`가 실행 점유·Celery ID·중단 이력을 보관한다. `menu_worker_schema`는 마이그레이션 버전만 관리한다. 초기화는 명시된 전용 DB에만 적용하고 비어 있지 않은 미등록 DB는 거부한다. 서비스 Alembic 마이그레이션과는 분리되어 있다.
+
+dispatcher는 2초마다 확인하며 전송된 미실행 작업은 30초 뒤 재전송할 수 있다. 생성 시작 전 만료된 점유는 다시 대기 상태로 돌린다. 생성 시작 기록 이후의 중단은 `needs_attention`으로 남기며 자동 재생성하지 않는다. 만료된 점유 토큰은 새 작업 상태를 덮어쓸 수 없다.
+
+산출물은 `job-artifacts` 볼륨의 `/var/lib/menu-jobs/jobs/{job_id}/attempts/{generation_attempt_id}/`에 저장한다. 원본 결과 JSON·fixture PNG·로그를 기록하고 파일 해시가 담긴 `manifest.json`을 마지막에 원자적으로 저장한다. 모든 결과는 `simulated: true`, `producer: fake_ani_menu_agent`이며 서비스 캐러셀 적재 형식이 아니다. LLM/Agent SQLite나 실제 카드 렌더링은 사용하지 않는다.
+
+`needs_attention` 작업에 완성된 파일이 있다면 기존 파일 검증·DB 저장만 재개할 수 있다. 이 명령은 Agent를 다시 실행하지 않는다. 불완전·변조 파일은 확인 필요 상태를 유지한다.
+
+```powershell
+docker compose --env-file worker/.env -f compose.worker.yaml exec -T job-worker python -m menu_worker.jobs recover --job-id $job.job_id
+```
+
+대기 중인 작업은 `jobs cancel --job-id ...`로 취소할 수 있다. 실행 중 강제 취소는 제공하지 않는다. Flower의 Celery `SUCCESS`와 DB의 업무 상태는 다를 수 있으므로 결과는 `jobs show`로 확인한다.
+
+## 콘텐츠 큐 회귀 검증
+
+단위 테스트는 네트워크 없이, DB 통합 테스트는 `jobs-db` 안의 별도 `menu_content_jobs_test` DB에서 실행한다. 통합 테스트가 테스트 DB를 생성하고 자신이 만든 작업만 정리한다. 실제 서비스 DB 이름은 허용하지 않는다.
+
+```powershell
+docker run --rm --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,size=32m --cap-drop ALL me-nu-worker:local python -m unittest discover -s tests -v
+docker compose --env-file worker/.env -f compose.worker.yaml exec -T job-worker python tests/run_postgres.py
+```
+
+DB 통합 테스트는 동시 접수·점유, 전송 실패, 점유 만료, 오래된 토큰 차단, 생성 결과 저장 실패 후 재생성 없는 복구를 검증한다. 네트워크 없는 실행에서는 DB 테스트가 명시적으로 skip된다.
 
 ## 2026-11-02 로컬 검증
 
@@ -94,3 +151,14 @@ Redis는 작업 전용 볼륨에 AOF를 저장하며 `appendfsync everysec`을 �
 - 기존 PostgreSQL 2개와 로그인 세션 Redis의 컨테이너 ID·시작 시각이 전후 동일함.
 
 콘텐츠 Agent·LLM·추천 배치 실행과 서비스 DB 마이그레이션은 수행하지 않았다. 이 결과는 로컬 실행 기반 검증이며 운영 배포나 유료 콘텐츠 생성의 복구 검증을 뜻하지 않는다.
+
+## 2026-11-02 가짜 콘텐츠 큐 검증
+
+- 최종 이미지의 네트워크 없는 단위 테스트 48개 통과. DB 통합 테스트 13개는 이 실행에서 skip하고 별도 실행했다.
+- 전용 `menu_content_jobs_test` PostgreSQL에서 통합 테스트 13개 통과.
+- 실제 Redis·dispatcher·Worker로 정상/보류/생략/실패 처리와 동일 요청·메시지 중복 방지 확인.
+- `slow` 가짜 작업 실행 중 `job-worker` 컨테이너를 SIGKILL한 뒤 재시작: `needs_attention`, `attempt_count=1`, 자동 재생성 없음 확인.
+- 완성 산출물 이후 DB 저장 실패는 파일을 다시 생성하지 않고 복구. 부분·변조 산출물은 확인 필요 상태 유지.
+- 기존 runtime smoke의 재시도·Beat heartbeat·Flower 인증/읽기 전용/SUCCESS 확인, `pip check` 통과.
+- 기존 서비스 PostgreSQL 2개와 세션 Redis의 컨테이너 ID·시작 시각이 작업 전후 동일. backend/model/agents/배포 설정 변경 없음.
+- 실제 LLM 호출 0회, 서비스 콘텐츠 적재·추천 계산·서비스 DB 마이그레이션 없음. 테스트용 업무 DB·볼륨은 보존했고 서비스들은 정상 기동 상태다.

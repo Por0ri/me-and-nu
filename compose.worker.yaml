@@ -30,6 +30,11 @@ x-environment: &environment
   CELERY_RESULT_BACKEND: redis://redis-tasks:6379/1
   CELERY_BEAT_INTERVAL_SECONDS: ${CELERY_BEAT_INTERVAL_SECONDS:-30}
 
+x-job-environment: &job-environment
+  <<: *environment
+  CONTENT_JOB_DATABASE_URL: "postgresql://menu_jobs:${CONTENT_JOB_DB_PASSWORD:?Run python worker/setup_local.py and pass --env-file worker/.env}@jobs-db:5432/menu_content_jobs"
+  CONTENT_JOB_ARTIFACT_ROOT: /var/lib/menu-jobs
+
 services:
   redis-tasks:
     image: redis:8.2-alpine
@@ -59,6 +64,82 @@ services:
       test: [CMD, python, -m, menu_worker.health, worker]
       interval: 15s
       timeout: 7s
+      retries: 3
+      start_period: 15s
+
+  jobs-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: menu_jobs
+      POSTGRES_DB: menu_content_jobs
+      POSTGRES_PASSWORD: ${CONTENT_JOB_DB_PASSWORD:?Run python worker/setup_local.py and pass --env-file worker/.env}
+    command: [postgres, -c, shared_buffers=64MB, -c, max_connections=20]
+    volumes: [jobs-db-data:/var/lib/postgresql/data]
+    networks: [tasks]
+    mem_limit: 384m
+    cpus: "0.25"
+    pids_limit: 64
+    shm_size: 64m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U menu_jobs -d menu_content_jobs"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  job-init:
+    <<: *runtime
+    restart: "no"
+    environment: *job-environment
+    command: [python, -m, menu_worker.jobs, init-db]
+    depends_on:
+      jobs-db:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  job-worker:
+    <<: *runtime
+    environment: *job-environment
+    command: [celery, -A, "menu_worker.app:app", worker, --loglevel=INFO, --concurrency=1, --queues=content-generation, "--hostname=content@%h", --events]
+    volumes: [job-artifacts:/var/lib/menu-jobs]
+    stop_grace_period: 60s
+    depends_on:
+      redis-tasks:
+        condition: service_healthy
+      jobs-db:
+        condition: service_healthy
+      job-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -m, menu_worker.health, job-worker]
+      interval: 15s
+      timeout: 7s
+      retries: 3
+      start_period: 15s
+
+  job-dispatcher:
+    <<: *runtime
+    environment: *job-environment
+    command: [python, -m, menu_worker.jobs, dispatch, --loop]
+    volumes: [job-artifacts:/var/lib/menu-jobs:ro]
+    depends_on:
+      redis-tasks:
+        condition: service_healthy
+      jobs-db:
+        condition: service_healthy
+      job-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -m, menu_worker.health, job-dispatcher]
+      interval: 15s
+      timeout: 5s
       retries: 3
       start_period: 15s
 
@@ -103,6 +184,8 @@ volumes:
   redis-tasks-data:
   beat-data:
   flower-data:
+  jobs-db-data:
+  job-artifacts:
 
 networks:
   tasks:

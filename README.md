@@ -8,7 +8,7 @@ Next.js, FastAPI, PostgreSQL, Redis 기반 로컬 V1 테스트 프로젝트입�
 
 팀 테스트 서버용 Dockerfile, 독립 Compose 설정, 환경변수 준비와 실행 순서는 [백엔드 배포 안내](deploy/README.md)를 참고하세요. 카카오·네이버 OAuth 백엔드와 프론트 없이 확인하는 절차는 [OAuth 설정 안내](docs/OAUTH_T02_1_SETUP.md)에 정리했습니다. 기본 예제의 OAuth 설정은 비활성이며, 이미 구성된 환경의 앱 등록·DB 적용·배포 상태는 각 환경 기록을 확인하세요.
 
-Celery Worker·Beat·Flower의 독립 로컬 실행과 점검은 [작업 큐 실행 안내](worker/README.md)를 참고하세요. 점검용 작업만 실행하며 실제 애니 콘텐츠 생성 연결은 후속 범위입니다. 기존 추천 배치는 유지합니다.
+Celery Worker·Beat·Flower와 가짜 Agent 단건 콘텐츠 큐의 로컬 실행·접수·조회·복구는 [작업 큐 실행 안내](worker/README.md)를 참고하세요. 작업 DB는 별도 PostgreSQL을 사용하며 실제 LLM 호출과 서비스 콘텐츠 적재는 연결하지 않았습니다. 기존 추천 배치는 유지합니다.
 
 ## 준비
 
