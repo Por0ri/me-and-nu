@@ -1,6 +1,8 @@
 .carousel { position: relative; height: 100%; min-width: 0; color: #27272a; }
 .cover { position: relative; z-index: 1; border-radius: 8px; box-shadow: 0 0 2px #e0bafb; }
 .track { display: grid; grid-auto-flow: column; grid-auto-columns: 100%; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; touch-action: auto; overscroll-behavior-x: contain; overscroll-behavior-y: auto; scrollbar-width: none; border-radius: 8px; }
+/* Keep positioned copy inside the track, below its sibling navigation buttons. */
+.track { isolation: isolate; }
 .track::-webkit-scrollbar { display: none; }
 .track:focus-visible, .overlay:focus-visible, .carousel button:focus-visible { outline: 3px solid #7043b4; outline-offset: -3px; }
 .slide { min-width: 0; scroll-snap-align: start; scroll-snap-stop: always; }
@@ -13,6 +15,19 @@
 .overlay { position: absolute; z-index: 1; overflow: auto; scrollbar-width: thin; color: white; text-shadow: 0 1px 4px #000; overflow-wrap: anywhere; word-break: keep-all; }
 .stage:has([data-carousel-image-state="loading"]) .overlay,
 .stage:has([data-carousel-image-state="error"]) .overlay { padding: 8px; border-radius: 8px; background: rgb(39 39 42 / 94%); text-shadow: none; }
+/* Without image pixels there is no image-relative layout to preserve. Use a
+   separate status row and a scrollable copy row so neither can cover the other.
+   Only failures override the inline server box; successful images retain it. */
+.stage { --error-right: 12px; --error-bottom: 12px; }
+.carousel[data-content-carousel="home"] .stage { --error-right: 52px; --error-bottom: 48px; }
+.stage:has([data-carousel-image-state="error"]) { display: flex; flex-direction: column; background: #efe7ff; }
+.stage:has([data-carousel-image-state="error"]) .imageFrame { position: static; flex: none; }
+.stage:has([data-carousel-image-state="error"]) .imageState { position: static; padding: 16px var(--error-right) 12px 12px; }
+.stage:has([data-carousel-image-state="error"]) .overlay {
+  position: relative; flex: 1; min-height: 0; margin: 0 var(--error-right) var(--error-bottom) 12px;
+  left: auto !important; top: auto !important; width: auto !important; height: auto !important;
+  max-width: none !important; max-height: none !important;
+}
 .eyebrow { margin: 0 0 1.2cqw; font-size: clamp(10px, 3.3cqw, 13px); line-height: 1.35; font-weight: 600; }
 .title { margin: 0; font-size: clamp(14px, 5.2cqw, 21px); line-height: 1.25; font-weight: 750; letter-spacing: -.025em; }
 .title span { display: block; }
