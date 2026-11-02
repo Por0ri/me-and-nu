@@ -7,7 +7,7 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from menu_worker.job_contract import JobInput
+from menu_worker.job_checks import smoke_input
 from menu_worker.job_store import JobStore
 from menu_worker.jobs import send_delivery
 
@@ -17,7 +17,7 @@ def main():
     foreign_kind = {"fake": "anime", "anime": "fake"}[kind]
     store = JobStore()
     key = "cross-delivery-" + uuid4().hex
-    request = JobInput(key, "fixture", f"https://example.invalid/success/{key}", "news")
+    request = smoke_input(foreign_kind, "success", key)
     job = store.submit(request, job_kind=foreign_kind)
 
     # Valid local task name, broker and queue, intentionally wrong job ID.

@@ -4,6 +4,8 @@ from pathlib import Path
 from threading import Event, Thread
 
 from menu_worker.job_artifacts import ArtifactError, FakeAgentError, generate_anime_probe, generate_fake, validate_artifacts
+from menu_worker.anime_catalog import AnimeInputError
+from menu_worker.job_contract import INPUT_FIELDS, JobInputError, validate_job_request
 
 
 class LostClaim(RuntimeError):
@@ -49,6 +51,12 @@ def run_job(store, root: Path, job_id: str, task_id: str | None = None, *, recov
     with Lease(store, job) as lease:
         try:
             if not recover:
+                if expected_kind == "anime":
+                    fields = {key: job[key] for key in INPUT_FIELDS}
+                    fields["menu_work_id"] = job["menu_work_id"]
+                    _, canonical, digest = validate_job_request(fields, "anime")
+                    if (canonical, digest) != (job["canonical_url"], job["input_sha256"]):
+                        raise JobInputError("Stored input identity mismatch", "input_identity_mismatch")
                 if not store.mark_generation_started(job_id, token, expected_kind=expected_kind):
                     raise LostClaim("Job claim was lost")
                 generate = generate_anime_probe if expected_kind == "anime" else generate_fake
@@ -56,6 +64,9 @@ def run_job(store, root: Path, job_id: str, task_id: str | None = None, *, recov
             lease.ensure()
             evidence = validate_artifacts(root, job)
             completed = store.complete(job_id, token, execution_status="succeeded", expected_kind=expected_kind, **evidence)
+        except (JobInputError, AnimeInputError) as error:
+            completed = store.complete(job_id, token, execution_status="failed",
+                                       expected_kind=expected_kind, error_code=error.code)
         except FakeAgentError:
             completed = store.complete(job_id, token, execution_status="failed",
                                        expected_kind=expected_kind, error_code="fake_generation_failed")

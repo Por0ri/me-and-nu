@@ -32,10 +32,11 @@ class JobContractTests(unittest.TestCase):
         v1_hash = "d60a72458c4d08da9f63c5bcfa906fe89c9cfb2b79e372745c2c33e01eaee55e"
         self.assertEqual(request.input_sha256, v1_hash)
         self.assertEqual(request.hash_for_kind("fake"), v1_hash)
-        self.assertNotEqual(request.hash_for_kind("anime"), v1_hash)
+        with self.assertRaises(JobInputError):
+            request.hash_for_kind("anime")
 
-    def test_only_success_fixture_can_enter_the_anime_probe(self):
-        for scenario in ("held", "skipped", "fail", "slow"):
+    def test_fixture_cannot_enter_anime_queue(self):
+        for scenario in ("success", "held", "skipped", "fail", "slow"):
             request = validate_input(self.request(source_url=f"https://example.invalid/{scenario}/one"))
             with self.subTest(scenario=scenario), self.assertRaises(JobInputError):
                 request.hash_for_kind("anime")

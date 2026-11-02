@@ -106,6 +106,8 @@ def _write_simulation(root, job, pulse, *, producer, outcome, producer_status, i
         "skip_reason": "duplicate" if outcome == "skipped" else None,
         "llm_calls": 0, "service_database_changed": False,
     }
+    if producer == "anime_queue_probe":
+        result["validated_input"] = _anime_evidence(job)
     log = f"{producer}: simulated execution, zero LLM calls.\n".encode()
     files = {"result.json": _json(result), "agent.log": log}
     if include_card:
@@ -119,6 +121,10 @@ def _write_simulation(root, job, pulse, *, producer, outcome, producer_status, i
         "artifact_version": 1,
         "files": {name: {"sha256": sha256(data), "bytes": len(data)} for name, data in files.items()},
     }))
+
+
+def _anime_evidence(job):
+    return {key: job[key] for key in ("source_id", "canonical_url", "content_type", "menu_work_id")}
 
 
 def validate_artifacts(root: Path, job: dict) -> dict:
@@ -155,6 +161,8 @@ def validate_artifacts(root: Path, job: dict) -> dict:
         }
         if any(result.get(key) != value for key, value in expected_identity.items()):
             raise ArtifactError("Artifact identity mismatch")
+        if anime_probe and job.get("menu_work_id") is not None and result.get("validated_input") != _anime_evidence(job):
+            raise ArtifactError("Validated source or work mismatch")
         dispositions = {"ready_for_staging": "ready_for_feed", "held": "held_for_quality_review",
                         "skipped": "duplicate_skipped"}
         if anime_probe:

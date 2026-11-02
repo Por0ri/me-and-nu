@@ -15,6 +15,7 @@ ADMIN_ENV = "CONTENT_JOB_MIGRATION_TEST_ADMIN_URL"
 ADMIN_DB = "menu_content_jobs_test"
 MIGRATION_DB = "menu_content_jobs_migration_test"
 V1_SQL = Path(__file__).resolve().parents[1] / "menu_worker/migrations/001_content_jobs.sql"
+V2_SQL = V1_SQL.with_name("002_job_kind.sql")
 
 
 @unittest.skipUnless(os.environ.get(ADMIN_ENV), "Run tests/run_postgres.py on the isolated jobs-db service")
@@ -76,15 +77,18 @@ class JobSchemaMigrationTests(unittest.TestCase):
 
     def test_fresh_install_and_concurrent_or_repeated_initialize(self):
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [2, 2])
+        self.assertEqual([result["version"] for result in results], [3, 3])
         self.assertCountEqual([result["created"] for result in results], [True, False])
         store = self.store()
         repeated = store.initialize()
-        self.assertEqual(repeated["version"], 2)
+        self.assertEqual(repeated["version"], 3)
         self.assertFalse(repeated["created"])
         for kind in ("fake", "anime"):
             request = {"idempotency_key": kind, "source_id": "fixture", "content_type": "news",
                        "source_url": f"https://example.invalid/success/fresh-{kind}"}
+            if kind == "anime":
+                request.update(source_id="one_piece_official", content_type="goods", menu_work_id=8,
+                               source_url="https://one-piece.com/news/82812/index.html")
             job = store.submit(request, job_kind=kind)
             self.assertTrue(job["created"])
             self.assertEqual(job["job_kind"], kind)
@@ -147,7 +151,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
         job_ids, inputs = self.seed_v1()
         old_jobs, old_attempts = self.snapshot()
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [2, 2])
+        self.assertEqual([result["version"] for result in results], [3, 3])
         self.assertFalse(self.store().initialize()["created"])
         jobs, attempts = self.snapshot()
         self.assertEqual(len(jobs), len(old_jobs))
@@ -155,6 +159,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
         for before, after in zip(old_jobs, jobs, strict=True):
             self.assertEqual({column: after[column] for column in before}, before)
             self.assertEqual(after["job_kind"], "fake")
+            self.assertIsNone(after["menu_work_id"])
         for before, after in zip(old_attempts, attempts, strict=True):
             self.assertEqual({column: after[column] for column in before}, before)
         store = self.store()
@@ -165,6 +170,85 @@ class JobSchemaMigrationTests(unittest.TestCase):
         self.assertIsNone(store.claim(str(job_ids[0])))
         self.assertIsNone(store.claim(str(job_ids[1]), expected_kind="anime"))
         self.assertIsNotNone(store.claim(str(job_ids[1])))
+
+    def seed_v2_anime_probe(self, connection, phase):
+        job_id, attempt_id, token = uuid4(), uuid4(), uuid4()
+        url = f"https://example.invalid/success/v2-{phase}"
+        payload = {"source_id": "fixture", "source_url": url, "content_type": "news", "job_kind": "anime"}
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        connection.execute(
+            """INSERT INTO public.content_generation_job
+               (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,input_sha256,job_kind)
+               VALUES (%s,%s,'fixture',%s,%s,'news',%s,'anime')""",
+            (job_id, f"v2-{phase}", url, url, digest),
+        )
+        if phase == "queued":
+            return str(job_id)
+
+        running = phase in ("before_start", "after_start")
+        started = phase != "before_start"
+        status = "running" if running else phase
+        outcome = "routing_verified" if phase == "succeeded" else None
+        producer = "anime_probe_completed" if phase == "succeeded" else None
+        path = f"jobs/{job_id}/attempts/{attempt_id}/manifest.json" if phase == "succeeded" else None
+        result_hash = hashlib.sha256(b"preserved-v2-anime-probe").hexdigest() if path else None
+        connection.execute(
+            """INSERT INTO public.content_generation_attempt
+               (attempt_id,job_id,attempt_no,mode,celery_task_id,claim_token,execution_status,generation_started_at,
+                outcome,producer_status,artifact_path,result_sha256,finished_at)
+               VALUES (%s,%s,1,'generation',%s,%s,%s,CASE WHEN %s THEN CURRENT_TIMESTAMP END,
+                       %s,%s,%s,%s,CASE WHEN %s THEN CURRENT_TIMESTAMP END)""",
+            (attempt_id, job_id, f"v2-task-{phase}", token, status, started, outcome, producer, path,
+             result_hash, not running),
+        )
+        connection.execute(
+            """UPDATE public.content_generation_job SET execution_status=%s,
+               current_attempt_id=%s,generation_attempt_id=%s,attempt_count=1,claim_token=%s,
+               lease_expires_at=CASE WHEN %s THEN clock_timestamp()-INTERVAL '1 second' END,
+               generation_started_at=CASE WHEN %s THEN CURRENT_TIMESTAMP END,
+               outcome=%s,producer_status=%s,artifact_path=%s,result_sha256=%s,
+               finished_at=CASE WHEN %s THEN CURRENT_TIMESTAMP END WHERE job_id=%s""",
+            (status, attempt_id, attempt_id, token if running else None, running, started,
+             outcome, producer, path, result_hash, not running, job_id),
+        )
+        return str(job_id)
+
+    def test_concurrent_v2_upgrade_preserves_results_and_retires_fixture_delivery(self):
+        phases = ("succeeded", "queued", "needs_attention", "before_start", "after_start")
+        with self.connect() as connection:
+            for migration in (V1_SQL, V2_SQL):
+                connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
+            ids = {phase: self.seed_v2_anime_probe(connection, phase) for phase in phases}
+        old_jobs, old_attempts = self.snapshot()
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [3, 3])
+        store = self.store()
+        self.assertFalse(store.initialize()["created"])
+        jobs, attempts = self.snapshot()
+        self.assertEqual(attempts, old_attempts)
+        for before, after in zip(old_jobs, jobs, strict=True):
+            updated_fields = set()
+            if str(before["job_id"]) == ids["queued"]:
+                updated_fields = {"execution_status", "error_code", "updated_at", "finished_at"}
+                self.assertEqual(after["execution_status"], "cancelled")
+                self.assertEqual(after["error_code"], "LEGACY_ANIME_FIXTURE_RETIRED")
+                self.assertIsNotNone(after["finished_at"])
+            for column in before.keys() - updated_fields:
+                self.assertEqual(after[column], before[column], column)
+            self.assertIsNone(after["menu_work_id"])
+
+        self.assertEqual(store.list_pending(expected_kind="anime"), [])
+        self.assertIsNone(store.claim(ids["queued"], expected_kind="anime"))
+        self.assertIsNone(store.claim_recovery(ids["needs_attention"], expected_kind="anime"))
+        store.recover_expired(expected_kind="anime")
+        for phase, expected in (("before_start", "cancelled"), ("after_start", "needs_attention")):
+            with self.subTest(phase=phase):
+                job = store.get(ids[phase])
+                self.assertEqual(job["execution_status"], expected)
+                self.assertEqual(job["error_code"], "LEGACY_ANIME_FIXTURE_RETIRED")
+                self.assertEqual(len(job["attempts"]), 1)
+                self.assertIsNone(store.claim(ids[phase], expected_kind="anime"))
+                self.assertIsNone(store.claim_recovery(ids[phase], expected_kind="anime"))
+        self.assertEqual(store.list_pending(expected_kind="anime"), [])
 
 
 if __name__ == "__main__":

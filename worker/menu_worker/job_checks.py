@@ -9,6 +9,14 @@ from menu_worker.job_contract import JobInput
 from menu_worker.jobs import job_route, send_delivery
 
 
+def smoke_input(kind, scenario, key):
+    if kind == "anime":
+        # Synthetic article path on the catalog's One Piece source, never fetched.
+        article = uuid4().int % 10**16
+        return JobInput(key, "one_piece_official", f"https://one-piece.com/news/{article}/index.html", "goods", 8)
+    return JobInput(key, "fixture", f"https://example.invalid/{scenario}/{key}", "news")
+
+
 def smoke(store, timeout=60, *, kind="fake"):
     namespace = "smoke-" + uuid4().hex
     expected = {"success": ("succeeded", "ready_for_staging"), "held": ("succeeded", "held"),
@@ -20,8 +28,7 @@ def smoke(store, timeout=60, *, kind="fake"):
     root = Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"])
     jobs = {}
     for scenario in expected:
-        request = JobInput(f"{namespace}-{scenario}", "fixture",
-                           f"https://example.invalid/{scenario}/{namespace}", "news")
+        request = smoke_input(kind, scenario, f"{namespace}-{scenario}")
         job = store.submit(request, job_kind=kind)
         duplicate = store.submit(request, job_kind=kind)
         if duplicate["job_id"] != job["job_id"] or duplicate["created"]:
@@ -56,4 +63,6 @@ def smoke(store, timeout=60, *, kind="fake"):
                 raise RuntimeError("Stored artifact and job result differ")
         report[scenario] = {"job_id": job_id, "execution_status": row["execution_status"],
                             "outcome": row["outcome"], "worker": receipt["worker"]}
+        if kind == "anime":
+            report[scenario].update(source_id=row["source_id"], menu_work_id=row["menu_work_id"])
     return {f"{kind}_jobs": report, "duplicate_request": "deduplicated", "duplicate_delivery": "ignored", "llm_calls": 0}

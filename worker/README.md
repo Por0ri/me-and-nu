@@ -9,7 +9,7 @@ Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 �
 | `beat` | 기본 30초 간격으로 heartbeat 작업 전송 |
 | `flower` | Worker·작업 상태 조회. 로컬 접속·인증·읽기 전용 설정 사용 |
 | `jobs-db` | 전용 PostgreSQL 17. 콘텐츠 작업·실행 이력 저장, 호스트 포트 없음 |
-| `job-init` | 전용 DB를 v2로 초기화하거나 기존 v1 작업을 마이그레이션하고 종료 |
+| `job-init` | 작업 전용 DB를 v3로 초기화하거나 기존 v1/v2 데이터에 순차 마이그레이션 적용 |
 | `job-worker` | `content-generation` 큐의 가짜 Agent 실행, 동시 실행 1개 |
 | `job-dispatcher` | fake 작업 전달 및 중단된 fake 작업 정리 |
 | `anime-redis`, `anime-worker`, `anime-dispatcher` | 선택형 `anime` 프로필. 별도 Redis와 산출물 볼륨에서 애니 큐 전달을 점검 |
@@ -20,7 +20,7 @@ Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 �
 
 Docker Desktop의 Linux 컨테이너와 Docker Compose가 필요하다. 명령은 저장소 루트에서 실행한다. `.env` 초기화에 사용하는 호스트 Python과 실제 Worker를 실행하는 컨테이너 Python은 별개다.
 
-v1 환경을 업그레이드할 때는 아래 시작 명령 전에 `docker compose --env-file worker/.env -f compose.worker.yaml stop job-dispatcher job-worker`를 먼저 실행한다. v1 소비자에는 작업 종류 검사가 없으므로 두 버전의 소비자를 동시에 운영하지 않는다. PostgreSQL과 산출물 볼륨은 유지한다.
+기존 환경은 아래 시작 명령 전에 이전 버전의 콘텐츠 소비자를 종료한다. v1에서는 `docker compose --env-file worker/.env -f compose.worker.yaml stop job-dispatcher job-worker`를 사용한다. v2에서 anime 프로필도 사용했다면 `--profile anime stop job-dispatcher anime-dispatcher job-worker anime-worker`로 네 서비스를 종료한다. PostgreSQL과 산출물 볼륨은 유지한다. 빌드에는 Compose 설정의 추가 빌드 컨텍스트가 필요하다.
 
 ```powershell
 python worker/setup_local.py
@@ -140,7 +140,7 @@ v2에서는 작업 생성 시 `job_kind`가 결정된다. 기존 작업은 `fake
 | `fake` | `redis-tasks` / `content-generation` | `content@...` | 기존 시나리오별 결과 |
 | `anime` | `anime-redis` / `anime-generation` | `anime@...` | `routing_verified` |
 
-anime Worker는 `fixture` 출처의 `https://example.invalid/success/<id>` 작업을 받아 실행 확인 JSON을 기록한다. 두 종류 모두 외부 호출 없이 실행된다. 기본 Flower는 기존 `redis-tasks`를 모니터링하므로 anime 작업은 `jobs show` 또는 아래 smoke의 Worker 이름과 결과로 확인한다.
+v3의 anime Worker는 아래 출처·작품 검증을 거친 작업의 실행 확인 JSON을 기록한다. v2에서 완료한 anime fixture의 기존 ID와 결과 파일은 계속 조회할 수 있다. 기본 Flower는 기존 `redis-tasks`를 모니터링하므로 anime 작업은 `jobs show` 또는 아래 smoke의 Worker 이름과 결과로 확인한다.
 
 ```powershell
 docker compose --env-file worker/.env -f compose.worker.yaml --profile anime up -d --wait
@@ -148,7 +148,7 @@ docker compose --env-file worker/.env -f compose.worker.yaml exec -T job-dispatc
 docker compose --env-file worker/.env -f compose.worker.yaml --profile anime exec -T anime-dispatcher python -m menu_worker.jobs smoke
 ```
 
-단건 접수 시 `submit --kind anime --idempotency-key anime-demo-1 --url https://example.invalid/success/anime-demo-1`을 사용한다. 종류를 생략하면 해당 Dispatcher의 종류를 사용한다. anime 프로필이 꺼진 상태에서 접수된 anime 작업은 해당 프로필이 시작될 때까지 작업 DB에서 대기한다.
+단건 접수 방법은 아래 v3 예시를 따른다. 종류를 생략하면 해당 Dispatcher의 종류를 사용한다. anime 프로필이 꺼진 상태에서 접수된 anime 작업은 해당 프로필이 시작될 때까지 작업 DB에서 대기한다.
 
 두 Worker의 교차 전달 거부를 직접 검증하려면 로컬 테스트 환경에서 두 Dispatcher만 잠시 정지한다. 아래 명령은 각 Worker에 다른 종류의 대기 작업 ID를 전송한다. 성공 시 `attempt_count`는 0이며 Dispatcher를 다시 시작하면 원래 담당 Worker가 처리한다.
 
@@ -163,6 +163,25 @@ try {
 ```
 
 anime 프로필까지 기동한 환경 전체를 종료할 때는 `docker compose --env-file worker/.env -f compose.worker.yaml --profile anime down`을 사용한다. 기본 종료 명령은 데이터 볼륨을 보존한다.
+
+## v3 anime 출처·작품 입력 검증
+
+anime 작업은 출처 ID, 원문 HTTPS URL, 콘텐츠 유형과 기존 `menu_work_id`를 함께 제출한다. 다음은 저장소의 원피스 공식 출처 예시다. 같은 키와 입력을 다시 제출하면 기존 작업을 반환한다.
+
+```powershell
+$job = docker compose --env-file worker/.env -f compose.worker.yaml --profile anime exec -T anime-dispatcher python -m menu_worker.jobs submit --kind anime --idempotency-key one-piece-82812 --source one_piece_official --url https://one-piece.com/news/82812/index.html --content-type goods --menu-work-id 8 | ConvertFrom-Json
+docker compose --env-file worker/.env -f compose.worker.yaml --profile anime exec -T anime-dispatcher python -m menu_worker.jobs show --job-id $job.job_id
+```
+
+Worker 이미지는 애니 Agent의 `sources.json`, `source_type_map.json`, `menu_works.csv`를 읽기 전용으로 포함한다. 레지스트리 변경은 Compose로 이미지를 다시 빌드해 반영한다. 검증 규칙은 다음과 같다.
+
+- 출처가 활성 상태이고 단건 실행에 허용된 역할·수집 방식·콘텐츠 유형이어야 한다. URL의 호스트와 경로는 등록된 출처 범위에 있어야 한다.
+- 작품 ID가 카탈로그에 있고, 출처에 기재된 작품명이 정확히 그 작품 하나로 연결돼야 한다. 종합 매체처럼 본문을 읽어야 작품을 특정할 수 있는 출처는 `source_work_unresolved`로 거부한다.
+- 잘못된 입력은 DB 접수 전에 오류 코드와 종료 코드 1을 반환한다. Worker는 실행 직전에 출처·작품과 입력 해시를 다시 확인한다.
+
+검증 완료 시 `routing_verified`와 결과 JSON의 `validated_input`에서 출처, 정규화 URL, 유형, 작품 ID를 확인할 수 있다. 이 단계는 URL 등록 범위를 오프라인으로 검사한다. 기사 존재·본문 검증, LLM 생성, 새 작품 등록은 후속 단계다. smoke는 중복되지 않는 합성 기사 경로를 사용한다.
+
+작업 DB의 v3 마이그레이션은 이전 완료 작업의 ID·상태·해시·산출물 경로를 보존한다. 작품 ID 없이 대기하던 v2 anime fixture는 `LEGACY_ANIME_FIXTURE_RETIRED`로 종료한다. 기존 실행의 점유가 만료되면 생성 시작 전에는 취소하고, 시작 후에는 `needs_attention`으로 기록한다.
 
 ## 콘텐츠 큐 회귀 검증
 

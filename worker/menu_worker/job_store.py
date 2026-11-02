@@ -13,11 +13,11 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
-from menu_worker.job_contract import JobInput, validate_input, validate_job_kind
+from menu_worker.job_contract import JobInput, validate_job_kind, validate_job_request
 
 DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test", "menu_content_jobs_migration_test"})
 DATABASE_HOSTS = frozenset({"jobs-db", "localhost", "127.0.0.1", "::1"})
-MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql")
+MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql", "003_anime_work_input.sql")
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
@@ -124,15 +124,14 @@ class JobStore:
         return {"version": SCHEMA_VERSION, "created": installed == 0}
 
     def submit(self, request: JobInput | dict, *, job_kind: str = "fake") -> dict:
-        request = request if isinstance(request, JobInput) else validate_input(request)
-        input_hash = request.hash_for_kind(job_kind)
+        request, canonical_url, input_hash = validate_job_request(request, job_kind)
         with self._connect() as connection:
             created = connection.execute(
                 """INSERT INTO public.content_generation_job
-                   (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,input_sha256,job_kind)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING *""",
+                   (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,input_sha256,job_kind,menu_work_id)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING *""",
                 (uuid4(), request.idempotency_key, request.source_id, request.source_url,
-                 request.canonical_url, request.content_type, input_hash, job_kind),
+                 canonical_url, request.content_type, input_hash, job_kind, request.menu_work_id),
             ).fetchone()
             if created:
                 return {**_plain(created), "created": True}
@@ -144,7 +143,7 @@ class JobStore:
                     raise JobConflict("idempotency_conflict", previous["job_id"])
                 return {**_plain(previous), "created": False}
             previous = connection.execute(
-                "SELECT job_id FROM public.content_generation_job WHERE canonical_url=%s", (request.canonical_url,)
+                "SELECT job_id FROM public.content_generation_job WHERE canonical_url=%s", (canonical_url,)
             ).fetchone()
             if previous:
                 raise JobConflict("candidate_exists", previous["job_id"])
@@ -189,7 +188,8 @@ class JobStore:
         lease_seconds, task_id = _lease(lease_seconds), _task_id(task_id)
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM public.content_generation_job WHERE job_id=%s AND job_kind=%s FOR UPDATE",
+                """SELECT * FROM public.content_generation_job WHERE job_id=%s AND job_kind=%s
+                   AND (job_kind='fake' OR menu_work_id IS NOT NULL) FOR UPDATE""",
                 (_identity(job_id), expected_kind),
             ).fetchone()
             expected = "needs_attention" if recovery else "queued"
@@ -230,6 +230,7 @@ class JobStore:
             row = connection.execute(
                 """UPDATE public.content_generation_job SET generation_started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
                    WHERE job_id=%s AND claim_token=%s AND job_kind=%s AND execution_status='running'
+                   AND (job_kind='fake' OR menu_work_id IS NOT NULL)
                    AND lease_expires_at>clock_timestamp() AND generation_started_at IS NULL
                    AND current_attempt_id=generation_attempt_id RETURNING current_attempt_id""",
                 (_identity(job_id), _identity(claim_token), expected_kind),
@@ -319,17 +320,21 @@ class JobStore:
                 started = row["generation_started_at"] is not None
                 status = "needs_attention" if started else "queued"
                 code = "GENERATION_INTERRUPTED" if started else "LEASE_EXPIRED_BEFORE_GENERATION"
+                if row["job_kind"] == "anime" and row["menu_work_id"] is None:
+                    status = "needs_attention" if started else "cancelled"
+                    code = "LEGACY_ANIME_FIXTURE_RETIRED"
                 connection.execute(
                     """UPDATE public.content_generation_attempt SET execution_status=%s,error_code=%s,
                        finished_at=CURRENT_TIMESTAMP WHERE attempt_id=%s""",
-                    ("needs_attention" if started else "failed", code, row["current_attempt_id"]),
+                    ("failed" if status == "queued" else status, code, row["current_attempt_id"]),
                 )
                 connection.execute(
                     """UPDATE public.content_generation_job SET execution_status=%s,error_code=%s,
-                       claim_token=NULL,lease_expires_at=NULL,last_dispatched_at=NULL,updated_at=CURRENT_TIMESTAMP
-                       WHERE job_id=%s""", (status, code, row["job_id"]),
+                       claim_token=NULL,lease_expires_at=NULL,last_dispatched_at=NULL,updated_at=CURRENT_TIMESTAMP,
+                       finished_at=CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE finished_at END
+                       WHERE job_id=%s""", (status, code, status == "cancelled", row["job_id"]),
                 )
-                counts[status] += 1
+                counts[status] = counts.get(status, 0) + 1
         return counts
 
     def cancel(self, job_id: str) -> bool:

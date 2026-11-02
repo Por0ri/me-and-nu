@@ -1,4 +1,4 @@
-"""Immutable fixture inputs for fake jobs and the anime routing probe."""
+"""Admission rules for the fake queue and the offline anime input probe."""
 from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
@@ -18,6 +18,9 @@ JOB_KINDS = frozenset({"fake", "anime"})
 
 class JobInputError(ValueError):
     """A bounded input error that does not echo untrusted URLs or credentials."""
+    def __init__(self, message, code="invalid_job_input"):
+        super().__init__(message)
+        self.code = code
 
 
 def validate_job_kind(value: str) -> str:
@@ -59,48 +62,64 @@ class JobInput:
     source_id: str
     source_url: str
     content_type: str
+    menu_work_id: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.idempotency_key, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.idempotency_key):
             raise JobInputError("idempotency_key must be 1 to 128 ASCII identifier characters")
-        if self.source_id != "fixture":
-            raise JobInputError("Only the fixture source is enabled")
+        if not isinstance(self.source_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", self.source_id):
+            raise JobInputError("Invalid source identifier", "invalid_source_id")
         if not isinstance(self.content_type, str) or self.content_type not in CONTENT_TYPES:
             raise JobInputError("Unsupported content_type")
-        canonical_source_url(self.source_url)
+        if self.source_id == "fixture":
+            if self.menu_work_id is not None:
+                raise JobInputError("Fake input cannot select a work", "unexpected_menu_work_id")
+            canonical_source_url(self.source_url)
+        elif type(self.menu_work_id) is not int or not 1 <= self.menu_work_id <= 2**63 - 1:
+            raise JobInputError("Provide a positive catalog work ID", "invalid_menu_work_id")
 
     @property
     def canonical_url(self) -> str:
-        return canonical_source_url(self.source_url)
+        if self.source_id == "fixture":
+            return canonical_source_url(self.source_url)
+        from menu_worker.anime_catalog import validate_anime_source
+        return validate_anime_source(self.source_id, self.source_url, self.content_type, self.menu_work_id)
 
     @property
     def input_sha256(self) -> str:
-        return self.hash_for_kind("fake")
+        return self.hash_for_kind("fake" if self.source_id == "fixture" else "anime")
 
     def hash_for_kind(self, job_kind: str) -> str:
-        validate_job_kind(job_kind)
-        normalized = {
-            "source_id": self.source_id,
-            "source_url": self.canonical_url,
-            "content_type": self.content_type,
-        }
-        if job_kind == "anime":
-            if self.scenario != "success":
-                raise JobInputError("The anime routing probe requires a /success/ fixture URL")
-            normalized["job_kind"] = job_kind
-        # Keep the original fake serialization byte-for-byte for existing manifests and jobs.
-        encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        return validate_job_request(self, job_kind)[2]
 
     @property
     def scenario(self) -> str:
         return urlsplit(self.canonical_url).path.split("/")[1]
 
-    def as_dict(self) -> dict[str, str]:
-        return {name: getattr(self, name) for name in sorted(INPUT_FIELDS)}
+    def as_dict(self) -> dict[str, str | int]:
+        fields = {name: getattr(self, name) for name in sorted(INPUT_FIELDS)}
+        if self.menu_work_id is not None:
+            fields["menu_work_id"] = self.menu_work_id
+        return fields
 
 
 def validate_input(value: Mapping) -> JobInput:
-    if not isinstance(value, Mapping) or set(value) != INPUT_FIELDS:
-        raise JobInputError("Input must contain exactly idempotency_key, source_id, source_url and content_type")
+    if not isinstance(value, Mapping) or set(value) not in (INPUT_FIELDS, INPUT_FIELDS | {"menu_work_id"}):
+        raise JobInputError("Unsupported or missing input fields")
     return JobInput(**value)
+
+
+def validate_job_request(value: JobInput | Mapping, job_kind: str) -> tuple[JobInput, str, str]:
+    validate_job_kind(job_kind)
+    request = value if isinstance(value, JobInput) else validate_input(value)
+    if job_kind == "anime" and request.source_id == "fixture":
+        raise JobInputError("Choose a registered anime source and work", "registered_source_required")
+    if job_kind == "fake" and request.source_id != "fixture":
+        raise JobInputError("Fake jobs require fixture input", "fixture_source_required")
+    canonical_url = request.canonical_url
+    identity = {"source_id": request.source_id, "source_url": canonical_url, "content_type": request.content_type}
+    if job_kind == "anime":
+        identity.update(job_kind="anime", menu_work_id=request.menu_work_id)
+    # The v1/v2 fake identity remains byte-for-byte compatible.
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return request, canonical_url, hashlib.sha256(encoded).hexdigest()

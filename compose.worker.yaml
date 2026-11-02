@@ -5,6 +5,9 @@ x-runtime: &runtime
   image: me-nu-worker:local
   build:
     context: ./worker
+    additional_contexts:
+      anime-registry: "./agents/ani_me;nu/config"
+      anime-works: "./agents/ani_me;nu/data/reference"
   restart: unless-stopped
   init: true
   read_only: true

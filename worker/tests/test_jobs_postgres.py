@@ -86,6 +86,18 @@ class JobStorePostgresTests(unittest.TestCase):
         value.update(overrides)
         return self.validate_input(value)
 
+    def anime_candidate(self, **overrides):
+        # Each test gets a unique registry-compatible path. No request is made.
+        article_id = int(self.namespace.removeprefix("pgtest-")[:12], 16)
+        return {
+            "idempotency_key": f"{self.namespace}-anime",
+            "source_id": "one_piece_official",
+            "source_url": f"https://one-piece.com/news/{article_id}/index.html",
+            "content_type": "goods",
+            "menu_work_id": 8,
+            **overrides,
+        }
+
     @staticmethod
     def job_id(row):
         return str(row["job_id"])
@@ -355,7 +367,7 @@ class JobStorePostgresTests(unittest.TestCase):
         job_id = self.job_id(job)
         self.assertEqual(job["job_kind"], "fake")
         with self.assertRaises(self.JobConflict) as conflict:
-            self.store.submit(request, job_kind="anime")
+            self.store.submit(self.anime_candidate(idempotency_key=request.idempotency_key), job_kind="anime")
         self.assertEqual(conflict.exception.code, "idempotency_conflict")
         self.assertEqual(str(conflict.exception.existing_job_id), job_id)
         # The database also protects old producers and non-CLI writers.
@@ -369,10 +381,7 @@ class JobStorePostgresTests(unittest.TestCase):
 
     def test_dispatch_claim_completion_and_recovery_are_fenced_by_kind(self):
         fake_id = self.job_id(self.store.submit(self.candidate()))
-        anime_id = self.job_id(self.store.submit(self.candidate(
-            idempotency_key=f"{self.namespace}-anime",
-            source_url=f"https://example.invalid/success/{self.namespace}/anime",
-        ), job_kind="anime"))
+        anime_id = self.job_id(self.store.submit(self.anime_candidate(), job_kind="anime"))
 
         for kind, own, other in (("fake", fake_id, anime_id), ("anime", anime_id, fake_id)):
             with self.subTest(dispatch_kind=kind):
@@ -409,6 +418,74 @@ class JobStorePostgresTests(unittest.TestCase):
         self.assertIsNone(self.store.claim_recovery(anime_id))
         recovered = self.store.claim_recovery(anime_id, expected_kind="anime")
         self.assertEqual(recovered["generation_attempt_id"], anime["generation_attempt_id"])
+
+    def test_anime_source_url_work_and_hash_survive_round_trip(self):
+        request = self.anime_candidate()
+        row = self.store.submit(request, job_kind="anime")
+        self.assertTrue(row["created"])
+        saved = self.store.get(row["job_id"])
+        for field in ("source_id", "source_url", "menu_work_id", "content_type"):
+            self.assertEqual(saved[field], request[field])
+        self.assertEqual(saved["canonical_url"], request["source_url"])
+        self.assertEqual(saved["job_kind"], "anime")
+        repeated = self.store.submit({**request, "source_url": request["source_url"].replace("https:", "HTTPS:")},
+                                     job_kind="anime")
+        self.assertFalse(repeated["created"])
+        self.assertEqual(repeated["job_id"], row["job_id"])
+        self.assertEqual(repeated["input_sha256"], saved["input_sha256"])
+
+    def test_article_query_directly_after_registered_root_host(self):
+        raw_url = f"https://www.natsume-anime.jp?p={uuid.uuid4().int}"
+        request = self.anime_candidate(source_id="natsume_official", source_url=raw_url,
+                                       content_type="news", menu_work_id=377)
+        job = self.store.submit(request, job_kind="anime")
+        self.assertEqual(job["source_url"], raw_url)
+        self.assertEqual(job["canonical_url"], raw_url.replace("?p=", "/?p="))
+
+    def test_invalid_anime_inputs_leave_no_registered_job(self):
+        cases = (
+            {"source_id": "fixture", "source_url": "https://example.invalid/success/retired"},
+            {"source_id": "not_a_registered_source"},
+            {"source_url": "https://example.org/news/82812/index.html"},
+            {"menu_work_id": None}, {"menu_work_id": 0}, {"menu_work_id": True}, {"menu_work_id": 2 ** 63},
+        )
+        for invalid in cases:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.store.submit(self.anime_candidate(**invalid), job_kind="anime")
+        with self.connection() as connection:
+            count = connection.execute(
+                "SELECT count(*) FROM content_generation_job WHERE idempotency_key LIKE %s",
+                (self.namespace + "%",),
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_sql_insert_rejects_new_legacy_anime_fixture_even_when_terminal(self):
+        with self.assertRaises(self.psycopg.errors.CheckViolation):
+            with self.connection() as connection:
+                connection.execute(
+                    """INSERT INTO public.content_generation_job
+                       (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,
+                        input_sha256,job_kind,execution_status)
+                       VALUES (%s,%s,'fixture',%s,%s,'news',%s,'anime','cancelled')""",
+                    (uuid.uuid4(), self.namespace, "https://example.invalid/success/retired",
+                     "https://example.invalid/success/retired", "f" * 64),
+                )
+
+    def test_tampered_anime_input_fails_before_generation_or_artifacts(self):
+        runner = importlib.import_module("menu_worker.job_runner")
+        row = self.store.submit(self.anime_candidate(), job_kind="anime")
+        with self.connection() as connection:
+            connection.execute("UPDATE public.content_generation_job SET input_sha256=%s WHERE job_id=%s",
+                               ("f" * 64, row["job_id"]))
+        with TemporaryDirectory(prefix="menu-job-pgtest-") as temporary:
+            root = Path(temporary).resolve()
+            runner.run_job(self.store, root, row["job_id"], task_id="unit-tampered", expected_kind="anime")
+            self.assertEqual(list(root.iterdir()), [])
+        job = self.store.get(row["job_id"])
+        self.assertEqual(job["execution_status"], "failed")
+        self.assertEqual(job["error_code"], "input_identity_mismatch")
+        self.assertIsNone(job["generation_started_at"])
+        self.assertIsNone(job["attempts"][0]["generation_started_at"])
 
 
 if __name__ == "__main__":
