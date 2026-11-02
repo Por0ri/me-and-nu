@@ -5,7 +5,7 @@
 .card { min-width: 0; border-radius: 8px; background: white; box-shadow: 0 0 4px var(--my-shadow); }
 .profile { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; box-shadow: 0 0 2px var(--my-shadow); }
 .profile > div { min-width: 0; }
-.nickname { margin: 0 0 4px; font-size: 16px; font-weight: 600; line-height: 24px; }
+.nickname { overflow-wrap: anywhere; margin: 0 0 4px; font-size: 16px; font-weight: 600; line-height: 24px; }
 .email { margin: 0; color: #71717a; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .edit { flex: none; display: grid; place-items: center; min-height: 44px; padding: 0; border: 0; background: transparent; }
 .edit > span { display: flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: #efe7ff; font-size: 11px; font-weight: 500; line-height: 16px; }

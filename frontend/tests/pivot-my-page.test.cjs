@@ -28,17 +28,22 @@ function load(file) {
 }
 const { maskProfileEmail, createMyPageRequestController } = load('lib/pivot/my-page.ts');
 const { mockMyPageSource } = load('lib/pivot/my-page-mock.ts');
-const { pendingMyPageSource } = load('lib/pivot/my-page-service.ts');
+const { pendingMyPageSource, createServiceMyPageSource } = load('lib/pivot/my-page-service.ts');
 const { PivotMyPageScreen } = load('components/pivot/my-page-screen.tsx');
 const render = (state, demo = true) => renderToStaticMarkup(React.createElement(PivotMyPageScreen, { state, demo, onHome() {}, onRetry() {} }));
 const options = () => ({ signal: new AbortController().signal });
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 
-test('Profile masking hides the complete local part and handles short or invalid addresses', () => {
-  for (const [email, expected] of [['demo.preview@example.com', 'demo***@example.com'], ['abc@example.com', 'ab***@example.com'], ['a@example.com', 'a***@example.com'], ['', '이메일 표시 준비 중'], ['a@b@c', '이메일 표시 준비 중']]) {
-    assert.equal(maskProfileEmail(email), expected);
+test('Profile masking accepts valid addresses and never exposes a complete short local part', () => {
+  for (const [local, expected] of [['demo.preview', 'demo'], ['abc', 'ab'], ['ab', 'a'], ['a', '']]) {
+    assert.ok(maskProfileEmail([local, 'example.com'].join('@')) === `${expected}***@example.com`, 'masked display only');
+  }
+  for (const email of [null, undefined, 42, {}, '', 'a@b@c', 'a@b', ' a@example.com', 'a@bad domain.com',
+    '.a@example.com', 'a..b@example.com', 'a@-bad.com', 'a@example.com\n', 'a@<private>.com', 'a'.repeat(65) + '@example.com']) {
+    assert.ok(maskProfileEmail(email) === '이메일 정보를 확인할 수 없어요', 'invalid email uses safe guidance');
   }
 });
+
 test('Demo uses a reserved virtual identity and returns independent display models', async () => {
   const first = await mockMyPageSource.load(options()), second = await mockMyPageSource.load(options());
   assert.equal(first.profile.maskedEmail, 'demo***@example.com');
@@ -46,12 +51,12 @@ test('Demo uses a reserved virtual identity and returns independent display mode
   assert.equal(second.profile.nickname, '미뉴');
   assert.equal(second.profile.origin, 'demo');
 });
-test('Service remains unconfigured with no virtual profile or settings controls', async () => {
+test('Unbound fallback never reads a profile or exposes Demo controls', async () => {
   const states = [];
   await createMyPageRequestController(pendingMyPageSource, state => states.push(state)).load();
   assert.deepEqual(states.map(state => state.status), ['loading', 'unconfigured']);
   const html = render(states.at(-1), false);
-  assert.match(html, /연결을 준비/);
+  assert.match(html, /로그인 상태를 확인/);
   assert.doesNotMatch(html, /example.com|미뉴|시연용|role="switch"|회원탈퇴/);
 });
 test('Cross-source identities fail closed in both the loader and display boundary', async () => {
@@ -105,7 +110,7 @@ test('Ready Demo renders accessible switches, all menus, a single MY selection, 
   assert.match(html, /시연용 가상 프로필/); assert.match(html, /초기화/);
   assert.doesNotMatch(html, /<a |9:41|imgWifi|imgBattery|role="dialog"|저장됐|삭제했|로그아웃했/);
 });
-test('Service adapter has no network, storage, OAuth or Mock fallback side effects', () => {
+test('Service uses the shared client without direct fetch, storage, OAuth or Mock fallback', () => {
   for (const file of ['lib/pivot/my-page-service.ts', 'components/pivot/my-page-screen.tsx', 'components/pivot/my-page-controller.tsx']) {
     const source = fs.readFileSync(path.join(root, file), 'utf8');
     assert.doesNotMatch(source, /fetch\(|localStorage|sessionStorage|Notification\.|document.cookie|signOut|\/api\/|from.*my-page-mock/);
@@ -155,7 +160,7 @@ test('Service logout is available without a profile, blocks duplicate clicks and
   let resolve, reject, calls = 0;
   const pending = new Promise((yes, no) => { resolve = yes; reject = no; });
   const fixture = interactiveModule('components/pivot/my-page-screen.tsx');
-  const props = { state: { status: 'unconfigured', message: '프로필 연결 준비 중' }, demo: false, onHome() {}, onRetry() {},
+  const props = { state: { status: 'error', message: '프로필을 불러오지 못했어요' }, demo: false, onHome() {}, onRetry() {},
     onLogout() { calls++; return calls === 1 ? pending : Promise.resolve(); } };
   const draw = () => fixture.draw(fixture.exports.PivotMyPageScreen, props);
   const logout = tree => descendants(tree).find(node => node.type === 'button' && React.Children.toArray(node.props.children).includes('로그아웃'));
@@ -195,4 +200,140 @@ test('Session logout clears personal state and replaces the route only after API
   const second = context.logout(); requests[1].resolve(); await second; context = draw();
   assert.equal(context.state.session, null); assert.equal(context.draft, null); assert.equal(context.profile.nickname, '');
   assert.equal(context.onboarding.interest, null); assert.deepEqual(replacements, ['/pivot/login']);
+});
+
+const activeSession = (id = 7) => ({ authenticated: true, sessionState: 'active', onboardingCompleted: true,
+  user: { id, accountType: 'user' }, csrfToken: 'test-csrf' });
+const profileFixture = (overrides = {}) => ({ userId: 7, nickname: '연결 확인', accountType: 'user',
+  email: ['profile.fixture', 'example.com'].join('@'), ...overrides });
+function serviceFixture(response = profileFixture(), session = activeSession()) {
+  let current = session;
+  const calls = [];
+  const source = createServiceMyPageSource(() => current, { async getProfile(options) { calls.push(options); return response; } }, () => {});
+  return { source, calls, switchSession(value) { current = value; } };
+}
+
+test('Active Consumer loads its own profile, forwards cancellation, and only returns a display model', async () => {
+  const fixture = serviceFixture(), request = options();
+  const result = await fixture.source.load(request);
+  assert.equal(fixture.calls[0].signal, request.signal);
+  assert.equal(result.status, 'ready');
+  assert.equal(result.profile.nickname, '연결 확인');
+  assert.equal(result.profile.origin, 'service');
+  assert.equal(result.profile.maskedEmail, 'prof***@example.com');
+  assert.ok(!Object.hasOwn(result.profile, 'email'), 'raw email must not enter the display model');
+  assert.ok(!JSON.stringify(result).includes(profileFixture().email), 'no raw email in the published model');
+  const html = render(result, false);
+  assert.ok(html.includes('취향 수정하기'));
+  assert.ok(!html.includes(profileFixture().email), 'no raw email in markup');
+});
+
+test('Missing, null and malformed email retain the actual nickname with safe guidance', async () => {
+  for (const email of [null, undefined, 42, {}, 'invalid', 'person@private domain.com']) {
+    const result = await serviceFixture(profileFixture({ email })).source.load(options());
+    assert.equal(result.profile.nickname, '연결 확인');
+    assert.equal(result.profile.maskedEmail, '이메일 정보를 확인할 수 없어요');
+  }
+});
+
+test('Invalid identities and profile payloads fail closed without leaking response data', async () => {
+  for (const response of [null, [], 'payload', {}, profileFixture({ userId: 8 }), profileFixture({ userId: '7' }),
+    profileFixture({ userId: 0 }), profileFixture({ accountType: 'admin' }), profileFixture({ accountType: null }),
+    profileFixture({ nickname: null }), profileFixture({ nickname: '  ' }), profileFixture({ nickname: 3 }),
+    profileFixture({ nickname: 'x'.repeat(31) }), profileFixture({ nickname: 'bad\nname' })]) {
+    const states = [];
+    await createMyPageRequestController(serviceFixture(response).source, state => states.push(state)).load();
+    assert.deepEqual(states.map(state => state.status), ['loading', 'error']);
+    assert.ok(!JSON.stringify(states).includes(profileFixture().email), 'invalid responses must remain private');
+    assert.doesNotMatch(render(states.at(-1), false), /연결 확인|demo\*|미뉴님/);
+  }
+});
+
+test('Inactive, non-Consumer and invalid sessions cannot initiate a profile read', async () => {
+  for (const session of [null, activeSession(0), activeSession(-1), activeSession('7'),
+    { ...activeSession(), authenticated: false }, { ...activeSession(), sessionState: 'onboarding_pending' },
+    { ...activeSession(), onboardingCompleted: false }, { ...activeSession(), user: { id: 7, accountType: 'admin' } }]) {
+    const fixture = serviceFixture(profileFixture(), session);
+    await assert.rejects(fixture.source.load(options()), /Profile session changed/);
+    assert.equal(fixture.calls.length, 0);
+  }
+  let calls = 0;
+  const source = createServiceMyPageSource(() => activeSession(), { getProfile: async () => { calls++; } }, () => { throw new Error('API blocked'); });
+  await assert.rejects(source.load(options()), /API blocked/);
+  assert.equal(calls, 0);
+});
+
+test('Session changes before or during a read, including same-user replacement, discard old identities', async () => {
+  for (const next of [null, activeSession(8), activeSession(7)]) {
+    const fixture = serviceFixture(); fixture.switchSession(next);
+    await assert.rejects(fixture.source.load(options()), /Profile session changed/);
+    assert.equal(fixture.calls.length, 0);
+    let current = activeSession(); const pending = deferred(); const states = [];
+    const source = createServiceMyPageSource(() => current, { getProfile: () => pending.promise }, () => {});
+    const request = createMyPageRequestController(source, state => states.push(state)).load();
+    current = next; pending.resolve(profileFixture()); await request;
+    assert.deepEqual(states.map(state => state.status), ['loading', 'error']);
+    if (next) {
+      const nextSource = createServiceMyPageSource(() => current, { getProfile: async () => profileFixture({ userId: next.user.id, nickname: '새 사용자' }) }, () => {});
+      assert.equal((await nextSource.load(options())).profile.nickname, '새 사용자');
+    }
+  }
+});
+
+test('Service requests abort before fetch and discard late responses even if the transport ignores abort', async () => {
+  const fixture = serviceFixture(), abort = new AbortController(); abort.abort();
+  await assert.rejects(fixture.source.load({ signal: abort.signal }));
+  assert.equal(fixture.calls.length, 0);
+  const session = activeSession(), pending = deferred(), states = []; let signal;
+  const source = createServiceMyPageSource(() => session, { getProfile(options) { signal = options.signal; return pending.promise; } }, () => {});
+  const controller = createMyPageRequestController(source, state => states.push(state));
+  const request = controller.load(); controller.cancel();
+  pending.resolve(profileFixture()); await request;
+  assert.equal(signal.aborted, true);
+  assert.deepEqual(states.map(state => state.status), ['loading']);
+});
+
+test('Actual Service adapter errors stay generic and retry reloads a validated profile', async () => {
+  const session = activeSession(), states = []; let fail = true, calls = 0;
+  const source = createServiceMyPageSource(() => session, { async getProfile() {
+    calls++; if (fail) throw new Error(profileFixture().email); return profileFixture();
+  } }, () => {});
+  const controller = createMyPageRequestController(source, state => states.push(state));
+  await controller.load();
+  assert.equal(states.at(-1).status, 'error');
+  assert.ok(!JSON.stringify(states).includes(profileFixture().email), 'error messages are sanitized');
+  fail = false; await controller.load();
+  assert.deepEqual(states.map(state => state.status), ['loading', 'error', 'loading', 'ready']);
+  assert.equal(calls, 2);
+});
+
+function profileApi(fetch, dispatchEvent = () => {}) {
+  const mod = { exports: {} };
+  const output = ts.transpileModule(fs.readFileSync(path.join(root, 'lib/api.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  vm.runInNewContext(output, { module: mod, exports: mod.exports, Headers, Event, fetch,
+    window: { dispatchEvent }, process: { env: {} }, require: () => ({}) });
+  return mod.exports;
+}
+
+test('getProfile reuses the credentialed no-store GET client and supports existing no-argument callers', async () => {
+  const calls = [];
+  const api = profileApi(async (url, init) => { calls.push({ url, init }); return { ok: true, status: 200, json: async () => profileFixture() }; });
+  const { signal } = options();
+  await api.getProfile({ signal }); await api.getProfile();
+  assert.equal(calls[0].url.endsWith('/api/v1/users/me'), true);
+  assert.equal(calls[0].init.signal, signal);
+  assert.equal(calls[0].init.credentials, 'include'); assert.equal(calls[0].init.cache, 'no-store');
+  assert.equal(calls[0].init.method ?? 'GET', 'GET');
+  assert.equal(calls[1].init.signal, undefined);
+});
+
+test('A cancelled profile response cannot expire a newer session through a late 401', async () => {
+  const body = deferred(), events = [], abort = new AbortController(); let reading;
+  const started = new Promise(resolve => { reading = resolve; });
+  const api = profileApi(async () => ({ ok: false, status: 401, json() { reading(); return body.promise; } }), event => events.push(event.type));
+  const request = api.getProfile({ signal: abort.signal });
+  await started; abort.abort(); body.resolve({ code: 'AUTH_REQUIRED' });
+  await assert.rejects(request); assert.deepEqual(events, []);
 });
