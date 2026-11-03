@@ -7,6 +7,7 @@ import { dismissActionNotice } from "@/lib/pivot/action-notice";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { ContentCarousel } from "./content-carousel";
 import styles from "./home.module.css";
+import { HomeAIButton } from "./home-ai-button";
 import { useHomeExposure, useInteractions } from "./interaction-context";
 
 type HomeNotice = { message: string; postId?: string };
@@ -47,8 +48,7 @@ export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI 
       <button type="button" data-my-navigation="" aria-current={active === "my" ? "page" : undefined}
         aria-disabled={!onMy && active !== "my" || undefined} onClick={() => { if (active === "my") return; if (onMy) onMy(); else (onNotice ?? setNotice)("MY 화면은 준비 중이에요."); }}><span>MY</span></button>
     </nav>
-    {!hideAI ? <button type="button" className={styles.aiButton} aria-label="AI 콘텐츠 탐색" aria-disabled="true"
-      onClick={() => (onNotice ?? setNotice)("AI 콘텐츠 탐색은 준비 중이에요.")}><img src="/pivot/home/chrome/ai.svg" alt="" /></button> : null}
+    {!hideAI ? <HomeAIButton onNotice={onNotice ?? setNotice} /> : null}
     {notice ? <p className={styles.pendingNotice} role="status">{notice}</p> : null}
   </div>;
 }

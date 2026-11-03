@@ -42,15 +42,17 @@ function slides(count = 3) {
   }));
 }
 
-test('Service carousel renders every page in order with normalized safe text overlay and accessible controls', () => {
+test('Home preview renders every page and all source text with accessible controls', () => {
   const { ContentCarousel } = loader()('components/pivot/content-carousel.tsx');
   const pages = slides(10).reverse(); pages[9].titleLines = ['<script>unsafe</script>'];
   const html = renderToStaticMarkup(React.createElement(ContentCarousel, { slides: pages, title: '검수된 콘텐츠', scope: 'home' }));
   assert.equal((html.match(/data-carousel-slide=/g) || []).length, 10);
   assert.equal((html.match(/data-carousel-overlay=/g) || []).length, 10);
   assert.ok(html.indexOf('data-carousel-slide="1"') < html.indexOf('data-carousel-slide="10"'));
-  const region = html.match(/style="left:([^;]+);top:([^;]+);width:([^;]+);height:([^"]+)"/);
-  assert.ok(region); [6, 58, 88, 36].forEach((value, index) => assert.ok(Math.abs(parseFloat(region[index + 1]) - value) < 0.00001));
+  assert.doesNotMatch(html, /style="left:/, 'Home preview uses its readable bottom area, not the constrained image-relative box');
+  assert.equal((html.match(/aria-label="카드 미리보기"/g) || []).length, 10);
+  assert.match(html, /전체 글과 슬라이드 원문은 자세히 보기/);
+  for (const page of pages) for (const sentence of page.bodySentences) assert.ok(html.includes(sentence));
   assert.match(html, /&lt;script&gt;unsafe&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script|https:\/\/api\.example\.test/);
   assert.match(html, /data-home-track=""/);
@@ -134,6 +136,8 @@ test('Detail cover renders the first ordered slide with protected image and text
   assert.equal((html.match(/data-content-cover=/g) || []).length, 1);
   assert.equal((html.match(/data-carousel-overlay=/g) || []).length, 1);
   assert.match(html, /제목 1/); assert.match(html, /본문 1/);
+  const region = html.match(/style="left:([^;]+);top:([^;]+);width:([^;]+);height:([^"]+)"/);
+  assert.ok(region); [6, 58, 88, 36].forEach((value, index) => assert.ok(Math.abs(parseFloat(region[index + 1]) - value) < 0.00001));
   assert.doesNotMatch(html, /제목 2|제목 10|data-detail-track|data-carousel-track|data-carousel-slide|이전 슬라이드|다음 슬라이드/);
   assert.match(html, /data-carousel-image-state="loading"/);
   assert.doesNotMatch(html, /<img|https:\/\/api\.example\.test/);
@@ -206,4 +210,122 @@ test('Protected Saved thumbnails keep one detail button and do not leak the auth
   assert.equal((html.match(/<button/g) || []).length, 1);
   assert.match(html, /data-saved-content="10"/); assert.match(html, /data-carousel-image-state="loading"/);
   assert.doesNotMatch(html, /<img|https:\/\/api\.example\.test/);
+});
+
+function detailTextFixture(pages, paragraphs, mode = 'full_body', demo = false) {
+  const { PivotDetailScreen } = loader()('components/pivot/detail-screen.tsx');
+  const article = { postId: 'post-10', contentId: '10', topicId: 2, origin: 'service', title: '글 제목',
+    displayMode: mode, slides: pages, sections: [{ paragraphs }], sourceUrl: 'https://example.test/source',
+    productionType: 'ai', notices: [{ code: 'AI_GENERATED', message: 'AI가 생성한 콘텐츠입니다.' }] };
+  const before = JSON.stringify(article);
+  const html = renderToStaticMarkup(React.createElement(PivotDetailScreen,
+    { state: { status: 'ready', article }, demo, onBack() {}, onRetry() {} }));
+  assert.equal(JSON.stringify(article), before, 'display filtering never mutates the source');
+  const start = html.indexOf('data-detail-slide-text=');
+  return { html, extra: start < 0 ? '' : html.slice(start, html.indexOf('<footer data-detail-publication=', start)) };
+}
+const occurrences = (text, value) => text.split(value).length - 1;
+
+test('Four article paragraphs repeated across ten slides add no forty duplicate paragraphs or empty section', () => {
+  const paragraphs = ['기존 첫 문단.', '기존 둘째 문단.', '기존 셋째 문단.', '기존 넷째 문단.'];
+  const pages = slides(10).map(page => ({ ...page, titleLines: ['대표 제목'], bodySentences: [...paragraphs] }));
+  const { html, extra } = detailTextFixture(pages, paragraphs);
+  assert.equal(extra, '');
+  for (const paragraph of paragraphs) assert.equal(occurrences(html, paragraph), 2, 'one existing article paragraph and one unchanged cover paragraph');
+  const differentTitles = pages.map((page, i) => ({ ...page, titleLines: ['고유 제목 ' + (i + 1)] }));
+  const unique = detailTextFixture(differentTitles, paragraphs).extra;
+  assert.equal((unique.match(/data-detail-slide-page=/g) || []).length, 9);
+  for (const paragraph of paragraphs) assert.equal(occurrences(unique, paragraph), 0);
+});
+
+test('Every missing title and sentence from pages two through ten remains readable in page order', () => {
+  const pages = slides(10).reverse();
+  for (const page of pages) page.bodySentences = Array.from({ length: 4 }, (_, i) => page.page + '번의 새로운 원문 ' + i + '.');
+  pages[0].titleLines = ['긴 제목 '.repeat(80), '<script>original</script>'];
+  pages[0].bodySentences[3] = '마지막 원문 '.repeat(90);
+  const { html, extra } = detailTextFixture(pages, ['독립 상세 본문']);
+  assert.equal((extra.match(/data-detail-slide-page=/g) || []).length, 9);
+  assert.ok(extra.indexOf('data-detail-slide-page="2"') < extra.indexOf('data-detail-slide-page="10"'));
+  assert.ok(html.indexOf('독립 상세 본문') < html.indexOf('data-detail-slide-text='));
+  for (const page of pages.filter(page => page.page !== 1)) {
+    for (const sentence of page.bodySentences) assert.equal(occurrences(extra, sentence), 1);
+  }
+  assert.ok(extra.includes(pages[0].titleLines[0]));
+  assert.match(extra, /&lt;script&gt;original&lt;\/script&gt;/);
+  assert.doesNotMatch(extra, /<script|data-carousel-track|data-carousel-overlay/);
+});
+
+test('Repeated titles and sentences across later slides are displayed once', () => {
+  const pages = slides();
+  pages[1].titleLines = ['같은 새 제목']; pages[2].titleLines = ['같은 새 제목'];
+  pages[1].bodySentences = ['공통 추가 문장.', '두 번째만의 원문.'];
+  pages[2].bodySentences = ['공통 추가 문장.', '세 번째만의 원문.'];
+  const { extra } = detailTextFixture(pages, ['독립 본문']);
+  for (const text of ['같은 새 제목', '공통 추가 문장.', '두 번째만의 원문.', '세 번째만의 원문.']) assert.equal(occurrences(extra, text), 1);
+});
+
+test('Only whitespace and linebreak differences are normalized; displayed new text is unchanged', () => {
+  const pages = slides();
+  pages[1].titleLines = ['  기존\n제목  ']; pages[2].titleLines = ['새로운', '제목'];
+  pages[1].bodySentences = ['\n기존\t문장입니다.  ', '  새\t원문은\n그대로입니다.  '];
+  pages[2].bodySentences = ['새 원문은 그대로입니다.'];
+  const { extra } = detailTextFixture(pages, ['기존 제목', '기존 문장입니다.', '새로운 제목']);
+  assert.doesNotMatch(extra, /기존|새로운|data-detail-slide-page="3"/);
+  assert.equal(occurrences(extra, '  새\t원문은\n그대로입니다.  '), 1);
+});
+
+test('Partial matches, different facts, punctuation and case are preserved without fuzzy deduplication', () => {
+  const pages = slides(), distinct = ['공연은 토요일입니다.', '공연은 금요일입니다. 입장은 무료입니다.', '금요일입니다.', '공연은 금요일입니다!', 'title'];
+  pages[1].bodySentences = distinct.slice(0, 4); pages[2].bodySentences = distinct.slice(4);
+  const { extra } = detailTextFixture(pages, ['공연은 금요일입니다.', 'Title']);
+  for (const sentence of distinct) assert.equal(occurrences(extra, '<p>' + sentence + '</p>'), 1);
+});
+
+test('The first ordered cover seeds only text it actually displays', () => {
+  const pages = slides();
+  pages[1].titleLines = [...pages[0].titleLines]; pages[1].bodySentences = [...pages[0].bodySentences];
+  let result = detailTextFixture([...pages].reverse(), ['독립 본문']);
+  assert.doesNotMatch(result.extra, /data-detail-slide-page="1"|data-detail-slide-page="2"/);
+  assert.match(result.html, /data-carousel-image-state="loading"/);
+  // A legacy cover renders its description, not otherwise unused structured text.
+  delete pages[0].layout; pages[0].description = '대표 카드 설명';
+  result = detailTextFixture(pages, ['독립 본문']);
+  assert.match(result.extra, /data-detail-slide-page="1"/);
+  assert.equal(occurrences(result.extra, '제목 1'), 1);
+  assert.equal(occurrences(result.extra, '본문 1'), 1);
+  assert.doesNotMatch(result.extra, /대표 카드 설명/);
+});
+
+test('Absent slides and Demo never produce a new original-text section', () => {
+  assert.equal(detailTextFixture([], ['기존 본문']).extra, '');
+  assert.equal(detailTextFixture(slides(), ['기존 본문'], 'full_body', true).extra, '');
+});
+
+for (const mode of ['full_body', 'link_excerpt']) test(mode + ': visible sections take precedence and existing source/AI/cover remain', () => {
+  const pages = slides(), visible = mode === 'full_body' ? '전체 본문에 있는 내용.' : '발췌에 있는 내용.';
+  pages[1].bodySentences = [visible, '두 번째 슬라이드에만 있는 내용.'];
+  pages[2].bodySentences = ['두 번째 슬라이드에만 있는 내용.', '세 번째 슬라이드에만 있는 내용.'];
+  const { html, extra } = detailTextFixture(pages, [visible], mode);
+  assert.equal(occurrences(html, '<p>' + visible + '</p>'), 1);
+  assert.equal(occurrences(extra, '두 번째 슬라이드에만 있는 내용.'), 1);
+  assert.equal(occurrences(extra, '세 번째 슬라이드에만 있는 내용.'), 1);
+  assert.equal((html.match(/data-content-cover=/g) || []).length, 1);
+  assert.doesNotMatch(html, /data-carousel-track=/);
+  assert.equal(occurrences(html, 'AI가 생성한 콘텐츠입니다.'), 1);
+  assert.equal(html.includes('원문에서 계속 읽기'), mode === 'link_excerpt');
+  assert.match(html, /aria-label="뒤로가기"/);
+});
+
+test('Consecutive keyboard moves use settled DOM position even before onScroll state rerenders', () => {
+  const writes = [], element = { clientWidth: 350, scrollLeft: 0, scrollTo(value) { writes.push(value); } };
+  const react = { ...React, useId: () => 'keys', useRef: () => ({ current: element }), useState: value => [value, () => {}] };
+  const { ContentCarousel } = loader({}, react)('components/pivot/content-carousel.tsx');
+  const tree = ContentCarousel({ slides: slides(), title: '키보드', scope: 'home' });
+  const all = node => !node || typeof node !== 'object' ? [] : [node, ...React.Children.toArray(node.props?.children).flatMap(all)];
+  const track = all(tree).find(node => node.props?.['data-carousel-track'] === '');
+  const key = value => track.props.onKeyDown({ key: value, target: element, currentTarget: element, preventDefault() {} });
+  key('ArrowRight'); assert.equal(writes.at(-1).left, 350);
+  element.scrollLeft = 350; key('ArrowRight'); assert.equal(writes.at(-1).left, 700);
+  element.scrollLeft = 700; key('ArrowLeft'); assert.equal(writes.at(-1).left, 350);
+  key('Home'); element.scrollLeft = 0; key('ArrowRight'); assert.equal(writes.at(-1).left, 350);
 });

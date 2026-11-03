@@ -40,3 +40,19 @@
 .metadata .notice { color: #7043b4; }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 @media (prefers-reduced-motion: reduce) { .track { scroll-behavior: auto; } }
+
+/* Home is a preview, independent of image-relative copy boxes. The complete
+   slide text remains readable in Detail: cover, article, then missing text. */
+.carousel[data-content-carousel="home"] .stage::after { content: ""; position: absolute; inset: 35% 0 0; pointer-events: none; background: linear-gradient(180deg, transparent, rgb(0 0 0 / 40%) 45%, rgb(0 0 0 / 90%)); }
+.carousel[data-content-carousel="home"] .overlay { left: 12px; right: 52px; top: auto; bottom: 48px; width: auto; height: auto; overflow: clip; }
+.carousel[data-content-carousel="home"] .eyebrow { margin-bottom: 4px; font-size: 11px; line-height: 16px; color: #c7acfb; }
+.carousel[data-content-carousel="home"] .title { font-size: 18px; line-height: 26px; font-weight: 600; letter-spacing: 0; }
+.carousel[data-content-carousel="home"] .copy { margin-top: 4px; font-size: 14px; line-height: 20px; }
+.carousel[data-content-carousel="home"] :is(.eyebrow, .title, .copy p) { display: -webkit-box; -webkit-box-orient: vertical; overflow: clip; }
+.carousel[data-content-carousel="home"] .eyebrow { -webkit-line-clamp: 1; }
+.carousel[data-content-carousel="home"] .title { -webkit-line-clamp: 3; }
+.carousel[data-content-carousel="home"] .copy p { -webkit-line-clamp: 2; }
+.carousel[data-content-carousel="home"] .stage:has([data-carousel-image-state="error"]) .overlay { right: auto; bottom: auto; }
+/* Keep PR #24's separate error/status row and retry target free of the scrim. */
+.carousel[data-content-carousel="home"] .stage:has([data-carousel-image-state="error"])::after,
+.carousel[data-content-carousel="home"] .stage:has([data-carousel-image-state="loading"])::after { display: none; }

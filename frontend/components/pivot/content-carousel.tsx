@@ -101,18 +101,16 @@ function SlideFigure({ slide, enabled, focusable, home = false }: {
 }) {
   const box = slide.layout?.textOverlayBox;
   const overlay = !!box && !!slide.titleLines;
-  const region: CSSProperties | undefined = box ? {
+  const region: CSSProperties | undefined = box && !home ? {
     left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`,
-    // Keep the existing right-hand actions and bottom navigation outside copy.
-    ...(home ? { maxWidth: `calc(100% - ${box.x * 100}% - 52px)`, maxHeight: `calc(100% - ${box.y * 100}% - 48px)` } : {}),
   } : undefined;
   return <figure className={styles.stage}>
     <SlideImage key={slide.image?.src ?? "missing"} slide={slide} enabled={enabled} />
-    {overlay ? <figcaption className={styles.overlay} style={region} tabIndex={focusable ? 0 : -1}
-      aria-label="카드 본문" data-slide-overlay="" data-carousel-overlay="">
+    {overlay ? <figcaption className={styles.overlay} style={region} tabIndex={!home && focusable ? 0 : -1}
+      aria-label={home ? "카드 미리보기" : "카드 본문"} data-slide-overlay="" data-carousel-overlay="">
       {slide.eyebrow ? <p className={styles.eyebrow}>{slide.eyebrow}</p> : null}
-      <h3 className={styles.title}>{slide.titleLines!.map((line, lineIndex) => <span key={lineIndex}>{line}</span>)}</h3>
-      {slide.bodySentences?.length ? <div className={styles.copy}>{slide.bodySentences.map((sentence, sentenceIndex) => <p key={sentenceIndex}>{sentence}</p>)}</div> : null}
+      <h3 className={styles.title}>{home ? slide.titleLines!.join(" ") : slide.titleLines!.map((line, lineIndex) => <span key={lineIndex}>{line}</span>)}</h3>
+      {slide.bodySentences?.length ? <div className={styles.copy}>{home ? <p>{slide.bodySentences.join(" ")}</p> : slide.bodySentences.map((sentence, sentenceIndex) => <p key={sentenceIndex}>{sentence}</p>)}</div> : null}
     </figcaption> : <figcaption className={styles.legacyCaption}>{slide.description}</figcaption>}
   </figure>;
 }
@@ -149,7 +147,11 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
         if (element.clientWidth) { const index = Math.round(element.scrollLeft / element.clientWidth); setActive(index); onSlideChange?.(index); }
       }} onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
-        const index = event.key === "ArrowRight" ? current + 1 : event.key === "ArrowLeft" ? current - 1
+        // Scroll can settle before React commits onScroll state. Read the actual
+        // track position so consecutive keyboard moves do not use a stale page.
+        const element = event.currentTarget;
+        const position = element.clientWidth ? Math.round(element.scrollLeft / element.clientWidth) : current;
+        const index = event.key === "ArrowRight" ? position + 1 : event.key === "ArrowLeft" ? position - 1
           : event.key === "Home" ? 0 : event.key === "End" ? slides.length - 1 : null;
         if (index === null) return;
         event.preventDefault(); goTo(index);
@@ -171,7 +173,7 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
       {slides.map((slide, index) => <button type="button" className={homeStyles.indicator} key={slide.id} aria-label={`${index + 1}번 슬라이드 보기`}
         aria-current={current === index ? "true" : undefined} aria-controls={`${id}-track`} onClick={() => goTo(index)}><span /></button>)}
     </div>
-    <p className={styles.srOnly} id={`${id}-help`}>좌우로 넘기거나 방향키·이전·다음 버튼으로 탐색하세요. 카드 본문이 길면 본문 안에서 위아래로 스크롤할 수 있어요.</p>
+    <p className={styles.srOnly} id={`${id}-help`}>좌우로 넘기거나 방향키·이전·다음 버튼으로 탐색하세요. {scope === "home" ? "카드는 미리보기예요. 전체 글과 슬라이드 원문은 자세히 보기에서 읽을 수 있어요." : "카드 본문이 길면 본문 안에서 위아래로 스크롤할 수 있어요."}</p>
   </div>;
 }
 
