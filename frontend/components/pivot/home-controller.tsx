@@ -64,8 +64,8 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
       const { cards } = await source.search(label, { signal: controller.signal, workId: entry.workId });
       if (controller.signal.aborted) return;
       setFound({ source, label, cards });
-      // Results clear the box; "no result" keeps the words (with the back button) to fix them.
-      setQuery(cards.length ? "" : label);
+      // Found or not, the result has its own title row with "검색 결과 닫기", so the box starts empty again.
+      setQuery("");
       window.scrollTo({ top: 0, behavior: "instant" });
     } catch {
       if (!controller.signal.aborted) setSearchNotice({ message: "검색하지 못했어요.\n잠시 후 다시 시도해 주세요.", id: Date.now() });
@@ -78,7 +78,7 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
   const result = found?.source === source ? found : null;
   // Back from the panel over a shown result returns to that result; anywhere else it leaves search for the feed.
   function back() {
-    if (open && result) { setOpen(false); setQuery(result.cards.length ? "" : result.label); return; }
+    if (open && result) { setOpen(false); setQuery(""); return; }
     closeSearch();
   }
   const store = source.recent;

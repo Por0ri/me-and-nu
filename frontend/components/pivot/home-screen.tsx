@@ -138,7 +138,7 @@ export function WorkSearchField({ value, onChange, onSubmit, notice, onNoticeEnd
 }
 
 function SearchEmpty({ label }: { label: string }) {
-  return <section className={styles.searchEmpty} aria-label="검색 결과">
+  return <div className={styles.searchEmpty}>
     <img className={styles.searchEmptyMascot} src="/pivot/home/search/empty-mascot@1x.png"
       srcSet="/pivot/home/search/empty-mascot@1x.png 1x, /pivot/home/search/empty-mascot@2x.png 2x, /pivot/home/search/empty-mascot@3x.png 3x"
       alt="" width={115} height={69} />
@@ -148,7 +148,7 @@ function SearchEmpty({ label }: { label: string }) {
         <p className={styles.searchEmptyHelp}>작품 이름을 확인하거나 다른 검색어로 다시 검색해 보세요</p>
       </div>
     </div>
-  </section>;
+  </div>;
 }
 
 function HomeSlideImage({ image }: { image: HomeSlideModel["image"] }) {
@@ -351,15 +351,17 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
       <p>실제 추천 결과가 아니에요. 선택한 답변과 관계없이 같은 예시를 보여드려요.</p>
     </aside> : null}
     <WorkSearchField value={query} onChange={onQueryChange} onSubmit={onSearch} notice={searchNotice} onNoticeEnd={onSearchNoticeEnd}
-      search={search} active={!!search && (search.open || (!!result && !result.cards.length))} />
+      search={search} active={!!search?.open} />
     {search?.open ? <button type="button" className={styles.searchDim} aria-label="검색 닫기" tabIndex={-1} onClick={search.onBack} /> : null}
-    {result && search ? (result.cards.length ? <section aria-labelledby="home-search-results">
+    {result && search ? <section aria-labelledby="home-search-results">
       <div className={styles.resultsHeader}>
         <h2 id="home-search-results"><strong>‘{result.label}’</strong> 검색 결과</h2>
         <button type="button" onClick={search.onClose}>검색 결과 닫기</button>
       </div>
-      <HomeFeed cards={result.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} label="검색 결과 글" impressions={false} />
-    </section> : <SearchEmpty label={result.label} />)
+      {result.cards.length
+        ? <HomeFeed cards={result.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} label="검색 결과 글" impressions={false} />
+        : <SearchEmpty label={result.label} />}
+    </section>
       : state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} /> : <HomeStatus state={state} onRetry={onRetry} />}
     {demo && onRestart ? <footer className={styles.footer}><button type="button" onClick={onRestart} className={styles.button}>처음부터 시연</button></footer> : null}
     <HomeNavigation onMy={onMy} onSaved={onSaved} onNotice={pending} />

@@ -88,17 +88,18 @@ test('Home search opens recent searches or matching works over a dimmed screen w
   assert.match(typing, /aria-label="검색어 지우기"/);
 });
 
-test('Home search results replace the feed; no result keeps the words and shows the empty card', () => {
+test('Home search results replace the feed; no result has the same title row to close it, above the empty card', () => {
   const found = renderSearch({ result: { label: '진격의 거인', cards: [cardFixture('found-card')] } });
   assert.match(found, /‘진격의 거인’<\/strong> 검색 결과/);
   assert.match(found, />검색 결과 닫기</);
   assert.match(found, /data-home-post="found-card"/);
   assert.doesNotMatch(found, /data-home-post="feed-card"|검색 나가기/);
-  const none = renderSearch({ result: { label: '미뉴', cards: [] } }, '미뉴');
+  const none = renderSearch({ result: { label: '미뉴', cards: [] } });
+  assert.match(none, /‘미뉴’<\/strong> 검색 결과/);
+  assert.match(none, />검색 결과 닫기</);
   assert.match(none, /‘미뉴’ 검색어에 대한 결과가 없어요/);
   assert.match(none, /작품 이름을 확인하거나 다른 검색어로 다시 검색해 보세요/);
-  assert.match(none, /aria-label="검색 나가기"/);
-  assert.match(none, /value="미뉴"/);
+  assert.doesNotMatch(none, /검색 나가기|검색어 지우기|data-search-active/);
   assert.doesNotMatch(none, /data-home-post=/);
   assert.match(none, /srcSet="\/pivot\/home\/search\/empty-mascot@1x\.png 1x, \/pivot\/home\/search\/empty-mascot@2x\.png 2x, \/pivot\/home\/search\/empty-mascot@3x\.png 3x"/);
 });

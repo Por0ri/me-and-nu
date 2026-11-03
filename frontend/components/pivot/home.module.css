@@ -65,9 +65,9 @@
 .resultsHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 12px; }
 .resultsHeader h2 { min-width: 0; margin: 0; color: var(--home-muted); font-size: 14px; font-weight: 500; line-height: 22px; }
 .resultsHeader h2 strong { color: var(--home-ink); font-size: 16px; font-weight: 700; }
-/* Centred on the screen: 200px = the header and search box above (100px) plus the screen's
-   bottom padding kept for the navigation (100px), so the middle of what is left is the middle of the screen. */
-.searchEmpty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100svh - 200px); }
+/* Centred on the screen under the result title: 156px are above it (header and search box 100px +
+   title row 56px), so leaving 156px below as well puts its middle at the middle of the screen. */
+.searchEmpty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100svh - 312px); }
 /* The header's peeking mascot pre-cut to its visible part at 1x/2x/3x (public/pivot/home/search/sources.json):
    the browser blurs it when it shrinks the 1448px original itself. 11% taller than the file, like the header's
    Figma placement. Its cut edge sits on the card's top. */
