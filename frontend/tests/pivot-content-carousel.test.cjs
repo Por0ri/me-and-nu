@@ -130,15 +130,18 @@ test('401 clears the session through its event while 404 and invalid images rema
   }
 });
 
-test('Detail cover renders the first ordered slide with protected image and text, without carousel navigation', () => {
+test('Detail cover reuses ordered carousel pages with protected images and original text', () => {
   const { ContentCover } = loader()('components/pivot/content-carousel.tsx');
   const html = renderToStaticMarkup(React.createElement(ContentCover, { slides: slides(10).reverse(), title: '검수된 콘텐츠' }));
   assert.equal((html.match(/data-content-cover=/g) || []).length, 1);
-  assert.equal((html.match(/data-carousel-overlay=/g) || []).length, 1);
+  assert.equal((html.match(/data-carousel-overlay=/g) || []).length, 10);
   assert.match(html, /제목 1/); assert.match(html, /본문 1/);
   const region = html.match(/style="left:([^;]+);top:([^;]+);width:([^;]+);height:([^"]+)"/);
   assert.ok(region); [6, 58, 88, 36].forEach((value, index) => assert.ok(Math.abs(parseFloat(region[index + 1]) - value) < 0.00001));
-  assert.doesNotMatch(html, /제목 2|제목 10|data-detail-track|data-carousel-track|data-carousel-slide|이전 슬라이드|다음 슬라이드/);
+  assert.match(html, /data-content-carousel="detail"/);
+  assert.equal((html.match(/data-detail-track=/g) || []).length, 1);
+  assert.equal((html.match(/inert=""/g) || []).length, 9);
+  assert.ok(html.indexOf('data-carousel-slide="1"') < html.indexOf('data-carousel-slide="10"'));
   assert.match(html, /data-carousel-image-state="loading"/);
   assert.doesNotMatch(html, /<img|https:\/\/api\.example\.test/);
 });
@@ -154,8 +157,8 @@ test('Full-body detail keeps a single cover followed by article paragraphs and s
   const html = renderToStaticMarkup(React.createElement(PivotDetailScreen, { state: { status: 'ready', article }, demo: false, onBack() {}, onRetry() {},
     bookmarks: { kind: 'service', has: () => false, isPending: () => false, toggle() {} } }));
   assert.equal((html.match(/data-content-cover=/g) || []).length, 1);
-  assert.equal((html.match(/data-carousel-overlay=/g) || []).length, 1);
-  assert.doesNotMatch(html, /data-detail-track|data-carousel-track|data-carousel-slide|이전 슬라이드|다음 슬라이드/);
+  assert.equal((html.match(/data-carousel-overlay=/g) || []).length, 3);
+  assert.equal((html.match(/data-detail-track=/g) || []).length, 1);
   assert.match(html, /<h1[^>]*class="srOnly"/);
   assert.match(html, /원본 상세 첫 문단/); assert.match(html, /원본 상세 둘째 문단/);
   assert.ok(html.indexOf('data-content-cover=') < html.indexOf('원본 상세 첫 문단'));
@@ -231,7 +234,7 @@ test('Four article paragraphs repeated across ten slides add no forty duplicate 
   const pages = slides(10).map(page => ({ ...page, titleLines: ['대표 제목'], bodySentences: [...paragraphs] }));
   const { html, extra } = detailTextFixture(pages, paragraphs);
   assert.equal(extra, '');
-  for (const paragraph of paragraphs) assert.equal(occurrences(html, paragraph), 2, 'one existing article paragraph and one unchanged cover paragraph');
+  for (const paragraph of paragraphs) assert.equal(occurrences(html, paragraph), pages.length + 1, 'one article paragraph plus unchanged carousel originals; no duplicate transcript');
   const differentTitles = pages.map((page, i) => ({ ...page, titleLines: ['고유 제목 ' + (i + 1)] }));
   const unique = detailTextFixture(differentTitles, paragraphs).extra;
   assert.equal((unique.match(/data-detail-slide-page=/g) || []).length, 9);
@@ -306,11 +309,12 @@ for (const mode of ['full_body', 'link_excerpt']) test(mode + ': visible section
   pages[1].bodySentences = [visible, '두 번째 슬라이드에만 있는 내용.'];
   pages[2].bodySentences = ['두 번째 슬라이드에만 있는 내용.', '세 번째 슬라이드에만 있는 내용.'];
   const { html, extra } = detailTextFixture(pages, [visible], mode);
-  assert.equal(occurrences(html, '<p>' + visible + '</p>'), 1);
+  assert.equal(occurrences(html, '<p>' + visible + '</p>'), 2, 'one unchanged slide and one article paragraph');
+  assert.equal(occurrences(extra, visible), 0, 'no repeated paragraph in the transcript');
   assert.equal(occurrences(extra, '두 번째 슬라이드에만 있는 내용.'), 1);
   assert.equal(occurrences(extra, '세 번째 슬라이드에만 있는 내용.'), 1);
   assert.equal((html.match(/data-content-cover=/g) || []).length, 1);
-  assert.doesNotMatch(html, /data-carousel-track=/);
+  assert.equal((html.match(/data-carousel-track=/g) || []).length, 1);
   assert.equal(occurrences(html, 'AI가 생성한 콘텐츠입니다.'), 1);
   assert.equal(html.includes('원문에서 계속 읽기'), mode === 'link_excerpt');
   assert.match(html, /aria-label="뒤로가기"/);
@@ -328,4 +332,51 @@ test('Consecutive keyboard moves use settled DOM position even before onScroll s
   element.scrollLeft = 350; key('ArrowRight'); assert.equal(writes.at(-1).left, 700);
   element.scrollLeft = 700; key('ArrowLeft'); assert.equal(writes.at(-1).left, 350);
   key('Home'); element.scrollLeft = 0; key('ArrowRight'); assert.equal(writes.at(-1).left, 350);
+});
+
+test('Detail uses the actual slide count and leaves the supplied source unchanged', () => {
+  const { ContentCover } = loader()('components/pivot/content-carousel.tsx');
+  for (const count of [0, 1, 3, 7, 10]) {
+    const pages = slides(count).reverse(), before = JSON.stringify(pages);
+    const html = renderToStaticMarkup(React.createElement(ContentCover, { slides: pages, title: '가변 슬라이드' }));
+    assert.equal((html.match(/data-carousel-slide=/g) || []).length, count);
+    if (count) assert.ok(html.includes(`aria-label="${count} / ${count}"`));
+    else assert.equal(html, '');
+    assert.equal(JSON.stringify(pages), before);
+  }
+});
+
+test('Home keeps supplied title line breaks and the complete three-line body', () => {
+  const { ContentCarousel } = loader()('components/pivot/content-carousel.tsx');
+  const pages = slides(); pages[0].titleLines = ['첫째 제목', '둘째 제목'];
+  pages[0].bodySentences = ['첫 문장\n둘째 줄\n셋째 줄'];
+  const html = renderToStaticMarkup(React.createElement(ContentCarousel, { slides: pages, title: '줄바꿈' }));
+  assert.match(html, /첫째 제목\n둘째 제목/);
+  assert.match(html, /첫 문장\n둘째 줄\n셋째 줄/);
+});
+
+test('Detail mouse drag snaps and releases capture; native touch, vertical moves and Home are untouched', () => {
+  const all = node => !node || typeof node !== 'object' ? [] : [node, ...React.Children.toArray(node.props?.children).flatMap(all)];
+  for (const scope of ['home', 'detail']) {
+    const writes = [], element = { clientWidth: 327, scrollLeft: 0, dataset: {}, captured: false,
+      scrollTo(value) { writes.push(value.left); }, setPointerCapture() { this.captured = true; },
+      hasPointerCapture() { return this.captured; }, releasePointerCapture() { this.captured = false; } };
+    let refs = 0;
+    const react = { ...React, useId: () => 'drag', useRef: initial => ({ current: refs++ === 0 ? element : initial }), useState: value => [value, () => {}] };
+    const { ContentCarousel } = loader({}, react)('components/pivot/content-carousel.tsx');
+    const track = all(ContentCarousel({ slides: slides(), title: '드래그', scope })).find(node => node.props?.['data-carousel-track'] === '').props;
+    if (scope === 'home') { assert.equal(track.onPointerDown, undefined); assert.equal(track.onPointerMove, undefined); continue; }
+    const event = (x, y, type = 'mouse') => ({ currentTarget: element, target: { closest: () => null }, pointerId: 1,
+      pointerType: type, button: 0, buttons: 1, clientX: x, clientY: y, preventDefault() {} });
+    track.onPointerDown(event(280, 50, 'touch')); track.onPointerMove(event(60, 50, 'touch'));
+    assert.equal(element.scrollLeft, 0); assert.equal(element.captured, false);
+    track.onPointerDown(event(280, 50)); track.onPointerMove(event(278, 90)); track.onPointerUp(event(278, 90));
+    assert.equal(writes.length, 0, 'vertical movement does not turn a page');
+    track.onPointerDown(event(280, 50)); track.onPointerMove(event(60, 50));
+    assert.equal(element.scrollLeft, 220); assert.equal(element.dataset.dragging, 'true'); assert.equal(element.captured, true);
+    track.onPointerUp(event(60, 50));
+    assert.equal(writes.at(-1), 327); assert.equal(element.captured, false); assert.equal(element.dataset.dragging, undefined);
+    track.onPointerDown(event(280, 50)); track.onPointerMove(event(60, 50)); track.onPointerCancel(event(60, 50));
+    assert.equal(element.captured, false); assert.equal(element.dataset.dragging, undefined);
+  }
 });

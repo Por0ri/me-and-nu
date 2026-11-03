@@ -67,10 +67,11 @@
 .slideControls { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
 /* Keep the 44px arrows 4px above the reaction stack when a narrow card moves it up.
    179px = stack reserve (153px) + gap (4px) + half the arrow height (22px). */
-.slideButton { position: relative; top: min(0px, calc(50% - 179px)); pointer-events: auto; width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 8px; background: rgb(39 39 42 / 70%); color: white; font-size: 12px; opacity: 0; }
-.card:focus-within .slideButton, .slideButton:focus-visible { opacity: 1; }
-@media (hover: hover) { .card:hover .slideButton { opacity: 1; } }
-.slideButton:disabled { pointer-events: none; }
+.slideButton { position: relative; top: min(0px, calc(50% - 179px)); pointer-events: none; width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 8px; background: rgb(39 39 42 / 70%); color: white; font-size: 12px; opacity: 0; }
+/* Touch focus must not leave desktop arrows painted over the card. */
+.card:has(:focus-visible) .slideButton, .slideButton:focus-visible, .slideButton:active { opacity: 1; pointer-events: auto; }
+@media (hover: hover) and (pointer: fine) { .card:hover .slideButton { opacity: 1; pointer-events: auto; } }
+.card .slideButton:disabled { pointer-events: none; }
 .position { position: absolute; left: 12px; bottom: 12px; margin: 0; padding: 2px 5px; border-radius: 5px; background: rgb(39 39 42 / 75%); color: white; font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums; }
 .indicators { position: absolute; left: 52px; right: 90px; bottom: 2px; display: flex; }
 /* The two-digit 10 / 10 counter needs slightly more room than 1 / 3. */
