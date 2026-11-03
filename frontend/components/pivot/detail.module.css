@@ -38,3 +38,9 @@
 .sources li + li { margin-top: 12px; }
 .sources a { display: inline-block; padding-block: 6px; color: #7043b4; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
 .sources span { display: block; color: #71717a; font-size: 12px; }
+
+.slideTranscript { margin-top: 24px; padding-top: 20px; border-top: 1px solid #e4e4e7; }
+.slideTranscript h2 { margin: 0 0 16px; font-size: 16px; line-height: 24px; font-weight: 600; }
+.slideTranscript h3 { margin: 4px 0 8px; font-size: 14px; line-height: 20px; font-weight: 600; }
+.slideTranscript .slideLabel { color: #7043b4; font-size: 12px; line-height: 18px; }
+.slideTranscript h3, .slideTranscript .section p { white-space: pre-wrap; }

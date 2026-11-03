@@ -112,3 +112,9 @@
 .status .button { margin-top: 20px; }
 .footer { margin-top: 24px; }
 .footer .button { width: 100%; }
+
+/* Preserve the Figma dock anchor; only the AI button moves during a collision. */
+.aiAnchor { position: absolute; right: 34px; top: 0; width: 40px; height: 40px; pointer-events: none; }
+.aiAnchor .aiButton { right: 0; top: 0; transform: translate(var(--home-ai-x, 0px), var(--home-ai-y, 0px)); transition: none; }
+.aiAnchor .aiButton img { pointer-events: none; }
+@media (max-width: 340px) { .aiAnchor { right: 16px; } }
