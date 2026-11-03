@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models import UserAccount
 from app.schemas.catalog import TopicsResponse
 from app.schemas.common import COMMON_ERRORS, ErrorResponse
-from app.schemas.feed import FeedResponse, FeedSearchResponse
+from app.schemas.feed import FeedResponse, FeedSearchResponse, WorkSuggestionsResponse
 from app.services import catalog_service, feed_service
 
 router = APIRouter(prefix="/topics")
@@ -56,7 +56,7 @@ async def get_topic_feed(
     response_model=FeedSearchResponse,
     tags=["피드"],
     summary="작품 이름으로 콘텐츠 검색",
-    description="작품 이름이나 별칭에 검색어가 들어간 작품(띄어쓰기 무시)의 공개 콘텐츠를 오늘(없으면 어제) 추천 순서, 그다음 최신순으로 최대 20개 반환합니다. works는 맞는 작품의 정식 이름입니다(글이 없어도 채움). 홈은 이 카드를 피드 맨 위에 두고 아래로 원래 피드를 이어 보여 줍니다. 검색 카드는 recommendationId 없이 recommendationReason에 검색 결과 문구를 담습니다.",
+    description="작품 이름이나 별칭에 검색어가 들어간 작품(띄어쓰기 무시)의 공개 콘텐츠를 오늘(없으면 어제) 추천 순서, 그다음 최신순으로 최대 20개 반환합니다. workId를 주면(검색어 아래 추천 작품을 고른 경우) 그 작품의 콘텐츠만 반환합니다. works는 맞는 작품의 정식 이름입니다(글이 없어도 채움). 홈은 검색 결과 화면에 이 카드만 보여 주고 노출 기록을 남기지 않습니다. 검색 카드는 recommendationId 없이 recommendationReason에 검색 결과 문구를 담습니다.",
     responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "TOPIC_NOT_FOUND"}},
 )
 async def search_topic_contents(
@@ -64,5 +64,24 @@ async def search_topic_contents(
     db: Annotated[AsyncSession, Depends(get_db)],
     topic_id: Annotated[int, Path(alias="topicId", gt=0, description="현재 내 Topic ID")],
     q: Annotated[str, Query(min_length=1, max_length=50, description="작품 이름 검색어")],
+    work_id: Annotated[int | None, Query(alias="workId", gt=0, le=9223372036854775807, description="고른 작품 ID (search/works 의 entityId)")] = None,
 ) -> FeedSearchResponse:
-    return await feed_service.search_feed(db, current_user.user_id, topic_id, q=q)
+    return await feed_service.search_feed(db, current_user.user_id, topic_id, q=q, work_id=work_id)
+
+
+@router.get(
+    "/{topicId}/search/works",
+    response_model=WorkSuggestionsResponse,
+    tags=["피드"],
+    summary="검색어 아래에 띄울 작품",
+    description="홈 검색창에 쓰는 동안 이름이나 별칭에 검색어가 들어간 작품(띄어쓰기 무시)을 온보딩 Q1 작품 검색과 같은 규칙·순서로 최대 limit개(기본 3) 반환합니다. 글이 없는 작품도 포함합니다. 고른 작품의 entityId를 검색의 workId로 씁니다.",
+    responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "TOPIC_NOT_FOUND"}},
+)
+async def suggest_topic_works(
+    current_user: Annotated[UserAccount, Depends(require_onboarding)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    topic_id: Annotated[int, Path(alias="topicId", gt=0, description="현재 내 Topic ID")],
+    q: Annotated[str, Query(min_length=1, max_length=50, description="작품 이름 검색어")],
+    limit: Annotated[int, Query(ge=1, le=10, description="작품 수, 기본 3")] = feed_service.SUGGEST_WORKS,
+) -> WorkSuggestionsResponse:
+    return await feed_service.suggest_works(db, current_user.user_id, topic_id, q=q, limit=limit)

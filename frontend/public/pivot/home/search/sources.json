@@ -1,0 +1,21 @@
+{
+  "note": "결과 없음 화면 캐릭터 (2026-11-03): 헤더와 같은 mascot.png 에서 위쪽 빈 칸을 잘라 내고 LANCZOS 로 CSS 115x69 의 1x · 2x · 3x 로 줄임. UI 디자인 크기 = 카드 너비의 약 37%, 세로는 헤더 캐릭터(Figma 배치)처럼 원본 비율보다 1.111배",
+  "derivedFrom": {
+    "path": "/pivot/home/chrome/mascot.png",
+    "sha256": "ce71b1804e9afc4a2f24be9905aaf4e7716bf5f15297169a1f1359b4e759c807"
+  },
+  "assets": [
+    {
+      "path": "/pivot/home/search/empty-mascot@1x.png",
+      "sha256": "7995a3f3f70c7f0aa4d279ed7e1484742df540eabe25cc2889b9eeb63ca036bd"
+    },
+    {
+      "path": "/pivot/home/search/empty-mascot@2x.png",
+      "sha256": "cd830c8734ce87fa96c3ec581ac71ea16b95a2b7610fba84b57c524d01b9a5bb"
+    },
+    {
+      "path": "/pivot/home/search/empty-mascot@3x.png",
+      "sha256": "99cca12f387ebda26a74017f81583013da76616f07e72f85798de4a42d2d4cbe"
+    }
+  ]
+}

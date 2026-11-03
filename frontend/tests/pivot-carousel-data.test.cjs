@@ -161,14 +161,28 @@ test('Home preserves typed HTTP and transport error reasons', async () => {
 test('Work search asks for the active Topic and keeps the search reason without a recommendation id', async () => {
   const calls = [], card = { ...feed(), recommendationReason: '‘하이큐!!’ 검색 결과예요' };
   const api = (selectedTopicId, works = ['하이큐!!']) => ({ async getMyTopics() { return topics; }, async getFeed() {},
-    async searchFeed(topicId, q) { calls.push([topicId, q]); return { selectedTopicId, query: q, works, contents: [card] }; } });
+    async searchFeed(topicId, q, init, workId) { calls.push([topicId, q, workId]); return { selectedTopicId, query: q, works, contents: [card] }; } });
   const { works, cards } = await createServiceHomeSource(api(42), () => {}).search('하이큐', { signal: new AbortController().signal });
-  assert.deepEqual(calls, [[42, '하이큐']]); assert.deepEqual(plain(works), ['하이큐!!']);
+  await createServiceHomeSource(api(42), () => {}).search('하이큐!!', { signal: new AbortController().signal, workId: 901 });
+  assert.deepEqual(calls, [[42, '하이큐', undefined], [42, '하이큐!!', 901]]); assert.deepEqual(plain(works), ['하이큐!!']);
   assert.equal(cards.length, 1); assert.equal(cards[0].id, '17');
   assert.equal(cards[0].recommendationReason, '‘하이큐!!’ 검색 결과예요'); assert.equal(cards[0].recommendationId, undefined);
   for (const bad of [api(7), api(42, [17])]) {
     await assert.rejects(createServiceHomeSource(bad, () => {}).search('하이큐', { signal: new AbortController().signal }));
   }
+});
+
+test('Work suggestions ask for the active Topic and keep the returned works with their ids', async () => {
+  const calls = [], signal = new AbortController().signal;
+  const api = (selectedTopicId, works) => ({ async getMyTopics() { return topics; }, async getFeed() {},
+    async searchWorks(topicId, q) { calls.push([topicId, q]); return { selectedTopicId, query: q, works }; } });
+  const found = await createServiceHomeSource(api(42, [{ entityId: 12, name: '진격의 거인' }, { entityId: 13, name: '진격의 거인 극장판' }]), () => {}).suggest('진격', { signal });
+  assert.deepEqual(plain(found), [{ id: 12, name: '진격의 거인' }, { id: 13, name: '진격의 거인 극장판' }]);
+  assert.deepEqual(calls, [[42, '진격']]);
+  for (const bad of [api(7, []), api(42, [{ entityId: 0, name: '진격의 거인' }]), api(42, [{ entityId: 12, name: ' ' }]), api(42, null)]) {
+    await assert.rejects(createServiceHomeSource(bad, () => {}).suggest('진격', { signal }));
+  }
+  assert.deepEqual(plain(await createServiceHomeSource({ async getMyTopics() { return topics; }, async getFeed() {} }, () => {}).suggest('진격', { signal })), []);
 });
 
 test('Aborted API reads never dispatch a stale unauthorized event before or after JSON parsing', async () => {

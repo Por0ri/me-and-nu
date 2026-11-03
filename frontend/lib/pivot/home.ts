@@ -1,5 +1,6 @@
 import type { CarouselLayout } from "@/lib/api";
 import type { ContentImage, PublicationMetadata } from "./carousel-data";
+import type { RecentSearchStore } from "./recent-search";
 
 // Display models shared by Demo and the authenticated API adapter.
 export type HomeSlideModel = {
@@ -56,12 +57,19 @@ export type HomeLoadError = {
 
 /** Work search: matching works' official names (even without cards) and their cards. */
 export type HomeSearchResult = { works: string[]; cards: HomeCardModel[] };
+/** A work suggested under the search box while typing, like onboarding Q1. */
+export type HomeWorkSuggestion = { id: number; name: string };
 
 export interface HomeDataSource {
   readonly kind: "demo" | "service";
   load(options: { signal: AbortSignal }): Promise<HomeLoadResult>;
-  /** Cards about works matching the query, shown above the feed. Demo has no search. */
-  search?(query: string, options: { signal: AbortSignal }): Promise<HomeSearchResult>;
+  /** Cards about works matching the query (only workId's when a suggestion was picked), shown alone as
+   *  the search result. Demo has no search. */
+  search?(query: string, options: { signal: AbortSignal; workId?: number }): Promise<HomeSearchResult>;
+  /** Up to three works whose name or alias contains the query, with or without cards. */
+  suggest?(query: string, options: { signal: AbortSignal }): Promise<HomeWorkSuggestion[]>;
+  /** The member's recent searches in this browser. */
+  readonly recent?: RecentSearchStore;
 }
 
 export type HomeState =

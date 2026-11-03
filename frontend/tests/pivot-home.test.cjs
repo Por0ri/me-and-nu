@@ -62,6 +62,55 @@ function render(state, demo = true) {
   }));
 }
 
+function renderSearch(search, query = '') {
+  return renderToStaticMarkup(React.createElement(PivotHomeScreen, {
+    state: result('feed-card'), demo: false, query, onQueryChange() {}, onSearch() {}, onRetry() {},
+    search: { open: false, result: null, suggestions: [], recent: [], onOpen() {}, onBack() {}, onClear() {}, onClose() {},
+      onPick() {}, onRemoveRecent() {}, onClearRecent() {}, ...search },
+  }));
+}
+
+test('Home search opens recent searches or matching works over a dimmed screen while typing', () => {
+  const idle = renderSearch({});
+  assert.doesNotMatch(idle, /검색 나가기|검색 닫기|최근 검색|data-search-open/);
+  assert.match(idle, /data-home-post="feed-card"/);
+  const recent = renderSearch({ open: true, recent: [{ label: '하이큐' }, { label: '진격의 거인', workId: 12 }] });
+  assert.match(recent, /data-search-open="true"/);
+  assert.match(recent, /aria-label="검색 나가기"/);
+  assert.match(recent, /aria-label="검색 닫기"/);
+  assert.match(recent, /<h2>최근 검색<\/h2>/);
+  assert.match(recent, />모두 삭제</);
+  assert.match(recent, /aria-label="최근 검색 진격의 거인 삭제"/);
+  const typing = renderSearch({ open: true, suggestions: [{ id: 12, name: '진격의 거인' }], recent: [{ label: '하이큐' }] }, '진격');
+  assert.match(typing, /aria-label="관련 작품"/);
+  assert.match(typing, />진격의 거인</);
+  assert.doesNotMatch(typing, /최근 검색/);
+  assert.match(typing, /aria-label="검색어 지우기"/);
+});
+
+test('Home search results replace the feed; no result keeps the words and shows the empty card', () => {
+  const found = renderSearch({ result: { label: '진격의 거인', cards: [cardFixture('found-card')] } });
+  assert.match(found, /‘진격의 거인’<\/strong> 검색 결과/);
+  assert.match(found, />검색 결과 닫기</);
+  assert.match(found, /data-home-post="found-card"/);
+  assert.doesNotMatch(found, /data-home-post="feed-card"|검색 나가기/);
+  const none = renderSearch({ result: { label: '미뉴', cards: [] } }, '미뉴');
+  assert.match(none, /‘미뉴’ 검색어에 대한 결과가 없어요/);
+  assert.match(none, /작품 이름을 확인하거나 다른 검색어로 다시 검색해 보세요/);
+  assert.match(none, /aria-label="검색 나가기"/);
+  assert.match(none, /value="미뉴"/);
+  assert.doesNotMatch(none, /data-home-post=/);
+  assert.match(none, /srcSet="\/pivot\/home\/search\/empty-mascot@1x\.png 1x, \/pivot\/home\/search\/empty-mascot@2x\.png 2x, \/pivot\/home\/search\/empty-mascot@3x\.png 3x"/);
+});
+
+test('The no-result mascot images match their recorded hashes and the header mascot they were cut from', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public/pivot/home/search/sources.json'), 'utf8'));
+  for (const asset of [manifest.derivedFrom, ...manifest.assets]) {
+    assert.equal(sourceAssetHash(asset.path, fs.readFileSync(path.join(root, 'public', asset.path))), asset.sha256);
+  }
+  assert.deepEqual(manifest.assets.map(asset => asset.path), [1, 2, 3].map(k => `/pivot/home/search/empty-mascot@${k}x.png`));
+});
+
 test('A blocked Service origin renders an error without Mock cards or demo controls', async () => {
   assert.equal(pendingHomeSource.kind, 'service');
   const states = [];

@@ -23,6 +23,8 @@ from app.schemas.feed import (
     FeedSection,
     MyReaction,
     ShareInfo,
+    WorkSuggestion,
+    WorkSuggestionsResponse,
 )
 from app.services.cursor import decode_cursor, encode_cursor
 from app.services.feed_ranking import FeedSlot, order_feed
@@ -42,9 +44,10 @@ MAX_CONTENT_ID = 2**63 - 1
 NEW_ACCOUNT_WINDOW = timedelta(minutes=1)
 FIRST_ROUND_POLLS = 12
 FIRST_ROUND_POLL_SECONDS = 0.25
-# Work search shown above the Home feed: matched works and cards per query.
+# Home work search: matched works and cards per query, and works suggested while typing.
 SEARCH_WORKS = 10
 SEARCH_CARDS = 20
+SUGGEST_WORKS = 3
 
 
 def preference_value(value: str | None) -> str | None:
@@ -321,16 +324,32 @@ async def _recommended_feed(
     return _feed_response(topic_id, cards, next_cursor, cursor=cursor)
 
 
-async def search_feed(db: AsyncSession, user_id: int, topic_id: int, *, q: str) -> FeedSearchResponse:
-    """Cards about works whose name or alias contains q, for the top of Home.
+async def suggest_works(db: AsyncSession, user_id: int, topic_id: int, *, q: str, limit: int = SUGGEST_WORKS) -> WorkSuggestionsResponse:
+    """Works suggested while typing in Home search: the onboarding Q1 match (name or
+    alias contains q, spaces ignored, active works in id order), with or without cards."""
+    await require_active_tap(db, user_id, topic_id)
+    query = q.strip()
+    works = await work_search_repo.search_works(db, topic_id, query=query, after_id=None, limit=limit) if query else []
+    return WorkSuggestionsResponse(selected_topic_id=topic_id, query=query,
+                                   works=[WorkSuggestion(entity_id=work.entity_id, name=work.name) for work in works])
+
+
+async def search_feed(
+    db: AsyncSession, user_id: int, topic_id: int, *, q: str, work_id: int | None = None,
+) -> FeedSearchResponse:
+    """Cards for Home's search results: about works whose name or alias contains q,
+    or only about work_id when a suggested work was picked.
 
     Ordered by today's (else yesterday's) ranking, then newest; "그만볼래요"
-    cards stay hidden. Cards carry no recommendation id, so a search result is
-    never logged as a recommendation impression.
+    cards stay hidden. Cards carry no recommendation id, and Home logs no
+    impression for them: searching shows interest, so it never counts as a skip.
     """
     tap = await require_active_tap(db, user_id, topic_id)
     query = q.strip()
-    works = await work_search_repo.search_works(db, topic_id, query=query, after_id=None, limit=SEARCH_WORKS) if query else []
+    if work_id is not None:
+        works = await work_search_repo.find_active_works(db, topic_id, [work_id])
+    else:
+        works = await work_search_repo.search_works(db, topic_id, query=query, after_id=None, limit=SEARCH_WORKS) if query else []
     names = {work.entity_id: work.name for work in works}
     found = await recommendation_repo.work_contents(db, topic_id, list(names)) if names else []
     negative = await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id) if found else set()

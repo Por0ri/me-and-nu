@@ -99,6 +99,7 @@ export type FeedResponse = {
   emptyReason: string | null;
 };
 export type FeedSearchResponse = { selectedTopicId: number; query: string; works: string[]; contents: FeedCard[] };
+export type WorkSuggestionsResponse = { selectedTopicId: number; query: string; works: { entityId: number; name: string }[] };
 export type ContentDetail = {
   contentId: number; topicId: number; title: string; sourceUrl: string;
   publisher: string; publishedAt: string | null; displayMode: string;
@@ -283,8 +284,11 @@ export function getFeed(
 ): Promise<FeedResponse> {
   return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`, init);
 }
-export function searchFeed(topicId: number, q: string, init: Pick<RequestInit, "signal"> = {}): Promise<FeedSearchResponse> {
-  return apiRequest(`/api/v1/topics/${topicId}/search${query({ q })}`, init);
+export function searchFeed(topicId: number, q: string, init: Pick<RequestInit, "signal"> = {}, workId?: number): Promise<FeedSearchResponse> {
+  return apiRequest(`/api/v1/topics/${topicId}/search${query({ q, workId })}`, init);
+}
+export function searchWorks(topicId: number, q: string, init: Pick<RequestInit, "signal"> = {}): Promise<WorkSuggestionsResponse> {
+  return apiRequest(`/api/v1/topics/${topicId}/search/works${query({ q })}`, init);
 }
 export function getContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal"> = {}): Promise<ContentDetail> {
   return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`, init);
