@@ -4,7 +4,7 @@
 
 현재 코드 재확인: 2026-10-28, `codex/service-integration` 작업 공간 기준. 최초 2026-09-29에 [Notion API V1.1 명세서](https://app.notion.com/p/94604c45a961835bbd1601fc3ab15ac0), [FE 세션·공통 계약](https://app.notion.com/p/0ce04c45a96183a884988159b10ddc81)를 대조한 기록에 로컬 라우터·OpenAPI의 변경을 반영했다. 이번에는 외부 Notion 명세나 배포 서버를 재검증하지 않았다. V1.1 전체 요구사항의 구현 완료 판정은 아니다.
 
-`create_app(...).openapi()`에서 확인한 HTTP 작업은 공개 V1 **36개**, 상태 확인 **3개**이며, `ENABLE_DEV_API=true`이면 개발용 **6개**가 추가되어 총 **45개**다. 개발 API를 끄면 39개다. 상태 확인은 `/health`, `/health/db`, `/health/redis`다. 아래 공개 경로는 `/api/v1` 접두사를 한 번만 쓰며 끝에 `/`를 붙이지 않는다. `정합`은 기존 대조 범위의 메서드·경로·주요 계약 대응을 뜻하며 실제 환경의 호출 성공이나 기능 전체 완성을 뜻하지 않는다.
+`create_app(...).openapi()`에서 확인한 HTTP 작업은 공개 V1 **45개**, 상태 확인 **3개**이며, `ENABLE_DEV_API=true`이면 개발용 **2개**가 추가되어 총 **50개**다. 개발 API를 끄면 48개다 (2026-11-04 기준: 영화 Agent 개발용 API 4개 삭제, 검색 관련 작품 · 취향 힌트 · 닉네임 확인 API 추가). 상태 확인은 `/health`, `/health/db`, `/health/redis`다. 아래 공개 경로는 `/api/v1` 접두사를 한 번만 쓰며 끝에 `/`를 붙이지 않는다. `정합`은 기존 대조 범위의 메서드·경로·주요 계약 대응을 뜻하며 실제 환경의 호출 성공이나 기능 전체 완성을 뜻하지 않는다.
 
 **생년월일 정책 보류 유지 (2026-10-27~28):** 수집·저장·연령 확인 방식은 통합 완료 후 결정한다. 새 Pivot 흐름은 닉네임만 수집하고 생년월일 입력·검사·전송을 보류한다. 생년월일 삭제 migration을 새로 적용하지 않으며 레거시 Consumer 화면·유틸리티는 기존 상태를 유지한다.
 
@@ -60,7 +60,7 @@
 - 첫 익명 세션 발급 시 허용된 출처를 확인한다. 헤더가 없는 로컬 Swagger·CLI GET은 허용한다. 오류 응답은 `code`와 `message`, 입력 검증 오류는 `fields[]`의 `field`·`code`·`message`를 사용한다. 깨진 JSON은 `400 MALFORMED_JSON`이다.
 - 공개 `/api/v1` 응답에는 `Cache-Control: private, no-store`가 붙는다. 본문이 있는 변경 요청은 JSON `Content-Type`을 사용한다. 다른 본문 형식은 `415 UNSUPPORTED_MEDIA_TYPE`이다.
 - `204` 성공 응답에는 본문이 없다. 클라이언트는 JSON 파싱을 시도하지 않는다. 보호된 API는 로그인·온보딩 상태에 따라 `401 AUTH_REQUIRED` 또는 `403 ONBOARDING_REQUIRED`가 될 수 있다.
-- `ENABLE_DEV_API=true`의 개발용 가입·로그인·Agent 결과 API와 `ENABLE_DEV_AUTH_BYPASS=true`의 루프백 우회는 **로컬 테스트 수단**이다. 카카오·네이버 OAuth나 정식 운영 인증을 뜻하지 않는다.
+- `ENABLE_DEV_API=true`의 개발용 가입·로그인 API와 `ENABLE_DEV_AUTH_BYPASS=true`의 루프백 우회는 **로컬 테스트 수단**이다. 카카오·네이버 OAuth나 정식 운영 인증을 뜻하지 않는다.
 
 ## Pivot 화면의 현재 호출 순서
 
@@ -86,7 +86,7 @@
 
 서버·PostgreSQL·seed 준비와 모든 작업의 Try it out 입력값은 [Swagger UI 조작법](SWAGGER_UI_OPERATION_GUIDE.md)과 [서버 준비 가이드](SWAGGER_TEST_GUIDE.md)를 따른다. `/docs`와 `/openapi.json`은 같은 `localhost:8000`으로 연다. 예시의 숫자 ID를 그대로 쓰지 않고 앞선 GET의 실제 값을 사용한다.
 
-1. **빠른 공개 글 확인:** `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=true`로 로컬 데모 사용자를 준비한다. `GET /api/v1/me/topics`의 활성 `topicId` → `GET /api/v1/topics/{topicId}/subtopics`의 `subtopicId` → `GET /api/v1/topics/{topicId}/feed`의 카드 `id` → `GET /api/v1/contents/{contentId}?topicId=...` 순서로 실행한다. 공개된 Agent 글도 같은 피드·상세에서 확인한다. 내부 초안은 개발용 Agent 실행 조회 경로를 사용한다.
+1. **빠른 공개 글 확인:** `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=true`로 로컬 데모 사용자를 준비한다. `GET /api/v1/me/topics`의 활성 `topicId` → `GET /api/v1/topics/{topicId}/subtopics`의 `subtopicId` → `GET /api/v1/topics/{topicId}/feed`의 카드 `id` → `GET /api/v1/contents/{contentId}?topicId=...` 순서로 실행한다. 공개된 Agent 글도 같은 피드·상세에서 확인한다.
 2. **실제 세션 흐름:** `ENABLE_DEV_AUTH_BYPASS=false`로 재시작한다. `GET /api/v1/auth/session`에서 `anonymous`와 `csrfToken`을 받는다. Swagger **Authorize → CsrfToken**에 넣고 개발용 가입·로그인을 실행한다. 세션을 다시 조회해 `onboarding_pending`과 새 토큰을 받는다.
 3. **온보딩:** 정책·Topic을 GET으로 읽고 작품 검색 GET → 후보 조회 POST → 완료 POST 순서로 실행한다. 완료에는 실제 ID의 V2 `answers`를 제출한다. `201` 응답의 답변과 `activeTopic.subtopicIds=[]`를 확인한 뒤 세션을 다시 조회해 `active`와 새 토큰을 받는다. 기존 `subtopicIds`, 답변 누락, 질문별 개수·형식·현재 후보 조건 위반은 422다. `q1/q2` 두 문자열을 보내는 V1 호환 검사는 별도로 구분한다.
 4. **화면 동작:** 프로필·동의·관심사 조회와 갱신 → 피드·상세 → O/X·좋아요·북마크 PUT 및 DELETE 순서로 실행한다. DELETE와 로그아웃의 `204`에는 본문이 없고, 변경 뒤 GET을 다시 호출해 결과를 본다.

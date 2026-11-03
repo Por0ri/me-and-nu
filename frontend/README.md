@@ -66,14 +66,7 @@ NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true
 
 실제 소셜 로그인 연결은 후속 작업입니다. 로컬 시연이 활성화된 API 모드에서 비로그인 상태로 `/consumer`에 진입하면 로그인 화면으로 이동합니다. 자연어 관심사 해석은 아직 연결되지 않았습니다. AI 대화는 API 모드에서 서버에 연결되며 질문은 최대 500자입니다.
 
-**API 시연 데이터 준비:** 기본 정책·데모 사용자 seed에 더해, `backend`에서 다음 명령으로 Agent 콘텐츠와 온보딩 관심사를 적재해야 합니다. 기본 seed만 있는 DB에는 현재 화면의 7개 선택지가 모두 준비되어 있지 않습니다.
-
-```powershell
-.\.venv\Scripts\python.exe -m app.seeds.agent_contents --git-ref f645df0 --apply
-.\.venv\Scripts\python.exe -m app.seeds.agent_interests --git-ref f645df0 --apply
-```
-
-영화·음악·애니메이션별로 현재 콘텐츠에 근거한 임시 관심사 7개를 표시하며, 실제 API에서 조회한 DB ID로 저장합니다. 온보딩과 분야 추가 화면에서 동일한 목록을 사용합니다. [임시 분류 목록·근거·팀 협의 사항](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)을 참고하세요. PostgreSQL 데이터 자체는 Git 커밋에 포함되지 않으므로 다른 환경에서는 위 seed를 실행해야 합니다.
+**API 시연 데이터 준비:** 영화·음악·애니메이션별 임시 관심사 7개와 그 근거가 된 예전 Agent 콘텐츠는 `backend`의 `agent_contents`·`agent_interests` seed로 적재했지만, 이 seed는 2026-11-03 영화 Agent 코드와 함께 삭제했습니다. 이미 적재된 DB에서는 그대로 보입니다. 새 DB에서 이 시연을 준비하려면 `chore/movie-agent` 브랜치에서 seed를 되살려 실행해야 합니다. [임시 분류 목록·근거·팀 협의 사항](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)을 참고하세요.
 
 콘텐츠 `imageUrl`이 `/local-content/...`이면 `frontend/public/local-content`의 로컬 이미지를 표시합니다. 포함된 이미지 파일만으로 DB의 콘텐츠 이미지 경로를 자동 변경하지는 않습니다.
 
