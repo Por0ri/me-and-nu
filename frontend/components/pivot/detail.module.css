@@ -16,6 +16,8 @@
 .section + .section { margin-top: 20px; }
 .section h2, .section p { margin: 0; font-size: 14px; line-height: 20px; font-weight: 400; }
 .section p + p { margin-top: 12px; }
+/* Figma 1828:12160 separates article paragraphs by one 20px blank line. */
+.body > .section p + p { margin-top: 20px; }
 .feedback { padding-top: 48px; text-align: center; }
 .feedback h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
 .feedbackButtons { display: flex; gap: 12px; margin-top: 16px; }

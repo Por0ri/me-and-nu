@@ -53,6 +53,12 @@ const items = originals.map((original, index) => {
         contrastMode: 'scrim_required', blurBackground: false },
     })) };
 });
+// Figma copy is a local layout fixture only; never replace service article text.
+const figmaTitle = ['사이버펑크: 엣지러너 2', '화면은 번쩍, 평은 갈린다'];
+Object.assign(items[0].slides[8], { eyebrow: '리뷰 큐레이션', titleLines: figmaTitle,
+  bodySentences: ['리뷰어들이 짚은 매력과 아쉬움,\n팬 시선으로 골라봤어.'] });
+Object.assign(items[0].slides[9], { eyebrow: '리뷰 큐레이션', titleLines: figmaTitle,
+  bodySentences: ['한 리뷰어는 로만을 그나마 멀쩡한 인물로 봤고, 다른 리뷰어는 그의 행동에 답답함을 느꼈다.'] });
 // Existing local PNG stands in for media. Cover/body use verbatim Agent text;
 // later slides add clearly synthetic short/long/missing/duplicate-text fixtures.
 const png = fs.readFileSync(path.join(root, 'public/local-content/licorice-pizza-poster.png'));
@@ -191,7 +197,8 @@ async function run(browser, viewport) {
       const r = el.getBoundingClientRect(), stage = el.parentElement.getBoundingClientRect();
       const title = el.querySelector('h3'), copy = el.querySelector('div > p');
       const measure = node => { if (!node) return null; const b = node.getBoundingClientRect(), css = getComputedStyle(node);
-        return { rect: b.toJSON(), lineHeight: parseFloat(css.lineHeight), font: parseFloat(css.fontSize), clamp: css.webkitLineClamp }; };
+        return { rect: b.toJSON(), lineHeight: parseFloat(css.lineHeight), font: parseFloat(css.fontSize), clamp: css.webkitLineClamp,
+          family: css.fontFamily, weight: css.fontWeight, spacing: css.letterSpacing }; };
       const descendants = [el, ...el.querySelectorAll('*')];
       const movable = descendants.filter(node => { node.scrollTop = 100; const moved = node.scrollTop > 0; node.scrollTop = 0; return moved; }).length;
       return { rect: r.toJSON(), stage: stage.toJSON(), scroll: el.scrollHeight, client: el.clientHeight,
@@ -202,12 +209,16 @@ async function run(browser, viewport) {
     assert.equal(geometryData.overflow, 'clip'); assert.equal(geometryData.movable, 0);
     assert.ok(geometryData.scroll <= geometryData.client + 1, 'no vertical overflow inside the overlay');
     assert.equal(geometryData.title.font, 18); assert.equal(geometryData.title.lineHeight, 26);
+    assert.match(geometryData.title.family, /PivotPretendard/); assert.equal(geometryData.title.weight, '600');
+    assert.ok(['normal', '0px'].includes(geometryData.title.spacing));
     assert.equal(geometryData.title.clamp, '3');
     assert.ok(geometryData.title.rect.height <= 3 * 26 + 1 && geometryData.title.rect.height >= 26);
     assert.ok(Math.abs(geometryData.title.rect.height / 26 - Math.round(geometryData.title.rect.height / 26)) < .03, 'title ends at a complete line');
     if (geometryData.copy) {
-      assert.equal(geometryData.copy.font, 14); assert.equal(geometryData.copy.lineHeight, 20); assert.equal(geometryData.copy.clamp, '2');
-      assert.ok(geometryData.copy.rect.height <= 40 + 1);
+      assert.equal(geometryData.copy.font, 14); assert.equal(geometryData.copy.lineHeight, 20); assert.equal(geometryData.copy.clamp, '3');
+      assert.match(geometryData.copy.family, /PivotPretendard/); assert.equal(geometryData.copy.weight, '400');
+      assert.ok(['normal', '0px'].includes(geometryData.copy.spacing));
+      assert.ok(geometryData.copy.rect.height <= 60 + 1);
       assert.ok(geometryData.title.rect.bottom <= geometryData.copy.rect.top, 'title and summary do not overlap');
     }
     for (const button of [card.getByRole('button', { name: '저장', exact: true }), card.locator('[data-home-detail]')]) {
@@ -246,10 +257,55 @@ async function run(browser, viewport) {
         }
         const previous = card.getByRole('button', { name: '이전 슬라이드', exact: true });
         await until(() => previous.isEnabled(), 'previous button is enabled after slide change');
+        await page.keyboard.press('Tab'); await previous.focus();
+        await until(() => previous.evaluate(el => getComputedStyle(el).opacity === '1'), 'keyboard arrow is visible');
         assert.ok(await hit(previous), 'previous button center receives input over server overlay');
-        await previous.click(); await until(async () => await indexOf(track) === 0, 'previous returns first slide');
+        if (viewport.width < 600) await page.keyboard.press('Enter'); else await previous.click();
+        await until(async () => await indexOf(track) === 0, 'previous returns first slide');
       });
     }
+    await check('Figma bottom copy: 227px text, 10px inset, two/three body lines and five-stop scrim', async () => {
+      const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
+      for (const [index, expectedHeight] of [[8, 136], [9, 156]]) {
+        await card.getByRole('button', { name: `${index + 1}번 슬라이드 보기`, exact: true }).click();
+        await until(async () => await indexOf(track) === index, 'Figma fixture slide');
+        const slide = card.locator(`[data-carousel-slide="${index + 1}"]`);
+        await slide.locator('img[data-carousel-image-state="ready"]').waitFor();
+        await page.evaluate(() => document.fonts.ready);
+        const metrics = await slide.evaluate(el => {
+          const stage = el.querySelector('figure').getBoundingClientRect(), copy = el.querySelector('figcaption').getBoundingClientRect();
+          const scrim = el.querySelector('figure > div[aria-hidden="true"]');
+          return { width: copy.width, left: copy.left - stage.left, bottom: stage.bottom - copy.bottom,
+            scrimHeight: scrim.getBoundingClientRect().height, gradient: getComputedStyle(scrim).backgroundImage };
+        });
+        assert.equal(metrics.width, 227); assert.equal(metrics.left, 10); assert.equal(metrics.bottom, 10);
+        assert.equal(metrics.scrimHeight, expectedHeight);
+        for (const stop of ['20.673%', '51.442%', '79.327%']) assert.ok(metrics.gradient.includes(stop));
+        geometry.push({ viewport, label: 'figma-' + index, ...metrics });
+        await inspectPreview(card, slide, 'figma-' + index);
+      }
+    });
+    await check('touch focus never paints large arrows; keyboard focus still reveals working controls', async () => {
+      const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
+      await track.focus(); await page.keyboard.press('Home'); await until(async () => await indexOf(track) === 0, 'first slide');
+      const next = card.getByRole('button', { name: '다음 슬라이드', exact: true });
+      await page.keyboard.press('Tab'); await next.focus();
+      await until(() => next.evaluate(el => getComputedStyle(el).opacity === '1'), 'keyboard controls remain visible');
+      await page.keyboard.press('Enter'); await until(async () => await indexOf(track) === 1, 'keyboard button works');
+      if (viewport.width < 600) {
+        await track.scrollIntoViewIfNeeded(); const b = await track.boundingBox();
+        await page.touchscreen.tap(b.x + b.width * .5, b.y + b.height * .2);
+        await swipe(page, track, -220, 0, [.8, .3]); await until(async () => await indexOf(track) === 2, 'touch reaches third slide');
+        for (const name of ['이전 슬라이드', '다음 슬라이드']) {
+          await until(() => card.getByRole('button', { name, exact: true }).evaluate(el => getComputedStyle(el).opacity === '0' && getComputedStyle(el).pointerEvents === 'none'), 'touch arrows are hidden and do not intercept swipes');
+        }
+        // A dot is a genuine focusable touch target: its focus must not expose the arrows either.
+        const dot = card.getByRole('button', { name: '1번 슬라이드 보기', exact: true });
+        await dot.tap(); await until(async () => await indexOf(track) === 0, 'touch dot works');
+        await until(() => next.evaluate(el => getComputedStyle(el).opacity === '0'), 'dot touch does not expose arrows');
+        await capture('touch-arrows-hidden');
+      }
+    });
     await check('vertical touch on preview scrolls the feed, never an inner card', async () => {
       const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
       await track.focus(); await page.keyboard.press('Home'); await until(async () => await indexOf(track) === 0, 'first slide');
@@ -268,7 +324,50 @@ async function run(browser, viewport) {
       await open.click(); const detail = page.locator('main[data-detail-state="ready"]'); await detail.waitFor();
       await until(() => detail.locator('h1').evaluate(el => el === document.activeElement), 'Detail heading focus');
       assert.equal(await detail.locator('[data-content-cover]').count(), 1);
-      assert.equal(await detail.locator('[data-carousel-track]').count(), 0, 'Detail stays single cover');
+      assert.equal(await detail.locator('[data-detail-track]').count(), 1);
+      assert.equal(await detail.locator('[data-carousel-slide]').count(), items[0].slides.length);
+      const detailTrack = detail.locator('[data-detail-track]');
+      if (viewport.width < 600) {
+        await swipe(page, detailTrack, -220, 0, [.8, .3]);
+        await until(async () => await indexOf(detailTrack) === 1, 'Detail touch advances');
+        await swipe(page, detailTrack, 220, 0, [.2, .3]);
+        await until(async () => await indexOf(detailTrack) === 0, 'Detail touch returns');
+      }
+      await detailTrack.scrollIntoViewIfNeeded();
+      const dragBox = await detailTrack.boundingBox(), startX = dragBox.x + dragBox.width * .8, startY = dragBox.y + dragBox.height * .3;
+      await page.mouse.move(startX, startY); await page.mouse.down();
+      await page.mouse.move(startX - dragBox.width * .7, startY, { steps: 12 }); await page.mouse.up();
+      await until(async () => await indexOf(detailTrack) === 1, 'Detail mouse drag advances');
+      await detailTrack.focus(); await page.keyboard.press('End');
+      await until(async () => await indexOf(detailTrack) === items[0].slides.length - 1, 'Detail reaches actual final slide');
+      await page.keyboard.press('Home'); await until(async () => await indexOf(detailTrack) === 0, 'Detail returns to first slide');
+      await page.evaluate(() => document.fonts.ready);
+      const typography = await detail.evaluate(el => {
+        const cover = el.querySelector('[data-carousel-slide="1"]');
+        const paragraphs = el.querySelectorAll('article > div:last-child > section:first-child > p');
+        const measure = node => {
+          const css = getComputedStyle(node), rect = node.getBoundingClientRect();
+          return { family: css.fontFamily, size: css.fontSize, weight: css.fontWeight, lineHeight: css.lineHeight,
+            spacing: css.letterSpacing, width: rect.width, height: rect.height, textSizeAdjust: css.webkitTextSizeAdjust };
+        };
+        return { title: measure(cover.querySelector('h3')), description: measure(cover.querySelector('figcaption div > p')),
+          body: measure(paragraphs[0]), paragraphGap: paragraphs[1].getBoundingClientRect().top - paragraphs[0].getBoundingClientRect().bottom,
+          fontLoaded: document.fonts.check('14px PivotPretendard', '본문 글꼴') };
+      });
+      for (const [key, size, height, weight] of [['title', '18px', '26px', '600'], ['description', '14px', '20px', '400'], ['body', '14px', '20px', '400']]) {
+        assert.equal(typography[key].size, size); assert.equal(typography[key].lineHeight, height); assert.equal(typography[key].weight, weight);
+        assert.match(typography[key].family, /PivotPretendard/); assert.ok(['normal', '0px'].includes(typography[key].spacing));
+      }
+      assert.equal(typography.fontLoaded, true); assert.equal(typography.paragraphGap, 20);
+      assert.equal(typography.body.width, Math.min(viewport.width, 430) - 64);
+      assert.equal(typography.body.height % 20, 0);
+      const cdp = await context.newCDPSession(page); await cdp.send('DOM.enable'); await cdp.send('CSS.enable');
+      const { root: dom } = await cdp.send('DOM.getDocument');
+      const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: dom.nodeId,
+        selector: 'main[data-detail-state="ready"] article > div:last-child > section:first-child > p' });
+      const { fonts } = await cdp.send('CSS.getPlatformFontsForNode', { nodeId }); await cdp.detach();
+      assert.ok(fonts.length > 0 && fonts.every(font => font.isCustomFont && /Pretendard/.test(font.familyName)), 'actual body glyphs use bundled Pretendard');
+      geometry.push({ viewport, label: 'detail-typography', ...typography, fonts });
       for (const paragraph of items[0].body.split(/\n\s*\n/)) assert.ok((await detail.innerText()).includes(paragraph));
       const publication = detail.locator('[data-detail-publication]');
       assert.ok((await publication.innerText()).includes('AI가 생성한 콘텐츠입니다.'));
@@ -337,6 +436,9 @@ async function run(browser, viewport) {
       await home.locator('[data-home-post="42"] [data-home-detail]').click();
       const detail = page.locator('[data-detail-state="ready"]'); await detail.waitFor();
       for (const paragraph of items[1].body.split(/\n\s*\n/)) assert.ok((await detail.innerText()).includes(paragraph));
+      assert.equal(await detail.locator('[data-carousel-slide]').count(), 3, 'short server carousel is not padded to five');
+      const track = detail.locator('[data-detail-track]'); await track.focus(); await page.keyboard.press('End');
+      await until(async () => await indexOf(track) === 2, 'three-slide detail ends at page three');
       await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
       await capture('longest-detail-bottom');
       assert.ok(await hit(detail.getByRole('button', { name: '더 볼래요', exact: true })));
@@ -344,7 +446,7 @@ async function run(browser, viewport) {
     await check('Detail cover failure: readable copy, separate retry, recovered cover', async () => {
       imageFailure = 42; await page.reload();
       const detail = page.locator('[data-detail-state="ready"]'); await detail.waitFor();
-      const cover = detail.locator('[data-content-cover]');
+      const cover = detail.locator('[data-content-cover] [data-carousel-slide="1"]');
       await cover.scrollIntoViewIfNeeded(); // Protected media loads only near the viewport.
       await cover.locator('[data-carousel-image-state="error"]').waitFor();
       const retry = cover.getByRole('button', { name: '이미지 다시 시도', exact: true });
@@ -374,7 +476,7 @@ async function run(browser, viewport) {
       const all = normalize(await detail.innerText());
       for (const slide of items[0].slides) for (const text of [...slide.titleLines, ...slide.bodySentences]) assert.ok(all.includes(normalize(text)), 'every original remains accessible');
       assert.equal(await detail.getByText('원문에서 계속 읽기', { exact: true }).count(), mode === 'link_excerpt' ? 1 : 0);
-      assert.equal(await detail.locator('[data-carousel-track]').count(), 0);
+      assert.equal(await detail.locator('[data-detail-track]').count(), 1);
       await extra.scrollIntoViewIfNeeded(); await capture('detail-' + mode + '-extra');
       assert.ok(await extra.evaluate(el => !['auto', 'scroll', 'hidden'].includes(getComputedStyle(el).overflowY) && el.scrollHeight <= el.clientHeight + 1));
       await detail.getByRole('button', { name: '뒤로가기', exact: true }).click(); await home.waitFor();
