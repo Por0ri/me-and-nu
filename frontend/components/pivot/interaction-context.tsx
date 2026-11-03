@@ -35,7 +35,9 @@ export function useInteractions() {
 }
 function foreground(element: HTMLElement) { return document.visibilityState !== "hidden" && !element.closest("[hidden]"); }
 
-export function useHomeExposure(ref: RefObject<HTMLElement | null>, target: HomeDetailTarget, demo: boolean) {
+/** impressions=false: search results. A searched card left unopened is interest, not a skip, so only
+ *  its slide swipes are recorded (opens and reactions are recorded elsewhere as usual). */
+export function useHomeExposure(ref: RefObject<HTMLElement | null>, target: HomeDetailTarget, demo: boolean, impressions = true) {
   const scope = useContext(InteractionContext), view = useContext(InteractionViewContext);
   const { postId, contentId, topicId, recommendationId, recommendationReason } = target;
   const carousel = useRef(createCarouselMeasurement());
@@ -48,7 +50,7 @@ export function useHomeExposure(ref: RefObject<HTMLElement | null>, target: Home
     let inView = false;
     function finish() {
       const value = exposure.finish();
-      if (value.duration >= 1000) scope!.activity.record(target, "impression", { surface: "home_feed", viewMode: "card", visibleMs: value.duration });
+      if (impressions && value.duration >= 1000) scope!.activity.record(target, "impression", { surface: "home_feed", viewMode: "card", visibleMs: value.duration });
     }
     function update() {
       const visible = inView && foreground(element!);
@@ -73,7 +75,7 @@ export function useHomeExposure(ref: RefObject<HTMLElement | null>, target: Home
     window.addEventListener(ACTIVITY_BOUNDARY_EVENT, finish);
     window.addEventListener(ACTIVITY_RESUME_EVENT, update);
     return () => { window.removeEventListener(ACTIVITY_RESUME_EVENT, update); element.removeEventListener("pointerdown", pointer); element.removeEventListener("wheel", wheel); element.removeEventListener("keydown", keyboard); observer?.disconnect(); document.removeEventListener("visibilitychange", update); window.removeEventListener("pagehide", finish); window.removeEventListener(ACTIVITY_BOUNDARY_EVENT, finish); finish(); };
-  }, [scope, view, ref, demo, postId, contentId, topicId, recommendationId, recommendationReason]);
+  }, [scope, view, ref, demo, impressions, postId, contentId, topicId, recommendationId, recommendationReason]);
   return (index: number, count: number) => {
     const moved = carousel.current.move(index, count);
     if (moved && !demo && view === "home" && ref.current && foreground(ref.current))

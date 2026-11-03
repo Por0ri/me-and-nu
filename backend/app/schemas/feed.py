@@ -101,6 +101,18 @@ class FeedSearchResponse(CamelModel):
     contents: list[FeedCard]
 
 
+class WorkSuggestion(CamelModel):
+    entity_id: int
+    name: str
+
+
+class WorkSuggestionsResponse(CamelModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"selectedTopicId": 1, "query": "진격", "works": [{"entityId": 12, "name": "진격의 거인"}]}})
+    selected_topic_id: int
+    query: str
+    works: list[WorkSuggestion] = Field(default_factory=list, description="이름·별칭에 검색어가 들어간 작품 (온보딩 Q1 검색과 같은 규칙·순서, 글이 없어도 포함)")
+
+
 class PracticalInfo(CamelModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
