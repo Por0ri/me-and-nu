@@ -90,7 +90,7 @@ NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true
 ## 포함된 테스트
 
 - 홈·Topic·Subtopic별 공개 콘텐츠 피드와 상세 화면
-- 카드뉴스에는 AI 생성·개발용 미리보기를 표시하고, 일반 글에는 해당 시 검토 필요 배지도 표시
+- 카드뉴스에는 AI 생성 안내를 표시하고, 일반 글에는 해당 시 미리보기와 검토 필요 배지도 표시
 - 내부 Next.js Route Handler `/api/health`
 - 외부 FastAPI `/health` 선택 호출
 - 개발용 가입·로그인 → 세션 → 정책·Topic/Subtopic → 온보딩 → 프로필·구독 → 피드·상세 → O/X·좋아요·북마크 → 로그아웃

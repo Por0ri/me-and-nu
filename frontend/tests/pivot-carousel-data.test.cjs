@@ -63,14 +63,14 @@ test('Feed and detail map every service slide in page order and retain identity,
   assert.equal(article.notices[0].code, 'AI_GENERATED');
 });
 
-test('Carousel feed and detail hide only the review notice and preserve the original API notices', () => {
+test('Carousel feed and detail hide review and preview labels and preserve the original API notices', () => {
   const review = { code: 'REVIEW_REQUIRED', message: '검토 필요' };
+  const preview = { code: 'DEV_PREVIEW', message: '개발용 미리보기' };
   const publicNotices = [
-    { code: 'DEV_PREVIEW', message: '개발용 미리보기' },
     { code: 'AI_GENERATED', message: 'AI가 생성한 콘텐츠입니다.' },
     { code: 'SPOILER', message: '스포일러 포함' },
   ];
-  const allNotices = [review, ...publicNotices];
+  const allNotices = [review, preview, ...publicNotices];
   for (const [serviceSlides, expected] of [[slides(), publicNotices], [[], allNotices]]) {
     const feedResponse = { ...feed(), slides: serviceSlides, notices: structuredClone(allNotices) };
     const detailResponse = { ...detail(), slides: serviceSlides, notices: structuredClone(allNotices) };

@@ -103,7 +103,7 @@ export function publicationMetadata(value: { publishedAt?: unknown; productionTy
     if (!Array.isArray(value.notices)) invalidContentResponse();
     result.notices = value.notices.flatMap(notice => {
       if (!object(notice)) invalidContentResponse();
-      if (value.slides?.length && notice.code === "REVIEW_REQUIRED") return [];
+      if (value.slides?.length && (notice.code === "REVIEW_REQUIRED" || notice.code === "DEV_PREVIEW")) return [];
       return typeof notice.code === "string" && typeof notice.message === "string"
         ? [{ code: notice.code, message: notice.message }] : [];
     });
