@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, type Dispatch, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
+import { useDragScroll } from "@/lib/pivot/drag-scroll";
 import { type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
 import { MAX_PREFERENCE_TAGS_PER_KIND, selectedPreferenceCount, canAdvance, selectionKey, type OnboardingAction, type OnboardingState, type OnboardingWork } from "@/lib/pivot/onboarding";
 import { PivotFrame, PrimaryButton } from "./pivot-ui";
@@ -19,6 +20,9 @@ export function QuestionProgress({ step, onBack, busy }: { step: 1 | 2 | 3; onBa
 /** Another flow's words for a question (My Page taste edit): its heading, description and a box above them. */
 export type QuestionCopy = { heading?: string; description?: ReactNode; hint?: ReactNode };
 type Props = { state: OnboardingState; dispatch: Dispatch<OnboardingAction>; catalog: OnboardingCatalog; onBack: () => void; onNext: () => void; busy: boolean; chrome?: boolean; demo: boolean; message?: string; copy?: QuestionCopy };
+/** Search results show three at a time and 작품 더보기 adds three (2026-11 design feedback: the list was too long).
+ * Pages still load 20 at a time; the next page is asked for only when the loaded ones run out. */
+export const RESULTS_STEP = 3;
 const errorMessage = (error: unknown) => error instanceof ApiError && error.status === 401 ? "로그인이 만료됐어요. 다시 로그인해 주세요."
   : error instanceof ApiError && error.code === "CSRF_INVALID" ? "로그인 확인 정보가 바뀌었어요. 다시 시도해 주세요."
   : "목록을 불러오지 못했어요. 연결을 확인하고 다시 시도해 주세요.";
@@ -27,6 +31,7 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<OnboardingWork[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
+  const [shown, setShown] = useState(RESULTS_STEP);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [topicError, setTopicError] = useState("");
@@ -36,6 +41,7 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
   const searchInput = useRef<HTMLInputElement>(null);
   const request = useRef(0);
   const controller = useRef<AbortController | null>(null);
+  const dragScroll = useDragScroll<HTMLUListElement>();
   useEffect(() => {
     let live = true; setTopicReady(false); setTopicError("");
     catalog.resolveTopic().then(topicId => { if (live) { dispatch({ type: "set-topic", topicId }); setTopicReady(true); } })
@@ -46,7 +52,7 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
     const token = ++request.current;
     controller.current?.abort();
     const abort = new AbortController(); controller.current = abort;
-    setError(""); setItems([]); setCursor(null);
+    setError(""); setItems([]); setCursor(null); setShown(RESULTS_STEP);
     if (!topicReady || state.topicId === null || (!query.trim() && !demo)) { setLoading(false); return () => abort.abort(); }
     setLoading(true);
     const timer = setTimeout(() => {
@@ -70,6 +76,11 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
     } catch (reason) { if (request.current === token && !abort.signal.aborted) setError(errorMessage(reason)); }
     finally { if (request.current === token && !abort.signal.aborted) setLoading(false); }
   }
+  function showMore() {
+    const next = shown + RESULTS_STEP;
+    setShown(next);
+    if (next >= items.length && cursor) void more();
+  }
   useEffect(() => () => { ++request.current; controller.current?.abort(); }, []);
   function toggle(work: OnboardingWork) { dispatch({ type: "toggle-work", work }); }
   function search(value: string) { ++request.current; controller.current?.abort(); setQuery(value); }
@@ -91,7 +102,7 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
         </button>}
       </div>
       <span className={styles.srOnly} aria-live="polite">{`선택한 작품 ${state.favoriteWorks.length}/5`}</span>
-      <ul className={styles.selectedWorks} aria-label="선택한 작품">
+      <ul className={styles.selectedWorks} aria-label="선택한 작품" {...dragScroll}>
         {state.favoriteWorks.map(work => <li key={work.entityId}><span>{work.name}</span><button type="button" aria-label={`${work.name} 선택 해제`} onClick={() => toggle(work)} disabled={busy}>
           <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="m2.5 2.5 7 7m0-7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
         </button></li>)}
@@ -103,7 +114,7 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
           {error && <div role="alert" className={styles.catalogError}>{error}<button type="button" onClick={() => { if (cursor && items.length) void more(); else setAttempt(value => value + 1); }}>다시 시도</button></div>}
           {items.length > 0 && <p className={styles.resultsLabel} aria-hidden="true">검색 결과</p>}
           <ul className={styles.workResults} aria-label="작품 검색 결과" aria-busy={loading}>
-            {items.map(work => {
+            {items.slice(0, shown).map(work => {
               const selected = state.favoriteWorks.some(item => item.entityId === work.entityId);
               return <li key={work.entityId}><button type="button" className={`${styles.workChoice} ${selected ? styles.selected : ""}`} aria-pressed={selected}
                 disabled={busy || !work.selectable || (!selected && state.favoriteWorks.length >= 5)} onClick={() => toggle(work)}>
@@ -116,7 +127,7 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
           </ul>
           {loading && <p className={styles.catalogNotice} role="status">작품을 찾고 있어요…</p>}
           {!loading && !error && (query.trim() || demo) && items.length === 0 && <p className={styles.catalogNotice} role="status">검색 결과가 없어요. 다른 제목이나 별칭으로 찾아보세요.</p>}
-          {cursor && !error && <button className={styles.moreWorks} type="button" disabled={busy || loading} onClick={() => void more()}>작품 더 보기</button>}
+          {(shown < items.length || cursor) && !error && <button className={styles.moreWorks} type="button" disabled={busy || loading} onClick={showMore}>작품 더보기</button>}
         </>}
     </section>
     {/* The design shows just "다음"; the spoken name stays the same so existing checks still find it. */}

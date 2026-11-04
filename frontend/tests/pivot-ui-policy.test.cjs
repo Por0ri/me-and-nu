@@ -48,6 +48,10 @@ for (const mode of ['demo', 'service']) {
     for (const step of ['q1', 'q2','q3']) assert.equal((render(step, mode).match(/aria-label="이전 단계"/g) || []).length, 1);
     assert.match(render('result', mode), />다시 선택하기<\/button>/);
   });
+  test(mode + ': Q1 selected works and every result chip row slide with a mouse drag', () => {
+    assert.match(render('q1', mode), /<ul class="selectedWorks" aria-label="선택한 작품" data-drag-scroll="">/);
+    assert.equal((render('result', mode).match(/<ul class="summaryChips" data-drag-scroll="">/g) || []).length, 4);
+  });
   test(mode + ': Q2 explains the per-kind minimum and an incomplete result cannot be submitted', () => {
     assert.match(render('q2', mode), /장르·소재 각각 최소 1개/);
     for (const ids of [[], [201], [301]]) {

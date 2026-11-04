@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useRef, useState, type Dispatch, type ImgHTMLAttributes } from "react";
 import assetManifest from "@/public/pivot/bc-sources.json";
+import { useDragScroll } from "@/lib/pivot/drag-scroll";
 import { q1Choices, canAdvance, isStateComplete, selectionSummary, type OnboardingAction, type OnboardingState } from "@/lib/pivot/onboarding";
 import { serviceCatalog, demoCatalog, type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
 import { QuestionProgress, WorksQuestion, TagsQuestion, type QuestionCopy } from "./onboarding-catalog-screens";
@@ -70,6 +71,7 @@ export function ResultDecorations() {
 /** The mascot over the "추천 기준" card: one row per kind of answer, one chip per answer (2026-11 design). */
 export function ResultCriteria({ state, title, label }: { state: OnboardingState; title: string; label: string }) {
   const summary = selectionSummary(state);
+  const dragScroll = useDragScroll<HTMLUListElement>();
   const chosen = state.preferenceOptions.filter(tag => state.preferenceTagIds.includes(tag.tagId));
   const rows: [string, string[]][] = [
     ["관심 작품", state.favoriteWorks.map(work => work.name)],
@@ -83,7 +85,7 @@ export function ResultCriteria({ state, title, label }: { state: OnboardingState
       <div className={styles.summaryIntro}><h2>{title}</h2><p>선택해주신 3가지 답변을 바탕으로 콘텐츠를 추천할게요</p></div>
       <div className={styles.summaryRows}>
         {rows.map(([name, values]) => <div key={name} className={styles.summaryRow}><span className={styles.summaryLabel}>{name}</span>
-          <ul className={styles.summaryChips}>{values.map((value, index) => <li key={index} className={styles.answerTag}>{value}</li>)}</ul></div>)}
+          <ul className={styles.summaryChips} {...dragScroll}>{values.map((value, index) => <li key={index} className={styles.answerTag}>{value}</li>)}</ul></div>)}
       </div>
     </div>
   </>;
