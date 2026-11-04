@@ -1,6 +1,6 @@
 # 현재 구현 API의 Swagger UI 조작법
 
-현재 로컬 코드 기준: **2026-10-28**. 등록된 HTTP 작업은 공개 V1 **36개**, 상태 확인 **3개**이며 `ENABLE_DEV_API=true`이면 개발용 **6개**가 추가되어 총 **45개**다. 최초 2026-09-29의 32개(공개 24·개발 6·상태 2)는 당시 기록이다. 전체 현재 목록과 한계는 [V1.1 로컬 정합화 표](API_V1_1_LOCAL_ALIGNMENT.md)를 따른다. 이 문서는 **Swagger 화면에서 주요 기능을 확인하는 순서와 입력 방법**을 설명한다. 서버·DB 준비는 [로컬 테스트 가이드](SWAGGER_TEST_GUIDE.md)를 참고한다. 로컬 구현 갱신이 원격 배포 완료를 뜻하지 않는다.
+현재 로컬 코드 기준: **2026-10-28**. 등록된 HTTP 작업은 공개 V1 **36개**, 상태 확인 **3개**이며 `ENABLE_DEV_API=true`이면 개발용 **6개**가 추가되어 총 **45개**다. 2026-11-03 영화 Agent 개발용 작업 4개를 삭제해 개발용은 **2개**(가입·로그인)만 남았다. 최초 2026-09-29의 32개(공개 24·개발 6·상태 2)는 당시 기록이다. 전체 현재 목록과 한계는 [V1.1 로컬 정합화 표](API_V1_1_LOCAL_ALIGNMENT.md)를 따른다. 이 문서는 **Swagger 화면에서 주요 기능을 확인하는 순서와 입력 방법**을 설명한다. 서버·DB 준비는 [로컬 테스트 가이드](SWAGGER_TEST_GUIDE.md)를 참고한다. 로컬 구현 갱신이 원격 배포 완료를 뜻하지 않는다.
 
 > JSON의 숫자 ID와 정책 버전 `v1`은 입력 형식을 보여주는 예시다. 팀원은 **자기 환경의 조회 응답에서 받은 값**으로 바꾼다. 작품은 works GET, 태그는 preference-options POST 응답의 ID를 사용한다. 현재 서버가 실행 중이지 않으면 `/docs`를 열기 전에 백엔드와 PostgreSQL을 먼저 시작한다.
 
@@ -19,28 +19,27 @@
 1. **[http://localhost:8000/docs](http://localhost:8000/docs)**를 연다. 세션 쿠키가 이어지도록 테스트 내내 `localhost`를 사용하고 `127.0.0.1`과 섞지 않는다.
 2. 아래 표의 **Swagger 태그**를 펼치고 해당 메서드·경로를 클릭한다. **Try it out**을 누른다.
 3. `Parameters`의 **path/query** 칸과, 필요한 작업에서만 `Request body`의 JSON을 입력한다. 빈 선택 query는 그대로 비운다. **Execute**를 누른다.
-4. 아래 `Server response`의 **Code**와 **Response body**를 확인한다. 다음 요청에는 예시 ID가 아니라 여기서 받은 실제 `id`, `entityId`, `tagId`, `subtopicId`, `contentId`, `agentRunId`, `nextCursor`를 사용한다. **204**는 성공이어도 본문이 없다.
+4. 아래 `Server response`의 **Code**와 **Response body**를 확인한다. 다음 요청에는 예시 ID가 아니라 여기서 받은 실제 `id`, `entityId`, `tagId`, `subtopicId`, `contentId`, `nextCursor`를 사용한다. **204**는 성공이어도 본문이 없다.
 5. 변경 요청이 403 `CSRF_INVALID`라면 `GET /api/v1/auth/session`을 다시 실행하고 새 `csrfToken`을 우상단 **Authorize → CsrfToken**에 입력한다. `SessionCookie` 칸은 수동으로 채우지 않는다. 같은 브라우저의 HttpOnly 쿠키는 자동 전송된다.
 
 ### 테스트 모드 선택
 
 | 모드 | `backend/.env` | 사용처 | Swagger 인증 |
 | --- | --- | --- | --- |
-| **A. 빠른 로컬 조회·피드·Agent 미리보기** | `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=true` | 데모 사용자 seed 후 보호 API와 탈락 초안 미리보기 | `Authorize` 불필요. 서버·브라우저 요청이 모두 루프백이어야 한다. |
+| **A. 빠른 로컬 조회·피드** | `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=true` | 데모 사용자 seed 후 보호 API | `Authorize` 불필요. 서버·브라우저 요청이 모두 루프백이어야 한다. |
 | **B. 실제 세션·온보딩 흐름** | `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=false` | 가입, 로그인, CSRF, 온보딩, 로그아웃 검증 | 익명 세션 조회 → `CsrfToken` 설정 → 로그인·온보딩 뒤 토큰 갱신. |
 
-설정 변경 뒤에는 **백엔드를 재시작하고 `/docs`를 새로고침**한다. `ENABLE_DEV_API=false`이면 개발용 6개 작업은 Swagger와 라우트에서 사라진다. 모드 A의 데모 사용자는 이미 온보딩이 완료되어 있으므로, **작품 검색·후보 조회를 포함한** 신규 온보딩과 로그아웃 후 401 검사는 **모드 B**에서 한다. 개발용 인증 대신 설정된 카카오·네이버 OAuth로 로그인해도 되며 [OAuth 안내](OAUTH_T02_1_SETUP.md)를 따라 복귀 후 실제 `onboarding_pending` 세션과 현재 CSRF를 확인한다.
+설정 변경 뒤에는 **백엔드를 재시작하고 `/docs`를 새로고침**한다. `ENABLE_DEV_API=false`이면 개발용 2개 작업은 Swagger와 라우트에서 사라진다. 모드 A의 데모 사용자는 이미 온보딩이 완료되어 있으므로, **작품 검색·후보 조회를 포함한** 신규 온보딩과 로그아웃 후 401 검사는 **모드 B**에서 한다. 개발용 인증 대신 설정된 카카오·네이버 OAuth로 로그인해도 되며 [OAuth 안내](OAUTH_T02_1_SETUP.md)를 따라 복귀 후 실제 `onboarding_pending` 세션과 현재 CSRF를 확인한다.
 
 ## 2. 그대로 따라 하는 기본 흐름
 
-### A. 로그인 없이 공개 글·Agent 미리보기 확인
+### A. 로그인 없이 공개 글 확인
 
 1. `상태 확인`의 `GET /health`, `GET /health/db`를 실행해 각각 200을 확인한다.
 2. `정책`의 `GET /api/v1/policies`, `Topic`의 `GET /api/v1/topics`, `내 관심사`의 `GET /api/v1/me/topics`를 실행한다. 응답에서 활성 `topicId`를 기록한다.
 3. `Subtopic`의 `GET /api/v1/topics/{topicId}/subtopics`에 Topic ID를 넣어 **영화 리뷰**의 `subtopicId`를 기록한다.
 4. `피드`의 `GET /api/v1/topics/{topicId}/feed`를 실행한다. 필요하면 `subtopicId` query에 영화 리뷰 ID를 넣고 다시 실행한다. `sections[].contents[].id`가 공개 글의 `contentId`다.
 5. `콘텐츠`의 `GET /api/v1/contents/{contentId}`에 카드 ID를 path로, 같은 `topicId`를 필수 query로 넣어 상세를 확인한다.
-6. 저장된 Agent 실행이 있다면 `개발용 Agent 결과`의 목록·상세를 조회한다. 탈락 초안은 아래 표의 `publish-preview`를 **의도적으로** 실행한 뒤 피드·상세를 다시 조회한다. 화면 확인은 `http://localhost:3000/`의 **새로고침**을 누른다.
 
 ### B. 신규 계정부터 로그아웃까지
 
@@ -178,21 +177,6 @@ Pivot은 정책 동의와 닉네임 입력 뒤 Q1 작품 검색·선택 → Q2 �
 반응 PUT/DELETE는 **모드 B의 현재 CSRF**가 필요하다. `topicId=1`은 예시이며, 콘텐츠가 속한 **내 활성 Topic ID**로 바꾼다. 피드의 `recommendationReason=null`, `seen=false`는 추천·노출 이벤트 미연결 상태에서 정상일 수 있다.
 
 캐러셀은 [서비스 import CLI](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#3-적재-경계)로 별도 준비한다. Swagger에 캐러셀 import·검토 승인 작업은 없다. 기본 보류 적재본은 피드에 나오지 않으며 별도 운영자가 정확한 digest에 연결해 승인한 묶음만 공개한다. 공개본에서 `slides`의 page순 텍스트·camelCase layout·1308×1632 크기, 상세의 `sources`·AI 고지를 확인하고 이미지 GET을 호출한다. 이미지 응답은 JSON으로 파싱하지 않는다. 만료·미검토·거절·불완전 캐러셀과 없는 장은 404여야 하며, 다른 Topic이나 비로그인에서도 노출되면 안 된다. 현재 프론트 화면의 캐러셀 표시를 확인하는 단계는 포함하지 않는다.
-
-### 개발용 Agent 결과·발행 — 4개
-
-Agent 새 실행을 만드는 Swagger 작업은 없다. 기존 실행이 없으면 [기존 가이드의 CLI 절차](SWAGGER_TEST_GUIDE.md#영화-agent-초안과-판정-조회)로 먼저 준비한다. 실행에는 외부 모델/TMDB 키와 사용량이 필요할 수 있다. 아래 작업은 `ENABLE_DEV_API=true`와 **로컬 요청**이 필요하다.
-
-아래 `publish`·`publish-preview`는 기존 영화 Agent 경로다. 캐러셀 묶음의 검토·승인은 별도 운영자 기록과 [서비스 import CLI](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#3-적재-경계)를 사용하며 이 개발용 작업으로 우회하지 않는다.
-
-| 명세 번호 | Swagger 태그 → 작업 | Try it out 입력 | 정상 Code · Response body 확인 |
-| --- | --- | --- | --- |
-| — | 개발용 Agent 결과 → `GET /api/v1/dev/agent-runs` | 선택 query `limit` 기본 20(1~50), `offset` 기본 0 | **200** `items[].agentRunId`, `outcome`, `draft.status`, `hasMore` |
-| — | 개발용 Agent 결과 → `GET /api/v1/dev/agent-runs/{agentRunId}` | 목록에서 얻은 path `agentRunId` | **200** `draft`, `steps`, `judgments`, `sourceUrls`; 글이 없으면 `draft=null` |
-| — | 개발용 Agent 결과 → `POST /api/v1/dev/agent-runs/{agentRunId}/publish` | **승인된** 실행 ID. 본문 없음. 모드 B에서는 CSRF 필요 | **200** `contentId`, `topicId`, `status`, `judgmentStatus`, `feedUrl`, `detailUrl`; 조건 미충족은 409 |
-| — | 개발용 Agent 결과 → `POST /api/v1/dev/agent-runs/{agentRunId}/publish-preview` | **탈락한** 실행 ID. 본문 없음. **모드 A만** | **200** `preview=true`, `judgmentStatus="needs_review"`; 모드 B는 403 `DEV_PREVIEW_DISABLED` |
-
-`publish`는 `outcome=publish_candidate`, `draft.status=approved`, 사실 확인 추가 검토 불필요 조건을 요구한다. 정상 자동 발행이 이미 완료됐다면 같은 Content를 반환한다. 탈락 원고를 `publish-preview`로 게시한 뒤 같은 실행에 일반 `publish`를 요청하면 **409 `AGENT_DRAFT_PREVIEW_ONLY`**가 정상이다. `publish-preview`로 만든 공개 글은 개발용·검토 필요 표식이 붙는다. 발행 응답의 `feedUrl`과 `detailUrl`을 Swagger의 피드·콘텐츠 GET에 대응시켜 확인한다.
 
 ## 4. 오류와 결과 기록
 

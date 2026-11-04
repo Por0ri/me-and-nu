@@ -6,13 +6,11 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 
 ## 현재 구현된 V1 로컬 범위
 
-2026-10-28 현재 구현 ERD는 38개 테이블의 [current_schema.sql](../docs/erd/current_schema.sql)입니다. DB 연결 없이 `python scripts/export_current_schema.py`로 재생성하고 `--check`로 일치 여부를 검사합니다. [온보딩 V2 계약·migration](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [캐러셀 DB·API 확장](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [과거 DB 확인 기록](../docs/ERD_API_ALIGNMENT_2026-10-27.md)을 구분하세요. 현재 OpenAPI는 공개 V1 36개·상태 확인 3개이며 개발용 API를 켜면 6개가 추가되어 총 45개입니다.
+2026-10-28 현재 구현 ERD는 38개 테이블의 [current_schema.sql](../docs/erd/current_schema.sql)입니다. DB 연결 없이 `python scripts/export_current_schema.py`로 재생성하고 `--check`로 일치 여부를 검사합니다. [온보딩 V2 계약·migration](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [캐러셀 DB·API 확장](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [과거 DB 확인 기록](../docs/ERD_API_ALIGNMENT_2026-10-27.md)을 구분하세요. 현재 OpenAPI는 공개 V1 45개·상태 확인 3개이며 개발용 API를 켜면 2개가 추가되어 총 50개입니다.
 
 | 영역 | Endpoint |
 | --- | --- |
 | 개발용 인증 | `POST /api/v1/dev/auth/register`, `POST /api/v1/dev/auth/login` |
-| 개발용 Agent 결과 | `GET /api/v1/dev/agent-runs`, `GET /api/v1/dev/agent-runs/{agentRunId}` |
-| 개발용 Agent 발행 | `POST /api/v1/dev/agent-runs/{agentRunId}/publish`, `POST /api/v1/dev/agent-runs/{agentRunId}/publish-preview` |
 | 세션 | `GET /api/v1/auth/session`, `POST /api/v1/auth/logout` |
 | 소셜 OAuth (API-001·002) | `POST /api/v1/auth/login/{provider}`, `GET /api/v1/auth/login/{provider}/callback` — 카카오·네이버. 앱 키와 `oauth_attempt` 마이그레이션 필요, 기본 비활성. [설정·백엔드 단독 검증](../docs/OAUTH_T02_1_SETUP.md) |
 | 정책·온보딩 | `GET /api/v1/policies`, `GET /api/v1/onboarding/works`, `POST /api/v1/onboarding/preference-options`, `POST /api/v1/onboarding/complete` |
@@ -25,7 +23,7 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 | AI 대화 (API-048·052·053) | `POST /api/v1/chat/sessions`, `POST /api/v1/chat/sessions/{sessionId}/messages`, `GET /api/v1/chat/jobs/{jobId}` — `backend/.env`의 `LLM_KEY` 필요. 질문은 앞뒤 공백 제외 최대 500자이며 현재 분야 공개 콘텐츠 안에서만 근거를 찾아 답합니다. |
 | 알림 (API-107·108·109) | `GET /api/v1/users/me/notifications`, `GET /api/v1/users/me/notifications/unread-count`, `PATCH /api/v1/users/me/notifications/{notificationId}` — 운영공지(`system_notice`)만 목록·미읽음 수·읽음 처리에 포함합니다. 환영 공지를 생성하며, 기존 다른 유형 알림은 보존하되 공개 API에서 제외합니다. 실제 운영공지 공급은 후속 작업입니다. |
 
-사용자와 콘텐츠 데이터는 PostgreSQL을 사용합니다. 세션 저장소는 `SESSION_BACKEND=redis`로 Redis를 선택할 수 있으며 미설정 시 기존 PostgreSQL 세션을 사용합니다. 개발용 가입·로그인과 Agent 결과 조회는 `ENABLE_DEV_API=true`에서만 등록됩니다. Agent 결과 조회는 로컬 요청과 인증된 개발 사용자로 제한되며 Swagger의 **개발용 Agent 결과**에 표시됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 영화 Agent 실행 결과가 승인되고 사실 확인 항목이 없으면 저장 직후 공개 Content 피드에 자동 발행됩니다. 탈락하거나 사실 확인이 필요한 초안은 자동 발행되지 않습니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
+사용자와 콘텐츠 데이터는 PostgreSQL을 사용합니다. 세션 저장소는 `SESSION_BACKEND=redis`로 Redis를 선택할 수 있으며 미설정 시 기존 PostgreSQL 세션을 사용합니다. 개발용 가입·로그인은 `ENABLE_DEV_API=true`에서만 등록됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
 
 ### 환경 변수와 실행
 
@@ -111,13 +109,9 @@ $env:TEST_REDIS_URL = 'redis://127.0.0.1:6379/0'
 
 `backend`에서 `python -m app.seeds.carousel_contents --file <bundle.json> --expected-database <DB명>`으로 먼저 검사합니다. 기본은 읽기 전용 dry-run이며 `--apply`만 저장합니다. 별도 운영자 검토 기록 `--review-record-file <review.json>`이 없는 콘텐츠는 `pending_review`로 저장하고 공개하지 않습니다. 원본 Agent의 점수·ready 상태는 승인 증거로 사용하지 않습니다. 정확한 묶음 해시에 연결된 승인 기록만 공개할 수 있으며 미검수 강제 발행 옵션은 없습니다. 입력 규격·원자성·동일 요청 충돌·출처 표시와 검증 범위는 [캐러셀 DB·API 문서](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. 에이전트 생성 DB와 코드는 변경하지 않습니다.
 
-### 기존 커밋된 Agent 콘텐츠 일괄 적재
+### 예전 Agent 콘텐츠 도구 (삭제됨)
 
-`backend`에서 `python -m app.seeds.agent_contents --git-ref f645df0`으로 읽기 전용 검사 후, `--apply`를 붙여 적재할 수 있습니다. 원격 커밋의 JSON을 직접 읽으며 현재 브랜치를 변경하지 않습니다. 전체 트랜잭션·중복 방지·원본 추적을 지원합니다. [적재 결과와 실행 안내](../docs/AGENT_CONTENT_IMPORT.md)를 참고하세요.
-
-기존 분야별 임시 세부 관심사 7개는 콘텐츠 적재 후 `python -m app.seeds.agent_interests --git-ref f645df0 --apply`로 등록할 수 있습니다. 현재 Q1·Q2 온보딩의 필수 준비 과정은 아니며, 기존 작품 분류를 보존하면서 콘텐츠 연결을 추가하는 용도입니다. [임시 분류와 실행 안내](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)를 참고하세요.
-
-콘텐츠 사진은 `backend/.env`에 `TMDB_KEY`를 넣은 뒤 `python -m app.seeds.content_images --apply`로 채웁니다. 영화·애니는 TMDB 장면 사진(없으면 포스터), 음악은 MusicBrainz 앨범 표지를 쓰며 `image_url`이 비어 있는 Agent 콘텐츠만 바꿉니다. 먼저 `--apply` 없이 실행하면 찾은 결과만 미리 볼 수 있습니다.
+예전 `agent/` 폴더의 글을 넣던 `agent_contents`·`agent_interests`·`content_images` seed와 영화 Agent 실행 코드(개발용 Agent 결과·발행 API 포함)는 2026-11-03 삭제했습니다. 영화 도메인을 지금 쓰지 않아서이며, 확장할 때 필요하면 `chore/movie-agent` 브랜치에서 되살립니다.
 
 ## 구조 원칙
 
@@ -134,7 +128,7 @@ $env:TEST_REDIS_URL = 'redis://127.0.0.1:6379/0'
 
 ~~~text
 me_nu/
-├─ agent/
+├─ agents/
 ├─ backend/
 │  ├─ alembic/versions/
 │  │  └─ 7c8e1a9b4d2f_add_v1_persistent_api_tables.py

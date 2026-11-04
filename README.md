@@ -49,9 +49,6 @@ API의 회원 유형은 `user` 하나입니다. 이 서비스 반영 후보의 A
 
 `backend/.env`에 `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 설정하고 위 마이그레이션과 두 seed를 실행한 뒤 `localhost:8000/docs`를 여세요. 루프백 요청의 보호 API는 데모 사용자로 처리되어 세션 쿠키와 CSRF 헤더 없이 실행할 수 있습니다. `ENABLE_DEV_AUTH_BYPASS=false`로 바꾸고 서버를 다시 시작하면 일반 인증이 복원됩니다. 기존 로그인 API `POST /api/v1/dev/auth/login`은 `ENABLE_DEV_API=true`일 때 Swagger의 **개발용 인증** 아래에 있습니다.
 
-영화 Agent를 실행해 저장한 초안과 판정은 Swagger의 **개발용 Agent 결과 → `GET /api/v1/dev/agent-runs`**에서 확인합니다. 실행 명령과 상세 조회 순서는 [Swagger 테스트 가이드](docs/SWAGGER_TEST_GUIDE.md)에 있습니다. 승인되고 추가 사실 확인이 필요 없는 초안은 저장 후 공개 피드로 자동 발행됩니다.
-공개 피드 테스트에서는 같은 Swagger 그룹의 `POST /api/v1/dev/agent-runs/{agentRunId}/publish`로 발행을 재시도할 수 있습니다. 탈락 초안은 로컬 테스트 모드에서만 `publish-preview`로 게시하며 검토 필요 상태로 표시됩니다.
-
 ## 프론트엔드 실행
 
 새 PowerShell 창에서 실행합니다.

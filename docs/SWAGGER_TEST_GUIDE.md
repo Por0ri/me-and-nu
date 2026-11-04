@@ -57,7 +57,7 @@ python -m app.seeds.carousel_contents --file <bundle.json> --expected-database <
 python -m app.seeds.carousel_contents --file <bundle.json> --expected-database <대상_DB명> --review-record-file <review.json>
 ```
 
-기본은 읽기 전용입니다. 저장하면 검토 기록 없는 묶음은 Content·Draft·슬라이드를 `pending_review`로 보관하고 공개 API에서는 차단합니다. 원본 Agent의 `ready`·점수·`reviewEvidence`는 발행 승인이 아닙니다. 정확한 묶음 digest에 연결된 별도 운영자 승인 기록이 있어야 공개할 수 있습니다. Swagger에 캐러셀 import·승인 API는 없고 아래 기존 영화 Agent의 `publish`·`publish-preview`를 캐러셀 승인 수단으로 사용하지 않습니다.
+기본은 읽기 전용입니다. 저장하면 검토 기록 없는 묶음은 Content·Draft·슬라이드를 `pending_review`로 보관하고 공개 API에서는 차단합니다. 원본 Agent의 `ready`·점수·`reviewEvidence`는 발행 승인이 아닙니다. 정확한 묶음 digest에 연결된 별도 운영자 승인 기록이 있어야 공개할 수 있습니다. Swagger에 캐러셀 import·승인 API는 없습니다.
 
 검토되어 공개된 캐러셀을 별도로 준비한 환경에서 다음을 확인합니다.
 
@@ -67,22 +67,6 @@ python -m app.seeds.carousel_contents --file <bundle.json> --expected-database <
 4. `ENABLE_DEV_AUTH_BYPASS=false`에서 비로그인은 401, 가입 대기는 403을 확인합니다. 다른 Topic·보류·거절·만료·불완전 캐러셀이나 없는 page는 404, page 0/11 또는 필수 topicId 누락은 422여야 합니다. 만료·불완전 캐러셀은 피드·북마크 목록에도 나오지 않습니다.
 
 슬라이드 없는 기존 글은 `slides:[]`이며 기존 `imageUrl`·`body`·`displayMode` 동작을 유지합니다. 이 순서는 Swagger/API 계약 확인이며 프론트의 HTML 오버레이·캐러셀 화면 검증을 의미하지 않습니다.
-
-## 영화 Agent 초안과 판정 조회
-
-영화 Agent는 글을 먼저 내부 초안으로 저장합니다. 실행하려면 `agent/.env`에 `LLM_KEY`, `TMDB_KEY`가 있어야 하며 모델 API 사용량이 발생할 수 있습니다. `backend` 폴더에서 한 편을 실행합니다.
-
-```powershell
-.\.venv\Scripts\python.exe scripts/run_movie_agent_once.py "기생충" 2019
-```
-
-Swagger의 **개발용 Agent 결과 → GET `/api/v1/dev/agent-runs`**에서 실행 목록을 조회하고, 반환된 `agentRunId`로 **GET `/api/v1/dev/agent-runs/{agentRunId}`**를 호출합니다. 상세 응답에는 초안의 제목·본문·상태, 형식 검사 단계, 판정 요약, 확인 필요 항목과 출처 URL이 포함됩니다. `draft=null`이면 해당 실행에서 글을 만들지 않은 것입니다.
-
-`outcome=rejected_archive`인 글도 개발용 조회에서는 확인할 수 있지만, `draft.status=discarded`로 표시됩니다. `publish_candidate`로 승인되고 추가 사실 확인이 필요 없는 글은 저장 직후 공개 피드에 자동 발행되며, 성공하면 `draft.status=published`가 됩니다. 자동 발행에 실패한 초안은 `approved` 상태로 남으며 서버 로그에 이유가 기록됩니다. 이 조회 경로는 로컬 요청과 개발용 인증에서만 사용할 수 있습니다.
-
-자동 발행된 글은 **GET `/api/v1/topics/{topicId}/feed`**에서 확인합니다. 이전 실행이나 자동 발행에 실패한 승인 초안을 다시 게시하려면 **POST `/api/v1/dev/agent-runs/{agentRunId}/publish`**를 호출합니다. 이 경로도 `publish_candidate`·`approved`이고 추가 사실 확인이 필요 없는 초안만 발행합니다. 탈락 초안을 로컬 화면에서 시험하려면 인증 생략 모드에서 **POST `/api/v1/dev/agent-runs/{agentRunId}/publish-preview`**를 명시적으로 호출합니다. 테스트 게시는 피드 요약에 표식을 남기고 `judgmentStatus=needs_review`로 저장됩니다. 같은 실행을 다시 게시해도 새 콘텐츠를 중복 생성하지 않습니다.
-
-게시 응답의 `contentId`, `topicId`, `feedUrl`, `detailUrl`을 사용해 **GET `/api/v1/topics/{topicId}/feed`**와 **GET `/api/v1/contents/{contentId}?topicId=...`**를 확인합니다. 영화 Subtopic 필터에서도 보이려면 **GET `/api/v1/topics/{topicId}/subtopics`**에서 `영화 리뷰`의 ID를 확인해 피드의 `subtopicId`로 넣습니다. 상세 응답은 AI 원본 글의 `body`를 반환합니다.
 
 ## 3. 일반 로그인과 온보딩 테스트
 
