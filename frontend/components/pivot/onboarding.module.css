@@ -13,7 +13,8 @@
 .interestCard, .choice { position: relative; border: 2px solid #e4e4e7; border-radius: 8px; cursor: pointer; background: transparent; }
 .interestCard input, .choice input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .interestCard:has(input:focus-visible), .choice:has(input:focus-visible) { outline: 3px solid #7043b4; outline-offset: 3px; }
-.interestCard { display: flex; flex-direction: column; align-items: center; gap: 5px; height: 202px; padding: 13px 0 15px; }
+/* 2026-11 design feedback: squarer cards (166×202 → 166×184), the contents keep their place. */
+.interestCard { display: flex; flex-direction: column; align-items: center; gap: 5px; height: 184px; padding: 13px 0 15px; }
 .interestArtwork { position: relative; display: block; flex: none; width: 115px; height: 100px; overflow: hidden; }
 .interestArtwork img { position: absolute; left: 0; top: -5.86px; width: 115px; height: 104.11px; }
 .interestCard strong { font-size: 16px; font-weight: 600; line-height: 24px; color: #27272a; }
@@ -21,7 +22,13 @@
 .selected { background: #f7f2ff; border-color: #7043b4; }
 .selected .badge { color: #7043b4; }
 .interestCard.selected strong { color: #3f3f46; }
-.upcoming { height: 202px; border: 1px dashed #e4e4e7; border-radius: 14px; background: #f4f4f5; display: flex; flex-direction: column; align-items: center; gap: 13px; padding-top: 58px; color: #b9b9c1; }
+/* My Page 관심분야 관리: the detail screen's grey round back button where the logo was, the card cannot be unpicked. */
+.interestHeader.manageHeader { justify-content: flex-start; }
+.manageBack { display: grid; place-items: center; width: 44px; height: 44px; margin: -34px 0 0 -8px; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.manageBack span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgb(192 192 186 / 48%); }
+.manageBack img { flex: none; max-width: none; }
+.fixedCard { cursor: default; }
+.upcoming { height: 184px; border: 1px dashed #e4e4e7; border-radius: 14px; background: #f4f4f5; display: flex; flex-direction: column; align-items: center; gap: 13px; padding-top: 46px; color: #b9b9c1; }
 .upcoming strong { font-size: 16px; line-height: 24px; font-weight: 600; }
 .hint { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 10px 20px; margin-top: 23px; border: 1px solid #e4e4e7; border-radius: 8px; }
 .hint p { color: #71717a; font-size: 12px; line-height: 18px; }
@@ -103,6 +110,10 @@
 .selectedWorks { display: flex; gap: 8px; list-style: none; margin: 14px -24px 0; padding: 0 24px; overflow-x: auto; scrollbar-width: none; }
 .selectedWorks::-webkit-scrollbar { display: none; }
 .selectedWorks:empty { display: none; }
+/* Mouse drag (lib/pivot/drag-scroll.ts): a grab cursor only when the row overflows, and no text selection. */
+.selectedWorks, .summaryChips { user-select: none; }
+.selectedWorks[data-scrollable="true"], .summaryChips[data-scrollable="true"] { cursor: grab; }
+.selectedWorks[data-dragging="true"], .summaryChips[data-dragging="true"] { cursor: grabbing; }
 .selectedWorks li { display: flex; flex: none; align-items: center; box-sizing: border-box; height: 28px; border: 1px solid #27272a; border-radius: 14px; background: #efe7ff; color: #27272a; padding-left: 10px; font-size: 13px; line-height: 18px; white-space: nowrap; }
 .selectedWorks button { display: grid; place-items: center; flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 13px; background: transparent; color: inherit; }
 .frame .catalogNotice { margin-top: 12px; color: #71717a; font-size: 13px; line-height: 20px; word-break: keep-all; overflow-wrap: anywhere; }

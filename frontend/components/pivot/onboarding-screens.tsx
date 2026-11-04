@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useRef, useState, type Dispatch, type ImgHTMLAttributes } from "react";
 import assetManifest from "@/public/pivot/bc-sources.json";
+import { useDragScroll } from "@/lib/pivot/drag-scroll";
 import { q1Choices, canAdvance, isStateComplete, selectionSummary, type OnboardingAction, type OnboardingState } from "@/lib/pivot/onboarding";
 import { serviceCatalog, demoCatalog, type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
 import { QuestionProgress, WorksQuestion, TagsQuestion, type QuestionCopy } from "./onboarding-catalog-screens";
@@ -15,29 +16,43 @@ function Asset({ screen, variable, ...props }: { screen: string; variable: strin
 }
 type NavigationProps = { onBack: () => void; onNext: () => void; busy: boolean };
 type SubmissionProps = { submitting: boolean; error: string; onSubmit: () => void; recovery?: { label: string; onClick: () => void } };
-export function InterestScreen({ selected, onToggle, onNext, busy, chrome = false }: Omit<NavigationProps, "onBack"> & { selected: boolean; onToggle: () => void; chrome?: boolean }) {
-  const assetScreen = selected ? "interest-on" : "interest";
+/** The 관심 분야 screen. manage = My Page 관심분야 관리 (2026-11 design): a back button in place of the logo, the field
+ * shown as chosen and no start button. Animation is the only field for now; more fields would read GET /me/topics. */
+export function InterestScreen({ selected, onToggle, onNext, busy, chrome = false, manage }: Omit<NavigationProps, "onBack"> & {
+  selected: boolean; onToggle: () => void; chrome?: boolean; manage?: { onBack: () => void };
+}) {
+  const chosen = selected || !!manage;
+  const assetScreen = chosen ? "interest-on" : "interest";
+  const artwork = <span className={styles.interestArtwork}><Asset screen={assetScreen} variable="img" width={115} height={104.11} /></span>;
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
-    <header className={styles.interestHeader}>
-      <Asset screen={assetScreen} variable="img4Vectorized" width={104} height={20.7859} alt="me;nu" aria-hidden={undefined} />
+    <header className={[styles.interestHeader, manage ? styles.manageHeader : ""].join(" ")}>
+      {manage
+        ? <button type="button" className={styles.manageBack} aria-label="뒤로가기" onClick={manage.onBack}>
+          <span><img src="/pivot/detail/back.svg" alt="" width={24} height={24} /></span>
+        </button>
+        : <Asset screen={assetScreen} variable="img4Vectorized" width={104} height={20.7859} alt="me;nu" aria-hidden={undefined} />}
     </header>
     <section className={styles.interestBody} aria-labelledby="interest-heading">
       <h1 id="interest-heading" tabIndex={-1}>관심 분야를<br /><em>선택</em>해주세요</h1>
       <p className={styles.interestDescription}>지금은 애니메이션부터 시작할 수 있어요</p>
       <div className={styles.interestCards}>
-        <label className={[styles.interestCard, selected ? styles.selected : ""].join(" ")}>
-          <input type="checkbox" aria-label="애니메이션" checked={selected} onChange={onToggle} disabled={busy} />
-          <span className={styles.interestArtwork}><Asset screen={assetScreen} variable="img" width={115} height={104.11} /></span>
-          <strong>애니메이션</strong><span className={styles.badge}>{selected ? "선택 완료" : "선택 가능"}</span>
-        </label>
+        {manage
+          ? <div className={[styles.interestCard, styles.selected, styles.fixedCard].join(" ")}>
+            {artwork}<strong>애니메이션</strong><span className={styles.badge}>선택중</span>
+          </div>
+          : <label className={[styles.interestCard, selected ? styles.selected : ""].join(" ")}>
+            <input type="checkbox" aria-label="애니메이션" checked={selected} onChange={onToggle} disabled={busy} />
+            {artwork}<strong>애니메이션</strong><span className={styles.badge}>{selected ? "선택 완료" : "선택 가능"}</span>
+          </label>}
         <div className={styles.upcoming} aria-label="추가 예정 분야">
-          <Asset screen={assetScreen} variable={selected ? "img1" : "img2"} width={52} height={52} />
+          <Asset screen={assetScreen} variable={chosen ? "img1" : "img2"} width={52} height={52} />
           <strong>추가 예정</strong>
         </div>
       </div>
-      <div className={styles.hint}><Asset screen={assetScreen} variable={selected ? "img2" : "img1"} width={32} height={32} /><p>분야를 선택한 뒤 취향을 고를 수 있어요</p></div>
+      <div className={styles.hint}><Asset screen={assetScreen} variable={chosen ? "img2" : "img1"} width={32} height={32} />
+        <p>{manage ? "이미 애니메이션을 탐색중입니다" : "분야를 선택한 뒤 취향을 고를 수 있어요"}</p></div>
     </section>
-    <div className={styles.actions}><PrimaryButton disabled={!selected || busy} onClick={onNext}>애니메이션 선택하고 시작하기</PrimaryButton></div>
+    {!manage && <div className={styles.actions}><PrimaryButton disabled={!selected || busy} onClick={onNext}>애니메이션 선택하고 시작하기</PrimaryButton></div>}
   </PivotFrame>;
 }
 export function QuestionScreen({ value, onChoose, onBack, onNext, busy, chrome = false, copy }: NavigationProps & { value: string | null; onChoose: (value: string) => void; chrome?: boolean; copy?: QuestionCopy }) {
@@ -70,6 +85,7 @@ export function ResultDecorations() {
 /** The mascot over the "추천 기준" card: one row per kind of answer, one chip per answer (2026-11 design). */
 export function ResultCriteria({ state, title, label }: { state: OnboardingState; title: string; label: string }) {
   const summary = selectionSummary(state);
+  const dragScroll = useDragScroll<HTMLUListElement>();
   const chosen = state.preferenceOptions.filter(tag => state.preferenceTagIds.includes(tag.tagId));
   const rows: [string, string[]][] = [
     ["관심 작품", state.favoriteWorks.map(work => work.name)],
@@ -83,7 +99,7 @@ export function ResultCriteria({ state, title, label }: { state: OnboardingState
       <div className={styles.summaryIntro}><h2>{title}</h2><p>선택해주신 3가지 답변을 바탕으로 콘텐츠를 추천할게요</p></div>
       <div className={styles.summaryRows}>
         {rows.map(([name, values]) => <div key={name} className={styles.summaryRow}><span className={styles.summaryLabel}>{name}</span>
-          <ul className={styles.summaryChips}>{values.map((value, index) => <li key={index} className={styles.answerTag}>{value}</li>)}</ul></div>)}
+          <ul className={styles.summaryChips} {...dragScroll}>{values.map((value, index) => <li key={index} className={styles.answerTag}>{value}</li>)}</ul></div>)}
       </div>
     </div>
   </>;

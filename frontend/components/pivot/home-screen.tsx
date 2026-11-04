@@ -13,10 +13,17 @@ import { useHomeExposure, useInteractions } from "./interaction-context";
 
 type HomeNotice = { message: string; postId?: string };
 
-export function HomeHeader({ title = "홈", showMascot = true, onNotice }: { title?: string; showMascot?: boolean; onNotice?: (message: string) => void } = {}) {
+export function HomeHeader({ title = "홈", showMascot = true, onNotice, onBack }: {
+  title?: string; showMascot?: boolean; onNotice?: (message: string) => void;
+  /** A round back button before the logo (My Page sub-pages such as 프로필 수정, 2026-11 design). */
+  onBack?: () => void;
+} = {}) {
   const [notice, setNotice] = useState("");
   return <header className={styles.header} data-home-header="">
     <p className={styles.brand}>
+      {onBack ? <button type="button" className={styles.headerBack} aria-label="뒤로가기" onClick={onBack}>
+        <span><img src="/pivot/detail/back.svg" alt="" width={24} height={24} /></span>
+      </button> : null}
       <img src="/pivot/home/chrome/logo.svg" alt="me;nu" width={103} height={20.5862} />
       <span>Little discoveries<br />for a more you</span>
     </p>

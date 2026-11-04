@@ -101,6 +101,28 @@ def test_profile_change_follows_the_onboarding_rule(onboarding_flow, nickname):
     assert change(flow, csrf, " 미뉴덕후2 ").json()["nickname"] == "미뉴덕후2"
 
 
+def my_check(flow, nickname):
+    return flow.client.get("/api/v1/users/me/nickname", params={"nickname": nickname})
+
+
+def test_my_page_check_uses_the_onboarding_rule_and_keeps_ones_own_name(onboarding_flow):
+    flow = onboarding_flow
+    onboarded(flow, "미뉴덕후")
+    add_member(flow, "Menu")
+    add_member(flow, "가입대기", onboarded=False)
+    assert my_check(flow, "menu").json() == {"nickname": "menu", "available": False, "reason": "taken"}
+    assert my_check(flow, "미뉴덕후").json() == {"nickname": "미뉴덕후", "available": True, "reason": None}   # one's own
+    assert my_check(flow, "가입대기").json() == {"nickname": "가입대기", "available": True, "reason": None}
+    assert my_check(flow, " 미뉴! ").json() == {"nickname": "미뉴!", "available": False, "reason": "invalid"}
+
+
+def test_my_page_check_needs_an_onboarded_session(onboarding_flow):
+    flow = onboarding_flow
+    assert my_check(flow, "미뉴덕후").status_code == 401
+    pending_onboarding(flow)
+    assert my_check(flow, "미뉴덕후").status_code == 403
+
+
 def test_profile_change_rejects_a_name_another_member_uses(onboarding_flow):
     flow = onboarding_flow
     csrf = onboarded(flow, "미뉴덕후")
