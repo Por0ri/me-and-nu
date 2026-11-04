@@ -6,7 +6,7 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 
 ## 현재 구현된 V1 로컬 범위
 
-2026-10-28 현재 구현 ERD는 38개 테이블의 [current_schema.sql](../docs/erd/current_schema.sql)입니다. DB 연결 없이 `python scripts/export_current_schema.py`로 재생성하고 `--check`로 일치 여부를 검사합니다. [온보딩 V2 계약·migration](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [캐러셀 DB·API 확장](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [과거 DB 확인 기록](../docs/ERD_API_ALIGNMENT_2026-10-27.md)을 구분하세요. 현재 OpenAPI는 공개 V1 45개·상태 확인 3개이며 개발용 API를 켜면 2개가 추가되어 총 50개입니다.
+2026-10-28 현재 구현 ERD는 38개 테이블의 [current_schema.sql](../docs/erd/current_schema.sql)입니다. DB 연결 없이 `python scripts/export_current_schema.py`로 재생성하고 `--check`로 일치 여부를 검사합니다. [온보딩 V2 계약·migration](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [캐러셀 DB·API 확장](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [과거 DB 확인 기록](../docs/ERD_API_ALIGNMENT_2026-10-27.md)을 구분하세요. 현재 OpenAPI는 공개 V1 46개·상태 확인 3개이며 개발용 API를 켜면 2개가 추가되어 총 51개입니다.
 
 | 영역 | Endpoint |
 | --- | --- |

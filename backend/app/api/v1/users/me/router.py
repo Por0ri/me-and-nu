@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_csrf, require_onboarding
@@ -8,9 +8,9 @@ from app.core.exceptions import ApiError
 from app.db.session import get_db
 from app.models import UserAccount
 from app.schemas.common import COMMON_ERRORS
-from app.schemas.onboarding import NICKNAME_TAKEN
+from app.schemas.onboarding import NICKNAME_TAKEN, NicknameCheckResponse
 from app.schemas.profile import ProfilePatchRequest, ProfileResponse
-from app.services.onboarding_service import reject_taken_nickname
+from app.services.onboarding_service import check_nickname, reject_taken_nickname
 
 router = APIRouter(prefix="/users/me", tags=["사용자"])
 
@@ -37,6 +37,21 @@ async def get_profile(
     user: Annotated[UserAccount, Depends(require_onboarding)],
 ) -> ProfileResponse:
     return profile_response(user)
+
+
+@router.get(
+    "/nickname",
+    response_model=NicknameCheckResponse,
+    summary="닉네임 바꾸기 전 사용 가능 여부 확인",
+    description="온보딩을 마친 회원이 마이페이지에서 닉네임을 바꾸기 전에 확인합니다. GET /onboarding/nickname 과 같은 규칙(앞뒤 공백을 지운 2~20자 한글·영문·숫자, 띄어쓰기·특수문자 제외)과 중복 검사(온보딩을 마친 다른 회원, 영문 대소문자 구분 없이)입니다. 규칙 위반은 available=false·reason=invalid, 중복은 reason=taken이고, 본인의 지금 닉네임은 사용 가능입니다. 확인만 하고 닉네임을 맡아 두지 않으므로 PATCH /users/me 에서 다시 검사합니다.",
+    responses=COMMON_ERRORS,
+)
+async def check_profile_nickname(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[UserAccount, Depends(require_onboarding)],
+    nickname: Annotated[str, Query(min_length=1, max_length=100)],
+) -> NicknameCheckResponse:
+    return await check_nickname(db, nickname, user_id=user.user_id)
 
 
 @router.patch(
