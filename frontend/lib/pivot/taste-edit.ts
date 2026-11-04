@@ -1,7 +1,7 @@
 // My Page taste edit (temporary, 2026-11 user test): onboarding Q1~Q3 again with the saved answers.
 // Remove together with /pivot/taste, the My Page button and the backend /me/taste router.
 import { apiRequest, getSession, getTopics } from "@/lib/api";
-import { initialOnboardingState, onboardingReducer, q1Choices, validId, type OnboardingAction, type OnboardingState, type OnboardingWork, type UiSelection } from "./onboarding";
+import { initialOnboardingState, onboardingReducer, q1Choices, validId, type OnboardingAction, type OnboardingState, type OnboardingWork, type Q1Choice, type UiSelection } from "./onboarding";
 import { validatePreferenceOptions, validateWorkPage, type OnboardingCatalog, type WorkPage } from "./onboarding-catalog";
 import { animeTopicId } from "./onboarding-service";
 import { requirePivotApi } from "./services";
@@ -41,6 +41,39 @@ export async function loadMyTaste(): Promise<MyTaste> {
   requirePivotApi();
   const topicId = animeTopicId(await getTopics());
   return validateMyTaste(await apiRequest<MyTaste>(`/api/v1/me/taste?topicId=${topicId}`), topicId);
+}
+
+/** What the member reacted to lately, above the edit questions (GET /me/taste/hints). Q3 lists all six answers. */
+export type TasteHints = {
+  enough: boolean; contents: number;
+  works: { entityId: number; name: string; percent: number }[];
+  genres: { tagId: number; name: string }[]; themes: { tagId: number; name: string }[];
+  types: { answer: Q1Choice; percent: number }[];
+};
+type TasteHintsPayload = TasteHints & { topicId: number };
+
+export function validateTasteHints(value: TasteHintsPayload, topicId: number): TasteHints {
+  const percent = (n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 100;
+  const named = (item: { name?: unknown }) => typeof item?.name === "string" && !!item.name.trim();
+  const tags = (list: unknown) => Array.isArray(list) && list.every(tag => validId(tag?.tagId) && named(tag));
+  if (value?.topicId !== topicId || typeof value.enough !== "boolean" || !Number.isInteger(value.contents) ||
+    !Array.isArray(value.works) || !value.works.every(work => validId(work?.entityId) && named(work) && percent(work.percent)) ||
+    !tags(value.genres) || !tags(value.themes) || !Array.isArray(value.types) ||
+    !value.types.every(type => q1Choices.some(choice => choice.id === type?.answer) && percent(type.percent))) {
+    throw new Error("취향 힌트를 확인하지 못했어요.");
+  }
+  const { enough, contents, works, genres, themes, types } = value;
+  return { enough, contents, works, genres, themes, types };
+}
+
+/** The hints only help; when they cannot load, the edit goes on without them (null). */
+export async function loadTasteHints(topicId: number, signal?: AbortSignal): Promise<TasteHints | null> {
+  try {
+    requirePivotApi();
+    return validateTasteHints(await apiRequest<TasteHintsPayload>(`/api/v1/me/taste/hints?topicId=${topicId}`, { signal }), topicId);
+  } catch {
+    return null;
+  }
 }
 
 export async function saveMyTaste(selection: UiSelection): Promise<MyTaste> {

@@ -136,7 +136,7 @@ async function verify(browser, viewport) {
     await page.locator('[data-saved-state]').getByRole('button', { name: 'MY', exact: true }).click(); await ready();
     checks.push('My → Home → My → Saved → My');
     step = 'taste edit and save';
-    await my.getByRole('button', { name: '취향 수정하기', exact: true }).click(); await page.waitForURL('**/pivot/taste');
+    await my.getByRole('button', { name: '내 피드 취향 조정하기', exact: true }).click(); await page.waitForURL('**/pivot/taste');
     await page.getByRole('button', { name: '검증 작품 선택 해제', exact: true }).waitFor();
     await page.getByRole('button', { name: '선택한 작품으로 다음', exact: true }).click();
     await page.getByRole('checkbox', { name: '장르 검증', exact: true }).waitFor();
@@ -146,7 +146,7 @@ async function verify(browser, viewport) {
     assert.equal(await page.getByRole('radio', { name: '설정과 세계관을 파고든다', exact: true }).isChecked(), true);
     await page.getByRole('radio', { name: '새로운 소식을 빠르게 확인한다', exact: true }).check();
     await page.getByRole('button', { name: '선택 완료', exact: true }).click();
-    await page.getByRole('button', { name: '저장하고 피드 보기', exact: true }).click();
+    await page.getByRole('button', { name: '새로운 피드 보러가기', exact: true }).click();
     await page.waitForURL('**/pivot/home'); assert.equal(tasteWrites, 1); await visit(); await ready();
     checks.push('taste route, Q1-Q3 prefill/edit and mocked save');
     step = 'user switch and cancellation';

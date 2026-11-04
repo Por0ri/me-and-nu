@@ -49,7 +49,7 @@ for (const mode of ['demo', 'service']) {
     assert.match(render('result', mode), />다시 선택하기<\/button>/);
   });
   test(mode + ': Q2 explains the per-kind minimum and an incomplete result cannot be submitted', () => {
-    assert.match(render('q2', mode), /장르와 소재를 각각 1개 이상/);
+    assert.match(render('q2', mode), /장르·소재 각각 최소 1개/);
     for (const ids of [[], [201], [301]]) {
       const html = render('result', mode, {preferenceTagIds: ids});
       assert.match(html, /<button[^>]*disabled=""[^>]*aria-describedby="home-feedback"/);
@@ -58,7 +58,7 @@ for (const mode of ['demo', 'service']) {
   test(mode + ': unanswered Q1/Q2/Q3 block CTA and contain no stale result summary', () => {
     for (const step of ['q1', 'q2','q3']) {
       const html = render(step, mode, { favoriteWorks:[],preferenceTagIds:[],preferenceOptions:[],optionsKey:null,consumptionType:null });
-      assert.match(html, /<button[^>]*disabled=""[^>]*>(?:선택 완료|선택한 작품으로 다음|장르·소재 선택 완료)<\/button>/);
+      assert.match(html, /<button[^>]*disabled=""[^>]*>(?:선택 완료|다음|장르·소재 선택 완료)<\/button>/);
       assert.doesNotMatch(html, /선택 답변 요약/);
       assert.match(html,/aria-valuemax="3"/);
     }
@@ -70,8 +70,68 @@ test('Web frame omits simulated OS status indicators even in design preview', ()
 });
 
 test('Deferred birth-date policy exposes only the nickname input in the new onboarding profile',()=>{
-  const html=renderToStaticMarkup(React.createElement(OnboardingProfileScreen,{profile:{nickname:''},onChange(){},onContinue(){},onBack(){}}));
+  const html=renderToStaticMarkup(React.createElement(OnboardingProfileScreen,{profile:{nickname:''},onChange(){},onContinue(){}}));
   assert.match(html,/name="nickname"/);
   assert.doesNotMatch(html,/birthDate|type="date"|만 14세|autoComplete="bday"/);
+});
+
+test('Q2 spreads the 16 genres over three lines and keeps the catalogue order within each line',()=>{
+  const { balancedRows } = load('components/pivot/onboarding-catalog-screens.tsx');
+  const labels=['코미디','액션','드라마','로맨스','SF','판타지','일상','모험','초자연','로봇','미스터리','심리','스포츠','호러','음악','스릴러'];
+  const rows=balancedRows(labels.map((label,at)=>({label,at})),3);
+  assert.equal(rows.length,3);
+  assert.deepEqual(Array.from(rows.flat(),tag=>tag.label).sort(),[...labels].sort());
+  for (const row of rows) {
+    const order=Array.from(row,tag=>tag.at);
+    assert.deepEqual(order,[...order].sort((a,b)=>a-b));
+    assert.ok(row.length>=5&&row.length<=6,`${row.length} chips in one line`);
+  }
+});
+
+test('Q2 box shows the chips the chosen works carry, most shared first, three per kind',()=>{
+  const { discoveredTags } = load('components/pivot/onboarding-catalog-screens.tsx');
+  const tag=(tagId,kind,ids)=>({tagId,kind,code:String(tagId),label:'t'+tagId,sourceEntityIds:ids});
+  const options=[tag(1,'genre',[101]),tag(2,'genre',[]),tag(3,'genre',[101,102]),tag(4,'genre',[102]),tag(5,'genre',[101]),tag(6,'theme',[101])];
+  assert.deepEqual(Array.from(discoveredTags(options,'genre'),t=>t.tagId),[3,1,4]);
+  assert.deepEqual(Array.from(discoveredTags(options,'theme'),t=>t.tagId),[6]);
+  assert.equal(discoveredTags(options.map(t=>({...t,sourceEntityIds:[]})),'genre').length,0);
+});
+
+test('Feed loading screen uses the teammate artwork with the design words',()=>{
+  const { FeedLoadingScreen } = load('components/pivot/feed-loading-screen.tsx');
+  const html=renderToStaticMarkup(React.createElement(FeedLoadingScreen));
+  assert.match(html,/취향을 불러오는 중/);
+  assert.match(html,/맞춤 콘텐츠를 수집하고 있어요/);
+  assert.match(html,/\/pivot\/loading\/phase-1\.png/);
+  assert.match(html,/\/pivot\/loading\/dots-1\.svg/);
+  assert.doesNotMatch(html,/시연용|처음부터 시연/);
+});
+
+test('Nickname screen waits for the duplicate check and shows a taken nickname in red',()=>{
+  const screen=props=>renderToStaticMarkup(React.createElement(OnboardingProfileScreen,{onChange(){},onContinue(){},...props}));
+  // A valid nickname still waits (grey) until the check answers; without a check it can start at once.
+  assert.match(screen({profile:{nickname:'미뉴덕후'},checkNickname:async()=>({available:true,reason:null})}),/disabled=""[^>]*>시작하기/);
+  assert.doesNotMatch(screen({profile:{nickname:'미뉴덕후'}}),/disabled=""/);
+  const taken=screen({profile:{nickname:'공룡'},message:'중복된 닉네임입니다'});
+  assert.match(taken,/role="alert">중복된 닉네임입니다</);
+  assert.match(taken,/aria-invalid="true"/);
+});
+
+test('Nickname screen marks each broken part of the 2~20 rule and starts only with a valid nickname',()=>{
+  const render=nickname=>renderToStaticMarkup(React.createElement(OnboardingProfileScreen,{profile:{nickname},onChange(){},onContinue(){}}));
+  const red=part=>new RegExp(`<span class="profileRuleBroken">${part}</span>`);
+  const empty=render('');
+  assert.match(empty.replace(/<[^>]+>/g,''),/2~20자, 공백·특수문자 제외/);
+  assert.match(empty,/>0\/20</);
+  assert.match(empty,/<button type="submit"[^>]*disabled=""[^>]*>시작하기<\/button>/);
+  assert.doesNotMatch(empty,/profileRuleBroken|약관으로 돌아가기|취향 선택하기|1~30자/);
+  const valid=render('미뉴덕후');
+  assert.match(valid,/>4\/20</);
+  assert.doesNotMatch(valid,/disabled=""|profileRuleBroken/);
+  for (const [nickname,parts] of [['미',['2~20자']],['가'.repeat(21),['2~20자']],['미뉴 덕후',['공백·특수문자 제외']],['킹갓디노 ',['공백·특수문자 제외']],['!',['2~20자','공백·특수문자 제외']]]) {
+    const html=render(nickname);
+    assert.match(html,/disabled=""/,nickname);
+    for (const part of ['2~20자','공백·특수문자 제외']) (parts.includes(part)?assert.match:assert.doesNotMatch)(html,red(part),`${nickname}: ${part}`);
+  }
 });
 

@@ -247,8 +247,8 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
  }
  // This visual fixture stops before the real completion write; the separate
  // service integration check covers persisted signup and rotated sessions.
- await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent==='가입 완료하고 콘텐츠 보기'&&!button.disabled));
- assert.equal(await page.getByRole('button',{name:'가입 완료하고 콘텐츠 보기',exact:true}).isEnabled(),true);
+ await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent==='콘텐츠 보러가기'&&!button.disabled));
+ assert.equal(await page.getByRole('button',{name:'콘텐츠 보러가기',exact:true}).isEnabled(),true);
 }
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:process.env.PIVOT_BROWSER_CHANNEL||'msedge'});
@@ -549,9 +549,9 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    assert.equal(await page.getByRole('button',{name:'시작하기',exact:true}).isEnabled(),true);
    await page.getByRole('button',{name:'시작하기',exact:true}).evaluate(b=>{b.click();b.click();});
    await page.waitForURL('**/pivot/onboarding');
-   await page.getByRole('textbox',{name:'닉네임',exact:true}).fill('브라우저 검증 회원');
+   await page.getByRole('textbox',{name:'닉네임',exact:true}).fill('브라우저검증회원');
    assert.equal(await page.locator('input[type=date]').count(),0,'Birth-date collection remains deferred');
-   await page.getByRole('button',{name:'취향 선택하기',exact:true}).click();
+   await page.getByRole('button',{name:'시작하기',exact:true}).click();
    await questionFlow(page,prefix+'-service');
    const serviceText=await page.locator('main').innerText();
    assert.doesNotMatch(serviceText,/시연|미리보기|피드 연결 대기|새 Home/);
