@@ -29,7 +29,7 @@ function load(relative) {
   } });
   return mod.exports;
 }
-const { OnboardingFlow } = load('components/pivot/onboarding-screens.tsx');
+const { OnboardingFlow, InterestScreen } = load('components/pivot/onboarding-screens.tsx');
 const { PivotFrame } = load('components/pivot/pivot-ui.tsx');
 const { OnboardingProfileScreen } = load('components/pivot/onboarding-profile.tsx');
 const { initialOnboardingState } = load('lib/pivot/onboarding.ts');
@@ -42,6 +42,15 @@ function render(step, mode, answers = {}) {
     dispatch() {}, onExit() {}, mode,
   }));
 }
+test('My Page 관심분야 관리: back button, animation shown as chosen, no checkbox or start button', () => {
+  const html = renderToStaticMarkup(React.createElement(InterestScreen, { selected: false, onToggle() {}, onNext() {}, busy: false, manage: { onBack() {} } }));
+  assert.match(html, /aria-label="뒤로가기"/);
+  assert.match(html, />선택중</);
+  assert.match(html, /이미 애니메이션을 탐색중입니다/);
+  assert.doesNotMatch(html, /type="checkbox"|애니메이션 선택하고 시작하기|alt="me;nu"/);
+  const onboarding = renderToStaticMarkup(React.createElement(InterestScreen, { selected: true, onToggle() {}, onNext() {}, busy: false }));
+  assert.match(onboarding, /선택 완료/); assert.match(onboarding, /애니메이션 선택하고 시작하기/); assert.doesNotMatch(onboarding, /뒤로가기/);
+});
 for (const mode of ['demo', 'service']) {
   test(mode + ': interest/result omit ordinary Back; questions retain it', () => {
     for (const step of ['interest', 'result']) assert.doesNotMatch(render(step, mode), /aria-label="이전 단계"/);

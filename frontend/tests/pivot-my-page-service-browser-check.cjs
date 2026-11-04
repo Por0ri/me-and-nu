@@ -108,11 +108,14 @@ async function verify(browser, viewport) {
     const card = await my.getByRole('region', { name: '프로필', exact: true }).boundingBox();
     assert.equal(card.x, 24); assert.equal(card.width, viewport.width - 48); assert.equal(card.height, 68);
     for (const toggle of await my.getByRole('switch').all()) assert.equal(await toggle.getAttribute('aria-disabled'), 'true');
-    for (const label of ['프로필 수정', '회원탈퇴']) {
-      await my.getByRole('button', { name: label, exact: true }).click();
-      await my.getByRole('status').filter({ hasText: '준비 중' }).waitFor();
-    }
-    checks.push('loading, nickname, masked email, layout, pending controls');
+    await my.getByRole('button', { name: '회원탈퇴', exact: true }).click();
+    await my.getByRole('status').filter({ hasText: '준비 중' }).waitFor();
+    // 프로필 수정 opens the nickname page; an unchanged nickname cannot be saved.
+    await my.getByRole('button', { name: '프로필 수정', exact: true }).click(); await page.waitForURL('**/pivot/profile');
+    await page.getByText('프로필에 표시되는 닉네임을 변경할 수 있어요').waitFor();
+    assert.equal(await page.getByRole('button', { name: '저장하기', exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: '뒤로가기', exact: true }).click(); await page.waitForURL('**/pivot/home?view=my'); await ready();
+    checks.push('loading, nickname, masked email, layout, pending controls, profile edit and back');
     step = 'email validation and retry';
     for (const variant of ['null-email', 'invalid-email']) {
       mode = variant; await visit(); await ready();
@@ -135,6 +138,11 @@ async function verify(browser, viewport) {
     step = 'Service Saved to My';
     await page.locator('[data-saved-state]').getByRole('button', { name: 'MY', exact: true }).click(); await ready();
     checks.push('My → Home → My → Saved → My');
+    step = 'interest view and back';
+    await my.getByRole('button', { name: '관심분야 관리', exact: true }).click(); await page.waitForURL('**/pivot/interests');
+    await page.getByText('이미 애니메이션을 탐색중입니다').waitFor();
+    await page.getByRole('button', { name: '뒤로가기', exact: true }).click(); await page.waitForURL('**/pivot/home?view=my'); await ready();
+    checks.push('My → 관심분야 관리 → back to My');
     step = 'taste edit and save';
     await my.getByRole('button', { name: '내 피드 취향 조정하기', exact: true }).click(); await page.waitForURL('**/pivot/taste');
     await page.getByRole('button', { name: '검증 작품 선택 해제', exact: true }).waitFor();

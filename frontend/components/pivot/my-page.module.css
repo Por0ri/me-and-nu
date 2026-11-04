@@ -3,7 +3,8 @@
 .content { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; }
 .intro { margin: 0; color: #27272a; font-size: 16px; font-weight: 600; line-height: 24px; }
 .card { min-width: 0; border-radius: 8px; background: white; box-shadow: 0 0 4px var(--my-shadow); }
-.profile { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; box-shadow: 0 0 2px var(--my-shadow); }
+/* 2026-11 design feedback: the profile card glows like the other cards (.card 4px; it was 2px). */
+.profile { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; }
 .profile > div { min-width: 0; }
 .nickname { overflow-wrap: anywhere; margin: 0 0 4px; font-size: 16px; font-weight: 600; line-height: 24px; }
 .email { margin: 0; color: #71717a; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }

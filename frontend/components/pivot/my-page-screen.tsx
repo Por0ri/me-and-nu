@@ -9,8 +9,9 @@ import styles from "./my-page.module.css";
 function Chevron({ muted = false, last = false }: { muted?: boolean; last?: boolean }) {
   return <img src={`/pivot/my/chevron${muted ? "-muted" : ""}${last ? "-last" : ""}.svg`} alt="" width={16} height={24} />;
 }
-// The 내 정보 row that opens the taste edit (/pivot/taste); Demo keeps the pending notice.
+// The 내 정보 rows that open their own pages; Demo keeps the pending notice.
 const TASTE_EDIT = "내 피드 취향 조정하기";
+const ROW_PAGES: Record<string, string> = { [TASTE_EDIT]: "/pivot/taste", "관심분야 관리": "/pivot/interests" };
 function MenuSection({ title, children }: { title?: string; children: ReactNode }) {
   return <section className={styles.card} aria-label={title ?? "계정 안내"}>
     {title ? <h2 className={styles.sectionTitle}>{title}</h2> : null}
@@ -74,11 +75,11 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
       {profile ? <>
         <section className={`${styles.card} ${styles.profile}`} aria-label={demo ? "시연용 가상 프로필" : "프로필"}>
           <div><p className={styles.nickname}>{profile.nickname}님</p><p className={styles.email}>{profile.maskedEmail}</p></div>
-          <button type="button" className={styles.edit} onClick={() => pending("프로필 수정")}><span>프로필 수정<Chevron /></span></button>
+          <button type="button" className={styles.edit} onClick={() => !demo ? window.location.assign("/pivot/profile") : pending("프로필 수정")}><span>프로필 수정<Chevron /></span></button>
         </section>
         <MenuSection title="내 정보">
           {["내 활동", TASTE_EDIT, "관심분야 관리"].map((label, index) => <button key={label} type="button" className={styles.row}
-            onClick={() => label === TASTE_EDIT && !demo ? window.location.assign("/pivot/taste") : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
+            onClick={() => ROW_PAGES[label] && !demo ? window.location.assign(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
         <MenuSection title="알림 설정">
           <button type="button" role="switch" aria-checked={demo && notifications} aria-describedby={demo ? "my-demo-help" : undefined} aria-disabled={!demo || undefined}
