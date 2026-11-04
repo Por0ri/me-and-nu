@@ -23,8 +23,9 @@ from ani_menu_agent.agents.crawlers.base import profile_signal_checks
 from ani_menu_agent.agents.humor import research_humor
 from ani_menu_agent.agents.image import image_curator
 from ani_menu_agent.agents.information import research_information
+from ani_menu_agent.classification import infer_strong_content_type
 from ani_menu_agent.config import get_settings
-from ani_menu_agent.discovery import collect_candidates, supports_discovery_adapter
+from ani_menu_agent.discovery import DiscoveryItem, collect_candidates, supports_discovery_adapter
 from ani_menu_agent.extraction import extract_page_capture, extract_page_payload
 from ani_menu_agent.generation import estimate_gpt_6_luna_cost
 from ani_menu_agent.graph import build_graph
@@ -51,12 +52,13 @@ from ani_menu_agent.sources import load_source_registry
 from ani_menu_agent.sources.kitsu_images import collect_kitsu_work_images
 from ani_menu_agent.sources.page_collector import collect_official_page, collect_reference_page
 from ani_menu_agent.storage import AgentRepository
+from ani_menu_agent.work_aliases import find_named_works
 from ani_menu_agent.work_catalog import (
     load_work_catalog,
     resolve_menu_work_ids,
     resolve_work_matches,
 )
-from ani_menu_agent.work_catalog_registration import register_unmatched_work_from_kitsu
+from ani_menu_agent.work_match_fallback import resolve_unmatched_work_with_llm
 from ani_menu_agent.work_type_coverage import build_work_type_coverage, find_work_ids
 
 app = typer.Typer(no_args_is_help=True)
@@ -73,7 +75,72 @@ def _load_package(path: Path) -> ContentPackage:
     return ContentPackage.model_validate(payload)
 
 
-def _candidate_menu_work_ids(candidate: dict, source) -> list[int]:
+def _enrich_candidate_outcome(outcome: dict) -> dict:
+    """Attach compact stage and blocker diagnostics to a candidate attempt."""
+    enriched = dict(outcome)
+    result_path = Path(str(enriched.get("output") or ""))
+    result: dict = {}
+    if result_path.is_file():
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            result = {}
+
+    trace = result.get("trace") or enriched.get("trace") or []
+    qa_items = result.get("qa_report") or enriched.get("qa_report") or []
+    if isinstance(qa_items, dict):
+        qa_items = qa_items.get("issues") or qa_items.get("hard_blockers") or []
+    quality_report = result.get("quality_report") or enriched.get("quality_report") or {}
+    if not qa_items and isinstance(quality_report, dict):
+        qa_items = quality_report.get("issues") or quality_report.get("hard_blockers") or []
+    if not isinstance(qa_items, list):
+        qa_items = []
+
+    reason_codes = [
+        str(item.get("code"))
+        for item in qa_items
+        if isinstance(item, dict) and item.get("code")
+    ]
+    reason_messages = [
+        str(item.get("message"))
+        for item in qa_items
+        if isinstance(item, dict) and item.get("message")
+    ]
+    status = str(enriched.get("status") or result.get("status") or "unknown")
+    fallback_stage = {
+        "stale_candidate_skipped": "freshness_preflight",
+        "work_id_unresolved_skipped": "work_matching",
+        "original_source_unresolved": "source_resolution",
+        "content_type_mismatch_skipped": "type_classification",
+        "insufficient_discussion_evidence": "candidate_evidence_preflight",
+        "duplicate_skipped": "duplicate_check",
+        "candidate_pipeline_error": "pipeline_error",
+        "ready_for_feed": "feed_queue",
+    }.get(status, "generation_or_review")
+    terminal_stage = trace[-1] if isinstance(trace, list) and trace else fallback_stage
+    enriched.update(
+        {
+            "status": status,
+            "trace": trace,
+            "terminal_stage": terminal_stage,
+            "failure_stage": None if status == "ready_for_feed" else terminal_stage,
+            "reason_codes": list(dict.fromkeys(reason_codes)),
+            "reason_messages": list(dict.fromkeys(reason_messages))[:8],
+            "stage_timings_seconds": result.get("stage_timings_seconds") or {},
+        }
+    )
+    package = result.get("package") or {}
+    if isinstance(package, dict):
+        enriched["menu_work_ids"] = package.get("menu_work_ids") or []
+        enriched["fact_count"] = len(package.get("facts") or [])
+        enriched["image_count"] = len(package.get("images") or [])
+        enriched["source_count"] = len(package.get("sources") or [])
+    return enriched
+
+
+def _candidate_menu_work_ids(
+    candidate: dict, source, content_type: str | None = None
+) -> list[int]:
     """Resolve only the candidate title; summaries can mention unrelated works."""
     headline = str(candidate.get("title") or "").strip()
     if not headline:
@@ -91,12 +158,64 @@ def _candidate_menu_work_ids(candidate: dict, source) -> list[int]:
         request_id="discovery-work-preflight",
         topic=headline,
         content_kind=ContentKind.INFORMATION,
+        content_type=content_type,
         sources=[evidence],
     )
-    matched = resolve_work_matches(titles=[headline], source_ids=[source.id])
+    matched = resolve_work_matches(
+        titles=[headline],
+        source_ids=[source.id],
+        content_type=content_type,
+        source_url=str(candidate.get("url") or source.url),
+    )
     if matched:
         return list(dict.fromkeys(item.menu_work_id for item in matched))
     return resolve_menu_work_ids(package)
+
+
+def _rotating_catalog_work_titles(limit: int = 3) -> list[str]:
+    """Select different popular catalog works across daily guide/character passes."""
+    works = [
+        row
+        for row in load_work_catalog()
+        if str(
+            row.get("title_ko") or row.get("title_romaji") or row.get("title_english") or ""
+        ).strip()
+    ]
+    works.sort(key=lambda row: (-int(row.get("popularity") or 0), int(row["menu_work_id"])))
+    if not works:
+        return []
+    offset = datetime.now(UTC).date().toordinal() % len(works)
+    rotated = works[offset:] + works[:offset]
+    selected = []
+    for row in rotated:
+        title = str(
+            row.get("title_ko") or row.get("title_romaji") or row.get("title_english") or ""
+        ).strip()
+        if title and title not in selected:
+            selected.append(title)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _diversify_candidate_items(items: list, limit: int) -> list:
+    """Interleave catalog works so a burst from one series cannot fill the whole batch."""
+    registry = {source.id: source for source in load_source_registry().sources}
+    groups: dict[str, list] = {}
+    for index, item in enumerate(items):
+        source = registry.get(item.source_id)
+        matched = _candidate_menu_work_ids(item.model_dump(mode="json"), source) if source else []
+        key = ",".join(map(str, matched)) if matched else f"unmatched:{index}"
+        groups.setdefault(key, []).append(item)
+    selected = []
+    while groups and len(selected) < limit:
+        for key in list(groups):
+            selected.append(groups[key].pop(0))
+            if not groups[key]:
+                del groups[key]
+            if len(selected) >= limit:
+                break
+    return selected
 
 
 def _candidate_host_matches_source(candidate_url: str, source_url: str) -> bool:
@@ -160,6 +279,11 @@ def _add_same_work_catalog_images(
     package.menu_work_ids = resolve_menu_work_ids(package)
     if not package.menu_work_ids or len(package.images) >= max_images:
         return 0
+    if package.content_type == "curation" and len(set(package.menu_work_ids)) > 1:
+        # A package-level union of work IDs is not enough to safely choose an
+        # image for each curated item. Keep source-page art; don't mix catalog
+        # images from different works until card-level image associations exist.
+        return 0
     kitsu_source = next(
         (
             item
@@ -172,10 +296,30 @@ def _add_same_work_catalog_images(
     )
     if kitsu_source is None or len(package.images) >= max_images:
         return 0
+    preferred_character_names = []
+    if package.content_type == "character":
+        preferred_character_names = list(
+            dict.fromkeys(
+                [
+                    match.name
+                    for match in find_named_works(package.topic)
+                    if match.kind == "character"
+                    and match.menu_work_id in package.menu_work_ids
+                ]
+                + [
+                    name
+                    for term in package.term_glossary
+                    if term.category == "character"
+                    for name in (term.korean, term.original)
+                    if name and name.strip()
+                ]
+            )
+        )
     catalog_images = collect_kitsu_work_images(
         package.menu_work_ids,
         kitsu_source,
         max_images=min(max_images - len(package.images), max(8, 3 * len(package.menu_work_ids))),
+        preferred_character_names=preferred_character_names,
     )
     package.images.extend(catalog_images)
     return len(catalog_images)
@@ -249,12 +393,38 @@ def _run_generation_from_db(
     fixture: Path | None = None,
     requested_content_type: str | None = None,
     initial_usage_records: list[dict] | None = None,
+    repository: AgentRepository | None = None,
 ) -> tuple[ContentPackage, dict]:
     """Load crawler records from PostgreSQL and run the existing generation graph."""
-    repository = AgentRepository()
+    repository = repository or AgentRepository()
     package = repository.load_content_package(
         request_id, kind.value, content_type=requested_content_type
     )
+    if requested_content_type:
+        package.content_type = requested_content_type
+    curation_match_audit: dict = {}
+    work_match_usage_records = list(initial_usage_records or [])
+    if package.content_type == "curation" and not package.menu_work_ids:
+        source_titles = [source.title for source in package.sources if source.title]
+        source_quotes = [
+            str(fact.details.get("source_quote") or "").strip()
+            for fact in package.facts
+            if str(fact.details.get("source_quote") or "").strip()
+        ]
+        evidence = resolve_unmatched_work_with_llm(
+            titles=source_titles or [package.topic],
+            source_url=str(package.sources[0].url) if package.sources else None,
+            body_excerpt="\n".join(source_quotes)[:2_000],
+            content_type="curation",
+            usage_records=work_match_usage_records,
+            audit=curation_match_audit,
+        )
+        package.work_match_evidence = evidence
+        package.menu_work_ids = list(dict.fromkeys(item.menu_work_id for item in evidence))
+        if not package.menu_work_ids:
+            curation_match_audit.setdefault(
+                "status", "curation_work_list_unresolved"
+            )
     if any(
         image.url and image.download_status in {"pending", "blocked_rights", "failed"}
         for image in package.images
@@ -264,6 +434,7 @@ def _run_generation_from_db(
                 "package": package.model_dump(mode="json"),
                 "trace": [],
                 "download_images": True,
+                "repository": repository,
             }
         )
         package = ContentPackage.model_validate(curated["package"])
@@ -281,7 +452,7 @@ def _run_generation_from_db(
             "content_kind": package.content_kind.value,
             "requested_content_type": requested_content_type,
             "package": package.model_dump(mode="json"),
-            "usage_records": list(initial_usage_records or []),
+            "usage_records": work_match_usage_records,
             "trace": [],
             "revision_count": 0,
             "max_revision": get_settings().max_revision,
@@ -292,6 +463,8 @@ def _run_generation_from_db(
         }
     )
     result["stage_timings_seconds"] = {"generation_graph": round(perf_counter() - started, 3)}
+    if curation_match_audit:
+        result["work_match_audit"] = curation_match_audit
     _add_usage_summary(result)
     return package, result
 
@@ -903,9 +1076,14 @@ def crawl_generate(
 ) -> None:
     """승인된 원문 수집부터 카드 생성 및 독립 검수까지 실행합니다."""
     registry = load_source_registry()
+    run_started = perf_counter()
+    stage_timings: dict[str, float] = {}
+    identity_preflight_started = perf_counter()
     discovery_provenance = None
     candidate_work_ids: list[int] = []
     work_match_evidence = []
+    work_match_usage_records: list[dict] = []
+    work_match_audit: dict = {}
     identity_preflight_capture = None
     if candidate_id:
         if source_id or url:
@@ -1137,7 +1315,7 @@ def crawl_generate(
         )
 
     if candidate_id:
-        candidate_work_ids = _candidate_menu_work_ids(candidate, source)
+        candidate_work_ids = _candidate_menu_work_ids(candidate, source, content_type)
         if not candidate_work_ids:
             # Do not reject an item solely because its headline omits the work.
             # Capture only this already-approved source page, then inspect its
@@ -1156,22 +1334,33 @@ def crawl_generate(
                 structured_references=identity_preflight_capture.structured_work_references,
                 outbound_links=identity_preflight_capture.outbound_links,
                 content_type=content_type,
+                source_url=str(identity_preflight_capture.url or candidate.get("url") or url),
             )
             candidate_work_ids = list(
                 dict.fromkeys(item.menu_work_id for item in work_match_evidence)
             )
             if not candidate_work_ids:
-                new_work_evidence = register_unmatched_work_from_kitsu(
-                    [str(candidate.get("title") or ""), identity_preflight_capture.title],
-                    structured_references=identity_preflight_capture.structured_work_references,
+                work_match_evidence = resolve_unmatched_work_with_llm(
+                    titles=[
+                        str(candidate.get("title") or ""),
+                        identity_preflight_capture.title,
+                    ],
+                    source_url=str(candidate.get("url") or url),
+                    structured_references=(
+                        identity_preflight_capture.structured_work_references
+                    ),
+                    body_excerpt=identity_preflight_capture.text,
+                    outbound_links=[
+                        item.model_dump(mode="json")
+                        for item in identity_preflight_capture.outbound_links
+                    ],
+                    content_type=content_type,
+                    usage_records=work_match_usage_records,
+                    audit=work_match_audit,
                 )
-                if new_work_evidence:
-                    work_match_evidence = [new_work_evidence]
-                    candidate_work_ids = [new_work_evidence.menu_work_id]
-                    console.print(
-                        f"새 애니메이션 카탈로그 등록: {new_work_evidence.matched_value} "
-                        f"→ menu_work_id {new_work_evidence.menu_work_id}"
-                    )
+                candidate_work_ids = list(
+                    dict.fromkeys(item.menu_work_id for item in work_match_evidence)
+                )
     if candidate_id and not candidate_work_ids:
         repository = AgentRepository()
         record_unresolved = getattr(repository, "mark_discovery_work_unresolved", None)
@@ -1209,6 +1398,8 @@ def crawl_generate(
                         else []
                     ),
                     "work_match_evidence": [],
+                    "work_match_audit": work_match_audit,
+                    "usage_records": work_match_usage_records,
                     "source_url": str(candidate.get("url") or url),
                     "reason": (
                         "approved title, source mapping, structured metadata, and registered "
@@ -1227,8 +1418,9 @@ def crawl_generate(
         )
         return
 
-    run_started = perf_counter()
-    stage_timings: dict[str, float] = {}
+    stage_timings["identity_preflight"] = round(
+        perf_counter() - identity_preflight_started, 3
+    )
     console.print("1/5 공식 페이지 수집 중…")
     stage_started = perf_counter()
     try:
@@ -1275,6 +1467,7 @@ def crawl_generate(
                 "원문 본문을 추출할 수 없어 이미지 적재와 생성 단계를 건너뜁니다."
             )
             return
+        payload_prepare_started = perf_counter()
         payload = capture.model_dump(mode="json")
         if discovery_provenance:
             payload.update(discovery_provenance)
@@ -1288,22 +1481,30 @@ def crawl_generate(
                 structured_references=capture.structured_work_references,
                 outbound_links=capture.outbound_links,
                 content_type=content_type,
+                source_url=str(capture.url or url),
             )
             candidate_work_ids = list(
                 dict.fromkeys(item.menu_work_id for item in work_match_evidence)
             )
         if not candidate_work_ids:
-            new_work_evidence = register_unmatched_work_from_kitsu(
-                [str(candidate.get("title") or "") if candidate_id else "", capture.title],
+            work_match_evidence = resolve_unmatched_work_with_llm(
+                titles=[
+                    str(candidate.get("title") or "") if candidate_id else "",
+                    capture.title,
+                ],
+                source_url=str(capture.url or url),
                 structured_references=capture.structured_work_references,
+                body_excerpt=capture.text,
+                outbound_links=[
+                    item.model_dump(mode="json") for item in capture.outbound_links
+                ],
+                content_type=content_type,
+                usage_records=work_match_usage_records,
+                audit=work_match_audit,
             )
-            if new_work_evidence:
-                work_match_evidence = [new_work_evidence]
-                candidate_work_ids = [new_work_evidence.menu_work_id]
-                console.print(
-                    f"새 애니메이션 카탈로그 등록: {new_work_evidence.matched_value} "
-                    f"→ menu_work_id {new_work_evidence.menu_work_id}"
-                )
+            candidate_work_ids = list(
+                dict.fromkeys(item.menu_work_id for item in work_match_evidence)
+            )
         payload["menu_work_ids"] = candidate_work_ids
         payload["work_match_evidence"] = [
             item.model_dump(mode="json") for item in work_match_evidence
@@ -1329,7 +1530,7 @@ def crawl_generate(
                 "skipping downstream generation."
             )
             return
-        image_rows: list[dict[str, str]] = []
+        image_rows: list[dict] = []
         for image_url in capture.image_urls[:max_images]:
             image_id = (
                 f"{source.id}-{hashlib.sha1(str(image_url).encode('utf-8')).hexdigest()[:14]}"
@@ -1341,6 +1542,8 @@ def crawl_generate(
                     "alt_text": capture.image_alt_text.get(str(image_url), ""),
                     "source_url": capture.image_source_pages.get(str(image_url), str(capture.url)),
                     "source_page_title": capture.image_source_titles.get(str(image_url), ""),
+                    "asset_kind": capture.image_asset_kinds.get(str(image_url), ""),
+                    "depicted_entities": capture.image_depicted_entities.get(str(image_url), []),
                     "local_path": "",
                     "download_status": "pending",
                     "rights_status": RightsStatus.NEEDS_REVIEW.value,
@@ -1367,15 +1570,65 @@ def crawl_generate(
                     "lexical signals are advisory; final type fit remains independently reviewed"
                 ),
             }
+        stage_timings["identity_and_payload_preparation"] = round(
+            perf_counter() - payload_prepare_started, 3
+        )
+        capture_persist_started = perf_counter()
         repository = AgentRepository()
         repository.persist_page_capture(payload, source.region)
+        stage_timings["initial_capture_persist"] = round(
+            perf_counter() - capture_persist_started, 3
+        )
         if type_signal_checks and not any(type_signal_checks.values()):
             console.print(
                 "유형 키워드 신호가 약해도 원문과 작품이 확인되어 초안 생성·독립 검수로 진행합니다."
             )
         console.print("2/5 근거 문장 추출 중…")
         stage_started = perf_counter()
+        requested_content_type = content_type
         package, extraction_usage = extract_page_payload(payload)
+        detected_type = infer_strong_content_type(package)
+        if detected_type and detected_type != content_type:
+            supported_types = {item.value for item in source.content_types}
+            if detected_type not in supported_types:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(
+                        {
+                            "status": "content_type_mismatch_skipped",
+                            "candidate_id": candidate_id,
+                            "request_id": package.request_id,
+                            "requested_content_type": requested_content_type,
+                            "evidence_content_type": detected_type,
+                            "supported_source_types": sorted(supported_types),
+                            "topic": package.topic,
+                            "source_urls": [str(item.url) for item in package.sources],
+                            "reason": (
+                                "원문 제목·검증 팩트가 다른 유형을 가리키며, "
+                                "연결된 출처가 그 유형을 "
+                                "지원하지 않아 카피 생성 전에 중단했습니다."
+                            ),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                console.print(
+                    f"원문 유형이 요청과 다릅니다 ({content_type} → {detected_type}). "
+                    "이 유형을 지원하는 출처가 없어 카피 생성 전에 건너뜁니다."
+                )
+                return
+            console.print(
+                f"원문 제목·팩트로 유형을 다시 분류합니다: {content_type} → {detected_type}"
+            )
+            content_type = detected_type
+            payload["content_type"] = detected_type
+            payload["type_signal_review"] = {
+                "status": "rerouted_before_copy_generation",
+                "requested_content_type": requested_content_type,
+                "evidence_content_type": detected_type,
+            }
         # This command already knows the requested editorial type. Set it before
         # graph/storage image supplementation so event/goods restrictions apply
         # while the asset pool is being built, not only during final QA.
@@ -1421,7 +1674,9 @@ def crawl_generate(
         console.print("확인된 행사 종료일이 지나 카드 생성을 생략합니다.")
         return
 
+    duplicate_started = perf_counter()
     duplicate = repository.find_duplicate_content(package, retry_same_request=retry_failed)
+    stage_timings["duplicate_check"] = round(perf_counter() - duplicate_started, 3)
     if duplicate:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(
@@ -1448,7 +1703,9 @@ def crawl_generate(
     payload["event_end"] = package.event_end
     repository.persist_page_capture(payload, source.region, package.event_end)
     repository.prepare_lifecycle(package)
-    research_information({"package": package.model_dump(mode="json"), "trace": []})
+    research_information(
+        {"package": package.model_dump(mode="json"), "trace": [], "repository": repository}
+    )
     stage_timings["database_and_research"] = round(perf_counter() - stage_started, 3)
     console.print(f"4/5 이미지 권리 확인 및 다운로드 중… (후보 {len(package.images)}개)")
     stage_started = perf_counter()
@@ -1457,6 +1714,7 @@ def crawl_generate(
             "package": package.model_dump(mode="json"),
             "trace": [],
             "download_images": True,
+            "repository": repository,
         }
     )
     stage_timings["image_curation_and_download"] = round(perf_counter() - stage_started, 3)
@@ -1479,7 +1737,8 @@ def crawl_generate(
             package.request_id,
             ContentKind.INFORMATION,
             requested_content_type=content_type,
-            initial_usage_records=[extraction_usage],
+            initial_usage_records=[extraction_usage, *work_match_usage_records],
+            repository=repository,
         )
     except (ValueError, RuntimeError) as exc:
         raise typer.BadParameter(f"DB 기반 콘텐츠 생성 단계에서 중단: {exc}") from exc
@@ -1487,6 +1746,8 @@ def crawl_generate(
     stage_timings.update(result.get("stage_timings_seconds", {}))
     stage_timings["total"] = round(perf_counter() - run_started, 3)
     result["stage_timings_seconds"] = stage_timings
+    if work_match_audit:
+        result["work_match_audit"] = work_match_audit
     _add_usage_summary(result)
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1536,15 +1797,34 @@ def _crawl_generate_humor_candidate(candidate: dict, output: Path) -> dict:
     topic = str(candidate.get("title") or "").strip()
     summary = " ".join(str(candidate.get("summary") or "").split())
     source_url = str(candidate.get("url") or "")
-    work_ids = _candidate_menu_work_ids(candidate, source)
+    community_posts = [
+        post
+        for post in candidate.get("community_posts", [])
+        if isinstance(post, dict)
+        and len(" ".join(str(post.get("text") or "").split())) >= 25
+        and str(post.get("url") or "").startswith("https://")
+    ]
+    if len(community_posts) < 2:
+        return {
+            "status": "insufficient_discussion_evidence",
+            "candidate_id": candidate.get("id"),
+            "reason": "공개된 서로 다른 작성자의 토론 글과 답글을 확인하지 못했습니다.",
+        }
+    work_ids = _candidate_menu_work_ids(candidate, source, ContentKind.HUMOR.value)
+    work_match_usage_records: list[dict] = []
+    work_match_audit: dict = {}
     if not work_ids and topic:
-        new_work_evidence = register_unmatched_work_from_kitsu([topic])
-        if new_work_evidence:
-            work_ids = [new_work_evidence.menu_work_id]
-            console.print(
-                f"새 애니메이션 카탈로그 등록: {new_work_evidence.matched_value} "
-                f"→ menu_work_id {new_work_evidence.menu_work_id}"
-            )
+        fallback_evidence = resolve_unmatched_work_with_llm(
+            titles=[topic],
+            source_url=source_url,
+            body_excerpt="\n".join(
+                [summary, *(str(post.get("text") or "") for post in community_posts[:4])]
+            )[:2_000],
+            content_type=ContentKind.HUMOR.value,
+            usage_records=work_match_usage_records,
+            audit=work_match_audit,
+        )
+        work_ids = list(dict.fromkeys(item.menu_work_id for item in fallback_evidence))
     humor_signals = profile_signal_checks(
         get_type_crawler(ContentKind.HUMOR.value).profile,
         f"{topic}\n{summary}",
@@ -1561,6 +1841,7 @@ def _crawl_generate_humor_candidate(candidate: dict, output: Path) -> dict:
             "status": "trend_signal_incomplete",
             "candidate_id": candidate.get("id"),
             "reason": "작품 제목 매칭 또는 생성 가능한 토론 신호가 부족합니다.",
+            "work_match_audit": work_match_audit,
         }
 
     candidate_id = str(candidate.get("id") or source_url)
@@ -1577,6 +1858,28 @@ def _crawl_generate_humor_candidate(candidate: dict, output: Path) -> dict:
         role="trend",
         region=source.region,
     )
+    facts = []
+    for index, post in enumerate(community_posts[:6], start=1):
+        post_text = " ".join(str(post.get("text") or "").split())[:700]
+        post_url_hash = hashlib.sha256(
+            str(index).encode() + str(post.get("url") or "").encode()
+        ).hexdigest()[:12]
+        facts.append(
+            Fact(
+                id=f"community-{post_url_hash}",
+                statement=f"공개 커뮤니티 게시물에 나타난 개인 의견: {post_text}",
+                source_ids=[source.id],
+                verified=False,
+                fact_type="community_viewpoint",
+                details={
+                    "candidate_id": candidate.get("id"),
+                    "observed_at": post.get("published_at") or now,
+                    "source_url": str(post.get("url") or source_url),
+                    "editorial_use": "paraphrase_as_individual_opinion",
+                    "source_quote": post_text,
+                },
+            )
+        )
     package = ContentPackage(
         request_id=request_id,
         topic=topic,
@@ -1585,24 +1888,7 @@ def _crawl_generate_humor_candidate(candidate: dict, output: Path) -> dict:
         menu_work_ids=work_ids,
         audience_region="KR",
         sources=[evidence],
-        facts=[
-            Fact(
-                id=f"trend-{hashlib.sha256(candidate_id.encode('utf-8')).hexdigest()[:12]}",
-                statement=(
-                    "커뮤니티에서 제기된 토론·유머 소재 신호이며, 원문의 주장은 사실로 검증되거나 "
-                    f"팬덤 전체의 의견으로 확인된 것이 아님: {summary[:700]}"
-                ),
-                source_ids=[source.id],
-                verified=False,
-                fact_type="community_trend",
-                details={
-                    "candidate_id": candidate_id,
-                    "observed_at": candidate.get("published_at") or now,
-                    "source_url": source_url,
-                    "editorial_use": "paraphrase_as_opinion_or_question",
-                },
-            )
-        ],
+        facts=facts,
     )
     repository = AgentRepository()
     duplicate = repository.find_duplicate_content(package)
@@ -1619,7 +1905,9 @@ def _crawl_generate_humor_candidate(candidate: dict, output: Path) -> dict:
         20,
     )
     repository.prepare_lifecycle(package)
-    research_humor({"package": package.model_dump(mode="json"), "trace": []})
+    research_humor(
+        {"package": package.model_dump(mode="json"), "trace": [], "repository": repository}
+    )
     image_curator(
         {
             "package": package.model_dump(mode="json"),
@@ -1632,7 +1920,11 @@ def _crawl_generate_humor_candidate(candidate: dict, output: Path) -> dict:
         request_id,
         ContentKind.HUMOR,
         requested_content_type=ContentKind.HUMOR.value,
+        initial_usage_records=work_match_usage_records,
+        repository=repository,
     )
+    if work_match_audit:
+        result["work_match_audit"] = work_match_audit
     _add_usage_summary(result)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1658,10 +1950,14 @@ def crawl_type(
         int | None,
         typer.Option("--target-passed", min=1, max=20, help="이번 실행에서 확보할 검수 통과 수"),
     ] = None,
-    retry_failed: Annotated[
-        bool,
-        typer.Option("--retry-failed", help="이전 미통과 초안만 재작업 허용"),
-    ] = False,
+    retry_candidate_id: Annotated[
+        str | None,
+        typer.Option("--retry-candidate-id", help="명시한 후보 1건만 제한적으로 재시도"),
+    ] = None,
+    retry_note: Annotated[
+        str | None,
+        typer.Option("--retry-note", help="재시도 전에 해결한 원인 또는 변경사항"),
+    ] = None,
     region_policy: Annotated[
         str,
         typer.Option("--region-policy", help="kr_first, mixed, jp_first"),
@@ -1680,19 +1976,120 @@ def crawl_type(
     if region_policy not in {"kr_first", "mixed", "jp_first"}:
         raise typer.BadParameter("region-policy는 kr_first, mixed, jp_first 중 하나여야 합니다.")
 
-    run = get_type_crawler(content_type).run(
-        limit=limit,
-        region_policy=region_policy,
-        work_title=work_title,
-        # The downstream verified-crawl stage captures and stores final package
-        # images under its request_id, avoiding duplicate image rows.
-        capture_images=False,
+    if bool(retry_candidate_id) != bool(retry_note and retry_note.strip()):
+        raise typer.BadParameter(
+            "명시적 재시도에는 --retry-candidate-id와 비어 있지 않은 "
+            "--retry-note가 함께 필요합니다."
+        )
+
+    # The same recent feed entries can recur on every scheduled pass. Fetch a
+    # wider discovery window, then skip IDs already attempted in this output
+    # history so each loop spends generation time on fresh candidates first.
+    retryable_statuses = {
+        "needs_crawler_update",
+        "work_id_unresolved_skipped",
+        "original_source_unresolved",
+        "candidate_pipeline_error",
+    }
+    attempted_tokens: set[str] = set()
+    type_output_dir = output_dir / content_type
+    repository = AgentRepository()
+    previous_candidate_attempts = repository.list_candidate_attempts(content_type)
+    if retry_candidate_id:
+        previous = previous_candidate_attempts.get(retry_candidate_id)
+        if previous is None:
+            raise typer.BadParameter("이 유형에서 처리한 기록이 없는 후보는 재시도할 수 없습니다.")
+        if previous.get("status") not in retryable_statuses:
+            raise typer.BadParameter(
+                f"이 상태는 수정 재시도 대상이 아닙니다: {previous.get('status')}"
+            )
+        if int(previous.get("retry_count", 0)) >= POLICY.max_candidate_retries:
+            raise typer.BadParameter(
+                f"후보별 재시도 한도({POLICY.max_candidate_retries})를 이미 사용했습니다."
+            )
+        try:
+            retry_payload = repository.load_discovery_candidate(retry_candidate_id)
+            retry_item = DiscoveryItem.model_validate(retry_payload)
+        except (ValueError, TypeError) as exc:
+            raise typer.BadParameter(f"재시도 후보를 읽지 못했습니다: {exc}") from exc
+        if content_type not in set(retry_item.content_types):
+            raise typer.BadParameter("재시도 후보가 지정한 콘텐츠 유형에 연결되어 있지 않습니다.")
+    if type_output_dir.exists():
+        for prior_path in type_output_dir.rglob("*.json"):
+            if prior_path.name == "run_summary.json":
+                continue
+            # Per-candidate result JSONs do not always carry candidate_id;
+            # their filename token is the stable SHA-256 prefix of that ID.
+            token = prior_path.stem.rsplit("-", 1)[-1]
+            if len(token) == 12 and all(char in "0123456789abcdef" for char in token):
+                attempted_tokens.add(token)
+
+    for candidate_id in previous_candidate_attempts:
+        attempted_tokens.add(hashlib.sha256(candidate_id.encode("utf-8")).hexdigest()[:12])
+
+    # Keep looking beyond the newest feed window after earlier candidates have
+    # already been attempted. The crawler still generates only `limit` items;
+    # this only widens candidate discovery for long-running generation runs.
+    discovery_limit = min(max(limit * 10, limit), 200)
+    crawler = get_type_crawler(content_type)
+    provided_work_title = (work_title or "").strip() or None
+    sampled_work_titles = (
+        _rotating_catalog_work_titles(3)
+        if content_type in {"character", "guide"} and not provided_work_title
+        else []
     )
+    run_titles = sampled_work_titles or [provided_work_title]
+    runs = []
+    if retry_candidate_id:
+        collected_items = [retry_item]
+    else:
+        for index, title in enumerate(run_titles):
+            runs.append(
+                crawler.run(
+                limit=(
+                    min(max(limit * 4, 20), 80)
+                    if sampled_work_titles
+                    else discovery_limit
+                ),
+                region_policy=region_policy,
+                work_title=title,
+                # The birthday calendar is independent of the three rotating work
+                # title probes. Read the full current-month list once; later probes
+                # remain work-specific so generation can prioritize sampled works.
+                unfiltered_sources=(
+                    {"onnada"}
+                    if content_type == "character" and sampled_work_titles and index == 0
+                    else None
+                ),
+                # The downstream verified-crawl stage captures and stores final package
+                # images under its request_id, avoiding duplicate image rows.
+                capture_images=False,
+                )
+            )
+        collected_items = []
+        seen_item_ids: set[str] = set()
+        for crawler_run in runs:
+            for item in crawler_run.items:
+                if item.id not in seen_item_ids:
+                    collected_items.append(item)
+                    seen_item_ids.add(item.id)
     run_folder = output_dir / content_type / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_folder.mkdir(parents=True, exist_ok=True)
+    unattempted_items = []
+    for item in collected_items:
+        token = hashlib.sha256(str(item.id).encode("utf-8")).hexdigest()[:12]
+        if retry_candidate_id or token not in attempted_tokens:
+            unattempted_items.append(item)
+    fresh_items = (
+        unattempted_items
+        if retry_candidate_id
+        else _diversify_candidate_items(unattempted_items, limit)
+    )
+    diversity_deferred = len(unattempted_items) - len(fresh_items)
+    skipped_attempted = len(collected_items) - len(unattempted_items)
     outcomes: list[dict] = []
     passed_count = 0
-    for index, item in enumerate(run.items, start=1):
+    for index, item in enumerate(fresh_items, start=1):
         if target_passed is not None and passed_count >= target_passed:
             break
         candidate = item.model_dump(mode="json")
@@ -1712,7 +2109,7 @@ def crawl_type(
                     content_type=content_type,
                     output=result_path,
                     max_images=20,
-                    retry_failed=retry_failed,
+                    retry_failed=bool(retry_candidate_id),
                 )
                 generated = json.loads(result_path.read_text(encoding="utf-8"))
                 outcome = {
@@ -1755,22 +2152,72 @@ def crawl_type(
                     json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
         outcomes.append(outcome)
+        if retry_candidate_id:
+            previous_attempt_count = int(
+                previous_candidate_attempts[retry_candidate_id].get("attempt_count", 1)
+            )
+            outcome["attempt_count"] = previous_attempt_count + 1
+            outcome["retry_count"] = int(
+                previous_candidate_attempts[retry_candidate_id].get("retry_count", 0)
+            ) + 1
+            outcome["retry_note"] = retry_note.strip() if retry_note else ""
+        else:
+            outcome["attempt_count"] = int(
+                previous_candidate_attempts.get(candidate_id, {}).get("attempt_count", 0)
+            ) + 1
+            outcome["retry_count"] = int(
+                previous_candidate_attempts.get(candidate_id, {}).get("retry_count", 0)
+            )
+        outcome = _enrich_candidate_outcome(outcome)
+        try:
+            repository.persist_candidate_attempt(content_type, candidate, outcome)
+        except Exception as exc:
+            console.print(
+                f"[yellow]후보 처리 이력을 DB에 저장하지 못했습니다: {str(exc)[:240]}[/yellow]"
+            )
         if outcome.get("status") == "ready_for_feed":
             passed_count += 1
         console.print(
-            f"[{index}/{len(run.items)}] {candidate.get('title', candidate_id)} "
+            f"[{index}/{len(fresh_items)}] {candidate.get('title', candidate_id)} "
             f"→ {outcome.get('status')}"
         )
 
+    status_counts: dict[str, int] = {}
+    stage_counts: dict[str, int] = {}
+    reason_code_counts: dict[str, int] = {}
+    for outcome in outcomes:
+        status = str(outcome.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        stage = str(outcome.get("failure_stage") or "completed")
+        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+        for code in set(outcome.get("reason_codes") or []):
+            reason_code_counts[str(code)] = reason_code_counts.get(str(code), 0) + 1
+
     summary = {
         "content_type": content_type,
-        "candidate_count": len(run.items),
-        "candidate_records_persisted": run.persisted_count,
+        "candidate_count": len(fresh_items),
+        "candidates_discovered": len(collected_items),
+        "previously_attempted_skipped": skipped_attempted,
+        "work_concentration_deferred": diversity_deferred,
+        "candidate_records_persisted": sum(item.persisted_count for item in runs),
+        "birthday_reference_upserts": sum(
+            item.birthday_reference_upserts for item in runs
+        ),
+        "work_titles_sampled": sampled_work_titles,
         "target_passed": target_passed,
         "passed_this_run": passed_count,
-        "collection_errors": run.errors,
-        "source_results": [asdict(item) for item in run.source_results],
-        "rejected_candidate_count": run.rejected_count,
+        "collection_errors": [error for item in runs for error in item.errors],
+        "source_results": [asdict(result) for item in runs for result in item.source_results],
+        "rejected_candidate_count": sum(item.rejected_count for item in runs),
+        "funnel": {
+            "discovered": len(collected_items),
+            "deferred_for_work_diversity": diversity_deferred,
+            "previously_attempted_skipped": skipped_attempted,
+            "attempted": len(outcomes),
+            "status_counts": status_counts,
+            "failure_stage_counts": stage_counts,
+            "reason_code_counts": reason_code_counts,
+        },
         "source_discovery": run_source_discovery(AgentRepository(), validation_limit=3),
         "outcomes": outcomes,
     }
@@ -1778,7 +2225,7 @@ def crawl_type(
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     ready = sum(item.get("status") == "ready_for_feed" for item in outcomes)
     console.print(
-        f"유형 {content_type}: 후보 {len(run.items)}건 → 독립 검수 통과 {ready}건 · "
+        f"유형 {content_type}: 후보 {len(collected_items)}건 → 독립 검수 통과 {ready}건 · "
         f"실행 요약 {summary_path.resolve()}"
     )
 

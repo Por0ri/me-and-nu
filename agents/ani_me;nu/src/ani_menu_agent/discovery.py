@@ -35,6 +35,15 @@ class DiscoveryItem(BaseModel):
     region: str = "global"
     source_role: str = "discovery"
     is_community_post: bool = False
+    community_posts: list[dict[str, str]] = Field(default_factory=list)
+    # Onnada birthday records are reusable calendar references, not publication dates.
+    character_name: str | None = None
+    linked_work_title: str | None = None
+    birthday_mmdd: str | None = Field(
+        default=None,
+        pattern=r"^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+    )
+    linked_work_ids: list[int] = Field(default_factory=list)
 
 
 def _item_id(source_id: str, value: str) -> str:
@@ -91,6 +100,24 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
     for type_code, pattern in patterns.items():
         if re.search(pattern, title):
             inferred.add(type_code)
+    # Explicit localized signals keep Korean event and fandom headlines routable
+    # even when a publisher's broader taxonomy is shared by news and commerce.
+    if re.search(
+        r"\ud31d\uc5c5|\uc804\uc2dc|\uc804\uc2dc\ud68c|\ud589\uc0ac|\ud398\uc5b4|"
+        r"\ud2f0\ucf13|\uad00\ub78c|\ucf5c\ub77c\ubcf4\s*\uce74\ud398|\uc624\ud504\ub77c\uc778\s*\uc2a4\ud1a0\uc5b4|"
+        r"\u958b\u50ac|\u5c55\u89a7|\u5c55\u793a|\u50ac\u4e8b|\u516c\u6f14|\u821e\u53f0|\u30a4\u30d9\u30f3\u30c8",
+        title,
+    ):
+        inferred.add("event")
+    if re.search(
+        r"fan\s+(?:debate|discussion|theory|prediction)|fans?\s+(?:react|debate)|"
+        r"meme|fandom|behind[ -]?the[ -]?scenes|making(?:[ -]?of)?|production\s+(?:interview|notes|report)|"
+        r"\ud32c\ub364|\ud32c\s*(?:\ud1a0\ub860|\uc774\ub860|\uc608\uce21|\ud654\uc81c)|"
+        r"\ubc08|\uc720\uba38|\ub18d\ub2f4|\uc81c\uc791\uc9c4\s*\uc778\ud130\ubdf0|\uc81c\uc791\s*\uacfc\uc815|\ube44\ud558\uc778\ub4dc|\uba54\uc774\ud0b9|"
+        r"\u5236\u4f5c\u79d8\u8a71|\u821e\u53f0\u88cf|\u30e1\u30a4\u30ad\u30f3\u30b0|\u88fd\u4f5c\u9663",
+        title,
+    ):
+        inferred.add("humor")
     if re.search(
         r"behind[ -]?the[ -]?scenes|making(?:[ -]?of)?|production notes|"
         r"production interview|staff interview|production report|recording report|"
@@ -115,6 +142,7 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
         "korea_entertainment_trade_news": "news",
         "korea_official_news": "news",
         "kitsu_anime_catalog": "guide",
+        "onnada_character_catalog": "character",
         "wikipedia_reference": "guide",
         "wikidata_character_catalog": "character",
         "ann_encyclopedia": "guide",
@@ -145,6 +173,28 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
         "korea_official_news",
     }:
         inferred.discard("news")
+    announcement_only = re.search(
+        r"new season|season \d+|season [ivx]+|sequel|cast announcement|broadcast date|"
+        r"premiere date|airing date|放送決定|放送開始|放送日|放送|放映|配信開始|続編|"
+        r"第[0-9０-９一二三四五六七八九十]+期|キャスト解禁|新シリーズ|"
+        r"방영 확정|방송 시작|방송일|방영일|방영|방송|캐스팅 공개|새 시즌|후속 시즌|속편",
+        title,
+    )
+    actual_event = re.search(
+        r"event|exhibition|festival|concert|ticket|venue|screening|pop[ -]?up|"
+        r"イベント|展示|会場|公演|上映|チケット|開催|전시|축제|공연|상영|티켓|팝업|오프라인",
+        title,
+    )
+    actual_event = actual_event or re.search(
+        r"\ud31d\uc5c5|\uc804\uc2dc|\uc804\uc2dc\ud68c|\ud589\uc0ac|\ud398\uc5b4|\ud2f0\ucf13|\uad00\ub78c|"
+        r"\ucf5c\ub77c\ubcf4\s*\uce74\ud398|\uc624\ud504\ub77c\uc778\s*\uc2a4\ud1a0\uc5b4|"
+        r"\u958b\u50ac|\u5c55\u89a7|\u5c55\u793a|\u50ac\u4e8b|\u516c\u6f14|\u821e\u53f0|\u30a4\u30d9\u30f3\u30c8",
+        title,
+    )
+    if announcement_only and not actual_event:
+        inferred.discard("event")
+        if "news" in available:
+            inferred.add("news")
     if not inferred and "news" in available and source.role in {"primary", "discovery"}:
         inferred.add("news")
     return inferred & available
@@ -297,7 +347,11 @@ def _catalog_work_titles_for_tags(tags: list[str]) -> list[str]:
 
 
 def _catalog_work_titles_in_text(text: str) -> list[str]:
-    normalized_text = _normalized_tag(text)
+    # Avoid matching a work that appears only in a quoted credit, hashtag dump,
+    # or incidental parenthetical unrelated to the post's main topic.
+    lead = re.split(r"(?<=[.!?。！？])\s+", text, maxsplit=1)[0][:240]
+    lead = re.sub(r"[（(][^）)]{1,100}[）)]", " ", lead)
+    normalized_text = _normalized_tag(lead)
     matches: list[tuple[int, str]] = []
     for work in load_work_catalog():
         aliases = [
@@ -353,7 +407,7 @@ def parse_mastodon_tag_timeline(payload: list[dict], source: Source) -> list[Dis
                 "アニメ",
             }:
                 counts[normalized] += 1
-        # Replies and boosts often lose context or duplicate another author's post.
+        # Replies are represented through a separately fetched public thread context.
         if status.get("reblog") or status.get("in_reply_to_id"):
             continue
         post_url = status.get("url")
@@ -366,10 +420,14 @@ def parse_mastodon_tag_timeline(payload: list[dict], source: Source) -> list[Dis
         body = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "", body)
         body = re.sub(r"\s+", " ", body).strip()
         work_titles = _catalog_work_titles_for_tags(tags) or _catalog_work_titles_in_text(body)
+        community_posts = status.get("community_posts")
+        if not isinstance(community_posts, list):
+            community_posts = []
         if (
             not work_titles
             or normalized_tags & news_tags
             or len(body) < 40
+            or len(community_posts) < 2
         ):
             continue
         title = f"{work_titles[0]} 팬덤 토론"
@@ -386,6 +444,7 @@ def parse_mastodon_tag_timeline(payload: list[dict], source: Source) -> list[Dis
                 region=source.region,
                 source_role="trend",
                 is_community_post=True,
+                community_posts=community_posts[:6],
             )
         )
     if not counts:
@@ -413,6 +472,81 @@ def parse_mastodon_tag_timeline(payload: list[dict], source: Source) -> list[Dis
         )
     )
     return items
+
+
+def _clean_public_mastodon_status(status: dict) -> dict[str, str] | None:
+    """Return a public post's paraphrase input without account identifiers."""
+    if (
+        not isinstance(status, dict)
+        or status.get("visibility") != "public"
+        or status.get("sensitive")
+        or status.get("reblog")
+    ):
+        return None
+    url = status.get("url")
+    if not isinstance(url, str) or not url.startswith("https://"):
+        return None
+    body = BeautifulSoup(str(status.get("content") or ""), "html.parser").get_text(
+        " ", strip=True
+    )
+    body = re.sub(r"https?://\S+|@[^\s]+", "", body)
+    body = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "", body)
+    body = re.sub(r"\s+", " ", body).strip()
+    if len(body) < 25:
+        return None
+    account = status.get("account")
+    if not isinstance(account, dict):
+        account = {}
+    author_key = str(account.get("id") or account.get("acct") or "").strip()
+    if not author_key:
+        return None
+    return {
+        "text": body[:700],
+        "url": url,
+        "published_at": str(status.get("created_at") or ""),
+        "_author_key": author_key,
+        "_status_id": str(status.get("id") or url),
+    }
+
+
+def _mastodon_thread_posts(
+    client: httpx.Client, source: Source, status: dict
+) -> list[dict[str, str]]:
+    """Fetch one bounded public thread and keep only distinct, non-sensitive views."""
+    root = _clean_public_mastodon_status(status)
+    if root is None or not str(status.get("id", "")).isdigit():
+        return []
+    base = urlparse(str(source.url))
+    context_url = f"{base.scheme}://{base.netloc}/api/v1/statuses/{status['id']}/context"
+    try:
+        response = _get_with_backoff(client, context_url, source.min_interval_seconds)
+        context = response.json()
+    except (httpx.HTTPError, ValueError):
+        return []
+    descendants = context.get("descendants", []) if isinstance(context, dict) else []
+    candidates = [root]
+    seen_statuses = {root["_status_id"]}
+    for descendant in descendants if isinstance(descendants, list) else []:
+        clean = _clean_public_mastodon_status(descendant)
+        if clean and clean["_status_id"] not in seen_statuses:
+            seen_statuses.add(clean["_status_id"])
+            candidates.append(clean)
+        if len(candidates) >= 6:
+            break
+    authors = {post["_author_key"] for post in candidates}
+    if len(authors) < 2:
+        return []
+    # Account IDs are used only in memory to deduplicate. Never persist them.
+    result = []
+    seen_authors: set[str] = set()
+    for post in candidates:
+        author = post.pop("_author_key", "")
+        post.pop("_status_id", None)
+        if author in seen_authors:
+            continue
+        seen_authors.add(author)
+        result.append(post)
+    return result
 
 
 def parse_kitsu_search(payload: dict, source: Source, limit: int = 10) -> list[DiscoveryItem]:
@@ -505,6 +639,125 @@ def parse_kitsu_characters(
         if len(items) >= limit:
             break
     items.sort(key=lambda item: ("role=main" not in item.summary, item.title.casefold()))
+    return items
+
+
+def parse_onnada_birthday_listing(
+    html: str,
+    source: Source,
+    *,
+    limit: int = 30,
+    work_title: str | None = None,
+) -> list[DiscoveryItem]:
+    """Create character leads from Onnada's dated character/work pairs."""
+    soup = BeautifulSoup(html, "html.parser")
+    requested_work_ids = set(resolve_title_work_ids(work_title or ""))
+    items: list[DiscoveryItem] = []
+    seen: set[str] = set()
+
+    for character_anchor in soup.select('a[href^="/character/"]'):
+        character_match = re.fullmatch(
+            r"/character/(\d+)(?:/index\.html?)?/?",
+            urlparse(urljoin(str(source.url), str(character_anchor.get("href") or ""))).path,
+            re.IGNORECASE,
+        )
+        if not character_match:
+            continue
+
+        card = character_anchor
+        work_anchor = None
+        day_item = None
+        for _ in range(5):
+            card = card.parent
+            if card is None:
+                break
+            character_links = [
+                link
+                for link in card.select('a[href^="/character/"]')
+                if re.fullmatch(
+                    r"/character/\d+(?:/index\.html?)?/?",
+                    urlparse(urljoin(str(source.url), str(link.get("href") or ""))).path,
+                    re.IGNORECASE,
+                )
+            ]
+            work_links = [
+                link
+                for link in card.select('a[href^="/anime/"]')
+                if re.fullmatch(
+                    r"/anime/\d+(?:/index\.html?)?/?",
+                    urlparse(urljoin(str(source.url), str(link.get("href") or ""))).path,
+                    re.IGNORECASE,
+                )
+            ]
+            if len(character_links) == 1 and len(work_links) == 1:
+                character_anchor = character_links[0]
+                work_anchor = work_links[0]
+                day_item = card.find_parent(
+                    "li", id=re.compile(r"^character-birthday-timeline-day-")
+                )
+                break
+        if work_anchor is None:
+            continue
+
+        character_name = re.sub(r"\s+", " ", character_anchor.get_text(" ", strip=True)).strip()
+        linked_work_title = re.sub(r"\s+", " ", work_anchor.get_text(" ", strip=True)).strip()
+        if len(character_name) < 2 or len(linked_work_title) < 2:
+            continue
+        linked_work_ids = set(resolve_title_work_ids(linked_work_title))
+        if requested_work_ids and linked_work_ids and not requested_work_ids.intersection(
+            linked_work_ids
+        ):
+            continue
+        if requested_work_ids and not linked_work_ids:
+            requested_normalized = _normalized_tag(work_title or "")
+            linked_normalized = _normalized_tag(linked_work_title)
+            if not requested_normalized or not (
+                requested_normalized in linked_normalized
+                or linked_normalized in requested_normalized
+            ):
+                continue
+
+        character_id = character_match.group(1)
+        profile_url = urljoin(str(source.url), f"/character/{character_id}")
+        if day_item is not None:
+            date_match = re.search(
+                r"character-birthday-timeline-day-(20\d{2})-(\d{1,2})-(\d{1,2})",
+                str(day_item.get("id") or ""),
+            )
+        else:
+            date_match = None
+        birthday = (
+            f"{int(date_match.group(2)):02d}-"
+            f"{int(date_match.group(3)):02d}"
+            if date_match
+            else ""
+        )
+        identity = f"{character_id}|{linked_work_title.casefold()}"
+        if identity in seen:
+            continue
+        seen.add(identity)
+        items.append(
+            DiscoveryItem(
+                id=_item_id(source.id, identity),
+                title=f"{linked_work_title} — {character_name}",
+                url=profile_url,
+                source_id=source.id,
+                content_types=["character"],
+                character_name=character_name,
+                linked_work_title=linked_work_title,
+                birthday_mmdd=birthday or None,
+                linked_work_ids=sorted(linked_work_ids),
+                summary=(
+                    f"Onnada character_id={character_id}; character={character_name}; "
+                    f"birthday={birthday or 'not-listed'}; linked_work={linked_work_title}. "
+                    "Use the linked character profile and preserve its NamuWiki reference URL."
+                ),
+                region="KR",
+                source_role=source.role,
+            )
+        )
+        if len(items) >= limit:
+            break
     return items
 
 
@@ -946,7 +1199,9 @@ def collect_candidates(
     content_type: str | None = None,
     work_title: str | None = None,
     source_ids: set[str] | None = None,
+    unfiltered_sources: set[str] | None = None,
     source_report: list[dict[str, object]] | None = None,
+    birthday_catalog: list[DiscoveryItem] | None = None,
 ) -> tuple[list[DiscoveryItem], list[str]]:
     """활성 출처 중 선택 유형을 지원하는 곳에서 미검증 후보만 수집합니다."""
     errors: list[str] = []
@@ -981,7 +1236,34 @@ def collect_candidates(
                         )
                 elif rss_source.collection == "html":
                     page_url = str(rss_source.url)
-                    if rss_source.category == "ann_encyclopedia" and work_title:
+                    if rss_source.category == "onnada_character_catalog":
+                        now = datetime.now(ZoneInfo("Asia/Seoul"))
+                        query = urlencode({"y": now.year, "m": now.month})
+                        birthday_url = f"{page_url.rstrip('/')}/character/birthday?{query}"
+                        attempted = True
+                        html, _ = _get_html(birthday_url, rss_source, timeout=timeout)
+                        monthly_birthdays = parse_onnada_birthday_listing(
+                            html,
+                            rss_source,
+                            # Keep the durable calendar complete even though the
+                            # downstream generation candidate batch is bounded.
+                            limit=1000,
+                            work_title=None,
+                        )
+                        if birthday_catalog is not None:
+                            birthday_catalog.extend(monthly_birthdays)
+                        candidate_birthdays = (
+                            monthly_birthdays
+                            if unfiltered_sources and rss_source.id in unfiltered_sources
+                            else parse_onnada_birthday_listing(
+                                html,
+                                rss_source,
+                                limit=limit,
+                                work_title=work_title,
+                            )
+                        )
+                        items.extend(candidate_birthdays)
+                    elif rss_source.category == "ann_encyclopedia" and work_title:
                         only = "person" if content_type == "people" else "anime"
                         page_url = f"{page_url}?{urlencode({'only': only, 'q': work_title})}"
                         attempted = True
@@ -1123,7 +1405,24 @@ def collect_candidates(
                         rss_source.min_interval_seconds,
                     )
                     source_for_parse = rss_source.model_copy(update={"url": timeline_url})
-                    items.extend(parse_mastodon_tag_timeline(response.json(), source_for_parse))
+                    timeline = response.json()
+                    if isinstance(timeline, list):
+                        enriched = []
+                        context_requests = 0
+                        for status in timeline:
+                            if (
+                                isinstance(status, dict)
+                                and not status.get("in_reply_to_id")
+                                and not status.get("reblog")
+                                and context_requests < 3
+                            ):
+                                status = dict(status)
+                                status["community_posts"] = _mastodon_thread_posts(
+                                    client, rss_source, status
+                                )
+                                context_requests += 1
+                            enriched.append(status)
+                        items.extend(parse_mastodon_tag_timeline(enriched, source_for_parse))
                 elif rss_source.collection == "manual":
                     continue
             except (httpx.HTTPError, ValueError) as exc:

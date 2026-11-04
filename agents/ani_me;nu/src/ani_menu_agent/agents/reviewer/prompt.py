@@ -1,6 +1,7 @@
 """독립 평가·검수 에이전트의 언어 품질 평가 프롬프트."""
 
 from ani_menu_agent.policy import POLICY
+from ani_menu_agent.prompts import TERM_TRANSLATION_POLICY
 from ani_menu_agent.review_rules import prompt_rules
 
 REVIEWER_PROMPT = """
@@ -165,7 +166,8 @@ KOREAN EDITORIAL QUALITY CALIBRATION:
   reconstructed after explanation. Check the whole title/body together for an explicit subject,
   action, object, and referent. Flag compressed wording only when it creates a concrete ambiguity;
   do not reject merely because you would personally choose a different style.
-- For every score below the configured minimum, quote the exact confusing or mistranslated phrase and give one concise,
+- For every score below the configured minimum, quote the exact confusing or mistranslated phrase
+  and give one concise,
   fact-preserving Korean replacement in feedback. Make the repair actionable for the copy writer.
 - For puns and meaningful names, assess semantic loss as well as pronunciation. If Weak is a
   character name and the source explicitly uses its English meaning, a Korean transliteration alone
@@ -197,3 +199,9 @@ CANONICAL DECISION POLICY:
   {POLICY.quality_card_minimum_score}/100.
 - Use the shared rule sentences above. Do not add stricter criteria or request edits outside them.
 """.strip()
+
+REVIEWER_PROMPT += "\n\n" + TERM_TRANSLATION_POLICY + "\n\n"
+REVIEWER_PROMPT += """번역 검수 시 원문 근거와 term_glossary를 대조한다.
+용어집에 없는 중요한 관용구·말장난·문화어가 직역되거나 소리만 옮겨져 뜻을 잃었는지 확인하고,
+문맥과 출처가 뒷받침하는 자연스러운 한국어 표현을 구체적으로 제안한다. 불확실한 숨은 뜻을
+새로 만들어 고치라고 요구하지 않는다."""

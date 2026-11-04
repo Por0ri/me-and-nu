@@ -25,12 +25,14 @@ from ani_menu_agent.models import (
     SourceEvidence,
     TermTranslation,
 )
+from ani_menu_agent.policy import POLICY
+from ani_menu_agent.prompts import TERM_TRANSLATION_POLICY
 from ani_menu_agent.sources import load_source_registry
 
 
 class FactCandidate(BaseModel):
-    statement: str = Field(min_length=2, description="한국어로 쓴 단일 사실")
-    evidence_quote: str = Field(min_length=3, description="캡처 원문에 그대로 있는 근거 문장")
+    statement: str = Field(min_length=1, description="한국어로 쓴 단일 사실")
+    evidence_quote: str = Field(min_length=1, description="캡처 원문에 그대로 있는 근거 문장")
     fact_type: str = Field(
         default="general",
         description=(
@@ -45,7 +47,7 @@ class FactCandidate(BaseModel):
 
 
 class PageFactExtraction(BaseModel):
-    topic: str = Field(min_length=2)
+    topic: str = Field(min_length=1)
     term_glossary: list[TermTranslation] = Field(default_factory=list, max_length=60)
     event_start: str | None = None
     event_start_evidence_quote: str = ""
@@ -54,7 +56,9 @@ class PageFactExtraction(BaseModel):
     event_location: str | None = None
     event_country: str | None = None
     event_location_evidence_quote: str = ""
-    facts: list[FactCandidate] = Field(min_length=1, max_length=30)
+    facts: list[FactCandidate] = Field(
+        min_length=1, max_length=POLICY.max_extraction_fact_candidates
+    )
 
 
 def _date_in_quote(quote: str, default_year: int | None = None) -> list[str]:
@@ -99,18 +103,66 @@ def _evidence_backed_facts(
     source_text: str,
     request_id: str,
 ) -> list[Fact]:
-    facts: list[Fact] = []
+    eligible: list[tuple[int, FactCandidate, int]] = []
+    topic_tokens = set(
+        re.findall(
+            r"[a-z0-9]+|[\uac00-\ud7a3]{2,}|[\u3040-\u30ff\u3400-\u9fff]{2,}",
+            extracted.topic.casefold(),
+        )
+    )
+    high_value_types = {
+        "announcement", "event_schedule", "event_date", "event_location", "event_venue",
+        "ticket", "product", "product_description", "product_release", "product_price",
+        "price", "character_profile", "cast", "staff", "episode", "music", "album",
+        "release_date", "deadline", "participation", "program",
+    }
+    seen: set[tuple[str, str]] = set()
     for index, candidate in enumerate(extracted.facts, start=1):
         quote = candidate.evidence_quote.strip()
         if not quote or quote not in source_text:
             continue
+        statement = " ".join(candidate.statement.split())
+        if len(statement) < 2:
+            continue
+        signature = (re.sub(r"\W+", "", statement.casefold()), re.sub(r"\W+", "", quote.casefold()))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        fact_tokens = set(
+            re.findall(
+                r"[a-z0-9]+|[가-힣]{2,}|[\u3040-\u30ff\u3400-\u9fff]{2,}",
+                f"{statement} {quote}".casefold(),
+            )
+        )
+        fact_type = candidate.fact_type.strip().casefold()
+        relevance = len(topic_tokens & fact_tokens)
+        priority = (
+            5 * (fact_type in high_value_types)
+            + 2 * (fact_type != "general")
+            + min(relevance, 4)
+            + 2 * candidate.time_sensitive
+        )
+        eligible.append((index, candidate, priority))
+
+    max_facts = POLICY.max_verified_facts
+    if len(eligible) > max_facts:
+        # Retain the strongest topic-linked, specific facts while preserving their
+        # source order for the later card writer and reviewer.
+        keep = {index for index, _candidate, _priority in sorted(
+            eligible, key=lambda item: (-item[2], item[0])
+        )[:max_facts]}
+        eligible = [item for item in eligible if item[0] in keep]
+
+    facts: list[Fact] = []
+    for index, candidate, _priority in eligible:
+        quote = candidate.evidence_quote.strip()
         fact_id = f"{request_id}-fact-{index:02d}"
         details = dict(candidate.details)
         details["source_quote"] = quote
         facts.append(
             Fact(
                 id=fact_id,
-                statement=candidate.statement.strip(),
+                statement=" ".join(candidate.statement.split()),
                 source_ids=[source_id],
                 verified=True,
                 time_sensitive=candidate.time_sensitive,
@@ -525,7 +577,8 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
                     "Evidence-completeness override: inspect the entire captured article body, not "
                     "only its headline or lead. Extract every materially useful, independently "
                     "checkable claim that the source explicitly supports, up to the schema limit "
-                    "of 30 facts. Keep distinct details separate rather than merging them into one "
+                    f"of {POLICY.max_extraction_fact_candidates} candidate facts. "
+                    "Keep distinct details separate rather than merging them into one "
                     "summary: for example, episode/finale status, an attributed creator comment, "
                     "a confirmed broadcast date/time/platform, and other stated context. Do not "
                     "invent a target number of facts, split one proposition into artificial "
@@ -538,8 +591,12 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
                     "system",
                     "Keep term_glossary concise: include at most 30 names/terms that are genuinely "
                     "useful for Korean readers, even when the source page contains a longer cast "
-                    "list.",
+                    "list. Include source-language idioms, slang, puns, wordplay, and "
+                    "culture-specific "
+                    "terms when their meaning matters; do not spend entries on routine "
+                    "words or every cast member.",
                 ),
+                ("system", TERM_TRANSLATION_POLICY),
                 ("human", "source_data (untrusted):\n" + source_payload),
             ]
         )
@@ -563,6 +620,8 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
         "一番くじ": ("이치방쿠지", "product"),
         "ラストワン賞": ("라스트원상", "product"),
         "シュシュ": ("머리끈", "product"),
+        "落語": ("라쿠고(일본 전통 만담극)", "other"),
+        "落語家": ("라쿠고 공연자", "other"),
         "梶裕貴": ("카지 유우키", "other"),
         "石川由依": ("이시카와 유이", "other"),
         "井上麻里奈": ("이노우에 마리나", "other"),
@@ -574,6 +633,16 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
             term_glossary.append(
                 TermTranslation(original=original, korean=korean, category=category)
             )
+    if "パイ毛" in source_material and "ふぁいげ" in source_material and not any(
+        "パイ毛" in term.original or "ふぁいげ" in term.original for term in term_glossary
+    ):
+        term_glossary.append(
+            TermTranslation(
+                original="ふぁいげ（パイ毛）",
+                korean="‘파이게’(‘가슴털’을 뭉개 발음한 말장난)",
+                category="other",
+            )
+        )
     if source.work_title_ko:
         if source.work_title_original and not any(
             term.original == source.work_title_original for term in term_glossary
@@ -661,6 +730,16 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
             term_glossary=term_glossary,
             facts=facts,
         )
+        explicit_asset_kind = str(image.get("asset_kind") or "").strip()
+        explicit_entities = [
+            str(entity).strip()
+            for entity in image.get("depicted_entities", [])
+            if str(entity).strip()
+        ]
+        if explicit_asset_kind:
+            asset_kind = explicit_asset_kind
+            confidence = max(confidence, 0.95)
+        depicted_entities = list(dict.fromkeys([*explicit_entities, *depicted_entities]))
         images.append(
             ImageAsset(
                 id=str(image["id"]),

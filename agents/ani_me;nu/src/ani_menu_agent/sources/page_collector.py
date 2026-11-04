@@ -128,6 +128,8 @@ class SourcePageCapture(BaseModel):
     image_alt_text: dict[str, str] = Field(default_factory=dict)
     image_source_pages: dict[str, str] = Field(default_factory=dict)
     image_source_titles: dict[str, str] = Field(default_factory=dict)
+    image_asset_kinds: dict[str, str] = Field(default_factory=dict)
+    image_depicted_entities: dict[str, list[str]] = Field(default_factory=dict)
     outbound_links: list[PageOutboundLink] = Field(default_factory=list)
     structured_work_references: list[StructuredWorkReference] = Field(default_factory=list)
     related_image_pages: list[HttpUrl] = Field(default_factory=list)
@@ -140,6 +142,33 @@ def _article_outbound_links(
 ) -> list[PageOutboundLink]:
     """Capture external links only from an explicit article body for provenance routing."""
     scope = None
+    parsed_page = urlparse(page_url)
+    if (
+        (parsed_page.hostname or "").lower() == "onnada.com"
+        and re.fullmatch(r"/character/\d+/?", parsed_page.path, re.IGNORECASE)
+    ):
+        # The profile page itself is the factual source; retain its NamuWiki
+        # cross-reference as a separately attributable secondary link.
+        links: list[PageOutboundLink] = []
+        seen: set[str] = set()
+        for anchor in soup.select('main a[href], [role="main"] a[href], a[href]'):
+            absolute = urljoin(page_url, str(anchor.get("href") or ""))
+            parsed = urlparse(absolute)
+            if (
+                parsed.scheme != "https"
+                or (parsed.hostname or "").lower().removeprefix("www.") != "namu.wiki"
+                or absolute in seen
+            ):
+                continue
+            seen.add(absolute)
+            links.append(
+                PageOutboundLink(
+                    url=absolute,
+                    text=re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))[:200]
+                    or "나무위키 참고 링크",
+                )
+            )
+        return links[:10]
     for selector in (
         '[itemprop="articleBody"]',
         ".news_detail_cont",
@@ -444,6 +473,23 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
 
     scoped_images = scope.find_all("img")
     parsed_page = urlparse(page_url)
+    onnada_character = (
+        (parsed_page.hostname or "").lower() == "onnada.com"
+        and re.fullmatch(r"/character/(\d+)/?", parsed_page.path, re.IGNORECASE)
+    )
+    if onnada_character:
+        character_id = re.fullmatch(r"/character/(\d+)/?", parsed_page.path).group(1)
+        heading = soup.select_one("h1")
+        character_name = re.sub(r"\s+", " ", heading.get_text(" ", strip=True)) if heading else ""
+        scoped_images = [
+            tag
+            for tag in scoped_images
+            if any(
+                "/character_image/"
+                in urlparse(urljoin(page_url, str(tag.get(attribute) or ""))).path.casefold()
+                for attribute in ("src", "data-src", "data-original", "data-lazy-src")
+            )
+        ]
     character_path = re.fullmatch(
         r"/character/([^/]+)/index\.html?", parsed_page.path, re.IGNORECASE
     )
@@ -467,6 +513,10 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
         image_url = tag.get("content")
         if image_url:
             absolute_url = urljoin(page_url, str(image_url))
+            if onnada_character and "/character_image/" not in urlparse(
+                absolute_url
+            ).path.casefold():
+                continue
             scores[absolute_url] = max(scores.get(absolute_url, 0), 100)
     for tag in scoped_images:
         if _is_linked_to_another_news_article(tag, page_url):
@@ -502,6 +552,9 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
                 if best:
                     candidates.append(best)
         description = str(tag.get("alt") or tag.get("title") or "").strip()
+        if onnada_character:
+            identity = f"{character_name} (Onnada character ID {character_id})".strip()
+            description = f"Character portrait: {identity}"
         for candidate in candidates:
             if not candidate:
                 continue
@@ -535,6 +588,10 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
         style = str(tag.get("style") or "")
         for raw_url in re.findall(r"url\((?:['\"])?(.*?)(?:['\"])?\)", style, re.IGNORECASE):
             absolute_url = urljoin(page_url, raw_url.strip())
+            if onnada_character and "/character_image/" not in urlparse(
+                absolute_url
+            ).path.casefold():
+                continue
             scores[absolute_url] = max(scores.get(absolute_url, 0), 20)
     # Apply the CMS rendition upgrade consistently to metadata/OG images too;
     # those can otherwise re-introduce a small duplicate before the article body
@@ -580,6 +637,13 @@ def _article_content_scope(soup: BeautifulSoup, page_url: str | None = None):
     if page_url:
         parsed_page = urlparse(page_url)
         if (
+            (parsed_page.hostname or "").lower() == "onnada.com"
+            and re.fullmatch(r"/character/\d+/?", parsed_page.path, re.IGNORECASE)
+        ):
+            profile = soup.select_one("main, [role='main']")
+            if profile:
+                return profile
+        if (
             (parsed_page.hostname or "").lower() == "toynews.kr"
             and parsed_page.path.startswith("/article/")
         ):
@@ -613,6 +677,19 @@ def _article_content_scope(soup: BeautifulSoup, page_url: str | None = None):
 def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
     """Extract prose from a known article body when the precision parser returns nothing."""
     parsed_page = urlparse(page_url)
+    if (
+        (parsed_page.hostname or "").lower() == "onnada.com"
+        and re.fullmatch(r"/character/\d+/?", parsed_page.path, re.IGNORECASE)
+    ):
+        scope = _article_content_scope(soup, page_url)
+        body = BeautifulSoup(str(scope), "html.parser")
+        for tag in body.select("script, style, noscript, iframe, nav, footer, aside, form, button"):
+            tag.decompose()
+        lines = [
+            re.sub(r"\s+", " ", line).strip()
+            for line in body.get_text(separator="\n", strip=True).splitlines()
+        ]
+        return "\n".join(line for line in lines if line)
     if (parsed_page.hostname or "").lower() == "toynews.kr" and parsed_page.path.startswith(
         "/article/"
     ):
@@ -789,6 +866,15 @@ def collect_official_page(
     html, final_url = _get_html(url, source, timeout)
     soup = BeautifulSoup(html, "html.parser")
     title = _page_title(soup)
+    onnada_profile = (
+        source.id == "onnada"
+        and (urlparse(final_url).hostname or "").lower() == "onnada.com"
+        and re.fullmatch(r"/character/\d+/?", urlparse(final_url).path, re.IGNORECASE)
+    )
+    if onnada_profile:
+        heading = soup.select_one("h1")
+        if heading and heading.get_text(" ", strip=True):
+            title = heading.get_text(" ", strip=True)
     daewon_title = daewon_published_at = None
     if source.id == "daewonmedia_kr":
         daewon_title, daewon_published_at = _daewon_article_metadata(soup)
@@ -812,7 +898,9 @@ def collect_official_page(
     image_source_pages = {candidate: final_url for candidate in image_urls}
     image_source_titles = {candidate: title for candidate in image_urls}
     related_candidates = (
-        _related_image_page_candidates(soup, final_url) if expand_related_pages else []
+        _related_image_page_candidates(soup, final_url)
+        if expand_related_pages and not onnada_profile
+        else []
     )
     related_pages: list[str] = []
     related_image_urls: list[str] = []
@@ -894,6 +982,11 @@ def collect_reference_page(
     parsed = urlparse(url)
     fetched_at = datetime.now(UTC).isoformat()
     structured_work_references: list[StructuredWorkReference] = []
+    image_urls: list[HttpUrl] = []
+    image_alt_text: dict[str, str] = {}
+    image_source_titles: dict[str, str] = {}
+    image_asset_kinds: dict[str, str] = {}
+    image_depicted_entities: dict[str, list[str]] = {}
     headers = {
         "Accept": "application/vnd.api+json, application/json",
         "User-Agent": "me-nu-content-agent/0.3 (https://github.com/Por0ri/me-and-nu)",
@@ -930,6 +1023,21 @@ def collect_reference_page(
             media_attrs = (media or {}).get("attributes") or {}
             title = str(char_attrs.get("canonicalName") or "Kitsu character")
             media_title = str(media_attrs.get("canonicalTitle") or "").strip()
+            character_image = char_attrs.get("image") or {}
+            character_image_url = (
+                character_image.get("original") or character_image.get("large")
+                if isinstance(character_image, dict)
+                else None
+            )
+            if isinstance(character_image_url, str) and character_image_url.startswith("https://"):
+                image_urls.append(HttpUrl(character_image_url))
+                image_alt_text[character_image_url] = f"Character portrait: {title}"
+                image_source_titles[character_image_url] = (
+                    f"{title} character portrait"
+                    + (f" — {media_title}" if media_title else "")
+                )
+                image_asset_kinds[character_image_url] = "character_art"
+                image_depicted_entities[character_image_url] = [title]
             if media_title:
                 structured_work_references.append(
                     StructuredWorkReference(relation="about", name=media_title)
@@ -1148,7 +1256,12 @@ def collect_reference_page(
         url=HttpUrl(canonical),
         fetched_at=fetched_at,
         text=text,
-        image_urls=[],
+        image_urls=image_urls,
+        image_alt_text=image_alt_text,
+        image_source_pages={str(image_url): canonical for image_url in image_urls},
+        image_source_titles=image_source_titles,
+        image_asset_kinds=image_asset_kinds,
+        image_depicted_entities=image_depicted_entities,
         structured_work_references=structured_work_references,
         status="unverified_capture",
         excerpt_truncated=len(text) >= 24_000,

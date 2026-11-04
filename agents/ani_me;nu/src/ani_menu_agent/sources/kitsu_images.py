@@ -53,6 +53,7 @@ def collect_kitsu_work_images(
     source: Source,
     *,
     max_images: int = MAX_IMAGES,
+    preferred_character_names: list[str] | None = None,
     timeout: float = 20.0,
 ) -> list[ImageAsset]:
     """Return only poster/character art whose Kitsu titles exactly match the work catalog.
@@ -76,6 +77,11 @@ def collect_kitsu_work_images(
     }
     assets: list[ImageAsset] = []
     seen_urls: set[str] = set()
+    preferred_names = {
+        _normalized_title(name)
+        for name in (preferred_character_names or [])
+        if _normalized_title(name)
+    }
     headers = {
         "Accept": "application/vnd.api+json, application/json",
         "User-Agent": "me-nu-content-agent/0.3 (public catalog image references)",
@@ -180,17 +186,45 @@ def collect_kitsu_work_images(
                 for item in character_payload.get("data", [])
                 if isinstance(item, dict)
             ]
+
+            def related_character_names(relation: dict[str, Any]) -> list[str]:
+                relationship = (relation.get("relationships") or {}).get("character") or {}
+                character_ref = relationship.get("data") or {}
+                character = included.get(str(character_ref.get("id") or ""))
+                if not character:
+                    return []
+                char_attributes = character.get("attributes") or {}
+                values = [char_attributes.get("canonicalName")]
+                aliases = char_attributes.get("names")
+                if isinstance(aliases, dict):
+                    values.extend(aliases.values())
+                return list(
+                    dict.fromkeys(
+                        str(name).strip()
+                        for name in values
+                        if isinstance(name, str) and name.strip()
+                    )
+                )
+
             relations.sort(
                 key=lambda item: (
+                    bool(
+                        preferred_names
+                        and not preferred_names.intersection(
+                            _normalized_title(name)
+                            for name in related_character_names(item)
+                        )
+                    ),
                     (item.get("attributes") or {}).get("role") != "main",
                     (item.get("attributes") or {}).get("role") != "supporting",
                 )
             )
-            # Kitsu character portraits are frequently only 225x350 and fail
-            # the unchanged editorial-resolution floor. Reserve slots for
-            # full-size episode stills so low-resolution art cannot exhaust
-            # the request budget before usable visuals are collected.
-            episode_reserve = min(4, max_images - len(assets))
+            # Character-focused packages benefit more from exact-character
+            # portraits than from reserving most of the small image budget for
+            # episode stills. Keep the reserve for general franchise fallback.
+            episode_reserve = (
+                0 if preferred_names else min(4, max_images - len(assets))
+            )
             character_image_limit = max_images - len(assets) - episode_reserve
             character_images_added = 0
             evidence = SourceEvidence(
@@ -214,21 +248,11 @@ def collect_kitsu_work_images(
                 character = included.get(str(character_ref.get("id") or ""))
                 if not character:
                     continue
+                names = related_character_names(relation)
                 char_attributes = character.get("attributes") or {}
                 image_url = (char_attributes.get("image") or {}).get("original")
                 if not isinstance(image_url, str) or image_url in seen_urls:
                     continue
-                character_names = [char_attributes.get("canonicalName")]
-                aliases = char_attributes.get("names")
-                if isinstance(aliases, dict):
-                    character_names.extend(aliases.values())
-                names = list(
-                    dict.fromkeys(
-                        str(name).strip()
-                        for name in character_names
-                        if isinstance(name, str) and name.strip()
-                    )
-                )
                 character_label = names[0] if names else "character"
                 asset = _asset(
                     image_url,

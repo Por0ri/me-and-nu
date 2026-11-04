@@ -31,7 +31,7 @@ flowchart LR
 | 유형별 크롤러 10개 | 유형별 승인 출처 | 유형별 역할·출처 allowlist·품질 규칙 적용, 후보를 미검증 상태로 DB 적재. 유머는 커뮤니티 유머와 제작 비하인드·메이킹을 함께 담당 | `crawlers/{news,event,guide,people,goods,review,humor,character,curation,music}.py` |
 | 공통 수집 모듈 | 공개 RSS/API/HTML 목록 및 후보 원문 | 어댑터별 출처 조회·파싱·후보 구조화 및 출처별 실행 결과 집계 | `discovery.py`, `sources/` |
 | 이미지 처리 | 후보와 동일한 공식/편집/참고 HTML 페이지 | 기존 이미지 처리기를 재사용해 robots/출처/권리/다운로드 정책 적용 및 이미지 메타데이터 저장. 유머·리뷰·큐레이션에는 후보 페이지 이미지를 섞지 않음 | `image/`, `collect-page` |
-| 콘텐츠 생성 | 검증된 DB 자료 | 3~10장 카피와 근거 ID를 작성하고 전체 이미지 표시를 우선해 레이아웃 | `content_generation/` 및 상위 `generation.py`, `layout_engine.py` |
+| 콘텐츠 생성 | 검증된 DB 자료 | 2~10장 카피와 근거 ID를 작성하고 전체 이미지 표시를 우선해 레이아웃 | `content_generation/` 및 상위 `generation.py`, `layout_engine.py` |
 | 평가·검수 | 생성 초안·근거·이미지 메타데이터 | 규칙 검사 + 독립 LLM 언어 검수, 통과·반환·보완·보관 판정 | `reviewer/` |
 
 ## 운영 규칙

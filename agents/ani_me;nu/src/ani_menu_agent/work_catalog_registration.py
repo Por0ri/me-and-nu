@@ -1,4 +1,4 @@
-"""Register an unlisted anime only after an exact Kitsu catalog title match."""
+"""Record unlisted anime discoveries without mutating the shared work catalog."""
 
 from __future__ import annotations
 
@@ -47,6 +47,20 @@ _EXTERNAL_FIELDS = (
     "year",
     "registered_at",
 )
+_DISCOVERED_FIELDS = (
+    "kitsu_id",
+    "canonical_title",
+    "title_romaji",
+    "title_english",
+    "title_native",
+    "format",
+    "first_year",
+    "source_title",
+    "source_url",
+    "status",
+    "first_seen_at",
+    "last_seen_at",
+)
 
 
 def _normalize_title(value: str) -> str:
@@ -75,6 +89,7 @@ def _title_match(
 ) -> list[tuple[str, str, dict[str, Any]]]:
     matches: list[tuple[str, str, dict[str, Any]]] = []
     normalized_headlines = [(_normalize_title(value), value) for value in headlines]
+    located: list[tuple[str, str, dict[str, Any], int, int, int]] = []
     for row in rows:
         attrs = row.get("attributes")
         if not isinstance(attrs, dict) or not str(row.get("id", "")).isdigit():
@@ -83,14 +98,59 @@ def _title_match(
             normalized_catalog_title = _normalize_title(catalog_title)
             if len(normalized_catalog_title) < 4:
                 continue
-            for normalized_headline, _headline in normalized_headlines:
-                if normalized_catalog_title in normalized_headline:
-                    matches.append((str(row["id"]), catalog_title, attrs))
-                    break
+            for headline_index, (normalized_headline, _headline) in enumerate(
+                normalized_headlines
+            ):
+                start = normalized_headline.find(normalized_catalog_title)
+                if start >= 0:
+                    located.append(
+                        (
+                            str(row["id"]),
+                            catalog_title,
+                            attrs,
+                            headline_index,
+                            start,
+                            start + len(normalized_catalog_title),
+                        )
+                    )
+    # Prefer a complete, more specific catalog title over its overlapping parent
+    # title (e.g. a named spin-off should not also match the main series).
+    for candidate in located:
+        _id, _title, _attrs, headline_index, start, end = candidate
+        if any(
+            other[3] == headline_index
+            and other[5] - other[4] > end - start
+            and other[4] < end
+            and start < other[5]
+            for other in located
+        ):
+            continue
+        matches.append(candidate[:3])
     unique: dict[str, tuple[str, str, dict[str, Any]]] = {}
     for match in matches:
         unique.setdefault(match[0], match)
     return list(unique.values())
+
+
+def _catalog_search_queries(headline: str) -> list[str]:
+    """Break long editorial headlines into likely title phrases for catalog search.
+
+    Search variants only improve Kitsu retrieval. A result is still accepted only
+    when its complete catalog title occurs in the original headline, so fragments
+    cannot create a weaker work match by themselves.
+    """
+    separators = re.compile(r"\s*(?:[:：|｜—–]|\s/\s|\s·\s|\s-\s)\s*")
+    parts = [part.strip(" \t\r\n[]【】「」『』()（）") for part in separators.split(headline)]
+    queries = [headline.strip(), *parts]
+    unique: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        normalized = _normalize_title(query)
+        if len(normalized) < 4 or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(query)
+    return unique[:4]
 
 
 @contextmanager
@@ -160,29 +220,6 @@ def _year(value: Any) -> str:
     return match.group(1) if match else ""
 
 
-def _work_row(menu_work_id: int, attributes: dict[str, Any]) -> dict[str, str]:
-    titles = attributes.get("titles") or {}
-    if not isinstance(titles, dict):
-        titles = {}
-    canonical = str(attributes.get("canonicalTitle") or "").strip()
-    start_year = _year(attributes.get("startDate"))
-    end_year = _year(attributes.get("endDate")) or start_year
-    return {
-        "menu_work_id": str(menu_work_id),
-        "title_ko": "",
-        "title_ko_source": "",
-        "title_ko_check": "pending_translation",
-        "title_romaji": str(titles.get("en_jp") or canonical).strip(),
-        "title_english": str(titles.get("en") or "").strip(),
-        "title_native": str(titles.get("ja_jp") or titles.get("ja") or "").strip(),
-        "first_year": start_year,
-        "last_year": end_year,
-        "n_entries": "1",
-        "popularity": "0",
-        "anilist_ids": "",
-    }
-
-
 def _external_row(
     menu_work_id: int, kitsu_id: str, attributes: dict[str, Any]
 ) -> dict[str, str]:
@@ -199,10 +236,57 @@ def _external_row(
     }
 
 
+def _record_discovered_work(
+    kitsu_id: str,
+    attributes: dict[str, Any],
+    source_titles: list[str],
+    source_url: str | None,
+) -> None:
+    """Store a confirmed new title for team review, without assigning a menu ID."""
+    catalog_dir = work_catalog._CATALOG_DIRECTORY
+    discovered_path = catalog_dir / "discovered_works.csv"
+    titles = attributes.get("titles") or {}
+    if not isinstance(titles, dict):
+        titles = {}
+    now = datetime.now(UTC).isoformat()
+    canonical = str(attributes.get("canonicalTitle") or "").strip()
+    source_title = " | ".join(
+        dict.fromkeys(value.strip() for value in source_titles if value.strip())
+    )
+    candidate = {
+        "kitsu_id": kitsu_id,
+        "canonical_title": canonical,
+        "title_romaji": str(titles.get("en_jp") or canonical).strip(),
+        "title_english": str(titles.get("en") or "").strip(),
+        "title_native": str(titles.get("ja_jp") or titles.get("ja") or "").strip(),
+        "format": str(attributes.get("subtype") or ""),
+        "first_year": _year(attributes.get("startDate")),
+        "source_title": source_title,
+        "source_url": str(source_url or ""),
+        "status": "pending_team_review",
+        "first_seen_at": now,
+        "last_seen_at": now,
+    }
+    with _catalog_lock(catalog_dir):
+        rows = _read_csv(discovered_path, _DISCOVERED_FIELDS)
+        existing = next((row for row in rows if row["kitsu_id"] == kitsu_id), None)
+        if existing is None:
+            rows.append(candidate)
+        else:
+            existing["last_seen_at"] = now
+            for field in ("source_title", "source_url"):
+                existing[field] = " | ".join(
+                    dict.fromkeys(value for value in (existing[field], candidate[field]) if value)
+                )
+        _atomic_write_csv(discovered_path, _DISCOVERED_FIELDS, rows)
+
+
 def _clear_catalog_caches() -> None:
     for function_name in (
         "load_work_catalog",
         "load_work_entries",
+        "load_work_external_entries",
+        "load_work_aliases",
         "_work_parent_overrides",
         "load_work_franchises",
         "_aliases",
@@ -214,8 +298,15 @@ def _clear_catalog_caches() -> None:
 
 
 def _persist_kitsu_work(
-    kitsu_id: str, attributes: dict[str, Any], matched_title: str
+    kitsu_id: str,
+    attributes: dict[str, Any],
+    matched_title: str,
+    *,
+    existing_menu_work_id: int | None = None,
 ) -> int | None:
+    # The agent must never append a newly discovered work to menu_works.csv.
+    if existing_menu_work_id is None:
+        return None
     catalog_dir = work_catalog._CATALOG_DIRECTORY
     works_path = catalog_dir / "menu_works.csv"
     external_path = catalog_dir / "menu_work_external_entries.csv"
@@ -232,24 +323,18 @@ def _persist_kitsu_work(
             None,
         )
         if external_match is not None:
+            if external_match != existing_menu_work_id:
+                return None
             return external_match
 
         _clear_catalog_caches()
         existing_ids = work_catalog.resolve_title_work_ids(matched_title)
-        if len(existing_ids) > 1:
+        valid_work_ids = {int(row["menu_work_id"]) for row in works}
+        if existing_menu_work_id not in valid_work_ids:
             return None
-        if existing_ids:
-            menu_work_id = existing_ids[0]
-        else:
-            valid_ids = [
-                int(row["menu_work_id"])
-                for row in [*works, *external_entries]
-                if row["menu_work_id"].isdigit()
-            ]
-            menu_work_id = max(valid_ids, default=0) + 1
-            works.append(_work_row(menu_work_id, attributes))
-            _atomic_write_csv(works_path, _CATALOG_FIELDS, works)
-            _clear_catalog_caches()
+        if existing_ids and existing_menu_work_id not in existing_ids:
+            return None
+        menu_work_id = existing_menu_work_id
 
         external_entries.append(_external_row(menu_work_id, kitsu_id, attributes))
         _atomic_write_csv(external_path, _EXTERNAL_FIELDS, external_entries)
@@ -261,15 +346,19 @@ def register_unmatched_work_from_kitsu(
     titles: list[str],
     *,
     structured_references: list[StructuredWorkReference] | None = None,
+    existing_menu_work_id: int | None = None,
+    source_url: str | None = None,
+    audit: dict[str, Any] | None = None,
     timeout: float = 12.0,
 ) -> WorkMatchEvidence | None:
-    """Add a genuinely unlisted anime when Kitsu confirms its title in the headline.
+    """Map an exact Kitsu title or stage a new-work discovery for team review.
 
     The page body, generated text, and character names are not searched for a new
     series name. A Kitsu search result must contain a full catalog title verbatim
     (after typography/spacing normalization) in an article headline or an explicit
-    structured ``about`` reference. Existing work aliases are resolved before an
-    ID is allocated, and the new ID is the next number after the current maximum.
+    structured ``about`` reference. Existing works may receive an external title
+    mapping. A genuinely new work is only recorded in discovered_works.csv; the
+    agent does not assign it an ID or modify menu_works.csv.
     """
     source = next(
         (
@@ -301,33 +390,86 @@ def register_unmatched_work_from_kitsu(
     }
     exact_matches: dict[str, tuple[str, dict[str, Any]]] = {}
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
+        queried: set[str] = set()
         for headline in eligible_titles:
-            params = urlencode({"filter[text]": headline, "page[limit]": MAX_KITSU_PAGE_LIMIT})
-            endpoint = f"{str(source.url).rstrip('/')}?{params}"
-            try:
-                pace_host(endpoint, source.min_interval_seconds)
-                response = client.get(endpoint)
-                response.raise_for_status()
-                if len(response.content) > MAX_CATALOG_RESPONSE_BYTES:
+            for query in _catalog_search_queries(headline):
+                normalized_query = _normalize_title(query)
+                if normalized_query in queried:
                     continue
-                payload = response.json()
-            except (httpx.HTTPError, ValueError):
-                continue
-            rows = payload.get("data") if isinstance(payload, dict) else None
-            if not isinstance(rows, list):
-                continue
-            for kitsu_id, matched_title, attributes in _title_match([headline], rows):
-                exact_matches.setdefault(kitsu_id, (matched_title, attributes))
+                queried.add(normalized_query)
+                params = urlencode(
+                    {"filter[text]": query, "page[limit]": MAX_KITSU_PAGE_LIMIT}
+                )
+                endpoint = f"{str(source.url).rstrip('/')}?{params}"
+                try:
+                    pace_host(endpoint, source.min_interval_seconds)
+                    response = client.get(endpoint)
+                    response.raise_for_status()
+                    if len(response.content) > MAX_CATALOG_RESPONSE_BYTES:
+                        continue
+                    payload = response.json()
+                except (httpx.HTTPError, ValueError):
+                    continue
+                rows = payload.get("data") if isinstance(payload, dict) else None
+                if not isinstance(rows, list):
+                    continue
+                for kitsu_id, matched_title, attributes in _title_match([headline], rows):
+                    exact_matches.setdefault(kitsu_id, (matched_title, attributes))
+
+    if len(exact_matches) > 1:
+        normalized_headlines = [_normalize_title(value) for value in eligible_titles]
+        specific_matches = {
+            kitsu_id: (matched_title, attributes)
+            for kitsu_id, (matched_title, attributes) in exact_matches.items()
+            if not any(
+                other_id != kitsu_id
+                and len(_normalize_title(other_title)) > len(_normalize_title(matched_title))
+                and _normalize_title(matched_title) in _normalize_title(other_title)
+                and any(
+                    _normalize_title(other_title) in normalized_headline
+                    for normalized_headline in normalized_headlines
+                )
+                for other_id, (other_title, _other_attributes) in exact_matches.items()
+            )
+        }
+        exact_matches = specific_matches
 
     if len(exact_matches) != 1:
+        if audit is not None:
+            audit["status"] = "kitsu_match_ambiguous_or_missing"
         return None
     kitsu_id, (matched_title, attributes) = next(iter(exact_matches.items()))
-    menu_work_id = _persist_kitsu_work(kitsu_id, attributes, matched_title)
+    if existing_menu_work_id is None:
+        _record_discovered_work(
+            kitsu_id,
+            attributes,
+            [*eligible_titles, matched_title],
+            source_url,
+        )
+        if audit is not None:
+            audit.update(
+                {
+                    "status": "new_work_logged_pending_team_review",
+                    "kitsu_id": kitsu_id,
+                    "matched_title": matched_title,
+                }
+            )
+        return None
+    menu_work_id = _persist_kitsu_work(
+        kitsu_id,
+        attributes,
+        matched_title,
+        existing_menu_work_id=existing_menu_work_id,
+    )
     if menu_work_id is None:
         return None
     return WorkMatchEvidence(
         menu_work_id=menu_work_id,
-        basis="kitsu_catalog_title",
+        basis=(
+            "kitsu_catalog_entry_title"
+            if existing_menu_work_id is not None
+            else "kitsu_catalog_title"
+        ),
         matched_value=matched_title,
         evidence_url=f"https://kitsu.io/anime/{kitsu_id}",
         confidence=0.97,

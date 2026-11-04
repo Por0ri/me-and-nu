@@ -12,7 +12,10 @@ from ani_menu_agent.agents.content_generation.image_upscaler import (
 )
 from ani_menu_agent.config import get_settings
 from ani_menu_agent.generation import generate_copy_deck
-from ani_menu_agent.image_selection import _fits_card_resolution, assign_distinct_images
+from ani_menu_agent.image_selection import (
+    _fits_card_resolution,
+    assign_distinct_images,
+)
 from ani_menu_agent.layout_engine import build_cards, reflow_for_composition
 from ani_menu_agent.models import ContentPackage, CopyCard, QualityIssue
 from ani_menu_agent.policy import POLICY

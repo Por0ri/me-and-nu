@@ -77,7 +77,7 @@ def validate_generation_sources(
                     configured.status == "active"
                     and bool(editorial_types)
                     and editorial_types
-                    <= {"review", "curation", "humor", "people", "event", "goods"}
+                    <= {"news", "review", "curation", "humor", "people", "event", "goods"}
                     and _value(record, "is_official", False) is False
                     and _value(record, "role", "") == "editorial"
                 )

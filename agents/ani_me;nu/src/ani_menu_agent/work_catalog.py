@@ -8,6 +8,7 @@ import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ani_menu_agent.models import (
     ContentPackage,
@@ -83,6 +84,58 @@ def load_work_entries() -> list[dict[str, Any]]:
 
 
 @lru_cache(maxsize=1)
+def load_work_external_entries() -> list[dict[str, Any]]:
+    """Load externally confirmed anime titles mapped to an existing work ID."""
+    path = _CATALOG_DIRECTORY / "menu_work_external_entries.csv"
+    if not path.is_file():
+        return []
+    valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
+    entries: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            try:
+                work_id = int(row.get("menu_work_id") or "")
+            except (TypeError, ValueError):
+                continue
+            title = (row.get("canonical_title") or "").strip()
+            if (
+                work_id in valid_work_ids
+                and row.get("source_id") == "kitsu_anime_catalog"
+                and title
+            ):
+                entries.append({**row, "menu_work_id": work_id, "canonical_title": title})
+    return entries
+
+
+@lru_cache(maxsize=1)
+def load_work_aliases() -> list[dict[str, Any]]:
+    """Load reviewed title variants without modifying canonical work records."""
+    path = _CATALOG_DIRECTORY / "menu_work_aliases.csv"
+    if not path.is_file():
+        return []
+    valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
+    aliases: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            try:
+                work_id = int(row.get("menu_work_id") or "")
+            except (TypeError, ValueError):
+                continue
+            alias = str(row.get("alias") or "").strip()
+            if work_id not in valid_work_ids or not alias or row.get("status") != "verified":
+                continue
+            aliases.append(
+                {
+                    **row,
+                    "menu_work_id": work_id,
+                    "alias": alias,
+                    "source_url_prefix": str(row.get("source_url_prefix") or "").strip(),
+                }
+            )
+    return aliases
+
+
+@lru_cache(maxsize=1)
 def _work_parent_overrides() -> dict[int, int]:
     """Load curated franchise-level links for standalone catalog works."""
     path = _CATALOG_DIRECTORY / "menu_work_parent_overrides.csv"
@@ -143,11 +196,36 @@ def _normalize_catalog_title(value: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
-@lru_cache(maxsize=1)
-def _aliases() -> list[tuple[str, int]]:
+def _alias_scope_matches(alias_row: dict[str, Any], source_url: str | None) -> bool:
+    prefix = str(alias_row.get("source_url_prefix") or "").strip()
+    if not prefix:
+        return True
+    if not source_url:
+        return False
+    return str(source_url).casefold().startswith(prefix.casefold())
+
+
+@lru_cache(maxsize=128)
+def _aliases(source_url: str | None = None) -> list[tuple[str, int]]:
     """Index canonical and entry-level titles, excluding cross-series collisions."""
     aliases: dict[str, set[int]] = {}
-    for row in load_work_catalog() + load_work_entries():
+    rows = load_work_catalog() + load_work_entries()
+    rows.extend(
+        {
+            "menu_work_id": row["menu_work_id"],
+            "title_native": row["canonical_title"],
+        }
+        for row in load_work_external_entries()
+    )
+    rows.extend(
+        {
+            "menu_work_id": row["menu_work_id"],
+            "title_native": row["alias"],
+        }
+        for row in load_work_aliases()
+        if not row.get("source_url_prefix")
+    )
+    for row in rows:
         # Curated child spin-offs may resolve to a parent work, while separate
         # series in the same franchise (such as Yu-Gi-Oh! GX) keep their own ID.
         work_id = _franchise_work_id(int(row["menu_work_id"]))
@@ -161,6 +239,33 @@ def _aliases() -> list[tuple[str, int]]:
         for name, work_ids in aliases.items()
         if len(work_ids) == 1
     ]
+    # A publisher page can disambiguate a generic or reused native title (for
+    # example, "ワンピース" on the One Piece prize site vs. a separate recap
+    # entry). Apply URL-scoped aliases after global collision filtering.
+    scoped_aliases: dict[str, tuple[str, set[int]]] = {}
+    for row in load_work_aliases():
+        if not row.get("source_url_prefix") or not _alias_scope_matches(row, source_url):
+            continue
+        alias = _normalize_catalog_title(row["alias"])
+        if len(alias) < 3:
+            continue
+        work_id = _franchise_work_id(int(row["menu_work_id"]))
+        if alias not in scoped_aliases:
+            scoped_aliases[alias] = (row["alias"], {work_id})
+        else:
+            scoped_aliases[alias][1].add(work_id)
+    if scoped_aliases:
+        scoped_keys = set(scoped_aliases)
+        unique_aliases = [
+            (alias, work_id)
+            for alias, work_id in unique_aliases
+            if _normalize_catalog_title(alias) not in scoped_keys
+        ]
+        unique_aliases.extend(
+            (alias, next(iter(work_ids)))
+            for alias, work_ids in scoped_aliases.values()
+            if len(work_ids) == 1
+        )
     return sorted(unique_aliases, key=lambda item: -len(item[0]))
 
 
@@ -183,9 +288,9 @@ def _registered_work_titles() -> dict[str, tuple[str, ...]]:
     return titles
 
 
-def _match_title_work_ids(title: str) -> list[int]:
+def _match_title_work_ids(title: str, source_url: str | None = None) -> list[int]:
     """Match distinct, longest title spans; never promote a nested short title."""
-    aliases = _aliases()
+    aliases = _aliases(source_url)
     # Normalize colons to spaces while keeping word boundaries and sequel suffixes
     # strict. For example, "Another World" must not also link to the unrelated
     # one-word title "Another" merely because it is a substring.
@@ -252,18 +357,36 @@ def _match_title_work_ids(title: str) -> list[int]:
     return ordered
 
 
-def _headline_names_multiple_works(title: str, work_ids: list[int]) -> bool:
-    """Allow multiple IDs only when a headline explicitly describes collaboration."""
-    return (
-        len(set(work_ids)) > 1
-        and len(_match_title_work_ids(title or "")) > 1
-        and bool(_COLLABORATION_MARKER.search(title or ""))
-    )
+def _headline_names_multiple_works(
+    title: str, work_ids: list[int], content_type: str | None = None
+) -> bool:
+    """Allow multiple IDs for collaborations or explicit, itemized curation titles."""
+    if len(set(work_ids)) <= 1 or len(_match_title_work_ids(title or "")) <= 1:
+        return False
+    if _COLLABORATION_MARKER.search(title or ""):
+        return True
+    return content_type == "curation" and bool(_CURATION_MARKER.search(title or ""))
+
+
+def allows_multiple_work_match(
+    evidence_text: str, work_ids: list[int], content_type: str | None = None
+) -> bool:
+    """Check whether the evidence explicitly supports a multi-work association."""
+    return _headline_names_multiple_works(evidence_text, work_ids, content_type)
 
 
 _COLLABORATION_MARKER = re.compile(
     r"\b(?:collab(?:oration)?|crossover|cross-over|team-up)\b|"
     r"콜라보(?:레이션)?|협업|합작|크로스오버|コラボ(?:レーション)?|クロスオーバー|×",
+    re.IGNORECASE,
+)
+
+_CURATION_MARKER = re.compile(
+    r"\b(?:ranking|ranked|rank|polls?|vote|top\s*\d+|top\s+(?:anime|shows?)|best|recommendations?|"
+    r"roundup|selection|favorites?|collection|list)\b|"
+    r"\u30e9\u30f3\u30ad\u30f3\u30b0|\u6295\u7968|\u304a\u3059\u3059\u3081|"
+    r"\u7279\u96c6|\u4eba\u6c17\u4f5c|\u307e\u3068\u3081|"
+    r"\ub7ad\ud0b9|\uc21c\uc704|\ud22c\ud45c|\ucd94\ucc9c|\ubaa8\uc74c|\uacb0\uc0b0|\uc120\uc815|\uc778\uae30\uc791",
     re.IGNORECASE,
 )
 
@@ -280,9 +403,9 @@ def _headline_character_work_ids(title: str) -> list[int]:
     return ids
 
 
-def resolve_title_work_ids(title: str) -> list[int]:
+def resolve_title_work_ids(title: str, source_url: str | None = None) -> list[int]:
     """Resolve explicit catalog titles in a headline without using body text."""
-    return _match_title_work_ids(title)
+    return _match_title_work_ids(title, source_url)
 
 
 def resolve_work_matches(
@@ -292,6 +415,7 @@ def resolve_work_matches(
     structured_references: list[StructuredWorkReference | dict[str, Any]] | None = None,
     outbound_links: list[Any] | None = None,
     content_type: str | None = None,
+    source_url: str | None = None,
 ) -> list[WorkMatchEvidence]:
     """Resolve work identity from explicit titles and publisher-declared metadata.
 
@@ -299,15 +423,15 @@ def resolve_work_matches(
     treated as identity evidence. The first available evidence tier wins.
     """
     def evidence_for(title: str, basis: str, confidence: float, url: str | None = None):
-        ids = _match_title_work_ids(title)
+        ids = _match_title_work_ids(title, source_url)
         if not ids:
             return []
-        if not _headline_names_multiple_works(title, ids):
+        if not _headline_names_multiple_works(title, ids, content_type):
             ids = ids[:1]
         folded = title.casefold()
         aliases = [
             (alias, work_id)
-            for alias, work_id in _aliases()
+            for alias, work_id in _aliases(source_url)
             if work_id in ids and alias.casefold() in folded
         ]
         def display_alias(work_id: int) -> str:
@@ -450,12 +574,13 @@ def resolve_work_matches(
 
 
 def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
-    """Resolve works from publication/article titles, never from body prose.
+    """Resolve work links from explicit title matches or audited curation lists.
 
     A source is tied to an official work in the source registry; that work is the
     representative fallback when its page title omits the franchise name. Any
-    additional works must be explicitly named in a source/article title. The
-    extracted topic, facts, and generated copy are intentionally excluded.
+    additional works are allowed only for explicit collaborations or a curation
+    match whose individual catalog aliases were grounded in the source evidence.
+    Extracted topic and generated copy are intentionally excluded.
     """
     if package.work_match_evidence:
         valid_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
@@ -475,9 +600,17 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
             "",
         )
         if (
-            _headline_names_multiple_works(multi_work_title, evidence_ids)
+            _headline_names_multiple_works(
+                multi_work_title, evidence_ids, package.content_type
+            )
         ):
             return explicit_title_ids or evidence_ids
+        if (
+            package.content_type == "curation"
+            and len(evidence_ids) > 1
+            and any(item.basis == "llm_curation_list" for item in package.work_match_evidence)
+        ):
+            return evidence_ids
         return evidence_ids[:1]
 
     registered_titles = _registered_work_titles()
@@ -504,7 +637,9 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
         "",
     )
     if multi_work_title and _headline_names_multiple_works(
-        multi_work_title, _match_title_work_ids(multi_work_title)
+        multi_work_title,
+        _match_title_work_ids(multi_work_title),
+        package.content_type,
     ):
         return _match_title_work_ids(multi_work_title)
     if ordered:

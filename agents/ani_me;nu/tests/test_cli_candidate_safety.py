@@ -49,12 +49,11 @@ def _install_candidate(monkeypatch, content_types: list[str]) -> None:
 def _mock_unmatched_catalog_registration(monkeypatch):
     queries = []
 
-    def no_exact_match(titles, *, structured_references=None):
+    def no_exact_match(titles, **_kwargs):
         queries.append(list(titles))
-        assert not structured_references
-        return None
+        return []
 
-    monkeypatch.setattr(cli, "register_unmatched_work_from_kitsu", no_exact_match)
+    monkeypatch.setattr(cli, "resolve_unmatched_work_with_llm", no_exact_match)
     return queries
 
 

@@ -15,6 +15,9 @@ class EditorialPolicy:
     # Every carousel must have a cover, at least one detail card, and a payoff.
     min_cards: int = 3
     max_cards: int = 10
+    max_extraction_fact_candidates: int = 100
+    max_verified_facts: int = 30
+    max_candidate_retries: int = 1
     default_event_retention_days: int = 30
     default_content_validity_days: int = 90
     max_review_failures: int = 4

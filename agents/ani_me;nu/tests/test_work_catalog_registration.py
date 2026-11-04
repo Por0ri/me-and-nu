@@ -131,6 +131,33 @@ def test_exact_kitsu_title_registers_next_id_and_future_title_matching(monkeypat
     assert external[0]["menu_work_id"] == "11"
 
 
+def test_kitsu_confirmed_movie_title_can_map_to_existing_parent_id(monkeypatch, tmp_path):
+    _write_catalog(tmp_path)
+    monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", tmp_path)
+    work_catalog.load_work_catalog.cache_clear()
+    work_catalog.load_work_entries.cache_clear()
+    work_catalog._aliases.cache_clear()
+    _install_fake_kitsu(monkeypatch, _kitsu_payload(("9906", "Existing Work: The Movie")))
+
+    evidence = register_unmatched_work_from_kitsu(
+        ["Existing Work: The Movie announces a new theatrical release"],
+        existing_menu_work_id=10,
+    )
+
+    assert evidence is not None
+    assert evidence.menu_work_id == 10
+    assert evidence.basis == "kitsu_catalog_entry_title"
+    with (tmp_path / "menu_works.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert len(list(csv.DictReader(stream))) == 1
+    with (tmp_path / "menu_work_external_entries.csv").open(
+        encoding="utf-8-sig", newline=""
+    ) as stream:
+        external = list(csv.DictReader(stream))
+    assert external[0]["external_id"] == "9906"
+    assert external[0]["menu_work_id"] == "10"
+    assert work_catalog.resolve_title_work_ids("Existing Work: The Movie") == [10]
+
+
 def test_unknown_work_is_not_registered_without_full_catalog_title_match(
     monkeypatch, tmp_path
 ):

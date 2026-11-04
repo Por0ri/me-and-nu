@@ -112,6 +112,7 @@
       "role": "discovery",
       "collection": "rss",
       "status": "active",
+      "discovery_enabled": true,
       "region": "JP",
       "notes": "공개 RSS에서 애니메이션 직접 언급 후보만 찾는다. 사실은 발표 기업/주최자의 공식 원문에서 확인한다."
     },
@@ -384,12 +385,17 @@
       "id": "onnada",
       "name": "온나다",
       "url": "https://onnada.com/",
-      "category": "korea_community",
-      "role": "discovery",
+      "category": "onnada_character_catalog",
+      "role": "reference",
       "collection": "html",
-      "status": "technical_review",
+      "status": "active",
       "region": "KR",
-      "notes": "접근 구조와 이용 조건을 확인할 때까지 자동 수집하지 않는다."
+      "allowed_asset_hosts": [
+        "data.onnada.com"
+      ],
+      "min_interval_seconds": 3,
+      "discovery_enabled": true,
+      "notes": "Character birthdays and profile relationships are discovered from the public calendar. Profile facts and character_image assets are collected from the linked profile page. NamuWiki outbound link is retained as a secondary reference; Onnada profile data may be community-edited and should be attributed."
     },
     {
       "id": "agf_korea_official",
@@ -700,9 +706,10 @@
       "name": "Anime Corner News and Features",
       "url": "https://animecorner.me/category/anime-corner/",
       "category": "anime_media",
-      "role": "discovery",
+      "role": "editorial",
       "collection": "html",
       "status": "active",
+      "discovery_enabled": true,
       "region": "global",
       "notes": "Automatic candidate discovery only; Anime Corner is an editorial publisher, not an anime rights-holder or primary fact source. Confirm factual claims against active primary sources; images require separate rights clearance."
     },
@@ -918,7 +925,7 @@
       "name": "MANTANWEB Goods News",
       "url": "https://mantan-web.jp/goods/",
       "category": "goods",
-      "role": "discovery",
+      "role": "editorial",
       "collection": "html",
       "status": "active",
       "region": "JP",
@@ -955,7 +962,7 @@
       "name": "tamashiiweb.com",
       "url": "https://tamashiiweb.com/",
       "category": "source_discovery",
-      "role": "discovery",
+      "role": "primary",
       "collection": "html",
       "status": "active",
       "region": "global",
@@ -980,13 +987,97 @@
       "name": "RE:CAL Korea Event Listings",
       "url": "https://recal.kr/ko/c/offline",
       "category": "event",
-      "role": "discovery",
+      "role": "editorial",
       "collection": "html",
       "status": "active",
       "region": "KR",
       "discovery_enabled": true,
       "min_interval_seconds": 30,
       "notes": "Korean offline-event discovery listing. Repeatedly discover anime events, conventions, pop-ups, and exhibitions and collect their detail URLs. This is an editorial schedule aggregator, so use it for discovery and confirm dates, venues, prices, and participation terms with the organizer's official source. Listing and detail routes verified on 2026-10-30."
+    },
+    {
+      "id": "src_bsp_prize_jp",
+      "name": "bsp-prize.jp",
+      "url": "https://bsp-prize.jp/",
+      "category": "source_discovery",
+      "role": "primary",
+      "collection": "html",
+      "status": "active",
+      "region": "global",
+      "discovery_enabled": true,
+      "notes": "자동 출처 후보 검증 통과. 발견용 페이지로만 사용하며 원문 근거로 직접 승인하지 않음. 검증일 2026-10-30T09:15:58.751489+00:00; 유형: goods"
+    },
+    {
+      "id": "src_www_toei_anim_co_jp",
+      "name": "www.toei-anim.co.jp",
+      "url": "https://www.toei-anim.co.jp/",
+      "category": "source_discovery",
+      "role": "primary",
+      "collection": "html",
+      "status": "active",
+      "region": "global",
+      "discovery_enabled": true,
+      "notes": "자동 출처 후보 검증 통과. 발견용 페이지로만 사용하며 원문 근거로 직접 승인하지 않음. 검증일 2026-10-30T09:50:25.048797+00:00; 유형: news"
+    },
+    {
+      "id": "src_mercedes_anime_com",
+      "name": "mercedes-anime.com",
+      "url": "https://mercedes-anime.com/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "active",
+      "region": "global",
+      "discovery_enabled": true,
+      "notes": "자동 출처 후보 검증 통과. 발견용 페이지로만 사용하며 원문 근거로 직접 승인하지 않음. 검증일 2026-10-30T10:03:11.923357+00:00; 유형: people"
+    },
+    {
+      "id": "src_www_cinemacafe_net",
+      "name": "www.cinemacafe.net",
+      "url": "https://www.cinemacafe.net/",
+      "category": "source_discovery",
+      "role": "editorial",
+      "collection": "html",
+      "status": "active",
+      "region": "global",
+      "discovery_enabled": true,
+      "notes": "자동 출처 후보 검증 통과. 발견용 페이지로만 사용하며 원문 근거로 직접 승인하지 않음. 검증일 2026-10-31T00:03:45.810716+00:00; 유형: goods"
+    },
+    {
+      "id": "src_kusuriyanohitorigoto_jp",
+      "name": "kusuriyanohitorigoto.jp",
+      "url": "https://kusuriyanohitorigoto.jp/",
+      "category": "source_discovery",
+      "role": "primary",
+      "collection": "html",
+      "status": "active",
+      "region": "global",
+      "discovery_enabled": true,
+      "notes": "자동 출처 후보 검증 통과. 발견용 페이지로만 사용하며 원문 근거로 직접 승인하지 않음. 검증일 2026-11-01T01:30:32.886873+00:00; 유형: event"
+    },
+    {
+      "id": "src_furyuprize_com",
+      "name": "furyuprize.com",
+      "url": "https://furyuprize.com/",
+      "category": "source_discovery",
+      "role": "primary",
+      "collection": "html",
+      "status": "active",
+      "region": "global",
+      "discovery_enabled": true,
+      "notes": "자동 출처 후보 검증 통과. 발견용 페이지로만 사용하며 원문 근거로 직접 승인하지 않음. 검증일 2026-11-01T04:21:22.711357+00:00; 유형: goods"
+    },
+    {
+      "id": "src_livepocket_jp",
+      "name": "livepocket.jp",
+      "url": "https://livepocket.jp/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "active",
+      "region": "global",
+      "discovery_enabled": true,
+      "notes": "자동 출처 후보 검증 통과. 발견용 페이지로만 사용하며 원문 근거로 직접 승인하지 않음. 검증일 2026-11-02T09:38:52.565681+00:00; 유형: event"
     }
   ]
 }

@@ -11,6 +11,7 @@ import re
 import sqlite3
 import sys
 from datetime import UTC, date, datetime, time, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -45,6 +46,7 @@ def _card_overlay_json(card) -> str:
     return json.dumps(
         {
             "page": card.page,
+            "menu_work_ids": card.menu_work_ids,
             "image_key": card.rendered_image_key,
             "image_id": card.image_id,
             "visual_mode": card.visual_mode,
@@ -116,6 +118,75 @@ KST = ZoneInfo("Asia/Seoul")
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
 _PSYCOPG_DLL_HANDLES: list[Any] = []
+
+
+@lru_cache(maxsize=4)
+def _load_duplicate_baseline_rows(
+    database_path: str,
+    database_mtime_ns: int,
+    database_size: int,
+    wal_mtime_ns: int,
+    wal_size: int,
+) -> tuple[dict[str, Any], ...]:
+    """Read and decode the immutable duplicate baseline once per crawl batch."""
+    del database_mtime_ns, database_size, wal_mtime_ns, wal_size  # cache invalidation key
+    baseline = Path(database_path)
+    try:
+        readonly = sqlite3.connect(
+            f"{baseline.as_uri()}?mode=ro", uri=True, timeout=10
+        )
+        readonly.row_factory = sqlite3.Row
+        try:
+            rows: list[dict[str, Any]] = []
+            for table in ("content_drafts", "feed_queue"):
+                try:
+                    records = readonly.execute(
+                        "SELECT request_id, topic, package_json, status "
+                        f"FROM {table}"
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    continue
+                for record in records:
+                    try:
+                        package = json.loads(record["package_json"])
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    rows.append(
+                        {
+                            "request_id": str(record["request_id"]),
+                            "topic": str(record["topic"]),
+                            "status": str(record["status"]),
+                            "package": package,
+                        }
+                    )
+            try:
+                records = readonly.execute(
+                    "SELECT request_id, topic, package_json, "
+                    "'rejected_archived' AS status FROM rejected_archive"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                records = []
+            for record in records:
+                try:
+                    package = json.loads(record["package_json"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                rows.append(
+                    {
+                        "request_id": str(record["request_id"]),
+                        "topic": str(record["topic"]),
+                        "status": "rejected_archived",
+                        "package": package,
+                    }
+                )
+            return tuple(rows)
+        finally:
+            readonly.close()
+    except sqlite3.Error as exc:
+        raise RuntimeError(
+            "중복 기준 SQLite를 읽지 못해 생성을 안전하게 진행할 수 없습니다: "
+            f"{baseline}"
+        ) from exc
 
 
 def _prepare_windows_psycopg_dlls() -> None:
@@ -206,8 +277,10 @@ def prepare_package_lifecycle(
             if valid_until.tzinfo is None:
                 valid_until = valid_until.replace(tzinfo=KST)
     else:
-        end_date = _as_date(package.event_end)
-        if not end_date:
+        # Extraction may find dates on product, news, guide, or interview pages.
+        # Only an event package's event_end is an event expiry anchor.
+        end_date = _as_date(package.event_end) if package.content_type == "event" else None
+        if not end_date and package.content_type == "event":
             end_date = next(
                 (
                     parsed
@@ -239,7 +312,9 @@ def prepare_package_lifecycle(
         purge_at = datetime.fromisoformat(package.purge_at)
         if purge_at.tzinfo is None:
             purge_at = purge_at.replace(tzinfo=UTC)
-    elif package.retention_expires_at and not package.event_end:
+    elif package.retention_expires_at and not (
+        package.content_type == "event" and package.event_end
+    ):
         purge_at = datetime.fromisoformat(package.retention_expires_at)
         if purge_at.tzinfo is None:
             purge_at = purge_at.replace(tzinfo=UTC)
@@ -408,6 +483,7 @@ class AgentRepository:
                     title_lines_json TEXT NOT NULL,
                     body_json TEXT NOT NULL,
                     fact_ids_json TEXT NOT NULL,
+                    menu_work_ids_json TEXT NOT NULL DEFAULT '[]',
                     image_id TEXT NOT NULL,
                     visual_mode TEXT NOT NULL DEFAULT 'source_image',
                     image_explanation TEXT NOT NULL,
@@ -462,6 +538,7 @@ class AgentRepository:
                     "rendered_image_key": "TEXT",
                     "visual_mode": "TEXT NOT NULL DEFAULT 'source_image'",
                     "overlay_json": "TEXT NOT NULL DEFAULT '{}'",
+                    "menu_work_ids_json": "TEXT NOT NULL DEFAULT '[]'",
                 },
             }
             if self.dialect == "sqlite":
@@ -1033,34 +1110,25 @@ class AgentRepository:
             current = self.path.resolve() if self.path else None
             if baseline.is_file() and baseline != current:
                 try:
-                    readonly = sqlite3.connect(f"{baseline.as_uri()}?mode=ro", uri=True, timeout=10)
-                    readonly.row_factory = sqlite3.Row
+                    database_stat = baseline.stat()
+                    wal = Path(f"{baseline}-wal")
                     try:
-                        for table in ("content_drafts", "feed_queue"):
-                            try:
-                                rows.extend(
-                                    readonly.execute(
-                                        "SELECT request_id, topic, package_json, status "
-                                        f"FROM {table}"
-                                    ).fetchall()
-                                )
-                            except sqlite3.OperationalError:
-                                continue
-                        try:
-                            rows.extend(
-                                readonly.execute(
-                                    "SELECT request_id, topic, package_json, "
-                                    "'rejected_archived' AS status FROM rejected_archive"
-                                ).fetchall()
-                            )
-                        except sqlite3.OperationalError:
-                            pass
-                    finally:
-                        readonly.close()
-                except sqlite3.Error as exc:
+                        wal_stat = wal.stat()
+                        wal_mtime_ns, wal_size = wal_stat.st_mtime_ns, wal_stat.st_size
+                    except OSError:
+                        wal_mtime_ns, wal_size = 0, 0
+                    rows.extend(
+                        _load_duplicate_baseline_rows(
+                            str(baseline),
+                            database_stat.st_mtime_ns,
+                            database_stat.st_size,
+                            wal_mtime_ns,
+                            wal_size,
+                        )
+                    )
+                except OSError as exc:
                     raise RuntimeError(
-                        "중복 기준 SQLite를 읽지 못해 생성을 안전하게 진행할 수 없습니다: "
-                        f"{baseline}"
+                        f"중복 기준 SQLite 상태를 확인할 수 없습니다: {baseline}"
                     ) from exc
         seen: set[str] = set()
         for row in rows:
@@ -1068,10 +1136,13 @@ class AgentRepository:
             if request_id in seen:
                 continue
             seen.add(request_id)
-            try:
-                existing = json.loads(row["package_json"])
-            except (TypeError, json.JSONDecodeError):
-                continue
+            if "package" in row.keys():
+                existing = row["package"]
+            else:
+                try:
+                    existing = json.loads(row["package_json"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
             retryable_status = row["status"] in {
                 "generated_pending_review",
                 "needs_crawler_update",
@@ -1615,6 +1686,184 @@ class AgentRepository:
                 count += 1
         return count
 
+    def persist_character_birthday_references(
+        self, items: list[dict[str, Any]]
+    ) -> int:
+        """Upsert reusable birthday facts separately from expiring discovery leads."""
+        if not items:
+            return 0
+        now = _utc_now().isoformat()
+        saved = 0
+        with self.connect() as connection:
+            for item in items:
+                birthday_mmdd = str(item.get("birthday_mmdd") or "")
+                if (
+                    item.get("source_id") != "onnada"
+                    or not item.get("character_name")
+                    or not item.get("linked_work_title")
+                    or not re.fullmatch(
+                        r"(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])",
+                        birthday_mmdd,
+                    )
+                ):
+                    continue
+                candidate_id = str(item.get("id") or "").strip()
+                if not candidate_id:
+                    continue
+                payload = dict(item)
+                payload["menu_work_ids"] = sorted(
+                    {
+                        int(value)
+                        for value in item.get("linked_work_ids", [])
+                        if int(value) > 0
+                    }
+                )
+                payload["work_match_status"] = (
+                    "matched" if payload["menu_work_ids"] else "unresolved"
+                )
+                record_id = f"birthday:{candidate_id}"
+                connection.execute(
+                    """
+                    INSERT INTO agent_records (
+                        agent_type, record_id, record_kind, request_id, topic, region,
+                        event_start, event_end, valid_until, expires_at, status,
+                        payload_json, created_at, updated_at
+                    ) VALUES ('character', ?, 'character_birthday_reference', ?, ?, 'KR',
+                              NULL, NULL, NULL, NULL, ?, ?, ?, ?)
+                    ON CONFLICT(agent_type, record_id) DO UPDATE SET
+                        topic=excluded.topic, status=excluded.status,
+                        payload_json=excluded.payload_json, updated_at=excluded.updated_at
+                    """,
+                    (
+                        record_id,
+                        candidate_id,
+                        f"{payload['linked_work_title']} — {payload['character_name']}",
+                        payload["work_match_status"],
+                        json.dumps(payload, ensure_ascii=False),
+                        now,
+                        now,
+                    ),
+                )
+                saved += 1
+        return saved
+
+    def persist_candidate_attempt(
+        self,
+        content_type: str,
+        candidate: dict[str, Any],
+        outcome: dict[str, Any],
+    ) -> None:
+        """Keep a durable, non-expiring record that a candidate was processed."""
+        candidate_id = str(candidate.get("id") or outcome.get("candidate_id") or "").strip()
+        if not candidate_id:
+            return
+        now = _utc_now().isoformat()
+        attempted_at = str(outcome.get("attempted_at") or now)
+        payload = {
+            "candidate_id": candidate_id,
+            "candidate_title": str(candidate.get("title") or ""),
+            "candidate_url": str(candidate.get("url") or ""),
+            "source_id": str(candidate.get("source_id") or ""),
+            "content_type": content_type,
+            "status": str(outcome.get("status") or "unknown"),
+            "attempt_count": int(outcome.get("attempt_count", 1)),
+            "retry_count": int(outcome.get("retry_count", 0)),
+            "retry_note": str(outcome.get("retry_note") or ""),
+            "request_id": outcome.get("request_id"),
+            "output": outcome.get("output"),
+            "error": outcome.get("error"),
+            "terminal_stage": str(outcome.get("terminal_stage") or "unknown"),
+            "failure_stage": outcome.get("failure_stage"),
+            "reason_codes": list(outcome.get("reason_codes") or []),
+            "reason_messages": list(outcome.get("reason_messages") or [])[:8],
+            "trace": list(outcome.get("trace") or []),
+            "stage_timings_seconds": dict(outcome.get("stage_timings_seconds") or {}),
+            "menu_work_ids": list(outcome.get("menu_work_ids") or []),
+            "fact_count": int(outcome.get("fact_count") or 0),
+            "image_count": int(outcome.get("image_count") or 0),
+            "source_count": int(outcome.get("source_count") or 0),
+            "attempted_at": attempted_at,
+        }
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_records (
+                    agent_type, record_id, record_kind, request_id, topic, region,
+                    expires_at, status, payload_json, created_at, updated_at
+                ) VALUES (?, ?, 'candidate_attempt', ?, ?, ?, NULL, ?, ?, ?, ?)
+                ON CONFLICT(agent_type, record_id) DO UPDATE SET
+                    topic=excluded.topic, region=excluded.region,
+                    status=excluded.status, payload_json=excluded.payload_json,
+                    updated_at=excluded.updated_at
+                WHERE excluded.updated_at >= agent_records.updated_at
+                """,
+                (
+                    content_type,
+                    f"attempt:{candidate_id}",
+                    candidate_id,
+                    payload["candidate_title"] or candidate_id,
+                    str(candidate.get("region") or "global"),
+                    payload["status"],
+                    json.dumps(payload, ensure_ascii=False),
+                    attempted_at,
+                    attempted_at,
+                ),
+            )
+
+    def list_candidate_attempts(self, content_type: str) -> dict[str, dict[str, Any]]:
+        """Load durable processing history keyed by the stable discovery candidate ID."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM agent_records "
+                "WHERE agent_type=? AND record_kind='candidate_attempt'",
+                (content_type,),
+            ).fetchall()
+        attempts = {}
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            candidate_id = str(payload.get("candidate_id") or "")
+            if candidate_id:
+                attempts[candidate_id] = payload
+        return attempts
+
+    def list_character_birthday_references(
+        self,
+        *,
+        month: int,
+        menu_work_ids: list[int] | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return this month's durable birthday records for the user's followed works."""
+        if not 1 <= month <= 12:
+            raise ValueError("month must be between 1 and 12")
+        preferred = {int(value) for value in (menu_work_ids or [])}
+        if not preferred:
+            return []
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM agent_records "
+                "WHERE agent_type='character' AND record_kind='character_birthday_reference' "
+                "ORDER BY topic"
+            ).fetchall()
+        records = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            birthday = str(payload.get("birthday_mmdd") or "")
+            if not birthday.startswith(f"{month:02d}-"):
+                continue
+            work_ids = {int(value) for value in payload.get("menu_work_ids", [])}
+            if not preferred.intersection(work_ids):
+                continue
+            records.append(payload)
+        records.sort(
+            key=lambda item: (
+                str(item.get("birthday_mmdd") or ""),
+                str(item.get("linked_work_title") or "").casefold(),
+                str(item.get("character_name") or "").casefold(),
+            )
+        )
+        return records[: max(1, min(limit, 5000))]
+
     def mark_discovery_work_unresolved(self, candidate_id: str, reason: str) -> bool:
         """Keep an unresolved work title searchable instead of treating it as a dead lead."""
         now = _utc_now().isoformat()
@@ -1873,9 +2122,9 @@ class AgentRepository:
                     """
                     INSERT INTO content_cards (
                         request_id, page, role, eyebrow, title_lines_json, body_json,
-                        fact_ids_json, image_id, visual_mode, image_explanation, layout_json,
-                        rendered_image_key, overlay_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        fact_ids_json, menu_work_ids_json, image_id, visual_mode,
+                        image_explanation, layout_json, rendered_image_key, overlay_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         package.request_id,
@@ -1885,6 +2134,7 @@ class AgentRepository:
                         json.dumps(card.title_lines, ensure_ascii=False),
                         json.dumps(card.body_sentences, ensure_ascii=False),
                         json.dumps(card.fact_ids, ensure_ascii=False),
+                        json.dumps(card.menu_work_ids, ensure_ascii=False),
                         card.image_id,
                         card.visual_mode,
                         card.image_explanation,
@@ -2006,13 +2256,14 @@ class AgentRepository:
                     """
                     INSERT INTO content_cards (
                         request_id, page, role, eyebrow, title_lines_json, body_json,
-                        fact_ids_json, image_id, visual_mode, image_explanation, layout_json,
-                        rendered_image_key, overlay_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        fact_ids_json, menu_work_ids_json, image_id, visual_mode,
+                        image_explanation, layout_json, rendered_image_key, overlay_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(request_id, page) DO UPDATE SET
                         role=excluded.role, eyebrow=excluded.eyebrow,
                         title_lines_json=excluded.title_lines_json,
                         body_json=excluded.body_json, fact_ids_json=excluded.fact_ids_json,
+                        menu_work_ids_json=excluded.menu_work_ids_json,
                         image_id=excluded.image_id,
                         visual_mode=excluded.visual_mode,
                         image_explanation=excluded.image_explanation,
@@ -2028,6 +2279,7 @@ class AgentRepository:
                         json.dumps(card.title_lines, ensure_ascii=False),
                         json.dumps(card.body_sentences, ensure_ascii=False),
                         json.dumps(card.fact_ids, ensure_ascii=False),
+                        json.dumps(card.menu_work_ids, ensure_ascii=False),
                         card.image_id,
                         card.visual_mode,
                         card.image_explanation,
