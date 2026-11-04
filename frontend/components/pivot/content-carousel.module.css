@@ -66,3 +66,20 @@
 .carousel .slideButton:disabled { pointer-events: none; }
 .carousel[data-content-carousel="detail"] .track { cursor: grab; }
 .track[data-dragging="true"] { scroll-snap-type: none; scroll-behavior: auto; cursor: grabbing; user-select: none; }
+
+/* Detail only: reserve a top control row. The image-relative copy remains a
+   non-scrollable preview; unmeasured/overflowing cover originals stay below. */
+.carousel[data-content-carousel="detail"] .overlay { overflow: clip; display: flow-root; }
+.carousel[data-content-carousel="detail"] .legacyCaption { max-height: calc(100% - 76px); overflow: clip; }
+.carousel[data-content-carousel="detail"] .slideButton { align-self: flex-start; top: 0; }
+.carousel[data-content-carousel="detail"] .position { left: 48px; }
+.carousel[data-content-carousel="detail"] .indicators { left: 92px; right: 48px; }
+/* Loading and failure guidance/retry occupy their own row below navigation. */
+.carousel[data-content-carousel="detail"] .stage:has([data-carousel-image-state="loading"]) { display: flex; flex-direction: column; background: #efe7ff; }
+.carousel[data-content-carousel="detail"] .stage:has([data-carousel-image-state="loading"]) .imageFrame { position: static; flex: none; }
+.carousel[data-content-carousel="detail"] .imageState { position: static; padding: 56px 12px 12px; }
+.carousel[data-content-carousel="detail"] .stage:has([data-carousel-image-state="loading"]) .overlay {
+  position: relative; flex: 1; min-height: 0; margin: 0 12px 12px;
+  left: auto !important; top: auto !important; width: auto !important; height: auto !important;
+  max-width: none !important; max-height: none !important;
+}
