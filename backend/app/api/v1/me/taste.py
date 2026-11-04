@@ -14,8 +14,8 @@ from app.db.session import get_db
 from app.models import UserAccount
 from app.schemas.common import COMMON_ERRORS
 from app.schemas.onboarding import OnboardingWorksResponse, PreferenceOptionsRequest, PreferenceOptionsResponse
-from app.schemas.taste import TasteResponse, TasteUpdateRequest
-from app.services import onboarding_catalog_service, taste_service
+from app.schemas.taste import TasteHintsResponse, TasteResponse, TasteUpdateRequest
+from app.services import onboarding_catalog_service, taste_hint_service, taste_service
 
 router = APIRouter(prefix="/me/taste", tags=["내 취향 수정 (임시)"])
 
@@ -33,6 +33,24 @@ async def my_taste(
     topic_id: Annotated[int, Query(alias="topicId", gt=0, le=9223372036854775807)],
 ) -> TasteResponse:
     return await taste_service.get_taste(db, current_user.user_id, topic_id)
+
+
+@router.get(
+    "/hints",
+    response_model=TasteHintsResponse,
+    summary="취향 수정 힌트 (행동 기록)",
+    description="최근 30일 동안 반응한 글(카드 넘김 · 본문 읽기 · 좋아요 · 저장 · 더볼래요. 보기만 한 글과 그만볼래요 한 글은 빼고)로 "
+                "Q1 작품 상위 3개와 작품 중 비율, Q2 장르 · 소재 상위 3개씩, Q3 답 6개 모두의 비율(합 100)을 돌려줍니다. "
+                "점수는 추천 계산과 같은 세기입니다. 반응한 글이 하나도 없으면 enough=false 이고 목록은 비어 있습니다. "
+                "1편만 있어도 힌트를 주므로 비율이 100%·0%로 나올 수 있습니다.",
+    responses={**COMMON_ERRORS, 404: {"description": "Topic 없음"}},
+)
+async def my_taste_hints(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserAccount, Depends(require_onboarding)],
+    topic_id: Annotated[int, Query(alias="topicId", gt=0, le=9223372036854775807)],
+) -> TasteHintsResponse:
+    return await taste_hint_service.get_taste_hints(db, current_user.user_id, topic_id)
 
 
 @router.get(
