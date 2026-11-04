@@ -224,7 +224,7 @@ test('Active Consumer loads its own profile, forwards cancellation, and only ret
   assert.ok(!Object.hasOwn(result.profile, 'email'), 'raw email must not enter the display model');
   assert.ok(!JSON.stringify(result).includes(profileFixture().email), 'no raw email in the published model');
   const html = render(result, false);
-  assert.ok(html.includes('취향 수정하기'));
+  assert.ok(html.includes('내 피드 취향 조정하기'));
   assert.ok(!html.includes(profileFixture().email), 'no raw email in markup');
 });
 

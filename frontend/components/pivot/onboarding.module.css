@@ -29,10 +29,9 @@
 .navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 40px; margin: 45px 24px 0; }
 .navigation .back { margin-left: -10px; margin-right: -10px; }
 .navigation > span { flex: none; font-size: 11px; line-height: 16px; font-weight: 500; color: #71717a; }
-.progress { display: flex; gap: 2px; width: 220px; min-width: 0; }
-.progress i { height: 8px; border-radius: 4px; background: #7043b4; flex: 1; }
-.progress i + i { background: #efe7ff; }
-.progress i.filled { background: #7043b4; }
+/* One lilac track with a purple fill up to the current step (2026-11 design). */
+.progress { width: 220px; min-width: 0; height: 8px; border-radius: 4px; background: #efe7ff; overflow: hidden; }
+.progress i { display: block; height: 100%; border-radius: 4px; background: #7043b4; }
 .questionBody { margin: 30px 24px 0; }
 .questionBody h1 { color: #3f3f46; font-size: 24px; line-height: 34px; font-weight: 700; word-break: keep-all; overflow-wrap: anywhere; }
 .questionBody h1 > span { display: block; }
@@ -40,8 +39,9 @@
 .q1Grid, .q2List { border: 0; padding: 0; min-width: 0; margin: 16px 0 0; }
 .q1Grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 24px; }
 .choice { color: #27272a; font-size: 16px; line-height: 24px; font-weight: 600; }
-.q1Card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 146px; padding: 10px; text-align: center; word-break: keep-all; overflow-wrap: anywhere; }
-.q1Card > img { width: 76px; height: 66px; object-fit: cover; }
+.q1Card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 146px; padding: 10px; text-align: center; word-break: keep-all; overflow-wrap: anywhere; }
+/* Q3 (2026-11 design): the whole square picture, not cropped. */
+.q1Card > img { width: 64px; height: 64px; object-fit: contain; }
 .q1Card > span { display: block; }
 .q2List { display: flex; flex-direction: column; gap: 12px; }
 .q2Card { display: flex; align-items: center; gap: 16px; min-height: 76px; padding: 10px 18px; }
@@ -59,56 +59,82 @@
 .summaryIntro h2 { font-size: 16px; line-height: 24px; font-weight: 600; }
 .summaryIntro p { color: #71717a; font-size: 11px; line-height: 16px; font-weight: 500; margin-top: 2px; }
 .summaryRows { display: flex; flex-direction: column; gap: 4px; }
-.summaryRow { display: flex; align-items: center; gap: 8px; min-height: 42px; border-radius: 8px; background: #fffcf9; padding: 7px 8px; }
-.summaryLabel { width: 99px; flex: none; color: #3f3f46; font-size: 11px; line-height: 16px; font-weight: 500; }
-.summaryRow + .summaryRow .summaryLabel { width: 94px; }
-.answerTag { min-width: 0; flex: 0 1 auto; padding: 5px 9px; border-radius: 28px; background: #decfff; color: #27272a; font-size: 12px; line-height: 18px; font-weight: 500; overflow-wrap: anywhere; }
+.summaryRow { display: flex; align-items: center; gap: 8px; min-height: 42px; overflow: hidden; border-radius: 8px; background: #fffcf9; padding: 7px 0 7px 8px; }
+.summaryLabel { flex: none; color: #3f3f46; font-size: 11px; line-height: 16px; font-weight: 500; }
+/* One chip per answer; a long row slides sideways (2026-11 design). */
+.summaryChips { display: flex; gap: 8px; min-width: 0; margin: 0; padding: 0 8px 0 0; list-style: none; overflow-x: auto; scrollbar-width: none; }
+.summaryChips::-webkit-scrollbar { display: none; }
+.answerTag { flex: none; padding: 5px 10px; border-radius: 28px; background: #decfff; color: #27272a; font-size: 13px; line-height: 18px; font-weight: 500; white-space: nowrap; }
 .frame .connectionNotice { font-size: 12px; line-height: 18px; color: #71717a; margin-top: 16px; text-align: center; }
 .frame .homeFeedback { font-size: 13px; line-height: 20px; margin-top: 10px; color: #7043b4; text-align: center; }
 .homeFeedback:empty { display: none; }
 .reselect { display: block; width: 100%; min-height: 44px; margin: 0 0 4px; padding: 12px 8px; border: 0; background: transparent; color: #71717a; text-decoration: underline; text-underline-position: under; font-size: 14px; line-height: 20px; }
 .restart { display: block; border: 0; padding: 10px; min-height: 44px; margin: 8px auto 0; background: transparent; color: #7043b4; text-decoration: underline; font-size: 14px; }
-.profileHeader { margin: 24px 24px 0; }
-.profileBack { display: block; min-height: 44px; margin-bottom: 24px; padding: 8px 0; color: #7043b4; border: 0; background: transparent; font-size: 14px; }
+/* Sizes and colours measured from the design: logo 77px down (same as the question screens, status bar included). */
+.profileHeader { margin: 77px 24px 0; }
+.profileHeader .profileBrand { width: 104px; height: 20.8px; }
+.profileHeader .profileBrand img { width: 100%; height: 100%; }
 .profileForm { flex: 1; display: flex; flex-direction: column; }
-.profileBody { margin: 44px 24px 28px; }
-.profileBody h1 { font-size: 28px; line-height: 38px; word-break: keep-all; }
-.profileBody > p { margin-top: 8px; color: #71717a; font-size: 14px; line-height: 22px; }
-.profileField { margin-top: 28px; }
-.profileField label { display: block; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
-.profileField input { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 48px; padding: 10px 12px; border: 1px solid #a1a1aa; border-radius: 8px; background: #fff; color: #27272a; font-size: 16px; }
-.profileField input[aria-invalid="true"] { border-color: #b42318; }
-.profileField p { margin-top: 6px; font-size: 13px; line-height: 20px; color: #71717a; }
-.profileBody .fieldError { color: #b42318; font-size: 13px; line-height: 20px; }
+.profileBody { margin: 33px 22px 28px; text-align: center; }
+.profileBody h1 { font-size: 24px; font-weight: 700; line-height: 32px; color: #3f3f46; word-break: keep-all; }
+.profileBody > p { margin-top: 6px; color: #71717a; font-size: 14px; line-height: 20px; }
+/* A soft lilac glow around the card. */
+.profileField { margin-top: 32px; padding: 10px 24px 20px; border: 1px solid #f4e3fc; border-radius: 12px; background: #fff; box-shadow: 0 0 4px rgba(204, 153, 255, 0.45); text-align: left; }
+.profileField label { display: block; margin-bottom: 12px; color: #71717a; font-size: 14px; line-height: 20px; }
+.profileInput { position: relative; }
+.profileField input { display: block; box-sizing: border-box; width: 100%; min-width: 0; height: 48px; padding: 0 52px 0 12px; border: 1px solid #decfff; border-radius: 8px; background: #f7f2ff; color: #27272a; font-size: 18px; font-weight: 600; }
+/* The design keeps the same light border while typing. */
+.frame .profileField input:focus-visible { outline: none; }
+.profileCount { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); color: #71717a; font-size: 12px; line-height: 16px; pointer-events: none; }
+.profileField p { margin-top: 12px; color: #71717a; font-size: 14px; line-height: 20px; }
+.profileField .profileRuleBroken { color: #ff0000; }
+.profileBody .fieldError { margin-top: 10px; color: #ff0000; font-size: 15px; line-height: 22px; }
 .fieldError:empty { display: none; }
-.searchLabel { display: block; margin-top: 24px; margin-bottom: 8px; font-size: 14px; font-weight: 600; }
-.workSearch { box-sizing: border-box; width: 100%; min-width: 0; height: 48px; padding: 10px 14px; border: 1px solid #a1a1aa; border-radius: 10px; background: #fff; color: #27272a; font: inherit; font-size: 16px; }
-.workSearch:focus-visible { outline: 3px solid #decfff; border-color: #7043b4; }
-.selectionHeading { display: flex; justify-content: space-between; gap: 12px; margin-top: 20px; font-size: 13px; }
-.selectionHeading span { color: #7043b4; }
-.selectedWorks { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 10px 0 0; padding: 0; }
-.selectedWorks li { display: flex; align-items: center; max-width: 100%; border-radius: 18px; background: #efe7ff; color: #583199; padding-left: 12px; font-size: 12px; line-height: 18px; }
-.selectedWorks li > span { min-width: 0; overflow-wrap: anywhere; }
-.selectedWorks button { flex: none; border: 0; background: transparent; color: inherit; width: 38px; min-height: 40px; font-size: 22px; border-radius: 18px; }
+/* Q1 (2026-11 design): lilac pill search, outlined chips in one sideways-scrolling row. */
+.searchBox { position: relative; margin-top: 20px; }
+.searchIcon { position: absolute; top: 50%; left: 16px; transform: translateY(-50%); color: #71717a; pointer-events: none; }
+/* 16px keeps iOS from zooming in on focus. */
+.workSearch { box-sizing: border-box; width: 100%; min-width: 0; height: 48px; padding: 0 48px 0 44px; border: 0; border-radius: 24px; background: #f7f2ff; color: #27272a; font: inherit; font-size: 16px; -webkit-appearance: none; appearance: none; }
+.workSearch::placeholder { color: #a1a1aa; }
+.workSearch::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+/* The design keeps the pill without a ring while typing. */
+.frame .workSearch:focus-visible { outline: none; }
+.searchClear { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 18px; background: transparent; color: #c4c4cc; }
+.selectedWorks { display: flex; gap: 8px; list-style: none; margin: 14px -24px 0; padding: 0 24px; overflow-x: auto; scrollbar-width: none; }
+.selectedWorks::-webkit-scrollbar { display: none; }
+.selectedWorks:empty { display: none; }
+.selectedWorks li { display: flex; flex: none; align-items: center; box-sizing: border-box; height: 28px; border: 1px solid #27272a; border-radius: 14px; background: #efe7ff; color: #27272a; padding-left: 10px; font-size: 13px; line-height: 18px; white-space: nowrap; }
+.selectedWorks button { display: grid; place-items: center; flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 13px; background: transparent; color: inherit; }
 .frame .catalogNotice { margin-top: 12px; color: #71717a; font-size: 13px; line-height: 20px; word-break: keep-all; overflow-wrap: anywhere; }
 .frame .catalogError { margin-top: 14px; padding: 12px; border-radius: 8px; background: #fff2ef; color: #8f3024; font-size: 13px; line-height: 20px; }
 .catalogError button { display: block; border: 1px solid currentColor; border-radius: 6px; min-height: 40px; padding: 6px 14px; margin-top: 8px; background: #fff; color: inherit; }
-.workResults { list-style: none; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 8px; }
-.workChoice { display: flex; align-items: center; gap: 12px; box-sizing: border-box; width: 100%; border: 1px solid #e4e4e7; border-radius: 10px; background: #fff; color: #27272a; text-align: left; padding: 12px; }
-.workChoice.selected { border-color: #7043b4; background: #f7f2ff; }
+/* Q1 results: lilac rows with a circle on the right; a chosen row turns deeper lilac with a check. */
+.frame .resultsLabel { margin-top: 18px; color: #71717a; font-size: 13px; line-height: 20px; }
+.workResults { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 10px; }
+.workChoice { display: flex; align-items: center; gap: 12px; box-sizing: border-box; width: 100%; min-height: 34px; border: 1px solid transparent; border-radius: 8px; background: #f7f2ff; color: #27272a; text-align: left; padding: 6px 12px; font-size: 14px; line-height: 20px; }
+.workChoice.selected { background: #decfff; border-color: #c7acfb; }
 .workChoice:disabled { opacity: .55; cursor: default; }
-.workChoice > img, .workPlaceholder { width: 42px; height: 56px; flex: none; border-radius: 6px; object-fit: cover; }
-.workPlaceholder { display: grid; place-items: center; background: #efe7ff; color: #7043b4; font-size: 12px; }
-.workChoice > span:not(.workPlaceholder):not(.workCheck) { min-width: 0; flex: 1; }
-.workChoice strong { display: block; font-size: 14px; line-height: 21px; overflow-wrap: anywhere; }
-.workChoice small { display: block; margin-top: 3px; color: #71717a; font-size: 11px; line-height: 17px; }
-.workCheck { color: #7043b4; font-size: 22px; flex: none; }
+.workName { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.workName small { display: block; color: #71717a; font-size: 11px; line-height: 16px; }
+.workCheck { display: grid; place-items: center; flex: none; box-sizing: border-box; width: 18px; height: 18px; border: 1px solid #c4c4cc; border-radius: 50%; color: #7043b4; }
+.workChecked { border-color: #7043b4; }
 .moreWorks { display: block; margin: 12px auto 0; min-height: 44px; padding: 8px 24px; border: 1px solid #d6c6ef; border-radius: 8px; background: #fff; color: #7043b4; }
 .tagGroup { min-width: 0; border: 0; padding: 0; margin: 24px 0 0; }
-.tagGroup legend { padding: 0; margin-bottom: 10px; font-size: 16px; font-weight: 600; }
-.tagChips { display: flex; flex-wrap: wrap; gap: 8px; }
-.tagChip { position: relative; display: inline-flex; align-items: center; min-height: 44px; max-width: 100%; border: 1px solid #d4d4d8; border-radius: 24px; padding: 8px 16px; font-size: 14px; line-height: 20px; cursor: pointer; }
-.tagChip.selected { border-color: #7043b4; color: #583199; }
+.tagGroup legend { padding: 0; margin-bottom: 12px; color: #27272a; font-size: 16px; font-weight: 600; }
+/* Q2 box "선택한 작품에서 이런 취향을 발견했어요!" (2026-11 design). */
+.discovered { margin: 20px 24px 0; }
+.frame .discovered h2 { color: #27272a; font-size: 15px; line-height: 22px; font-weight: 600; text-align: center; }
+.discovered dl { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 0; padding: 12px 16px; border-radius: 8px; background: #efe7ff; }
+.discovered dl > div { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.discovered dt { flex: none; color: #27272a; font-size: 15px; line-height: 22px; font-weight: 600; }
+.discovered dd { margin: 0; min-width: 0; }
+.discovered ul { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.discovered li { padding: 4px 10px; border-radius: 14px; background: #fff; color: #7043b4; font-size: 14px; line-height: 20px; }
+/* Q2 (2026-11 design): smaller grey outlined chips, a chosen one filled purple. */
+.tagRows { display: flex; flex-direction: column; gap: 8px; }
+.tagChips { display: flex; flex-wrap: wrap; gap: 8px 6px; }
+.tagChip { position: relative; display: inline-flex; align-items: center; box-sizing: border-box; min-height: 34px; max-width: 100%; border: 1px solid #c4c4cc; border-radius: 17px; padding: 6px 8px; color: #71717a; font-size: 14px; line-height: 20px; cursor: pointer; }
+.tagChip.selected { border-color: #7043b4; background: #7043b4; color: #fff; }
 .tagChip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
 .tagChip span { overflow-wrap: anywhere; }
 .tagChip:has(input:focus-visible), .workChoice:focus-visible { outline: 3px solid #7043b4; outline-offset: 3px; }
@@ -122,6 +148,8 @@
 }
 @media (max-height: 700px) {
   .interestHeader { margin-top: 48px; }
+  .profileHeader { margin-top: 48px; }
+  .profileBody { margin-top: 24px; }
   .interestBody { margin-top: 20px; }
   .interestBody h1 { font-size: 28px; line-height: 38px; }
   .navigation { margin-top: 20px; }

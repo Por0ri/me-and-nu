@@ -30,7 +30,7 @@ def v2_answers(**changes):
 
 def payload(answers):
     return {
-        "nickname": "신규 회원", "accountType": "user", "topicId": 1, "answers": answers,
+        "nickname": "신규회원", "accountType": "user", "topicId": 1, "answers": answers,
         "consents": [{"type": "terms", "policyVersion": "v1", "agreed": True}],
     }
 

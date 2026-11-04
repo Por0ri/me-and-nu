@@ -247,7 +247,7 @@ def signup_request(flow, csrf, answers, **extra):
     return flow.client.post(
         "/api/v1/onboarding/complete",
         json={
-            "nickname": "선택 저장 회원",
+            "nickname": "선택저장회원",
             "accountType": "user", "topicId": 1, "answers": answers,
             "consents": [
                 {"type": "terms", "policyVersion": "v1", "agreed": True},
@@ -277,7 +277,7 @@ def test_onboarding_persists_answers_without_subtopics_and_rotates_session(onboa
     assert active_token != pending_token
     with Session(flow.engine) as session:
         user = session.scalar(select(UserAccount))
-        assert user.nickname == "선택 저장 회원"
+        assert user.nickname == "선택저장회원"
         assert user.onboarding_completed_at is not None
         tap = session.scalar(select(Tap))
         assert (tap.user_id, tap.topic_id) == (user.user_id, 1)
@@ -341,11 +341,11 @@ def test_onboarding_profile_and_relogin_work_with_or_without_legacy_birth_column
     assert profile.json()["userId"] == user_id
     assert "birthDate" not in profile.json()
     updated = flow.client.patch(
-        "/api/v1/users/me", json={"nickname": "수정된 회원"},
+        "/api/v1/users/me", json={"nickname": "수정된회원"},
         headers={"X-CSRF-Token": active["csrfToken"]},
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json()["nickname"] == "수정된 회원"
+    assert updated.json()["nickname"] == "수정된회원"
     assert "birthDate" not in updated.json()
 
     def stored_onboarding():
