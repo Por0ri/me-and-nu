@@ -15,6 +15,8 @@
 .sourceLink a { color: var(--pivot-primary, #7043b4); text-decoration: underline; }
 .section + .section { margin-top: 20px; }
 .section h2, .section p { margin: 0; font-size: 14px; line-height: 20px; font-weight: 400; }
+/* Mobile readability override: only article/transcript paragraphs grow. */
+.section p { font-size: 16px; line-height: 24px; }
 .section p + p { margin-top: 12px; }
 /* Figma 1828:12160 separates article paragraphs by one 20px blank line. */
 .body > .section p + p { margin-top: 20px; }

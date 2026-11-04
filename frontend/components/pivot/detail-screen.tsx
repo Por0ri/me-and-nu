@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { orderedHomeSlides } from "@/lib/pivot/home";
 import type { DetailArticle, DetailState } from "@/lib/pivot/detail";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
@@ -21,15 +21,16 @@ function DetailImage({ article }: { article: DetailArticle }) {
 }
 
 /** Compare exact text units only; preserve the original strings for display. */
-function DetailSlideText({ article }: { article: DetailArticle }) {
+export function DetailSlideText({ article, coverTextVisible = false }: { article: DetailArticle; coverTextVisible?: boolean }) {
   const slides = orderedHomeSlides(article.slides ?? []);
   const normalize = (text: string) => text.replace(/\s+/gu, " ").trim();
   const seen = new Set(article.sections.flatMap(section => section.paragraphs).map(normalize));
   const cover = slides[0];
-  // Match ContentCover/SlideFigure: only seed text actually shown by the cover.
-  if (cover?.layout?.textOverlayBox && cover.titleLines) {
+  // Only exclude the cover after the browser confirms its entire caption fits.
+  // Merely having an overlay box does not prove the original is readable.
+  if (coverTextVisible && cover?.layout?.textOverlayBox && cover.titleLines) {
     for (const text of [...cover.titleLines, cover.titleLines.join(" "), ...(cover.bodySentences ?? [])]) seen.add(normalize(text));
-  } else if (cover?.description) {
+  } else if (coverTextVisible && cover?.description) {
     seen.add(normalize(cover.description));
   }
   const takeNew = (texts: readonly string[]) => texts.filter(text => {
@@ -43,7 +44,10 @@ function DetailSlideText({ article }: { article: DetailArticle }) {
     const titleKey = normalize(slide.titleLines?.join(" ") ?? "");
     const titleLines = seen.has(titleKey) ? [] : takeNew(slide.titleLines ?? []);
     if (titleKey) seen.add(titleKey);
-    const bodySentences = takeNew(slide.bodySentences ?? (slide.description ? [slide.description] : []));
+    const bodySentences = takeNew([
+      ...(slide.bodySentences ?? (slide.description ? [slide.description] : [])),
+      ...(!(slide.layout?.textOverlayBox && slide.titleLines) && slide.description ? [slide.description] : []),
+    ]);
     return titleLines.length || bodySentences.length
       ? [{ id: slide.id, page: slide.page ?? index + 1, titleLines, bodySentences }] : [];
   });
@@ -65,6 +69,11 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const article = useRef<HTMLElement>(null);
+  const readyArticle = state.status === "ready" ? state.article : null;
+  const [coverText, setCoverText] = useState<{ article: DetailArticle | null; visible: boolean } | null>(null);
+  const onCoverTextVisibilityChange = useCallback((visible: boolean) => {
+    setCoverText(current => current?.article === readyArticle && current.visible === visible ? current : { article: readyArticle, visible });
+  }, [readyArticle]);
   const interactions = useInteractions();
   const [noticeState, setNoticeState] = useState({ message: "" });
   const notice = noticeState.message;
@@ -139,7 +148,7 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
     <h1 ref={heading} tabIndex={-1} className={homeStyles.srOnly}>{state.status === "ready" ? [state.article.work, state.article.title].filter(Boolean).join(" · ") : "콘텐츠 상세"}</h1>
     {state.status === "ready" ? <article ref={article} aria-label={state.article.title} data-detail-content={state.article.contentId} data-detail-post={state.article.postId}>
       {!demo && state.article.slides?.length ? <ContentCover key={state.article.contentId}
-        slides={state.article.slides} title={state.article.title} /> : <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />}
+        slides={state.article.slides} title={state.article.title} onCoverTextVisibilityChange={onCoverTextVisibilityChange} /> : <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />}
       <div className={styles.body}>
         {state.article.sections.map((section, index) => <section key={index} className={styles.section}>
           {section.heading ? <h2>{section.heading}</h2> : null}
@@ -148,7 +157,7 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
         {!demo && state.article.displayMode === "link_excerpt" && state.article.sourceUrl ? <p className={styles.sourceLink}>
           <a href={state.article.sourceUrl} target="_blank" rel="noopener noreferrer">원문에서 계속 읽기</a>
         </p> : null}
-        {!demo ? <DetailSlideText article={state.article} /> : null}
+        {!demo ? <DetailSlideText article={state.article} coverTextVisible={coverText?.article === state.article && coverText.visible} /> : null}
         {!demo ? <footer data-detail-publication="">
         <ContentMetadata productionType={state.article.productionType} notices={state.article.notices}
           publishedAt={state.article.publishedAt} publisher={state.article.publisher} />
