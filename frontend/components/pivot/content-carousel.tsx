@@ -166,6 +166,7 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; x: number; y: number; left: number; moving: boolean } | null>(null);
+  const suppressClick = useRef(false);
   const [active, setActive] = useState(0);
   const slides = orderedHomeSlides(sourceSlides);
   const current = Math.max(0, Math.min(active, slides.length - 1));
@@ -191,29 +192,40 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
     <div id={`${id}-track`} ref={track} className={styles.track} tabIndex={0} data-carousel-track=""
       data-home-track={scope === "home" ? "" : undefined} data-detail-track={scope === "detail" ? "" : undefined}
       aria-label="좌우로 슬라이드 탐색" aria-describedby={`${id}-help`}
-      onPointerDown={scope === "detail" ? (event) => {
-        // Touch keeps native horizontal swiping and vertical article/copy scrolling.
+      onPointerDown={(event) => {
+        // A fresh input (including touch or a button) must keep its normal click.
+        suppressClick.current = false;
+        // Touch keeps native horizontal swiping and vertical feed/article scrolling.
         if (event.pointerType !== "mouse" || event.button !== 0 || (event.target as Element).closest("button, a")) return;
         drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, moving: false };
-      } : undefined}
-      onPointerMove={scope === "detail" ? (event) => {
+      }}
+      onPointerMove={(event) => {
         const start = drag.current;
-        if (!start || start.pointerId !== event.pointerId) return;
+        if (event.pointerType !== "mouse" || !start || start.pointerId !== event.pointerId) return;
         if (event.buttons !== 1) { finishDrag(event); return; }
         const dx = event.clientX - start.x, dy = event.clientY - start.y;
         if (!start.moving) {
-          if (Math.abs(dy) > 6 && Math.abs(dy) >= Math.abs(dx)) { drag.current = null; return; }
+          if (Math.abs(dy) >= 6 && Math.abs(dy) >= Math.abs(dx)) { drag.current = null; return; }
           if (Math.abs(dx) < 6) return;
           start.moving = true;
+          suppressClick.current = true;
           event.currentTarget.setPointerCapture(event.pointerId);
           event.currentTarget.dataset.dragging = "true";
         }
         event.preventDefault();
         event.currentTarget.scrollLeft = start.left - dx;
-      } : undefined}
-      onPointerUp={scope === "detail" ? finishDrag : undefined}
-      onPointerCancel={scope === "detail" ? finishDrag : undefined}
-      onLostPointerCapture={scope === "detail" ? finishDrag : undefined}
+      }}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
+      onLostPointerCapture={finishDrag}
+      onPointerLeave={() => { if (!drag.current?.moving) drag.current = null; }}
+      onClickCapture={(event) => {
+        // Pointer capture retargets the release click to this track. Consume it
+        // before a card action can run; keyboard activation has no click count.
+        if (!suppressClick.current || event.detail === 0) return;
+        suppressClick.current = false;
+        event.preventDefault(); event.stopPropagation();
+      }}
       onScroll={(event) => {
         const element = event.currentTarget;
         if (element.clientWidth) { const index = Math.round(element.scrollLeft / element.clientWidth); setActive(index); onSlideChange?.(index); }
