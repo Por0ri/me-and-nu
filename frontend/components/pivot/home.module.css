@@ -139,16 +139,28 @@
 .detailHelp, .actionNotice { position: absolute; z-index: 2; bottom: 52px; right: 10px; width: min(260px, calc(100vw - 80px)); margin: 0; padding: 12px; border-radius: 8px; box-shadow: 0 2px 12px #0002; background: white; color: var(--home-ink); font-size: 12px; line-height: 19px; }
 .actionNotice { right: 12px; bottom: 60px; pointer-events: none; }
 .noSlides { display: grid; place-items: center; height: 100%; margin: 0; padding: 24px; font-size: 14px; color: var(--home-muted); }
-.bottomBar { position: fixed; z-index: 6; bottom: max(20px, env(safe-area-inset-bottom)); left: 50%; width: min(100%, 430px); height: 40px; transform: translateX(-50%); pointer-events: none; }
-.navigation { position: absolute; left: 50%; display: flex; align-items: center; justify-content: center; width: 200px; height: 40px; padding-inline: 16px; transform: translateX(-50%); border: .75px solid rgb(239 239 239 / 65%); border-radius: 24px; background: rgb(255 255 255 / 64%); box-shadow: 0 6px 18px #0000001f; backdrop-filter: blur(9px); pointer-events: auto; }
-.navigation button { display: grid; place-items: center; flex: 1; height: 40px; min-width: 0; padding: 0; border: 0; background: transparent; color: #3f3f46; }
-.navigation button > span { display: grid; place-items: center; width: 60px; height: 24px; border-radius: 12px; font-size: 9px; line-height: 13.5px; }
+/* 375x812: 812 - 12 - 48 = y752. Keep the existing max(inset) policy
+   until additive safe-area spacing has been validated on physical devices. */
+.bottomBar { position: fixed; z-index: 6; bottom: max(12px, env(safe-area-inset-bottom)); left: 50%; width: min(100%, 430px); height: 48px; transform: translateX(-50%); pointer-events: none; }
+.navigation { position: absolute; left: 50%; display: flex; align-items: center; justify-content: center; width: 200px; height: 100%; padding-inline: 8px; transform: translateX(-50%); border: .75px solid rgb(239 239 239 / 65%); border-radius: 24px; background: rgb(255 255 255 / 64%); box-shadow: 0 6px 18px #0000001f; backdrop-filter: blur(9px); pointer-events: auto; }
+.navigation button { display: flex; align-items: center; justify-content: center; flex: 1; height: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: #3f3f46; font-weight: 400; }
+.navigation button > span { display: grid; place-items: center; width: 60px; max-width: 100%; height: 24px; border-radius: 12px; font-size: 12px; line-height: 18px; }
 .navigation [aria-current="page"] > span { background: #efe7ff; font-weight: 600; }
+/* Match Detail's unchanged 40px AI dock while the shared navigation is inert. */
+.bottomBar[data-compact] { bottom: max(20px, env(safe-area-inset-bottom)); height: 40px; }
 .aiButton { position: absolute; right: 34px; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; }
 .aiButton img { position: absolute; left: -8px; top: 0; max-width: none; }
 /* Informational status only: let clicks, swipes and scrolling reach the content below. */
 .pendingNotice { position: fixed; z-index: 8; left: 50%; bottom: 76px; width: min(327px, calc(100vw - 48px)); margin: 0; padding: 12px; transform: translateX(-50%); border-radius: 8px; background: white; box-shadow: 0 2px 12px #0002; color: var(--home-ink); font-size: 12px; line-height: 19px; pointer-events: none; }
-@media (max-width: 340px) { .navigation { left: calc(50% - 20px); width: 180px; padding-inline: 6px; } .aiButton { right: 16px; } .brand { gap: 6px; } .headerMascot { right: 51px; } }
+@media (max-width: 340px) {
+  .navigation { width: 180px; padding-inline: 6px; }
+  /* Detail's AI reaches 48px left from its right inset (34px); reserve an
+     additional 8px gap and half the 180px nav. At 320px this yields x50.
+     Home's AI has more room (16px inset). Standalone navs remain centered. */
+  .bottomBar[data-adjacent-ai]:not([data-compact]) .navigation { left: max(90px, min(50%, calc(100% - 34px - 48px - 8px - 90px))); }
+  .bottomBar[data-compact] .navigation { max-width: calc(100% - 68px); }
+  .aiButton { right: 16px; } .brand { gap: 6px; } .headerMascot { right: 51px; }
+}
 @media (prefers-reduced-motion: reduce) { .slideTrack { scroll-behavior: auto; } .screen button { transition: none; } }
 .status { padding: 32px 20px; border: 1px solid var(--home-line); border-radius: 12px; background: var(--home-surface); text-align: center; font-size: 14px; line-height: 23px; }
 .status p { margin: 0; }
@@ -158,7 +170,9 @@
 .footer .button { width: 100%; }
 
 /* Preserve the Figma dock anchor; only the AI button moves during a collision. */
-.aiAnchor { position: absolute; right: 34px; top: 0; width: 40px; height: 40px; pointer-events: none; }
+/* Preserve the previous AI y = viewport - max(20px, inset) - 40px,
+   including when the 48px nav is lifted by a nonzero safe area. */
+.aiAnchor { position: absolute; right: 34px; top: clamp(0px, calc(env(safe-area-inset-bottom) - 12px), 8px); width: 40px; height: 40px; pointer-events: none; }
 .aiAnchor .aiButton { right: 0; top: 0; transform: translate(var(--home-ai-x, 0px), var(--home-ai-y, 0px)); transition: none; }
 .aiAnchor .aiButton img { pointer-events: none; }
 @media (max-width: 340px) { .aiAnchor { right: 16px; } }

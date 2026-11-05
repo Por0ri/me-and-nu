@@ -35,8 +35,12 @@ export function HomeHeader({ title = "홈", showMascot = true, onNotice, onBack 
   </header>;
 }
 
-export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI = false, onNotice }: {
+export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI = false, adjacentAI = !hideAI, compact = false, onNotice }: {
   onHome?: () => void; onMy?: () => void; onSaved?: () => void; active?: "home" | "my" | "saved"; hideAI?: boolean;
+  /** Reserve the adjacent AI area, including Detail's separately rendered AI. */
+  adjacentAI?: boolean;
+  /** Detail's expanded AI covers an inert, 40px navigation bar. */
+  compact?: boolean;
   onNotice?: (message: string) => void;
 } = {}) {
   const [localNotice, setLocalNotice] = useState({ message: "" });
@@ -48,7 +52,7 @@ export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI 
       setLocalNotice(current => current === localNotice ? { message: "" } : current);
     });
   }, [localNotice, onNotice]);
-  return <div className={styles.bottomBar}>
+  return <div className={styles.bottomBar} data-adjacent-ai={adjacentAI || undefined} data-compact={compact || undefined}>
     <nav aria-label="주요 메뉴" className={styles.navigation}>
       <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } window.scrollTo({ top: 0, behavior: "instant" }); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
       <button type="button" data-saved-navigation="" aria-current={active === "saved" ? "page" : undefined}
