@@ -377,28 +377,117 @@ test('Home keeps supplied title line breaks and the complete three-line body', (
   assert.match(html, /첫 문장\n둘째 줄\n셋째 줄/);
 });
 
-test('Detail mouse drag snaps and releases capture; native touch, vertical moves and Home are untouched', () => {
+function pointerFixture(scope, count = 3) {
   const all = node => !node || typeof node !== 'object' ? [] : [node, ...React.Children.toArray(node.props?.children).flatMap(all)];
-  for (const scope of ['home', 'detail']) {
-    const writes = [], element = { clientWidth: 327, scrollLeft: 0, dataset: {}, captured: false,
-      scrollTo(value) { writes.push(value.left); }, setPointerCapture() { this.captured = true; },
-      hasPointerCapture() { return this.captured; }, releasePointerCapture() { this.captured = false; } };
-    let refs = 0;
-    const react = { ...React, useId: () => 'drag', useRef: initial => ({ current: refs++ === 0 ? element : initial }), useState: value => [value, () => {}] };
-    const { ContentCarousel } = loader({}, react)('components/pivot/content-carousel.tsx');
-    const track = all(ContentCarousel({ slides: slides(), title: '드래그', scope })).find(node => node.props?.['data-carousel-track'] === '').props;
-    if (scope === 'home') { assert.equal(track.onPointerDown, undefined); assert.equal(track.onPointerMove, undefined); continue; }
-    const event = (x, y, type = 'mouse') => ({ currentTarget: element, target: { closest: () => null }, pointerId: 1,
-      pointerType: type, button: 0, buttons: 1, clientX: x, clientY: y, preventDefault() {} });
-    track.onPointerDown(event(280, 50, 'touch')); track.onPointerMove(event(60, 50, 'touch'));
-    assert.equal(element.scrollLeft, 0); assert.equal(element.captured, false);
-    track.onPointerDown(event(280, 50)); track.onPointerMove(event(278, 90)); track.onPointerUp(event(278, 90));
-    assert.equal(writes.length, 0, 'vertical movement does not turn a page');
-    track.onPointerDown(event(280, 50)); track.onPointerMove(event(60, 50));
-    assert.equal(element.scrollLeft, 220); assert.equal(element.dataset.dragging, 'true'); assert.equal(element.captured, true);
-    track.onPointerUp(event(60, 50));
-    assert.equal(writes.at(-1), 327); assert.equal(element.captured, false); assert.equal(element.dataset.dragging, undefined);
-    track.onPointerDown(event(280, 50)); track.onPointerMove(event(60, 50)); track.onPointerCancel(event(60, 50));
-    assert.equal(element.captured, false); assert.equal(element.dataset.dragging, undefined);
+  let left = 0, refs = 0;
+  const writes = [], element = { clientWidth: 327, dataset: {}, captured: false,
+    get scrollLeft() { return left; }, set scrollLeft(value) { left = Math.max(0, Math.min(value, (count - 1) * this.clientWidth)); },
+    scrollTo(value) { writes.push(value.left); this.scrollLeft = value.left; }, setPointerCapture() { this.captured = true; },
+    hasPointerCapture() { return this.captured; }, releasePointerCapture() { this.captured = false; } };
+  const react = { ...React, useId: () => 'drag', useRef: initial => ({ current: refs++ === 0 ? element : initial }), useState: value => [value, () => {}] };
+  const { ContentCarousel } = loader({}, react)('components/pivot/content-carousel.tsx');
+  const track = all(ContentCarousel({ slides: slides(count), title: '드래그', scope })).find(node => node.props?.['data-carousel-track'] === '').props;
+  const event = (x, y = 50, options = {}) => ({ currentTarget: element, target: { closest: () => null }, pointerId: 1,
+    pointerType: 'mouse', button: 0, buttons: 1, clientX: x, clientY: y, prevented: false,
+    preventDefault() { this.prevented = true; }, ...options });
+  const click = (detail = 1) => {
+    const e = { detail, prevented: false, stopped: false, preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; } };
+    track.onClickCapture(e); return e;
+  };
+  return { track, element, writes, event, click };
+}
+
+for (const scope of ['home', 'detail']) {
+  test(`${scope}: left mouse drag follows both directions, snaps and consumes only its release click`, () => {
+    const { track, element, writes, event, click } = pointerFixture(scope);
+    for (const [from, to, offset, snapped] of [[280, 60, 220, 327], [60, 280, 107, 0]]) {
+      track.onPointerDown(event(from)); track.onPointerMove(event(to));
+      assert.equal(element.scrollLeft, offset); assert.equal(element.dataset.dragging, 'true'); assert.equal(element.captured, true);
+      track.onPointerUp(event(to));
+      assert.equal(writes.at(-1), snapped); assert.equal(element.captured, false); assert.equal(element.dataset.dragging, undefined);
+      assert.equal(click(0).prevented, false, 'keyboard activation remains available');
+      const release = click(); assert.equal(release.prevented, true); assert.equal(release.stopped, true);
+      assert.equal(click().prevented, false, 'only the release click is consumed');
+    }
+  });
+
+  test(`${scope}: movement below 6px stays a click; exactly 6px starts a horizontal drag`, () => {
+    const { track, element, writes, event, click } = pointerFixture(scope);
+    track.onPointerDown(event(100)); const small = event(94.01);
+    track.onPointerMove(small); track.onPointerUp(small);
+    assert.equal(small.prevented, false); assert.equal(element.captured, false); assert.equal(writes.length, 0);
+    assert.equal(click().prevented, false);
+    track.onPointerDown(event(100)); const threshold = event(94);
+    track.onPointerMove(threshold); assert.equal(threshold.prevented, true); assert.equal(element.captured, true);
+    assert.equal(element.scrollLeft, 6); track.onPointerUp(threshold); assert.equal(writes.at(-1), 0);
+  });
+
+  test(`${scope}: vertical and equal-axis diagonal starts cancel permanently; horizontal diagonals work`, () => {
+    const { track, element, writes, event, click } = pointerFixture(scope);
+    for (const [dx, dy] of [[2, 40], [6, 6], [-8, -10], [-10, 10]]) {
+      track.onPointerDown(event(100)); const move = event(100 + dx, 50 + dy);
+      track.onPointerMove(move); track.onPointerMove(event(0)); track.onPointerUp(event(0));
+      assert.equal(move.prevented, false); assert.equal(element.captured, false); assert.equal(writes.length, 0);
+      assert.equal(click().prevented, false);
+    }
+    track.onPointerDown(event(280)); track.onPointerMove(event(60, 80)); track.onPointerUp(event(60, 80));
+    assert.equal(writes.at(-1), 327);
+  });
+
+  test(`${scope}: touch, pen, non-left buttons and button/link descendants never start dragging`, () => {
+    for (const options of [{ pointerType: 'touch' }, { pointerType: 'pen' }, { button: 1, buttons: 4 }, { button: 2, buttons: 2 },
+      ...['button', 'a'].map(tag => ({ target: { closest(selector) { assert.equal(selector, 'button, a'); return { tagName: tag }; } } }))]) {
+      const { track, element, writes, event, click } = pointerFixture(scope);
+      track.onPointerDown(event(280, 50, options)); const move = event(60, 50, options);
+      track.onPointerMove(move); track.onPointerUp(move);
+      assert.equal(move.prevented, false); assert.equal(element.scrollLeft, 0); assert.equal(element.captured, false);
+      assert.equal(writes.length, 0); assert.equal(click().prevented, false);
+    }
+  });
+
+  test(`${scope}: cancellation, lost capture and lost buttons clean up once and allow the next input`, () => {
+    for (const finish of ['onPointerCancel', 'onLostPointerCapture', 'onPointerMove']) {
+      const { track, element, writes, event, click } = pointerFixture(scope);
+      track.onPointerDown(event(280)); track.onPointerMove(event(60));
+      if (finish === 'onLostPointerCapture') element.captured = false;
+      track[finish](event(60, 50, { buttons: 0 }));
+      assert.equal(element.dataset.dragging, undefined); assert.equal(element.captured, false); assert.equal(writes.at(-1), 327);
+      track.onLostPointerCapture(event(60)); track.onPointerUp(event(60)); assert.equal(writes.length, 1);
+      track.onPointerMove(event(0)); assert.equal(element.scrollLeft, 327);
+      track.onPointerDown(event(100)); track.onPointerUp(event(100)); assert.equal(click().prevented, false);
+    }
+  });
+
+  test(`${scope}: unrelated pointers and leaving before capture cannot create a stale drag`, () => {
+    const { track, element, writes, event } = pointerFixture(scope);
+    track.onPointerDown(event(280)); track.onPointerMove(event(60, 50, { pointerId: 2 }));
+    track.onPointerCancel(event(60, 50, { pointerId: 2 })); assert.equal(element.captured, false);
+    track.onPointerMove(event(60)); assert.equal(element.captured, true);
+    track.onPointerLeave(); track.onPointerUp(event(60)); assert.equal(writes.at(-1), 327);
+    track.onPointerDown(event(280)); track.onPointerLeave(); track.onPointerMove(event(60));
+    assert.equal(element.captured, false); assert.equal(writes.length, 1);
+  });
+
+  test(`${scope}: first, last and single-slide boundaries remain aligned`, () => {
+    for (const count of [1, 3]) {
+      const { track, element, writes, event } = pointerFixture(scope, count);
+      track.onPointerDown(event(60)); track.onPointerMove(event(280)); track.onPointerUp(event(280));
+      assert.equal(writes.at(-1), 0);
+      element.scrollLeft = (count - 1) * element.clientWidth;
+      track.onPointerDown(event(280)); track.onPointerMove(event(60)); track.onPointerUp(event(60));
+      assert.equal(writes.at(-1), (count - 1) * element.clientWidth);
+    }
+  });
+}
+
+test('Home carousel instances keep independent positions and click suppression', () => {
+  const first = pointerFixture('home'), second = pointerFixture('home');
+  first.track.onPointerDown(first.event(280)); first.track.onPointerMove(first.event(60)); first.track.onPointerUp(first.event(60));
+  assert.equal(first.element.scrollLeft, 327); assert.equal(second.element.scrollLeft, 0);
+  assert.equal(second.click().prevented, false); assert.equal(first.click().prevented, true);
+  for (const pointerType of ['touch', 'mouse']) {
+    first.track.onPointerDown(first.event(280)); first.track.onPointerMove(first.event(60)); first.track.onPointerCancel(first.event(60));
+    first.track.onPointerDown(first.event(100, 50, { pointerType }));
+    assert.equal(first.click().prevented, false, 'new input resets any unconsumed cancelled-gesture click');
   }
 });

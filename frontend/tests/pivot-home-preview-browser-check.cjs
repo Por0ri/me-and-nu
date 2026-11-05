@@ -30,7 +30,9 @@ const artifact = name => {
   if (fs.existsSync(file)) assert.equal(fs.lstatSync(file).isSymbolicLink(), false, 'No redirected output files');
   return file;
 };
-const exported = JSON.parse(fs.readFileSync(path.join(root, '../agent/contents/contents.json'), 'utf8'));
+// Newer checkouts omit the old Agent export; allow the same read-only snapshot
+// to be supplied from the isolated test artifacts without changing service data.
+const exported = JSON.parse(fs.readFileSync(process.env.PIVOT_CONTENT_FIXTURE || path.join(root, '../agent/contents/contents.json'), 'utf8'));
 const longest = key => [...exported].sort((a, b) => b[key].length - a[key].length)[0];
 const originals = [longest('title'), longest('body'), exported[0]];
 const boxes = [
@@ -85,6 +87,15 @@ async function swipe(page, element, dx, dy, fraction = [.6, .45]) {
   }
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await cdp.detach();
+}
+async function mouseDrag(page, track, dx, dy = 0, finish) {
+  await track.scrollIntoViewIfNeeded();
+  const b = await track.boundingBox(), x = b.x + b.width * (dx < 0 ? .8 : .2), y = b.y + b.height * .3;
+  await page.mouse.move(x, y); await page.mouse.down();
+  try {
+    await page.mouse.move(x + dx, y + dy, { steps: 12 });
+    if (finish) await finish();
+  } finally { await page.mouse.up(); }
 }
 async function hit(locator) {
   await locator.scrollIntoViewIfNeeded();
@@ -231,6 +242,105 @@ async function run(browser, viewport) {
   try {
     await page.goto(base + '/pivot/home');
     const home = page.locator('main[data-home-state="ready"]'); await home.waitFor();
+    if (viewport.width >= 600) {
+      const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
+      const reset = async (index = 0) => {
+        await card.getByRole('button', { name: `${index + 1}번 슬라이드 보기`, exact: true }).click();
+        await until(async () => await indexOf(track) === index, 'mouse test reset');
+      };
+      await track.evaluate(el => {
+        el.__mouseProbe = { clicks: 0, pointerId: null };
+        el.closest('[data-home-post]').addEventListener('click', event => {
+          if (el.contains(event.target)) el.__mouseProbe.clicks++;
+        });
+        el.addEventListener('pointerdown', event => { el.__mouseProbe.pointerId = event.pointerId; });
+      });
+      const clicks = () => track.evaluate(el => el.__mouseProbe.clicks);
+      const clean = () => track.evaluate(el => !el.dataset.dragging && !el.hasPointerCapture(el.__mouseProbe.pointerId));
+      await check('service Home mouse: both directions, continuous movement, smooth snap and no card click/detail navigation', async () => {
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        try {
+          await reset(); const before = await clicks();
+          const width = await track.evaluate(el => el.clientWidth);
+          await mouseDrag(page, track, -width * .7, 0, async () => {
+            const state = await track.evaluate(el => ({ left: el.scrollLeft, width: el.clientWidth,
+              dragging: el.dataset.dragging, snap: getComputedStyle(el).scrollSnapType }));
+            assert.equal(state.dragging, 'true'); assert.equal(state.snap, 'none');
+            assert.ok(Math.abs(state.left - state.width * .7) < 2, 'track follows the mouse before release');
+          });
+          await until(async () => await indexOf(track) === 1, 'Home drag advances');
+          await mouseDrag(page, track, width * .7);
+          await until(async () => await indexOf(track) === 0, 'Home drag returns');
+          assert.equal(await clicks(), before); assert.ok(await clean());
+          assert.equal(await home.isVisible(), true); assert.equal(new URL(page.url()).pathname, '/pivot/home');
+          assert.equal(await track.evaluate(el => getComputedStyle(el).scrollSnapType), 'x mandatory');
+          await capture('home-mouse-drag');
+        } finally { await page.emulateMedia({ reducedMotion: 'reduce' }); }
+      });
+      await check('service Home mouse: 5px clicks, 6px drags, vertical/equal diagonal cancellation and fresh click', async () => {
+        await reset(); const before = await clicks();
+        await mouseDrag(page, track, -5); assert.equal(await clicks(), before + 1); assert.ok(await clean());
+        await mouseDrag(page, track, -6, 0, async () => assert.equal(await track.getAttribute('data-dragging'), 'true'));
+        await until(async () => await indexOf(track) === 0, 'short drag snaps back');
+        assert.equal(await clicks(), before + 1);
+        for (const [dx, dy] of [[-4, 60], [-6, 6], [-30, 60]]) {
+          await mouseDrag(page, track, dx, dy, async () => assert.ok(await clean()));
+          assert.equal(await indexOf(track), 0);
+        }
+        const after = await clicks(); await mouseDrag(page, track, 0); assert.equal(await clicks(), after + 1);
+      });
+      await check('service Home mouse: cancel/lost capture cleanup, first/last edges and independent card positions', async () => {
+        const width = await track.evaluate(el => el.clientWidth);
+        for (const cancel of [true, false]) {
+          await reset();
+          await mouseDrag(page, track, -width * .7, 0, async () => {
+            await track.evaluate((el, cancel) => {
+              const pointerId = el.__mouseProbe.pointerId;
+              if (cancel) el.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerType: 'mouse', pointerId }));
+              else el.releasePointerCapture(pointerId);
+            }, cancel);
+            // The browser processes pending capture loss before its next pointer
+            // event. Deliver a real move before expecting lostpointercapture.
+            const box = await track.boundingBox();
+            await page.mouse.move(box.x + box.width * .1 + 1, box.y + box.height * .3);
+            await until(clean, 'pointer cleanup');
+          });
+          await until(async () => await indexOf(track) === 1, 'cancel/lost capture aligns');
+        }
+        await reset(); await mouseDrag(page, track, width * .6); assert.equal(await indexOf(track), 0);
+        await reset(9); await mouseDrag(page, track, -width * .6); assert.equal(await indexOf(track), 9);
+        const second = home.locator('[data-home-post="42"] [data-home-track]');
+        assert.equal(await indexOf(second), 0);
+        await mouseDrag(page, second, -width * .7); await until(async () => await indexOf(second) === 1, 'second card drag');
+        assert.equal(await indexOf(track), 9); await reset();
+      });
+      await check('service Home mouse: nested button/link starts retain their activation and never capture', async () => {
+        await reset();
+        for (const tag of ['button', 'a']) {
+          await track.evaluate((el, tag) => {
+            const control = document.createElement(tag); control.dataset.dragControlFixture = '';
+            control.innerHTML = '<span>입력 보호 검증</span>';
+            control.style.cssText = 'position:absolute;top:100px;left:60px;z-index:10;width:180px;height:48px;background:white';
+            if (tag === 'button') control.type = 'button'; else control.href = '#local-drag-fixture';
+            control.addEventListener('click', event => { event.preventDefault(); control.dataset.activated = 'true'; });
+            el.querySelector('[data-carousel-slide][aria-hidden="false"] figure').append(control);
+          }, tag);
+          const control = track.locator('[data-drag-control-fixture]');
+          try {
+            await control.locator('span').click();
+            assert.equal(await control.getAttribute('data-activated'), 'true');
+            await control.evaluate(el => delete el.dataset.activated);
+            await control.scrollIntoViewIfNeeded(); const b = await control.boundingBox();
+            await page.mouse.move(b.x + 100, b.y + 24); await page.mouse.down();
+            await page.mouse.move(b.x + 40, b.y + 24, { steps: 6 }); assert.ok(await clean()); await page.mouse.up();
+            // Native link drag-and-drop may omit click; it must remain outside
+            // the carousel gesture, and a subsequent ordinary click must work.
+            assert.equal(await indexOf(track), 0);
+            await control.locator('span').click(); assert.equal(await control.getAttribute('data-activated'), 'true');
+          } finally { await page.mouse.up(); await control.evaluate(el => el.remove()); }
+        }
+      });
+    }
     for (const [n, item] of items.entries()) {
       const card = home.locator(`[data-home-post="${item.id}"]`), track = card.locator('[data-home-track]');
       await card.scrollIntoViewIfNeeded();
@@ -315,6 +425,20 @@ async function run(browser, viewport) {
       await until(async () => await page.evaluate(() => scrollY) > before + 40, 'touch beginning on copy scrolls feed');
       assert.equal(await overlay.evaluate(el => el.scrollTop), 0);
       assert.equal(await indexOf(track), 0, 'vertical gesture does not change the slide');
+    });
+    if (viewport.width < 600) await check('service Home native diagonal touch and momentum settle without mouse capture or JS correction', async () => {
+      const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
+      await track.focus(); await page.keyboard.press('Home'); await until(async () => await indexOf(track) === 0, 'touch reset');
+      assert.equal(await track.evaluate(el => getComputedStyle(el).touchAction), 'auto');
+      await swipe(page, track, -220, -25, [.8, .45]);
+      await until(async () => await indexOf(track) >= 1, 'horizontal diagonal settles natively');
+      const settled = await indexOf(track); await page.waitForTimeout(500);
+      assert.equal(await indexOf(track), settled, 'no delayed slide rollback');
+      assert.equal(await track.getAttribute('data-dragging'), null);
+      await track.scrollIntoViewIfNeeded(); const before = await page.evaluate(() => scrollY);
+      await swipe(page, track, -20, -140, [.5, .7]);
+      await until(async () => await page.evaluate(() => scrollY) > before + 40, 'vertical diagonal scrolls the feed');
+      assert.equal(await indexOf(track), settled); assert.equal(await track.getAttribute('data-dragging'), null);
     });
     await check('Home → Detail → Back/HOME: body, sources, AI, reactions, focus and positions', async () => {
       const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
