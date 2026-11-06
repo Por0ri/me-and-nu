@@ -6,7 +6,7 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 
 ## 현재 구현된 V1 로컬 범위
 
-2026-10-28 현재 구현 ERD는 38개 테이블의 [current_schema.sql](../docs/erd/current_schema.sql)입니다. DB 연결 없이 `python scripts/export_current_schema.py`로 재생성하고 `--check`로 일치 여부를 검사합니다. [온보딩 V2 계약·migration](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [캐러셀 DB·API 확장](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [과거 DB 확인 기록](../docs/ERD_API_ALIGNMENT_2026-10-27.md)을 구분하세요. 현재 OpenAPI는 공개 V1 47개·상태 확인 3개이며 개발용 API를 켜면 2개가 추가되어 총 52개입니다.
+2026-10-28 현재 구현 ERD는 38개 테이블의 [current_schema.sql](../docs/erd/current_schema.sql)입니다. DB 연결 없이 `python scripts/export_current_schema.py`로 재생성하고 `--check`로 일치 여부를 검사합니다. [온보딩 V2 계약·migration](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [캐러셀 DB·API 확장](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [과거 DB 확인 기록](../docs/ERD_API_ALIGNMENT_2026-10-27.md)을 구분하세요. 현재 OpenAPI는 공개 V1 51개·상태 확인 3개이며 개발용 API를 켜면 2개가 추가되어 총 56개입니다.
 
 | 영역 | Endpoint |
 | --- | --- |
@@ -14,12 +14,14 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 | 세션 | `GET /api/v1/auth/session`, `POST /api/v1/auth/logout` |
 | 소셜 OAuth (API-001·002) | `POST /api/v1/auth/login/{provider}`, `GET /api/v1/auth/login/{provider}/callback` — 카카오·네이버. 앱 키와 `oauth_attempt` 마이그레이션 필요, 기본 비활성. [설정·백엔드 단독 검증](../docs/OAUTH_T02_1_SETUP.md) |
 | 정책·온보딩 | `GET /api/v1/policies`, `GET /api/v1/onboarding/works`, `POST /api/v1/onboarding/preference-options`, `POST /api/v1/onboarding/complete` |
-| 내 정보 | `GET/PATCH /api/v1/users/me`, `GET/PATCH /api/v1/users/me/consents` |
+| 내 정보 | `GET/PATCH/DELETE /api/v1/users/me` (DELETE = 회원탈퇴 API-009, 지금은 `mode=immediate` 즉시 삭제만), `GET/PATCH /api/v1/users/me/consents` |
 | Topic·Subtopic | `GET /api/v1/topics`, `GET /api/v1/topics/{topicId}/subtopics`, `GET /api/v1/subtopics/{subtopicId}` |
 | 내 관심사 | `GET/POST /api/v1/me/topics`, `GET /api/v1/me/topics/{topicId}/subtopics`, `PUT/DELETE /api/v1/me/topics/{topicId}/subtopics/{subtopicId}` |
 | 피드·콘텐츠 | `GET /api/v1/topics/{topicId}/feed`, `GET /api/v1/contents/{contentId}?topicId=...`, `GET /api/v1/contents/{contentId}/slides/{page}/image?topicId=...` |
 | 반응·저장 | `PUT/DELETE /api/v1/contents/{contentId}/preference`, `/like`, `/bookmark` |
 | 저장 목록 (API-041) | `GET /api/v1/users/me/bookmarks?topicId=...&limit=...&cursor=...` |
+| 내 활동 | `GET /api/v1/users/me/likes` (좋아요한 콘텐츠), `GET /api/v1/users/me/recent-views` (최근 30일에 본 콘텐츠) — 저장 목록과 같은 카드 · cursor |
+| 신고 · 문의 (API-070) | `POST /api/v1/reports` (콘텐츠 신고, 사유 5개), `POST /api/v1/inquiries` (마이페이지 문의) |
 | AI 대화 (API-048·052·053) | `POST /api/v1/chat/sessions`, `POST /api/v1/chat/sessions/{sessionId}/messages`, `GET /api/v1/chat/jobs/{jobId}` — `backend/.env`의 `LLM_KEY` 필요. 질문은 앞뒤 공백 제외 최대 500자이며 현재 분야 공개 콘텐츠 안에서만 근거를 찾아 답합니다. |
 | 알림 (API-107·108·109) | `GET /api/v1/users/me/notifications`, `GET /api/v1/users/me/notifications/unread-count`, `PATCH /api/v1/users/me/notifications/{notificationId}` — 운영공지(`system_notice`)만 목록·미읽음 수·읽음 처리에 포함합니다. 환영 공지를 생성하며, 기존 다른 유형 알림은 보존하되 공개 API에서 제외합니다. 실제 운영공지 공급은 후속 작업입니다. |
 

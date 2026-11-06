@@ -4,7 +4,7 @@
 
 현재 코드 재확인: 2026-10-28, `codex/service-integration` 작업 공간 기준. 최초 2026-09-29에 [Notion API V1.1 명세서](https://app.notion.com/p/94604c45a961835bbd1601fc3ab15ac0), [FE 세션·공통 계약](https://app.notion.com/p/0ce04c45a96183a884988159b10ddc81)를 대조한 기록에 로컬 라우터·OpenAPI의 변경을 반영했다. 이번에는 외부 Notion 명세나 배포 서버를 재검증하지 않았다. V1.1 전체 요구사항의 구현 완료 판정은 아니다.
 
-`create_app(...).openapi()`에서 확인한 HTTP 작업은 공개 V1 **47개**, 상태 확인 **3개**이며, `ENABLE_DEV_API=true`이면 개발용 **2개**가 추가되어 총 **52개**다. 개발 API를 끄면 50개다 (2026-11-04 기준: 영화 Agent 개발용 API 4개 삭제, 검색 관련 작품 · 취향 힌트 · 닉네임 확인 · 마이페이지 닉네임 확인 API 추가. 2026-11-06: 회원탈퇴 API 추가). 상태 확인은 `/health`, `/health/db`, `/health/redis`다. 아래 공개 경로는 `/api/v1` 접두사를 한 번만 쓰며 끝에 `/`를 붙이지 않는다. `정합`은 기존 대조 범위의 메서드·경로·주요 계약 대응을 뜻하며 실제 환경의 호출 성공이나 기능 전체 완성을 뜻하지 않는다.
+`create_app(...).openapi()`에서 확인한 HTTP 작업은 공개 V1 **51개**, 상태 확인 **3개**이며, `ENABLE_DEV_API=true`이면 개발용 **2개**가 추가되어 총 **56개**다. 개발 API를 끄면 54개다 (2026-11-04 기준: 영화 Agent 개발용 API 4개 삭제, 검색 관련 작품 · 취향 힌트 · 닉네임 확인 · 마이페이지 닉네임 확인 API 추가. 2026-11-06: 회원탈퇴 · 콘텐츠 신고 · 문의 · 내 활동 2개 API 추가). 상태 확인은 `/health`, `/health/db`, `/health/redis`다. 아래 공개 경로는 `/api/v1` 접두사를 한 번만 쓰며 끝에 `/`를 붙이지 않는다. `정합`은 기존 대조 범위의 메서드·경로·주요 계약 대응을 뜻하며 실제 환경의 호출 성공이나 기능 전체 완성을 뜻하지 않는다.
 
 **생년월일 정책 보류 유지 (2026-10-27~28):** 수집·저장·연령 확인 방식은 통합 완료 후 결정한다. 새 Pivot 흐름은 닉네임만 수집하고 생년월일 입력·검사·전송을 보류한다. 생년월일 삭제 migration을 새로 적용하지 않으며 레거시 Consumer 화면·유틸리티는 기존 상태를 유지한다.
 
@@ -12,7 +12,7 @@
 
 **2026-10-21 과거 온보딩 변경:** 당시 API-004는 `POST /api/v1/onboarding/complete`에서 `subtopicIds` 대신 필수 `answers: {"q1":"world","q2":"releases"}`를 받도록 변경됐다. Q1·Q2 각각 단일 허용값을 저장하는 revision은 `c0e5f3b8a124`다. 당시 프론트 수정은 포함하지 않았으며, 현재 Pivot은 위 V2 계약으로 연결되어 있다. 당시 두 질문과 아래 2026-09-29 검증 수치를 현재 Pivot 계약으로 사용하지 않는다.
 
-## 현재 API 대조 — 37개 (기존 번호 34개 + 온보딩 2개 + 캐러셀 이미지 1개)
+## 현재 API 대조 — 39개 (기존 번호 36개 + 온보딩 2개 + 캐러셀 이미지 1개)
 
 | 번호 | 메서드와 공개 경로 | 상태 | 로컬에서 확인할 계약과 범위 |
 | --- | --- | --- | --- |
@@ -25,6 +25,7 @@
 | API-006 | `POST /api/v1/auth/logout` | 정합 | 현재 세션 폐기, `204` 빈 본문. 유효 세션의 변경 요청에는 CSRF가 필요하다. |
 | API-007 | `GET /api/v1/users/me` | 정합 | 온보딩 완료 사용자의 프로필 조회. 응답에 `birthDate`가 없다. |
 | API-008 | `PATCH /api/v1/users/me` | **부분** | 닉네임 수정은 가능하다. 프로필 이미지 업로드·연결은 API-096 미구현으로 현재 `profileImageId`를 새 값으로 설정할 수 없다. |
+| API-009 | `DELETE /api/v1/users/me?mode=immediate` | **부분** | 온보딩 완료 세션·CSRF. 즉시 삭제만 지원해 `202`와 `status=withdrawn`을 반환하고 세션 쿠키를 지운다. 소셜 재인증·`mode=grace`(유예)·API-010 복구는 후속이며 `grace`는 `422 WITHDRAWAL_MODE_UNSUPPORTED`다. |
 | API-011 | `GET /api/v1/policies` | 정합 | `consentItems[]`의 실제 `type`·`policyVersion`·`required`를 조회한다. |
 | API-012 | `GET /api/v1/users/me/consents` | 정합 | 현재 동의 내역 조회. |
 | API-013 | `PATCH /api/v1/users/me/consents` | 정합 | 선택 동의 갱신. 필수 항목을 거짓으로 철회하면 오류를 반환한다. |
@@ -50,6 +51,7 @@
 | API-048 | `POST /api/v1/chat/sessions` | 구현 | 관심 분야에 연결된 AI 대화 세션을 생성한다. |
 | API-052 | `POST /api/v1/chat/sessions/{sessionId}/messages` | 구현 | 질문 전송·답변 생성 작업. LLM 설정과 현재 분야의 공개 콘텐츠 근거가 필요하다. |
 | API-053 | `GET /api/v1/chat/jobs/{jobId}` | 구현 | 본인의 답변 작업 상태·결과 조회. |
+| API-070 | `POST /api/v1/reports` | **부분** | 온보딩 완료 세션·CSRF. 공개 중인 콘텐츠 신고만(`targetType=content`), 사유 `wrong_info`·`spoiler`·`rights`·`inappropriate`·`other`, 같은 회원·같은 글은 `409 REPORT_DUPLICATE`. DM 신고와 API-071 결과 조회는 후속이다. |
 | API-107 | `GET /api/v1/users/me/notifications` | **부분** | 운영공지(`system_notice`)만 조회. 다른 알림 공급은 후속이다. |
 | API-108 | `GET /api/v1/users/me/notifications/unread-count` | **부분** | 운영공지만 미읽음 수에 포함한다. |
 | API-109 | `PATCH /api/v1/users/me/notifications/{notificationId}` | **부분** | 본인의 운영공지를 읽음 처리한다. |
