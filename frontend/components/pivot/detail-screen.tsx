@@ -187,7 +187,7 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
       {state.status !== "loading" ? <button type="button" onClick={onBack}>{fromSaved ? "저장 목록으로 돌아가기" : "Home으로 돌아가기"}</button> : null}
     </section>}
     {/* Keep shared navigation consistent with Home and My Page. */}
-    <div inert={aiExpanded}><HomeNavigation active={fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI /></div>
+    <div inert={aiExpanded}><HomeNavigation active={fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI adjacentAI compact={aiExpanded} /></div>
     <div className={styles.aiDock}>
       {aiExpanded ? <div className={styles.aiPrompt}><button type="button" aria-disabled="true"
         onClick={() => setNotice("AI 질문 기능은 준비 중이에요. 질문을 전송하지 않아요.")}>이 콘텐츠에서 어떤 점이 궁금하세요?</button></div> : null}

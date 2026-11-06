@@ -89,7 +89,7 @@ async function images(page) {
           near(detail.width, 68, 'Detail face width'); near(detail.height, 24, 'Detail face height');
           near(card.x + card.width - detail.x - detail.width, 12, 'Detail right inset');
           near(card.y + card.height - detail.y - detail.height, 12, 'Detail bottom inset');
-          near(share.width, 28, 'Share icon'); near(navigation.width, 200, 'Navigation width'); near(navigation.height, 40, 'Navigation height');
+          near(share.width, 28, 'Share icon'); near(navigation.width, 200, 'Navigation width'); near(navigation.height, 48, 'Navigation height');
           near(ai.width, 40, 'AI width'); near(ai.height, 40, 'AI height');
           if (viewport.width === 375) {
             // Figma's fake OS strip is 45px. Our truthful demo disclosure is 44px.
