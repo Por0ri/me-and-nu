@@ -91,7 +91,7 @@ async def patch_profile(
     status_code=202,
     response_model=WithdrawalResponse,
     summary="회원 탈퇴 (지금은 즉시 삭제만)",
-    description="API-009. mode=immediate 이면 회원과 연결 데이터(관심 분야 · 온보딩 답 · 좋아요 · 저장 · O/X · 행동 기록 · 알림 · 챗봇 대화 · 추천 결과)를 바로 지우고, 지금 세션을 끝내고 쿠키를 지웁니다. 다른 기기의 세션도 회원이 없어져 더는 인증되지 않습니다. 명세의 소셜 재인증과 mode=grace(3개월 유예 · API-010 복구)는 아직 없으며 grace 는 422 WITHDRAWAL_MODE_UNSUPPORTED 입니다. 같은 소셜 계정으로 다시 로그인하면 새 회원으로 온보딩부터 시작합니다. 온보딩을 마친 회원만 쓸 수 있고 X-CSRF-Token이 필요합니다.",
+    description="API-009. mode=immediate 이면 회원과 연결 데이터(관심 분야 · 온보딩 답 · 좋아요 · 저장 · O/X · 행동 기록 · 알림 · 챗봇 대화 · 추천 결과 · 문의)를 바로 지우고(콘텐츠 신고는 글 검토용으로 남기고 신고자만 비움), 지금 세션을 끝내고 쿠키를 지웁니다. 다른 기기의 세션도 회원이 없어져 더는 인증되지 않습니다. 명세의 소셜 재인증과 mode=grace(3개월 유예 · API-010 복구)는 아직 없으며 grace 는 422 WITHDRAWAL_MODE_UNSUPPORTED 입니다. 같은 소셜 계정으로 다시 로그인하면 새 회원으로 온보딩부터 시작합니다. 온보딩을 마친 회원만 쓸 수 있고 X-CSRF-Token이 필요합니다.",
     responses={
         **COMMON_ERRORS,
         409: {"model": ErrorResponse, "description": "크리에이터 채널이 연결된 계정(WITHDRAWAL_BLOCKED)", "content": {"application/json": {"example": {"code": "WITHDRAWAL_BLOCKED", "message": "연결된 크리에이터 채널이 있어 바로 탈퇴할 수 없습니다."}}}},
