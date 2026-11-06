@@ -192,7 +192,7 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
       {aiExpanded ? <div className={styles.aiPrompt}><button type="button" aria-disabled="true"
         onClick={() => setNotice("AI 질문 기능은 준비 중이에요. 질문을 전송하지 않아요.")}>이 콘텐츠에서 어떤 점이 궁금하세요?</button></div> : null}
       <button type="button" className={styles.aiButton} aria-label="AI 질문 안내" aria-expanded={aiExpanded}
-        onClick={() => setAiExpanded((expanded) => !expanded)}><img src="/pivot/detail/ai.svg" alt="" /></button>
+        onClick={() => setAiExpanded((expanded) => !expanded)}><img src={aiExpanded ? "/pivot/detail/ai-expanded.svg" : "/pivot/detail/ai.svg"} alt="" /></button>
     </div>
     {notice ? <p role="status" className={styles.notice}>{notice}</p> : null}
   </main>;
