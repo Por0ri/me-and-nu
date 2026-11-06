@@ -17,11 +17,11 @@ function Asset({ screen, variable, ...props }: { screen: string; variable: strin
 type NavigationProps = { onBack: () => void; onNext: () => void; busy: boolean };
 type SubmissionProps = { submitting: boolean; error: string; onSubmit: () => void; recovery?: { label: string; onClick: () => void } };
 /** The 관심 분야 screen. manage = My Page 관심분야 관리 (2026-11 design): a back button in place of the logo, the field
- * shown as chosen and no start button. Animation is the only field for now; more fields would read GET /me/topics. */
+ * showing the member's actual anime subscription with no selection or start action. */
 export function InterestScreen({ selected, onToggle, onNext, busy, chrome = false, manage }: Omit<NavigationProps, "onBack"> & {
   selected: boolean; onToggle: () => void; chrome?: boolean; manage?: { onBack: () => void };
 }) {
-  const chosen = selected || !!manage;
+  const chosen = selected;
   const assetScreen = chosen ? "interest-on" : "interest";
   const artwork = <span className={styles.interestArtwork}><Asset screen={assetScreen} variable="img" width={115} height={104.11} /></span>;
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
@@ -37,8 +37,8 @@ export function InterestScreen({ selected, onToggle, onNext, busy, chrome = fals
       <p className={styles.interestDescription}>지금은 애니메이션부터 시작할 수 있어요</p>
       <div className={styles.interestCards}>
         {manage
-          ? <div className={[styles.interestCard, styles.selected, styles.fixedCard].join(" ")}>
-            {artwork}<strong>애니메이션</strong><span className={styles.badge}>선택중</span>
+          ? <div className={[styles.interestCard, selected ? styles.selected : "", styles.fixedCard].join(" ")}>
+            {artwork}<strong>애니메이션</strong><span className={styles.badge}>{selected ? "선택중" : "미가입"}</span>
           </div>
           : <label className={[styles.interestCard, selected ? styles.selected : ""].join(" ")}>
             <input type="checkbox" aria-label="애니메이션" checked={selected} onChange={onToggle} disabled={busy} />
@@ -50,7 +50,8 @@ export function InterestScreen({ selected, onToggle, onNext, busy, chrome = fals
         </div>
       </div>
       <div className={styles.hint}><Asset screen={assetScreen} variable={chosen ? "img2" : "img1"} width={32} height={32} />
-        <p>{manage ? "이미 애니메이션을 탐색중입니다" : "분야를 선택한 뒤 취향을 고를 수 있어요"}</p></div>
+        <p role={manage ? "status" : undefined}>{manage ? selected ? "이미 애니메이션을 탐색중입니다" : "가입된 애니메이션 관심 분야가 없어요."
+          : "분야를 선택한 뒤 취향을 고를 수 있어요"}</p></div>
     </section>
     {!manage && <div className={styles.actions}><PrimaryButton disabled={!selected || busy} onClick={onNext}>애니메이션 선택하고 시작하기</PrimaryButton></div>}
   </PivotFrame>;
