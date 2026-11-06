@@ -39,6 +39,38 @@ function DemoAccountDialog({ action, onClose }: { action: "로그아웃" | "회�
   </dialog>;
 }
 
+function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
+  busy: boolean; error: string; onConfirm: () => void; onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    const trigger = document.activeElement as HTMLElement | null;
+    element?.showModal();
+    return () => {
+      element?.close();
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    };
+  }, []);
+  return <dialog ref={dialog} className={`${styles.dialog} ${styles.logoutDialog}`} aria-modal="true"
+    aria-labelledby="my-logout-title" aria-describedby="my-logout-question my-logout-hint" aria-busy={busy || undefined}
+    onCancel={(event) => { event.preventDefault(); onClose(); }}
+    onClose={(event) => {
+      // Strict Mode can reopen the dialog before cleanup's queued close event arrives.
+      if (!event.currentTarget.open) onClose();
+    }}>
+    <h2 id="my-logout-title">로그아웃</h2>
+    <p id="my-logout-question" className={styles.logoutQuestion}>정말 로그아웃하시겠어요?</p>
+    <p id="my-logout-hint" className={styles.logoutHint}>다시 로그인하면 저장한 내용은 그대로 볼 수 있어요</p>
+    {error ? <p role="alert" className={styles.logoutError}>{error}</p> : null}
+    <div className={styles.dialogActions}>
+      <button type="button" autoFocus disabled={busy} onClick={onClose}>취소</button>
+      {/* Keep keyboard focus on confirmation while the parent ref blocks duplicate requests. */}
+      <button type="button" aria-disabled={busy || undefined} onClick={onConfirm}>{busy ? "로그아웃 중…" : error ? "다시 시도" : "로그아웃"}</button>
+    </div>
+  </dialog>;
+}
+
 export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLogout }: {
   state: MyPageState; demo: boolean; onHome: () => void; onRetry: () => void; onSaved?: () => void; onLogout?: () => Promise<void>;
 }) {
@@ -47,18 +79,32 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
   const [notifications, setNotifications] = useState(true);
   const [nightNotifications, setNightNotifications] = useState(false);
   const [accountDialog, setAccountDialog] = useState<"로그아웃" | "회원탈퇴" | null>(null);
+  const [logoutDialog, setLogoutDialog] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { screen.current?.querySelector<HTMLHeadingElement>("h1")?.focus({ preventScroll: true }); }, []);
   function pending(label: string) { setNotice(`${label} 기능은 준비 중이에요.`); }
-  async function logout() {
+  function confirmLogout() {
     if (demo || !onLogout || logoutLock.current) return;
-    logoutLock.current = true; setLoggingOut(true); setNotice("");
-    try { await onLogout(); }
+    setNotice(""); setLogoutError(""); setLogoutDialog(true);
+  }
+  function closeLogout() {
+    // Once sent, closing cannot cancel the session-ending request.
+    if (logoutLock.current) return;
+    setLogoutDialog(false); setLogoutError("");
+  }
+  async function logout() {
+    if (demo || !onLogout || !logoutDialog || logoutLock.current) return;
+    logoutLock.current = true; setLoggingOut(true); setLogoutError("");
+    try {
+      await onLogout();
+      if (mounted.current) setLogoutDialog(false);
+    }
     catch {
-      if (mounted.current) setNotice("로그아웃하지 못했어요. 잠시 후 다시 시도해주세요.");
+      if (mounted.current) setLogoutError("로그아웃하지 못했어요. 잠시 후 다시 시도해주세요.");
     } finally {
       logoutLock.current = false;
       if (mounted.current) setLoggingOut(false);
@@ -68,7 +114,7 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
   // these controls before the notification policy/write adapter are agreed.
   const profile = state.status === "ready" && state.profile.origin === (demo ? "demo" : "service") ? state.profile : null;
   return <main ref={screen} className={`${homeStyles.screen} ${styles.screen}`} data-my-state={state.status} data-my-mode={demo ? "demo" : "service"}
-    aria-busy={state.status === "loading"}>
+    aria-busy={state.status === "loading" && !logoutDialog}>
     <HomeHeader title="마이페이지" showMascot={false} onNotice={setNotice} />
     <div className={styles.content}>
       <p className={styles.intro}>내 정보와 설정을 관리해보세요</p>
@@ -98,7 +144,7 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
         <MenuSection>
           {(["로그아웃", "회원탈퇴"] as const).map((label, index) => <button key={label} type="button" className={`${styles.row} ${styles.account}`}
             disabled={label === "로그아웃" && loggingOut} aria-busy={label === "로그아웃" && loggingOut || undefined}
-            onClick={() => demo ? setAccountDialog(label) : label === "로그아웃" && onLogout ? void logout() : pending(label)}>{label}<Chevron muted last={index === 1} /></button>)}
+            onClick={() => demo ? setAccountDialog(label) : label === "로그아웃" && onLogout ? confirmLogout() : pending(label)}>{label}<Chevron muted last={index === 1} /></button>)}
         </MenuSection>
         {demo ? <p id="my-demo-help" className={styles.help}>시연용 가상 프로필이에요. 알림 선택은 이 화면에서만 적용되며, 화면을 떠나거나 새로고침하면 초기화돼요.</p> : null}
       </> : <section className={homeStyles.status} aria-label="My Page 연결 상태">
@@ -108,11 +154,12 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
       </section>}
       {!profile && !demo && onLogout ? <MenuSection>
         <button type="button" className={`${styles.row} ${styles.account}`} disabled={loggingOut} aria-busy={loggingOut || undefined}
-          onClick={() => void logout()}>로그아웃<Chevron muted last /></button>
+          onClick={confirmLogout}>로그아웃<Chevron muted last /></button>
       </MenuSection> : null}
     </div>
     <HomeNavigation active="my" onHome={onHome} onSaved={onSaved} hideAI onNotice={setNotice} />
     {notice ? <p role="status" className={homeStyles.pendingNotice}>{notice}</p> : null}
     {accountDialog ? <DemoAccountDialog action={accountDialog} onClose={() => setAccountDialog(null)} /> : null}
+    {logoutDialog && !demo ? <ServiceLogoutDialog busy={loggingOut} error={logoutError} onConfirm={() => void logout()} onClose={closeLogout} /> : null}
   </main>;
 }

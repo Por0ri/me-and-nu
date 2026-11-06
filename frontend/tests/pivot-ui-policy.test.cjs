@@ -42,12 +42,15 @@ function render(step, mode, answers = {}) {
     dispatch() {}, onExit() {}, mode,
   }));
 }
-test('My Page 관심분야 관리: back button, animation shown as chosen, no checkbox or start button', () => {
-  const html = renderToStaticMarkup(React.createElement(InterestScreen, { selected: false, onToggle() {}, onNext() {}, busy: false, manage: { onBack() {} } }));
-  assert.match(html, /aria-label="뒤로가기"/);
-  assert.match(html, />선택중</);
-  assert.match(html, /이미 애니메이션을 탐색중입니다/);
-  assert.doesNotMatch(html, /type="checkbox"|애니메이션 선택하고 시작하기|alt="me;nu"/);
+test('My Page 관심분야 관리: actual subscription state, back button, no checkbox or start button', () => {
+  for (const selected of [false, true]) {
+    const html = renderToStaticMarkup(React.createElement(InterestScreen, { selected, onToggle() {}, onNext() {}, busy: false, manage: { onBack() {} } }));
+    assert.match(html, /aria-label="뒤로가기"/);
+    assert.match(html, selected ? />선택중</ : />미가입</);
+    assert.match(html, selected ? /이미 애니메이션을 탐색중입니다/ : /가입된 애니메이션 관심 분야가 없어요\./);
+    assert.doesNotMatch(html, selected ? /미가입|가입된 애니메이션 관심 분야가 없어요/ : /선택중|이미 애니메이션을 탐색중입니다/);
+    assert.doesNotMatch(html, /type="checkbox"|애니메이션 선택하고 시작하기|alt="me;nu"/);
+  }
   const onboarding = renderToStaticMarkup(React.createElement(InterestScreen, { selected: true, onToggle() {}, onNext() {}, busy: false }));
   assert.match(onboarding, /선택 완료/); assert.match(onboarding, /애니메이션 선택하고 시작하기/); assert.doesNotMatch(onboarding, /뒤로가기/);
 });

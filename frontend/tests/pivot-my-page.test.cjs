@@ -129,21 +129,27 @@ test('My Page assets retain their source hashes; shared chrome is an exact Figma
   }
 });
 
-function interactiveModule(file, replacements = {}) {
-  const hooks = []; let cursor = 0;
+function interactiveModule(file, replacements = {}, globals = {}) {
+  const instances = new Map(), effects = []; let hooks = [], cursor = 0;
   const react = { ...React,
     useRef(initial) { const index = cursor++; return hooks[index] ??= { current: initial }; },
-    useState(initial) { const index = cursor++; hooks[index] ??= { value: typeof initial === 'function' ? initial() : initial };
-      return [hooks[index].value, value => { hooks[index].value = typeof value === 'function' ? value(hooks[index].value) : value; }]; },
-    useReducer(reducer, argument, initialize) { const index = cursor++; hooks[index] ??= { value: initialize ? initialize(argument) : argument };
-      return [hooks[index].value, action => { hooks[index].value = reducer(hooks[index].value, action); }]; },
-    useCallback: callback => callback, useEffect() {},
+    useState(initial) { const state = hooks[cursor++] ??= { value: typeof initial === 'function' ? initial() : initial };
+      return [state.value, value => { state.value = typeof value === 'function' ? value(state.value) : value; }]; },
+    useReducer(reducer, argument, initialize) { const state = hooks[cursor++] ??= { value: initialize ? initialize(argument) : argument };
+      return [state.value, action => { state.value = reducer(state.value, action); }]; },
+    useCallback: callback => callback,
+    useEffect(setup, deps) {
+      const index = cursor++, previous = hooks[index];
+      if (previous && deps?.every((dep, i) => Object.is(dep, previous.deps?.[i]))) return;
+      const effect = { deps, setup, cleanup: previous?.cleanup }; hooks[index] = effect;
+      effects.push(() => { effect.cleanup?.(); effect.cleanup = setup(); });
+    },
   };
   const mod = { exports: {} };
   const output = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
-  vm.runInNewContext(output, { module: mod, exports: mod.exports, require(name) {
+  vm.runInNewContext(output, { ...globals, module: mod, exports: mod.exports, require(name) {
     if (Object.hasOwn(replacements, name)) return replacements[name];
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return require(name);
@@ -151,28 +157,196 @@ function interactiveModule(file, replacements = {}) {
     const relative = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(file), name);
     return load(relative + (fs.existsSync(path.join(root, relative + '.tsx')) ? '.tsx' : '.ts'));
   } });
-  return { exports: mod.exports, draw(component, props) { cursor = 0; return component(props); } };
+  return { exports: mod.exports,
+    draw(component, props) {
+      if (!instances.has(component)) instances.set(component, []);
+      hooks = instances.get(component); cursor = 0; return component(props);
+    },
+    flushEffects() { for (const setup of effects.splice(0)) setup(); },
+    replayEffects(component) {
+      const effects = (instances.get(component) ?? []).filter(hook => hook.setup);
+      for (const effect of effects) effect.cleanup?.();
+      for (const effect of effects) effect.cleanup = effect.setup();
+    },
+    unmount(component) { for (const hook of instances.get(component) ?? []) hook.cleanup?.(); instances.delete(component); },
+  };
 }
 const descendants = node => !node || typeof node !== 'object' ? [] : [node, ...React.Children.toArray(node.props?.children).flatMap(descendants)];
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 
-test('Service logout is available without a profile, blocks duplicate clicks and permits an explicit retry after failure', async () => {
-  let resolve, reject, calls = 0;
-  const pending = new Promise((yes, no) => { resolve = yes; reject = no; });
+const logoutRow = tree => descendants(tree).find(node => node.type === 'button' && React.Children.toArray(node.props.children).includes('로그아웃'));
+const serviceDialog = tree => descendants(tree).find(node => typeof node.props?.onConfirm === 'function');
+const serviceState = { status: 'ready', profile: { origin: 'service', nickname: '회원', maskedEmail: 'me***@example.com' } };
+
+// Native close() clears open synchronously, then queues a close event for a later task.
+function queuedNativeDialog(tree) {
+  const closeEvents = [];
+  const element = {
+    open: false,
+    showModal() { this.open = true; },
+    close() {
+      if (!this.open) return;
+      this.open = false;
+      closeEvents.push(() => tree.props.onClose({ currentTarget: element }));
+    },
+  };
+  tree.props.ref.current = element;
+  return { element, closeEvents, flushCloseEvents() { for (const dispatch of closeEvents.splice(0)) dispatch(); } };
+}
+
+test('Strict Mode delayed close preserves the reopened service dialog until explicit confirmation', async () => {
+  let calls = 0;
+  const fixture = interactiveModule('components/pivot/my-page-screen.tsx', {}, { document: { activeElement: null } });
+  const props = { state: serviceState, demo: false, onHome() {}, onRetry() {}, onLogout: async () => { calls++; } };
+  const draw = () => fixture.draw(fixture.exports.PivotMyPageScreen, props);
+  logoutRow(draw()).props.onClick();
+  const component = serviceDialog(draw()), tree = fixture.draw(component.type, component.props);
+  const native = queuedNativeDialog(tree);
+  fixture.flushEffects();
+  assert.equal(native.element.open, true);
+  fixture.replayEffects(component.type);
+  assert.equal(native.closeEvents.length, 1, 'cleanup queued a close event');
+  assert.equal(native.element.open, true, 'the second setup reopened the same dialog');
+  native.flushCloseEvents();
+  assert.ok(serviceDialog(draw()), 'the old close event must not dismiss the reopened confirmation');
+  assert.equal(native.element.open, true); assert.equal(calls, 0);
+  descendants(tree).find(node => node.type === 'button' && node.props.children === '로그아웃').props.onClick();
+  assert.equal(calls, 1);
+  await nextTurn(); assert.equal(serviceDialog(draw()), undefined);
+  fixture.unmount(component.type); native.flushCloseEvents();
+  assert.equal(native.element.open, false); assert.equal(calls, 1);
+});
+
+test('Repeated service dialog opens still cancel, Escape and accept a genuinely closed native dialog after effect replay', () => {
+  let calls = 0, focus = 0;
+  const trigger = { isConnected: true, focus() { focus++; } };
+  const fixture = interactiveModule('components/pivot/my-page-screen.tsx', {}, { document: { activeElement: trigger } });
+  const props = { state: serviceState, demo: false, onHome() {}, onRetry() {}, onLogout: async () => { calls++; } };
+  const draw = () => fixture.draw(fixture.exports.PivotMyPageScreen, props);
+  for (const dismiss of ['cancel', 'escape', 'close', 'cancel']) {
+    logoutRow(draw()).props.onClick();
+    const component = serviceDialog(draw()), tree = fixture.draw(component.type, component.props);
+    const native = queuedNativeDialog(tree);
+    fixture.flushEffects(); fixture.replayEffects(component.type); native.flushCloseEvents();
+    assert.ok(serviceDialog(draw())); assert.equal(native.element.open, true); assert.equal(calls, 0);
+    if (dismiss === 'cancel') descendants(tree).find(node => node.type === 'button' && node.props.children === '취소').props.onClick();
+    if (dismiss === 'escape') {
+      let prevented = false;
+      tree.props.onCancel({ preventDefault() { prevented = true; } });
+      assert.equal(prevented, true);
+    }
+    if (dismiss === 'close') {
+      native.element.close(); assert.equal(native.element.open, false);
+      native.flushCloseEvents();
+    }
+    assert.equal(serviceDialog(draw()), undefined); assert.equal(calls, 0);
+    assert.equal(props.state, serviceState);
+    const previousFocus = focus;
+    fixture.unmount(component.type); native.flushCloseEvents();
+    assert.equal(native.element.open, false); assert.equal(focus, previousFocus + 1);
+  }
+});
+
+test('Service logout opens confirmation without a request, including when the profile is loading or unavailable', () => {
+  for (const state of [serviceState, { status: 'loading' }, { status: 'error', message: '프로필 조회 실패' }]) {
+    let calls = 0;
+    const fixture = interactiveModule('components/pivot/my-page-screen.tsx');
+    const props = { state, demo: false, onHome() {}, onRetry() {}, onLogout: async () => { calls++; } };
+    const draw = () => fixture.draw(fixture.exports.PivotMyPageScreen, props);
+    assert.equal(serviceDialog(draw()), undefined);
+    logoutRow(draw()).props.onClick();
+    const opened = draw(), dialog = serviceDialog(opened);
+    assert.ok(dialog); assert.equal(calls, 0);
+    assert.equal(opened.props['aria-busy'], false, 'profile loading must not suppress modal announcements');
+    const html = renderToStaticMarkup(fixture.draw(dialog.type, dialog.props));
+    assert.match(html, /정말 로그아웃하시겠어요/);
+    assert.match(html, /다시 로그인하면 저장한 내용은 그대로 볼 수 있어요/);
+    assert.doesNotMatch(html, /Demo|로그아웃했/);
+  }
+});
+
+test('Service cancellation, Escape and native close dismiss confirmation without logging out', () => {
+  for (const dismiss of ['cancel', 'escape', 'close']) {
+    let calls = 0, prevented = false;
+    const fixture = interactiveModule('components/pivot/my-page-screen.tsx');
+    const props = { state: serviceState, demo: false, onHome() {}, onRetry() {}, onLogout: async () => { calls++; } };
+    const draw = () => fixture.draw(fixture.exports.PivotMyPageScreen, props);
+    logoutRow(draw()).props.onClick();
+    const dialog = serviceDialog(draw()), tree = fixture.draw(dialog.type, dialog.props);
+    if (dismiss === 'cancel') descendants(tree).find(node => node.type === 'button' && node.props.children === '취소').props.onClick();
+    if (dismiss === 'escape') tree.props.onCancel({ preventDefault() { prevented = true; } });
+    if (dismiss === 'close') tree.props.onClose({ currentTarget: { open: false } });
+    assert.equal(calls, 0); assert.equal(serviceDialog(draw()), undefined);
+    assert.equal(props.state, serviceState);
+    if (dismiss === 'escape') assert.equal(prevented, true);
+  }
+});
+
+test('Service confirmation blocks duplicate requests and dismissal while pending, then permits retry after failure', async () => {
+  let reject, calls = 0;
+  const pending = new Promise((_, no) => { reject = no; });
   const fixture = interactiveModule('components/pivot/my-page-screen.tsx');
   const props = { state: { status: 'error', message: '프로필을 불러오지 못했어요' }, demo: false, onHome() {}, onRetry() {},
     onLogout() { calls++; return calls === 1 ? pending : Promise.resolve(); } };
   const draw = () => fixture.draw(fixture.exports.PivotMyPageScreen, props);
-  const logout = tree => descendants(tree).find(node => node.type === 'button' && React.Children.toArray(node.props.children).includes('로그아웃'));
-  let tree = draw(); assert.ok(logout(tree));
-  const click = logout(tree).props.onClick; click(); click();
+  logoutRow(draw()).props.onClick(); assert.equal(calls, 0);
+  const initial = serviceDialog(draw());
+  initial.props.onConfirm(); initial.props.onConfirm(); initial.props.onClose();
   assert.equal(calls, 1);
-  tree = draw(); assert.equal(logout(tree).props.disabled, true); assert.equal(logout(tree).props['aria-busy'], true);
-  reject(new Error('private API diagnostics')); await nextTurn(); tree = draw();
-  assert.equal(logout(tree).props.disabled, false);
-  assert.ok(descendants(tree).some(node => node.props?.role === 'status' && node.props.children === '로그아웃하지 못했어요. 잠시 후 다시 시도해주세요.'));
-  logout(tree).props.onClick(); await nextTurn(); assert.equal(calls, 2);
-  resolve();
+  let tree = draw(), dialog = serviceDialog(tree);
+  assert.ok(dialog); assert.equal(dialog.props.busy, true);
+  assert.equal(logoutRow(tree).props.disabled, true);
+  const busyDialog = fixture.draw(dialog.type, dialog.props);
+  assert.equal(busyDialog.props['aria-busy'], true);
+  const buttons = descendants(busyDialog).filter(node => node.type === 'button');
+  assert.equal(buttons[0].props.disabled, true);
+  assert.equal(buttons[1].props['aria-disabled'], true);
+  assert.equal(buttons[1].props.disabled, undefined, 'confirmation retains keyboard focus');
+  busyDialog.props.onCancel({ preventDefault() {} }); assert.ok(serviceDialog(draw()));
+  reject(new Error('private API diagnostics')); await nextTurn(); tree = draw(); dialog = serviceDialog(tree);
+  assert.equal(dialog.props.busy, false); assert.equal(logoutRow(tree).props.disabled, false);
+  const failed = renderToStaticMarkup(fixture.draw(dialog.type, dialog.props));
+  assert.match(failed, /role="alert"[^>]*>로그아웃하지 못했어요/);
+  assert.match(failed, />다시 시도<\/button>/); assert.doesNotMatch(failed, /private API|로그아웃했/);
+  dialog.props.onConfirm(); await nextTurn(); assert.equal(calls, 2);
+  assert.equal(serviceDialog(draw()), undefined, 'only success dismisses the submitted confirmation');
+});
+
+test('Service dialog uses a labelled native modal, safe initial focus and restores only a connected trigger', () => {
+  for (const connected of [true, false]) {
+    let opens = 0, closes = 0, focus = 0;
+    const trigger = { isConnected: connected, focus(options) { assert.equal(options.preventScroll, true); focus++; } };
+    const fixture = interactiveModule('components/pivot/my-page-screen.tsx', {}, { document: { activeElement: trigger } });
+    const props = { state: serviceState, demo: false, onHome() {}, onRetry() {}, onLogout: async () => {} };
+    const draw = () => fixture.draw(fixture.exports.PivotMyPageScreen, props);
+    logoutRow(draw()).props.onClick(); const component = serviceDialog(draw());
+    const tree = fixture.draw(component.type, component.props);
+    tree.props.ref.current = { showModal() { opens++; }, close() { closes++; } };
+    fixture.flushEffects();
+    assert.equal(opens, 1); assert.equal(tree.type, 'dialog'); assert.equal(tree.props['aria-modal'], 'true');
+    const ids = new Set(descendants(tree).map(node => node.props?.id));
+    for (const id of (tree.props['aria-labelledby'] + ' ' + tree.props['aria-describedby']).split(' ')) assert.ok(ids.has(id));
+    const cancel = descendants(tree).find(node => node.type === 'button' && node.props.children === '취소');
+    assert.equal(cancel.props.autoFocus, true);
+    fixture.unmount(component.type);
+    assert.equal(closes, 1); assert.equal(focus, connected ? 1 : 0);
+  }
+});
+
+test('Demo account dialogs retain their disclosure and never call a supplied service logout', () => {
+  let calls = 0;
+  const fixture = interactiveModule('components/pivot/my-page-screen.tsx');
+  const props = { state: { ...serviceState, profile: { ...serviceState.profile, origin: 'demo' } }, demo: true,
+    onHome() {}, onRetry() {}, onLogout: async () => { calls++; } };
+  const draw = () => fixture.draw(fixture.exports.PivotMyPageScreen, props);
+  for (const action of ['로그아웃', '회원탈퇴']) {
+    descendants(draw()).find(node => node.type === 'button' && React.Children.toArray(node.props.children).includes(action)).props.onClick();
+    const tree = draw(), dialog = descendants(tree).find(node => node.props?.action === action);
+    assert.ok(dialog); assert.equal(serviceDialog(tree), undefined);
+    const html = renderToStaticMarkup(fixture.draw(dialog.type, dialog.props));
+    assert.ok(html.includes('Demo ' + action + ' 안내'));
+    dialog.props.onClose(); assert.equal(calls, 0);
+  }
 });
 
 test('Session logout clears personal state and replaces the route only after API success; failed attempts keep the session', async () => {
