@@ -30,6 +30,7 @@ from app.models.onboarding_catalog import (
 from app.models.recommendation import (
     ContentEntityLink, RecommendationItem, RecommendationRound, UserEvent,
 )
+from app.models.report import ContentReport, Inquiry
 from app.models.user import UserAccount
 from app.models.v1 import (
     AuthSession,
@@ -82,6 +83,8 @@ __all__ = [
     "Topic",
     "TopicCluster",
     "Notification",
+    "ContentReport",
+    "Inquiry",
     "Tap",
     "TapTopic",
     "UserAccount",

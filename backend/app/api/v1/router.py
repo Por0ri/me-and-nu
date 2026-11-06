@@ -6,15 +6,18 @@ from app.api.v1.auth.router import router as auth_router
 from app.api.v1.auth.oauth import router as oauth_router
 from app.api.v1.chat.router import router as chat_router
 from app.api.v1.contents.router import router as contents_router
+from app.api.v1.inquiries.router import router as inquiries_router
 from app.api.v1.me.taste import router as my_taste_router
 from app.api.v1.me.topics import router as my_topics_router
 from app.api.v1.onboarding.router import router as onboarding_router
 from app.api.v1.policies.router import router as policies_router
+from app.api.v1.reports.router import router as reports_router
 from app.api.v1.subtopics.router import router as subtopics_router
 from app.api.v1.topics.router import router as topics_router
 from app.api.v1.users.me.activity import router as activity_router
 from app.api.v1.users.me.bookmarks import router as bookmarks_router
 from app.api.v1.users.me.consents import router as consents_router
+from app.api.v1.users.me.my_activity import router as my_activity_router
 from app.api.v1.users.me.notifications import router as notifications_router
 from app.api.v1.users.me.router import router as profile_router
 
@@ -34,3 +37,6 @@ router.include_router(bookmarks_router)
 router.include_router(activity_router)
 router.include_router(chat_router)
 router.include_router(notifications_router)
+router.include_router(my_activity_router)
+router.include_router(reports_router)
+router.include_router(inquiries_router)
