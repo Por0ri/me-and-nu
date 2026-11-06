@@ -11,7 +11,8 @@ const overlaps = (a: Rect, b: Rect, gap = 0) =>
 /** Keep a safe temporary position until scrolling settles; never move for a near miss. */
 export function chooseHomeAIPosition(base: Rect, leftLane: number, current: Offset,
   obstacles: readonly Rect[], viewport: Rect, mayReturn: boolean): Offset | null {
-  const at = ({ x, y }: Offset): Rect => ({ left: base.left - 8 + x, right: base.left + 48 + x, top: base.top + y, bottom: base.top + 56 + y });
+  // The SVG includes a non-interactive shadow. Only the actual button is a hit target.
+  const at = ({ x, y }: Offset): Rect => ({ left: base.left + x, right: base.right + x, top: base.top + y, bottom: base.bottom + y });
   const free = (offset: Offset, gap = 0) => {
     const box = at(offset);
     return box.left >= viewport.left && box.right <= viewport.right && box.top >= viewport.top && box.bottom <= viewport.bottom &&
@@ -21,16 +22,23 @@ export function chooseHomeAIPosition(base: Rect, leftLane: number, current: Offs
   if (!displaced && free(home)) return home;
   if (displaced && mayReturn && free(home, 4)) return home;
   if (displaced && free(current)) return current;
-  // The empty left end of the existing dock is preferred over moving vertically.
-  const left = leftLane - base.left;
-  for (let rise = 0; rise <= viewport.bottom - viewport.top; rise += 64) {
-    for (const x of [left, 0]) {
-      if (x === 0 && rise === 0) continue;
-      const candidate = { x, y: -rise };
-      if (free(candidate, 8)) return candidate;
+  // Project onto control edges instead of jumping to the left dock or a 64px row.
+  // Keep a safe displaced position above; when blocked, minimize the next movement.
+  const origin = displaced ? current : home, gap = 4;
+  const xs = new Set([origin.x, 0, leftLane - base.left, viewport.left - base.left, viewport.right - base.right]);
+  const ys = new Set([origin.y, 0, viewport.top - base.top, viewport.bottom - base.bottom]);
+  for (const rect of obstacles) {
+    xs.add(rect.left - gap - base.right); xs.add(rect.right + gap - base.left);
+    ys.add(rect.top - gap - base.bottom); ys.add(rect.bottom + gap - base.top);
+  }
+  let nearest: Offset | null = null, distance = Infinity;
+  for (const x of xs) {
+    for (const y of ys) {
+      const candidate = { x, y }, squared = (x - origin.x) ** 2 + (y - origin.y) ** 2;
+      if (squared < distance && free(candidate, gap)) { nearest = candidate; distance = squared; }
     }
   }
-  return null;
+  return nearest;
 }
 
 export function HomeAIButton({ onNotice }: { onNotice: (message: string) => void }) {
@@ -59,6 +67,7 @@ export function HomeAIButton({ onNotice }: { onNotice: (message: string) => void
       frame = 0;
       if (pressed) return;
       const base = slot!.getBoundingClientRect(), dock = slot!.parentElement!.getBoundingClientRect();
+      if (!base.width || !base.height) return; // Home remains mounted while Detail is open.
       const visual = window.visualViewport;
       const viewport = { left: visual?.offsetLeft ?? 0, top: visual?.offsetTop ?? 0,
         right: (visual?.offsetLeft ?? 0) + (visual?.width ?? innerWidth), bottom: (visual?.offsetTop ?? 0) + (visual?.height ?? innerHeight) };
@@ -74,14 +83,17 @@ export function HomeAIButton({ onNotice }: { onNotice: (message: string) => void
       lastMotion = performance.now(); window.clearTimeout(settle);
       schedule(); settle = window.setTimeout(schedule, 190);
     };
+    // Horizontal carousel scrolls do not move the fixed dock or card action targets.
+    const scroll = (event: Event) => { if (event.target === document) motion(); };
     const down = () => { pressed = true; };
     const up = () => { pressed = false; schedule(); };
     const resize = new ResizeObserver(motion); resize.observe(root); resize.observe(slot);
     const mutation = new MutationObserver(schedule);
     mutation.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "inert", "hidden"] });
-    window.addEventListener("scroll", motion, { passive: true, capture: true });
+    window.addEventListener("scroll", scroll, { passive: true, capture: true });
     window.addEventListener("resize", motion);
     window.visualViewport?.addEventListener("resize", motion);
+    window.visualViewport?.addEventListener("scroll", motion);
     root.addEventListener("focusin", schedule); root.addEventListener("focusout", schedule);
     root.addEventListener("pointerover", schedule); root.addEventListener("pointerout", schedule);
     control.addEventListener("pointerdown", down);
@@ -89,8 +101,9 @@ export function HomeAIButton({ onNotice }: { onNotice: (message: string) => void
     update();
     return () => {
       cancelAnimationFrame(frame); window.clearTimeout(settle); resize.disconnect(); mutation.disconnect();
-      window.removeEventListener("scroll", motion, true); window.removeEventListener("resize", motion);
+      window.removeEventListener("scroll", scroll, true); window.removeEventListener("resize", motion);
       window.visualViewport?.removeEventListener("resize", motion);
+      window.visualViewport?.removeEventListener("scroll", motion);
       root.removeEventListener("focusin", schedule); root.removeEventListener("focusout", schedule);
       root.removeEventListener("pointerover", schedule); root.removeEventListener("pointerout", schedule);
       control.removeEventListener("pointerdown", down);

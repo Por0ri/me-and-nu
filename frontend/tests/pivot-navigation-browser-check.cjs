@@ -50,7 +50,7 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
   assert.equal(data.inert, compact);
   if (ai && !compact) {
     const control = page.locator('main:visible').locator('[data-home-ai], button[aria-label="AI 질문 안내"]');
-    // Home's unchanged collision handling may move it after scrolling.
+    // Home's collision handling may move it after scrolling.
     await page.waitForFunction(() => {
       const main = [...document.querySelectorAll('main')].find(el => el.getBoundingClientRect().width > 0);
       const n = main.querySelector('nav').getBoundingClientRect();
@@ -58,7 +58,7 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
       return !(a.left < n.right && a.right > n.left && a.top < n.bottom && a.bottom > n.top);
     });
     data.ai = await control.evaluate(el => el.getBoundingClientRect().toJSON());
-    near(data.ai.width, 40, 'Unchanged AI width'); near(data.ai.height, 40, 'Unchanged AI height');
+    near(data.ai.width, 48, 'Figma AI width'); near(data.ai.height, 48, 'Figma AI height');
     assert.equal(overlap(data.rect, data.ai), false);
   }
   return data;
@@ -73,9 +73,15 @@ async function lastContent(page, selector) {
 async function expanded(page, inset = 0) {
   const toggle = page.getByRole('button', { name: 'AI 질문 안내', exact: true });
   await toggle.click();
+  await page.waitForFunction(() => document.querySelector('button[aria-label="AI 질문 안내"]')?.getAttribute('aria-expanded') === 'true');
+  const target = await toggle.boundingBox();
+  near(target.width, 40, 'Figma expanded AI width'); near(target.height, 40, 'Figma expanded AI height');
+  assert.equal(await toggle.locator('img').getAttribute('src'), '/pivot/detail/ai-expanded.svg');
   const data = await measure(page, 'SAVE', { compact: true, ai: true, inset });
   const prompt = page.getByRole('button', { name: '이 콘텐츠에서 어떤 점이 궁금하세요?', exact: true });
   const bar = await prompt.evaluate(el => el.parentElement.getBoundingClientRect().toJSON());
+  const promptTarget = await prompt.boundingBox();
+  assert.ok(promptTarget.x + promptTarget.width <= target.x, 'AI prompt and toggle targets do not overlap');
   assert.ok(data.rect.top >= bar.top && data.rect.bottom <= bar.bottom, 'No vertical protrusion');
   assert.ok(data.rect.left >= bar.left && data.rect.right <= bar.right, 'Compact NAV fits inside AI prompt');
   const originalUrl = page.url();
@@ -152,7 +158,7 @@ async function run(browser, viewport) {
       checks[`safeHome${inset}`] = await measure(page, 'HOME', { inset, ai: true });
       checks[`safeHomeLast${inset}`] = await lastContent(page, '[data-home-post]');
       const anchor = await page.locator('[data-home-ai]').evaluate(el => el.parentElement.getBoundingClientRect().toJSON());
-      near(anchor.y, viewport.height - Math.max(20, inset) - 40, 'Original AI anchor preserved');
+      near(anchor.y, viewport.height - Math.max(12, inset) - 48, 'Figma AI anchor follows safe area');
       await page.locator('[data-demo-bookmark]').first().click();
       await nav(page).getByRole('button', { name: 'SAVE', exact: true }).click(); await ready(page, 'saved');
       checks[`safeSaved${inset}`] = await measure(page, 'SAVE', { inset });

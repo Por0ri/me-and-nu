@@ -106,13 +106,12 @@ async function hit(locator) {
   if (!result.hit) console.error('HIT DIAGNOSTIC', result);
   return result.hit;
 }
-// Measure the visible image/button footprint independently of the positioning helper.
+// Measure the interactive face; the exported SVG includes a non-interactive shadow.
 async function aiObstructions(ai) {
   return ai.evaluate(el => {
-    const button = el.getBoundingClientRect(), image = el.querySelector('img').getBoundingClientRect();
+    const button = el.getBoundingClientRect();
     const anchor = el.parentElement.getBoundingClientRect();
-    const actual = { left: Math.min(button.left, image.left), right: Math.max(button.right, image.right),
-      top: Math.min(button.top, image.top), bottom: Math.max(button.bottom, image.bottom) };
+    const actual = button;
     const original = { left: actual.left + anchor.left - button.left, right: actual.right + anchor.left - button.left,
       top: actual.top + anchor.top - button.top, bottom: actual.bottom + anchor.top - button.top };
     const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -727,7 +726,15 @@ async function run(browser, viewport) {
       await card.evaluate(el => el.scrollIntoView({ block: 'end', behavior: 'instant' }));
       await until(async () => await ai.getAttribute('data-ai-displaced') === 'true', 'AI moves only while overlapping visible controls');
       for (const button of [card.getByRole('button', { name: '좋아요', exact: true }), card.getByRole('button', { name: '저장', exact: true }), card.locator('[data-home-detail]'), ai]) assert.ok(await hit(button));
-      const size = await ai.boundingBox(); assert.equal(size.width, 40); assert.equal(size.height, 40);
+      const size = await ai.boundingBox(); assert.equal(size.width, 48); assert.equal(size.height, 48);
+      const probes = await ai.evaluate(el => {
+        const b = el.getBoundingClientRect(), img = el.querySelector('img');
+        const hit = (x, y) => el.contains(document.elementFromPoint(x, y));
+        return { face: [[1, 24], [47, 24], [24, 1], [24, 47]].map(([x, y]) => hit(b.x + x, b.y + y)),
+          shadow: hit(b.x - 4, b.y + 24), imageWidth: img.naturalWidth, events: getComputedStyle(img).pointerEvents };
+      });
+      assert.ok(probes.face.every(Boolean)); assert.equal(probes.shadow, false);
+      assert.equal(probes.imageWidth, 64); assert.equal(probes.events, 'none');
       await capture('fixed-nav-obstruction-resolved');
       // The existing informational button has aria-disabled=true, so locator.click waits for enabled.
       // Use real input at the verified hit target; keep the visible notice assertion.
@@ -743,16 +750,16 @@ async function run(browser, viewport) {
       const detail = page.locator('[data-detail-state="ready"]'); await detail.waitFor();
       await detail.getByRole('button', { name: '뒤로가기', exact: true }).click(); await home.waitFor();
       await page.evaluate(() => scrollTo(0, 0));
-      assert.ok((await aiObstructions(ai)).original.length > 0, 'at scrollY=0 the next card still occupies the default AI position');
-      await until(async () => await ai.getAttribute('data-ai-displaced') === 'true', 'AI stays displaced while a visible control overlaps its anchor');
+      const blocked = (await aiObstructions(ai)).original.length > 0;
+      await until(async () => await ai.getAttribute('data-ai-displaced') === String(blocked), 'AI follows actual anchor collisions at this viewport');
       assert.deepEqual((await aiObstructions(ai)).actual, [], 'temporary position clears the visible controls');
       await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
       assert.deepEqual((await aiObstructions(ai)).original, [], 'return is tested only after the actual default-position collision clears');
       await until(async () => await ai.getAttribute('data-ai-displaced') === 'false', 'AI returns after the collision clears and scroll settles');
       assert.deepEqual((await aiObstructions(ai)).actual, []);
       const homeRect = await home.boundingBox(), original = await ai.boundingBox();
-      assert.ok(Math.abs(original.x - (homeRect.x + homeRect.width - 34 - 40)) < 1);
-      assert.ok(Math.abs(original.y - (viewport.height - 20 - 40)) < 1);
+      assert.ok(Math.abs(original.x - (homeRect.x + homeRect.width - (viewport.width <= 340 ? 16 : 34) - 48)) < 1);
+      assert.ok(Math.abs(original.y - (viewport.height - 12 - 48)) < 1);
       assert.ok(await hit(ai)); await capture('ai-default-position');
     });
     await check('fast vertical scroll and boundary jitter do not hide or repeatedly move AI', async () => {
@@ -773,8 +780,8 @@ async function run(browser, viewport) {
       await page.evaluate(async () => {
         for (const y of [0, 160, 400, 650, 320, 120, 0]) { scrollTo(0, y); await new Promise(resolve => requestAnimationFrame(resolve)); }
       });
-      assert.ok((await aiObstructions(ai)).original.length > 0, 'the unchanged rapid-scroll sequence ends at a genuine collision');
-      await until(async () => await ai.getAttribute('data-ai-displaced') === 'true', 'rapid scroll preserves avoidance while the anchor is blocked');
+      const blocked = (await aiObstructions(ai)).original.length > 0;
+      await until(async () => await ai.getAttribute('data-ai-displaced') === String(blocked), 'rapid scroll settles according to actual collisions');
       assert.deepEqual((await aiObstructions(ai)).actual, []);
       await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
       assert.deepEqual((await aiObstructions(ai)).original, [], 'clear the collision before requiring the default position');

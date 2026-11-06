@@ -148,8 +148,9 @@
 .navigation [aria-current="page"] > span { background: #efe7ff; font-weight: 600; }
 /* Match Detail's unchanged 40px AI dock while the shared navigation is inert. */
 .bottomBar[data-compact] { bottom: max(20px, env(safe-area-inset-bottom)); height: 40px; }
-.aiButton { position: absolute; right: 34px; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; }
-.aiButton img { position: absolute; left: -8px; top: 0; max-width: none; }
+/* Figma: 48px face / hit target; the native 64px SVG includes its shadow. */
+.aiButton { position: absolute; right: 34px; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; }
+.aiButton img { position: absolute; left: -8px; top: 0; max-width: none; pointer-events: none; }
 /* Informational status only: let clicks, swipes and scrolling reach the content below. */
 .pendingNotice { position: fixed; z-index: 8; left: 50%; bottom: 76px; width: min(327px, calc(100vw - 48px)); margin: 0; padding: 12px; transform: translateX(-50%); border-radius: 8px; background: white; box-shadow: 0 2px 12px #0002; color: var(--home-ink); font-size: 12px; line-height: 19px; pointer-events: none; }
 @media (max-width: 340px) {
@@ -170,9 +171,7 @@
 .footer .button { width: 100%; }
 
 /* Preserve the Figma dock anchor; only the AI button moves during a collision. */
-/* Preserve the previous AI y = viewport - max(20px, inset) - 40px,
-   including when the 48px nav is lifted by a nonzero safe area. */
-.aiAnchor { position: absolute; right: 34px; top: clamp(0px, calc(env(safe-area-inset-bottom) - 12px), 8px); width: 40px; height: 40px; pointer-events: none; }
+/* Align the 48px face to the existing dock: y752 at 375x812. */
+.aiAnchor { position: absolute; right: 34px; top: 0; width: 48px; height: 48px; pointer-events: none; }
 .aiAnchor .aiButton { right: 0; top: 0; transform: translate(var(--home-ai-x, 0px), var(--home-ai-y, 0px)); transition: none; }
-.aiAnchor .aiButton img { pointer-events: none; }
 @media (max-width: 340px) { .aiAnchor { right: 16px; } }

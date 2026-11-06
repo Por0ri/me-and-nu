@@ -31,8 +31,10 @@
 .status p { margin: 0 0 16px; }
 .status button { display: block; width: 100%; min-height: 44px; padding: 8px; margin-top: 12px; border: 1px solid var(--pivot-primary); border-radius: 8px; background: white; color: var(--pivot-primary); }
 .aiDock { position: fixed; z-index: 7; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); width: min(307px, calc(100vw - 68px)); height: 40px; transform: translateX(-50%); pointer-events: none; }
-.aiButton { position: absolute; right: 0; top: 0; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; }
-.aiButton img { position: absolute; top: 0; left: -8px; max-width: none; }
+.aiDock:has(.aiButton[aria-expanded="false"]) { bottom: max(12px, env(safe-area-inset-bottom)); height: 48px; }
+.aiButton { position: absolute; right: 0; top: 0; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; transition: none; }
+.aiButton[aria-expanded="true"] { width: 40px; height: 40px; }
+.aiButton img { position: absolute; top: 0; left: -8px; max-width: none; pointer-events: none; }
 .aiPrompt { position: absolute; inset: 0; border-radius: 24px; background: linear-gradient(90deg, rgb(247 242 255 / 60%), rgb(224 186 251 / 60%)); backdrop-filter: blur(12px); box-shadow: 0 8px 24px #0000001f; pointer-events: auto; }
 .aiPrompt button { width: calc(100% - 48px); height: 40px; padding: 8px 0 8px 16px; border: 0; border-radius: 24px; background: transparent; color: #52525b; font-size: 12px; line-height: 18px; text-align: left; }
 .notice { position: fixed; z-index: 8; bottom: 76px; left: 50%; width: min(327px, calc(100vw - 48px)); transform: translateX(-50%); margin: 0; padding: 12px; background: white; border-radius: 8px; box-shadow: 0 2px 12px #0002; font-size: 12px; line-height: 19px; pointer-events: none; }
