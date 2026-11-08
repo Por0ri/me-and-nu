@@ -945,11 +945,11 @@ def test_preflight_returns_to_crawler_when_cover_has_no_source_image() -> None:
     assert result["qa_report"][0]["code"] == "SOURCE_IMAGE_POOL_INSUFFICIENT"
 
 
-def test_information_with_one_verified_fact_can_reach_generation_preflight(monkeypatch) -> None:
+def test_information_with_two_verified_facts_can_reach_generation_preflight(monkeypatch) -> None:
     import ani_menu_agent.nodes as nodes
 
     payload = load_sample()
-    payload["facts"] = payload["facts"][:1]
+    payload["facts"] = payload["facts"][:2]
     payload["menu_work_ids"] = [1]
     package = ContentPackage.model_validate(payload)
     monkeypatch.setattr(nodes, "validate_generation_sources", lambda *_args: ["source"])
@@ -1131,12 +1131,12 @@ def test_layout_director_reassigns_repeated_image_choices_to_unique_assets() -> 
     assert {card.image_reuse_mode for card in rebuilt.cards} == {"unique"}
 
 
-def test_layout_director_blocks_when_image_pool_is_smaller_than_deck() -> None:
+def test_layout_director_blocks_when_image_pool_is_below_the_minimum_deck() -> None:
     from ani_menu_agent.nodes import layout_director
 
     payload = load_sample()
     package = ContentPackage.model_validate(payload)
-    package.images = package.images[:3]
+    package.images = package.images[:1]
     copies = [CopyCard.model_validate(card) for card in payload["cards"]]
     result = layout_director(
         {
@@ -1148,6 +1148,29 @@ def test_layout_director_blocks_when_image_pool_is_smaller_than_deck() -> None:
 
     assert result["status"] == "needs_crawler_update"
     assert result["qa_report"][0]["code"] == "SOURCE_IMAGE_MISSING"
+
+
+def test_a_single_verified_fact_cannot_become_a_deck(monkeypatch) -> None:
+    from ani_menu_agent import nodes
+
+    payload = load_sample()
+    payload["facts"] = payload["facts"][:1]
+    payload["menu_work_ids"] = [1]
+    monkeypatch.setattr(nodes, "validate_generation_sources", lambda *_args: ["source"])
+    monkeypatch.setattr(nodes, "attach_menu_work_ids", lambda _package: None)
+    monkeypatch.setattr(nodes, "supported_content_types_for_sources", lambda _ids: ["news"])
+
+    result = nodes.rights_preflight({"package": payload, "trace": [], "allow_llm": True})
+
+    assert result["status"] == "needs_crawler_update"
+    assert result["qa_report"][0]["code"] == "FACT_DIVERSITY_LOW"
+
+
+def test_notes_about_the_evidence_are_not_reader_copy() -> None:
+    payload = load_sample()
+    payload["cards"][1]["title_lines"] = ["방송 공지는 있지만 작품 연결은 미확인"]
+
+    assert "AGENT_MONOLOGUE" in issue_codes(payload)
 
 
 def test_layouts_follow_image_shape_and_keep_copy_in_the_lower_band() -> None:

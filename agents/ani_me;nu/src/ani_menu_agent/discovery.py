@@ -352,17 +352,24 @@ def _catalog_work_titles_in_text(text: str) -> list[str]:
     lead = re.split(r"(?<=[.!?。！？])\s+", text, maxsplit=1)[0][:240]
     lead = re.sub(r"[（(][^）)]{1,100}[）)]", " ", lead)
     normalized_text = _normalized_tag(lead)
+    latin_words = set(re.findall(r"[a-z0-9]+", lead.casefold()))
+
+    def named_in_lead(alias: str) -> bool:
+        normalized_alias = _normalized_tag(alias)
+        if len(normalized_alias) < 3 or normalized_alias not in normalized_text:
+            return False
+        # A one-word Latin title must be a whole word: DIVE!! is not "HIDIVE".
+        if normalized_alias.isascii() and " " not in alias.strip():
+            return normalized_alias in latin_words
+        return True
+
     matches: list[tuple[int, str]] = []
     for work in load_work_catalog():
         aliases = [
             str(work.get(key) or "")
             for key in ("title_ko", "title_romaji", "title_english", "title_native")
         ]
-        if any(
-            len(_normalized_tag(alias)) >= 3 and _normalized_tag(alias) in normalized_text
-            for alias in aliases
-            if alias.strip()
-        ):
+        if any(named_in_lead(alias) for alias in aliases if alias.strip()):
             matches.append(
                 (
                     int(work["menu_work_id"]),
@@ -472,6 +479,30 @@ def parse_mastodon_tag_timeline(payload: list[dict], source: Source) -> list[Dis
         )
     )
     return items
+
+
+MAX_MASTODON_THREAD_LOOKUPS = 5
+
+
+def _thread_worth_fetching(status: object) -> bool:
+    """Spend the capped thread lookups only on posts that can become a real discussion."""
+    if (
+        not isinstance(status, dict)
+        or status.get("in_reply_to_id")
+        or status.get("reblog")
+        or int(status.get("replies_count") or 0) < 1
+        or (status.get("account") or {}).get("bot")
+    ):
+        return False
+    tags = [
+        str(tag.get("name") or "").strip()
+        for tag in status.get("tags", [])
+        if isinstance(tag, dict) and tag.get("name")
+    ]
+    body = BeautifulSoup(str(status.get("content") or ""), "html.parser").get_text(
+        " ", strip=True
+    )
+    return bool(_catalog_work_titles_for_tags(tags) or _catalog_work_titles_in_text(body))
 
 
 def _clean_public_mastodon_status(status: dict) -> dict[str, str] | None:
@@ -1411,10 +1442,8 @@ def collect_candidates(
                         context_requests = 0
                         for status in timeline:
                             if (
-                                isinstance(status, dict)
-                                and not status.get("in_reply_to_id")
-                                and not status.get("reblog")
-                                and context_requests < 3
+                                context_requests < MAX_MASTODON_THREAD_LOOKUPS
+                                and _thread_worth_fetching(status)
                             ):
                                 status = dict(status)
                                 status["community_posts"] = _mastodon_thread_posts(

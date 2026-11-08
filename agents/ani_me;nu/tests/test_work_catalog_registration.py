@@ -104,31 +104,26 @@ def _install_fake_kitsu(monkeypatch, payload: dict) -> None:
     monkeypatch.setattr("ani_menu_agent.work_catalog_registration.pace_host", lambda *_args: None)
 
 
-def test_exact_kitsu_title_registers_next_id_and_future_title_matching(monkeypatch, tmp_path):
+def test_exact_kitsu_title_logs_new_work_without_assigning_an_id(monkeypatch, tmp_path):
     _write_catalog(tmp_path)
     monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", tmp_path)
     work_catalog.load_work_catalog.cache_clear()
     work_catalog._aliases.cache_clear()
     _install_fake_kitsu(monkeypatch, _kitsu_payload(("9901", "Mysterious Anime")))
+    audit: dict = {}
 
     evidence = register_unmatched_work_from_kitsu(
-        ["Mysterious Anime announces its October debut"]
+        ["Mysterious Anime announces its October debut"], audit=audit
     )
 
-    assert evidence is not None
-    assert evidence.menu_work_id == 11
-    assert evidence.basis == "kitsu_catalog_title"
-    assert work_catalog.resolve_title_work_ids("Mysterious Anime") == [11]
+    assert evidence is None
+    assert audit["status"] == "new_work_logged_pending_team_review"
     with (tmp_path / "menu_works.csv").open(encoding="utf-8-sig", newline="") as stream:
-        registered = next(row for row in csv.DictReader(stream) if row["menu_work_id"] == "11")
-    assert registered["title_english"] == "Mysterious Anime"
-    assert registered["anilist_ids"] == ""
-    with (tmp_path / "menu_work_external_entries.csv").open(
-        encoding="utf-8-sig", newline=""
-    ) as stream:
-        external = list(csv.DictReader(stream))
-    assert external[0]["external_id"] == "9901"
-    assert external[0]["menu_work_id"] == "11"
+        assert len(list(csv.DictReader(stream))) == 1
+    with (tmp_path / "discovered_works.csv").open(encoding="utf-8-sig", newline="") as stream:
+        discovered = list(csv.DictReader(stream))
+    assert discovered[0]["kitsu_id"] == "9901"
+    assert discovered[0]["status"] == "pending_team_review"
 
 
 def test_kitsu_confirmed_movie_title_can_map_to_existing_parent_id(monkeypatch, tmp_path):
@@ -192,7 +187,7 @@ def test_ambiguous_kitsu_title_results_are_not_registered(monkeypatch, tmp_path)
         assert len(list(csv.DictReader(stream))) == 1
 
 
-def test_structured_about_title_can_register_catalog_confirmed_new_work(
+def test_structured_about_title_logs_catalog_confirmed_new_work(
     monkeypatch, tmp_path
 ):
     _write_catalog(tmp_path)
@@ -208,5 +203,7 @@ def test_structured_about_title_can_register_catalog_confirmed_new_work(
         ],
     )
 
-    assert evidence is not None
-    assert evidence.menu_work_id == 11
+    assert evidence is None
+    with (tmp_path / "discovered_works.csv").open(encoding="utf-8-sig", newline="") as stream:
+        discovered = list(csv.DictReader(stream))
+    assert discovered[0]["kitsu_id"] == "9905"

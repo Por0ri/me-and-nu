@@ -530,7 +530,7 @@ def test_humor_candidate_uses_trend_only_unverified_package_and_shared_graph(
         lambda state: captured.update(image_repository=state["repository"]),
     )
 
-    def fake_generate(request_id, kind, requested_content_type):
+    def fake_generate(request_id, kind, requested_content_type, **_kwargs):
         captured["generation_args"] = (request_id, kind, requested_content_type)
         return captured["prepared"], {
             "status": "ready_for_feed",
@@ -547,6 +547,16 @@ def test_humor_candidate_uses_trend_only_unverified_package_and_shared_graph(
         "source_id": source.id,
         "published_at": "2026-10-23T10:00:00Z",
         "summary": "나루토와 사스케의 대결 조건을 두고 팬들이 재미있게 의견을 나눴다.",
+        "community_posts": [
+            {
+                "text": "나루토와 사스케가 같은 조건으로 붙으면 누가 이길지 궁금하다.",
+                "url": "https://social.example/@fan/123",
+            },
+            {
+                "text": "조건을 똑같이 맞추는 순간 작품 속 설정이 전부 달라진다고 본다.",
+                "url": "https://social.example/@reply/124",
+            },
+        ],
     }
 
     result = cli._crawl_generate_humor_candidate(candidate, tmp_path / "humor.json")

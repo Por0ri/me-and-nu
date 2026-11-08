@@ -377,6 +377,17 @@ def _body_evidence_is_grounded(
     return len(quote) >= 20 and quote in body and len(title) >= 3 and title in quote_title
 
 
+def _is_shortened_or_untranslated_name(evidence_title: str, catalog_titles: set[str]) -> bool:
+    """Whether a headline name can differ from these titles only in form, not in work."""
+    evidence = _normalized_title_evidence(evidence_title)
+    if len(evidence) >= 3 and any(
+        evidence in _normalized_title_evidence(title) for title in catalog_titles
+    ):
+        return True
+    has_hangul = re.compile(r"[가-힣]").search
+    return bool(has_hangul(evidence_title)) and not any(map(has_hangul, catalog_titles))
+
+
 def _is_generic_listing_url(source_url: str | None) -> bool:
     path = urlparse(source_url or "").path.casefold()
     return bool(
@@ -665,7 +676,7 @@ def resolve_unmatched_work_with_llm(
             match.menu_work_id: [
                 alias
                 for alias in aliases_by_id[match.menu_work_id]
-                if len(_normalized_title_evidence(alias)) >= 4
+                if len(_normalized_title_evidence(alias)) >= 2
                 and _normalized_title_evidence(alias) in normalized_quote
             ]
             for match in selected
@@ -690,6 +701,32 @@ def resolve_unmatched_work_with_llm(
                 source_url=source_url,
             )
             if confirmed is None:
+                # A confident headline reading can link the work when the name differs from
+                # the catalog only by abbreviation or by a Korean title it does not have yet.
+                if (
+                    decision.evidence_basis == "headline_or_about"
+                    and decision.confidence >= 0.9
+                    and _is_shortened_or_untranslated_name(
+                        decision.evidence_title, aliases_by_id[ids[0]]
+                    )
+                ):
+                    if audit is not None:
+                        audit.update(
+                            {
+                                "status": "matched",
+                                "catalog_alias_confirmation": "llm_headline_only",
+                                "ungrounded_ids": ungrounded_ids,
+                            }
+                        )
+                    return [
+                        WorkMatchEvidence(
+                            menu_work_id=ids[0],
+                            basis="llm_title_match",
+                            matched_value=decision.evidence_title,
+                            evidence_url=source_url,
+                            confidence=decision.confidence,
+                        )
+                    ]
                 logger.info(
                     "Rejecting LLM work match: catalog alias was not grounded or Kitsu-confirmed"
                 )

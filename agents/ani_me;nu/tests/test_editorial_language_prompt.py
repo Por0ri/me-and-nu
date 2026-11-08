@@ -21,9 +21,9 @@ def test_copy_writer_preserves_meaning_in_puns_and_avoids_ambiguous_compression(
 
 
 def test_detail_writer_distinguishes_attributed_review_opinions_from_facts() -> None:
-    assert "Attribute review judgments to the reviewer" in DETAIL_WRITER_PROMPT
+    assert "Attribute review judgments naturally to the source review" in DETAIL_WRITER_PROMPT
     assert "unsupported praise" in DETAIL_WRITER_PROMPT
-    assert "clear, polished Korean fan-editorial prose" in DETAIL_WRITER_PROMPT
+    assert "fluent, natural Korean prose" in DETAIL_WRITER_PROMPT
 
 
 def test_detail_writer_revision_feedback_accepts_serialized_and_model_issues() -> None:

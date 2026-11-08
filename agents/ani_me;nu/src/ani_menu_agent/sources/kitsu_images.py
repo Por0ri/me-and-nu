@@ -343,7 +343,9 @@ def _asset(
         menu_work_ids=[work_id],
         official=False,
         rights_status=RightsStatus.NEEDS_REVIEW,
-        source_description=description[:240],
+        # The image filter treats 240+ characters as a text-heavy notice, so a long
+        # synopsis cut at exactly 240 would throw away a perfectly good poster.
+        source_description=description[:200],
         asset_kind=asset_kind,
         depicted_entities=entities[:20],
         asset_metadata_confidence=confidence,

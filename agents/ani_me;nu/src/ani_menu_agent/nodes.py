@@ -18,7 +18,7 @@ from ani_menu_agent.image_selection import (
 )
 from ani_menu_agent.layout_engine import build_cards, reflow_for_composition
 from ani_menu_agent.models import ContentPackage, CopyCard, QualityIssue
-from ani_menu_agent.policy import POLICY
+from ani_menu_agent.policy import POLICY, min_cards_for
 from ani_menu_agent.quality import check_copy, check_sources
 from ani_menu_agent.review_rules import make_issue
 from ani_menu_agent.source_policy import (
@@ -129,13 +129,56 @@ def _merge_copy_revision(
     return [cards_by_page[page] for page in sorted(cards_by_page)]
 
 
-def _remove_copy_pages(cards: list[CopyCard], remove_pages: list[int]) -> list[CopyCard]:
+def _remove_copy_pages(
+    cards: list[CopyCard],
+    remove_pages: list[int],
+    min_cards: int = POLICY.min_cards,
+) -> list[CopyCard]:
     """Honor an explicit reviewer request to drop a redundant middle card."""
     removed = set(remove_pages)
     kept = [card for card in cards if card.page not in removed]
-    if len(kept) < POLICY.min_cards:
+    if len(kept) < min_cards:
         raise RuntimeError("카드 삭제 후 최소 장수에 미달해 자동 삭제할 수 없습니다.")
     return [card.model_copy(update={"page": index}) for index, card in enumerate(kept, start=1)]
+
+
+def _fit_body_length(card: CopyCard) -> CopyCard:
+    """Drop trailing sentences from an overlong body rather than losing the whole deck."""
+    sentences = list(card.body_sentences)
+    while len(sentences) > 1 and len(" ".join(sentences).strip()) > POLICY.max_body_chars:
+        sentences.pop()
+    return card.model_copy(update={"body_sentences": sentences})
+
+
+def _drop_repeated_cards(cards: list[CopyCard]) -> list[CopyCard]:
+    """A revision can return the same card twice; readers should only see it once."""
+    seen: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+    kept: list[CopyCard] = []
+    for card in sorted(cards, key=lambda item: item.page):
+        text = (tuple(card.title_lines), tuple(card.body_sentences))
+        if text not in seen:
+            seen.add(text)
+            kept.append(card)
+    if len(kept) == len(cards):
+        return cards
+    return _normalize_structural_roles(
+        [card.model_copy(update={"page": index}) for index, card in enumerate(kept, start=1)]
+    )
+
+
+def _drop_detail_cards_without_images(
+    cards: list[CopyCard], package: ContentPackage
+) -> list[CopyCard]:
+    """A shorter deck beats no deck: cut detail cards no image could be found for."""
+    missing = [
+        card.page
+        for card in cards
+        if card.role == "detail" and card.image_id.startswith("missing-source-image-")
+    ]
+    min_cards = min_cards_for(package.content_type)
+    if not missing or len(cards) - len(missing) < min_cards:
+        return cards
+    return _normalize_structural_roles(_remove_copy_pages(cards, missing, min_cards))
 
 
 def _normalize_structural_roles(cards: list[CopyCard]) -> list[CopyCard]:
@@ -240,12 +283,16 @@ def rights_preflight(state: ContentState) -> ContentState:
                 "status": "needs_crawler_update",
             }
         verified_fact_count = sum(fact.verified for fact in package.facts)
-        if package.content_kind.value == "information" and verified_fact_count == 0:
+        # One fact ("the page shows this title") only produces a card about the missing rest.
+        if (
+            package.content_kind.value == "information"
+            and verified_fact_count < POLICY.min_short_cards
+        ):
             issue = make_issue(
                 code="FACT_DIVERSITY_LOW",
                 message=(
                     f"서로 다른 검증 사실이 {verified_fact_count}개뿐이라 "
-                    f"최소 {POLICY.min_cards}장으로 구성할 수 없습니다. "
+                    f"최소 {POLICY.min_short_cards}장으로 구성할 수 없습니다. "
                     "원문 근거를 더 수집하거나 이 후보를 건너뜁니다."
                 ),
 
@@ -259,6 +306,7 @@ def rights_preflight(state: ContentState) -> ContentState:
     from ani_menu_agent.image_selection import (
         cover_usable_editorial_images,
         distinct_editorial_images,
+        placeable_image_count,
     )
 
     cover_images = cover_usable_editorial_images(
@@ -279,15 +327,16 @@ def rights_preflight(state: ContentState) -> ContentState:
             "qa_report": [issue.model_dump(mode="json")],
             "status": "needs_crawler_update",
         }
-    eligible_images = distinct_editorial_images(
-        package.images, package.sources, package, card_role="detail"
+    placeable_images = placeable_image_count(
+        distinct_editorial_images(package.images, package.sources, package, card_role="detail")
     )
-    if len(eligible_images) < POLICY.min_cards:
+    min_cards = min_cards_for(package.content_type)
+    if placeable_images < min_cards:
         issue = make_issue(
             code="SOURCE_IMAGE_POOL_INSUFFICIENT",
             message=(
-                f"Only {len(eligible_images)} distinct relevant images are eligible, but at least "
-                f"{POLICY.min_cards} are needed because every card requires real anime art. "
+                f"Only {placeable_images} distinct relevant images can be placed, but at least "
+                f"{min_cards} are needed because every card requires real anime art. "
                 "Collect more same-work images; never fill the gap with geometric placeholders."
             ),
 
@@ -370,7 +419,7 @@ def copy_writer(state: ContentState) -> ContentState:
         removable_pages &= {
             card.page for card in package.cards if card.role not in {"cover", "ending"}
         }
-        if len(package.cards) - len(removable_pages) >= POLICY.min_cards:
+        if len(package.cards) - len(removable_pages) >= min_cards_for(package.content_type):
             remove_pages = sorted(removable_pages)
         copy_issues = [issue for issue in copy_issues if issue.page not in remove_pages]
         remove_only = bool(remove_pages) and not copy_issues
@@ -403,7 +452,9 @@ def copy_writer(state: ContentState) -> ContentState:
             generated_cards = _merge_copy_revision(existing_cards, generated_cards, revision_pages)
         usage_records.append(generated.usage.model_dump(mode="json"))
     if remove_pages:
-        generated_cards = _remove_copy_pages(generated_cards, remove_pages)
+        generated_cards = _remove_copy_pages(
+            generated_cards, remove_pages, min_cards_for(package.content_type)
+        )
     for _attempt in range(2):
         oversized = [
             card
@@ -498,6 +549,7 @@ def copy_writer(state: ContentState) -> ContentState:
                     revision_pages,
                 )
                 usage_records.append(revised.usage.model_dump(mode="json"))
+    generated_cards = [_fit_body_length(card) for card in generated_cards]
     if any(
         len(" ".join(card.body_sentences).strip()) > POLICY.max_body_chars
         for card in generated_cards
@@ -603,12 +655,14 @@ def layout_director(state: ContentState) -> ContentState:
                 "status": "layout_rebuilt_without_crop",
             }
         return {"trace": append_trace(state, "layout_director"), "status": "layout_supplied"}
-    copies = [CopyCard.model_validate(card) for card in state["draft_cards"]]
+    copies = _drop_repeated_cards(
+        [CopyCard.model_validate(card) for card in state["draft_cards"]]
+    )
     repository = AgentRepository()
     copies, upscale_usage, upscale_results = _upscale_selected_assets(
         copies, package, repository
     )
-    copies = assign_distinct_images(copies, package)
+    copies = _drop_detail_cards_without_images(assign_distinct_images(copies, package), package)
     missing_pages = [
         card.page
         for card in copies
@@ -701,7 +755,7 @@ def repair_visual_assignments(state: ContentState) -> ContentState:
     copies = [
         CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
     ]
-    repaired = assign_distinct_images(copies, package)
+    repaired = _drop_detail_cards_without_images(assign_distinct_images(copies, package), package)
     missing_pages = [
         card.page
         for card in repaired

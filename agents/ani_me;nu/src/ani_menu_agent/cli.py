@@ -199,14 +199,21 @@ def _rotating_catalog_work_titles(limit: int = 3) -> list[str]:
 
 
 def _diversify_candidate_items(items: list, limit: int) -> list:
-    """Interleave catalog works so a burst from one series cannot fill the whole batch."""
+    """Try catalog-matched works first, interleaved so one series cannot fill the batch.
+
+    Candidates whose title names no catalog work stay eligible, but only for slots
+    the matched ones leave open: most of them stop at work matching.
+    """
     registry = {source.id: source for source in load_source_registry().sources}
     groups: dict[str, list] = {}
-    for index, item in enumerate(items):
+    unmatched: list = []
+    for item in items:
         source = registry.get(item.source_id)
         matched = _candidate_menu_work_ids(item.model_dump(mode="json"), source) if source else []
-        key = ",".join(map(str, matched)) if matched else f"unmatched:{index}"
-        groups.setdefault(key, []).append(item)
+        if matched:
+            groups.setdefault(",".join(map(str, matched)), []).append(item)
+        else:
+            unmatched.append(item)
     selected = []
     while groups and len(selected) < limit:
         for key in list(groups):
@@ -215,7 +222,13 @@ def _diversify_candidate_items(items: list, limit: int) -> list:
                 del groups[key]
             if len(selected) >= limit:
                 break
+    selected.extend(unmatched[: limit - len(selected)])
     return selected
+
+
+def _is_discussionless_trend(item) -> bool:
+    """A trend item without a real thread can only end as insufficient evidence."""
+    return item.source_role == "trend" and len(item.community_posts) < 2
 
 
 def _candidate_host_matches_source(candidate_url: str, source_url: str) -> bool:
@@ -2080,6 +2093,25 @@ def crawl_type(
         token = hashlib.sha256(str(item.id).encode("utf-8")).hexdigest()[:12]
         if retry_candidate_id or token not in attempted_tokens:
             unattempted_items.append(item)
+    # Tag-frequency snapshots feed the trend charts but hold nothing to write from,
+    # so they must not take a generation slot from a real discussion.
+    no_discussion_skipped = 0
+    if content_type == ContentKind.HUMOR.value and not retry_candidate_id:
+        discussable_items = [
+            item for item in unattempted_items if not _is_discussionless_trend(item)
+        ]
+        no_discussion_skipped = len(unattempted_items) - len(discussable_items)
+        unattempted_items = discussable_items
+    # Old stories end at the freshness check anyway; drop them before they take a slot.
+    stale_skipped = 0
+    if not retry_candidate_id:
+        current_items = [
+            item
+            for item in unattempted_items
+            if not candidate_is_stale(item.model_dump(mode="json"), content_type)
+        ]
+        stale_skipped = len(unattempted_items) - len(current_items)
+        unattempted_items = current_items
     fresh_items = (
         unattempted_items
         if retry_candidate_id
@@ -2151,7 +2183,6 @@ def crawl_type(
                 result_path.write_text(
                     json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
-        outcomes.append(outcome)
         if retry_candidate_id:
             previous_attempt_count = int(
                 previous_candidate_attempts[retry_candidate_id].get("attempt_count", 1)
@@ -2169,6 +2200,8 @@ def crawl_type(
                 previous_candidate_attempts.get(candidate_id, {}).get("retry_count", 0)
             )
         outcome = _enrich_candidate_outcome(outcome)
+        # Keep the enriched copy, or the run summary loses every stage and reason code.
+        outcomes.append(outcome)
         try:
             repository.persist_candidate_attempt(content_type, candidate, outcome)
         except Exception as exc:
@@ -2213,6 +2246,8 @@ def crawl_type(
             "discovered": len(collected_items),
             "deferred_for_work_diversity": diversity_deferred,
             "previously_attempted_skipped": skipped_attempted,
+            "no_discussion_skipped": no_discussion_skipped,
+            "stale_skipped": stale_skipped,
             "attempted": len(outcomes),
             "status_counts": status_counts,
             "failure_stage_counts": stage_counts,

@@ -6,7 +6,7 @@ import re
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from ani_menu_agent.models import ContentPackage, CopyCard, ImageAsset, SourceEvidence
-from ani_menu_agent.policy import POLICY
+from ani_menu_agent.policy import POLICY, REAL_WORLD_TYPES
 
 # Modest sources may still be usable in the existing low-res spotlight layout.
 # Keep a separate cover floor so the broader detail-page pool cannot weaken covers.
@@ -104,9 +104,20 @@ def image_belongs_to_package_sources(
         # anime artwork, even if legacy metadata mislabeled it as a key visual.
         return False
     content_type = package.content_type if package is not None else None
-    if image.asset_kind == "goods_product" and content_type != "goods":
+    # Event and goods notices overlap (a collab cafe sells its own merch), so images
+    # printed in the article itself stay usable when it is filed under either type.
+    in_event_or_goods_article = same_source_page and content_type in REAL_WORLD_TYPES
+    if (
+        image.asset_kind == "goods_product"
+        and content_type != "goods"
+        and not in_event_or_goods_article
+    ):
         return False
-    if image.asset_kind == "event_visual" and content_type != "event":
+    if (
+        image.asset_kind == "event_visual"
+        and content_type != "event"
+        and not in_event_or_goods_article
+    ):
         return False
     if image.asset_kind == "fan_meme" and (
         package is None or package.content_kind.value != "humor"
@@ -178,6 +189,13 @@ def is_editorially_composable(image: ImageAsset) -> bool:
     )
 
 
+def allowed_image_upscale(template: str) -> float:
+    """How far a source may be stretched on a card; placement and review must agree."""
+    if template == "low_res_spotlight":
+        return POLICY.max_low_res_spotlight_upscale
+    return POLICY.max_card_image_upscale
+
+
 def _fits_card_resolution(
     image: ImageAsset,
     card: CopyCard,
@@ -198,14 +216,19 @@ def _fits_card_resolution(
         POLICY.logical_card_height * layout.image_box.height * POLICY.image_quality_target_dpr
     )
     upscale = min(target_width / image.width, target_height / image.height)
-    allowed_upscale = maximum_upscale or (
-        POLICY.max_low_res_spotlight_upscale
-        if layout.template == "low_res_spotlight"
-        else 2.5
-        if card.role == "cover"
-        else POLICY.max_image_upscale
+    return upscale <= (maximum_upscale or allowed_image_upscale(layout.template))
+
+
+def placeable_image_count(images: list[ImageAsset]) -> int:
+    """How many of these images can actually fill a detail card."""
+    probe = CopyCard(
+        page=2,
+        role="detail",
+        title_lines=["placement probe"],
+        body_sentences=["placement probe"],
+        image_id="placement-probe",
     )
-    return upscale <= allowed_upscale
+    return sum(_fits_card_resolution(image, probe) for image in images)
 
 
 def _image_context_mismatch(image: ImageAsset, package: ContentPackage) -> bool:
@@ -390,6 +413,13 @@ def assign_distinct_images(
         for image in distinct_editorial_images(
             package.images, package.sources, package, card_role=card.role
         ):
+            # A curation card introduces one specific work, so it must show that work.
+            if (
+                card.menu_work_ids
+                and image.menu_work_ids
+                and not set(card.menu_work_ids).intersection(image.menu_work_ids)
+            ):
+                continue
             if not _fits_card_resolution(image, card):
                 continue
             index = asset_index.get(id(image))
@@ -409,18 +439,34 @@ def assign_distinct_images(
             (visual, image)
             for visual, image in sorted(
                 best_by_visual.items(),
-                key=lambda pair: (card_score(card, pair[1]), pair[1].width * pair[1].height),
+                key=lambda pair: (
+                    card.role != "cover"
+                    or _fits_card_resolution(
+                        pair[1], card, maximum_upscale=POLICY.preferred_cover_image_upscale
+                    ),
+                    card_score(card, pair[1]),
+                    pair[1].width * pair[1].height,
+                ),
                 reverse=True,
             )
         ]
 
     # Kuhn-style augmenting paths maximize the number of cards with a distinct
-    # eligible image. Resolve the most constrained cards first for deterministic
-    # tie-breaking; cover gets priority only when candidate counts are equal.
+    # eligible image, and a card placed early keeps an image. Cover and ending go
+    # first because a deck can lose a detail card but not those two; after that the
+    # most constrained cards claim first for deterministic tie-breaking.
     owner_by_visual: dict[int, int] = {}
     assignment: dict[int, tuple[int, ImageAsset]] = {}
 
     def place(card_index: int, visited_visuals: set[int]) -> bool:
+        # Take a free image first. Displacing an earlier card straight away would
+        # hand every later card that card's best image, leaving the cover the worst.
+        for visual, image in choices[card_index]:
+            if visual not in visited_visuals and visual not in owner_by_visual:
+                visited_visuals.add(visual)
+                owner_by_visual[visual] = card_index
+                assignment[card_index] = (visual, image)
+                return True
         for visual, image in choices[card_index]:
             if visual in visited_visuals:
                 continue
@@ -435,6 +481,7 @@ def assign_distinct_images(
     card_order = sorted(
         range(len(cards)),
         key=lambda index: (
+            cards[index].role not in {"cover", "ending"},
             len(choices[index]),
             cards[index].role != "cover",
             cards[index].page,
@@ -453,7 +500,7 @@ def assign_distinct_images(
                         "image_id": f"missing-source-image-{card.page}",
                         "visual_mode": "source_image",
                         "image_reuse_mode": "missing_source_image",
-                        "image_explanation": "?? ??? ???? ?? ????? ??",
+                        "image_explanation": "원문 근거를 시각화한 편집 그래픽으로 구성",
                     }
                 )
             )
@@ -465,9 +512,11 @@ def assign_distinct_images(
         )
         if package.content_type in {"event", "goods"} and not selected_source_page_match:
             explanation = (
-                "?? ??? ?? ????? ?? ????? ?????. ?? ?? ???? ?? ?? ???? ????."
+                "동일 작품의 공식 일러스트를 보조 시각자료로 사용합니다. "
+                "행사 현장 사진이나 행사 전용 이미지는 아닙니다."
                 if package.content_type == "event"
-                else "?? ??? ?? ????? ?? ????? ?????. ?? ?? ??? ????."
+                else "동일 작품의 공식 일러스트를 보조 시각자료로 사용합니다. "
+                "상품 실물 사진은 아닙니다."
             )
         elif selected.id != card.image_id and selected.korean_explanation:
             explanation = selected.korean_explanation

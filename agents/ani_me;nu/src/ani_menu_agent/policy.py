@@ -14,6 +14,8 @@ class EditorialPolicy:
     image_model_cost_budget_usd: float = 0.0
     # Every carousel must have a cover, at least one detail card, and a payoff.
     min_cards: int = 3
+    # Timely stories often carry only a couple of usable visuals.
+    min_short_cards: int = 2
     max_cards: int = 10
     max_extraction_fact_candidates: int = 100
     max_verified_facts: int = 30
@@ -31,6 +33,13 @@ class EditorialPolicy:
     logical_card_height: int = 408
     image_quality_target_dpr: float = 4.0
     max_image_upscale: float = 1.25
+    # max_image_upscale is the clean target, and AI upscaling starts above it. A card
+    # may still stretch further: the target assumes a 4x screen, so this limit is about
+    # 1.6x on a common 2x phone. Stricter limits rejected ordinary 640px product photos
+    # and 400px episode stills outright, which left whole decks without images.
+    max_card_image_upscale: float = 3.2
+    # A cover takes a source within this sharper limit first, whenever one exists.
+    preferred_cover_image_upscale: float = 2.5
     # Small official portraits can occupy a meaningful area in a contain spotlight;
     # 2x is the compromise between usable visual scale and preserving sharpness.
     # Transparent cutouts and other layouts keep the stricter general limit above.
@@ -79,6 +88,14 @@ class EditorialPolicy:
 
 POLICY = EditorialPolicy()
 
+REAL_WORLD_TYPES = frozenset({"event", "goods"})
+SHORT_DECK_TYPES = REAL_WORLD_TYPES | {"news", "review"}
+
+
+def min_cards_for(content_type: str | None) -> int:
+    return POLICY.min_short_cards if content_type in SHORT_DECK_TYPES else POLICY.min_cards
+
+
 # 작품명만 바꾸면 재사용 가능한 상투 문구는 기본 차단한다.
 GENERIC_HUMOR_TERMS = (
     "통장이 열린다",
@@ -101,6 +118,9 @@ AGENT_MONOLOGUE_TERMS = (
     "에이전트",
     "검증을 완료",
     "공식 정보만 사용",
+    "작품 연결은",
+    "근거가 엇갈",
+    "확인된 자료에",
 )
 
 EXCESSIVE_PUNCTUATION = ("ㅋㅋ", "ㅎㅎ", "!!!", "???", "?!?", "!!")

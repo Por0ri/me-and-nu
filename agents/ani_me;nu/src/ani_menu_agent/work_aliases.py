@@ -31,6 +31,7 @@ _KOREAN_PARTICLES = (
     "에게서", "한테서", "이랑", "으로", "에게", "한테", "에서", "까지", "부터", "처럼",
     "의", "가", "이", "는", "은", "를", "을", "와", "과", "도", "로", "랑", "만", "님", "씨",
 )
+_NAME_QUOTES = "'\"‘’“”「」『』《》〈〉"
 _SKIPPED = re.compile(r"[\s・·•.,'\"!?\-–—_:;/()（）「」『』【】\[\]《》〈〉＝=~〜]")
 # Shortest name, per script of its first character, distinctive enough to match on its own.
 _MIN_CHARS = {"latin": 7, "katakana": 4, "hiragana": 3, "han": 3, "hangul": 2, "other": 3}
@@ -97,6 +98,18 @@ def _stands_alone(original: str, start: int, end: int) -> bool:
     if last == "hangul":
         return original.startswith(_KOREAN_PARTICLES, end)
     return last not in {"latin", "katakana"}
+
+
+def _reads_as_name(original: str, start: int, end: int) -> bool:
+    """A two-syllable Korean name is often an ordinary word ("미정", "판다", "체스").
+
+    It only counts when a particle follows it or quotes wrap it ("록리의 굿즈", "‘록리’").
+    """
+    before = original[start - 1] if start > 0 else ""
+    after = original[end] if end < len(original) else ""
+    return original.startswith(_KOREAN_PARTICLES, end) or (
+        before in _NAME_QUOTES and after in _NAME_QUOTES and bool(before)
+    )
 
 
 def _distinctive(name: str, key: str) -> bool:
@@ -188,7 +201,13 @@ def _spans(text: str, names: set[str], longest: int) -> list[tuple[int, str, str
             if key not in names or taken.intersection(range(start, start + size)):
                 continue
             begin, end = positions[start], positions[start + size - 1] + 1
-            if _stands_alone(original, begin, end):
+            # "록 리" written as two words already reads as a person's name.
+            ordinary_word_risk = (
+                size == 2 and _script(key[0]) == "hangul" and " " not in original[begin:end]
+            )
+            if _stands_alone(original, begin, end) and (
+                not ordinary_word_risk or _reads_as_name(original, begin, end)
+            ):
                 found.append((start, key, original[begin:end]))
                 taken.update(range(start, start + size))
     return sorted(found)

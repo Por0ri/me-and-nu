@@ -232,6 +232,10 @@ def test_mastodon_parser_accepts_engaged_english_discussion_and_skips_bots(monke
             "tags": [{"name": "Naruto"}],
             "favourites_count": 2,
             "reblogs_count": 2,
+            "community_posts": [
+                {"text": "The opening post about that ending.", "url": "https://m.example/@a/2"},
+                {"text": "A reply that reads the ending differently.", "url": "https://m.example/@b/3"},
+            ],
         },
     ]
 
@@ -796,6 +800,10 @@ def test_work_specific_public_post_does_not_need_trend_tags_or_engagement() -> N
         "tags": [{"name": "Naruto"}],
         "favourites_count": 0,
         "reblogs_count": 0,
+        "community_posts": [
+            {"text": "The opening post about Team 7.", "url": "https://mastodon.social/@fan/123"},
+            {"text": "A reply about Kakashi's quiet scenes.", "url": "https://mastodon.social/@b/124"},
+        ],
     }
 
     items = parse_mastodon_tag_timeline([post], source)

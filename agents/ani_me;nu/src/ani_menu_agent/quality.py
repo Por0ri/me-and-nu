@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from ani_menu_agent.classification import infer_strong_content_type
 from ani_menu_agent.image_selection import (
+    allowed_image_upscale,
     image_belongs_to_package_sources,
     image_visual_key,
     image_visual_keys,
@@ -17,6 +18,7 @@ from ani_menu_agent.policy import (
     EXCESSIVE_PUNCTUATION,
     GENERIC_HUMOR_TERMS,
     POLICY,
+    min_cards_for,
 )
 from ani_menu_agent.review_rules import RULES, decision_metadata, make_issue, score_penalty
 
@@ -311,12 +313,7 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                 * POLICY.image_quality_target_dpr
             )
             upscale = min(target_width / image.width, target_height / image.height)
-            max_upscale = (
-                POLICY.max_low_res_spotlight_upscale
-                if card.layout.template == "low_res_spotlight"
-                else POLICY.max_image_upscale
-            )
-            if upscale > max_upscale:
+            if upscale > allowed_image_upscale(card.layout.template):
                 issues.append(
                     _issue(
                         "IMAGE_LOW_RESOLUTION",
@@ -468,8 +465,8 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
             issues.append(
                 _issue(
                     "UNSUPPORTED_DATE_CLAIM",
-                    "移대뱶???곸뿭???ъ슜???좎쭨瑜?洹쇨굅 fact_id濡?媛由ы궎?꽌?쇰줈 ?쇱튂?섏? "
-                    "?딆뒿?덈떎. ?좎쭨 ?ъ떎瑜??ㅼ떆 ?몄슜?섍굅??湲곗? ?녿뒗 ?좎쭨瑜?젣嫄고븯?몄슂.",
+                    "카드 문구에 쓴 날짜가 근거 fact_id가 가리키는 사실과 일치하지 "
+                    "않습니다. 날짜 사실을 다시 인용하거나 근거 없는 날짜를 제거하세요.",
                     card.page,
                 )
             )
@@ -636,14 +633,15 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
             issues.append(
                 _issue(
                     "GOODS_RELEASE_PERIOD_MISSING",
-                    "怨듭떇 ?먮Ц???곹뭹 諛쒕ℓ?쇱씠 ?뺤씤?섏뿀?쇰?濡?goods "
-                    "?좎쭨瑜?DB ???ν빐???⑸땲??",
+                    "공식 원문에서 상품 발매일이 확인되었으므로 goods "
+                    "날짜를 DB에 저장해야 합니다.",
 
                 )
             )
-    if not POLICY.min_cards <= len(package.cards) <= POLICY.max_cards:
+    min_cards = min_cards_for(package.content_type)
+    if not min_cards <= len(package.cards) <= POLICY.max_cards:
         issues.append(
-            _issue("CARD_COUNT", f"카드는 {POLICY.min_cards}~{POLICY.max_cards}장이어야 합니다.")
+            _issue("CARD_COUNT", f"카드는 {min_cards}~{POLICY.max_cards}장이어야 합니다.")
         )
     if package.content_kind == ContentKind.INFORMATION:
         known_verified_ids = {fact.id for fact in package.facts if fact.verified}

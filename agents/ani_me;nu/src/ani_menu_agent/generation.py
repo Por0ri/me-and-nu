@@ -11,6 +11,7 @@ from ani_menu_agent.config import get_settings
 from ani_menu_agent.image_selection import (
     cover_usable_editorial_images,
     distinct_editorial_images,
+    placeable_image_count,
 )
 from ani_menu_agent.models import (
     CONTENT_TYPE_GUIDANCE,
@@ -20,7 +21,7 @@ from ani_menu_agent.models import (
     QualityIssue,
     UsageRecord,
 )
-from ani_menu_agent.policy import POLICY
+from ani_menu_agent.policy import POLICY, min_cards_for
 from ani_menu_agent.prompts import COPY_WRITER
 from ani_menu_agent.source_policy import (
     supported_content_types_for_sources,
@@ -85,16 +86,17 @@ def _card_count_requirement(
     *,
     existing_card_count: int = 0,
     allow_extra_card: bool = False,
+    min_cards: int = POLICY.min_cards,
 ) -> str:
     """State a concrete deck size so the model cannot treat the range as optional."""
-    if image_count < POLICY.min_cards:
+    if image_count < min_cards:
         return (
             f"Do not generate yet: only {image_count} eligible distinct source image(s) are "
             f"available; the cover needs source art and every card needs real artwork, while "
             f"the minimum is "
-            f"{POLICY.min_cards} cards. Request more relevant same-work images from the crawler."
+            f"{min_cards} cards. Request more relevant same-work images from the crawler."
         )
-    target = min(max(POLICY.min_cards, min(fact_count, 5)), POLICY.max_cards, image_count)
+    target = min(max(min_cards, min(fact_count, 5)), POLICY.max_cards, image_count)
     if allow_extra_card:
         target = max(target, min(existing_card_count, POLICY.max_cards, image_count))
     if (
@@ -107,8 +109,8 @@ def _card_count_requirement(
         )
     return (
         f"Generate exactly {target} cards (the allowed range is "
-        f"{POLICY.min_cards}~{POLICY.max_cards}). Do not return fewer than "
-        f"{POLICY.min_cards} cards. Use each distinct source image at most once. The cover "
+        f"{min_cards}~{POLICY.max_cards}). Do not return fewer than "
+        f"{min_cards} cards. Use each distinct source image at most once. The cover "
         "and every detail card must use a real image relevant to the same anime and that "
         "card's subject. A detail card may use another suitable same-work image when the "
         "article itself has no image, but never use geometric/editorial placeholder art, "
@@ -116,6 +118,40 @@ def _card_count_requirement(
         "image pool cannot cover the deck, request more same-work images from the crawler "
         "and do not fill the gap with decorative shapes."
     )
+
+
+def _link_card_works(cards: list, content_type: str, package: ContentPackage) -> list:
+    """Rebuild card-level work links from what each card says and cites.
+
+    Work links are bookkeeping, so a wrong ID from the model must cost that one
+    link rather than the whole deck. Only curation cards carry them.
+    """
+    allowed_work_ids = set(package.menu_work_ids)
+    facts_by_id = {fact.id: fact for fact in package.facts}
+    linked = []
+    for card in cards:
+        card_work_ids: list[int] = []
+        if content_type == "curation":
+            copy_text = [*card.title_lines, *card.body_sentences]
+            support = [facts_by_id[fact_id] for fact_id in card.fact_ids if fact_id in facts_by_id]
+            grounded_ids = set(
+                resolve_title_work_ids(
+                    " ".join(
+                        copy_text
+                        + [fact.statement for fact in support]
+                        + [str(fact.details.get("source_quote") or "") for fact in support]
+                    )
+                )
+            )
+            visible_ids = set(resolve_title_work_ids(" ".join(copy_text))) & allowed_work_ids
+            card_work_ids = [
+                work_id
+                for work_id in dict.fromkeys(card.menu_work_ids)
+                if work_id in allowed_work_ids and work_id in grounded_ids
+            ]
+            card_work_ids += sorted(visible_ids - set(card_work_ids))
+        linked.append(card.model_copy(update={"menu_work_ids": card_work_ids}))
+    return linked
 
 
 def _infer_copy_mode(text: str) -> str:
@@ -242,12 +278,16 @@ def generate_copy_deck(
         }
         for example in recent_copy
     ]
-    sparse_image_deck = len(image_catalog) < POLICY.min_cards
+    # Size the deck by the images that can really be placed, not by every eligible one.
+    placeable_images = placeable_image_count(editorial_images)
+    min_cards = min_cards_for(package.content_type)
+    sparse_image_deck = placeable_images < min_cards
     card_count_requirement = _card_count_requirement(
-        len(image_catalog),
+        placeable_images,
         len(verified_facts),
         existing_card_count=len(existing_cards or []),
         allow_extra_card=allow_extra_card,
+        min_cards=min_cards,
     )
     payload = {
         "topic": package.topic,
@@ -596,55 +636,9 @@ def generate_copy_deck(
         )
     if recommended_content_type in {item["code"] for item in available_content_types}:
         parsed = parsed.model_copy(update={"content_type": recommended_content_type})
-    allowed_work_ids = set(package.menu_work_ids)
-    facts_by_id = {fact.id: fact for fact in package.facts}
-    images_by_id = {image.id: image for image in package.images}
-    for card in parsed.cards:
-        card_work_ids = list(dict.fromkeys(card.menu_work_ids))
-        if any(work_id not in allowed_work_ids for work_id in card_work_ids):
-            raise ValueError(
-                f"Card {card.page} references a work ID outside the package associations."
-            )
-        if parsed.content_type != "curation" and card_work_ids:
-            raise ValueError("Card-level work associations are reserved for curation content.")
-        visible_work_ids = set(
-            resolve_title_work_ids(" ".join([*card.title_lines, *card.body_sentences]))
-        ).intersection(allowed_work_ids)
-        if parsed.content_type == "curation" and not visible_work_ids.issubset(
-            set(card_work_ids)
-        ):
-            raise ValueError(
-                f"Card {card.page} names a curated work without linking its menu_work_id."
-            )
-        if parsed.content_type == "curation" and card_work_ids:
-            support = [facts_by_id[fact_id] for fact_id in card.fact_ids if fact_id in facts_by_id]
-            evidence_text = " ".join(
-                [*card.title_lines, *card.body_sentences]
-                + [fact.statement for fact in support]
-                + [str(fact.details.get("source_quote") or "") for fact in support]
-            )
-            grounded_ids = set(resolve_title_work_ids(evidence_text))
-            if not set(card_work_ids).issubset(grounded_ids):
-                raise ValueError(
-                    f"Card {card.page} work IDs are not grounded in its copy and cited facts."
-                )
-            image = images_by_id.get(card.image_id)
-            if (
-                image is not None
-                and image.menu_work_ids
-                and not set(card_work_ids).intersection(image.menu_work_ids)
-            ):
-                raise ValueError(
-                    f"Card {card.page} image belongs to a different work than its curation item."
-                )
-            if (
-                image is not None
-                and image.related_fact_ids
-                and not set(card.fact_ids).intersection(image.related_fact_ids)
-            ):
-                raise ValueError(
-                    f"Card {card.page} image is not associated with its cited curation facts."
-                )
+    parsed = parsed.model_copy(
+        update={"cards": _link_card_works(parsed.cards, parsed.content_type, package)}
+    )
     parsed = parsed.model_copy(
         update={
             "editorial_angle": _clean_reader_facing_text(parsed.editorial_angle),

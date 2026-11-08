@@ -60,6 +60,9 @@ def test_typed_crawler_collects_and_persists_candidates(monkeypatch) -> None:
             calls["persist_region_policy"] = region_policy
             return len(items)
 
+        def persist_character_birthday_references(self, _rows):
+            return 0
+
     monkeypatch.setattr(crawler_module, "collect_candidates", collect_candidates)
     monkeypatch.setattr(
         crawler_module,

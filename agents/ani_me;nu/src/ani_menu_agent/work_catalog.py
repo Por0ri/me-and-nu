@@ -205,10 +205,51 @@ def _alias_scope_matches(alias_row: dict[str, Any], source_url: str | None) -> b
     return str(source_url).casefold().startswith(prefix.casefold())
 
 
+_CJK_CHARACTER = re.compile(r"[가-힣぀-ヿ㐀-鿿]")
+_READING_GLOSS = re.compile(r"[（(][^（）()]*[぀-ヿ㐀-鿿][^（）()]*[）)]")
+_TITLE_QUOTES = {
+    "「": "」",
+    "『": "』",
+    "‘": "’",
+    "“": "”",
+    "'": "'",
+    '"': '"',
+    "《": "》",
+    "〈": "〉",
+    "<": ">",
+}
+
+
+def _title_spelling_variants(title: str) -> list[str]:
+    """Other spellings of a catalog title that real headlines use.
+
+    Korean outlets drop the catalog's spacing (체인소 맨 -> 체인소맨), and a few
+    native titles carry a reading gloss (魔法騎士（マジックナイト）レイアース).
+    """
+    spellings = [title]
+    without_gloss = _READING_GLOSS.sub("", title)
+    if without_gloss != title:
+        spellings.append(without_gloss)
+    variants = []
+    for spelling in spellings:
+        normalized = _normalize_catalog_title(spelling)
+        if spelling != title and len(normalized) >= 3:
+            variants.append(normalized)
+        if re.search(r"[가-힣]", normalized) and " " in normalized:
+            variants.append(normalized.replace(" ", ""))
+    return variants
+
+
+def _is_title_quoted(text: str, start: int, end: int) -> bool:
+    """Whether the span is wrapped in a matching pair of title quotes."""
+    return start > 0 and end < len(text) and _TITLE_QUOTES.get(text[start - 1]) == text[end]
+
+
 @lru_cache(maxsize=128)
 def _aliases(source_url: str | None = None) -> list[tuple[str, int]]:
     """Index canonical and entry-level titles, excluding cross-series collisions."""
     aliases: dict[str, set[int]] = {}
+    spelling_variants: dict[str, set[int]] = {}
     rows = load_work_catalog() + load_work_entries()
     rows.extend(
         {
@@ -233,6 +274,11 @@ def _aliases(source_url: str | None = None) -> list[tuple[str, int]]:
             value = _normalize_catalog_title(row.get(key) or "")
             if value:
                 aliases.setdefault(value, set()).add(work_id)
+            for variant in _title_spelling_variants(row.get(key) or ""):
+                spelling_variants.setdefault(variant, set()).add(work_id)
+    # A variant never overrides a real title, so it cannot create a new collision.
+    for variant, work_ids in spelling_variants.items():
+        aliases.setdefault(variant, work_ids)
     # A title reused by different series is not enough evidence for an entity link.
     unique_aliases = [
         (name, next(iter(work_ids)))
@@ -291,15 +337,29 @@ def _registered_work_titles() -> dict[str, tuple[str, ...]]:
 def _match_title_work_ids(title: str, source_url: str | None = None) -> list[int]:
     """Match distinct, longest title spans; never promote a nested short title."""
     aliases = _aliases(source_url)
+    # Full normalization closes the gap between neighboring CJK words, which hides a
+    # word boundary ("チョコサプ ちいかわ2"), so retry with the headline's own spacing.
+    headline_spacing = re.sub(
+        r"\s+", " ", unicodedata.normalize("NFKC", title or "").casefold().replace("☆", "")
+    ).strip()
+    for text in dict.fromkeys((_normalize_catalog_title(title), headline_spacing)):
+        matched = _scan_headline(text, title, aliases)
+        if matched:
+            return matched
+    return []
+
+
+def _scan_headline(
+    normalized_headline: str, title: str, aliases: list[tuple[str, int]]
+) -> list[int]:
     # Normalize colons to spaces while keeping word boundaries and sequel suffixes
     # strict. For example, "Another World" must not also link to the unrelated
     # one-word title "Another" merely because it is a substring.
-    normalized_title = re.sub(
-        r"\s+", " ", re.sub(r"[:：]+", " ", _normalize_catalog_title(title))
-    ).strip()
+    normalized_title = re.sub(r"\s+", " ", re.sub(r"[:：]+", " ", normalized_headline)).strip()
     found: list[tuple[int, int, int, int]] = []
     for alias, work_id in aliases:
-        if len(alias.strip()) < 3:
+        alias_length = len(alias.strip())
+        if alias_length < 2 or (alias_length == 2 and not _CJK_CHARACTER.search(alias)):
             continue
         normalized_alias = re.sub(
             r"\s+", " ", re.sub(r"[:：]+", " ", _normalize_catalog_title(alias))
@@ -307,6 +367,10 @@ def _match_title_work_ids(title: str, source_url: str | None = None) -> list[int
         start = normalized_title.find(normalized_alias)
         while start >= 0:
             end = start + len(normalized_alias)
+            # A two-character title (銀魂, 은혼) is only clear evidence inside quotes.
+            if alias_length == 2 and not _is_title_quoted(normalized_title, start, end):
+                start = normalized_title.find(normalized_alias, start + 1)
+                continue
             # Semicolons can be internal to one stylized title (e.g. Steins;Gate).
             left_separator_is_internal = (
                 start >= 2

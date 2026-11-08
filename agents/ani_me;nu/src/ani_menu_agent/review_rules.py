@@ -50,9 +50,7 @@ def _register(
 _register(
     (
         "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
-        "EVENT_ALREADY_ENDED", "COPY_UNGROUNDED", "SOURCE_STALE",
-        "EVENT_PUBLICATION_DATE_SHOWN", "UNSUPPORTED_DATE_CLAIM",
-        "SOURCE_PUBLICATION_DATE_SHOWN", "SOURCE_APPROVAL_REQUIRED",
+        "EVENT_ALREADY_ENDED", "SOURCE_STALE", "SOURCE_APPROVAL_REQUIRED",
         "SOURCE_BODY_EMPTY", "CONTENT_TYPE_SOURCE_UNSUPPORTED",
     ),
     (
@@ -60,6 +58,19 @@ _register(
         'correct work; do not invent or silently alter facts.'
     ),
     check="both", severity="blocker", owner="crawler", on_fail="return_to_crawler",
+)
+# Same gate, but here the evidence is fine and the copy misused it, so a rewrite can
+# fix the card. These still block publication until they are fixed.
+_register(
+    (
+        "COPY_UNGROUNDED", "EVENT_PUBLICATION_DATE_SHOWN", "UNSUPPORTED_DATE_CLAIM",
+        "SOURCE_PUBLICATION_DATE_SHOWN",
+    ),
+    (
+        'Every factual claim must be supported by the recorded source and linked to the '
+        'correct work; do not invent or silently alter facts.'
+    ),
+    check="both", severity="blocker", owner="copy_writer", on_fail="revise_owner",
 )
 _register(
     ("SOURCE_NO_OFFICIAL",),
@@ -113,7 +124,8 @@ _register(
 _register(
     ("CARD_COUNT",),
     (
-        f"A carousel must contain at least {POLICY.min_cards} cards and "
+        f"A carousel must contain at least {POLICY.min_cards} cards "
+        f"({POLICY.min_short_cards} for news, event, goods, and review) and "
         f"no more than {POLICY.max_cards} cards."
     ),
     check="code", severity="blocker", owner="copy_writer",

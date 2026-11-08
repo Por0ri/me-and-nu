@@ -204,7 +204,7 @@ def test_generation_resolves_work_ids_before_kitsu_visual_fallback(monkeypatch) 
     )
     requested: list[list[int]] = []
 
-    def collect(work_ids, _source, *, max_images):
+    def collect(work_ids, _source, *, max_images, **_kwargs):
         requested.append(work_ids)
         return []
 
@@ -246,7 +246,7 @@ def test_event_can_collect_exact_work_reference_art_without_relabeling_it(monkey
     )
     requests = []
 
-    def collect(work_ids, source, *, max_images):
+    def collect(work_ids, source, *, max_images, **_kwargs):
         requests.append((work_ids, source.id, max_images))
         return [reference]
 

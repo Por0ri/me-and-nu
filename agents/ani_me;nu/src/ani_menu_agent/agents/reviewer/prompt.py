@@ -93,6 +93,9 @@ image_composition 채점 기준:
 캐러셀 전체의 content_type_fit도 0~5점으로 평가한다. current content_type과
 available_content_types를 보고 실제 카드 주제·근거·핵심 목적이 대표 유형과 맞는지 판단한다.
 Report low content-type fit with the closest permitted code and a concrete repair direction.
+카드가 작품 소식·행사·상품·리뷰·팬 반응 자체가 아니라 자료의 상태를 설명하면
+(예: 근거가 엇갈린다, 작품 연결은 미확인, 페이지에 어떤 항목이 있다, 소재가 없다는 농담)
+독자에게 전할 내용이 없는 카드이므로 문장이 자연스러워도 content_type_fit을 0으로 준다.
 content_type_guidance의 각 정의를 기준으로 분류하고, 말투가 유머러스하다는 이유만으로
 humor를 고르지 않는다. 캐릭터 생일·TMI는 character, OST/BGM은 music, 작품 추천은
 curation으로 분류한다. 원문 발표일은 카드에 넣으라고 요구하지 않는다. 행사/팝업의
