@@ -22,7 +22,7 @@ class _SessionPayload(BaseModel):
     session_token_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     csrf_token_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     user_id: int | None = Field(gt=0)
-    session_state: Literal["anonymous", "onboarding_pending", "active"]
+    session_state: Literal["anonymous", "onboarding_pending", "restoration_pending", "active"]
     created_at: AwareDatetime
     expires_at: AwareDatetime
 

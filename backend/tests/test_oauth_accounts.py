@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -122,6 +122,22 @@ async def test_nonactive_existing_account_is_unavailable(memory_db, status):
         await resolve_oauth_user(memory_db, identity())
     assert error.value.status_code == 403 and error.value.code == "AUTH_ACCOUNT_UNAVAILABLE"
     memory_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_account_inside_the_withdrawal_grace_period_can_sign_in(memory_db):
+    existing_user(memory_db, account_status="withdrawn", withdrawn_at=datetime.now(timezone.utc) - timedelta(days=29))
+    user = await resolve_oauth_user(memory_db, identity())
+    assert user.account_status == "withdrawn"   # 복구는 콜백 뒤 복구 API 에서만
+    memory_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_account_past_the_withdrawal_grace_period_is_unavailable(memory_db):
+    existing_user(memory_db, account_status="withdrawn", withdrawn_at=datetime.now(timezone.utc) - timedelta(days=30))
+    with pytest.raises(ApiError) as error:
+        await resolve_oauth_user(memory_db, identity())
+    assert error.value.status_code == 403 and error.value.code == "AUTH_ACCOUNT_UNAVAILABLE"
 
 
 @pytest.mark.asyncio

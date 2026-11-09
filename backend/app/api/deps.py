@@ -45,6 +45,8 @@ class AuthContext:
     user: UserAccount | None
     is_dev_bypass: bool = False
     session_store: RedisSessionStore | None = None
+    # 복구 대기 세션의 계정입니다. 이때 user는 비어 있어 일반 API에는 비로그인으로 보입니다.
+    restoring_user: UserAccount | None = None
 
 
 def local_dev_auth_bypass_enabled(request: Request) -> bool:
@@ -104,7 +106,15 @@ async def get_optional_auth_context(
     user = None
     if session.user_id is not None:
         user = await get_user_by_id(db, session.user_id)
-        if user is None or user.account_status != "active":
+        if user is None:
+            return None
+        if session.session_state == "restoration_pending":
+            if user.account_status != "withdrawn" or user.withdrawn_at is None:
+                return None
+            return AuthContext(
+                session=session, raw_token=raw_token, user=None, session_store=store, restoring_user=user
+            )
+        if user.account_status != "active":
             return None
     return AuthContext(session=session, raw_token=raw_token, user=user, session_store=store)
 
