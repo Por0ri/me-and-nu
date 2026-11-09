@@ -5,7 +5,7 @@ import { createMyPageRequestController, type MyPageDataSource, type MyPageState 
 import { PivotMyPageScreen } from "./my-page-screen";
 
 const loading: MyPageState = { status: "loading" };
-export function MyPageController({ source, onHome, onSaved, onActivity, onLogout }: { source: MyPageDataSource; onHome: () => void; onSaved?: () => void; onActivity?: () => void; onLogout?: () => Promise<void> }) {
+export function MyPageController({ source, onHome, onSaved, onActivity, onInquiry, onLogout }: { source: MyPageDataSource; onHome: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void> }) {
   const [request, setRequest] = useState<{ source: MyPageDataSource; state: MyPageState }>();
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -14,5 +14,5 @@ export function MyPageController({ source, onHome, onSaved, onActivity, onLogout
     return () => controller.cancel();
   }, [source, attempt]);
   const state = request?.source === source ? request.state : loading;
-  return <PivotMyPageScreen key={source.kind} state={state} demo={source.kind === "demo"} onHome={onHome} onSaved={onSaved} onActivity={onActivity} onLogout={onLogout} onRetry={() => setAttempt((value) => value + 1)} />;
+  return <PivotMyPageScreen key={source.kind} state={state} demo={source.kind === "demo"} onHome={onHome} onSaved={onSaved} onActivity={onActivity} onInquiry={onInquiry} onLogout={onLogout} onRetry={() => setAttempt((value) => value + 1)} />;
 }

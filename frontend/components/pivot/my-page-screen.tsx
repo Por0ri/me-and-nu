@@ -71,8 +71,8 @@ function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
   </dialog>;
 }
 
-export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onActivity, onLogout }: {
-  state: MyPageState; demo: boolean; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onLogout?: () => Promise<void>;
+export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout }: {
+  state: MyPageState; demo: boolean; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>;
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
@@ -139,7 +139,7 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
         </MenuSection>
         <MenuSection title="이용 안내">
           {["문의 및 신고", "이용약관", "개인정보처리방침"].map((label, index) => <button key={label} type="button" className={styles.row}
-            onClick={() => setNotice(`${label}${index ? " 문서는" : " 기능은"} 준비 중이에요.`)}>{label}<Chevron last={index === 2} /></button>)}
+            onClick={() => index === 0 && onInquiry ? onInquiry() : setNotice(`${label}${index ? " 문서는" : " 기능은"} 준비 중이에요.`)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
         <MenuSection>
           {(["로그아웃", "회원탈퇴"] as const).map((label, index) => <button key={label} type="button" className={`${styles.row} ${styles.account}`}
