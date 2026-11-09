@@ -49,6 +49,16 @@ const detail = () => ({ ...feed(), contentId: 17, displayMode: 'full_body', body
     { url: 'https://example.com/article', title: '원문', publisher: '공식 출처', role: 'primary', citationOrder: 1 },
   ] });
 
+test('Two slides remain valid for HOME and DETAIL; one slide is still rejected', () => {
+  for (const count of [2, 1]) {
+    const two = slides().filter(slide => slide.page <= count);
+    for (const map of [() => mapFeedCard({ ...feed(), slides: two }, 42), () => mapContentDetail({ ...detail(), slides: two }, target)]) {
+      if (count === 1) assert.throws(map);
+      else assert.deepEqual(plain(map().slides.map(slide => slide.page)), [1, 2]);
+    }
+  }
+});
+
 test('Feed and detail map every service slide in page order and retain identity, bookmark and independent body', () => {
   const card = mapFeedCard(feed(), 42), article = mapContentDetail(detail(), target);
   assert.deepEqual(plain(card.slides.map(item => item.page)), [1, 2, 3]);

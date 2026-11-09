@@ -164,6 +164,8 @@ export type RecentViewsResponse = { items: ViewedContent[]; nextCursor: string |
 export type ActivityListQuery = { topicId?: number; cursor?: string; limit?: number };
 export type InquiryInput = { inquiryType: "service" | "bug"; detail: string };
 export type InquiryResponse = { inquiryId: number; status: "received" };
+export type ReportInput = { targetType: "content"; targetId: number; reasonCode: "wrong_info" | "spoiler" | "rights" | "inappropriate" | "other"; detail?: string };
+export type ReportResponse = { reportId: number; status: "received" };
 
 export type ApiFieldError = { field: string; code: string; message: string };
 type ErrorPayload = { code?: string; message?: string; fields?: ApiFieldError[]; requestId?: string };
@@ -225,7 +227,13 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, expect
   return payload as T;
 }
 
-export function getSession(): Promise<Session> {
+export function getSession(init: Pick<RequestInit, "signal"> = {}): Promise<Session> {
+  // A dialog-owned preflight must be cancellable without cancelling shared bootstrap reads.
+  if (init.signal) return apiRequest<Session>("/api/v1/auth/session", init).then(session => {
+    init.signal?.throwIfAborted();
+    csrfToken = session.csrfToken;
+    return session;
+  });
   // Concurrent first reads (including Strict Mode) must share one cookie issuance.
   if (!sessionRequest) {
     sessionRequest = apiRequest<Session>("/api/v1/auth/session").then((session) => {
@@ -340,6 +348,9 @@ export function getMyRecentViews(options: ActivityListQuery = {}, init: Pick<Req
 }
 export function submitInquiry(input: InquiryInput, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<InquiryResponse> {
   return apiRequest("/api/v1/inquiries", { ...init, method: "POST", body: JSON.stringify(input) }, 201);
+}
+export function submitReport(input: ReportInput, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<ReportResponse> {
+  return apiRequest("/api/v1/reports", { ...init, method: "POST", body: JSON.stringify(input) }, 201);
 }
 export function createChatSession(topicId: number, anchorContentId?: number): Promise<ChatSessionResponse> {
   return apiRequest("/api/v1/chat/sessions", { method: "POST", body: JSON.stringify({ topicId, anchorContentId }) });
