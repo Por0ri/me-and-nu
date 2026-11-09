@@ -63,9 +63,9 @@ export function DetailSlideText({ article, coverTextVisible = false }: { article
   </section>;
 }
 
-export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved, onHome, fromSaved = false, bookmarks }: {
+export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved, onHome, fromSaved = false, fromActivity = false, bookmarks }: {
   state: DetailState; demo: boolean; onBack: () => void; onRetry: () => void; onMy?: () => void; onSaved?: () => void; onHome?: () => void;
-  fromSaved?: boolean; bookmarks?: BookmarkControls;
+  fromSaved?: boolean; fromActivity?: boolean; bookmarks?: BookmarkControls;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const article = useRef<HTMLElement>(null);
@@ -184,10 +184,10 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
         : state.status === "not-found" ? "요청한 콘텐츠를 찾을 수 없어요."
         : state.status === "empty" ? "아직 준비된 본문이 없어요." : state.message}</p>
       {state.status === "error" ? <button type="button" onClick={onRetry}>다시 시도</button> : null}
-      {state.status !== "loading" ? <button type="button" onClick={onBack}>{fromSaved ? "저장 목록으로 돌아가기" : "Home으로 돌아가기"}</button> : null}
+      {state.status !== "loading" ? <button type="button" onClick={onBack}>{fromActivity ? "내 활동으로 돌아가기" : fromSaved ? "저장 목록으로 돌아가기" : "Home으로 돌아가기"}</button> : null}
     </section>}
     {/* Keep shared navigation consistent with Home and My Page. */}
-    <div inert={aiExpanded}><HomeNavigation active={fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI adjacentAI compact={aiExpanded} /></div>
+    <div inert={aiExpanded}><HomeNavigation active={fromActivity ? "my" : fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI adjacentAI compact={aiExpanded} /></div>
     <div className={styles.aiDock}>
       {aiExpanded ? <div className={styles.aiPrompt}><button type="button" aria-disabled="true"
         onClick={() => setNotice("AI 질문 기능은 준비 중이에요. 질문을 전송하지 않아요.")}>이 콘텐츠에서 어떤 점이 궁금하세요?</button></div> : null}

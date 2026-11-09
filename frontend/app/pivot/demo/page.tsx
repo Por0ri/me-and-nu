@@ -12,5 +12,5 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ v
     enabled: process.env.PIVOT_DEMO_ENABLED,
   })) notFound();
   const { view, detailState } = await searchParams;
-  return <DemoFlow initialHome={view === "home" || view === "detail" || view === "my" || view === "saved"} detailPreview={detailState} />;
+  return <DemoFlow initialHome={view === "home" || view === "detail" || view === "my" || view === "saved" || view === "activity"} detailPreview={detailState} />;
 }

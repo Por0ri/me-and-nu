@@ -152,6 +152,16 @@ export type NotificationItem = {
 };
 export type NotificationsResponse = { items: NotificationItem[]; nextCursor: string | null };
 export type BookmarksResponse = { items: SavedBookmark[]; nextCursor: string | null };
+export type ActivityContentCard = {
+  contentId: number; title: string; topicId: number;
+  summary: string | null; imageUrl: string | null; sourceName: string | null;
+  productionType: string | null; publishedAt: string | null; subtopicNames: string[];
+};
+export type LikedContent = ActivityContentCard & { likedAt: string };
+export type ViewedContent = ActivityContentCard & { viewedAt: string };
+export type LikedContentsResponse = { items: LikedContent[]; nextCursor: string | null };
+export type RecentViewsResponse = { items: ViewedContent[]; nextCursor: string | null };
+export type ActivityListQuery = { topicId?: number; cursor?: string; limit?: number };
 
 export type ApiFieldError = { field: string; code: string; message: string };
 type ErrorPayload = { code?: string; message?: string; fields?: ApiFieldError[]; requestId?: string };
@@ -316,6 +326,12 @@ export function getBookmarks(
   init: Pick<RequestInit, "signal"> = {},
 ): Promise<BookmarksResponse> {
   return apiRequest(`/api/v1/users/me/bookmarks${query(options)}`, init);
+}
+export function getMyLikes(options: ActivityListQuery = {}, init: Pick<RequestInit, "signal"> = {}): Promise<LikedContentsResponse> {
+  return apiRequest(`/api/v1/users/me/likes${query(options)}`, init);
+}
+export function getMyRecentViews(options: ActivityListQuery = {}, init: Pick<RequestInit, "signal"> = {}): Promise<RecentViewsResponse> {
+  return apiRequest(`/api/v1/users/me/recent-views${query(options)}`, init);
 }
 export function createChatSession(topicId: number, anchorContentId?: number): Promise<ChatSessionResponse> {
   return apiRequest("/api/v1/chat/sessions", { method: "POST", body: JSON.stringify({ topicId, anchorContentId }) });

@@ -71,8 +71,8 @@ function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
   </dialog>;
 }
 
-export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLogout }: {
-  state: MyPageState; demo: boolean; onHome: () => void; onRetry: () => void; onSaved?: () => void; onLogout?: () => Promise<void>;
+export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onActivity, onLogout }: {
+  state: MyPageState; demo: boolean; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onLogout?: () => Promise<void>;
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
@@ -125,7 +125,7 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
         </section>
         <MenuSection title="내 정보">
           {["내 활동", TASTE_EDIT, "관심분야 관리"].map((label, index) => <button key={label} type="button" className={styles.row}
-            onClick={() => ROW_PAGES[label] && !demo ? window.location.assign(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
+            onClick={() => label === "내 활동" && onActivity ? onActivity() : ROW_PAGES[label] && !demo ? window.location.assign(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
         <MenuSection title="알림 설정">
           <button type="button" role="switch" aria-checked={demo && notifications} aria-describedby={demo ? "my-demo-help" : undefined} aria-disabled={!demo || undefined}

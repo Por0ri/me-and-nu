@@ -1,27 +1,14 @@
 "use client";
 
-import { useId, useState } from "react";
 import type { HomeDetailHandler } from "@/lib/pivot/home";
 import type { SavedCard, SavedState } from "@/lib/pivot/saved";
 import { HomeHeader, HomeNavigation } from "./home-screen";
-import { ProtectedSlideImage } from "./content-carousel";
+import { ContentListCard } from "./content-list-card";
 import homeStyles from "./home.module.css";
 import styles from "./saved.module.css";
 
 export function SavedContentCard({ card, onViewDetail }: { card: SavedCard; onViewDetail: HomeDetailHandler }) {
-  const id = useId(); const [failed, setFailed] = useState(false);
-  return <button type="button" className={styles.card} data-saved-content={card.contentId} data-saved-post={card.postId}
-    aria-labelledby={id} onClick={() => onViewDetail({ postId: card.postId, contentId: card.contentId, ...(card.topicId === undefined ? {} : { topicId: card.topicId }) })}>
-    {/* Keep legacy image text unobscured; Agent covers need a separate title. */}
-    <span className={styles.thumbnail}>
-    {card.image?.protected ? <ProtectedSlideImage key={card.image.src} src={card.image.src} alt="" retryable={false} /> : card.image?.src && !failed ? <img src={card.image.src} alt="" width={148} height={185} loading="lazy" draggable={false} onError={() => setFailed(true)} />
-      : <span className={styles.placeholder}>이미지 준비 중</span>}
-    </span>
-    <span id={id} className={styles.caption}>
-      <span className={styles.title} data-saved-title="">{card.title}</span>
-      <span className={homeStyles.srOnly}> 자세히 보기</span>
-    </span>
-  </button>;
+  return <ContentListCard card={card} onViewDetail={onViewDetail} />;
 }
 
 export function PivotSavedScreen({ state, demo, onHome, onMy, onViewDetail, onRetry }: {

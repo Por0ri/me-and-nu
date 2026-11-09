@@ -15,13 +15,16 @@ import { HomeController } from "./home-controller";
 import { DetailController } from "./detail-controller";
 import { MyPageController } from "./my-page-controller";
 import { SavedController } from "./saved-controller";
+import { MyActivityController } from "./my-activity-controller";
+import { activityTab, type ActivityDataSource, type ActivityTab } from "@/lib/pivot/my-activity";
 import { InteractionViewContext, useInteractions } from "./interaction-context";
 
 const noSubscribe = () => () => {};
 const noSnapshot = () => 0;
 
-export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, demoBookmarks, onRestart, onLogout }: {
+export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, activitySource, demoBookmarks, onRestart, onLogout }: {
   homeSource: HomeDataSource; detailSource: DetailDataSource; mySource?: MyPageDataSource; savedSource?: SavedDataSource;
+  activitySource?: ActivityDataSource;
   demoBookmarks?: DemoBookmarkControls; onRestart?: () => void; onLogout?: () => Promise<void>;
 }) {
   const params = useSearchParams();
@@ -29,6 +32,9 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const detailOpen = params.get("view") === "detail";
   const myOpen = params.get("view") === "my";
   const savedOpen = params.get("view") === "saved";
+  const activityOpen = params.get("view") === "activity";
+  const detailFromActivity = params.get("from") === "activity";
+  const selectedActivityTab = activityTab(params.get("activityTab"));
   const detailFromSaved = params.get("from") === "saved";
   const postId = params.get("postId") ?? "";
   const contentId = params.get("contentId") ?? "";
@@ -37,6 +43,8 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const topicId = Number.isSafeInteger(parsedTopic) ? parsedTopic : undefined;
   const home = useRef<HTMLDivElement>(null);
   const savedList = useRef<HTMLDivElement>(null);
+  const activityList = useRef<HTMLDivElement>(null);
+  const activityReturn = useRef<{ scrollY: number; contentId: string } | null>(null);
   const detail = useRef<HTMLDivElement>(null);
   const detailReturn = useRef<{ scrollY: number; focus: HTMLElement | null } | null>(null);
   const restoreFrame = useRef<number>(0);
@@ -60,7 +68,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   } : safeSavedSource, [safeSavedSource, serviceBookmarks]);
   useSyncExternalStore(bookmarks?.subscribe ?? noSubscribe, bookmarks?.getSnapshot ?? noSnapshot, noSnapshot);
   const restoreHome = useCallback(() => {
-    if (detailOpen || myOpen || savedOpen) return;
+    if (detailOpen || myOpen || savedOpen || activityOpen) return;
     const snapshot = readHomeReturn(window.history.state?.pivotDetailHome, window.location.pathname, homeSource.kind);
     if (snapshot) setRestoreQuery(snapshot.query);
     cancelAnimationFrame(restoreFrame.current);
@@ -81,7 +89,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
       (button ?? (snapshot.focusContentId === "" ? home.current?.querySelector<HTMLButtonElement>(snapshot.focusNavigation === "saved" ? "[data-saved-navigation]" : "[data-my-navigation]") : null)
         ?? home.current?.querySelector<HTMLHeadingElement>("h1"))?.focus({ preventScroll: true });
     });
-  }, [detailOpen, myOpen, savedOpen, homeSource.kind]);
+  }, [detailOpen, myOpen, savedOpen, activityOpen, homeSource.kind]);
   const restoreSaved = useCallback(() => {
     if (!savedOpen) return;
     const snapshot = readSavedReturn(window.history.state?.pivotDetailSaved, window.location.pathname, homeSource.kind);
@@ -100,10 +108,18 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
       if (saved) (saved.focus ?? detail.current?.querySelector<HTMLHeadingElement>("h1"))?.focus({ preventScroll: true });
     }
     else if (myOpen) window.scrollTo({ top: 0, behavior: "instant" });
+    else if (activityOpen) {
+      restoreFrame.current = requestAnimationFrame(() => {
+        window.scrollTo({ top: activityReturn.current?.scrollY ?? 0, behavior: "instant" });
+        const button = Array.from(activityList.current?.querySelectorAll<HTMLButtonElement>("[data-activity-content]") ?? [])
+          .find(item => item.dataset.activityContent === activityReturn.current?.contentId);
+        (button ?? activityList.current?.querySelector<HTMLHeadingElement>("h1"))?.focus({ preventScroll: true });
+      });
+    }
     else if (savedOpen) restoreSaved();
     else restoreHome();
     return () => cancelAnimationFrame(restoreFrame.current);
-  }, [detailOpen, myOpen, savedOpen, postId, contentId, topicId, restoreHome, restoreSaved]);
+  }, [detailOpen, myOpen, savedOpen, activityOpen, postId, contentId, topicId, restoreHome, restoreSaved]);
   function captureHome(focusContentId: string, focusNavigation?: "my" | "saved"): HomeReturnSnapshot {
     return {
       path: window.location.pathname, kind: homeSource.kind, scrollY: window.scrollY,
@@ -127,6 +143,11 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   function openDetail(target: HomeDetailTarget) {
     interactions?.activity.remember(target);
     detailReturn.current = null;
+    if (activityOpen) {
+      activityReturn.current = { scrollY: window.scrollY, contentId: target.contentId };
+      window.history.pushState({ ...storedSnapshots(), pivotDetailBack: true }, "", `${detailHref(window.location.pathname, target)}&from=activity&activityTab=${selectedActivityTab}`);
+      return;
+    }
     if (savedOpen) {
       const history = { ...storedSnapshots(), pivotDetailSaved: captureSaved(target.contentId) };
       window.history.replaceState({ ...history, pivotSavedBack: window.history.state?.pivotSavedBack === true }, "", `${window.location.pathname}?view=saved`);
@@ -143,7 +164,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   }
   function openSection(next: "my" | "saved") {
     const history = storedSnapshots();
-    const atHome = !detailOpen && !myOpen && !savedOpen;
+    const atHome = !detailOpen && !myOpen && !savedOpen && !activityOpen;
     if (atHome) {
       history.pivotDetailHome = captureHome("", next);
       history.pivotDetailSaved = null;
@@ -162,34 +183,57 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
       query.set("postId", postId); query.set("contentId", contentId);
       if (topicId !== undefined) query.set("topicId", String(topicId));
       if (detailFromSaved) query.set("from", "saved");
+      if (detailFromActivity) { query.set("from", "activity"); query.set("activityTab", selectedActivityTab); }
     }
     window.history.pushState({ ...history, pivotMyBack: next === "my" && atHome, pivotSavedBack: next === "saved" && atHome }, "", `${window.location.pathname}?${query}`);
   }
   function openMy() { openSection("my"); }
   function openSaved() { if (detailOpen && detailFromSaved) backFromDetail(); else openSection("saved"); }
+  function openActivity() {
+    activityReturn.current = null;
+    window.history.pushState({ ...storedSnapshots(), pivotActivityBack: true }, "", `${window.location.pathname}?view=activity&activityTab=likes`);
+  }
+  function selectActivityTab(tab: ActivityTab) {
+    if (tab === selectedActivityTab) return;
+    activityReturn.current = null;
+    window.history.replaceState({ ...storedSnapshots(), pivotActivityBack: window.history.state?.pivotActivityBack === true }, "", `${window.location.pathname}?view=activity&activityTab=${tab}`);
+  }
+  function backToMy() {
+    if (window.history.state?.pivotActivityBack) window.history.back();
+    else window.history.replaceState(storedSnapshots(), "", `${window.location.pathname}?view=my`);
+  }
   function backToHome() {
     detailReturn.current = null;
     const snapshot = readHomeReturn(window.history.state?.pivotDetailHome, window.location.pathname, homeSource.kind);
-    if ((myOpen ? window.history.state?.pivotMyBack : savedOpen ? window.history.state?.pivotSavedBack : !detailFromSaved && window.history.state?.pivotDetailBack) && snapshot) window.history.back();
+    if (!activityOpen && !detailFromActivity && (myOpen ? window.history.state?.pivotMyBack : savedOpen ? window.history.state?.pivotSavedBack : !detailFromSaved && window.history.state?.pivotDetailBack) && snapshot) window.history.back();
     else window.history.replaceState({ pivotDetailHome: snapshot, pivotDetailBack: false }, "", `${window.location.pathname}?view=home`);
   }
   function backFromDetail() {
+    if (detailFromActivity) {
+      detailReturn.current = null;
+      if (window.history.state?.pivotDetailBack) window.history.back();
+      else window.history.replaceState(storedSnapshots(), "", `${window.location.pathname}?view=activity&activityTab=${selectedActivityTab}`);
+      return;
+    }
     if (!detailFromSaved) { backToHome(); return; }
     detailReturn.current = null;
     const history = storedSnapshots();
     if (window.history.state?.pivotDetailBack && history.pivotDetailSaved) window.history.back();
     else window.history.replaceState(history, "", `${window.location.pathname}?view=saved`);
   }
-  return <InteractionViewContext.Provider value={detailOpen ? "detail" : myOpen ? "my" : savedOpen ? "saved" : "home"}>
-    <div ref={home} hidden={detailOpen || myOpen || savedOpen}>
+  return <InteractionViewContext.Provider value={detailOpen ? "detail" : myOpen ? "my" : savedOpen ? "saved" : activityOpen ? "activity" : "home"}>
+    <div ref={home} hidden={detailOpen || myOpen || savedOpen || activityOpen}>
       <HomeController source={homeSource} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} bookmarks={bookmarks} />
     </div>
     <div ref={detail} hidden={!detailOpen}>
-      {detailOpen || ((myOpen || savedOpen) && postId && contentId) ? <DetailController source={detailSource} target={{ postId, contentId, ...(topicId === undefined ? {} : { topicId }), ...interactions?.activity.metadata({ postId, contentId, topicId }) }} onBack={backFromDetail} onHome={backToHome} onMy={openMy} onSaved={openSaved} fromSaved={detailFromSaved} bookmarks={bookmarks} /> : null}
+      {detailOpen || ((myOpen || savedOpen) && postId && contentId) ? <DetailController source={detailSource} target={{ postId, contentId, ...(topicId === undefined ? {} : { topicId }), ...interactions?.activity.metadata({ postId, contentId, topicId }) }} onBack={backFromDetail} onHome={backToHome} onMy={openMy} onSaved={openSaved} fromSaved={detailFromSaved} fromActivity={detailFromActivity} bookmarks={bookmarks} /> : null}
     </div>
     <div ref={savedList} hidden={!savedOpen}>
       {savedOpen || (detailFromSaved && (detailOpen || myOpen)) ? <SavedController source={connectedSavedSource} onHome={backToHome} onMy={openMy} onViewDetail={openDetail} onReady={restoreSaved} /> : null}
     </div>
-    {myOpen ? <MyPageController source={mySource.kind === homeSource.kind ? mySource : pendingMyPageSource} onHome={backToHome} onSaved={openSaved} onLogout={homeSource.kind === "service" ? onLogout : undefined} /> : null}
+    <div ref={activityList} hidden={!activityOpen}>
+      {activityOpen || (detailFromActivity && (detailOpen || myOpen || savedOpen)) ? <MyActivityController source={activitySource} demo={homeSource.kind === "demo"} tab={selectedActivityTab} onTab={selectActivityTab} onHome={backToHome} onMy={backToMy} onSaved={openSaved} onViewDetail={openDetail} /> : null}
+    </div>
+    {myOpen ? <MyPageController source={mySource.kind === homeSource.kind ? mySource : pendingMyPageSource} onHome={backToHome} onSaved={openSaved} onActivity={openActivity} onLogout={homeSource.kind === "service" ? onLogout : undefined} /> : null}
   </InteractionViewContext.Provider>;
 }
