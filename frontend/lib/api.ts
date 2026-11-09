@@ -162,6 +162,8 @@ export type ViewedContent = ActivityContentCard & { viewedAt: string };
 export type LikedContentsResponse = { items: LikedContent[]; nextCursor: string | null };
 export type RecentViewsResponse = { items: ViewedContent[]; nextCursor: string | null };
 export type ActivityListQuery = { topicId?: number; cursor?: string; limit?: number };
+export type InquiryInput = { inquiryType: "service" | "bug"; detail: string };
+export type InquiryResponse = { inquiryId: number; status: "received" };
 
 export type ApiFieldError = { field: string; code: string; message: string };
 type ErrorPayload = { code?: string; message?: string; fields?: ApiFieldError[]; requestId?: string };
@@ -190,7 +192,7 @@ function query(params: Record<string, string | number | boolean | undefined | nu
   return search.size ? `?${search}` : "";
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(path: string, init: RequestInit = {}, expectedStatus?: number): Promise<T> {
   init.signal?.throwIfAborted();
   const method = (init.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD" && !csrfToken) await getSession();
@@ -202,7 +204,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     ...init, headers, credentials: "include", cache: "no-store",
   });
   init.signal?.throwIfAborted();
-  if (response.status === 204) return undefined as T;
+  if (response.status === 204 && expectedStatus === undefined) return undefined as T;
   const payload: unknown = await response.json().catch(() => null);
   // A cancelled read must not expire a newer session via a late 401 response.
   init.signal?.throwIfAborted();
@@ -216,6 +218,9 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       error?.message ?? `요청에 실패했습니다. (HTTP ${response.status})`,
       response.status, error?.code ?? "UNKNOWN_ERROR", error?.fields,
     );
+  }
+  if (expectedStatus !== undefined && response.status !== expectedStatus) {
+    throw new ApiError("접수 응답을 확인하지 못했어요.", response.status, "INVALID_RESPONSE");
   }
   return payload as T;
 }
@@ -332,6 +337,9 @@ export function getMyLikes(options: ActivityListQuery = {}, init: Pick<RequestIn
 }
 export function getMyRecentViews(options: ActivityListQuery = {}, init: Pick<RequestInit, "signal"> = {}): Promise<RecentViewsResponse> {
   return apiRequest(`/api/v1/users/me/recent-views${query(options)}`, init);
+}
+export function submitInquiry(input: InquiryInput, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<InquiryResponse> {
+  return apiRequest("/api/v1/inquiries", { ...init, method: "POST", body: JSON.stringify(input) }, 201);
 }
 export function createChatSession(topicId: number, anchorContentId?: number): Promise<ChatSessionResponse> {
   return apiRequest("/api/v1/chat/sessions", { method: "POST", body: JSON.stringify({ topicId, anchorContentId }) });
