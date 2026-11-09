@@ -63,6 +63,9 @@ async function verify(browser, width) {
     assert.equal(geometry.logo.width, 103); assert.equal(geometry.back.width, 24); assert.equal(geometry.notification.width, 24);
     await page.screenshot({ path: path.join(output, `empty-${width}.png`), fullPage: true });
     step = 'type and boundaries'; await fill(' \n\t '); assert.equal(await submit.isDisabled(), true);
+    await input.focus();
+    const colors = await input.evaluate(el => { const cs = getComputedStyle(el), option = getComputedStyle(document.querySelector('input[name="inquiryType"]:checked + span')); return { background: cs.backgroundColor, border: cs.borderColor, borderWidth: cs.borderWidth, selected: option.backgroundColor, selectedBorder: option.borderColor }; });
+    assert.deepEqual(colors, { background: 'rgb(244, 244, 245)', border: 'rgb(112, 67, 180)', borderWidth: '1px', selected: 'rgb(222, 207, 255)', selectedBorder: 'rgb(199, 172, 251)' });
     await input.fill('가'.repeat(500)); assert.equal(await submit.isDisabled(), false);
     await input.fill('😀'.repeat(500)); await screen.getByText('500/500', { exact: true }).waitFor(); assert.equal(await submit.isDisabled(), false);
     await input.fill('가'.repeat(501)); assert.equal(await submit.isDisabled(), true); await screen.getByRole('alert').waitFor();
@@ -109,7 +112,7 @@ async function verify(browser, width) {
 (async () => {
   fs.mkdirSync(output, { recursive: true });
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
-  try { for (const width of [375, 320]) await verify(browser, width); }
+  try { for (const width of [375, 320, 390]) await verify(browser, width); }
   finally { await browser.close(); fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(results, null, 2)); }
   console.log(JSON.stringify(results, null, 2));
 })().catch(error => { console.error(error); process.exitCode = 1; });

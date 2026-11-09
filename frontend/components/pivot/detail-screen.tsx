@@ -11,6 +11,8 @@ import { ContentCover, ContentMetadata } from "./content-carousel";
 import homeStyles from "./home.module.css";
 import styles from "./detail.module.css";
 import { useDetailExposure, useInteractions } from "./interaction-context";
+import type { ReportSource } from "@/lib/pivot/report";
+import { ReportDialog } from "./report-dialog";
 
 function DetailImage({ article }: { article: DetailArticle }) {
   const [failed, setFailed] = useState(false);
@@ -63,13 +65,34 @@ export function DetailSlideText({ article, coverTextVisible = false }: { article
   </section>;
 }
 
-export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved, onHome, fromSaved = false, fromActivity = false, bookmarks }: {
+export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved, onHome, fromSaved = false, fromActivity = false, bookmarks, reportSource }: {
   state: DetailState; demo: boolean; onBack: () => void; onRetry: () => void; onMy?: () => void; onSaved?: () => void; onHome?: () => void;
   fromSaved?: boolean; fromActivity?: boolean; bookmarks?: BookmarkControls;
+  reportSource?: ReportSource;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const article = useRef<HTMLElement>(null);
   const readyArticle = state.status === "ready" ? state.article : null;
+  const [reportOpen, setReportOpen] = useState(false);
+  const closingReport = useRef(false);
+  useEffect(() => {
+    if (!reportOpen) return;
+    const closeOnBack = () => setReportOpen(false);
+    window.addEventListener("popstate", closeOnBack);
+    return () => window.removeEventListener("popstate", closeOnBack);
+  }, [reportOpen]);
+  function openReport() {
+    if (reportOpen || !readyArticle) return;
+    closingReport.current = false;
+    window.history.pushState({ ...window.history.state, pivotReportDialog: true }, "");
+    setReportOpen(true);
+  }
+  function closeReport() {
+    if (closingReport.current) return;
+    closingReport.current = true;
+    if (window.history.state?.pivotReportDialog) window.history.back();
+    else setReportOpen(false);
+  }
   const [coverText, setCoverText] = useState<{ article: DetailArticle | null; visible: boolean } | null>(null);
   const onCoverTextVisibilityChange = useCallback((visible: boolean) => {
     setCoverText(current => current?.article === readyArticle && current.visible === visible ? current : { article: readyArticle, visible });
@@ -128,6 +151,9 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
         <span className={styles.circle}><img src="/pivot/detail/back.svg" alt="" width={24} height={24} /></span>
       </button>
       <div className={styles.actions}>
+        <button type="button" className={styles.iconButton} aria-label="콘텐츠 신고" disabled={!readyArticle} onClick={openReport}>
+          <span className={styles.circle}><img src="/pivot/report/flag.svg" alt="" width={24} height={24} /></span>
+        </button>
         {([['share', '공유'], ['like', '좋아요'], ['save', '저장']] as const).map(([icon, label]) =>
           <button key={icon} type="button" className={styles.iconButton} aria-label={label} aria-disabled={(icon === "save" && canBookmark) || (icon === "like" && canReact) ? undefined : true}
             aria-pressed={icon === "save" && canBookmark ? saved : icon === "like" && canReact ? reaction?.liked === true : undefined}
@@ -195,5 +221,6 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
         onClick={() => setAiExpanded((expanded) => !expanded)}><img src={aiExpanded ? "/pivot/detail/ai-expanded.svg" : "/pivot/detail/ai.svg"} alt="" /></button>
     </div>
     {notice ? <p role="status" className={styles.notice}>{notice}</p> : null}
+    {reportOpen && readyArticle ? <ReportDialog contentId={readyArticle.contentId} source={reportSource} demo={demo} onClose={closeReport} /> : null}
   </main>;
 }

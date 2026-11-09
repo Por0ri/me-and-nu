@@ -5,11 +5,13 @@ import { createDetailRequestController, type DetailDataSource, type DetailState 
 import type { HomeDetailTarget } from "@/lib/pivot/home";
 import type { BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { PivotDetailScreen } from "./detail-screen";
+import type { ReportSource } from "@/lib/pivot/report";
 
 const loading: DetailState = { status: "loading" };
-export function DetailController({ source, target, onBack, onMy, onSaved, onHome, fromSaved = false, fromActivity = false, bookmarks }: {
+export function DetailController({ source, target, onBack, onMy, onSaved, onHome, fromSaved = false, fromActivity = false, bookmarks, reportSource }: {
   source: DetailDataSource; target: HomeDetailTarget; onBack: () => void; onMy?: () => void; onSaved?: () => void; onHome?: () => void;
   fromSaved?: boolean; fromActivity?: boolean; bookmarks?: BookmarkControls;
+  reportSource?: ReportSource;
 }) {
   const [request, setRequest] = useState<{ source: DetailDataSource; postId: string; contentId: string; topicId?: number; state: DetailState }>();
   const [attempt, setAttempt] = useState(0);
@@ -20,5 +22,5 @@ export function DetailController({ source, target, onBack, onMy, onSaved, onHome
     return () => controller.cancel();
   }, [source, postId, contentId, topicId, recommendationId, recommendationReason, attempt]);
   const state = request?.source === source && request.postId === postId && request.contentId === contentId && request.topicId === topicId ? request.state : loading;
-  return <PivotDetailScreen key={`${topicId ?? "demo"}:${postId}:${contentId}`} state={state} demo={source.kind === "demo"} onBack={onBack} onMy={onMy} onSaved={onSaved} onHome={onHome} fromSaved={fromSaved} fromActivity={fromActivity} bookmarks={bookmarks} onRetry={() => setAttempt((value) => value + 1)} />;
+  return <PivotDetailScreen key={`${topicId ?? "demo"}:${postId}:${contentId}`} state={state} demo={source.kind === "demo"} reportSource={reportSource} onBack={onBack} onMy={onMy} onSaved={onSaved} onHome={onHome} fromSaved={fromSaved} fromActivity={fromActivity} bookmarks={bookmarks} onRetry={() => setAttempt((value) => value + 1)} />;
 }

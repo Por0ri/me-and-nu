@@ -17,7 +17,8 @@
 .details { display: flex; flex-direction: column; gap: 4px; height: 222px; padding: 12px; }
 .details .label { margin: 0; }
 .textbox { position: relative; display: flex; flex: 1; min-height: 0; }
-.textbox textarea { display: block; width: 100%; height: 100%; min-width: 0; resize: none; padding: 12px 12px 28px; border: .5px solid #b9b9c1; border-radius: 8px; background: white; color: var(--home-ink); font-family: inherit; font-size: 12px; line-height: 18px; }
+.textbox textarea { display: block; width: 100%; height: 100%; min-width: 0; resize: none; padding: 12px 12px 28px; border: 1px solid transparent; border-radius: 8px; background: #f4f4f5; color: var(--home-ink); font-family: inherit; font-size: 12px; line-height: 18px; }
+.textbox textarea:focus { border-color: #7043b4; outline: none; }
 .textbox textarea::placeholder { color: var(--home-muted); opacity: 1; }
 .textbox textarea:disabled { opacity: 1; -webkit-text-fill-color: var(--home-ink); }
 .count { position: absolute; right: 8px; bottom: 4px; color: var(--home-muted); font-size: 12px; line-height: 18px; pointer-events: none; }

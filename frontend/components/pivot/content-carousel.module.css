@@ -28,7 +28,11 @@
   left: auto !important; top: auto !important; width: auto !important; height: auto !important;
   max-width: none !important; max-height: none !important;
 }
-.eyebrow { margin: 0 0 4px; font-size: 11px; line-height: 16px; font-weight: 500; color: #c7acfb; }
+.eyebrow { margin: 0 0 4px; font-size: 11px; line-height: 16px; font-weight: 500; color: #c7acfb; text-shadow: 0 0 .5px #18181b, 0 .4px .5px #18181b; }
+/* A hairline preserves small counters and the purple fill on bright images. */
+@supports (-webkit-text-stroke: .4px #18181b) {
+  .eyebrow { -webkit-text-stroke: .4px #18181b; paint-order: stroke fill; text-shadow: none; }
+}
 .title { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600; letter-spacing: 0; }
 .title span { display: block; }
 .copy { margin-top: 4px; font-size: 14px; line-height: 20px; }
