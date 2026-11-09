@@ -593,7 +593,7 @@ def work_coverage(
     """작품별 출처 연결과 생성 현황을 점검해 출처 보강 대상을 찾습니다."""
     catalog = load_work_catalog()
     if not catalog:
-        raise typer.BadParameter("data/reference/menu_works.csv를 찾을 수 없습니다.")
+        raise typer.BadParameter("catalog/menu_works.csv를 찾을 수 없습니다.")
     sources = load_source_registry().sources
     counts = AgentRepository().get_work_content_counts()
 
@@ -665,7 +665,7 @@ def work_type_coverage(
     """작품별 10개 유형의 출처·후보·검증 사실·ready 커버리지를 확인합니다."""
     catalog = load_work_catalog()
     if not catalog:
-        raise typer.BadParameter("data/reference/menu_works.csv를 찾을 수 없습니다.")
+        raise typer.BadParameter("catalog/menu_works.csv를 찾을 수 없습니다.")
     if work_title:
         selected_ids = set(find_work_ids(catalog, work_title))
         if not selected_ids:

@@ -8,7 +8,6 @@ import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from ani_menu_agent.models import (
     ContentPackage,
@@ -19,6 +18,7 @@ from ani_menu_agent.sources import load_source_registry
 from ani_menu_agent.work_aliases import find_named_works
 
 _CATALOG_DIRECTORY = Path(__file__).resolve().parents[2] / "data" / "reference"
+_WORK_LIST_DIRECTORY = Path(__file__).resolve().parents[4] / "catalog"
 
 _KOREAN_TITLE_PARTICLES = (
     "에서",
@@ -48,24 +48,30 @@ _SEQUEL_SUFFIX = re.compile(
 @lru_cache(maxsize=1)
 def load_work_catalog() -> list[dict[str, Any]]:
     """Load canonical works without collapsing sequel/entry rows into one work."""
-    catalog = _CATALOG_DIRECTORY / "menu_works.csv"
-    if not catalog.is_file():
-        return []
-    with catalog.open(encoding="utf-8-sig", newline="") as stream:
-        return [
-            {
-                **row,
-                "menu_work_id": int(row["menu_work_id"]),
-                "popularity": int(row.get("popularity") or 0),
-            }
-            for row in csv.DictReader(stream)
-        ]
+    rows: list[dict[str, Any]] = []
+    for path in (
+        _WORK_LIST_DIRECTORY / "menu_works.csv",
+        _CATALOG_DIRECTORY / "agent_works.csv",
+    ):
+        if not path.is_file():
+            continue
+        with path.open(encoding="utf-8-sig", newline="") as stream:
+            rows.extend(
+                {
+                    **row,
+                    "menu_work_id": int(row["menu_work_id"]),
+                    "popularity": int(row.get("popularity") or 0),
+                }
+                for row in csv.DictReader(stream)
+                if row.get("menu_work_id", "").isdigit()
+            )
+    return rows
 
 
 @lru_cache(maxsize=1)
 def load_work_entries() -> list[dict[str, Any]]:
     """Load season/movie AniList entries and retain their canonical series ID."""
-    entries_path = _CATALOG_DIRECTORY / "menu_work_entries.csv"
+    entries_path = _WORK_LIST_DIRECTORY / "menu_work_entries.csv"
     valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
     if not entries_path.is_file():
         return []

@@ -117,6 +117,44 @@ def test_existing_parent_mapping_uses_kitsu_title_confirmation(monkeypatch) -> N
     assert calls == [(["Naruto Shippuden"], {"existing_menu_work_id": 7})]
 
 
+def test_source_verified_new_work_uses_registration_temporary_id(monkeypatch) -> None:
+    monkeypatch.setattr(fallback, "load_work_catalog", lambda: [])
+    monkeypatch.setattr(fallback, "load_work_entries", lambda: [])
+    monkeypatch.setattr(fallback, "load_work_external_entries", lambda: [])
+    monkeypatch.setattr(fallback, "load_work_aliases", lambda: [])
+    _install_model(
+        monkeypatch,
+        fallback.WorkIdentityDecision(
+            action="register_new",
+            subject_scope="anime_work",
+            subject_relation="primary_subject",
+            evidence_title="Mysterious Anime",
+            evidence_quote="Mysterious Anime",
+            confidence=0.96,
+            rationale="The source explicitly identifies a distinct new work.",
+        ),
+    )
+    registrations = []
+    monkeypatch.setattr(
+        fallback,
+        "register_new_work_from_source_title",
+        lambda title, source_url, audit: (
+            registrations.append((title, source_url, audit)) or 2_000_123
+        ),
+    )
+
+    audit: dict = {}
+    matches = fallback.resolve_unmatched_work_with_llm(
+        titles=["Mysterious Anime announcement"],
+        source_url="https://example.com/news",
+        audit=audit,
+    )
+
+    assert [item.menu_work_id for item in matches] == [2_000_123]
+    assert registrations[0][:2] == ("Mysterious Anime", "https://example.com/news")
+    assert audit["menu_work_id"] == 2_000_123
+
+
 def test_shortlist_keeps_canonical_title_when_many_entry_titles_exist(monkeypatch) -> None:
     monkeypatch.setattr(fallback, "load_work_catalog", lambda: [_catalog_row(11, "Naruto")])
     monkeypatch.setattr(
@@ -216,7 +254,7 @@ def test_low_confidence_decision_stays_unresolved(monkeypatch) -> None:
                 fallback.CatalogWorkSelection(menu_work_id=7, catalog_title="Naruto")
             ],
             evidence_title="Naruto Shippuden",
-            confidence=0.79,
+                confidence=0.49,
         ),
     )
 
@@ -287,7 +325,7 @@ def test_fallback_ignores_body_identity_from_generic_listing_pages(monkeypatch) 
     assert audit["status"] == "body_context_skipped_listing_page"
 
 
-def test_new_registration_requires_exact_source_title_and_catalog_confirmation(monkeypatch) -> None:
+def test_new_registration_uses_source_title_temporary_id(monkeypatch) -> None:
     monkeypatch.setattr(fallback, "load_work_catalog", lambda: [])
     monkeypatch.setattr(fallback, "load_work_entries", lambda: [])
     _install_model(
@@ -299,24 +337,25 @@ def test_new_registration_requires_exact_source_title_and_catalog_confirmation(m
             rationale="A distinct series title absent from the candidate catalog.",
         ),
     )
-    registration_calls: list[list[str]] = []
-    registered = WorkMatchEvidence(
-        menu_work_id=2434,
-        basis="kitsu_catalog_title",
-        matched_value="Yu-Gi-Oh! GX",
-        evidence_url="https://kitsu.io/anime/12345",
-        confidence=0.97,
-    )
+    registration_calls: list[tuple[str, str, dict]] = []
     monkeypatch.setattr(
         fallback,
-        "register_unmatched_work_from_kitsu",
-        lambda titles, **_kwargs: registration_calls.append(titles) or registered,
+        "register_new_work_from_source_title",
+        lambda title, source_url, audit: registration_calls.append((title, source_url, audit))
+        or 2_000_243,
     )
 
-    matches = fallback.resolve_unmatched_work_with_llm(titles=["Yu-Gi-Oh! GX"])
+    matches = fallback.resolve_unmatched_work_with_llm(
+        titles=["Yu-Gi-Oh! GX"], source_url="https://example.com/announcement"
+    )
 
-    assert matches == [registered]
-    assert registration_calls == [["Yu-Gi-Oh! GX"]]
+    assert len(matches) == 1
+    assert matches[0].menu_work_id == 2_000_243
+    assert matches[0].basis == "llm_source_new_work"
+    assert registration_calls[0][:2] == (
+        "Yu-Gi-Oh! GX",
+        "https://example.com/announcement",
+    )
 
 
 def test_new_registration_does_not_create_id_without_catalog_confirmation(monkeypatch) -> None:
