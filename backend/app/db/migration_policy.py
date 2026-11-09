@@ -1,6 +1,6 @@
 """Explicit service target while the birth-date collection policy is deferred."""
 
-SERVICE_SCHEMA_REVISION = "6d2f8b4a1c37"
+SERVICE_SCHEMA_REVISION = "b3e7a5c19d42"
 DEFERRED_BIRTH_REVISION = "d2f6a9c4e731"
 
 

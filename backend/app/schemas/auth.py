@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import EmailStr, Field, StringConstraints
@@ -45,3 +46,5 @@ class SessionResponse(CamelModel):
     user: SessionUser | None
     onboarding_completed: bool
     csrf_token: str
+    # 탈퇴 유예 중 복구 대기 세션(restoration_pending)에서만 값이 있습니다.
+    scheduled_delete_at: datetime | None = None

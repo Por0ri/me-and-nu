@@ -24,7 +24,9 @@ from app.db.session import get_db
 from app.repositories.auth_session_repository import create_auth_session, revoke_auth_session
 from app.repositories.redis_session_store import RedisSessionStore
 from app.schemas.auth import SessionResponse, SessionUser
-from app.schemas.common import COMMON_ERRORS
+from app.schemas.common import COMMON_ERRORS, ErrorResponse
+from app.schemas.withdrawal import WithdrawalRestorationResponse
+from app.services.withdrawal_service import restore_withdrawal, scheduled_delete_at
 
 router = APIRouter(prefix="/auth", tags=["인증·세션"])
 
@@ -75,6 +77,15 @@ async def get_session(
 
     session = context.session
     user = context.user
+    if context.restoring_user is not None:
+        return SessionResponse(
+            authenticated=False,
+            session_state="restoration_pending",
+            user=None,
+            onboarding_completed=context.restoring_user.onboarding_completed_at is not None,
+            csrf_token=csrf_token_for_session(context.raw_token),
+            scheduled_delete_at=scheduled_delete_at(context.restoring_user.withdrawn_at),
+        )
     if user is None:
         return SessionResponse(
             authenticated=False,
@@ -116,3 +127,32 @@ async def logout(
         if context.session_store is None:
             await db.commit()
     delete_session_cookie(response)
+
+
+@router.post(
+    "/withdrawal-restorations",
+    response_model=WithdrawalRestorationResponse,
+    summary="유예 중 탈퇴 복구",
+    description="API-010. 탈퇴 유예 중 같은 소셜 계정으로 로그인해 받은 복구 대기 세션(restoration_pending)에서만 씁니다. 계정을 되살리고 세션을 새로 발급합니다. 서버 redirect는 없으니 GET /auth/session을 다시 조회해 새 csrfToken을 받으세요. Body 없음, X-CSRF-Token 필요.",
+    responses={
+        **COMMON_ERRORS,
+        409: {"model": ErrorResponse, "description": "복구 기한이 지남(RESTORATION_EXPIRED)", "content": {"application/json": {"example": {"code": "RESTORATION_EXPIRED", "message": "복구 기한이 지났습니다."}}}},
+    },
+)
+async def restore_account(
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    context: Annotated[AuthContext | None, Depends(get_optional_auth_context)],
+    _: Annotated[None, Depends(require_csrf)],
+) -> WithdrawalRestorationResponse:
+    if context is None or context.restoring_user is None:
+        raise ApiError(403, "RESTORATION_SESSION_REQUIRED", "탈퇴 유예 중 다시 로그인한 뒤에 복구할 수 있습니다.")
+    user, raw_token = await restore_withdrawal(
+        db, user_id=context.restoring_user.user_id, session=context.session, store=context.session_store
+    )
+    set_session_cookie(response, raw_token)
+    return WithdrawalRestorationResponse(
+        user=SessionUser(id=user.user_id, account_type=user.account_type),
+        status="active",
+        onboarding_completed=user.onboarding_completed_at is not None,
+    )

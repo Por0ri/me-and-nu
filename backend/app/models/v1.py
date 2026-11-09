@@ -50,7 +50,7 @@ class AuthSession(Base):
     __table_args__ = (
         UniqueConstraint("session_token_hash", name="uq_auth_session_token_hash"),
         CheckConstraint(
-            "session_state IN ('anonymous', 'onboarding_pending', 'active')",
+            "session_state IN ('anonymous', 'onboarding_pending', 'restoration_pending', 'active')",
             name="ck_auth_session_state",
         ),
         CheckConstraint(

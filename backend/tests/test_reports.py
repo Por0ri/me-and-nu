@@ -4,6 +4,7 @@ test_oauth_postgres_flow 의 일회용 SQLite 흐름(외래 키 켬)에 글 · �
 글이 공개 중인지 보는 조건(카드 수 · 승인 · 기간)은 피드 테스트가 따로 보므로, 여기선 정해 둔 글 번호만 공개로 둡니다.
 """
 
+import asyncio
 from typing import get_args
 
 import pytest
@@ -17,7 +18,10 @@ from app.models import AgentRun, Content, ContentReport, CreatorChannel, Draft, 
 from app.models.report import INQUIRY_TYPES, REPORT_REASONS
 from app.schemas.report import InquiryType, ReportReason
 from app.services import report_service
-from test_oauth_postgres_flow import onboarding_flow, pending_onboarding, postgres_flow, signup_request  # noqa: F401
+from app.services.withdrawal_service import purge_withdrawn_accounts
+from test_oauth_postgres_flow import (  # noqa: F401
+    AsyncSqliteSession, onboarding_flow, pending_onboarding, postgres_flow, signup_request,
+)
 
 LEGACY_ANSWERS = {"q1": "world", "q2": "releases"}
 VISIBLE = {301, 302}   # 303 은 표에는 있지만 공개 중이 아닌 글
@@ -152,8 +156,18 @@ def test_withdrawal_keeps_reports_without_the_reporter_and_deletes_inquiries(rep
     assert report(flow, csrf).status_code == 201
     assert inquire(flow, csrf, inquiryType="bug", detail="카드가 안 넘어가요").status_code == 201
 
-    response = flow.client.delete("/api/v1/users/me", params={"mode": "immediate"}, headers={"X-CSRF-Token": csrf})
+    response = flow.client.delete("/api/v1/users/me", params={"mode": "grace"}, headers={"X-CSRF-Token": csrf})
     assert response.status_code == 202, response.text
+    with Session(flow.engine) as session:   # 유예 동안엔 신고자 · 문의가 그대로
+        assert session.scalar(select(ContentReport.user_id)) == user_id
+        assert session.scalar(select(func.count()).select_from(Inquiry)) == 1
+
+    async def delete_account():
+        with Session(flow.engine) as session:
+            db = AsyncSqliteSession(session, flow.failure)
+            assert (await purge_withdrawn_accounts(db, apply=True, user_id=user_id))["deleted"] == 1
+            await db.commit()
+    asyncio.run(delete_account())
     with Session(flow.engine) as session:
         assert session.get(UserAccount, user_id) is None
         assert [tuple(row) for row in session.execute(select(ContentReport.user_id, ContentReport.content_id))] == [(None, 301)]

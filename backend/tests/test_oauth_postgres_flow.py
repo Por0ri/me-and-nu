@@ -25,7 +25,7 @@ from app.core.security import hash_token
 from app.db.session import get_db
 from app.main import create_app
 from app.models import (
-    AuthSession, ConsentHistory, NotificationSetting, OnboardingAnswersRecord,
+    AuthSession, ConsentHistory, CreatorChannel, NotificationSetting, OnboardingAnswersRecord,
     Policy, Subtopic, Tap, TapTopic, Topic, UserAccount,
 )
 from app.models.oauth_attempt import OAuthAttempt
@@ -108,7 +108,7 @@ def postgres_flow(monkeypatch, request):
     metadata = MetaData()
     for model in (
         UserAccount, AuthSession, OAuthAttempt, Topic, Subtopic, Policy,
-        ConsentHistory, NotificationSetting, Tap, TapTopic, OnboardingAnswersRecord,
+        ConsentHistory, NotificationSetting, Tap, TapTopic, OnboardingAnswersRecord, CreatorChannel,
     ):
         table = model.__table__.to_metadata(metadata)
         for column in table.primary_key.columns:
