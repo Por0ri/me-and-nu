@@ -58,7 +58,7 @@ export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI 
       <button type="button" data-saved-navigation="" aria-current={active === "saved" ? "page" : undefined}
         aria-disabled={!onSaved && active !== "saved" || undefined} onClick={() => { if (active === "saved") { onSaved?.(); return; } if (onSaved) onSaved(); else (onNotice ?? setNotice)("SAVE 화면은 준비 중이에요. 저장은 수행하지 않아요."); }}><span>SAVE</span></button>
       <button type="button" data-my-navigation="" aria-current={active === "my" ? "page" : undefined}
-        aria-disabled={!onMy && active !== "my" || undefined} onClick={() => { if (active === "my") return; if (onMy) onMy(); else (onNotice ?? setNotice)("MY 화면은 준비 중이에요."); }}><span>MY</span></button>
+        aria-disabled={!onMy && active !== "my" || undefined} onClick={() => { if (active === "my") { onMy?.(); return; } if (onMy) onMy(); else (onNotice ?? setNotice)("MY 화면은 준비 중이에요."); }}><span>MY</span></button>
     </nav>
     {!hideAI ? <HomeAIButton onNotice={onNotice ?? setNotice} /> : null}
     {notice ? <p className={styles.pendingNotice} role="status">{notice}</p> : null}

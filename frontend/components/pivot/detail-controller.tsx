@@ -7,9 +7,9 @@ import type { BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { PivotDetailScreen } from "./detail-screen";
 
 const loading: DetailState = { status: "loading" };
-export function DetailController({ source, target, onBack, onMy, onSaved, onHome, fromSaved = false, bookmarks }: {
+export function DetailController({ source, target, onBack, onMy, onSaved, onHome, fromSaved = false, fromActivity = false, bookmarks }: {
   source: DetailDataSource; target: HomeDetailTarget; onBack: () => void; onMy?: () => void; onSaved?: () => void; onHome?: () => void;
-  fromSaved?: boolean; bookmarks?: BookmarkControls;
+  fromSaved?: boolean; fromActivity?: boolean; bookmarks?: BookmarkControls;
 }) {
   const [request, setRequest] = useState<{ source: DetailDataSource; postId: string; contentId: string; topicId?: number; state: DetailState }>();
   const [attempt, setAttempt] = useState(0);
@@ -20,5 +20,5 @@ export function DetailController({ source, target, onBack, onMy, onSaved, onHome
     return () => controller.cancel();
   }, [source, postId, contentId, topicId, recommendationId, recommendationReason, attempt]);
   const state = request?.source === source && request.postId === postId && request.contentId === contentId && request.topicId === topicId ? request.state : loading;
-  return <PivotDetailScreen key={`${topicId ?? "demo"}:${postId}:${contentId}`} state={state} demo={source.kind === "demo"} onBack={onBack} onMy={onMy} onSaved={onSaved} onHome={onHome} fromSaved={fromSaved} bookmarks={bookmarks} onRetry={() => setAttempt((value) => value + 1)} />;
+  return <PivotDetailScreen key={`${topicId ?? "demo"}:${postId}:${contentId}`} state={state} demo={source.kind === "demo"} onBack={onBack} onMy={onMy} onSaved={onSaved} onHome={onHome} fromSaved={fromSaved} fromActivity={fromActivity} bookmarks={bookmarks} onRetry={() => setAttempt((value) => value + 1)} />;
 }

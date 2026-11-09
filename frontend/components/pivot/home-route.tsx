@@ -1,6 +1,7 @@
 "use client";
 
 import { createServiceMyPageSource } from "@/lib/pivot/my-page-service";
+import { createServiceActivitySource } from "@/lib/pivot/my-activity-service";
 import { createServiceHomeSource } from "@/lib/pivot/home-service";
 import { pendingDetailSource } from "@/lib/pivot/detail-service";
 import { isActiveSession } from "@/lib/pivot/services";
@@ -24,6 +25,7 @@ export function HomeRoute() {
     () => createServiceMyPageSource(() => sessionRef.current),
     [state.session],
   );
+  const activitySource = useMemo(() => createServiceActivitySource(() => sessionRef.current), [state.session]);
   const interactions = useMemo(() => {
     const activity = createActivityQueue(userId ?? 0, () => sessionRef.current);
     return { activity, reactions: createReactionControls(activity) };
@@ -44,5 +46,5 @@ export function HomeRoute() {
       {state.status === "error" && <button type="button" onClick={refresh}>다시 확인</button>}
     </main>;
   }
-  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience mySource={mySource} homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} /></InteractionProvider></Suspense>;
+  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience mySource={mySource} activitySource={activitySource} homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} /></InteractionProvider></Suspense>;
 }
