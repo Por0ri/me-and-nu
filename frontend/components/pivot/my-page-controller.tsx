@@ -14,5 +14,5 @@ export function MyPageController({ source, onHome, onSaved, onActivity, onInquir
     return () => controller.cancel();
   }, [source, attempt]);
   const state = request?.source === source ? request.state : loading;
-  return <PivotMyPageScreen key={source.kind} state={state} demo={source.kind === "demo"} onHome={onHome} onSaved={onSaved} onActivity={onActivity} onInquiry={onInquiry} onLogout={onLogout} onRetry={() => setAttempt((value) => value + 1)} />;
+  return <PivotMyPageScreen key={source.kind} state={state} demo={source.kind === "demo"} notificationScope={source} onHome={onHome} onSaved={onSaved} onActivity={onActivity} onInquiry={onInquiry} onLogout={onLogout} onRetry={() => setAttempt((value) => value + 1)} />;
 }

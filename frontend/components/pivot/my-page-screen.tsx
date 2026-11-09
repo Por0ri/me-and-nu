@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MyPageState } from "@/lib/pivot/my-page";
 import type { MyPagePolicyType } from "@/lib/pivot/policy-document";
 import { MyPagePolicyDialog } from "./my-page-policy-dialog";
+import { MyNotificationSettings } from "./my-notification-settings";
 import { HomeHeader, HomeNavigation } from "./home-screen";
 import homeStyles from "./home.module.css";
 import styles from "./my-page.module.css";
@@ -73,15 +74,13 @@ function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
   </dialog>;
 }
 
-export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout }: {
-  state: MyPageState; demo: boolean; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>;
+export function PivotMyPageScreen({ state, demo, notificationScope, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout }: {
+  state: MyPageState; demo: boolean; notificationScope?: object; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>;
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
   const [policy, setPolicy] = useState<MyPagePolicyType | null>(null);
   const closingPolicy = useRef(false);
-  const [notifications, setNotifications] = useState(true);
-  const [nightNotifications, setNightNotifications] = useState(false);
   const [accountDialog, setAccountDialog] = useState<"로그아웃" | "회원탈퇴" | null>(null);
   const [logoutDialog, setLogoutDialog] = useState(false);
   const [logoutError, setLogoutError] = useState("");
@@ -134,8 +133,6 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
       if (mounted.current) setLoggingOut(false);
     }
   }
-  // Settings are demo-only local state. A future Service profile must not enable
-  // these controls before the notification policy/write adapter are agreed.
   const profile = state.status === "ready" && state.profile.origin === (demo ? "demo" : "service") ? state.profile : null;
   return <main ref={screen} className={`${homeStyles.screen} ${styles.screen}`} data-my-state={state.status} data-my-mode={demo ? "demo" : "service"}
     aria-busy={state.status === "loading" && !logoutDialog}>
@@ -151,16 +148,7 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
           {["내 활동", TASTE_EDIT, "관심분야 관리"].map((label, index) => <button key={label} type="button" className={styles.row}
             onClick={() => label === "내 활동" && onActivity ? onActivity() : ROW_PAGES[label] && !demo ? window.location.assign(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
-        <MenuSection title="알림 설정">
-          <button type="button" role="switch" aria-checked={demo && notifications} aria-describedby={demo ? "my-demo-help" : undefined} aria-disabled={!demo || undefined}
-            className={styles.row} onClick={() => demo ? setNotifications((value) => !value) : pending("알림 설정")}>
-            알림 허용<img src={`/pivot/my/switch-${demo && notifications ? "on" : "off"}.svg`} alt="" width={33} height={18} />
-          </button>
-          <button type="button" role="switch" aria-checked={demo && nightNotifications} aria-describedby={demo ? "my-demo-help" : undefined} aria-disabled={!demo || undefined}
-            className={styles.row} onClick={() => demo ? setNightNotifications((value) => !value) : pending("알림 설정")}>
-            21시 이후 알림 허용<img src={`/pivot/my/switch-${demo && nightNotifications ? "on" : "off"}.svg`} alt="" width={33} height={18} />
-          </button>
-        </MenuSection>
+        <MyNotificationSettings demo={demo} scope={notificationScope} />
         <MenuSection title="이용 안내">
           {["문의 및 신고", "이용약관", "개인정보처리방침"].map((label, index) => <button key={label} type="button" className={styles.row}
             aria-haspopup={index ? "dialog" : undefined}
