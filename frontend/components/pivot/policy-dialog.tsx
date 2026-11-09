@@ -6,7 +6,7 @@ import { PrimaryButton } from "./pivot-ui";
 import styles from "./pivot.module.css";
 
 /** Shared read-only shell: opening/closing never changes consent selection. */
-export function PolicyDialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function PolicyDialog({ title, children, notice, onClose }: { title: string; children: ReactNode; notice?: ReactNode; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
@@ -24,6 +24,7 @@ export function PolicyDialog({ title, children, onClose }: { title: string; chil
     onCancel={(event) => { event.preventDefault(); onClose(); }}
     onClose={(event) => { if (!event.currentTarget.open) onClose(); }}>
     <h2 id={titleId}>{title}</h2>
+    {notice}
     <div className={styles.policyBody}>{children}</div>
     <PrimaryButton autoFocus data-policy-close onClick={onClose}>닫기</PrimaryButton>
   </dialog>;

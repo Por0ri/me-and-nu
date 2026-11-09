@@ -4,9 +4,20 @@ import { useEffect, useState } from "react";
 import { myPagePolicyTitles, resolvePolicyDocument, type MyPagePolicyType, type PolicyDocumentState } from "@/lib/pivot/policy-document";
 import { loadPivotPolicies } from "@/lib/pivot/services";
 import { PolicyDialog, PolicyDocumentContent } from "./policy-dialog";
+import { isLocalPolicyReviewUrl } from "@/lib/pivot/policy-review";
+import { LocalPolicyReview } from "./local-policy-review";
 import styles from "./pivot.module.css";
 
 export function MyPagePolicyDialog({ type, demo, onClose }: { type: MyPagePolicyType; demo: boolean; onClose: () => void }) {
+  // Explicit local Demo entry only. The server independently enforces its opt-in
+  // and environment boundary; changing a query string cannot enable publication.
+  if (process.env.NODE_ENV === "development" && demo && typeof window !== "undefined" && isLocalPolicyReviewUrl(window.location.href)) {
+    return <LocalPolicyReview type={type} onClose={onClose} />;
+  }
+  return <PublishedPolicyDialog type={type} demo={demo} onClose={onClose} />;
+}
+
+function PublishedPolicyDialog({ type, demo, onClose }: { type: MyPagePolicyType; demo: boolean; onClose: () => void }) {
   const [state, setState] = useState<PolicyDocumentState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {

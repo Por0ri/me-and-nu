@@ -124,11 +124,33 @@
 .primary { display: flex; justify-content: center; align-items: center; width: 100%; height: 52px; padding-inline: 16px; border: 0; border-radius: 28px; background: var(--pivot-primary); color: #fafafa; font-size: 16px; line-height: 24px; font-weight: 600 !important; }
 .primary:disabled { background: #d4d4d8; color: #fafafa; }
 .loadState { margin-top: 41px; padding: 20px; border-radius: 14px; background: white; font-size: 14px; line-height: 22px; text-align: center; }
-.dialog { color: #252729; background: #fff9fd; border: 0; border-radius: 16px; width: min(480px, calc(100% - 32px)); max-height: calc(100svh - 48px); margin: auto; padding: 24px; font-family: PivotPretendard, sans-serif; overflow-y: auto; }
+.dialog { color: #252729; background: #fff9fd; border: 0; border-radius: 16px; width: min(480px, calc(100% - 32px)); max-height: calc(100svh - 48px); margin: auto; padding: 24px; font-family: PivotPretendard, sans-serif; overflow: clip; }
+.dialog[open] { display: flex; flex-direction: column; }
+.dialog > :not(.policyBody) { flex-shrink: 0; }
 .dialog::backdrop { background: rgba(37,39,41,.4); }
 .dialog h2 { margin: 0; font-size: 20px; line-height: 28px; }
-.policyBody { margin-block: 16px; max-height: 55svh; overflow-y: auto; overscroll-behavior: contain; }
+.policyBody { flex: 1 1 auto; min-height: 0; margin-block: 16px; max-height: 55svh; overflow-y: auto; overscroll-behavior: contain; }
 .policyBody a { color: #7043b4; text-decoration: underline; text-underline-offset: 3px; }
+.policyReviewNotice { margin: 12px 0 0; padding: 10px; border: 1px solid #decfff; border-radius: 8px; background: #f7f2ff; color: #52525b; font-size: 12px; line-height: 19px; }
+.policyReviewNotice strong { color: #7043b4; }
+.policyReviewNavigation { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.policyReviewNavigation button { padding: 8px 10px; border: 1px solid #decfff; border-radius: 8px; color: #7043b4; font-size: 13px; }
+.policyReviewDocument { font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.policyReviewDocument + .policyReviewDocument { margin-top: 28px; padding-top: 20px; border-top: 1px solid #decfff; }
+.policyReviewDocument :is(h3,h4,h5) { margin: 18px 0 8px; font-weight: 600; line-height: 1.6; }
+.policyReviewDocument h3 { font-size: 17px; color: #27272a; }
+.policyReviewDocument :is(h4,h5) { font-size: 14px; }
+.policyReviewDocument p { margin: 8px 0; white-space: pre-line; }
+.policyReviewMetadata { color: #7043b4; font-size: 12px; }
+.policyReviewDocument :is(ol,ul) { margin: 8px 0; padding-left: 22px; }
+.policyReviewDocument ol { list-style: decimal; }
+.policyReviewDocument ul { list-style: disc; }
+.policyReviewDocument li { margin: 6px 0; }
+.policyReviewTable { max-width: 100%; overflow-x: auto; margin: 12px 0; }
+.policyReviewTable table { table-layout: fixed; width: 100%; min-width: 320px; border-collapse: collapse; font-size: 12px; line-height: 1.7; }
+.policyReviewTable :is(th,td) { border: 1px solid #decfff; padding: 8px; vertical-align: top; text-align: left; }
+.policyReviewTable th { background: #f7f2ff; font-weight: 600; }
+.policyReviewTable:focus-visible, .policyReviewDocument h3:focus-visible { outline: 2px solid #7043b4; outline-offset: -2px; }
 .policyVersion { font-size: 12px; color: var(--pivot-muted); margin-block: 10px 20px; }
 .policyText { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 24px; margin-bottom: 24px; }
 .gate { margin: 68px 24px 0; text-align: center; font-size: 14px; line-height: 24px; }
