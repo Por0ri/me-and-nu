@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MyPageState } from "@/lib/pivot/my-page";
+import type { MyPagePolicyType } from "@/lib/pivot/policy-document";
+import { MyPagePolicyDialog } from "./my-page-policy-dialog";
 import { HomeHeader, HomeNavigation } from "./home-screen";
 import homeStyles from "./home.module.css";
 import styles from "./my-page.module.css";
@@ -76,6 +78,8 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
+  const [policy, setPolicy] = useState<MyPagePolicyType | null>(null);
+  const closingPolicy = useRef(false);
   const [notifications, setNotifications] = useState(true);
   const [nightNotifications, setNightNotifications] = useState(false);
   const [accountDialog, setAccountDialog] = useState<"로그아웃" | "회원탈퇴" | null>(null);
@@ -86,6 +90,26 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { screen.current?.querySelector<HTMLHeadingElement>("h1")?.focus({ preventScroll: true }); }, []);
+  useEffect(() => {
+    if (!policy) return;
+    const closeOnBack = () => setPolicy(null);
+    window.addEventListener("popstate", closeOnBack);
+    return () => window.removeEventListener("popstate", closeOnBack);
+  }, [policy]);
+  function openPolicy(type: MyPagePolicyType) {
+    if (policy) return;
+    closingPolicy.current = false;
+    setNotice("");
+    // A same-URL entry lets browser Back dismiss the dialog without unmounting MY.
+    window.history.pushState({ ...window.history.state, pivotPolicyDialog: true }, "");
+    setPolicy(type);
+  }
+  function closePolicy() {
+    if (closingPolicy.current) return;
+    closingPolicy.current = true;
+    if (window.history.state?.pivotPolicyDialog) window.history.back();
+    else setPolicy(null);
+  }
   function pending(label: string) { setNotice(`${label} 기능은 준비 중이에요.`); }
   function confirmLogout() {
     if (demo || !onLogout || logoutLock.current) return;
@@ -139,7 +163,8 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
         </MenuSection>
         <MenuSection title="이용 안내">
           {["문의 및 신고", "이용약관", "개인정보처리방침"].map((label, index) => <button key={label} type="button" className={styles.row}
-            onClick={() => index === 0 && onInquiry ? onInquiry() : setNotice(`${label}${index ? " 문서는" : " 기능은"} 준비 중이에요.`)}>{label}<Chevron last={index === 2} /></button>)}
+            aria-haspopup={index ? "dialog" : undefined}
+            onClick={() => index === 1 ? openPolicy("terms") : index === 2 ? openPolicy("privacy") : onInquiry ? onInquiry() : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
         <MenuSection>
           {(["로그아웃", "회원탈퇴"] as const).map((label, index) => <button key={label} type="button" className={`${styles.row} ${styles.account}`}
@@ -159,6 +184,7 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
     </div>
     <HomeNavigation active="my" onHome={onHome} onSaved={onSaved} hideAI onNotice={setNotice} />
     {notice ? <p role="status" className={homeStyles.pendingNotice}>{notice}</p> : null}
+    {policy ? <MyPagePolicyDialog type={policy} demo={demo} onClose={closePolicy} /> : null}
     {accountDialog ? <DemoAccountDialog action={accountDialog} onClose={() => setAccountDialog(null)} /> : null}
     {logoutDialog && !demo ? <ServiceLogoutDialog busy={loggingOut} error={logoutError} onConfirm={() => void logout()} onClose={closeLogout} /> : null}
   </main>;

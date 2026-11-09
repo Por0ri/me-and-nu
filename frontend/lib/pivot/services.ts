@@ -67,10 +67,10 @@ export async function restorePivotSession(): Promise<Session> {
   requirePivotApi();
   return getSession();
 }
-export async function loadPivotPolicies() {
+export async function loadPivotPolicies(signal?: AbortSignal) {
   requirePivotApi();
-  const response = await getPolicies();
-  return validatePolicies(response.consentItems);
+  const response = await getPolicies(signal);
+  return validatePolicies(response?.consentItems);
 }
 
 export function oauthErrorMessage(code: string | null): string {
