@@ -248,7 +248,7 @@ export async function logout(): Promise<void> {
   await apiRequest<void>("/api/v1/auth/logout", { method: "POST" });
   csrfToken = null;
 }
-export function getPolicies(): Promise<PoliciesResponse> { return apiRequest("/api/v1/policies"); }
+export function getPolicies(signal?: AbortSignal): Promise<PoliciesResponse> { return apiRequest("/api/v1/policies", { signal }); }
 export function getConsents(): Promise<ConsentHistoryResponse> {
   return apiRequest("/api/v1/users/me/consents");
 }
