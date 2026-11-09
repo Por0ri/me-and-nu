@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MyPageState } from "@/lib/pivot/my-page";
+import type { MyPagePolicyType } from "@/lib/pivot/policy-document";
+import { MyPagePolicyDialog } from "./my-page-policy-dialog";
 import { HomeHeader, HomeNavigation } from "./home-screen";
 import homeStyles from "./home.module.css";
 import styles from "./my-page.module.css";
@@ -9,6 +11,9 @@ import styles from "./my-page.module.css";
 function Chevron({ muted = false, last = false }: { muted?: boolean; last?: boolean }) {
   return <img src={`/pivot/my/chevron${muted ? "-muted" : ""}${last ? "-last" : ""}.svg`} alt="" width={16} height={24} />;
 }
+// The 내 정보 rows that open their own pages; Demo keeps the pending notice.
+const TASTE_EDIT = "내 피드 취향 조정하기";
+const ROW_PAGES: Record<string, string> = { [TASTE_EDIT]: "/pivot/taste", "관심분야 관리": "/pivot/interests" };
 function MenuSection({ title, children }: { title?: string; children: ReactNode }) {
   return <section className={styles.card} aria-label={title ?? "계정 안내"}>
     {title ? <h2 className={styles.sectionTitle}>{title}</h2> : null}
@@ -36,26 +41,94 @@ function DemoAccountDialog({ action, onClose }: { action: "로그아웃" | "회�
   </dialog>;
 }
 
-export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLogout }: {
-  state: MyPageState; demo: boolean; onHome: () => void; onRetry: () => void; onSaved?: () => void; onLogout?: () => Promise<void>;
+function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
+  busy: boolean; error: string; onConfirm: () => void; onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    const trigger = document.activeElement as HTMLElement | null;
+    element?.showModal();
+    return () => {
+      element?.close();
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    };
+  }, []);
+  return <dialog ref={dialog} className={`${styles.dialog} ${styles.logoutDialog}`} aria-modal="true"
+    aria-labelledby="my-logout-title" aria-describedby="my-logout-question my-logout-hint" aria-busy={busy || undefined}
+    onCancel={(event) => { event.preventDefault(); onClose(); }}
+    onClose={(event) => {
+      // Strict Mode can reopen the dialog before cleanup's queued close event arrives.
+      if (!event.currentTarget.open) onClose();
+    }}>
+    <h2 id="my-logout-title">로그아웃</h2>
+    <p id="my-logout-question" className={styles.logoutQuestion}>정말 로그아웃하시겠어요?</p>
+    <p id="my-logout-hint" className={styles.logoutHint}>다시 로그인하면 저장한 내용은 그대로 볼 수 있어요</p>
+    {error ? <p role="alert" className={styles.logoutError}>{error}</p> : null}
+    <div className={styles.dialogActions}>
+      <button type="button" autoFocus disabled={busy} onClick={onClose}>취소</button>
+      {/* Keep keyboard focus on confirmation while the parent ref blocks duplicate requests. */}
+      <button type="button" aria-disabled={busy || undefined} onClick={onConfirm}>{busy ? "로그아웃 중…" : error ? "다시 시도" : "로그아웃"}</button>
+    </div>
+  </dialog>;
+}
+
+export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout }: {
+  state: MyPageState; demo: boolean; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>;
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
+  const [policy, setPolicy] = useState<MyPagePolicyType | null>(null);
+  const closingPolicy = useRef(false);
   const [notifications, setNotifications] = useState(true);
   const [nightNotifications, setNightNotifications] = useState(false);
   const [accountDialog, setAccountDialog] = useState<"로그아웃" | "회원탈퇴" | null>(null);
+  const [logoutDialog, setLogoutDialog] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { screen.current?.querySelector<HTMLHeadingElement>("h1")?.focus({ preventScroll: true }); }, []);
+  useEffect(() => {
+    if (!policy) return;
+    const closeOnBack = () => setPolicy(null);
+    window.addEventListener("popstate", closeOnBack);
+    return () => window.removeEventListener("popstate", closeOnBack);
+  }, [policy]);
+  function openPolicy(type: MyPagePolicyType) {
+    if (policy) return;
+    closingPolicy.current = false;
+    setNotice("");
+    // A same-URL entry lets browser Back dismiss the dialog without unmounting MY.
+    window.history.pushState({ ...window.history.state, pivotPolicyDialog: true }, "");
+    setPolicy(type);
+  }
+  function closePolicy() {
+    if (closingPolicy.current) return;
+    closingPolicy.current = true;
+    if (window.history.state?.pivotPolicyDialog) window.history.back();
+    else setPolicy(null);
+  }
   function pending(label: string) { setNotice(`${label} 기능은 준비 중이에요.`); }
-  async function logout() {
+  function confirmLogout() {
     if (demo || !onLogout || logoutLock.current) return;
-    logoutLock.current = true; setLoggingOut(true); setNotice("");
-    try { await onLogout(); }
+    setNotice(""); setLogoutError(""); setLogoutDialog(true);
+  }
+  function closeLogout() {
+    // Once sent, closing cannot cancel the session-ending request.
+    if (logoutLock.current) return;
+    setLogoutDialog(false); setLogoutError("");
+  }
+  async function logout() {
+    if (demo || !onLogout || !logoutDialog || logoutLock.current) return;
+    logoutLock.current = true; setLoggingOut(true); setLogoutError("");
+    try {
+      await onLogout();
+      if (mounted.current) setLogoutDialog(false);
+    }
     catch {
-      if (mounted.current) setNotice("로그아웃하지 못했어요. 잠시 후 다시 시도해주세요.");
+      if (mounted.current) setLogoutError("로그아웃하지 못했어요. 잠시 후 다시 시도해주세요.");
     } finally {
       logoutLock.current = false;
       if (mounted.current) setLoggingOut(false);
@@ -65,40 +138,40 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
   // these controls before the notification policy/write adapter are agreed.
   const profile = state.status === "ready" && state.profile.origin === (demo ? "demo" : "service") ? state.profile : null;
   return <main ref={screen} className={`${homeStyles.screen} ${styles.screen}`} data-my-state={state.status} data-my-mode={demo ? "demo" : "service"}
-    aria-busy={state.status === "loading"}>
+    aria-busy={state.status === "loading" && !logoutDialog}>
     <HomeHeader title="마이페이지" showMascot={false} onNotice={setNotice} />
     <div className={styles.content}>
       <p className={styles.intro}>내 정보와 설정을 관리해보세요</p>
       {profile ? <>
         <section className={`${styles.card} ${styles.profile}`} aria-label={demo ? "시연용 가상 프로필" : "프로필"}>
           <div><p className={styles.nickname}>{profile.nickname}님</p><p className={styles.email}>{profile.maskedEmail}</p></div>
-          <button type="button" className={styles.edit} onClick={() => pending("프로필 수정")}><span>프로필 수정<Chevron /></span></button>
+          <button type="button" className={styles.edit} onClick={() => !demo ? window.location.assign("/pivot/profile") : pending("프로필 수정")}><span>프로필 수정<Chevron /></span></button>
         </section>
         <MenuSection title="내 정보">
-          {["내 활동", "관심분야 관리"].map((label, index) => <button key={label} type="button" className={styles.row} onClick={() => pending(label)}>{label}<Chevron last={index === 1} /></button>)}
+          {["내 활동", TASTE_EDIT, "관심분야 관리"].map((label, index) => <button key={label} type="button" className={styles.row}
+            onClick={() => label === "내 활동" && onActivity ? onActivity() : ROW_PAGES[label] && !demo ? window.location.assign(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
         <MenuSection title="알림 설정">
-          <button type="button" role="switch" aria-checked={demo && notifications} aria-describedby="my-demo-help" aria-disabled={!demo || undefined}
+          <button type="button" role="switch" aria-checked={demo && notifications} aria-describedby={demo ? "my-demo-help" : undefined} aria-disabled={!demo || undefined}
             className={styles.row} onClick={() => demo ? setNotifications((value) => !value) : pending("알림 설정")}>
             알림 허용<img src={`/pivot/my/switch-${demo && notifications ? "on" : "off"}.svg`} alt="" width={33} height={18} />
           </button>
-          <button type="button" role="switch" aria-checked={demo && nightNotifications} aria-describedby="my-demo-help" aria-disabled={!demo || undefined}
+          <button type="button" role="switch" aria-checked={demo && nightNotifications} aria-describedby={demo ? "my-demo-help" : undefined} aria-disabled={!demo || undefined}
             className={styles.row} onClick={() => demo ? setNightNotifications((value) => !value) : pending("알림 설정")}>
             21시 이후 알림 허용<img src={`/pivot/my/switch-${demo && nightNotifications ? "on" : "off"}.svg`} alt="" width={33} height={18} />
           </button>
         </MenuSection>
         <MenuSection title="이용 안내">
           {["문의 및 신고", "이용약관", "개인정보처리방침"].map((label, index) => <button key={label} type="button" className={styles.row}
-            onClick={() => setNotice(`${label}${index ? " 문서는" : " 기능은"} 준비 중이에요.`)}>{label}<Chevron last={index === 2} /></button>)}
+            aria-haspopup={index ? "dialog" : undefined}
+            onClick={() => index === 1 ? openPolicy("terms") : index === 2 ? openPolicy("privacy") : onInquiry ? onInquiry() : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
         <MenuSection>
           {(["로그아웃", "회원탈퇴"] as const).map((label, index) => <button key={label} type="button" className={`${styles.row} ${styles.account}`}
             disabled={label === "로그아웃" && loggingOut} aria-busy={label === "로그아웃" && loggingOut || undefined}
-            onClick={() => demo ? setAccountDialog(label) : label === "로그아웃" && onLogout ? void logout() : pending(label)}>{label}<Chevron muted last={index === 1} /></button>)}
+            onClick={() => demo ? setAccountDialog(label) : label === "로그아웃" && onLogout ? confirmLogout() : pending(label)}>{label}<Chevron muted last={index === 1} /></button>)}
         </MenuSection>
-        <p id="my-demo-help" className={styles.help}>{demo
-          ? "시연용 가상 프로필이에요. 알림 선택은 이 화면에서만 적용되며, 화면을 떠나거나 새로고침하면 초기화돼요."
-          : "알림·프로필 변경과 회원탈퇴는 연결 준비 중이에요."}</p>
+        {demo ? <p id="my-demo-help" className={styles.help}>시연용 가상 프로필이에요. 알림 선택은 이 화면에서만 적용되며, 화면을 떠나거나 새로고침하면 초기화돼요.</p> : null}
       </> : <section className={homeStyles.status} aria-label="My Page 연결 상태">
         <p role={state.status === "error" || state.status === "ready" ? "alert" : "status"}>{state.status === "loading" ? "프로필을 불러오고 있어요."
           : state.status === "ready" ? "프로필을 표시할 수 없어요." : state.message}</p>
@@ -106,11 +179,13 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onLog
       </section>}
       {!profile && !demo && onLogout ? <MenuSection>
         <button type="button" className={`${styles.row} ${styles.account}`} disabled={loggingOut} aria-busy={loggingOut || undefined}
-          onClick={() => void logout()}>로그아웃<Chevron muted last /></button>
+          onClick={confirmLogout}>로그아웃<Chevron muted last /></button>
       </MenuSection> : null}
     </div>
     <HomeNavigation active="my" onHome={onHome} onSaved={onSaved} hideAI onNotice={setNotice} />
     {notice ? <p role="status" className={homeStyles.pendingNotice}>{notice}</p> : null}
+    {policy ? <MyPagePolicyDialog type={policy} demo={demo} onClose={closePolicy} /> : null}
     {accountDialog ? <DemoAccountDialog action={accountDialog} onClose={() => setAccountDialog(null)} /> : null}
+    {logoutDialog && !demo ? <ServiceLogoutDialog busy={loggingOut} error={logoutError} onConfirm={() => void logout()} onClose={closeLogout} /> : null}
   </main>;
 }

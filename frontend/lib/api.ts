@@ -98,6 +98,8 @@ export type FeedResponse = {
   nextCursor: string | null;
   emptyReason: string | null;
 };
+export type FeedSearchResponse = { selectedTopicId: number; query: string; works: string[]; contents: FeedCard[] };
+export type WorkSuggestionsResponse = { selectedTopicId: number; query: string; works: { entityId: number; name: string }[] };
 export type ContentDetail = {
   contentId: number; topicId: number; title: string; sourceUrl: string;
   publisher: string; publishedAt: string | null; displayMode: string;
@@ -150,6 +152,20 @@ export type NotificationItem = {
 };
 export type NotificationsResponse = { items: NotificationItem[]; nextCursor: string | null };
 export type BookmarksResponse = { items: SavedBookmark[]; nextCursor: string | null };
+export type ActivityContentCard = {
+  contentId: number; title: string; topicId: number;
+  summary: string | null; imageUrl: string | null; sourceName: string | null;
+  productionType: string | null; publishedAt: string | null; subtopicNames: string[];
+};
+export type LikedContent = ActivityContentCard & { likedAt: string };
+export type ViewedContent = ActivityContentCard & { viewedAt: string };
+export type LikedContentsResponse = { items: LikedContent[]; nextCursor: string | null };
+export type RecentViewsResponse = { items: ViewedContent[]; nextCursor: string | null };
+export type ActivityListQuery = { topicId?: number; cursor?: string; limit?: number };
+export type InquiryInput = { inquiryType: "service" | "bug"; detail: string };
+export type InquiryResponse = { inquiryId: number; status: "received" };
+export type ReportInput = { targetType: "content"; targetId: number; reasonCode: "wrong_info" | "spoiler" | "rights" | "inappropriate" | "other"; detail?: string };
+export type ReportResponse = { reportId: number; status: "received" };
 
 export type ApiFieldError = { field: string; code: string; message: string };
 type ErrorPayload = { code?: string; message?: string; fields?: ApiFieldError[]; requestId?: string };
@@ -178,7 +194,7 @@ function query(params: Record<string, string | number | boolean | undefined | nu
   return search.size ? `?${search}` : "";
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(path: string, init: RequestInit = {}, expectedStatus?: number): Promise<T> {
   init.signal?.throwIfAborted();
   const method = (init.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD" && !csrfToken) await getSession();
@@ -190,7 +206,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     ...init, headers, credentials: "include", cache: "no-store",
   });
   init.signal?.throwIfAborted();
-  if (response.status === 204) return undefined as T;
+  if (response.status === 204 && expectedStatus === undefined) return undefined as T;
   const payload: unknown = await response.json().catch(() => null);
   // A cancelled read must not expire a newer session via a late 401 response.
   init.signal?.throwIfAborted();
@@ -205,10 +221,19 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       response.status, error?.code ?? "UNKNOWN_ERROR", error?.fields,
     );
   }
+  if (expectedStatus !== undefined && response.status !== expectedStatus) {
+    throw new ApiError("접수 응답을 확인하지 못했어요.", response.status, "INVALID_RESPONSE");
+  }
   return payload as T;
 }
 
-export function getSession(): Promise<Session> {
+export function getSession(init: Pick<RequestInit, "signal"> = {}): Promise<Session> {
+  // A dialog-owned preflight must be cancellable without cancelling shared bootstrap reads.
+  if (init.signal) return apiRequest<Session>("/api/v1/auth/session", init).then(session => {
+    init.signal?.throwIfAborted();
+    csrfToken = session.csrfToken;
+    return session;
+  });
   // Concurrent first reads (including Strict Mode) must share one cookie issuance.
   if (!sessionRequest) {
     sessionRequest = apiRequest<Session>("/api/v1/auth/session").then((session) => {
@@ -231,7 +256,7 @@ export async function logout(): Promise<void> {
   await apiRequest<void>("/api/v1/auth/logout", { method: "POST" });
   csrfToken = null;
 }
-export function getPolicies(): Promise<PoliciesResponse> { return apiRequest("/api/v1/policies"); }
+export function getPolicies(signal?: AbortSignal): Promise<PoliciesResponse> { return apiRequest("/api/v1/policies", { signal }); }
 export function getConsents(): Promise<ConsentHistoryResponse> {
   return apiRequest("/api/v1/users/me/consents");
 }
@@ -255,7 +280,9 @@ export async function onboard(input: OnboardingInput): Promise<OnboardingRespons
   csrfToken = null; // Onboarding rotates the cookie; the next write reloads its CSRF token.
   return result;
 }
-export function getProfile(): Promise<Profile> { return apiRequest("/api/v1/users/me"); }
+export function getProfile(options: { signal?: AbortSignal } = {}): Promise<Profile> {
+  return apiRequest("/api/v1/users/me", { signal: options.signal });
+}
 export function updateProfile(input: { nickname: string; profileImageId?: null } | { nickname?: string; profileImageId: null }): Promise<Profile> {
   return apiRequest("/api/v1/users/me", { method: "PATCH", body: JSON.stringify(input) });
 }
@@ -279,6 +306,12 @@ export function getFeed(
   init: Pick<RequestInit, "signal"> = {},
 ): Promise<FeedResponse> {
   return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`, init);
+}
+export function searchFeed(topicId: number, q: string, init: Pick<RequestInit, "signal"> = {}, workId?: number): Promise<FeedSearchResponse> {
+  return apiRequest(`/api/v1/topics/${topicId}/search${query({ q, workId })}`, init);
+}
+export function searchWorks(topicId: number, q: string, init: Pick<RequestInit, "signal"> = {}): Promise<WorkSuggestionsResponse> {
+  return apiRequest(`/api/v1/topics/${topicId}/search/works${query({ q })}`, init);
 }
 export function getContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal"> = {}): Promise<ContentDetail> {
   return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`, init);
@@ -306,6 +339,18 @@ export function getBookmarks(
   init: Pick<RequestInit, "signal"> = {},
 ): Promise<BookmarksResponse> {
   return apiRequest(`/api/v1/users/me/bookmarks${query(options)}`, init);
+}
+export function getMyLikes(options: ActivityListQuery = {}, init: Pick<RequestInit, "signal"> = {}): Promise<LikedContentsResponse> {
+  return apiRequest(`/api/v1/users/me/likes${query(options)}`, init);
+}
+export function getMyRecentViews(options: ActivityListQuery = {}, init: Pick<RequestInit, "signal"> = {}): Promise<RecentViewsResponse> {
+  return apiRequest(`/api/v1/users/me/recent-views${query(options)}`, init);
+}
+export function submitInquiry(input: InquiryInput, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<InquiryResponse> {
+  return apiRequest("/api/v1/inquiries", { ...init, method: "POST", body: JSON.stringify(input) }, 201);
+}
+export function submitReport(input: ReportInput, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<ReportResponse> {
+  return apiRequest("/api/v1/reports", { ...init, method: "POST", body: JSON.stringify(input) }, 201);
 }
 export function createChatSession(topicId: number, anchorContentId?: number): Promise<ChatSessionResponse> {
   return apiRequest("/api/v1/chat/sessions", { method: "POST", body: JSON.stringify({ topicId, anchorContentId }) });

@@ -8,7 +8,7 @@
     },
     {
       "path": "/pivot/detail/ai.svg",
-      "sha256": "f083628471c971fcb40670d7cea725bac4fcec7414a68783111624e244cc6246",
+      "sha256": "ad4683509fdd37154f509d61e9471e42c472e0678561d06cfb08dfe7a6120067",
       "node": "I1272:3731;1206:2088",
       "name": "ai"
     },
@@ -35,12 +35,18 @@
       "sha256": "51661be471c3cc8dbf7d7cf77efae8371250720bb34c05f382dc16e44e153efe",
       "node": "I1272:3728;1135:3249",
       "name": "save"
+    },
+    {
+      "path": "/pivot/detail/ai-expanded.svg",
+      "sha256": "9df856b212d4f296341308ea5e7b13d6c42b38ba62b1df7de8aae2b2d7d48067",
+      "node": "1206:3144",
+      "name": "ai-expanded"
     }
   ],
   "fileKey": "iLGLjporSKRHdHBdhsKEvV",
   "nodes": [
     "1272:3720",
-    "1272:4128"
+    "1206:3136"
   ],
   "note": "Cover/share/like/save exactly match existing Home assets by SHA-256; reused without modification. OS status bar belongs to browser/device."
 }

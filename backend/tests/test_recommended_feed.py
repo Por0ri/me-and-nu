@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
 from app.models import (
-    Content, ContentEntityLink, ContentReaction, ContentSlide, ContentSource, ContentTag, Entity,
-    RecommendationItem, RecommendationRound, SavedItem, Tap, Topic, UserAccount, UserEvent,
+    Content, ContentEntityLink, ContentReaction, ContentSlide, ContentSource, ContentTag, Entity, PreferenceTag,
+    RecommendationItem, RecommendationRound, SavedItem, Tap, TapPreferenceTag, Topic, UserAccount, UserEvent,
 )
 from app.services import feed_service
 from app.services.cursor import encode_cursor
@@ -26,7 +26,7 @@ NOW = datetime(2026, 11, 2, 3, tzinfo=timezone.utc)          # 12:00 in Seoul
 TODAY, YESTERDAY = NOW.date(), NOW.date() - timedelta(days=1)
 REASON = "요즘 보는 하이큐!! 관련 글"
 MODELS = (Topic, UserAccount, Tap, Content, ContentSlide, ContentSource, ContentTag, ContentReaction,
-          SavedItem, RecommendationRound, RecommendationItem, UserEvent, Entity, ContentEntityLink)
+          SavedItem, RecommendationRound, RecommendationItem, UserEvent, Entity, ContentEntityLink, TapPreferenceTag)
 
 
 def test_order_keeps_rank_drops_opened_and_disliked_and_moves_seen_to_back():
@@ -92,7 +92,7 @@ def engine():
         ])
         connection.execute(UserAccount.__table__.insert(), [
             {"user_id": user_id, "nickname": f"사용자{user_id}", "auth_provider": "kakao",
-             "provider_user_id": str(user_id), "onboarding_completed_at": NOW}
+             "provider_user_id": str(user_id), "onboarding_completed_at": NOW - timedelta(days=1)}
             for user_id in (7, 8)
         ])
         connection.execute(Tap.__table__.insert(), [
@@ -214,6 +214,176 @@ async def test_yesterdays_round_covers_the_hours_before_todays_batch(engine, mon
         add_round(connection, 2, tap_id=22, day=YESTERDAY, items=[(502, 1, None)])
 
     assert cards(await feed(engine, user_id=8, limit=1)) == [(502, 201, None)]
+
+
+def just_onboarded(engine, user_id=8):
+    with engine.begin() as connection:
+        connection.execute(update(UserAccount).where(UserAccount.user_id == user_id)
+                           .values(onboarding_completed_at=NOW - timedelta(seconds=1)))
+
+
+def record_sleeps(monkeypatch):
+    sleeps = []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(feed_service, "_sleep", sleep)
+    return sleeps
+
+
+@pytest.mark.asyncio
+async def test_a_new_account_waits_briefly_for_its_first_round(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    just_onboarded(engine)
+    with engine.begin() as connection:
+        add_round(connection, 2, tap_id=22, day=TODAY, items=[(502, 1, None)])
+    sleeps, calls = record_sleeps(monkeypatch), []
+    original = feed_service.recommendation_repo.latest_round
+
+    async def latest_round(db, tap_id, service_dates):      # the recommender writes during the first wait
+        calls.append(tap_id)
+        return None if len(calls) == 1 else await original(db, tap_id, service_dates)
+
+    monkeypatch.setattr(feed_service.recommendation_repo, "latest_round", latest_round)
+
+    assert cards(await feed(engine, user_id=8, limit=1)) == [(502, 201, None)]
+    assert sleeps == [feed_service.FIRST_ROUND_POLL_SECONDS]
+
+
+@pytest.mark.asyncio
+async def test_a_new_account_without_a_round_falls_back_after_the_wait(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    just_onboarded(engine)
+    sleeps = record_sleeps(monkeypatch)
+
+    assert cards(await feed(engine, user_id=8)) == [(508, None, None), (507, None, None)]
+    assert len(sleeps) == feed_service.FIRST_ROUND_POLLS
+
+
+@pytest.mark.asyncio
+async def test_an_account_that_onboarded_earlier_does_not_wait(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    sleeps = record_sleeps(monkeypatch)
+
+    assert cards(await feed(engine, user_id=8)) == [(508, None, None), (507, None, None)]
+    assert sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_a_taste_edit_waits_briefly_for_the_rebuilt_round(engine, monkeypatch):
+    # A My Page taste edit re-inserts every chip row and drops the recent rounds.
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    with engine.begin() as connection:
+        connection.execute(PreferenceTag.__table__.insert(), [
+            {"tag_id": 101, "topic_id": 1, "kind": "genre", "code": "action", "display_name": "액션", "is_active": True},
+        ])
+        connection.execute(TapPreferenceTag.__table__.insert(), [
+            {"tap_id": 22, "tag_id": 101, "topic_id": 1, "created_at": NOW - timedelta(seconds=1)},
+        ])
+        add_round(connection, 2, tap_id=22, day=TODAY, items=[(502, 1, None)])
+    sleeps, calls = record_sleeps(monkeypatch), []
+    original = feed_service.recommendation_repo.latest_round
+
+    async def latest_round(db, tap_id, service_dates):      # the recommender rebuilds during the first wait
+        calls.append(tap_id)
+        return None if len(calls) == 1 else await original(db, tap_id, service_dates)
+
+    monkeypatch.setattr(feed_service.recommendation_repo, "latest_round", latest_round)
+
+    assert cards(await feed(engine, user_id=8, limit=1)) == [(502, 201, None)]
+    assert sleeps == [feed_service.FIRST_ROUND_POLL_SECONDS]
+
+
+def link_works(engine):
+    with engine.begin() as connection:
+        connection.execute(Entity.__table__.insert(), [
+            {"entity_id": 901, "topic_id": 1, "entity_type": "anime", "name": "하이큐!!", "aliases": ["Haikyu!!"], "is_active": True},
+            {"entity_id": 902, "topic_id": 1, "entity_type": "anime", "name": "나루토", "aliases": [], "is_active": True},
+            {"entity_id": 903, "topic_id": 1, "entity_type": "anime", "name": "장송의 프리렌", "aliases": ["Sousou no Frieren"], "is_active": True},
+        ])
+        connection.execute(ContentEntityLink.__table__.insert(), [
+            {"content_id": content_id, "entity_id": entity_id, "topic_id": 1, "link_method": "carousel", "sort_order": 1}
+            for content_id, entity_id in [(503, 901), (505, 901), (507, 901), (508, 901), (506, 902)]
+        ])
+
+
+async def search(engine, q, user_id=7, work_id=None):
+    with Session(engine) as session:
+        return await feed_service.search_feed(AsyncAdapter(session), user_id, 1, q=q, work_id=work_id)
+
+
+async def suggest(engine, q, user_id=7, limit=feed_service.SUGGEST_WORKS):
+    with Session(engine) as session:
+        return await feed_service.suggest_works(AsyncAdapter(session), user_id, 1, q=q, limit=limit)
+
+
+@pytest.mark.asyncio
+async def test_search_shows_the_works_cards_in_todays_rank_then_newest(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+
+    result = await search(engine, " 하이큐 ")
+    # 503 and 507 are ranked today (1st, 4th), 508 is not; 505 was marked "그만볼래요".
+    assert [card.id for card in result.contents] == [503, 507, 508]
+    assert (result.query, result.works) == ("하이큐", ["하이큐!!"])
+    assert {card.recommendation_reason for card in result.contents} == {"‘하이큐!!’ 검색 결과예요"}
+    assert all(card.recommendation_id is None for card in result.contents)
+
+
+@pytest.mark.asyncio
+async def test_search_matches_aliases_and_returns_nothing_for_other_works(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+
+    assert [card.id for card in (await search(engine, "haikyu")).contents] == [503, 507, 508]
+    assert [card.id for card in (await search(engine, "나루토", user_id=8)).contents] == [506]
+    assert (await search(engine, "원피스")).works == (await search(engine, "원피스")).contents == []
+    assert (await search(engine, "   ")).contents == []
+
+
+@pytest.mark.asyncio
+async def test_search_ignores_spaces_and_names_a_work_without_cards(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+
+    assert [card.id for card in (await search(engine, "하이 큐")).contents] == [503, 507, 508]
+    frieren = await search(engine, "장송의프리렌")
+    assert (frieren.works, frieren.contents) == (["장송의 프리렌"], [])
+    assert (await search(engine, "sousounofrieren")).works == ["장송의 프리렌"]
+
+
+@pytest.mark.asyncio
+async def test_search_for_a_picked_work_shows_only_that_works_cards(engine, monkeypatch):
+    # Picking a suggested work narrows the result to it, whatever the typed words match.
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+
+    naruto = await search(engine, "하이큐", user_id=8, work_id=902)
+    assert ([card.id for card in naruto.contents], naruto.works) == ([506], ["나루토"])
+    assert naruto.contents[0].recommendation_reason == "‘나루토’ 검색 결과예요"
+    assert [card.id for card in (await search(engine, "하이큐!!", work_id=901)).contents] == [503, 507, 508]
+    unknown = await search(engine, "하이큐", work_id=999)
+    assert (unknown.works, unknown.contents) == ([], [])
+
+
+@pytest.mark.asyncio
+async def test_suggestions_match_like_onboarding_and_include_works_without_cards(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+    with engine.begin() as connection:
+        connection.execute(Entity.__table__.insert(), [
+            {"entity_id": entity_id, "topic_id": 1, "entity_type": "anime", "name": name, "aliases": [], "is_active": active}
+            for entity_id, name, active in [(904, "하이큐!! 극장판", True), (905, "하이큐!! 2기", True),
+                                             (906, "하이큐!! 3기", True), (907, "하이큐!! 옛판", False)]
+        ])
+
+    found = await suggest(engine, " 하이 큐 ")
+    assert (found.query, [(work.entity_id, work.name) for work in found.works]) == (
+        "하이 큐", [(901, "하이큐!!"), (904, "하이큐!! 극장판"), (905, "하이큐!! 2기")])
+    assert [work.entity_id for work in (await suggest(engine, "하이큐", limit=10)).works] == [901, 904, 905, 906]
+    assert [work.name for work in (await suggest(engine, "sousou")).works] == ["장송의 프리렌"]
+    assert (await suggest(engine, "   ")).works == []
 
 
 @pytest.mark.asyncio

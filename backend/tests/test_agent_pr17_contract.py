@@ -238,8 +238,8 @@ def test_short_agent_package_stays_outside_checking_carousel_contract(agent_cont
     package = persist()
     bundle_path, _ = export(package)
     document = json.loads(bundle_path.read_text(encoding="utf-8"))
-    document["items"][0]["package"]["cards"] = document["items"][0]["package"]["cards"][:2]
-    document["items"][0]["assets"] = document["items"][0]["assets"][:2]
+    document["items"][0]["package"]["cards"] = document["items"][0]["package"]["cards"][:1]
+    document["items"][0]["assets"] = document["items"][0]["assets"][:1]
     bundle_path.write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(seed.CarouselImportError):
         seed.load_bundle(bundle_path, now=moment)

@@ -46,7 +46,7 @@ python -m model.scripts.daily_recommend --preflight
 
 필수 파일:
 
-- 커밋된 `model/catalog/chips.csv`, `menu_works.csv`, `menu_work_entries.csv`.
+- 커밋된 `model/catalog/chips.csv`와 공용 작품 목록 `catalog/menu_works.csv`, `catalog/menu_work_entries.csv`.
 - 별도 공급해야 하는 `model/data/anilist/{media,media_recent,detail,links}.jsonl`.
 - `model/data/mal_sample/anime.csv` 및 `interactions.csv` 또는 사용 가능한 `interactions.npz`. MAL 표본 위치는 기존 `MAL_SAMPLE_DIR` 환경변수로 지정할 수 있다.
 - `model/data/anilist_users/entries.csv`는 선택 사항이다. 없으면 기존 MAL 전용 같이 본 기록과 최근 인기 0 대체 동작을 그대로 사용한다.
@@ -54,6 +54,21 @@ python -m model.scripts.daily_recommend --preflight
 `model/data/`는 Git에서 제외되어 clone만으로 준비되지 않는다. 승인된 데이터 사본을 별도로 공급해야 하며, 합성 파일로 운영 입력을 대체하지 않는다. CSV가 NPZ보다 새롭거나 캐시가 없으면 기존 로더가 `interactions.npz`를 생성/갱신한다. DB dry-run과 로컬 파일 쓰기는 별개이므로 데이터 디렉터리 권한도 확인한다. 원본 데이터의 보존·삭제 조건은 기존 `algo/service.py` 주석을 따른다.
 
 현재 3,887개 작품의 주요 상시 행렬만 약 519MiB이며 특징·사용 기록·행렬 계산의 임시 메모리는 별도다. API의 512MiB 메모리 한도 안에서 배치를 함께 돌리지 않는다. 원본 데이터 전체를 사용한 시간·최대 메모리는 아직 검증하지 않았다.
+
+### 서버에서 돌리기: 통계 문맥 파일 (2026-10-30)
+
+서버에는 원본 (`model/data/`의 AniList · MAL)을 두지 않는다. AniList 유저 표본은 허락 조건상 원본을 PC 한 대에만 두고 12/31에 삭제한다. 원본이 있는 PC에서 추천 문맥을 통계만 담은 파일 하나로 만들고, 서버는 그 파일로 계산한다.
+
+```bash
+python model/scripts/save_context.py --check    # 원본 PC: model/data/service_context.pkl.gz 생성 + 원본 문맥과 칸마다 비교
+python -m model.scripts.daily_recommend --preflight --context <파일>                # 서버: 원본 없이 이 파일만 검사
+python model/scripts/daily_recommend.py --expected-database <DB이름> --context <파일>  # 서버 계산 (--apply · --every 는 그대로)
+```
+
+- 파일에는 작품끼리 통계 (같이 본 횟수 · 유사도 · 작품 특징 · 날짜별 인기 합계)만 있다. 저장 전에 유저 단위 자료가 없는지 검사한다. 공개 레포에 올리지 않고 서버로 직접 옮긴다.
+- pickle 형식이라 `save_context.py`로 만든 파일만 읽는다.
+- 결과는 원본으로 계산한 것과 같다. 시험용 DB 18명의 추천 1,078개가 순서 · 점수 · 이유까지 일치했다.
+- 측정 (같은 PC): 파일 약 372MB. 원본으로 켜면 준비 약 90초 · 최대 메모리 약 1.6GB (예약 약 2.3GB), 파일로 켜면 준비 약 5초 · 최대 메모리 약 0.9GB (예약 약 1.15GB).
 
 ### 기존 starter Q2 선택 호환
 

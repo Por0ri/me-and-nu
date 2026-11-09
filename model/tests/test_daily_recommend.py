@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -78,6 +79,25 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(user["unmapped_chips"][0]["tag_id"], 42)
         self.assertEqual(user["answers"], ["ost"])
 
+    def test_load_visits_counts_one_impression_per_post_per_day(self):
+        at = datetime(2026, 10, 31, 3, tzinfo=timezone.utc)                # 12:00 in Seoul
+        events = [(1, "impression", 501, {"session_id": "a"}, at),
+                  (1, "impression", 501, {"session_id": "b"}, at + timedelta(hours=2)),   # same day, refreshed
+                  (1, "impression", 501, {"session_id": "c"}, at + timedelta(days=1))]
+
+        class Cursor:
+            def __init__(self):
+                self.rows = iter([events, [], []])
+
+            def execute(self, *_):
+                pass
+
+            def fetchall(self):
+                return next(self.rows)
+
+        visits = daily.load_visits(Cursor(), [1], {501: 0})[1]
+        self.assertEqual(sum(kind == "impression" for visit in visits for kind, *_ in visit), 2)
+
 
 class PreflightTests(unittest.TestCase):
     def test_missing_inputs_are_aggregated_without_connecting(self):
@@ -91,16 +111,28 @@ class PreflightTests(unittest.TestCase):
     def test_cache_only_input_is_accepted_as_presence_check(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for relative in ["catalog/chips.csv", "catalog/menu_works.csv", "catalog/menu_work_entries.csv",
-                             "data/anilist/media.jsonl", "data/anilist/media_recent.jsonl", "data/anilist/detail.jsonl",
-                             "data/anilist/links.jsonl", "mal/anime.csv", "mal/interactions.npz"]:
+            for relative in ["catalog/menu_works.csv", "catalog/menu_work_entries.csv", "model/catalog/chips.csv",
+                             "model/data/anilist/media.jsonl", "model/data/anilist/media_recent.jsonl",
+                             "model/data/anilist/detail.jsonl", "model/data/anilist/links.jsonl",
+                             "model/mal/anime.csv", "model/mal/interactions.npz"]:
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"presence only; not valid data")
-            report = check_inputs(root, root / "mal")
+            report = check_inputs(root / "model", root / "model" / "mal")
         self.assertTrue(report["ready"])
         self.assertIn("Presence/size", report["limits"])
         self.assertTrue(report["warnings"])
+
+    def test_server_context_mode_needs_only_chips_and_the_context_file(self):
+        # 추천 계산 이미지엔 model/ 만 들어가서 공용 작품 목록(레포 catalog/)이 없다
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "model" / "catalog").mkdir(parents=True)
+            (root / "model" / "catalog" / "chips.csv").write_bytes(b"presence only; not valid data")
+            (root / "context.pkl.gz").write_bytes(b"presence only; not valid data")
+            report = check_inputs(root / "model", context=root / "context.pkl.gz")
+        self.assertEqual(report["missing_files"], [])
+        self.assertTrue(report["ready"])
 
     def test_preflight_cli_does_not_read_database_configuration(self):
         with patch("sys.argv", ["daily_recommend", "--preflight"]), patch.object(daily, "database_url", side_effect=AssertionError("env forbidden")), patch.object(daily, "check_inputs", return_value={"ready": False}), patch("builtins.print"):

@@ -6,26 +6,28 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 
 ## 현재 구현된 V1 로컬 범위
 
-2026-10-28 현재 구현 ERD는 38개 테이블의 [current_schema.sql](../docs/erd/current_schema.sql)입니다. DB 연결 없이 `python scripts/export_current_schema.py`로 재생성하고 `--check`로 일치 여부를 검사합니다. [온보딩 V2 계약·migration](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [캐러셀 DB·API 확장](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [과거 DB 확인 기록](../docs/ERD_API_ALIGNMENT_2026-10-27.md)을 구분하세요. 현재 OpenAPI는 공개 V1 36개·상태 확인 3개이며 개발용 API를 켜면 6개가 추가되어 총 45개입니다.
+2026-10-28 현재 구현 ERD는 38개 테이블의 [current_schema.sql](../docs/erd/current_schema.sql)입니다. DB 연결 없이 `python scripts/export_current_schema.py`로 재생성하고 `--check`로 일치 여부를 검사합니다. [온보딩 V2 계약·migration](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md), [캐러셀 DB·API 확장](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md), [과거 DB 확인 기록](../docs/ERD_API_ALIGNMENT_2026-10-27.md)을 구분하세요. 현재 OpenAPI는 공개 V1 51개·상태 확인 3개이며 개발용 API를 켜면 2개가 추가되어 총 56개입니다.
 
 | 영역 | Endpoint |
 | --- | --- |
 | 개발용 인증 | `POST /api/v1/dev/auth/register`, `POST /api/v1/dev/auth/login` |
-| 개발용 Agent 결과 | `GET /api/v1/dev/agent-runs`, `GET /api/v1/dev/agent-runs/{agentRunId}` |
-| 개발용 Agent 발행 | `POST /api/v1/dev/agent-runs/{agentRunId}/publish`, `POST /api/v1/dev/agent-runs/{agentRunId}/publish-preview` |
-| 세션 | `GET /api/v1/auth/session`, `POST /api/v1/auth/logout` |
+| 세션 | `GET /api/v1/auth/session`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/withdrawal-restorations` (탈퇴 유예 중 복구, API-010) |
 | 소셜 OAuth (API-001·002) | `POST /api/v1/auth/login/{provider}`, `GET /api/v1/auth/login/{provider}/callback` — 카카오·네이버. 앱 키와 `oauth_attempt` 마이그레이션 필요, 기본 비활성. [설정·백엔드 단독 검증](../docs/OAUTH_T02_1_SETUP.md) |
 | 정책·온보딩 | `GET /api/v1/policies`, `GET /api/v1/onboarding/works`, `POST /api/v1/onboarding/preference-options`, `POST /api/v1/onboarding/complete` |
-| 내 정보 | `GET/PATCH /api/v1/users/me`, `GET/PATCH /api/v1/users/me/consents` |
+| 내 정보 | `GET/PATCH/DELETE /api/v1/users/me` (DELETE = 회원탈퇴 API-009, `mode=grace` 30일 유예), `GET/PATCH /api/v1/users/me/consents` |
 | Topic·Subtopic | `GET /api/v1/topics`, `GET /api/v1/topics/{topicId}/subtopics`, `GET /api/v1/subtopics/{subtopicId}` |
 | 내 관심사 | `GET/POST /api/v1/me/topics`, `GET /api/v1/me/topics/{topicId}/subtopics`, `PUT/DELETE /api/v1/me/topics/{topicId}/subtopics/{subtopicId}` |
 | 피드·콘텐츠 | `GET /api/v1/topics/{topicId}/feed`, `GET /api/v1/contents/{contentId}?topicId=...`, `GET /api/v1/contents/{contentId}/slides/{page}/image?topicId=...` |
 | 반응·저장 | `PUT/DELETE /api/v1/contents/{contentId}/preference`, `/like`, `/bookmark` |
 | 저장 목록 (API-041) | `GET /api/v1/users/me/bookmarks?topicId=...&limit=...&cursor=...` |
+| 내 활동 | `GET /api/v1/users/me/likes` (좋아요한 콘텐츠), `GET /api/v1/users/me/recent-views` (최근 30일에 본 콘텐츠) — 저장 목록과 같은 카드 · cursor |
+| 신고 · 문의 (API-070) | `POST /api/v1/reports` (콘텐츠 신고, 사유 5개), `POST /api/v1/inquiries` (마이페이지 문의) |
 | AI 대화 (API-048·052·053) | `POST /api/v1/chat/sessions`, `POST /api/v1/chat/sessions/{sessionId}/messages`, `GET /api/v1/chat/jobs/{jobId}` — `backend/.env`의 `LLM_KEY` 필요. 질문은 앞뒤 공백 제외 최대 500자이며 현재 분야 공개 콘텐츠 안에서만 근거를 찾아 답합니다. |
 | 알림 (API-107·108·109) | `GET /api/v1/users/me/notifications`, `GET /api/v1/users/me/notifications/unread-count`, `PATCH /api/v1/users/me/notifications/{notificationId}` — 운영공지(`system_notice`)만 목록·미읽음 수·읽음 처리에 포함합니다. 환영 공지를 생성하며, 기존 다른 유형 알림은 보존하되 공개 API에서 제외합니다. 실제 운영공지 공급은 후속 작업입니다. |
 
-사용자와 콘텐츠 데이터는 PostgreSQL을 사용합니다. 세션 저장소는 `SESSION_BACKEND=redis`로 Redis를 선택할 수 있으며 미설정 시 기존 PostgreSQL 세션을 사용합니다. 개발용 가입·로그인과 Agent 결과 조회는 `ENABLE_DEV_API=true`에서만 등록됩니다. Agent 결과 조회는 로컬 요청과 인증된 개발 사용자로 제한되며 Swagger의 **개발용 Agent 결과**에 표시됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 영화 Agent 실행 결과가 승인되고 사실 확인 항목이 없으면 저장 직후 공개 Content 피드에 자동 발행됩니다. 탈락하거나 사실 확인이 필요한 초안은 자동 발행되지 않습니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
+**탈퇴 계정 삭제:** 유예(30일)가 끝난 계정은 `python -m app.jobs.purge_withdrawn_users --expected-database <DB 이름> --apply`로 지웁니다. 기본은 미리보기이며 서버에서 하루에 한 번 실행합니다.
+
+사용자와 콘텐츠 데이터는 PostgreSQL을 사용합니다. 세션 저장소는 `SESSION_BACKEND=redis`로 Redis를 선택할 수 있으며 미설정 시 기존 PostgreSQL 세션을 사용합니다. 개발용 가입·로그인은 `ENABLE_DEV_API=true`에서만 등록됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
 
 ### 환경 변수와 실행
 
@@ -35,7 +37,7 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 # 저장소 루트에서 docker compose up -d postgres redis를 먼저 실행
 cd backend
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m alembic upgrade 150a601074af
+.\.venv\Scripts\python.exe -m alembic upgrade b3e7a5c19d42
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
 .\.venv\Scripts\python.exe scripts/run_local_api.py
@@ -51,7 +53,7 @@ cd backend
 
 신규 흐름은 `GET /api/v1/onboarding/works?topicId=...&q=...`로 작품을 1~5개 선택하고, `POST /api/v1/onboarding/preference-options`에 `{topicId,entityIds}`를 보내 활성 장르·소재 칩 전체를 받습니다. 선택 작품에 붙은 칩은 `sourceEntityIds`로 출처 작품을 알려 힌트로 씁니다. 칩은 장르와 소재를 각각 1개 이상, 종류별 7개까지 선택하고 기존 여섯 소비 유형 중 하나를 제출합니다. 두 조회는 가입 대기 세션을 사용하며 POST에는 CSRF가 필요합니다.
 
-완료 요청의 새 답변은 `answers:{version:2,favoriteEntityIds:[...],preferenceTagIds:[...],consumptionType:"world"}`입니다. 기존 프로필·정책·Topic 입력과 세션 교체는 유지합니다. 현재 카탈로그를 재검증한 뒤 답변·선택·동의·Tap을 함께 저장합니다. `entity` 등 신규 6개 테이블과 기존 `onboarding_answers` 버전 조건의 도입 revision은 `e3a7b9c2d451`입니다. 현재 서비스 target과 유일한 head는 캐러셀 확장 `f4b8c1d9a620`에 추천 연결 표 4개를 더한 자식 `150a601074af`이며 [적용 경로](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 따릅니다. 생년월일 삭제 d2 파일은 이 후보에 포함하지 않습니다.
+완료 요청의 새 답변은 `answers:{version:2,favoriteEntityIds:[...],preferenceTagIds:[...],consumptionType:"world"}`입니다. 기존 프로필·정책·Topic 입력과 세션 교체는 유지합니다. 현재 카탈로그를 재검증한 뒤 답변·선택·동의·Tap을 함께 저장합니다. `entity` 등 신규 6개 테이블과 기존 `onboarding_answers` 버전 조건의 도입 revision은 `e3a7b9c2d451`입니다. 현재 서비스 target과 유일한 head는 캐러셀 확장 `f4b8c1d9a620`에 추천 연결 표 4개(`150a601074af`), 신고·문의 표 2개, 복구 대기 세션 상태를 더한 `b3e7a5c19d42`이며 [적용 경로](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 따릅니다. 생년월일 삭제 d2 파일은 이 후보에 포함하지 않습니다.
 
 카탈로그는 검토된 JSON을 `python -m app.seeds.onboarding_catalog --file <JSON> --expected-database <DB명>`으로 먼저 확인합니다. 기본은 dry-run이며 `--apply`만 저장합니다. [실작품 시작 카탈로그](app/seeds/onboarding_catalog_starter.json)는 대표작 30개·장르/소재 38개이며 [출처·선정 기준](../docs/ONBOARDING_CATALOG_SOURCES_2026-10-28.md)을 함께 관리합니다. 별도의 두 가상 작품 예시는 개발용 `--demo`에 한정됩니다. [JSON·API 상세 계약](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)과 [Pivot 연결 검증](../docs/ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md)을 참고하세요.
 
@@ -59,7 +61,7 @@ cd backend
 
 `POST /api/v1/onboarding/complete`는 `nickname`, `accountType=user`, `consents`, `topicId`와 함께 필수 `answers: {"q1":"world","q2":"releases"}`를 받습니다. Q1은 `world`, `relationships`, `ost`, `goods`, `events`, `news` 중 하나, Q2는 `releases`, `characters`, `restock`, `events` 중 하나의 문자열입니다. 배열·누락·다른 필드는 거절하며, 기존 `subtopicIds`는 온보딩 요청에서 제거되어 보내면 422입니다.
 
-**생년월일 결정 보류:** 통합 완료 후 결정하며 현재 로컬 구현을 최종 정책으로 해석하지 않습니다. 온보딩과 캐러셀 migration은 기존 생년월일 컬럼과 값을 보존합니다. d2 삭제 파일은 후보에서 제외했고, 배포 Compose와 로컬 OAuth helper는 현재 서비스 target `150a601074af`를 명시적으로 선택합니다. 과거 d2가 이미 적용된 DB는 해당 이력을 임의로 수정하지 않으며, 이 후보만으로의 자동 업그레이드는 별도 검토 대상입니다. 구성 파일의 변경은 실제 migration·배포 실행을 뜻하지 않습니다.
+**생년월일 결정 보류:** 통합 완료 후 결정하며 현재 로컬 구현을 최종 정책으로 해석하지 않습니다. 온보딩과 캐러셀 migration은 기존 생년월일 컬럼과 값을 보존합니다. d2 삭제 파일은 후보에서 제외했고, 배포 Compose와 로컬 OAuth helper는 현재 서비스 target `b3e7a5c19d42`을 명시적으로 선택합니다. 과거 d2가 이미 적용된 DB는 해당 이력을 임의로 수정하지 않으며, 이 후보만으로의 자동 업그레이드는 별도 검토 대상입니다. 구성 파일의 변경은 실제 migration·배포 실행을 뜻하지 않습니다.
 
 현재 로컬 코드에서는 생년월일 수집·저장과 연령 확인 절차가 제거되어 있습니다. `birthDate`는 `null`도 포함해 전송하면 422 `VALIDATION_ERROR`이며 연령 확인용 대체 필드도 받지 않습니다. `GET/PATCH /api/v1/users/me` 응답에도 `birthDate`가 없습니다. 닉네임·동의·Topic·Q1/Q2·완료 상태와 OAuth 인증은 유지합니다.
 
@@ -107,17 +109,13 @@ $env:TEST_REDIS_URL = 'redis://127.0.0.1:6379/0'
 
 ### 캐러셀 묶음의 서비스 적재·조회 (2026-10-28)
 
-`content_slide`에 3~10장의 텍스트·배치와 검증된 PNG를 보관하고 `content.feed_valid_until`로 공개 만료를 관리합니다. 기존 피드·상세에 `slides[]`, 상세에 `sources[]`를 추가했으며, PNG는 세션·활성 Topic·공개 상태를 확인하는 이미지 GET으로 제공합니다. 기존 `body`·`imageUrl`·`sourceUrl`·`displayMode` 계약은 유지하고 새 캐러셀에는 `AI_GENERATED` 고지를 반환합니다. 프론트 캐러셀 연결은 이번 범위에 포함하지 않습니다.
+`content_slide`에 2~10장의 텍스트·배치와 검증된 PNG를 보관하고 `content.feed_valid_until`로 공개 만료를 관리합니다. 기존 피드·상세에 `slides[]`, 상세에 `sources[]`를 추가했으며, PNG는 세션·활성 Topic·공개 상태를 확인하는 이미지 GET으로 제공합니다. 기존 `body`·`imageUrl`·`sourceUrl`·`displayMode` 계약은 유지하고 새 캐러셀에는 `AI_GENERATED` 고지를 반환합니다. 프론트 캐러셀 연결은 이번 범위에 포함하지 않습니다.
 
 `backend`에서 `python -m app.seeds.carousel_contents --file <bundle.json> --expected-database <DB명>`으로 먼저 검사합니다. 기본은 읽기 전용 dry-run이며 `--apply`만 저장합니다. 별도 운영자 검토 기록 `--review-record-file <review.json>`이 없는 콘텐츠는 `pending_review`로 저장하고 공개하지 않습니다. 원본 Agent의 점수·ready 상태는 승인 증거로 사용하지 않습니다. 정확한 묶음 해시에 연결된 승인 기록만 공개할 수 있으며 미검수 강제 발행 옵션은 없습니다. 입력 규격·원자성·동일 요청 충돌·출처 표시와 검증 범위는 [캐러셀 DB·API 문서](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. 에이전트 생성 DB와 코드는 변경하지 않습니다.
 
-### 기존 커밋된 Agent 콘텐츠 일괄 적재
+### 예전 Agent 콘텐츠 도구 (삭제됨)
 
-`backend`에서 `python -m app.seeds.agent_contents --git-ref f645df0`으로 읽기 전용 검사 후, `--apply`를 붙여 적재할 수 있습니다. 원격 커밋의 JSON을 직접 읽으며 현재 브랜치를 변경하지 않습니다. 전체 트랜잭션·중복 방지·원본 추적을 지원합니다. [적재 결과와 실행 안내](../docs/AGENT_CONTENT_IMPORT.md)를 참고하세요.
-
-기존 분야별 임시 세부 관심사 7개는 콘텐츠 적재 후 `python -m app.seeds.agent_interests --git-ref f645df0 --apply`로 등록할 수 있습니다. 현재 Q1·Q2 온보딩의 필수 준비 과정은 아니며, 기존 작품 분류를 보존하면서 콘텐츠 연결을 추가하는 용도입니다. [임시 분류와 실행 안내](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)를 참고하세요.
-
-콘텐츠 사진은 `backend/.env`에 `TMDB_KEY`를 넣은 뒤 `python -m app.seeds.content_images --apply`로 채웁니다. 영화·애니는 TMDB 장면 사진(없으면 포스터), 음악은 MusicBrainz 앨범 표지를 쓰며 `image_url`이 비어 있는 Agent 콘텐츠만 바꿉니다. 먼저 `--apply` 없이 실행하면 찾은 결과만 미리 볼 수 있습니다.
+예전 `agent/` 폴더의 글을 넣던 `agent_contents`·`agent_interests`·`content_images` seed와 영화 Agent 실행 코드(개발용 Agent 결과·발행 API 포함)는 2026-11-03 삭제했습니다. 영화 도메인을 지금 쓰지 않아서이며, 확장할 때 필요하면 `chore/movie-agent` 브랜치에서 되살립니다.
 
 ## 구조 원칙
 
@@ -134,7 +132,7 @@ $env:TEST_REDIS_URL = 'redis://127.0.0.1:6379/0'
 
 ~~~text
 me_nu/
-├─ agent/
+├─ agents/
 ├─ backend/
 │  ├─ alembic/versions/
 │  │  └─ 7c8e1a9b4d2f_add_v1_persistent_api_tables.py

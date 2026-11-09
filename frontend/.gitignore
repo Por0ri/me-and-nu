@@ -7,3 +7,7 @@
 .env*
 !.env.example
 .DS_Store
+
+# Unapproved local review sources must never enter this public repository.
+/dev/policy-review/*
+!/dev/policy-review/provenance.json

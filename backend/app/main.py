@@ -4,8 +4,6 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.router import router as v1_router
 from app.api.dev.auth import router as dev_auth_router
-from app.api.dev.agent_runs import router as dev_agent_runs_router
-from app.api.dev.agent_publication import router as dev_agent_publication_router
 from app.api.health import router as health_router
 from app.core.config import settings
 from app.core.exceptions import install_exception_handlers
@@ -54,8 +52,6 @@ def create_app(enable_dev_api: bool | None = None) -> FastAPI:
     api.include_router(v1_router, prefix="/api/v1")
     if dev_api_enabled:
         api.include_router(dev_auth_router, prefix="/api/v1/dev")
-        api.include_router(dev_agent_runs_router, prefix="/api/v1/dev")
-        api.include_router(dev_agent_publication_router, prefix="/api/v1/dev")
     install_exception_handlers(api)
     return api
 

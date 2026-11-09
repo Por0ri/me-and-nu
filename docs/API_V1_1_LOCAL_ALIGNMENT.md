@@ -4,15 +4,15 @@
 
 현재 코드 재확인: 2026-10-28, `codex/service-integration` 작업 공간 기준. 최초 2026-09-29에 [Notion API V1.1 명세서](https://app.notion.com/p/94604c45a961835bbd1601fc3ab15ac0), [FE 세션·공통 계약](https://app.notion.com/p/0ce04c45a96183a884988159b10ddc81)를 대조한 기록에 로컬 라우터·OpenAPI의 변경을 반영했다. 이번에는 외부 Notion 명세나 배포 서버를 재검증하지 않았다. V1.1 전체 요구사항의 구현 완료 판정은 아니다.
 
-`create_app(...).openapi()`에서 확인한 HTTP 작업은 공개 V1 **36개**, 상태 확인 **3개**이며, `ENABLE_DEV_API=true`이면 개발용 **6개**가 추가되어 총 **45개**다. 개발 API를 끄면 39개다. 상태 확인은 `/health`, `/health/db`, `/health/redis`다. 아래 공개 경로는 `/api/v1` 접두사를 한 번만 쓰며 끝에 `/`를 붙이지 않는다. `정합`은 기존 대조 범위의 메서드·경로·주요 계약 대응을 뜻하며 실제 환경의 호출 성공이나 기능 전체 완성을 뜻하지 않는다.
+`create_app(...).openapi()`에서 확인한 HTTP 작업은 공개 V1 **52개**, 상태 확인 **3개**이며, `ENABLE_DEV_API=true`이면 개발용 **2개**가 추가되어 총 **57개**다. 개발 API를 끄면 55개다 (2026-11-04 기준: 영화 Agent 개발용 API 4개 삭제, 검색 관련 작품 · 취향 힌트 · 닉네임 확인 · 마이페이지 닉네임 확인 API 추가. 2026-11-06: 회원탈퇴 · 콘텐츠 신고 · 문의 · 내 활동 2개 API 추가. 2026-11-09: 탈퇴 복구 API 추가). 상태 확인은 `/health`, `/health/db`, `/health/redis`다. 아래 공개 경로는 `/api/v1` 접두사를 한 번만 쓰며 끝에 `/`를 붙이지 않는다. `정합`은 기존 대조 범위의 메서드·경로·주요 계약 대응을 뜻하며 실제 환경의 호출 성공이나 기능 전체 완성을 뜻하지 않는다.
 
 **생년월일 정책 보류 유지 (2026-10-27~28):** 수집·저장·연령 확인 방식은 통합 완료 후 결정한다. 새 Pivot 흐름은 닉네임만 수집하고 생년월일 입력·검사·전송을 보류한다. 생년월일 삭제 migration을 새로 적용하지 않으며 레거시 Consumer 화면·유틸리티는 기존 상태를 유지한다.
 
-**현재 로컬 코드 계약:** 온보딩은 `nickname`, `accountType:user`, `consents`, `topicId`, `answers`를 받는다. 새 답변은 `{version:2,favoriteEntityIds,preferenceTagIds,consumptionType}`이며 기존 `{q1,q2}`와 혼합하지 않는다. `birthDate`·`profileImageId`·`subtopicIds`는 `null`도 포함해 422다. 프로필의 birthDate 미지원도 유지한다. 온보딩 도입 revision `e3a7b9c2d451`과 자식 캐러셀 revision `f4b8c1d9a620`은 보류된 생년월일 삭제 d2와 독립되어 있다. 현재 서비스 target은 f4에 추천 연결 표 4개를 더한 자식 `150a601074af`를 명시하며 [DB·API 확장 계약](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)을 따른다. Pivot 제출에서는 생년월일을 제외해 기존 422 불일치를 해소했다. 이를 레거시 Consumer 전체의 계약 갱신이나 최종 생년월일 정책으로 해석하지 않는다.
+**현재 로컬 코드 계약:** 온보딩은 `nickname`, `accountType:user`, `consents`, `topicId`, `answers`를 받는다. 새 답변은 `{version:2,favoriteEntityIds,preferenceTagIds,consumptionType}`이며 기존 `{q1,q2}`와 혼합하지 않는다. `birthDate`·`profileImageId`·`subtopicIds`는 `null`도 포함해 422다. 프로필의 birthDate 미지원도 유지한다. 온보딩 도입 revision `e3a7b9c2d451`과 자식 캐러셀 revision `f4b8c1d9a620`은 보류된 생년월일 삭제 d2와 독립되어 있다. 현재 서비스 target은 f4에 추천 연결 표 4개(`150a601074af`), 신고·문의 표 2개, 복구 대기 세션 상태를 더한 `b3e7a5c19d42`을 명시하며 [DB·API 확장 계약](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)을 따른다. Pivot 제출에서는 생년월일을 제외해 기존 422 불일치를 해소했다. 이를 레거시 Consumer 전체의 계약 갱신이나 최종 생년월일 정책으로 해석하지 않는다.
 
 **2026-10-21 과거 온보딩 변경:** 당시 API-004는 `POST /api/v1/onboarding/complete`에서 `subtopicIds` 대신 필수 `answers: {"q1":"world","q2":"releases"}`를 받도록 변경됐다. Q1·Q2 각각 단일 허용값을 저장하는 revision은 `c0e5f3b8a124`다. 당시 프론트 수정은 포함하지 않았으며, 현재 Pivot은 위 V2 계약으로 연결되어 있다. 당시 두 질문과 아래 2026-09-29 검증 수치를 현재 Pivot 계약으로 사용하지 않는다.
 
-## 현재 API 대조 — 37개 (기존 번호 34개 + 온보딩 2개 + 캐러셀 이미지 1개)
+## 현재 API 대조 — 39개 (기존 번호 36개 + 온보딩 2개 + 캐러셀 이미지 1개)
 
 | 번호 | 메서드와 공개 경로 | 상태 | 로컬에서 확인할 계약과 범위 |
 | --- | --- | --- | --- |
@@ -21,10 +21,12 @@
 | API-004 | `POST /api/v1/onboarding/complete` | **부분** | `201`, 닉네임·동의·Topic과 버전별 답변·선택을 원자적으로 저장. v2는 작품 1~5개·현재 켜진 장르·소재 각각 1~7개·소비 유형 1개. v1은 기존 q1/q2. `answers`와 `activeTopic.subtopicIds=[]` 반환. pending 세션·CSRF 필요, 세션 교체 유지. |
 | 신규 Q1 | `GET /api/v1/onboarding/works` | 구현 | pending 세션. topicId/q/cursor/limit으로 활성 애니 작품 이름·별칭 검색. 빈 검색어는 빈 목록. 검색된 활성 작품은 모두 selectable=true. |
 | 신규 Q2 | `POST /api/v1/onboarding/preference-options` | 구현 | pending 세션·CSRF. `{topicId,entityIds}`로 유효 작품 1~5개를 검사하고 켜진 장르·소재 칩 전체와 힌트용 sourceEntityIds, minSelections(2), minGenreSelections(1), minThemeSelections(1), maxSelectionsPerKind(7) 반환. 선택 저장 없음. |
-| API-005 | `GET /api/v1/auth/session` | **부분** | 비로그인도 `200`과 익명 세션 쿠키·`csrfToken`을 받는다. 응답 모델은 `restoration_pending`을 허용하지만 계정 복구 절차(API-010)는 아직 없다. |
+| API-005 | `GET /api/v1/auth/session` | **부분** | 비로그인도 `200`과 익명 세션 쿠키·`csrfToken`을 받는다. 탈퇴 유예 중 복구 대기 세션은 `authenticated=false`, `sessionState=restoration_pending`, `scheduledDeleteAt`을 받는다. |
 | API-006 | `POST /api/v1/auth/logout` | 정합 | 현재 세션 폐기, `204` 빈 본문. 유효 세션의 변경 요청에는 CSRF가 필요하다. |
 | API-007 | `GET /api/v1/users/me` | 정합 | 온보딩 완료 사용자의 프로필 조회. 응답에 `birthDate`가 없다. |
 | API-008 | `PATCH /api/v1/users/me` | **부분** | 닉네임 수정은 가능하다. 프로필 이미지 업로드·연결은 API-096 미구현으로 현재 `profileImageId`를 새 값으로 설정할 수 없다. |
+| API-009 | `DELETE /api/v1/users/me?mode=grace` | **부분** | 온보딩 완료 세션·CSRF. 계정을 막고 `202`와 `status=withdrawal_pending`, 30일 뒤 `scheduledDeleteAt`을 반환하며 세션 쿠키를 지운다. `immediate`는 `422 WITHDRAWAL_MODE_UNSUPPORTED`다. 유예가 끝난 계정은 삭제 명령이 지운다. 소셜 재인증은 후속이다. |
+| API-010 | `POST /api/v1/auth/withdrawal-restorations` | 정합 | 복구 대기 세션·CSRF. 계정을 되살리고 세션을 새로 발급한다. 복구 대기 세션이 아니면 `403 RESTORATION_SESSION_REQUIRED`, 기한이 지나면 `409 RESTORATION_EXPIRED`다. |
 | API-011 | `GET /api/v1/policies` | 정합 | `consentItems[]`의 실제 `type`·`policyVersion`·`required`를 조회한다. |
 | API-012 | `GET /api/v1/users/me/consents` | 정합 | 현재 동의 내역 조회. |
 | API-013 | `PATCH /api/v1/users/me/consents` | 정합 | 선택 동의 갱신. 필수 항목을 거짓으로 철회하면 오류를 반환한다. |
@@ -50,6 +52,7 @@
 | API-048 | `POST /api/v1/chat/sessions` | 구현 | 관심 분야에 연결된 AI 대화 세션을 생성한다. |
 | API-052 | `POST /api/v1/chat/sessions/{sessionId}/messages` | 구현 | 질문 전송·답변 생성 작업. LLM 설정과 현재 분야의 공개 콘텐츠 근거가 필요하다. |
 | API-053 | `GET /api/v1/chat/jobs/{jobId}` | 구현 | 본인의 답변 작업 상태·결과 조회. |
+| API-070 | `POST /api/v1/reports` | **부분** | 온보딩 완료 세션·CSRF. 공개 중인 콘텐츠 신고만(`targetType=content`), 사유 `wrong_info`·`spoiler`·`rights`·`inappropriate`·`other`, 같은 회원·같은 글은 `409 REPORT_DUPLICATE`. DM 신고와 API-071 결과 조회는 후속이다. |
 | API-107 | `GET /api/v1/users/me/notifications` | **부분** | 운영공지(`system_notice`)만 조회. 다른 알림 공급은 후속이다. |
 | API-108 | `GET /api/v1/users/me/notifications/unread-count` | **부분** | 운영공지만 미읽음 수에 포함한다. |
 | API-109 | `PATCH /api/v1/users/me/notifications/{notificationId}` | **부분** | 본인의 운영공지를 읽음 처리한다. |
@@ -60,7 +63,7 @@
 - 첫 익명 세션 발급 시 허용된 출처를 확인한다. 헤더가 없는 로컬 Swagger·CLI GET은 허용한다. 오류 응답은 `code`와 `message`, 입력 검증 오류는 `fields[]`의 `field`·`code`·`message`를 사용한다. 깨진 JSON은 `400 MALFORMED_JSON`이다.
 - 공개 `/api/v1` 응답에는 `Cache-Control: private, no-store`가 붙는다. 본문이 있는 변경 요청은 JSON `Content-Type`을 사용한다. 다른 본문 형식은 `415 UNSUPPORTED_MEDIA_TYPE`이다.
 - `204` 성공 응답에는 본문이 없다. 클라이언트는 JSON 파싱을 시도하지 않는다. 보호된 API는 로그인·온보딩 상태에 따라 `401 AUTH_REQUIRED` 또는 `403 ONBOARDING_REQUIRED`가 될 수 있다.
-- `ENABLE_DEV_API=true`의 개발용 가입·로그인·Agent 결과 API와 `ENABLE_DEV_AUTH_BYPASS=true`의 루프백 우회는 **로컬 테스트 수단**이다. 카카오·네이버 OAuth나 정식 운영 인증을 뜻하지 않는다.
+- `ENABLE_DEV_API=true`의 개발용 가입·로그인 API와 `ENABLE_DEV_AUTH_BYPASS=true`의 루프백 우회는 **로컬 테스트 수단**이다. 카카오·네이버 OAuth나 정식 운영 인증을 뜻하지 않는다.
 
 ## Pivot 화면의 현재 호출 순서
 
@@ -86,7 +89,7 @@
 
 서버·PostgreSQL·seed 준비와 모든 작업의 Try it out 입력값은 [Swagger UI 조작법](SWAGGER_UI_OPERATION_GUIDE.md)과 [서버 준비 가이드](SWAGGER_TEST_GUIDE.md)를 따른다. `/docs`와 `/openapi.json`은 같은 `localhost:8000`으로 연다. 예시의 숫자 ID를 그대로 쓰지 않고 앞선 GET의 실제 값을 사용한다.
 
-1. **빠른 공개 글 확인:** `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=true`로 로컬 데모 사용자를 준비한다. `GET /api/v1/me/topics`의 활성 `topicId` → `GET /api/v1/topics/{topicId}/subtopics`의 `subtopicId` → `GET /api/v1/topics/{topicId}/feed`의 카드 `id` → `GET /api/v1/contents/{contentId}?topicId=...` 순서로 실행한다. 공개된 Agent 글도 같은 피드·상세에서 확인한다. 내부 초안은 개발용 Agent 실행 조회 경로를 사용한다.
+1. **빠른 공개 글 확인:** `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=true`로 로컬 데모 사용자를 준비한다. `GET /api/v1/me/topics`의 활성 `topicId` → `GET /api/v1/topics/{topicId}/subtopics`의 `subtopicId` → `GET /api/v1/topics/{topicId}/feed`의 카드 `id` → `GET /api/v1/contents/{contentId}?topicId=...` 순서로 실행한다. 공개된 Agent 글도 같은 피드·상세에서 확인한다.
 2. **실제 세션 흐름:** `ENABLE_DEV_AUTH_BYPASS=false`로 재시작한다. `GET /api/v1/auth/session`에서 `anonymous`와 `csrfToken`을 받는다. Swagger **Authorize → CsrfToken**에 넣고 개발용 가입·로그인을 실행한다. 세션을 다시 조회해 `onboarding_pending`과 새 토큰을 받는다.
 3. **온보딩:** 정책·Topic을 GET으로 읽고 작품 검색 GET → 후보 조회 POST → 완료 POST 순서로 실행한다. 완료에는 실제 ID의 V2 `answers`를 제출한다. `201` 응답의 답변과 `activeTopic.subtopicIds=[]`를 확인한 뒤 세션을 다시 조회해 `active`와 새 토큰을 받는다. 기존 `subtopicIds`, 답변 누락, 질문별 개수·형식·현재 후보 조건 위반은 422다. `q1/q2` 두 문자열을 보내는 V1 호환 검사는 별도로 구분한다.
 4. **화면 동작:** 프로필·동의·관심사 조회와 갱신 → 피드·상세 → O/X·좋아요·북마크 PUT 및 DELETE 순서로 실행한다. DELETE와 로그아웃의 `204`에는 본문이 없고, 변경 뒤 GET을 다시 호출해 결과를 본다.
@@ -104,7 +107,7 @@ npm run build
 
 ## 이번 범위 밖과 결정이 필요한 항목
 
-- **새 공개 API:** API-023 Topic 삭제, API-034 공유 정보, 계정 복구 API-010, 저장함 전용 수정·상세·삭제, 채널 팔로우·DM·설정·신고·탈퇴는 후속이다. 기존 OAuth, 저장 목록(API-041), AI 대화 3개, 운영공지 3개와 신규 온보딩 조회 2개는 위 표의 구현 범위에 포함한다.
+- **새 공개 API:** API-023 Topic 삭제, API-034 공유 정보, 저장함 전용 수정·상세·삭제, 채널 팔로우·DM·설정·신고·탈퇴는 후속이다. 기존 OAuth, 저장 목록(API-041), AI 대화 3개, 운영공지 3개와 신규 온보딩 조회 2개는 위 표의 구현 범위에 포함한다.
 - **온보딩 운영 전 확인:** Pivot의 V2 화면 연결은 완료됐다. 레거시 Consumer의 온보딩 계약 갱신, 실제 OAuth 공급자 신규 가입, 실서비스 적용·배포는 이번 로컬 검증과 구분한다. 생년월일 정책은 계속 보류한다. 실작품 시작 카탈로그의 표기·연도·이미지 결측 및 확장 기준은 [출처 문서](ONBOARDING_CATALOG_SOURCES_2026-10-28.md)를 따른다.
 - **홈 공급:** API-028은 추천 결과 표(`recommendation_round`·`recommendation_item`)에 오늘(없으면 어제) 결과가 있으면 그 순서를 쓰고, 없으면 공개 글 최신순이다. 이 표를 채우는 하루 한 번 모델 계산은 아직 연결 전이다. 광고·저장 재노출의 공급 로직, Home_AI의 “원하는 글 요청” 계약은 아직 없다. `Content_AI`의 글 질문·답변 계약과 동일하다고 가정하지 않는다.
 - **화면과 목록 계약:** Figma의 사람 구독 UI와 V1.1의 채널 팔로우, 번호 페이지 UI와 cursor 목록, 저장함 카드의 썸네일·작성자·시간, “21시 이후 알림허용”과 일반 문의의 필드는 별도 결정이 필요하다. 세부 화면 매핑은 [Figma API 백로그](FIGMA_API_V1_1_IMPLEMENTATION_BACKLOG.md)에 있다.

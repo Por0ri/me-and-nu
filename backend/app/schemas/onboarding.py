@@ -1,3 +1,4 @@
+import re
 from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Discriminator, Field, Tag, field_validator
@@ -7,6 +8,20 @@ from app.schemas.policy import ConsentInput
 
 ConsumptionType = Literal["world", "relationships", "ost", "goods", "events", "news"]
 CatalogId = Annotated[int, Field(strict=True, gt=0, le=9223372036854775807)]
+
+# Onboarding nickname (2026-11 design): 2~20 Korean (jamo too), English or digit characters, no spaces or symbols.
+# Not being used by another member who finished onboarding is checked by the service.
+NICKNAME_MIN, NICKNAME_MAX = 2, 20
+NICKNAME_RULE = "닉네임은 2~20자의 한글·영문·숫자만 쓸 수 있습니다."
+NICKNAME_TAKEN = "중복된 닉네임입니다."
+_NICKNAME = re.compile(r"[0-9A-Za-z가-힣ㄱ-ㅣ]+")
+
+
+def nickname_problem(nickname: str) -> str | None:
+    """None when the already trimmed nickname follows the rule, otherwise why not."""
+    if not NICKNAME_MIN <= len(nickname) <= NICKNAME_MAX or not _NICKNAME.fullmatch(nickname):
+        return NICKNAME_RULE
+    return None
 
 
 class OnboardingAnswers(CamelModel):
@@ -69,7 +84,8 @@ VersionedAnswers = Annotated[
 class OnboardingRequest(CamelModel):
     model_config = ConfigDict(extra="forbid")
 
-    nickname: str = Field(min_length=1, max_length=30)
+    nickname: str = Field(min_length=NICKNAME_MIN, max_length=NICKNAME_MAX,
+                          description="앞뒤 공백을 지운 2~20자 한글·영문·숫자 (띄어쓰기·특수문자 제외)")
     account_type: Literal["user"]
     consents: list[ConsentInput] = Field(min_length=1)
     topic_id: CatalogId
@@ -89,6 +105,20 @@ class OnboardingRequest(CamelModel):
     @classmethod
     def trim_nickname(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("nickname")
+    @classmethod
+    def check_nickname(cls, value: str) -> str:
+        if problem := nickname_problem(value):
+            raise ValueError(problem)
+        return value
+
+
+class NicknameCheckResponse(CamelModel):
+    nickname: str = Field(description="앞뒤 공백을 지운 닉네임")
+    available: bool
+    reason: Literal["invalid", "taken"] | None = Field(
+        default=None, description="invalid = 2~20자 한글·영문·숫자 규칙 위반, taken = 온보딩을 마친 다른 회원이 사용 중")
 
 
 class OnboardingUser(CamelModel):

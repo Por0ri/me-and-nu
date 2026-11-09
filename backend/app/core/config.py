@@ -40,6 +40,8 @@ def _oauth_origin(value: str, setting_name: str) -> tuple[str, bool]:
 
 class Settings(BaseSettings):
     database_url: str = Field(repr=False)
+    menu_deployment_env: str = ""
+    checking_carousel_test_preview_enabled: bool = False
     database_echo: bool = False
     redis_url: str | None = Field(default=None, repr=False)
     redis_key_prefix: str = Field(default="me_nu", min_length=1)
@@ -71,6 +73,14 @@ class Settings(BaseSettings):
     def validate_session_backend(self) -> "Settings":
         if self.session_backend == "redis" and not self.redis_url:
             raise ValueError("SESSION_BACKEND=redis requires REDIS_URL")
+        return self
+
+    @model_validator(mode="after")
+    def validate_checking_carousel_preview(self) -> "Settings":
+        from app.core.carousel_preview import checking_preview_database
+
+        if self.checking_carousel_test_preview_enabled and checking_preview_database(self) is None:
+            raise ValueError("Checking carousel preview requires the isolated Checking database, origins and secure authenticated runtime")
         return self
 
     @model_validator(mode="after")

@@ -173,17 +173,19 @@ erDiagram
 c0e5f3b8a124
   └─ e3a7b9c2d451  onboarding_v2 — 온보딩 도입 revision
      └─ f4b8c1d9a620  캐러셀 DB/API
-        └─ 150a601074af  추천 연결 표 4개 — 유일한 head와 명시적 적용 대상
+        └─ 150a601074af  추천 연결 표 4개
+           └─ 6d2f8b4a1c37  신고·문의 표 2개
+              └─ b3e7a5c19d42  복구 대기 세션 상태 — 유일한 head와 명시적 적용 대상
 ```
 
-온보딩만 도입한 당시 업그레이드 대상은 `e3a7b9c2d451`이었다. 현재 서비스 전체의 명시적 target은 캐러셀 `f4b8c1d9a620`에 추천 연결 표 4개를 더한 **`150a601074af`**이며 e3를 포함한다. [캐러셀 migration 안내](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)에 따라 대상 환경을 확인한다. 이 후보는 단일 head지만 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 150a를 명시한다. 아래 표는 **d2 파일이 있던 과거 통합 작업 공간에서 e3를 도입했을 당시**의 기록이며, 현재 후보가 d2 적용 DB의 자동 업그레이드를 지원한다는 뜻이 아니다.
+온보딩만 도입한 당시 업그레이드 대상은 `e3a7b9c2d451`이었다. 현재 서비스 전체의 명시적 target은 캐러셀 `f4b8c1d9a620`에 추천 연결 표 4개(`150a601074af`), 신고·문의 표 2개, 복구 대기 세션 상태를 더한 **`b3e7a5c19d42`**이며 e3를 포함한다. [캐러셀 migration 안내](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)에 따라 대상 환경을 확인한다. 이 후보는 단일 head지만 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 6d2f를 명시한다. 아래 표는 **d2 파일이 있던 과거 통합 작업 공간에서 e3를 도입했을 당시**의 기록이며, 현재 후보가 d2 적용 DB의 자동 업그레이드를 지원한다는 뜻이 아니다.
 
 | 시작 상태 | 온보딩 전용 업그레이드 후 |
 | --- | --- |
 | c0 또는 그 이전이며 생년월일 컬럼이 있는 DB | e3 서비스 분기로 업그레이드, 생년월일 컬럼·기존 값 보존 |
 | 이미 d2가 적용되어 생년월일 컬럼이 없는 DB | e3와 d2 두 revision 상태, 생년월일 컬럼을 재생성하거나 값을 추정하지 않음 |
 
-현재 `compose.deploy.yaml`, `compose.labs.yaml`의 migration 서비스와 `run_local_oauth.py`의 준비 경로는 e3·f4를 포함하는 150a를 명시한다. 이미 d2가 적용된 DB는 후보에 해당 revision 파일이 없으므로 별도 이력 검토가 필요하다. readiness 판정과 migration 실행 가능 여부는 서로 다르다. 이 구성 변경 자체는 원격 migration 실행이나 배포 완료를 뜻하지 않는다.
+현재 `compose.deploy.yaml`, `compose.labs.yaml`의 migration 서비스와 `run_local_oauth.py`의 준비 경로는 e3·f4를 포함하는 6d2f를 명시한다. 이미 d2가 적용된 DB는 후보에 해당 revision 파일이 없으므로 별도 이력 검토가 필요하다. readiness 판정과 migration 실행 가능 여부는 서로 다르다. 이 구성 변경 자체는 원격 migration 실행이나 배포 완료를 뜻하지 않는다.
 
 모델에 없는 `user_account.birth_date`가 autogenerate의 DROP 후보로 섞이지 않도록 [migration_policy.py](../backend/app/db/migration_policy.py)의 `include_schema_object`를 Alembic의 온라인·오프라인 설정에 연결했다. 생성된 migration은 온보딩 범위와 생년월일 DDL 부재를 별도로 검토해야 한다.
 

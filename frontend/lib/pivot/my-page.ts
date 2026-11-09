@@ -9,10 +9,19 @@ export type MyPageDataSource = {
   load(options: { signal: AbortSignal }): Promise<MyPageResult>;
 };
 
-export function maskProfileEmail(email: string): string {
+export function maskProfileEmail(email: unknown): string {
+  const unavailable = "이메일 정보를 확인할 수 없어요";
+  if (typeof email !== "string" || email.length > 254) return unavailable;
   const [local, domain, extra] = email.split("@");
-  if (!local || !domain || extra !== undefined) return "이메일 표시 준비 중";
-  return `${local.slice(0, Math.min(4, Math.max(1, local.length - 1)))}***@${domain}`;
+  if (!local || local.length > 64 || !domain || extra !== undefined
+    || !/^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]+$/.test(local)
+    || local.startsWith(".") || local.endsWith(".") || local.includes("..")) return unavailable;
+  const labels = domain.split(".");
+  if (labels.length < 2 || labels.some((label) => !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(label))) {
+    return unavailable;
+  }
+  // Even a one-character local part must not be exposed in full.
+  return `${local.slice(0, Math.min(4, local.length - 1))}***@${domain}`;
 }
 
 export function createMyPageRequestController(source: MyPageDataSource, publish: (state: MyPageState) => void) {

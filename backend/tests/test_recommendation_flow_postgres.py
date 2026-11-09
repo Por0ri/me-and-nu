@@ -116,7 +116,7 @@ def seed_demo(engine):
                               summary="실제 생성 콘텐츠가 아닌 통합 검증용 자료입니다.", content_type="guide",
                               published_at=now - timedelta(hours=i), feed_valid_until=now + timedelta(days=7),
                               status="active", judgment_status="confirmed",
-                              ai_judgment_basis={"method": "carousel_import_v1", "preview": True})
+                              ai_judgment_basis={"method": "carousel_import_v1"})
             db.add(content)
             db.flush()
             db.add(ContentSource(content_id=content.content_id, source_url=f"https://example.invalid/local-test/{i}",

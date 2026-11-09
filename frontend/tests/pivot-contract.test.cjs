@@ -238,10 +238,14 @@ test('Remote API access keeps staging, backend-labs and Checking environments pa
 test('Session routes use current user accounts without manufacturing onboarding completion', () => {
   const active = {authenticated:true, sessionState:'active', onboardingCompleted:true, user:{id:7, accountType:'user'}};
   assert.equal(s.isActiveSession(active), true);
+  for (const introSession of [null, { authenticated: false }, session, active]) {
+    assert.equal(s.resolvePivotSessionRoute(introSession, '/pivot'), null, 'intro waits for its own transition regardless of session');
+  }
   assert.equal(s.resolvePivotSessionRoute(active, '/pivot/login'), '/pivot/home');
   assert.equal(s.resolvePivotSessionRoute(active, '/pivot/consent'), '/pivot/home');
   assert.equal(s.resolvePivotSessionRoute(active, '/pivot/home'), null);
   assert.equal(s.resolvePivotSessionRoute(session, '/pivot/home'), '/pivot/consent');
+  assert.equal(s.resolvePivotSessionRoute(session, '/pivot/login'), '/pivot/consent');
   assert.equal(s.resolvePivotSessionRoute(session, '/pivot/consent'), null);
   assert.equal(s.resolvePivotSessionRoute(null, '/pivot/home'), '/pivot/login');
   for (const invalid of [session, {...active, user:null}, {...active, onboardingCompleted:false},

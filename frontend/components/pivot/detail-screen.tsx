@@ -1,14 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { orderedHomeSlides } from "@/lib/pivot/home";
 import type { DetailArticle, DetailState } from "@/lib/pivot/detail";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
+import { dismissActionNotice } from "@/lib/pivot/action-notice";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { HomeNavigation } from "./home-screen";
 import { ContentCover, ContentMetadata } from "./content-carousel";
 import homeStyles from "./home.module.css";
 import styles from "./detail.module.css";
 import { useDetailExposure, useInteractions } from "./interaction-context";
+import type { ReportSource } from "@/lib/pivot/report";
+import { ReportDialog } from "./report-dialog";
 
 function DetailImage({ article }: { article: DetailArticle }) {
   const [failed, setFailed] = useState(false);
@@ -18,14 +22,90 @@ function DetailImage({ article }: { article: DetailArticle }) {
     : <div className={styles.coverPlaceholder} role="img" aria-label="대표 이미지 준비 중">대표 이미지 준비 중</div>;
 }
 
-export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved, onHome, fromSaved = false, bookmarks }: {
+/** Compare exact text units only; preserve the original strings for display. */
+export function DetailSlideText({ article, coverTextVisible = false }: { article: DetailArticle; coverTextVisible?: boolean }) {
+  const slides = orderedHomeSlides(article.slides ?? []);
+  const normalize = (text: string) => text.replace(/\s+/gu, " ").trim();
+  const seen = new Set(article.sections.flatMap(section => section.paragraphs).map(normalize));
+  const cover = slides[0];
+  // Only exclude the cover after the browser confirms its entire caption fits.
+  // Merely having an overlay box does not prove the original is readable.
+  if (coverTextVisible && cover?.layout?.textOverlayBox && cover.titleLines) {
+    for (const text of [...cover.titleLines, cover.titleLines.join(" "), ...(cover.bodySentences ?? [])]) seen.add(normalize(text));
+  } else if (coverTextVisible && cover?.description) {
+    seen.add(normalize(cover.description));
+  }
+  const takeNew = (texts: readonly string[]) => texts.filter(text => {
+    const key = normalize(text);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const additions = slides.flatMap((slide, index) => {
+    // A title may arrive as one line or several lines containing the same text.
+    const titleKey = normalize(slide.titleLines?.join(" ") ?? "");
+    const titleLines = seen.has(titleKey) ? [] : takeNew(slide.titleLines ?? []);
+    if (titleKey) seen.add(titleKey);
+    const bodySentences = takeNew([
+      ...(slide.bodySentences ?? (slide.description ? [slide.description] : [])),
+      ...(!(slide.layout?.textOverlayBox && slide.titleLines) && slide.description ? [slide.description] : []),
+    ]);
+    return titleLines.length || bodySentences.length
+      ? [{ id: slide.id, page: slide.page ?? index + 1, titleLines, bodySentences }] : [];
+  });
+  if (!additions.length) return null;
+  return <section className={styles.slideTranscript} aria-label="슬라이드 추가 원문" data-detail-slide-text="">
+    <h2>슬라이드 추가 원문</h2>
+    {additions.map(slide => <section key={slide.id} className={styles.section}
+      aria-label={slide.page + "번 슬라이드 추가 원문"} data-detail-slide-page={slide.page}>
+      <p className={styles.slideLabel}>슬라이드 {slide.page}</p>
+      {slide.titleLines.length ? <h3>{slide.titleLines.join(" ")}</h3> : null}
+      {slide.bodySentences.map((sentence, index) => <p key={index}>{sentence}</p>)}
+    </section>)}
+  </section>;
+}
+
+export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved, onHome, fromSaved = false, fromActivity = false, bookmarks, reportSource }: {
   state: DetailState; demo: boolean; onBack: () => void; onRetry: () => void; onMy?: () => void; onSaved?: () => void; onHome?: () => void;
-  fromSaved?: boolean; bookmarks?: BookmarkControls;
+  fromSaved?: boolean; fromActivity?: boolean; bookmarks?: BookmarkControls;
+  reportSource?: ReportSource;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const article = useRef<HTMLElement>(null);
+  const readyArticle = state.status === "ready" ? state.article : null;
+  const [reportOpen, setReportOpen] = useState(false);
+  const closingReport = useRef(false);
+  useEffect(() => {
+    if (!reportOpen) return;
+    const closeOnBack = () => setReportOpen(false);
+    window.addEventListener("popstate", closeOnBack);
+    return () => window.removeEventListener("popstate", closeOnBack);
+  }, [reportOpen]);
+  function openReport() {
+    if (reportOpen || !readyArticle) return;
+    closingReport.current = false;
+    window.history.pushState({ ...window.history.state, pivotReportDialog: true }, "");
+    setReportOpen(true);
+  }
+  function closeReport() {
+    if (closingReport.current) return;
+    closingReport.current = true;
+    if (window.history.state?.pivotReportDialog) window.history.back();
+    else setReportOpen(false);
+  }
+  const [coverText, setCoverText] = useState<{ article: DetailArticle | null; visible: boolean } | null>(null);
+  const onCoverTextVisibilityChange = useCallback((visible: boolean) => {
+    setCoverText(current => current?.article === readyArticle && current.visible === visible ? current : { article: readyArticle, visible });
+  }, [readyArticle]);
   const interactions = useInteractions();
-  const [notice, setNotice] = useState("");
+  const [noticeState, setNoticeState] = useState({ message: "" });
+  const notice = noticeState.message;
+  function setNotice(message: string) { setNoticeState({ message }); }
+  useEffect(() => {
+    return dismissActionNotice(noticeState.message, () => {
+      setNoticeState(current => current === noticeState ? { message: "" } : current);
+    });
+  }, [noticeState]);
   const [feedback, setFeedback] = useState<"more" | "stop" | null>(null);
   const [aiExpanded, setAiExpanded] = useState(false);
   const target = state.status === "ready" ? { postId: state.article.postId, contentId: state.article.contentId,
@@ -71,6 +151,9 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
         <span className={styles.circle}><img src="/pivot/detail/back.svg" alt="" width={24} height={24} /></span>
       </button>
       <div className={styles.actions}>
+        <button type="button" className={styles.iconButton} aria-label="콘텐츠 신고" disabled={!readyArticle} onClick={openReport}>
+          <span className={styles.circle}><img src="/pivot/report/flag.svg" alt="" width={24} height={24} /></span>
+        </button>
         {([['share', '공유'], ['like', '좋아요'], ['save', '저장']] as const).map(([icon, label]) =>
           <button key={icon} type="button" className={styles.iconButton} aria-label={label} aria-disabled={(icon === "save" && canBookmark) || (icon === "like" && canReact) ? undefined : true}
             aria-pressed={icon === "save" && canBookmark ? saved : icon === "like" && canReact ? reaction?.liked === true : undefined}
@@ -91,7 +174,7 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
     <h1 ref={heading} tabIndex={-1} className={homeStyles.srOnly}>{state.status === "ready" ? [state.article.work, state.article.title].filter(Boolean).join(" · ") : "콘텐츠 상세"}</h1>
     {state.status === "ready" ? <article ref={article} aria-label={state.article.title} data-detail-content={state.article.contentId} data-detail-post={state.article.postId}>
       {!demo && state.article.slides?.length ? <ContentCover key={state.article.contentId}
-        slides={state.article.slides} title={state.article.title} /> : <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />}
+        slides={state.article.slides} title={state.article.title} onCoverTextVisibilityChange={onCoverTextVisibilityChange} /> : <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />}
       <div className={styles.body}>
         {state.article.sections.map((section, index) => <section key={index} className={styles.section}>
           {section.heading ? <h2>{section.heading}</h2> : null}
@@ -100,6 +183,7 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
         {!demo && state.article.displayMode === "link_excerpt" && state.article.sourceUrl ? <p className={styles.sourceLink}>
           <a href={state.article.sourceUrl} target="_blank" rel="noopener noreferrer">원문에서 계속 읽기</a>
         </p> : null}
+        {!demo ? <DetailSlideText article={state.article} coverTextVisible={coverText?.article === state.article && coverText.visible} /> : null}
         {!demo ? <footer data-detail-publication="">
         <ContentMetadata productionType={state.article.productionType} notices={state.article.notices}
           publishedAt={state.article.publishedAt} publisher={state.article.publisher} />
@@ -126,16 +210,17 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
         : state.status === "not-found" ? "요청한 콘텐츠를 찾을 수 없어요."
         : state.status === "empty" ? "아직 준비된 본문이 없어요." : state.message}</p>
       {state.status === "error" ? <button type="button" onClick={onRetry}>다시 시도</button> : null}
-      {state.status !== "loading" ? <button type="button" onClick={onBack}>{fromSaved ? "저장 목록으로 돌아가기" : "Home으로 돌아가기"}</button> : null}
+      {state.status !== "loading" ? <button type="button" onClick={onBack}>{fromActivity ? "내 활동으로 돌아가기" : fromSaved ? "저장 목록으로 돌아가기" : "Home으로 돌아가기"}</button> : null}
     </section>}
     {/* Keep shared navigation consistent with Home and My Page. */}
-    <div inert={aiExpanded}><HomeNavigation active={fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI /></div>
+    <div inert={aiExpanded}><HomeNavigation active={fromActivity ? "my" : fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI adjacentAI compact={aiExpanded} /></div>
     <div className={styles.aiDock}>
       {aiExpanded ? <div className={styles.aiPrompt}><button type="button" aria-disabled="true"
         onClick={() => setNotice("AI 질문 기능은 준비 중이에요. 질문을 전송하지 않아요.")}>이 콘텐츠에서 어떤 점이 궁금하세요?</button></div> : null}
       <button type="button" className={styles.aiButton} aria-label="AI 질문 안내" aria-expanded={aiExpanded}
-        onClick={() => setAiExpanded((expanded) => !expanded)}><img src="/pivot/detail/ai.svg" alt="" /></button>
+        onClick={() => setAiExpanded((expanded) => !expanded)}><img src={aiExpanded ? "/pivot/detail/ai-expanded.svg" : "/pivot/detail/ai.svg"} alt="" /></button>
     </div>
     {notice ? <p role="status" className={styles.notice}>{notice}</p> : null}
+    {reportOpen && readyArticle ? <ReportDialog contentId={readyArticle.contentId} source={reportSource} demo={demo} onClose={closeReport} /> : null}
   </main>;
 }

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,7 @@ from app.core.exceptions import ApiError
 from app.repositories import catalog_repository as catalog_repo
 from app.repositories import content_repository as content_repo
 from app.repositories import carousel_repository as carousel_repo
+from app.repositories import onboarding_catalog_repository as work_search_repo
 from app.repositories import recommendation_repository as recommendation_repo
 from app.schemas.feed import (
     ContentDetail,
@@ -17,9 +19,12 @@ from app.schemas.feed import (
     DetailReaction,
     FeedCard,
     FeedResponse,
+    FeedSearchResponse,
     FeedSection,
     MyReaction,
     ShareInfo,
+    WorkSuggestion,
+    WorkSuggestionsResponse,
 )
 from app.services.cursor import decode_cursor, encode_cursor
 from app.services.feed_ranking import FeedSlot, order_feed
@@ -33,6 +38,16 @@ MAX_SNAPSHOT_ITEMS = 600
 MAX_FEED_CURSOR_LENGTH = 7000
 MAX_CURSOR_HEADER_LENGTH = 512
 MAX_CONTENT_ID = 2**63 - 1
+# A new account opens Home about a second after onboarding, while the recommender
+# (deploy/checking/recommend.sh) looks for new accounts every second. Waiting up
+# to about 3 s for that first round keeps even the first visit in ranked order.
+NEW_ACCOUNT_WINDOW = timedelta(minutes=1)
+FIRST_ROUND_POLLS = 12
+FIRST_ROUND_POLL_SECONDS = 0.25
+# Home work search: matched works and cards per query, and works suggested while typing.
+SEARCH_WORKS = 10
+SEARCH_CARDS = 20
+SUGGEST_WORKS = 3
 
 
 def preference_value(value: str | None) -> str | None:
@@ -96,6 +111,10 @@ async def _state(db: AsyncSession, user_id: int, tap_id: int, content_id: int):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
 
 
 def _kst_day_start(moment: datetime) -> datetime:
@@ -214,6 +233,28 @@ def _decode_snapshot_cursor(cursor: str, context: dict) -> tuple[dict, list[int]
         raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다. 피드를 새로 불러와 주세요.") from exc
 
 
+def _recent(moment: datetime | None, as_of: datetime) -> bool:
+    if moment is None:
+        return False
+    if moment.tzinfo is None:               # SQLite fixtures lose timezone metadata
+        moment = moment.replace(tzinfo=timezone.utc)
+    return as_of - moment <= NEW_ACCOUNT_WINDOW
+
+
+async def _first_round(db: AsyncSession, user_id: int, tap_id: int, as_of: datetime, service_dates: list):
+    """A new account's first round, or the first after a My Page taste edit (which drops
+    the recent rounds), waited for up to about 3 s; None keeps newest first."""
+    if not _recent(await recommendation_repo.onboarding_completed_at(db, user_id), as_of) and not _recent(
+            await recommendation_repo.taste_edited_at(db, tap_id), as_of):
+        return None
+    for _ in range(FIRST_ROUND_POLLS):
+        await _sleep(FIRST_ROUND_POLL_SECONDS)
+        round_ = await recommendation_repo.latest_round(db, tap_id, service_dates)
+        if round_ is not None:
+            return round_
+    return None
+
+
 async def _recommended_feed(
     db: AsyncSession, user_id: int, topic_id: int, tap, *, cursor: str | None, limit: int
 ) -> FeedResponse | None:
@@ -221,13 +262,17 @@ async def _recommended_feed(
 
     Later pages consume the remaining IDs, so changed reactions or hidden cards
     cannot shift an offset. An old v2 cursor has no recoverable order and must
-    restart. Yesterday's round covers the hours before today's batch has run.
+    restart. Yesterday's round covers the hours before today's batch has run,
+    and a brand-new account briefly waits for its first round.
     """
     context = {"v": 3, "userId": user_id, "topicId": topic_id, "subtopicId": None}
     if cursor is None:
         as_of = _now()
         today = as_of.astimezone(KST).date()
-        round_ = await recommendation_repo.latest_round(db, tap.tap_id, [today, today - timedelta(days=1)])
+        service_dates = [today, today - timedelta(days=1)]
+        round_ = await recommendation_repo.latest_round(db, tap.tap_id, service_dates)
+        if round_ is None:
+            round_ = await _first_round(db, user_id, tap.tap_id, as_of, service_dates)
         if round_ is None:
             return None
         context.update(roundId=round_.recommendation_round_id, asOf=as_of.isoformat())
@@ -277,6 +322,53 @@ async def _recommended_feed(
                 break
     next_cursor = _snapshot_cursor(context, remaining_ids[position:]) if position < len(remaining_ids) else None
     return _feed_response(topic_id, cards, next_cursor, cursor=cursor)
+
+
+async def suggest_works(db: AsyncSession, user_id: int, topic_id: int, *, q: str, limit: int = SUGGEST_WORKS) -> WorkSuggestionsResponse:
+    """Works suggested while typing in Home search: the onboarding Q1 match (name or
+    alias contains q, spaces ignored, active works in id order), with or without cards."""
+    await require_active_tap(db, user_id, topic_id)
+    query = q.strip()
+    works = await work_search_repo.search_works(db, topic_id, query=query, after_id=None, limit=limit) if query else []
+    return WorkSuggestionsResponse(selected_topic_id=topic_id, query=query,
+                                   works=[WorkSuggestion(entity_id=work.entity_id, name=work.name) for work in works])
+
+
+async def search_feed(
+    db: AsyncSession, user_id: int, topic_id: int, *, q: str, work_id: int | None = None,
+) -> FeedSearchResponse:
+    """Cards for Home's search results: about works whose name or alias contains q,
+    or only about work_id when a suggested work was picked.
+
+    Ordered by today's (else yesterday's) ranking, then newest; "그만볼래요"
+    cards stay hidden. Cards carry no recommendation id, and Home logs no
+    impression for them: searching shows interest, so it never counts as a skip.
+    """
+    tap = await require_active_tap(db, user_id, topic_id)
+    query = q.strip()
+    if work_id is not None:
+        works = await work_search_repo.find_active_works(db, topic_id, [work_id])
+    else:
+        works = await work_search_repo.search_works(db, topic_id, query=query, after_id=None, limit=SEARCH_WORKS) if query else []
+    names = {work.entity_id: work.name for work in works}
+    found = await recommendation_repo.work_contents(db, topic_id, list(names)) if names else []
+    negative = await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id) if found else set()
+    rank = {}
+    if found:
+        today = _now().astimezone(KST).date()
+        round_ = await recommendation_repo.latest_round(db, tap.tap_id, [today, today - timedelta(days=1)])
+        if round_ is not None:
+            ranked = await recommendation_repo.ranked_items(db, round_.recommendation_round_id, topic_id)
+            rank = {content_id: position for position, (content_id, _, _) in enumerate(ranked)}
+    found = sorted((row for row in found if row[0].content_id not in negative),
+                   key=lambda row: rank.get(row[0].content_id, len(rank)))   # stable: unranked stay newest first
+    cards = []
+    for content, entity_id in found[:SEARCH_CARDS]:
+        card = await _card(db, content, topic_id=topic_id, tap_id=tap.tap_id, user_id=user_id,
+                           reason=f"‘{names[entity_id]}’ 검색 결과예요")
+        if card is not None:
+            cards.append(card)
+    return FeedSearchResponse(selected_topic_id=topic_id, query=query, works=[work.name for work in works], contents=cards)
 
 
 async def get_feed(

@@ -1,8 +1,9 @@
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext
 from app.core.exceptions import ApiError
-from app.models import NotificationSetting, OnboardingAnswersRecord, Tap, TapEntity, TapPreferenceTag
+from app.models import NotificationSetting, OnboardingAnswersRecord, Tap, TapEntity, TapPreferenceTag, UserAccount
 from app.repositories.auth_session_repository import (
     create_auth_session,
     discard_uncommitted_session,
@@ -12,15 +13,42 @@ from app.repositories.auth_session_repository import (
 from app.repositories.onboarding_repository import find_active_topic, lock_user
 from app.repositories.policy_repository import add_consent_history, get_current_policies
 from app.schemas.onboarding import (
+    NICKNAME_TAKEN,
     ActiveTopic,
+    NicknameCheckResponse,
     OnboardingAnswers,
     OnboardingAnswersV2,
     OnboardingRequest,
     OnboardingResponse,
     OnboardingUser,
+    nickname_problem,
 )
 from app.services.policy_service import validate_consent_inputs
 from app.services.onboarding_catalog_service import validate_v2_selection
+
+
+async def nickname_taken(db: AsyncSession, nickname: str, *, user_id: int) -> bool:
+    """Whether another member who finished onboarding uses it (English letters case-insensitively)."""
+    taken = await db.scalar(select(UserAccount.user_id).where(
+        func.lower(UserAccount.nickname) == nickname.lower(), UserAccount.user_id != user_id,
+        UserAccount.onboarding_completed_at.is_not(None)).limit(1))
+    return taken is not None
+
+
+async def reject_taken_nickname(db: AsyncSession, nickname: str, *, user_id: int) -> None:
+    """409 NICKNAME_TAKEN when another onboarded member uses it (onboarding completion and the My Page change)."""
+    if await nickname_taken(db, nickname, user_id=user_id):
+        raise ApiError(409, "NICKNAME_TAKEN", NICKNAME_TAKEN,
+                       [{"field": "nickname", "code": "NICKNAME_TAKEN", "message": NICKNAME_TAKEN}])
+
+
+async def check_nickname(db: AsyncSession, nickname: str, *, user_id: int) -> NicknameCheckResponse:
+    value = nickname.strip()
+    if nickname_problem(value):
+        return NicknameCheckResponse(nickname=value, available=False, reason="invalid")
+    if await nickname_taken(db, value, user_id=user_id):
+        return NicknameCheckResponse(nickname=value, available=False, reason="taken")
+    return NicknameCheckResponse(nickname=value, available=True)
 
 
 async def complete_onboarding(
@@ -48,6 +76,8 @@ async def complete_onboarding(
         if isinstance(payload.answers, OnboardingAnswersV2):
             await validate_v2_selection(db, topic.topic_id, payload.answers)
 
+        # The check before Q1 holds nothing, so someone may have finished with it since.
+        await reject_taken_nickname(db, payload.nickname, user_id=user.user_id)
         user.nickname = payload.nickname
         user.onboarding_completed_at = utcnow()
         for consent_type, item in submitted.items():

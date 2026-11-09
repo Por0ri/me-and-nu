@@ -1,0 +1,15 @@
+{
+  "status": "development-review-only",
+  "sourceFile": "menu_서비스정책문서_통합본_v1.1.md",
+  "referencePdf": "menu_서비스정책문서_v1.6.pdf",
+  "sourceDate": "2026-10-23",
+  "verifiedDate": "2026-11-09",
+  "sourceSha256Lf": "dacd5f1a169b7cc6d774671c6e0d2c330bb910c552a6465de8c90bbf8ea987f2",
+  "figmaFile": "iLGLjporSKRHdHBdhsKEvV",
+  "comparison": "Entire document text, including table cells; whitespace, Markdown delimiters and list markers excluded. Exact text equality for all three documents.",
+  "documents": [
+    { "id": "terms", "version": "v1.2", "effectiveDate": "2026-11-02", "figmaFrame": "1363:8740", "figmaTextNode": "1363:8750", "normalizedCharacters": 5334, "normalizedSha256": "d5a17e6b8553079d64e70a66e661bbd4cafc3a82a41de7dab5cdf4a9367ce0d9" },
+    { "id": "operations", "version": "v0.6", "effectiveDate": "2026-11-02", "figmaFrame": "1363:8740", "figmaTextNode": "1363:8755", "normalizedCharacters": 3583, "normalizedSha256": "2205cb43ffd2fffd0f165c98bb1f42320a09720fb5e806cddb757891be8d4251" },
+    { "id": "privacy", "version": "v0.3", "effectiveDate": "2026-11-02", "figmaFrame": "1363:8756", "figmaTextNode": "1363:8766", "normalizedCharacters": 3241, "normalizedSha256": "6722298aa086b2fa51217d3f487198a784ef69b8d111b3ec996ae130402f19c1" }
+  ]
+}

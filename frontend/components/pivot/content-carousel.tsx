@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import { API_UNAUTHORIZED_EVENT } from "@/lib/api";
 import { orderedHomeSlides, type HomeSlideModel } from "@/lib/pivot/home";
 import homeStyles from "./home.module.css";
@@ -96,40 +96,77 @@ function SlideImage({ slide, enabled }: { slide: HomeSlideModel; enabled: boolea
     : <div className={styles.imageState} role="img" aria-label="이미지 준비 중">이미지 준비 중</div>;
 }
 
-function SlideFigure({ slide, enabled, focusable, home = false }: {
-  slide: HomeSlideModel; enabled: boolean; focusable: boolean; home?: boolean;
+function SlideFigure({ slide, enabled, focusable, home = false, onTextVisibilityChange }: {
+  slide: HomeSlideModel; enabled: boolean; focusable: boolean; home?: boolean; onTextVisibilityChange?: (visible: boolean) => void;
 }) {
+  const figure = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const element = figure.current;
+    if (!element || !onTextVisibilityChange) return;
+    const caption = element.querySelector("figcaption");
+    if (!caption) return;
+    let disposed = false;
+    const measure = () => {
+      if (disposed) return;
+      const image = element.querySelector("img");
+      // Fail open: SSR, pending/error pixels and unmeasured/clipped text must
+      // keep their complete original in Detail's transcript below the card.
+      onTextVisibilityChange(!!image?.complete && image.naturalWidth > 0 &&
+        caption.clientHeight > 0 && caption.clientWidth > 0 &&
+        caption.scrollHeight <= caption.clientHeight && caption.scrollWidth <= caption.clientWidth);
+    };
+    measure();
+    const resize = new ResizeObserver(measure);
+    resize.observe(caption);
+    for (const child of caption.children) resize.observe(child);
+    const mutation = new MutationObserver(measure);
+    mutation.observe(element, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-carousel-image-state"] });
+    element.addEventListener("load", measure, true);
+    element.addEventListener("error", measure, true);
+    document.fonts.addEventListener("loadingdone", measure);
+    void document.fonts.ready.then(measure);
+    return () => {
+      disposed = true; resize.disconnect(); mutation.disconnect();
+      element.removeEventListener("load", measure, true);
+      element.removeEventListener("error", measure, true);
+      document.fonts.removeEventListener("loadingdone", measure);
+    };
+  }, [slide, onTextVisibilityChange]);
   const box = slide.layout?.textOverlayBox;
   const overlay = !!box && !!slide.titleLines;
-  const region: CSSProperties | undefined = box ? {
-    left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`,
-    // Keep the existing right-hand actions and bottom navigation outside copy.
-    ...(home ? { maxWidth: `calc(100% - ${box.x * 100}% - 52px)`, maxHeight: `calc(100% - ${box.y * 100}% - 48px)` } : {}),
+  const region: CSSProperties | undefined = box && !home ? {
+    left: `${box.x * 100}%`, top: `max(56px, ${box.y * 100}%)`, width: `${box.width * 100}%`, height: `${box.height * 100}%`,
+    maxHeight: `max(0px, calc(100% - max(56px, ${box.y * 100}%) - 12px))`,
   } : undefined;
-  return <figure className={styles.stage}>
+  return <figure ref={figure} className={styles.stage}>
     <SlideImage key={slide.image?.src ?? "missing"} slide={slide} enabled={enabled} />
-    {overlay ? <figcaption className={styles.overlay} style={region} tabIndex={focusable ? 0 : -1}
-      aria-label="카드 본문" data-slide-overlay="" data-carousel-overlay="">
+    {home && overlay ? <div className={styles.previewScrim} aria-hidden="true" /> : null}
+    {overlay ? <figcaption className={styles.overlay} style={region} tabIndex={!home && focusable ? 0 : -1}
+      aria-label={home ? "카드 미리보기" : "카드 본문"} data-slide-overlay="" data-carousel-overlay="">
       {slide.eyebrow ? <p className={styles.eyebrow}>{slide.eyebrow}</p> : null}
-      <h3 className={styles.title}>{slide.titleLines!.map((line, lineIndex) => <span key={lineIndex}>{line}</span>)}</h3>
-      {slide.bodySentences?.length ? <div className={styles.copy}>{slide.bodySentences.map((sentence, sentenceIndex) => <p key={sentenceIndex}>{sentence}</p>)}</div> : null}
+      <h3 className={styles.title}>{home ? slide.titleLines!.join("\n") : slide.titleLines!.map((line, lineIndex) => <span key={lineIndex}>{line}</span>)}</h3>
+      {slide.bodySentences?.length ? <div className={styles.copy}>{home ? <p>{slide.bodySentences.join(" ")}</p> : slide.bodySentences.map((sentence, sentenceIndex) => <p key={sentenceIndex}>{sentence}</p>)}</div> : null}
     </figcaption> : <figcaption className={styles.legacyCaption}>{slide.description}</figcaption>}
   </figure>;
 }
 
-/** Detail keeps the original single-cover/article layout; browsing stays in Home. */
-export function ContentCover({ slides, title }: { slides: readonly HomeSlideModel[]; title: string }) {
-  const cover = orderedHomeSlides(slides)[0];
-  return cover ? <div className={styles.cover} role="group" aria-label={title} data-content-cover="">
-    <SlideFigure slide={cover} enabled focusable />
+/** Keep Detail's cover/article boundary while reusing the server-sized carousel. */
+export function ContentCover({ slides, title, onCoverTextVisibilityChange }: {
+  slides: readonly HomeSlideModel[]; title: string; onCoverTextVisibilityChange?: (visible: boolean) => void;
+}) {
+  return slides.length ? <div className={styles.cover} role="group" aria-label={title} data-content-cover="">
+    <ContentCarousel slides={slides} title={title} scope="detail" onCoverTextVisibilityChange={onCoverTextVisibilityChange} />
   </div> : null;
 }
 
-export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home", onSlideChange }: {
+export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home", onSlideChange, onCoverTextVisibilityChange }: {
   slides: readonly HomeSlideModel[]; title: string; labelledBy?: string; scope?: "home" | "detail"; onSlideChange?: (index: number) => void;
+  onCoverTextVisibilityChange?: (visible: boolean) => void;
 }) {
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ pointerId: number; x: number; y: number; left: number; moving: boolean } | null>(null);
+  const suppressClick = useRef(false);
   const [active, setActive] = useState(0);
   const slides = orderedHomeSlides(sourceSlides);
   const current = Math.max(0, Math.min(active, slides.length - 1));
@@ -138,18 +175,67 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
     if (!element || index < 0 || index >= slides.length) return;
     element.scrollTo({ left: index * element.clientWidth });
   }
+  function finishDrag(event: PointerEvent<HTMLDivElement>) {
+    const start = drag.current;
+    if (!start || start.pointerId !== event.pointerId) return;
+    drag.current = null;
+    const element = event.currentTarget;
+    if (!start.moving) return;
+    const index = Math.round(element.scrollLeft / element.clientWidth);
+    delete element.dataset.dragging;
+    if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+    goTo(Math.max(0, Math.min(index, slides.length - 1)));
+  }
   if (!slides.length) return null;
   return <div className={styles.carousel} role="region" aria-roledescription="캐러셀"
     aria-labelledby={labelledBy} aria-label={labelledBy ? undefined : title} data-content-carousel={scope}>
     <div id={`${id}-track`} ref={track} className={styles.track} tabIndex={0} data-carousel-track=""
       data-home-track={scope === "home" ? "" : undefined} data-detail-track={scope === "detail" ? "" : undefined}
       aria-label="좌우로 슬라이드 탐색" aria-describedby={`${id}-help`}
+      onPointerDown={(event) => {
+        // A fresh input (including touch or a button) must keep its normal click.
+        suppressClick.current = false;
+        // Touch keeps native horizontal swiping and vertical feed/article scrolling.
+        if (event.pointerType !== "mouse" || event.button !== 0 || (event.target as Element).closest("button, a")) return;
+        drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, moving: false };
+      }}
+      onPointerMove={(event) => {
+        const start = drag.current;
+        if (event.pointerType !== "mouse" || !start || start.pointerId !== event.pointerId) return;
+        if (event.buttons !== 1) { finishDrag(event); return; }
+        const dx = event.clientX - start.x, dy = event.clientY - start.y;
+        if (!start.moving) {
+          if (Math.abs(dy) >= 6 && Math.abs(dy) >= Math.abs(dx)) { drag.current = null; return; }
+          if (Math.abs(dx) < 6) return;
+          start.moving = true;
+          suppressClick.current = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          event.currentTarget.dataset.dragging = "true";
+        }
+        event.preventDefault();
+        event.currentTarget.scrollLeft = start.left - dx;
+      }}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
+      onLostPointerCapture={finishDrag}
+      onPointerLeave={() => { if (!drag.current?.moving) drag.current = null; }}
+      onClickCapture={(event) => {
+        // Pointer capture retargets the release click to this track. Consume it
+        // before a card action can run; keyboard activation has no click count.
+        if (!suppressClick.current || event.detail === 0) return;
+        suppressClick.current = false;
+        event.preventDefault(); event.stopPropagation();
+      }}
       onScroll={(event) => {
         const element = event.currentTarget;
         if (element.clientWidth) { const index = Math.round(element.scrollLeft / element.clientWidth); setActive(index); onSlideChange?.(index); }
       }} onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
-        const index = event.key === "ArrowRight" ? current + 1 : event.key === "ArrowLeft" ? current - 1
+        // Scroll can settle before React commits onScroll state. Read the actual
+        // track position so consecutive keyboard moves do not use a stale page.
+        const element = event.currentTarget;
+        const position = element.clientWidth ? Math.round(element.scrollLeft / element.clientWidth) : current;
+        const index = event.key === "ArrowRight" ? position + 1 : event.key === "ArrowLeft" ? position - 1
           : event.key === "Home" ? 0 : event.key === "End" ? slides.length - 1 : null;
         if (index === null) return;
         event.preventDefault(); goTo(index);
@@ -157,21 +243,22 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
       {slides.map((slide, index) => <div key={slide.id} className={styles.slide} role="group" aria-roledescription="슬라이드"
           aria-label={`${index + 1} / ${slides.length}`} data-home-slide={scope === "home" ? slide.id : undefined}
           data-content-slide={slide.page ?? index + 1} data-carousel-slide={slide.page ?? index + 1} aria-hidden={current !== index} inert={current !== index}>
-          <SlideFigure slide={slide} enabled={Math.abs(current - index) <= 1} focusable={current === index} home={scope === "home"} />
+          <SlideFigure slide={slide} enabled={Math.abs(current - index) <= 1} focusable={current === index} home={scope === "home"}
+            onTextVisibilityChange={scope === "detail" && index === 0 ? onCoverTextVisibilityChange : undefined} />
         </div>)}
     </div>
     <div className={homeStyles.slideControls} role="group" aria-label={`${title} 슬라이드 이동`}>
-      <button type="button" className={homeStyles.slideButton} aria-label="이전 슬라이드" aria-controls={`${id}-track`} disabled={current === 0} onClick={() => goTo(current - 1)}>이전</button>
-      <p className={homeStyles.position} aria-live="polite" aria-atomic="true" data-home-position={scope === "home" ? "" : undefined} data-carousel-position="">
+      <button type="button" className={`${homeStyles.slideButton} ${styles.slideButton}`} aria-label="이전 슬라이드" aria-controls={`${id}-track`} disabled={current === 0} onClick={() => goTo(current - 1)}>이전</button>
+      <p className={`${homeStyles.position} ${styles.position}`} aria-live="polite" aria-atomic="true" data-home-position={scope === "home" ? "" : undefined} data-carousel-position="">
         <span className={styles.srOnly}>현재 슬라이드 </span>{current + 1} / {slides.length}
       </p>
-      <button type="button" className={homeStyles.slideButton} aria-label="다음 슬라이드" aria-controls={`${id}-track`} disabled={current === slides.length - 1} onClick={() => goTo(current + 1)}>다음</button>
+      <button type="button" className={`${homeStyles.slideButton} ${styles.slideButton}`} aria-label="다음 슬라이드" aria-controls={`${id}-track`} disabled={current === slides.length - 1} onClick={() => goTo(current + 1)}>다음</button>
     </div>
-    <div className={homeStyles.indicators} role="group" aria-label={`${title} 슬라이드 위치`}>
+    <div className={`${homeStyles.indicators} ${styles.indicators}`} role="group" aria-label={`${title} 슬라이드 위치`}>
       {slides.map((slide, index) => <button type="button" className={homeStyles.indicator} key={slide.id} aria-label={`${index + 1}번 슬라이드 보기`}
         aria-current={current === index ? "true" : undefined} aria-controls={`${id}-track`} onClick={() => goTo(index)}><span /></button>)}
     </div>
-    <p className={styles.srOnly} id={`${id}-help`}>좌우로 넘기거나 방향키·이전·다음 버튼으로 탐색하세요. 카드 본문이 길면 본문 안에서 위아래로 스크롤할 수 있어요.</p>
+    <p className={styles.srOnly} id={`${id}-help`}>좌우로 넘기거나 방향키·이전·다음 버튼으로 탐색하세요. {scope === "home" ? "카드는 미리보기예요. 전체 글과 슬라이드 원문은 자세히 보기에서 읽을 수 있어요." : "카드에 다 보이지 않는 원문은 이미지 아래 본문과 슬라이드 추가 원문에서 읽을 수 있어요."}</p>
   </div>;
 }
 
