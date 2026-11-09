@@ -1,6 +1,6 @@
 # make_chip_catalog — 온보딩 Q2 칩 목록과 작품 ↔ 칩 연결을 만든다 (model/catalog/chips.csv · work_chips.csv)
 #
-# 재료: AniList 작품 정보 (model/data/anilist/media.jsonl · media_recent.jsonl, 커밋 안 함) + me;nu 작품 목록 (model/catalog)
+# 재료: AniList 작품 정보 (model/data/anilist/media.jsonl · media_recent.jsonl, 커밋 안 함) + me;nu 작품 목록 (레포 맨 위 catalog/)
 # chips.csv: AniList 장르 · 태그 전부 (성인 장르 · 태그는 뺌). 화면 칩은 show = main 인 35개 (온보딩 시안의 장르 16 · 소재 19)
 #   나머지는 off 로 두고 한국어 이름은 비워 둠 (name_check = 입력 필요). 더보기가 정해지면 show · 한국어 이름만 고치면 됨
 # work_chips.csv: me;nu 작품(시리즈)마다 붙는 칩
@@ -18,6 +18,7 @@ from collections import Counter, defaultdict
 
 MODEL = pathlib.Path(__file__).resolve().parents[1]
 CATALOG = MODEL / "catalog"
+WORK_LIST = MODEL.parent / "catalog"
 ANILIST = MODEL / "data" / "anilist"
 TAG_MIN_RANK = 60
 SERIES_MIN_SHARE = 0.5
@@ -56,7 +57,7 @@ def code_of(name, taken):
 def load_series():
     """시리즈(me;nu 작품 번호)마다 장르 · 태그별 인기 비중 = 그 칩이 붙은 편들의 인기 합 / 시리즈 인기 합.
     태그는 관련도 60% 이상인 편만 붙은 걸로 침 (성인 · 스포일러 태그 제외). 태그 분류와 나온 태그 이름도 같이"""
-    with open(CATALOG / "menu_work_entries.csv", encoding="utf-8-sig", newline="") as f:
+    with open(WORK_LIST / "menu_work_entries.csv", encoding="utf-8-sig", newline="") as f:
         entries = list(csv.DictReader(f))
     work_of = {int(r["anilist_id"]): int(r["menu_work_id"]) for r in entries}
     popularity = {int(r["anilist_id"]): float(r["popularity"]) for r in entries}
@@ -84,7 +85,7 @@ def load_series():
 
 
 def main():
-    with open(CATALOG / "menu_works.csv", encoding="utf-8-sig", newline="") as f:
+    with open(WORK_LIST / "menu_works.csv", encoding="utf-8-sig", newline="") as f:
         works = [int(r["menu_work_id"]) for r in csv.DictReader(f)]
     genres, tags, category, seen_tags = load_series()
     links = {("genre", g): {w for w in works if genres[w].get(g, 0) >= SERIES_MIN_SHARE}
