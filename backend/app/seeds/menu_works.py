@@ -1,7 +1,7 @@
 """Load the me;nu work catalog and onboarding chips into the service DB.
 
-model/catalog/menu_works.csv is the source of truth for work numbers and
-titles; the model side maintains it. Works are matched by entity_external_id
+catalog/menu_works.csv is the shared source of truth for work numbers and
+titles; the service, model and agents all use it. Works are matched by entity_external_id
 (provider=menu_work), never by title. A work with a Korean title is active and
 searchable in onboarding; the rest stay inactive so contents can still link to
 them. Images are left untouched.
@@ -36,7 +36,9 @@ from app.models import Entity, EntityExternalId, EntityTag, PreferenceTag, Topic
 from app.repositories.content_work_repository import MENU_WORK_PROVIDER, link_carousel_works
 
 
-CATALOG_DIR = Path(__file__).resolve().parents[3] / "model" / "catalog"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+WORK_LIST_DIR = REPO_ROOT / "catalog"
+CHIP_DIR = REPO_ROOT / "model" / "catalog"
 TOPIC_CODE = "anime"
 SHOWN = ("main", "more")
 _CODE = re.compile(r"^[a-z][a-z0-9_-]*$")
@@ -311,11 +313,11 @@ async def run(*, works: list[MenuWork], chips: list[Chip], work_chips: dict[str,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--works", type=Path, default=CATALOG_DIR / "menu_works.csv")
-    parser.add_argument("--entries", type=Path, default=CATALOG_DIR / "menu_work_entries.csv",
+    parser.add_argument("--works", type=Path, default=WORK_LIST_DIR / "menu_works.csv")
+    parser.add_argument("--entries", type=Path, default=WORK_LIST_DIR / "menu_work_entries.csv",
                         help="Season/movie rows; used only to tell movies from series.")
-    parser.add_argument("--chips", type=Path, default=CATALOG_DIR / "chips.csv")
-    parser.add_argument("--work-chips", type=Path, default=CATALOG_DIR / "work_chips.csv")
+    parser.add_argument("--chips", type=Path, default=CHIP_DIR / "chips.csv")
+    parser.add_argument("--work-chips", type=Path, default=CHIP_DIR / "work_chips.csv")
     parser.add_argument("--expected-database", required=True, help="Exact target database name, never a URL.")
     parser.add_argument("--database-url", help="Explicit service DB URL; never printed.")
     parser.add_argument("--apply", action="store_true", help="Commit all changes atomically; default is read-only.")

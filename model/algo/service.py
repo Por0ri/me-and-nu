@@ -31,8 +31,8 @@ from model.algo import content_v1 as v1
 MODEL = pathlib.Path(__file__).resolve().parents[1]
 DATA = MODEL / "data"
 ANILIST = DATA / "anilist"
-ENTRIES = MODEL / "catalog" / "menu_work_entries.csv"   # me;nu 작품 목록 (레포에 있음. 백엔드 seeds/menu_works.py 와 같은 파일)
-WORKS = MODEL / "catalog" / "menu_works.csv"
+ENTRIES = MODEL.parent / "catalog" / "menu_work_entries.csv"   # me;nu 작품 목록 (레포 맨 위 공용 폴더. 서버 · 에이전트도 같은 파일)
+WORKS = MODEL.parent / "catalog" / "menu_works.csv"
 ANILIST_USERS = DATA / "anilist_users" / "entries.csv"
 NO_COWATCH_FROM = 2022   # 이 해부터 시작한 작품은 MAL 같이 본 기록을 안 씀 (위 설명)
 
