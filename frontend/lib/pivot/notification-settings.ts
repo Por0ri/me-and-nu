@@ -1,4 +1,4 @@
-// FE view model only, NOT an agreed API DTO or a mapping to existing DB fields.
+// FE view model; the Service adapter maps the in-app API contract to these keys.
 export type NotificationPreferences = { allowed: boolean; after21Allowed: boolean };
 export type NotificationPreferenceKey = keyof NotificationPreferences;
 export type NotificationSettingsSource =
@@ -12,10 +12,14 @@ export type NotificationSettingsSource =
     };
 export type NotificationSettingsState =
   | { status: "unavailable" | "loading" | "expired"; values: null }
-  | { status: "ready" | "saving"; values: NotificationPreferences }
-  | { status: "error"; values: null; operation: "load" | "save" };
+  | { status: "ready" | "saving"; values: NotificationPreferences; saved?: boolean }
+  | { status: "error"; values: null; operation: "load" | "save"; reason?: "conflict" };
 
-// No HTTP adapter, environment flag, default user preferences, or write path.
+export class NotificationSettingsError extends Error {
+  constructor(public readonly kind: "session" | "conflict") { super(kind); }
+}
+
+// Unbound fallback only; Service supplies a session-bound HTTP adapter.
 export const pendingNotificationSettingsSource: NotificationSettingsSource = { available: false };
 export function initialNotificationSettingsState(source: NotificationSettingsSource): NotificationSettingsState {
   return { status: source.available ? "loading" : "unavailable", values: null };
@@ -61,12 +65,16 @@ export function createNotificationSettingsController(
         ? await source.load({ signal: task.signal })
         : await source.save(patch!, { signal: task.signal });
       if (task.signal.aborted || active !== task || !current()) return;
-      update({ status: "ready", values: preferences(result) });
-    } catch {
+      update({ status: "ready", values: preferences(result), saved: operation === "save" });
+    } catch (error) {
       if (task.signal.aborted || active !== task || !current()) return;
+      if (error instanceof NotificationSettingsError && error.kind === "session") {
+        update({ status: "expired", values: null }); return;
+      }
       // A failed PATCH may already have committed. Clear unknown values; retry GET,
       // never replay a write or claim rollback/success based on a transport error.
-      update({ status: "error", values: null, operation });
+      update({ status: "error", values: null, operation,
+        ...(error instanceof NotificationSettingsError && error.kind === "conflict" ? { reason: "conflict" as const } : {}) });
     }
   }
   return {

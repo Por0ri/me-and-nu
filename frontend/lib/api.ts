@@ -36,6 +36,17 @@ export type ConsentHistoryResponse = {
 export type ConsentPatchResponse = {
   items: Array<{ type: string; agreed: boolean; updatedAt: string }>;
 };
+// API-068/069: stored internal notification preferences, not inbox/read state.
+export type NotificationSettingsResponse = { inAppEnabled: boolean; nightInAppEnabled: boolean; version: number };
+export type NotificationSettingsPatch = { version: number; inAppEnabled?: boolean; nightInAppEnabled?: boolean };
+export function getNotificationSettings(init: Pick<RequestInit, "signal"> = {}) {
+  return apiRequest<NotificationSettingsResponse>("/api/v1/users/me/notification-settings", init, 200);
+}
+export function patchNotificationSettings(input: NotificationSettingsPatch, init: Pick<RequestInit, "signal" | "headers"> = {}) {
+  return apiRequest<NotificationSettingsResponse>("/api/v1/users/me/notification-settings", {
+    ...init, method: "PATCH", body: JSON.stringify(input),
+  }, 200);
+}
 export type Topic = { id: number; code: string; name: string };
 export type TopicsResponse = { topics: Topic[] };
 export type Subtopic = { subtopicId: number; topicId: number; name: string };

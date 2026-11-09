@@ -37,15 +37,16 @@ export function NotificationSettingsView({ state, onChange, onRetry }: {
     : state.status === "loading" ? "알림 설정을 불러오고 있어요."
     : state.status === "saving" ? "알림 설정을 저장하고 있어요."
     : state.status === "expired" ? "로그인 상태가 변경됐어요. 로그인 상태를 확인해주세요."
-    : state.status === "error" ? state.operation === "save"
+    : state.status === "error" ? state.reason === "conflict" ? "다른 화면에서 설정이 변경됐어요. 현재 설정을 다시 불러와주세요." : state.operation === "save"
       ? "저장 결과를 확인하지 못했어요. 현재 설정을 다시 불러와주세요."
       : "알림 설정을 불러오지 못했어요. 다시 시도해주세요."
-    : "알림 설정을 변경할 수 있어요.";
+    : state.status === "ready" && state.saved ? "알림 설정을 저장했어요." : "알림 설정을 변경할 수 있어요.";
   return <>
     <div aria-busy={busy || undefined}><SettingsRows values={state.values} disabled={state.status !== "ready"}
       description="my-notification-status" onChange={onChange} /></div>
     <p id="my-notification-status" role={state.status === "error" ? "alert" : "status"}
-      className={state.status === "ready" ? styles.notificationReady : styles.notificationStatus}>{message}</p>
+      className={state.status === "ready" && !state.saved ? styles.notificationReady : styles.notificationStatus}>{message}</p>
+    <p className={styles.notificationStatus}>선택적 알림 수신 제어는 준비 중이에요. 필수 운영 공지는 계속 확인할 수 있어요.</p>
     {state.status === "error" ? <button type="button" className={styles.notificationRetry} onClick={onRetry}>설정 다시 불러오기</button> : null}
   </>;
 }

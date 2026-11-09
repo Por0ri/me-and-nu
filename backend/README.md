@@ -281,6 +281,14 @@ me_nu/
 
 ### 08. 광고·알림 — 8개
 
+API-068/069는 PM의 2026-11-09 현재 구현 기준으로 내부 알림 설정 저장을 지원한다(팀 전체 승인 계약을 의미하지 않음).
+GET 응답은 `{inAppEnabled, nightInAppEnabled, version}`이며 초기값은 `true/false/1`이다.
+PATCH는 현재 `version`과 하나 이상의 strict boolean 필드 및 세션의 `X-CSRF-Token`을 요구한다.
+성공 시 전체 설정과 증가한 version을 반환하고 stale version은 409 `NOTIFICATION_SETTINGS_CONFLICT`이다.
+필수 운영 공지·기존 알림 기록·마케팅 동의는 변경하지 않는다. 선택적 알림 생성/표시 적용과 외부 푸시는 미구현 범위다.
+Migration `91c7a2e4b630` 적용과 배포는 별도 절차이며 로컬 구현이 실제 환경의 적용을 의미하지 않는다.
+상세 계약·검증·의존성은 [알림 설정 구현 기록](../docs/MY_PAGE_NOTIFICATION_FE_API_PLAN_2026-11-09.md)을 참고한다.
+
 | API | 기능 | Method | Endpoint | 차수 |
 |---|---|---|---|---|
 | API-065 | 현재 토픽 광고 조회 | GET | /api/v1/topics/{topicId}/ads | 1차 |

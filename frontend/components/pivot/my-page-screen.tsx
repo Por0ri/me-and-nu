@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MyPageState } from "@/lib/pivot/my-page";
+import type { NotificationSettingsSource } from "@/lib/pivot/notification-settings";
 import type { MyPagePolicyType } from "@/lib/pivot/policy-document";
 import { MyPagePolicyDialog } from "./my-page-policy-dialog";
 import { MyNotificationSettings } from "./my-notification-settings";
@@ -74,8 +75,8 @@ function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
   </dialog>;
 }
 
-export function PivotMyPageScreen({ state, demo, notificationScope, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout }: {
-  state: MyPageState; demo: boolean; notificationScope?: object; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>;
+export function PivotMyPageScreen({ state, demo, notificationScope, notificationSource, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout }: {
+  state: MyPageState; demo: boolean; notificationScope?: object; notificationSource?: NotificationSettingsSource; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>;
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
@@ -148,7 +149,7 @@ export function PivotMyPageScreen({ state, demo, notificationScope, onHome, onRe
           {["내 활동", TASTE_EDIT, "관심분야 관리"].map((label, index) => <button key={label} type="button" className={styles.row}
             onClick={() => label === "내 활동" && onActivity ? onActivity() : ROW_PAGES[label] && !demo ? window.location.assign(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
-        <MyNotificationSettings demo={demo} scope={notificationScope} />
+        <MyNotificationSettings demo={demo} scope={notificationScope} source={notificationSource} />
         <MenuSection title="이용 안내">
           {["문의 및 신고", "이용약관", "개인정보처리방침"].map((label, index) => <button key={label} type="button" className={styles.row}
             aria-haspopup={index ? "dialog" : undefined}
