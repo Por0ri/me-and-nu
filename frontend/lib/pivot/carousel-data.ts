@@ -65,7 +65,7 @@ export function mapCoverImage(value: string | null | undefined, alt: string, con
 
 export function mapCarouselSlides(value: unknown, contentId: number, topicId: number): HomeSlideModel[] {
   if (value === undefined || (Array.isArray(value) && value.length === 0)) return [];
-  if (!Array.isArray(value) || value.length < 3 || value.length > 10) invalidContentResponse();
+  if (!Array.isArray(value) || value.length < 2 || value.length > 10) invalidContentResponse();
   const sorted = [...value].sort((a, b) => Number(a?.page) - Number(b?.page));
   return sorted.map((slide: unknown, index) => {
     if (!object(slide) || slide.page !== index + 1 || typeof slide.role !== "string" || !slide.role.trim() || slide.role.length > 50 ||
