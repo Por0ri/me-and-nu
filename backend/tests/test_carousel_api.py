@@ -92,7 +92,7 @@ def carousel_db(memory_db):
                         source_title=f"출처 {source_no}", source_role="primary" if source_no == 1 else "citation",
                         citation_order=source_no,
                     ))
-            pages = [] if legacy else ([1, 2] if content_id == 104 else
+            pages = [] if legacy else ([1] if content_id == 104 else
                     ([1, 3, 4] if content_id == 105 else list(range(1, 11 if content_id == 112 else 4))))
             for page in reversed(pages):
                 connection.execute(ContentSlide.__table__.insert().values(
@@ -362,7 +362,7 @@ async def test_image_http_auth_validation_and_private_png_contract(carousel_db):
         assert (await client.get("/api/v1/contents/101/slides/0/image?topicId=1")).status_code == 422
         assert (await client.get("/api/v1/contents/101/slides/11/image?topicId=1")).status_code == 422
         assert (await client.get("/api/v1/contents/101/slides/1/image?topicId=9223372036854775808")).status_code == 422
-        carousel_db.session.execute(delete(ContentSlide).where(ContentSlide.content_id == 101, ContentSlide.page == 3))
+        carousel_db.session.execute(delete(ContentSlide).where(ContentSlide.content_id == 101, ContentSlide.page.in_((2, 3))))
         unavailable = await client.get(url)
         assert unavailable.status_code == 404
         assert unavailable.headers["cache-control"] == "private, no-store"

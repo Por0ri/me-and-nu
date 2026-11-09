@@ -116,9 +116,9 @@ for (const [name, value] of Object.entries({
   assert.throws(() => protectedSlideImage(value, 17, 42, 1, '카드'), error => error.code === 'INVALID_CONTENT_RESPONSE');
 });
 
-for (const name of ['two', 'eleven', 'gap', 'duplicate', 'wrongDimensions', 'badBox', 'badText', 'null']) test(`Invalid ${name} carousel fails closed`, () => {
+for (const name of ['one', 'eleven', 'gap', 'duplicate', 'wrongDimensions', 'badBox', 'badText', 'null']) test(`Invalid ${name} carousel fails closed`, () => {
   const data = feed();
-  if (name === 'two') data.slides.pop();
+  if (name === 'one') data.slides = data.slides.filter(slide => slide.page === 1);
   if (name === 'eleven') data.slides = Array(11).fill(data.slides[0]);
   if (name === 'gap') data.slides[0].page = 4;
   if (name === 'duplicate') data.slides[0].page = 1;

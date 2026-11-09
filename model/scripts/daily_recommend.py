@@ -64,7 +64,7 @@ VISIBLE = """(c.status = 'active' AND c.deleted_at IS NULL
              AND (%(preview_scope)s::text <> 'checking_test_preview'
                   OR c.ai_judgment_basis -> 'checking_test_preview' ->> 'environment' = 'checking')))
         AND c.feed_valid_until IS NOT NULL
-        AND (SELECT count(*) FROM content_slide sl WHERE sl.content_id = c.content_id) BETWEEN 3 AND 10
+        AND (SELECT count(*) FROM content_slide sl WHERE sl.content_id = c.content_id) BETWEEN 2 AND 10
         AND (SELECT max(sl.page) FROM content_slide sl WHERE sl.content_id = c.content_id)
             = (SELECT count(*) FROM content_slide sl WHERE sl.content_id = c.content_id))))"""
 

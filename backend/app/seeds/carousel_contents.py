@@ -124,7 +124,7 @@ class PackageModel(BaseModel):
     purge_at: str | None = None
     sources: list[SourceModel] = Field(min_length=1, max_length=100)
     facts: list[FactModel] = Field(min_length=1, max_length=100)
-    cards: list[CardModel] = Field(min_length=3, max_length=10)
+    cards: list[CardModel] = Field(min_length=2, max_length=10)
     detail_body: str = Field(min_length=1, max_length=10000)
     detail_fact_ids: list[str] = Field(min_length=1, max_length=100)
     detail_source_ids: list[str] = Field(min_length=1, max_length=100)
@@ -169,7 +169,7 @@ class Asset(StrictModel):
 
 class BundleItem(StrictModel):
     package: dict[str, Any]
-    assets: list[Asset] = Field(min_length=3, max_length=10)
+    assets: list[Asset] = Field(min_length=2, max_length=10)
     reviewEvidence: dict[str, Any] | None = None
 
 
