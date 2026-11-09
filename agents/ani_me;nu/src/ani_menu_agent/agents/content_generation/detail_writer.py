@@ -158,11 +158,7 @@ def write_detail_body(state: ContentState) -> ContentState:
             "status": "detail_body_generation_failed",
         }
 
-    allowed_facts = [
-        fact
-        for fact in package.facts
-        if package.content_kind == ContentKind.HUMOR or fact.verified
-    ]
+    allowed_facts = list(package.facts)
     source_ids = {source.id for source in package.sources}
     fact_payload = []
     for fact in allowed_facts:

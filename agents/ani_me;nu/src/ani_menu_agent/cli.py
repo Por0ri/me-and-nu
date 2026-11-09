@@ -4,7 +4,9 @@ import hashlib
 import importlib.metadata
 import json
 import re
+import signal
 import sys
+import threading
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -23,7 +25,7 @@ from ani_menu_agent.agents.crawlers.base import profile_signal_checks
 from ani_menu_agent.agents.humor import research_humor
 from ani_menu_agent.agents.image import image_curator
 from ani_menu_agent.agents.information import research_information
-from ani_menu_agent.classification import infer_strong_content_type
+from ani_menu_agent.classification import infer_strong_content_type, infer_toei_press_type
 from ani_menu_agent.config import get_settings
 from ani_menu_agent.discovery import DiscoveryItem, collect_candidates, supports_discovery_adapter
 from ani_menu_agent.extraction import extract_page_capture, extract_page_payload
@@ -47,11 +49,16 @@ from ani_menu_agent.readiness import (
     supported_verified_fact_type,
 )
 from ani_menu_agent.source_discovery import run_source_discovery
-from ani_menu_agent.source_freshness import candidate_is_stale, candidate_publication_date
+from ani_menu_agent.source_freshness import (
+    candidate_is_stale,
+    expiry_evidence,
+    immediate_news_action_expiry,
+)
 from ani_menu_agent.sources import load_source_registry
+from ani_menu_agent.sources.image_ocr import extract_page_image_text
 from ani_menu_agent.sources.kitsu_images import collect_kitsu_work_images
 from ani_menu_agent.sources.page_collector import collect_official_page, collect_reference_page
-from ani_menu_agent.storage import AgentRepository
+from ani_menu_agent.storage import AgentRepository, discovery_candidate_fingerprint
 from ani_menu_agent.work_aliases import find_named_works
 from ani_menu_agent.work_catalog import (
     load_work_catalog,
@@ -68,6 +75,39 @@ for _stream in (sys.stdout, sys.stderr):
 console = Console(legacy_windows=False)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_PATH = PROJECT_ROOT / "examples" / "sample_content.json"
+
+
+def _minimal_period_capture(payload: dict, temporal: dict) -> dict:
+    """Keep provenance and the expiry decision while dropping body and assets."""
+    retained = {
+        key: payload.get(key)
+        for key in (
+            "source_id", "title", "url", "fetched_at", "published_at",
+            "content_type", "discovery_candidate_id", "discovery_url",
+            "discovery_title", "menu_work_ids", "work_match_evidence",
+        )
+        if payload.get(key) is not None
+    }
+    retained.update(
+        {
+            "main_text": "",
+            "text": "",
+            "image_urls": [],
+            "image_alt_text": {},
+            "image_source_pages": {},
+            "image_source_titles": {},
+            "image_asset_kinds": {},
+            "image_depicted_entities": {},
+            "images": [],
+            "linked_page_evidence": [],
+            "temporal_expiry": temporal,
+        }
+    )
+    if temporal.get("end_date"):
+        retained["event_end" if payload.get("content_type") == "event" else "sale_end"] = temporal[
+            "end_date"
+        ]
+    return retained
 
 
 def _load_package(path: Path) -> ContentPackage:
@@ -110,6 +150,7 @@ def _enrich_candidate_outcome(outcome: dict) -> dict:
     fallback_stage = {
         "stale_candidate_skipped": "freshness_preflight",
         "work_id_unresolved_skipped": "work_matching",
+        "out_of_scope_skipped": "work_scope_check",
         "original_source_unresolved": "source_resolution",
         "content_type_mismatch_skipped": "type_classification",
         "insufficient_discussion_evidence": "candidate_evidence_preflight",
@@ -129,6 +170,17 @@ def _enrich_candidate_outcome(outcome: dict) -> dict:
             "stage_timings_seconds": result.get("stage_timings_seconds") or {},
         }
     )
+    for key in (
+        "work_match_audit",
+        "candidate_title",
+        "captured_title",
+        "source_url",
+        "reason",
+        "structured_work_references",
+        "outbound_links",
+    ):
+        if key in result:
+            enriched[key] = result[key]
     package = result.get("package") or {}
     if isinstance(package, dict):
         enriched["menu_work_ids"] = package.get("menu_work_ids") or []
@@ -141,10 +193,16 @@ def _enrich_candidate_outcome(outcome: dict) -> dict:
 def _candidate_menu_work_ids(
     candidate: dict, source, content_type: str | None = None
 ) -> list[int]:
-    """Resolve only the candidate title; summaries can mention unrelated works."""
-    headline = str(candidate.get("title") or "").strip()
-    if not headline:
+    """Resolve candidate title and any explicitly linked work title.
+
+    Discovery records such as character birthdays retain the publisher's direct
+    character-to-anime link as ``linked_work_title``. That field is structured
+    identity evidence, unlike free-form summaries, and should not be discarded.
+    """
+    identity_titles = _candidate_identity_titles(candidate)
+    if not identity_titles:
         return []
+    headline = identity_titles[0]
     evidence = SourceEvidence(
         id=source.id,
         title=headline,
@@ -162,7 +220,7 @@ def _candidate_menu_work_ids(
         sources=[evidence],
     )
     matched = resolve_work_matches(
-        titles=[headline],
+        titles=identity_titles,
         source_ids=[source.id],
         content_type=content_type,
         source_url=str(candidate.get("url") or source.url),
@@ -170,6 +228,25 @@ def _candidate_menu_work_ids(
     if matched:
         return list(dict.fromkeys(item.menu_work_id for item in matched))
     return resolve_menu_work_ids(package)
+
+
+def _candidate_identity_titles(candidate: dict) -> list[str]:
+    """Return titles explicitly identifying the candidate's work.
+
+    Keep the headline first. Only include ``linked_work_title`` when a discovery
+    adapter supplied it as a dedicated field; never infer identity from summary
+    prose, which may contain incidental titles.
+    """
+    return list(
+        dict.fromkeys(
+            value
+            for value in (
+                str(candidate.get("title") or "").strip(),
+                str(candidate.get("linked_work_title") or "").strip(),
+            )
+            if value
+        )
+    )
 
 
 def _rotating_catalog_work_titles(limit: int = 3) -> list[str]:
@@ -199,14 +276,18 @@ def _rotating_catalog_work_titles(limit: int = 3) -> list[str]:
 
 
 def _diversify_candidate_items(items: list, limit: int) -> list:
-    """Interleave catalog works so a burst from one series cannot fill the whole batch."""
+    """Choose known-work candidates first, then use unresolved leads to fill gaps."""
     registry = {source.id: source for source in load_source_registry().sources}
     groups: dict[str, list] = {}
-    for index, item in enumerate(items):
+    unresolved: list = []
+    for item in items:
         source = registry.get(item.source_id)
         matched = _candidate_menu_work_ids(item.model_dump(mode="json"), source) if source else []
-        key = ",".join(map(str, matched)) if matched else f"unmatched:{index}"
-        groups.setdefault(key, []).append(item)
+        if matched:
+            key = ",".join(map(str, matched))
+            groups.setdefault(key, []).append(item)
+        else:
+            unresolved.append(item)
     selected = []
     while groups and len(selected) < limit:
         for key in list(groups):
@@ -215,6 +296,8 @@ def _diversify_candidate_items(items: list, limit: int) -> list:
                 del groups[key]
             if len(selected) >= limit:
                 break
+    if len(selected) < limit:
+        selected.extend(unresolved[: limit - len(selected)])
     return selected
 
 
@@ -1073,11 +1156,13 @@ def crawl_generate(
             help="같은 request_id가 미통과 상태일 때만 기존 실패 건을 다시 생성합니다.",
         ),
     ] = False,
+    prepare_only: bool = False,
 ) -> None:
     """승인된 원문 수집부터 카드 생성 및 독립 검수까지 실행합니다."""
     registry = load_source_registry()
     run_started = perf_counter()
     stage_timings: dict[str, float] = {}
+    requested_content_type = content_type
     identity_preflight_started = perf_counter()
     discovery_provenance = None
     candidate_work_ids: list[int] = []
@@ -1127,26 +1212,6 @@ def crawl_generate(
                     f"후보 유형이 여러 개입니다({', '.join(sorted(candidate_types))}). "
                     "--content-type으로 하나를 지정하세요."
                 )
-        if candidate_is_stale(candidate, content_type):
-            published = candidate_publication_date(candidate)
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(
-                json.dumps(
-                    {
-                        "status": "stale_candidate_skipped",
-                        "candidate_id": candidate_id,
-                        "content_type": content_type,
-                        "published_at": published.isoformat() if published else None,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-            console.print(
-                f"시의성 지난 {content_type} 후보를 생성 전에 건너뜁니다. (게시일 {published})"
-            )
-            return
         candidate_url = str(candidate["url"])
         candidate_host = (urlparse(candidate_url).hostname or "").lower().rstrip(".")
         eligible_sources = [
@@ -1208,7 +1273,7 @@ def crawl_generate(
                 and discovery_source.status == "active"
                 and discovery_source.discovery_enabled
                 and discovery_source.role == "discovery"
-                and discovery_source.collection == "html"
+                and discovery_source.collection in {"html", "rss"}
                 and discovery_host
                 and (
                     candidate_host == discovery_host
@@ -1219,12 +1284,17 @@ def crawl_generate(
                     "후보 URL에 대응하는 활성 원문 출처가 없고, 등록된 HTML 발견 출처의 "
                     "기사 페이지도 아니어서 공식 원문을 안전하게 찾을 수 없습니다."
                 )
+            capture_source = discovery_source
+            if discovery_source.collection != "html":
+                capture_source = discovery_source.model_copy(
+                    update={"collection": "html", "role": "reference"}
+                )
             try:
                 discovery_capture = collect_official_page(
-                    discovery_source,
+                    capture_source,
                     candidate_url,
                     expand_related_pages=False,
-                    allow_discovery_page=True,
+                    allow_discovery_page=capture_source.role == "discovery",
                 )
             except (ValueError, httpx.HTTPError) as exc:
                 raise typer.BadParameter(f"발견 매체 기사 수집 실패: {exc}") from exc
@@ -1245,35 +1315,29 @@ def crawl_generate(
             )
             AgentRepository().persist_page_capture(discovery_record, discovery_source.region)
             if original is None:
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_text(
-                    json.dumps(
-                        {
-                            "status": "original_source_unresolved",
-                            "candidate_id": candidate_id,
-                            "content_type": content_type,
-                            "discovery_source_id": discovery_source.id,
-                            "discovery_url": candidate_url,
-                            "reason": (
-                                "기사 본문에서 유형에 맞는 등록 활성 1차 출처 링크를 "
-                                "하나로 확정하지 못했습니다. 이 기사만으로는 생성하지 않았습니다."
-                            ),
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
-                console.print("공식 원문 링크를 특정하지 못해 생성하지 않았습니다.")
-                return
-            source, url, original_link_label = original
-            discovery_provenance = {
-                "discovered_via_source_id": discovery_source.id,
-                "discovery_url": candidate_url,
-                "discovery_title": discovery_capture.title,
-                "original_source_url": url,
-                "original_link_label": original_link_label,
-            }
+                # Keep a readable discovery page as non-official reference evidence
+                # if it has no registered primary-source link. It can be stored for
+                # generation/review, but is never promoted to an official source.
+                source = capture_source
+                url = candidate_url
+                identity_preflight_capture = discovery_capture
+                discovery_provenance = {
+                    "discovered_via_source_id": discovery_source.id,
+                    "discovery_url": candidate_url,
+                    "discovery_title": discovery_capture.title,
+                    "original_source_url": None,
+                    "original_link_label": "No registered primary-source link found",
+                    "source_authority": "non_official_reference",
+                }
+            else:
+                source, url, original_link_label = original
+                discovery_provenance = {
+                    "discovered_via_source_id": discovery_source.id,
+                    "discovery_url": candidate_url,
+                    "discovery_title": discovery_capture.title,
+                    "original_source_url": url,
+                    "original_link_label": original_link_label,
+                }
         else:
             source = matching_sources[0]
             url = candidate_url
@@ -1324,12 +1388,107 @@ def crawl_generate(
                 identity_preflight_capture = (
                     collect_reference_page(source, url)
                     if source.collection == "api"
-                    else collect_official_page(source, url, expand_related_pages=False)
+                    else collect_official_page(
+                        source,
+                        url,
+                        expand_related_pages=False,
+                        max_cta_detail_pages=1,
+                        review_ambiguous_links=not prepare_only,
+                    )
+                )
+                work_match_usage_records.extend(
+                    getattr(identity_preflight_capture, "link_review_usage", [])
+                )
+                identity_capture_payload = identity_preflight_capture.model_dump(mode="json")
+                identity_capture_payload.update(
+                    {
+                        "candidate_id": candidate_id,
+                        "content_type": content_type,
+                        "capture_role": "candidate_identity_preflight",
+                        "menu_work_ids": [],
+                        "work_match_evidence": [],
+                    }
+                )
+                identity_capture_payload["published_at"] = (
+                    identity_capture_payload.get("published_at")
+                    or candidate.get("published_at")
+                )
+                if discovery_provenance:
+                    identity_capture_payload.update(discovery_provenance)
+                if content_type in {"event", "goods"}:
+                    preflight_temporal = expiry_evidence(
+                        {
+                            "title": identity_preflight_capture.title,
+                            "text": identity_preflight_capture.text,
+                            "published_at": candidate.get("published_at"),
+                        },
+                        content_type,
+                    )
+                    if preflight_temporal["status"] != "active":
+                        status = (
+                            "stale_candidate_skipped"
+                            if preflight_temporal["status"] == "expired"
+                            else "expiry_unresolved_held"
+                        )
+                        output.parent.mkdir(parents=True, exist_ok=True)
+                        output.write_text(
+                            json.dumps(
+                                {
+                                    "status": status,
+                                    "candidate_id": candidate_id,
+                                    "content_type": content_type,
+                                    "title": identity_preflight_capture.title,
+                                    "source_url": str(identity_preflight_capture.url),
+                                    "event_end": preflight_temporal.get("end_date")
+                                    if content_type == "event" else None,
+                                    "sale_end": preflight_temporal.get("end_date")
+                                    if content_type == "goods" else None,
+                                    "expiry_evidence": preflight_temporal.get("evidence"),
+                                    "reason": "Period validity was expired or could not be established; no page data was stored.",
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                        return
+                if content_type == "news":
+                    preflight_news = immediate_news_action_expiry(candidate)
+                    if preflight_news["status"] in {"expired", "unresolved"}:
+                        status = (
+                            "stale_candidate_skipped"
+                            if preflight_news["status"] == "expired"
+                            else "expiry_unresolved_held"
+                        )
+                        output.parent.mkdir(parents=True, exist_ok=True)
+                        output.write_text(
+                            json.dumps(
+                                {
+                                    "status": status,
+                                    "candidate_id": candidate_id,
+                                    "content_type": content_type,
+                                    "title": candidate.get("title"),
+                                    "source_url": str(candidate.get("url") or url),
+                                    "expiry_evidence": preflight_news.get("evidence"),
+                                    "reason": "Time-sensitive news is past its publication day or has no publication date; no page data was stored.",
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                        return
+                AgentRepository().persist_page_capture(
+                    identity_capture_payload, source.region
                 )
             except (ValueError, httpx.HTTPError) as exc:
                 raise typer.BadParameter(f"작품 연결용 원문 메타데이터 수집 실패: {exc}") from exc
             work_match_evidence = resolve_work_matches(
-                titles=[str(candidate.get("title") or ""), identity_preflight_capture.title],
+                titles=[
+                    *_candidate_identity_titles(candidate),
+                    identity_preflight_capture.title,
+                    *[item.title for item in identity_preflight_capture.linked_page_evidence],
+                ],
                 source_ids=[source.id],
                 structured_references=identity_preflight_capture.structured_work_references,
                 outbound_links=identity_preflight_capture.outbound_links,
@@ -1342,8 +1501,12 @@ def crawl_generate(
             if not candidate_work_ids:
                 work_match_evidence = resolve_unmatched_work_with_llm(
                     titles=[
-                        str(candidate.get("title") or ""),
+                        *_candidate_identity_titles(candidate),
                         identity_preflight_capture.title,
+                        *[
+                            item.title
+                            for item in identity_preflight_capture.linked_page_evidence
+                        ],
                     ],
                     source_url=str(candidate.get("url") or url),
                     structured_references=(
@@ -1363,18 +1526,40 @@ def crawl_generate(
                 )
     if candidate_id and not candidate_work_ids:
         repository = AgentRepository()
+        record_resolution = getattr(
+            repository, "mark_discovery_candidate_work_resolution", None
+        )
         record_unresolved = getattr(repository, "mark_discovery_work_unresolved", None)
-        if callable(record_unresolved):
+        out_of_scope = (
+            work_match_audit.get("subject_scope") == "not_anime_related"
+            or work_match_audit.get("status") == "out_of_scope"
+        )
+        resolution_status = "out_of_scope" if out_of_scope else "unresolved_work_id"
+        resolution_reason = str(
+            work_match_audit.get("rationale")
+            or (
+                "The source does not identify an anime work as its subject."
+                if out_of_scope
+                else "An exact, unique anime work could not be confirmed from the source."
+            )
+        )
+        if callable(record_resolution):
+            record_resolution(
+                candidate_id,
+                resolution_reason,
+                resolution_status=resolution_status,
+                work_match_audit=work_match_audit,
+            )
+        elif callable(record_unresolved):
             record_unresolved(
                 candidate_id,
-                "등록 작품명·구조화된 작품 정보·활성 Kitsu 카탈로그 제목을 확인했지만 "
-                "정확하고 유일한 작품 매칭이 없어 새 ID를 만들지 않음",
+                resolution_reason,
             )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(
             json.dumps(
                 {
-                    "status": "work_id_unresolved_skipped",
+                    "status": "out_of_scope_skipped" if out_of_scope else "work_id_unresolved_skipped",
                     "candidate_id": candidate_id,
                     "content_type": content_type,
                     "candidate_title": candidate.get("title"),
@@ -1401,21 +1586,17 @@ def crawl_generate(
                     "work_match_audit": work_match_audit,
                     "usage_records": work_match_usage_records,
                     "source_url": str(candidate.get("url") or url),
-                    "reason": (
-                        "approved title, source mapping, structured metadata, and registered "
-                        "official-link evidence did not resolve a work; no unique exact anime "
-                        "title was confirmed by the active Kitsu catalog, so no new ID was created"
-                    ),
+                    "reason": resolution_reason,
                 },
                 ensure_ascii=False,
                 indent=2,
             ),
             encoding="utf-8",
         )
-        console.print(
-            "작품 ID를 제목에서 확인하지 못해 후보를 수집 전에 건너뜁니다. "
-            "작품 연결이 불명확한 콘텐츠는 적재하지 않습니다."
-        )
+        if out_of_scope:
+            console.print("원문 주제가 특정 애니 작품이 아니어서 작품 ID를 만들지 않고 보류 기록을 남깁니다.")
+        else:
+            console.print("작품 ID가 확정되지 않아 생성 큐에는 보내지 않고 매칭 근거와 함께 보류 기록을 남깁니다.")
         return
 
     stage_timings["identity_preflight"] = round(
@@ -1435,7 +1616,28 @@ def crawl_generate(
             # news pages on the same host often describe different events/products;
             # the repository adds only provenance-checked same-work artwork from its
             # reusable image library after this capture is persisted.
-            capture = collect_official_page(source, url, expand_related_pages=False)
+            capture = collect_official_page(
+                source,
+                url,
+                expand_related_pages=False,
+                max_cta_detail_pages=1,
+                review_ambiguous_links=not prepare_only,
+            )
+        if capture is not identity_preflight_capture:
+            work_match_usage_records.extend(capture.link_review_usage)
+        if not prepare_only:
+            capture.image_text_evidence, image_ocr_usage = extract_page_image_text(capture, source)
+            work_match_usage_records.extend(image_ocr_usage)
+            ocr_text_blocks = [
+                f"[페이지 내 상세 이미지 OCR · 출처 이미지 {item['image_url']}]\n"
+                f"{item['extracted_text']}"
+                for item in capture.image_text_evidence
+                if item.get("status") == "extracted" and item.get("extracted_text")
+            ]
+            if ocr_text_blocks:
+                capture.text = (
+                    capture.text.rstrip() + "\n\n" + "\n\n".join(ocr_text_blocks)
+                ).strip()
         stage_timings["page_collection"] = round(perf_counter() - stage_started, 3)
         if not capture.text.strip():
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -1467,15 +1669,22 @@ def crawl_generate(
                 "원문 본문을 추출할 수 없어 이미지 적재와 생성 단계를 건너뜁니다."
             )
             return
+        if source.id == "src_www_toei_anim_co_jp":
+            headline_type = infer_toei_press_type(capture.title)
+            if headline_type != "news":
+                content_type = headline_type
         payload_prepare_started = perf_counter()
         payload = capture.model_dump(mode="json")
+        if candidate_id:
+            payload["published_at"] = payload.get("published_at") or candidate.get("published_at")
         if discovery_provenance:
             payload.update(discovery_provenance)
         if not work_match_evidence:
             work_match_evidence = resolve_work_matches(
                 titles=[
-                    str(candidate.get("title") or "") if candidate_id else "",
+                    *(_candidate_identity_titles(candidate) if candidate_id else []),
                     capture.title,
+                    *[item.title for item in capture.linked_page_evidence],
                 ],
                 source_ids=[source.id],
                 structured_references=capture.structured_work_references,
@@ -1489,8 +1698,9 @@ def crawl_generate(
         if not candidate_work_ids:
             work_match_evidence = resolve_unmatched_work_with_llm(
                 titles=[
-                    str(candidate.get("title") or "") if candidate_id else "",
+                    *(_candidate_identity_titles(candidate) if candidate_id else []),
                     capture.title,
+                    *[item.title for item in capture.linked_page_evidence],
                 ],
                 source_url=str(capture.url or url),
                 structured_references=capture.structured_work_references,
@@ -1509,27 +1719,6 @@ def crawl_generate(
         payload["work_match_evidence"] = [
             item.model_dump(mode="json") for item in work_match_evidence
         ]
-        if candidate_is_stale(payload, content_type or ""):
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(
-                json.dumps(
-                    {
-                        "status": "stale_candidate_skipped",
-                        "content_type": content_type,
-                        "source_published_at": payload.get("published_at"),
-                        "source_url": str(payload.get("url") or url),
-                        "reason": "captured source publication date is outside freshness window",
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-            console.print(
-                "Captured source is outside the freshness window; "
-                "skipping downstream generation."
-            )
-            return
         image_rows: list[dict] = []
         for image_url in capture.image_urls[:max_images]:
             image_id = (
@@ -1564,7 +1753,7 @@ def crawl_generate(
                 "status": (
                     "matched" if any(type_signal_checks.values()) else "needs_semantic_review"
                 ),
-                "requested_content_type": content_type,
+                "requested_content_type": requested_content_type,
                 "signals": type_signal_checks,
                 "note": (
                     "lexical signals are advisory; final type fit remains independently reviewed"
@@ -1575,7 +1764,65 @@ def crawl_generate(
         )
         capture_persist_started = perf_counter()
         repository = AgentRepository()
-        repository.persist_page_capture(payload, source.region)
+        if content_type in {"event", "goods"}:
+            temporal = expiry_evidence(payload, content_type)
+            if temporal["status"] != "active":
+                status = (
+                    "stale_candidate_skipped"
+                    if temporal["status"] == "expired"
+                    else "expiry_unresolved_held"
+                )
+                result = {
+                    "status": status,
+                    "candidate_id": candidate_id,
+                    "content_type": content_type,
+                    "title": str(payload.get("title") or capture.title),
+                    "source_url": str(capture.url),
+                    "event_end": temporal.get("end_date") if content_type == "event" else None,
+                    "sale_end": temporal.get("end_date") if content_type == "goods" else None,
+                    "expiry_evidence": temporal.get("evidence"),
+                    "reason": (
+                        "The explicit event or sales end date has passed; no page data was stored."
+                        if temporal["status"] == "expired"
+                        else "No source-backed event or sales end date was found; held without storing page data."
+                    ),
+                }
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                console.print(
+                    f"기간 판정 {status}: {payload.get('title') or capture.title}; 생성 큐 적재를 건너뜁니다."
+                )
+                return
+            payload["temporal_expiry"] = temporal
+            payload["event_end" if content_type == "event" else "sale_end"] = temporal["end_date"]
+        elif content_type == "news":
+            temporal_news = immediate_news_action_expiry(payload)
+            if temporal_news["status"] in {"expired", "unresolved"}:
+                status = (
+                    "stale_candidate_skipped"
+                    if temporal_news["status"] == "expired"
+                    else "expiry_unresolved_held"
+                )
+                result = {
+                    "status": status,
+                    "candidate_id": candidate_id,
+                    "content_type": content_type,
+                    "title": str(payload.get("title") or capture.title),
+                    "source_url": str(capture.url),
+                    "published_at": temporal_news.get("published_at"),
+                    "expiry_evidence": temporal_news.get("evidence"),
+                    "reason": "Time-sensitive start news is past its publication/action date or has no date; no page data was stored.",
+                }
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+                console.print(
+                    f"시의성 뉴스 보류 {status}: {payload.get('title') or capture.title}; 페이지 저장과 생성 큐 적재를 건너뜁니다."
+                )
+                return
+        if prepare_only:
+            repository.persist_page_capture(payload, source.region)
         stage_timings["initial_capture_persist"] = round(
             perf_counter() - capture_persist_started, 3
         )
@@ -1583,11 +1830,110 @@ def crawl_generate(
             console.print(
                 "유형 키워드 신호가 약해도 원문과 작품이 확인되어 초안 생성·독립 검수로 진행합니다."
             )
-        console.print("2/5 근거 문장 추출 중…")
+        console.print("2/5 원문 자료 정리 중…")
         stage_started = perf_counter()
-        requested_content_type = content_type
-        package, extraction_usage = extract_page_payload(payload)
-        detected_type = infer_strong_content_type(package)
+        if prepare_only:
+            # The continuous crawler preserves the complete captured page as
+            # explicitly unverified source material. Fact extraction and fact
+            # verification belong to later content work, so a missing LLM key
+            # must not prevent source data from being stored.
+            source_evidence = SourceEvidence(
+                id=source.id,
+                title=str(payload.get("title") or source.name),
+                url=str(payload.get("url") or url),
+                publisher=source.name,
+                is_official=source.role == "primary",
+                published_at=payload.get("published_at"),
+                checked_at=payload.get("fetched_at"),
+                role=source.role,
+                region=source.region,
+                allowed_asset_hosts=source.allowed_asset_hosts,
+                discovered_via_source_id=payload.get("discovered_via_source_id"),
+                discovery_url=payload.get("discovery_url"),
+                discovery_title=payload.get("discovery_title"),
+            )
+            raw_statement = str(payload.get("text") or "").strip()
+            raw_request_id = f"crawl-{hashlib.sha1(str(payload.get('url') or url).encode('utf-8')).hexdigest()[:14]}"
+            raw_images = [
+                ImageAsset(
+                    id=str(image["id"]),
+                    url=str(image.get("url") or "") or None,
+                    source_url=str(image.get("source_url") or payload.get("url") or url),
+                    official=source.role == "primary",
+                    menu_work_ids=candidate_work_ids,
+                    rights_status=RightsStatus.NEEDS_REVIEW,
+                    asset_kind=(
+                        image.get("asset_kind")
+                        if image.get("asset_kind") in {
+                            "official_key_visual", "catalog_poster", "catalog_cover",
+                            "character_art", "scene_still", "manga_panel",
+                            "goods_product", "event_visual", "fan_meme",
+                            "editorial_photo", "unknown",
+                        }
+                        else "unknown"
+                    ),
+                    depicted_entities=image.get("depicted_entities") or [],
+                    source_description=str(image.get("alt_text") or image.get("source_page_title") or ""),
+                )
+                for image in payload.get("images", [])
+                if image.get("url")
+            ]
+            package = ContentPackage(
+                request_id=raw_request_id,
+                topic=(source.work_title_ko or str(payload.get("title") or source.name))[:300],
+                content_kind=ContentKind.INFORMATION,
+                content_type=content_type,
+                menu_work_ids=candidate_work_ids,
+                work_match_evidence=work_match_evidence,
+                sources=[source_evidence],
+                facts=[
+                    Fact(
+                        id=f"{raw_request_id}-source-page",
+                        statement=raw_statement,
+                        source_ids=[source.id],
+                        verified=False,
+                        time_sensitive=content_type in {"news", "event", "goods"},
+                        fact_type="source_page_capture",
+                        details={
+                            "verification_status": "not_performed",
+                            "captured_title": str(payload.get("title") or ""),
+                            "captured_url": str(payload.get("url") or url),
+                            "published_at": payload.get("published_at"),
+                            "fetched_at": payload.get("fetched_at"),
+                        },
+                    )
+                ] if raw_statement else [],
+                images=raw_images,
+            )
+            temporal = payload.get("temporal_expiry") or {}
+            if temporal.get("status") == "active" and temporal.get("end_date"):
+                if content_type == "event":
+                    package.event_end = str(temporal["end_date"])
+                elif content_type == "goods":
+                    package.facts.append(
+                        Fact(
+                            id=f"{package.request_id}-sales-period",
+                            statement=f"판매 종료일: {temporal['end_date']}",
+                            source_ids=[source.id],
+                            verified=False,
+                            time_sensitive=True,
+                            fact_type="sales_period",
+                            details={
+                                "sale_end": str(temporal["end_date"]),
+                                "source_quote": str(temporal.get("evidence") or ""),
+                            },
+                        )
+                    )
+            extraction_usage = {
+                "stage": "fact_extraction",
+                "status": "skipped",
+                "reason": "crawler_raw_capture_no_fact_verification",
+            }
+            detected_type = None
+            console.print("사실 검증 없이 원문 전체를 미검증 자료로 보존합니다.")
+        else:
+            package, extraction_usage = extract_page_payload(payload)
+            detected_type = infer_strong_content_type(package)
         if detected_type and detected_type != content_type:
             supported_types = {item.value for item in source.content_types}
             if detected_type not in supported_types:
@@ -1629,6 +1975,72 @@ def crawl_generate(
                 "requested_content_type": requested_content_type,
                 "evidence_content_type": detected_type,
             }
+        if content_type in {"event", "goods"}:
+            temporal_candidate = package.model_dump(mode="json")
+            temporal_candidate.update(
+                {
+                    "text": payload.get("text", ""),
+                    "main_text": payload.get("main_text", ""),
+                    "published_at": payload.get("published_at"),
+                }
+            )
+            temporal = expiry_evidence(temporal_candidate, content_type)
+            if temporal["status"] != "active":
+                status = (
+                    "stale_candidate_skipped"
+                    if temporal["status"] == "expired"
+                    else "expiry_unresolved_held"
+                )
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(
+                        {
+                            "status": status,
+                            "candidate_id": candidate_id,
+                            "request_id": package.request_id,
+                            "content_type": content_type,
+                            "topic": package.topic,
+                            "source_url": str(capture.url),
+                            "event_end": temporal.get("end_date") if content_type == "event" else None,
+                            "sale_end": temporal.get("end_date") if content_type == "goods" else None,
+                            "expiry_evidence": temporal.get("evidence"),
+                            "reason": (
+                                "The explicit event or sales end date has passed; no new page data was stored."
+                                if temporal["status"] == "expired"
+                                else "No source-backed event or sales end date was found; held without storing page data."
+                            ),
+                            "menu_work_ids": package.menu_work_ids,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                console.print(
+                    f"기간 판정 {status}: {package.topic}; 생성 큐 적재를 건너뜁니다."
+                )
+                return
+            payload["temporal_expiry"] = temporal
+            if content_type == "event" and not package.event_end:
+                package.event_end = str(temporal["end_date"])
+            elif content_type == "goods" and not any(
+                fact.fact_type == "sales_period" and fact.details.get("sale_end")
+                for fact in package.facts
+            ):
+                package.facts.append(
+                    Fact(
+                        id=f"{package.request_id}-sales-period",
+                        statement=f"판매 종료일: {temporal['end_date']}",
+                        source_ids=[source.id],
+                        verified=False,
+                        time_sensitive=True,
+                        fact_type="sales_period",
+                        details={
+                            "sale_end": str(temporal["end_date"]),
+                            "source_quote": str(temporal.get("evidence") or ""),
+                        },
+                    )
+                )
         # This command already knows the requested editorial type. Set it before
         # graph/storage image supplementation so event/goods restrictions apply
         # while the asset pool is being built, not only during final QA.
@@ -1649,29 +2061,38 @@ def crawl_generate(
     except (ValueError, KeyError, httpx.HTTPError, RuntimeError) as exc:
         raise typer.BadParameter(f"크롤링·팩트 추출 단계에서 중단: {exc}") from exc
 
-    if (
-        content_type == "event"
-        and package.event_end
-        and package.event_end < date.today().isoformat()
-    ):
+    console.print("3/5 자료 저장 및 수집 메타데이터 정리 중…")
+    stage_started = perf_counter()
+    payload["event_end"] = package.event_end
+    repository.persist_page_capture(
+        payload, source.region, package.event_end, package=package
+    )
+    repository.prepare_lifecycle(package)
+    research_information(
+        {"package": package.model_dump(mode="json"), "trace": [], "repository": repository}
+    )
+    stage_timings["database_and_research"] = round(perf_counter() - stage_started, 3)
+    if candidate_is_stale(package.model_dump(mode="json"), content_type or ""):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(
             json.dumps(
                 {
-                    "status": "stale_candidate_skipped",
+                    "status": "stale_evidence_persisted",
                     "request_id": package.request_id,
                     "topic": package.topic,
                     "content_type": content_type,
                     "event_end": package.event_end,
+                    "reason": "Evidence was retained; expired event/goods are not sent to generation.",
                     "source_urls": [str(item.url) for item in package.sources],
-                    "reason": "verified event end date is in the past",
+                    "fact_count": len(package.facts),
+                    "menu_work_ids": package.menu_work_ids,
                 },
                 ensure_ascii=False,
                 indent=2,
             ),
             encoding="utf-8",
         )
-        console.print("확인된 행사 종료일이 지나 카드 생성을 생략합니다.")
+        console.print("기간이 지난 후보의 원문과 사실을 저장했습니다. 생성 큐에는 보내지 않습니다.")
         return
 
     duplicate_started = perf_counter()
@@ -1682,31 +2103,22 @@ def crawl_generate(
         output.write_text(
             json.dumps(
                 {
-                    "status": "duplicate_skipped",
+                    "status": "duplicate_evidence_persisted",
                     "duplicate_of": duplicate,
                     "request_id": package.request_id,
                     "topic": package.topic,
                     "source_urls": [str(source.url) for source in package.sources],
+                    "fact_count": len(package.facts),
+                    "menu_work_ids": package.menu_work_ids,
                 },
                 ensure_ascii=False,
                 indent=2,
             ),
             encoding="utf-8",
         )
-        raise typer.BadParameter(
-            "기존 콘텐츠와 작품·출처 또는 핵심 사실이 중복되어 카드 생성을 건너뜁니다. "
-            f"기존 request_id={duplicate['request_id']} ({duplicate['reason']})"
-        )
+        console.print("중복 콘텐츠 후보의 출처와 사실은 저장했고, 중복 생성을 막았습니다.")
+        return
 
-    console.print("3/5 자료 저장 및 수집 메타데이터 정리 중…")
-    stage_started = perf_counter()
-    payload["event_end"] = package.event_end
-    repository.persist_page_capture(payload, source.region, package.event_end)
-    repository.prepare_lifecycle(package)
-    research_information(
-        {"package": package.model_dump(mode="json"), "trace": [], "repository": repository}
-    )
-    stage_timings["database_and_research"] = round(perf_counter() - stage_started, 3)
     console.print(f"4/5 이미지 권리 확인 및 다운로드 중… (후보 {len(package.images)}개)")
     stage_started = perf_counter()
     image_result = image_curator(
@@ -1730,6 +2142,43 @@ def crawl_generate(
     ]
     # Sparse imagery is a hard preflight condition: every card must receive a real,
     # relevant image, and placeholder graphics are not a substitute for source art.
+
+    if prepare_only:
+        from ani_menu_agent.pipelines.common.jobs import PipelineLane, PipelineStage
+
+        repository.enqueue_pipeline_job(
+            lane=PipelineLane.TIME_SENSITIVE,
+            stage=PipelineStage.GENERATE,
+            idempotency_key=f"{package.request_id}:generate:0",
+            request_id=package.request_id,
+            payload={
+                "content_type": content_type,
+                "content_kind": ContentKind.INFORMATION.value,
+                "revision_count": 0,
+                "review_failures": 0,
+                "max_revision": POLICY.max_review_failures,
+                "usage_records": [extraction_usage, *work_match_usage_records],
+                "trace": ["crawl_prepare", "evidence_persisted", "images_curated"],
+            },
+        )
+        prepared = {
+            "status": "generation_pending",
+            "request_id": package.request_id,
+            "content_type": content_type,
+            "topic": package.topic,
+            "source_urls": [str(item.url) for item in curated_package.sources],
+            "source_count": len(curated_package.sources),
+            "fact_count": len(curated_package.facts),
+            "image_count": len(usable_images),
+            "stage_timings_seconds": {
+                **stage_timings,
+                "total": round(perf_counter() - run_started, 3),
+            },
+        }
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(prepared, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"수집 자료와 생성 작업을 DB에 저장했습니다: {package.request_id}")
+        return
 
     console.print("5/5 카드 생성 및 독립 검수 중…")
     try:
@@ -1958,6 +2407,34 @@ def crawl_type(
         str | None,
         typer.Option("--retry-note", help="재시도 전에 해결한 원인 또는 변경사항"),
     ] = None,
+    retry_prior_failures: Annotated[
+        bool,
+        typer.Option(
+            "--retry-prior-failures",
+            help="저장된 고유 후보 중 통과하지 못한 후보를 새 버전으로 재평가",
+        ),
+    ] = False,
+    retry_work_identity_failures: Annotated[
+        bool,
+        typer.Option(
+            "--retry-work-identity-failures",
+            help="작품 ID 미확정 후보를 한 번 재평가",
+        ),
+    ] = False,
+    stored_candidates_only: Annotated[
+        bool,
+        typer.Option(
+            "--stored-candidates-only",
+            help="출처 목록을 다시 조회하지 않고 DB에 저장된 후보만 처리",
+        ),
+    ] = False,
+    retry_before: Annotated[
+        str | None,
+        typer.Option(
+            "--retry-before",
+            help="이 시각 이전에 처리된 실패만 재평가하는 고정 실행 경계(ISO-8601 UTC)",
+        ),
+    ] = None,
     region_policy: Annotated[
         str,
         typer.Option("--region-policy", help="kr_first, mixed, jp_first"),
@@ -1966,7 +2443,8 @@ def crawl_type(
         Path,
         typer.Option("--output-dir", help="이번 실행의 생성 결과 폴더"),
     ] = Path("output/crawl_runs"),
-) -> None:
+    enqueue_only: bool = False,
+) -> dict:
     """유형별 수집부터 DB 적재·콘텐츠 생성·독립 검수까지 연결해 실행합니다."""
     if content_type not in {item.value for item in CONTENT_TYPE_LABELS}:
         raise typer.BadParameter(
@@ -1981,18 +2459,33 @@ def crawl_type(
             "명시적 재시도에는 --retry-candidate-id와 비어 있지 않은 "
             "--retry-note가 함께 필요합니다."
         )
+    if stored_candidates_only and not retry_prior_failures:
+        raise typer.BadParameter(
+            "--stored-candidates-only에는 --retry-prior-failures가 필요합니다."
+        )
+    retry_cutoff = None
+    if retry_before:
+        try:
+            retry_cutoff = datetime.fromisoformat(retry_before.replace("Z", "+00:00"))
+            if retry_cutoff.tzinfo is None:
+                raise ValueError("timezone required")
+        except ValueError as exc:
+            raise typer.BadParameter("--retry-before는 시간대가 포함된 ISO-8601이어야 합니다.") from exc
 
-    # The same recent feed entries can recur on every scheduled pass. Fetch a
-    # wider discovery window, then skip IDs already attempted in this output
-    # history so each loop spends generation time on fresh candidates first.
+    # Re-evaluate old failed leads once after agent changes. Successful, stale,
+    # and duplicate records stay protected; source-changed leads can be retried
+    # again because their fingerprint differs from the last attempt.
     retryable_statuses = {
+        "stale_candidate_skipped",
+        "expiry_unresolved_held",
         "needs_crawler_update",
         "work_id_unresolved_skipped",
         "original_source_unresolved",
         "candidate_pipeline_error",
+        "insufficient_discussion_evidence",
+        "content_type_mismatch_skipped",
+        "rejected_archived",
     }
-    attempted_tokens: set[str] = set()
-    type_output_dir = output_dir / content_type
     repository = AgentRepository()
     previous_candidate_attempts = repository.list_candidate_attempts(content_type)
     if retry_candidate_id:
@@ -2003,7 +2496,16 @@ def crawl_type(
             raise typer.BadParameter(
                 f"이 상태는 수정 재시도 대상이 아닙니다: {previous.get('status')}"
             )
-        if int(previous.get("retry_count", 0)) >= POLICY.max_candidate_retries:
+        previous_match_audit = previous.get("work_match_audit") or {}
+        corrected_catalog_evidence = (
+            previous_match_audit.get("status") == "invalid_source_title_evidence"
+            and previous_match_audit.get("action") == "match_existing"
+            and len(previous_match_audit.get("catalog_matches") or []) == 1
+        )
+        if (
+            int(previous.get("retry_count", 0)) >= POLICY.max_candidate_retries
+            and not corrected_catalog_evidence
+        ):
             raise typer.BadParameter(
                 f"후보별 재시도 한도({POLICY.max_candidate_retries})를 이미 사용했습니다."
             )
@@ -2014,22 +2516,7 @@ def crawl_type(
             raise typer.BadParameter(f"재시도 후보를 읽지 못했습니다: {exc}") from exc
         if content_type not in set(retry_item.content_types):
             raise typer.BadParameter("재시도 후보가 지정한 콘텐츠 유형에 연결되어 있지 않습니다.")
-    if type_output_dir.exists():
-        for prior_path in type_output_dir.rglob("*.json"):
-            if prior_path.name == "run_summary.json":
-                continue
-            # Per-candidate result JSONs do not always carry candidate_id;
-            # their filename token is the stable SHA-256 prefix of that ID.
-            token = prior_path.stem.rsplit("-", 1)[-1]
-            if len(token) == 12 and all(char in "0123456789abcdef" for char in token):
-                attempted_tokens.add(token)
 
-    for candidate_id in previous_candidate_attempts:
-        attempted_tokens.add(hashlib.sha256(candidate_id.encode("utf-8")).hexdigest()[:12])
-
-    # Keep looking beyond the newest feed window after earlier candidates have
-    # already been attempted. The crawler still generates only `limit` items;
-    # this only widens candidate discovery for long-running generation runs.
     discovery_limit = min(max(limit * 10, limit), 200)
     crawler = get_type_crawler(content_type)
     provided_work_title = (work_title or "").strip() or None
@@ -2043,61 +2530,163 @@ def crawl_type(
     if retry_candidate_id:
         collected_items = [retry_item]
     else:
-        for index, title in enumerate(run_titles):
-            runs.append(
-                crawler.run(
-                limit=(
-                    min(max(limit * 4, 20), 80)
-                    if sampled_work_titles
-                    else discovery_limit
-                ),
-                region_policy=region_policy,
-                work_title=title,
-                # The birthday calendar is independent of the three rotating work
-                # title probes. Read the full current-month list once; later probes
-                # remain work-specific so generation can prioritize sampled works.
-                unfiltered_sources=(
-                    {"onnada"}
-                    if content_type == "character" and sampled_work_titles and index == 0
-                    else None
-                ),
-                # The downstream verified-crawl stage captures and stores final package
-                # images under its request_id, avoiding duplicate image rows.
-                capture_images=False,
-                )
-            )
         collected_items = []
-        seen_item_ids: set[str] = set()
-        for crawler_run in runs:
-            for item in crawler_run.items:
-                if item.id not in seen_item_ids:
-                    collected_items.append(item)
-                    seen_item_ids.add(item.id)
-    run_folder = output_dir / content_type / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        if not stored_candidates_only:
+            for index, title in enumerate(run_titles):
+                runs.append(
+                    crawler.run(
+                        limit=(
+                            min(max(limit * 4, 20), 80)
+                            if sampled_work_titles
+                            else discovery_limit
+                        ),
+                        region_policy=region_policy,
+                        work_title=title,
+                        unfiltered_sources=(
+                            {"onnada"}
+                            if content_type == "character"
+                            and sampled_work_titles
+                            and index == 0
+                            else None
+                        ),
+                        capture_images=False,
+                    )
+                )
+            seen_item_ids: set[str] = set()
+            for crawler_run in runs:
+                for item in crawler_run.items:
+                    if item.id not in seen_item_ids:
+                        collected_items.append(item)
+                        seen_item_ids.add(item.id)
+
+        if retry_prior_failures or retry_work_identity_failures:
+            stored_items = [
+                DiscoveryItem.model_validate(payload)
+                for payload in repository.list_discovery_candidates(content_type)
+            ]
+            merged_items = {item.id: item for item in stored_items}
+            # Prefer the current source scan over its older stored snapshot.
+            for item in collected_items:
+                merged_items[item.id] = item
+            collected_items = list(merged_items.values())
+
+    run_folder = output_dir / content_type / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     run_folder.mkdir(parents=True, exist_ok=True)
-    unattempted_items = []
+    eligible_items = []
     for item in collected_items:
-        token = hashlib.sha256(str(item.id).encode("utf-8")).hexdigest()[:12]
-        if retry_candidate_id or token not in attempted_tokens:
-            unattempted_items.append(item)
-    fresh_items = (
-        unattempted_items
-        if retry_candidate_id
-        else _diversify_candidate_items(unattempted_items, limit)
+        previous = previous_candidate_attempts.get(item.id)
+        if retry_candidate_id or previous is None:
+            eligible_items.append(item)
+            continue
+        retry_unresolved_identity = (
+            retry_work_identity_failures
+            and previous.get("status") == "work_id_unresolved_skipped"
+        )
+        previous_match_audit = previous.get("work_match_audit") or {}
+        retry_scope_conflict = (
+            retry_unresolved_identity
+            and previous_match_audit.get("status") == "scope_conflicts_with_work_match"
+            and previous_match_audit.get("subject_scope") == "not_anime_related"
+        )
+        prior_catalog_matches = previous_match_audit.get("catalog_matches") or []
+        retry_grounded_short_title = (
+            retry_unresolved_identity
+            and previous_match_audit.get("status") == "invalid_source_title_evidence"
+            and previous_match_audit.get("action") == "match_existing"
+            and len(prior_catalog_matches) == 1
+            and bool(previous_match_audit.get("evidence_title"))
+        )
+        retry_other_failure = (
+            retry_prior_failures
+            and previous.get("status") in retryable_statuses
+        )
+        if not (retry_unresolved_identity or retry_other_failure):
+            continue
+        old_fingerprint = str(previous.get("candidate_fingerprint") or "")
+        current_fingerprint = discovery_candidate_fingerprint(item.model_dump(mode="json"))
+        retry_count = int(previous.get("retry_count", 0))
+        attempted_at = str(previous.get("attempted_at") or "")
+        try:
+            previous_attempted_at = datetime.fromisoformat(
+                attempted_at.replace("Z", "+00:00")
+            )
+        except ValueError:
+            previous_attempted_at = None
+        is_prior_to_cutoff = (
+            retry_cutoff is None
+            or (previous_attempted_at is not None and previous_attempted_at < retry_cutoff)
+        )
+        if retry_unresolved_identity:
+            # Retry once when a prior audit has a specific, corrected resolution
+            # path. The updated outcome leaves this retryable state, preventing
+            # the candidate from looping on every crawler scan.
+            if retry_count < 1 or (
+                retry_count < 2
+                and (retry_scope_conflict or retry_grounded_short_title)
+            ):
+                eligible_items.append(item)
+        elif (retry_count < 1 and is_prior_to_cutoff) or (
+            old_fingerprint and current_fingerprint != old_fingerprint
+        ):
+            eligible_items.append(item)
+    eligible_before_stale_filter = len(eligible_items)
+    stale_candidates_seen = sum(
+        candidate_is_stale(item.model_dump(mode="json"), content_type)
+        for item in eligible_items
     )
-    diversity_deferred = len(unattempted_items) - len(fresh_items)
-    skipped_attempted = len(collected_items) - len(unattempted_items)
+    fresh_items = (
+        eligible_items
+        if retry_candidate_id
+        else _diversify_candidate_items(eligible_items, limit)
+    )
+    diversity_deferred = len(eligible_items) - len(fresh_items)
+    skipped_attempted = len(collected_items) - eligible_before_stale_filter
     outcomes: list[dict] = []
     passed_count = 0
+    quota_exhausted = False
     for index, item in enumerate(fresh_items, start=1):
+        if quota_exhausted:
+            break
         if target_passed is not None and passed_count >= target_passed:
             break
         candidate = item.model_dump(mode="json")
         candidate_id = str(candidate.get("id") or f"candidate-{index}")
         file_token = hashlib.sha256(candidate_id.encode("utf-8")).hexdigest()[:12]
         result_path = run_folder / f"{index:02d}-{file_token}.json"
+        temporal_skip = None
+        if content_type in {"event", "goods"}:
+            temporal = expiry_evidence(candidate, content_type)
+            if temporal["status"] == "expired":
+                temporal_skip = {
+                    "status": "stale_candidate_skipped",
+                    "content_type": content_type,
+                    "event_end": temporal.get("end_date") if content_type == "event" else None,
+                    "sale_end": temporal.get("end_date") if content_type == "goods" else None,
+                    "expiry_evidence": temporal.get("evidence"),
+                    "reason": "The listing already exposes an expired period; the article page was not fetched.",
+                }
+        elif content_type == "news":
+            temporal_news = immediate_news_action_expiry(candidate)
+            if temporal_news["status"] in {"expired", "unresolved"}:
+                temporal_skip = {
+                    "status": (
+                        "stale_candidate_skipped"
+                        if temporal_news["status"] == "expired"
+                        else "expiry_unresolved_held"
+                    ),
+                    "content_type": content_type,
+                    "published_at": temporal_news.get("published_at"),
+                    "expiry_evidence": temporal_news.get("evidence"),
+                    "reason": "Time-sensitive start news is past its publication day or has no publication date; the article page was not fetched.",
+                }
         try:
-            if content_type == ContentKind.HUMOR.value and candidate.get("source_role") == "trend":
+            if temporal_skip:
+                outcome = {**temporal_skip, "candidate_id": candidate_id}
+                result_path.parent.mkdir(parents=True, exist_ok=True)
+                result_path.write_text(
+                    json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+            elif content_type == ContentKind.HUMOR.value and candidate.get("source_role") == "trend":
                 outcome = _crawl_generate_humor_candidate(candidate, result_path)
                 if not result_path.exists():
                     result_path.write_text(
@@ -2109,7 +2698,11 @@ def crawl_type(
                     content_type=content_type,
                     output=result_path,
                     max_images=20,
-                    retry_failed=bool(retry_candidate_id),
+                    retry_failed=bool(
+                        retry_candidate_id
+                        or (retry_prior_failures and candidate_id in previous_candidate_attempts)
+                    ),
+                    prepare_only=enqueue_only,
                 )
                 generated = json.loads(result_path.read_text(encoding="utf-8"))
                 outcome = {
@@ -2151,7 +2744,6 @@ def crawl_type(
                 result_path.write_text(
                     json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
-        outcomes.append(outcome)
         if retry_candidate_id:
             previous_attempt_count = int(
                 previous_candidate_attempts[retry_candidate_id].get("attempt_count", 1)
@@ -2161,6 +2753,19 @@ def crawl_type(
                 previous_candidate_attempts[retry_candidate_id].get("retry_count", 0)
             ) + 1
             outcome["retry_note"] = retry_note.strip() if retry_note else ""
+        elif (
+            retry_prior_failures or retry_work_identity_failures
+        ) and candidate_id in previous_candidate_attempts:
+            previous = previous_candidate_attempts[candidate_id]
+            previous_fingerprint = str(previous.get("candidate_fingerprint") or "")
+            current_fingerprint = discovery_candidate_fingerprint(candidate)
+            outcome["attempt_count"] = int(previous.get("attempt_count", 1)) + 1
+            outcome["retry_count"] = int(previous.get("retry_count", 0)) + 1
+            outcome["retry_note"] = (
+                "candidate_updated_since_previous_attempt"
+                if previous_fingerprint and previous_fingerprint != current_fingerprint
+                else "re-evaluated_after_agent_improvements"
+            )
         else:
             outcome["attempt_count"] = int(
                 previous_candidate_attempts.get(candidate_id, {}).get("attempt_count", 0)
@@ -2169,6 +2774,7 @@ def crawl_type(
                 previous_candidate_attempts.get(candidate_id, {}).get("retry_count", 0)
             )
         outcome = _enrich_candidate_outcome(outcome)
+        outcomes.append(outcome)
         try:
             repository.persist_candidate_attempt(content_type, candidate, outcome)
         except Exception as exc:
@@ -2177,6 +2783,16 @@ def crawl_type(
             )
         if outcome.get("status") == "ready_for_feed":
             passed_count += 1
+        outcome_text = str(outcome).lower()
+        if any(
+            marker in outcome_text
+            for marker in (
+                "credit_balance_exhausted",
+                "insufficient_quota",
+                "no credits remaining",
+            )
+        ):
+            quota_exhausted = True
         console.print(
             f"[{index}/{len(fresh_items)}] {candidate.get('title', candidate_id)} "
             f"→ {outcome.get('status')}"
@@ -2209,10 +2825,12 @@ def crawl_type(
         "collection_errors": [error for item in runs for error in item.errors],
         "source_results": [asdict(result) for item in runs for result in item.source_results],
         "rejected_candidate_count": sum(item.rejected_count for item in runs),
+        "stale_candidates_deferred_to_evidence": stale_candidates_seen,
         "funnel": {
             "discovered": len(collected_items),
             "deferred_for_work_diversity": diversity_deferred,
             "previously_attempted_skipped": skipped_attempted,
+            "stale_deferred_to_evidence": stale_candidates_seen,
             "attempted": len(outcomes),
             "status_counts": status_counts,
             "failure_stage_counts": stage_counts,
@@ -2228,6 +2846,9 @@ def crawl_type(
         f"유형 {content_type}: 후보 {len(collected_items)}건 → 독립 검수 통과 {ready}건 · "
         f"실행 요약 {summary_path.resolve()}"
     )
+
+
+    return summary
 
 
 @app.command("validate")
@@ -2458,6 +3079,7 @@ def discover(
             limit=limit,
             region_policy=region_policy,
             work_title=work_title,
+            exhaustive_listing=True,
         )
         persisted = AgentRepository().persist_discovery(
             [item.model_dump(mode="json") for item in items],
@@ -2562,6 +3184,16 @@ def discover(
             f"이미지 후보/적재: {crawler_run.image_candidate_count}/"
             f"{crawler_run.persisted_image_count}개"
         )
+        for source_result in crawler_run.source_results:
+            pages_scanned = source_result.get("pages_scanned", 0)
+            if pages_scanned > 0:
+                page_counts = source_result.get("page_candidate_counts", [])
+                duplicates = source_result.get("duplicate_candidate_count", 0)
+                console.print(
+                    f"목록 페이지 {source_result['source_id']}: {pages_scanned}페이지 · "
+                    f"페이지별 후보 {page_counts} · 페이지 중복 {duplicates}건 · "
+                    f"종료 사유 {source_result.get('pagination_stop_reason', 'unknown')}"
+                )
     if errors:
         console.print(f"수집 오류 {len(errors)}건: {' | '.join(errors)}")
 
@@ -2753,6 +3385,56 @@ def db_cleanup() -> None:
     """노출 기간이 끝나 보관 유예기간도 지난 콘텐츠와 수집 자료를 정리합니다."""
     removed = AgentRepository().cleanup_expired()
     console.print(f"만료 콘텐츠/카드/수집 레코드 {removed}건 정리 완료")
+
+
+@app.command("pipeline-worker")
+def pipeline_worker(
+    stage: Annotated[str, typer.Option("--stage", help="crawl, generate, review")],
+    lane: Annotated[str, typer.Option("--lane")] = "time_sensitive",
+    content_types: Annotated[str, typer.Option("--content-types")] = "news,event,goods",
+    scan_interval_seconds: Annotated[int, typer.Option("--scan-interval-seconds", min=10)] = 300,
+    batch_limit: Annotated[int, typer.Option("--batch-limit", min=1, max=200)] = 200,
+    idle_sleep_seconds: Annotated[float, typer.Option("--idle-sleep-seconds", min=0.2)] = 3,
+    stop_file: Annotated[Path | None, typer.Option("--stop-file")] = None,
+) -> None:
+    """Run exactly one independently supervised pipeline worker."""
+    from ani_menu_agent.pipelines.common.jobs import PipelineStage
+    from ani_menu_agent.pipelines.workers.runtime import run_crawler_worker, run_queue_worker
+
+    try:
+        worker_stage = PipelineStage(stage)
+    except ValueError as exc:
+        raise typer.BadParameter("--stage must be crawl, generate, or review") from exc
+    stopping = threading.Event()
+    def should_stop() -> bool:
+        return stopping.is_set() or bool(stop_file and stop_file.exists())
+
+    def request_stop(_signum, _frame):
+        stopping.set()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, request_stop)
+    console.print(f"Starting independent {worker_stage.value} worker in lane {lane}.")
+    if worker_stage == PipelineStage.CRAWL:
+        selected_types = tuple(
+            value.strip() for value in content_types.split(",") if value.strip()
+        )
+        if not selected_types:
+            raise typer.BadParameter("--content-types must include at least one type")
+        run_crawler_worker(
+            content_types=selected_types,
+            scan_interval_seconds=scan_interval_seconds,
+            batch_limit=batch_limit,
+            stop_requested=should_stop,
+        )
+    else:
+        run_queue_worker(
+            stage=worker_stage,
+            lane=lane,
+            idle_sleep_seconds=idle_sleep_seconds,
+            stop_requested=should_stop,
+        )
+    console.print(f"Stopped {worker_stage.value} worker.")
 
 
 @app.command("export-markdown")

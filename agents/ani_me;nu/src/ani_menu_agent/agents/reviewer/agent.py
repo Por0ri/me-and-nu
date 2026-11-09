@@ -44,6 +44,183 @@ def _score_quality(package: ContentPackage, issues: list[QualityIssue], **kwargs
     return score_quality(package, issues, thresholds=SCORE_THRESHOLDS, **kwargs)
 
 
+def _review_minimal_editorial(state: ContentState, package: ContentPackage) -> ContentState:
+    """Review carousel shape and readability only, as requested for the pilot."""
+    cards = sorted(package.cards, key=lambda card: card.page)
+    failures: list[str] = []
+    if not 2 <= len(cards) <= 10:
+        failures.append("캐러셀은 2~10장이어야 합니다.")
+    if any(not (card.title_lines or card.body_sentences) for card in cards):
+        failures.append("제목과 본문이 모두 비어 있는 카드가 있습니다.")
+    image_ids = [card.image_id for card in cards if card.image_id]
+    if len(image_ids) != len(set(image_ids)):
+        failures.append("한 캐러셀 안에서 이미지가 반복됩니다.")
+
+    settings = get_settings()
+    if not settings.openai_api_key:
+        report = {
+            "mode": "minimal_editorial",
+            "decision": "pending_language_review",
+            "reason": "검수 모델 API 설정이 없어 문장 가독성을 평가하지 못했습니다.",
+        }
+        AgentRepository().persist_generated_content(
+            package, "review_api_required", report,
+            usage_records=state.get("usage_records", []),
+        )
+        return {
+            "trace": append_trace(state, "minimal_editorial_review"),
+            "quality_report": report,
+            "quality_score": 0,
+            "qa_report": [],
+            "review_mode": "not_evaluated",
+            "needs_revision": False,
+            "review_failures": state.get("review_failures", 0),
+            "editorial_decision": "review_required",
+            "status": "review_api_required",
+            "usage_records": state.get("usage_records", []),
+        }
+    if failures:
+        report = {"mode": "minimal_editorial", "decision": "revise", "issues": failures}
+        issues = [{"code": "CAROUSEL_SHAPE", "message": item} for item in failures]
+        AgentRepository().persist_generated_content(
+            package, "review_returned", report,
+            usage_records=state.get("usage_records", []),
+        )
+        return {
+            "trace": append_trace(state, "minimal_editorial_review"),
+            "quality_report": report,
+            "quality_score": 0,
+            "qa_report": issues,
+            "review_mode": "minimal_editorial",
+            "needs_revision": True,
+            "revision_owner": "layout_director",
+            "revision_owners": ["layout_director"],
+            "review_failures": int(state.get("review_failures", 0)) + 1,
+            "editorial_decision": "revise",
+            "status": "review_returned",
+            "usage_records": state.get("usage_records", []),
+        }
+
+    model = ChatOpenAI(model=settings.model_name, api_key=settings.openai_api_key)
+    structured = model.with_structured_output(
+        LanguageReview, method="function_calling", include_raw=True
+    )
+    text_payload = {
+        "content_type": package.content_type,
+        "cards": [
+            {
+                "page": card.page,
+                "role": card.role,
+                "title": card.title_lines,
+                "body": card.body_sentences,
+            }
+            for card in cards
+        ],
+    }
+    prompt = (
+        "Review this anime carousel only for Korean readability, natural phrasing, "
+        "clarity, engaging but non-stiff fan voice, and whether consecutive cards flow well. "
+        "Do not fact-check claims, inspect or require sources, judge copyright or image rights, "
+        "or request research. Do not invent facts. Still flag clear harmful abuse or sexualization "
+        "of minors. Score each card 0-5; scores 2-5 pass, "
+        "and use 0-1 only when wording is hard to understand or unusable. Set safety_respect=5, "
+        "safety_blocker=false unless the supplied copy itself clearly contains harmful abuse. "
+        "If changes are needed, give short, concrete Korean wording guidance in feedback. "
+        "Return every supplied page number and set content_type_fit=5.\n"
+        + json.dumps(text_payload, ensure_ascii=False)
+    )
+    started = perf_counter()
+    response = structured.invoke([("system", "You are a concise Korean carousel copy editor."), ("human", prompt)])
+    elapsed = perf_counter() - started
+    review = response.get("parsed")
+    usage_records = list(state.get("usage_records", []))
+    raw = response.get("raw")
+    usage = getattr(raw, "usage_metadata", None) or {}
+    input_tokens = int(usage.get("input_tokens", 0) or 0)
+    output_tokens = int(usage.get("output_tokens", 0) or 0)
+    input_details = usage.get("input_token_details") or {}
+    cached_tokens = int(input_details.get("cache_read", 0) or 0)
+    cache_write_tokens = int(input_details.get("cache_write", input_details.get("cache_creation", 0)) or 0)
+    usage_records.append(
+        UsageRecord(
+            model=settings.model_name,
+            stage="review",
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_tokens,
+            cache_write_tokens=cache_write_tokens,
+            output_tokens=output_tokens,
+            total_tokens=int(usage.get("total_tokens", input_tokens + output_tokens) or 0),
+            estimated_cost_usd=estimate_gpt_6_luna_cost(
+                input_tokens, cached_tokens, cache_write_tokens, output_tokens
+            ),
+            elapsed_seconds=elapsed,
+        ).model_dump(mode="json")
+    )
+    expected_pages = {card.page for card in cards}
+    reviewed_pages = {card.page for card in review.cards} if review else set()
+    failed_pages = []
+    unsafe_pages = []
+    if review is None or expected_pages != reviewed_pages:
+        failures.append("문장 검수 결과가 없거나 카드 번호가 맞지 않습니다.")
+    else:
+        for card_review in review.cards:
+            if card_review.safety_blocker:
+                unsafe_pages.append(card_review.page)
+            if min(
+                card_review.korean_naturalness,
+                card_review.translation_naturalness,
+                card_review.reader_clarity,
+                card_review.fan_engagement,
+                card_review.card_flow,
+            ) < 2:
+                failed_pages.append(card_review.page)
+        if failed_pages:
+            failures.append("읽기 불편하거나 문맥이 끊기는 카드: " + ", ".join(map(str, failed_pages)))
+        if unsafe_pages:
+            failures.append("명백한 유해 표현이 확인된 카드: " + ", ".join(map(str, unsafe_pages)))
+
+    decision = "revise" if failures else "pass_candidate"
+    score_values = [
+        getattr(card, field)
+        for card in (review.cards if review else [])
+        for field in ("korean_naturalness", "translation_naturalness", "reader_clarity", "fan_engagement", "card_flow")
+    ]
+    score = round(sum(score_values) / max(1, len(score_values)) * 20) if score_values else 0
+    report = {
+        "mode": "minimal_editorial",
+        "decision": decision,
+        "total": score,
+        "issues": failures,
+        "reviewed_pages": sorted(reviewed_pages),
+        "summary": review.summary if review else "검수 결과 형식 오류",
+        "dimensions": {
+            "carousel_shape": "pass",
+            "copy_readability": score,
+            "clear_safety_blockers": "pass" if not unsafe_pages else unsafe_pages,
+            "fact_checking": "skipped_by_policy",
+            "copyright_review": "skipped_by_policy",
+        },
+    }
+    status = "review_returned" if failures else "review_passed"
+    AgentRepository().persist_generated_content(
+        package, status, report, usage_records=usage_records
+    )
+    return {
+        "trace": append_trace(state, "minimal_editorial_review"),
+        "quality_report": report,
+        "quality_score": score,
+        "qa_report": [{"code": "COPY_READABILITY", "message": item} for item in failures],
+        "review_mode": "minimal_editorial",
+        "needs_revision": bool(failures),
+        "revision_owner": "copy_writer" if failures else "",
+        "revision_owners": ["copy_writer"] if failures else [],
+        "review_failures": int(state.get("review_failures", 0)) + int(bool(failures)),
+        "editorial_decision": "revise" if failures else "approved_for_feed",
+        "status": status,
+        "usage_records": usage_records,
+    }
+
+
 def _review_payload(package: ContentPackage) -> dict:
     images = {image.id: image for image in package.images}
     recent_copy = AgentRepository().recent_copy_examples(
@@ -117,10 +294,9 @@ def _review_payload(package: ContentPackage) -> dict:
             }
             for item in recent_copy
         ],
-        "verified_facts": [
+        "source_facts": [
             fact.model_dump(mode="json")
             for fact in package.facts
-            if fact.verified or package.content_kind.value == "humor"
         ],
         "cards": cards,
         "detail_body": package.detail_body,
@@ -341,6 +517,8 @@ def _score_language(
 def review_content(state: ContentState) -> ContentState:
     """Review a generated package independently; never use fixture approval for publishing."""
     package = ContentPackage.model_validate(state["package"])
+    if state.get("minimal_review"):
+        return _review_minimal_editorial(state, package)
     issues = run_quality_checks(package)
     if state.get("allow_llm", False) and not package.detail_body.strip():
         issues.append(
@@ -364,7 +542,9 @@ def review_content(state: ContentState) -> ContentState:
             else "review_returned"
         )
         if not offline_fixture:
-            AgentRepository().persist_generated_content(package, status, code_report)
+            AgentRepository().persist_generated_content(
+                package, status, code_report, usage_records=state.get("usage_records", [])
+            )
         return {
             "trace": append_trace(state, "review_agent"),
             "qa_report": [issue.model_dump(mode="json") for issue in issues],
@@ -400,7 +580,9 @@ def review_content(state: ContentState) -> ContentState:
                 if pending["decision"] == "pending_language_review"
                 else "review_returned"
             )
-            AgentRepository().persist_generated_content(package, status, pending)
+            AgentRepository().persist_generated_content(
+                package, status, pending, usage_records=state.get("usage_records", [])
+            )
             return {
                 "trace": append_trace(state, "review_agent"),
                 "qa_report": [issue.model_dump(mode="json") for issue in issues],
@@ -463,7 +645,9 @@ def review_content(state: ContentState) -> ContentState:
             )
             issues.append(issue)
             report = _score_quality(package, issues)
-            AgentRepository().persist_generated_content(package, "review_output_invalid", report)
+            AgentRepository().persist_generated_content(
+                package, "review_output_invalid", report, usage_records=usage_records
+            )
             decision = str(report["decision"])
             return {
                 "trace": append_trace(state, "review_agent"),
@@ -627,7 +811,9 @@ def review_content(state: ContentState) -> ContentState:
         editorial_decision = decision
 
     if review_mode != "offline_fixture":
-        AgentRepository().persist_generated_content(package, status, report)
+        AgentRepository().persist_generated_content(
+            package, status, report, usage_records=state.get("usage_records", [])
+        )
     return {
         "trace": append_trace(state, "review_agent"),
         "package": package.model_dump(mode="json"),

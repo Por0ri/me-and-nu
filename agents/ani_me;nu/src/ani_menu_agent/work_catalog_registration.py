@@ -1,4 +1,4 @@
-"""Record unlisted anime discoveries without mutating the shared work catalog."""
+"""Register source-grounded new anime works and map Kitsu title entries."""
 
 from __future__ import annotations
 
@@ -242,7 +242,7 @@ def _record_discovered_work(
     source_titles: list[str],
     source_url: str | None,
 ) -> None:
-    """Store a confirmed new title for team review, without assigning a menu ID."""
+    """Store an unconfirmed or not-yet-registerable title for later review."""
     catalog_dir = work_catalog._CATALOG_DIRECTORY
     discovered_path = catalog_dir / "discovered_works.csv"
     titles = attributes.get("titles") or {}
@@ -304,9 +304,6 @@ def _persist_kitsu_work(
     *,
     existing_menu_work_id: int | None = None,
 ) -> int | None:
-    # The agent must never append a newly discovered work to menu_works.csv.
-    if existing_menu_work_id is None:
-        return None
     catalog_dir = work_catalog._CATALOG_DIRECTORY
     works_path = catalog_dir / "menu_works.csv"
     external_path = catalog_dir / "menu_work_external_entries.csv"
@@ -323,22 +320,192 @@ def _persist_kitsu_work(
             None,
         )
         if external_match is not None:
-            if external_match != existing_menu_work_id:
+            valid_ids = {int(row["menu_work_id"]) for row in works}
+            if external_match not in valid_ids:
+                return None
+            if existing_menu_work_id is not None and external_match != existing_menu_work_id:
                 return None
             return external_match
 
         _clear_catalog_caches()
-        existing_ids = work_catalog.resolve_title_work_ids(matched_title)
+        existing_ids = set(work_catalog.resolve_title_work_ids(matched_title))
+        # Recheck the file being written while holding the cross-process lock;
+        # another process may have registered the same title since this
+        # process last refreshed its in-memory catalog cache.
+        catalog_title_keys = {
+            _normalize_title(value)
+            for value in _title_values(attributes)
+            if _normalize_title(value)
+        }
+        catalog_rows = [*works, *work_catalog.load_work_entries()]
+        catalog_rows.extend(
+            {
+                "menu_work_id": alias["menu_work_id"],
+                "title_native": alias["alias"],
+            }
+            for alias in work_catalog.load_work_aliases()
+        )
+        exact_file_ids: set[int] = set()
+        for row in catalog_rows:
+            try:
+                row_work_id = int(row["menu_work_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            normalized_titles = {
+                _normalize_title(row.get(field, ""))
+                for field in (
+                    "title_ko",
+                    "title_romaji",
+                    "title_english",
+                    "title_native",
+                )
+                if row.get(field)
+            }
+            if normalized_titles & catalog_title_keys:
+                exact_file_ids.add(work_catalog._franchise_work_id(row_work_id))
+        existing_ids.update(exact_file_ids)
         valid_work_ids = {int(row["menu_work_id"]) for row in works}
-        if existing_menu_work_id not in valid_work_ids:
+        if existing_menu_work_id is not None:
+            if existing_menu_work_id not in valid_work_ids:
+                return None
+            if existing_ids and existing_menu_work_id not in existing_ids:
+                return None
+            menu_work_id = existing_menu_work_id
+        elif len(existing_ids) == 1:
+            # Kitsu may return a franchise title already present under a local
+            # alias. Reuse its canonical ID instead of creating a duplicate.
+            menu_work_id = existing_ids[0]
+        elif existing_ids:
+            # A title that resolves to multiple works is not safe to register.
             return None
-        if existing_ids and existing_menu_work_id not in existing_ids:
-            return None
-        menu_work_id = existing_menu_work_id
+        else:
+            # New IDs are allocated only after an exact title was found in the
+            # Kitsu anime catalog (the caller reaches here after title evidence
+            # validation). Locking above prevents concurrent duplicate IDs.
+            ids = [
+                int(row["menu_work_id"])
+                for row in works
+                if row["menu_work_id"].isdigit()
+            ]
+            menu_work_id = max(ids, default=0) + 1
+            titles = attributes.get("titles") or {}
+            if not isinstance(titles, dict):
+                titles = {}
+            canonical = str(attributes.get("canonicalTitle") or matched_title).strip()
+            romaji = str(titles.get("en_jp") or canonical).strip()
+            english = str(titles.get("en") or "").strip()
+            native = str(titles.get("ja_jp") or titles.get("ja") or "").strip()
+            works.append(
+                {
+                    "menu_work_id": str(menu_work_id),
+                    "title_ko": "",
+                    "title_ko_source": "",
+                    "title_ko_check": "",
+                    "title_romaji": romaji,
+                    "title_english": english,
+                    "title_native": native,
+                    "first_year": _year(attributes.get("startDate")),
+                    "last_year": _year(attributes.get("endDate")),
+                    "n_entries": "0",
+                    "popularity": "0",
+                    "anilist_ids": "",
+                }
+            )
+            _atomic_write_csv(works_path, _CATALOG_FIELDS, works)
 
         external_entries.append(_external_row(menu_work_id, kitsu_id, attributes))
         _atomic_write_csv(external_path, _EXTERNAL_FIELDS, external_entries)
         _clear_catalog_caches()
+        return menu_work_id
+
+
+def register_new_work_from_source_title(
+    title: str, source_url: str, *, audit: dict[str, Any] | None = None
+) -> int | None:
+    """Assign the next ID to a source-grounded new anime title after duplicate checks.
+
+    The caller must persist the original capture and ERD entity before handing the
+    candidate to content generation. Exact existing titles are reused, never
+    assigned a second ID.
+    """
+    title = " ".join(str(title or "").split()).strip()
+    parsed = httpx.URL(source_url) if source_url else None
+    if not title or len(title) > 200 or len(_normalize_title(title)) < 3:
+        if audit is not None:
+            audit["status"] = "invalid_title"
+        return None
+    if not parsed or parsed.scheme not in {"http", "https"} or not parsed.host:
+        if audit is not None:
+            audit["status"] = "invalid_source_url"
+        return None
+
+    catalog_dir = work_catalog._CATALOG_DIRECTORY
+    works_path = catalog_dir / "menu_works.csv"
+    with _catalog_lock(catalog_dir):
+        _clear_catalog_caches()
+        works = _read_csv(works_path, _CATALOG_FIELDS)
+        normalized = _normalize_title(title)
+        matching_ids: set[int] = set()
+        catalog_rows = [*works, *work_catalog.load_work_entries()]
+        alias_path = catalog_dir / "menu_work_aliases.csv"
+        catalog_rows.extend(
+            {
+                "menu_work_id": row["menu_work_id"],
+                "title_native": row["alias"],
+            }
+            for row in _read_csv(alias_path, ("menu_work_id", "alias"))
+        )
+        catalog_rows.extend(
+            {
+                "menu_work_id": row["menu_work_id"],
+                "title_native": row["canonical_title"],
+            }
+            for row in work_catalog.load_work_external_entries()
+        )
+        for row in catalog_rows:
+            try:
+                work_id = int(row["menu_work_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if any(
+                _normalize_title(str(row.get(field) or "")) == normalized
+                for field in ("title_ko", "title_romaji", "title_english", "title_native", "canonical_title")
+            ):
+                matching_ids.add(work_id)
+        if len(matching_ids) == 1:
+            existing_id = next(iter(matching_ids))
+            if audit is not None:
+                audit.update({"status": "reused_existing_exact_title", "menu_work_id": existing_id})
+            return existing_id
+        if matching_ids:
+            if audit is not None:
+                audit.update({"status": "exact_title_maps_to_multiple_ids"})
+            return None
+
+        ids = [int(row["menu_work_id"]) for row in works if row["menu_work_id"].isdigit()]
+        menu_work_id = max(ids, default=0) + 1
+        korean = bool(re.search(r"[\uac00-\ud7a3]", title))
+        japanese = bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", title))
+        works.append(
+            {
+                "menu_work_id": str(menu_work_id),
+                "title_ko": title if korean else "",
+                "title_ko_source": source_url if korean else "",
+                "title_ko_check": "source-grounded; review pending" if korean else "",
+                "title_romaji": "",
+                "title_english": title if not korean and not japanese else "",
+                "title_native": title if japanese else "",
+                "first_year": "",
+                "last_year": "",
+                "n_entries": "0",
+                "popularity": "0",
+                "anilist_ids": "",
+            }
+        )
+        _atomic_write_csv(works_path, _CATALOG_FIELDS, works)
+        _clear_catalog_caches()
+        if audit is not None:
+            audit.update({"status": "registered_new_source_title", "menu_work_id": menu_work_id})
         return menu_work_id
 
 
@@ -351,14 +518,14 @@ def register_unmatched_work_from_kitsu(
     audit: dict[str, Any] | None = None,
     timeout: float = 12.0,
 ) -> WorkMatchEvidence | None:
-    """Map an exact Kitsu title or stage a new-work discovery for team review.
+    """Map an exact Kitsu title or register a catalog-confirmed new work.
 
     The page body, generated text, and character names are not searched for a new
     series name. A Kitsu search result must contain a full catalog title verbatim
     (after typography/spacing normalization) in an article headline or an explicit
-    structured ``about`` reference. Existing works may receive an external title
-    mapping. A genuinely new work is only recorded in discovered_works.csv; the
-    agent does not assign it an ID or modify menu_works.csv.
+    structured ``about`` reference. Existing works receive an external title
+    mapping; a distinct Kitsu-confirmed anime receives the next canonical ID.
+    Ambiguous or unconfirmed titles remain in discovered_works.csv for review.
     """
     source = next(
         (
@@ -439,7 +606,13 @@ def register_unmatched_work_from_kitsu(
             audit["status"] = "kitsu_match_ambiguous_or_missing"
         return None
     kitsu_id, (matched_title, attributes) = next(iter(exact_matches.items()))
-    if existing_menu_work_id is None:
+    menu_work_id = _persist_kitsu_work(
+        kitsu_id,
+        attributes,
+        matched_title,
+        existing_menu_work_id=existing_menu_work_id,
+    )
+    if menu_work_id is None:
         _record_discovered_work(
             kitsu_id,
             attributes,
@@ -449,20 +622,25 @@ def register_unmatched_work_from_kitsu(
         if audit is not None:
             audit.update(
                 {
-                    "status": "new_work_logged_pending_team_review",
+                    "status": "new_work_logged_pending_review",
                     "kitsu_id": kitsu_id,
                     "matched_title": matched_title,
                 }
             )
         return None
-    menu_work_id = _persist_kitsu_work(
-        kitsu_id,
-        attributes,
-        matched_title,
-        existing_menu_work_id=existing_menu_work_id,
-    )
-    if menu_work_id is None:
-        return None
+    if audit is not None:
+        audit.update(
+            {
+                "status": (
+                    "registered_new_work"
+                    if existing_menu_work_id is None
+                    else "mapped_existing_work"
+                ),
+                "kitsu_id": kitsu_id,
+                "matched_title": matched_title,
+                "menu_work_id": menu_work_id,
+            }
+        )
     return WorkMatchEvidence(
         menu_work_id=menu_work_id,
         basis=(

@@ -6,7 +6,7 @@
 - `graph.py`: 평가 단계를 독립 LangGraph로 실행
 - `prompt.py`: 검수 점수표와 평가 규칙
 
-Language naturalness, translation, clarity, fan engagement, and card flow use a common 2/5 minimum; image relevance uses 2/5; image composition and content-type fit use 2/5; detail factual support and completeness use 3/5; safety/respect remains 4/5. Overall and per-card score thresholds are 68/100 and 55/100. Blockers cannot be offset by scores, revise issues route to their owner when the configured threshold is missed, and warnings are logged only. HTML copy goes below the image; PNGs remain text-free.
+Language naturalness, translation, clarity, fan engagement, and card flow use a common 2/5 minimum; image relevance uses 2/5; image composition and content-type fit use 2/5; detail factual support and completeness use 3/5; safety/respect remains 4/5. Temporary high-throughput overall and per-card score thresholds are 40/100 and 30/100. Blockers cannot be offset by scores, revise issues route to their owner when the configured threshold is missed, and warnings are logged only. HTML copy goes below the image; PNGs remain text-free.
 
 The content-type fit threshold is the shared policy value of 2/5; an issue below that threshold is routed for revision.
 

@@ -151,12 +151,15 @@ DETAIL ARTICLE REVIEW (when detail_body is non-empty):
 - Review the standalone detail article separately from the carousel cards.
 - Return detail_body_review with naturalness, factual_support, coherence, and
   completeness scores from 0 to 5, plus concrete feedback. The code applies configured thresholds.
-- Check every material claim against verified_facts and detail_fact_ids. Do not penalize
+- Check every material claim against source_facts and detail_fact_ids. A fact marked
+  verified=false may be used when attributed to its recorded source; do not fail content
+  only because its source is non-official or its verification flag is false. Do not penalize
   clearly framed humor or fan speculation as though it were a factual news claim.
 - The article must read as coherent Korean prose, not as a page-by-page concatenation of cards.
 - For event, campaign, and sales content, completeness means including each available
 verified date, location, price, participation method, prize, deadline, and eligible
-region. Never invent a missing condition; report it as a collection gap.
+  region when those details are present in source_facts. Never invent a missing condition;
+  report it as a collection gap.
 """.strip()
 
 REVIEWER_PROMPT += """

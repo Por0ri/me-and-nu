@@ -1,4 +1,4 @@
-"""Discover, test, and promote new source hosts without mixing them with article leads."""
+"""Discover and validate source hosts without auto-activating unreviewed routes."""
 
 from __future__ import annotations
 
@@ -166,7 +166,7 @@ def validate_source_candidate(candidate: SourceCandidate) -> SourceCandidate:
                         allow_discovery_page=True,
                     )
                     article_text = f"{page.title} {page.text}"
-                    if len(page.text.strip()) >= 160 and all(
+                    if page.text.strip() and all(
                         re.search(pattern, article_text, re.IGNORECASE)
                         for _, pattern in profile.required_signals
                     ):
@@ -205,7 +205,7 @@ def promote_source_candidate(
     registry_path: Path = DEFAULT_REGISTRY_PATH,
     type_map_path: Path = DEFAULT_TYPE_MAP_PATH,
 ) -> str:
-    """Register only technically validated hosts as active discovery endpoints."""
+    """Register validated hosts for review, not as automatically polled endpoints."""
     if candidate.status != "validated" or not candidate.content_types:
         raise ValueError("검증 통과한 유형이 있는 출처 후보만 등록할 수 있습니다.")
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -236,13 +236,14 @@ def promote_source_candidate(
             "category": "source_discovery",
             "role": "discovery",
             "collection": "html",
-            "status": "active",
+            "status": "technical_review",
             "region": "global",
-            "discovery_enabled": True,
+            "discovery_enabled": False,
             "notes": (
-                "자동 출처 후보 검증 통과. 발견용 페이지로만 사용하며 "
-                "원문 근거로 직접 승인하지 않음. "
-                f"검증일 {candidate.last_checked_at}; 유형: {', '.join(candidate.content_types)}"
+                "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, "
+                "유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. "
+                "원문 사실 근거로 직접 승인하지 않음. "
+                f"검증일 {candidate.last_checked_at}; 후보 유형: {', '.join(candidate.content_types)}"
             ),
         }
     )

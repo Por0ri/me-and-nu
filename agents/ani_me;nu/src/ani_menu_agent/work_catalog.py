@@ -196,6 +196,21 @@ def _normalize_catalog_title(value: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
+def _title_spelling_variants(value: str) -> tuple[str, ...]:
+    """Add conservative spacing and parenthesized-reading variants for catalog titles."""
+    variants = [value.strip()]
+    if re.search(r"[\uac00-\ud7a3]", value) and re.search(r"\s", value.strip()):
+        variants.append(re.sub(r"\s+", "", value.strip()))
+    without_reading = re.sub(
+        r"\s*[（(][\u3040-\u30ff・ー\s]+[）)]$",
+        "",
+        value.strip(),
+    ).strip()
+    if without_reading and without_reading != value.strip():
+        variants.append(without_reading)
+    return tuple(dict.fromkeys(variant for variant in variants if variant))
+
+
 def _alias_scope_matches(alias_row: dict[str, Any], source_url: str | None) -> bool:
     prefix = str(alias_row.get("source_url_prefix") or "").strip()
     if not prefix:
@@ -230,9 +245,10 @@ def _aliases(source_url: str | None = None) -> list[tuple[str, int]]:
         # series in the same franchise (such as Yu-Gi-Oh! GX) keep their own ID.
         work_id = _franchise_work_id(int(row["menu_work_id"]))
         for key in ("title_ko", "title_romaji", "title_english", "title_native"):
-            value = _normalize_catalog_title(row.get(key) or "")
-            if value:
-                aliases.setdefault(value, set()).add(work_id)
+            for variant in _title_spelling_variants(str(row.get(key) or "")):
+                value = _normalize_catalog_title(variant)
+                if value:
+                    aliases.setdefault(value, set()).add(work_id)
     # A title reused by different series is not enough evidence for an entity link.
     unique_aliases = [
         (name, next(iter(work_ids)))
@@ -246,14 +262,15 @@ def _aliases(source_url: str | None = None) -> list[tuple[str, int]]:
     for row in load_work_aliases():
         if not row.get("source_url_prefix") or not _alias_scope_matches(row, source_url):
             continue
-        alias = _normalize_catalog_title(row["alias"])
-        if len(alias) < 3:
-            continue
         work_id = _franchise_work_id(int(row["menu_work_id"]))
-        if alias not in scoped_aliases:
-            scoped_aliases[alias] = (row["alias"], {work_id})
-        else:
-            scoped_aliases[alias][1].add(work_id)
+        for variant in _title_spelling_variants(row["alias"]):
+            alias = _normalize_catalog_title(variant)
+            if len(alias) < 3:
+                continue
+            if alias not in scoped_aliases:
+                scoped_aliases[alias] = (variant, {work_id})
+            else:
+                scoped_aliases[alias][1].add(work_id)
     if scoped_aliases:
         scoped_keys = set(scoped_aliases)
         unique_aliases = [
@@ -267,6 +284,27 @@ def _aliases(source_url: str | None = None) -> list[tuple[str, int]]:
             if len(work_ids) == 1
         )
     return sorted(unique_aliases, key=lambda item: -len(item[0]))
+
+
+def _is_title_quoted(title: str, alias: str) -> bool:
+    quote_pairs = (
+        ("『", "』"),
+        ("「", "」"),
+        ("《", "》"),
+        ("【", "】"),
+        ("“", "”"),
+        ("‘", "’"),
+        ('"', '"'),
+        ("'", "'"),
+    )
+    for opening, closing in quote_pairs:
+        if re.search(
+            rf"{re.escape(opening)}\s*{re.escape(alias)}\s*{re.escape(closing)}",
+            title,
+            flags=re.IGNORECASE,
+        ):
+            return True
+    return False
 
 
 @lru_cache(maxsize=1)
@@ -288,6 +326,21 @@ def _registered_work_titles() -> dict[str, tuple[str, ...]]:
     return titles
 
 
+def refresh_work_catalog_caches() -> None:
+    """Reload catalog-backed lookups after another worker registers a new work."""
+    for loader in (
+        load_work_catalog,
+        load_work_entries,
+        load_work_external_entries,
+        load_work_aliases,
+        _work_parent_overrides,
+        load_work_franchises,
+        _aliases,
+        _registered_work_titles,
+    ):
+        loader.cache_clear()
+
+
 def _match_title_work_ids(title: str, source_url: str | None = None) -> list[int]:
     """Match distinct, longest title spans; never promote a nested short title."""
     aliases = _aliases(source_url)
@@ -299,7 +352,7 @@ def _match_title_work_ids(title: str, source_url: str | None = None) -> list[int
     ).strip()
     found: list[tuple[int, int, int, int]] = []
     for alias, work_id in aliases:
-        if len(alias.strip()) < 3:
+        if len(alias.strip()) < 3 and not _is_title_quoted(title, alias):
             continue
         normalized_alias = re.sub(
             r"\s+", " ", re.sub(r"[:：]+", " ", _normalize_catalog_title(alias))

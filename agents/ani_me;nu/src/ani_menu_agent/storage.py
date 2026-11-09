@@ -10,6 +10,7 @@ import os
 import re
 import sqlite3
 import sys
+import uuid
 from datetime import UTC, date, datetime, time, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -32,13 +33,50 @@ from ani_menu_agent.models import (
     SourceEvidence,
 )
 from ani_menu_agent.policy import POLICY
+from ani_menu_agent.erd_storage import (
+    initialize_erd_schema,
+    persist_crawl_dataset as persist_erd_crawl_dataset,
+    persist_package as persist_erd_package,
+    set_content_status as set_erd_content_status,
+)
+from ani_menu_agent.pipelines.common.jobs import (
+    PipelineJob,
+    PipelineJobStatus,
+    PipelineLane,
+    PipelineStage,
+)
 from ani_menu_agent.source_policy import validate_generation_sources
 from ani_menu_agent.sources import load_source_registry
-from ani_menu_agent.work_catalog import attach_menu_work_ids, resolve_menu_work_ids
+from ani_menu_agent.work_catalog import (
+    attach_menu_work_ids,
+    refresh_work_catalog_caches,
+    resolve_menu_work_ids,
+)
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def discovery_candidate_fingerprint(candidate: dict[str, Any]) -> str:
+    """Fingerprint the discovery fields that signal a materially updated lead."""
+    identity_fields = (
+        "id",
+        "url",
+        "source_id",
+        "title",
+        "published_at",
+        "summary",
+        "content_types",
+        "linked_work_title",
+        "linked_work_ids",
+        "character_name",
+        "birthday_mmdd",
+        "community_posts",
+    )
+    payload = {key: candidate.get(key) for key in identity_fields if key in candidate}
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _card_overlay_json(card) -> str:
@@ -400,6 +438,159 @@ class AgentRepository:
             ).fetchall()
         return [{"code": row["type_code"], "label_ko": row["label_ko"]} for row in rows]
 
+    def enqueue_pipeline_job(
+        self,
+        *,
+        lane: PipelineLane | str,
+        stage: PipelineStage | str,
+        idempotency_key: str,
+        payload: dict[str, Any],
+        request_id: str | None = None,
+        available_at: datetime | None = None,
+    ) -> PipelineJob:
+        """Insert one durable job; repeated enqueue calls return the original job."""
+        lane = PipelineLane(lane)
+        stage = PipelineStage(stage)
+        key = idempotency_key.strip()
+        if not key:
+            raise ValueError("pipeline job idempotency_key must not be empty")
+        now = _utc_now().isoformat()
+        job_id = str(uuid.uuid4())
+        ready_at = (available_at or _utc_now()).astimezone(UTC).isoformat()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO pipeline_jobs (job_id, lane, stage, idempotency_key, "
+                "request_id, status, payload_json, attempts, available_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?) "
+                "ON CONFLICT(lane, stage, idempotency_key) DO NOTHING",
+                (
+                    job_id,
+                    lane.value,
+                    stage.value,
+                    key,
+                    request_id,
+                    PipelineJobStatus.PENDING.value,
+                    json.dumps(payload, ensure_ascii=False),
+                    ready_at,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM pipeline_jobs WHERE lane=? AND stage=? AND idempotency_key=?",
+                (lane.value, stage.value, key),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("pipeline job insert succeeded but row could not be loaded")
+        return PipelineJob.from_row(row)
+
+    def claim_pipeline_job(
+        self,
+        *,
+        stage: PipelineStage | str,
+        worker_id: str,
+        lease_seconds: int = 300,
+        lane: PipelineLane | str | None = None,
+    ) -> PipelineJob | None:
+        """Atomically claim the oldest available job, reclaiming expired leases."""
+        stage = PipelineStage(stage)
+        if not worker_id.strip():
+            raise ValueError("worker_id must not be empty")
+        if lease_seconds < 1:
+            raise ValueError("lease_seconds must be positive")
+        lane_value = PipelineLane(lane).value if lane is not None else None
+        now_dt = _utc_now()
+        now = now_dt.isoformat()
+        expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        with self.connect() as connection:
+            if self.dialect == "sqlite":
+                connection.execute("BEGIN IMMEDIATE")
+            where_lane = " AND lane=?" if lane_value else ""
+            params: tuple[Any, ...] = (
+                (stage.value, now, now, lane_value)
+                if lane_value
+                else (stage.value, now, now)
+            )
+            lock_clause = " FOR UPDATE SKIP LOCKED" if self.dialect == "postgresql" else ""
+            row = connection.execute(
+                "SELECT job_id FROM pipeline_jobs WHERE stage=? "
+                "AND ((status IN ('pending', 'retry') AND available_at<=?) "
+                "OR (status='leased' AND lease_expires_at<=?))" + where_lane
+                + " ORDER BY available_at, created_at LIMIT 1" + lock_clause,
+                params,
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                "UPDATE pipeline_jobs SET status='leased', lease_owner=?, lease_expires_at=?, "
+                "attempts=attempts+1, updated_at=? WHERE job_id=?",
+                (worker_id, expires, now, row["job_id"]),
+            )
+            claimed = connection.execute(
+                "SELECT * FROM pipeline_jobs WHERE job_id=?", (row["job_id"],)
+            ).fetchone()
+        return PipelineJob.from_row(claimed) if claimed is not None else None
+
+    def finish_pipeline_job(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        status: PipelineJobStatus | str,
+        error: str | None = None,
+        retry_after_seconds: int = 0,
+    ) -> None:
+        """Finish a lease or schedule a retry; stale workers cannot overwrite it."""
+        status = PipelineJobStatus(status)
+        allowed = {
+            PipelineJobStatus.RETRY,
+            PipelineJobStatus.COMPLETED,
+            PipelineJobStatus.FAILED,
+            PipelineJobStatus.CANCELLED,
+        }
+        if status not in allowed:
+            raise ValueError("finished pipeline job status must be terminal or retry")
+        if retry_after_seconds < 0:
+            raise ValueError("retry_after_seconds must not be negative")
+        now_dt = _utc_now()
+        available = now_dt + timedelta(seconds=retry_after_seconds)
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE pipeline_jobs SET status=?, available_at=?, lease_owner=NULL, "
+                "lease_expires_at=NULL, last_error=?, updated_at=? "
+                "WHERE job_id=? AND status='leased' AND lease_owner=?",
+                (
+                    status.value,
+                    available.isoformat(),
+                    error,
+                    now_dt.isoformat(),
+                    job_id,
+                    worker_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("pipeline job lease is missing, expired, or owned by another worker")
+
+    def renew_pipeline_job_lease(
+        self, job_id: str, *, worker_id: str, lease_seconds: int = 300
+    ) -> bool:
+        """Extend a live lease owned by this worker; return False if ownership was lost."""
+        if lease_seconds < 1:
+            raise ValueError("lease_seconds must be positive")
+        now_dt = _utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE pipeline_jobs SET lease_expires_at=?, updated_at=? "
+                "WHERE job_id=? AND status='leased' AND lease_owner=?",
+                (
+                    (now_dt + timedelta(seconds=lease_seconds)).isoformat(),
+                    now_dt.isoformat(),
+                    job_id,
+                    worker_id,
+                ),
+            )
+        return cursor.rowcount == 1
+
     def initialize(self) -> None:
         with self.connect() as connection:
             schema = """
@@ -424,6 +615,25 @@ class AgentRepository:
                     ON agent_records(expires_at);
                 CREATE INDEX IF NOT EXISTS idx_agent_records_request
                     ON agent_records(request_id);
+                CREATE TABLE IF NOT EXISTS pipeline_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    lane TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    request_id TEXT,
+                    status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    available_at TEXT NOT NULL,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (lane, stage, idempotency_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_claim
+                    ON pipeline_jobs(stage, status, available_at, lease_expires_at);
                 CREATE TABLE IF NOT EXISTS content_types (
                     type_code TEXT PRIMARY KEY,
                     label_ko TEXT NOT NULL,
@@ -511,6 +721,8 @@ class AgentRepository:
                     ON image_blobs(created_at);
                 """
             connection.executescript(schema)
+            if self.dialect == "sqlite":
+                initialize_erd_schema(connection)
             migrations = {
                 "agent_records": {"valid_until": "TEXT"},
                 "rejected_archive": {"purge_at": "TEXT", "content_type": "TEXT"},
@@ -633,23 +845,27 @@ class AgentRepository:
                     country = package.event_country
                     if row["content_type"] == "review_analysis":
                         code = "review"
-                        package.content_type = code
                     elif code == "behind":
                         code = "humor"
-                        package.content_type = code
                     if code != row["content_type"] or country != row["event_country"]:
+                        # Keep unmodeled legacy fields (for example archived
+                        # cards/sources) intact when normalizing only taxonomy
+                        # and event-country values.
+                        package_data["content_type"] = code
+                        package_data["event_country"] = country
+                        serialized_package = json.dumps(package_data, ensure_ascii=False)
                         if table == "rejected_archive":
                             connection.execute(
                                 "UPDATE rejected_archive SET content_type=?, package_json=? "
                                 "WHERE request_id=?",
-                                (code, package.model_dump_json(), row["request_id"]),
+                                (code, serialized_package, row["request_id"]),
                             )
                         else:
                             connection.execute(
                                 f"UPDATE {table} SET content_type=?, event_country=?, "
                                 "package_json=? "
                                 "WHERE request_id=?",
-                                (code, country, package.model_dump_json(), row["request_id"]),
+                                (code, country, serialized_package, row["request_id"]),
                             )
             for row in connection.execute(
                 "SELECT agent_type, record_id, payload_json FROM agent_records"
@@ -761,7 +977,9 @@ class AgentRepository:
                             row["request_id"],
                         ),
                     )
-        self.cleanup_expired()
+        # Expiry purging is an explicit maintenance operation. Running it during
+        # repository initialization silently removes evidence whenever any CLI
+        # command opens the database, including read/inspection workflows.
 
     def prepare_lifecycle(self, package: ContentPackage) -> ContentPackage:
         return prepare_package_lifecycle(package)
@@ -1174,6 +1392,10 @@ class AgentRepository:
         """Load generation inputs from crawler-owned records, never from discovery captures."""
         if content_kind not in {"information", "humor"}:
             raise ValueError("content_kind는 information 또는 humor여야 합니다.")
+        # The crawler may append a canonical title while this long-running
+        # generation process is alive. Refresh the derived indexes before
+        # resolving the work ID stored with captured source evidence.
+        refresh_work_catalog_caches()
         agent_type = content_kind
         with self.connect() as connection:
             rows = connection.execute(
@@ -1208,8 +1430,6 @@ class AgentRepository:
                 persisted_work_evidence.extend(payload.get("work_match_evidence", []))
                 eligible_rows.append(row)
             elif record_kind == "fact":
-                if content_kind == "information" and payload.get("verified") is not True:
-                    continue
                 facts.append(payload)
                 eligible_rows.append(row)
             elif record_kind == "humor_idea" and content_kind == "humor":
@@ -1344,6 +1564,17 @@ class AgentRepository:
             )
         package.images = self._supplement_same_work_official_images(package)
         return package
+
+    def load_generated_draft(self, request_id: str) -> ContentPackage:
+        """Load the latest generated package for independent review or revision."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT package_json FROM content_drafts WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"No generated draft exists for request_id={request_id!r}.")
+        return ContentPackage.model_validate_json(row["package_json"])
 
     def _supplement_same_work_official_images(
         self,
@@ -1782,9 +2013,50 @@ class AgentRepository:
             "fact_count": int(outcome.get("fact_count") or 0),
             "image_count": int(outcome.get("image_count") or 0),
             "source_count": int(outcome.get("source_count") or 0),
+            "work_match_audit": dict(outcome.get("work_match_audit") or {}),
+            "captured_title": str(outcome.get("captured_title") or ""),
+            "source_url": str(outcome.get("source_url") or candidate.get("url") or ""),
+            "resolution_reason": str(outcome.get("reason") or ""),
+            "structured_work_references": list(
+                outcome.get("structured_work_references") or []
+            )[:20],
+            "outbound_links": list(outcome.get("outbound_links") or [])[:20],
             "attempted_at": attempted_at,
+            "candidate_fingerprint": discovery_candidate_fingerprint(candidate),
         }
         with self.connect() as connection:
+            previous_row = connection.execute(
+                "SELECT payload_json FROM agent_records "
+                "WHERE agent_type=? AND record_id=? AND record_kind='candidate_attempt'",
+                (content_type, f"attempt:{candidate_id}"),
+            ).fetchone()
+            if previous_row is not None:
+                previous_payload = json.loads(previous_row["payload_json"])
+                history = list(previous_payload.get("attempt_history") or [])
+                history.append(
+                    {
+                        key: previous_payload.get(key)
+                        for key in (
+                            "status",
+                            "attempt_count",
+                            "retry_count",
+                            "retry_note",
+                            "output",
+                            "error",
+                            "terminal_stage",
+                            "failure_stage",
+                            "reason_codes",
+                            "reason_messages",
+                            "work_match_audit",
+                            "captured_title",
+                            "source_url",
+                            "resolution_reason",
+                            "attempted_at",
+                            "candidate_fingerprint",
+                        )
+                    }
+                )
+                payload["attempt_history"] = history
             connection.execute(
                 """
                 INSERT INTO agent_records (
@@ -1866,6 +2138,21 @@ class AgentRepository:
 
     def mark_discovery_work_unresolved(self, candidate_id: str, reason: str) -> bool:
         """Keep an unresolved work title searchable instead of treating it as a dead lead."""
+        return self.mark_discovery_candidate_work_resolution(
+            candidate_id,
+            reason,
+            resolution_status="unresolved_work_id",
+        )
+
+    def mark_discovery_candidate_work_resolution(
+        self,
+        candidate_id: str,
+        reason: str,
+        *,
+        resolution_status: str = "unresolved_work_id",
+        work_match_audit: dict[str, Any] | None = None,
+    ) -> bool:
+        """Persist a candidate's scope/match decision and evidence for later review."""
         now = _utc_now().isoformat()
         with self.connect() as connection:
             row = connection.execute(
@@ -1878,15 +2165,16 @@ class AgentRepository:
                 return False
             payload = json.loads(row["payload_json"])
             payload["work_resolution"] = {
-                "status": "unresolved_work_id",
+                "status": resolution_status,
                 "reason": reason,
                 "recorded_at": now,
+                "work_match_audit": work_match_audit or {},
             }
             connection.execute(
                 "UPDATE agent_records SET status=?, payload_json=?, updated_at=? "
                 "WHERE agent_type=? AND record_id=?",
                 (
-                    "unresolved_work_id",
+                    resolution_status,
                     json.dumps(payload, ensure_ascii=False),
                     now,
                     row["agent_type"],
@@ -1910,6 +2198,31 @@ class AgentRepository:
         if payload.get("id") != candidate_id or not payload.get("url"):
             raise ValueError("DB 후보 레코드의 ID 또는 원문 URL이 올바르지 않습니다.")
         return payload
+
+    def list_discovery_candidates(self, content_type: str) -> list[dict[str, Any]]:
+        """Load unique durable leads for a type so retries need not refetch listings."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM agent_records "
+                "WHERE record_kind='discovery_candidate' "
+                "ORDER BY updated_at DESC"
+            ).fetchall()
+        candidates: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            candidate_id = str(payload.get("id") or "").strip()
+            types = payload.get("content_types") or []
+            if (
+                candidate_id
+                and payload.get("url")
+                and content_type in types
+                and candidate_id not in candidates
+            ):
+                candidates[candidate_id] = payload
+        return list(candidates.values())
 
     def list_source_discovery_captures(self, limit: int = 1000) -> list[dict[str, Any]]:
         """Return captured candidate pages for discovering previously unregistered hosts."""
@@ -1982,6 +2295,7 @@ class AgentRepository:
         capture: dict[str, Any],
         region: str,
         event_end: str | None = None,
+        package: ContentPackage | None = None,
     ) -> None:
         """공식 페이지에서 가져온 원문 캡처를 미검증 상태로 적재합니다."""
         now = _utc_now().isoformat()
@@ -2049,15 +2363,26 @@ class AgentRepository:
                     now,
                 ),
             )
+            if self.dialect == "sqlite":
+                erd_capture = dict(capture)
+                erd_capture["record_id"] = record_id
+                erd_capture["region"] = region
+                erd_capture["expires_at"] = _expiration(event_end)
+                if package:
+                    erd_capture["menu_work_ids"] = list(package.menu_work_ids)
+                    erd_capture["facts"] = [fact.model_dump(mode="json") for fact in package.facts]
+                persist_erd_crawl_dataset(connection, erd_capture, package)
 
     def persist_generated_content(
         self,
         package: ContentPackage,
         status: str,
         quality_report: dict[str, Any] | None = None,
+        usage_records: list[dict[str, Any]] | None = None,
     ) -> None:
         """Save the latest generated version and its card rows, including drafts under review."""
         attach_menu_work_ids(package)
+        package.status = status
         if package.content_type != "event":
             package.event_country = None
         prepare_package_lifecycle(package)
@@ -2143,6 +2468,14 @@ class AgentRepository:
                         _card_overlay_json(card),
                     ),
                 )
+            if self.dialect == "sqlite":
+                persist_erd_package(
+                    connection,
+                    package,
+                    status,
+                    quality_report,
+                    usage_records=usage_records,
+                )
 
     def set_content_status(self, request_id: str, status: str) -> None:
         with self.connect() as connection:
@@ -2150,6 +2483,8 @@ class AgentRepository:
                 "UPDATE content_drafts SET status=?, updated_at=? WHERE request_id=?",
                 (status, _utc_now().isoformat(), request_id),
             )
+            if self.dialect == "sqlite":
+                set_erd_content_status(connection, request_id, status)
             # A previously approved revision can remain in the queue when a later
             # retry of the same request is rejected or returned for new evidence.
             # Keep that stale revision out of the serving set without deleting it.
@@ -2203,6 +2538,8 @@ class AgentRepository:
                 "UPDATE agent_records SET status='rejected' WHERE request_id=?",
                 (package.request_id,),
             )
+            if self.dialect == "sqlite":
+                set_erd_content_status(connection, package.request_id, "rejected_archived", adopted=False)
 
     def enqueue_for_feed(self, package: ContentPackage) -> None:
         if package.content_type is None:
@@ -2210,6 +2547,7 @@ class AgentRepository:
         if package.content_type not in {item["code"] for item in self.active_content_types()}:
             raise ValueError(f"활성 콘텐츠 유형이 아닙니다: {package.content_type}")
         attach_menu_work_ids(package)
+        package.status = "ready_for_feed"
         if package.content_type != "event":
             package.event_country = None
         prepare_package_lifecycle(package)
@@ -2250,6 +2588,10 @@ class AgentRepository:
                 "WHERE request_id=?",
                 (_utc_now().isoformat(), package.request_id),
             )
+            if self.dialect == "sqlite":
+                set_erd_content_status(
+                    connection, package.request_id, "ready_for_feed", adopted=True
+                )
             self._replace_work_links(connection, package)
             for card in package.cards:
                 connection.execute(

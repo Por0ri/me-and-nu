@@ -343,7 +343,7 @@ def _asset(
         menu_work_ids=[work_id],
         official=False,
         rights_status=RightsStatus.NEEDS_REVIEW,
-        source_description=description[:240],
+        source_description=description[:200],
         asset_kind=asset_kind,
         depicted_entities=entities[:20],
         asset_metadata_confidence=confidence,

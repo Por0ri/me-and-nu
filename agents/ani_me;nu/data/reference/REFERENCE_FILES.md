@@ -11,7 +11,7 @@
 | `menu_work_external_entries.csv` | Kitsu 같은 외부 카탈로그 항목의 ID·제목을 이미 등록된 상위 작품에 연결합니다. | `menu_work_id`, `source_id`, `external_id` |
 | `menu_work_franchises.csv` | 여러 작품이 공유하는 프랜차이즈 표기입니다. 프랜차이즈가 같아도 작품 ID는 별개로 유지할 수 있습니다. | `franchise_id`, `menu_work_id` |
 | `menu_work_parent_overrides.csv` | 작품명 매칭에서 특정 하위작·스핀오프를 상위 작품으로 연결하는 예외 규칙입니다. | `menu_work_id`, `parent_menu_work_id` |
-| `discovered_works.csv` | 카탈로그에 없는 작품 후보를 팀 검토용으로 기록합니다. 검토 전에는 작품 ID를 부여하지 않습니다. | `kitsu_id`, `status` |
+| `discovered_works.csv` | 작품 ID 연결이 모호하거나 Kitsu 확인이 충분하지 않은 신규 후보의 검토 대기 목록입니다. 확정 등록된 작품은 `menu_works.csv`에 ID가 부여됩니다. | `kitsu_id`, `status` |
 | `work_characters.csv` | 작품과 캐릭터·작품 속 고유명사의 연결 및 언어별 이름·별칭입니다. 자세한 출처와 매칭 규칙은 `WORK_MATCH_DATA.md`를 참고합니다. | `menu_work_id`, `anilist_id`, `wikidata_id` |
 | `work_theme_songs.csv` | 작품별 OP·ED 곡명과 가수 정보입니다. 곡명·가수명으로 작품을 찾는 보조 사전입니다. | `menu_work_id`, `anilist_id`, `animethemes_anime` |
 | `WORK_MATCH_DATA.md` | 캐릭터·곡명 매칭 사전의 출처, 열 설명, 사용 규칙, 한계와 재생성 방법을 설명합니다. | 문서 |
@@ -26,7 +26,7 @@
 
 ## 새 작품 처리 원칙
 
-`menu_works.csv`는 팀이 관리하는 공유 작품 카탈로그입니다. 새 작품 후보를 발견해도 에이전트가 이 파일에 ID를 만들어 추가하지 않습니다. 후보는 `discovered_works.csv`에 원문 제목·URL·외부 카탈로그 정보와 검토 상태를 기록하고, 팀에서 확인한 뒤 공유 카탈로그에 반영합니다. 기존 작품으로 확인된 외부 별칭만 `menu_work_external_entries.csv`에서 기존 ID에 연결할 수 있습니다.
+`menu_works.csv`는 최종 작품 ID 카탈로그입니다. 원문 제목과 Kitsu 작품명이 정확히 확인되고 기존 작품의 별도 시즌·극장판이나 중복이 아니라고 판단된 신규 작품은 현재 최댓값 다음 ID로 등록합니다. 확인이 불충분한 후보는 `discovered_works.csv`에 보류 기록합니다. Kitsu 외부 ID는 `menu_work_external_entries.csv`에서 최종 ID와 연결합니다.
 
 ## 수정 시 주의
 

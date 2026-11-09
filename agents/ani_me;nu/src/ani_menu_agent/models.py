@@ -107,6 +107,20 @@ class SourceEvidence(BaseModel):
     discovered_via_source_id: str | None = None
     discovery_url: HttpUrl | None = None
     discovery_title: str | None = None
+    # A linked page keeps its own URL while retaining the exact parent-link path
+    # that led to it. This lets policy validate source lineage without promoting
+    # an unregistered destination to an official source.
+    parent_source_evidence_id: str | None = None
+    linked_from_url: HttpUrl | None = None
+    link_label: str = ""
+    link_discovery_method: str = ""
+    link_relationship: str = ""
+    target_work_match: bool = False
+    link_classification: str = "unverified"
+    link_classification_method: str = "pending"
+    link_classification_confidence: float = Field(default=0.0, ge=0, le=1)
+    link_classification_evidence: list[str] = Field(default_factory=list)
+    link_relationship_type: str = "uncertain"
 
 
 class WorkMatchEvidence(BaseModel):
@@ -116,8 +130,10 @@ class WorkMatchEvidence(BaseModel):
     basis: Literal[
         "article_title",
         "llm_title_match",
+        "llm_headline_only",
         "llm_body_context",
         "llm_curation_list",
+        "llm_source_new_work",
         "headline_character",
         "kitsu_catalog_title",
         "kitsu_catalog_entry_title",

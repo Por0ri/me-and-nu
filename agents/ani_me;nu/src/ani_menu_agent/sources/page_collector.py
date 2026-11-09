@@ -117,12 +117,66 @@ class PageOutboundLink(BaseModel):
     text: str = ""
 
 
+class PageLinkCandidate(BaseModel):
+    """A statically discovered CTA destination that still needs target verification."""
+
+    url: HttpUrl
+    label: str = ""
+    surrounding_context: str = ""
+    discovery_method: str
+    status: str = "needs_target_review"
+    target_page_title: str = ""
+    target_operator: str = ""
+    target_excerpt: str = ""
+    target_work_match: bool | None = None
+    link_classification: str = "unverified"
+    link_classification_method: str = "pending"
+    link_classification_confidence: float = Field(default=0.0, ge=0, le=1)
+    link_classification_evidence: list[str] = Field(default_factory=list)
+    link_relationship_type: str = "uncertain"
+    target_detail_links: list[PageOutboundLink] = Field(default_factory=list)
+    target_fetch_note: str = ""
+
+
+class PageLinkedEvidence(BaseModel):
+    """A bounded, same-work detail page reached through a statically found CTA."""
+
+    url: HttpUrl
+    title: str
+    linked_from_url: HttpUrl
+    link_label: str = ""
+    link_discovery_method: str = ""
+    link_relationship: str = "cta_target"
+    target_work_match: bool = False
+    link_classification: str = "unverified"
+    link_classification_method: str = "pending"
+    link_classification_confidence: float = Field(default=0.0, ge=0, le=1)
+    link_classification_evidence: list[str] = Field(default_factory=list)
+    link_relationship_type: str = "uncertain"
+    publisher: str = ""
+    published_at: str | None = None
+    text: str = ""
+    image_urls: list[HttpUrl] = Field(default_factory=list)
+    image_alt_text: dict[str, str] = Field(default_factory=dict)
+    redistribution_notice: str = ""
+
+
+class ImageCollectionExclusion(BaseModel):
+    """Audit record for images omitted because the page explicitly forbids reuse."""
+
+    page_url: HttpUrl
+    notice_text: str
+    image_urls: list[HttpUrl]
+    reason: str = "explicit_no_redistribution_notice"
+
+
 class SourcePageCapture(BaseModel):
     source_id: str
     title: str
     url: HttpUrl
     fetched_at: str
     published_at: str | None = None
+    main_text: str = ""
     text: str
     image_urls: list[HttpUrl]
     image_alt_text: dict[str, str] = Field(default_factory=dict)
@@ -131,10 +185,386 @@ class SourcePageCapture(BaseModel):
     image_asset_kinds: dict[str, str] = Field(default_factory=dict)
     image_depicted_entities: dict[str, list[str]] = Field(default_factory=dict)
     outbound_links: list[PageOutboundLink] = Field(default_factory=list)
+    link_candidates: list[PageLinkCandidate] = Field(default_factory=list)
+    link_review_usage: list[dict] = Field(default_factory=list)
+    linked_page_evidence: list[PageLinkedEvidence] = Field(default_factory=list)
+    image_exclusions: list[ImageCollectionExclusion] = Field(default_factory=list)
+    image_text_evidence: list[dict] = Field(default_factory=list)
     structured_work_references: list[StructuredWorkReference] = Field(default_factory=list)
     related_image_pages: list[HttpUrl] = Field(default_factory=list)
     excerpt_truncated: bool = False
     status: str = "unverified_capture"
+
+
+_CTA_STRONG_RE = re.compile(
+    r"official|officialSite|official_site|openSite|siteLink|specialSite|"
+    r"공식|작품\s*사이트|프로그램\s*사이트|특설\s*사이트|홈페이지|"
+    r"公式|作品サイト|番組サイト|特設サイト",
+    re.IGNORECASE,
+)
+_CTA_GENERIC_RE = re.compile(
+    r"\bmore\b|\bdetails\b|\bopen\b|자세히|상세|詳しく|詳細|"
+    r"click|\bview\b|\bwebsite\b",
+    re.IGNORECASE,
+)
+_CTA_CONTEXT_RE = re.compile(
+    r"official|site|website|公式|공식|작품\s*사이트|프로그램\s*사이트|"
+    r"특설\s*사이트|홈페이지|작품\s*정보|프로그램\s*정보|主催|주최|주관",
+    re.IGNORECASE,
+)
+_STATIC_HTTPS_RE = re.compile(r"https://[^\s\"'<>\\]+", re.IGNORECASE)
+_IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif")
+_REDISTRIBUTION_NOTICE_RE = re.compile(
+    r"무단\s*(?:전재|복제|배포|재배포|사용|도용)\s*(?:및\s*)?(?:재배포\s*)?금지|"
+    r"재배포\s*금지|무단\s*전재|무단\s*복제|무단\s*배포|무단\s*사용\s*금지|"
+    r"転載禁止|再配布禁止|無断転載|無断転用|無断複製|無断配布|無断使用禁止|"
+    r"転載は禁止|再利用禁止",
+    re.IGNORECASE,
+)
+
+
+def _script_function_body(script: str, function_name: str) -> str | None:
+    """Return one named JavaScript function body without evaluating the script."""
+    match = re.search(
+        rf"(?:function\s+{re.escape(function_name)}\s*\([^)]*\)|"
+        rf"(?:const|let|var)\s+{re.escape(function_name)}\s*=\s*\([^)]*\)\s*=>)\s*\{{",
+        script,
+    )
+    if not match:
+        return None
+    start = script.find("{", match.start())
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    for index in range(start, len(script)):
+        char = script[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return script[start : index + 1]
+    return None
+
+
+def _script_function_static_urls(script: str, function_name: str) -> list[str]:
+    """Resolve literal URL variables referenced by a handler without running JS."""
+    body = _script_function_body(script, function_name)
+    if not body:
+        return []
+    urls = list(_STATIC_HTTPS_RE.findall(body))
+    identifiers = set(re.findall(r"\b[A-Za-z_$][\w$]*\b", body))
+    for identifier in identifiers:
+        assignment = re.compile(
+            rf"(?:\b(?:var|let|const)\s+)?\b{re.escape(identifier)}\s*=\s*(['\"])(.*?)\1",
+            re.DOTALL,
+        )
+        for match in assignment.finditer(script):
+            value = match.group(2).strip().replace("\\/", "/").replace("\\u0026", "&")
+            if value.startswith(("https://", "/", "./", "../")):
+                urls.append(value)
+    return list(dict.fromkeys(urls))
+
+
+def _static_detail_page_links(
+    soup: BeautifulSoup, page_url: str
+) -> list[PageOutboundLink]:
+    """Find a few clearly editorial detail links on a linked work site."""
+    base = urlparse(page_url)
+    base_host = (base.hostname or "").lower().removeprefix("www.").rstrip(".")
+    sensitive_query_keys = {
+        "token", "access_token", "auth", "authorization", "session", "sessionid",
+        "csrf", "email", "user", "account", "code", "state",
+    }
+    article_path = re.compile(
+        r"/(?:news|topics?|events?|information|info|articles?|press|releases?|"
+        r"campaigns?|updates?|interviews?|goods|products?)(?:/|$)",
+        re.IGNORECASE,
+    )
+    date_signal = re.compile(
+        r"20\d{2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}|"
+        r"20\d{2}\s*\u5e74\s*\d{1,2}\s*\u6708|"
+        r"\d{1,2}\s*\u6708\s*\d{1,2}\s*\u65e5"
+    )
+    found: dict[str, PageOutboundLink] = {}
+    for anchor in soup.select("a[href]"):
+        raw_href = str(anchor.get("href") or "").strip()
+        if not raw_href or raw_href.startswith(("#", "mailto:", "javascript:")):
+            continue
+        absolute = urljoin(page_url, raw_href)
+        parsed = urlparse(absolute)
+        host = (parsed.hostname or "").lower().removeprefix("www.").rstrip(".")
+        if (
+            parsed.scheme != "https"
+            or not host
+            or parsed.username
+            or parsed.password
+            or host != base_host
+            or parsed.path.rstrip("/") == base.path.rstrip("/")
+            or {key.casefold() for key in parse_qs(parsed.query)} & sensitive_query_keys
+        ):
+            continue
+        label = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True)).strip()
+        if len(label) < 10 or not (article_path.search(parsed.path) or date_signal.search(label)):
+            continue
+        found.setdefault(absolute, PageOutboundLink(url=absolute, text=label[:300]))
+    return list(found.values())[:3]
+
+
+def _static_cta_link_candidates(
+    soup: BeautifulSoup, page_url: str
+) -> list[PageLinkCandidate]:
+    """Extract likely site-button destinations from literal markup/JS only."""
+    scripts = [script.get_text() for script in soup.find_all("script") if script.get_text()]
+    found: dict[str, PageLinkCandidate] = {}
+    elements = soup.select(
+        "a, button, [role='button'], input[type='button'], input[type='image']"
+    )
+    for element in elements:
+        image = element if element.name == "img" else element.find("img")
+        label = " ".join(
+            part.strip()
+            for part in (
+                element.get_text(" ", strip=True),
+                str(element.get("aria-label") or ""),
+                str(element.get("title") or ""),
+                str(element.get("alt") or ""),
+                str(image.get("alt") or "") if image else "",
+            )
+            if part and part.strip()
+        )
+        if re.search(
+            r"youtube|instagram|twitter|facebook|tiktok|social|公式アカウント|official\s+account",
+            label,
+            re.IGNORECASE,
+        ):
+            continue
+        attrs = " ".join(
+            str(element.get(key) or "")
+            for key in ("href", "onclick", "data-href", "data-url", "data-target")
+        )
+        context_node = element.parent
+        context = re.sub(
+            r"\s+", " ", context_node.get_text(" ", strip=True) if context_node else ""
+        )[:500]
+        if not _CTA_STRONG_RE.search(label) and not _CTA_STRONG_RE.search(attrs) and not (
+            _CTA_GENERIC_RE.search(label) and _CTA_CONTEXT_RE.search(context)
+        ):
+            continue
+        script_scope = ""
+        raw_urls: list[str] = []
+        handler_names = re.findall(r"\b([A-Za-z_$][\w$]*)\s*\(", attrs)
+        for script in scripts:
+            for function_name in handler_names:
+                static_urls = _script_function_static_urls(script, function_name)
+                if static_urls:
+                    script_scope += "\n" + "\n".join(static_urls)
+                    raw_urls.extend(static_urls)
+
+        for key in ("href", "data-href", "data-url", "data-target"):
+            raw = str(element.get(key) or "").strip()
+            if raw and not raw.lower().startswith("javascript:"):
+                raw_urls.append(raw)
+        literal_sources = [attrs, script_scope]
+        for literal_source in literal_sources:
+            normalized_source = literal_source.replace("\\/", "/").replace("\\u0026", "&")
+            for raw_url in _STATIC_HTTPS_RE.findall(normalized_source):
+                raw_urls.append(raw_url)
+        for raw_url in dict.fromkeys(raw_urls):
+            normalized = raw_url.replace("\\/", "/").replace("\\u0026", "&").strip()
+            if normalized.lower().startswith(("javascript:", "data:", "mailto:")):
+                continue
+            cleaned = urljoin(page_url, normalized).rstrip(".,);]")
+            parsed = urlparse(cleaned)
+            if parsed.scheme != "https" or not parsed.hostname or parsed.username:
+                continue
+            normalized_label = re.sub(r"\s+", " ", label)[:240]
+            method = (
+                "static_js_handler_literal"
+                if normalized in script_scope
+                else "static_markup_literal"
+            )
+            found.setdefault(
+                cleaned,
+                PageLinkCandidate(
+                    url=cleaned,
+                    label=normalized_label,
+                    surrounding_context=context,
+                    discovery_method=method,
+                ),
+            )
+    return list(found.values())[:30]
+
+
+def _redistribution_notice_text(soup: BeautifulSoup) -> str | None:
+    text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+    match = _REDISTRIBUTION_NOTICE_RE.search(text)
+    if not match:
+        return None
+    start = max(0, match.start() - 100)
+    end = min(len(text), match.end() + 100)
+    return text[start:end][:300]
+
+
+def _inspect_cta_targets(
+    candidates: list[PageLinkCandidate],
+    source: Source,
+    timeout: float,
+    *,
+    context_title: str = "",
+) -> list[PageLinkCandidate]:
+    """Fetch bounded public HTTPS targets for review; never auto-approve them."""
+    inspected: list[PageLinkCandidate] = []
+    known_work_titles = [
+        title.casefold()
+        for title in (source.work_title_ko, source.work_title_original)
+        if title and len(title.strip()) >= 2
+    ]
+    page_work_title = re.split(r"[|｜·:：]", context_title, maxsplit=1)[0].strip()
+    page_work_title = re.sub(
+        r"\s+(?:テレビ東京|アニメ公式|公式サイト|official site).*$",
+        "",
+        page_work_title,
+        flags=re.IGNORECASE,
+    ).strip()
+    if len(page_work_title) >= 3:
+        known_work_titles.append(page_work_title.casefold())
+    for candidate in candidates[:5]:
+        parsed = urlparse(str(candidate.url))
+        host = (parsed.hostname or "").lower().rstrip(".")
+        query_keys = {key.casefold() for key in parse_qs(parsed.query)}
+        if parsed.username or parsed.password or query_keys & {
+            "token", "access_token", "auth", "authorization", "session", "sessionid",
+            "csrf", "email", "user", "account", "code", "state",
+        }:
+            candidate.target_fetch_note = "민감한 URL 정보가 있어 목적지 페이지를 열지 않음."
+            inspected.append(candidate)
+            continue
+        try:
+            target_source = source.model_copy(update={"allowed_asset_hosts": [host]})
+            html, final_url = _get_html(str(candidate.url), target_source, timeout)
+            target_soup = BeautifulSoup(html, "html.parser")
+            title = _page_title(target_soup)
+            operator_tag = target_soup.find("meta", attrs={"property": "og:site_name"})
+            operator = str(operator_tag.get("content") or "").strip() if operator_tag else ""
+            if not operator:
+                operator_tag = target_soup.find("meta", attrs={"name": "publisher"})
+                operator = str(operator_tag.get("content") or "").strip() if operator_tag else host
+            excerpt = _extract_article_text(html, final_url, target_soup)[:800]
+            target_text = f"{title}\n{operator}\n{excerpt}".casefold()
+            matched = any(work_title in target_text for work_title in known_work_titles)
+            candidate.target_page_title = title[:300]
+            candidate.target_operator = operator[:200]
+            candidate.target_excerpt = excerpt
+            candidate.target_work_match = matched if known_work_titles else None
+            if matched:
+                candidate.target_detail_links = _static_detail_page_links(
+                    target_soup, final_url
+                )
+            candidate.target_fetch_note = (
+                "목적지 HTML 확인 완료. 공식 여부는 운영 주체·작품·링크 문맥을 함께 검토해야 함."
+            )
+            candidate.status = "needs_manual_review"
+        except (ValueError, httpx.HTTPError) as exc:
+            candidate.target_fetch_note = (
+                f"???????: {type(exc).__name__}: {str(exc)[:180]}"
+            )
+        inspected.append(candidate)
+    inspected.extend(candidates[5:])
+    return inspected
+
+
+def _follow_cta_detail_pages(
+    candidates: list[PageLinkCandidate],
+    source: Source,
+    timeout: float,
+    *,
+    max_pages: int = 3,
+) -> tuple[list[PageLinkedEvidence], list[ImageCollectionExclusion]]:
+    """Follow bounded same-site detail links from work-matched CTA pages."""
+    captures: list[PageLinkedEvidence] = []
+    exclusions: list[ImageCollectionExclusion] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate.target_work_match is not True:
+            continue
+        target_host = (urlparse(str(candidate.url)).hostname or "").lower().rstrip(".")
+        for link in candidate.target_detail_links:
+            if len(captures) >= max_pages:
+                return captures, exclusions
+            detail_url = str(link.url)
+            if detail_url in seen:
+                continue
+            seen.add(detail_url)
+            detail_host = (urlparse(detail_url).hostname or "").lower().rstrip(".")
+            if not (
+                detail_host == target_host
+                or detail_host.endswith(f".{target_host}")
+                or target_host.endswith(f".{detail_host}")
+            ):
+                continue
+            detail_source = source.model_copy(
+                update={"allowed_asset_hosts": list({target_host, detail_host})}
+            )
+            try:
+                html, final_url = _get_html(detail_url, detail_source, timeout)
+            except (ValueError, httpx.HTTPError):
+                continue
+            soup = BeautifulSoup(html, "html.parser")
+            title = _page_title(soup) or link.text
+            notice = _redistribution_notice_text(soup) or ""
+            text = _extract_article_text(html, final_url, soup)
+            detail_image_urls, image_alt = _image_candidates(soup, final_url)
+            image_urls = [] if notice else detail_image_urls
+            if notice and detail_image_urls:
+                exclusions.append(
+                    ImageCollectionExclusion(
+                        page_url=final_url,
+                        notice_text=notice,
+                        image_urls=[HttpUrl(item) for item in detail_image_urls[:MAX_IMAGE_URLS]],
+                    )
+                )
+            captures.append(
+                PageLinkedEvidence(
+                    url=final_url,
+                    title=title[:300],
+                    linked_from_url=candidate.url,
+                    link_label=link.text[:300],
+                    link_discovery_method="same_site_article_link",
+                    link_relationship="same_site_detail",
+                    target_work_match=True,
+                link_classification=(
+                    "official_verified"
+                    if candidate.link_classification == "official_verified"
+                    else "related_page"
+                ),
+                link_classification_method="inherited_same_site_parent",
+                link_classification_confidence=candidate.link_classification_confidence,
+                link_classification_evidence=list(candidate.link_classification_evidence),
+                link_relationship_type="editorial_article",
+                    publisher=(urlparse(final_url).hostname or "").lower(),
+                    published_at=_published_date_from_html(soup),
+                    text=text[:4_000],
+                    image_urls=[HttpUrl(item) for item in image_urls[:MAX_IMAGE_URLS]],
+                    image_alt_text={
+                        item: image_alt[item]
+                        for item in image_urls[:MAX_IMAGE_URLS]
+                        if item in image_alt
+                    },
+                    redistribution_notice=notice,
+                )
+            )
+    return captures, exclusions
 
 
 def _article_outbound_links(
@@ -181,7 +611,7 @@ def _article_outbound_links(
         scope = soup.select_one(selector)
         if scope:
             break
-    if scope is None and source_id == "recal_kr":
+    if scope is None and source_id in {"recal_kr", "recal_music"}:
         # RE:CAL renders event records in a Next.js <main> tree rather than an
         # article element. Keep only explicitly labelled organizer/source links.
         scope = soup.select_one("main")
@@ -194,8 +624,11 @@ def _article_outbound_links(
     for anchor in scope.select("a[href]"):
         href = str(anchor.get("href") or "").strip()
         link_text = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))
-        if source_id == "recal_kr" and not re.search(
-            r"official|\uacf5\uc2dd|\ucd9c\ucc98|\uacf5\uc9c0|\uc548\ub0b4", link_text, re.I
+        if source_id in {"recal_kr", "recal_music"} and not re.search(
+            r"official|공식|출처|주최|주관|공지|안내|홈페이지|사이트|예매|티켓|신청|예약|"
+            r"상세|자세히|이벤트 정보|homepage|ticket|reservation|organizer|主催|公式|詳細",
+            link_text,
+            re.I,
         ):
             continue
         if not href or href.startswith(("#", "mailto:", "javascript:")):
@@ -421,6 +854,76 @@ def _get_html(url: str, source: Source, timeout: float) -> tuple[str, str]:
     raise ValueError("페이지 리다이렉트 횟수가 제한을 초과했습니다.")
 
 
+def _get_html_with_client(
+    client: httpx.Client,
+    url: str,
+    source: Source,
+    timeout: float,
+    robots_cache: dict[str, RobotFileParser | None],
+) -> tuple[str, str]:
+    """Fetch bounded HTML with a shared client and per-run robots policy cache."""
+    current_url = url
+    for _ in range(4):
+        _validate_url(current_url, source)
+        parsed = urlparse(current_url)
+        origin = f"{parsed.scheme}://{parsed.netloc}".lower()
+        robots_url = f"{origin}/robots.txt"
+        _validate_url(robots_url, source)
+        if origin not in robots_cache:
+            try:
+                pace_host(robots_url, source.min_interval_seconds)
+                with client.stream("GET", robots_url, follow_redirects=False) as response:
+                    if response.status_code in {404, 410}:
+                        robots_cache[origin] = None
+                    else:
+                        response.raise_for_status()
+                        chunks: list[bytes] = []
+                        size = 0
+                        for chunk in response.iter_bytes():
+                            size += len(chunk)
+                            if size > MAX_ROBOTS_BYTES:
+                                raise ValueError("robots.txt exceeds the 256KB safety limit")
+                            chunks.append(chunk)
+                        parser = RobotFileParser(robots_url)
+                        parser.parse(
+                            b"".join(chunks).decode("utf-8", errors="replace").splitlines()
+                        )
+                        robots_cache[origin] = parser
+            except httpx.HTTPError as exc:
+                raise ValueError(f"Could not read robots.txt for {origin}: {exc}") from exc
+        robots_parser = robots_cache[origin]
+        if robots_parser is not None and not robots_parser.can_fetch(
+            "me-nu-content-agent", current_url
+        ):
+            raise ValueError(f"robots.txt disallows collection of {current_url}")
+
+        pace_host(current_url, source.min_interval_seconds)
+        with client.stream("GET", current_url, timeout=timeout, follow_redirects=False) as response:
+            if response.is_redirect:
+                location = response.headers.get("location")
+                if not location:
+                    raise ValueError("Source page redirect has no Location header")
+                current_url = _secure_redirect_target(current_url, location)
+                continue
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "").lower()
+            if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+                raise ValueError(f"Expected HTML, received {content_type or 'unknown'}")
+            length = response.headers.get("content-length")
+            if length and int(length) > MAX_PAGE_BYTES:
+                raise ValueError("Source page exceeds the 5MB safety limit")
+            chunks = []
+            size = 0
+            for chunk in response.iter_bytes():
+                size += len(chunk)
+                if size > MAX_PAGE_BYTES:
+                    raise ValueError("Source page exceeds the 5MB safety limit")
+                chunks.append(chunk)
+            encoding = response.encoding or "utf-8"
+            return b"".join(chunks).decode(encoding, errors="replace"), current_url
+    raise ValueError("Source page exceeded the four-redirect limit")
+
+
 def _secure_redirect_target(current_url: str, location: str) -> str:
     """Keep same-host canonical redirects on HTTPS without visiting HTTP."""
     target = urljoin(current_url, location)
@@ -470,9 +973,30 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
     scores: dict[str, int] = {}
     descriptions: dict[str, str] = {}
     scope = _article_content_scope(soup, page_url)
+    parsed_page = urlparse(page_url)
 
     scoped_images = scope.find_all("img")
-    parsed_page = urlparse(page_url)
+    if (parsed_page.hostname or "").lower() == "recal.kr" and parsed_page.path.startswith(
+        "/ko/e/"
+    ):
+        # RE:CAL keeps long event infographics in a separate "상세 이미지" panel,
+        # outside the hero section used for ordinary page images. Include those
+        # panel assets without sweeping in the site's unrelated recommendation rail.
+        detail_labels = soup.find_all(
+            string=re.compile(r"상세\s*이미지|detail\s*image", re.IGNORECASE)
+        )
+        for label in detail_labels:
+            parent = label.parent
+            for _ in range(5):
+                if parent is None or parent.name in {"main", "body", "html"}:
+                    break
+                detail_images = parent.find_all("img")
+                if detail_images:
+                    for image_tag in detail_images:
+                        if image_tag not in scoped_images:
+                            scoped_images.append(image_tag)
+                    break
+                parent = parent.parent
     onnada_character = (
         (parsed_page.hostname or "").lower() == "onnada.com"
         and re.fullmatch(r"/character/(\d+)/?", parsed_page.path, re.IGNORECASE)
@@ -538,6 +1062,15 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
                 "data-actualsrc",
             )
         ]
+        for attribute in ("data-full", "data-large", "data-detail", "data-original-image"):
+            value = tag.get(attribute)
+            if value:
+                candidates.append(value)
+        image_anchor = tag.find_parent("a", href=True)
+        if image_anchor:
+            linked_asset = urljoin(page_url, str(image_anchor.get("href") or "").strip())
+            if urlparse(linked_asset).path.casefold().endswith(_IMAGE_SUFFIXES):
+                candidates.append(linked_asset)
 
         for srcset_key in ("srcset", "data-srcset"):
             best = _largest_srcset_candidate(tag.get(srcset_key))
@@ -652,7 +1185,7 @@ def _article_content_scope(soup: BeautifulSoup, page_url: str | None = None):
                 return view_content
         if (
             (parsed_page.hostname or "").lower() == "recal.kr"
-            and parsed_page.path.startswith("/ko/e/offline/")
+            and parsed_page.path.startswith(("/ko/e/offline/", "/ko/e/music/"))
         ):
             headline = soup.find("h1")
             hero_section = headline.find_parent("section") if headline else None
@@ -851,6 +1384,8 @@ def collect_official_page(
     timeout: float = 20.0,
     expand_related_pages: bool = True,
     allow_discovery_page: bool = False,
+    max_cta_detail_pages: int = 3,
+    review_ambiguous_links: bool = False,
 ) -> SourcePageCapture:
     """Read one approved page; discovery pages are link-resolution context only."""
     if (
@@ -888,11 +1423,23 @@ def collect_official_page(
         published_at = published_at or daewon_published_at
 
     extracted = _extract_article_text(html, final_url, soup)
-    if source.id == "aniplus_shop" and len(extracted.strip()) < 20:
-        # The public SSR payload includes the campaign title, but product
-        # availability/details may be client-loaded. Keep only this explicit fact.
+    if source.id == "aniplus_shop" and not extracted.strip():
+        # Preserve any short page text; use the title only when extraction is empty.
         extracted = title
-    image_urls, image_alt_text = _image_candidates(soup, final_url)
+    image_exclusions: list[ImageCollectionExclusion] = []
+    page_notice = _redistribution_notice_text(soup)
+    if page_notice:
+        excluded_urls, _ = _image_candidates(soup, final_url)
+        image_exclusions.append(
+            ImageCollectionExclusion(
+                page_url=final_url,
+                notice_text=page_notice,
+                image_urls=[HttpUrl(item) for item in excluded_urls[:MAX_IMAGE_URLS]],
+            )
+        )
+        image_urls, image_alt_text = [], {}
+    else:
+        image_urls, image_alt_text = _image_candidates(soup, final_url)
     seed_image_urls = image_urls
     image_urls = list(seed_image_urls)
     image_source_pages = {candidate: final_url for candidate in image_urls}
@@ -913,7 +1460,19 @@ def collect_official_page(
         related_soup = BeautifulSoup(related_html, "html.parser")
         related_title = _page_title(related_soup)
         related_pages.append(related_final_url)
-        related_urls, related_alt_text = _image_candidates(related_soup, related_final_url)
+        related_notice = _redistribution_notice_text(related_soup)
+        if related_notice:
+            excluded_urls, _ = _image_candidates(related_soup, related_final_url)
+            image_exclusions.append(
+                ImageCollectionExclusion(
+                    page_url=related_final_url,
+                    notice_text=related_notice,
+                    image_urls=[HttpUrl(item) for item in excluded_urls[:MAX_IMAGE_URLS]],
+                )
+            )
+            related_urls, related_alt_text = [], {}
+        else:
+            related_urls, related_alt_text = _image_candidates(related_soup, related_final_url)
         for candidate in related_urls:
             image_source_pages.setdefault(candidate, related_final_url)
             image_source_titles.setdefault(candidate, related_title)
@@ -922,7 +1481,80 @@ def collect_official_page(
     # Keep every seed-page image before images from optional linked galleries.
     image_urls.extend(related_image_urls)
 
+    link_candidates = _inspect_cta_targets(
+        _static_cta_link_candidates(soup, final_url),
+        source,
+        timeout,
+        context_title=title,
+    )
+    link_review_usage: list[dict] = []
+    from ani_menu_agent.sources.link_review import classify_link_candidates
+
+    link_candidates = classify_link_candidates(
+        link_candidates,
+        source_role=source.role,
+        context_title=title,
+        usage_records=link_review_usage,
+        allow_llm=review_ambiguous_links,
+    )
+    linked_pages: list[PageLinkedEvidence] = []
+    linked_page_text: list[str] = []
+    for candidate in link_candidates:
+        if candidate.target_work_match is not True or not candidate.target_excerpt.strip():
+            continue
+        linked_pages.append(
+            PageLinkedEvidence(
+                url=candidate.url,
+                title=candidate.target_page_title or candidate.label or str(candidate.url),
+                linked_from_url=final_url,
+                link_label=candidate.label,
+                link_discovery_method=candidate.discovery_method,
+                link_relationship="cta_target",
+                target_work_match=candidate.target_work_match is True,
+                link_classification=candidate.link_classification,
+                link_classification_method=candidate.link_classification_method,
+                link_classification_confidence=candidate.link_classification_confidence,
+                link_classification_evidence=list(candidate.link_classification_evidence),
+                link_relationship_type=candidate.link_relationship_type,
+                publisher=candidate.target_operator,
+                text=candidate.target_excerpt[:4_000],
+            )
+        )
+        linked_page_text.append(
+            f"[연결된 사이트 후보: {candidate.target_page_title or candidate.label} | "
+            f"{candidate.url}]\n{candidate.target_excerpt}"
+        )
+    detail_pages, linked_image_exclusions = _follow_cta_detail_pages(
+        link_candidates, source, timeout, max_pages=max_cta_detail_pages
+    )
+    linked_pages.extend(detail_pages)
+    image_exclusions.extend(linked_image_exclusions)
+    for page in detail_pages:
+        if page.text.strip():
+            linked_page_text.append(
+                f"[연결된 상세 원문: {page.title} | {page.url}]\n{page.text}"
+            )
+        for image_url in page.image_urls:
+            image_urls.append(str(image_url))
+            image_source_pages.setdefault(str(image_url), str(page.url))
+            image_source_titles.setdefault(str(image_url), page.title)
+            if str(image_url) in page.image_alt_text:
+                image_alt_text[str(image_url)] = page.image_alt_text[str(image_url)]
+
+    main_text = extracted
+    if linked_page_text:
+        extracted = "\n\n".join(part for part in (extracted, *linked_page_text) if part.strip())
+
     allowed = _approved_hosts(source)
+    for candidate in link_candidates:
+        if candidate.target_work_match is True:
+            candidate_host = (urlparse(str(candidate.url)).hostname or "").lower().rstrip(".")
+            if candidate_host:
+                allowed.add(candidate_host)
+    for page in detail_pages:
+        page_host = (urlparse(str(page.url)).hostname or "").lower().rstrip(".")
+        if page_host:
+            allowed.add(page_host)
     unique_images: list[HttpUrl] = []
     seen: set[str] = set()
     for candidate in image_urls:
@@ -940,13 +1572,14 @@ def collect_official_page(
         if len(unique_images) >= MAX_IMAGE_URLS:
             break
 
-    excerpt_limit = 2_000
+    excerpt_limit = 8_000
     return SourcePageCapture(
         source_id=source.id,
         title=(title or final_url)[:300],
         url=final_url,
         fetched_at=datetime.now(UTC).isoformat(),
         published_at=published_at,
+        main_text=main_text[:2_000],
         text=extracted[:excerpt_limit],
         image_urls=unique_images,
         image_alt_text={
@@ -963,6 +1596,10 @@ def collect_official_page(
             for image_url in unique_images
         },
         outbound_links=_article_outbound_links(soup, final_url, source.id),
+        link_candidates=link_candidates,
+        link_review_usage=link_review_usage,
+        linked_page_evidence=linked_pages,
+        image_exclusions=image_exclusions,
         structured_work_references=_structured_work_references(soup),
         related_image_pages=[HttpUrl(page) for page in related_pages],
         excerpt_truncated=len(extracted) > excerpt_limit,

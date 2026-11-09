@@ -102,6 +102,7 @@ def _evidence_backed_facts(
     source_id: str,
     source_text: str,
     request_id: str,
+    linked_source_texts: list[tuple[str, str]] | None = None,
 ) -> list[Fact]:
     eligible: list[tuple[int, FactCandidate, int]] = []
     topic_tokens = set(
@@ -154,16 +155,25 @@ def _evidence_backed_facts(
         eligible = [item for item in eligible if item[0] in keep]
 
     facts: list[Fact] = []
+    linked_sources = linked_source_texts or []
     for index, candidate, _priority in eligible:
         quote = candidate.evidence_quote.strip()
         fact_id = f"{request_id}-fact-{index:02d}"
         details = dict(candidate.details)
         details["source_quote"] = quote
+        fact_source_id = next(
+            (
+                linked_id
+                for linked_id, linked_text in linked_sources
+                if quote in linked_text
+            ),
+            source_id,
+        )
         facts.append(
             Fact(
                 id=fact_id,
                 statement=" ".join(candidate.statement.split()),
-                source_ids=[source_id],
+                source_ids=[fact_source_id],
                 verified=True,
                 time_sensitive=candidate.time_sensitive,
                 fact_type=candidate.fact_type,
@@ -486,6 +496,15 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
         None,
     )
     if (
+        source is not None
+        and source.role == "discovery"
+        and payload.get("source_authority") == "non_official_reference"
+        and source.status == "active"
+    ):
+        # A readable discovery page can contribute attributed, non-official
+        # evidence when no registered primary-source link is available.
+        source = source.model_copy(update={"role": "reference", "collection": "html"})
+    if (
         source is None
         or source.status != "active"
         or source.role not in {"primary", "editorial", "reference"}
@@ -498,11 +517,24 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
     if not settings.openai_api_key:
         raise RuntimeError("팩트 추출에는 OPENAI_API_KEY 또는 LLM_KEY가 필요합니다.")
 
+    linked_page_evidence = payload.get("linked_page_evidence", [])
     source_payload = json.dumps(
         {
             "title": payload.get("title", ""),
             "url": payload.get("url", ""),
             "fetched_at": payload.get("fetched_at", ""),
+            "main_text": payload.get("main_text") or source_text,
+            "linked_pages": [
+                {
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "linked_from_url": item.get("linked_from_url", ""),
+                    "published_at": item.get("published_at"),
+                    "text": item.get("text", ""),
+                }
+                for item in linked_page_evidence
+                if item.get("text")
+            ],
             "text": source_text,
         },
         ensure_ascii=False,
@@ -545,6 +577,17 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
                     "확인되거나 도시로 명확히 식별 가능한 국가를 기록하고, 장소 전체가 포함된 "
                     "원문 구절을 event_location_evidence_quote에 복사하라. 국가가 근거로 "
                     "확정되지 않으면 국가를 추정하지 말고 비워 둬라.",
+                ),
+                (
+                    "system",
+                    "Temporal validity rules: source publication date is metadata, never an expiry date. "
+                    "For event facts, use event_start/event_end only for the actual event period, "
+                    "not the article date or application deadline. For merchandise, record an "
+                    "explicit sale or preorder end date in fact.details as sale_end, sales_end, "
+                    "preorder_end, or deadline only when the source states it and the evidence quote "
+                    "contains it. Record an explicit availability status as availability_status. "
+                    "Never treat a product release date as a sale end date. If the source gives no "
+                    "validity end or status, leave it unknown; do not infer expiration from age.",
                 ),
                 (
                     "system",
@@ -609,7 +652,68 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
 
     url = str(payload["url"])
     request_id = f"crawl-{hashlib.sha1(url.encode('utf-8')).hexdigest()[:14]}"
-    facts = _evidence_backed_facts(extracted, source.id, source_text, request_id)
+    linked_sources: list[tuple[str, str]] = []
+    linked_evidence: list[SourceEvidence] = []
+
+    def link_key(value: str) -> str:
+        parsed = urlparse(value)
+        return parsed._replace(fragment="").geturl().rstrip("/")
+
+    evidence_ids_by_url = {link_key(str(payload["url"])): source.id}
+    for item in linked_page_evidence:
+        linked_url = str(item.get("url") or "").strip()
+        linked_text = str(item.get("text") or "")
+        parent_url = str(item.get("linked_from_url") or "").strip()
+        if not linked_url or not parent_url:
+            continue
+        linked_digest = hashlib.sha1(linked_url.encode("utf-8")).hexdigest()[:10]
+        linked_id = f"{source.id}-linked-{linked_digest}"
+        parent_id = evidence_ids_by_url.get(link_key(parent_url))
+        linked_sources.append((linked_id, linked_text))
+        linked_host = (urlparse(linked_url).hostname or "").lower().rstrip(".")
+        linked_evidence.append(
+            SourceEvidence(
+                id=linked_id,
+                title=str(item.get("title") or linked_url)[:300],
+                url=HttpUrl(linked_url),
+                publisher=str(item.get("publisher") or source.name)[:200],
+                # A linked page retains its own citation URL and is not mislabeled
+                # as official. The source validator checks its traced parent link.
+                is_official=False,
+                published_at=item.get("published_at"),
+                checked_at=payload.get("fetched_at"),
+                role="reference",
+                region=source.region,
+                allowed_asset_hosts=list(dict.fromkeys([*source.allowed_asset_hosts, linked_host])),
+                discovered_via_source_id=source.id,
+                discovery_url=HttpUrl(str(payload["url"])),
+                discovery_title=str(payload.get("title") or source.name)[:300],
+                parent_source_evidence_id=parent_id,
+                linked_from_url=HttpUrl(parent_url),
+                link_label=str(item.get("link_label") or "")[:300],
+                link_discovery_method=str(item.get("link_discovery_method") or "")[:80],
+                link_relationship=str(item.get("link_relationship") or "")[:40],
+                target_work_match=item.get("target_work_match") is True,
+                link_classification=str(item.get("link_classification") or "unverified")[:40],
+                link_classification_method=str(
+                    item.get("link_classification_method") or "pending"
+                )[:80],
+                link_classification_confidence=float(
+                    item.get("link_classification_confidence") or 0.0
+                ),
+                link_classification_evidence=[
+                    str(value)[:300]
+                    for value in item.get("link_classification_evidence", [])[:5]
+                ],
+                link_relationship_type=str(
+                    item.get("link_relationship_type") or "uncertain"
+                )[:40],
+            )
+        )
+        evidence_ids_by_url[link_key(linked_url)] = linked_id
+    facts = _evidence_backed_facts(
+        extracted, source.id, source_text, request_id, linked_sources
+    )
     source_material = "\n".join((payload.get("title", ""), source_text))
     term_glossary = [
         term
@@ -672,7 +776,15 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
     try:
         source_year = date.fromisoformat(published_at[:10]).year
     except ValueError:
-        source_year = None
+        source_year = next(
+            (
+                date.fromisoformat(str(item.get("published_at"))[:10]).year
+                for item in linked_page_evidence
+                if item.get("published_at")
+                and re.match(r"^\d{4}-\d{2}-\d{2}", str(item["published_at"]))
+            ),
+            None,
+        )
     event_start, event_end = _verified_event_dates(extracted, source_year)
     fact_start, fact_end = _verified_event_dates_from_facts(facts, source_year)
     has_single_event_date = any(
@@ -797,7 +909,7 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
         retention_expires_at=(datetime.now(UTC) + timedelta(days=30)).isoformat()
         if not event_end
         else None,
-        sources=[evidence],
+        sources=[evidence, *linked_evidence],
         facts=facts,
         images=images,
     )

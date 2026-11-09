@@ -5,9 +5,10 @@ import re
 import time
 from collections import Counter
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from functools import lru_cache
 from hashlib import sha1
-from urllib.parse import quote, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse
 from zoneinfo import ZoneInfo
 
 import feedparser
@@ -16,9 +17,10 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, HttpUrl
 
 from ani_menu_agent.models import CONTENT_TYPE_LABELS
+from ani_menu_agent.classification import infer_toei_press_type
 from ani_menu_agent.sources.http_policy import pace_host
 from ani_menu_agent.sources.models import Source
-from ani_menu_agent.sources.page_collector import _get_html
+from ani_menu_agent.sources.page_collector import _get_html_with_client
 from ani_menu_agent.sources.registry import load_source_registry
 from ani_menu_agent.work_catalog import load_work_catalog, resolve_title_work_ids
 
@@ -44,6 +46,271 @@ class DiscoveryItem(BaseModel):
         pattern=r"^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
     )
     linked_work_ids: list[int] = Field(default_factory=list)
+
+
+MAX_LISTING_CANDIDATES_PER_PAGE = 200
+MAX_MASTODON_THREAD_LOOKUPS = 5
+
+
+def _listing_page_number(url: str) -> int:
+    parsed = urlparse(url)
+    for key in ("page", "paged", "page_no", "p"):
+        value = parse_qs(parsed.query).get(key, [None])[0]
+        if value and value.isdigit():
+            return int(value)
+    match = re.search(r"/page/(\d+)/?$", parsed.path)
+    return int(match.group(1)) if match else 1
+
+
+def _is_listing_page_url(candidate_url: str, source: Source) -> bool:
+    candidate = urlparse(candidate_url)
+    source_url = urlparse(str(source.url))
+    if (
+        candidate.scheme != "https"
+        or (candidate.hostname or "").lower() != (source_url.hostname or "").lower()
+        or candidate.username
+        or candidate.password
+    ):
+        return False
+    source_path = source_url.path.rstrip("/")
+    candidate_path = candidate.path.rstrip("/")
+    query_page = any(
+        (value := parse_qs(candidate.query).get(key, [None])[0]) and value.isdigit()
+        for key in ("page", "paged", "page_no", "p")
+    )
+    path_page = bool(
+        re.fullmatch(re.escape(source_path) + r"/page/\d+", candidate_path)
+    )
+    return candidate_path == source_path and query_page or path_page
+
+
+def _next_listing_url(html: str, current_url: str, source: Source) -> str | None:
+    """Find a same-listing next-page link without guessing arbitrary URLs."""
+    soup = BeautifulSoup(html, "html.parser")
+    current_page = _listing_page_number(current_url)
+    expected_page = current_page + 1
+    explicit_next: list[str] = []
+    numbered_next: list[str] = []
+    next_text = re.compile(
+        r"\b(?:next|older\s+posts?|more\s+posts?)\b|次へ|次のページ|もっと見る|さらに読む|下一页",
+        re.IGNORECASE,
+    )
+
+    for anchor in soup.select("a[href]"):
+        href = str(anchor.get("href") or "").strip()
+        if not href or href.startswith(("#", "javascript:", "mailto:")):
+            continue
+        absolute = urljoin(current_url, href)
+        if not _is_listing_page_url(absolute, source):
+            continue
+        if _listing_page_number(absolute) != expected_page:
+            continue
+        text = " ".join(anchor.get_text(" ", strip=True).split())
+        label = " ".join(
+            [
+                text,
+                str(anchor.get("aria-label") or ""),
+                " ".join(str(value) for value in anchor.get("class", [])),
+                str(anchor.parent.get("class") if anchor.parent else ""),
+            ]
+        )
+        if anchor.get("rel") and "next" in anchor.get("rel", []):
+            explicit_next.append(absolute)
+        elif next_text.search(label):
+            explicit_next.append(absolute)
+        else:
+            parent = anchor
+            in_pagination = False
+            for _ in range(4):
+                if parent is None:
+                    break
+                marker = " ".join(
+                    [str(parent.get("id") or ""), " ".join(parent.get("class", []))]
+                ).casefold()
+                if parent.name == "nav" or any(
+                    term in marker for term in ("pagination", "pager", "paging", "page-links")
+                ):
+                    in_pagination = True
+                    break
+                parent = parent.parent
+            if in_pagination:
+                numbered_next.append(absolute)
+
+    candidates = explicit_next or numbered_next
+    return candidates[0] if candidates else None
+
+
+def _listing_card_published_at(anchor) -> str | None:
+    """Read a publication date only from the anchor's nearby article card."""
+    card = anchor.find_parent("li") or anchor.find_parent("article")
+    if card is None:
+        parent = anchor.parent
+        for _ in range(4):
+            if parent is None:
+                break
+            marker = " ".join(
+                [str(parent.get("id") or ""), " ".join(parent.get("class", []))]
+            ).casefold()
+            if any(term in marker for term in ("post", "entry", "article", "news", "card")):
+                card = parent
+                break
+            parent = parent.parent
+    if card is None:
+        return None
+    date_node = card.select_one(
+        'time[datetime], time, [itemprop="datePublished"], '
+        '[property="article:published_time"], .article_date, '
+        '.boxDate, [class*="published"], [class*="date"]'
+    )
+    if date_node is None:
+        return None
+    value = str(date_node.get("datetime") or date_node.get("content") or "").strip()
+    if not value:
+        value = date_node.get_text(" ", strip=True)
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        match = re.search(r"(20\d{2})[./年-](\d{1,2})[./月-](\d{1,2})", value)
+        if match:
+            try:
+                return datetime(*(int(part) for part in match.groups())).date().isoformat()
+            except ValueError:
+                return None
+        for date_format in ("%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(value, date_format).date().isoformat()
+            except ValueError:
+                continue
+        return None
+
+
+def _listing_anchor_title(anchor, source: Source) -> str:
+    """Prefer the headline in a listing card over its date and teaser text."""
+    card = anchor.find_parent("li") or anchor.find_parent("article")
+    if card is None:
+        parent = anchor.parent
+        for _ in range(5):
+            if parent is None:
+                break
+            marker = " ".join(
+                [str(parent.get("id") or ""), " ".join(parent.get("class", []))]
+            ).casefold()
+            if any(term in marker for term in ("item", "card", "article", "entry", "post")):
+                card = parent
+                break
+            parent = parent.parent
+    if card is None:
+        card = anchor.find_parent("li")
+
+    title_node = anchor.select_one("h1, h2, h3, h4")
+    if title_node is None and card is not None:
+        title_node = card.select_one("h1, h2, h3, h4")
+    if title_node is None:
+        title_node = anchor.select_one("[class*='title'], [class*='name']")
+    if title_node is None and card is not None:
+        title_node = card.select_one("[class*='title'], [class*='name']")
+    if title_node is not None:
+        title = " ".join(title_node.get_text(" ", strip=True).split())
+    else:
+        title = " ".join(anchor.get_text(" ", strip=True).split())
+
+    if not title:
+        image = anchor.find("img")
+        title = " ".join(
+            part.strip()
+            for part in (
+                str(anchor.get("aria-label") or ""),
+                str(anchor.get("title") or ""),
+                str(anchor.get("data-title") or ""),
+                str(image.get("alt") or "") if image else "",
+                str(image.get("title") or "") if image else "",
+            )
+            if part and part.strip()
+        )
+    title = re.sub(r"\s+", " ", title)
+    if source.id == "natsume_official":
+        # Natsume's card wrappers contain a site-wide broadcast banner before
+        # the linked article headline; the link text itself is the article title.
+        title = " ".join(anchor.get_text(" ", strip=True).split())
+
+    if source.id == "src_www_toei_anim_co_jp":
+        title = re.sub(
+            r"^\s*20\d{2}[./年-]\d{1,2}[./月-]\d{1,2}日?\s*(?:ニュース|NEWS)?\s*",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
+    if source.id == "src_kusuriyanohitorigoto_jp":
+        title = re.sub(r"^\s*20\d{2}[./年-]\d{1,2}[./月-]\d{1,2}\s*", "", title)
+    if source.id in {
+        "jujutsu_kaisen_official",
+        "natsume_official",
+        "haikyu_official",
+        "spy_family_official",
+        "my_hero_academia_official",
+    }:
+        title = re.sub(r"^\s*20\d{2}[./年-]\d{1,2}[./月-]\d{1,2}日?\s*", "", title)
+    if source.id == "haikyu_official":
+        title = re.sub(r"\s+20\d{2}\.\d{2}\.\d{2}\s*$", "", title)
+    if source.id == "src_dfx_theshop_jp":
+        title = re.sub(r"\s+JPY\s+[\d,]+.*$", "", title, flags=re.IGNORECASE)
+    if source.id == "eeo_events":
+        title = re.sub(r"\s+20\d{4}\.\d{2}\.\d{2}\s*$", "", title)
+    return title.strip()
+
+
+def _recal_music_records(soup: BeautifulSoup) -> list[dict]:
+    """Read the complete concert list from RE:CAL's serialized Next.js payload."""
+    records: dict[str, dict] = {}
+    for script in soup.select("script"):
+        script_text = script.string or script.get_text()
+        if not script_text or "music:concert:" not in script_text:
+            continue
+        chunks = re.findall(
+            r"self\.__next_f\.push\(\[1,(\"(?:\\\\.|[^\"\\\\])*\")\]\)",
+            script_text,
+        )
+        for encoded_chunk in chunks:
+            try:
+                payload_text = json.loads(encoded_chunk)
+            except json.JSONDecodeError:
+                continue
+            for match in re.finditer(r'\{"key":"music:concert:', payload_text):
+                start = match.start()
+                depth = 0
+                quote = False
+                escaped = False
+                end = None
+                for index in range(start, len(payload_text)):
+                    char = payload_text[index]
+                    if quote:
+                        if escaped:
+                            escaped = False
+                        elif char == "\\":
+                            escaped = True
+                        elif char == '"':
+                            quote = False
+                        continue
+                    if char == '"':
+                        quote = True
+                    elif char == "{":
+                        depth += 1
+                    elif char == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end = index + 1
+                            break
+                if end is None:
+                    continue
+                try:
+                    item = json.loads(payload_text[start:end])
+                except json.JSONDecodeError:
+                    continue
+                item_id = str(item.get("id") or item.get("key") or "")
+                href = str(item.get("href") or "")
+                if item_id and href.startswith("/e/music/") and item.get("title"):
+                    records.setdefault(item_id, item)
+    return list(records.values())
 
 
 def _item_id(source_id: str, value: str) -> str:
@@ -133,6 +400,7 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
     # Editorial/reference endpoints have a narrow, explicit purpose even when their
     # list-page title is generic. Community feeds remain trend signals only.
     category_defaults = {
+        "news": "news",
         "review": "review",
         "curation": "curation",
         "community_trend": "humor",
@@ -165,6 +433,7 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
     if "news" in inferred and re.search(r"announce|announcement|announced|発表|解禁|決定", title):
         inferred.discard("guide")
     if source.role == "editorial" and source.category not in {
+        "news",
         "review",
         "curation",
         "event",
@@ -172,6 +441,12 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
         "korea_entertainment_trade_news",
         "korea_official_news",
     }:
+        inferred.discard("news")
+    # A period-specific subject must flow through the event/goods crawler so
+    # expiry_evidence can hold expired or undated items before generation.
+    # Broad source categories such as korea_official_news must not add a second
+    # generic-news route for the same pop-up or merchandise announcement.
+    if inferred & {"event", "goods"}:
         inferred.discard("news")
     announcement_only = re.search(
         r"new season|season \d+|season [ivx]+|sequel|cast announcement|broadcast date|"
@@ -197,6 +472,10 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
             inferred.add("news")
     if not inferred and "news" in available and source.role in {"primary", "discovery"}:
         inferred.add("news")
+    # The announcement fallback above is intended for evergreen news only.
+    # Restore period routing if a release headline also matched event/goods.
+    if inferred & {"event", "goods"}:
+        inferred.discard("news")
     return inferred & available
 
 
@@ -352,17 +631,29 @@ def _catalog_work_titles_in_text(text: str) -> list[str]:
     lead = re.split(r"(?<=[.!?。！？])\s+", text, maxsplit=1)[0][:240]
     lead = re.sub(r"[（(][^）)]{1,100}[）)]", " ", lead)
     normalized_text = _normalized_tag(lead)
+    raw_text = lead.casefold()
     matches: list[tuple[int, str]] = []
     for work in load_work_catalog():
         aliases = [
             str(work.get(key) or "")
             for key in ("title_ko", "title_romaji", "title_english", "title_native")
         ]
-        if any(
-            len(_normalized_tag(alias)) >= 3 and _normalized_tag(alias) in normalized_text
-            for alias in aliases
-            if alias.strip()
-        ):
+        matched = False
+        for alias in aliases:
+            normalized_alias = _normalized_tag(alias)
+            if not alias.strip() or len(normalized_alias) < 3:
+                continue
+            if re.fullmatch(r"[a-z0-9]+", normalized_alias):
+                if re.search(
+                    rf"(?<![a-z0-9]){re.escape(normalized_alias)}(?![a-z0-9])",
+                    raw_text,
+                ):
+                    matched = True
+                    break
+            elif normalized_alias in normalized_text:
+                matched = True
+                break
+        if matched:
             matches.append(
                 (
                     int(work["menu_work_id"]),
@@ -370,6 +661,39 @@ def _catalog_work_titles_in_text(text: str) -> list[str]:
                 )
             )
     return [title for _, title in sorted(matches)]
+
+
+def _thread_worth_fetching(status: dict) -> bool:
+    """Spend a Mastodon context lookup only on a non-bot, work-specific post with replies."""
+    if (
+        not isinstance(status, dict)
+        or status.get("visibility") != "public"
+        or status.get("sensitive")
+        or status.get("reblog")
+        or status.get("in_reply_to_id")
+    ):
+        return False
+    account = status.get("account")
+    if not isinstance(account, dict) or account.get("bot"):
+        return False
+    try:
+        if int(status.get("replies_count") or 0) < 1:
+            return False
+    except (TypeError, ValueError):
+        return False
+    tags = [
+        str(tag.get("name") or "").strip()
+        for tag in status.get("tags", [])
+        if isinstance(tag, dict) and tag.get("name")
+    ]
+    automation_tags = {"bot", "bots", "autopost", "automated", "rssbot", "feedbot"}
+    if {_normalized_tag(tag) for tag in tags} & automation_tags:
+        return False
+    body = BeautifulSoup(str(status.get("content") or ""), "html.parser").get_text(
+        " ", strip=True
+    )
+    body = re.sub(r"https?://\S+|@[\w.-]+(?:@[\w.-]+)?", "", body)
+    return bool(_catalog_work_titles_for_tags(tags) or _catalog_work_titles_in_text(body))
 
 
 def parse_mastodon_tag_timeline(payload: list[dict], source: Source) -> list[DiscoveryItem]:
@@ -959,6 +1283,46 @@ def parse_anilist(payload: dict) -> list[DiscoveryItem]:
 def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[DiscoveryItem]:
     """Turn article links from an approved listing page into unverified leads."""
     soup = BeautifulSoup(html, "html.parser")
+    if source.id == "recal_music":
+        items: list[DiscoveryItem] = []
+        for record in _recal_music_records(soup):
+            try:
+                days_until = int(record.get("d"))
+            except (TypeError, ValueError):
+                days_until = 0
+            # `d` is RE:CAL's days-until-event field, not publication age.
+            if days_until < 0:
+                continue
+            href = str(record["href"])
+            if not href.startswith("/ko/"):
+                href = "/ko" + href
+            url = urljoin(str(source.url), href)
+            details = [
+                str(record.get(key) or "").strip()
+                for key in ("date", "ym", "venue", "region", "when", "runtime", "age", "artist")
+                if record.get(key)
+            ]
+            prices = record.get("prices")
+            if isinstance(prices, list):
+                details.extend(str(price).strip() for price in prices if str(price).strip())
+            items.append(
+                DiscoveryItem(
+                    id=f"recal_music-{record.get('id') or record.get('key')}",
+                    title=str(record["title"]).strip()[:300],
+                    url=url,
+                    source_id=source.id,
+                    content_types=[item.value for item in source.content_types],
+                    summary="RE:CAL 월별 공연 목록 후보: " + " · ".join(details)[:1800],
+                    region=source.region,
+                    status="discovery_only",
+                    source_role=source.role,
+                )
+            )
+            if len(items) >= limit:
+                break
+        if items:
+            return items
+
     candidates: list[DiscoveryItem] = []
     seen: set[str] = set()
     source_parsed = urlparse(str(source.url))
@@ -976,6 +1340,10 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         # prefix of its event detail URLs. Keep discovery scoped to that
         # event-record namespace instead of opening the broader site root.
         source_path = "/ko/e/offline"
+    if source.id == "recal_music" and source_page_path == "/ko/c/music":
+        # Concert detail records live below /ko/e/music rather than under the
+        # category path. Restrict this source to those event records.
+        source_path = "/ko/e/music"
     if taxonomy_listing:
         # Category archives often link to root-level canonical articles. Keep a
         # /news prefix when the archive itself lives there, to avoid treating
@@ -1003,7 +1371,6 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         "events",
         "feed",
         "goods",
-        "index.html",
         "news",
         "page",
         "privacy",
@@ -1035,7 +1402,12 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         "vote now",
     }
     minimum_path_segments = 1 if not source_path else 2
+    if source.id == "spy_family_official":
+        # The official site renders article details as /news/?p=<id>.
+        minimum_path_segments = 1
     if source.id == "recal_kr" and source_path == "/ko/e/offline":
+        minimum_path_segments = 4
+    if source.id == "recal_music" and source_path == "/ko/e/music":
         minimum_path_segments = 4
 
     # Prefer article cards and main content so a page's nav/footer links do not
@@ -1054,7 +1426,7 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
     # Some official sites render cards outside semantic article/list elements.
     # Inspect all links after content-scoped links, then reject taxonomy/navigation.
     for anchor in anchors:
-        title = " ".join(anchor.get_text(" ", strip=True).split())
+        title = _listing_anchor_title(anchor, source)
         href = anchor.get("href")
         if not title or not href or len(title) < 8:
             continue
@@ -1066,12 +1438,50 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         parsed = urlparse(url)
         if parsed.scheme != "https" or parsed.hostname != source_host:
             continue
+        detail_query = (
+            parsed.query
+            if source.id == "spy_family_official"
+            and re.fullmatch(r"p=\d+", parsed.query)
+            else ""
+        )
         normalized_url = parsed._replace(
-            path=parsed.path.rstrip("/"), query="", fragment=""
+            path=parsed.path.rstrip("/"), query=detail_query, fragment=""
         ).geturl()
         if normalized_url in seen:
             continue
         path = parsed.path.rstrip("/").lower()
+        if source.id == "natsume_official" and not path.startswith("/news/"):
+            continue
+        if source.id == "spy_family_official" and not re.fullmatch(r"p=\d+", parsed.query):
+            continue
+        if source.id == "src_www_toei_anim_co_jp" and not path.startswith("/ja/press/"):
+            # Toei's corporate press archive shares its page with policy and
+            # corporate-navigation links; only dated press records are leads.
+            continue
+        if source.id == "anime_news_network" and path.startswith("/review/game/"):
+            # The review archive also includes video-game reviews, which are not
+            # anime-review leads for this source mapping.
+            continue
+        if source.id == "anime_news_network" and re.search(
+            r"\blive[ -]?action\b|実写|실사", title, re.IGNORECASE
+        ):
+            continue
+        if source.id == "eeo_events" and not re.fullmatch(
+            r"/media/\d{4}/\d{2}/\d{2}/\d+", path
+        ):
+            continue
+        if source.id == "anime_hack_events" and not re.search(
+            r"\u958b\u50ac|\u5c55\u89a7|\u30a4\u30d9\u30f3\u30c8|\u30d5\u30a7\u30a2|"
+            r"\u30d5\u30a7\u30b9|\u30b3\u30e9\u30dc|\u4e0a\u6620|\u4f1a\u5834|"
+            r"\u516c\u6f14|\u30c1\u30b1\u30c3\u30c8|\u4f53\u9a13|"
+            r"\u30dd\u30c3\u30d7\u30a2\u30c3\u30d7|\u30b9\u30c8\u30a2",
+            title,
+        ):
+            continue
+        if source.id == "src_www_megahobby_jp" and not re.fullmatch(
+            r"/products/item/\d+", path
+        ):
+            continue
         if source.category == "review" and (
             path.startswith("/db/community/rankings/") or path in {"/polls", "/polls/browse"}
         ):
@@ -1083,27 +1493,67 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
             continue
         if path.endswith((".pdf", ".zip", ".xml", ".json", ".rss", ".mp4", ".mp3")):
             continue
-        if not path or path == source_page_path:
+        if not path or (
+            path == source_page_path
+            and not (
+                source.id == "spy_family_official"
+                and re.fullmatch(r"p=\d+", parsed.query)
+            )
+        ):
             continue
-        if source_path and not path.startswith(f"{source_path}/"):
+        query_detail = (
+            source.id == "spy_family_official"
+            and path == source_path
+            and re.fullmatch(r"p=\d+", parsed.query)
+        )
+        if source_path and not path.startswith(f"{source_path}/") and not query_detail:
             continue
         segments = [segment for segment in path.split("/") if segment]
-        if len(segments) < minimum_path_segments or segments[-1] in listing_only_segments:
+        if len(segments) < minimum_path_segments or (
+            segments[-1] in listing_only_segments and not query_detail
+        ):
             continue
         if re.search(r"/(?:page|tag|category|author)(?:/|$)", path):
             continue
+        published_at = _listing_card_published_at(anchor)
+        if source.id in {
+            "src_www_toei_anim_co_jp",
+            "jujutsu_kaisen_official",
+            "natsume_official",
+            "haikyu_official",
+            "spy_family_official",
+            "my_hero_academia_official",
+        }:
+            raw_title = " ".join(anchor.get_text(" ", strip=True).split())
+            date_match = re.match(
+                r"\s*(20\d{2})[./年-](\d{1,2})[./月-](\d{1,2})日?", raw_title
+            )
+            if date_match:
+                try:
+                    published_at = datetime(
+                        *(int(part) for part in date_match.groups())
+                    ).date().isoformat()
+                except ValueError:
+                    pass
         seen.add(normalized_url)
+        candidate_types = [item.value for item in source.content_types]
+        if source.id == "src_www_toei_anim_co_jp":
+            # The corporate archive mixes ordinary announcements, events,
+            # pop-ups, and merchandise on one listing. Route each lead by its
+            # headline so period-sensitive items reach the right lane.
+            candidate_types = [infer_toei_press_type(title)]
         candidates.append(
             DiscoveryItem(
                 id=_item_id(source.id, normalized_url),
                 title=title[:300],
                 url=normalized_url,
                 source_id=source.id,
-                content_types=[item.value for item in source.content_types],
+                content_types=candidate_types,
                 summary="목록 페이지에서 발견한 후보. 원문 확인 전 미검증.",
                 region=source.region,
                 status="trend_signal" if source.role == "trend" else "discovery_only",
                 source_role=source.role,
+                published_at=published_at,
             )
         )
         if len(candidates) >= limit:
@@ -1142,12 +1592,25 @@ def rank_candidates(
         "jp_first": {"JP": 0, "KR": 1, "global": 2},
     }
     region_order = priorities.get(region_policy, priorities["kr_first"])
+
+    def publication_order(value: str | None) -> float:
+        if not value:
+            return float("inf")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                parsed = parsedate_to_datetime(value)
+            except (TypeError, ValueError, OverflowError):
+                return float("inf")
+        return -parsed.timestamp()
+
     ordered = sorted(
         items,
         key=lambda item: (
             region_order.get(item.region, 3),
             item.source_id != "anilist",
-            item.published_at or "9999-99-99",
+            publication_order(item.published_at),
         ),
     )
     # Interleave both publishers and explicitly resolvable works. This is a
@@ -1202,17 +1665,23 @@ def collect_candidates(
     unfiltered_sources: set[str] | None = None,
     source_report: list[dict[str, object]] | None = None,
     birthday_catalog: list[DiscoveryItem] | None = None,
+    exhaustive_listing: bool = False,
 ) -> tuple[list[DiscoveryItem], list[str]]:
     """활성 출처 중 선택 유형을 지원하는 곳에서 미검증 후보만 수집합니다."""
     errors: list[str] = []
     items: list[DiscoveryItem] = []
     active = _collectable_sources_for_type(content_type, source_ids)
     headers = {"User-Agent": "me-nu-content-agent/0.3 (https://github.com/Por0ri/me-and-nu)"}
+    robots_cache = {}
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
         for rss_source in active.values():
             source_item_count = len(items)
             source_error_count = len(errors)
             attempted = False
+            pages_scanned = 0
+            page_candidate_counts: list[int] = []
+            duplicate_candidate_count = 0
+            listing_stop_reason = "not_applicable"
             try:
                 if rss_source.collection in {"rss", "youtube_rss"}:
                     if rss_source.collection == "youtube_rss" and rss_source.feed_url is None:
@@ -1241,7 +1710,9 @@ def collect_candidates(
                         query = urlencode({"y": now.year, "m": now.month})
                         birthday_url = f"{page_url.rstrip('/')}/character/birthday?{query}"
                         attempted = True
-                        html, _ = _get_html(birthday_url, rss_source, timeout=timeout)
+                        html, _ = _get_html_with_client(
+                            client, birthday_url, rss_source, timeout, robots_cache
+                        )
                         monthly_birthdays = parse_onnada_birthday_listing(
                             html,
                             rss_source,
@@ -1267,7 +1738,9 @@ def collect_candidates(
                         only = "person" if content_type == "people" else "anime"
                         page_url = f"{page_url}?{urlencode({'only': only, 'q': work_title})}"
                         attempted = True
-                        html, _ = _get_html(page_url, rss_source, timeout=timeout)
+                        html, _ = _get_html_with_client(
+                            client, page_url, rss_source, timeout, robots_cache
+                        )
                         items.extend(
                             parse_ann_search(
                                 html,
@@ -1280,8 +1753,55 @@ def collect_candidates(
                         continue
                     else:
                         attempted = True
-                        html, _ = _get_html(page_url, rss_source, timeout=timeout)
-                        items.extend(parse_html_listing(html, rss_source, limit=limit))
+                        seen_source_urls: set[str] = set()
+                        seen_page_urls: set[str] = set()
+                        listing_url = page_url
+                        while listing_url:
+                            normalized_listing_url = urlparse(listing_url)._replace(
+                                fragment=""
+                            ).geturl()
+                            if normalized_listing_url in seen_page_urls:
+                                listing_stop_reason = "repeated_page_url"
+                                break
+                            seen_page_urls.add(normalized_listing_url)
+                            html, _ = _get_html_with_client(
+                                client, listing_url, rss_source, timeout, robots_cache
+                            )
+                            # `limit` is a downstream candidate batch size. During
+                            # exhaustive discovery, inspect the whole listing page so
+                            # that batch sizing does not silently discard its tail.
+                            page_limit = (
+                                max(limit, MAX_LISTING_CANDIDATES_PER_PAGE)
+                                if exhaustive_listing
+                                else limit
+                            )
+                            page_items = parse_html_listing(
+                                html, rss_source, limit=page_limit
+                            )
+                            pages_scanned += 1
+                            page_candidate_counts.append(len(page_items))
+                            # Discovery follows the source archive regardless of article age.
+                            # Time validity is checked only after source facts are captured.
+                            page_new_count = 0
+                            for item in page_items:
+                                candidate_url = str(item.url)
+                                if candidate_url in seen_source_urls:
+                                    duplicate_candidate_count += 1
+                                    continue
+                                seen_source_urls.add(candidate_url)
+                                items.append(item)
+                                page_new_count += 1
+                            if page_new_count == 0:
+                                listing_stop_reason = "no_new_candidates"
+                                break
+                            if not exhaustive_listing and len(seen_source_urls) >= limit:
+                                listing_stop_reason = "requested_limit_reached"
+                                break
+                            next_url = _next_listing_url(html, listing_url, rss_source)
+                            if not next_url:
+                                listing_stop_reason = "no_next_page_link"
+                                break
+                            listing_url = next_url
                 elif rss_source.collection == "api" and rss_source.role == "reference":
                     if rss_source.category == "kitsu_anime_catalog":
                         if content_type == "curation":
@@ -1412,9 +1932,8 @@ def collect_candidates(
                         for status in timeline:
                             if (
                                 isinstance(status, dict)
-                                and not status.get("in_reply_to_id")
-                                and not status.get("reblog")
-                                and context_requests < 3
+                                and _thread_worth_fetching(status)
+                                and context_requests < MAX_MASTODON_THREAD_LOOKUPS
                             ):
                                 status = dict(status)
                                 status["community_posts"] = _mastodon_thread_posts(
@@ -1427,23 +1946,32 @@ def collect_candidates(
                     continue
             except (httpx.HTTPError, ValueError) as exc:
                 errors.append(f"{rss_source.id}: {exc}")
+                if pages_scanned:
+                    listing_stop_reason = "page_fetch_error"
             finally:
                 if source_report is not None:
                     source_errors = errors[source_error_count:]
+                    source_candidate_count = len(items) - source_item_count
                     source_report.append(
                         {
                             "source_id": rss_source.id,
                             "status": (
-                                "failed"
+                                "partial"
+                                if source_errors and pages_scanned and source_candidate_count
+                                else "failed"
                                 if source_errors
                                 else "succeeded"
-                                if attempted and len(items) > source_item_count
+                                if attempted and source_candidate_count > 0
                                 else "succeeded_empty"
                                 if attempted
                                 else "skipped_needs_work_title"
                             ),
                             "attempted": attempted,
-                            "candidate_count": len(items) - source_item_count,
+                            "candidate_count": source_candidate_count,
+                            "pages_scanned": pages_scanned,
+                            "page_candidate_counts": page_candidate_counts,
+                            "duplicate_candidate_count": duplicate_candidate_count,
+                            "pagination_stop_reason": listing_stop_reason,
                             "error": " | ".join(source_errors),
                         }
                     )
@@ -1521,4 +2049,4 @@ def collect_candidates(
             item = item.model_copy(update={"content_types": sorted(inferred_types)})
         unique.setdefault(str(item.url), item)
     ranked = rank_candidates(list(unique.values()), region_policy=region_policy)
-    return ranked[:limit], errors
+    return (ranked if exhaustive_listing else ranked[:limit]), errors

@@ -26,7 +26,10 @@ from ani_menu_agent.work_catalog import (
     load_work_entries,
     load_work_external_entries,
 )
-from ani_menu_agent.work_catalog_registration import register_unmatched_work_from_kitsu
+from ani_menu_agent.work_catalog_registration import (
+    register_new_work_from_source_title,
+    register_unmatched_work_from_kitsu,
+)
 
 logger = logging.getLogger(__name__)
 _CATALOG_ALIAS_INDEX_CACHE: tuple | None = None
@@ -92,6 +95,22 @@ def _normalized_title_evidence(value: str) -> str:
     return "".join(character for character in normalized if character.isalnum())
 
 
+def _is_specific_title_evidence(value: str) -> bool:
+    """Accept short CJK titles when they are exact, grounded catalog phrases."""
+    normalized = _normalized_title_evidence(value)
+    if len(normalized) >= 3:
+        return True
+    if len(normalized) != 2:
+        return False
+    return all(
+        any(
+            marker in unicodedata.name(character, "")
+            for marker in ("CJK", "HIRAGANA", "KATAKANA", "HANGUL")
+        )
+        for character in normalized
+    )
+
+
 def _title_tokens(value: str) -> set[str]:
     tokens = set(re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", value).casefold()))
     return {
@@ -104,7 +123,7 @@ def _title_tokens(value: str) -> set[str]:
 
 def _evidence_is_from_source(evidence_title: str, supplied_titles: set[str]) -> bool:
     evidence = _normalized_title_evidence(evidence_title)
-    if len(evidence) < 3:
+    if not _is_specific_title_evidence(evidence_title):
         return False
     return any(
         evidence in _normalized_title_evidence(title)
@@ -122,6 +141,12 @@ class WorkIdentityDecision(BaseModel):
     """Constrained LLM decision; IDs must come from the supplied catalog candidates."""
 
     action: Literal["match_existing", "register_new", "unresolved"]
+    subject_scope: Literal[
+        "anime_work",
+        "anime_related_no_single_work",
+        "not_anime_related",
+        "unclear",
+    ] = "unclear"
     catalog_matches: list[CatalogWorkSelection] = Field(default_factory=list, max_length=10)
     evidence_title: str = Field(default="", max_length=500)
     evidence_basis: Literal["headline_or_about", "body_excerpt"] = "headline_or_about"
@@ -396,13 +421,14 @@ def resolve_unmatched_work_with_llm(
     usage_records: list[dict] | None = None,
     audit: dict | None = None,
 ) -> list[WorkMatchEvidence]:
-    """Resolve an unmatched title; stage confirmed new works for team review.
+    """Resolve an unmatched title from the source's title/about/opening text.
 
     This fallback runs only after deterministic title and metadata matching fails.
     A short opening excerpt may help identify the article's primary subject, but
     incidental body mentions and outbound-link labels alone are never sufficient.
     Curation lists may link several works only when each selected catalog alias is
-    present in the same quoted source passage as an actual listed target.
+    present in the same quoted source passage as an actual listed target. A new
+    source-grounded anime title receives the next catalog ID after duplicate checks.
     """
     settings = get_settings()
     clean_titles = list(
@@ -511,15 +537,27 @@ def resolve_unmatched_work_with_llm(
                     "the evidence quote includes the actual itemized targets and every selected "
                     "catalog alias is grounded in that quote. "
                     "Choose register_new only for a distinct anime absent from the candidates. "
-                    "A confirmed new title is logged for team review and receives no menu ID yet. "
+                    "For a confirmed distinct primary anime absent from the catalog, assign the next "
+                    "menu_work_id after exact-title duplicate checks; do not leave it as an ID-only record. "
                     "For match_existing or register_new, set evidence_title to the exact work-name "
                     "phrase appearing in the selected evidence. If evidence_basis is "
                     "headline_or_about, the phrase must occur in a supplied title or publisher "
                     "about-reference. If it is body_excerpt, evidence_title must occur in "
                     "evidence_quote and the quote must be "
                     "copied verbatim from the opening excerpt. Never invent titles or quotes. "
-                    "Kitsu confirmation only records a discovery; "
-                    "never add a new work ID. "
+                    "A distinct work absent from the catalog may be registered when the exact "
+                    "primary work title is explicitly grounded in this original source and "
+                    "the source context identifies an anime. Registration assigns the next "
+                    "canonical menu_work_id; the crawler must persist the source document and "
+                    "ERD work entity before enqueueing generation. Do not register uncertain "
+                    "titles, duplicates, or a season/movie as a separate franchise. "
+                    "Classify subject_scope separately: use anime_work when the item is about a "
+                    "specific anime work; anime_related_no_single_work when it discusses anime "
+                    "or animation broadly, multiple works, or a concert/screening without one "
+                    "primary anime work; not_anime_related when anime is incidental or the item "
+                    "is about music artists, games, companies, investments, or other subjects; "
+                    "use unclear only when the source evidence cannot establish its scope. "
+                    "For not_anime_related, choose unresolved and do not force a menu_work_id. "
                     "If uncertain, choose unresolved. Never invent IDs or evidence titles. "
                     "Confidence must reflect the evidence.",
                 ),
@@ -573,12 +611,22 @@ def resolve_unmatched_work_with_llm(
                 "evidence_basis": decision.evidence_basis,
                 "evidence_quote": decision.evidence_quote,
                 "subject_relation": decision.subject_relation,
+                "subject_scope": decision.subject_scope,
                 "catalog_matches": [
                     match.model_dump(mode="json") for match in decision.catalog_matches
                 ],
                 "rationale": decision.rationale,
             }
         )
+
+    if (
+        decision.action != "unresolved"
+        and decision.subject_scope == "not_anime_related"
+    ):
+        logger.warning("Rejecting work match because the model classified the item as non-anime")
+        if audit is not None:
+            audit["status"] = "scope_conflicts_with_work_match"
+        return []
 
     supplied_title_evidence = {
         *clean_titles,
@@ -607,8 +655,8 @@ def resolve_unmatched_work_with_llm(
             )
         return []
     minimum_confidence = {
-        "match_existing": 0.80,
-        "register_new": 0.90,
+        "match_existing": 0.50,
+        "register_new": 0.60,
         "unresolved": 0.0,
     }[decision.action]
     if decision.confidence < minimum_confidence:
@@ -665,7 +713,7 @@ def resolve_unmatched_work_with_llm(
             match.menu_work_id: [
                 alias
                 for alias in aliases_by_id[match.menu_work_id]
-                if len(_normalized_title_evidence(alias)) >= 4
+                if _is_specific_title_evidence(alias)
                 and _normalized_title_evidence(alias) in normalized_quote
             ]
             for match in selected
@@ -690,6 +738,28 @@ def resolve_unmatched_work_with_llm(
                 source_url=source_url,
             )
             if confirmed is None:
+                if (
+                    decision.evidence_basis == "headline_or_about"
+                    and decision.subject_relation == "primary_subject"
+                    and decision.confidence >= 0.90
+                ):
+                    if audit is not None:
+                        audit.update(
+                            {
+                                "status": "matched",
+                                "catalog_alias_confirmation": "llm_headline_only",
+                                "confidence": decision.confidence,
+                            }
+                        )
+                    return [
+                        WorkMatchEvidence(
+                            menu_work_id=ids[0],
+                            basis="llm_headline_only",
+                            matched_value=decision.evidence_title,
+                            evidence_url=source_url,
+                            confidence=decision.confidence,
+                        )
+                    ]
                 logger.info(
                     "Rejecting LLM work match: catalog alias was not grounded or Kitsu-confirmed"
                 )
@@ -755,27 +825,45 @@ def resolve_unmatched_work_with_llm(
 
     if decision.action == "register_new" and decision.evidence_title.strip():
         logger.info(
-            "LLM proposed a distinct title for Kitsu verification: %s; rationale=%s",
+            "LLM identified a source-grounded new anime title: %s; rationale=%s",
             decision.evidence_title,
             decision.rationale,
         )
-        discovery_audit: dict = {}
-        registered = register_unmatched_work_from_kitsu(
-            [decision.evidence_title],
-            source_url=source_url,
-            audit=discovery_audit,
+        registration_audit: dict = {}
+        menu_work_id = register_new_work_from_source_title(
+            decision.evidence_title, source_url or "", audit=registration_audit
         )
+        if menu_work_id is None:
+            if audit is not None:
+                audit["status"] = "new_work_registration_ambiguous_or_invalid"
+            return []
         if audit is not None:
-            audit["status"] = discovery_audit.get(
-                "status",
-                "registered_existing" if registered else "kitsu_confirmation_failed",
+            audit.update(
+                {
+                    "status": registration_audit.get("status", "registered_work_pending_dataset_persist"),
+                    "menu_work_id": menu_work_id,
+                    "source_url": source_url,
+                }
             )
-            if discovery_audit:
-                audit["discovered_work"] = discovery_audit
-            if registered:
-                audit["menu_work_id"] = registered.menu_work_id
-        return [registered] if registered else []
+        return [
+            WorkMatchEvidence(
+                menu_work_id=menu_work_id,
+                basis=(
+                    "llm_title_match"
+                    if registration_audit.get("status") == "reused_existing_exact_title"
+                    else "llm_source_new_work"
+                ),
+                matched_value=decision.evidence_title,
+                evidence_url=source_url,
+                confidence=decision.confidence,
+            )
+        ]
     logger.info("LLM left unmatched work title unresolved: %s", decision.rationale)
     if audit is not None:
-        audit["status"] = "unresolved"
+        audit["status"] = {
+            "not_anime_related": "out_of_scope",
+            "anime_related_no_single_work": "ambiguous_primary_work",
+            "anime_work": "unresolved_work_id",
+            "unclear": "unresolved",
+        }[decision.subject_scope]
     return []

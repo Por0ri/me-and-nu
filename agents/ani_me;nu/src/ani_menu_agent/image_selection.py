@@ -104,9 +104,17 @@ def image_belongs_to_package_sources(
         # anime artwork, even if legacy metadata mislabeled it as a key visual.
         return False
     content_type = package.content_type if package is not None else None
-    if image.asset_kind == "goods_product" and content_type != "goods":
+    if (
+        image.asset_kind == "goods_product"
+        and content_type != "goods"
+        and not same_source_page
+    ):
         return False
-    if image.asset_kind == "event_visual" and content_type != "event":
+    if (
+        image.asset_kind == "event_visual"
+        and content_type != "event"
+        and not same_source_page
+    ):
         return False
     if image.asset_kind == "fan_meme" and (
         package is None or package.content_kind.value != "humor"
