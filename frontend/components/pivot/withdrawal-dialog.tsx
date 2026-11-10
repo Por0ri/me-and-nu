@@ -30,15 +30,23 @@ export function WithdrawalDialog({ withdraw, onClose }: { withdraw: () => Promis
     setError("");
     try {
       await withdraw();
-      onClose();
     } catch (failure) {
-      setError(failure instanceof ApiError && failure.code === "WITHDRAWAL_BLOCKED"
-        ? "연결된 크리에이터 채널이 있어 탈퇴할 수 없어요."
-        : "탈퇴 신청을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+      const code = failure instanceof ApiError ? failure.code : null;
+      if (code === "WITHDRAWAL_BLOCKED") {
+        setError("연결된 크리에이터 채널이 있어 탈퇴할 수 없어요.");
+      } else if (code === "ACCOUNT_REQUEST_IN_PROGRESS") {
+        setError("다른 계정 요청을 처리하고 있어요. 잠시 후 다시 시도해 주세요.");
+      } else if (code === "ACCOUNT_SESSION_CHANGED") {
+        setError("로그인 상태가 바뀌었어요. 다시 로그인해 주세요.");
+      } else {
+        setError("탈퇴 신청을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+      }
+      return;
     } finally {
       pending.current = false;
       setBusy(false);
     }
+    onClose();
   }
 
   return <dialog ref={dialog} className={`${styles.dialog} ${styles.withdrawalDialog}`} aria-modal="true"

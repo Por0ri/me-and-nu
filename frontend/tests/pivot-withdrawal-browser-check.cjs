@@ -61,6 +61,28 @@ async function verify(browser, fixture, width) {
     assert.ok(await focused(trigger));
     assert.equal(writes(profile).length, 0);
 
+    const logout = '/api/v1/auth/logout';
+    let releaseLogout;
+    const logoutGate = new Promise(resolve => { releaseLogout = resolve; });
+    await page.route(url => url.origin === apiOrigin && url.pathname === logout,
+      async route => { await logoutGate; await route.continue(); }, { times: 1 });
+    fixture.state.failNext = { path: logout, method: 'POST', status: 503 };
+    await button(my(), '로그아웃').click();
+    const logoutDialog = page.getByRole('dialog', { name: '로그아웃', exact: true });
+    const logoutStarted = page.waitForRequest(url => url.url() === apiOrigin + logout);
+    await button(logoutDialog, '로그아웃').click();
+    await logoutStarted;
+    // Exercise the provider guard even though the logout modal blocks pointer input behind it.
+    await my().getByRole('button', { name: '회원탈퇴', exact: true, includeHidden: true }).evaluate(node => node.click());
+    try {
+      await button(dialog, '탈퇴').click();
+      await message(dialog, 'alert', '다른 계정 요청을 처리하고 있어요');
+      assert.equal(writes(profile).length, 0);
+      await button(dialog, '취소').click();
+    } finally { releaseLogout(); }
+    await message(logoutDialog, 'alert', '로그아웃하지 못했어요');
+    await button(logoutDialog, '취소').click();
+
     await trigger.click();
     fixture.state.failNext = { path: profile, method: 'DELETE', status: 409, code: 'WITHDRAWAL_BLOCKED' };
     await button(dialog, '탈퇴').click();
@@ -175,7 +197,9 @@ async function verify(browser, fixture, width) {
     const requestsBeforeDemo = fixture.requests.length;
     await page.goto(base + '/pivot/demo?view=my');
     await button(page, '회원탈퇴').click();
-    await button(page.getByRole('dialog', { name: 'Demo 회원탈퇴 안내' }), '확인').click();
+    const demoDialog = page.getByRole('dialog', { name: 'Demo 회원탈퇴 안내' });
+    await demoDialog.getByText('시연용 화면이라 실제 계정 삭제 API를 호출하거나 개인정보를 삭제하지 않아요.', { exact: true }).waitFor();
+    await button(demoDialog, '확인').click();
     assert.equal(fixture.requests.length, requestsBeforeDemo);
     assert.deepEqual(errors, []);
     console.log(`PASS ${width}px: withdrawal, restoration, errors, account isolation, keyboard and zero Demo API requests`);

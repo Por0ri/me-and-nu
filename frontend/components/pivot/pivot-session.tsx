@@ -11,6 +11,10 @@ import { initialOnboardingState, onboardingReducer, type OnboardingState, type O
 type SessionState = { status: "loading" | "ready" | "error" | "disconnected"; session: Session | null; message?: string };
 type ContextValue = { state: SessionState; refresh: () => void; logout: () => Promise<void>; withdraw?: () => Promise<void>; restoreAccount?: () => Promise<void>; returnToLogin?: () => void; draft: ConsentDraft | null; rememberDraft: (draft: ConsentDraft) => void; onboarding: OnboardingState; dispatchOnboarding: Dispatch<OnboardingAction>; profile: OnboardingProfile; rememberProfile: (profile: OnboardingProfile) => void; completeOnboarding: (session: Session) => void };
 const Context = createContext<ContextValue | null>(null);
+function accountSessionChanged() {
+  return new ApiError("로그인 상태가 바뀌었어요. 다시 로그인해 주세요.", 403, "ACCOUNT_SESSION_CHANGED");
+}
+
 const isolatedSession: ContextValue = {
   state: { status: "disconnected", session: null }, draft: null,
   refresh: () => {}, logout: async () => {}, rememberDraft: () => {},
@@ -76,19 +80,22 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
       : isRestorationSession(current);
     if (request !== epoch.current || !sameAccount ||
         typeof owner.csrfToken !== "string" || !owner.csrfToken || current.csrfToken !== owner.csrfToken) {
-      throw new ApiError("로그인 상태가 바뀌었어요. 다시 로그인해 주세요.", 403, "ACCOUNT_SESSION_CHANGED");
+      throw accountSessionChanged();
     }
   }
   async function withdraw() {
     requirePivotApi();
     const owner = state.session;
-    if (changingAccount.current || logoutRequest.current || !owner || !isActiveSession(owner)) return;
+    if (changingAccount.current || logoutRequest.current) {
+      throw new ApiError("계정 요청을 처리하고 있어요.", 409, "ACCOUNT_REQUEST_IN_PROGRESS");
+    }
+    if (!owner || !isActiveSession(owner)) throw accountSessionChanged();
     const request = epoch.current;
     changingAccount.current = true;
     try {
       await verifyAccount(owner, request);
       await requestWithdrawal(owner.csrfToken);
-      if (request !== epoch.current) return;
+      if (request !== epoch.current) throw accountSessionChanged();
       endSession("탈퇴 신청이 완료됐어요. 30일 이내에 같은 소셜 계정으로 로그인해 계정을 복구할 수 있어요.");
       router.replace("/pivot/login");
     } catch (error) {
@@ -106,14 +113,17 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
   async function restoreAccount() {
     requirePivotApi();
     const owner = state.session;
-    if (changingAccount.current || !owner || !isRestorationSession(owner)) return;
+    if (changingAccount.current || logoutRequest.current) {
+      throw new ApiError("계정 요청을 처리하고 있어요.", 409, "ACCOUNT_REQUEST_IN_PROGRESS");
+    }
+    if (!owner || !isRestorationSession(owner)) throw accountSessionChanged();
     const request = epoch.current;
     changingAccount.current = true;
     try {
       if (restoredAccount.current?.owner !== owner) {
         await verifyAccount(owner, request);
         const result = await restoreWithdrawal(owner.csrfToken);
-        if (request !== epoch.current) return;
+        if (request !== epoch.current) throw accountSessionChanged();
         if (result?.status !== "active" || !result.user || !isActiveSession({
           authenticated: true, sessionState: "active", user: result.user,
           onboardingCompleted: result.onboardingCompleted, csrfToken: "",
@@ -122,7 +132,7 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
       }
       // A failed read can be retried without resending the already successful POST.
       const current = await getSession({ fresh: true });
-      if (request !== epoch.current) return;
+      if (request !== epoch.current) throw accountSessionChanged();
       if (!isActiveSession(current) || current.user?.id !== restoredAccount.current.id ||
           typeof current.csrfToken !== "string" || !current.csrfToken || current.csrfToken === owner.csrfToken) {
         throw new ApiError("복구한 계정의 로그인 상태를 확인하지 못했어요. 다시 로그인해 주세요.", 403, "ACCOUNT_SESSION_CHANGED");
