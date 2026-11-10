@@ -100,6 +100,10 @@
 .naverCrop img { position: absolute; width: 1187.1%; height: 171.56%; left: -380.65%; top: -35.78%; max-width: none; }
 .loginFeedback, .consentFeedback { margin: 10px 0 0; color: var(--pivot-primary); text-align: center; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .loginFeedback:empty, .consentFeedback:empty { display: none; }
+.restorationIntro { gap: 16px; padding-top: clamp(48px, 14vh, 112px); text-align: center; }
+.restorationIntro h1 { color: inherit; font-size: 20px; }
+.restorationIntro p { margin: 0; font-size: 14px; line-height: 22px; }
+.restorationIntro + .loginActions { gap: 12px; margin-top: 24px; }
 .textButton { align-self: center; border: 0; background: none; color: var(--pivot-primary); text-decoration: underline; min-height: 44px; padding: 8px; font-size: 14px; }
 .consentBrand { margin-top: 152px; }
 .consentBody { margin: 68px 24px 0; }

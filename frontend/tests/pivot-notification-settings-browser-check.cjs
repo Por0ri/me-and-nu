@@ -116,7 +116,7 @@ async function verify(browser, width, demo) {
       await until(async () => (await section.innerText()).includes('로그인 상태가 변경됐어요'));
       assert.equal(writes(), beforeSessionChange); assert.equal(await allow.getAttribute('aria-disabled'), 'true');
       await my.getByRole('button', { name: '회원탈퇴', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: '회원탈퇴 기능은 준비 중' }).waitFor();
+      await my.getByRole('dialog', { name: '회원탈퇴' }).getByRole('button', { name: '취소' }).click();
     }
     assert.ok(requests.every(request => request.method === 'GET' || request.method === 'PATCH' && request.path.endsWith('/notification-settings')));
     assert.ok(!requests.some(request => /\/notifications(?:\/|$)|withdraw|admin/.test(request.path)));

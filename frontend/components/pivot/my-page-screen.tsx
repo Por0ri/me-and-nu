@@ -6,6 +6,7 @@ import type { NotificationSettingsSource } from "@/lib/pivot/notification-settin
 import type { MyPagePolicyType } from "@/lib/pivot/policy-document";
 import { MyPagePolicyDialog } from "./my-page-policy-dialog";
 import { MyNotificationSettings } from "./my-notification-settings";
+import { WithdrawalDialog } from "./withdrawal-dialog";
 import { HomeHeader, HomeNavigation } from "./home-screen";
 import homeStyles from "./home.module.css";
 import styles from "./my-page.module.css";
@@ -75,14 +76,15 @@ function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
   </dialog>;
 }
 
-export function PivotMyPageScreen({ state, demo, notificationScope, notificationSource, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout }: {
-  state: MyPageState; demo: boolean; notificationScope?: object; notificationSource?: NotificationSettingsSource; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>;
+export function PivotMyPageScreen({ state, demo, notificationScope, notificationSource, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout, onWithdraw }: {
+  state: MyPageState; demo: boolean; notificationScope?: object; notificationSource?: NotificationSettingsSource; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>;
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
   const [policy, setPolicy] = useState<MyPagePolicyType | null>(null);
   const closingPolicy = useRef(false);
   const [accountDialog, setAccountDialog] = useState<"로그아웃" | "회원탈퇴" | null>(null);
+  const [withdrawalDialog, setWithdrawalDialog] = useState(false);
   const [logoutDialog, setLogoutDialog] = useState(false);
   const [logoutError, setLogoutError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
@@ -158,7 +160,13 @@ export function PivotMyPageScreen({ state, demo, notificationScope, notification
         <MenuSection>
           {(["로그아웃", "회원탈퇴"] as const).map((label, index) => <button key={label} type="button" className={`${styles.row} ${styles.account}`}
             disabled={label === "로그아웃" && loggingOut} aria-busy={label === "로그아웃" && loggingOut || undefined}
-            onClick={() => demo ? setAccountDialog(label) : label === "로그아웃" && onLogout ? confirmLogout() : pending(label)}>{label}<Chevron muted last={index === 1} /></button>)}
+            aria-haspopup={demo || (index === 0 ? onLogout : onWithdraw) ? "dialog" : undefined}
+            onClick={() => {
+              if (demo) setAccountDialog(label);
+              else if (label === "로그아웃" && onLogout) confirmLogout();
+              else if (label === "회원탈퇴" && onWithdraw) { setNotice(""); setWithdrawalDialog(true); }
+              else pending(label);
+            }}>{label}<Chevron muted last={index === 1} /></button>)}
         </MenuSection>
         {demo ? <p id="my-demo-help" className={styles.help}>시연용 가상 프로필이에요. 알림 선택은 이 화면에서만 적용되며, 화면을 떠나거나 새로고침하면 초기화돼요.</p> : null}
       </> : <section className={homeStyles.status} aria-label="My Page 연결 상태">
@@ -176,5 +184,6 @@ export function PivotMyPageScreen({ state, demo, notificationScope, notification
     {policy ? <MyPagePolicyDialog type={policy} demo={demo} onClose={closePolicy} /> : null}
     {accountDialog ? <DemoAccountDialog action={accountDialog} onClose={() => setAccountDialog(null)} /> : null}
     {logoutDialog && !demo ? <ServiceLogoutDialog busy={loggingOut} error={logoutError} onConfirm={() => void logout()} onClose={closeLogout} /> : null}
+    {withdrawalDialog && !demo && onWithdraw ? <WithdrawalDialog withdraw={onWithdraw} onClose={() => setWithdrawalDialog(false)} /> : null}
   </main>;
 }

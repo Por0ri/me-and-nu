@@ -248,6 +248,12 @@ test('Session routes use current user accounts without manufacturing onboarding 
   assert.equal(s.resolvePivotSessionRoute(session, '/pivot/login'), '/pivot/consent');
   assert.equal(s.resolvePivotSessionRoute(session, '/pivot/consent'), null);
   assert.equal(s.resolvePivotSessionRoute(null, '/pivot/home'), '/pivot/login');
+  const restoring = { authenticated: false, sessionState: 'restoration_pending', user: null, onboardingCompleted: true };
+  assert.equal(s.isActiveSession(restoring), false);
+  assert.equal(s.resolvePivotSessionRoute(restoring, '/pivot/login'), null);
+  for (const path of ['/pivot', '/pivot/home', '/pivot/consent', '/pivot/profile']) {
+    assert.equal(s.resolvePivotSessionRoute(restoring, path), '/pivot/login');
+  }
   for (const invalid of [session, {...active, user:null}, {...active, onboardingCompleted:false},
     {...active, user:{id:7,accountType:'consumer'}}, {...active, user:{id:0,accountType:'user'}}]) {
     assert.equal(s.isActiveSession(invalid), false);
