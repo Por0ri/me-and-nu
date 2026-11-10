@@ -5,7 +5,8 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
   strictOnboarding = false, oauthCallbackPhase = 'active', today = '2026-10-27', topicId = 7 } = {}) {
   const requests = [];
   const state = { phase: 'anonymous', csrf: 'fixture-anonymous-csrf', cookie: 'fixture-anonymous', saved: new Set(), failNext: null, topics: true,
-    onboardingCompletions: 0, onboarding: null, notifications: [], notificationPageSize: 50 };
+    onboardingCompletions: 0, onboarding: null, notifications: [], notificationPageSize: 50, userId: 12 };
+  const scheduledDeleteAt = '2027-01-01T00:00:00Z';
   const topic = { id: topicId, code: 'anime', name: '애니메이션', subtopicIds: [19], status: 'active', deletedAt: null };
   const contents = [
     { id: 41, title: '연결 검증 콘텐츠 하나', summary: '첫 번째 콘텐츠의 공개 요약입니다.', body: '테스트 API에서 내려온 첫 번째 본문입니다.\n\n새로고침해도 저장 상태가 유지됩니다.' },
@@ -36,9 +37,10 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
     state.csrf = `fixture-${phase}-csrf`;
   }
   function session() {
-    return { authenticated: state.phase !== 'anonymous', sessionState: state.phase,
-      onboardingCompleted: state.phase === 'active', user: state.phase === 'active' ? { id: 12, accountType: 'user' } : null,
-      csrfToken: state.csrf };
+    const restoring = state.phase === 'restoration_pending';
+    return { authenticated: !restoring && state.phase !== 'anonymous', sessionState: state.phase,
+      onboardingCompleted: restoring || state.phase === 'active', user: state.phase === 'active' ? { id: state.userId, accountType: 'user' } : null,
+      csrfToken: state.csrf, ...(restoring ? { scheduledDeleteAt } : {}) };
   }
   const error = (status, code, message = code) => ({ status, body: { code, message } });
   function validateOnboarding(data) {
@@ -83,7 +85,8 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
     if (method === 'GET' && url.pathname === '/api/v1/policies') return { status: 200, body: { consentItems: policies, aiNotice: '테스트', chatRetention: { days: null, status: 'undecided' } } };
     if (method === 'GET' && /^\/api\/v1\/auth\/login\/(kakao|naver)\/callback$/.test(url.pathname)) {
       rotate(oauthCallbackPhase);
-      return { status: 303, headers: { 'Set-Cookie': cookie(), Location: `${frontendOrigin}/pivot/${oauthCallbackPhase === 'onboarding_pending' ? 'consent' : 'home'}` } };
+      const destination = { onboarding_pending: 'consent', restoration_pending: 'login' }[oauthCallbackPhase] ?? 'home';
+      return { status: 303, headers: { 'Set-Cookie': cookie(), Location: `${frontendOrigin}/pivot/${destination}` } };
     }
     if (method !== 'GET' && normalized.get('x-csrf-token') !== state.csrf) return error(403, 'CSRF_INVALID');
     if (method === 'POST' && /^\/api\/v1\/auth\/login\/(kakao|naver)$/.test(url.pathname)) {
@@ -97,6 +100,18 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
       rotate('anonymous'); return { status: 204, headers: { 'Set-Cookie': cookie() } };
     }
     if (!normalized.get('cookie')?.includes(`fixture_session=${state.cookie}`)) return error(401, 'AUTH_REQUIRED');
+    if (method === 'POST' && url.pathname === '/api/v1/auth/withdrawal-restorations') {
+      if (state.phase !== 'restoration_pending') return error(403, 'RESTORATION_SESSION_REQUIRED');
+      rotate('active');
+      return { status: 200, headers: { 'Set-Cookie': cookie() }, body: { user: session().user, status: 'active', onboardingCompleted: true } };
+    }
+    if (method === 'DELETE' && url.pathname === '/api/v1/users/me') {
+      if (state.phase !== 'active') return error(401, 'AUTH_REQUIRED');
+      if (url.searchParams.get('mode') !== 'grace') return error(422, 'WITHDRAWAL_MODE_UNSUPPORTED');
+      rotate('anonymous');
+      return { status: 202, headers: { 'Set-Cookie': 'fixture_session=; Max-Age=0; HttpOnly; Path=/' },
+        body: { status: 'withdrawal_pending', mode: 'grace', scheduledDeleteAt } };
+    }
     if (state.phase === 'anonymous') return error(401, 'AUTH_REQUIRED');
     if (method === 'GET' && url.pathname === '/api/v1/topics') return { status: 200, body: { topics: state.topics ? [{ id: topic.id, code: topic.code, name: topic.name }] : [] } };
     if (url.pathname === '/api/v1/onboarding/works' && method === 'GET') {
@@ -125,6 +140,12 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
       rotate('active'); return { status: 201, headers: { 'Set-Cookie': cookie() }, body: { user: { id: 12, accountType: 'user' }, onboardingCompleted: true, activeTopic: {...topic,subtopicIds:[]}, answers: {...data.answers,favoriteEntityIds:[...data.answers.favoriteEntityIds].sort((a,b)=>a-b),preferenceTagIds:[...data.answers.preferenceTagIds].sort((a,b)=>a-b)} } };
     }
     if (state.phase !== 'active') return error(403, 'ONBOARDING_REQUIRED');
+    if (method === 'GET' && url.pathname === '/api/v1/users/me') {
+      return { status: 200, body: { userId: state.userId, nickname: '검증 계정', email: null, accountType: 'user' } };
+    }
+    if (method === 'GET' && url.pathname === '/api/v1/users/me/notification-settings') {
+      return { status: 200, body: { inAppEnabled: true, nightInAppEnabled: false, version: 1 } };
+    }
     const inbox = '/api/v1/users/me/notifications';
     if (method === 'GET' && url.pathname === inbox) {
       const after = Number(url.searchParams.get('cursor') || Infinity);

@@ -41,3 +41,10 @@
 .screen .logoutDialog .dialogActions button { min-width: 0; min-height: 41px; color: #9c79e6; }
 .screen .logoutDialog .dialogActions button:last-child { color: #fafafa; }
 .screen .logoutDialog .dialogActions button:is(:disabled, [aria-disabled="true"]) { cursor: wait; opacity: .65; }
+.withdrawalDialog { max-height: calc(100dvh - 32px); padding-inline: 22px; }
+.withdrawalDialog strong, .withdrawalDialog .withdrawalError { color: #b42318; }
+.withdrawalDialog .withdrawalQuestion { color: #71717a; font-size: 12px; line-height: 18px; }
+.screen .withdrawalDialog .dialogActions button:last-child { background: #7043b4; }
+.screen .withdrawalDialog .dialogActions button:is(:disabled, [aria-disabled="true"]) { cursor: wait; opacity: .65; }
+.withdrawalDialog .withdrawalProgress { margin: 0; }
+.withdrawalDialog .withdrawalProgress:not(:empty) { margin-top: 12px; }

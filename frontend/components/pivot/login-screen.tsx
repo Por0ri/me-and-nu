@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { oauthErrorMessage, startSnsLogin, type SnsProvider } from "@/lib/pivot/services";
+import { isRestorationSession, oauthErrorMessage, startSnsLogin, type SnsProvider } from "@/lib/pivot/services";
 import { usePivotSession } from "./pivot-session";
+import { AccountRestorationScreen } from "./account-restoration-screen";
 import { PivotAsset, PivotBrand, PivotFrame, PrimaryButton } from "./pivot-ui";
 import styles from "./pivot.module.css";
 
 export function LoginScreen({ preview = false, onDemoContinue }: { preview?: boolean; onDemoContinue?: () => void }) {
   const demo = onDemoContinue !== undefined;
-  const { state, refresh } = usePivotSession();
+  const { state, refresh, restoreAccount, returnToLogin } = usePivotSession();
   const [message, setMessage] = useState("");
   const [pendingProvider, setPendingProvider] = useState<SnsProvider | null>(null);
   const loginPending = useRef(false);
@@ -43,11 +44,12 @@ export function LoginScreen({ preview = false, onDemoContinue }: { preview?: boo
       setMessage(error instanceof Error ? error.message : "로그인을 시작할 수 없어요.");
     }
   }
+  if (!preview && !demo && isRestorationSession(state.session) && restoreAccount && returnToLogin) {
+    return <AccountRestorationScreen key={state.session?.csrfToken} scheduledDeleteAt={state.session?.scheduledDeleteAt} restore={restoreAccount} returnToLogin={returnToLogin} />;
+  }
   const sessionNotice = !preview && !demo && state.session?.sessionState === "active"
     ? "로그인을 확인했어요. 홈으로 이동하고 있어요."
-    : !preview && !demo && state.session?.sessionState === "restoration_pending"
-      ? "계정 복원 확인이 필요해요. 계정 복원 절차를 먼저 진행해 주세요."
-      : !preview && !demo ? state.message : "";
+    : !preview && !demo ? state.message : "";
   return <PivotFrame chrome={preview}>
     <section className={styles.loginIntro} aria-labelledby="login-heading">
       <PivotBrand screen="login" />

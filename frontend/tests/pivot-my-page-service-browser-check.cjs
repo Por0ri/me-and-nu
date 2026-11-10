@@ -56,8 +56,10 @@ async function verify(browser, viewport) {
       if (method === 'GET' && url.pathname === '/api/v1/me/topics') return reply({ topics: [{ id: 83, code: 'anime', name: '애니메이션', subtopicIds: [], status: 'active', deletedAt: null }] });
       if (method === 'GET' && url.pathname === '/api/v1/topics/83/feed') return reply({ selectedTopicId: 83, sections: [], nextCursor: null, emptyReason: null });
       if (method === 'GET' && url.pathname === '/api/v1/users/me/bookmarks') return reply({ items: [], nextCursor: null });
+      if (method === 'GET' && url.pathname === '/api/v1/users/me/notification-settings') return reply({ inAppEnabled: true, nightInAppEnabled: false, version: 1 });
       if (method === 'GET' && url.pathname === '/api/v1/topics') return reply({ topics: [{ id: 83, code: 'anime', name: '애니메이션' }] });
       if (method === 'GET' && url.pathname === '/api/v1/me/taste') return reply(taste);
+      if (method === 'GET' && url.pathname === '/api/v1/me/taste/hints') return reply({ topicId: 83, enough: false, contents: 0, works: [], genres: [], themes: [], types: [] });
       if (method === 'GET' && url.pathname === '/api/v1/me/taste/works') return reply({ items: [work], nextCursor: null });
       // These expected write requests receive in-memory mock replies only.
       // Nothing is sent to a BE or persisted; all other writes are aborted below.
@@ -107,9 +109,9 @@ async function verify(browser, viewport) {
     await capture('service-profile');
     const card = await my.getByRole('region', { name: '프로필', exact: true }).boundingBox();
     assert.equal(card.x, 24); assert.equal(card.width, viewport.width - 48); assert.equal(card.height, 68);
-    for (const toggle of await my.getByRole('switch').all()) assert.equal(await toggle.getAttribute('aria-disabled'), 'true');
+    await my.getByRole('switch', { name: '알림 허용', checked: true, exact: true }).waitFor();
     await my.getByRole('button', { name: '회원탈퇴', exact: true }).click();
-    await my.getByRole('status').filter({ hasText: '준비 중' }).waitFor();
+    await my.getByRole('dialog', { name: '회원탈퇴' }).getByRole('button', { name: '취소' }).click();
     // 프로필 수정 opens the nickname page; an unchanged nickname cannot be saved.
     await my.getByRole('button', { name: '프로필 수정', exact: true }).click(); await page.waitForURL('**/pivot/profile');
     await page.getByText('프로필에 표시되는 닉네임을 변경할 수 있어요').waitFor();

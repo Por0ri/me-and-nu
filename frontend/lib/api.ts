@@ -13,7 +13,9 @@ export type Session = {
   user: { id: number; accountType: AccountType } | null;
   onboardingCompleted: boolean;
   csrfToken: string;
+  scheduledDeleteAt?: string | null;
 };
+type WithdrawalRestoration = { status: "active"; user: NonNullable<Session["user"]>; onboardingCompleted: boolean };
 export type PolicyType = string;
 export type Policy = {
   type: PolicyType;
@@ -196,6 +198,7 @@ export const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://local
 export const API_UNAUTHORIZED_EVENT = "api:unauthorized";
 let csrfToken: string | null = null;
 let sessionRequest: Promise<Session> | null = null;
+let sessionVersion = 0;
 
 function query(params: Record<string, string | number | boolean | undefined | null>): string {
   const search = new URLSearchParams();
@@ -208,11 +211,12 @@ function query(params: Record<string, string | number | boolean | undefined | nu
 export async function apiRequest<T>(path: string, init: RequestInit = {}, expectedStatus?: number): Promise<T> {
   init.signal?.throwIfAborted();
   const method = (init.method ?? "GET").toUpperCase();
-  if (method !== "GET" && method !== "HEAD" && !csrfToken) await getSession();
+  if (method !== "GET" && method !== "HEAD" && !csrfToken && !new Headers(init.headers).has("X-CSRF-Token")) await getSession();
   init.signal?.throwIfAborted();
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (method !== "GET" && method !== "HEAD" && csrfToken && !headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", csrfToken);
+  const version = sessionVersion;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init, headers, credentials: "include", cache: "no-store",
   });
@@ -223,9 +227,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, expect
   init.signal?.throwIfAborted();
   if (!response.ok) {
     const error = payload as ErrorPayload | null;
-    if (response.status === 401 || error?.code === "CSRF_INVALID") csrfToken = null;
-    if (response.status === 401 && typeof window !== "undefined") {
-      window.dispatchEvent(new Event(API_UNAUTHORIZED_EVENT));
+    if (version === sessionVersion) {
+      if (response.status === 401 || error?.code === "CSRF_INVALID") csrfToken = null;
+      if (response.status === 401 && typeof window !== "undefined") {
+        window.dispatchEvent(new Event(API_UNAUTHORIZED_EVENT));
+      }
     }
     throw new ApiError(
       error?.message ?? `요청에 실패했습니다. (HTTP ${response.status})`,
@@ -238,19 +244,19 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, expect
   return payload as T;
 }
 
-export function getSession(init: Pick<RequestInit, "signal"> = {}): Promise<Session> {
-  // A dialog-owned preflight must be cancellable without cancelling shared bootstrap reads.
-  if (init.signal) return apiRequest<Session>("/api/v1/auth/session", init).then(session => {
-    init.signal?.throwIfAborted();
-    csrfToken = session.csrfToken;
+export function getSession({ fresh, signal }: Pick<RequestInit, "signal"> & { fresh?: boolean } = {}): Promise<Session> {
+  const version = sessionVersion;
+  const read = () => apiRequest<Session>("/api/v1/auth/session", { signal }).then(session => {
+    signal?.throwIfAborted();
+    if (version === sessionVersion) csrfToken = session.csrfToken;
     return session;
   });
+  // A dialog-owned preflight must be cancellable without cancelling shared bootstrap reads.
+  if (signal || fresh) return read();
   // Concurrent first reads (including Strict Mode) must share one cookie issuance.
   if (!sessionRequest) {
-    sessionRequest = apiRequest<Session>("/api/v1/auth/session").then((session) => {
-      csrfToken = session.csrfToken;
-      return session;
-    }).finally(() => { sessionRequest = null; });
+    const request = read().finally(() => { if (sessionRequest === request) sessionRequest = null; });
+    sessionRequest = request;
   }
   return sessionRequest;
 }
@@ -265,6 +271,22 @@ export async function login(input: LoginInput): Promise<LoginResponse> {
 }
 export async function logout(): Promise<void> {
   await apiRequest<void>("/api/v1/auth/logout", { method: "POST" });
+  csrfToken = null;
+}
+export async function requestWithdrawal(csrf: string): Promise<void> {
+  await apiRequest("/api/v1/users/me?mode=grace", { method: "DELETE", headers: { "X-CSRF-Token": csrf } }, 202);
+  invalidateSessionToken();
+}
+export async function restoreWithdrawal(csrf: string): Promise<WithdrawalRestoration> {
+  const result = await apiRequest<WithdrawalRestoration>(
+    "/api/v1/auth/withdrawal-restorations", { method: "POST", headers: { "X-CSRF-Token": csrf } }, 200,
+  );
+  invalidateSessionToken();
+  return result;
+}
+function invalidateSessionToken() {
+  sessionVersion++;
+  sessionRequest = null;
   csrfToken = null;
 }
 export function getPolicies(signal?: AbortSignal): Promise<PoliciesResponse> { return apiRequest("/api/v1/policies", { signal }); }

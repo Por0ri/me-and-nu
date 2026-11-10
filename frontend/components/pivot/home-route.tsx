@@ -16,7 +16,7 @@ import { createReactionControls } from "@/lib/pivot/reaction-service";
 import { InteractionProvider } from "./interaction-context";
 
 export function HomeRoute() {
-  const { state, refresh, logout } = usePivotSession();
+  const { state, refresh, logout, withdraw } = usePivotSession();
   const sessionRef = useRef(state.session);
   sessionRef.current = state.status === "ready" ? state.session : null;
   const userId = state.session?.user?.id;
@@ -52,5 +52,5 @@ export function HomeRoute() {
       {state.status === "error" && <button type="button" onClick={refresh}>다시 확인</button>}
     </main>;
   }
-  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience key={state.session?.csrfToken} mySource={mySource} activitySource={activitySource} inquirySource={inquirySource} reportSource={reportSource} notificationSource={notificationSource} homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} /></InteractionProvider></Suspense>;
+  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience key={state.session?.csrfToken} mySource={mySource} activitySource={activitySource} inquirySource={inquirySource} reportSource={reportSource} notificationSource={notificationSource} homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} onWithdraw={withdraw} /></InteractionProvider></Suspense>;
 }
