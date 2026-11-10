@@ -19,6 +19,7 @@ from app.api.v1.users.me.bookmarks import router as bookmarks_router
 from app.api.v1.users.me.consents import router as consents_router
 from app.api.v1.users.me.my_activity import router as my_activity_router
 from app.api.v1.users.me.notifications import router as notifications_router
+from app.api.v1.users.me.notification_settings import router as notification_settings_router
 from app.api.v1.users.me.router import router as profile_router
 
 router = APIRouter()
@@ -37,6 +38,7 @@ router.include_router(bookmarks_router)
 router.include_router(activity_router)
 router.include_router(chat_router)
 router.include_router(notifications_router)
+router.include_router(notification_settings_router)
 router.include_router(my_activity_router)
 router.include_router(reports_router)
 router.include_router(inquiries_router)
