@@ -11,13 +11,13 @@ export function SavedContentCard({ card, onViewDetail }: { card: SavedCard; onVi
   return <ContentListCard card={card} onViewDetail={onViewDetail} />;
 }
 
-export function PivotSavedScreen({ state, demo, onHome, onMy, onViewDetail, onRetry }: {
-  state: SavedState; demo: boolean; onHome: () => void; onMy: () => void; onViewDetail: HomeDetailHandler; onRetry: () => void;
+export function PivotSavedScreen({ state, demo, onHome, onMy, onViewDetail, onRetry, onNotifications }: {
+  state: SavedState; demo: boolean; onHome: () => void; onMy: () => void; onViewDetail: HomeDetailHandler; onRetry: () => void; onNotifications?: () => void;
 }) {
   const list = state.status === "ready" && state.saved.origin === (demo ? "demo" : "service") ? state.saved : null;
   return <main className={homeStyles.screen} data-saved-state={state.status} data-saved-mode={demo ? "demo" : "service"}
     aria-busy={state.status === "loading"}>
-    <HomeHeader title="저장한 콘텐츠" showMascot={false} />
+    <HomeHeader title="저장한 콘텐츠" showMascot={false} onNotifications={onNotifications} />
     {list ? <ul className={styles.grid} aria-label="저장한 콘텐츠 목록">
       {list.cards.map((card) => <li key={`${card.topicId ?? "demo"}:${card.contentId}`}><SavedContentCard key={card.image?.src ?? "missing"} card={card} onViewDetail={onViewDetail} /></li>)}
     </ul> : state.status === "empty" ? <section className={styles.empty} aria-label="저장 목록 상태">

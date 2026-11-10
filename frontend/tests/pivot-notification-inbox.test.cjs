@@ -22,7 +22,7 @@ function load(file, dependencies = {}) {
 }
 
 const services = load('lib/pivot/services.ts', { '@/lib/api': {}, './consent': {} });
-const { createServiceNotificationInbox, createDemoNotificationInbox, findInboxNotification } =
+const { createServiceNotificationInbox, createDemoNotificationInbox, findInboxNotification, newPostTarget } =
   load('lib/pivot/notification-inbox.ts', { '@/lib/api': {}, './services': services });
 const owner = {
   authenticated: true, sessionState: 'active', onboardingCompleted: true,
@@ -30,6 +30,7 @@ const owner = {
 };
 const readAt = '2026-11-10T01:27:00Z';
 const notice = { notificationId: 17, type: 'system_notice', isRead: false, body: '첫 문단\n\n다음 문단' };
+const newPost = { notificationId: 18, type: 'topic_new_post', isRead: false, title: '‘체인소 맨’ 새 글', body: '레제편 굿즈', topicId: 1, contentId: 501 };
 const signal = () => new AbortController().signal;
 
 function fixture() {
@@ -41,7 +42,10 @@ function fixture() {
     async getSession() { return cookie; },
     async getNotifications(options) {
       requests.push(options);
-      return { items: [notice, { type: 'follow' }], nextCursor: 'next' };
+      return {
+        items: [notice, newPost, { ...newPost, notificationId: 19, contentId: null }, { type: 'follow' }],
+        nextCursor: 'next',
+      };
     },
     async getUnreadNotificationCount() { return { unreadCount: 2 }; },
     async markNotificationRead(notificationId, init) {
@@ -58,18 +62,25 @@ function fixture() {
   };
 }
 
-test('Service preserves pagination and full body, allows only system notices, and pins CSRF for confirmed writes', async () => {
+test('Service preserves pagination and full body, allows only notices and openable new posts, and pins CSRF for confirmed writes', async () => {
   const { source, requests } = fixture();
   const options = { unreadOnly: true, cursor: 'page-2', signal: signal() };
   const page = await source.list(options);
   assert.equal(requests[0], options);
   assert.equal(page.nextCursor, 'next');
-  assert.equal(page.items.length, 1);
+  assert.deepEqual(page.items.map((item) => item.notificationId), [17, 18]);
   assert.equal(page.items[0].body, notice.body);
   assert.equal(await source.count(options.signal), 2);
   assert.equal(await source.markRead(notice.notificationId, options.signal), readAt);
   assert.equal(requests[1].init.headers['X-CSRF-Token'], owner.csrfToken);
   assert.equal(requests[1].init.signal, options.signal);
+});
+
+test('A new-post notice opens its post, and other notices open nothing', () => {
+  assert.deepEqual({ ...newPostTarget(newPost) }, { postId: '501', contentId: '501', topicId: 1 });
+  assert.equal(newPostTarget(notice), null);
+  assert.equal(newPostTarget({ ...newPost, topicId: 0 }), null);
+  assert.equal(newPostTarget({ ...newPost, contentId: 1.5 }), null);
 });
 
 test('Service rejects an unconfirmed write and prevents writes after same-user cookie rotation', async () => {

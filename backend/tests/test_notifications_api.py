@@ -27,7 +27,7 @@ def test_read_request_accepts_only_true():
         NotificationReadRequest(is_read=False)
 
 
-def test_public_notification_type_is_system_notice_only():
+def test_public_notification_types_are_notice_and_new_post_only():
     values = {
         "notification_id": 1,
         "title": "운영 공지",
@@ -36,8 +36,10 @@ def test_public_notification_type_is_system_notice_only():
         "created_at": datetime.now(timezone.utc),
     }
     assert NotificationItem(type="system_notice", **values).type == "system_notice"
-    with pytest.raises(ValidationError):
-        NotificationItem(type="topic_new_post", **values)
+    assert NotificationItem(type="topic_new_post", **values).type == "topic_new_post"
+    for legacy in ("creator_new_post", "follow", "direct_message"):
+        with pytest.raises(ValidationError):
+            NotificationItem(type=legacy, **values)
 
 
 @pytest.fixture
@@ -80,19 +82,23 @@ def mixed_notification_db(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_paginates_only_current_users_system_notices(mixed_notification_db):
+async def test_list_paginates_only_current_users_notices_and_new_posts(mixed_notification_db):
     db, _ = mixed_notification_db
     first = await notification_service.list_notifications(
         db, 1, unread_only=False, cursor=None, limit=2
     )
-    assert [item.notification_id for item in first.items] == [7, 3]
-    assert all(item.type == "system_notice" for item in first.items)
+    assert [item.notification_id for item in first.items] == [4, 7]
+    assert [item.type for item in first.items] == ["topic_new_post", "system_notice"]
     assert first.next_cursor is not None
     second = await notification_service.list_notifications(
         db, 1, unread_only=False, cursor=first.next_cursor, limit=2
     )
-    assert [item.notification_id for item in second.items] == [2, 1]
-    assert second.next_cursor is None
+    assert [item.notification_id for item in second.items] == [3, 2]
+    third = await notification_service.list_notifications(
+        db, 1, unread_only=False, cursor=second.next_cursor, limit=2
+    )
+    assert [item.notification_id for item in third.items] == [1]
+    assert third.next_cursor is None
 
 
 @pytest.mark.asyncio
@@ -102,19 +108,20 @@ async def test_unread_list_and_count_exclude_legacy_and_other_users_notices(mixe
         db, 1, unread_only=True, cursor=None, limit=20
     )
     count = await notification_service.unread_count(db, 1)
-    assert [item.notification_id for item in unread.items] == [7, 3, 1]
-    assert count.unread_count == len(unread.items) == 3
+    assert [item.notification_id for item in unread.items] == [4, 7, 3, 1]
+    assert count.unread_count == len(unread.items) == 4
     await notification_service.mark_read(db, 1, 3)
+    await notification_service.mark_read(db, 1, 4)
     assert (await notification_service.unread_count(db, 1)).unread_count == 2
     # Filtering never removes or marks legacy rows as read.
     stored = session.scalars(select(Notification)).all()
     assert len(stored) == 7
-    assert session.get(Notification, 4).read_at is None
+    assert session.get(Notification, 4).read_at is not None
     assert session.get(Notification, 6).read_at is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("notification_id", [4, 5, 6, 999])
+@pytest.mark.parametrize("notification_id", [5, 6, 999])
 async def test_read_rejects_legacy_other_users_and_missing_notices(mixed_notification_db, notification_id):
     db, session = mixed_notification_db
     with pytest.raises(ApiError) as error:
@@ -146,6 +153,79 @@ async def test_welcome_generation_adds_only_a_system_notice():
     # The sole SQL execution is the advisory lock, with no post-notification insertion.
     db.execute.assert_awaited_once()
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_welcome_is_still_created_once_after_an_operational_notice():
+    """운영공지가 환영 공지보다 먼저 와도 환영 공지는 한 번 생긴다."""
+    engine = create_engine("sqlite://")
+    Notification.__table__.create(engine)
+    joined_at = datetime(2026, 10, 20, tzinfo=timezone.utc)
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(Notification(notification_id=1, user_id=1, notification_type="system_notice",
+                                 title="점검 안내", body="새벽 점검", created_at=joined_at + timedelta(days=1)))
+        session.commit()
+
+        async def execute(statement, params=None):
+            if "pg_advisory_xact_lock" in str(statement):
+                return None
+            return session.execute(statement, params)
+
+        def add(row):
+            row.notification_id = row.notification_id or 2  # SQLite BIGINT 기본 키는 번호를 안 채운다
+            session.add(row)
+
+        db = SimpleNamespace(
+            execute=execute,
+            scalar=AsyncMock(side_effect=session.scalar),
+            get=AsyncMock(return_value=SimpleNamespace(onboarding_completed_at=joined_at)),
+            add=add,
+            commit=AsyncMock(side_effect=session.commit),
+        )
+        await notification_service._ensure_welcome_notice(db, 1)
+        await notification_service._ensure_welcome_notice(db, 1)
+        titles = session.scalars(
+            select(Notification.title).where(Notification.user_id == 1).order_by(Notification.created_at)
+        ).all()
+    engine.dispose()
+    assert titles == [notification_service.WELCOME_TITLE, "점검 안내"]
+
+
+def _post(content_id, work_id, hours_ago):
+    return notification_service.NewPost(
+        user_id=1, content_id=content_id, topic_id=1, work_id=work_id, work_name=f"작품 {work_id}",
+        title=f"글 {content_id}", published_at=datetime(2026, 11, 10, 9, tzinfo=timezone.utc) - timedelta(hours=hours_ago),
+    )
+
+
+def test_new_posts_are_newest_first_one_per_work_and_three_a_day():
+    posts = [_post(1, 10, 5), _post(2, 10, 1), _post(3, 20, 2), _post(4, 30, 3), _post(5, 40, 4)]
+    assert [p.content_id for p in notification_service.pick_new_posts(posts)] == [2, 3, 4]
+
+
+def test_new_posts_count_what_was_already_sent_today():
+    posts = [_post(1, 10, 1), _post(2, 20, 2), _post(3, 30, 3)]
+    picked = notification_service.pick_new_posts(posts, sent_today=2, works_today={10})
+    assert [p.content_id for p in picked] == [2]
+    assert notification_service.pick_new_posts(posts, sent_today=3) == []
+
+
+def test_new_post_title_fits_the_title_column():
+    assert notification_service.new_post_title(" 체인소   맨 ") == "‘체인소 맨’ 새 글"
+    long = notification_service.new_post_title("가" * 300)
+    assert len(long) == 100 and long.endswith("…’ 새 글")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("title, body", [
+    ("", "본문"), ("가" * 101, "본문"), ("점검", " "), ("점검", "가" * 501),
+    (notification_service.WELCOME_TITLE, "본문"),
+])
+async def test_notice_rejects_bad_text_before_touching_the_database(title, body):
+    db = SimpleNamespace(execute=AsyncMock())
+    with pytest.raises(ValueError):
+        await notification_service.publish_notice(db, title=title, body=body, apply=True)
+    db.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

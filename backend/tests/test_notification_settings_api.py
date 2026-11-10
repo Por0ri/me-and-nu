@@ -169,12 +169,14 @@ def test_get_patch_persist_exact_values_and_preserve_notices_and_consents(api):
         assert (row.report_result, row.creator_new_post, row.saved_resurface, row.marketing) == (False, True, False, True)
         assert db.scalar(text("SELECT count(*) FROM consent_history")) == 1
     inbox = client.get("/api/v1/users/me/notifications").json()
-    assert len(inbox["items"]) == 1 and inbox["items"][0]["type"] == "system_notice"
-    assert client.get("/api/v1/users/me/notifications/unread-count").json()["unreadCount"] == 1
-    notification_id = inbox["items"][0]["notificationId"]
+    # The required notice survives the OFF switch; a notice that came first no longer suppresses the welcome.
+    assert sorted(item["title"] for item in inbox["items"]) == ["필수 공지", "환영 공지"]
+    assert all(item["type"] == "system_notice" for item in inbox["items"])
+    assert client.get("/api/v1/users/me/notifications/unread-count").json()["unreadCount"] == 2
+    notification_id = next(item["notificationId"] for item in inbox["items"] if item["title"] == "필수 공지")
     assert client.patch(f"/api/v1/users/me/notifications/{notification_id}", json={"isRead": True}).status_code == 200
-    assert len(client.get("/api/v1/users/me/notifications").json()["items"]) == 1
-    assert client.get("/api/v1/users/me/notifications/unread-count").json()["unreadCount"] == 0
+    assert len(client.get("/api/v1/users/me/notifications").json()["items"]) == 2
+    assert client.get("/api/v1/users/me/notifications/unread-count").json()["unreadCount"] == 1
 
 
 def test_invalid_requests_never_write(api):
@@ -314,4 +316,5 @@ def test_withdrawal_blocks_settings_and_restoration_preserves_preferences(api):
     with Session(engine) as db:
         assert db.get(NotificationSetting, users[0]).marketing is True
         assert db.scalar(text("SELECT count(*) FROM consent_history")) == 1
-    assert len(client.get("/api/v1/users/me/notifications").json()["items"]) == 1
+    titles = sorted(item["title"] for item in client.get("/api/v1/users/me/notifications").json()["items"])
+    assert titles == ["필수 공지", "환영 공지"]  # the required notice survives; the welcome is added once

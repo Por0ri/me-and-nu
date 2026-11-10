@@ -76,8 +76,8 @@ function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
   </dialog>;
 }
 
-export function PivotMyPageScreen({ state, demo, notificationScope, notificationSource, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout, onWithdraw }: {
-  state: MyPageState; demo: boolean; notificationScope?: object; notificationSource?: NotificationSettingsSource; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>;
+export function PivotMyPageScreen({ state, demo, notificationScope, notificationSource, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout, onWithdraw, onNotifications }: {
+  state: MyPageState; demo: boolean; notificationScope?: object; notificationSource?: NotificationSettingsSource; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>; onNotifications?: () => void;
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
@@ -139,7 +139,7 @@ export function PivotMyPageScreen({ state, demo, notificationScope, notification
   const profile = state.status === "ready" && state.profile.origin === (demo ? "demo" : "service") ? state.profile : null;
   return <main ref={screen} className={`${homeStyles.screen} ${styles.screen}`} data-my-state={state.status} data-my-mode={demo ? "demo" : "service"}
     aria-busy={state.status === "loading" && !logoutDialog}>
-    <HomeHeader title="마이페이지" showMascot={false} onNotice={setNotice} />
+    <HomeHeader title="마이페이지" showMascot={false} onNotice={setNotice} onNotifications={onNotifications} />
     <div className={styles.content}>
       <p className={styles.intro}>내 정보와 설정을 관리해보세요</p>
       {profile ? <>

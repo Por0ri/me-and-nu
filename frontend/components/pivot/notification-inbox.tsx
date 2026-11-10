@@ -23,12 +23,14 @@ function formatDetailTime(iso: string) {
 type ListState = { page?: InboxPage; loading: boolean; failed: boolean };
 const loadingList: ListState = { loading: true, failed: false };
 
-export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, onBack }: {
+export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, onOpenContent, onBack }: {
   source: NotificationInboxSource;
   unreadOnly: boolean;
   id: number | null;
   onFilter: (unreadOnly: boolean) => void;
   onOpen: (id: number) => void;
+  /** Opens the post of a new-post notice; the inbox closes when it navigates. */
+  onOpenContent?: (item: InboxNotification) => void;
   onBack: () => void;
 }) {
   const [list, setList] = useState<ListState>(loadingList);
@@ -41,6 +43,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
   const lifetime = useRef<AbortController | null>(null);
   const pendingReads = useRef(new Set<number>());
   const listScroll = useRef(0);
+  const leaving = useRef(false);
   const opener = useRef<HTMLButtonElement | null>(null);
   const screen = useRef<HTMLElement>(null);
 
@@ -123,7 +126,25 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
     }
   }
 
+  async function openContent(item: InboxNotification) {
+    if (leaving.current || !onOpenContent) return;
+    leaving.current = true;
+    listScroll.current = window.scrollY;
+    try {
+      // Opening the post unmounts the inbox, which would cancel a pending read.
+      await markRead(item);
+      onOpenContent(item);
+    } finally {
+      leaving.current = false;
+    }
+  }
+
   function open(item: InboxNotification, button: HTMLButtonElement) {
+    if (item.type === "topic_new_post" && onOpenContent) {
+      opener.current = button;
+      void openContent(item);
+      return;
+    }
     listScroll.current = window.scrollY;
     opener.current = button;
     setSelected(item);
@@ -155,7 +176,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
             aria-label={`${item.title}, ${item.isRead ? "읽음" : "읽지 않음"}`}
             onClick={(event) => open(item, event.currentTarget)}>
             <span className={styles.meta}>
-              <span className={styles.tag}>운영 공지</span>
+              <span className={styles.tag}>{item.type === "topic_new_post" ? "새 글" : "운영 공지"}</span>
               <span className={styles.time}>
                 <time dateTime={item.createdAt} title={formatDetailTime(item.createdAt)}>{formatRelativeTime(item.createdAt)}</time>
                 {!item.isRead && <span className={styles.dot} aria-hidden="true" />}
@@ -183,6 +204,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
           <time dateTime={detail.createdAt}>{formatDetailTime(detail.createdAt)}</time>
         </div>
         <p className={styles.body}>{detail.body}</p>
+        {detail.type === "topic_new_post" && onOpenContent && <button type="button" className={styles.more} onClick={() => void openContent(detail)}>글 보러 가기</button>}
         {readState === "pending" && <p role="status">읽음 상태를 저장하고 있어요.</p>}
         {readState === "failed" && <div className={styles.feedback}>
           <p role="alert">읽음 상태를 저장하지 못했어요.</p>

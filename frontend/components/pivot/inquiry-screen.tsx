@@ -6,9 +6,9 @@ import { HomeHeader, HomeNavigation } from "./home-screen";
 import homeStyles from "./home.module.css";
 import styles from "./inquiry.module.css";
 
-export function InquiryScreen({ state, demo, available, onChange, onSubmit, onMy, onHome, onSaved }: {
+export function InquiryScreen({ state, demo, available, onChange, onSubmit, onMy, onHome, onSaved, onNotifications }: {
   state: InquiryState; demo: boolean; available: boolean; onChange: (draft: Partial<InquiryDraft>) => void;
-  onSubmit: () => void; onMy: () => void; onHome: () => void; onSaved: () => void;
+  onSubmit: () => void; onMy: () => void; onHome: () => void; onSaved: () => void; onNotifications?: () => void;
 }) {
   const screen = useRef<HTMLElement>(null);
   useEffect(() => { screen.current?.querySelector("h1")?.focus({ preventScroll: true }); }, []);
@@ -16,7 +16,7 @@ export function InquiryScreen({ state, demo, available, onChange, onSubmit, onMy
   const locked = busy || state.status === "received" || state.status === "unavailable";
   const length = inquiryLength(state.detail);
   return <main ref={screen} className={`${homeStyles.screen} ${styles.screen}`} data-inquiry-state={state.status} data-inquiry-mode={demo ? "demo" : "service"}>
-    <HomeHeader title="문의 및 신고" showMascot={false} onBack={onMy} />
+    <HomeHeader title="문의 및 신고" showMascot={false} onBack={onMy} onNotifications={onNotifications} />
     <form className={styles.form} onSubmit={event => { event.preventDefault(); onSubmit(); }} aria-busy={busy}>
       <h2 className={styles.intro}>문의 유형을 선택하고 세부 내용을 작성해주세요</h2>
       <div className={styles.card}>

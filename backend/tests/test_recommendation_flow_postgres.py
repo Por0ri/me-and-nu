@@ -175,7 +175,9 @@ def test_onboarding_batch_feed_activity_reactions_and_logout(recommendation_pg, 
     from model.tests.fixtures import build_synthetic_world
 
     pg = recommendation_pg
-    pg.migrate(TARGET)
+    # The flow runs the current ORM (onboarding also writes notification settings), so the schema
+    # must be the latest one. The migration-preservation test above still pins TARGET.
+    pg.migrate("head")
     token, user_id = seed_demo(pg.engine)
     for key, value in {"session_backend": "postgres", "redis_url": None, "enable_dev_auth_bypass": False,
                        "session_cookie_secure": False, "event_data_source": "local_demo"}.items():
