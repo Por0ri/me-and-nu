@@ -18,6 +18,8 @@
 #   python model/scripts/fetch_anilist.py recent 1000  # 2022년 이후 인기작 1000편
 #   python model/scripts/fetch_anilist.py links        # 받은 작품들의 관계·추천·인기 (links 25 = 25편만, 시험용)
 #   python model/scripts/fetch_anilist.py detail       # 받은 작품들의 줄거리·스튜디오·제작진·캐릭터·성우 (detail 20 = 20편만)
+#   python model/scripts/fetch_anilist.py catalog      # 작품 목록(레포 맨 위 catalog/)에 있는데 아직 안 받은 시즌만
+#                                                      # → media_recent.jsonl 뒤에 붙임. 그 뒤 links · detail 을 돌리면 새 시즌도 받음
 #   → model/data/anilist/ (커밋 안 함)
 
 import csv
@@ -35,6 +37,7 @@ OUT = ROOT / "anilist" / "media.jsonl"
 OUT_RECENT = ROOT / "anilist" / "media_recent.jsonl"
 OUT_LINKS = ROOT / "anilist" / "links.jsonl"
 OUT_DETAIL = ROOT / "anilist" / "detail.jsonl"
+CATALOG_ENTRIES = ROOT.parents[1] / "catalog" / "menu_work_entries.csv"   # me;nu 작품 목록 (레포 맨 위 공용 폴더)
 URL = "https://graphql.anilist.co"
 PER_REQUEST = 50
 PER_LINKS = 25          # 관계·추천은 작품마다 목록이 붙어서 요청 하나를 작게
@@ -59,6 +62,13 @@ QUERY_RECENT = """
 query ($page: Int, $after: FuzzyDateInt) {
   Page(page: $page, perPage: 50) {
     media(type: ANIME, startDate_greater: $after, sort: POPULARITY_DESC, isAdult: false) {%s}
+  }
+}
+""" % FIELDS
+QUERY_IDS = """
+query ($ids: [Int]) {
+  Page(page: 1, perPage: 50) {
+    media(id_in: $ids, type: ANIME) {%s}
   }
 }
 """ % FIELDS
@@ -98,6 +108,37 @@ def fetched_ids():
                 for line in f:
                     ids.update(m["id"] for m in json.loads(line)["media"] if not m["isAdult"])
     return sorted(ids)
+
+
+def fetch_catalog(limit=None):
+    # 작품 목록에 있는데 media.jsonl · media_recent.jsonl 에 없는 시즌을 AniList 번호로 받는다.
+    # 모델이 읽는 파일을 늘리지 않으려고 media_recent.jsonl 뒤에 붙인다 (줄 표시 page="catalog").
+    # 요청한 번호도 남겨서 AniList 에 없는 번호도 다시 요청하지 않는다
+    with open(CATALOG_ENTRIES, encoding="utf-8-sig", newline="") as f:
+        wanted = sorted({int(r["anilist_id"]) for r in csv.DictReader(f)})
+    have = set()
+    for path in (OUT, OUT_RECENT):
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    record = json.loads(line)
+                    have.update(m["id"] for m in record["media"])
+                    have.update(record.get("requested_ids") or [])
+    todo = [a for a in wanted if a not in have][:limit]
+    print(f"작품 목록 시즌 {len(wanted):,}개 중 새로 받을 것 {len(todo)} → 요청 {(len(todo) + PER_REQUEST - 1) // PER_REQUEST}번",
+          flush=True)
+    OUT_RECENT.parent.mkdir(parents=True, exist_ok=True)
+    got = 0
+    with open(OUT_RECENT, "a", encoding="utf-8", newline="\n") as f:
+        for i in range(0, len(todo), PER_REQUEST):
+            ids = todo[i:i + PER_REQUEST]
+            media, remaining = post(QUERY_IDS, {"ids": ids})
+            f.write(json.dumps({"page": "catalog", "requested_ids": ids, "media": media}, ensure_ascii=False) + "\n")
+            f.flush()
+            got += len(media)
+            print(f"  {i + len(ids)}/{len(todo)} · 받은 작품 {got} · 남은 한도 {remaining}", flush=True)
+            time.sleep(PAUSE)
+    print(f"끝 → {OUT_RECENT}")
 
 
 def fetch_links(limit=None):
@@ -208,6 +249,9 @@ def main():
         return
     if len(sys.argv) > 1 and sys.argv[1] == "detail":
         fetch_detail(int(sys.argv[2]) if len(sys.argv) > 2 else None)
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "catalog":
+        fetch_catalog(int(sys.argv[2]) if len(sys.argv) > 2 else None)
         return
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
     OUT.parent.mkdir(parents=True, exist_ok=True)
