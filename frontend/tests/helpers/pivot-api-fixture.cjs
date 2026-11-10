@@ -5,7 +5,7 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
   strictOnboarding = false, oauthCallbackPhase = 'active', today = '2026-10-27', topicId = 7 } = {}) {
   const requests = [];
   const state = { phase: 'anonymous', csrf: 'fixture-anonymous-csrf', cookie: 'fixture-anonymous', saved: new Set(), failNext: null, topics: true,
-    onboardingCompletions: 0, onboarding: null };
+    onboardingCompletions: 0, onboarding: null, notifications: [], notificationPageSize: 50 };
   const topic = { id: topicId, code: 'anime', name: '애니메이션', subtopicIds: [19], status: 'active', deletedAt: null };
   const contents = [
     { id: 41, title: '연결 검증 콘텐츠 하나', summary: '첫 번째 콘텐츠의 공개 요약입니다.', body: '테스트 API에서 내려온 첫 번째 본문입니다.\n\n새로고침해도 저장 상태가 유지됩니다.' },
@@ -125,6 +125,25 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
       rotate('active'); return { status: 201, headers: { 'Set-Cookie': cookie() }, body: { user: { id: 12, accountType: 'user' }, onboardingCompleted: true, activeTopic: {...topic,subtopicIds:[]}, answers: {...data.answers,favoriteEntityIds:[...data.answers.favoriteEntityIds].sort((a,b)=>a-b),preferenceTagIds:[...data.answers.preferenceTagIds].sort((a,b)=>a-b)} } };
     }
     if (state.phase !== 'active') return error(403, 'ONBOARDING_REQUIRED');
+    const inbox = '/api/v1/users/me/notifications';
+    if (method === 'GET' && url.pathname === inbox) {
+      const after = Number(url.searchParams.get('cursor') || Infinity);
+      const unreadOnly = url.searchParams.get('unreadOnly') === 'true';
+      const matching = state.notifications.filter(item => item.notificationId < after && (!unreadOnly || !item.isRead));
+      const items = matching.slice(0, state.notificationPageSize);
+      return { status: 200, body: { items, nextCursor: matching.length > items.length ? String(items.at(-1).notificationId) : null } };
+    }
+    if (method === 'GET' && url.pathname === inbox + '/unread-count') {
+      return { status: 200, body: { unreadCount: state.notifications.filter(item => !item.isRead).length } };
+    }
+    if (method === 'PATCH' && url.pathname.startsWith(inbox + '/')) {
+      const item = state.notifications.find(item => item.notificationId === Number(url.pathname.split('/').at(-1)));
+      if (!item) return error(404, 'NOTIFICATION_NOT_FOUND');
+      if (data?.isRead !== true) return error(422, 'VALIDATION_ERROR');
+      item.isRead = true;
+      item.readAt ??= new Date().toISOString();
+      return { status: 200, body: { notificationId: item.notificationId, isRead: true, readAt: item.readAt } };
+    }
     if (method === 'GET' && url.pathname === '/api/v1/me/topics') return { status: 200, body: { topics: state.topics ? [topic] : [] } };
     if (method === 'GET' && url.pathname === `/api/v1/topics/${topic.id}/feed`) return { status: 200, body: {
       selectedTopicId: topic.id, sections: [{ id: 'recommended', type: 'recommended', title: '추천 콘텐츠', subtopicId: null,
@@ -167,7 +186,7 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
       res.setHeader('Access-Control-Allow-Origin', frontendOrigin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Access-Control-Allow-Headers', 'content-type,x-csrf-token');
-      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
       if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
       let raw = ''; for await (const chunk of req) raw += chunk;
       try {

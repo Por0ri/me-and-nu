@@ -374,15 +374,14 @@ export function sendChatMessage(sessionId: number, content: string, clientMessag
 export function getChatJob(jobId: number): Promise<ChatJob> {
   return apiRequest(`/api/v1/chat/jobs/${jobId}`);
 }
-export function getNotifications(options: { cursor?: string; limit?: number } = {}): Promise<NotificationsResponse> {
-  const query = new URLSearchParams();
-  if (options.cursor) query.set("cursor", options.cursor);
-  query.set("limit", String(options.limit ?? 50));
-  return apiRequest(`/api/v1/users/me/notifications?${query}`);
+export function getNotifications({ cursor, limit = 50, unreadOnly, signal }: {
+  cursor?: string; limit?: number; unreadOnly?: boolean; signal?: AbortSignal;
+} = {}): Promise<NotificationsResponse> {
+  return apiRequest(`/api/v1/users/me/notifications${query({ cursor, limit, unreadOnly })}`, { signal });
 }
-export function getUnreadNotificationCount(): Promise<{ unreadCount: number }> {
-  return apiRequest("/api/v1/users/me/notifications/unread-count");
+export function getUnreadNotificationCount(signal?: AbortSignal): Promise<{ unreadCount: number }> {
+  return apiRequest("/api/v1/users/me/notifications/unread-count", { signal });
 }
-export function markNotificationRead(notificationId: number): Promise<{ notificationId: number; isRead: boolean; readAt: string | null }> {
-  return apiRequest(`/api/v1/users/me/notifications/${notificationId}`, { method: "PATCH", body: JSON.stringify({ isRead: true }) });
+export function markNotificationRead(notificationId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<{ notificationId: number; isRead: boolean; readAt: string | null }> {
+  return apiRequest(`/api/v1/users/me/notifications/${notificationId}`, { ...init, method: "PATCH", body: JSON.stringify({ isRead: true }) });
 }
