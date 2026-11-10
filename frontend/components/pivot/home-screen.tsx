@@ -13,8 +13,8 @@ import { useHomeExposure, useInteractions } from "./interaction-context";
 
 type HomeNotice = { message: string; postId?: string };
 
-export function HomeHeader({ title = "홈", showMascot = true, onNotice, onBack }: {
-  title?: string; showMascot?: boolean; onNotice?: (message: string) => void;
+export function HomeHeader({ title = "홈", showMascot = true, showNotification = true, onNotice, onBack, onNotifications }: {
+  title?: string; showMascot?: boolean; showNotification?: boolean; onNotice?: (message: string) => void; onNotifications?: () => void;
   /** A round back button before the logo (My Page sub-pages such as 프로필 수정, 2026-11 design). */
   onBack?: () => void;
 } = {}) {
@@ -29,8 +29,8 @@ export function HomeHeader({ title = "홈", showMascot = true, onNotice, onBack 
     </p>
     <h1 className={styles.srOnly} tabIndex={-1}>{title}</h1>
     {showMascot ? <div className={styles.headerMascot} aria-hidden="true"><img src="/pivot/home/chrome/mascot.png" alt="" /></div> : null}
-    <button type="button" className={styles.notification} aria-label="알림" aria-disabled="true"
-      onClick={() => (onNotice ?? setNotice)("알림 기능은 준비 중이에요.")}><img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} /></button>
+    {showNotification ? <button type="button" className={styles.notification} aria-label="알림" aria-disabled={!onNotifications || undefined} data-notification-navigation=""
+      onClick={onNotifications ?? (() => (onNotice ?? setNotice)("알림 기능은 준비 중이에요."))}><img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} /></button> : null}
     {notice ? <p className={styles.pendingNotice} role="status">{notice}</p> : null}
   </header>;
 }
@@ -330,7 +330,7 @@ export function HomeStatus({ state, onRetry }: { state: Exclude<HomeState, { sta
   </section>;
 }
 
-export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onRestart, onViewDetail, onMy, onSaved, bookmarks }: {
+export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onRestart, onViewDetail, onMy, onSaved, onNotifications, bookmarks }: {
   state: HomeState;
   demo: boolean;
   query: string;
@@ -344,6 +344,7 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
   onViewDetail?: HomeDetailHandler;
   onMy?: () => void;
   onSaved?: () => void;
+  onNotifications?: () => void;
   bookmarks?: BookmarkControls;
 }) {
   // Keep only the latest feedback, at its existing screen or card location.
@@ -356,7 +357,7 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
   function pending(message: string) { setNotice({ message }); }
   const result = search?.result ?? null;
   return <main className={styles.screen} data-home-state={state.status} data-search-open={search?.open || undefined} aria-busy={state.status === "loading"}>
-    <HomeHeader onNotice={pending} />
+    <HomeHeader onNotice={pending} onNotifications={onNotifications} />
     {demo ? <aside className={styles.demoNotice} aria-label="시연용 피드 안내">
       <strong>시연용 예시 피드</strong>
       <p>실제 추천 결과가 아니에요. 선택한 답변과 관계없이 같은 예시를 보여드려요.</p>

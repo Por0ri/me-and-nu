@@ -21,15 +21,18 @@ import type { InquirySource } from "@/lib/pivot/inquiry";
 import type { ReportSource } from "@/lib/pivot/report";
 import { activityTab, type ActivityDataSource, type ActivityTab } from "@/lib/pivot/my-activity";
 import { InteractionViewContext, useInteractions } from "./interaction-context";
+import { createDemoNotificationInbox, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
+import { NotificationInbox } from "./notification-inbox";
 
 const noSubscribe = () => () => {};
 const noSnapshot = () => 0;
 
-export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, activitySource, inquirySource, reportSource, demoBookmarks, onRestart, onLogout }: {
+export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, activitySource, inquirySource, reportSource, notificationSource, demoBookmarks, onRestart, onLogout }: {
   homeSource: HomeDataSource; detailSource: DetailDataSource; mySource?: MyPageDataSource; savedSource?: SavedDataSource;
   activitySource?: ActivityDataSource;
   inquirySource?: InquirySource;
   reportSource?: ReportSource;
+  notificationSource?: NotificationInboxSource;
   demoBookmarks?: DemoBookmarkControls; onRestart?: () => void; onLogout?: () => Promise<void>;
 }) {
   const params = useSearchParams();
@@ -39,6 +42,12 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const savedOpen = params.get("view") === "saved";
   const activityOpen = params.get("view") === "activity";
   const inquiryOpen = params.get("view") === "inquiry";
+  const inboxSource = useMemo(() => homeSource.kind === "demo" ? createDemoNotificationInbox() : notificationSource, [homeSource.kind, notificationSource]);
+  const inboxOpen = !!inboxSource && params.get("view") === "notifications";
+  const unreadOnly = params.get("unread") === "1";
+  const noticeParam = params.get("notificationId");
+  const parsedNotice = noticeParam && /^[1-9]\d*$/.test(noticeParam) ? Number(noticeParam) : null;
+  const noticeId = Number.isSafeInteger(parsedNotice) ? parsedNotice : null;
   const detailFromActivity = params.get("from") === "activity";
   const selectedActivityTab = activityTab(params.get("activityTab"));
   const detailFromSaved = params.get("from") === "saved";
@@ -74,7 +83,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   } : safeSavedSource, [safeSavedSource, serviceBookmarks]);
   useSyncExternalStore(bookmarks?.subscribe ?? noSubscribe, bookmarks?.getSnapshot ?? noSnapshot, noSnapshot);
   const restoreHome = useCallback(() => {
-    if (detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen) return;
+    if (detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen || inboxOpen) return;
     const snapshot = readHomeReturn(window.history.state?.pivotDetailHome, window.location.pathname, homeSource.kind);
     if (snapshot) setRestoreQuery(snapshot.query);
     cancelAnimationFrame(restoreFrame.current);
@@ -92,10 +101,11 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
       window.scrollTo({ top: snapshot.scrollY, behavior: "instant" });
       const button = Array.from(home.current?.querySelectorAll<HTMLButtonElement>("[data-home-detail]") ?? [])
         .find((item) => item.dataset.homeDetail === snapshot.focusContentId);
-      (button ?? (snapshot.focusContentId === "" ? home.current?.querySelector<HTMLButtonElement>(snapshot.focusNavigation === "saved" ? "[data-saved-navigation]" : "[data-my-navigation]") : null)
+      const navigation = snapshot.focusNavigation ?? "my";
+      (button ?? (snapshot.focusContentId === "" ? home.current?.querySelector<HTMLButtonElement>(`[data-${navigation}-navigation]`) : null)
         ?? home.current?.querySelector<HTMLHeadingElement>("h1"))?.focus({ preventScroll: true });
     });
-  }, [detailOpen, myOpen, savedOpen, activityOpen, inquiryOpen, homeSource.kind]);
+  }, [detailOpen, myOpen, savedOpen, activityOpen, inquiryOpen, inboxOpen, homeSource.kind]);
   const restoreSaved = useCallback(() => {
     if (!savedOpen) return;
     const snapshot = readSavedReturn(window.history.state?.pivotDetailSaved, window.location.pathname, homeSource.kind);
@@ -126,7 +136,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     else restoreHome();
     return () => cancelAnimationFrame(restoreFrame.current);
   }, [detailOpen, myOpen, savedOpen, activityOpen, inquiryOpen, postId, contentId, topicId, restoreHome, restoreSaved]);
-  function captureHome(focusContentId: string, focusNavigation?: "my" | "saved"): HomeReturnSnapshot {
+  function captureHome(focusContentId: string, focusNavigation?: HomeReturnSnapshot["focusNavigation"]): HomeReturnSnapshot {
     return {
       path: window.location.pathname, kind: homeSource.kind, scrollY: window.scrollY,
       query: home.current?.querySelector<HTMLInputElement>("input[type=search]")?.value ?? "",
@@ -195,6 +205,33 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   }
   function openMy() { openSection("my"); }
   function openSaved() { if (detailOpen && detailFromSaved) backFromDetail(); else openSection("saved"); }
+  function inboxHref(unread: boolean, id?: number) {
+    const query = new URLSearchParams({ view: "notifications" });
+    if (unread) query.set("unread", "1");
+    if (id !== undefined) query.set("notificationId", String(id));
+    return `${window.location.pathname}?${query}`;
+  }
+  function openInbox() {
+    const snapshot = captureHome("", "notification");
+    window.history.replaceState({ pivotDetailHome: snapshot }, "", `${snapshot.path}${window.location.search}`);
+    window.history.pushState({ pivotDetailHome: snapshot, pivotInboxBack: true }, "", inboxHref(false));
+  }
+  function inboxHistory() {
+    return { ...storedSnapshots(), pivotInboxBack: window.history.state?.pivotInboxBack === true };
+  }
+  function selectInboxFilter(unread: boolean) {
+    if (unread !== unreadOnly) window.history.replaceState(inboxHistory(), "", inboxHref(unread));
+  }
+  function openNotice(id: number) {
+    window.history.pushState({ ...inboxHistory(), pivotNoticeBack: true }, "", inboxHref(unreadOnly, id));
+  }
+  function backFromInbox() {
+    if (noticeId !== null) {
+      if (window.history.state?.pivotNoticeBack) window.history.back();
+      else window.history.replaceState(inboxHistory(), "", inboxHref(unreadOnly));
+    } else if (window.history.state?.pivotInboxBack) window.history.back();
+    else backToHome();
+  }
   function openActivity() {
     activityReturn.current = null;
     window.history.pushState({ ...storedSnapshots(), pivotActivityBack: true }, "", `${window.location.pathname}?view=activity&activityTab=likes`);
@@ -232,10 +269,12 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     if (window.history.state?.pivotDetailBack && history.pivotDetailSaved) window.history.back();
     else window.history.replaceState(history, "", `${window.location.pathname}?view=saved`);
   }
-  return <InteractionViewContext.Provider value={detailOpen ? "detail" : myOpen ? "my" : savedOpen ? "saved" : activityOpen ? "activity" : inquiryOpen ? "inquiry" : "home"}>
-    <div ref={home} hidden={detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen}>
-      <HomeController source={homeSource} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} bookmarks={bookmarks} />
+  return <InteractionViewContext.Provider value={detailOpen ? "detail" : myOpen ? "my" : savedOpen ? "saved" : activityOpen ? "activity" : inquiryOpen ? "inquiry" : inboxOpen ? "notifications" : "home"}>
+    <div ref={home} hidden={detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen || inboxOpen}>
+      <HomeController source={homeSource} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} onNotifications={inboxSource ? openInbox : undefined} bookmarks={bookmarks} />
     </div>
+    {inboxOpen && <NotificationInbox key={String(unreadOnly)} source={inboxSource} unreadOnly={unreadOnly} id={noticeId}
+      onFilter={selectInboxFilter} onOpen={openNotice} onBack={backFromInbox} />}
     <div ref={detail} hidden={!detailOpen}>
       {detailOpen || ((myOpen || savedOpen || inquiryOpen) && postId && contentId) ? <DetailController source={detailSource} reportSource={homeSource.kind === "service" ? reportSource : undefined} target={{ postId, contentId, ...(topicId === undefined ? {} : { topicId }), ...interactions?.activity.metadata({ postId, contentId, topicId }) }} onBack={backFromDetail} onHome={backToHome} onMy={openMy} onSaved={openSaved} fromSaved={detailFromSaved} fromActivity={detailFromActivity} bookmarks={bookmarks} /> : null}
     </div>

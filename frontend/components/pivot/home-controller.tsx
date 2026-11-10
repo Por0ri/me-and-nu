@@ -10,10 +10,10 @@ const loading: HomeState = { status: "loading" };
 // Same pause as onboarding Q1 before asking for works while the user types.
 const SUGGEST_DELAY_MS = 250;
 
-export function HomeController({ source, onRestart, onViewDetail, onReady, restoreQuery, onMy, onSaved, bookmarks }: {
+export function HomeController({ source, onRestart, onViewDetail, onReady, restoreQuery, onMy, onSaved, onNotifications, bookmarks }: {
   source: HomeDataSource; onRestart?: () => void; onViewDetail?: HomeDetailHandler; onReady?: () => void; restoreQuery?: string;
   onMy?: () => void;
-  onSaved?: () => void; bookmarks?: BookmarkControls;
+  onSaved?: () => void; onNotifications?: () => void; bookmarks?: BookmarkControls;
 }) {
   const [request, setRequest] = useState<{ source: HomeDataSource; state: HomeState }>({ source, state: loading });
   const [attempt, setAttempt] = useState(0);
@@ -98,5 +98,5 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
   return <PivotHomeScreen state={state} demo={source.kind === "demo"} query={query} onQueryChange={setQuery}
     onSearch={source.search ? (value) => void run({ label: value }) : undefined} search={search}
     searchNotice={searchNotice} onSearchNoticeEnd={() => setSearchNotice(null)}
-    onRetry={() => setAttempt((value) => value + 1)} onRestart={onRestart} onViewDetail={onViewDetail} onMy={onMy} onSaved={onSaved} bookmarks={bookmarks} />;
+    onRetry={() => setAttempt((value) => value + 1)} onRestart={onRestart} onViewDetail={onViewDetail} onMy={onMy} onSaved={onSaved} onNotifications={onNotifications} bookmarks={bookmarks} />;
 }

@@ -6,7 +6,7 @@ export type HomeReturnSnapshot = {
   scrollY: number;
   query: string;
   focusContentId: string;
-  focusNavigation?: "my" | "saved";
+  focusNavigation?: "my" | "saved" | "notification";
   tracks: { postId: string; index: number }[];
 };
 
@@ -24,7 +24,7 @@ export function readHomeReturn(value: unknown, path: string, kind: "demo" | "ser
   const snapshot = value as HomeReturnSnapshot;
   if (snapshot.path !== path || snapshot.kind !== kind || !Number.isFinite(snapshot.scrollY) || snapshot.scrollY < 0
     || typeof snapshot.query !== "string" || typeof snapshot.focusContentId !== "string" || !Array.isArray(snapshot.tracks)
-    || (snapshot.focusNavigation !== undefined && snapshot.focusNavigation !== "my" && snapshot.focusNavigation !== "saved")
+    || (snapshot.focusNavigation !== undefined && !["my", "saved", "notification"].includes(snapshot.focusNavigation))
     || snapshot.tracks.some((track) => !track || typeof track.postId !== "string" || !Number.isFinite(track.index) || track.index < 0)) return null;
   return snapshot;
 }
