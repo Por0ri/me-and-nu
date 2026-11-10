@@ -62,7 +62,7 @@ export function QuestionScreen({ value, onChoose, onBack, onNext, busy, chrome =
     <QuestionProgress step={3} onBack={onBack} busy={busy} />
     {copy?.hint}
     <section className={styles.questionBody} aria-labelledby="question-heading">
-      <h1 id="question-heading" tabIndex={-1}><span>Q3.</span>{copy?.heading ?? "덕질할 때 주로 무엇을 하나요?"}</h1>
+      <h1 id="question-heading" tabIndex={-1}><span>Q3.</span>{copy?.heading ?? "어떤 콘텐츠를 주로 보고싶나요?"}</h1>
       <p className={styles.questionDescription}>{copy?.description ?? "가장 많이 하는 것을 하나만 선택해주세요"}</p>
       <fieldset className={styles.q1Grid}>
         <legend className={styles.srOnly}>Q3 소비 유형 하나 선택</legend>

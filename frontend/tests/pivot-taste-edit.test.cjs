@@ -144,7 +144,7 @@ test('Taste edit questions use their own words under the hints; onboarding keeps
   const bare=renderToStaticMarkup(React.createElement(QuestionScreen,{...base,copy:tasteQuestionCopy({...shownHints,enough:false}).q3}));
   assert.doesNotMatch(bare,/많이 본 콘텐츠 유형|이전 열람 성향/);
   const onboardingHtml=renderToStaticMarkup(React.createElement(QuestionScreen,base));
-  assert.match(onboardingHtml,/덕질할 때 주로 무엇을 하나요\?/);
+  assert.match(onboardingHtml,/어떤 콘텐츠를 주로 보고싶나요\?/);
   assert.doesNotMatch(onboardingHtml,/많이 본 콘텐츠 유형|더 보고싶나요/);
 });
 
