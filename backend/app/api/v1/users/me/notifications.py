@@ -24,7 +24,11 @@ router = APIRouter(prefix="/users/me/notifications", tags=["알림"])
     "",
     response_model=NotificationsResponse,
     summary="내 알림 목록 조회 (API-107)",
-    description="운영공지(system_notice)만 최신순으로 반환합니다. 첫 조회 시 환영 공지를 생성합니다.",
+    description=(
+        "운영공지(system_notice)와 새 글 알림(topic_new_post)을 최신순으로 반환합니다. "
+        "새 글 알림에는 topicId · contentId · imageUrl(글 대표 그림)이 있습니다. "
+        "첫 조회 시 환영 공지를 생성합니다."
+    ),
     responses={**COMMON_ERRORS, 422: {"model": ErrorResponse, "description": "VALIDATION_ERROR 또는 INVALID_CURSOR"}},
 )
 async def list_notifications(

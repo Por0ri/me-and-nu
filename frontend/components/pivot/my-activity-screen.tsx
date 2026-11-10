@@ -9,15 +9,15 @@ import savedStyles from "./saved.module.css";
 import styles from "./my-activity.module.css";
 
 const tabs = [{ id: "likes", label: "좋아요한 콘텐츠" }, { id: "recent-views", label: "최근 본 콘텐츠" }] as const;
-export function MyActivityScreen({ state, tab, demo, onTab, onMy, onHome, onSaved, onViewDetail, onRetry, onMore }: {
+export function MyActivityScreen({ state, tab, demo, onTab, onMy, onHome, onSaved, onViewDetail, onRetry, onMore, onNotifications }: {
   state: ActivityState; tab: ActivityTab; demo: boolean; onTab: (tab: ActivityTab) => void;
-  onMy: () => void; onHome: () => void; onSaved: () => void; onViewDetail: HomeDetailHandler; onRetry: () => void; onMore: () => void;
+  onMy: () => void; onHome: () => void; onSaved: () => void; onViewDetail: HomeDetailHandler; onRetry: () => void; onMore: () => void; onNotifications?: () => void;
 }) {
   const ready = !demo && state.status === "ready" && state.page.origin === "service" ? state : null;
   const empty = ready?.page.cards.length === 0 && ready.page.nextCursor === null;
   const label = tabs.find(item => item.id === tab)!.label;
   return <main className={`${homeStyles.screen} ${styles.screen}`} data-activity-state={empty ? "empty" : state.status} data-activity-mode={demo ? "demo" : "service"}>
-    <HomeHeader title="내 활동" showMascot={false} onBack={onMy} />
+    <HomeHeader title="내 활동" showMascot={false} onBack={onMy} onNotifications={onNotifications} />
     <div className={styles.tabs} role="tablist" aria-label="내 활동 목록">
       {tabs.map((item, index) => <button type="button" key={item.id} id={`activity-tab-${item.id}`} role="tab"
         aria-selected={tab === item.id} aria-controls="activity-panel" tabIndex={tab === item.id ? 0 : -1}

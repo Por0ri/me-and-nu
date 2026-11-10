@@ -21,7 +21,7 @@ import type { InquirySource } from "@/lib/pivot/inquiry";
 import type { ReportSource } from "@/lib/pivot/report";
 import { activityTab, type ActivityDataSource, type ActivityTab } from "@/lib/pivot/my-activity";
 import { InteractionViewContext, useInteractions } from "./interaction-context";
-import { createDemoNotificationInbox, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
+import { createDemoNotificationInbox, newPostTarget, type InboxNotification, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
 import { NotificationInbox } from "./notification-inbox";
 
 const noSubscribe = () => () => {};
@@ -51,6 +51,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const detailFromActivity = params.get("from") === "activity";
   const selectedActivityTab = activityTab(params.get("activityTab"));
   const detailFromSaved = params.get("from") === "saved";
+  const inboxFromProfile = inboxOpen && params.get("from") === "profile";
   const postId = params.get("postId") ?? "";
   const contentId = params.get("contentId") ?? "";
   const topicParam = params.get("topicId");
@@ -209,9 +210,15 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     const query = new URLSearchParams({ view: "notifications" });
     if (unread) query.set("unread", "1");
     if (id !== undefined) query.set("notificationId", String(id));
+    if (inboxFromProfile) query.set("from", "profile");
     return `${window.location.pathname}?${query}`;
   }
   function openInbox() {
+    if (detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen) {
+      // From SAVE, MY, activity or inquiry, back from the inbox pops this entry and returns there.
+      window.history.pushState({ ...storedSnapshots(), pivotInboxBack: true }, "", inboxHref(false));
+      return;
+    }
     const snapshot = captureHome("", "notification");
     window.history.replaceState({ pivotDetailHome: snapshot }, "", `${snapshot.path}${window.location.search}`);
     window.history.pushState({ pivotDetailHome: snapshot, pivotInboxBack: true }, "", inboxHref(false));
@@ -225,11 +232,18 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   function openNotice(id: number) {
     window.history.pushState({ ...inboxHistory(), pivotNoticeBack: true }, "", inboxHref(unreadOnly, id));
   }
+  function openInboxContent(item: InboxNotification) {
+    const target = newPostTarget(item);
+    if (!target) return;
+    detailReturn.current = null;
+    // Back from the post pops this entry and returns to the inbox, which keeps the Home snapshot.
+    window.history.pushState({ ...inboxHistory(), pivotDetailBack: true, pivotDetailFromInbox: true }, "", detailHref(window.location.pathname, target));
+  }
   function backFromInbox() {
     if (noticeId !== null) {
       if (window.history.state?.pivotNoticeBack) window.history.back();
       else window.history.replaceState(inboxHistory(), "", inboxHref(unreadOnly));
-    } else if (window.history.state?.pivotInboxBack) window.history.back();
+    } else if (window.history.state?.pivotInboxBack || inboxFromProfile) window.history.back();
     else backToHome();
   }
   function openActivity() {
@@ -253,10 +267,15 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   function backToHome() {
     detailReturn.current = null;
     const snapshot = readHomeReturn(window.history.state?.pivotDetailHome, window.location.pathname, homeSource.kind);
-    if (!activityOpen && !inquiryOpen && !detailFromActivity && (myOpen ? window.history.state?.pivotMyBack : savedOpen ? window.history.state?.pivotSavedBack : !detailFromSaved && window.history.state?.pivotDetailBack) && snapshot) window.history.back();
+    if (!activityOpen && !inquiryOpen && !detailFromActivity && !window.history.state?.pivotDetailFromInbox && (myOpen ? window.history.state?.pivotMyBack : savedOpen ? window.history.state?.pivotSavedBack : !detailFromSaved && window.history.state?.pivotDetailBack) && snapshot) window.history.back();
     else window.history.replaceState({ pivotDetailHome: snapshot, pivotDetailBack: false }, "", `${window.location.pathname}?view=home`);
   }
   function backFromDetail() {
+    if (window.history.state?.pivotDetailFromInbox) {
+      detailReturn.current = null;
+      window.history.back();
+      return;
+    }
     if (detailFromActivity) {
       detailReturn.current = null;
       if (window.history.state?.pivotDetailBack) window.history.back();
@@ -274,17 +293,17 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
       <HomeController source={homeSource} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} onNotifications={inboxSource ? openInbox : undefined} bookmarks={bookmarks} />
     </div>
     {inboxOpen && <NotificationInbox key={String(unreadOnly)} source={inboxSource} unreadOnly={unreadOnly} id={noticeId}
-      onFilter={selectInboxFilter} onOpen={openNotice} onBack={backFromInbox} />}
+      onFilter={selectInboxFilter} onOpen={openNotice} onOpenContent={openInboxContent} onBack={backFromInbox} />}
     <div ref={detail} hidden={!detailOpen}>
       {detailOpen || ((myOpen || savedOpen || inquiryOpen) && postId && contentId) ? <DetailController source={detailSource} reportSource={homeSource.kind === "service" ? reportSource : undefined} target={{ postId, contentId, ...(topicId === undefined ? {} : { topicId }), ...interactions?.activity.metadata({ postId, contentId, topicId }) }} onBack={backFromDetail} onHome={backToHome} onMy={openMy} onSaved={openSaved} fromSaved={detailFromSaved} fromActivity={detailFromActivity} bookmarks={bookmarks} /> : null}
     </div>
     <div ref={savedList} hidden={!savedOpen}>
-      {savedOpen || (detailFromSaved && (detailOpen || myOpen || inquiryOpen)) ? <SavedController source={connectedSavedSource} onHome={backToHome} onMy={openMy} onViewDetail={openDetail} onReady={restoreSaved} /> : null}
+      {savedOpen || (detailFromSaved && (detailOpen || myOpen || inquiryOpen)) ? <SavedController source={connectedSavedSource} onHome={backToHome} onMy={openMy} onViewDetail={openDetail} onReady={restoreSaved} onNotifications={inboxSource ? openInbox : undefined} /> : null}
     </div>
     <div ref={activityList} hidden={!activityOpen}>
-      {activityOpen || (detailFromActivity && (detailOpen || myOpen || savedOpen || inquiryOpen)) ? <MyActivityController source={activitySource} demo={homeSource.kind === "demo"} tab={selectedActivityTab} onTab={selectActivityTab} onHome={backToHome} onMy={backToMy} onSaved={openSaved} onViewDetail={openDetail} /> : null}
+      {activityOpen || (detailFromActivity && (detailOpen || myOpen || savedOpen || inquiryOpen)) ? <MyActivityController source={activitySource} demo={homeSource.kind === "demo"} tab={selectedActivityTab} onTab={selectActivityTab} onHome={backToHome} onMy={backToMy} onSaved={openSaved} onViewDetail={openDetail} onNotifications={inboxSource ? openInbox : undefined} /> : null}
     </div>
-    {myOpen ? <MyPageController source={mySource.kind === homeSource.kind ? mySource : pendingMyPageSource} onHome={backToHome} onSaved={openSaved} onActivity={openActivity} onInquiry={openInquiry} onLogout={homeSource.kind === "service" ? onLogout : undefined} onWithdraw={homeSource.kind === "service" ? onWithdraw : undefined} /> : null}
-    {inquiryOpen ? <InquiryController source={homeSource.kind === "service" ? inquirySource : undefined} demo={homeSource.kind === "demo"} onMy={backToMy} onHome={backToHome} onSaved={openSaved} /> : null}
+    {myOpen ? <MyPageController source={mySource.kind === homeSource.kind ? mySource : pendingMyPageSource} onHome={backToHome} onSaved={openSaved} onActivity={openActivity} onInquiry={openInquiry} onLogout={homeSource.kind === "service" ? onLogout : undefined} onWithdraw={homeSource.kind === "service" ? onWithdraw : undefined} onNotifications={inboxSource ? openInbox : undefined} /> : null}
+    {inquiryOpen ? <InquiryController source={homeSource.kind === "service" ? inquirySource : undefined} demo={homeSource.kind === "demo"} onMy={backToMy} onHome={backToHome} onSaved={openSaved} onNotifications={inboxSource ? openInbox : undefined} /> : null}
   </InteractionViewContext.Provider>;
 }

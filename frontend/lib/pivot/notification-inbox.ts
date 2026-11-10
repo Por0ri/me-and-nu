@@ -1,8 +1,25 @@
 import { getNotifications, getSession, getUnreadNotificationCount, markNotificationRead, type NotificationItem, type NotificationsResponse, type Session } from "@/lib/api";
+import type { HomeDetailTarget } from "./home";
 import { isActiveSession, requirePivotApi } from "./services";
 
 export type InboxNotification = NotificationItem & { preview?: string };
 export type InboxPage = Omit<NotificationsResponse, "items"> & { items: InboxNotification[] };
+
+function positiveId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/** The inbox shows operational notices and new-post notices that point to a post. */
+export function isInboxItem(item: NotificationItem): boolean {
+  if (item.type === "system_notice") return true;
+  return item.type === "topic_new_post" && positiveId(item.contentId) && positiveId(item.topicId);
+}
+
+/** A new-post notice opens its post; service posts use the content ID as the post ID. */
+export function newPostTarget(item: NotificationItem): HomeDetailTarget | null {
+  if (item.type !== "topic_new_post" || !positiveId(item.contentId) || !positiveId(item.topicId)) return null;
+  return { postId: String(item.contentId), contentId: String(item.contentId), topicId: item.topicId };
+}
 
 export type NotificationInboxSource = {
   kind: "service" | "demo";
@@ -47,7 +64,7 @@ export function createServiceNotificationInbox(
     kind: "service",
     async list(options) {
       const result = await read(options.signal, () => api.getNotifications(options));
-      return { ...result, items: result.items.filter((item) => item.type === "system_notice") };
+      return { ...result, items: result.items.filter(isInboxItem) };
     },
     async count(signal) {
       const result = await read(signal, () => api.getUnreadNotificationCount(signal));

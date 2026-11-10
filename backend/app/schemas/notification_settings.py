@@ -14,7 +14,9 @@ class NotificationSettingsResponse(CamelModel):
 
 
 class NotificationSettingsPatch(CamelModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=False)
+    # Pydantic 2.11+ reads validate_by_name; populate_by_name=False alone keeps CamelModel's
+    # validate_by_name=True and would still accept snake_case keys such as in_app_enabled.
+    model_config = ConfigDict(extra="forbid", populate_by_name=False, validate_by_name=False)
 
     version: int = Field(strict=True, ge=1, le=2147483647)
     in_app_enabled: StrictBool | None = None
