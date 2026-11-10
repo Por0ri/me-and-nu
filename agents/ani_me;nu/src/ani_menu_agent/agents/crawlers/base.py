@@ -23,6 +23,7 @@ from ani_menu_agent.models import (
 )
 from ani_menu_agent.sources.page_collector import collect_official_page
 from ani_menu_agent.sources.registry import load_source_registry
+from ani_menu_agent.source_freshness import expiry_evidence, immediate_news_action_expiry
 from ani_menu_agent.storage import AgentRepository
 from ani_menu_agent.work_catalog import resolve_menu_work_ids
 
@@ -46,6 +47,10 @@ class SourceCrawlResult:
     status: str
     attempted: bool
     candidate_count: int = 0
+    pages_scanned: int = 0
+    page_candidate_counts: list[int] | None = None
+    duplicate_candidate_count: int = 0
+    pagination_stop_reason: str = "not_applicable"
     error: str = ""
 
 
@@ -60,6 +65,7 @@ class CrawlerRun:
     captured_page_count: int = 0
     image_candidate_count: int = 0
     persisted_image_count: int = 0
+    birthday_reference_upserts: int = 0
 
 
 class CrawlerState(TypedDict, total=False):
@@ -68,8 +74,11 @@ class CrawlerState(TypedDict, total=False):
     timeout: float
     region_policy: str
     source_ids: list[str]
+    unfiltered_sources: list[str]
+    exhaustive_listing: bool
     source_results: list[dict]
     items: list[dict]
+    birthday_catalog: list[dict]
     errors: list[str]
     rejected_count: int
     persisted_count: int
@@ -191,6 +200,7 @@ class TypeCrawlerAgent:
 
     def _collect(self, state: CrawlerState) -> dict:
         source_report: list[dict] = []
+        birthday_catalog: list[DiscoveryItem] = []
         try:
             items, errors = collect_candidates(
                 limit=state["limit"],
@@ -199,7 +209,10 @@ class TypeCrawlerAgent:
                 content_type=self.content_type.value,
                 work_title=state.get("work_title"),
                 source_ids=set(state.get("source_ids", [])),
+                unfiltered_sources=set(state.get("unfiltered_sources", [])),
+                birthday_catalog=birthday_catalog,
                 source_report=source_report,
+                exhaustive_listing=state.get("exhaustive_listing", True),
             )
         except (httpx.HTTPError, ValueError) as exc:
             return {
@@ -211,6 +224,9 @@ class TypeCrawlerAgent:
             }
         return {
             "items": [item.model_dump(mode="json") for item in items],
+            "birthday_catalog": [
+                item.model_dump(mode="json") for item in birthday_catalog
+            ],
             "errors": [*state.get("errors", []), *errors],
             "source_results": self._merge_source_results(
                 state.get("source_results", []), source_report
@@ -250,6 +266,16 @@ class TypeCrawlerAgent:
                 reasons.append("non_https_candidate")
             if self.content_type.value not in item.content_types:
                 reasons.append("type_not_supported_by_candidate")
+            if not reasons and self.content_type.value in {"event", "goods"}:
+                temporal = expiry_evidence(item.model_dump(mode="json"), self.content_type.value)
+                if temporal["status"] == "expired":
+                    rejected += 1
+                    continue
+            if not reasons and self.content_type.value == "news":
+                temporal_news = immediate_news_action_expiry(item.model_dump(mode="json"))
+                if temporal_news["status"] in {"expired", "unresolved"}:
+                    rejected += 1
+                    continue
             if reasons:
                 rejected += 1
                 continue
@@ -272,7 +298,7 @@ class TypeCrawlerAgent:
             updated = dict(result)
             if updated.get("source_id") in source_counts:
                 updated["candidate_count"] = source_counts[updated["source_id"]]
-                if updated.get("attempted"):
+                if updated.get("attempted") and updated.get("status") != "partial":
                     updated["status"] = "succeeded_with_candidates"
             source_results.append(updated)
         return {
@@ -285,12 +311,19 @@ class TypeCrawlerAgent:
         repository = state.get("repository") or AgentRepository()
         items = state.get("items", [])
         saved = repository.persist_discovery(items, state["region_policy"])
+        birthday_references_saved = repository.persist_character_birthday_references(
+            state.get("birthday_catalog", [])
+        )
         capture = self._capture_images(
             state,
             repository,
             [DiscoveryItem.model_validate(item) for item in items],
         ) if state.get("capture_images") else {}
-        return {"persisted_count": saved, **capture}
+        return {
+            "persisted_count": saved,
+            "birthday_references_saved": birthday_references_saved,
+            **capture,
+        }
 
     def _capture_images(
         self,
@@ -440,9 +473,11 @@ class TypeCrawlerAgent:
         region_policy: str = "kr_first",
         repository: AgentRepository | None = None,
         capture_images: bool = True,
+        unfiltered_sources: set[str] | None = None,
+        exhaustive_listing: bool = False,
     ) -> CrawlerRun:
-        if not 1 <= limit <= 50:
-            raise ValueError("limit은 1~50 사이여야 합니다.")
+        if not 1 <= limit <= 200:
+            raise ValueError("limit은 1~200 사이여야 합니다.")
         if timeout <= 0:
             raise ValueError("timeout은 0보다 커야 합니다.")
         if region_policy not in {"kr_first", "mixed", "jp_first"}:
@@ -455,6 +490,8 @@ class TypeCrawlerAgent:
                 "region_policy": region_policy,
                 "repository": repository,
                 "capture_images": capture_images,
+                "unfiltered_sources": sorted(unfiltered_sources or set()),
+                "exhaustive_listing": exhaustive_listing,
                 "source_results": [],
                 "errors": [],
             }
@@ -469,4 +506,5 @@ class TypeCrawlerAgent:
             captured_page_count=final.get("captured_page_count", 0),
             image_candidate_count=final.get("image_candidate_count", 0),
             persisted_image_count=final.get("persisted_image_count", 0),
+            birthday_reference_upserts=final.get("birthday_references_saved", 0),
         )

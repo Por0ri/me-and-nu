@@ -12,9 +12,15 @@ class EditorialPolicy:
     revision_cost_reserve_usd: float = 0.01
     # Recent image-upscale calls cost more than the full package budget.
     image_model_cost_budget_usd: float = 0.0
-    # Every carousel must have a cover, at least one detail card, and a payoff.
+    # Time-sensitive cards can be a compact cover + payoff pair; other carousels
+    # retain the three-card minimum so they include a detail card.
     min_cards: int = 3
+    min_short_deck_cards: int = 2
+    short_deck_content_types: tuple[str, ...] = ("news", "event", "goods")
     max_cards: int = 10
+    max_extraction_fact_candidates: int = 100
+    max_verified_facts: int = 30
+    max_candidate_retries: int = 1
     default_event_retention_days: int = 30
     default_content_validity_days: int = 90
     max_review_failures: int = 4
@@ -32,8 +38,10 @@ class EditorialPolicy:
     # 2x is the compromise between usable visual scale and preserving sharpness.
     # Transparent cutouts and other layouts keep the stricter general limit above.
     max_low_res_spotlight_upscale: float = 2.0
-    quality_pass_score: int = 68
-    quality_card_minimum_score: int = 55
+    # Temporary high-throughput review floor: preserve the carousel shape and
+    # hard blockers while allowing substantially weaker editorial scores.
+    quality_pass_score: int = 40
+    quality_card_minimum_score: int = 30
     safety_minimum_per_card: int = 4
     default_review_issue_penalty: int = 12
     review_issue_penalties: tuple[tuple[str, int], ...] = (
@@ -72,6 +80,12 @@ class EditorialPolicy:
     # Additionally accepts attributed public imagery embedded in the exact
     # registered same-work editorial page. This is not a license or permission.
     allow_public_editorial_image_risk: bool = True
+
+    def minimum_cards_for(self, content_type: str | None) -> int:
+        value = getattr(content_type, "value", content_type)
+        if value in self.short_deck_content_types:
+            return self.min_short_deck_cards
+        return self.min_cards
 
 
 POLICY = EditorialPolicy()

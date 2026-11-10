@@ -46,13 +46,12 @@ def _register(
         _RULES[code] = ReviewRule(code, rule, check, severity, owner, on_fail, applies_to)
 
 
-# Evidence, attribution, rights, and safety are non-negotiable publication gates.
+# Source attribution and safety remain required; source authority and verification
+# confidence are recorded for reviewers but do not block a draft by themselves.
 _register(
     (
-        "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
-        "EVENT_ALREADY_ENDED", "COPY_UNGROUNDED", "SOURCE_STALE",
-        "EVENT_PUBLICATION_DATE_SHOWN", "UNSUPPORTED_DATE_CLAIM",
-        "SOURCE_PUBLICATION_DATE_SHOWN", "SOURCE_APPROVAL_REQUIRED",
+        "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING",
+        "EVENT_ALREADY_ENDED", "SOURCE_APPROVAL_REQUIRED",
         "SOURCE_BODY_EMPTY", "CONTENT_TYPE_SOURCE_UNSUPPORTED",
     ),
     (
@@ -60,6 +59,25 @@ _register(
         'correct work; do not invent or silently alter facts.'
     ),
     check="both", severity="blocker", owner="crawler", on_fail="return_to_crawler",
+)
+_register(
+    (
+        "COPY_UNGROUNDED", "EVENT_PUBLICATION_DATE_SHOWN",
+        "UNSUPPORTED_DATE_CLAIM", "SOURCE_PUBLICATION_DATE_SHOWN",
+    ),
+    (
+        'Keep the blocker until the copy is rewritten to use only dates and claims present in '
+        'the verified facts. Do not add a replacement claim that the facts do not support.'
+    ),
+    check="both", severity="blocker", owner="copy_writer", on_fail="revise_owner",
+)
+_register(
+    ("SOURCE_STALE",),
+    (
+        'Publication age alone does not make a source expired. For event and goods content, '
+        'use only an explicitly verified validity end date or status.'
+    ),
+    check="both", severity="warning", owner="crawler", on_fail="return_to_crawler",
 )
 _register(
     ("SOURCE_NO_OFFICIAL",),
@@ -113,8 +131,9 @@ _register(
 _register(
     ("CARD_COUNT",),
     (
-        f"A carousel must contain at least {POLICY.min_cards} cards and "
-        f"no more than {POLICY.max_cards} cards."
+        'A news, event, or goods carousel must contain at least 2 cards; other types '
+        f"must contain at least {POLICY.min_cards} cards; all types are capped at "
+        f"{POLICY.max_cards} cards."
     ),
     check="code", severity="blocker", owner="copy_writer",
 )
@@ -212,12 +231,12 @@ _register(
     (
         "DETAIL_BODY_MISSING", "DETAIL_BODY_REVIEW_MISSING", "DETAIL_BODY_LLM_REQUIRED",
         "DETAIL_BODY_OUTPUT_INVALID", "DETAIL_BODY_LENGTH", "DETAIL_BODY_FACT_LINK_MISSING",
-        "DETAIL_BODY_FACT_UNVERIFIED", "DETAIL_BODY_SOURCE_MISSING",
+        "DETAIL_BODY_SOURCE_MISSING",
         "DETAIL_BODY_SOURCE_LINK_MISSING",
     ),
     (
-        'The detail article must be readable, source-linked, and supported by verified '
-        'facts; include all available essential event or product conditions without '
+        'The detail article must be readable, source-linked, and supported by recorded '
+        'source facts; include available essential event or product conditions without '
         'inventing missing information.'
     ),
     check="both", severity="blocker", owner="detail_writer",

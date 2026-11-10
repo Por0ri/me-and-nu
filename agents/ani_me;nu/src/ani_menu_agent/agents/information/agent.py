@@ -8,7 +8,8 @@ from ani_menu_agent.storage import AgentRepository
 
 def research_information(state: ContentState) -> ContentState:
     package = ContentPackage.model_validate(state["package"])
-    saved = AgentRepository().persist_information(package)
+    repository = state.get("repository") or AgentRepository()
+    saved = repository.persist_information(package)
     return {
         "trace": append_trace(state, "research_information"),
         "status": "information_researched",

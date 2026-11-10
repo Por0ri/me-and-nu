@@ -107,6 +107,20 @@ class SourceEvidence(BaseModel):
     discovered_via_source_id: str | None = None
     discovery_url: HttpUrl | None = None
     discovery_title: str | None = None
+    # A linked page keeps its own URL while retaining the exact parent-link path
+    # that led to it. This lets policy validate source lineage without promoting
+    # an unregistered destination to an official source.
+    parent_source_evidence_id: str | None = None
+    linked_from_url: HttpUrl | None = None
+    link_label: str = ""
+    link_discovery_method: str = ""
+    link_relationship: str = ""
+    target_work_match: bool = False
+    link_classification: str = "unverified"
+    link_classification_method: str = "pending"
+    link_classification_confidence: float = Field(default=0.0, ge=0, le=1)
+    link_classification_evidence: list[str] = Field(default_factory=list)
+    link_relationship_type: str = "uncertain"
 
 
 class WorkMatchEvidence(BaseModel):
@@ -115,8 +129,14 @@ class WorkMatchEvidence(BaseModel):
     menu_work_id: int = Field(gt=0)
     basis: Literal[
         "article_title",
+        "llm_title_match",
+        "llm_headline_only",
+        "llm_body_context",
+        "llm_curation_list",
+        "llm_source_new_work",
         "headline_character",
         "kitsu_catalog_title",
+        "kitsu_catalog_entry_title",
         "source_registry",
         "structured_about",
         "structured_mention",
@@ -151,7 +171,9 @@ class Fact(BaseModel):
 class TermTranslation(BaseModel):
     original: str = Field(min_length=1)
     korean: str = Field(min_length=1)
-    category: Literal["work_title", "character", "product", "brand", "event", "other"] = "other"
+    category: Literal[
+        "work_title", "character", "product", "brand", "event", "music", "other"
+    ] = "other"
 
     @model_validator(mode="after")
     def normalize_known_korean_terms(self) -> TermTranslation:
@@ -361,6 +383,8 @@ class CardSpec(BaseModel):
     body_sentences: list[str] = Field(default_factory=list, max_length=4)
     protected_phrases: list[str] = Field(default_factory=list)
     fact_ids: list[str] = Field(default_factory=list)
+    # Work IDs actually covered by this card; narrower than the package-level set.
+    menu_work_ids: list[int] = Field(default_factory=list, max_length=10)
     image_id: str
     visual_mode: Literal["source_image", "editorial_graphic"] = "source_image"
     image_explanation: str = ""
@@ -386,6 +410,8 @@ class CopyCard(BaseModel):
     body_sentences: list[str] = Field(default_factory=list, max_length=4)
     protected_phrases: list[str] = Field(default_factory=list)
     fact_ids: list[str] = Field(default_factory=list)
+    # For curation, identify the explicitly covered works on this page.
+    menu_work_ids: list[int] = Field(default_factory=list, max_length=10)
     image_id: str
     visual_mode: Literal["source_image", "editorial_graphic"] = "source_image"
     image_explanation: str = ""
