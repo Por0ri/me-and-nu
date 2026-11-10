@@ -89,7 +89,7 @@ def test_checking_preview_requires_matching_explicit_opt_in(rendered):
     "project", "volume", "external_volume", "network", "public_data", "extra_service", "api_origin",
     "database", "cookie", "redis_prefix", "port", "public_port", "udp", "db_port", "memory", "cpu",
     "zero_memory", "dev_api", "dev_bypass", "llm", "tmdb", "openai", "redis", "pg_buffers", "image",
-    "build_context", "entrypoint", "api_command", "migration_head", "migration_dob", "startup_gate",
+    "build_context", "entrypoint", "api_command", "migration_head", "migration_previous", "migration_dob", "startup_gate",
     "api_mount", "db_mount", "privileged", "host_network", "writeable", "capabilities", "proxy", "oauth",
 ])
 def test_config_cannot_cross_environment_or_enable_unsafe_runtime(rendered, change):
@@ -125,6 +125,7 @@ def test_config_cannot_cross_environment_or_enable_unsafe_runtime(rendered, chan
     elif change == "entrypoint": api["entrypoint"] = ["sh"]
     elif change == "api_command": api["command"] = ["python", "other.py"]
     elif change == "migration_head": config["services"]["migrate"]["command"][-1] = "heads"
+    elif change == "migration_previous": config["services"]["migrate"]["command"][-1] = "b3e7a5c19d42"
     elif change == "migration_dob": config["services"]["migrate"]["command"][-1] = "d2f6a9c4e731"
     elif change == "startup_gate": api["depends_on"]["migrate"]["condition"] = "service_started"
     elif change == "api_mount": api["volumes"] = [{"type": "bind", "source": "/", "target": "/host"}]
