@@ -36,7 +36,7 @@ function DemoAccountDialog({ action, onClose }: { action: "로그아웃" | "회�
     <h2 id="my-account-title">Demo {action} 안내</h2>
     <p id="my-account-description">{action === "로그아웃"
       ? "가상 프로필로 체험 중이에요. 실제 로그인 세션이 없어 로그아웃을 수행하지 않아요."
-      : "시연용 화면이에요. 계정 삭제를 요청하거나 개인정보를 삭제하지 않아요. 실제 회원탈퇴 기능은 준비 중이에요."}</p>
+      : "시연용 화면이라 실제 계정 삭제 API를 호출하거나 개인정보를 삭제하지 않아요."}</p>
     <div className={styles.dialogActions}>
       <button type="button" autoFocus onClick={onClose}>취소</button>
       <button type="button" onClick={onClose}>확인</button>
