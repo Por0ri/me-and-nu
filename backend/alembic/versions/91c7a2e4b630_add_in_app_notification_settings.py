@@ -1,14 +1,14 @@
 """Add in-app preferences under the PM implementation baseline, not team sign-off.
 
 Revision ID: 91c7a2e4b630
-Revises: 6d2f8b4a1c37
+Revises: b3e7a5c19d42
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "91c7a2e4b630"
-down_revision = "6d2f8b4a1c37"
+down_revision = "b3e7a5c19d42"
 branch_labels = None
 depends_on = None
 

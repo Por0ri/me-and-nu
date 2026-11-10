@@ -111,16 +111,28 @@ class PreflightTests(unittest.TestCase):
     def test_cache_only_input_is_accepted_as_presence_check(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for relative in ["catalog/chips.csv", "catalog/menu_works.csv", "catalog/menu_work_entries.csv",
-                             "data/anilist/media.jsonl", "data/anilist/media_recent.jsonl", "data/anilist/detail.jsonl",
-                             "data/anilist/links.jsonl", "mal/anime.csv", "mal/interactions.npz"]:
+            for relative in ["catalog/menu_works.csv", "catalog/menu_work_entries.csv", "model/catalog/chips.csv",
+                             "model/data/anilist/media.jsonl", "model/data/anilist/media_recent.jsonl",
+                             "model/data/anilist/detail.jsonl", "model/data/anilist/links.jsonl",
+                             "model/mal/anime.csv", "model/mal/interactions.npz"]:
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"presence only; not valid data")
-            report = check_inputs(root, root / "mal")
+            report = check_inputs(root / "model", root / "model" / "mal")
         self.assertTrue(report["ready"])
         self.assertIn("Presence/size", report["limits"])
         self.assertTrue(report["warnings"])
+
+    def test_server_context_mode_needs_only_chips_and_the_context_file(self):
+        # 추천 계산 이미지엔 model/ 만 들어가서 공용 작품 목록(레포 catalog/)이 없다
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "model" / "catalog").mkdir(parents=True)
+            (root / "model" / "catalog" / "chips.csv").write_bytes(b"presence only; not valid data")
+            (root / "context.pkl.gz").write_bytes(b"presence only; not valid data")
+            report = check_inputs(root / "model", context=root / "context.pkl.gz")
+        self.assertEqual(report["missing_files"], [])
+        self.assertTrue(report["ready"])
 
     def test_preflight_cli_does_not_read_database_configuration(self):
         with patch("sys.argv", ["daily_recommend", "--preflight"]), patch.object(daily, "database_url", side_effect=AssertionError("env forbidden")), patch.object(daily, "check_inputs", return_value={"ready": False}), patch("builtins.print"):

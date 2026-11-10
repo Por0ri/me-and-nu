@@ -28,7 +28,7 @@ from app.db.session import get_db
 from app.main import create_app
 from app.models import AuthSession, Notification, NotificationSetting
 
-BASE = "6d2f8b4a1c37"
+BASE = "b3e7a5c19d42"
 TARGET = "91c7a2e4b630"
 PATH = "/api/v1/users/me/notification-settings"
 
@@ -253,3 +253,65 @@ def test_missing_row_is_not_synthesized_and_downgrade_guards_saved_values(api):
         assert response.status_code == 409 and response.json()["code"] == "NOTIFICATION_SETTINGS_NOT_INITIALIZED"
     with engine.connect() as db:
         assert db.scalar(text("SELECT count(*) FROM notification_setting WHERE user_id=:user"), {"user": users[0]}) == 0
+
+
+def test_upgrade_and_downgrade_preserve_checking_restoration_sessions(pg):
+    engine, _, migrate, users = pg
+    migrate(BASE, True)
+    now = datetime.now(timezone.utc)
+    token = "restoration-migration-fixture-" + uuid4().hex
+    with Session(engine) as db:
+        db.execute(text("UPDATE user_account SET account_status='withdrawn', withdrawn_at=:now WHERE user_id=:user"),
+                   {"now": now, "user": users[0]})
+        session = AuthSession(user_id=users[0], session_state="restoration_pending",
+            session_token_hash=hash_token(token), csrf_token_hash=hash_token(csrf_token_for_session(token)),
+            created_at=now, expires_at=now + timedelta(hours=1))
+        db.add(session); db.commit(); db.refresh(session)
+        session_id = session.auth_session_id
+    # This database starts at the already-merged Checking revision, with real data.
+    for target, downgrade in [(TARGET, False), (BASE, True), (TARGET, False)]:
+        migrate(target, downgrade)
+        with Session(engine) as db:
+            assert db.get(AuthSession, session_id).session_state == "restoration_pending"
+            assert db.scalar(text("SELECT version_num FROM alembic_version")) == target
+            assert db.scalar(text("SELECT account_status FROM user_account WHERE user_id=:user"), {"user": users[0]}) == "withdrawn"
+            assert db.execute(text("SELECT report_result,creator_new_post,saved_resurface,marketing FROM notification_setting WHERE user_id=:user"),
+                              {"user": users[0]}).one() == (False, True, False, True)
+            assert db.scalar(text("SELECT count(*) FROM consent_history")) == 1
+            if target == TARGET:
+                row = db.get(NotificationSetting, users[0])
+                assert (row.in_app_enabled, row.night_in_app_enabled, row.version) == (True, False, 1)
+
+
+def test_withdrawal_blocks_settings_and_restoration_preserves_preferences(api):
+    client, _, engine, users, _, _ = api
+    saved = client.patch(PATH, json={"version": 1, "inAppEnabled": False, "nightInAppEnabled": True}).json()
+    assert saved == {"inAppEnabled": False, "nightInAppEnabled": True, "version": 2}
+    assert client.delete("/api/v1/users/me", params={"mode": "grace"}).status_code == 202
+    assert client.get(PATH).status_code == 401
+    assert client.patch(PATH, json={"version": 2, "inAppEnabled": True}).status_code == 401
+    # Emulate the restricted session issued after OAuth; no real provider login.
+    token = "restoration-api-fixture-" + uuid4().hex
+    now = datetime.now(timezone.utc)
+    with Session(engine) as db:
+        db.add(AuthSession(user_id=users[0], session_state="restoration_pending",
+            session_token_hash=hash_token(token), csrf_token_hash=hash_token(csrf_token_for_session(token)),
+            created_at=now, expires_at=now + timedelta(hours=1)))
+        db.commit()
+    client.cookies.clear()
+    client.cookies.set(settings.session_cookie_name, token, domain="testserver.local", path="/")
+    client.headers["X-CSRF-Token"] = csrf_token_for_session(token)
+    assert client.get("/api/v1/auth/session").json()["sessionState"] == "restoration_pending"
+    assert client.get(PATH).status_code == 401
+    assert client.patch(PATH, json={"version": 2, "inAppEnabled": True}).status_code == 401
+    assert client.post("/api/v1/auth/withdrawal-restorations").status_code == 200
+    current = client.get("/api/v1/auth/session").json()
+    assert current["sessionState"] == "active"
+    client.headers["X-CSRF-Token"] = current["csrfToken"]
+    assert client.get(PATH).json() == saved
+    assert client.patch(PATH, json={"version": 2, "nightInAppEnabled": False}).json() == {
+        "inAppEnabled": False, "nightInAppEnabled": False, "version": 3}
+    with Session(engine) as db:
+        assert db.get(NotificationSetting, users[0]).marketing is True
+        assert db.scalar(text("SELECT count(*) FROM consent_history")) == 1
+    assert len(client.get("/api/v1/users/me/notifications").json()["items"]) == 1

@@ -27,8 +27,11 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
 
     assert script.get_heads() == ["91c7a2e4b630"]
     settings = script.get_revision("91c7a2e4b630")
-    assert settings.down_revision == "6d2f8b4a1c37"
+    assert settings.down_revision == "b3e7a5c19d42"
     assert settings.dependencies is None
+    restoration = script.get_revision("b3e7a5c19d42")
+    assert restoration.down_revision == "6d2f8b4a1c37"
+    assert restoration.dependencies is None
     report = script.get_revision("6d2f8b4a1c37")
     assert report.down_revision == "150a601074af"
     assert report.dependencies is None
@@ -43,7 +46,7 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     assert onboarding_v2.dependencies is None
     assert "onboarding_v2" in onboarding_v2.branch_labels
     assert "d2f6a9c4e731" not in {
-        revision.revision for revision in script.walk_revisions(base="base", head="6d2f8b4a1c37")
+        revision.revision for revision in script.walk_revisions(base="base", head="91c7a2e4b630")
     }
     assert script.get_revision("c0e5f3b8a124").down_revision == (
         "b9d4e2a7f013"
@@ -142,6 +145,28 @@ def test_carousel_migration_offline_sql_preserves_downgrade_guard(monkeypatch):
     guard = sql.index("RAISE EXCEPTION")
     deletion = sql.index("DROP TABLE content_slide")
     assert lock < guard < deletion
+
+
+def test_restoration_session_migration_only_widens_the_session_state_rule(monkeypatch):
+    revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("b3e7a5c19d42").module
+    buffer = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(context))
+    revision.upgrade()
+    upgrade_sql = buffer.getvalue()
+    assert "DROP CONSTRAINT ck_auth_session_state" in upgrade_sql
+    assert "'restoration_pending'" in upgrade_sql
+    assert "CREATE TABLE" not in upgrade_sql and "ADD COLUMN" not in upgrade_sql
+
+    buffer.seek(0)
+    buffer.truncate()
+    revision.downgrade()
+    downgrade_sql = buffer.getvalue()
+    # The old rule rejects these sessions, so they go before it comes back.
+    assert downgrade_sql.index("DELETE FROM auth_session") < downgrade_sql.index("ADD CONSTRAINT ck_auth_session_state")
+    assert "CHECK (session_state IN ('anonymous', 'onboarding_pending', 'active'))" in downgrade_sql
 
 
 def test_recommendation_migration_is_additive_and_guards_downgrade(monkeypatch):

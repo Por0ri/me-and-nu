@@ -1,4 +1,4 @@
-anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,title_native,popularity
+﻿anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,title_native,popularity
 16498,16498,1,TV,2013,진격의 거인,Shingeki no Kyojin,Attack on Titan,進撃の巨人,1068093
 18397,18397,1,OVA,2013,,Shingeki no Kyojin OVA,Attack on Titan OVA,進撃の巨人 OVA,132557
 19391,19391,1,SPECIAL,2013,,Shingeki no Kyojin: Chimi Kyara Gekijou - Tondeke! Kunren Heidan,Attack on Titan Picture Drama,"「進撃の巨人」ちみキャラ劇場""とんでけ! 訓練兵団""",15491
@@ -553,7 +553,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 111762,40417,103,TV,2020,,Fruits Basket: 2nd Season,Fruits Basket Season 2,フルーツバスケット 2nd Season,188018
 124194,42938,103,TV,2021,,Fruits Basket: The Final,Fruits Basket The Final Season,フルーツバスケットThe Final,178706
 136192,49310,103,MOVIE,2022,극장판 후르츠 바스켓: 프렐류드,Fruits Basket: prelude,Fruits Basket -prelude-,フルーツバスケット -prelude-,49913
-100388,36649,104,TV,2018,,BANANA FISH,BANANA FISH,BANANA FISH,312024
+100388,36649,104,TV,2018,바나나 피쉬,BANANA FISH,BANANA FISH,BANANA FISH,312024
 113813,40839,105,TV,2020,,"Kanojo, Okarishimasu",Rent-a-Girlfriend,彼女、お借りします,311485
 124410,42963,105,TV,2022,,"Kanojo, Okarishimasu 2nd Season",Rent-a-Girlfriend Season 2,彼女、お借りします 第2期,138348
 154745,53050,105,TV,2023,,"Kanojo, Okarishimasu 3rd Season",Rent-a-Girlfriend Season 3,彼女、お借りします 第3期,74838
@@ -613,7 +613,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 178754,59177,117,TV,2025,,Kaijuu 8-gou 2nd Season,Kaiju No. 8 Season 2,怪獣８号 第２期,158200
 179998,59489,117,MOVIE,2025,,Kaijuu 8-gou Movie,Kaiju No. 8: Mission Recon,怪獣8号 第1期総集編,26701
 179999,59490,117,SPECIAL,2025,,Kaijuu 8-gou: Hoshina no Kyuujitsu,Kaiju No.8: Hoshina's Day Off,怪獣8号 保科の休日,24029
-141391,50346,118,TV,2022,,Yofukashi no Uta,Call of the Night,よふかしのうた,287311
+141391,50346,118,TV,2022,철야의 노래,Yofukashi no Uta,Call of the Night,よふかしのうた,287311
 175914,58390,118,TV,2025,,Yofukashi no Uta Season 2,Call of the Night Season 2,よふかしのうた Season 2,105638
 124845,43299,119,TV,2021,원더 에그 프라이어리티,Wonder Egg Priority,WONDER EGG PRIORITY,ワンダーエッグ・プライオリティ,287221
 131773,48614,119,SPECIAL,2021,,Wonder Egg Priority: Tokubetsu-hen,WONDER EGG PRIORITY: My Priority,ワンダーエッグ・プライオリティ 特別編,66738
@@ -708,7 +708,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 143271,50713,137,TV,2024,,Mahouka Koukou no Rettousei 3rd Season,The Irregular at Magic High School Season 3,魔法科高校の劣等生 第3シーズン,57030
 178707,59174,137,MOVIE,2026,,Mahouka Koukou no Rettousei: Yotsuba Keishou-hen,The Irregular at Magic High School THE MOVIE -Yotsuba Succession Arc-,劇場版 魔法科高校の劣等生 四葉継承編,18100
 20872,27775,138,TV,2015,플라스틱 메모리즈,Plastic Memories,Plastic Memories,プラスティックメモリーズ,261885
-853,853,139,TV,2006,,Ouran Koukou Host Club,Ouran High School Host Club,桜蘭高校ホスト部,260768
+853,853,139,TV,2006,오란고교 사교클럽,Ouran Koukou Host Club,Ouran High School Host Club,桜蘭高校ホスト部,260768
 107660,39195,140,TV,2019,비스타즈,BEASTARS,BEASTARS,BEASTARS,260437
 114194,40935,140,TV,2021,,BEASTARS 2nd Season,BEASTARS Season 2,BEASTARS 第2期,141374
 136880,49469,140,ONA,2024,,BEASTARS FINAL SEASON Part 1,BEASTARS Final Season Part 1,BEASTARS FINAL SEASON Part 1,42782
@@ -735,12 +735,12 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 100722,36633,148,TV,2019,,Date A Live III,Date A Live III,デート・ア・ライブⅢ,113821
 116605,41461,148,TV,2022,,Date A Live IV,Date A Live IV,デート・ア・ライブIV,83321
 151380,52196,148,TV,2024,,Date A Live V,Date A Live V,デート・ア・ライブV,48905
-116267,41389,149,TV,2020,,Tonikaku Kawaii,TONIKAWA: Over The Moon For You,トニカクカワイイ,249557
+116267,41389,149,TV,2020,어쨌든 귀여워,Tonikaku Kawaii,TONIKAWA: Over The Moon For You,トニカクカワイイ,249557
 127371,44931,149,OVA,2021,,Tonikaku Kawaii: SNS,TONIKAWA: Over The Moon For You ~SNS~,トニカクカワイイ ～SNS～,64762
 141212,51533,149,SPECIAL,2022,,Tonikaku Kawaii: Seifuku,TONIKAWA: Over The Moon For You ~Uniform~,トニカクカワイイ ～制服～,42688
 141208,50307,149,TV,2023,,Tonikaku Kawaii Season 2,TONIKAWA: Over The Moon For You Season 2,トニカクカワイイ（シーズン2）,94319
 166104,55651,149,ONA,2023,,Tonikaku Kawaii: Joshikou-hen,TONIKAWA: Over The Moon For You ~High School Days~,トニカクカワイイ 女子高編,31715
-21092,30296,150,TV,2015,,Rakudai Kishi no Cavalry,Chivalry of a Failed Knight,落第騎士の英雄譚（キャバルリィ）,248726
+21092,30296,150,TV,2015,낙제 기사의 영웅담,Rakudai Kishi no Cavalry,Chivalry of a Failed Knight,落第騎士の英雄譚（キャバルリィ）,248726
 437,437,151,MOVIE,1998,퍼펙트 블루,PERFECT BLUE,Perfect Blue,PERFECT BLUE,248507
 21688,32902,152,OVA,2016,,Mahoutsukai no Yome: Hoshi Matsu Hito,The Ancient Magus' Bride: Those Awaiting a Star,魔法使いの嫁 星待つひと,73463
 98436,35062,152,TV,2017,,Mahoutsukai no Yome,The Ancient Magus' Bride,魔法使いの嫁,248275
@@ -749,7 +749,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 20596,21995,153,TV,2014,,Ao Haru Ride,Blue Spring Ride,アオハライド,247275
 20837,24151,153,OVA,2014,,Ao Haru Ride: unwritten,,アオハライド unwritten,32241
 20900,24151,153,OVA,2014,,Ao Haru Ride PAGE.13,,アオハライド PAGE.13,18291
-21857,33487,154,TV,2017,,Masamune-kun no Revenge,Masamune-kun's Revenge,政宗くんのリベンジ,246823
+21857,33487,154,TV,2017,마사무네의 리벤지,Masamune-kun no Revenge,Masamune-kun's Revenge,政宗くんのリベンジ,246823
 101213,37377,154,OVA,2018,,Masamune-kun no Revenge OVA,Masamune-kun's Revenge OAD,政宗くんのリベンジ OVA,37887
 146953,51498,154,TV,2023,,Masamune-kun no Revenge R,Masamune-kun's Revenge R,政宗くんのリベンジR,87908
 159831,54112,155,TV,2023,,Zom 100: Zombie ni Naru Made ni Shitai 100 no Koto,Zom 100: Bucket List of the Dead,ゾン100～ゾンビになるまでにしたい100のこと～,244992
@@ -793,10 +793,10 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 97886,34451,170,TV,2017,,Kekkai Sensen & BEYOND,Blood Blockade Battlefront & Beyond,血界戦線 & BEYOND,111220
 153518,52701,171,TV,2024,던전밥,Dungeon Meshi,Delicious in Dungeon,ダンジョン飯,230092
 178031,59068,171,ONA,2027,,Dungeon Meshi 2nd Season,Delicious in Dungeon Season 2,ダンジョン飯 第２期,46506
-129201,47194,172,TV,2022,,Summer Time Render,Summer Time Rendering,サマータイムレンダ,229370
-113717,40834,173,TV,2021,,Ousama Ranking,Ranking of Kings,王様ランキング,226762
+129201,47194,172,TV,2022,서머타임 렌더,Summer Time Render,Summer Time Rendering,サマータイムレンダ,229370
+113717,40834,173,TV,2021,임금님 랭킹,Ousama Ranking,Ranking of Kings,王様ランキング,226762
 153452,52657,173,TV,2023,,Ousama Ranking: Yuuki no Takarabako,Ranking of Kings: The Treasure Chest of Courage,王様ランキング 勇気の宝箱,54767
-103139,37982,174,TV,2019,,Domestic na Kanojo,Domestic Girlfriend,ドメスティックな彼女,225398
+103139,37982,174,TV,2019,도메스틱 그녀,Domestic na Kanojo,Domestic Girlfriend,ドメスティックな彼女,225398
 177709,58939,175,ONA,2025,사카모토 데이즈,SAKAMOTO DAYS,SAKAMOTO DAYS,SAKAMOTO DAYS,225374
 184237,60285,175,ONA,2025,,SAKAMOTO DAYS Part 2,SAKAMOTO DAYS Part 2,SAKAMOTO DAYS 第２クール,105616
 204363,63139,175,TV,2027,,SAKAMOTO DAYS 2nd Season,SAKAMOTO DAYS Season 2,SAKAMOTO DAYS 第2期,27696
@@ -821,9 +821,9 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 877,877,186,TV,2006,,NANA,NANA,NANA-ナナ-,210676
 162804,54744,187,TV,2024,,Tokidoki Bosotto Rossiya-go de Dereru Tonari no Alya-san,Alya Sometimes Hides Her Feelings in Russian,時々ボソッとロシア語でデレる隣のアーリャさん,210396
 181641,59873,187,TV,2027,,Tokidoki Bosotto Rossiya-go de Dereru Tonari no Alya-san Season 2,,時々ボソッとロシア語でデレる隣のアーリャさん Season 2,50967
-154965,53126,188,TV,2023,,Yamada-kun to Lv999 no Koi wo Suru,My Love Story with Yamada-kun at Lv999,山田くんとLv999の恋をする,209988
-20910,29786,189,TV,2015,,Shimoneta to Iu Gainen ga Sonzai Shinai Taikutsu na Sekai,SHIMONETA: A Boring World Where the Concept of Dirty Jokes Doesn’t Exist,下ネタという概念が存在しない退屈な世界,209532
-227,227,190,OVA,2000,,FLCL,FLCL,フリクリ,209062
+154965,53126,188,TV,2023,야마다 군과 Lv999의 사랑을 하다,Yamada-kun to Lv999 no Koi wo Suru,My Love Story with Yamada-kun at Lv999,山田くんとLv999の恋をする,209988
+20910,29786,189,TV,2015,야한 이야기라는 개념이 존재하지 않는 지루한 세계,Shimoneta to Iu Gainen ga Sonzai Shinai Taikutsu na Sekai,SHIMONETA: A Boring World Where the Concept of Dirty Jokes Doesn’t Exist,下ネタという概念が存在しない退屈な世界,209532
+227,227,190,OVA,2000,프리크리,FLCL,FLCL,フリクリ,209062
 21746,33010,190,MOVIE,2018,,FLCL Progressive,FLCL Progressive,フリクリ プログレ,46464
 21748,35842,190,MOVIE,2018,,FLCL Alternative,FLCL Alternative,フリクリ オルタナ,35686
 101004,37210,191,TV,2018,,Isekai Maou to Shoukan Shoujo no Dorei Majutsu,How NOT to Summon a Demon Lord,異世界魔王と召喚少女の奴隷魔術,208531
@@ -841,10 +841,10 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 849,849,199,TV,2006,스즈미야 하루히의 우울,Suzumiya Haruhi no Yuuutsu,The Melancholy of Haruhi Suzumiya,涼宮ハルヒの憂鬱,202879
 4382,4382,199,TV,2009,,Suzumiya Haruhi no Yuuutsu (2009),The Melancholy of Haruhi Suzumiya (2009),涼宮ハルヒの憂鬱,121091
 7311,7311,199,MOVIE,2010,스즈미야 하루히의 소실,Suzumiya Haruhi no Shoushitsu,The Disappearance of Haruhi Suzumiya,涼宮ハルヒの消失,149610
-105156,38659,200,TV,2019,,Shinchou Yuusha: Kono Yuusha ga Ore TUEEE Kuse ni Shinchou Sugiru,Cautious Hero: The Hero Is Overpowered but Overly Cautious,慎重勇者～この勇者が俺ＴＵＥＥＥくせに慎重すぎる～,202643
+105156,38659,200,TV,2019,이 용사가 ZZANG센 주제에 너무 신중하다,Shinchou Yuusha: Kono Yuusha ga Ore TUEEE Kuse ni Shinchou Sugiru,Cautious Hero: The Hero Is Overpowered but Overly Cautious,慎重勇者～この勇者が俺ＴＵＥＥＥくせに慎重すぎる～,202643
 21711,32998,201,TV,2016,91 데이즈,91Days,91 Days,91Days,200716
 98778,34777,201,SPECIAL,2017,,91Days: Day 13,91 Days: Shoal of Time,91Days Day13,19408
-20994,28907,202,TV,2015,,"GATE: Jieitai Kanochi nite, Kaku Tatakaeri",Gate,GATE 自衛隊 彼の地にて、斯く戦えり,199960
+20994,28907,202,TV,2015,"게이트 : 자위대 그의 땅에서, 이처럼 싸우며","GATE: Jieitai Kanochi nite, Kaku Tatakaeri",Gate,GATE 自衛隊 彼の地にて、斯く戦えり,199960
 21364,31637,202,TV,2016,,"GATE: Jieitai Kanochi nite, Kaku Tatakaeri Part 2",Gate 2,GATE 自衛隊 彼の地にて、斯く戦えり 第2クール,127677
 20631,25157,203,TV,2014,,Trinity Seven,TRINITY SEVEN,トリニティセブン,199824
 21064,28285,203,OVA,2015,,Trinity Seven: Nanatsu no Taizai to Nana Madoushi,,トリニティセブン 七つの大罪と七魔道士,34974
@@ -852,9 +852,9 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 103631,37986,203,MOVIE,2019,,Trinity Seven Movie - Tenkuu Toshokan to Shinku no Maou,Trinity Seven: Heavens Library & Crimson Lord,劇場版トリニティセブン -天空図書館と真紅の魔王,38271
 21196,28623,204,TV,2016,갑철성의 카바네리,Koutetsujou no Kabaneri,Kabaneri of the Iron Fortress,甲鉄城のカバネリ,199333
 97918,34544,204,MOVIE,2019,,Koutetsujou no Kabaneri: Unato Kessen,Kabaneri of the Iron Fortress: The Battle of Unato,甲鉄城のカバネリ 〜海門決戦〜,50623
-98291,34902,205,TV,2017,,Tsurezure Children,Tsuredure Children,徒然チルドレン,198497
+98291,34902,205,TV,2017,심심한 칠드런,Tsurezure Children,Tsuredure Children,徒然チルドレン,198497
 20457,20787,206,TV,2014,,Black Bullet,Black Bullet,ブラック・ブレット,197779
-10408,10408,207,MOVIE,2011,,Hotarubi no Mori e,Into the Forest of Fireflies' Light,蛍火の杜へ,196681
+10408,10408,207,MOVIE,2011,반딧불이의 숲으로,Hotarubi no Mori e,Into the Forest of Fireflies' Light,蛍火の杜へ,196681
 457,457,208,TV,2005,,Mushishi,MUSHI-SHI,蟲師,196361
 20595,21939,208,TV,2014,,Mushishi Zoku Shou,MUSHI-SHI The Next Passage,蟲師 続章,68645
 20751,24701,208,TV,2014,,Mushishi Zoku Shou 2,MUSHI-SHI The Next Passage 2,蟲師 続章 2,59217
@@ -961,7 +961,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 449,449,252,MOVIE,2004,홍련의 봉래도,Inuyasha: Guren no Houraijima,InuYasha the Movie 4: Fire on the Mystic Island,犬夜叉 紅蓮の蓬莱島,16700
 6811,6811,252,TV,2009,이누야샤 완결편,Inuyasha: Kanketsu-hen,InuYasha: The Final Act,犬夜叉 完結編,52426
 118399,41911,252,TV,2020,,Hanyou no Yashahime,Yashahime: Princess Half-Demon,半妖の夜叉姫,36341
-20987,28825,253,TV,2015,,Himouto! Umaru-chan,Himouto! Umaru-chan,干物妹！うまるちゃん,174436
+20987,28825,253,TV,2015,건어물 여동생! 우마루짱,Himouto! Umaru-chan,Himouto! Umaru-chan,干物妹！うまるちゃん,174436
 21327,30991,253,OVA,2015,,Himouto! Umaru-chan OVA,,干物妹！うまるちゃん OVA,21409
 98572,35376,253,TV,2017,,Himouto! Umaru-chan R,Himouto! Umaru-chan R,干物妹! うまるちゃん R,68011
 21093,30307,254,TV,2015,,Monster Musume no Iru Nichijou,Monster Musume: Everyday Life With Monster Girls,モンスター娘のいる日常,172638
@@ -978,13 +978,13 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 107068,38993,257,TV,2019,,Karakai Jouzu no Takagi-san 2,Teasing Master Takagi-san Season 2,からかい上手の高木さん 2,92783
 138424,49721,257,TV,2022,,Karakai Jouzu no Takagi-san 3,Teasing Master Takagi-san Season 3,からかい上手の高木さん３,57102
 138425,49722,257,MOVIE,2022,극장판 장난을 잘 치는 타카기 양,Karakai Jouzu no Takagi-san Movie,Teasing Master Takagi-san: The Movie,劇場版 からかい上手の高木さん,31156
-107693,39196,258,TV,2019,,Mairimashita! Iruma-kun,Welcome to Demon School! Iruma-kun,魔入りました！入間くん,171297
+107693,39196,258,TV,2019,마계학교 이루마군,Mairimashita! Iruma-kun,Welcome to Demon School! Iruma-kun,魔入りました！入間くん,171297
 116338,41402,258,TV,2021,,Mairimashita! Iruma-kun 2,Welcome to Demon School! Iruma-kun Season 2,魔入りました！入間くん 第2シリーズ,108028
 139092,49784,258,TV,2022,,Mairimashita! Iruma-kun 3,Welcome to Demon School! Iruma-kun Season 3,魔入りました！入間くん 第3シリーズ,75372
 184492,60310,258,TV,2026,,Mairimashita! Iruma-kun 4,Welcome to Demon School! Iruma-kun Season 4,魔入りました！入間くん 第4シリーズ,43768
 131565,48556,259,TV,2021,Takt op.Destiny,takt op.Destiny,takt op.Destiny,takt op.Destiny,170609
 141949,50425,260,TV,2022,,"Fuufu Ijou, Koibito Miman.","More than a Married Couple, but Not Lovers.",夫婦以上、恋人未満。,169902
-141014,50273,261,ONA,2022,친구게임,Tomodachi Game,Tomodachi Game,トモダチゲーム,169220
+141014,50273,261,ONA,2022,친구 게임,Tomodachi Game,Tomodachi Game,トモダチゲーム,169220
 100183,36475,262,TV,2018,,Sword Art Online Alternative: Gun Gale Online,Sword Art Online Alternative: Gun Gale Online,ソードアート・オンライン オルタナティブ ガンゲイル・オンライン,168830
 167141,55994,262,TV,2024,,Sword Art Online Alternative: Gun Gale Online II,Sword Art Online Alternative: Gun Gale Online II,ソードアート・オンライン オルタナティブ ガンゲイル・オンラインⅡ,43392
 99426,35839,263,TV,2018,우주보다 먼 곳,Sora yori mo Tooi Basho,A Place Further Than the Universe,宇宙よりも遠い場所,168748
@@ -1010,8 +1010,8 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 170221,56948,272,ONA,2023,,Boku no Kokoro no Yabai Yatsu: Twi-Yaba,The Dangers in My Heart Special,僕の心のヤバイやつ ツイヤバ,17556
 166216,55690,272,TV,2024,,Boku no Kokoro no Yabai Yatsu 2nd Season,The Dangers in My Heart Season 2,僕の心のヤバイやつ 第2期,107313
 182317,59985,272,MOVIE,2026,,Boku no Kokoro no Yabai Yatsu Movie,The Dangers in My Heart: The Movie,劇場版 僕の心のヤバイやつ,30752
-131083,48483,273,TV,2021,,Mieruko-chan,Mieruko-chan,見える子ちゃん,164195
-20678,23233,274,TV,2015,,Shinmai Maou no Testament,The Testament of Sister New Devil,新妹魔王の契約者,163948
+131083,48483,273,TV,2021,보이는 여고생,Mieruko-chan,Mieruko-chan,見える子ちゃん,164195
+20678,23233,274,TV,2015,새 여동생 마왕의 계약,Shinmai Maou no Testament,The Testament of Sister New Devil,新妹魔王の契約者,163948
 21110,30363,274,TV,2015,,Shinmai Maou no Testament: BURST,The Testament of Sister New Devil BURST,新妹魔王の契約者 BURST,90717
 21247,29027,274,OVA,2015,,Shinmai Maou no Testament: Toujou Basara no Hard Sweet na Nichijou,"The Testament of Sister New Devil: Tojo Basara's Hard, Sweet Daily Life",新妹魔王の契約者 東城刃更のハードスウィートな日常,37955
 21209,30464,274,SPECIAL,2015,,Shinmai Maou no Testament: Loli Ero Succubus Maria no Characommentary Tsuki Hizou Eizou,The Testament of Sister New Devil Loli Ero Succubus Maria no Characommentary Tsuki Hizou Eizou,新妹魔王の契約者〈テスタメント〉ロリエロサキュバス万理亜のキャラコメンタリー付き秘蔵映像,13248
@@ -1043,7 +1043,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 5764,5764,286,SPECIAL,2008,,Zero no Tsukaima: Princesses no Rondo - Yuuwaku no Sunahama,"The Familiar of Zero: ""Rondo"" of Princesses - Seductive Beach",ゼロの使い魔 ～三美姫（プリンセッセ）の輪舞（ロンド）～ 誘惑の砂浜,18798
 11319,11319,286,TV,2012,,Zero no Tsukaima F,The Familiar of Zero F,ゼロの使い魔F,78067
 128705,46352,287,TV,2021,,Blue Period,Blue Period,ブルーピリオド,156268
-14289,14289,288,TV,2012,,Sukitte Ii na yo.,"Say ""I love you"".",好きっていいなよ。,156179
+14289,14289,288,TV,2012,사랑한다고 말해,Sukitte Ii na yo.,"Say ""I love you"".",好きっていいなよ。,156179
 17409,17409,288,SPECIAL,2012,,Sukitte Ii na yo. Specials,"Say ""I love you"". Specials",好きっていいなよ。,10677
 16868,16868,288,OVA,2013,,Sukitte Ii na yo.: Dareka ga,,好きっていいなよ。誰かが,15204
 6213,6213,289,TV,2009,어떤 과학의 초전차포,Toaru Kagaku no Railgun,A Certain Scientific Railgun,とある科学の超電磁砲,156020
@@ -1072,7 +1072,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 101992,35678,297,MOVIE,2019,극장판 울려라! 유포니엄 ~맹세의 피날레~,Hibike! Euphonium: Chikai no Finale,Sound! Euphonium: The Movie - Our Promise: A Brand New Day,劇場版 響け！ユーフォニアム～誓いのフィナーレ～,35994
 150429,51995,297,OVA,2023,극장판 울려라! 유포니엄: 앙상블 콘테스트,Tokubetsu-hen Hibike! Euphonium: Ensemble Contest,Sound! Euphonium: Ensemble Contest,特別編 響け！ユーフォニアム～アンサンブルコンテスト～,19795
 109731,39894,297,TV,2024,,Hibike! Euphonium 3,Sound! Euphonium 3,響け！ユーフォニアム３,36947
-153845,52830,298,TV,2023,,"Isekai de Cheat Skill wo Te ni Shita Ore wa, Genjitsu Sekai wo mo Musou Suru: Level Up wa Jinsei wo Kaeta","I Got a Cheat Skill in Another World and Became Unrivaled in The Real World, Too",異世界でチート能力を手にした俺は、現実世界をも無双する ～レベルアップは人生を変えた～,153158
+153845,52830,298,TV,2023,이세계에서 치트 스킬을 얻은 나는 현실 세계에서도 무쌍한다,"Isekai de Cheat Skill wo Te ni Shita Ore wa, Genjitsu Sekai wo mo Musou Suru: Level Up wa Jinsei wo Kaeta","I Got a Cheat Skill in Another World and Became Unrivaled in The Real World, Too",異世界でチート能力を手にした俺は、現実世界をも無双する ～レベルアップは人生を変えた～,153158
 170110,56906,298,SPECIAL,2026,,"Isekai de Cheat Skill wo Te ni Shita Ore wa, Genjitsu Sekai wo mo Musou Suru: Level Up wa Jinsei wo Kaeta","I Got a Cheat Skill in Another World and Became Unrivaled in The Real World, Too (Special) - The Legendary Dragon—Awakens",異世界でチート能力を手にした俺は、現実世界をも無双する ～レベルアップは人生を変えた～,30642
 115113,41226,299,TV,2020,,Uzaki-chan wa Asobitai!,Uzaki-chan Wants to Hang Out!,宇崎ちゃんは遊びたい！,152477
 124395,42962,299,TV,2022,,Uzaki-chan wa Asobitai! ω,Uzaki-chan Wants to Hang Out! Season 2,宇崎ちゃんは遊びたい！ω（だぶる）,70390
@@ -1080,9 +1080,9 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 143080,50653,300,MOVIE,2022,영화 오드 택시 인 더 우즈,Odd Taxi: In the Woods,ODDTAXI In The Woods,映画 オッドタクシー イン・ザ・ウッズ,19771
 100077,36296,301,TV,2018,히나마츠리,Hinamatsuri,HINAMATSURI,ヒナまつり,150428
 7785,7785,302,TV,2010,,Yojouhan Shinwa Taikei,The Tatami Galaxy,四畳半神話大系,150069
-101001,37171,303,TV,2018,,Asobi Asobase,Asobi Asobase - workshop of fun -,あそびあそばせ,149877
+101001,37171,303,TV,2018,즐겁게 놀아보세,Asobi Asobase,Asobi Asobase - workshop of fun -,あそびあそばせ,149877
 104170,37996,303,OVA,2018,,Asobi Asobase OVA,Asobi Asobase -workshop of fun- OVA,あそびあそばせ (OAD),18821
-97863,34403,304,TV,2017,,Hajimete no Gal,My First Girlfriend is a Gal,はじめてのギャル,149761
+97863,34403,304,TV,2017,첫 갸루,Hajimete no Gal,My First Girlfriend is a Gal,はじめてのギャル,149761
 98878,35237,304,OVA,2017,,Hajimete no Gal: Hajimete no Bunkasai,My First Girlfriend is a Gal OVA,はじめてのギャル はじめての文化祭,25783
 527,527,305,TV,1997,포켓몬스터,Pocket Monsters,Pokémon,ポケットモンスター,149722
 528,528,305,MOVIE,1998,극장판 포켓몬스터: 뮤츠의 역습,Pocket Monsters: Mewtwo no Gyakushuu,Pokémon: The First Movie,ポケットモンスター ミュウツーの逆襲,62619
@@ -1132,7 +1132,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 12069,12069,309,SPECIAL,2003,,Hajime no Ippo: THE FIGHTING! Boxer no Kobushi,Hajime no Ippo: The Fighting! - Boxer's Fist,はじめの一歩 THE FIGHTING! ボクサーの拳,16141
 5258,5258,309,TV,2009,,Hajime no Ippo: New Challenger,Hajime no Ippo: The Fighting! New Challenger,はじめの一歩 New Challenger,62350
 19647,19647,309,TV,2013,,Hajime no Ippo: Rising,Hajime No Ippo: The Fighting! - Rising -,はじめの一歩 Rising,60933
-21290,31404,310,TV,2016,,Netoge no Yome wa Onnanoko ja Nai to Omotta?,And you thought there is never a girl online?,ネトゲの嫁は女の子じゃないと思った?,146966
+21290,31404,310,TV,2016,온라인 게임의 신부는 여자아이가 아니라고 생각한 거야?,Netoge no Yome wa Onnanoko ja Nai to Omotta?,And you thought there is never a girl online?,ネトゲの嫁は女の子じゃないと思った?,146966
 17729,17729,311,TV,2014,그리자이아의 과실,Grisaia no Kajitsu,The Fruit of Grisaia,グリザイアの果実,146919
 21010,29101,311,SPECIAL,2014,,Grisaia no Kajitsu: Grisaia no Tokuten,The Fruit of Grisaia: Grisaia no Tokuten,グリザイアの果実 グリザイアの特典,22970
 21006,29095,311,TV,2015,,Grisaia no Rakuen,The Eden of Grisaia,グリザイアの楽園,90868
@@ -1160,8 +1160,8 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 185857,60560,319,ONA,2025,,Xian Wang de Richang Shenghuo 5,The Daily Life of the Immortal King Season 5,仙王的日常生活 第五季,15239
 101168,37345,320,TV,2020,,Plunderer,Plunderer,プランダラ,143191
 166794,55866,321,TV,2024,손끝과 연연,Yubisaki to Renren,A Sign of Affection,ゆびさきと恋々,142840
-195600,62001,322,TV,2026,,Yomi no Tsugai,Daemons of the Shadow Realm,黄泉のツガイ,142818
-3455,3455,323,TV,2008,,To LOVE-Ru,To Love Ru,To LOVEる -とらぶる-,142805
+195600,62001,322,TV,2026,황천의 츠가이,Yomi no Tsugai,Daemons of the Shadow Realm,黄泉のツガイ,142818
+3455,3455,323,TV,2008,투 러브 트러블,To LOVE-Ru,To Love Ru,To LOVEる -とらぶる-,142805
 5667,5667,323,OVA,2009,,To LOVE-Ru OVA,,To LOVEる -とらぶる-,41502
 9181,9181,323,TV,2010,,Motto To LOVE-Ru,Motto To Love Ru,もっと To LOVEる -とらぶる-,70757
 13663,13663,323,TV,2012,,To LOVE-Ru Darkness,To Love Ru Darkness,To LOVEる -とらぶる- ダークネス,79231
@@ -1171,13 +1171,13 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 21852,31711,323,SPECIAL,2016,,To LOVE-Ru Darkness 2nd Specials,To Love Ru Darkness 2 Specials,To LOVEる -とらぶる- ダークネス2nd,26495
 126546,44203,324,TV,2021,,Seirei Gensouki,Seirei Gensouki: Spirit Chronicles,精霊幻想記,142293
 141182,50306,324,TV,2024,,Seirei Gensouki 2,Seirei Gensouki: Spirit Chronicles Season 2,精霊幻想記2,75865
-117612,41710,325,TV,2021,,Genjitsu Shugi Yuusha no Oukoku Saikenki,How a Realist Hero Rebuilt the Kingdom,現実主義勇者の王国再建記,141900
+117612,41710,325,TV,2021,현실주의 용사의 왕국 재건기,Genjitsu Shugi Yuusha no Oukoku Saikenki,How a Realist Hero Rebuilt the Kingdom,現実主義勇者の王国再建記,141900
 139648,49930,325,TV,2022,,Genjitsu Shugi Yuusha no Oukoku Saikenki Part 2,How a Realist Hero Rebuilt the Kingdom Part 2,現実主義勇者の王国再建記 第二部,91665
 11633,11633,326,TV,2013,,Blood Lad,Blood Lad,ブラッドラッド,141417
 18441,18441,326,OVA,2013,,Blood Lad: Wagahai wa Neko de wa Nai,,ブラッドラッド 我輩は猫ではない,28446
-104464,38483,327,TV,2019,,Ore wo Suki nano wa Omae dake ka yo,ORESUKI: Are you the only one who loves me?,俺を好きなのはお前だけかよ,141311
+104464,38483,327,TV,2019,나를 좋아하는 건 너뿐이냐,Ore wo Suki nano wa Omae dake ka yo,ORESUKI: Are you the only one who loves me?,俺を好きなのはお前だけかよ,141311
 114195,40936,327,OVA,2020,,Ore wo Suki nano wa Omae dake ka yo: Oretachi no Game Set,ORESUKI: Are you the only one who loves me?: Our Playball / Our End Run / Our Game,俺を好きなのはお前だけかよ～俺たちのゲームセット～,44412
-112608,40586,328,TV,2021,,"Slime Taoshite 300-nen, Shiranai Uchi ni Level MAX ni Nattemashita",I've Been Killing Slimes for 300 Years and Maxed Out My Level,スライム倒して300年、知らないうちにレベルMAXになってました,141253
+112608,40586,328,TV,2021,"슬라임을 잡으면서 300년, 모르는 사이에 레벨MAX가 되었습니다","Slime Taoshite 300-nen, Shiranai Uchi ni Level MAX ni Nattemashita",I've Been Killing Slimes for 300 Years and Maxed Out My Level,スライム倒して300年、知らないうちにレベルMAXになってました,141253
 143337,50738,328,TV,2025,,"Slime Taoshite 300-nen, Shiranai Uchi ni Level MAX ni Nattemashita: Sono ni",I've Been Killing Slimes For 300 Years And Maxed Out My Level Season 2,スライム倒して300年、知らないうちにレベルMAXになってました ～そのに～,50021
 287,287,329,TV,2001,,Grappler Baki (TV),Baki the Grappler,グラップラー刃牙 (TV),39774
 551,551,329,TV,2001,,Grappler Baki: Saidai Tournament-hen,Grappler Baki Maximum Tournament,グラップラー刃牙(バキ) 最大トーナメント編,23658
@@ -1191,19 +1191,19 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 110355,40059,330,TV,2020,,Golden Kamuy 3rd Season,Golden Kamuy Season 3,ゴールデンカムイ 第三期,54612
 142343,50528,330,TV,2022,,Golden Kamuy 4th Season,Golden Kamuy Season 4,ゴールデンカムイ 第四期,37218
 166521,55772,330,TV,2026,,Golden Kamuy: Saishuushou,Golden Kamuy Final Season,ゴールデンカムイ 最終章,22282
-100298,36563,331,TV,2018,,Megalo Box,Megalobox,メガロボクス,140180
+100298,36563,331,TV,2018,메갈로 복스,Megalo Box,Megalobox,メガロボクス,140180
 113359,40729,331,TV,2021,,NOMAD: Megalo Box 2,MEGALOBOX 2: NOMAD,NOMAD メガロボクス2,58882
 21306,31442,332,TV,2016,,Musaigen no Phantom World,Myriad Colors Phantom World,無彩限のファントム・ワールド,139488
 21777,33075,332,SPECIAL,2016,,Musaigen no Phantom World: Mizutama no Kiseki,Myriad Colors Phantom World: The Polka Dot Miracle,無彩限のファントム・ワールド 水玉の奇跡,18667
 99420,35838,333,TV,2017,소녀종말여행,Shoujo Shuumatsu Ryokou,Girls' Last Tour,少女終末旅行,139320
 101573,37786,334,TV,2018,이윽고 네가 된다,Yagate Kimi ni Naru,Bloom Into You,やがて君になる,139295
-2034,2034,335,TV,2007,,Lovely★Complex,Lovely Complex,ラブ★コン,139138
+2034,2034,335,TV,2007,러브 콤플렉스,Lovely★Complex,Lovely Complex,ラブ★コン,139138
 16067,16067,336,TV,2013,잔잔한 내일로부터,Nagi no Asukara,A Lull in the Sea,凪のあすから,138969
 97907,34497,337,TV,2018,,Death March Kara Hajimaru Isekai Kyousoukyoku,Death March to the Parallel World Rhapsody,デスマーチからはじまる異世界狂想曲,138228
-125428,43690,338,ONA,2021,,Tenkuu Shinpan,High-Rise Invasion,天空侵犯,137936
+125428,43690,338,ONA,2021,천공 침범,Tenkuu Shinpan,High-Rise Invasion,天空侵犯,137936
 132126,48849,339,TV,2021,Sonny Boy,Sonny Boy,Sonny Boy,Sonny Boy,137911
-20773,25183,340,TV,2015,,GANGSTA.,GANGSTA.,GANGSTA.,137825
-99726,36038,341,ONA,2017,,Net-juu no Susume,Recovery of an MMO Junkie,ネト充のススメ,137179
+20773,25183,340,TV,2015,갱스터,GANGSTA.,GANGSTA.,GANGSTA.,137825
+99726,36038,341,ONA,2017,이 게임 폐인이 사는 법,Net-juu no Susume,Recovery of an MMO Junkie,ネト充のススメ,137179
 100684,36043,341,SPECIAL,2017,,Net-juu no Susume OVA,Recovery of an MMO Junkie OVA,ネト充のススメ OVA,37455
 97980,34561,342,TV,2017,Re:CREATORS,Re:CREATORS,Re:CREATORS,Re:CREATORS,136994
 162694,54714,343,TV,2023,,Kimi no Koto ga Dai Dai Dai Dai Daisuki na 100-nin no Kanojo,"The 100 Girlfriends Who Really, Really, Really, Really, REALLY Love You",君のことが大大大大大好きな100人の彼女,136743
@@ -1224,11 +1224,11 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 139,139,346,OVA,2004,,HUNTER×HUNTER: Greed Island Final,,HUNTER×HUNTER　G・I　Final,28607
 13271,13271,346,MOVIE,2013,극장판 헌터X헌터 : 팬텀루즈,HUNTER×HUNTER: Phantom Rouge,Hunter x Hunter: Phantom Rouge,劇場版 HUNTER×HUNTER 緋色の幻影（ファントム・ルージュ）,65406
 19951,19951,346,MOVIE,2013,극장판 헌터X헌터 : 더 라스트 미션,HUNTER×HUNTER: THE LAST MISSION,Hunter x Hunter: The Last Mission,劇場版 HUNTER×HUNTER THE LAST MISSION,53420
-135806,49220,347,TV,2022,,Isekai Oji-san,Uncle from Another World,異世界おじさん,135363
+135806,49220,347,TV,2022,이세계 삼촌,Isekai Oji-san,Uncle from Another World,異世界おじさん,135363
 21123,31339,348,TV,2016,,DRIFTERS,DRIFTERS,DRIFTERS,135328
 122922,33032,348,OVA,2016,,DRIFTERS: Special edition,,DRIFTERS Special edition,5339
 97988,36480,348,OVA,2017,,DRIFTERS OVA,,ドリフターズ (2017),20430
-6594,6594,349,TV,2010,,Katanagatari,Katanagatari,刀語,135302
+6594,6594,349,TV,2010,카타나가타리,Katanagatari,Katanagatari,刀語,135302
 20955,28497,350,TV,2015,육화의 용사,Rokka no Yuusha,Rokka -Braves of the Six Flowers-,六花の勇者,135174
 141911,50416,351,TV,2023,,Skip to Loafer,Skip and Loafer,スキップとローファー,135123
 185657,60548,351,TV,2027,,Skip to Loafer 2nd Season,Skip and Loafer Season 2,スキップとローファー 2nd season,20912
@@ -1238,7 +1238,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 20571,21653,352,OVA,2014,,IS: Infinite Stratos 2 - World Purge-hen,,IS〈インフィニット・ストラトス〉2 ワールド・パージ編,20737
 513,513,353,MOVIE,1986,천공의 성 라퓨타,Tenkuu no Shiro Laputa,Castle in the Sky,天空の城ラピュタ,134518
 171457,57524,354,TV,2024,,Make Heroine ga Oosugiru!,Makeine: Too Many Losing Heroines!,負けヒロインが多すぎる！,134397
-126192,43969,355,TV,2021,,Kanojo mo Kanojo,"Girlfriend, Girlfriend",カノジョも彼女,133751
+126192,43969,355,TV,2021,그녀도 여친,Kanojo mo Kanojo,"Girlfriend, Girlfriend",カノジョも彼女,133751
 154692,53040,355,TV,2023,,Kanojo mo Kanojo Season 2,"Girlfriend, Girlfriend Season 2",カノジョも彼女 Season 2,46385
 154116,52741,356,TV,2023,,Undead Unluck,Undead Unluck,アンデッドアンラック,133714
 179930,59435,356,SPECIAL,2025,,Undead Unluck: Winter-hen,Undead Unluck: Winter Arc,アンデッドアンラック Winter編,20204
@@ -1252,7 +1252,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 187921,61200,358,ONA,2025,,Shuumatsu no Valkyrie III,Record of Ragnarok III,終末のワルキューレ III,28809
 14749,14749,359,TV,2013,,Ore no Kanojo to Osananajimi ga Shuraba Sugiru,Oreshura,俺の彼女と幼なじみが修羅場すぎる,133407
 98035,34662,360,TV,2017,페이트/아포크리파,Fate/Apocrypha,Fate/Apocrypha,Fate/Apocrypha,133343
-196187,62076,361,TV,2026,,Super no Ura de Yani Suu Futari,Smoking Behind the Supermarket with You,スーパーの裏でヤニ吸うふたり,133304
+196187,62076,361,TV,2026,슈퍼 뒤에서 담배 피우는 두 사람,Super no Ura de Yani Suu Futari,Smoking Behind the Supermarket with You,スーパーの裏でヤニ吸うふたり,133304
 142074,50461,362,TV,2022,,Otomege Sekai wa Mob ni Kibishii Sekai desu,Trapped in a Dating Sim: The World of Otome Games Is Tough for Mobs,乙女ゲー世界はモブに厳しい世界です,133148
 159309,54000,362,TV,2026,,Otomege Sekai wa Mob ni Kibishii Sekai desu 2,Trapped in a Dating Sim: The World of Otome Games is Tough for Mobs Season 2,乙女ゲー世界はモブに厳しい世界です2,58578
 323,323,363,TV,2004,망상대리인,Mousou Dairinin,Paranoia Agent,妄想代理人,133038
@@ -1261,16 +1261,16 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 109492,39819,364,OVA,2019,,Bokutachi wa Benkyou ga Dekinai OVAs,We Never Learn OVAs,ぼくたちは勉強ができない OVAs,24226
 7724,7724,365,TV,2010,,Shiki,Shiki,屍鬼,132304
 10083,10083,365,SPECIAL,2011,,Shiki Specials,,屍鬼 特別,16873
-128712,46471,366,TV,2021,,"Tantei wa mou, Shindeiru.",The Detective Is Already Dead,探偵はもう、死んでいる。,132259
+128712,46471,366,TV,2021,탐정은 이미 죽었다.,"Tantei wa mou, Shindeiru.",The Detective Is Already Dead,探偵はもう、死んでいる。,132259
 152677,52480,366,TV,2026,,"Tantei wa mou, Shindeiru. Season 2",The Detective Is Already Dead Season 2,探偵はもう、死んでいる。Season2,25101
-137908,49613,367,TV,2024,,Chiyu Mahou no Machigatta Tsukaikata,The Wrong Way to Use Healing Magic,治癒魔法の間違った使い方,131370
+137908,49613,367,TV,2024,치유마법의 잘못된 사용법,Chiyu Mahou no Machigatta Tsukaikata,The Wrong Way to Use Healing Magic,治癒魔法の間違った使い方,131370
 21878,33731,368,TV,2017,,Gabriel Dropout,Gabriel DropOut,ガヴリールドロップアウト,131050
 98524,34855,368,SPECIAL,2017,,Gabriel Dropout OVA,,ガヴリールドロップアウト OVA,22874
 110354,40060,369,TV,2020,BNA: Brand New Animal,BNA,BNA,BNA ビー・エヌ・エー,130776
 127401,44961,370,TV,2021,플래티넘 엔드,Platinum End,Platinum End,プラチナエンド,130515
 184951,60371,371,TV,2026,정반대의 너와 나,Seihantai na Kimi to Boku,You and I Are Polar Opposites,正反対な君と僕,130483
 210031,63832,371,TV,2026,,Seihantai na Kimi to Boku 2nd Season,You and I Are Polar Opposites Season 2,正反対な君と僕 第2期,67962
-118375,41899,372,TV,2021,,Ore dake Haireru Kakushi Dungeon,The Hidden Dungeon Only I Can Enter,俺だけ入れる隠しダンジョン,130110
+118375,41899,372,TV,2021,나만 들어가는 숨겨진 던전,Ore dake Haireru Kakushi Dungeon,The Hidden Dungeon Only I Can Enter,俺だけ入れる隠しダンジョン,130110
 16417,16417,373,TV,2013,타마코 마켓,Tamako Market,Tamako Market,たまこまーけっと,129862
 20519,21647,373,MOVIE,2014,타마코 러브 스토리,Tamako Love Story,Tamako -love story-,たまこラブストーリー,121656
 155907,53411,374,TV,2023,버디 대디스,Buddy Daddies,Buddy Daddies,Buddy Daddies,129634
@@ -1294,19 +1294,19 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 112296,40485,378,OVA,2020,,Strike the Blood IV,,ストライク・ザ・ブラッド IV,28713
 136226,49316,378,OVA,2022,,Strike the Blood FINAL,,ストライク・ザ・ブラッドFINAL,15285
 2476,2476,379,TV,2007,스쿨데이즈,School Days (TV),School Days (TV),School Days (TV),128641
-98251,34881,380,TV,2017,,Aho-Girl,AHO-GIRL,アホガール,128447
+98251,34881,380,TV,2017,바보걸,Aho-Girl,AHO-GIRL,アホガール,128447
 110350,40046,381,TV,2020,ID：INVADED,ID: INVADED,ID: INVADED,イド：インヴェイデッド,128085
 126213,44037,382,TV,2021,,"Shin no Nakama ja Nai to Yuusha no Party wo Oidasareta node, Henkyou de Slow Life suru Koto ni shimashita","Banished from the Hero’s Party, I Decided to Live a Quiet Life in the Countryside",真の仲間じゃないと勇者のパーティーを追い出されたので、辺境でスローライフすることにしました,128079
 156131,53488,382,TV,2024,,"Shin no Nakama ja Nai to Yuusha no Party wo Oidasareta node, Henkyou de Slow Life suru Koto ni shimashita 2nd","Banished from the Hero’s Party, I Decided to Live a Quiet Life in the Countryside Season 2",真の仲間じゃないと勇者のパーティーを追い出されたので、辺境でスローライフすることにしました 2nd,61650
 114085,40908,383,TV,2021,,Kemono Jihen,Kemono Jihen,怪物事変,127818
 174788,58125,384,MOVIE,2024,룩백,Look Back,LOOK BACK,ルックバック,127803
-21495,32093,385,TV,2016,,Tanaka-kun wa Itsumo Kedaruge,Tanaka-kun is Always Listless,田中くんはいつもけだるげ,127310
+21495,32093,385,TV,2016,타나카 군은 항상 나른해,Tanaka-kun wa Itsumo Kedaruge,Tanaka-kun is Always Listless,田中くんはいつもけだるげ,127310
 2993,2993,386,TV,2008,로자리오와 뱀파이어,Rosario to Vampire,Rosario + Vampire,ロザリオとバンパイア,127005
 4214,4214,386,TV,2008,,Rosario to Vampire Capu2,Rosario + Vampire Capu2,ロザリオとバンパイア Capu2,70787
 8425,8425,387,TV,2011,,GOSICK,Gosick,GOSICK,126831
 20607,22135,388,TV,2014,,Ping Pong THE ANIMATION,Ping Pong the Animation,ピンポン THE ANIMATION,126197
 21499,32105,389,TV,2016,,Sousei no Onmyouji,Twin Star Exorcists,双星の陰陽師,126041
-151514,52215,390,TV,2024,,Chi. Chikyuu no Undou ni Tsuite,Orb: On the Movements of the Earth,チ。-地球の運動について-,126026
+151514,52215,390,TV,2024,지구의 운동에 대하여,Chi. Chikyuu no Undou ni Tsuite,Orb: On the Movements of the Earth,チ。-地球の運動について-,126026
 20754,24765,391,TV,2015,,Gakkou Gurashi!,SCHOOL-LIVE!,がっこうぐらし!,125922
 107226,39026,392,TV,2019,,Dumbbell Nan Kilo Moteru?,How Heavy Are the Dumbbells You Lift?,ダンベル何キロ持てる？,125749
 116588,41456,393,TV,2021,,"Sentouin, Hakenshimasu!",Combatants Will Be Dispatched!,戦闘員、派遣します！,125663
@@ -1315,7 +1315,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 14397,14397,395,TV,2013,,Chihayafuru 2,Chihayafuru 2,ちはやふる 2,57576
 18745,18745,395,OVA,2013,,Chihayafuru 2: Waga Mi Yo ni Furu Nagame Seshi Ma ni,,ちはやふる２　わがみよにふるながめせしまに,10965
 101215,37379,395,TV,2019,,Chihayafuru 3,Chihayafuru 3,ちはやふる 3,45547
-107067,38992,396,TV,2020,,Rikei ga Koi ni Ochita no de Shoumei shitemita.,"Science Fell in Love, So I Tried to Prove It",理系が恋に落ちたので証明してみた。,123798
+107067,38992,396,TV,2020,이과가 사랑에 빠졌기에 증명해 보았다,Rikei ga Koi ni Ochita no de Shoumei shitemita.,"Science Fell in Love, So I Tried to Prove It",理系が恋に落ちたので証明してみた。,123798
 125124,43470,396,TV,2022,,Rikei ga Koi ni Ochita no de Shoumei shitemita. r=1-sinθ (Heart),"Science Fell in Love, So I Tried to Prove It r=1-sinθ",理系が恋に落ちたので証明してみた。r=1-sinθ（ハート）,52796
 132474,48760,397,TV,2022,,"Gaikotsu Kishi-sama, Tadaima Isekai e Odekakechuu",Skeleton Knight in Another World,骸骨騎士様、只今異世界へお出掛け中,123791
 185542,60522,397,TV,2026,,"Gaikotsu Kishi-sama, Tadaima Isekai e Odekakechuu II",Skeleton Knight in Another World Season 2,骸骨騎士様、只今異世界へお出掛け中Ⅱ,52448
@@ -1337,8 +1337,8 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 20729,24405,406,TV,2014,,World Trigger,World Trigger,ワールドトリガー,121854
 114087,40907,406,TV,2021,,World Trigger 2nd Season,World Trigger 2nd Season,ワールドトリガー 2ndシーズン,46544
 127400,44940,406,TV,2021,,World Trigger 3rd Season,World Trigger 3rd Season,ワールドトリガー 3rdシーズン,37331
-21455,31953,407,TV,2016,,NEW GAME!,NEW GAME!,NEW GAME!,121755
-98292,34914,407,TV,2017,,NEW GAME!!,NEW GAME!!,NEW GAME!!,74627
+21455,31953,407,TV,2016,뉴 게임!,NEW GAME!,NEW GAME!,NEW GAME!,121755
+98292,34914,407,TV,2017,뉴 게임!,NEW GAME!!,NEW GAME!!,NEW GAME!!,74627
 97637,34277,407,OVA,2017,,"NEW GAME!: Watashi, Shainryokoutte Hajimete na no de...",,NEW GAME! 私、社員旅行って初めてなので…,25963
 17549,17549,408,TV,2013,,Non Non Biyori,Non Non Biyori,のんのんびより,121263
 20497,21667,408,OVA,2014,,Non Non Biyori: Okinawa e Ikukoto ni Natta,,のんのんびより 沖縄へ行くことになった,21630
@@ -1380,7 +1380,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 146493,51297,419,TV,2023,,Ragna Crimson,Ragna Crimson,ラグナクリムゾン,116950
 109298,39792,420,TV,2020,,Eizouken ni wa Te wo Dasu na!,Keep Your Hands Off Eizouken!,映像研には手を出すな！,116881
 5681,5681,421,MOVIE,2009,썸머 워즈,Summer Wars,Summer Wars,サマーウォーズ,116213
-8841,8841,422,TV,2011,,Kore wa Zombie desu ka?,Is this a Zombie?,これはゾンビですか?,116124
+8841,8841,422,TV,2011,이것은 좀비입니까?,Kore wa Zombie desu ka?,Is this a Zombie?,これはゾンビですか?,116124
 10209,10209,422,OVA,2011,,Kore wa Zombie desu ka? OVA,Is this a Zombie? OVA,これはゾンビですか? OVA,28145
 10790,10790,422,TV,2012,,Kore wa Zombie desu ka? of the Dead,Is this A Zombie? of the Dead,これはゾンビですか？オブ・ザ・デッド,67441
 15437,15437,422,OVA,2012,,"Kore wa Zombie Desu ka? of the Dead: Hai, Minotake ni Attemasu","Is This a Zombie? Of the Dead: Yes, This Suits Me Just Fine",これはゾンビですか？オブ・ザ・デッ ド はい、身の丈に合ってます,23196
@@ -1390,7 +1390,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 120646,42351,425,TV,2021,,Senpai ga Uzai Kouhai no Hanashi,My Senpai is Annoying,先輩がうざい後輩の話,115700
 14075,14075,426,TV,2012,,Zetsuen no Tempest,Blast of Tempest,絶園のテンペスト,115431
 130586,48415,427,TV,2022,,"Shijou Saikyou no Daimaou, Murabito A ni Tensei suru",The Greatest Demon Lord Is Reborn as a Typical Nobody,史上最強の大魔王、村人Aに転生する,115326
-132052,48675,428,TV,2022,,Kakkou no Iinazuke,A Couple of Cuckoos,カッコウの許嫁,115320
+132052,48675,428,TV,2022,뻐꾸기 커플,Kakkou no Iinazuke,A Couple of Cuckoos,カッコウの許嫁,115320
 179828,59402,428,TV,2025,,Kakkou no Iinazuke Season 2,A Couple of Cuckoos Season 2,カッコウの許嫁 Season2,32889
 167336,56038,429,TV,2025,LAZARUS 라자로,Lazarus,LAZARUS,ラザロ,115247
 268,268,430,OVA,1995,,GOLDEN BOY: Sasurai no Obenkyou Yarou,GOLDEN BOY,GOLDEN BOY さすらいのお勉強野郎,115087
@@ -1411,7 +1411,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 112667,40595,437,TV,2020,,"Kimi to Boku no Saigo no Senjo, Arui wa Sekai ga Hajimaru Seisen",Our Last Crusade or the Rise of a New World,キミと僕の最後の戦場、あるいは世界が始まる聖戦,113618
 139825,49981,437,TV,2024,,"Kimi to Boku no Saigo no Senjou, Arui wa Sekai ga Hajimaru Seisen Season II",Our Last Crusade or the Rise of a New World Season 2,キミと僕の最後の戦場、あるいは世界が始まる聖戦 Season II,44626
 114065,40904,438,TV,2021,,Bokutachi no Remake,Remake Our Life!,ぼくたちのリメイク,113599
-146210,51213,439,TV,2022,,Kinsou no Vermeil: Gakeppuchi Majutsushi wa Saikyou no Yakusai to Mahou Sekai wo Tsukisusumu,Vermeil in Gold,金装のヴェルメイユ～崖っぷち魔術師は最強の厄災と魔法世界を突き進む～,113245
+146210,51213,439,TV,2022,금장의 벨메이유,Kinsou no Vermeil: Gakeppuchi Majutsushi wa Saikyou no Yakusai to Mahou Sekai wo Tsukisusumu,Vermeil in Gold,金装のヴェルメイユ～崖っぷち魔術師は最強の厄災と魔法世界を突き進む～,113245
 66,66,440,TV,2002,,Azumanga Daiou THE ANIMATION,Azumanga Daioh,あずまんが大王 THE ANIMATION,112960
 20812,25835,441,TV,2014,시로바코,SHIROBAKO,SHIROBAKO,SHIROBAKO,112958
 5630,5630,442,TV,2009,동쪽의 에덴,Higashi no Eden,Eden of the East,東のエデン,112798
@@ -1419,9 +1419,9 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 6637,6637,442,MOVIE,2010,동쪽의 에덴 극장판 2: 파라다이스 로스트,Higashi no Eden Movie II: Paradise Lost,Eden of the East the Movie II: Paradise Lost,東のエデン 劇場版II Paradise Lost,29046
 104722,38572,443,TV,2019,어새신즈 프라이드,Assassins Pride,ASSASSINS PRIDE,アサシンズプライド,112303
 129190,47159,444,TV,2022,,Tensai Ouji no Akaji Kokka Saisei Jutsu,The Genius Prince's Guide to Raising a Nation Out of Debt,天才王子の赤字国家再生術,112050
-105932,38753,445,TV,2019,,Araburu Kisetsu no Otome-domo yo.,O Maidens in Your Savage Season,荒ぶる季節の乙女どもよ。,112016
+105932,38753,445,TV,2019,거친 계절의 소녀들이여,Araburu Kisetsu no Otome-domo yo.,O Maidens in Your Savage Season,荒ぶる季節の乙女どもよ。,112016
 20981,28805,446,MOVIE,2015,괴물의 아이,Bakemono no Ko,The Boy and the Beast,バケモノの子,112012
-14833,14833,447,TV,2013,,Maoyuu Maou Yuusha,Maoyu: Archenemy & Hero,まおゆう魔王勇者,111905
+14833,14833,447,TV,2013,마오유우 마왕용사,Maoyuu Maou Yuusha,Maoyu: Archenemy & Hero,まおゆう魔王勇者,111905
 2593,2593,448,MOVIE,2007,,Kara no Kyoukai: Fukan Fuukei,the Garden of sinners Chapter 1: Thanatos. (Overlooking View),空の境界 俯瞰風景,111862
 3782,3782,448,MOVIE,2007,,Kara no Kyoukai: Satsujin Kousatsu (Zen),the Garden of sinners Chapter 2: …and nothing heart. (Murder Speculation Part A),空の境界 殺人考察(前),65513
 3783,3783,448,MOVIE,2008,,Kara no Kyoukai: Tsuukaku Zanryuu,"the Garden of sinners Chapter 3: ever cry, never life. (Remaining Sense of Pain)",空の境界 痛覚残留,61810
@@ -1434,11 +1434,11 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 14807,14807,448,MOVIE,2013,공의 경계 미래복음-Extra Chorus,Kara no Kyoukai: Mirai Fukuin,the Garden of sinners -recalled out summer-,空の境界 未来福音,35715
 20697,22763,448,SPECIAL,2013,,Kara no Kyoukai: Mirai Fukuin - extra chorus,the Garden of sinners: recalled out summer –extra chorus–,空の境界 未来福音 extra chorus,18746
 143653,50796,449,TV,2023,,Kimi wa Houkago Insomnia,Insomniacs After School,君は放課後インソムニア,111672
-104325,38397,450,TV,2019,,Nande Koko ni Sensei ga!?,"Why the hell are you here, Teacher!?",なんでここに先生が!?,111476
+104325,38397,450,TV,2019,어째서 여기에 선생님이!?,Nande Koko ni Sensei ga!?,"Why the hell are you here, Teacher!?",なんでここに先生が!?,111476
 113924,39689,450,SPECIAL,2019,,Nande Koko ni Sensei ga!? Special,"Why the hell are you here, Teacher!?: Thirteenth Period",なんでここに先生が!?,26408
-140457,50175,451,TV,2022,,"Yuusha, Yamemasu",I'm Quitting Heroing,勇者、辞めます,111274
+140457,50175,451,TV,2022,"용사, 그만둡니다","Yuusha, Yamemasu",I'm Quitting Heroing,勇者、辞めます,111274
 151126,51562,451,OVA,2022,,"Yuusha, Yamemasu: Kenshuu Ryokou wa Mokuteki wo Miushinau na","I'm Quitting Heroing: Remember, the Work Trip is First and Foremost a Learning Opportunity",勇者、辞めます 研修旅行は目的を見失うな,17363
-8675,8675,452,TV,2010,,Seitokai Yakuindomo,Seitokai Yakuindomo,生徒会役員共,110866
+8675,8675,452,TV,2010,학생회 임원들,Seitokai Yakuindomo,Seitokai Yakuindomo,生徒会役員共,110866
 10119,10119,452,OVA,2011,,Seitokai Yakuindomo OVA,,生徒会役員共 OVA,31245
 20448,20847,452,TV,2014,,Seitokai Yakuindomo＊,Seitokai Yakuindomo Season 2,生徒会役員共＊,55843
 20826,26123,452,OVA,2014,,Seitokai Yakuindomo＊ OVA,Seitokai Yakuindomo Season 2 OVA,生徒会役員共＊ OVA,21860
@@ -1447,11 +1447,11 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 110261,39991,454,ONA,2019,,Promare: SIDE Galo,Promare: Galo,プロメア SIDE ガロ,13628
 111789,40313,454,ONA,2019,,Promare: SIDE Lio,Promare: Lio,プロメア SIDE リオ,13699
 99425,35848,454,MOVIE,2019,프로메어,Promare,Promare,プロメア,110479
-21639,32686,455,TV,2016,,Keijo!!!!!!!!,Keijo!!!!!!!!,競女!!!!!!!!,110228
-105914,38759,456,TV,2019,,Sewayaki Kitsune no Senko-san,The Helpful Fox Senko-san,世話やきキツネの仙狐さん,110061
+21639,32686,455,TV,2016,경녀!!!!!!!!,Keijo!!!!!!!!,Keijo!!!!!!!!,競女!!!!!!!!,110228
+105914,38759,456,TV,2019,도우미 여우 센코 씨,Sewayaki Kitsune no Senko-san,The Helpful Fox Senko-san,世話やきキツネの仙狐さん,110061
 153930,52865,457,ONA,2022,,Romantic Killer,Romantic Killer,ロマンティック・キラー,109957
 136934,49470,458,TV,2022,새 엄마가 데려온 딸이 전 여친이었다,Mamahaha no Tsurego ga Motokano datta,My Stepmom's Daughter is My Ex,継母の連れ子が元カノだった,109624
-132473,48761,459,TV,2021,,Saihate no Paladin,The Faraway Paladin,最果てのパラディン,109563
+132473,48761,459,TV,2021,변경의 팔라딘,Saihate no Paladin,The Faraway Paladin,最果てのパラディン,109563
 143085,50664,459,TV,2023,,Saihate no Paladin: Tetsusabi no Yama no Ou,The Faraway Paladin: The Lord of Rust Mountains,最果てのパラディン 鉄錆の山の王,50036
 7711,7711,460,MOVIE,2010,마루 밑 아리에티,Karigurashi no Arrietty,The Secret World of Arrietty,借りぐらしのアリエッティ,109450
 572,572,461,MOVIE,1984,바람계곡의 나우시카,Kaze no Tani no Nausicaä,Nausicaä of the Valley of the Wind,風の谷のナウシカ,109321
@@ -1460,12 +1460,12 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 117074,41567,462,MOVIE,2022,,Isekai Quartet: Another World,Isekai Quartet The Movie: Another World,異世界かるてっと ～あなざーわーるど～,30703
 194447,61851,462,TV_SHORT,2025,,Isekai Quartet 3,Isekai Quartet 3,異世界かるてっと 3,17134
 175977,58426,463,ONA,2024,사슴 아이 어슬렁어슬렁 호시탐탐,Shikanoko Nokonoko Koshitantan,My Deer Friend Nokotan,しかのこのこのここしたんたん,109108
-9513,9513,464,TV,2011,,Beelzebub,Beelzebub,べるぜバブ,107705
-113311,40716,465,TV,2020,,Kakushigoto,Kakushigoto,かくしごと,107461
+9513,9513,464,TV,2011,벨제바브,Beelzebub,Beelzebub,べるぜバブ,107705
+113311,40716,465,TV,2020,카쿠시고토,Kakushigoto,Kakushigoto,かくしごと,107461
 20646,25159,466,TV,2014,,Inou-Battle wa Nichijou-kei no Naka de,When Supernatural Battles Became Commonplace,異能バトルは日常系のなかで,107270
 99088,35737,467,ONA,2023,PLUTO,PLUTO,PLUTO,PLUTO,106957
 7593,7593,468,TV,2010,,kiss×sis (TV),,kiss×sis (TV),106614
-156415,53516,469,TV,2024,,"Tensei Shitara Dai Nana Ouji Datta node, Kimamani Majutsu wo Kiwamemasu",I Was Reincarnated as the 7th Prince so I Can Take My Time Perfecting My Magical Ability,転生したら第七王子だったので、気ままに魔術を極めます,106501
+156415,53516,469,TV,2024,"환생했는데 제7왕자라, 내맘대로 마술을 연마합니다","Tensei Shitara Dai Nana Ouji Datta node, Kimamani Majutsu wo Kiwamemasu",I Was Reincarnated as the 7th Prince so I Can Take My Time Perfecting My Magical Ability,転生したら第七王子だったので、気ままに魔術を極めます,106501
 178090,59095,469,TV,2025,,"Tensei Shitara Dai Nana Ouji Datta node, Kimamani Majutsu wo Kiwamemasu 2nd Season",I Was Reincarnated as the 7th Prince so I Can Take My Time Perfecting My Magical Ability Season 2,転生したら第七王子だったので、気ままに魔術を極めます 第2期,64630
 530,530,470,TV,1992,달의 요정 세일러문,Bishoujo Senshi Sailor Moon,Sailor Moon,美少女戦士セーラームーン,106306
 740,740,470,TV,1993,달의 요정 세일러문 R,Bishoujo Senshi Sailor Moon R,Sailor Moon R,美少女戦士セーラームーン R,35767
@@ -1481,23 +1481,23 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 99424,35847,473,TV,2018,SSSS.GRIDMAN,SSSS.GRIDMAN,SSSS.GRIDMAN,SSSS.GRIDMAN,105734
 113950,40870,473,TV,2021,SSSS.DYNAZENON,SSSS.DYNAZENON,SSSS.DYNAZENON,SSSS.DYNAZENON,52202
 142684,50587,473,MOVIE,2023,그리드맨 유니버스,GRIDMAN UNIVERSE,Gridman Universe,グリッドマン ユニバース,20239
-103302,38080,474,TV,2019,,Kono Oto Tomare!,Kono Oto Tomare!: Sounds of Life,この音とまれ！,105732
+103302,38080,474,TV,2019,이 소리에 모여!,Kono Oto Tomare!,Kono Oto Tomare!: Sounds of Life,この音とまれ！,105732
 108891,38889,474,TV,2019,,Kono Oto Tomare! 2,Kono Oto Tomare!: Sounds of Life Season 2,この音とまれ！2,54604
 107663,39198,475,TV,2019,저 너머의 아스트라,Kanata no Astra,ASTRA LOST IN SPACE,彼方のアストラ,105539
-141774,50380,476,TV,2022,,Paripi Koumei,Ya Boy Kongming!,パリピ孔明,104806
+141774,50380,476,TV,2022,파티피플 공명,Paripi Koumei,Ya Boy Kongming!,パリピ孔明,104806
 105018,38594,477,MOVIE,2019,너와 파도를 탈 수 있다면,"Kimi to, Nami ni Noretara",Ride Your Wave,きみと、波にのれたら,104606
 20632,22729,478,TV,2014,,Aldnoah.Zero,ALDNOAH.ZERO,アルドノア・ゼロ,104588
 20853,27655,478,TV,2015,,Aldnoah.Zero Part 2,ALDNOAH.ZERO Season 2,アルドノア・ゼロ 第2クール,64181
 169580,56734,479,TV,2026,반에서 두 번째로 귀여운 여자애와 친구가 되었다,Class de 2-banme ni Kawaii Onnanoko to Tomodachi ni Natta,I Made Friends with the Second Prettiest Girl in My Class,クラスで２番目に可愛い女の子と友だちになった,104426
 10161,10161,480,TV,2011,,NO.6,No.6,NO.6,104213
-170130,56923,481,TV,2024,,Lv2 Kara Cheat datta Moto Yuusha Kouho no Mattari Isekai Life,Chillin' in Another World with Level 2 Super Cheat Powers,Lv2からチートだった元勇者候補のまったり異世界ライフ,104193
+170130,56923,481,TV,2024,Lv2부터 치트였던 전직 용사 후보의 유유자적 이세계 라이프,Lv2 Kara Cheat datta Moto Yuusha Kouho no Mattari Isekai Life,Chillin' in Another World with Level 2 Super Cheat Powers,Lv2からチートだった元勇者候補のまったり異世界ライフ,104193
 232,232,482,TV,1998,카드캡터 사쿠라,Cardcaptor Sakura,Cardcaptor Sakura,カードキャプターさくら,104162
 371,371,482,MOVIE,1999,극장판 카드캡터 사쿠라,Cardcaptor Sakura Movie,Cardcaptor Sakura: The Movie,劇場版 カードキャプターさくら,21980
 372,372,482,MOVIE,2000,극장판 카드캡터 사쿠라: 봉인된 카드,Cardcaptor Sakura Movie: Fuinsareta Card,Cardcaptor Sakura the Movie 2: The Sealed Card,劇場版 カードキャプターさくら 封印されたカード,25500
 98554,35320,482,OVA,2017,,Cardcaptor Sakura: Clear Card-hen - Prologue Sakura to Futatsu no Kuma,Cardcaptor Sakura: Clear Card Prologue – Sakura and the Two Bears,カードキャプターさくら クリアカード編 プロローグ さくらとふたつのくま,13975
 97881,33354,482,TV,2018,,Cardcaptor Sakura: Clear Card-hen,Cardcaptor Sakura: Clear Card,カードキャプターさくら クリアカード編,33396
 98596,35413,483,TV,2017,,Imouto sae Ireba Ii.,A Sister's All You Need.,妹さえいればいい。,104035
-97592,33988,484,TV,2017,,Demi-chan wa Kataritai,Interviews with Monster Girls,亜人ちゃんは語りたい,103861
+97592,33988,484,TV,2017,데미는 이야기하고 싶어,Demi-chan wa Kataritai,Interviews with Monster Girls,亜人ちゃんは語りたい,103861
 99394,35823,484,ONA,2017,,Demi-chan wa Kataritai: Demi-chan no Natsuyasumi,Interviews with Monster Girls: The Demi-chans' Summer Break,亜人ちゃんは語りたい 亜人ちゃんの夏休み,25024
 98503,35222,485,TV,2018,,Gakuen Babysitters,School Babysitters,学園ベビーシッターズ,103820
 102969,37959,485,SPECIAL,2018,,Gakuen Babysitters OVA,School Babysitters OVA,学園ベビーシッターズ OVA,16662
@@ -1513,16 +1513,16 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 101351,37517,493,TV,2018,,Happy Sugar Life,Happy Sugar Life,ハッピーシュガーライフ,102660
 101547,37744,494,TV,2019,,Isekai Cheat Magician,Isekai Cheat Magician,異世界チート魔術師,102619
 136263,49297,494,SPECIAL,2021,,Isekai Cheat Magician: Yoiboshi no Matsuri to Majutsushi,Isekai Cheat Magician: Magicians and the Starry Night Festival,異世界チート魔術師 宵星の祭りと魔術師,15275
-125038,43439,495,TV,2021,,Shadows House,SHADOWS HOUSE,シャドーハウス,102587
+125038,43439,495,TV,2021,섀도 하우스,Shadows House,SHADOWS HOUSE,シャドーハウス,102587
 139093,49782,495,TV,2022,,Shadows House 2nd Season,SHADOWS HOUSE 2nd Season,シャドーハウス 2nd Season,45913
 10162,10162,496,TV,2011,,Usagi Drop,Bunny Drop,うさぎドロップ,102318
-7088,7088,497,TV,2010,,Ichiban Ushiro no Daimaou,Demon King Daimao,いちばんうしろの大魔王,102303
+7088,7088,497,TV,2010,언젠가는 대마왕,Ichiban Ushiro no Daimaou,Demon King Daimao,いちばんうしろの大魔王,102303
 387,387,498,TV,2002,,Haibane Renmei,Haibane Renmei,灰羽連盟,101991
 110353,40056,499,TV,2020,데카당스,Deca-Dence,DECA-DENCE,デカダンス,101909
 180367,59597,500,TV,2025,,Witch Watch,WITCH WATCH,ウィッチウォッチ,101871
 14349,14349,501,MOVIE,2013,리틀 위치 아카데미아,Little Witch Academia,Little Witch Academia,リトルウィッチアカデミア,101841
 19489,19489,501,MOVIE,2015,리틀 위치 아카데미아: 마법장치의 퍼레이드,Little Witch Academia: Mahou-jikake no Parade,Little Witch Academia: The Enchanted Parade,リトルウィッチアカデミア 魔法仕掛けのパレード,55201
-116242,41380,502,TV,2020,,100-man no Inochi no Ue ni Ore wa Tatteiru,I'm Standing on a Million Lives,100万の命の上に俺は立っている,101746
+116242,41380,502,TV,2020,나는 100만 명의 목숨 위에 서 있다,100-man no Inochi no Ue ni Ore wa Tatteiru,I'm Standing on a Million Lives,100万の命の上に俺は立っている,101746
 127366,44881,502,TV,2021,,100-man no Inochi no Ue ni Ore wa Tatteiru 2nd Season,I'm Standing on a Million Lives Season 2,100万の命の上に俺は立っている 第2シーズン,54512
 3457,3457,503,TV,2008,,Vampire Knight,Vampire Knight,ヴァンパイア騎士,101720
 4752,4752,503,TV,2008,,Vampire Knight Guilty,Vampire Knight: Guilty,ヴァンパイア騎士,51882
@@ -1531,7 +1531,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 10490,10490,505,TV,2011,BLOOD-C,BLOOD-C,Blood-C,BLOOD-C,101572
 10681,10681,505,MOVIE,2012,,BLOOD-C: The Last Dark,BLOOD-C: The Last Dark,劇場版 BLOOD-C The Last Dark,27410
 144553,50932,506,TV,2023,,Saikyou Onmyouji no Isekai Tenseiki,The Reincarnation of the Strongest Exorcist in Another World,最強陰陽師の異世界転生記,101473
-107961,39326,507,TV,2019,,Kawaikereba Hentai demo Suki ni Natte Kuremasu ka?,"Hensuki: Are you willing to fall in love with a pervert, as long as she’s a cutie?",可愛ければ変態でも好きになってくれますか？,101321
+107961,39326,507,TV,2019,귀여우면 변태라도 좋아해주실 수 있나요?,Kawaikereba Hentai demo Suki ni Natte Kuremasu ka?,"Hensuki: Are you willing to fall in love with a pervert, as long as she’s a cutie?",可愛ければ変態でも好きになってくれますか？,101321
 101316,37497,508,TV,2018,물드는 세계의 내일로부터,Irozuku Sekai no Ashita kara,IRODUKU: The World in Colors,色づく世界の明日から,100383
 157198,53613,509,TV,2023,,Dead Mount Death Play,Dead Mount Death Play,デッドマウント・デスプレイ,100332
 162803,54743,509,TV,2023,,Dead Mount Death Play Part 2,Dead Mount Death Play Part 2,デッドマウント・デスプレイ 第2クール,48746
@@ -1566,27 +1566,27 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 183161,60146,527,TV,2025,,"Saikyou no Ousama, Nidome no Jinsei wa Nani wo Suru?",The Beginning After the End,最強の王様、二度目の人生は 何をする?,98026
 194317,61831,527,TV,2026,,"Saikyou no Ousama, Nidome no Jinsei wa Nani wo Suru? 2nd Season",The Beginning After the End Season 2,最強の王様、二度目の人生は 何をする? 第2期,48763
 1604,1604,528,TV,2006,,Katekyou Hitman REBORN!,REBORN!,家庭教師ヒットマンREBORN!,97756
-179966,59459,529,TV,2025,,Silent Witch: Chinmoku no Majo no Kakushigoto,Secrets of the Silent Witch,サイレント・ウィッチ 沈黙の魔女の隠しごと,97568
+179966,59459,529,TV,2025,사일런트 위치 침묵의 마녀의 비밀,Silent Witch: Chinmoku no Majo no Kakushigoto,Secrets of the Silent Witch,サイレント・ウィッチ 沈黙の魔女の隠しごと,97568
 148969,51815,530,TV,2023,쿠보 양은 나를 내버려두지 않아,Kubo-san wa Mob wo Yurusanai,Kubo Won't Let Me Be Invisible,久保さんは僕を許さない,97538
 355,355,531,TV,2005,,Shakugan no Shana,Shakugan no Shana,灼眼のシャナ,97516
 2787,2787,531,TV,2007,,Shakugan no Shana II (Second),Shakugan no Shana: Season II,灼眼のシャナⅡ(Second),51434
 1815,1815,531,MOVIE,2007,,Shakugan no Shana Movie,Shakugan no Shana: The Movie,劇場版 灼眼のシャナ,12542
 6572,6572,531,OVA,2009,,Shakugan no Shana S,Shakugan no Shana S,灼眼のシャナ S,18053
 6773,6773,531,TV,2011,,Shakugan no Shana III (Final),Shakugan no Shana: Season III,灼眼のシャナIII (Final),43447
-173694,57892,532,TV,2024,,Hazure Waku no [Joutai Ijou Skill] de Saikyou ni Natta Ore ga Subete wo Juurin Suru made,Failure Frame: I Became the Strongest and Annihilated Everything with Low-Level Spells,ハズレ枠の【状態異常スキル】で最強になった俺がすべてを蹂躙するまで,97415
+173694,57892,532,TV,2024,폐급 【상태 이상 스킬】로 최강이 된 내가 모든 것을 유린하기까지,Hazure Waku no [Joutai Ijou Skill] de Saikyou ni Natta Ore ga Subete wo Juurin Suru made,Failure Frame: I Became the Strongest and Annihilated Everything with Low-Level Spells,ハズレ枠の【状態異常スキル】で最強になった俺がすべてを蹂躙するまで,97415
 21676,32887,533,TV,2017,,Dungeon ni Deai wo Motomeru no wa Machigatteiru Darou ka Gaiden: Sword Oratoria,Sword Oratoria: Is it Wrong to Try to Pick Up Girls in a Dungeon? On the Side,ダンジョンに出会いを求めるのは間違っているだろうか外伝 ソード・オラトリア,97364
 163623,54968,534,TV,2024,유사 하렘,Giji Harem,Pseudo Harem,疑似ハーレム,97229
 12531,12531,535,TV,2012,,Sakamichi no Apollon,Kids on the Slope,坂道のアポロン,97201
 112649,40594,536,TV,2021,,Tatoeba Last Dungeon Mae no Mura no Shounen ga Joban no Machi de Kurasu Youna Monogatari,Suppose a Kid from the Last Dungeon Boonies moved to a starter town?,たとえばラストダンジョン前の村の少年が序盤の街で暮らすような物語,97154
 118419,41930,537,TV,2020,신이 된 날,Kamisama ni Natta Hi,The Day I Became a God,神様になった日,97022
-151252,52173,538,TV,2023,,Koori Zokusei Danshi to Cool na Douryou Joshi,The Ice Guy and His Cool Female Colleague,氷属性男子とクールな同僚女子,96930
-186052,60732,539,TV,2025,,Mizu Zokusei no Mahou Tsukai,The Water Magician,水属性の魔法使い,96925
+151252,52173,538,TV,2023,빙속성 남자와 쿨한 동료 여자,Koori Zokusei Danshi to Cool na Douryou Joshi,The Ice Guy and His Cool Female Colleague,氷属性男子とクールな同僚女子,96930
+186052,60732,539,TV,2025,수속성의 마법사,Mizu Zokusei no Mahou Tsukai,The Water Magician,水属性の魔法使い,96925
 486,486,540,TV,2003,,Kino no Tabi: the Beautiful World,Kino's Journey,キノの旅 -the Beautiful World-,96614
 1379,1379,540,MOVIE,2005,,Kino no Tabi: Nanika wo Suru Tame ni -life goes on.-,,キノの旅 何かをするために -life goes on.-,18129
 3466,3466,540,SPECIAL,2005,,Kino no Tabi: the Beautiful World - Tou no Kuni: Free Lance,,キノの旅 the Beautiful World 塔の国 -Free Lance-,13131
 2175,2175,540,MOVIE,2007,,Kino no Tabi: the Beautiful World - Byouki no Kuni: For You,,キノの旅 the Beautiful World 病気の国 -For You-,14760
-15225,15225,541,TV,2013,,Hentai Ouji to Warawanai Neko.,Hentai Prince & the Stony Cat,変態王子と笑わない猫。,95715
-20057,20057,542,TV,2014,,Space☆Dandy,Space Dandy,スペース☆ダンディ,95712
+15225,15225,541,TV,2013,변태왕자와 웃지 않는 고양이,Hentai Ouji to Warawanai Neko.,Hentai Prince & the Stony Cat,変態王子と笑わない猫。,95715
+20057,20057,542,TV,2014,스페이스 댄디,Space☆Dandy,Space Dandy,スペース☆ダンディ,95712
 20666,23327,542,TV,2014,,Space☆Dandy 2,Space Dandy 2,スペース☆ダンディ 2,45107
 152137,52367,543,TV,2024,,Isekai Shikkaku,No Longer Allowed in Another World,異世界失格,95668
 11013,11013,544,TV,2012,이누×보쿠SS,Inu × Boku SS,Inu X Boku Secret Service,妖狐×僕SS,95562
@@ -1596,22 +1596,22 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 7858,7858,545,OVA,2010,,Sora no Otoshimono OVA,Heaven's Lost Property OVA,そらのおとしもの,21915
 9790,9790,545,MOVIE,2011,하늘의 유실물: 시계 태엽의 엔젤로이드,Sora no Otoshimono: Tokeijikake no Angeloid,Heaven's Lost Property the Movie: The Angeloid of Clockwork,劇場版 そらのおとしもの 時計じかけの哀女神（エンジェロイド）,28042
 12783,12783,545,MOVIE,2014,하늘의 유실물: 영원한 나의 새장,Sora no Otoshimono Final: Eien no Watashi no Torikago,Heaven's Lost Property Final – The Movie: Eternally My Master,そらのおとしものＦｉｎａｌ永遠の私の鳥籠［エターナルマイマスター］,20815
-12445,12445,546,TV,2012,,Tasogare Otome × Amnesia,Dusk Maiden of Amnesia,黄昏乙女×アムネジア,94320
+12445,12445,546,TV,2012,황혼소녀×암네지아,Tasogare Otome × Amnesia,Dusk Maiden of Amnesia,黄昏乙女×アムネジア,94320
 14189,14189,546,SPECIAL,2012,,Tasogare Otome × Amnesia: Taima Otome,"Dusk Maiden of Amnesia: ""Ghost Girl""",黄昏乙女×アムネジア 退魔乙女,21008
 2246,2246,547,TV,2007,모노노케,Mononoke,Mononoke,モノノ怪,94176
 151117,52107,547,MOVIE,2024,극장판 모노노케: 우중망령,Mononoke: Karakasa,Mononoke The Movie: The Phantom in the Rain,モノノ怪 唐傘,24218
 21517,32262,548,TV,2017,,Renai Boukun,Love Tyrant,恋愛暴君,94127
-199547,62601,549,TV,2026,,MARRIAGETOXIN,MARRIAGETOXIN,マリッジトキシン,93974
+199547,62601,549,TV,2026,매리지 톡신,MARRIAGETOXIN,MARRIAGETOXIN,マリッジトキシン,93974
 213752,64524,549,TV,2027,,MARRIAGETOXIN 2nd Season,,マリッジトキシン 第2期,14178
 134732,49052,550,TV,2022,아오아시,Aoashi,Aoashi,アオアシ,93917
 191788,61603,550,TV,2026,,Aoashi 2nd Season,Aoashi Season 2,アオアシ 第2期,23996
 146625,51417,551,TV,2022,Engage Kiss,Engage Kiss,Engage Kiss,Engage Kiss,93163
-155963,53421,552,TV,2024,,Dosanko Gal wa Namara Menkoi,Hokkaido Gals Are Super Adorable!,道産子ギャルはなまらめんこい,93114
+155963,53421,552,TV,2024,도산코 갸루는 참말로 귀여워,Dosanko Gal wa Namara Menkoi,Hokkaido Gals Are Super Adorable!,道産子ギャルはなまらめんこい,93114
 6956,6956,553,TV,2010,WORKING!!,WORKING!!,Wagnaria!!,WORKING!!,93078
 10521,10521,553,TV,2011,WORKING!!,WORKING'!!,Wagnaria!!2,WORKING'!!,54585
 20819,25879,553,TV,2015,,WORKING!!!,Wagnaria!!3,WORKING!!!,51921
 21384,31715,553,SPECIAL,2016,,WORKING!!!: Lord of the Takanashi,Wagnaria!!3: Lord of the Takanashi,WORKING!!! ロード・オブ・ザ・小鳥遊,24489
-162896,54724,554,TV,2024,,Nige Jouzu no Wakagimi,The Elusive Samurai,逃げ上手の若君,92791
+162896,54724,554,TV,2024,도망을 잘 치는 도련님,Nige Jouzu no Wakagimi,The Elusive Samurai,逃げ上手の若君,92791
 182616,60059,554,TV,2026,,Nige Jouzu no Wakagimi 2nd Season,The Elusive Samurai Season 2,逃げ上手の若君 第二期,29486
 142455,50549,555,ONA,2022,버블,Bubble,Bubble,バブル,92762
 98514,35249,556,TV,2018,,Uma Musume: Pretty Derby,Umamusume: Pretty Derby,ウマ娘 プリティーダービー,92494
@@ -1621,21 +1621,21 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 172420,57647,556,MOVIE,2024,,Uma Musume: Pretty Derby - Shin Jidai no Tobira,Umamusume: Pretty Derby - Beginning of a New Era,ウマ娘 プリティーダービー 新時代の扉,33607
 180516,59636,556,TV,2025,,Uma Musume: Cinderella Gray,Umamusume: Cinderella Gray,ウマ娘 シンデレラグレイ,48451
 195240,61930,556,TV,2025,,Uma Musume: Cinderella Gray Part 2,Umamusume: Cinderella Gray 2nd Cour,ウマ娘 シンデレラグレイ 第2クール,30529
-20590,21843,557,TV,2014,,Shingeki no Bahamut: GENESIS,Rage of Bahamut: Genesis,神撃のバハムート GENESIS,92461
+20590,21843,557,TV,2014,신격의 바하무트 제네시스,Shingeki no Bahamut: GENESIS,Rage of Bahamut: Genesis,神撃のバハムート GENESIS,92461
 21184,30736,557,TV,2017,,Shingeki no Bahamut: VIRGIN SOUL,Rage of Bahamut: Virgin Soul,神撃のバハムート VIRGIN SOUL,53848
-13161,13161,558,TV,2012,,Hagure Yuusha no Estetica,Aesthetica of a Rogue Hero,はぐれ勇者の鬼畜美学 (エステティカ),92433
+13161,13161,558,TV,2012,열등용사의 귀축미학,Hagure Yuusha no Estetica,Aesthetica of a Rogue Hero,はぐれ勇者の鬼畜美学 (エステティカ),92433
 59,59,559,TV,2002,,Chobits,Chobits,ちょびっツ,92298
 596,596,559,SPECIAL,2003,,"Chobits: Chibits - Sumomo, Kotoko Todokeru",,ちょびっツ ちびっツ すもも・琴子　届ける,7861
-178869,59205,560,TV,2025,,Clevatess: Majuu no Ou to Akago to Kabane no Yuusha,Clevatess,クレバテス-魔獣の王と赤子と屍の勇者-,92264
+178869,59205,560,TV,2025,클레바테스 -마수왕과 아기와 시체 용사-,Clevatess: Majuu no Ou to Akago to Kabane no Yuusha,Clevatess,クレバテス-魔獣の王と赤子と屍の勇者-,92264
 198946,62513,560,TV,2026,,Clevatess II: Majuu no Ou to Itsuwari no Yuusha Denshou,Clevatess Season 2,クレバテスⅡ-魔獣の王と偽りの勇者伝承-,49764
-170695,57058,561,TV,2024,,Ore wa Subete wo [Parry] Suru: Gyaku Kanchigai no Sekai Saikyou wa Boukensha ni Naritai,I Parry Everything,俺は全てを【パリイ】する ～逆勘違いの世界最強は冒険者になりたい～,92197
+170695,57058,561,TV,2024,나는 모든 것을 【패리】한다,Ore wa Subete wo [Parry] Suru: Gyaku Kanchigai no Sekai Saikyou wa Boukensha ni Naritai,I Parry Everything,俺は全てを【パリイ】する ～逆勘違いの世界最強は冒険者になりたい～,92197
 153629,52736,562,TV,2023,,Tensei Oujo to Tensai Reijou no Mahou Kakumei,The Magical Revolution of the Reincarnated Princess and the Genius Young Lady,転生王女と天才令嬢の魔法革命,91404
 98861,33926,563,ONA,2017,전직고수,Quanzhi Gaoshou,The King's Avatar,全职高手,91376
 101410,37078,563,ONA,2018,,Quanzhi Gaoshou Specials,,全职高手 特别篇,27332
 108981,40080,563,MOVIE,2019,,Quanzhi Gaoshou: Dianfeng Rongyao,The King's Avatar: For the Glory,全职高手之巅峰荣耀,16614
 102997,37932,563,ONA,2020,,Quanzhi Gaoshou 2,The King's Avatar S2,全职高手2,32238
 759,759,564,MOVIE,2003,크리스마스에 기적을 만날 확률,Tokyo Godfathers,Tokyo Godfathers,東京ゴッドファーザーズ,91050
-19221,19221,565,TV,2013,,"Ore no Nounai Sentakushi ga, Gakuen Love Comedy wo Zenryoku de Jama Shiteiru",My Mental Choices Are Completely Interfering With My School Romantic Comedy,俺の脳内選択肢が、学園ラブコメを全力で邪魔している,91028
+19221,19221,565,TV,2013,내 뇌 속의 선택지가 학원 러브 코미디를 전력으로 방해하고 있다,"Ore no Nounai Sentakushi ga, Gakuen Love Comedy wo Zenryoku de Jama Shiteiru",My Mental Choices Are Completely Interfering With My School Romantic Comedy,俺の脳内選択肢が、学園ラブコメを全力で邪魔している,91028
 20479,20939,565,OVA,2014,,"Ore no Nounai Sentakushi ga, Gakuen Love Comedy wo Zenryoku de Jama Shiteiru OVA",My Mental Choices Are Completely Interfering With My School Romantic Comedy OVA,俺の脳内選択肢が、学園ラブコメを全力で邪魔している OVA,18051
 136707,49438,566,TV,2022,이세계 약국,Isekai Yakkyoku,Parallel World Pharmacy,異世界薬局,90961
 119683,42192,567,TV,2021,,EDENS ZERO,EDENS ZERO,EDENS ZERO,90912
@@ -1646,8 +1646,8 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 142877,50613,568,TV,2023,,Rurouni Kenshin: Meiji Kenkaku Romantan (2023),Rurouni Kenshin (2023),るろうに剣心 －明治剣客浪漫譚－(2023),61936
 171637,57554,568,TV,2024,,Rurouni Kenshin: Meiji Kenkaku Romantan - Kyoto Douran,Rurouni Kenshin -Kyoto Disturbance-,るろうに剣心 －明治剣客浪漫譚－京都動乱,24326
 160188,54234,569,TV,2023,,Suki na Ko ga Megane wo Wasureta,The Girl I Like Forgot Her Glasses,好きな子がめがねを忘れた,90870
-168374,56352,570,TV,2024,,"Loop 7-kaime no Akuyaku Reijou wa, Moto Tekikoku de Jiyuu Kimama na Hanayome Seikatsu wo Mankitsu Suru",7th Time Loop: The Villainess Enjoys a Carefree Life Married to Her Worst Enemy!,ループ7回目の悪役令嬢は、元敵国で自由気ままな花嫁生活を満喫する,90869
-6114,6114,571,TV,2010,,RAINBOW: Nisha Rokubou no Shichinin,Rainbow,RAINBOW -二舎六房の七人-,90718
+168374,56352,570,TV,2024,루프 7회차 악역 영애는 적국에서 자유로운 신부 생활을 만끽한다,"Loop 7-kaime no Akuyaku Reijou wa, Moto Tekikoku de Jiyuu Kimama na Hanayome Seikatsu wo Mankitsu Suru",7th Time Loop: The Villainess Enjoys a Carefree Life Married to Her Worst Enemy!,ループ7回目の悪役令嬢は、元敵国で自由気ままな花嫁生活を満喫する,90869
+6114,6114,571,TV,2010,레인보우,RAINBOW: Nisha Rokubou no Shichinin,Rainbow,RAINBOW -二舎六房の七人-,90718
 12413,12413,572,TV,2012,,Jormungand,Jormungand,ヨルムンガンド,90480
 13331,13331,572,TV,2012,,Jormungand: PERFECT ORDER,Jormungand: Perfect Order,ヨルムンガンド PERFECT ORDER,42861
 8676,8676,573,TV,2010,아마가미 SS,Amagami SS,Amagami SS,アマガミSS,90129
@@ -1657,7 +1657,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 12669,12669,573,SPECIAL,2012,,Amagami SS+ plus Specials,,アマガミSS+ plus,10235
 97730,33836,573,TV,2017,세이렌,Seiren,Seiren,セイレン,63056
 157397,53632,574,TV,2023,꿈꾸는 남자는 현실주의자,Yumemiru Danshi wa Genjitsushugisha,The Dreaming Boy is a Realist,夢見る男子は現実主義者,90054
-98820,35639,575,TV,2017,,Just Because!,Just Because!,Just Because!,89457
+98820,35639,575,TV,2017,저스트 비코즈!,Just Because!,Just Because!,Just Because!,89457
 10495,10495,576,TV,2011,유루유리,Yuru Yuri,YuruYuri,ゆるゆり,89424
 12403,12403,576,TV,2012,,Yuru Yuri♪♪,YuruYuri Season 2,ゆるゆり♪♪,47266
 21088,30279,576,TV,2015,,Yuru Yuri San☆Hai!,YuruYuri Season 3,ゆるゆり さん☆はい！,34548
@@ -1669,7 +1669,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 163144,54863,578,TV,2026,,TRIGUN STARGAZE,TRIGUN STARGAZE,TRIGUN STARGAZE,33480
 21051,30016,579,TV,2016,,Nanbaka,NANBAKA,ナンバカ,88779
 97875,34414,579,ONA,2017,,Nanbaka 2,NANBAKA - Part Two,ナンバカ 2,35047
-20031,20031,580,TV,2014,,D-Frag!,,ディーふらぐ!,88647
+20031,20031,580,TV,2014,디-프래그,D-Frag!,,ディーふらぐ!,88647
 20856,23383,580,OVA,2014,,D-Frag! OVA,,ディーふらぐ! OAD,16448
 20555,21557,581,MOVIE,2014,추억의 마니,Omoide no Marnie,When Marnie Was There,思い出のマーニー,88612
 1292,1292,582,TV,2007,,Afro Samurai,Afro Samurai,アフロサムライ,88547
@@ -1685,17 +1685,17 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 18617,18617,586,MOVIE,2015,걸즈 앤 판처 극장판,Girls und Panzer Movie,Girls und Panzer der Film,ガールズ&パンツァー 劇場版,32574
 99938,33970,586,MOVIE,2017,걸즈 앤 판처 최종장 제,Girls und Panzer: Saishuushou 1,Girls und Panzer das Finale - Part 1,ガールズ&パンツァー 最終章 第1話,20609
 107208,38081,586,MOVIE,2019,걸즈 앤 판처 최종장 제,Girls und Panzer: Saishuushou 2,Girls und Panzer das Finale - Part 2,ガールズ＆パンツァー 最終章 第2話,16144
-124675,43007,587,TV,2021,,Osananajimi ga Zettai ni Makenai Love Kome,Osamake: Romcom Where The Childhood Friend Won't Lose,幼なじみが絶対に負けないラブコメ,88068
-112802,40620,588,TV,2021,,Uramichi Oniisan,Life Lessons with Uramichi Oniisan,うらみちお兄さん,87879
-98005,34636,589,TV,2017,,Ballroom e Youkoso,Welcome to the Ballroom,ボールルームへようこそ,87796
-129192,47163,590,TV,2022,,"Tensei Kenja no Isekai Life: Daini no Shokugyou wo Ete, Sekai Saikyou ni Narimashita",My Isekai Life: I Gained a Second Character Class and Became the Strongest Sage in the World!,転生賢者の異世界ライフ ～第二の職業を得て、世界最強になりました～,87661
-12549,12549,591,TV,2012,,"Dakara Boku wa, H ga Dekinai.","So, I Can't Play H!",だから僕は、Hができない。,87635
+124675,43007,587,TV,2021,소꿉친구가 절대로 지지 않는 러브 코미디,Osananajimi ga Zettai ni Makenai Love Kome,Osamake: Romcom Where The Childhood Friend Won't Lose,幼なじみが絶対に負けないラブコメ,88068
+112802,40620,588,TV,2021,우라미치 선생님,Uramichi Oniisan,Life Lessons with Uramichi Oniisan,うらみちお兄さん,87879
+98005,34636,589,TV,2017,볼룸에 오신 것을 환영합니다,Ballroom e Youkoso,Welcome to the Ballroom,ボールルームへようこそ,87796
+129192,47163,590,TV,2022,전생현자의 이세계 라이프 ~두 번째 직업을 얻고 세계 최강이 되었습니다~,"Tensei Kenja no Isekai Life: Daini no Shokugyou wo Ete, Sekai Saikyou ni Narimashita",My Isekai Life: I Gained a Second Character Class and Became the Strongest Sage in the World!,転生賢者の異世界ライフ ～第二の職業を得て、世界最強になりました～,87661
+12549,12549,591,TV,2012,그래서 나는 H를 할 수 없다,"Dakara Boku wa, H ga Dekinai.","So, I Can't Play H!",だから僕は、Hができない。,87635
 14893,14893,591,OVA,2013,,"Dakara Boku wa, H ga Dekinai.: Mie Sugi! Mizugi Contest","So, I Can't Play H?",だから僕は、Ｈができない 。 見えすぎ! 水着コンテスト,17193
 148048,51693,592,TV,2023,신 없는 세계의 신 활동,Kaminaki Sekai no Kamisama Katsudou,KamiKatsu: Working for God in a Godless World,神無き世界のカミサマ活動,87600
-108388,39523,593,TV,2019,,Choujin Koukousei-tachi wa Isekai demo Yoyuu de Ikinuku you desu!,High School Prodigies Have It Easy Even In Another World,超人高校生たちは異世界でも余裕で生き抜くようです!,87472
-138882,49776,594,TV,2022,,Kumichou Musume to Sewagakari,The Yakuza's Guide to Babysitting,組長娘と世話係,87430
+108388,39523,593,TV,2019,초인 고교생들은 이세계에서도 여유롭게 살아가나 봅니다!,Choujin Koukousei-tachi wa Isekai demo Yoyuu de Ikinuku you desu!,High School Prodigies Have It Easy Even In Another World,超人高校生たちは異世界でも余裕で生き抜くようです!,87472
+138882,49776,594,TV,2022,보스 따님과 돌보미,Kumichou Musume to Sewagakari,The Yakuza's Guide to Babysitting,組長娘と世話係,87430
 21520,32268,595,ONA,2016,,Koyomimonogatari,Koyomimonogatari,暦物語,87428
-132010,48643,596,TV,2022,,Koi wa Sekai Seifuku no Ato de,Love After World Domination,恋は世界征服のあとで,87291
+132010,48643,596,TV,2022,사랑은 세계정복 후에,Koi wa Sekai Seifuku no Ato de,Love After World Domination,恋は世界征服のあとで,87291
 20462,20853,597,TV,2014,관희의 챠이카,Hitsugi no Chaika,Chaika -The Coffin Princess-,棺姫のチャイカ,87251
 20719,24231,597,TV,2014,,Hitsugi no Chaika: AVENGING BATTLE,Chaika -The Coffin Princess- AVENGING BATTLE,棺姫のチャイカ AVENGING BATTLE,45428
 20724,24261,597,OVA,2015,,Hitsugi no Chaika: Nerawareta Hitsugi/Yomigaeru Iseki,Chaika -The Coffin Princess- OVA,棺姫のチャイカ ねらわれた棺 / 蘇る遺跡,10933
@@ -1704,7 +1704,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 153332,52608,599,TV,2023,전생귀족의 이세계 모험록 ~자중을 모르는 신들의 사도~,Tensei Kizoku no Isekai Boukenroku: Jichou wo Shiranai Kamigami no Shito,The Aristocrat’s Otherworldly Adventure: Serving Gods Who Go Too Far,転生貴族の異世界冒険録 〜自重を知らない神々の使徒〜,87211
 13807,13807,600,OVA,2012,,Corpse Party: Missing Footage,,コープスパーティー Missing Footage,30522
 15037,15037,600,OVA,2013,콥스파티 -포학해진 영혼의 주문-,Corpse Party: Tortured Souls - Bougyakusareta Tamashii no Jukyou,Corpse Party,コープスパーティー Tortured Souls -暴虐された魂の呪叫-,87149
-26,26,601,TV,2003,,TEXHNOLYZE,Texhnolyze,TEXHNOLYZE,87046
+26,26,601,TV,2003,테크노 라이즈,TEXHNOLYZE,Texhnolyze,TEXHNOLYZE,87046
 550,550,2325,TV,1998,,Yu☆Gi☆Oh!,,遊☆戯☆王,54491
 2006,2006,2325,MOVIE,1999,,Yu☆Gi☆Oh! (Movie),,遊☆戯☆王 (Movie),12646
 481,481,602,TV,2000,유희왕 듀얼몬스터즈,Yu☆Gi☆Oh! Duel Monsters,Yu-Gi-Oh! Duel Monsters,遊☆戯☆王　デュエルモンスターズ,86817
@@ -1717,27 +1717,27 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 139435,49858,603,TV,2023,,Shinigami Bocchan to Kuro Maid 2nd Season,The Duke of Death and His Maid Season 2,死神坊ちゃんと黒メイド 第2期,32931
 169584,56738,603,TV,2024,,Shinigami Bocchan to Kuro Maid 3rd Season,The Duke of Death and His Maid Season 3,死神坊ちゃんと黒メイド 第3期,23266
 111314,40333,604,TV,2024,,Uzumaki,Uzumaki,うずまき,86641
-104723,38573,605,TV,2019,,Tsuujou Kougeki ga Zentai Kougeki de Ni-kai Kougeki no Okaasan wa Suki desu ka?,Do You Love Your Mom and Her Two-Hit Multi-Target Attacks?,通常攻撃が全体攻撃で二回攻撃のお母さんは好きですか？,86569
+104723,38573,605,TV,2019,일반공격이 전체공격에 2회 공격인 엄마는 좋아하세요?,Tsuujou Kougeki ga Zentai Kougeki de Ni-kai Kougeki no Okaasan wa Suki desu ka?,Do You Love Your Mom and Her Two-Hit Multi-Target Attacks?,通常攻撃が全体攻撃で二回攻撃のお母さんは好きですか？,86569
 110445,40102,605,OVA,2020,,Tsuujou Kougeki ga Zentai Kougeki de Ni-kai Kougeki no Okaasan wa Suki desu ka? OVA,Do You Love Your Mom and Her Two-Hit Multi-Target Attacks?: Do You Love Your Mom on the Shore?,通常攻撃が全体攻撃で二回攻撃のお母さんは好きですか？OVA,18013
 147642,51648,606,ONA,2024,,Nozomanu Fushi no Boukensha,The Unwanted Undead Adventurer,望まぬ不死の冒険者,86426
-21659,32828,607,TV,2016,,Amaama to Inazuma,Sweetness & Lightning,甘々と稲妻,86401
-19369,19369,608,TV,2013,,Outbreak Company,Outbreak Company,アウトブレイク・カンパニー,86369
+21659,32828,607,TV,2016,달콤달콤 & 짜릿짜릿,Amaama to Inazuma,Sweetness & Lightning,甘々と稲妻,86401
+19369,19369,608,TV,2013,아웃브레이크 컴퍼니,Outbreak Company,Outbreak Company,アウトブレイク・カンパニー,86369
 3014,3014,609,MOVIE,1988,,Ginga Eiyuu Densetsu: Waga Yuku wa Hoshi no Taikai,Legend of the Galactic Heroes: My Conquest Is the Sea of Stars,銀河英雄伝説: わが征くは星の大海,15977
-820,820,609,OVA,1988,,Ginga Eiyuu Densetsu,Legend of the Galactic Heroes,銀河英雄伝説,86216
+820,820,609,OVA,1988,은하영웅전설,Ginga Eiyuu Densetsu,Legend of the Galactic Heroes,銀河英雄伝説,86216
 3016,3016,609,MOVIE,1993,,Ginga Eiyuu Densetsu: Arata Naru Tatakai no Overture,Legend of the Galactic Heroes: Overture to a New War,銀河英雄伝説外伝　新たなる戦いの序曲[オーヴァチュア],13135
 20628,31433,609,TV,2018,,Ginga Eiyuu Densetsu: Die Neue These - Kaikou,Legend of the Galactic Heroes: Die Neue These,銀河英雄伝説 -Die Neue These- 邂逅,27210
 186794,61026,610,TV,2025,암살자인 내 스테이터스가 용사보다도 훨씬 강한데요,Ansatsusha de Aru Ore no Status ga Yuusha yori mo Akiraka ni Tsuyoi no da ga,My Status as an Assassin Obviously Exceeds the Hero’s,暗殺者である俺のステータスが 勇者よりも明らかに強いのだが,86072
-132456,48753,611,TV,2021,,Jahy-sama wa Kujikenai!,The Great Jahy Will Not Be Defeated!,ジャヒー様はくじけない！,85852
-20503,21085,612,TV,2014,,Witch Craft Works,Witch Craft Works,ウィッチクラフトワークス,85772
-20809,24455,613,TV,2014,,Madan no Ou to Vanadis,Lord Marksman and Vanadis,魔弾の王と戦姫 (ヴァナディース),85716
-186497,60852,614,TV,2026,,Koori no Jouheki,The Ramparts of Ice,氷の城壁,85406
+132456,48753,611,TV,2021,쟈히님은 기죽지 않아!,Jahy-sama wa Kujikenai!,The Great Jahy Will Not Be Defeated!,ジャヒー様はくじけない！,85852
+20503,21085,612,TV,2014,위치 크래프트 워크스,Witch Craft Works,Witch Craft Works,ウィッチクラフトワークス,85772
+20809,24455,613,TV,2014,마탄의 왕과 바나디스,Madan no Ou to Vanadis,Lord Marksman and Vanadis,魔弾の王と戦姫 (ヴァナディース),85716
+186497,60852,614,TV,2026,얼음 성벽,Koori no Jouheki,The Ramparts of Ice,氷の城壁,85406
 213805,64534,614,TV,2026,,Koori no Jouheki 2nd Season,The Ramparts of Ice Season 2,氷の城壁 第2期,34593
-100483,36726,615,TV,2018,,Yuragi-sou no Yuuna-san,Yuuna and the Haunted Hot Springs,ゆらぎ荘の幽奈さん,85317
+100483,36726,615,TV,2018,유라기장의 유우나 씨,Yuragi-sou no Yuuna-san,Yuuna and the Haunted Hot Springs,ゆらぎ荘の幽奈さん,85317
 101581,36950,615,OVA,2018,,Yuragi-sou no Yuuna-san OVA,,ゆらぎ荘の幽奈さん OVA,19915
 10721,10721,616,TV,2011,돌아가는 펭귄드럼,Mawaru Penguindrum,Penguindrum,輪るピングドラム,85180
-20735,26349,617,TV,2014,,Danna ga Nani wo Itteiru ka Wakaranai Ken,I Can't Understand What My Husband Is Saying,旦那が何を言っているかわからない件,85067
+20735,26349,617,TV,2014,남편이 무슨 말을 하는지 모르겠다,Danna ga Nani wo Itteiru ka Wakaranai Ken,I Can't Understand What My Husband Is Saying,旦那が何を言っているかわからない件,85067
 21000,29067,617,TV,2015,,Danna ga Nani wo Itteiru ka Wakaranai Ken 2-sure-me,I Can't Understand What My Husband is Saying 2nd Thread,旦那が何を言っているかわからない件2スレ目,47643
-154391,52969,618,TV,2023,,"Jitsu wa Ore, Saikyou Deshita?",Am I Actually the Strongest?,実は俺、最強でした？,85024
+154391,52969,618,TV,2023,"실은 나, 최강이었다?","Jitsu wa Ore, Saikyou Deshita?",Am I Actually the Strongest?,実は俺、最強でした？,85024
 130591,48414,619,TV,2022,,Sabikui Bisco,Sabikui Bisco,錆喰いビスコ,85002
 21096,30346,620,MOVIE,2016,,Doukyuusei,Doukyuusei -Classmates-,同級生,84971
 21362,31338,621,TV,2016,,Hundred,Hundred,ハンドレッド,84885
@@ -1894,7 +1894,7 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 12291,12291,698,TV,2012,,Acchi Kocchi,Place to Place,あっちこっち,75370
 16273,16273,698,SPECIAL,2012,,Acchi Kocchi: PLACE=PRINCESS,Place to Place OVA,あっちこっち 第13話(未放送)「PLACE=PRINCESS」,16140
 21284,31376,699,TV,2016,플라잉 위치,Flying Witch,Flying Witch,ふらいんぐうぃっち,75247
-185736,60593,700,TV,2025,,Vigilante: Boku no Hero Academia ILLEGALS,My Hero Academia: Vigilantes,ヴィジランテ -僕のヒーローアカデミア ILLEGALS-,75109
+185736,60593,700,TV,2025,비질랜티,Vigilante: Boku no Hero Academia ILLEGALS,My Hero Academia: Vigilantes,ヴィジランテ -僕のヒーローアカデミア ILLEGALS-,75109
 195322,61942,700,TV,2026,,Vigilante: Boku no Hero Academia ILLEGALS 2nd Season,My Hero Academia: Vigilantes Season 2,ヴィジランテ -僕のヒーローアカデミア ILLEGALS- 第2期,40750
 126047,43814,701,TV,2021,,Deatte 5-byou de Battle,Battle Game in 5 Seconds,出会って5秒でバトル,75097
 97908,34498,702,MOVIE,2017,"쏘아올린 불꽃, 밑에서 볼까? 옆에서 볼까?","Uchiage Hanabi, Shita kara Miru ka? Yoko kara Miru ka?",Fireworks,打ち上げ花火、下から見るか？横から見るか？,75053
@@ -3888,3 +3888,312 @@ anilist_id,mal_id,menu_work_id,format,year,title_ko,title_romaji,title_english,t
 102065,29978,2322,ONA,2013,,001,,001,5512
 140842,,2326,TV_SHORT,2022,치이카와,Chiikawa,Chiikawa,ちいかわ,12503
 202717,,2326,MOVIE,2026,극장판 치이카와: 인어 섬의 비밀,Chiikawa: Ningyo no Shima no Himitsu,Chiikawa the Movie: The Secret of Mermaid Island,映画ちいかわ 人魚の島のひみつ,3229
+154392,,1356,MOVIE,2025,,Versailles no Bara Movie,The Rose of Versailles Movie,劇場 ベルサイユのばら,0
+182158,59957,1289,MOVIE,2025,,Senpai wa Otokonoko: Ame Nochi Hare,Senpai Is an Otokonoko - Sunny After The Rain,先輩はおとこのこ あめのち晴れ,0
+162921,54769,1925,TV,2025,,Sousei no Aquarion: Myth of Emotions,Genesis of Aquarion Myth of Emotions,想星のアクエリオン Myth of Emotions,0
+176470,58549,1286,MOVIE,2024,,30-sai made Doutei da to Mahou Tsukai ni Nareru Rashii: Tokubetsu-hen,Cherry Magic! Thirty Years of Virginity Can Make You a Wizard?! Movie,30歳まで童貞だと魔法使いになれるらしい 特別編,0
+185088,60410,1538,TV,2025,,Yami Shibai 14,,闇芝居 十四期,0
+180804,,840,MOVIE,2024,,Inazuma Eleven: Soushuuhen - Densetsu no Kickoff,Inazuma Eleven The Movie: Legendary Kickoff,イナズマイレブン総集編 伝説のキックオフ,0
+194403,60645,5,OVA,2025,,Boku no Hero Academia THE MOVIE: YOU'RE NEXT - A PIECE OF CAKE,My Hero Academia: You're Next - A Piece of Cake,僕のヒーローアカデミア THE MOVIE ユアネクスト《A PIECE OF CAKE》,0
+182920,54144,2217,TV,2025,,Cardfight!! Vanguard: Divinez - Deluxe-hen,CARDFIGHT!! VANGUARD Divinez DELUXE Arc,ヴァンガード Divinez デラックス編,0
+181078,59819,1511,TV,2025,,"Bye Bye, Earth 2nd Season","Bye Bye, Earth Season 2",ばいばい、アース 第2シーズン,0
+179852,,547,MOVIE,2025,,Mononoke: Hinezumi,Mononoke The Movie: Chapter II - The Ashes of Rage,モノノ怪 火鼠,0
+181440,,478,OVA,2025,,Aldnoah.Zero: Ame no Danshou - The Penultimate Truth,,アルドノア・ゼロ 雨の断章 -The Penultimate Truth-,0
+186716,,746,MOVIE,2025,,Princess Principal: Crown Handler - Chapter 4,Princess Principal: Crown Handler 4,プリンセス・プリンシパル Crown Handler 第4章,0
+185212,60445,648,MOVIE,2025,,Meitantei Conan: Sekigan no Flashback,,名探偵コナン 隻眼の残像,0
+157692,59662,1499,ONA,2025,,Long Zu Season 2,Dragon Raja Season 2,,0
+177880,,1176,TV,2025,,Osomatsu-san 4,Mr. Osomatsu 4th season,おそ松さん４,0
+185084,,2142,MOVIE,2025,,LUPIN THE IIIRD THE MOVIE: Fujimi no Ketsuzoku,LUPIN THE IIIRD THE MOVIE: The ‌Immortal ‌Bloodline,LUPIN THE IIIRD THE MOVIE 不死身の血族,0
+191994,,2217,TV,2025,,Cardfight!! Vanguard: Divinez Deluxe Kesshou-hen,CARDFIGHT!! VANGUARD Divinez DELUXE Finals,カードファイト!! ヴァンガード Divinez デラックス決勝編,0
+191884,,2142,ONA,2025,,LUPIN THE IIIRD: Zenigata to Futari no Lupin,LUPIN THE IIIRD: Zenigata and the Two Lupins,LUPIN THE IIIRD 銭形と2人のルパン,0
+194088,,1538,TV,2025,,Yami Shibai 15,,闇芝居 十五期,0
+184642,60336,1181,ONA,2025,,Star Wars: Visions Volume 3,Star Wars: Visions Volume 3,スター・ウォーズ：ビジョンズ Vol. 3,0
+170018,56877,1594,TV,2025,,Ao no Orchestra 2nd Season,The Blue Orchestra Season 2,青のオーケストラ 第2期,0
+177271,58772,979,TV,2025,,Kakuriyo no Yadomeshi 2nd Season,Kakuriyo: Bed & Breakfast for Spirits Season 2,かくりよの宿飯 第２期,0
+190840,61517,855,TV,2025,,Kingdom 6th Season,,キングダム 第6シリーズ,0
+186714,59817,783,MOVIE,2025,,GIRLS BAND CRY: Seishun Kyousoukyoku,,ガールズバンドクライ 劇場版総集編,0
+183384,60159,1403,MOVIE,2025,,Love Live! Nijigasaki Gakuen School Idol Doukoukai: Kanketsu-hen 2,Love Live! Nijigasaki High School Idol Club the Movie - Finale - Chapter 2,ラブライブ！虹ヶ咲学園スクールアイドル同好会 完結編 第2章,0
+196115,,330,MOVIE,2025,,Golden Kamuy: Sapporo Beer Koujou-hen,,ゴールデンカムイ 札幌ビール工場編,0
+194872,61834,330,OVA,2025,,Golden Kamuy: Inazuma Goutou to Mamushi no Ogin/Shimaenaga,Golden Kamuy: The Lightning Bandit and Ogin the Viper/Long-Tailed Tit,ゴールデンカムイ 稲妻強盗と蝮のお銀 / シマエナガ,0
+113971,38716,711,MOVIE,2026,,Kidou Senshi Gundam: Senkou no Hathaway - Circe no Majo,Mobile Suit Gundam: Hathaway - The Sorcery of Nymph Circe,機動戦士ガンダム 閃光のハサウェイ キルケーの魔女,0
+176370,58524,1303,TV,2026,,"Hime-sama, ""Goumon"" no Jikan desu 2nd Season","'Tis Time for ""Torture,"" Princess Season 2",姫様“拷問”の時間です 第2期,0
+189258,,2089,TV,2025,,Ao no Miburo: Serizawa Ansatsu-hen,Blue Miburo Season 2,青のミブロ 芹沢暗殺編,0
+189137,,1910,TV,2026,,"Douse, Koishite Shimaunda. Season 2",,どうせ、恋してしまうんだ。Season 2,0
+198720,,1393,TV,2026,,Hokuto no Ken: Ken'ougun Zako-tachi no Banka,,北斗の拳 拳王軍ザコたちの挽歌,0
+203296,,2217,TV,2026,,Cardfight!! Vanguard: Divinez Genma Seisen-hen,CARDFIGHT!! VANGUARD Divinez Parallactic Clash,カードファイト!! ヴァンガード Divinez 幻真星戦編,0
+203939,63087,1538,TV,2026,,Yami Shibai 16,Theatre of Darkness: Yamishibai 16,闇芝居 十六期,0
+177634,58877,793,TV,2026,,Diamond no Ace act II: Second Season,Ace of the Diamond act II Season 2,ダイヤのA actII -Second Season-,0
+179874,,547,MOVIE,2026,,Mononoke: Hebigami,Mononoke The Movie: Chapter Ⅲ - The Curse of the Serpent,モノノ怪 蛇神,0
+169228,,1393,TV,2026,,Hokuto no Ken: FIST OF THE NORTH STAR,Fist of the North Star (2026),北斗の拳 -FIST OF THE NORTH STAR-,0
+198369,62387,648,MOVIE,2026,,Meitantei Conan Movie 29: Highway no Datenshi,Detective Conan Movie 29: Fallen Angel of the Highway,名探偵コナン ハイウェイの堕天使,0
+205054,,1800,OVA,2026,,Tensei Akujo no Kuro Rekishi OVA,,転生悪女の黒歴史 OVA,0
+185692,60552,1906,TV,2026,,Kabushiki Gaisha Magi Lumiere 2nd Season,Magilumiere Magical Girls Inc. Season 2,株式会社マジルミエ 第2期,0
+209961,63819,974,MOVIE,2026,,Shibou Yuugi de Meshi wo Kuu. 44: Cloudy Beach,Shiboyugi: Playing Death Games to Put Food on the Table: 44 - Cloudy Beach,死亡遊戯で飯を食う。44:CLOUDY BEACH,0
+209669,,1895,TV,2026,,Hanazakari no Kimitachi e 2nd Season,Hana-Kimi Season 2,花ざかりの君たちへ 第2期,0
+201667,62883,1264,TV,2026,,Bungou Stray Dogs Wan! 2,Bungo Stray Dogs Wan! 2,文豪ストレイドッグスわん！2,0
+213847,61546,1181,ONA,2026,,Star Wars: Visions - Kyuuninme no Jedi,Star Wars: Visions Presents - The Ninth Jedi,Star Wars：ビジョンズ 九人目のジェダイ,0
+210032,,329,ONA,2026,,BAKI-DOU Part 2,BAKI-DOU: The Invincible Samurai Part 2,刃牙道 第2クール,0
+213506,,1393,TV,2026,,Hokuto no Ken: Kenou-gun Zako-tachi no Banka 2,,北斗の拳 拳王軍ザコたちの挽歌 第2クール,0
+213359,,1538,TV,2026,,Yami Shibai 17,Theatre of Darkness: Yamishibai 17,闇芝居 十七期,0
+204431,63138,117,ONA,2026,,Kaijuu 8-gou: Narumi no Heijitsu,Kaiju No. 8: Narumi's Week at Work,怪獣8号 鳴海の平日,0
+212539,,313,MOVIE,2026,,Takopii no Genzai: Arigatou Mata Ashita,"Takopi's Original Sin: Thank You, See You Tomorrow",タコピーの原罪 -ありがとう、また明日-,0
+198727,62484,1011,TV,2026,,Chitose-kun wa Ramune Bin no Naka Part 2,,千歳くんはラムネ瓶のなか 2クール,0
+213658,64505,793,TV,2026,,Diamond no Ace act II: Second Season Part 2,Ace of Diamond Act II Season 2 Part 2,ダイヤのA actⅡ -Second Season- 第2クール,0
+160803,,1039,TV,2026,,Mahou Shoujo Ikusei Keikaku: restart,Magical Girl Raising Project: restart,魔法少女育成計画 restart,0
+199068,,2232,TV,2026,,Shin Tennis no Ouji-sama: U-17 WORLD CUP Kesshou Member Ketteisen,The Prince of Tennis II U-17 WORLD CUP Final Member Selection Match,新テニスの王子様 U-17 WORLD CUP 決勝メンバー決定戦,0
+188892,,894,TV,2027,,Kuroiwa Medaka ni Watashi no Kawaii ga Tsuujinai 2nd Season,Medaka Kuroiwa is Impervious to My Charms Season 2,黒岩メダカに私の可愛いが通じない 第2期,0
+206298,,1167,MOVIE,2027,,Medalist Movie,,劇場版 メダリスト,0
+213360,,1196,TV,2027,,Akane-banashi 2nd Season,Akane-Banashi Season 2,あかね噺 第2期,0
+199337,,1742,TV,2027,,Shin Samurai-den YAIBA 2,YAIBA: Samurai Legend Season 2,真•侍伝 #YAIBA 第二期,0
+217070,,1014,TV,2027,,Futsutsuka na Akujo de wa Gozaimasu ga: Suuguu Chouso Torikae Den Part 2,Though I Am an Inept Villainess Part 2,ふつつかな悪女ではございますが ～雛宮蝶鼠とりかえ伝～ 第二幕,0
+207251,63419,258,TV,2027,,Mairimashita! Iruma-kun: If Episode of Mafia,Welcome to Demon School! Iruma-kun: IruMafia Edition,魔入りました！入間くん if Episode of 魔フィア,0
+184072,,265,TV,2027,,Yuru Camp△ SEASON 4,Laid-Back Camp Season 4,ゆるキャン△ SEASON４,0
+217330,,49,TV,2027,,Tensei Shitara Slime Datta Ken: Clayman REVENGE,TenSura: Clayman Revenge,転生したらスライムだった件 クレイマンREVENGE,0
+215855,,8,MOVIE,2027,,ONE PIECE FILM: GOD VALLEY,One Piece Film: God Valley,ONE PIECE FILM: GOD VALLEY,0
+174188,57969,2327,TV,2025,,Nukitashi THE ANIMATION,Nukitashi THE ANIMATION,ぬきたし THE ANIMATION,0
+156395,53512,2328,TV,2025,,Busu ni Hanataba wo.,April Showers Bring May Flowers,ブスに花束を。,0
+108992,39473,2329,TV,2026,,Mebius Dust,,メビウス・ダスト,0
+175124,58197,2330,ONA,2025,,Nyaight of the Living Cat,Nyaight of the Living Cat,ニャイト・オブ・ザ・リビングキャット,0
+179678,59342,2331,TV,2025,,Jigoku Sensei Nube,Hell Teacher: Jigoku Sensei Nube (2025),地獄先生ぬ～べ～ (2025),0
+177159,58739,2332,TV,2025,,Momentary Lily,,もめんたりー・リリィ,0
+184574,60315,2333,TV,2025,,Dekin no Mogura,Dekin no Mogura: The Earthbound Mole,出禁のモグラ,0
+174596,58066,2334,TV,2025,,Sorairo Utility,,空色ユーティリティ,0
+159483,54028,2335,TV,2025,,Turkey!,Turkey!-Time to Strike-,ターキー!,0
+186920,61072,2336,TV,2025,,Shuumatsu Touring,Touring After the Apocalypse,終末ツーリング,0
+184034,60260,2337,TV,2025,,Hotel Inhumans,,ホテル・インヒューマンズ,0
+199426,,2337,TV,2026,,Hotel Inhumans 2nd Season,,ホテル・インヒューマンズ 第2期,0
+185773,60610,2338,MOVIE,2025,,Hateshinaki Scarlet,Scarlet,果てしなきスカーレット,0
+183984,60255,2339,TV,2026,,Arne no Jikenbo,The Case Book of Arne,アルネの事件簿,0
+178046,,2340,TV,2025,,GUILTY GEAR STRIVE: DUAL RULERS,Guilty Gear Strive: Dual Rulers,GUILTY GEAR STRIVE: DUAL RULERS,0
+192867,,2341,TV,2026,,Android wa Keiken Ninzuu ni Hairimasu ka??,Does it Count if You Lose Your Innocence to an Android?,アンドロイドは経験人数に入りますか？？,0
+208517,,2341,ONA,2026,,Android wa Keiken Ninzuu ni Hairimasu ka??: 5-kakan Tsuzukete......?,Does It Count If You Lose Your Innocence to an Android? ONA,アンドロイドは経験人数に入りますか？？ 5日間続けて……？,0
+211778,64084,2342,TV,2026,,"Sekai Saikyou no Majo, Hajimemashita",The World's Strongest Witch,世界最強の魔女、始めました,0
+177501,58820,2343,TV,2026,,Awajima Hyakkei,A Hundred Scenes of AWAJIMA,淡島百景,0
+186003,60697,2344,TV,2025,,Fermat no Ryouri,Fermat Kitchen,フェルマーの料理,0
+154064,54740,2345,MOVIE,2025,,Make a Girl,Make a Girl,メイク ア ガール,0
+179541,59322,2346,ONA,2025,,Shirobuta Kizoku desu ga Zense no Kioku ga Haeta node Hiyoko na Otouto Sodatemasu,SHIROHIYO - Reincarnated as a Neglected Noble: Raising My Baby Brother With Memories From My Past Life,白豚貴族ですが前世の記憶が生えたので ひよこな弟育てます,0
+175422,58265,2347,TV,2025,,Babanbabanban Vampire,,ババンババンバンバンパイア,0
+189069,61274,2348,TV,2025,,Ginga Tokkyuu Milky☆Subway,Milky☆Subway: The Galactic Limited Express,銀河特急 ミルキー☆サブウェイ,0
+204949,62518,2348,MOVIE,2026,,Ginga Tokkyuu Milky☆Subway Movie: Kakueki Teisha Gekijou Yuki,Milky☆Subway: The Galactic Limited Express – the Movie,劇場 銀河特急 ミルキー☆サブウェイ 各駅停車劇場行き,0
+178312,,2349,TV,2025,,Farmagia,FARMAGIA,ファーマギア,0
+158036,53732,2350,TV,2026,,Hidarikiki no Eren,Eren the Southpaw,左ききのエレン,0
+198561,62144,2351,TV,2025,,"Potion, Wagami wo Tasukeru",,ポーション、わが身を助ける,0
+185613,,2352,MOVIE,2024,,The Lord of the Rings: Rohan no Tatakai,The Lord of the Rings: The War of the Rohirrim,ロード・オブ・ザ・リング／ローハンの戦い,0
+192002,61595,2353,MOVIE,2025,,I Byeol-e Pil-yohan,Lost in Starlight,,0
+186914,61067,2354,TV,2025,,Ninja to Gokudou,Ninja vs. Gokudo,忍者と極道,0
+188525,61280,2355,TV,2026,,Kore Kaite Shine,"Draw this, then die!",これ描いて死ね,0
+202985,63014,2356,TV,2026,,"Tadaima, Ojamasaremasu!","Pardon the Intrusion, I'm Home!",ただいま、おじゃまされます！,0
+177761,58957,2357,TV,2025,,9-nine- Shihaisha no Oukan,9-nine- Ruler's Crown,9-nine- 支配者の王冠,0
+207809,63489,2358,TV,2026,,Sora wa Akai Kawa no Hotori,Red River,天は赤い河のほとり,0
+197731,,2359,TV,2026,,Goumon Baito-kun no Nichijou,The Daily Life of a Part-time Torturer,拷問バイトくんの日常,0
+183127,60131,2360,TV,2025,,Karaoke Iko!,Let's Go Karaoke!,カラオケ行こ!,0
+210234,63304,2361,TV,2026,,Mamonogurai no Boukensha: Ore Dake Mamono wo Kuratte Tsuyoku Naru,Monster Eater,魔物喰らいの冒険者～俺だけ魔物を喰らって強くなる～,0
+186742,61014,2362,TV,2026,,Toaru Anbu no ITEM,A Certain Dark Item,とある暗部の少女共棲,0
+170936,,2363,TV,2025,,Debu to Love to Ayamachi to!,Plus-sized Misadventures in Love!,デブとラブと過ちと！,0
+185505,60505,2364,TV,2025,,Necronomico no Cosmic Horror Show,Necronomico and the Cosmic Horror Show,ネクロノミ子のコズミックホラーショウ,0
+157960,53722,2365,ONA,2025,,BULLET/BULLET,,バレット/バレット,0
+195209,59961,2366,TV,2025,,Kizu darake Seijo yori Houfuku wo Komete,"With Vengeance, Sincerely, Your Broken Saintess",傷だらけ聖女より報復をこめて,0
+212144,64180,2366,TV,2026,,Kizu darake Seijo yori Houfuku wo Komete Season2,,傷だらけ聖女より報復をこめて Season2,0
+177887,59005,2367,ONA,2025,,Leviathan,,リヴァイアサン,0
+197868,,2368,ONA,2026,,Maid-san wa Taberu dake,The Food Diary of Miss Maid,メイドさんは食べるだけ,0
+205896,63292,2369,TV,2026,,Shinja Zero no Megami-sama to Hajimeru Isekai Kouryaku,,信者ゼロの女神サマと始める異世界攻略,0
+180825,,2370,TV,2025,,Maebashi Witches,,前橋ウィッチーズ,0
+178868,,2371,TV,2026,,Magical Knight Rayearth (2026),Magic Knight Rayearth (2026),魔法騎士レイアース (2026),0
+182419,60009,2372,TV,2025,,Chuuzenji-sensei Mononoke Kougiroku: Sensei ga Nazo wo Hodoite Shimau kara.,The Mononoke Lecture Logs of Chuzenji-sensei: He Just Solves All the Mysteries,中禅寺先生物怪講義録　先生が謎を解いてしまうから。,0
+199007,62524,2373,TV,2026,,#Zombie Sagashitemasu,,#ゾンビさがしてます,0
+173335,57820,2374,TV,2025,,Kamitsubaki-shi Kensetsuchuu.,KAMITSUBAKI City Under Construction,神椿市建設中。,0
+184718,,2375,ONA,2025,,Cat's♥Eye (2025),Cat's Eye (2025),キャッツ❤︎アイ (2025),0
+183128,60130,2376,TV,2025,,"Muchuu sa, Kimi ni.","Captivated, by You",夢中さ、きみに。,0
+177778,58964,2377,MOVIE,2025,,Batman Ninja vs. Yakuza League,,ニンジャバットマン対ヤクザリーグ,0
+196017,62051,2378,TV,2026,,Grow Up Show: Himawari no Circus-dan,GROW UP SHOW -Sunflower Circus-,グロウアップショウ ～ひまわりのサーカス団～,0
+181284,,2379,TV,2026,,Kirio Fanclub,,霧尾ファンクラブ,0
+184997,,2380,TV,2025,,Shabake,Shabake,しゃばけ,0
+204060,,2381,TV,2026,,Tetsunabe no Jan!,Iron Wok Jan,鉄鍋のジャン！,0
+208352,63572,2382,ONA,2026,,Dandelion,Dandelion,ダンデライオン,0
+185070,,2383,TV,2025,,Uchuujin MuuMuu,,宇宙人ムームー,0
+190054,,2384,ONA,2026,,Watashi no Shiawase na Kekkon Tokubetsu-hen,My Happy Marriage Special Episodes,わたしの幸せな結婚 新作アニメ,0
+195571,,2385,TV,2026,,Shuiro no Kamen,The Vermilion Mask,朱色の仮面,0
+203490,,2386,TV,2026,,Uchi no Otouto-domo ga Sumimasen,Please Excuse My Younger Brothers,うちの弟どもがすみません,0
+200455,62753,2387,TV,2026,,"Yowaki MAX Reijou Nano ni, Ratsuwan Konyakusha-sama no Kake ni Notte Shimatta","Even Though I'm a Super Timid Noble Girl, I Accepted the Bet From My Cunning Fiancé",弱気MAX令嬢なのに、辣腕婚約者様の賭けに乗ってしまった,0
+158287,53762,2388,TV,2025,,#Compass 2.0: Sentou Setsuri Kaiseki System,#Compass2.0: Animation Project,#コンパス2.0 戦闘摂理解析システム,0
+195734,,2389,TV,2026,,Ichijouma Mankitsu Gurashi!,Ichijyoma Mankitsu Gurashi!,一畳間まんきつ暮らし！,0
+166475,61952,2390,MOVIE,2025,,Luo Xiao Hei Zhan Ji 2,The Legend of Hei 2,,0
+175035,58953,2391,ONA,2025,,Pokémon Concierge Part 2,Pokémon Concierge Part 2,ポケモンコンシェルジュ  2クール,0
+196553,62126,2392,TV,2025,,SI-VIS: The Sound of Heroes,,,0
+202508,,2393,TV,2026,,Kami no Shizuku,The Drops of God,神の雫,0
+178052,59078,2394,TV,2025,,Princession Orchestra,Princess-Session Orchestra,プリンセッション・オーケストラ,0
+206166,,2395,TV,2026,,Ingoku Danchi,Ingoku Danchi: Deviant's Apartment Complex,インゴクダンチ,0
+200230,62683,2396,TV,2026,,Let's Go Kaiki-gumi,,レッツゴー怪奇組,0
+185875,,2397,TV,2026,,Magical Girl Lyrical Nanoha EXCEEDS Gun Blaze Vengeance,,魔法少女リリカルなのは EXCEEDS Gun Blaze Vengeance,0
+183960,,2398,TV,2025,,Isekai Munchkin: HP 1 no Mama de Saikyou Saisoku Dungeon Kouryaku,Otherworldly Munchkin: Let's Speedrun the Dungeon with Only 1 HP!,異世界マンチキン ―HP1のままで最強最速ダンジョン攻略―,0
+177508,58832,2399,TV,2026,,Kujima Utaeba Ie Hororo,,ジマ歌えば家ほろろ,0
+177132,58735,2400,MOVIE,2024,,A NEW DAWN,,,0
+186861,60544,2401,MOVIE,2025,,Nezha Zhi Mo Tong Nao Hai,,,0
+198117,62378,2402,TV,2025,,Ganglion,,ガングリオン,0
+211877,,2403,TV,2026,,Kanojo no Tomodachi,My Girlfriend's Friend,彼女の友達,0
+188035,,2404,MOVIE,2026,,Saishuu Gakushou Hibike! Euphonium Zenpen,"Sound! Euphonium, The Final Movie Part 1",最終楽章 響け！ユーフォニアム 前編,0
+185073,60407,2405,TV,2025,,Kimi to Idol Precure♪,You and Idol Precure♪,キミとアイドルプリキュア♪,0
+202564,,2406,TV,2027,,Kakunaru Ue wa,Now That We Draw,描くなるうえは,0
+209499,,2407,TV,2026,,Sensha Isu: TANK CHAIR,,戦車椅子-TANK CHAIR-,0
+210375,63433,2408,TV,2026,,Daikenja Riddle no Jikan Gyakkou,The Regression of Great Sage Riddle,大賢者リドルの時間逆行,0
+169080,56613,2409,TV,2026,,Azur Lane Bisoku Zenshin! 2nd Season,AzurLane: Slow Ahead! Season 2,アズールレーン びそくぜんしんっ！ 第二期,0
+187062,61084,2410,TV,2026,,Hikuidori: Ushuu Boro Tobi-gumi,Oedo Fire Slayer: The Legend of Phoenix,火喰鳥 羽州ぼろ鳶組,0
+198376,62430,2411,TV,2026,,Bang Dream! Yume∞Mita,,バンドリ！ ゆめ∞みた,0
+213657,64503,2412,TV,2026,,Mission: Yozakura Family Season 2 Part 2,Mission: Yozakura Family Season 2 Part 2,夜桜さんちの大作戦 第2期 第2クール,0
+188668,,2413,ONA,2025,,Koisuru ONE PIECE,,恋するワンピース,0
+196840,,2414,OVA,2026,,Iya na Kao sare nagara Opantsu Misete Moraitai Returns,I Want You To Make a Disgusted Face and Show Me Your Underwear 4,嫌な顔されながらおパンツ見せてもらいたいR（リターンズ）,0
+194318,,2415,TV,2026,,Yoroi Shinden Samurai Troopers,Yoroi-Shinden Samurai Troopers,鎧真伝サムライトルーパー,0
+206249,,2416,TV,2026,,Iwamoto-senpai no Suisen,Recommendations from Iwamoto-Senpai,岩元先輩ノ推薦,0
+162722,54717,2417,TV,2025,,Mahoutsukai Precure!! MIRAI DAYS,,魔法つかいプリキュア！！～MIRAI DAYS～,0
+208754,63736,2418,MOVIE,2026,,Unanswered//butterfly: Sword Art Online,,Unanswered//butterfly: Sword Art Online,0
+166215,55689,2419,TV,2025,,Utagoe wa Mille-Feuille,Harmony of Mille-Feuille,うたごえはミルフィーユ,0
+213484,62957,2420,ONA,2026,,Bai Ri Cheng Wang,Crowned in a Hundred Days,,0
+178749,,2421,TV,2026,,Mahou no Shimai Lulutto Lilly,,魔法の姉妹ルルットリリィ,0
+186043,,2422,ONA,2025,,My Melody & Kuromi,My Melody & Kuromi,マイメロディとクロミ,0
+186169,60774,2423,MOVIE,2025,,ChaO,ChaO,チャオ,0
+202957,,2424,TV,2026,,Meitantei Precure!,,名探偵プリキュア！,0
+185584,60535,2425,ONA,2025,,Everyday Host,,えぶりでいホスト,0
+198312,,2426,TV,2025,,Heika Watashi wo Wasurete Kudasai,"Forget That Night, Your Majesty",陛下わたしを忘れてください,0
+203275,63045,2427,TV,2026,,Demon's Crest,Devil's Crest,デモンズ・クレスト,0
+191967,,2428,TV,2026,,Jigoku Sensei Nube (2025) Part 2,,地獄先生ぬ～べ～ (2025) 第2クール,0
+200294,,2429,TV,2026,,Choujun! Choujou Senpai,,超巡！超条先輩,0
+186181,,2430,MOVIE,2025,,Fushigi ‌no ‌Kuni ‌de ‌Alice to: Dive ‌in ‌Wonderland,,不思議の国でアリスと -Dive in Wonderland-,0
+201090,,2431,TV,2026,,Ghost Concert: missing Songs,,ゴーストコンサート: missing Songs,0
+168244,60821,2432,ONA,2025,,Shiye Mowang,The Laid Off Demon,,0
+207327,,2433,MOVIE,2026,,Doko yori mo Tooi Basho ni Iru Kimi e,To You in the Beyond,どこよりも遠い場所にいる君へ,0
+209463,,2434,TV,2026,,Kanata Kara,From Far Away,彼方から,0
+178825,59199,2435,TV,2025,,CLASSIC★STARS,,クラシック★スターズ,0
+185646,60534,2436,TV,2025,,Koupen-chan,,コウペンちゃん,0
+166373,55727,2437,TV,2025,,MIRU: Watashi no Mirai,MIRU: Paths To My Future,未ル わたしのみらい,0
+199597,,2438,TV,2027,,Youchien WARS,Kindergarten Wars,幼稚園WARS,0
+188034,61227,2439,MOVIE,2025,,Girls & Panzer: Motto Love Love Sakusen desu!,,ガールズ＆パンツァー もっとらぶらぶ作戦です!,0
+209562,,2440,TV,2026,,Vertex Force,,バーテックスフォース,0
+197474,62277,2441,MOVIE,2026,,Shin Gintama Movie: Yoshiwara Daienjou,,新劇場版 銀魂 -吉原大炎上-,0
+203473,,2442,TV,2026,,Kyoufu Collector,Horror Collector,恐怖コレクター,0
+185755,,2443,TV,2025,,Puniru wa Kawaii Slime 2nd Season,Puniru is a Kawaii Slime Season 2,ぷにるはかわいいスライム 第2期,0
+185462,60425,2444,TV,2025,,0-saiji Start Dash Monogatari Season 2,Head Start at Birth Season 2,0歳児スタートダッシュ物語 シーズン2,0
+212799,,2445,TV,2026,,Marronnier Oukoku no Shichinin no Kishi,The Seven Knights of the Marronnier Kingdom,マロニエ王国の七人の騎士,0
+199446,61969,2446,TV,2026,,"Saioshi no Gikei Mederu Tame, Nagaikishimasu!",I'll Live a Long Life to Dote on My Favorite Stepbrother!,最推しの義兄を愛でるため、長生きします！,0
+163788,60020,2447,MOVIE,2025,,Yeon-ui Pyeonji,Your Letter,,0
+132776,48701,2448,MOVIE,2025,,Peleliu: Rakuen no Guernica,Peleliu: Guernica of Paradise,ペリリュー～楽園のゲルニカ～,0
+167742,56135,2449,TV,2025,,UniteUp!: Uni:Birth,,,0
+186151,60651,2450,ONA,2025,,Yu-Gi-Oh! Card Game: The Chronicles,,,0
+187316,,2451,TV,2026,,Gensou Suikoden,Suikoden: The Anime,幻想水滸伝,0
+196230,62066,2452,TV,2025,,Monster Strike: Deadverse Reloaded,,モンスターストライク　デッドバースリローデッド,0
+199594,,2453,TV,2026,,Tetsuryou! meet with Tetsudou Musume,,てつりょー！meet with 鉄道むすめ,0
+177686,58915,2454,MOVIE,2025,,Housenka,The Last Blossom,ホウセンカ,0
+168631,61847,2455,TV,2025,,Pyramid Game,,,0
+188138,61239,2456,TV,2025,,Binan Koukou Chikyuu Bouei-bu Haikara!,Cute High Earth Defense Club Haikara!,美男高校地球防衛部ハイカラ！,0
+212667,,2457,TV,2026,,Hitozukiai ga Nigate na Miboujin no Yukionna-san to Noroi no Yubiwa,The Shy Snow Woman and the Cursed Ring,人付き合いが苦手な未亡人の雪女さんと呪いの指輪,0
+197097,,2458,MOVIE,2026,,Paris ni Saku Étoile,,パリに咲くエトワール,0
+203710,60591,2459,ONA,2025,,Wei Miao Rensheng,Just for a Meowment,,0
+189956,61418,2460,MOVIE,2026,,Kusunoki no Bannin,,クスノキの番人,0
+211304,64006,2461,TV,2026,,"Megane, Tokidoki, Yankee-kun",Glasses With a Chance of Delinquent,メガネ、時々、ヤンキーくん,0
+202079,,2462,TV,2026,,Oji-san wa Kawaii Mono ga Osuki.,Uncle's Obsession with Cute Things,おじさんはカワイイものがお好き。,0
+193923,,2463,MOVIE,2026,,Kono Hon wo Nusumu Mono wa,Whoever Steals This Book,この本を盗む者は,0
+200556,62804,2464,TV,2026,,High School! Kimengumi (2026),High School! Kimengumi (2026),ハイスクール！奇面組 (2026),0
+213665,63878,2465,TV,2026,,Migawari Reijou wo Sukutta no wa Reikoku Mujihi na Koori no Ouji no Ai deshita,Saved by the Ice Cold Prince's Embrace,身代わり令嬢を救ったのは冷酷無慈悲な氷の王子の愛でした,0
+146608,55359,2466,MOVIE,2024,,Tsurubami-Iro no Nagiko-tachi,The Mourning Children: Nagiko and the Girls Wearing Tsurubami Black,つるばみ色のなぎ子たち,0
+194213,,2467,MOVIE,2027,,ghost／yoru no hate,ghost – end of night,ghost／夜の果て,0
+198560,62238,2468,ONA,2025,,Dungeons & Television,,ダンジョン＆テレビジョン,0
+175137,58199,2469,TV,2024,,Yoru wa Neko to Issho Season 3,Nights with a Cat Season 3,夜は猫といっしょSeason3,0
+205130,,2470,TV,2027,,Historié,,ヒストリエ HISTORIĒ,0
+195384,,2471,MOVIE,2026,,Meikyuu no Shiori,LABYRINTH,迷宮のしおり,0
+213666,63514,2472,TV,2026,,Perfect Addiction,,,0
+194116,,2473,MOVIE,2026,,Saishuu Gakushou Hibike! Euphonium - Kouhen,"Sound! Euphonium, The Final Movie Part 2",最終楽章 響け！ユーフォニアム後編,0
+186837,60988,2474,ONA,2025,,Tian Guan Cifu Short Film,Heaven Official's Blessing Short Film,天官賜福 短片,0
+204080,,2475,ONA,2025,,"🫵😭 ""IRIS OUT""",,🫵😭「IRIS OUT」,0
+187860,61184,2476,TV,2025,,Nohara Hiroshi: Hiru Meshi no Ryuugi,Style of Hiroshi Nohara Lunch,野原ひろし 昼メシの流儀,0
+187383,61179,2477,ONA,2025,,Kimetsu no Yaiba x MLB Tokyo Series presented by Guggenheim,,鬼滅の刃 × MLB Tokyo Series presented by Guggenheim,0
+186148,60749,2478,ONA,2025,,Maomao no Hitorigoto 2nd season,,猫猫のひとりごと 第2期,0
+196333,,2479,TV,2027,,Hirayasumi,,ひらやすみ,0
+185992,,2480,ONA,2025,,NEET de Otaku na Kunoichi to Naze ka Dousei Hajimemashita OVA,I'm Living With a Otaku NEET Kunoichi?! Specials,ニートくノ一となぜか同棲はじめました OVAs,0
+181886,59914,2481,TV,2025,,Kinnikuman: Kanpeki Choujin Shiso-hen Season 2,Kinnikuman: Perfect Origin Arc Season 2,キン肉マン 完璧超人始祖編 Season 2,0
+207254,63418,2482,TV,2026,,Thunder 3,,サンダー3,0
+186559,60946,2483,ONA,2025,,Kairyuu to Yuubinya-san,Pokémon: Dragonite and the Special Delivery,カイリューとゆうびんやさん,0
+202419,62864,2484,TV,2026,,Omae wa Mada Gunma wo Shiranai: Reiwa-ban,,お前はまだグンマを知らない～令和版～,0
+206875,62286,2485,ONA,2025,,Guimu Zhi Zhu: Caidan,Lord of Mysteries: Chibi Theatre,,0
+200578,62808,2486,TV,2027,,Isshiki-san wa Koi wo Shiritai.,,一式さんは恋を知りたい。,0
+187380,60790,2487,MOVIE,2025,,"Luffy, Law",,ルフィ、ロー,0
+166249,55709,2488,MOVIE,2025,,Boku to Roboco Movie,Me & Roboco: The Movie,劇場版 僕とロボコ,0
+189832,,2489,ONA,2025,,Chotto dake Ai ga Omoi Dark Elf ga Isekai kara Oikakete Kita Mini Anime Gekijou,,ちょっとだけ愛が重いダークエルフが異世界から追いかけてきたミニアニメ劇場,0
+207675,63469,2490,TV,2026,,Hyakki Yakoushou,,百鬼夜行抄,0
+195833,,2491,TV,2026,,Honoo no Toukyuujyo Dodge Danko,Dodgeball Girl Danko,炎の闘球女 ドッジ弾子,0
+168632,61764,2492,ONA,2025,,Wiheomhan Pyeonuijeom,The Dangerous Convenience Store,,0
+182877,60094,2493,ONA,2025,,Kankin Kuiki Level X 2nd Season,Lockdown Zone: Lv. X Sequel,監禁区域レベルX 続編,0
+206819,,2494,MOVIE,2026,,Kimi to Hanabi to Yakusoku to,,君と花火と約束と,0
+213068,,2495,TV,2026,,Jyuоu Mujin Dandivine,,獣王武神ダンデヴァイン,0
+187265,61130,2496,ONA,2025,,Ruri Dragon PV,,ルリドラゴン PV,0
+187166,61107,2497,ONA,2025,,Ganzo! Bandori-chan,BanG Dream-chan,元祖！バンドリちゃん,0
+179294,59266,2498,TV,2025,,Watari Tori to Katatsumuri,Migratory Birds & Snail,渡り鳥とカタツムリ,0
+192474,61672,2499,ONA,2025,,Shinsei Galverse,,新星ギャルバース,0
+179876,,2500,TV,2026,,DARK MACHINE: The Animation,,DARK MACHINE -The Animation-,0
+183231,,2501,ONA,2026,,Rilakkuma: Goyururi Yume no Tabi,,リラックマ ～ごゆるり夢の旅～,0
+199411,60587,2502,ONA,2026,,Yu Ling Shi,B.King,,0
+199430,60582,2503,ONA,2025,,Cengjing You Yongshi,So You're Raising a Warrior,,0
+205905,62340,2504,ONA,2025,,Guangyin Zhi Wai,Beyond Time's Gaze,,0
+193296,61461,2505,TV,2027,,Tenkaichi,,テンカイチ,0
+166371,55710,2506,TV,2025,,Hana-Doll*: Reinterpretation of Flowering,,華Doll*-Reinterpretation of Flowering-,0
+216624,64950,2507,TV,2027,,Shishite Ikiru SSS-kyuu Hunter,SSS-Class Revival Hunter,死して生きるSSS級ハンター,0
+213094,62540,2508,ONA,2025,,Yonghansonyeo,Dragon Girl,,0
+199009,,2509,TV,2025,,2200-nen Neko no Kuni Nippon,"Japan, the Land of Cats in the Year 2200",2200年ねこの国ニッポン,0
+185834,60562,2510,ONA,2025,,Bai Yao Pu 5th Season,Fairies Albums 5,,0
+208105,,2511,ONA,2026,,Yani Neko Mini,,ヤニねこ ミニ,0
+208766,,2512,TV,2027,,Bless,,ブレス,0
+173333,57827,2513,TV,2025,,Mashin Souzouden Wataru,,魔神創造伝ワタル,0
+185861,60557,2514,ONA,2025,,Fanren Xiu Xian Chuan 4th Season,A Record of Mortal's Journey to Immortality Season 4,,0
+191689,61579,2515,ONA,2025,,Umayuru: Pretty Gray,,うまゆる ぷりてぃ～ぐれい,0
+183414,60773,2516,MOVIE,2025,,Kimi to Idol Precure♪ Omatase! Kimi ni Todokeru KirakkiLive!,,キミとアイドルプリキュア♪お待たせ！キミに届けるキラッキライブ！,0
+177518,58837,2517,MOVIE,2025,,Odekake Kozame: Tokai no Otomodachi,,映画 おでかけ子ザメ とかいのおともだち,0
+185121,60279,2518,ONA,2025,,Xian Ni: Shenlin Zhi Zhan,Renegade Immortal: Battle of Gods,,0
+186522,60506,2519,TV,2025,,Araiguma Calcal-dan,,あらいぐま カルカル団,0
+206163,,2520,MOVIE,2026,,Soukou Kihei Votoms Haiiro no Majo,Armored Trooper Votoms The Gray Witch,,0
+179838,59406,2521,MOVIE,2025,,Binan Koukou Chikyuu Bouei-bu ETERNAL LOVE!,Cute High Earth Defense Club ETERNAL LOVE!,美男高校地球防衛部ETERNAL LOVE！,0
+211258,63998,2522,TV,2026,,Arafou Kenja no Isekai Seikatsu Nikki,The Diary of a Middle-Aged Sage's Carefree Life in Another World,アラフォー賢者の異世界生活日記,0
+194879,61108,2523,MOVIE,2025,,Mumei no Jinsei,,無名の人生,0
+207886,62843,2524,ONA,2025,,Run Run Lantern,Run Run Lantern,Run Run Lantern,0
+192928,61327,2525,ONA,2025,,Nomo no Kuni,The Land of NOMO,ノモの国,0
+214703,64718,2526,TV,2026,,Ghost Meets Gal!,,ごーすと・みーつ・ぎゃる！,0
+199794,62643,2527,TV,2025,,Anila to Cocora,,アニラとココラ,0
+209940,63709,2528,TV,2026,,Komekami! Girls,,こめかみっ！Girls,0
+209800,,2529,TV,2026,,Yoroi-Shinden Samurai Troopers Part 2,,鎧真伝サムライトルーパー 第2クール,0
+185694,,2530,TV,2025,,Hyakushou Kizoku 3rd Season,Hyakusho Kizoku-the farmer's day Season 3,百姓貴族 第3期,0
+204579,,2531,TV,2027,,Jirai nan desu ka? Chihara-san,,地雷なんですか？地原さん,0
+205772,,2532,TV,2026,,Candy Caries,Candy Caries,キャンディーカリエス,0
+204432,,2533,TV,2026,,CHOPPER's,CHOPPER's,,0
+199005,,2534,TV,2025,,#Kanagawa ni Sunderu Elf,,#神奈川に住んでるエルフ,0
+185259,60446,2535,TV,2025,,Masuda Kousuke Gekijou Gag Manga Biyori GO,Gag Manga Biyori GO,増田こうすけ劇場 ギャグマンガ日和GO,0
+198926,62522,2536,TV,2025,,Chou Futsuu Mahou Shoujo Asumi Toruverse,,超普通マホウ少女アスミトルバース,0
+184289,60070,2537,TV,2025,,Kaijuu Sekai Seifuku (TV),,かいじゅうせかいせいふく,0
+198745,61846,2538,TV,2025,,Shuukan Ranobe Anime,,週刊ラノベアニメ,0
+209132,,2539,TV,2026,,Junket Bank,,ジャンケットバンク,0
+187990,,2540,TV,2026,,Battle Spirits [Re] Zekkai No Ku,,Battle Spirits [Re] 絶界の空,0
+209032,,2541,TV,2026,,Mahou no Shimai LuluttoLilly Part 2,,魔法の姉妹ルルットリリィ 第2クール,0
+186313,60947,2542,TV,2025,,Nmeneko,,ンめねこ,0
+193883,61765,2543,TV,2025,,Chibi Godzilla no Gyakushuu 3,Chibi Godzilla Raids Again Season 3,ちびゴジラの逆襲(第3期),0
+185699,,2544,TV,2027,,Ramen Aka Neko 2nd Season,,ラーメン赤猫 第2期,0
+206523,,2545,TV,2026,,Onegai AiPri,,おねがいアイプリ,0
+184470,,2546,TV,2025,,Himitsu no AiPri: Ring-hen,,ひみつのアイプリ リング編,0
+159981,54160,2547,TV,2025,,Future Kid Takara,,フューチャーキッドタカラ,0
+214380,,2548,TV,2027,,Mobile Suit Gundam RG XARX-ZERO,,機動戦士ガンダムRG XARX-ZERO,0
+218216,,2549,TV,2027,,Nue no Onmyouji,Nue's Exorcist,鵺の陰陽師,0
+199603,62654,2550,TV,2025,,Princess Catch! Tiniping,,,0
+219548,,2551,TV,2026,,Spirit Circle,Spirit Circle,スピリットサークル,0
+198408,62268,2552,TV,2025,,Chikyuu no Latair,,地球のラテール,0
+188661,61279,2553,TV,2025,,Go! Go! Vehicle Zoo: Vehicle Star-hen,,ゴー！ゴー！びーくるずー のりものスター編,0
+194207,,2554,TV,2026,,Pan Dorobou,,パンどろぼう,0
+212308,,2555,TV,2026,,Pan no Akachan (TV),,パンの赤ちゃん,0
+214536,,2556,TV,2026,,CARDFIGHT!! VANGUARD Divinez: Parallactic Fate,CARDFIGHT!! VANGUARD Divinez: Parallactic Fate,カードファイト!! ヴァンガード Divinez 運命星戦編,0
+196227,62083,2557,TV,2025,,Tomica to Tom,Tomica & Tom,トミカとトム,0
+208824,63641,2558,TV,2026,,Plannosaurus Gachi Koseibutsu-bu,,プラノサウルス ガチコセイブツ部,0
+204698,,2559,TV,2026,,Gelpiyo,,ゲルぴよ,0
+210157,,2560,TV,2027,,Love Live! Hasu no Sora Jogakuin School Idol Club,,ラブライブ！蓮ノ空女学院スクールアイドルクラブ,0
+214593,,2561,TV,2026,,Yuusanchi! from Yuuhachi,,ゆうさんち！from 遊ハち,0
+188131,,2562,TV,2025,,Chikuwa Senki: Ore no Kawaii de Chikyuu Shinryaku,,ちくわ戦記～おれのカワイイで地球侵略～,0
+203148,,2563,TV,2026,,Hoppe-chan: Sun Oukoku to Kuro Hoppe-dan no Himitsu,,ほっぺちゃん ～サン王国と黒ほっぺ団の秘密～,0
+198411,,2564,TV,2026,,Nezumi-kun no Chokki (TV),,ねずみくんのチョッキ (TV),0
+214968,,2564,TV,2026,,Nezumi-kun no Chokki (TV) 2nd Season,Little Mouse's Red Vest 2,ねずみくんのチョッキ (TV) 第2期,0
+209709,,2565,TV,2026,,Sirotan,,しろたん,0
+213298,,2566,TV,2026,,Yuruyuru Zukan,,ゆるゆる図鑑,0
+205116,,2567,TV,2026,,Aware! Meisaku-kun (2026),,あはれ！名作くん (2026),0
+216860,63823,2568,TV,2026,,Punirunes Puni 4,,ぷにるんず ぷに４,0

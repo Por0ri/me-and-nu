@@ -7,7 +7,7 @@
 -- Constraint names follow ORM metadata and can differ from migration history.
 -- Only SQL server defaults are emitted; Python defaults/onupdate are not triggers.
 -- Use Alembic migrations to change existing databases; do not apply this snapshot.
--- Service migration target: 6d2f8b4a1c37 (onboarding V2 + carousel + recommendation + content report · inquiry); do not upgrade all heads.
+-- Service migration target: 91c7a2e4b630 (onboarding V2 + carousel + recommendation + content report · inquiry + restoration session + in-app preferences); do not upgrade all heads.
 -- Birth-date policy is deferred: existing birth_date columns/data are preserved.
 -- Absence of birth_date here describes ORM metadata, not approval to drop it.
 
@@ -83,7 +83,7 @@ CREATE TABLE auth_session (
 	last_accessed_at TIMESTAMP WITH TIME ZONE,
 	CONSTRAINT pk_auth_session PRIMARY KEY (auth_session_id),
 	CONSTRAINT uq_auth_session_token_hash UNIQUE (session_token_hash),
-	CONSTRAINT ck_auth_session_state CHECK (session_state IN ('anonymous', 'onboarding_pending', 'active')),
+	CONSTRAINT ck_auth_session_state CHECK (session_state IN ('anonymous', 'onboarding_pending', 'restoration_pending', 'active')),
 	CONSTRAINT ck_auth_session_state_user CHECK ((session_state = 'anonymous' AND user_id IS NULL) OR (session_state <> 'anonymous' AND user_id IS NOT NULL))
 );
 

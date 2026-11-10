@@ -93,7 +93,7 @@ X-CSRF-Token: <현재 세션 토큰>
 | night_in_app_enabled | BOOLEAN NOT NULL, DB/ORM 기본 false |
 | version | INTEGER NOT NULL, DB/ORM 기본 1, CHECK version >= 1 |
 
-Migration `91c7a2e4b630`의 parent는 `6d2f8b4a1c37`이며 단일 head를 유지한다.
+2026-11-10 Checking 통합 후 Migration `91c7a2e4b630`의 parent는 `b3e7a5c19d42`이며 단일 head를 유지한다. 최초 로컬 구현의 parent `6d2f8b4a1c37`에서 연결만 변경했다. 해당 알림 설정 revision은 실제 환경에 적용하지 않았으며, 이미 Checking에 병합된 회원탈퇴 revision과 기존 데이터는 변경하지 않는다.
 
 1. 상수 server default와 NOT NULL로 새 열을 추가해 기존 행에 true/false/1을 채운다. 기존 종류별 선택·marketing·timestamp를 UPDATE하지 않는다.
 2. 온보딩 완료 사용자 중 설정 행이 없는 사용자만 `INSERT ... ON CONFLICT DO NOTHING`으로 보완한다.
@@ -156,7 +156,7 @@ BE 재현 시 `DATABASE_URL`과 `NOTIFICATION_SETTINGS_TEST_DATABASE_URL`을 명
 2. PM의 ON/OFF 기본값·KST 시간 기준은 이번 구현 근거이며 팀 전체 합의로 기록하지 않는다. 팀 리뷰에서 적용 대상, 상하위 UI 동작, 과거 기록·배지 관계와 계약을 확인해야 한다.
 3. API/DB 저장·FE 연동에는 로컬 검증상 새 Blocker·Major 없음. 배포 전 migration 적용과 전체 FE/Production Build·실제 환경 통합 검증은 남아 있다.
 4. 마케팅 동의는 기존 별도 흐름 유지, 외부 푸시는 MVP 제외. 새 구독·기기 토큰·광고 이벤트를 추가하지 않는다.
-5. 회원탈퇴는 기존 즉시 삭제 API와 확정 30일 유예 정책의 차이가 남아 있지만 이번에는 파일/API 연결 모두 수정하지 않았다. 관리자 화면/API도 별도 작업이다.
+5. 11/09 검증 시점에는 회원탈퇴 즉시 삭제 API와 30일 유예 정책의 차이가 있었다. 11/10 Checking 통합으로 PR #42의 30일 유예·복구 BE가 포함되었으며, 그 구현은 보존했다. 회원탈퇴 FE 연결과 관리자 화면/API는 이 알림 설정 작업의 범위 밖이다.
 6. 일정은 PM 제공 기준: 11/15 Consumer+Admin 베타 준비, 11/16~20 최소 5일 테스트, 11/20 개발 마감. 본 작업 완료가 전체 Consumer/Admin 준비 완료를 뜻하지 않는다.
 
 ## 9. 후속 최종 검수와 로컬 Commit
@@ -164,3 +164,28 @@ BE 재현 시 `DATABASE_URL`과 `NOTIFICATION_SETTINGS_TEST_DATABASE_URL`을 명
 2026-11-09 최종 검수에서 변경 범위 21개 파일, DTO·저장값·version 비교, 인증·온보딩·CSRF·본인 설정 격리, 기존 데이터 보존, migration 연결·backfill·downgrade 차단, FE 재조회·409·세션 변경 및 Demo 분리를 확인했다. 새로운 코드 수준 Blocker·Major는 발견하지 못했다. 코드와 테스트는 변경하지 않았으며 기존 통과 결과를 유지하고 동일 테스트를 반복하지 않는다. 이 문서의 작업 단계 기록만 보완했다.
 
 조건부 로컬 Commit 메시지는 `feat(pivot): connect my page notification settings API`다. 실제 선택적 알림 생성·표시 및 야간 수신 제어는 계속 미구현이며, 전체 FE 테스트·Production Build·실제 환경 통합 검증은 후속 단계다. 실제 서비스 DB에는 migration을 적용하지 않는다.
+
+## 10. 2026-11-10 Checking 최종 통합
+
+- 시작 HEAD `982235b4359d54273540076ede962aa23bd3ae69`, clean. Fetch한 Checking은 `65b4e3e8e40f8fb366a4f46607cb88e422172c2a`이며 PR #42 회원탈퇴·복구, #43~44 카탈로그·에이전트 변경을 포함한다.
+- 기존 준비 Commit `be2d776`과 구현 Commit `982235b`를 재작성하지 않고 Checking을 현재 브랜치에 merge한다. 회원탈퇴 BE·에이전트·카탈로그 코드는 Checking 그대로 보존한다.
+- 두 revision이 `6d2f8b4a1c37`을 부모로 공유하던 분기를 `6d2f8b4a1c37 → b3e7a5c19d42 → 91c7a2e4b630` 단일 경로로 정리했다. 실제 DB에 적용하지 않은 알림 설정 revision의 parent만 변경했으며, Checking에 병합된 b3e7 파일은 변경하지 않았다.
+- 충돌 파일은 `backend/tests/test_alembic.py`와 `docs/erd/current_schema.sql` 두 개였다. 양쪽 테스트를 유지하고 스키마 문서는 통합 ORM에서 재생성했다.
+- Compose 3종·readiness/로컬 OAuth helper가 사용하는 `SERVICE_SCHEMA_REVISION`·스키마 생성기의 명시적 target을 91c7로 맞췄다. 기존 b3e7 고정값을 그대로 두면 새 설정 컬럼이 준비되지 않으므로 필요한 통합 수정이다. 관련 문서의 현재 target 안내도 함께 갱신했다. Compose 실행·실환경 migration은 하지 않았다.
+- FE 코드·API DTO·저장 로직은 어제 Commit과 동일하다. 빌드가 자동 변경한 `next-env.d.ts`는 원상 복원하여 산출물 변경을 Commit에 넣지 않는다.
+
+### 최종 코드 검증
+
+| 항목 | 결과 |
+| --- | --- |
+| 전체 FE `npm test` | 580/580 통과, skip 없음 |
+| TypeScript | 생성된 `next-env.d.ts` 원상 복원 후 `npm run typecheck` 통과 |
+| Production Build | `npm run build -- --webpack` 성공, 내장 TypeScript 검사 통과, 정적 페이지 22개 생성 |
+| 관련 BE | 351/351 통과, skip 없음. 인증·CSRF·OAuth/Redis·회원탈퇴/복구·온보딩·신고·알림·저장함·Migration 포함 |
+| 설정 API·격리 PG | 위 351개 중 9개: schema 1개 + 실제 PostgreSQL 8개. b3e7 데이터에서 upgrade/downgrade/재적용, 복구 대기 세션 보존, 탈퇴·복구 후 설정 유지 추가 검증 |
+| 산출물 검사 | Production trace manifest 31개에서 로컬 정책 원문 포함 0건. 원문 hash 유지 |
+| 스키마 | ORM 생성 파일 `--check` 통과, 다른 팀 b3e7 migration 변경 없음 |
+
+검증 DB는 별도 `menu-notifications-test-1110` 컨테이너의 loopback `127.0.0.1:15439/notification_settings_test`, tmpfs이며 각 테스트는 임의 schema를 생성·정리했다. 실제 서비스 DB에 연결하지 않았다. 복구 대기 세션은 테스트에서 발급했으며 실제 소셜 OAuth 로그인 검증으로 해석하지 않는다. 어제 Mock 브라우저 4/4와 실제 로컬 API/DB 브라우저 1/1은 당시 결과로 보존하고, 변경 없는 FE 브라우저 검증을 반복하지 않았다.
+
+PR에는 설정 저장·FE 연결과 migration 통합만 포함한다. 필수 운영 공지는 유지하며 선택적 알림 생성·표시·야간 수신 제어는 미구현이다. 새 Blocker·Major는 로컬 검증 범위에서 발견하지 못했다. 실환경은 승인 후 현재 revision/백업 확인 → 91c7 migration → BE → FE → 실제 세션으로 GET/PATCH·409·알림함 확인 순서가 필요하다. 저장 이력이 생긴 뒤 downgrade는 의도적으로 차단되므로 별도 데이터 보관·복원 계획 없이 되돌리지 않는다. Push·PR은 준비된 결과에 대한 사용자 승인 후 진행하며 Merge·배포·실환경 DB 변경은 이 작업에서 하지 않는다.

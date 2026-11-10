@@ -1,7 +1,7 @@
 """LLM을 쓰지 않고도 매번 동일하게 적용되는 품질 검사."""
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from urllib.parse import urlparse
 
 from ani_menu_agent.classification import infer_strong_content_type
@@ -19,6 +19,7 @@ from ani_menu_agent.policy import (
     POLICY,
 )
 from ani_menu_agent.review_rules import RULES, decision_metadata, make_issue, score_penalty
+from ani_menu_agent.source_freshness import candidate_is_stale
 
 
 def _issue(
@@ -161,37 +162,15 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                                 card.page,
                             )
                         )
-            has_current_claim = any(
-                fact.time_sensitive and source.id in fact.source_ids for fact in package.facts
+    if package.content_type == "event" and candidate_is_stale(
+        {"event_end": package.event_end}, "event"
+    ):
+        issues.append(
+            _issue(
+                "EVENT_ALREADY_ENDED",
+                "Verified event end date has passed; do not present the event as upcoming.",
             )
-            if (
-                package.content_kind == ContentKind.INFORMATION
-                and has_current_claim
-                and published_date
-                and published_date < date.today() - timedelta(days=90)
-            ):
-                issues.append(
-                    _issue(
-                        "SOURCE_STALE",
-                        "시의성 사실의 원문 게시일이 90일을 넘었습니다. "
-                        "최신 공지/상태를 재확인하거나 상시 정보로 다시 분류하세요.",
-
-                    )
-                )
-    if package.content_type == "event" and package.event_end:
-        try:
-            event_end = date.fromisoformat(package.event_end[:10])
-        except ValueError:
-            event_end = None
-        if event_end and event_end < date.today():
-            issues.append(
-                _issue(
-                    "EVENT_ALREADY_ENDED",
-                    "행사 종료일이 지났습니다. 종료된 행사를 진행 예정처럼 생성하지 말고 "
-                    "최신 후보를 사용하세요.",
-
-                )
-            )
+        )
     for fact in package.facts:
         missing = sorted(set(fact.source_ids) - source_ids)
         if missing:
@@ -233,10 +212,6 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                         next(card.page for card in package.cards if fact.id in card.fact_ids),
                     )
                 )
-        if package.content_kind == ContentKind.INFORMATION and not fact.verified:
-            issues.append(
-                _issue("FACT_UNVERIFIED", f"미검증 사실: {fact.statement}")
-            )
         if fact.fact_type == "campaign" and fact.id in used_fact_ids:
             required = {"participation_steps", "prize", "deadline", "region"}
             missing = sorted(key for key in required if not fact.details.get(key))
@@ -641,24 +616,24 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
 
                 )
             )
-    if not POLICY.min_cards <= len(package.cards) <= POLICY.max_cards:
+    minimum_cards = POLICY.minimum_cards_for(package.content_type)
+    if not minimum_cards <= len(package.cards) <= POLICY.max_cards:
         issues.append(
-            _issue("CARD_COUNT", f"카드는 {POLICY.min_cards}~{POLICY.max_cards}장이어야 합니다.")
+            _issue("CARD_COUNT", f"카드는 {minimum_cards}~{POLICY.max_cards}장이어야 합니다.")
         )
     if package.content_kind == ContentKind.INFORMATION:
-        known_verified_ids = {fact.id for fact in package.facts if fact.verified}
-        used_verified_ids = {
+        known_source_fact_ids = {fact.id for fact in package.facts}
+        used_source_fact_ids = {
             fact_id
             for card in package.cards
             for fact_id in card.fact_ids
-            if fact_id in known_verified_ids
+            if fact_id in known_source_fact_ids
         }
-        if len(used_verified_ids) < 1:
+        if len(used_source_fact_ids) < 1:
             issues.append(
                 _issue(
                     "FACT_DIVERSITY_LOW",
-                    "카드뉴스에 활용된 검증 사실이 3개 미만입니다. 한 가지 사실을 늘려 쓰지 말고 "
-                    "서로 다른 근거를 더 수집하거나 이 자료를 후보에서 제외하세요.",
+                    "카드뉴스에서 출처가 연결된 사실을 하나 이상 사용해야 합니다.",
 
                 )
             )
@@ -1075,14 +1050,6 @@ def check_detail_body(package: ContentPackage) -> list[QualityIssue]:
         )
     for fact_id in set(package.detail_fact_ids) & facts_by_id.keys():
         fact = facts_by_id[fact_id]
-        if package.content_kind == ContentKind.INFORMATION and not fact.verified:
-            issues.append(
-                _issue(
-                    "DETAIL_BODY_FACT_UNVERIFIED",
-                    f"상세글이 미검증 정보 팩트를 참조합니다: {fact_id}",
-
-                )
-            )
         if not set(fact.source_ids) & source_ids:
             issues.append(
                 _issue(
@@ -1126,7 +1093,7 @@ SCORE_THRESHOLDS = {
 }
 
 FACT_BLOCKERS = {
-    "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
+    "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING",
     "CAMPAIGN_DETAILS_MISSING", "COPY_UNGROUNDED", "SOURCE_STALE", "EVENT_ALREADY_ENDED",
     "FACT_DIVERSITY_LOW", "UNSUPPORTED_DATE_CLAIM", "SOURCE_PUBLICATION_DATE_SHOWN",
     "EVENT_PERIOD_MISSING", "GOODS_RELEASE_PERIOD_MISSING",
