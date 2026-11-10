@@ -142,16 +142,25 @@ def load_posts(cur, topic_id, today, preview=None):
     return posts, {p["id"]: i for i, p in enumerate(posts)}
 
 
+class Visit(list):
+    """한 접속의 기록 [(종류, 글 번호, 값), ...] (v1.learn 에 넣을 모양). day = 접속한 날 번호 (한국 날짜, service.make_feed 와 같은 기준)"""
+
+    def __init__(self, events, day):
+        super().__init__(events)
+        self.day = day
+
+
 def load_visits(cur, taps, index):
-    """기록 → 유저마다 접속 목록 [[(종류, 글 번호, 값), ...], ...] (시간 순, v1.learn 에 넣을 모양).
+    """기록 → 유저마다 접속 목록 [Visit, ...] (시간 순).
     활동 기록은 같은 session_id (없으면 같은 날)를 한 접속으로. 반응(좋아요 · 저장 · O/X)은 현재 상태 표에서 읽어 그날에 넣음.
-    읽은 비율 = 카드 넘긴 장 수 / 전체 장 수 · 상세 스크롤 비율 중 큰 값 (접속마다 글 하나에 한 번).
+    접속마다 글 하나에 카드 넘김 한 번 (swipe: 가장 멀리 넘긴 장 · 전체 장 수) · 본문 읽기 한 번 (read: 가장 많이 내린 비율).
+    점수는 v1.learn 이 매김 (카드 · 본문이 둘 다면 큰 쪽 하나, 11/3 결정).
     노출은 같은 날 같은 글 한 번만 (새로고침 · 여러 번 접속이 본 글 감점과 무관심 신호를 쌓지 않게, 10/31)"""
     groups = {tap: {} for tap in taps}
     shown_days = set()
 
     def visit(tap, key, at):
-        g = groups[tap].setdefault(key, {"at": at, "events": [], "read": {}})
+        g = groups[tap].setdefault(key, {"at": at, "events": [], "card": {}, "body": {}})
         g["at"] = min(g["at"], at)
         return g
 
@@ -168,16 +177,14 @@ def load_visits(cur, taps, index):
                 continue
             shown_days.add(day_key)
         g = visit(tap, ("s", value["session_id"]) if value.get("session_id") else ("d", at.astimezone(KST).date()), at)
-        ratio = None
         if kind == "card_swipe":
-            if value.get("card_index") and value.get("card_count"):
-                ratio = min(value["card_index"] / value["card_count"], 1.0)
+            card, count = value.get("card_index"), value.get("card_count")
+            if card and count:
+                g["card"][c] = max(g["card"].get(c, (0, 0)), (min(card, count), count))
         else:
             g["events"].append((kind, c, None))
             if kind == "open" and value.get("scroll_pct") is not None:
-                ratio = value["scroll_pct"] / 100
-        if ratio is not None:
-            g["read"][c] = max(g["read"].get(c, 0.0), ratio)
+                g["body"][c] = max(g["body"].get(c, 0.0), value["scroll_pct"] / 100)
 
     reactions = []
     cur.execute("SELECT tap_id, content_id, is_liked, liked_at, ox_feedback, updated_at FROM content_reaction WHERE tap_id = ANY(%s)",
@@ -193,7 +200,8 @@ def load_visits(cur, taps, index):
     for tap, kind, cid, at in reactions:
         if cid in index:
             visit(tap, ("r", at.astimezone(KST).date()), at)["events"].append((kind, index[cid], None))
-    return {tap: [g["events"] + [("read", c, r) for c, r in g["read"].items()]
+    return {tap: [Visit(g["events"] + [("swipe", c, v) for c, v in g["card"].items()]
+                        + [("read", c, r) for c, r in g["body"].items()], g["at"].astimezone(KST).date().toordinal() - 719163)
                   for g in sorted(gs.values(), key=lambda g: g["at"])] for tap, gs in groups.items()}
 
 
@@ -203,7 +211,7 @@ def recommend(user, visits, ctx, feed, posts, day, t, cfg, catalog_ids):
     state = v1.UserState(ob["history"], ob["genres"], ob["themes"], service.user_types(user["answers"]), t,
                          len(catalog_ids), len(posts))
     for events in visits:
-        v1.learn(state, events, feed, cfg, catalog_ids)
+        v1.learn(state, events, feed, cfg, catalog_ids, day=getattr(events, "day", None))
     service.work_affinity(state, ctx, cfg)
     if cfg.w_genre:
         service.genre_affinity(state, ctx)
@@ -344,7 +352,8 @@ def main():
     t0 = time.time()
     ctx = service.load_context(args.context) if args.context else service.build()
     print(f"문맥 준비 ({'파일' if args.context else '원본'}) {time.time() - t0:.0f}초 · 작품 {len(ctx['ids']):,} · 버전 {VERSION}")
-    world = (ctx, v1.Config(logs=service.LOGS, w_genre=service.W_GENRE, w_seen=service.W_SEEN), ctx["ids"][ctx["cw_rows"]], chip_names())
+    world = (ctx, v1.Config(logs=service.LOGS, w_genre=service.W_GENRE, w_seen=service.W_SEEN, reread_days=service.REREAD_DAYS),
+             ctx["ids"][ctx["cw_rows"]], chip_names())
     while True:
         now = datetime.now(KST)
         today = date.fromisoformat(args.today) if args.today else now.date()

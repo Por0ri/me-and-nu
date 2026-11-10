@@ -31,7 +31,7 @@ MODELS = (Topic, UserAccount, Tap, Content, ContentSlide, ContentSource, Content
 
 def test_order_keeps_rank_drops_opened_and_disliked_and_moves_seen_to_back():
     ranked = [FeedSlot(503, 1, REASON), FeedSlot(501, 2), FeedSlot(505, 3), FeedSlot(507, 4)]
-    ordered = order_feed(ranked, [508, 507, 506, 503], opened={501}, negative={505}, shown_today={503, 506})
+    ordered = order_feed(ranked, [508, 507, 506, 503], fully_read={501}, negative={505}, shown_today={503, 506})
 
     assert [slot.content_id for slot in ordered] == [507, 508, 503, 506]
     assert ordered[0] == FeedSlot(507, 4)
@@ -52,9 +52,9 @@ def test_spread_never_pulls_a_card_shown_today_forward_but_continues_behind_it()
     works = {1: 10, 2: 10, 3: 20}
     ranked = [FeedSlot(1), FeedSlot(2), FeedSlot(3)]
     # 3 would break the 1-2 repeat, but it was shown today.
-    assert ids(order_feed(ranked, [], opened=set(), negative=set(), shown_today={3}, main_work=works)) == [1, 2, 3]
+    assert ids(order_feed(ranked, [], fully_read=set(), negative=set(), shown_today={3}, main_work=works)) == [1, 2, 3]
     # Among cards shown today, the spread continues from the last fresh card.
-    assert ids(order_feed(ranked, [], opened=set(), negative=set(), shown_today={2, 3}, main_work=works)) == [1, 3, 2]
+    assert ids(order_feed(ranked, [], fully_read=set(), negative=set(), shown_today={2, 3}, main_work=works)) == [1, 3, 2]
 
 
 def test_cards_without_a_main_work_never_count_as_repeats():
@@ -111,7 +111,8 @@ def engine():
         ])
         add_round(connection, 1, tap_id=11, day=TODAY, items=[(503, 1, {"text": REASON}), (501, 2, None),
                                                               (505, 3, None), (507, 4, None)])
-        add_event(connection, 501, "open", NOW - timedelta(days=1))         # opened before: drop
+        add_event(connection, 501, "open", NOW - timedelta(days=1), value={"scroll_pct": 90})   # read to the end: drop
+        add_event(connection, 502, "open", NOW - timedelta(days=1), value={"scroll_pct": 50})   # opened, not finished: stays
         add_event(connection, 503, "impression", NOW - timedelta(hours=1))  # shown today: move back
         add_event(connection, 506, "impression", NOW - timedelta(days=1))   # shown yesterday: no effect
         connection.execute(ContentReaction.__table__.insert(), [
@@ -133,10 +134,10 @@ def add_round(connection, round_id, *, tap_id, day, items):
     ])
 
 
-def add_event(connection, content_id, event_type, at, tap_id=11, user_id=7):
+def add_event(connection, content_id, event_type, at, tap_id=11, user_id=7, value=None):
     connection.execute(UserEvent.__table__.insert(), [
         {"client_event_id": uuid.uuid4(), "user_id": user_id, "tap_id": tap_id, "event_type": event_type,
-         "content_id": content_id, "event_value": {}, "occurred_at": at, "received_at": at,
+         "content_id": content_id, "event_value": value or {}, "occurred_at": at, "received_at": at,
          "data_source": "automated_test"},
     ])
 

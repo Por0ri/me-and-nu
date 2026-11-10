@@ -32,6 +32,8 @@ from app.services.feed_ranking import FeedSlot, order_feed
 KST = timezone(timedelta(hours=9))
 # Newest public contents considered after the day's ranked list (the model ranks 100).
 LATEST_POOL = 500
+# 끝까지 본 글 (카드 마지막 장 · 본문 80% 이상)은 본 날 포함 이 날 수 동안 피드에서 뺌 (모델 service.REREAD_DAYS 와 같은 값)
+REREAD_DAYS = 14
 # Up to 100 ranked cards plus 500 latest cards. IDs are packed once, separately
 # from the JSON header, so even BIGINT IDs stay below a 7 KB query value.
 MAX_SNAPSHOT_ITEMS = 600
@@ -292,7 +294,9 @@ async def _recommended_feed(
         latest = await recommendation_repo.latest_content_ids(db, topic_id, as_of, LATEST_POOL)
         ordered = order_feed(
             ranked, latest,
-            opened=await recommendation_repo.opened_content_ids(db, tap.tap_id, as_of),
+            fully_read=await recommendation_repo.fully_read_content_ids(
+                db, tap.tap_id, _kst_day_start(as_of) - timedelta(days=REREAD_DAYS - 1), as_of,
+            ),
             negative=negative,
             shown_today=await recommendation_repo.shown_content_ids(db, tap.tap_id, _kst_day_start(as_of), as_of),
             main_work=await recommendation_repo.main_works(db, [slot.content_id for slot in ranked] + latest),
