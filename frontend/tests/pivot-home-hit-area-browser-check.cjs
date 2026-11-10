@@ -1,5 +1,5 @@
 // Reuse an installed Playwright + Edge. No package installation or backend calls.
-// Optional fourth argument "before" records the unfixed layout without changing it.
+// Optional fourth argument "before" records the layout, or "ai" checks AI scroll stability.
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -7,6 +7,7 @@ const { chromium } = require(process.env.PIVOT_PLAYWRIGHT_MODULE || 'playwright'
 const base = process.argv[2] || 'http://127.0.0.1:3104';
 const out = process.argv[3] || path.join(require('node:os').tmpdir(), 'pivot-home-hit-area');
 const beforeFix = process.argv[4] === 'before';
+const aiOnly = process.argv[4] === 'ai';
 const near = (actual, expected, label) => assert.ok(Math.abs(actual - expected) <= 1, label + ': ' + actual + ' / ' + expected);
 fs.mkdirSync(out, { recursive: true });
 const results = [];
@@ -144,10 +145,101 @@ async function touchChecks(page, post, cdp) {
   assert.ok(diagonalX.index > 0); assert.ok(Math.abs(diagonalX.y - diagonalXStart.y) < 10);
   return { start, horizontal, verticalStart, vertical, diagonalStart, diagonal, diagonalXStart, diagonalX };
 }
+async function aiChecks(page, posts, cdp) {
+  const { width, height } = page.viewportSize();
+  const post = posts.last(), detail = post.locator('[data-home-detail]');
+  const ai = home(page).locator('[data-home-ai]');
+  const nav = home(page).getByRole('navigation', { name: '주요 메뉴' });
+  const state = () => ai.evaluate(e => {
+    const rect = e.getBoundingClientRect(), anchor = e.parentElement.getBoundingClientRect();
+    const nav = e.parentElement.parentElement.querySelector('nav');
+    const controls = [nav, ...e.closest('main').querySelectorAll('[data-home-post] button')];
+    const blocked = controls.filter(target => {
+      const css = getComputedStyle(target), box = target.getBoundingClientRect();
+      return css.pointerEvents !== 'none' && css.visibility === 'visible' && Number(css.opacity) > 0 &&
+        box.width && box.height && rect.left < box.right && rect.right > box.left && rect.top < box.bottom && rect.bottom > box.top;
+    }).map(e => e.getAttribute('aria-label'));
+    return { x: rect.x - anchor.x, y: rect.y - anchor.y, bottom: rect.bottom, right: rect.right, blocked,
+      width: rect.width, height: rect.height };
+  });
+  const offset = ({ x, y }) => [x, y];
+  const scrollToDepth = depth => detail.evaluate(async (target, depth) => {
+    const anchor = target.closest('main').querySelector('[data-home-ai]').parentElement.getBoundingClientRect();
+    scrollTo({ top: scrollY + target.getBoundingClientRect().bottom - anchor.top - depth, behavior: 'instant' });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return target.getBoundingClientRect().bottom - anchor.top;
+  }, depth);
+  const sample = async depth => {
+    near(await scrollToDepth(depth), depth, 'Detail crosses the anchor edge');
+    const measured = await state();
+    assert.deepEqual(measured.blocked, [], `Clear hit areas at depth ${depth}`);
+    return offset(measured);
+  };
+  const homeOffset = [0, 0];
+  const checkAnchor = async inset => {
+    const measured = await state();
+    assert.deepEqual(offset(measured), homeOffset);
+    assert.deepEqual([measured.width, measured.height], [48, 48]);
+    near(measured.bottom, height - Math.max(12, inset), 'AI safe-area bottom');
+    near(measured.right, width - (width <= 340 ? 16 : 34), 'AI Figma right edge');
+  };
+  await settled(page, post.locator('[data-home-track]'));
+  await sample(-32);
+  await page.waitForFunction(() => document.querySelector('[data-home-ai]').dataset.aiDisplaced !== 'true');
+  await checkAnchor(0);
+  assert.deepEqual(await sample(-2), homeOffset, 'A near miss stays at the anchor');
+  const firstEscape = await sample(2);
+  assert.notDeepEqual(firstEscape, homeOffset, 'A real Detail collision moves AI');
+  assert.ok(Math.hypot(...firstEscape) <= 24, 'Use the nearby space at the viewport edge');
+  for (const depth of [6, 10, 6, 8]) {
+    assert.deepEqual(await sample(depth), firstEscape, `Hold the first safe position at depth ${depth}`);
+  }
+  const displaced = await sample(16);
+  for (const depth of [18, 14, 16, 6, -6]) {
+    assert.deepEqual(await sample(depth), displaced, `Hold the new safe position at depth ${depth}`);
+  }
+  await page.waitForTimeout(230);
+  assert.deepEqual(offset(await state()), displaced, 'A pause just outside the collision does not return AI');
+  assert.deepEqual(await sample(2), displaced, 'Resuming across the boundary holds position');
+
+  const measured = await geometry(post);
+  const tap = async (label, points) => {
+    assert.ok(points[0].target, `${label} center hit target`);
+    await page.touchscreen.tap(points[0].x, points[0].y);
+  };
+  await tap('좋아요', measured.probes['좋아요']);
+  await post.getByRole('status').filter({ hasText: '좋아요 기능은 준비 중' }).waitFor();
+  const bookmark = post.locator('[data-demo-bookmark]');
+  assert.ok(measured.points.every(p => p.bookmark), 'Save retains its center, edge and corner hit targets');
+  await toggleAt(page, bookmark, measured.points[0]);
+  const expected = await snapshot(page);
+  await tap('Detail', measured.probes[await detail.getAttribute('aria-label')]);
+  await detailReady(page);
+  await page.locator('[data-detail-state]').getByRole('button', { name: '뒤로가기', exact: true }).click();
+  await restored(page, expected);
+
+  await settled(page, post.locator('[data-home-track]'));
+  await sample(-32);
+  await page.waitForFunction(() => document.querySelector('[data-home-ai]').dataset.aiDisplaced === 'false');
+  await checkAnchor(0);
+  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { bottom: 34 } });
+  await page.waitForFunction(h => document.querySelector('[data-home-ai]').getBoundingClientRect().bottom === h - 34, height);
+  await checkAnchor(34);
+  await nav.getByRole('button', { name: 'MY', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  assert.ok(await ai.evaluate(e => e === document.activeElement), 'Tab reaches AI from NAV');
+  await page.keyboard.press('Enter');
+  await home(page).getByRole('status').filter({ hasText: 'AI 콘텐츠 탐색은 준비 중이에요.' }).waitFor();
+  await nav.getByRole('button', { name: 'SAVE', exact: true }).tap(); await savedReady(page);
+  await page.locator('[data-saved-state]').getByRole('button', { name: 'HOME', exact: true }).tap(); await homeReady(page);
+  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: {} });
+  return { firstEscape, displaced, touch: await touchChecks(page, posts.first(), cdp) };
+}
 (async () => {
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
   try {
     for (const viewport of [{ width: 320, height: 568 }, { width: 360, height: 800 }, { width: 375, height: 812 }, { width: 390, height: 844 }]) {
+      if (aiOnly && viewport.width === 360) continue;
       for (const reducedMotion of ['no-preference', 'reduce']) {
         const name = `${viewport.width}-${reducedMotion}`;
         const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, reducedMotion, serviceWorkers: 'block' });
@@ -163,9 +255,16 @@ async function touchChecks(page, post, cdp) {
         page.on('pageerror', e => errors.push(e.message));
         page.on('console', e => { if (e.type() === 'error') errors.push(e.text()); });
         try {
-          await page.goto(base + '/pivot/demo?view=home'); await homeReady(page);
+          await page.goto(base + '/pivot/demo?view=home', aiOnly ? { timeout: 30000 } : {}); await homeReady(page);
           await page.waitForFunction(() => document.activeElement === document.querySelector('[data-home-state] h1'));
           const posts = home(page).locator('[data-home-post]');
+          if (aiOnly) {
+            evidence.ai = await aiChecks(page, posts, await context.newCDPSession(page));
+            assert.deepEqual({ api, external, errors }, { api: [], external: [], errors: [] });
+            results.push({ ...evidence, status: 'pass' });
+            console.log(`PASS HOME AI ${name}`);
+            continue;
+          }
           const initialStorage = await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage }, cookie: document.cookie }));
           for (const index of [0, 1]) {
             const post = posts.nth(index), bookmark = post.locator('[data-demo-bookmark]');

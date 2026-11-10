@@ -42,10 +42,28 @@ test('Home AI chooses a short horizontal escape when it is closer than a vertica
   assert.deepEqual(choose(base, 20, home, [obstacle], viewport, false), { x: -15, y: 0 });
 });
 
-test('Home AI holds its safe offset through small scroll reversals', () => {
-  for (const delta of [-2, 0, 2, -2, 1]) {
-    assert.deepEqual(choose(base, 20, raised, [nav, { ...detail, top: detail.top + delta }], viewport, false), raised);
+test('Home AI buffers a real collision through successive scroll frames and a reversal', () => {
+  const passing = delta => ({ ...detail, top: 799 + delta, bottom: 843 + delta, scrolls: true });
+  assert.deepEqual(choose(base, 20, home, [nav, passing(2)], viewport, false), home);
+  const displaced = choose(base, 20, home, [nav, passing(0)], viewport, false);
+  assert.deepEqual(displaced, { x: 0, y: -25 });
+  for (const delta of [-4, -8, -16, -8, -10, 2]) {
+    assert.deepEqual(choose(base, 20, displaced, [nav, passing(delta)], viewport, false), displaced);
   }
+  // Pausing just past the collision edge must leave room for the next small reversal.
+  assert.deepEqual(choose(base, 20, displaced, [nav, passing(10)], viewport, true), displaced);
+  assert.deepEqual(choose(base, 20, displaced, [nav, passing(25)], viewport, true), home);
+});
+
+test('Home AI prioritizes an exact fit over keeping clearance in a tight viewport', () => {
+  const bounds = { left: base.left, right: base.right, top: base.top - 2, bottom: base.bottom };
+  const obstacle = { ...detail, top: base.bottom - 2, scrolls: true };
+  assert.deepEqual(choose(base, 20, home, [obstacle], bounds, false), { x: 0, y: -2 });
+});
+
+test('Home AI uses the available viewport space instead of jumping across the card for full clearance', () => {
+  const passing = { ...detail, top: 710, bottom: 754, scrolls: true };
+  assert.deepEqual(choose(base, 20, home, [nav, passing], viewport, false), { x: 0, y: 12 });
 });
 
 test('Home AI uses the actual target size and keeps all mobile targets inside the viewport', () => {
