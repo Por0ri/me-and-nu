@@ -54,6 +54,7 @@ CHIPS = REPO / "model" / "catalog" / "chips.csv"
 PREVIEW_SCOPES = {"checking": "checking_test_preview", "local": "local_test_preview"}
 VISIBLE = """(c.status = 'active' AND c.deleted_at IS NULL
     AND (c.feed_valid_until IS NULL OR c.feed_valid_until > now())
+    AND (c.published_at IS NULL OR c.published_at <= now())
     AND EXISTS (SELECT 1 FROM content_source s WHERE s.content_id = c.content_id)
     AND (COALESCE(c.ai_judgment_basis ->> 'method', '') <> %(carousel)s OR (
         ((NOT COALESCE((c.ai_judgment_basis ->> 'preview')::boolean, false) AND c.judgment_status = 'confirmed')

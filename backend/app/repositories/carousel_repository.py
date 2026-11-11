@@ -64,7 +64,8 @@ def public_content_condition():
     Legacy publications keep their existing review behavior. Imported carousels
     require approval, except for explicitly marked previews in a matching local
     test service or the opted-in Checking stack. All paths require 2..10
-    contiguous slides and a future expiry.
+    contiguous slides and a future expiry. A publication time in the future
+    keeps any content closed until that moment.
     PNG decoding and hash verification are the import boundary's job.
     """
     count = (
@@ -82,6 +83,7 @@ def public_content_condition():
         Content.status == "active",
         Content.deleted_at.is_(None),
         or_(Content.feed_valid_until.is_(None), Content.feed_valid_until > func.now()),
+        or_(Content.published_at.is_(None), Content.published_at <= func.now()),
         or_(
             ~imported,
             and_(

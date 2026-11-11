@@ -11,14 +11,14 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from app.jobs import create_notifications
 from app.models import (
-    ContentEntityLink, ContentReaction, Notification, NotificationSetting, RecommendationItem, RecommendationRound,
+    Content, ContentEntityLink, ContentReaction, Notification, NotificationSetting, RecommendationItem, RecommendationRound,
     Tap, TapEntity, UserAccount, UserEvent,
 )
 from app.services import notification_service
@@ -124,6 +124,29 @@ def test_new_post_notifications_follow_q1_works_settings_and_daily_limit(recomme
     assert {item.content_id for item in items if item.type == "topic_new_post"} == {post[1], post[2]}
     assert items[-1].title == notification_service.WELCOME_TITLE
     assert unread == 3
+
+
+def test_new_post_notification_waits_until_the_post_opens(recommendation_pg):
+    pg = recommendation_pg
+    pg.migrate("head")
+    seed_demo(pg.engine)
+    with Session(pg.engine) as db:
+        post = dict(db.execute(select(ContentEntityLink.entity_id, ContentEntityLink.content_id)
+                               .where(ContentEntityLink.sort_order == 1)).all())
+        fan = add_member(db, "공개대기", [1])
+        db.commit()
+
+    def open_in(hours):
+        with Session(pg.engine) as db:
+            db.execute(update(Content).where(Content.content_id == post[1]).values(
+                published_at=datetime.now(timezone.utc) + timedelta(hours=hours)))
+            db.commit()
+
+    open_in(8)
+    assert run(pg, "new-posts", apply=True)["created"] == 0
+    open_in(-9)     # 한국 0시에 열리고 9시에 알림을 돌린 경우
+    assert run(pg, "new-posts", apply=True)["created"] == 1
+    assert sent(pg) == {fan.user_id: {post[1]}}
 
 
 def add_round(db, member, day, ranked, version="v1-usertest"):
