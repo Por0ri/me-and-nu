@@ -11,14 +11,16 @@ const out = process.argv[3] || path.join(require('node:os').tmpdir(), 'pivot-sav
 assert.equal(new URL(base).hostname, 'localhost'); assert.equal(new URL(base).protocol, 'http:');
 const near = (a, b, label) => assert.ok(Math.abs(a - b) < 1, `${label}: ${a} / ${b}`);
 const results = [];
+const before = process.argv[4] === 'before';
 (async () => {
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch({ channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge', headless: true });
   try {
-    for (const width of [320, 375, 390]) {
+    for (const width of before ? [375] : [320, 375, 390]) {
       const context = await browser.newContext({ viewport: { width, height: 844 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
       const page = await context.newPage(); page.setDefaultTimeout(12000);
       const fixture = createApiFixture({ apiOrigin, frontendOrigin: base }); fixture.rotate('active');
+      fixture.contents.find(c => c.id === 42).title = '보호 이미지에서도 제목과 요약을 읽을 수 있는 저장 콘텐츠';
       let imageMode = 'loading', releaseImage;
       const unexpected = [], errors = [], protectedCalls = [];
       const covers = [base + '/pivot/home/chrome/mascot.png', '/api/v1/contents/42/slides/1/image?topicId=7', null, base + '/broken-cover.png'];
@@ -33,10 +35,14 @@ const results = [];
             protectedCalls.push({ method: request.method(), query: url.search, mode: imageMode });
             if (imageMode === 'loading') await new Promise(resolve => { releaseImage = resolve; });
             return route.fulfill({ status: imageMode === 'error' ? 404 : 200, headers, contentType: 'image/png',
-              body: imageMode === 'error' ? '' : fs.readFileSync(path.join(__dirname, '../public/pivot/home/slide-1.png')) }).catch(() => {});
+              body: imageMode === 'error' ? '' : fs.readFileSync(path.join(__dirname, '../public/pivot/home/chrome/mascot.png')) }).catch(() => {});
           }
           const response = fixture.dispatch(url.href, { method: request.method(), headers: request.headers(), body: request.postData() });
-          if (url.pathname === '/api/v1/users/me/bookmarks') response.body.items.forEach((item, i) => { item.imageUrl = covers[i]; });
+          if (url.pathname === '/api/v1/users/me/bookmarks') response.body.items.forEach((item, i) => {
+            item.imageUrl = covers[i];
+            item.summary = i < 2 ? '새로운 시선으로 살펴보는 콘텐츠의 요약입니다.' : null;
+            item.sourceName = i < 2 ? '테스트 매거진' : null;
+          });
           if (response.body?.code === 'FIXTURE_ROUTE_NOT_FOUND') unexpected.push(request.method() + ' ' + url.pathname);
           return route.fulfill({ status: response.status, headers: { ...headers, ...response.headers }, contentType: 'application/json', body: JSON.stringify(response.body) });
         }
@@ -49,11 +55,27 @@ const results = [];
         const saved = page.locator('[data-saved-state="ready"]:visible'); await saved.waitFor();
         await page.waitForFunction(() => document.activeElement === document.querySelector('[data-saved-state] h1'));
         const card = id => saved.locator(`[data-saved-content="${id}"]`);
-        const overlay = id => card(id).locator('[data-saved-title]').locator('..');
+        const overlay = id => card(id).locator('[data-saved-title]').locator('xpath=ancestor::span[contains(@class,"savedOverlay")]');
+        const measureText = id => card(id).locator('[data-saved-title]').evaluate(e => {
+          const r = e.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(e);
+          const glyph = range.getBoundingClientRect();
+          const parents = []; for (let n = e; n && n.tagName !== 'BUTTON'; n = n.parentElement) {
+            const s = getComputedStyle(n); parents.push({ display: s.display, visibility: s.visibility, opacity: Number(s.opacity), clip: s.clipPath, width: n.clientWidth, height: n.clientHeight });
+          }
+          return { text: e.textContent, width: r.width, height: r.height, glyphWidth: glyph.width, glyphHeight: glyph.height,
+            font: getComputedStyle(e).fontSize, lineHeight: getComputedStyle(e).lineHeight, color: getComputedStyle(e).color,
+            clamp: getComputedStyle(e).webkitLineClamp, parents };
+        });
         const shown = async id => {
           const b = await card(id).boundingBox(), t = await overlay(id).boundingBox();
           assert.ok(t.width > 1 && t.y >= b.y && t.y + t.height <= b.y + b.height, 'Title stays inside thumbnail');
+          const text = await measureText(id);
+          assert.ok(text.width > 1 && text.height > 1 && text.glyphWidth > 1 && text.glyphHeight > 1, 'Title has painted text geometry');
+          assert.ok(text.parents.every(s => s.display !== 'none' && s.visibility === 'visible' && s.opacity > 0 && s.clip === 'none' && s.width > 1 && s.height > 1), 'Title and every ancestor are visually exposed');
+          assert.equal(text.clamp, '2');
+          assert.ok(text.height <= 2 * parseFloat(text.lineHeight) + .1, 'Title is limited to two visual lines');
           await assert.doesNotReject(() => saved.getByRole('button', { name: fixture.contents.find(c => c.id === id).title + ' 자세히 보기', exact: true }).waitFor());
+          return text;
         };
         await card(41).locator('img').evaluate(e => e.decode());
         await card(44).getByText('이미지 준비 중', { exact: true }).waitFor();
@@ -72,9 +94,21 @@ const results = [];
         await page.screenshot({ path: path.join(out, `loading-${width}.png`), fullPage: true });
         assert.ok(releaseImage); imageMode = 'ready'; releaseImage();
         await card(42).locator('[data-carousel-image-state="ready"]').waitFor();
-        const protectedTitle = await overlay(42).boundingBox();
-        near(protectedTitle.width, 1, 'Successful protected cover hides duplicate title');
-        assert.equal(await overlay(42).evaluate(e => getComputedStyle(e).clipPath), 'inset(50%)');
+        const protectedTitle = await measureText(42);
+        if (before) {
+          await page.screenshot({ path: path.join(out, 'before-375.png'), fullPage: true });
+          results.push({ width, status: 'baseline', geometry, protectedTitle });
+          console.log('CAPTURED before 375'); continue;
+        }
+        await shown(42);
+        for (const id of [41, 42]) {
+          assert.equal(await card(id).locator('[data-saved-summary]').innerText(), '새로운 시선으로 살펴보는 콘텐츠의 요약입니다.');
+          assert.equal(await card(id).locator('[data-saved-source]').innerText(), '출처: 테스트 매거진');
+          for (const selector of ['[data-saved-summary]', '[data-saved-source]']) {
+            const r = await card(id).locator(selector).boundingBox(); assert.ok(r.width > 1 && r.height > 1);
+          }
+        }
+        for (const id of [43, 44]) assert.equal(await card(id).locator('[data-saved-summary], [data-saved-source]').count(), 0, 'Null metadata is omitted');
         await page.screenshot({ path: path.join(out, `covers-${width}.png`), fullPage: true });
         for (const id of [41, 42, 43, 44]) {
           await card(id).click();
@@ -90,8 +124,24 @@ const results = [];
         await page.screenshot({ path: path.join(out, `protected-failure-${width}.png`), fullPage: true });
         await card(42).click(); await page.locator('[data-detail-content="42"]:visible').waitFor();
         assert.deepEqual(unexpected, []); assert.deepEqual(errors, []);
-        results.push({ width, status: 'pass', browser: browser.version(), geometry, protectedCalls,
-          checks: ['text-free overlay', 'missing/broken image identity', 'protected loading/ready/error', 'no title duplication', 'accessible names', 'all four DETAIL targets'] });
+        await page.goto(base + '/pivot/demo?view=saved');
+        const demo = page.locator('[data-saved-state="ready"]:visible'); await demo.waitFor();
+        await demo.locator('[data-saved-content] img').evaluateAll(items => Promise.all(items.map(e => e.decode())));
+        const demoTitles = await demo.locator('[data-embedded-copy]').evaluateAll(items => items.map(e => {
+          const label = e.querySelector('[data-saved-title]'), overlay = e.querySelector('[class*="savedOverlay"]'), s = getComputedStyle(overlay);
+          return { title: label.textContent, clip: s.clipPath, width: overlay.clientWidth, height: overlay.clientHeight };
+        }));
+        assert.equal(demoTitles.length, 3); assert.ok(demoTitles.every(t => t.clip === 'inset(50%)' && t.width === 1 && t.height === 1));
+        await page.screenshot({ path: path.join(out, `demo-${width}.png`), fullPage: true });
+        await context.route('**/pivot/home/slide-1.png', route => route.fulfill({ status: 200, contentType: 'image/png', body: 'invalid-pixels' }));
+        await page.reload(); await demo.waitFor();
+        const failedDemo = demo.locator('[data-saved-content]').first();
+        await failedDemo.getByText('이미지 준비 중', { exact: true }).waitFor();
+        const failedDemoLabel = await failedDemo.locator('[data-saved-title]').boundingBox();
+        assert.ok(failedDemoLabel.width > 1 && failedDemoLabel.height > 1, 'Failed verified Demo cover reveals its canonical title');
+        await context.unroute('**/pivot/home/slide-1.png');
+        results.push({ width, status: 'pass', browser: browser.version(), geometry, protectedCalls, protectedTitle, demoTitles,
+          checks: ['text-free overlay', 'summary and real source label', 'null metadata omitted', 'missing/broken image identity', 'protected loading/ready/error text visible', 'explicit Demo copy only', 'accessible names', 'all four DETAIL targets'] });
         console.log('PASS Saved covers ' + width);
       } catch (error) {
         results.push({ width, status: 'fail', error: error.stack, unexpected, errors });

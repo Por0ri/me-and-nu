@@ -7,7 +7,12 @@ import { mapCoverImage } from "./carousel-data";
 export function mapSavedCard(item: SavedBookmark, topicId: number): SavedCard {
   if (!item || !isPositiveId(item.contentId) || item.topicId !== topicId) throw new Error("Invalid saved identity");
   const title = requireTitle(item.title);
-  return { postId: String(item.contentId), contentId: String(item.contentId), topicId, title, image: mapCoverImage(item.imageUrl, title, item.contentId, topicId) };
+  return {
+    postId: String(item.contentId), contentId: String(item.contentId), topicId, title,
+    image: mapCoverImage(item.imageUrl, title, item.contentId, topicId),
+    summary: typeof item.summary === "string" ? item.summary.trim() || undefined : undefined,
+    sourceName: typeof item.sourceName === "string" ? item.sourceName.trim() || undefined : undefined,
+  };
 }
 
 export function createServiceSavedSource(
