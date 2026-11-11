@@ -24,6 +24,7 @@ import { activityTab, type ActivityDataSource, type ActivityTab } from "@/lib/pi
 import { InteractionViewContext, useInteractions } from "./interaction-context";
 import { createDemoNotificationInbox, newPostTarget, type InboxNotification, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
 import { NotificationInbox } from "./notification-inbox";
+import { NewNoticeContext } from "./home-screen";
 
 const noSubscribe = () => () => {};
 const noSnapshot = () => 0;
@@ -45,6 +46,16 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const inquiryOpen = params.get("view") === "inquiry";
   const inboxSource = useMemo(() => homeSource.kind === "demo" ? createDemoNotificationInbox() : notificationSource, [homeSource.kind, notificationSource]);
   const inboxOpen = !!inboxSource && params.get("view") === "notifications";
+  const [hasNewNotice, setHasNewNotice] = useState(false);
+  useEffect(() => {
+    if (!inboxSource || inboxOpen) return;   // 알림함에서 돌아오면 다시 확인해서 다 읽었으면 끈다
+    const controller = new AbortController();
+    inboxSource.hasNewToday(controller.signal).then(
+      (value) => { if (!controller.signal.aborted) setHasNewNotice(value); },
+      () => {},   // 확인에 실패해도 화면은 그대로 쓴다
+    );
+    return () => controller.abort();
+  }, [inboxSource, inboxOpen]);
   const unreadOnly = params.get("unread") === "1";
   const noticeParam = params.get("notificationId");
   const parsedNotice = noticeParam && /^[1-9]\d*$/.test(noticeParam) ? Number(noticeParam) : null;
@@ -289,7 +300,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     if (window.history.state?.pivotDetailBack && history.pivotDetailSaved) window.history.back();
     else window.history.replaceState(history, "", `${window.location.pathname}?view=saved`);
   }
-  return <InteractionViewContext.Provider value={detailOpen ? "detail" : myOpen ? "my" : savedOpen ? "saved" : activityOpen ? "activity" : inquiryOpen ? "inquiry" : inboxOpen ? "notifications" : "home"}>
+  return <NewNoticeContext.Provider value={hasNewNotice}><InteractionViewContext.Provider value={detailOpen ? "detail" : myOpen ? "my" : savedOpen ? "saved" : activityOpen ? "activity" : inquiryOpen ? "inquiry" : inboxOpen ? "notifications" : "home"}>
     <div ref={home} hidden={detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen || inboxOpen}>
       <HomeController source={homeSource} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} onNotifications={inboxSource ? openInbox : undefined} bookmarks={bookmarks} />
     </div>
@@ -306,5 +317,5 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     </div>
     {myOpen ? <MyPageController source={mySource.kind === homeSource.kind ? mySource : pendingMyPageSource} onHome={backToHome} onSaved={openSaved} onActivity={openActivity} onInquiry={openInquiry} onLogout={homeSource.kind === "service" ? onLogout : undefined} onWithdraw={homeSource.kind === "service" ? onWithdraw : undefined} onNotifications={inboxSource ? openInbox : undefined} /> : null}
     {inquiryOpen ? <InquiryController source={homeSource.kind === "service" ? inquirySource : undefined} demo={homeSource.kind === "demo"} onMy={backToMy} onHome={backToHome} onSaved={openSaved} onNotifications={inboxSource ? openInbox : undefined} /> : null}
-  </InteractionViewContext.Provider>;
+  </InteractionViewContext.Provider></NewNoticeContext.Provider>;
 }

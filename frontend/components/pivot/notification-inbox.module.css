@@ -42,7 +42,7 @@
 .meta { justify-content: space-between; gap: 8px; }
 .tag { border-radius: 8px; padding: 2px 8px; color: #583199; background: #efe7ff; }
 .time { gap: 4px; color: var(--pivot-muted); font-size: 12px; line-height: 18px; }
-.preview { position: relative; display: grid; gap: 8px; padding-right: 28px; }
+.preview { position: relative; display: grid; gap: 8px; min-height: 68px; padding-right: 28px; }
 .title { font-size: 16px; font-weight: 600; line-height: 24px; }
 .summary {
   display: -webkit-box;
@@ -54,7 +54,17 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
-.preview img { position: absolute; right: 0; top: 50%; translate: 0 -50%; }
+.preview > img { position: absolute; right: 0; top: 50%; translate: 0 -50%; }
+.preview[data-post] { grid-template-columns: 68px minmax(0, 1fr); align-items: center; }
+.preview[data-post] .title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.thumb { position: relative; display: block; overflow: hidden; aspect-ratio: 1; border-radius: 4px; background: #efe7ff; }
+.thumb img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.thumb [role="status"] { display: none; }
 .detail { display: grid; gap: 16px; }
 .detailHeading { display: grid; gap: 8px; padding-block: 16px; border-bottom: 1px solid #d4d4d8; }
 .detailHeading h2 { margin: 0; font-size: 20px; font-weight: 700; line-height: 28px; }

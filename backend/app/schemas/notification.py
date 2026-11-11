@@ -10,8 +10,8 @@ from app.schemas.common import CamelModel
 
 class NotificationItem(CamelModel):
     notification_id: int
-    # topic_new_post 는 topicId · contentId · imageUrl(글 대표 그림)이 있고, 누르면 그 글로 간다.
-    type: Literal["system_notice", "topic_new_post"]
+    # topic_new_post · recommended_post 는 topicId · contentId · imageUrl(글 대표 그림)이 있고, 누르면 그 글로 간다.
+    type: Literal["system_notice", "topic_new_post", "recommended_post"]
     title: str
     body: str
     topic_id: int | None = None

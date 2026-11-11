@@ -27,7 +27,7 @@ def test_read_request_accepts_only_true():
         NotificationReadRequest(is_read=False)
 
 
-def test_public_notification_types_are_notice_and_new_post_only():
+def test_public_notification_types_are_notice_new_post_and_recommended_only():
     values = {
         "notification_id": 1,
         "title": "운영 공지",
@@ -37,6 +37,7 @@ def test_public_notification_types_are_notice_and_new_post_only():
     }
     assert NotificationItem(type="system_notice", **values).type == "system_notice"
     assert NotificationItem(type="topic_new_post", **values).type == "topic_new_post"
+    assert NotificationItem(type="recommended_post", **values).type == "recommended_post"
     for legacy in ("creator_new_post", "follow", "direct_message"):
         with pytest.raises(ValidationError):
             NotificationItem(type=legacy, **values)
@@ -198,16 +199,16 @@ def _post(content_id, work_id, hours_ago):
     )
 
 
-def test_new_posts_are_newest_first_one_per_work_and_three_a_day():
+def test_new_posts_are_newest_first_and_one_a_day():
     posts = [_post(1, 10, 5), _post(2, 10, 1), _post(3, 20, 2), _post(4, 30, 3), _post(5, 40, 4)]
-    assert [p.content_id for p in notification_service.pick_new_posts(posts)] == [2, 3, 4]
+    assert [p.content_id for p in notification_service.pick_new_posts(posts)] == [2]
 
 
 def test_new_posts_count_what_was_already_sent_today():
     posts = [_post(1, 10, 1), _post(2, 20, 2), _post(3, 30, 3)]
-    picked = notification_service.pick_new_posts(posts, sent_today=2, works_today={10})
+    picked = notification_service.pick_new_posts(posts, works_today={10})
     assert [p.content_id for p in picked] == [2]
-    assert notification_service.pick_new_posts(posts, sent_today=3) == []
+    assert notification_service.pick_new_posts(posts, sent_today=1) == []
 
 
 def test_new_post_title_fits_the_title_column():

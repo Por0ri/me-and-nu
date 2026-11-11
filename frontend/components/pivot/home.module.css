@@ -28,7 +28,8 @@
 .header h1:focus { outline: none; }
 .headerMascot { position: absolute; right: 61px; top: 12px; width: 68px; height: 36px; overflow: hidden; pointer-events: none; }
 .headerMascot img { position: absolute; width: 97.78%; height: 153.89%; max-width: none; left: 1.11%; top: -53.89%; }
-.notification { display: grid; place-items: center; width: 24px; height: 40px; padding: 0; border: 0; background: transparent; }
+.notification { position: relative; display: grid; place-items: center; width: 24px; height: 40px; padding: 0; border: 0; background: transparent; }
+.notificationDot { position: absolute; top: 10px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background: #f00; }
 /* HomeHeader onBack: the detail screen's grey round back button before the logo. */
 .headerBack { display: grid; place-items: center; flex: none; width: 28px; height: 40px; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .headerBack > span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgb(192 192 186 / 48%); }
