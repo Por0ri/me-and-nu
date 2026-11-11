@@ -115,7 +115,7 @@ async function toggleAt(page, button, point) {
 }
 async function swipe(page, cdp, track, dx, dy) {
   const b = await track.boundingBox();
-  const x = b.x + b.width / 2 - dx / 2, y = b.y + b.height / 2 - dy / 2;
+  const x = b.x + b.width / 2 - dx / 2 - 4, y = b.y + b.height / 2 - dy / 2;
   assert.ok(y > 44 && y + dy > 44 && y < page.viewportSize().height - 64 && y + dy < page.viewportSize().height - 64);
   assert.ok(await track.evaluate((e, p) => e.contains(document.elementFromPoint(p.x, p.y)), { x, y }), 'Touch starts on the slide, outside controls');
   const points = (px, py) => [{ x: px, y: py, id: 1, radiusX: 2, radiusY: 2, force: 1 }];
@@ -147,65 +147,74 @@ async function touchChecks(page, post, cdp) {
 }
 async function aiChecks(page, posts, cdp) {
   const { width, height } = page.viewportSize();
+  const mobile = width < 600;
   const post = posts.last(), detail = post.locator('[data-home-detail]');
   const ai = home(page).locator('[data-home-ai]');
   const nav = home(page).getByRole('navigation', { name: '주요 메뉴' });
   const state = () => ai.evaluate(e => {
-    const rect = e.getBoundingClientRect(), anchor = e.parentElement.getBoundingClientRect();
-    const nav = e.parentElement.parentElement.querySelector('nav');
-    const controls = [nav, ...e.closest('main').querySelectorAll('[data-home-post] button')];
+    const rect = e.getBoundingClientRect(), nav = e.parentElement.querySelector('nav');
+    const cards = [...e.closest('main').querySelectorAll('[data-home-post]')];
+    const controls = [nav, ...cards.flatMap(card => [...card.querySelectorAll('button')])];
     const blocked = controls.filter(target => {
       const css = getComputedStyle(target), box = target.getBoundingClientRect();
       return css.pointerEvents !== 'none' && css.visibility === 'visible' && Number(css.opacity) > 0 &&
         box.width && box.height && rect.left < box.right && rect.right > box.left && rect.top < box.bottom && rect.bottom > box.top;
     }).map(e => e.getAttribute('aria-label'));
-    return { x: rect.x - anchor.x, y: rect.y - anchor.y, bottom: rect.bottom, right: rect.right, blocked,
-      width: rect.width, height: rect.height };
+    return { x: rect.x, y: rect.y, bottom: rect.bottom, right: rect.right, blocked, scrollY,
+      cardRight: Math.max(...cards.map(card => card.getBoundingClientRect().right)), nav: nav.getBoundingClientRect().toJSON(),
+      width: rect.width, height: rect.height, animations: e.getAnimations().length };
   });
   const offset = ({ x, y }) => [x, y];
   const scrollToDepth = depth => detail.evaluate(async (target, depth) => {
-    const anchor = target.closest('main').querySelector('[data-home-ai]').parentElement.getBoundingClientRect();
+    const anchor = target.closest('main').querySelector('[data-home-ai]').getBoundingClientRect();
     scrollTo({ top: scrollY + target.getBoundingClientRect().bottom - anchor.top - depth, behavior: 'instant' });
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return target.getBoundingClientRect().bottom - anchor.top;
   }, depth);
-  const sample = async depth => {
-    near(await scrollToDepth(depth), depth, 'Detail crosses the anchor edge');
+  const checkAnchor = async ({ bottom = 0, right = 0, left = 0 } = {}) => {
     const measured = await state();
-    assert.deepEqual(measured.blocked, [], `Clear hit areas at depth ${depth}`);
-    return offset(measured);
-  };
-  const homeOffset = [0, 0];
-  const checkAnchor = async inset => {
-    const measured = await state();
-    assert.deepEqual(offset(measured), homeOffset);
     assert.deepEqual([measured.width, measured.height], [48, 48]);
-    near(measured.bottom, height - Math.max(12, inset), 'AI safe-area bottom');
-    near(measured.right, width - (width <= 340 ? 16 : 34), 'AI Figma right edge');
+    near(measured.bottom, height - Math.max(12, bottom), 'AI safe-area bottom');
+    near(measured.x - measured.cardRight, 8, 'AI stays outside the card');
+    near(measured.y, measured.nav.top, 'AI aligns with NAV');
+    assert.ok(measured.right <= width - Math.max(8, right) + 1);
+    assert.ok(measured.nav.left >= left - 1, 'NAV clears the left safe area');
+    assert.deepEqual(measured.blocked, []);
+    assert.equal(measured.animations, 0);
+    return measured;
   };
   await settled(page, post.locator('[data-home-track]'));
-  await sample(-32);
-  await page.waitForFunction(() => document.querySelector('[data-home-ai]').dataset.aiDisplaced !== 'true');
-  await checkAnchor(0);
-  assert.deepEqual(await sample(-2), homeOffset, 'A near miss stays at the anchor');
-  const firstEscape = await sample(2);
-  assert.notDeepEqual(firstEscape, homeOffset, 'A real Detail collision moves AI');
-  assert.ok(Math.hypot(...firstEscape) <= 24, 'Use the nearby space at the viewport edge');
-  for (const depth of [6, 10, 6, 8]) {
-    assert.deepEqual(await sample(depth), firstEscape, `Hold the first safe position at depth ${depth}`);
-  }
-  const displaced = await sample(16);
-  for (const depth of [18, 14, 16, 6, -6]) {
-    assert.deepEqual(await sample(depth), displaced, `Hold the new safe position at depth ${depth}`);
-  }
-  await page.waitForTimeout(230);
-  assert.deepEqual(offset(await state()), displaced, 'A pause just outside the collision does not return AI');
-  assert.deepEqual(await sample(2), displaced, 'Resuming across the boundary holds position');
+  const checkScroll = async insets => {
+    const initial = await checkAnchor(insets);
+    const samples = [];
+    for (const depth of [-8, 8, 44, 100, 160, 100, 6, -8]) {
+      near(await scrollToDepth(depth), depth, 'Card buttons pass the dock vertically');
+      const measured = await checkAnchor(insets);
+      assert.deepEqual(offset(measured), offset(initial), `AI stays fixed at depth ${depth}`);
+      const sample = { depth, scrollY: measured.scrollY, x: measured.x, y: measured.y };
+      if (depth === 44) {
+        const atDock = await detail.evaluate(target => {
+          const { x, y, width, height } = target.getBoundingClientRect();
+          return { x, right: x + width, hit: target.contains(document.elementFromPoint(x + width / 2, y + height / 2)) };
+        });
+        assert.ok(atDock.hit, 'Detail center remains clickable as it passes NAV');
+        sample.navOverlap = Math.max(0, Math.min(measured.nav.right, atDock.right) - Math.max(measured.nav.left, atDock.x));
+      }
+      samples.push(sample);
+    }
+    assert.ok(new Set(samples.map(sample => sample.scrollY)).size >= 6);
+    await page.waitForTimeout(230);
+    assert.deepEqual(offset(await checkAnchor(insets)), offset(initial), 'Scroll settling never moves AI');
+    return samples;
+  };
+  const scroll = await checkScroll();
 
   const measured = await geometry(post);
   const tap = async (label, points) => {
-    assert.ok(points[0].target, `${label} center hit target`);
-    await page.touchscreen.tap(points[0].x, points[0].y);
+    assert.ok(points.every(point => point.target), `${label} center, edge and corner hit targets`);
+    const { x, y } = points[0];
+    if (mobile) await page.touchscreen.tap(x, y);
+    else await page.mouse.click(x, y);
   };
   await tap('좋아요', measured.probes['좋아요']);
   await post.getByRole('status').filter({ hasText: '좋아요 기능은 준비 중' }).waitFor();
@@ -219,30 +228,37 @@ async function aiChecks(page, posts, cdp) {
   await restored(page, expected);
 
   await settled(page, post.locator('[data-home-track]'));
-  await sample(-32);
-  await page.waitForFunction(() => document.querySelector('[data-home-ai]').dataset.aiDisplaced === 'false');
-  await checkAnchor(0);
-  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { bottom: 34 } });
+  const insets = { bottom: 34, right: 16, left: 16 };
+  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets });
   await page.waitForFunction(h => document.querySelector('[data-home-ai]').getBoundingClientRect().bottom === h - 34, height);
-  await checkAnchor(34);
+  const safeArea = await checkScroll(insets);
   await nav.getByRole('button', { name: 'MY', exact: true }).focus();
   await page.keyboard.press('Tab');
   assert.ok(await ai.evaluate(e => e === document.activeElement), 'Tab reaches AI from NAV');
   await page.keyboard.press('Enter');
   await home(page).getByRole('status').filter({ hasText: 'AI 콘텐츠 탐색은 준비 중이에요.' }).waitFor();
-  await nav.getByRole('button', { name: 'SAVE', exact: true }).tap(); await savedReady(page);
-  await page.locator('[data-saved-state]').getByRole('button', { name: 'HOME', exact: true }).tap(); await homeReady(page);
+  const activate = button => mobile ? button.tap() : button.click();
+  await activate(nav.getByRole('button', { name: 'SAVE', exact: true })); await savedReady(page);
+  await activate(page.locator('[data-saved-state]').getByRole('button', { name: 'HOME', exact: true })); await homeReady(page);
   await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: {} });
-  return { firstEscape, displaced, touch: await touchChecks(page, posts.first(), cdp) };
+  if (mobile) return { scroll, safeArea, touch: await touchChecks(page, posts.first(), cdp) };
+  const first = posts.first(), track = first.locator('[data-home-track]');
+  await track.focus();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowRight');
+  assert.equal((await settled(page, track)).index, 1, 'Desktop keyboard moves the horizontal carousel');
+  return { scroll, safeArea };
 }
 (async () => {
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
   try {
-    for (const viewport of [{ width: 320, height: 568 }, { width: 360, height: 800 }, { width: 375, height: 812 }, { width: 390, height: 844 }]) {
-      if (aiOnly && viewport.width === 360) continue;
+    const viewports = [{ width: 320, height: 568 }, { width: 375, height: 812 }, { width: 390, height: 844 }];
+    viewports.push(aiOnly ? { width: 1280, height: 900 } : { width: 360, height: 800 });
+    for (const viewport of viewports) {
+      const mobile = viewport.width < 600;
       for (const reducedMotion of ['no-preference', 'reduce']) {
         const name = `${viewport.width}-${reducedMotion}`;
-        const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, reducedMotion, serviceWorkers: 'block' });
+        const context = await browser.newContext({ viewport, isMobile: mobile, hasTouch: mobile, reducedMotion, serviceWorkers: 'block' });
         const page = await context.newPage(); page.setDefaultTimeout(8000);
         const api = [], external = [], errors = [], evidence = { name, viewport, reducedMotion, browser: browser.version(), cards: [] };
         await context.route('**/*', async route => {
@@ -259,6 +275,7 @@ async function aiChecks(page, posts, cdp) {
           await page.waitForFunction(() => document.activeElement === document.querySelector('[data-home-state] h1'));
           const posts = home(page).locator('[data-home-post]');
           if (aiOnly) {
+            await page.screenshot({ path: path.join(out, name + '.png'), timeout: 30000 });
             evidence.ai = await aiChecks(page, posts, await context.newCDPSession(page));
             assert.deepEqual({ api, external, errors }, { api: [], external: [], errors: [] });
             results.push({ ...evidence, status: 'pass' });
@@ -283,10 +300,10 @@ async function aiChecks(page, posts, cdp) {
             assert.deepEqual([detailControl.rect.width, detailControl.rect.height], [88, 44]);
             near(measured.card.bottom - measured.visual.detail.bottom, 12, 'Detail face bottom inset');
             if (viewport.width === 375) {
-              near(measured.card.width, 327, 'Figma card width'); near(measured.card.height, 408, 'Figma card height');
-              near(measured.visual.reactionStart, 262, 'Figma reactions start');
-              near(measured.visual.reactionEnd, 360, 'Figma reactions end');
-              near(measured.visual.detailStart, 372, 'Figma Detail start');
+              near(measured.card.width, 287, 'Card width with the AI gutter'); near(measured.card.height, 287 * 408 / 327, 'Card aspect ratio');
+              near(measured.card.height - measured.visual.reactionStart, 146, 'Reaction stack top reserve');
+              near(measured.card.height - measured.visual.reactionEnd, 48, 'Reaction stack bottom inset');
+              near(measured.card.height - measured.visual.detailStart, 36, 'Detail face top inset');
               assert.ok(Math.abs(measured.visual.gap - 12) < .1, 'Figma visual gap remains 12px');
             }
             assert.ok(measured.points.every(p => p.bookmark), 'Bookmark center, edges and corners must hit the bookmark');

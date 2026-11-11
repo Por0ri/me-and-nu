@@ -110,19 +110,13 @@ async function hit(locator) {
 async function aiObstructions(ai) {
   return ai.evaluate(el => {
     const button = el.getBoundingClientRect();
-    const anchor = el.parentElement.getBoundingClientRect();
-    const actual = button;
-    const original = { left: actual.left + anchor.left - button.left, right: actual.right + anchor.left - button.left,
-      top: actual.top + anchor.top - button.top, bottom: actual.bottom + anchor.top - button.top };
     const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-    const controls = [...document.querySelectorAll('[data-home-post] button')].filter(control => {
+    const controls = [...el.closest('main').querySelectorAll('nav, [data-home-post] button')].filter(control => {
       const rect = control.getBoundingClientRect(), css = getComputedStyle(control);
-      return !control.closest('[inert]') && css.visibility !== 'hidden' && Number(css.opacity) > 0 && rect.width && rect.height &&
-        rect.bottom > 0 && rect.top < innerHeight && overlaps(rect, control.closest('[data-home-post]').getBoundingClientRect());
+      return !control.closest('[inert]') && css.visibility === 'visible' && css.pointerEvents !== 'none' &&
+        Number(css.opacity) > 0 && rect.width && rect.height && overlaps(button, rect);
     });
-    const blockers = box => controls.filter(control => overlaps(box, control.getBoundingClientRect()))
-      .map(control => control.getAttribute('aria-label') || control.textContent);
-    return { original: blockers(original), actual: blockers(actual) };
+    return controls.map(control => control.getAttribute('aria-label') || control.textContent);
   });
 }
 async function run(browser, viewport) {
@@ -373,7 +367,7 @@ async function run(browser, viewport) {
         await until(async () => await indexOf(track) === 0, 'previous returns first slide');
       });
     }
-    await check('Figma bottom copy: 227px text, 10px inset, two/three body lines and five-stop scrim', async () => {
+    await check('Bottom copy follows the card width, 10px inset and five-stop scrim', async () => {
       const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
       for (const [index, expectedHeight] of [[8, 136], [9, 156]]) {
         await card.getByRole('button', { name: `${index + 1}번 슬라이드 보기`, exact: true }).click();
@@ -384,11 +378,14 @@ async function run(browser, viewport) {
         const metrics = await slide.evaluate(el => {
           const stage = el.querySelector('figure').getBoundingClientRect(), copy = el.querySelector('figcaption').getBoundingClientRect();
           const scrim = el.querySelector('figure > div[aria-hidden="true"]');
-          return { width: copy.width, left: copy.left - stage.left, bottom: stage.bottom - copy.bottom,
+          return { width: copy.width, stageWidth: stage.width, copyHeight: copy.height,
+            left: copy.left - stage.left, bottom: stage.bottom - copy.bottom,
             scrimHeight: scrim.getBoundingClientRect().height, gradient: getComputedStyle(scrim).backgroundImage };
         });
-        assert.equal(metrics.width, 227); assert.equal(metrics.left, 10); assert.equal(metrics.bottom, 10);
-        assert.equal(metrics.scrimHeight, expectedHeight);
+        assert.equal(metrics.width, Math.min(227, metrics.stageWidth - 100));
+        assert.equal(metrics.left, 10); assert.equal(metrics.bottom, 10);
+        assert.equal(metrics.scrimHeight, metrics.copyHeight + 20);
+        if (metrics.width === 227) assert.equal(metrics.scrimHeight, expectedHeight);
         for (const stop of ['20.673%', '51.442%', '79.327%']) assert.ok(metrics.gradient.includes(stop));
         geometry.push({ viewport, label: 'figma-' + index, ...metrics });
         await inspectPreview(card, slide, 'figma-' + index);
@@ -719,12 +716,12 @@ async function run(browser, viewport) {
       await capture('detail-mobile-fitting');
     });
     detailSlides = null; detailMode = 'full_body';
-    await check('fixed AI: visible controls stay clickable, default geometry and notice are preserved', async () => {
+    await check('fixed AI: the gutter keeps controls clickable and the notice is preserved', async () => {
       imageFailure = null; detailMode = 'full_body'; await page.goto(base + '/pivot/home'); await home.waitFor();
       const ai = home.getByRole('button', { name: 'AI 콘텐츠 탐색', exact: true });
       const card = home.locator('[data-home-post="42"]');
       await card.evaluate(el => el.scrollIntoView({ block: 'end', behavior: 'instant' }));
-      await until(async () => await ai.getAttribute('data-ai-displaced') === 'true', 'AI moves only while overlapping visible controls');
+      assert.deepEqual(await aiObstructions(ai), []);
       for (const button of [card.getByRole('button', { name: '좋아요', exact: true }), card.getByRole('button', { name: '저장', exact: true }), card.locator('[data-home-detail]'), ai]) assert.ok(await hit(button));
       const size = await ai.boundingBox(); assert.equal(size.width, 48); assert.equal(size.height, 48);
       const probes = await ai.evaluate(el => {
@@ -735,7 +732,10 @@ async function run(browser, viewport) {
       });
       assert.ok(probes.face.every(Boolean)); assert.equal(probes.shadow, false);
       assert.equal(probes.imageWidth, 64); assert.equal(probes.events, 'none');
-      await capture('fixed-nav-obstruction-resolved');
+      const cardBox = await card.boundingBox();
+      assert.ok(Math.abs(size.x - cardBox.x - cardBox.width - 8) < 1, 'AI sits outside the feed');
+      assert.ok(Math.abs(size.y - (viewport.height - 12 - 48)) < 1, 'AI aligns with the NAV height');
+      await capture('fixed-ai-gutter');
       // The existing informational button has aria-disabled=true, so locator.click waits for enabled.
       // Use real input at the verified hit target; keep the visible notice assertion.
       const point = await ai.boundingBox();
@@ -749,44 +749,27 @@ async function run(browser, viewport) {
       await card.locator('[data-home-detail]').click();
       const detail = page.locator('[data-detail-state="ready"]'); await detail.waitFor();
       await detail.getByRole('button', { name: '뒤로가기', exact: true }).click(); await home.waitFor();
-      await page.evaluate(() => scrollTo(0, 0));
-      const blocked = (await aiObstructions(ai)).original.length > 0;
-      await until(async () => await ai.getAttribute('data-ai-displaced') === String(blocked), 'AI follows actual anchor collisions at this viewport');
-      assert.deepEqual((await aiObstructions(ai)).actual, [], 'temporary position clears the visible controls');
-      await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
-      assert.deepEqual((await aiObstructions(ai)).original, [], 'return is tested only after the actual default-position collision clears');
-      await until(async () => await ai.getAttribute('data-ai-displaced') === 'false', 'AI returns after the collision clears and scroll settles');
-      assert.deepEqual((await aiObstructions(ai)).actual, []);
-      const homeRect = await home.boundingBox(), original = await ai.boundingBox();
-      assert.ok(Math.abs(original.x - (homeRect.x + homeRect.width - (viewport.width <= 340 ? 16 : 34) - 48)) < 1);
-      assert.ok(Math.abs(original.y - (viewport.height - 12 - 48)) < 1);
-      assert.ok(await hit(ai)); await capture('ai-default-position');
+      assert.deepEqual(await ai.boundingBox(), size, 'Detail return retains the fixed AI coordinates');
+      assert.ok(await hit(ai));
     });
-    await check('fast vertical scroll and boundary jitter do not hide or repeatedly move AI', async () => {
+    await check('fast vertical scroll and direction changes keep the same AI coordinates', async () => {
       const card = home.locator('[data-home-post="42"]'), ai = home.locator('[data-home-ai]');
       await card.evaluate(el => el.scrollIntoView({ block: 'end', behavior: 'instant' }));
-      await until(async () => await ai.getAttribute('data-ai-displaced') === 'true', 'collision shift');
       const positions = await page.evaluate(async () => {
         const ai = document.querySelector('[data-home-ai]'), origin = scrollY, result = [];
-        for (let i = 0; i < 18; i++) {
-          scrollTo(0, origin + (i % 2 ? 2 : -2));
+        for (const y of [origin - 2, origin + 2, 0, 160, 400, 650, 320, 120, 0, document.documentElement.scrollHeight]) {
+          scrollTo(0, y);
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-          const css = getComputedStyle(ai); result.push({ transform: css.transform, opacity: css.opacity, visibility: css.visibility });
+          const { x, y: top } = ai.getBoundingClientRect();
+          const css = getComputedStyle(ai);
+          result.push({ x, top, scrollY, opacity: css.opacity, visibility: css.visibility });
         }
         return result;
       });
-      assert.equal(new Set(positions.map(item => item.transform)).size, 1, 'no boundary ping-pong');
+      assert.ok(new Set(positions.map(item => item.scrollY)).size >= 5);
+      assert.equal(new Set(positions.map(({ x, top }) => `${x},${top}`)).size, 1);
       assert.ok(positions.every(item => item.opacity === '1' && item.visibility === 'visible'));
-      await page.evaluate(async () => {
-        for (const y of [0, 160, 400, 650, 320, 120, 0]) { scrollTo(0, y); await new Promise(resolve => requestAnimationFrame(resolve)); }
-      });
-      const blocked = (await aiObstructions(ai)).original.length > 0;
-      await until(async () => await ai.getAttribute('data-ai-displaced') === String(blocked), 'rapid scroll settles according to actual collisions');
-      assert.deepEqual((await aiObstructions(ai)).actual, []);
-      await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
-      assert.deepEqual((await aiObstructions(ai)).original, [], 'clear the collision before requiring the default position');
-      await until(async () => await ai.getAttribute('data-ai-displaced') === 'false', 'stable default after rapid scroll');
-      assert.deepEqual((await aiObstructions(ai)).actual, []);
+      assert.deepEqual(await aiObstructions(ai), []);
       assert.ok(await hit(ai));
     });
     await check('desktop and mobile keyboard Home, End and consecutive arrows reach the intended pages', async () => {
