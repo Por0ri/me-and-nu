@@ -4,7 +4,11 @@ import type { ContentImage } from "./carousel-data";
 import { serviceContentId } from "./service-data";
 
 // A service card keeps its Topic so opening or removing it uses the same scope.
-export type SavedCard = HomeDetailTarget & { title: string; image?: ContentImage };
+export type SavedCard = HomeDetailTarget & {
+  title: string; image?: ContentImage; summary?: string; sourceName?: string;
+  /** Only set for assets explicitly verified to contain editorial copy. */
+  imageHasEmbeddedCopy?: true;
+};
 export type SavedList = { origin: "demo" | "service"; cards: readonly SavedCard[] };
 export type SavedLoadResult = { status: "ready"; saved: SavedList } | { status: "unconfigured"; message: string };
 export type SavedState = SavedLoadResult | { status: "loading" } | { status: "empty" } | { status: "error"; message: string };

@@ -71,6 +71,8 @@ async function production(page, viewport, api, external, errors) {
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
   try {
     for (const viewport of [{ width: 320, height: 568 }, { width: 360, height: 800 }, { width: 375, height: 812 }, { width: 390, height: 844 }, { width: 1280, height: 900 }]) for (const reducedMotion of ['no-preference', 'reduce']) {
+      if (process.env.PIVOT_VIEWPORT_WIDTH && viewport.width !== Number(process.env.PIVOT_VIEWPORT_WIDTH)) continue;
+      if (process.env.PIVOT_REDUCED_MOTION && reducedMotion !== process.env.PIVOT_REDUCED_MOTION) continue;
       const context = await browser.newContext({ viewport, isMobile: viewport.width < 500, hasTouch: viewport.width < 500, reducedMotion, serviceWorkers: 'block' });
       await installPageScroll(context);
       const page = await context.newPage(); page.setDefaultTimeout(12000);
@@ -132,7 +134,7 @@ async function production(page, viewport, api, external, errors) {
         for (const card of geometry) assert.equal(await saved.getByRole('button', { name: card.title + ' 자세히 보기', exact: true }).count(), 1);
         for (const card of await cards.all()) {
           const title = await card.locator('[data-saved-title]').evaluate(e => {
-            const parent = e.parentElement, r = parent.getBoundingClientRect();
+            const parent = e.closest('[class*="savedOverlay"]'), r = parent.getBoundingClientRect();
             return { width: r.width, height: r.height, clip: getComputedStyle(parent).clipPath };
           });
           const image = await card.locator('img').boundingBox();

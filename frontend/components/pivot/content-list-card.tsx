@@ -8,15 +8,19 @@ import homeStyles from "./home.module.css";
 import styles from "./saved.module.css";
 
 export function ContentListCard({ card, onViewDetail, surface = "saved" }: {
-  card: SavedCard & { summary?: string; sourceName?: string }; onViewDetail: HomeDetailHandler; surface?: "saved" | "activity";
+  card: SavedCard; onViewDetail: HomeDetailHandler; surface?: "saved" | "activity";
 }) {
   const id = useId(); const [failed, setFailed] = useState(false);
-  // These local Figma covers and rendered carousel PNGs already include copy.
-  // Other images keep the canonical title inside the thumbnail as an overlay.
-  const embeddedCopy = !!card.image?.protected || ["/pivot/home/slide-1.png", "/pivot/home/slide-5.png"].includes(card.image?.src ?? "");
-  const savedTitle = surface === "saved" ? <span id={id} className={styles.savedOverlay}>
-    <span className={styles.title} data-saved-title="">{card.title}</span>
-    <span className={homeStyles.srOnly}> 자세히 보기</span>
+  // Authentication says nothing about image copy. Only explicit provenance may
+  // hide duplicate text; normal service covers always retain their HTML copy.
+  const embeddedCopy = card.imageHasEmbeddedCopy === true;
+  const savedTitle = surface === "saved" ? <span className={styles.savedOverlay}>
+    {card.sourceName ? <span className={styles.savedSource} data-saved-source="">출처: {card.sourceName}</span> : null}
+    <span id={id} className={styles.savedLabel}>
+      <span className={styles.title} data-saved-title="">{card.title}</span>
+      <span className={homeStyles.srOnly}> 자세히 보기</span>
+    </span>
+    {card.summary ? <span className={styles.savedSummary} data-saved-summary="">{card.summary}</span> : null}
   </span> : null;
   return <button type="button" className={styles.card}
     data-saved-content={surface === "saved" ? card.contentId : undefined} data-saved-post={surface === "saved" ? card.postId : undefined}
