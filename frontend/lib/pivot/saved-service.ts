@@ -12,6 +12,8 @@ export function mapSavedCard(item: SavedBookmark, topicId: number): SavedCard {
     image: mapCoverImage(item.imageUrl, title, item.contentId, topicId),
     summary: typeof item.summary === "string" ? item.summary.trim() || undefined : undefined,
     sourceName: typeof item.sourceName === "string" ? item.sourceName.trim() || undefined : undefined,
+    // Keep the same editorial copy as HOME; attribution and taxonomy are not labels.
+    eyebrow: typeof item.eyebrow === "string" && item.eyebrow.trim() ? item.eyebrow : undefined,
   };
 }
 

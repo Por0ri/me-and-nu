@@ -17,6 +17,7 @@ class SavedBookmarkItem(CamelModel):
     summary: str | None = None
     image_url: str | None = None
     source_name: str | None = None
+    eyebrow: str | None = None
     production_type: str | None = None
     published_at: datetime | None = None
     subtopic_names: list[str] = Field(default_factory=list)
@@ -34,6 +35,7 @@ class SavedBookmarksResponse(CamelModel):
             "summary": "허용된 발췌",
             "imageUrl": None,
             "sourceName": "MeNu 로컬 테스트",
+            "eyebrow": None,
         }],
         "nextCursor": None,
     }})

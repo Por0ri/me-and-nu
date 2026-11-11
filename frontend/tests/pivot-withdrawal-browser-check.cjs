@@ -1,10 +1,14 @@
 // Only the loopback frontend and the in-memory API fixture receive requests.
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { chromium } = require(process.env.PIVOT_PLAYWRIGHT_MODULE || 'playwright');
 const { createApiFixture } = require('./helpers/pivot-api-fixture.cjs');
 
 const base = new URL(process.argv[2] || 'http://localhost:3180').origin;
 const apiOrigin = 'http://localhost:8180';
+const out = process.argv[3];
+if (out) fs.mkdirSync(out, { recursive: true });
 assert.equal(new URL(base).hostname, 'localhost');
 assert.equal(new URL(base).protocol, 'http:');
 const profile = '/api/v1/users/me';
@@ -17,7 +21,7 @@ const focused = locator => locator.evaluate(node => node === document.activeElem
 const fits = page => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
 
 async function verify(browser, fixture, width) {
-  const context = await browser.newContext({ viewport: { width, height: 680 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
+  const context = await browser.newContext({ viewport: { width, height: 680 }, timezoneId: 'America/Los_Angeles', isMobile: true, hasTouch: true, serviceWorkers: 'block' });
   const page = await context.newPage();
   page.setDefaultTimeout(12000);
   const errors = [];
@@ -104,6 +108,9 @@ async function verify(browser, fixture, width) {
     releaseDelete();
     await page.waitForURL('**/pivot/login');
     await message(page, 'status', '탈퇴 신청이 완료됐어요');
+    assert.equal(await heading(page, '당신의 취향에 딱 맞는 정보를 만나보세요').locator('br').count(), 1);
+    await button(page, '네이버 로그인').waitFor();
+    if (out) await page.screenshot({ path: path.join(out, `login-${width}.png`), fullPage: true });
     assert.equal(await my().count(), 0);
     assert.deepEqual(writes(profile).map(row => [row.method, row.query.mode, row.csrf]),
       Array.from({ length: 3 }, () => ['DELETE', 'grace', 'fixture-active-csrf']));
@@ -117,6 +124,31 @@ async function verify(browser, fixture, width) {
     assert.ok(await fits(page));
     assert.equal(await page.locator('time').getAttribute('datetime'), '2027-01-01T00:00:00Z');
     await page.getByText('한국 시간', { exact: false }).waitFor();
+    assert.equal(await page.locator('time').innerText(), '2027년 1월 1일까지');
+    await page.getByText('한국 시간 09:00:00 전까지 복구할 수 있어요.', { exact: true }).waitFor();
+    const guidance = page.getByText('탈퇴 유예 중인 계정이에요.', { exact: false });
+    assert.equal(await guidance.innerText(), '탈퇴 유예 중인 계정이에요.\n유예 기간 안에 복구하면\n서비스를 다시 이용할 수 있어요.');
+    assert.equal(await guidance.evaluate(node => getComputedStyle(node).textAlign), 'center');
+    if (out) await page.screenshot({ path: path.join(out, `restoration-${width}.png`), fullPage: true });
+    let deadlineOverride;
+    const overrideSession = async route => {
+      const response = await route.fetch(); const body = await response.json();
+      body.scheduledDeleteAt = deadlineOverride;
+      await route.fulfill({ response, json: body });
+    };
+    await page.route(apiOrigin + session, overrideSession);
+    for (const [value, expected] of [
+      ['2027-02-23T15:00:00Z', '2027년 2월 24일까지'],
+      ['2027-12-31T20:30:00-05:00', '2028년 1월 1일까지'],
+      [null, null], [undefined, null], ['not-a-date', null], ['2027-02-30T00:00:00Z', null],
+    ]) {
+      deadlineOverride = value; await page.reload(); await recoveryTitle.waitFor();
+      if (expected) assert.equal(await page.locator('time').innerText(), expected);
+      else { await page.getByText('삭제 예정일을 확인할 수 없어요.', { exact: true }).waitFor(); assert.equal(await page.locator('time').count(), 0); }
+      assert.ok(await fits(page));
+    }
+    await page.unroute(apiOrigin + session, overrideSession);
+    await page.reload(); await recoveryTitle.waitFor();
     assert.equal(await button(page, '카카오 로그인').count(), 0);
     assert.equal(writes(restoration).length, 0);
 
@@ -195,6 +227,8 @@ async function verify(browser, fixture, width) {
     fixture.state.userId = 12;
 
     const requestsBeforeDemo = fixture.requests.length;
+    await page.goto(base + '/pivot/demo');
+    await heading(page, 'me;nu, 당신의 취향을 위한 시작').waitFor();
     await page.goto(base + '/pivot/demo?view=my');
     await button(page, '회원탈퇴').click();
     const demoDialog = page.getByRole('dialog', { name: 'Demo 회원탈퇴 안내' });
@@ -212,7 +246,7 @@ async function verify(browser, fixture, width) {
   let browser;
   try {
     browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'chrome' });
-    for (const width of [320, 390]) await verify(browser, fixture, width);
+    for (const width of [320, 375, 390]) await verify(browser, fixture, width);
   } finally {
     await browser?.close();
     server.close();

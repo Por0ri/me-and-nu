@@ -53,7 +53,7 @@ export function LoginScreen({ preview = false, onDemoContinue }: { preview?: boo
   return <PivotFrame chrome={preview}>
     <section className={styles.loginIntro} aria-labelledby="login-heading">
       <PivotBrand screen="login" />
-      <h1 id="login-heading" tabIndex={-1}>당신의 덕질에<br />딱 맞는 정보를 만나보세요</h1>
+      <h1 id="login-heading" tabIndex={-1}>당신의 취향에<br />딱 맞는 정보를 만나보세요</h1>
       <div className={styles.loginMascot}><PivotAsset screen="login" name="imgImage36" width={169} height={205.183} /></div>
     </section>
     <div className={styles.loginActions}>

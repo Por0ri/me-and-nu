@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
 from app.repositories import bookmark_repository as repo
-from app.repositories import content_repository
+from app.repositories import carousel_repository, content_repository
 from app.schemas.bookmark import SavedBookmarkItem, SavedBookmarksResponse
 from app.services.cursor import decode_cursor, encode_cursor
 from app.services.feed_service import require_active_tap
@@ -44,6 +44,9 @@ async def get_saved_bookmarks(
         db, user_id, topic_id=topic_id, q=normalized_q, after=after, limit=limit + 1
     )
     page = rows[:limit]
+    eyebrows = await carousel_repository.list_cover_eyebrows(
+        db, [content.content_id for _, content in page]
+    )
     items = []
     for saved, content in page:
         # The repository already requires a source; a missing source after a
@@ -62,6 +65,7 @@ async def get_saved_bookmarks(
             summary=content.summary,
             image_url=content.image_url,
             source_name=site.media_name if site else source_row.source_title,
+            eyebrow=eyebrows.get(content.content_id),
             production_type=content.production_type,
             published_at=content.published_at,
             subtopic_names=await content_repository.list_content_subtopic_names(db, content.content_id),

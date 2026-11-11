@@ -140,6 +140,7 @@ export type SavedBookmark = {
   summary: string | null; imageUrl: string | null; sourceName: string | null;
   topicId: number; tags: string[]; resurfaceEnabled: boolean;
   productionType?: string | null; publishedAt?: string | null; subtopicNames?: string[];
+  eyebrow?: string | null;
 };
 export type ChatSessionResponse = {
   sessionId: number; topicId: number; anchorContentId: number | null; aiNotice: string;

@@ -19,7 +19,7 @@ from app.db.session import get_db
 from app.main import create_app
 from app.models import AgentRun, Content, ContentSlide, ContentSource, Draft, SavedItem, Tap, Topic, UserAccount
 from app.repositories import bookmark_repository, carousel_repository, content_repository
-from app.services import feed_service, reaction_service
+from app.services import bookmark_service, feed_service, reaction_service
 from test_fe_integration_seed import AsyncAdapter, memory_db  # noqa: F401
 from test_checking_carousel_preview_config import configure_checking
 
@@ -134,6 +134,9 @@ async def test_feed_detail_keep_order_sources_full_body_and_public_fields_only(c
     try:
         feed = await feed_service.get_feed(carousel_db.db, 1, 1, subtopic_id=None, cursor=None, limit=20)
         detail = await feed_service.get_content_detail(carousel_db.db, 1, 1, 101)
+        saved = await bookmark_service.get_saved_bookmarks(
+            carousel_db.db, 1, topic_id=1, q=None, cursor=None, limit=20,
+        )
     finally:
         event.remove(carousel_db.engine, "before_cursor_execute", capture)
     body = detail.model_dump(by_alias=True)
@@ -151,6 +154,11 @@ async def test_feed_detail_keep_order_sources_full_body_and_public_fields_only(c
     assert all("image_data" not in statement for statement in statements)
     items = {item.id: item for item in feed.sections[0].contents}
     assert items[101].slides == detail.slides
+    saved_items = {item.content_id: item for item in saved.items}
+    assert list(saved_items) == [112, 111, 110, 101]
+    assert saved_items[101].eyebrow == items[101].slides[0].eyebrow == detail.slides[0].eyebrow
+    assert saved_items[112].eyebrow == items[112].slides[0].eyebrow
+    assert saved_items[110].eyebrow is None and saved_items[111].eyebrow is None
     assert len(items[112].slides) == 10
     assert items[110].slides == [] and items[110].notices == []
     assert items[111].slides == []

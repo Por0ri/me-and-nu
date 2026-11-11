@@ -5,6 +5,21 @@ import { ApiError } from "@/lib/api";
 import { PivotBrand, PivotFrame, PrimaryButton } from "./pivot-ui";
 import styles from "./pivot.module.css";
 
+function deletionDeadline(value?: string | null) {
+  // A server deadline must include its timezone. Reject invalid calendar days
+  // too: Date.parse alone silently normalizes dates such as February 30.
+  const parts = typeof value === "string"
+    ? /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.exec(value) : null;
+  if (!parts) return null;
+  const day = new Date(`${parts[1]}-${parts[2]}-${parts[3]}T00:00:00Z`);
+  const deadline = Date.parse(value!);
+  if (!Number.isFinite(deadline) || day.getUTCDate() !== Number(parts[3])) return null;
+  return {
+    date: new Intl.DateTimeFormat("ko-KR", { dateStyle: "long", timeZone: "Asia/Seoul" }).format(deadline),
+    time: new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23", timeZone: "Asia/Seoul" }).format(deadline),
+  };
+}
+
 export function AccountRestorationScreen({ scheduledDeleteAt, restore, returnToLogin }: {
   scheduledDeleteAt?: string | null;
   restore: () => Promise<void>;
@@ -19,10 +34,7 @@ export function AccountRestorationScreen({ scheduledDeleteAt, restore, returnToL
   useEffect(() => { heading.current?.focus({ preventScroll: true }); }, []);
   useEffect(() => { if (terminal) loginButton.current?.focus(); }, [terminal]);
 
-  const deadline = typeof scheduledDeleteAt === "string" ? Date.parse(scheduledDeleteAt) : NaN;
-  const formattedDeadline = Number.isFinite(deadline) ? new Intl.DateTimeFormat("ko-KR", {
-    dateStyle: "long", timeStyle: "short", timeZone: "Asia/Seoul",
-  }).format(deadline) : null;
+  const deadline = deletionDeadline(scheduledDeleteAt);
 
   async function confirm() {
     if (pending.current || terminal) return;
@@ -52,10 +64,14 @@ export function AccountRestorationScreen({ scheduledDeleteAt, restore, returnToL
     <section className={`${styles.loginIntro} ${styles.restorationIntro}`} aria-labelledby="restoration-heading">
       <PivotBrand screen="login" />
       <h1 ref={heading} id="restoration-heading" tabIndex={-1}>계정 복구</h1>
-      <p>탈퇴 유예 중인 계정이에요. 유예 기간 안에 복구하면 서비스를 다시 이용할 수 있어요.</p>
-      <p>{formattedDeadline && scheduledDeleteAt
-        ? <>삭제 예정일 <time dateTime={scheduledDeleteAt}>{formattedDeadline}</time> (한국 시간)</>
-        : "삭제 예정일을 확인할 수 없어요."}</p>
+      <p>탈퇴 유예 중인 계정이에요.<br />유예 기간 안에 복구하면<br />서비스를 다시 이용할 수 있어요.</p>
+      <div className={styles.restorationDeadline}>
+        <p>삭제예정일</p>
+        {deadline && scheduledDeleteAt ? <>
+          <p><time dateTime={scheduledDeleteAt}>{deadline.date}까지</time></p>
+          <p className={styles.restorationDeadlineTime}>한국 시간 {deadline.time} 전까지 복구할 수 있어요.</p>
+        </> : <p>삭제 예정일을 확인할 수 없어요.</p>}
+      </div>
     </section>
     <div className={styles.loginActions}>
       <p className={styles.loginFeedback} role="status">{busy ? "계정 복구를 확인하고 있어요." : ""}</p>

@@ -6,6 +6,7 @@ import { serviceContentId } from "./service-data";
 // A service card keeps its Topic so opening or removing it uses the same scope.
 export type SavedCard = HomeDetailTarget & {
   title: string; image?: ContentImage; summary?: string; sourceName?: string;
+  eyebrow?: string;
   /** Only set for assets explicitly verified to contain editorial copy. */
   imageHasEmbeddedCopy?: true;
 };
