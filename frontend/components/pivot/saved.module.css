@@ -8,6 +8,12 @@
 .thumbnail > img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .caption { display: block; min-width: 0; padding: 8px; color: var(--home-ink); }
 .title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; height: 36px; overflow: hidden; overflow-wrap: anywhere; word-break: normal; font-size: 12px; font-weight: 600; line-height: 18px; }
+/* SAVE is one thumbnail high. Keep its full accessible title even when the
+   cover contains copy; reveal it over missing/loading/failed protected pixels. */
+.savedOverlay { position: absolute; inset: auto 0 0; display: block; padding: 20px 8px 8px; color: #fafafa; background: linear-gradient(transparent, rgb(0 0 0 / 85%) 20px); }
+.savedOverlay .title { height: auto; }
+.thumbnail:has(> .savedOverlay) [data-carousel-image-state]:not(img) { justify-content: center; padding: 12px 8px 64px; font-size: 11px; line-height: 16px; }
+.thumbnail[data-embedded-copy]:not(:has([data-carousel-image-state="loading"], [data-carousel-image-state="error"])) > .savedOverlay { width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .overlay { position: absolute; inset: auto 0 0; display: flex; flex-direction: column; gap: 2px; padding: 20px 5px 5px; color: #fafafa; background: linear-gradient(transparent, rgb(0 0 0 / 40%) 40%, #000); }
 .overlay .title { height: auto; font-size: 8.15px; line-height: 11.768px; }
 .eyebrow { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c7acfb; font-size: 4.98px; line-height: 7.242px; }
