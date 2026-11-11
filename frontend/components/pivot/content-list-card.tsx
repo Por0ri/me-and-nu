@@ -15,7 +15,7 @@ export function ContentListCard({ card, onViewDetail, surface = "saved" }: {
   // hide duplicate text; normal service covers always retain their HTML copy.
   const embeddedCopy = card.imageHasEmbeddedCopy === true;
   const savedTitle = surface === "saved" ? <span className={styles.savedOverlay}>
-    {card.sourceName ? <span className={styles.savedSource} data-saved-source="">출처: {card.sourceName}</span> : null}
+    {card.eyebrow ? <span className={styles.savedEyebrow} data-saved-eyebrow="">{card.eyebrow}</span> : null}
     <span id={id} className={styles.savedLabel}>
       <span className={styles.title} data-saved-title="">{card.title}</span>
       <span className={homeStyles.srOnly}> 자세히 보기</span>

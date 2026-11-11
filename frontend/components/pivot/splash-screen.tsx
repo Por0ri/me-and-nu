@@ -26,7 +26,7 @@ export function SplashScreen({ preview = false, onContinue }: { preview?: boolea
   }, [preview, continueOnce]);
   return <div className={leaving ? styles.splashLeaving : undefined} style={{ "--splash-dissolve-duration": `${SPLASH_DISSOLVE_MS}ms` } as CSSProperties}>
     <PivotFrame splash chrome={preview}>
-    <h1 className={styles.srOnly} tabIndex={-1}>me;nu, 당신의 덕질을 위한 시작</h1>
+    <h1 className={styles.srOnly} tabIndex={-1}>me;nu, 당신의 취향을 위한 시작</h1>
     <SplashBackground active={!leaving} />
     <PivotBrand screen="splash" className={styles.splashBrand} />
     <div className={styles.splashMascot} aria-hidden="true" data-splash-mascot="">

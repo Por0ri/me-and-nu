@@ -103,6 +103,8 @@
 .restorationIntro { gap: 16px; padding-top: clamp(48px, 14vh, 112px); text-align: center; }
 .restorationIntro h1 { color: inherit; font-size: 20px; }
 .restorationIntro p { margin: 0; font-size: 14px; line-height: 22px; }
+.restorationDeadline { display: flex; flex-direction: column; gap: 4px; width: 100%; margin-top: 8px; padding: 16px 8px; border-radius: 8px; background: #f3f3f3; color: var(--pivot-muted); }
+.restorationDeadline p.restorationDeadlineTime { margin-top: 4px; font-size: 12px; line-height: 18px; }
 .restorationIntro + .loginActions { gap: 12px; margin-top: 24px; }
 .textButton { align-self: center; border: 0; background: none; color: var(--pivot-primary); text-decoration: underline; min-height: 44px; padding: 8px; font-size: 14px; }
 .consentBrand { margin-top: 152px; }

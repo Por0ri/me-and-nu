@@ -202,29 +202,32 @@ test('Saved hides duplicate copy only with explicit metadata, never image authen
   }
 });
 
-test('Saved service metadata is trimmed, escaped and omitted when null, blank or malformed', () => {
+test('Saved preserves editorial eyebrow, keeps attribution in data and omits absent labels', () => {
   const base = { contentId: 41, topicId: 7, title: '서비스 제목', imageUrl: null };
-  const withText = mapSavedCard({ ...base, summary: '  실제 요약 <script>  ', sourceName: '  실제 출처 &  ' }, 7);
+  const withText = mapSavedCard({ ...base, summary: '  실제 요약 <script>  ', sourceName: '  실제 출처 &  ', eyebrow: '  편집 라벨 & <소식>  ' }, 7);
   assert.equal(withText.summary, '실제 요약 <script>'); assert.equal(withText.sourceName, '실제 출처 &');
+  assert.equal(withText.eyebrow, '  편집 라벨 & <소식>  ');
   assert.equal(withText.imageHasEmbeddedCopy, undefined);
   const html = renderToStaticMarkup(React.createElement(SavedContentCard, { card: withText, onViewDetail() {} }));
   assert.match(html, /data-saved-summary="">실제 요약 &lt;script&gt;/);
-  assert.match(html, /data-saved-source="">출처: 실제 출처 &amp;/);
+  assert.match(html, /data-saved-eyebrow="">  편집 라벨 &amp; &lt;소식&gt;  /);
+  assert.doesNotMatch(html, /실제 출처|출처:|data-saved-source/);
   assert.doesNotMatch(html, /<script>/);
   const label = html.match(/<span id="[^"]+" class="savedLabel">([\s\S]*?)<\/span><\/span>/)[1];
   assert.match(label, /서비스 제목/); assert.doesNotMatch(label, /실제 출처|실제 요약/);
   for (const value of [null, undefined, '', '   ', 42, { fake: 'text' }]) {
-    const card = mapSavedCard({ ...base, summary: value, sourceName: value }, 7);
-    assert.equal(card.summary, undefined); assert.equal(card.sourceName, undefined);
+    const card = mapSavedCard({ ...base, summary: value, eyebrow: value, sourceName: '보존할 출처', productionType: 'ai', subtopicNames: ['액션'], contentType: 'news' }, 7);
+    assert.equal(card.summary, undefined); assert.equal(card.eyebrow, undefined); assert.equal(card.sourceName, '보존할 출처');
     const empty = renderToStaticMarkup(React.createElement(SavedContentCard, { card, onViewDetail() {} }));
-    assert.doesNotMatch(empty, /data-saved-summary|data-saved-source/);
+    assert.doesNotMatch(empty, /data-saved-summary|data-saved-eyebrow|보존할 출처|액션|news/);
   }
-  for (const field of ['summary', 'sourceName']) {
-    const card = mapSavedCard({ ...base, summary: null, sourceName: null, [field]: '독립 필드' }, 7);
+  for (const field of ['summary', 'sourceName', 'eyebrow']) {
+    const card = mapSavedCard({ ...base, summary: null, sourceName: null, eyebrow: null, [field]: '독립 필드' }, 7);
     assert.equal(card[field], '독립 필드');
     const html = renderToStaticMarkup(React.createElement(SavedContentCard, { card, onViewDetail() {} }));
     assert.equal(html.includes('data-saved-summary'), field === 'summary');
-    assert.equal(html.includes('data-saved-source'), field === 'sourceName');
+    assert.equal(html.includes('data-saved-eyebrow'), field === 'eyebrow');
+    assert.equal(html.includes('data-saved-source'), false);
   }
 });
 
