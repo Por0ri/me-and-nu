@@ -26,6 +26,7 @@ async function verify(browser, width) {
     const reply = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {});
     if (url.pathname === '/api/v1/auth/session') return reply(session());
     if (url.pathname === '/api/v1/users/me') return reply({ userId: user, nickname: `회원 ${user}`, email: null, accountType: 'user' });
+    if (url.pathname === '/api/v1/users/me/notification-settings') return reply({ inAppEnabled: true, nightInAppEnabled: false, version: 1 });
     if (url.pathname === '/api/v1/me/topics') return reply({ topics: [{ id: 83, code: 'anime', name: '애니메이션', status: 'active', deletedAt: null, subtopicIds: [] }] });
     if (url.pathname === '/api/v1/topics/83/feed') return reply({ selectedTopicId: 83, sections: [], nextCursor: null, emptyReason: null });
     if (url.pathname === '/api/v1/users/me/bookmarks') return reply({ items: [{ ...card(91), savedItemId: 10, tags: [], resurfaceEnabled: false }], nextCursor: null });

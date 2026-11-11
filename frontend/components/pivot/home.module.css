@@ -178,6 +178,10 @@
   --home-dock-space: calc(48px + max(12px, env(safe-area-inset-bottom)) + 8px);
   position: fixed;
   inset: 0;
+  /* Include desktop gutters in the native scrollport; keep the feed and header
+     at their existing centered widths without forwarding wheel events. */
+  max-width: none;
+  padding-inline: max(var(--home-screen-padding), calc((100% - var(--home-screen-width)) / 2 + var(--home-screen-padding)));
   min-height: 0;
   padding-bottom: calc(var(--home-dock-space) + 24px);
   overflow-y: auto;

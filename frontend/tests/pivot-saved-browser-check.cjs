@@ -1,5 +1,6 @@
 // Existing Playwright + Edge only. No dependency installation or real API calls.
 const fs = require('node:fs');
+const { installPageScroll } = require('./helpers/pivot-page-scroll.cjs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.PIVOT_PLAYWRIGHT_MODULE || 'playwright');
@@ -12,7 +13,7 @@ const mode = process.argv[4] || 'development';
 const results = []; fs.mkdirSync(out, { recursive: true });
 const demoOnlySavedCopy = /Demo|시연용|하이큐|미뉴|아직 저장한|저장한 콘텐츠가 아직 없어요|콘텐츠 보러가기/;
 const near = (a, b, label) => assert.ok(Math.abs(a - b) < 1, `${label}: ${a} / ${b}`);
-const homeSnapshot = page => page.evaluate(() => ({ y: scrollY, query: document.querySelector('input[type=search]')?.value,
+const homeSnapshot = page => page.evaluate(() => ({ y: window.pivotScrollRoot().scrollTop, query: document.querySelector('input[type=search]')?.value,
   tracks: [...document.querySelectorAll('[data-home-track]')].map(e => Math.round(e.scrollLeft / e.clientWidth)) }));
 const storage = page => page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage }, cookie: document.cookie }));
 async function savedReady(page, state = 'ready') {
@@ -29,7 +30,7 @@ async function detailReady(page, state = 'ready') {
 }
 async function restoredHome(page, before) {
   await page.locator('[data-home-state="ready"]').waitFor({ state: 'visible' });
-  await page.waitForFunction(({ y, query, tracks }) => Math.abs(scrollY - y) < 2
+  await page.waitForFunction(({ y, query, tracks }) => Math.abs(window.pivotScrollRoot().scrollTop - y) < 2
     && document.querySelector('input[type=search]').value === query
     && [...document.querySelectorAll('[data-home-track]')].every((e, i) => Math.round(e.scrollLeft / e.clientWidth) === tracks[i]), before);
   assert.deepEqual(await homeSnapshot(page), before);
@@ -71,6 +72,7 @@ async function production(page, viewport, api, external, errors) {
   try {
     for (const viewport of [{ width: 320, height: 568 }, { width: 360, height: 800 }, { width: 375, height: 812 }, { width: 390, height: 844 }, { width: 1280, height: 900 }]) for (const reducedMotion of ['no-preference', 'reduce']) {
       const context = await browser.newContext({ viewport, isMobile: viewport.width < 500, hasTouch: viewport.width < 500, reducedMotion, serviceWorkers: 'block' });
+      await installPageScroll(context);
       const page = await context.newPage(); page.setDefaultTimeout(12000);
       const api = [], external = [], errors = [], homeBookmarkClicks = [];
       await context.route('**/*', async route => {
@@ -121,7 +123,7 @@ async function production(page, viewport, api, external, errors) {
         near(geometry[0].x, screenInset + 35.5, 'Centered first column'); near(geometry[0].y, 104, 'Disclosure + header + gap + panel padding');
         near(geometry[0].width, expectedWidth, 'Card width');
         near(geometry[0].imageHeight, expectedWidth * 184.661 / 148, 'Original cover height');
-        near(geometry[0].height, geometry[0].imageHeight + 52, 'Cover plus separate two-line title');
+        near(geometry[0].height, geometry[0].imageHeight, 'Card is exactly one thumbnail high');
         if (viewport.width === 375) assert.equal(geometry[0].width, 148);
         near(geometry[1].x - geometry[0].x - geometry[0].width, 8, 'Column gap');
         near(geometry[2].y - geometry[0].y - geometry[0].height, 12, 'Row gap');
@@ -129,9 +131,15 @@ async function production(page, viewport, api, external, errors) {
         assert.equal(await cards.locator('[data-saved-title]:visible').count(), 3);
         for (const card of geometry) assert.equal(await saved.getByRole('button', { name: card.title + ' 자세히 보기', exact: true }).count(), 1);
         for (const card of await cards.all()) {
-          const title = await card.locator('[data-saved-title]').boundingBox();
+          const title = await card.locator('[data-saved-title]').evaluate(e => {
+            const parent = e.parentElement, r = parent.getBoundingClientRect();
+            return { width: r.width, height: r.height, clip: getComputedStyle(parent).clipPath };
+          });
           const image = await card.locator('img').boundingBox();
-          assert.ok(title.y >= image.y + image.height, 'HTML title must not overlap embedded image text');
+          assert.ok(title.width <= 1 && title.height <= 1, 'Embedded cover keeps its HTML title screen-reader-only');
+          assert.equal(title.clip, 'inset(50%)');
+          assert.ok(image.height > 1);
+          assert.equal(await card.locator('span[class*="caption"]').count(), 0);
         }
         assert.equal(await saved.getByRole('button', { name: 'SAVE', exact: true }).getAttribute('aria-current'), 'page');
         const chrome = await saved.locator('header img').evaluateAll(items => items.map(e => { const r = e.getBoundingClientRect(); return { src: e.getAttribute('src'), width: r.width, height: r.height, loaded: e.complete && e.naturalWidth > 0 }; }));
@@ -179,7 +187,7 @@ async function production(page, viewport, api, external, errors) {
         const tracks = home.locator('[data-home-track]');
         await tracks.nth(0).evaluate(e => e.scrollTo({ left: e.clientWidth * 2, behavior: 'instant' }));
         await tracks.nth(1).evaluate(e => e.scrollTo({ left: e.clientWidth, behavior: 'instant' }));
-        await page.evaluate(() => scrollTo({ top: 554, behavior: 'instant' }));
+        await page.evaluate(() => window.pivotScrollRoot().scrollTo({ top: 554, behavior: 'instant' }));
         await page.waitForFunction(() => document.querySelector('[data-home-position]').textContent.includes('3 / 5'));
         const before = await homeSnapshot(page);
         homeBookmarkClicks.push(await toggleHomeBookmark(bookmark)); assert.equal(await bookmark.getAttribute('aria-pressed'), 'true');
@@ -226,10 +234,11 @@ async function production(page, viewport, api, external, errors) {
         assert.equal(await saved.getByRole('button', { name: 'SAVE', exact: true }).getAttribute('aria-current'), 'page');
         await saved.getByRole('button', { name: '콘텐츠 보러가기', exact: true }).click(); await home.waitFor({ state: 'visible' });
         await page.waitForFunction(() => document.activeElement?.matches('[data-home-state] [data-saved-navigation]'));
-        await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
+        await page.evaluate(() => window.pivotScrollRoot().scrollTo({ top: 0, behavior: 'instant' }));
         homeBookmarkClicks.push(await toggleHomeBookmark(home.locator('[data-demo-bookmark="demo-content-story"]')));
         await home.getByRole('button', { name: 'SAVE', exact: true }).click(); await savedReady(page); assert.equal(await cards.count(), 1);
         near((await cards.first().boundingBox()).width, expectedWidth, 'Single card keeps one column');
+        near((await cards.first().boundingBox()).x, screenInset + 35.5, 'Single card stays in the first column');
         await capture(page, 'saved-single-' + name);
         assert.deepEqual(await storage(page), initialStorage, 'Demo bookmark choices never write persistent storage or cookies');
         await page.reload(); await savedReady(page); assert.equal(await cards.count(), 3, 'Reload restores the disclosed example list');
@@ -239,6 +248,7 @@ async function production(page, viewport, api, external, errors) {
           for (let i = 0; i < 27; i++) {
             const clone = originals[i % originals.length].cloneNode(true);
             clone.dataset.layoutFixture = 'true';
+            clone.querySelector('[data-embedded-copy]')?.removeAttribute('data-embedded-copy');
             clone.querySelector('[data-saved-title]').textContent = '아주 긴 제목과 공백없는문자열 ' + 'LongUnbrokenTitle'.repeat(20);
             clone.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
             const button = clone.querySelector('button'); button.removeAttribute('aria-labelledby'); button.disabled = true;
@@ -252,7 +262,7 @@ async function production(page, viewport, api, external, errors) {
             noOverflow: title.scrollWidth <= title.clientWidth, clamp: getComputedStyle(title).webkitLineClamp };
         }));
         assert.equal(longTitles.length, 27);
-        assert.ok(longTitles.every(title => title.inside && title.noOverflow && title.clamp === '2' && title.height === 36));
+        assert.ok(longTitles.every(title => title.inside && title.noOverflow && title.clamp === '2' && title.height <= 36));
         await page.evaluate(() => scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
         const longListLayout = await page.evaluate(() => {
           const list = document.querySelector('[aria-label="저장한 콘텐츠 목록"]');
@@ -272,6 +282,9 @@ async function production(page, viewport, api, external, errors) {
         await context.route('**/pivot/home/slide-1.png', route => route.fulfill({ status: 200, contentType: 'image/png',
           body: fs.readFileSync(path.join(__dirname, '../public/pivot/home/chrome/mascot.png')) }));
         await page.reload(); await savedReady(page);
+        // DOM-only text-free layout fixture; changing pixels cannot change the
+        // known cover's metadata. Service images exercise real classification separately.
+        await cards.locator('[data-embedded-copy]').evaluateAll(items => items.forEach(e => e.removeAttribute('data-embedded-copy')));
         await capture(page, 'saved-text-free-' + name);
         assert.equal(await cards.locator('[data-saved-title]:visible').count(), 3);
         assert.equal(await cards.first().locator('[data-saved-title]').innerText(), geometry[0].title);
@@ -279,6 +292,12 @@ async function production(page, viewport, api, external, errors) {
         await context.route('**/pivot/home/slide-1.png', route => route.fulfill({ status: 200, contentType: 'image/png', body: 'broken-image' }));
         await page.reload(); await savedReady(page);
         await saved.getByText('이미지 준비 중', { exact: true }).first().waitFor();
+        const failedCard = cards.first();
+        const fallbackTitle = await failedCard.locator('[data-saved-title]').boundingBox();
+        const fallbackBox = await failedCard.boundingBox();
+        assert.ok(fallbackTitle.width > 1 && fallbackTitle.y >= fallbackBox.y && fallbackTitle.y + fallbackTitle.height <= fallbackBox.y + fallbackBox.height);
+        near(fallbackBox.height, expectedWidth * 184.661 / 148, 'Failed cover preserves thumbnail height');
+        assert.equal(await failedCard.getAttribute('aria-labelledby') !== null, true);
         assert.equal(await saved.getByText('이미지 준비 중', { exact: true }).count(), 2); await capture(page, 'saved-image-failure-' + name);
         await cards.first().click(); await detailReady(page);
         assert.equal(await page.locator('[data-detail-content]').getAttribute('data-detail-content'), geometry[0].contentId);
