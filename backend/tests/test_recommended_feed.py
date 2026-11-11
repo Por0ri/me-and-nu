@@ -7,14 +7,14 @@ from urllib.parse import quote
 import uuid
 
 import pytest
-from sqlalchemy import BigInteger, DefaultClause, Integer, JSON, MetaData, Uuid, create_engine, delete, text, update
+from sqlalchemy import BigInteger, DefaultClause, Integer, JSON, MetaData, Uuid, create_engine, delete, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
 from app.models import (
     Content, ContentEntityLink, ContentReaction, ContentSlide, ContentSource, ContentTag, Entity, PreferenceTag,
-    RecommendationItem, RecommendationRound, SavedItem, Tap, TapPreferenceTag, Topic, UserAccount, UserEvent,
+    RecommendationItem, RecommendationRound, SavedItem, SearchLog, Tap, TapPreferenceTag, Topic, UserAccount, UserEvent,
 )
 from app.services import feed_service
 from app.services.cursor import encode_cursor
@@ -26,7 +26,8 @@ NOW = datetime(2026, 11, 2, 3, tzinfo=timezone.utc)          # 12:00 in Seoul
 TODAY, YESTERDAY = NOW.date(), NOW.date() - timedelta(days=1)
 REASON = "요즘 보는 하이큐!! 관련 글"
 MODELS = (Topic, UserAccount, Tap, Content, ContentSlide, ContentSource, ContentTag, ContentReaction,
-          SavedItem, RecommendationRound, RecommendationItem, UserEvent, Entity, ContentEntityLink, TapPreferenceTag)
+          SavedItem, RecommendationRound, RecommendationItem, UserEvent, Entity, ContentEntityLink, TapPreferenceTag,
+          SearchLog)
 
 
 def test_order_keeps_rank_drops_opened_and_disliked_and_moves_seen_to_back():
@@ -330,6 +331,44 @@ async def test_search_shows_the_works_cards_in_todays_rank_then_newest(engine, m
     assert (result.query, result.works) == ("하이큐", ["하이큐!!"])
     assert {card.recommendation_reason for card in result.contents} == {"‘하이큐!!’ 검색 결과예요"}
     assert all(card.recommendation_id is None for card in result.contents)
+
+
+def search_logs(engine):
+    with Session(engine) as session:
+        rows = session.scalars(select(SearchLog).order_by(SearchLog.search_log_id)).all()
+        return [(r.user_id, r.tap_id, r.search_text, r.picked_work_id, r.matched_work_ids, r.result_count) for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_search_keeps_what_ran_and_what_it_found_but_not_typing(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+
+    await suggest(engine, "하이")                 # 입력 중 미리보기는 남기지 않음
+    await search(engine, " 하이큐 ")               # 엔터: 맞은 작품과 보여 준 글 수
+    await search(engine, "하이", work_id=901)      # 미리보기에서 고른 작품
+    await search(engine, "프리렌")                 # 작품은 있는데 글이 없음
+    await search(engine, "없는작품")               # 작품 목록에 없음
+    await search(engine, "   ")                    # 빈 검색어는 검색이 아님
+
+    assert search_logs(engine) == [
+        (7, 11, "하이큐", None, [901], 3),
+        (7, 11, "하이", 901, [901], 3),
+        (7, 11, "프리렌", None, [903], 0),
+        (7, 11, "없는작품", None, [], 0),
+    ]
+    with Session(engine) as session:
+        assert {row.data_source for row in session.scalars(select(SearchLog))} == {feed_service.settings.event_data_source}
+
+
+@pytest.mark.asyncio
+async def test_search_still_answers_when_its_log_cannot_be_saved(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE search_log"))
+
+    assert [card.id for card in (await search(engine, "하이큐")).contents] == [503, 507, 508]
 
 
 @pytest.mark.asyncio

@@ -54,7 +54,7 @@ docker compose --env-file deploy/.env -f compose.deploy.yaml build
 docker compose --env-file deploy/.env -f compose.deploy.yaml up -d --wait --wait-timeout 180
 ```
 
-PostgreSQL이 준비되면 `migrate`가 `python -m alembic upgrade c8f2d6a1e947`을 실행합니다. 온보딩 V2 e3, 서비스 캐러셀 f4, 추천 연결 표, 신고·문의 표, 복구 대기 세션 상태, 내부 알림 설정, 추천 알림 종류를 포함하는 이 후보의 유일한 head이며, 생년월일 삭제 d2 파일은 제외했습니다. 대상 고정을 위해 `upgrade head/heads`로 변경하지 않습니다. 대상 DB의 기존 revision을 확인하고 검증한 이미지로 적용합니다. 과거 d2가 이미 적용된 DB는 별도 migration 이력 검토가 필요하며 이 후보만으로 자동 업그레이드하지 않습니다. 마이그레이션이 성공하고 PostgreSQL·Redis가 정상인 경우 API가 시작됩니다. `migrate`가 종료 코드 0으로 멈춰 있는 것은 정상입니다. 마이그레이션 실패 시 로그를 확인하고 원인을 해결한 뒤 재실행합니다. 이 설정 변경만으로 서버 배포나 DB 적용이 이루어지지는 않습니다.
+PostgreSQL이 준비되면 `migrate`가 `python -m alembic upgrade d7b3e9a1c452`을 실행합니다. 온보딩 V2 e3, 서비스 캐러셀 f4, 추천 연결 표, 신고·문의 표, 복구 대기 세션 상태, 내부 알림 설정, 추천 알림 종류, 검색 기록 표를 포함하는 이 후보의 유일한 head이며, 생년월일 삭제 d2 파일은 제외했습니다. 대상 고정을 위해 `upgrade head/heads`로 변경하지 않습니다. 대상 DB의 기존 revision을 확인하고 검증한 이미지로 적용합니다. 과거 d2가 이미 적용된 DB는 별도 migration 이력 검토가 필요하며 이 후보만으로 자동 업그레이드하지 않습니다. 마이그레이션이 성공하고 PostgreSQL·Redis가 정상인 경우 API가 시작됩니다. `migrate`가 종료 코드 0으로 멈춰 있는 것은 정상입니다. 마이그레이션 실패 시 로그를 확인하고 원인을 해결한 뒤 재실행합니다. 이 설정 변경만으로 서버 배포나 DB 적용이 이루어지지는 않습니다.
 
 이미지는 백엔드 코드와 마이그레이션을 포함합니다. Agent 실행 코드, Git 이력·적재 도구, 프런트엔드는 포함하지 않습니다.
 

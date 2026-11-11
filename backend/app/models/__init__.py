@@ -28,7 +28,7 @@ from app.models.onboarding_catalog import (
     Entity, EntityExternalId, PreferenceTag, EntityTag, TapEntity, TapPreferenceTag,
 )
 from app.models.recommendation import (
-    ContentEntityLink, RecommendationItem, RecommendationRound, UserEvent,
+    ContentEntityLink, RecommendationItem, RecommendationRound, SearchLog, UserEvent,
 )
 from app.models.report import ContentReport, Inquiry
 from app.models.user import UserAccount
@@ -75,6 +75,7 @@ __all__ = [
     "ContentEntityLink",
     "RecommendationRound",
     "RecommendationItem",
+    "SearchLog",
     "UserEvent",
     "Policy",
     "SavedItem",
