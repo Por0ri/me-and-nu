@@ -177,7 +177,8 @@ def test_invalid_batch_is_rejected_before_db(tmp_path, raw_bundle, case):
     elif case == "missing_asset":
         item["assets"].pop()
     elif case == "too_few_cards":
-        package["cards"].pop()
+        package["cards"] = package["cards"][:1]
+        item["assets"] = item["assets"][:1]
     elif case == "gap_pages":
         package["cards"][-1]["page"] = 4
     elif case == "unknown_fact":

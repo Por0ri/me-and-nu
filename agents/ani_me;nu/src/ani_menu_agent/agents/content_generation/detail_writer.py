@@ -3,28 +3,48 @@
 from __future__ import annotations
 
 import json
+import re
 from time import perf_counter
 
 from langchain_openai import ChatOpenAI
 
 from ani_menu_agent.agents.common import append_trace
 from ani_menu_agent.config import get_settings
-from ani_menu_agent.generation import estimate_gpt_6_luna_cost
+from ani_menu_agent.generation import _clean_reader_facing_text, estimate_gpt_6_luna_cost
 from ani_menu_agent.models import (
     ContentKind,
     ContentPackage,
     DetailArticleDraft,
     UsageRecord,
 )
-from ani_menu_agent.prompts import BRAND_CONTEXT
+from ani_menu_agent.prompts import BRAND_CONTEXT, TERM_TRANSLATION_POLICY
 from ani_menu_agent.review_rules import make_issue, prompt_rules
 from ani_menu_agent.state import ContentState
+from ani_menu_agent.work_catalog import load_work_catalog
 
 DETAIL_WRITER_PROMPT = """
 You write the standalone long-form article shown when a reader taps “자세히 보기”.
 Write fluent, natural Korean prose that adds context and explains the verified material;
-aim for clear, polished Korean fan-editorial prose. Do not merely concatenate or paraphrase
-the carousel cards sentence by sentence.
+write like a deeply invested anime fan telling a friend why this specific news hit so hard. The
+detail article must have the same lively fan personality as the carousel, not a neutral report or
+polished press-release recap. Do not merely concatenate or paraphrase the cards sentence by
+sentence.
+
+VOICE AND ENERGY:
+- React to the concrete character, scene, setting, performance, or announcement in the source.
+  Let the excitement show in the phrasing, rhythm, and fan perspective: a sincere “이걸 여기서
+  꺼내네, 진짜 가슴이 웅장해진다” reaction, a sharp fandom joke, or affectionate overinvestment
+  can fit when the evidence gives it a real hook.
+- Sound like a fan whose enthusiasm is a little out of control in the fun way: delighted, dramatic,
+  observant, and funny. Do not sound like a reviewer writing a formal summary. Avoid detached
+  transitions such as “눈에 띄는 점은”, “따라서”, and “종합하면” when a direct, lively Korean
+  sentence works better.
+- Make the fan reaction specific to this work and this story. Use one or two memorable reactions
+  across the article, not a catchphrase in every paragraph. Vary jokes and emotional intensity;
+  let a serious story stay sincere.
+- A playful “과몰입 덕후” energy is welcome, but do not invent personal viewing experiences,
+  claim to speak for all fans, sexualize characters, or turn an unsupported interpretation into a
+  fact.
 
 Use only the supplied package facts and card copy. Do not invent dates, places, prices,
 quotes, production details, motives, or announcements. Return every fact ID that materially
@@ -33,29 +53,43 @@ statement or source excerpt. In particular, do not speculate about how an event,
 illustration will be implemented, presented, or received unless a supplied fact explicitly says
 so. Keep each sentence traceable to the fact IDs that support it; if a sentence needs an inference,
 remove it or label it clearly as a question/opinion without making it sound announced. For
-information content, use only verified facts. For humor content,
-frame fan interpretations as opinions or playful possibilities, never as confirmed facts.
+information content, use only verified facts. For humor content, distinguish each supplied public
+community viewpoint from verified facts. Explain the actual difference between viewpoints when at
+least two are supplied, then add me;nu's own fan take. Do not claim the sample represents a majority
+or the whole fandom, and never invent the other side of a discussion. Frame interpretations as
+opinions or playful possibilities, never as facts.
 {BRAND_CONTEXT}
-Let that same fan voice carry through the detail article; do not flatten it into press-release
-prose. Translate for meaning, not sound alone. When an
+Let that same fan voice carry through the detail article from the opening sentence to the ending.
+Translate for meaning, not sound alone. When an
 English/Japanese name or nickname carries a source-language pun, preserve its readable Korean
 name and explain the original spelling and meaning briefly at first mention, only when the source
 supports that reading. Read each sentence aloud and make its subject, action, and referent clear.
-Attribute review judgments to the reviewer; do not turn an attributed opinion into an objective
-fact or embellish it with unsupported praise. Use a vivid metaphor, meme, or fan expression when it
+Attribute review judgments naturally to the source review (for example, "리뷰에서는 ...라고
+짚었다"); avoid labeling the author in the copy. Do not turn an attributed opinion into an objective
+fact or embellish it with unsupported praise. Use "독자" or "시청자" only to refer to the audience.
+Never include internal request, crawl, or fact identifiers in reader-facing prose. Use a vivid
+metaphor, meme, or fan expression when it
 makes the point land; revise it only if readers cannot follow its connection to the source. Keep
-paragraphs connected by a clear progression:
-context, the most distinctive supported point, then a balanced takeaway.
+paragraphs connected by a clear progression: open with the fan-facing hook, unpack the most
+distinctive supported point, then end with a lively but evidence-grounded fan takeaway rather than
+a formal summary.
+Use title_ko from canonical_work_titles consistently; if it is empty, use title_romaji. Do not
+invent alternate transliterations for the same work. Follow term_glossary for Japanese names and
+terms. In particular, 落語 means “라쿠고(일본 전통 만담극)” and 落語家 means “라쿠고 공연자”; never
+translate these as “낙어”.
 For event articles with multiple programs, keep each program's locations, dates, and benefits in a
 separate paragraph or clearly labeled list. Never imply that two programs share locations using
 phrases like “뿐 아니라” or “이곳에서도” unless the supplied facts explicitly confirm the overlap.
-Do not include a source list or AI disclosure in the body; those are rendered below the body.
+Fact IDs are internal evidence keys. Put them only in the returned fact_ids array; never print them
+in the article body, headings, parentheses, brackets, or visible prose. Do not include a source list
+or AI disclosure in the body; those are rendered below the body.
 Write roughly 300–700 Korean characters in 2–5 readable paragraphs. Avoid filler and repetition.
 """.strip().replace("{BRAND_CONTEXT}", BRAND_CONTEXT)
 
 DETAIL_WRITER_PROMPT += "\n\nCANONICAL DETAIL RULES:\n" + prompt_rules(
     check="both", owners={"detail_writer", "crawler"}
 )
+DETAIL_WRITER_PROMPT += "\n\n" + TERM_TRANSLATION_POLICY
 
 
 def _detail_writer_revision_issues(raw_issues: list) -> list[dict]:
@@ -68,6 +102,25 @@ def _detail_writer_revision_issues(raw_issues: list) -> list[dict]:
     return normalized
 
 
+_INLINE_FACT_ID = re.compile(
+    r"\s*[\[(（【]\s*(?:crawl-[\w-]+-)?fact[-_ ]?\d+(?:\s*[,，/]\s*"
+    r"(?:crawl-[\w-]+-)?fact[-_ ]?\d+)*\s*[\])）】]"
+    r"|\s*\((?:fact|crawl-fact)[-_:][\w-]+\)",
+    re.IGNORECASE,
+)
+def _strip_inline_fact_ids(body: str, fact_ids: list[str] | None = None) -> str:
+    """Remove internal evidence markers if the model accidentally exposes them."""
+    cleaned = _INLINE_FACT_ID.sub("", body)
+    for fact_id in sorted(set(fact_ids or []), key=len, reverse=True):
+        escaped = re.escape(fact_id)
+        bracketed_ids = rf"\s*[\[(（【]\s*{escaped}(?:\s*[,，/]\s*{escaped})*\s*[\])）】]"
+        cleaned = re.sub(bracketed_ids, "", cleaned)
+        cleaned = re.sub(rf"\s*{escaped}(?=\s*[,，。.!?！？]|\s|$)", "", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,，。.!?！？])", r"\1", cleaned)
+    return _clean_reader_facing_text(cleaned)
+
+
 def write_detail_body(state: ContentState) -> ContentState:
     """Generate and attach a standalone detail article to the existing package JSON."""
     package = ContentPackage.model_validate(state["package"])
@@ -77,7 +130,14 @@ def write_detail_body(state: ContentState) -> ContentState:
         in (state.get("revision_owners") or [state.get("revision_owner")])
     )
     if package.detail_body and not revising:
-        return {"trace": append_trace(state, "detail_writer"), "status": "detail_body_supplied"}
+        package.detail_body = _strip_inline_fact_ids(
+            package.detail_body, [fact.id for fact in package.facts]
+        )
+        return {
+            "trace": append_trace(state, "detail_writer"),
+            "package": package.model_dump(mode="json"),
+            "status": "detail_body_supplied",
+        }
     if not state.get("allow_llm", False):
         return {
             "trace": append_trace(state, "detail_writer"),
@@ -98,11 +158,7 @@ def write_detail_body(state: ContentState) -> ContentState:
             "status": "detail_body_generation_failed",
         }
 
-    allowed_facts = [
-        fact
-        for fact in package.facts
-        if package.content_kind == ContentKind.HUMOR or fact.verified
-    ]
+    allowed_facts = list(package.facts)
     source_ids = {source.id for source in package.sources}
     fact_payload = []
     for fact in allowed_facts:
@@ -118,8 +174,19 @@ def write_detail_body(state: ContentState) -> ContentState:
         )
 
     issues = _detail_writer_revision_issues(state.get("qa_report", []))
+    work_rows = {int(work["menu_work_id"]): work for work in load_work_catalog()}
     user_payload = {
         "topic": package.topic,
+        "term_glossary": [term.model_dump(mode="json") for term in package.term_glossary],
+        "canonical_work_titles": [
+            {
+                "menu_work_id": work_id,
+                "title_ko": work_rows.get(work_id, {}).get("title_ko") or "",
+                "title_romaji": work_rows.get(work_id, {}).get("title_romaji") or "",
+            }
+            for work_id in package.menu_work_ids
+            if work_id in work_rows
+        ],
         "content_kind": package.content_kind.value,
         "content_type": package.content_type,
         "editorial_angle": package.editorial_angle,
@@ -198,7 +265,7 @@ def write_detail_body(state: ContentState) -> ContentState:
         }
 
     draft = DetailArticleDraft.model_validate(draft)
-    package.detail_body = draft.body.strip()
+    package.detail_body = _strip_inline_fact_ids(draft.body, [fact.id for fact in package.facts])
     package.detail_fact_ids = list(dict.fromkeys(draft.fact_ids))
     facts_by_id = {fact.id: fact for fact in package.facts}
     package.detail_source_ids = list(

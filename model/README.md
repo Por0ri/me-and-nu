@@ -46,7 +46,7 @@ python -m model.scripts.daily_recommend --preflight
 
 필수 파일:
 
-- 커밋된 `model/catalog/chips.csv`, `menu_works.csv`, `menu_work_entries.csv`.
+- 커밋된 `model/catalog/chips.csv`와 공용 작품 목록 `catalog/menu_works.csv`, `catalog/menu_work_entries.csv`.
 - 별도 공급해야 하는 `model/data/anilist/{media,media_recent,detail,links}.jsonl`.
 - `model/data/mal_sample/anime.csv` 및 `interactions.csv` 또는 사용 가능한 `interactions.npz`. MAL 표본 위치는 기존 `MAL_SAMPLE_DIR` 환경변수로 지정할 수 있다.
 - `model/data/anilist_users/entries.csv`는 선택 사항이다. 없으면 기존 MAL 전용 같이 본 기록과 최근 인기 0 대체 동작을 그대로 사용한다.

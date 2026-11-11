@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     image_upscale_enabled: bool = Field(
         default=False, validation_alias="ANI_MENU_IMAGE_UPSCALE_ENABLED"
     )
+    image_ocr_enabled: bool = Field(default=True, validation_alias="ANI_MENU_IMAGE_OCR_ENABLED")
     image_edit_model: str = Field(
         default="gpt-image-2.5-sunburst", validation_alias="ANI_MENU_IMAGE_EDIT_MODEL"
     )

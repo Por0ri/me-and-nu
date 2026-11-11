@@ -35,7 +35,7 @@ docker compose up -d postgres redis
 cd backend
 if (!(Test-Path .venv)) { py -m venv .venv }
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m alembic upgrade 150a601074af
+.\.venv\Scripts\python.exe -m alembic upgrade 91c7a2e4b630
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
 .\.venv\Scripts\python.exe scripts/run_local_api.py
@@ -43,16 +43,13 @@ if (!(Test-Path .venv)) { py -m venv .venv }
 
 Windows에서는 위 실행 스크립트가 PostgreSQL 비동기 연결에 맞는 이벤트 루프를 사용합니다. 자동 재시작은 하지 않으므로 코드 변경 후에는 기존 서버를 종료하고 다시 실행하세요. 이미 `http://localhost:8000/health/db`가 정상 응답하면 서버가 실행 중입니다. 같은 8000번 포트로 중복 실행하면 Windows에서 `WinError 10013` 또는 `10048`이 발생할 수 있습니다.
 
-API의 회원 유형은 `user` 하나입니다. 이 서비스 반영 후보의 Alembic head와 명시적 migration target은 추천 연결 표 4개를 더한 `150a601074af` 하나이며 캐러셀 `f4b8c1d9a620`과 온보딩 V2 `e3a7b9c2d451`을 포함합니다. 생년월일 삭제 `d2f6a9c4e731` 파일은 제외했고, 기존 생년월일 컬럼과 값은 보존합니다. 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 위 revision을 명시합니다. 과거 d2가 이미 적용된 DB는 이 후보에 해당 migration 이력이 없으므로 별도 이력 검토 없이 자동 업그레이드하지 않습니다. 환경별 실제 revision을 먼저 확인하세요. 이 저장소의 설정 변경만으로 DB 적용이나 배포가 이루어지지는 않습니다.
+API의 회원 유형은 `user` 하나입니다. 이 서비스 반영 후보의 Alembic head와 명시적 migration target은 추천 연결 표 4개(`150a601074af`), 신고·문의 표 2개, 복구 대기 세션 상태와 내부 알림 설정을 더한 `91c7a2e4b630` 하나이며 캐러셀 `f4b8c1d9a620`과 온보딩 V2 `e3a7b9c2d451`을 포함합니다. 생년월일 삭제 `d2f6a9c4e731` 파일은 제외했고, 기존 생년월일 컬럼과 값은 보존합니다. 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 위 revision을 명시합니다. 과거 d2가 이미 적용된 DB는 이 후보에 해당 migration 이력이 없으므로 별도 이력 검토 없이 자동 업그레이드하지 않습니다. 환경별 실제 revision을 먼저 확인하세요. 이 저장소의 설정 변경만으로 DB 적용이나 배포가 이루어지지는 않습니다.
 
 `app.seeds.v1_local`은 정책, 영화 Topic·Subtopic, 로컬 공개 콘텐츠를 멱등적으로 준비합니다. `app.seeds.dev_user`는 로컬 테스트용 데모 사용자를 준비합니다. 기존 영화 Agent와 저장 로직은 별개입니다. 서버 실행 중 [Swagger UI](http://localhost:8000/docs), [OpenAPI JSON](http://localhost:8000/openapi.json), [ReDoc](http://localhost:8000/redoc)을 확인할 수 있습니다.
 
 ## Swagger에서 로그인 없이 테스트
 
 `backend/.env`에 `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 설정하고 위 마이그레이션과 두 seed를 실행한 뒤 `localhost:8000/docs`를 여세요. 루프백 요청의 보호 API는 데모 사용자로 처리되어 세션 쿠키와 CSRF 헤더 없이 실행할 수 있습니다. `ENABLE_DEV_AUTH_BYPASS=false`로 바꾸고 서버를 다시 시작하면 일반 인증이 복원됩니다. 기존 로그인 API `POST /api/v1/dev/auth/login`은 `ENABLE_DEV_API=true`일 때 Swagger의 **개발용 인증** 아래에 있습니다.
-
-영화 Agent를 실행해 저장한 초안과 판정은 Swagger의 **개발용 Agent 결과 → `GET /api/v1/dev/agent-runs`**에서 확인합니다. 실행 명령과 상세 조회 순서는 [Swagger 테스트 가이드](docs/SWAGGER_TEST_GUIDE.md)에 있습니다. 승인되고 추가 사실 확인이 필요 없는 초안은 저장 후 공개 피드로 자동 발행됩니다.
-공개 피드 테스트에서는 같은 Swagger 그룹의 `POST /api/v1/dev/agent-runs/{agentRunId}/publish`로 발행을 재시도할 수 있습니다. 탈락 초안은 로컬 테스트 모드에서만 `publish-preview`로 게시하며 검토 필요 상태로 표시됩니다.
 
 ## 프론트엔드 실행
 

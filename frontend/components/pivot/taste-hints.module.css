@@ -1,0 +1,12 @@
+/* Taste edit hints (2026-11 design): a centred bold title over a lavender box of white pill chips. */
+.hint { margin: 20px 24px 0; text-align: center; }
+.title { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0; color: #27272a; font-size: 14px; font-weight: 700; line-height: 20px; word-break: keep-all; }
+.more { min-height: 32px; margin: -6px 0; padding: 0 4px; border: 0; background: none; color: var(--pivot-primary, #7043b4); font-size: 11px; font-weight: 500; line-height: 16px; }
+.box { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin: 8px 0 0; padding: 10px 12px; border-radius: 8px; background: #efe7ff; list-style: none; }
+.chip { padding: 4px 10px; border-radius: 999px; background: #fff; color: var(--pivot-primary, #7043b4); font-size: 12px; line-height: 18px; white-space: nowrap; }
+/* Q2: one row per kind, the label beside its chips. */
+dl.box { display: grid; gap: 6px; }
+.row { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.row dt { flex: none; color: #3f3f46; font-size: 13px; font-weight: 700; line-height: 18px; }
+.row dd { margin: 0; }
+.row ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin: 0; padding: 0; list-style: none; }

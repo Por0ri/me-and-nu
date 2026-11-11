@@ -10,7 +10,7 @@ from app.schemas.onboarding import OnboardingRequest
 
 def onboarding_payload(**changes):
     return {
-        "nickname": "일반 회원",
+        "nickname": "일반회원",
         "accountType": "user",
         "topicId": 1,
         "answers": {"q1": "world", "q2": "releases"},

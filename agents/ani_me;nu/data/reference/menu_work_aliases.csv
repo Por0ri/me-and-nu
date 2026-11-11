@@ -1,0 +1,5 @@
+menu_work_id,alias,language,alias_type,source_id,evidence_url,source_url_prefix,status,confidence
+1629,アイナナ,ja,official_abbreviation,eeo_events,https://eeo.today/media/2026/10/15/403133/,,verified,0.99
+2184,D.C. 다카포,ko,source_explicit_title,onnada,https://onnada.com/character/2806,,verified,0.99
+8,ワンピース,ja,localized_title,src_bsp_prize_jp,https://bsp-prize.jp/item/2872300/,https://bsp-prize.jp/,verified,0.99
+1673,ポケットモンスター,ja,official_page_title,tv_tokyo_anime_official,https://www.tv-tokyo.co.jp/anime/pocketmonster2023/,https://www.tv-tokyo.co.jp/anime/pocketmonster2023/,verified,0.97

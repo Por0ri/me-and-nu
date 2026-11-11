@@ -65,8 +65,8 @@ export default function ContentArticle({ contentId, topicId, subtopicId }: Props
       {detail && <article className="rounded-3xl border border-white/10 bg-white/[0.045] p-6 sm:p-9">
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="rounded-full bg-teal-300/10 px-3 py-1.5 font-semibold text-teal-200">{productionLabel(detail.productionType)}</span>
-          {needsReview(detail.notices, detail.excerpt) && <span className="rounded-full bg-amber-300/10 px-3 py-1.5 font-semibold text-amber-200">검토 필요</span>}
-          {preview && <span className="rounded-full bg-orange-300/10 px-3 py-1.5 font-semibold text-orange-200">개발용 미리보기</span>}
+          {!detail.slides?.length && needsReview(detail.notices, detail.excerpt) && <span className="rounded-full bg-amber-300/10 px-3 py-1.5 font-semibold text-amber-200">검토 필요</span>}
+          {!detail.slides?.length && preview && <span className="rounded-full bg-orange-300/10 px-3 py-1.5 font-semibold text-orange-200">개발용 미리보기</span>}
         </div>
         <h1 className="mt-5 text-3xl font-bold leading-tight tracking-tight sm:text-4xl">{detail.title}</h1>
         <p className="mt-3 text-sm text-slate-500">{detail.publisher}{publishedDate(detail.publishedAt) && ` · ${publishedDate(detail.publishedAt)}`}</p>

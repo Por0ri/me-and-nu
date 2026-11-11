@@ -63,7 +63,7 @@ def public_content_condition():
 
     Legacy publications keep their existing review behavior. Imported carousels
     require approval, except for explicitly marked previews in a matching local
-    test service or the opted-in Checking stack. All paths require 3..10
+    test service or the opted-in Checking stack. All paths require 2..10
     contiguous slides and a future expiry.
     PNG decoding and hash verification are the import boundary's job.
     """
@@ -87,7 +87,7 @@ def public_content_condition():
             and_(
                 _carousel_review_condition(),
                 Content.feed_valid_until.is_not(None),
-                count.between(3, 10),
+                count.between(2, 10),
                 last_page == count,
                 select(ContentSource.content_source_id)
                 .where(ContentSource.content_id == Content.content_id)

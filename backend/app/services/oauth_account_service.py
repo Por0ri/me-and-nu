@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
 from app.models.user import UserAccount
+from app.services.withdrawal_service import in_grace_period
 
 if TYPE_CHECKING:
     from app.services.oauth_provider import OAuthIdentity
@@ -22,8 +23,9 @@ if TYPE_CHECKING:
 _EMAIL = TypeAdapter(EmailStr)
 
 
-def _require_active(user: UserAccount) -> UserAccount:
-    if user.account_status != "active":
+def _require_loginable(user: UserAccount) -> UserAccount:
+    """활성 계정과 탈퇴 유예 중인 계정만 통과합니다. 유예 중이면 콜백이 복구 대기 세션을 줍니다."""
+    if user.account_status != "active" and not in_grace_period(user):
         raise ApiError(403, "AUTH_ACCOUNT_UNAVAILABLE", "현재 로그인할 수 없는 계정입니다.")
     return user
 
@@ -56,7 +58,7 @@ async def _email_exists(db: AsyncSession, email: str) -> bool:
 async def resolve_oauth_user(db: AsyncSession, identity: OAuthIdentity) -> UserAccount:
     existing = await _find_identity(db, identity)
     if existing is not None:
-        return _require_active(existing)
+        return _require_loginable(existing)
 
     email = None
     if identity.email and identity.email.strip():
@@ -68,7 +70,7 @@ async def resolve_oauth_user(db: AsyncSession, identity: OAuthIdentity) -> UserA
             # The same identity may have appeared after the first lookup.
             existing = await _find_identity(db, identity)
             if existing is not None:
-                return _require_active(existing)
+                return _require_loginable(existing)
             raise _email_conflict()
 
     user = UserAccount(
@@ -87,7 +89,7 @@ async def resolve_oauth_user(db: AsyncSession, identity: OAuthIdentity) -> UserA
         # A concurrent callback may have created the identity after our lookup.
         existing = await _find_identity(db, identity)
         if existing is not None:
-            return _require_active(existing)
+            return _require_loginable(existing)
         if email is not None and await _email_exists(db, email):
             raise _email_conflict() from None
         raise

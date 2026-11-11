@@ -1,6 +1,8 @@
 .carousel { position: relative; height: 100%; min-width: 0; color: #27272a; }
 .cover { position: relative; z-index: 1; border-radius: 8px; box-shadow: 0 0 2px #e0bafb; }
 .track { display: grid; grid-auto-flow: column; grid-auto-columns: 100%; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; touch-action: auto; overscroll-behavior-x: contain; overscroll-behavior-y: auto; scrollbar-width: none; border-radius: 8px; }
+/* Keep positioned copy inside the track, below its sibling navigation buttons. */
+.track { isolation: isolate; }
 .track::-webkit-scrollbar { display: none; }
 .track:focus-visible, .overlay:focus-visible, .carousel button:focus-visible { outline: 3px solid #7043b4; outline-offset: -3px; }
 .slide { min-width: 0; scroll-snap-align: start; scroll-snap-stop: always; }
@@ -10,18 +12,78 @@
 .imageState { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 20% 24px 24px; gap: 12px; background: #efe7ff; color: #3f3f46; text-align: center; font-size: 13px; line-height: 1.5; }
 .imageState > span { margin: 0; max-width: 260px; }
 .imageState button { position: relative; z-index: 2; min-height: 44px; padding: 8px 14px; border: 1px solid #7043b4; border-radius: 8px; background: white; color: #7043b4; }
-.overlay { position: absolute; z-index: 1; overflow: auto; scrollbar-width: thin; color: white; text-shadow: 0 1px 4px #000; overflow-wrap: anywhere; word-break: keep-all; }
+.overlay { position: absolute; z-index: 1; overflow: auto; scrollbar-width: thin; color: #fafafa; overflow-wrap: break-word; word-break: normal; }
 .stage:has([data-carousel-image-state="loading"]) .overlay,
 .stage:has([data-carousel-image-state="error"]) .overlay { padding: 8px; border-radius: 8px; background: rgb(39 39 42 / 94%); text-shadow: none; }
-.eyebrow { margin: 0 0 1.2cqw; font-size: clamp(10px, 3.3cqw, 13px); line-height: 1.35; font-weight: 600; }
-.title { margin: 0; font-size: clamp(14px, 5.2cqw, 21px); line-height: 1.25; font-weight: 750; letter-spacing: -.025em; }
+/* Without image pixels there is no image-relative layout to preserve. Use a
+   separate status row and a scrollable copy row so neither can cover the other.
+   Only failures override the inline server box; successful images retain it. */
+.stage { --error-right: 12px; --error-bottom: 12px; }
+.carousel[data-content-carousel="home"] .stage { --error-right: 52px; --error-bottom: 48px; }
+.stage:has([data-carousel-image-state="error"]) { display: flex; flex-direction: column; background: #efe7ff; }
+.stage:has([data-carousel-image-state="error"]) .imageFrame { position: static; flex: none; }
+.stage:has([data-carousel-image-state="error"]) .imageState { position: static; padding: 16px var(--error-right) 12px 12px; }
+.stage:has([data-carousel-image-state="error"]) .overlay {
+  position: relative; flex: 1; min-height: 0; margin: 0 var(--error-right) var(--error-bottom) 12px;
+  left: auto !important; top: auto !important; width: auto !important; height: auto !important;
+  max-width: none !important; max-height: none !important;
+}
+.eyebrow { margin: 0 0 4px; font-size: 11px; line-height: 16px; font-weight: 500; color: #c7acfb; text-shadow: 0 0 .5px #18181b, 0 .4px .5px #18181b; }
+/* A hairline preserves small counters and the purple fill on bright images. */
+@supports (-webkit-text-stroke: .4px #18181b) {
+  .eyebrow { -webkit-text-stroke: .4px #18181b; paint-order: stroke fill; text-shadow: none; }
+}
+.title { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600; letter-spacing: 0; }
 .title span { display: block; }
-.copy { margin-top: 1.8cqw; font-size: clamp(11px, 3.6cqw, 14px); line-height: 1.5; }
+.copy { margin-top: 4px; font-size: 14px; line-height: 20px; }
 .copy p { margin: 0; }
-.copy p + p { margin-top: .8cqw; }
 .legacyCaption { position: absolute; inset: auto 16px 20px; margin: 0; padding: 12px; border-radius: 8px; background: #fffffff0; font-size: 14px; line-height: 1.5; }
 .metadata { margin: 20px 0 0; font-size: 11px; line-height: 1.6; color: #71717a; }
 .metadata p { display: flex; flex-wrap: wrap; column-gap: 8px; margin: 0; }
 .metadata .notice { color: #7043b4; }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 @media (prefers-reduced-motion: reduce) { .track { scroll-behavior: auto; } }
+
+/* Figma 1828:11797/11798: 247px including 10px padding, anchored bottom-left.
+   Sharing a grid row lets the five-stop scrim follow the actual copy height:
+   136px for two title/body lines, 156px for the three-line body (1828:12130).
+   Agent PNGs may already contain a scrim; do not add another full-card shade. */
+.carousel[data-content-carousel="home"] .stage { display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.carousel[data-content-carousel="home"] .image { position: absolute; inset: 0; }
+.previewScrim { position: relative; grid-area: 2 / 1; pointer-events: none; background: linear-gradient(180deg, rgb(0 0 0 / 1%) 0%, rgb(0 0 0 / 10%) 20.673%, rgb(0 0 0 / 40%) 51.442%, rgb(0 0 0 / 80%) 79.327%, #000 100%); }
+.carousel[data-content-carousel="home"] .overlay { position: relative; grid-area: 2 / 1; align-self: end; margin: 10px; width: min(227px, calc(100% - 100px)); overflow: clip; }
+.carousel[data-content-carousel="home"] :is(.title, .copy) { white-space: pre-line; }
+.carousel[data-content-carousel="home"] :is(.eyebrow, .title, .copy p) { display: -webkit-box; -webkit-box-orient: vertical; overflow: clip; }
+.carousel[data-content-carousel="home"] .eyebrow { -webkit-line-clamp: 1; }
+.carousel[data-content-carousel="home"] .title { -webkit-line-clamp: 3; }
+.carousel[data-content-carousel="home"] .copy p { -webkit-line-clamp: 3; }
+.carousel[data-content-carousel="home"] .stage:has([data-carousel-image-state="error"]) { display: flex; }
+.carousel[data-content-carousel="home"] .stage:has([data-carousel-image-state="error"]) .overlay { margin: 0 var(--error-right) var(--error-bottom) 12px; right: auto; bottom: auto; }
+/* Keep PR #24's separate error/status row and retry target free of the scrim. */
+.stage:has([data-carousel-image-state="error"]) .previewScrim,
+.stage:has([data-carousel-image-state="loading"]) .previewScrim { display: none; }
+/* Keep existing navigation available without covering the final bottom copy. */
+.carousel .position { top: 12px; bottom: auto; }
+.carousel .indicators { top: 0; bottom: auto; }
+.carousel:has(:focus-visible) .slideButton { opacity: 1; pointer-events: auto; }
+@media (hover: hover) and (pointer: fine) { .carousel:hover .slideButton { opacity: 1; pointer-events: auto; } }
+.carousel .slideButton:disabled { pointer-events: none; }
+.carousel[data-content-carousel="detail"] .track { cursor: grab; }
+.track[data-dragging="true"] { scroll-snap-type: none; scroll-behavior: auto; cursor: grabbing; user-select: none; }
+
+/* Detail only: reserve a top control row. The image-relative copy remains a
+   non-scrollable preview; unmeasured/overflowing cover originals stay below. */
+.carousel[data-content-carousel="detail"] .overlay { overflow: clip; display: flow-root; }
+.carousel[data-content-carousel="detail"] .legacyCaption { max-height: calc(100% - 76px); overflow: clip; }
+.carousel[data-content-carousel="detail"] .slideButton { align-self: flex-start; top: 0; }
+.carousel[data-content-carousel="detail"] .position { left: 48px; }
+.carousel[data-content-carousel="detail"] .indicators { left: 92px; right: 48px; }
+/* Loading and failure guidance/retry occupy their own row below navigation. */
+.carousel[data-content-carousel="detail"] .stage:has([data-carousel-image-state="loading"]) { display: flex; flex-direction: column; background: #efe7ff; }
+.carousel[data-content-carousel="detail"] .stage:has([data-carousel-image-state="loading"]) .imageFrame { position: static; flex: none; }
+.carousel[data-content-carousel="detail"] .imageState { position: static; padding: 56px 12px 12px; }
+.carousel[data-content-carousel="detail"] .stage:has([data-carousel-image-state="loading"]) .overlay {
+  position: relative; flex: 1; min-height: 0; margin: 0 12px 12px;
+  left: auto !important; top: auto !important; width: auto !important; height: auto !important;
+  max-width: none !important; max-height: none !important;
+}

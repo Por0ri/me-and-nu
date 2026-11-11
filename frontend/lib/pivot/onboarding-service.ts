@@ -8,12 +8,42 @@ export type OnboardingProfileValidation =
   | { valid: true; profile: OnboardingProfile }
   | { valid: false; errors: Partial<Record<keyof OnboardingProfile, string>> };
 
+/** Same nickname rule as the backend (2026-11 design): 2~20 Korean (jamo too), English or digit characters after trimming. */
+export const NICKNAME_MIN = 2;
+export const NICKNAME_MAX = 20;
+export const NICKNAME_RULE = "닉네임은 2~20자의 한글·영문·숫자만 쓸 수 있어요.";
+const NICKNAME_CHARACTERS = /^[0-9A-Za-z가-힣ㄱ-ㅣ]+$/;
+
+/** Why an already trimmed nickname breaks the rule: a space or symbol inside, or its length. */
+export function nicknameProblem(nickname: string): "characters" | "length" | null {
+  if (nickname && !NICKNAME_CHARACTERS.test(nickname)) return "characters";
+  const length = [...nickname].length;
+  return length < NICKNAME_MIN || length > NICKNAME_MAX ? "length" : null;
+}
+
+/** Which parts of the rule the typed text breaks, as the screen marks them: "2~20자" (length) and
+ * "공백·특수문자 제외" (characters, a space at either end included so it never looks accepted). Empty breaks nothing yet. */
+export function nicknameRuleBreaks(typed: string): { length: boolean; characters: boolean } {
+  const length = [...typed].length;
+  return {
+    length: length > 0 && (length < NICKNAME_MIN || length > NICKNAME_MAX),
+    characters: length > 0 && !NICKNAME_CHARACTERS.test(typed),
+  };
+}
+
+export const NICKNAME_TAKEN_MESSAGE = "중복된 닉네임입니다";
+export type NicknameCheck = { nickname: string; available: boolean; reason: "invalid" | "taken" | null };
+
+/** Asks whether another member who finished onboarding already uses the nickname (completion checks again). */
+export async function checkNickname(nickname: string, signal?: AbortSignal, guard: () => void = requirePivotApi): Promise<NicknameCheck> {
+  guard();
+  return apiRequest<NicknameCheck>(`/api/v1/onboarding/nickname?nickname=${encodeURIComponent(nickname)}`, { signal });
+}
+
 /** Birth-date collection and age policy remain deferred; only nickname is collected. */
 export function validateOnboardingProfile(profile: OnboardingProfile): OnboardingProfileValidation {
-  const errors: Partial<Record<keyof OnboardingProfile, string>> = {};
   const nickname = typeof profile?.nickname === "string" ? profile.nickname.trim() : "";
-  if (!nickname || [...nickname].length > 30) errors.nickname = "닉네임을 1~30자로 입력해 주세요.";
-  return Object.keys(errors).length ? { valid: false, errors } : { valid: true, profile: { nickname } };
+  return nicknameProblem(nickname) ? { valid: false, errors: { nickname: NICKNAME_RULE } } : { valid: true, profile: { nickname } };
 }
 
 export type OnboardingCompleteInput = OnboardingProfile & {

@@ -29,7 +29,7 @@ NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true
 - 생년월일 정책은 보류합니다. 새 Pivot 가입에서는 생년월일을 입력·보관·전송하거나 연령 조건을 새로 적용하지 않습니다. 이전 Consumer 화면과 날짜 유틸리티는 별도 레거시 경로로 남겨두며 기존 DB의 생년월일 상태를 바꾸지 않습니다.
 - `/pivot/demo`, 개발용 `/pivot/preview`는 명시적인 가상 작품 fixture를 사용하고 실제 세션·저장 API에 접근하지 않습니다. 서비스 화면은 오류를 데모 카탈로그로 대체하지 않습니다.
 
-서비스 사용 전 온보딩 도입 revision `e3a7b9c2d451`과 캐러셀 `f4b8c1d9a620`을 포함하는 현재 target **`150a601074af`**와 활성 `anime` Topic, 검토된 실제 작품 카탈로그를 준비해야 합니다. [온보딩 V2 명세](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)와 [캐러셀 DB·API 안내](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. 브라우저와 API 모두 같은 `localhost` 호스트를 쓰고 `NEXT_PUBLIC_API_BASE_URL`과 `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`를 실행 시 설정합니다. 실제 OAuth·약관 검증은 해당 개발 환경 설정을 사용합니다.
+서비스 사용 전 온보딩 도입 revision `e3a7b9c2d451`과 캐러셀 `f4b8c1d9a620`을 포함하는 현재 target **`91c7a2e4b630`**과 활성 `anime` Topic, 검토된 실제 작품 카탈로그를 준비해야 합니다. [온보딩 V2 명세](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)와 [캐러셀 DB·API 안내](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. 브라우저와 API 모두 같은 `localhost` 호스트를 쓰고 `NEXT_PUBLIC_API_BASE_URL`과 `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`를 실행 시 설정합니다. 실제 OAuth·약관 검증은 해당 개발 환경 설정을 사용합니다.
 
 검증 명령은 `npm test`, `npm run typecheck`, `npm run build -- --webpack`입니다. 관리 worktree에서 기존 설치 디렉터리를 junction으로 재사용할 경우 webpack 빌드로 확인하며 원본 checkout의 빌드 산출물을 변경하지 않습니다.
 
@@ -66,14 +66,7 @@ NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true
 
 실제 소셜 로그인 연결은 후속 작업입니다. 로컬 시연이 활성화된 API 모드에서 비로그인 상태로 `/consumer`에 진입하면 로그인 화면으로 이동합니다. 자연어 관심사 해석은 아직 연결되지 않았습니다. AI 대화는 API 모드에서 서버에 연결되며 질문은 최대 500자입니다.
 
-**API 시연 데이터 준비:** 기본 정책·데모 사용자 seed에 더해, `backend`에서 다음 명령으로 Agent 콘텐츠와 온보딩 관심사를 적재해야 합니다. 기본 seed만 있는 DB에는 현재 화면의 7개 선택지가 모두 준비되어 있지 않습니다.
-
-```powershell
-.\.venv\Scripts\python.exe -m app.seeds.agent_contents --git-ref f645df0 --apply
-.\.venv\Scripts\python.exe -m app.seeds.agent_interests --git-ref f645df0 --apply
-```
-
-영화·음악·애니메이션별로 현재 콘텐츠에 근거한 임시 관심사 7개를 표시하며, 실제 API에서 조회한 DB ID로 저장합니다. 온보딩과 분야 추가 화면에서 동일한 목록을 사용합니다. [임시 분류 목록·근거·팀 협의 사항](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)을 참고하세요. PostgreSQL 데이터 자체는 Git 커밋에 포함되지 않으므로 다른 환경에서는 위 seed를 실행해야 합니다.
+**API 시연 데이터 준비:** 영화·음악·애니메이션별 임시 관심사 7개와 그 근거가 된 예전 Agent 콘텐츠는 `backend`의 `agent_contents`·`agent_interests` seed로 적재했지만, 이 seed는 2026-11-03 영화 Agent 코드와 함께 삭제했습니다. 이미 적재된 DB에서는 그대로 보입니다. 새 DB에서 이 시연을 준비하려면 `chore/movie-agent` 브랜치에서 seed를 되살려 실행해야 합니다. [임시 분류 목록·근거·팀 협의 사항](../docs/PROVISIONAL_ONBOARDING_INTERESTS.md)을 참고하세요.
 
 콘텐츠 `imageUrl`이 `/local-content/...`이면 `frontend/public/local-content`의 로컬 이미지를 표시합니다. 포함된 이미지 파일만으로 DB의 콘텐츠 이미지 경로를 자동 변경하지는 않습니다.
 
@@ -90,7 +83,7 @@ NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true
 ## 포함된 테스트
 
 - 홈·Topic·Subtopic별 공개 콘텐츠 피드와 상세 화면
-- AI 생성, 검토 필요, 개발용 미리보기 표시
+- 카드뉴스에는 AI 생성 안내를 표시하고, 일반 글에는 해당 시 미리보기와 검토 필요 배지도 표시
 - 내부 Next.js Route Handler `/api/health`
 - 외부 FastAPI `/health` 선택 호출
 - 개발용 가입·로그인 → 세션 → 정책·Topic/Subtopic → 온보딩 → 프로필·구독 → 피드·상세 → O/X·좋아요·북마크 → 로그아웃
@@ -154,7 +147,7 @@ npm run dev
 
 브라우저의 HttpOnly 쿠키가 정상 전달되려면 두 주소 모두 `localhost`를
 사용해야 합니다. `localhost`와 `127.0.0.1`을 섞지 마세요. 백엔드 실행 전
-대상 DB를 확인한 뒤 `alembic upgrade 150a601074af`와 `python -m app.seeds.v1_local`을 사용합니다. 이 후보에는 150a head만 있고 생년월일 삭제 d2 파일은 없습니다. 적용 revision을 고정하기 위해 `upgrade head`나 `upgrade heads`로 바꾸지 않습니다.
+대상 DB를 확인한 뒤 `alembic upgrade 91c7a2e4b630`과 `python -m app.seeds.v1_local`을 사용합니다. 이 후보에는 91c7 head만 있고 생년월일 삭제 d2 파일은 없습니다. 적용 revision을 고정하기 위해 `upgrade head`나 `upgrade heads`로 바꾸지 않습니다.
 Swagger 수동 절차는 [가이드](../docs/SWAGGER_TEST_GUIDE.md)에 있습니다.
 
 ## Vercel 연결

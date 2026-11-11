@@ -1,0 +1,64 @@
+.screen {
+  --home-muted: var(--pivot-muted);
+  width: 100%;
+  max-width: 430px;
+  min-height: 100svh;
+  margin-inline: auto;
+  padding: env(safe-area-inset-top) 24px max(24px, env(safe-area-inset-bottom));
+  background: var(--pivot-bg);
+  color: #27272a;
+  overflow-wrap: anywhere;
+}
+
+.screen[data-demo] { min-height: calc(100svh - 44px); }
+.screen > header { height: 44px; }
+.content { padding-top: 8px; }
+.filters, .meta, .time { display: flex; align-items: center; }
+.filters { gap: 12px; margin-bottom: 8px; }
+.screen .filters button, .tag { font-size: 12px; font-weight: 500; line-height: 18px; }
+.filters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px;
+  border: 1px solid #efe7ff;
+  border-radius: 999px;
+  background: white;
+}
+.filters button[aria-pressed="true"] { border-color: #9c79e6; background: #9c79e6; color: #fafafa; }
+.dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--pivot-primary); }
+.cards { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.card {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #efe7ff;
+  border-radius: 8px;
+  background: white;
+  text-align: left;
+}
+.card[data-unread] { border-color: #decfff; background: #f7f2ff; }
+.meta { justify-content: space-between; gap: 8px; }
+.tag { border-radius: 8px; padding: 2px 8px; color: #583199; background: #efe7ff; }
+.time { gap: 4px; color: var(--pivot-muted); font-size: 12px; line-height: 18px; }
+.preview { position: relative; display: grid; gap: 8px; padding-right: 28px; }
+.title { font-size: 16px; font-weight: 600; line-height: 24px; }
+.summary {
+  display: -webkit-box;
+  max-width: 230px;
+  overflow: hidden;
+  color: #52525b;
+  font-size: 12px;
+  line-height: 18px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.preview img { position: absolute; right: 0; top: 50%; translate: 0 -50%; }
+.detail { display: grid; gap: 16px; }
+.detailHeading { display: grid; gap: 8px; padding-block: 16px; border-bottom: 1px solid #d4d4d8; }
+.detailHeading h2 { margin: 0; font-size: 20px; font-weight: 700; line-height: 28px; }
+.detailHeading time { color: #a1a1aa; font-size: 16px; font-weight: 600; line-height: 24px; }
+.body { margin: 0; color: black; font-size: 16px; line-height: 24px; white-space: pre-wrap; }
+.content > p, .feedback, .detail > [role="status"] { padding-block: 12px; color: #52525b; font-size: 14px; line-height: 20px; }
+.more, .feedback button { margin-top: 8px; padding: 8px 12px; border: 1px solid #efe7ff; border-radius: 8px; background: white; color: #583199; }

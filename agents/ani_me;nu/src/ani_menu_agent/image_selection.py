@@ -88,6 +88,14 @@ def image_belongs_to_package_sources(
     """Accept source-page images or provenance-checked official art for the same work."""
     image_page = _source_page_key(str(image.source_url))
     same_source_page = any(_source_page_key(str(source.url)) == image_page for source in sources)
+    if (
+        package is not None
+        and image.menu_work_ids
+        and not set(image.menu_work_ids).intersection(package.menu_work_ids)
+    ):
+        # Page co-location is not evidence that an explicitly different-work
+        # asset belongs to this package (e.g. a multi-franchise article page).
+        return False
     provenance_title = image.provenance_source.title if image.provenance_source else ""
     source_path = unquote(urlsplit(str(image.source_url)).path)
     image_context = " ".join((image.source_description, provenance_title, source_path))
@@ -96,9 +104,17 @@ def image_belongs_to_package_sources(
         # anime artwork, even if legacy metadata mislabeled it as a key visual.
         return False
     content_type = package.content_type if package is not None else None
-    if image.asset_kind == "goods_product" and content_type != "goods":
+    if (
+        image.asset_kind == "goods_product"
+        and content_type != "goods"
+        and not same_source_page
+    ):
         return False
-    if image.asset_kind == "event_visual" and content_type != "event":
+    if (
+        image.asset_kind == "event_visual"
+        and content_type != "event"
+        and not same_source_page
+    ):
         return False
     if image.asset_kind == "fan_meme" and (
         package is None or package.content_kind.value != "humor"
@@ -291,97 +307,175 @@ def assign_distinct_images(
     cards: list[CopyCard],
     package: ContentPackage,
 ) -> list[CopyCard]:
-    """Assign unique relevant source images; never substitute decorative graphics."""
-    used: set[str] = set()
-    assigned: list[CopyCard] = []
-    for card in sorted(cards, key=lambda item: (item.role != "cover", item.page)):
-        candidates = distinct_editorial_images(
-            package.images, package.sources, package, card_role=card.role
+    """Preflight every card, then assign distinct relevant images by constrained match.
+
+    Cards with fewer eligible assets get first claim. An augmenting-path pass can
+    move a flexible card to another asset when that preserves a unique assignment
+    for a more constrained card. Visual fingerprints and normalized URLs share a
+    single capacity, so alternate CDN renditions cannot be reused across cards.
+    """
+    if not cards:
+        return []
+
+    target_source_pages = {_source_page_key(str(source.url)) for source in package.sources}
+
+    def card_score(card: CopyCard, image: ImageAsset) -> tuple[int, int, int, int, int, int]:
+        fact_ids = set(card.fact_ids)
+        target_text = " ".join(
+            [
+                package.topic,
+                *card.title_lines,
+                *card.body_sentences,
+                *(
+                    alias
+                    for term in package.term_glossary
+                    if term.category == "character"
+                    for alias in (term.korean, term.original)
+                    if alias
+                ),
+            ]
+        ).casefold()
+        image_context = " ".join(
+            (
+                image.source_description,
+                unquote(urlsplit(str(image.url or "")).path),
+                image.provenance_source.title if image.provenance_source else "",
+                *image.depicted_entities,
+            )
+        ).casefold()
+        entity_matches = sum(
+            1 for entity in image.depicted_entities if entity.casefold() in target_text
         )
-        available = [
-            image
-            for image in candidates
-            if not used.intersection(image_visual_keys(image))
-            and _fits_card_resolution(image, card)
+        for term in package.term_glossary:
+            if term.category != "character" or not term.korean.strip():
+                continue
+            if term.korean.casefold() not in target_text:
+                continue
+            if any(
+                alias and alias.casefold() in image_context
+                for alias in (term.korean, term.original)
+            ):
+                entity_matches += 1
+        source_page_match = int(
+            _source_page_key(str(image.source_url)) in target_source_pages
+        )
+        return (
+            len(fact_ids.intersection(image.related_fact_ids)),
+            entity_matches,
+            source_page_match,
+            int(image.visual_match == "exact"),
+            int(image.visual_match in {"exact", "strong"}),
+            int(image.id == card.image_id),
+        )
+
+    # Merge assets that share any source URL, byte fingerprint, or storage key.
+    assets = list(package.images)
+    parents = list(range(len(assets)))
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    token_owner: dict[str, int] = {}
+    asset_index = {id(image): index for index, image in enumerate(assets)}
+    for index, image in enumerate(assets):
+        for token in image_visual_keys(image):
+            previous = token_owner.setdefault(token, index)
+            union(index, previous)
+
+    # For each card, retain its best rendition for each unique visual and order
+    # choices by semantic relevance. Nothing here relaxes eligibility or reuse.
+    choices: dict[int, list[tuple[int, ImageAsset]]] = {}
+    for card_index, card in enumerate(cards):
+        best_by_visual: dict[int, ImageAsset] = {}
+        for image in distinct_editorial_images(
+            package.images, package.sources, package, card_role=card.role
+        ):
+            if not _fits_card_resolution(image, card):
+                continue
+            index = asset_index.get(id(image))
+            if index is None:
+                # Defensive fallback for model copies returned by a future filter.
+                index = next(
+                    (i for i, asset in enumerate(assets) if asset.id == image.id),
+                    None,
+                )
+            if index is None:
+                continue
+            visual = find(index)
+            current = best_by_visual.get(visual)
+            if current is None or card_score(card, image) > card_score(card, current):
+                best_by_visual[visual] = image
+        choices[card_index] = [
+            (visual, image)
+            for visual, image in sorted(
+                best_by_visual.items(),
+                key=lambda pair: (card_score(card, pair[1]), pair[1].width * pair[1].height),
+                reverse=True,
+            )
         ]
-        if not available:
+
+    # Kuhn-style augmenting paths maximize the number of cards with a distinct
+    # eligible image. Resolve the most constrained cards first for deterministic
+    # tie-breaking; cover gets priority only when candidate counts are equal.
+    owner_by_visual: dict[int, int] = {}
+    assignment: dict[int, tuple[int, ImageAsset]] = {}
+
+    def place(card_index: int, visited_visuals: set[int]) -> bool:
+        for visual, image in choices[card_index]:
+            if visual in visited_visuals:
+                continue
+            visited_visuals.add(visual)
+            previous_card = owner_by_visual.get(visual)
+            if previous_card is None or place(previous_card, visited_visuals):
+                owner_by_visual[visual] = card_index
+                assignment[card_index] = (visual, image)
+                return True
+        return False
+
+    card_order = sorted(
+        range(len(cards)),
+        key=lambda index: (
+            len(choices[index]),
+            cards[index].role != "cover",
+            cards[index].page,
+        ),
+    )
+    for card_index in card_order:
+        place(card_index, set())
+
+    assigned: list[CopyCard] = []
+    for card_index, card in enumerate(cards):
+        match = assignment.get(card_index)
+        if match is None:
             assigned.append(
                 card.model_copy(
                     update={
                         "image_id": f"missing-source-image-{card.page}",
                         "visual_mode": "source_image",
                         "image_reuse_mode": "missing_source_image",
-                        "image_explanation": (
-                            "원문 근거를 시각화한 편집 그래픽으로 구성"
-                        ),
+                        "image_explanation": "?? ??? ???? ?? ????? ??",
                     }
                 )
             )
             continue
-        fact_ids = set(card.fact_ids)
-        target_text = " ".join(
-            [package.topic, *card.title_lines, *card.body_sentences]
-        ).casefold()
-        target_source_pages = {_source_page_key(str(source.url)) for source in package.sources}
-
-        def score(
-            image: ImageAsset,
-            fact_ids: set[str] = fact_ids,
-            preferred_id: str = card.image_id,
-            target_text: str = target_text,
-            target_source_pages: set[tuple[str, str]] = target_source_pages,
-        ) -> tuple[int, int, int, int, int, int]:
-            image_context = " ".join(
-                (
-                    image.source_description,
-                    unquote(urlsplit(str(image.url or "")).path),
-                    image.provenance_source.title if image.provenance_source else "",
-                )
-            ).casefold()
-            entity_matches = sum(
-                1 for entity in image.depicted_entities if entity.casefold() in target_text
-            )
-            for term in package.term_glossary:
-                if term.category != "character" or not term.korean.strip():
-                    continue
-                if term.korean.casefold() not in target_text:
-                    continue
-                if any(
-                    alias and alias.casefold() in image_context
-                    for alias in (term.korean, term.original)
-                ):
-                    entity_matches += 1
-            source_page_match = int(
-                _source_page_key(str(image.source_url)) in target_source_pages
-            )
-            return (
-                len(fact_ids.intersection(image.related_fact_ids)),
-                entity_matches,
-                source_page_match,
-                int(image.visual_match == "exact"),
-                int(image.visual_match in {"exact", "strong"}),
-                int(image.id == preferred_id),
-            )
-
-        # The LLM's initial image ID is a hint, not proof of semantic fit.
-        # Prefer fact/entity-matched assets and visuals from the cited page;
-        # keep the preferred ID only as the final tie-breaker.
-        selected = max(available, key=score)
-        used.update(image_visual_keys(selected))
+        _visual, selected = match
         explanation = card.image_explanation.strip()
         selected_source_page_match = (
             _source_page_key(str(selected.source_url)) in target_source_pages
         )
-        if (
-            package.content_type in {"event", "goods"}
-            and not selected_source_page_match
-        ):
+        if package.content_type in {"event", "goods"} and not selected_source_page_match:
             explanation = (
-                "동일 작품의 공식 일러스트를 보조 시각자료로 사용합니다. "
-                "행사 현장 사진이나 행사 전용 이미지는 아닙니다."
+                "?? ??? ?? ????? ?? ????? ?????. ?? ?? ???? ?? ?? ???? ????."
                 if package.content_type == "event"
-                else "동일 작품의 공식 일러스트를 보조 시각자료로 사용합니다. "
-                "상품 실물 사진은 아닙니다."
+                else "?? ??? ?? ????? ?? ????? ?????. ?? ?? ??? ????."
             )
         elif selected.id != card.image_id and selected.korean_explanation:
             explanation = selected.korean_explanation

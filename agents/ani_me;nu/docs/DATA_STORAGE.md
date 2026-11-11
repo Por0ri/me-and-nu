@@ -35,7 +35,7 @@ CSV는 초기 작품 카탈로그 가져오기용 입력 데이터로만 취급�
 
 ## 카드 원고 형식
 
-카드 원고의 기준 데이터는 Markdown 문자열이 아니라 `ContentPackage`와 카드별 구조 필드입니다. `content_cards`에는 `page`, `role`, `eyebrow`, `title_lines`, `body_sentences`, `fact_ids`, `image_id`, `visual_mode`, `image_explanation`, `layout`, `rendered_image_key`를 저장하고, `feed_queue.package_json`에는 전체 패키지와 출처·사실·이미지 메타데이터를 함께 보존합니다. `visual_mode`는 원본 이미지 카드(`source_image`)와 자체 편집 그래픽 카드(`editorial_graphic`)를 구분합니다. 한 행이 카드 한 장이며 `page`로 캐러셀 순서를 보장합니다.
+카드 원고의 기준 데이터는 Markdown 문자열이 아니라 `ContentPackage`와 카드별 구조 필드입니다. `content_cards`에는 `page`, `role`, `eyebrow`, `title_lines`, `body_sentences`, `fact_ids`, 카드가 실제로 다루는 `menu_work_ids`, `image_id`, `visual_mode`, `image_explanation`, `layout`, `rendered_image_key`를 저장하고, `feed_queue.package_json`에는 전체 패키지와 출처·사실·이미지 메타데이터를 함께 보존합니다. 큐레이션의 `menu_work_ids`는 패키지 전체 대상 작품이며, 카드 행의 `menu_work_ids_json`은 해당 페이지가 실제로 다루는 작품만 담습니다. `visual_mode`는 원본 이미지 카드(`source_image`)와 자체 편집 그래픽 카드(`editorial_graphic`)를 구분합니다. 한 행이 카드 한 장이며 `page`로 캐러셀 순서를 보장합니다.
 
 각 캐러셀에는 추천용 대표 `content_type`을 하나 저장합니다. 현재 활성 타입은 소식(`news`), 행사(`event`), 작품 가이드(`guide`), 인물(`people`), 굿즈(`goods`), 리뷰 분석(`review`), 유머(`humor`), 캐릭터(`character`), 큐레이션(`curation`), 음악(`music`) 10개입니다. 제작 비하인드·메이킹은 별도 활성 유형이 아니라 `humor`에 포함됩니다. 기존 `behind` 레코드는 스키마 초기화 시 `humor`로 정규화되고 레지스트리의 `behind`는 비활성화됩니다. `content_kind`의 `information`/`humor`는 수집·생성 경로이고, 추천용 `content_type`과 별도 필드입니다. 하위 카테고리는 아직 저장하지 않습니다. `content_types` 레지스트리와 `content_drafts`/`feed_queue`의 인덱스 컬럼을 사용해 타입별 추천 조회를 지원하며, 미분류 콘텐츠는 피드에 넣지 않습니다.
 
@@ -44,6 +44,7 @@ CSV는 초기 작품 카탈로그 가져오기용 입력 데이터로만 취급�
 - 제목은 `title_lines` 배열로 보관해 한국어 단어가 렌더 단계에서 어색하게 쪼개지지 않도록 합니다.
 - 본문은 `body_sentences` 배열로 문장 단위 보관합니다. 마크다운 줄바꿈이나 HTML 태그에 문장 의미를 맡기지 않습니다.
 - 카드에서 언급한 검증 사실은 `fact_ids`로 연결합니다. 날짜·장소·가격·참여 단계 같은 변경 가능한 값은 `Fact.details`에 타입이 있는 필드로 보관합니다.
+- 큐레이션 카드의 `menu_work_ids`는 패키지에 연결된 작품 ID의 부분집합이어야 하며, 카드 문구·인용된 사실에서 해당 작품을 확인할 수 있어야 합니다. 지정된 작품 ID와 다른 작품 이미지가 연결되면 생성 검증에서 차단합니다. 패키지 작품 링크의 첫 항목은 대표 링크로 유지해 기존 피드 계약과 호환합니다.
 - 외국어 포스터의 OCR 원문은 이미지 레코드에 보존하고, 사용자에게 설명할 한국어는 카드의 `image_explanation`에 둡니다.
 - 사람이 읽고 공유할 필요가 있으면 `ani-menu export-markdown <manifest.json> --output <file.md>`로 내보냅니다. 이 Markdown은 내보내기 산출물이며, 수정 후 다시 입력하려면 구조화 manifest에 반영해야 합니다.
 

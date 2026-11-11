@@ -5,7 +5,7 @@ import { createMyPageRequestController, type MyPageDataSource, type MyPageState 
 import { PivotMyPageScreen } from "./my-page-screen";
 
 const loading: MyPageState = { status: "loading" };
-export function MyPageController({ source, onHome, onSaved, onLogout }: { source: MyPageDataSource; onHome: () => void; onSaved?: () => void; onLogout?: () => Promise<void> }) {
+export function MyPageController({ source, onHome, onSaved, onActivity, onInquiry, onLogout, onWithdraw, onNotifications }: { source: MyPageDataSource; onHome: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>; onNotifications?: () => void }) {
   const [request, setRequest] = useState<{ source: MyPageDataSource; state: MyPageState }>();
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -14,5 +14,5 @@ export function MyPageController({ source, onHome, onSaved, onLogout }: { source
     return () => controller.cancel();
   }, [source, attempt]);
   const state = request?.source === source ? request.state : loading;
-  return <PivotMyPageScreen key={source.kind} state={state} demo={source.kind === "demo"} onHome={onHome} onSaved={onSaved} onLogout={onLogout} onRetry={() => setAttempt((value) => value + 1)} />;
+  return <PivotMyPageScreen key={source.kind} state={state} demo={source.kind === "demo"} notificationScope={source} notificationSource={source.kind === "service" ? source.notificationSettings : undefined} onHome={onHome} onSaved={onSaved} onActivity={onActivity} onInquiry={onInquiry} onLogout={onLogout} onWithdraw={onWithdraw} onNotifications={onNotifications} onRetry={() => setAttempt((value) => value + 1)} />;
 }

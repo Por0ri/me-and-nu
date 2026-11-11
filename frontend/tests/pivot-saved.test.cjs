@@ -29,7 +29,7 @@ function load(file) {
   return mod.exports;
 }
 const { createDemoSavedSource } = load('lib/pivot/saved-mock.ts');
-const { pendingSavedSource } = load('lib/pivot/saved-service.ts');
+const { pendingSavedSource, mapSavedCard } = load('lib/pivot/saved-service.ts');
 const { createSavedRequestController } = load('lib/pivot/saved.ts');
 const { mockHomeSource } = load('lib/pivot/home-mock.ts');
 const { mockDetailSource } = load('lib/pivot/detail-mock.ts');
@@ -53,6 +53,7 @@ test('Every Saved card resolves the exact Home and Detail identity, title and co
     assert.equal(card.title, post.title); assert.equal(card.title, detail.article.title);
     assert.deepEqual(plain(card.image), plain(post.slides[0].image));
     assert.deepEqual(plain(card.image), plain(detail.article.image));
+    assert.equal(card.imageHasEmbeddedCopy, true, 'Verified Demo covers explicitly declare embedded copy');
   }
 });
 test('Demo bookmarks toggle one matching identity, reject mismatched pairs and notify only subscribers', async () => {
@@ -173,4 +174,68 @@ test('Saved Service and Demo changes have no API, persistent storage or Consumer
     assert.doesNotMatch(source, /fetch\(|localStorage|sessionStorage|document.cookie|\/api\/|consumer/);
   }
   assert.doesNotMatch(fs.readFileSync(path.join(root, 'lib/pivot/saved-service.ts'), 'utf8'), /from.*mock/);
+});
+
+test('Saved hides duplicate copy only with explicit metadata, never image authentication or URL shape', () => {
+  const title = '이미지 문구와 다른 실제 제목 <안전> ' + '긴제목'.repeat(30);
+  for (const { image, imageHasEmbeddedCopy } of [
+    {},
+    { image: { src: '/pivot/home/slide-1.png', alt: 'URL alone is not evidence' } },
+    { image: { src: '/pivot/home/slide-5.png', alt: 'Verified local fixture' }, imageHasEmbeddedCopy: true },
+    { image: { src: '/agent-cover.png', alt: 'Agent image without text' } },
+    { image: { src: '/api/v1/contents/41/slides/1/image?topicId=7', alt: '', protected: true } },
+  ]) {
+    const card = { postId: '41', contentId: '41', topicId: 7, title, image, imageHasEmbeddedCopy };
+    const html = renderToStaticMarkup(React.createElement(SavedContentCard, { card, onViewDetail() {} }));
+    const escaped = title.replace('<', '&lt;').replace('>', '&gt;');
+    assert.equal(html.split(escaped).length - 1, 1);
+    assert.ok(html.includes(`class="title" data-saved-title="">${escaped}</span>`));
+    assert.match(html, /class="thumbnail"[^>]*>[\s\S]*<span class="savedOverlay">/);
+    assert.doesNotMatch(html, /class="caption"/);
+    assert.equal(html.includes('data-embedded-copy="true"'), imageHasEmbeddedCopy === true);
+    const labelledBy = html.match(/aria-labelledby="([^"]+)"/)[1];
+    assert.ok(html.includes(`id="${labelledBy}" class="savedLabel"`));
+    assert.match(html, /class="srOnly"> 자세히 보기<\/span>/);
+    assert.doesNotMatch(html, /<안전>/);
+    if (image?.protected) assert.match(html, /data-carousel-image-state="loading"/);
+    if (!image) assert.match(html, /이미지 준비 중/);
+  }
+});
+
+test('Saved service metadata is trimmed, escaped and omitted when null, blank or malformed', () => {
+  const base = { contentId: 41, topicId: 7, title: '서비스 제목', imageUrl: null };
+  const withText = mapSavedCard({ ...base, summary: '  실제 요약 <script>  ', sourceName: '  실제 출처 &  ' }, 7);
+  assert.equal(withText.summary, '실제 요약 <script>'); assert.equal(withText.sourceName, '실제 출처 &');
+  assert.equal(withText.imageHasEmbeddedCopy, undefined);
+  const html = renderToStaticMarkup(React.createElement(SavedContentCard, { card: withText, onViewDetail() {} }));
+  assert.match(html, /data-saved-summary="">실제 요약 &lt;script&gt;/);
+  assert.match(html, /data-saved-source="">출처: 실제 출처 &amp;/);
+  assert.doesNotMatch(html, /<script>/);
+  const label = html.match(/<span id="[^"]+" class="savedLabel">([\s\S]*?)<\/span><\/span>/)[1];
+  assert.match(label, /서비스 제목/); assert.doesNotMatch(label, /실제 출처|실제 요약/);
+  for (const value of [null, undefined, '', '   ', 42, { fake: 'text' }]) {
+    const card = mapSavedCard({ ...base, summary: value, sourceName: value }, 7);
+    assert.equal(card.summary, undefined); assert.equal(card.sourceName, undefined);
+    const empty = renderToStaticMarkup(React.createElement(SavedContentCard, { card, onViewDetail() {} }));
+    assert.doesNotMatch(empty, /data-saved-summary|data-saved-source/);
+  }
+  for (const field of ['summary', 'sourceName']) {
+    const card = mapSavedCard({ ...base, summary: null, sourceName: null, [field]: '독립 필드' }, 7);
+    assert.equal(card[field], '독립 필드');
+    const html = renderToStaticMarkup(React.createElement(SavedContentCard, { card, onViewDetail() {} }));
+    assert.equal(html.includes('data-saved-summary'), field === 'summary');
+    assert.equal(html.includes('data-saved-source'), field === 'sourceName');
+  }
+});
+
+test('Activity retains its existing overlay and protected-cover caption independently of SAVE', () => {
+  const { ContentListCard } = load('components/pivot/content-list-card.tsx');
+  for (const protectedImage of [false, true]) {
+    const card = { postId: '41', contentId: '41', title: '활동 제목', summary: '활동 요약', sourceName: '출처',
+      image: { src: '/cover.png', alt: '', ...(protectedImage ? { protected: true } : {}) } };
+    const html = renderToStaticMarkup(React.createElement(ContentListCard, { card, surface: 'activity', onViewDetail() {} }));
+    assert.match(html, new RegExp(`class="${protectedImage ? 'caption' : 'overlay'}"`));
+    assert.equal(html.includes('활동 요약'), !protectedImage);
+    assert.doesNotMatch(html, /savedOverlay|data-embedded-copy|data-saved-title/);
+  }
 });

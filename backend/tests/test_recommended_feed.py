@@ -308,9 +308,14 @@ def link_works(engine):
         ])
 
 
-async def search(engine, q, user_id=7):
+async def search(engine, q, user_id=7, work_id=None):
     with Session(engine) as session:
-        return await feed_service.search_feed(AsyncAdapter(session), user_id, 1, q=q)
+        return await feed_service.search_feed(AsyncAdapter(session), user_id, 1, q=q, work_id=work_id)
+
+
+async def suggest(engine, q, user_id=7, limit=feed_service.SUGGEST_WORKS):
+    with Session(engine) as session:
+        return await feed_service.suggest_works(AsyncAdapter(session), user_id, 1, q=q, limit=limit)
 
 
 @pytest.mark.asyncio
@@ -346,6 +351,39 @@ async def test_search_ignores_spaces_and_names_a_work_without_cards(engine, monk
     frieren = await search(engine, "장송의프리렌")
     assert (frieren.works, frieren.contents) == (["장송의 프리렌"], [])
     assert (await search(engine, "sousounofrieren")).works == ["장송의 프리렌"]
+
+
+@pytest.mark.asyncio
+async def test_search_for_a_picked_work_shows_only_that_works_cards(engine, monkeypatch):
+    # Picking a suggested work narrows the result to it, whatever the typed words match.
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+
+    naruto = await search(engine, "하이큐", user_id=8, work_id=902)
+    assert ([card.id for card in naruto.contents], naruto.works) == ([506], ["나루토"])
+    assert naruto.contents[0].recommendation_reason == "‘나루토’ 검색 결과예요"
+    assert [card.id for card in (await search(engine, "하이큐!!", work_id=901)).contents] == [503, 507, 508]
+    unknown = await search(engine, "하이큐", work_id=999)
+    assert (unknown.works, unknown.contents) == ([], [])
+
+
+@pytest.mark.asyncio
+async def test_suggestions_match_like_onboarding_and_include_works_without_cards(engine, monkeypatch):
+    monkeypatch.setattr(feed_service, "_now", lambda: NOW)
+    link_works(engine)
+    with engine.begin() as connection:
+        connection.execute(Entity.__table__.insert(), [
+            {"entity_id": entity_id, "topic_id": 1, "entity_type": "anime", "name": name, "aliases": [], "is_active": active}
+            for entity_id, name, active in [(904, "하이큐!! 극장판", True), (905, "하이큐!! 2기", True),
+                                             (906, "하이큐!! 3기", True), (907, "하이큐!! 옛판", False)]
+        ])
+
+    found = await suggest(engine, " 하이 큐 ")
+    assert (found.query, [(work.entity_id, work.name) for work in found.works]) == (
+        "하이 큐", [(901, "하이큐!!"), (904, "하이큐!! 극장판"), (905, "하이큐!! 2기")])
+    assert [work.entity_id for work in (await suggest(engine, "하이큐", limit=10)).works] == [901, 904, 905, 906]
+    assert [work.name for work in (await suggest(engine, "sousou")).works] == ["장송의 프리렌"]
+    assert (await suggest(engine, "   ")).works == []
 
 
 @pytest.mark.asyncio

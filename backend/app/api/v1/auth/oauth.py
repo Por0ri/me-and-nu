@@ -89,8 +89,8 @@ async def _rollback(db: AsyncSession) -> None:
     summary="카카오·네이버 로그인 시작",
     description=(
         "먼저 /auth/session에서 익명 세션과 CSRF 토큰을 받으세요. "
-        "authorizationUrl로 브라우저를 이동합니다. 현재 purpose=signin만 지원하며 "
-        "reauth/restore는 후속 계정 기능에서 연결합니다."
+        "authorizationUrl로 브라우저를 이동합니다. 현재 purpose=signin만 지원합니다. "
+        "탈퇴 유예 중인 계정도 signin으로 로그인하면 복구 대기 세션을 받습니다."
     ),
     responses={
         **COMMON_ERRORS,
@@ -111,7 +111,7 @@ async def start_login(
     if context.is_dev_bypass:
         raise ApiError(503, "AUTH_UNAVAILABLE", "실제 소셜 로그인에서는 개발용 인증 우회를 꺼 주세요.")
     if payload is not None and payload.purpose != "signin":
-        raise ApiError(422, "UNSUPPORTED_AUTH_PURPOSE", "재인증·탈퇴 복구는 아직 지원하지 않습니다.")
+        raise ApiError(422, "UNSUPPORTED_AUTH_PURPOSE", "지원하지 않는 로그인 목적입니다.")
     state = await create_oauth_attempt(
         db,
         provider=provider,
@@ -177,15 +177,17 @@ async def login_callback(
         user = await resolve_oauth_user(db, identity)
         user.last_login_at = utcnow()
         complete = user.onboarding_completed_at is not None
+        # 탈퇴 유예 중인 계정은 로그인 화면으로 돌아가 복구 여부를 고릅니다.
+        restoring = user.account_status == "withdrawn"
         new_session, raw_token = await create_auth_session(
             db,
             user_id=user.user_id,
-            session_state="active" if complete else "onboarding_pending",
+            session_state="restoration_pending" if restoring else "active" if complete else "onboarding_pending",
             store=store,
         )
         await revoke_auth_session(previous, store=store)
         await db.commit()
-        response = _redirect("/pivot/home" if complete else "/pivot/consent")
+        response = _redirect("/pivot/login" if restoring else "/pivot/home" if complete else "/pivot/consent")
         set_session_cookie(response, raw_token)
         return response
     except ApiError as exc:

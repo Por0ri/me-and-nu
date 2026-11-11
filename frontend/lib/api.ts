@@ -13,7 +13,9 @@ export type Session = {
   user: { id: number; accountType: AccountType } | null;
   onboardingCompleted: boolean;
   csrfToken: string;
+  scheduledDeleteAt?: string | null;
 };
+type WithdrawalRestoration = { status: "active"; user: NonNullable<Session["user"]>; onboardingCompleted: boolean };
 export type PolicyType = string;
 export type Policy = {
   type: PolicyType;
@@ -36,6 +38,17 @@ export type ConsentHistoryResponse = {
 export type ConsentPatchResponse = {
   items: Array<{ type: string; agreed: boolean; updatedAt: string }>;
 };
+// API-068/069: stored internal notification preferences, not inbox/read state.
+export type NotificationSettingsResponse = { inAppEnabled: boolean; nightInAppEnabled: boolean; version: number };
+export type NotificationSettingsPatch = { version: number; inAppEnabled?: boolean; nightInAppEnabled?: boolean };
+export function getNotificationSettings(init: Pick<RequestInit, "signal"> = {}) {
+  return apiRequest<NotificationSettingsResponse>("/api/v1/users/me/notification-settings", init, 200);
+}
+export function patchNotificationSettings(input: NotificationSettingsPatch, init: Pick<RequestInit, "signal" | "headers"> = {}) {
+  return apiRequest<NotificationSettingsResponse>("/api/v1/users/me/notification-settings", {
+    ...init, method: "PATCH", body: JSON.stringify(input),
+  }, 200);
+}
 export type Topic = { id: number; code: string; name: string };
 export type TopicsResponse = { topics: Topic[] };
 export type Subtopic = { subtopicId: number; topicId: number; name: string };
@@ -99,6 +112,7 @@ export type FeedResponse = {
   emptyReason: string | null;
 };
 export type FeedSearchResponse = { selectedTopicId: number; query: string; works: string[]; contents: FeedCard[] };
+export type WorkSuggestionsResponse = { selectedTopicId: number; query: string; works: { entityId: number; name: string }[] };
 export type ContentDetail = {
   contentId: number; topicId: number; title: string; sourceUrl: string;
   publisher: string; publishedAt: string | null; displayMode: string;
@@ -145,12 +159,26 @@ export type ChatJob = {
   error: { code: string; message: string } | null;
 };
 export type NotificationItem = {
-  notificationId: number; type: "system_notice"; title: string; body: string;
+  notificationId: number; type: "system_notice" | "topic_new_post"; title: string; body: string;
   topicId: number | null; contentId: number | null; imageUrl: string | null;
   isRead: boolean; readAt: string | null; createdAt: string;
 };
 export type NotificationsResponse = { items: NotificationItem[]; nextCursor: string | null };
 export type BookmarksResponse = { items: SavedBookmark[]; nextCursor: string | null };
+export type ActivityContentCard = {
+  contentId: number; title: string; topicId: number;
+  summary: string | null; imageUrl: string | null; sourceName: string | null;
+  productionType: string | null; publishedAt: string | null; subtopicNames: string[];
+};
+export type LikedContent = ActivityContentCard & { likedAt: string };
+export type ViewedContent = ActivityContentCard & { viewedAt: string };
+export type LikedContentsResponse = { items: LikedContent[]; nextCursor: string | null };
+export type RecentViewsResponse = { items: ViewedContent[]; nextCursor: string | null };
+export type ActivityListQuery = { topicId?: number; cursor?: string; limit?: number };
+export type InquiryInput = { inquiryType: "service" | "bug"; detail: string };
+export type InquiryResponse = { inquiryId: number; status: "received" };
+export type ReportInput = { targetType: "content"; targetId: number; reasonCode: "wrong_info" | "spoiler" | "rights" | "inappropriate" | "other"; detail?: string };
+export type ReportResponse = { reportId: number; status: "received" };
 
 export type ApiFieldError = { field: string; code: string; message: string };
 type ErrorPayload = { code?: string; message?: string; fields?: ApiFieldError[]; requestId?: string };
@@ -170,6 +198,7 @@ export const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://local
 export const API_UNAUTHORIZED_EVENT = "api:unauthorized";
 let csrfToken: string | null = null;
 let sessionRequest: Promise<Session> | null = null;
+let sessionVersion = 0;
 
 function query(params: Record<string, string | number | boolean | undefined | null>): string {
   const search = new URLSearchParams();
@@ -179,43 +208,55 @@ function query(params: Record<string, string | number | boolean | undefined | nu
   return search.size ? `?${search}` : "";
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(path: string, init: RequestInit = {}, expectedStatus?: number): Promise<T> {
   init.signal?.throwIfAborted();
   const method = (init.method ?? "GET").toUpperCase();
-  if (method !== "GET" && method !== "HEAD" && !csrfToken) await getSession();
+  if (method !== "GET" && method !== "HEAD" && !csrfToken && !new Headers(init.headers).has("X-CSRF-Token")) await getSession();
   init.signal?.throwIfAborted();
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (method !== "GET" && method !== "HEAD" && csrfToken && !headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", csrfToken);
+  const version = sessionVersion;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init, headers, credentials: "include", cache: "no-store",
   });
   init.signal?.throwIfAborted();
-  if (response.status === 204) return undefined as T;
+  if (response.status === 204 && expectedStatus === undefined) return undefined as T;
   const payload: unknown = await response.json().catch(() => null);
   // A cancelled read must not expire a newer session via a late 401 response.
   init.signal?.throwIfAborted();
   if (!response.ok) {
     const error = payload as ErrorPayload | null;
-    if (response.status === 401 || error?.code === "CSRF_INVALID") csrfToken = null;
-    if (response.status === 401 && typeof window !== "undefined") {
-      window.dispatchEvent(new Event(API_UNAUTHORIZED_EVENT));
+    if (version === sessionVersion) {
+      if (response.status === 401 || error?.code === "CSRF_INVALID") csrfToken = null;
+      if (response.status === 401 && typeof window !== "undefined") {
+        window.dispatchEvent(new Event(API_UNAUTHORIZED_EVENT));
+      }
     }
     throw new ApiError(
       error?.message ?? `요청에 실패했습니다. (HTTP ${response.status})`,
       response.status, error?.code ?? "UNKNOWN_ERROR", error?.fields,
     );
   }
+  if (expectedStatus !== undefined && response.status !== expectedStatus) {
+    throw new ApiError("접수 응답을 확인하지 못했어요.", response.status, "INVALID_RESPONSE");
+  }
   return payload as T;
 }
 
-export function getSession(): Promise<Session> {
+export function getSession({ fresh, signal }: Pick<RequestInit, "signal"> & { fresh?: boolean } = {}): Promise<Session> {
+  const version = sessionVersion;
+  const read = () => apiRequest<Session>("/api/v1/auth/session", { signal }).then(session => {
+    signal?.throwIfAborted();
+    if (version === sessionVersion) csrfToken = session.csrfToken;
+    return session;
+  });
+  // A dialog-owned preflight must be cancellable without cancelling shared bootstrap reads.
+  if (signal || fresh) return read();
   // Concurrent first reads (including Strict Mode) must share one cookie issuance.
   if (!sessionRequest) {
-    sessionRequest = apiRequest<Session>("/api/v1/auth/session").then((session) => {
-      csrfToken = session.csrfToken;
-      return session;
-    }).finally(() => { sessionRequest = null; });
+    const request = read().finally(() => { if (sessionRequest === request) sessionRequest = null; });
+    sessionRequest = request;
   }
   return sessionRequest;
 }
@@ -232,7 +273,23 @@ export async function logout(): Promise<void> {
   await apiRequest<void>("/api/v1/auth/logout", { method: "POST" });
   csrfToken = null;
 }
-export function getPolicies(): Promise<PoliciesResponse> { return apiRequest("/api/v1/policies"); }
+export async function requestWithdrawal(csrf: string): Promise<void> {
+  await apiRequest("/api/v1/users/me?mode=grace", { method: "DELETE", headers: { "X-CSRF-Token": csrf } }, 202);
+  invalidateSessionToken();
+}
+export async function restoreWithdrawal(csrf: string): Promise<WithdrawalRestoration> {
+  const result = await apiRequest<WithdrawalRestoration>(
+    "/api/v1/auth/withdrawal-restorations", { method: "POST", headers: { "X-CSRF-Token": csrf } }, 200,
+  );
+  invalidateSessionToken();
+  return result;
+}
+function invalidateSessionToken() {
+  sessionVersion++;
+  sessionRequest = null;
+  csrfToken = null;
+}
+export function getPolicies(signal?: AbortSignal): Promise<PoliciesResponse> { return apiRequest("/api/v1/policies", { signal }); }
 export function getConsents(): Promise<ConsentHistoryResponse> {
   return apiRequest("/api/v1/users/me/consents");
 }
@@ -256,7 +313,9 @@ export async function onboard(input: OnboardingInput): Promise<OnboardingRespons
   csrfToken = null; // Onboarding rotates the cookie; the next write reloads its CSRF token.
   return result;
 }
-export function getProfile(): Promise<Profile> { return apiRequest("/api/v1/users/me"); }
+export function getProfile(options: { signal?: AbortSignal } = {}): Promise<Profile> {
+  return apiRequest("/api/v1/users/me", { signal: options.signal });
+}
 export function updateProfile(input: { nickname: string; profileImageId?: null } | { nickname?: string; profileImageId: null }): Promise<Profile> {
   return apiRequest("/api/v1/users/me", { method: "PATCH", body: JSON.stringify(input) });
 }
@@ -281,8 +340,11 @@ export function getFeed(
 ): Promise<FeedResponse> {
   return apiRequest(`/api/v1/topics/${topicId}/feed${query(options)}`, init);
 }
-export function searchFeed(topicId: number, q: string, init: Pick<RequestInit, "signal"> = {}): Promise<FeedSearchResponse> {
-  return apiRequest(`/api/v1/topics/${topicId}/search${query({ q })}`, init);
+export function searchFeed(topicId: number, q: string, init: Pick<RequestInit, "signal"> = {}, workId?: number): Promise<FeedSearchResponse> {
+  return apiRequest(`/api/v1/topics/${topicId}/search${query({ q, workId })}`, init);
+}
+export function searchWorks(topicId: number, q: string, init: Pick<RequestInit, "signal"> = {}): Promise<WorkSuggestionsResponse> {
+  return apiRequest(`/api/v1/topics/${topicId}/search/works${query({ q })}`, init);
 }
 export function getContent(contentId: number, topicId: number, init: Pick<RequestInit, "signal"> = {}): Promise<ContentDetail> {
   return apiRequest(`/api/v1/contents/${contentId}${query({ topicId })}`, init);
@@ -311,6 +373,18 @@ export function getBookmarks(
 ): Promise<BookmarksResponse> {
   return apiRequest(`/api/v1/users/me/bookmarks${query(options)}`, init);
 }
+export function getMyLikes(options: ActivityListQuery = {}, init: Pick<RequestInit, "signal"> = {}): Promise<LikedContentsResponse> {
+  return apiRequest(`/api/v1/users/me/likes${query(options)}`, init);
+}
+export function getMyRecentViews(options: ActivityListQuery = {}, init: Pick<RequestInit, "signal"> = {}): Promise<RecentViewsResponse> {
+  return apiRequest(`/api/v1/users/me/recent-views${query(options)}`, init);
+}
+export function submitInquiry(input: InquiryInput, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<InquiryResponse> {
+  return apiRequest("/api/v1/inquiries", { ...init, method: "POST", body: JSON.stringify(input) }, 201);
+}
+export function submitReport(input: ReportInput, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<ReportResponse> {
+  return apiRequest("/api/v1/reports", { ...init, method: "POST", body: JSON.stringify(input) }, 201);
+}
 export function createChatSession(topicId: number, anchorContentId?: number): Promise<ChatSessionResponse> {
   return apiRequest("/api/v1/chat/sessions", { method: "POST", body: JSON.stringify({ topicId, anchorContentId }) });
 }
@@ -322,15 +396,14 @@ export function sendChatMessage(sessionId: number, content: string, clientMessag
 export function getChatJob(jobId: number): Promise<ChatJob> {
   return apiRequest(`/api/v1/chat/jobs/${jobId}`);
 }
-export function getNotifications(options: { cursor?: string; limit?: number } = {}): Promise<NotificationsResponse> {
-  const query = new URLSearchParams();
-  if (options.cursor) query.set("cursor", options.cursor);
-  query.set("limit", String(options.limit ?? 50));
-  return apiRequest(`/api/v1/users/me/notifications?${query}`);
+export function getNotifications({ cursor, limit = 50, unreadOnly, signal }: {
+  cursor?: string; limit?: number; unreadOnly?: boolean; signal?: AbortSignal;
+} = {}): Promise<NotificationsResponse> {
+  return apiRequest(`/api/v1/users/me/notifications${query({ cursor, limit, unreadOnly })}`, { signal });
 }
-export function getUnreadNotificationCount(): Promise<{ unreadCount: number }> {
-  return apiRequest("/api/v1/users/me/notifications/unread-count");
+export function getUnreadNotificationCount(signal?: AbortSignal): Promise<{ unreadCount: number }> {
+  return apiRequest("/api/v1/users/me/notifications/unread-count", { signal });
 }
-export function markNotificationRead(notificationId: number): Promise<{ notificationId: number; isRead: boolean; readAt: string | null }> {
-  return apiRequest(`/api/v1/users/me/notifications/${notificationId}`, { method: "PATCH", body: JSON.stringify({ isRead: true }) });
+export function markNotificationRead(notificationId: number, init: Pick<RequestInit, "signal" | "headers"> = {}): Promise<{ notificationId: number; isRead: boolean; readAt: string | null }> {
+  return apiRequest(`/api/v1/users/me/notifications/${notificationId}`, { ...init, method: "PATCH", body: JSON.stringify({ isRead: true }) });
 }

@@ -1,6 +1,11 @@
 "use client";
 
+import { createServiceMyPageSource } from "@/lib/pivot/my-page-service";
+import { createServiceActivitySource } from "@/lib/pivot/my-activity-service";
+import { createServiceInquirySource } from "@/lib/pivot/inquiry-service";
+import { createServiceReportSource } from "@/lib/pivot/report-service";
 import { createServiceHomeSource } from "@/lib/pivot/home-service";
+import { createServiceNotificationInbox } from "@/lib/pivot/notification-inbox";
 import { pendingDetailSource } from "@/lib/pivot/detail-service";
 import { isActiveSession } from "@/lib/pivot/services";
 import { Suspense, useMemo, useRef } from "react";
@@ -11,7 +16,7 @@ import { createReactionControls } from "@/lib/pivot/reaction-service";
 import { InteractionProvider } from "./interaction-context";
 
 export function HomeRoute() {
-  const { state, refresh, logout } = usePivotSession();
+  const { state, refresh, logout, withdraw } = usePivotSession();
   const sessionRef = useRef(state.session);
   sessionRef.current = state.status === "ready" ? state.session : null;
   const userId = state.session?.user?.id;
@@ -19,6 +24,14 @@ export function HomeRoute() {
     () => createServiceHomeSource(undefined, undefined, () => sessionRef.current),
     [userId],
   );
+  const mySource = useMemo(
+    () => createServiceMyPageSource(() => sessionRef.current),
+    [state.session],
+  );
+  const activitySource = useMemo(() => createServiceActivitySource(() => sessionRef.current), [state.session]);
+  const inquirySource = useMemo(() => createServiceInquirySource(() => sessionRef.current), [state.session]);
+  const reportSource = useMemo(() => createServiceReportSource(() => sessionRef.current), [state.session]);
+  const notificationSource = useMemo(() => createServiceNotificationInbox(() => sessionRef.current, refresh), [state.session, refresh]);
   const interactions = useMemo(() => {
     const activity = createActivityQueue(userId ?? 0, () => sessionRef.current);
     return { activity, reactions: createReactionControls(activity) };
@@ -39,5 +52,5 @@ export function HomeRoute() {
       {state.status === "error" && <button type="button" onClick={refresh}>다시 확인</button>}
     </main>;
   }
-  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} /></InteractionProvider></Suspense>;
+  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience key={state.session?.csrfToken} mySource={mySource} activitySource={activitySource} inquirySource={inquirySource} reportSource={reportSource} notificationSource={notificationSource} homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} onWithdraw={withdraw} /></InteractionProvider></Suspense>;
 }

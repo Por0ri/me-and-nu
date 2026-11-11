@@ -111,7 +111,7 @@ class RuntimeGuardTests(unittest.TestCase):
         self.connection = MagicMock()
         self.connection.__enter__.return_value = self.connection
         self.connection.scalar.side_effect = [seed.DATABASE, seed.DATABASE]
-        self.connection.execute.return_value.scalars.return_value.all.return_value = [seed.REVISION]
+        self.connection.execute.return_value.scalars.return_value.all.return_value = ["91c7a2e4b630"]
         self.engine = MagicMock()
         self.engine.connect.return_value = self.connection
         self.target = {"database_url": "postgresql+psycopg://me_nu_checking:test-only@postgres:5432/me_nu_checking",
@@ -141,10 +141,14 @@ class RuntimeGuardTests(unittest.TestCase):
         plan.assert_not_called()
 
     def test_wrong_migration_prevents_seeding(self):
-        self.connection.execute.return_value.scalars.return_value.all.return_value = ["e3a7b9c2d451"]
-        with patch.object(seed, "create_engine", return_value=self.engine), patch.object(seed, "build_plan") as plan, self.assertRaises(seed.BootstrapError):
-            seed.run(**self.target)
-        plan.assert_not_called()
+        for revisions in (["b3e7a5c19d42"], ["d2f6a9c4e731"], ["91c7a2e4b630", "d2f6a9c4e731"]):
+            with self.subTest(revisions=revisions):
+                self.connection.scalar.side_effect = [seed.DATABASE, seed.DATABASE]
+                self.connection.execute.return_value.scalars.return_value.all.return_value = revisions
+                with patch.object(seed, "create_engine", return_value=self.engine), patch.object(seed, "build_plan") as plan:
+                    with self.assertRaisesRegex(seed.BootstrapError, "requires migration 91c7a2e4b630 exactly"):
+                        seed.run(**self.target)
+                    plan.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ class ContentState(TypedDict, total=False):
     review_fixture: dict[str, Any]
     language_review: dict[str, Any]
     review_mode: str
+    minimal_review: bool
     quality_score: int
     needs_revision: bool
     revision_count: int

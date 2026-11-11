@@ -151,8 +151,7 @@
       "goods"
     ],
     "onnada": [
-      "news",
-      "guide"
+      "character"
     ],
     "agf_korea_official": [
       "event"
@@ -371,6 +370,48 @@
     ],
     "recal_kr": [
       "event"
+    ],
+    "recal_music": [
+      "event",
+      "music"
+    ],
+    "src_bsp_prize_jp": [
+      "goods"
+    ],
+    "src_www_toei_anim_co_jp": [
+      "news",
+      "event",
+      "goods"
+    ],
+    "src_mercedes_anime_com": [
+      "people"
+    ],
+    "src_www_cinemacafe_net": [
+      "news"
+    ],
+    "src_kusuriyanohitorigoto_jp": [
+      "event"
+    ],
+    "src_furyuprize_com": [
+      "goods"
+    ],
+    "src_livepocket_jp": [
+      "event"
+    ],
+    "src_www_megahobby_jp": [
+      "goods"
+    ],
+    "src_oshiga_shop": [
+      "goods"
+    ],
+    "src_thankyoumart_jp": [
+      "goods"
+    ],
+    "src_dfx_theshop_jp": [
+      "goods"
+    ],
+    "src_bokusuki_com": [
+      "news"
     ]
   }
 }

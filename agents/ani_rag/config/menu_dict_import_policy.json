@@ -1,0 +1,55 @@
+{
+  "snapshot_sha256": "e2219a0ca8e1e7bcf52def135228eb1f421d8aa0aa885bc46e9ecdae775e66a5",
+  "import_only_sources": {
+    "anilist": {
+      "content_types": ["character", "guide", "people", "music"],
+      "license_basis": "Team reports that AniList granted permission for bulk storage and AI/RAG use of this shared dataset; preserve each original source URL and fetched_at.",
+      "permission_confirmation": "User confirmed on 2026-11-09 that the team obtained AniList permission for this dataset.",
+      "site_url": "https://anilist.co",
+      "allowed_hosts": ["anilist.co"]
+    },
+    "wikidata": {
+      "content_types": ["character", "guide", "people", "music"],
+      "license_basis": "CC0 structured facts; preserve item URL and fetched_at",
+      "site_url": "https://www.wikidata.org",
+      "allowed_hosts": ["www.wikidata.org"]
+    },
+    "kmrb": {
+      "content_types": ["guide"],
+      "license_basis": "Public data portal terms; preserve attribution and source URL",
+      "site_url": "https://www.data.go.kr",
+      "allowed_hosts": ["www.data.go.kr"]
+    },
+    "madb": {
+      "content_types": ["guide", "people", "music"],
+      "license_basis": "Open secondary use with adapted-fact and dataset-version attribution",
+      "site_url": "https://mediaarts-db.artmuseums.go.jp",
+      "allowed_hosts": ["mediaarts-db.artmuseums.go.jp"]
+    },
+    "enwiki": {
+      "content_types": ["guide", "people"],
+      "license_basis": "CC BY-SA 4.0; attribute source and preserve share-alike notice; paraphrase facts",
+      "site_url": "https://en.wikipedia.org",
+      "allowed_hosts": ["en.wikipedia.org"]
+    },
+    "kowiki": {
+      "content_types": ["guide", "people"],
+      "license_basis": "CC BY-SA 4.0; attribute source and preserve share-alike notice; paraphrase facts",
+      "site_url": "https://ko.wikipedia.org",
+      "allowed_hosts": ["ko.wikipedia.org"]
+    }
+  },
+  "excluded_sources": {
+    "animethemes": "Source notes prohibit AI training; exclude from AI retrieval.",
+    "syoboi": "Commercial-use and redistribution conditions need confirmation; exclude pending review.",
+    "musicbrainz": "Mixed license and commercial API terms need field-level review; exclude pending review.",
+    "mal": "Source notes restrict commercial use and content reuse; exclude.",
+    "anidb": "ID crosswalk only; source notes say not to use its data as content.",
+    "kitsu": "Terms were not verified; source notes limit use to ID crosswalk.",
+    "livechart": "Terms were not verified; source notes limit use to ID crosswalk.",
+    "onnada": "Noncommercial use only and no verbatim text; exclude from this bulk import.",
+    "annict": "The listed terms take effect after this snapshot date; the prior terms need review.",
+    "menu_catalog": "Internal identity/catalog data only; not source evidence."
+  },
+  "excluded_fields": ["x_account", "official_site", "external_link", "is_adult", "recommendation", "ranking", "popularity", "favourites", "character_favourites", "person_favourites"]
+}

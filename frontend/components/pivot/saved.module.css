@@ -3,8 +3,26 @@
 /* Center Figma's 304px grid in its 327px panel; shrink both columns on narrow screens. */
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 8px; margin: 8px 0 0; padding: 12px 11.5px; list-style: none; }
 .grid li { min-width: 0; }
-.card { position: relative; display: block; width: 100%; aspect-ratio: 148 / 184.661; overflow: hidden; padding: 0; border: 0; border-radius: 3.621px; background: var(--home-surface); box-shadow: 0 0 .905px #e0bafb; text-align: left; }
-.card > img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.card { position: relative; display: block; width: 100%; overflow: hidden; padding: 0; border: 0; border-radius: 3.621px; background: var(--home-surface); box-shadow: 0 0 .905px #e0bafb; text-align: left; }
+.thumbnail { position: relative; display: block; width: 100%; aspect-ratio: 148 / 184.661; overflow: hidden; border-radius: 3.621px; }
+.thumbnail > img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.caption { display: block; min-width: 0; padding: 8px; color: var(--home-ink); }
+.title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; height: 36px; overflow: hidden; overflow-wrap: anywhere; word-break: normal; font-size: 12px; font-weight: 600; line-height: 18px; }
+/* SAVE is one thumbnail high. Keep its full accessible title even when the
+   cover contains copy; reveal it over missing/loading/failed protected pixels. */
+/* Figma's bottom-left copy, ~5px inset and 2px gaps. Use readable 10/8px
+   type for service text while keeping the scrim inside the same thumbnail. */
+.savedOverlay { position: absolute; inset: auto 0 0; display: flex; flex-direction: column; gap: 2px; padding: 16px 5px 5px; color: #fafafa; background: linear-gradient(180deg, transparent, rgb(0 0 0 / 78%) 16px, rgb(0 0 0 / 88%) 70%, #000); }
+.savedLabel { display: block; }
+.savedOverlay .title { height: auto; font-size: 10px; line-height: 14px; text-shadow: 0 1px 2px #000; }
+.savedSource { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c7acfb; font-size: 8px; line-height: 11px; text-shadow: 0 1px 2px #000; }
+.savedSummary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 8px; line-height: 11px; }
+.thumbnail:has(> .savedOverlay) [data-carousel-image-state]:not(img) { justify-content: center; padding: 8px 6px 90px; font-size: 10px; line-height: 13px; }
+.thumbnail[data-embedded-copy]:not(:has([data-carousel-image-state="loading"], [data-carousel-image-state="error"])) > .savedOverlay { width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.overlay { position: absolute; inset: auto 0 0; display: flex; flex-direction: column; gap: 2px; padding: 20px 5px 5px; color: #fafafa; background: linear-gradient(transparent, rgb(0 0 0 / 40%) 40%, #000); }
+.overlay .title { height: auto; font-size: 8.15px; line-height: 11.768px; }
+.eyebrow { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c7acfb; font-size: 4.98px; line-height: 7.242px; }
+.summary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 6.34px; line-height: 9.052px; }
 .placeholder { display: flex; flex-direction: column; justify-content: center; gap: 12px; width: 100%; height: 100%; padding: 12px; background: #efe7ff; color: #52525b; font-size: 12px; line-height: 18px; }
 .empty { display: flex; flex-direction: column; align-items: center; gap: 16px; margin-top: 20px; padding: 36px 12px 0; overflow: hidden; }
 .empty p { width: 100%; margin: 0; padding-inline: 6px; color: #3f3f46; font-size: 12px; font-weight: 600; line-height: 18px; text-align: center; }

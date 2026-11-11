@@ -11,7 +11,7 @@
 | 네트워크 | `me-nu-checking_data`(internal), `me-nu-checking_egress` |
 | Redis 키 접두사 / Secure 쿠키 | `me_nu_checking` / `menu_checking_session` |
 | 백엔드 이미지 | `me-nu-backend-checking:<40자리 커밋 SHA>` |
-| 서비스 마이그레이션 | `150a601074af` |
+| 서비스 마이그레이션 | `91c7a2e4b630` |
 
 DB/Redis 비밀번호는 서버의 `init`에서 서로 다른 난수로 생성한다. 다른 환경의 회원·동의·세션·북마크·DB 덤프는 복사하지 않는다. API와 migration의 개발 인증 우회, 개발 API, LLM/TMDB/OpenAI 키는 비활성화돼 있다. 기존 에이전트 코드나 생년월일 정책은 바꾸지 않는다. DB의 기존 nullable `birth_date`와 값은 유지하며 물리 삭제 `d2`는 포함하지 않는다.
 
@@ -34,7 +34,7 @@ sudo bash deploy/checking/checking.sh status
 
 `build`는 추가로 `check-build`를 실행해 `CHECKING_IMAGE_TAG`가 현재 체크아웃의 실제 Git HEAD와 일치하는지, `backend/`에 staged/unstaged/untracked 변경이 없는지 확인한다. 불일치하면 이미지 빌드 전에 중단한다. Git 조회는 상속된 `GIT_*` 환경을 사용하지 않고 현재 체크아웃만 읽으며, sudo 소유권 차이를 위해 해당 경로에만 일회성 `safe.directory`를 지정한다. 전역 Git 설정은 변경하지 않는다. 일반 `check`·`up`·`status`·`stop`은 소스 빌드를 하지 않으므로 이 추가 검사 대상이 아니다. 빌드 도중에는 체크아웃을 변경하지 않는다.
 
-`up`은 저장소 healthcheck와 명시적 `alembic upgrade 150a601074af` 성공 후 API를 시작한다. `head/heads`로 바꾸지 않는다. `d2`가 적용된 과거 DB는 이 경로로 이전하지 않는다. DB/Redis 호스트 포트와 컨테이너 관리자 권한은 공개하지 않는다.
+`up`은 저장소 healthcheck와 명시적 `alembic upgrade 91c7a2e4b630` 성공 후 API를 시작한다. `head/heads`로 바꾸지 않는다. `d2`가 적용된 과거 DB는 이 경로로 이전하지 않는다. DB/Redis 호스트 포트와 컨테이너 관리자 권한은 공개하지 않는다.
 
 ## 정책·카탈로그·콘텐츠
 
@@ -42,7 +42,7 @@ sudo bash deploy/checking/checking.sh status
 
 실제 에이전트 산출물을 **검토 전 팀 미리보기**로 공유할 때는 서버의 전용 환경 파일에 `CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED=true`를 명시한다(기본값 `false`). 기존 환경 파일에도 이 키를 추가해야 배포 guard를 통과한다. API와 importer는 Checking 배포 식별자·고정 도메인·전용 DB/계정·컨테이너 endpoint·Secure 쿠키·개발 인증 비활성 조건을 함께 검사한다. 다른 환경에서는 이 플래그를 활성화할 수 없다.
 
-검증한 bundle/PNG만 Checking 실행 컨테이너에 전달한 뒤 `python -m app.seeds.carousel_contents --file <bundle.json> --expected-database me_nu_checking --checking-test-preview`로 dry-run하고, 동일 명령에 `--apply`를 추가해 적재한다. 로컬 사용자·세션·DB 파일이나 API 키는 전달하지 않는다. `--review-record-file`과 함께 사용할 수 없으며 `active / needs_review`, `checking_test_preview` 범위를 기록한다. 기존 QC 보류 결과와 원본 이미지·digest를 유지하고 승인 기록을 만들지 않는다. 피드·상세의 `개발용 미리보기`, `검토 필요`, `AI가 생성한 콘텐츠입니다.` 안내가 유지된다. 재실행은 동일 콘텐츠를 추가하지 않으며 플래그를 끄면 기존 미리보기 행도 공개 조회에서 제외된다.
+검증한 bundle/PNG만 Checking 실행 컨테이너에 전달한 뒤 `python -m app.seeds.carousel_contents --file <bundle.json> --expected-database me_nu_checking --checking-test-preview`로 dry-run하고, 동일 명령에 `--apply`를 추가해 적재한다. 로컬 사용자·세션·DB 파일이나 API 키는 전달하지 않는다. `--review-record-file`과 함께 사용할 수 없으며 `active / needs_review`, `checking_test_preview` 범위를 기록한다. 기존 QC 보류 결과와 원본 이미지·digest를 유지하고 승인 기록을 만들지 않는다. 카드뉴스 상세에는 AI 생성 안내를 표시한다. 미리보기 및 검토 필요 여부는 API의 `DEV_PREVIEW`와 `REVIEW_REQUIRED`로 확인할 수 있다. 재실행은 동일 콘텐츠를 추가하지 않으며 플래그를 끄면 기존 미리보기 행도 공개 조회에서 제외된다.
 
 ## 도메인·TLS·FE·OAuth
 

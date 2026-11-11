@@ -25,7 +25,7 @@ const service = load('lib/pivot/onboarding-service.ts', {
   './onboarding':load('lib/pivot/onboarding.ts'), './services':services,
 });
 const plain = value => JSON.parse(JSON.stringify(value));
-const profile = {nickname:'  새로운 회원  '};
+const profile = {nickname:'  새로운회원  '};
 const selection = {interest:'animation',topicId:83,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionType:'ost'};
 const answers = {version:2,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionType:'ost'};
 const consent = {consents:[
@@ -50,16 +50,44 @@ function setup(overrides = {}, guard = () => {}) {
   return {calls,service:service.createOnboardingService(api,guard)};
 }
 
-test('Profile validation trims nicknames and counts Unicode code points like the backend', () => {
-  assert.deepEqual(plain(service.validateOnboardingProfile(profile)), {valid:true,profile:{nickname:'새로운 회원'}});
-  assert.equal(service.validateOnboardingProfile({...profile,nickname:'😀'.repeat(30)}).valid,true);
-  assert.equal(service.validateOnboardingProfile({...profile,nickname:'😀'.repeat(31)}).valid,false);
-  assert.equal(service.validateOnboardingProfile({...profile,nickname:'  '}).valid,false);
+test('Profile validation trims nicknames and follows the backend rule (2~20 Korean, English or digits)', () => {
+  assert.deepEqual(plain(service.validateOnboardingProfile(profile)), {valid:true,profile:{nickname:'새로운회원'}});
+  for (const nickname of ['미뉴덕후','menu','Menu12','ㅋㅋ','가'.repeat(20),' 미뉴 ']) {
+    assert.equal(service.validateOnboardingProfile({nickname}).valid,true,nickname);
+  }
+  for (const nickname of ['','  ','미','가'.repeat(21),'미뉴 덕후','미뉴!','me_nu','😀😀']) {
+    assert.equal(service.validateOnboardingProfile({nickname}).valid,false,nickname);
+  }
+  assert.equal(service.nicknameProblem('미뉴 덕후'),'characters');
+  assert.equal(service.nicknameProblem('미'),'length');
+  assert.equal(service.nicknameProblem('미뉴덕후'),null);
+});
+
+test('Nickname check asks the onboarding API about the typed nickname and fails when the API is off', async () => {
+  const calls = [];
+  const checker = load('lib/pivot/onboarding-service.ts', {
+    '@/lib/api': {...apiModule, apiRequest: async (path) => { calls.push(path); return {nickname:'공룡',available:false,reason:'taken'}; }},
+    './onboarding': load('lib/pivot/onboarding.ts'), './services': services,
+  });
+  assert.equal((await checker.checkNickname('공룡', undefined, () => {})).reason, 'taken');
+  assert.deepEqual(calls, ['/api/v1/onboarding/nickname?nickname=' + encodeURIComponent('공룡')]);
+  await assert.rejects(checker.checkNickname('공룡', undefined, () => { throw new Error('API off'); }));
+  assert.equal(calls.length, 1);
+});
+
+test('The screen marks each broken part of what is typed, a space at either end included', () => {
+  const breaks = nickname => plain(service.nicknameRuleBreaks(nickname));
+  assert.deepEqual(breaks(''), {length:false,characters:false});
+  assert.deepEqual(breaks('미뉴덕후'), {length:false,characters:false});
+  assert.deepEqual(breaks('미'), {length:true,characters:false});
+  assert.deepEqual(breaks('가'.repeat(21)), {length:true,characters:false});
+  assert.deepEqual(breaks('킹갓디노 '), {length:false,characters:true});
+  assert.deepEqual(breaks('!'), {length:true,characters:true});
 });
 
 test('Deferred birth-date input is neither validated as an age policy nor carried into the profile DTO', async () => {
   for (const birthDate of [undefined, '', 'invalid', '2099-01-01']) {
-    assert.deepEqual(plain(service.validateOnboardingProfile({...profile,birthDate})), {valid:true,profile:{nickname:'새로운 회원'}});
+    assert.deepEqual(plain(service.validateOnboardingProfile({...profile,birthDate})), {valid:true,profile:{nickname:'새로운회원'}});
     const app = setup();
     await app.service.submitSelection(selection,consent,{...profile,birthDate});
     assert.equal(Object.hasOwn(app.calls.find(call => call.input).input, 'birthDate'),false);
@@ -70,7 +98,7 @@ test('Completion resolves the current anime ID and sends only the current backen
   const app = setup();
   const result = await app.service.submitSelection(selection,consent,profile);
   assert.deepEqual(app.calls, ['session','topics',{input:{
-    nickname:'새로운 회원',accountType:'user',topicId:83,
+    nickname:'새로운회원',accountType:'user',topicId:83,
     consents:consent.consents,answers,
   }},'session']);
   assert.equal(result.session,active);

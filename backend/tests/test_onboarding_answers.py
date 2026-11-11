@@ -55,7 +55,7 @@ def test_extra_question_is_not_silently_ignored():
 
 def signup_payload(**changes):
     return {
-        "nickname": "일반 회원",
+        "nickname": "일반회원",
         "accountType": "user",
         "topicId": 1,
         "answers": {"q1": "world", "q2": "releases"},
