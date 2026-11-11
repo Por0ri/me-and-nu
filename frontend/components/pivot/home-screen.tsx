@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { orderedHomeSlides, type HomeCardModel, type HomeDetailHandler, type HomeSlideModel, type HomeState, type HomeWorkSuggestion } from "@/lib/pivot/home";
 import type { RecentSearch } from "@/lib/pivot/recent-search";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
@@ -13,12 +13,16 @@ import { useHomeExposure, useInteractions } from "./interaction-context";
 
 type HomeNotice = { message: string; postId?: string };
 
+/** Whether an unread notification arrived today; every screen's header bell shows the same dot. */
+export const NewNoticeContext = createContext(false);
+
 export function HomeHeader({ title = "홈", showMascot = true, showNotification = true, onNotice, onBack, onNotifications }: {
   title?: string; showMascot?: boolean; showNotification?: boolean; onNotice?: (message: string) => void; onNotifications?: () => void;
   /** A round back button before the logo (My Page sub-pages such as 프로필 수정, 2026-11 design). */
   onBack?: () => void;
 } = {}) {
   const [notice, setNotice] = useState("");
+  const hasNewNotice = useContext(NewNoticeContext);
   return <header className={styles.header} data-home-header="">
     <p className={styles.brand}>
       {onBack ? <button type="button" className={styles.headerBack} aria-label="뒤로가기" onClick={onBack}>
@@ -29,8 +33,8 @@ export function HomeHeader({ title = "홈", showMascot = true, showNotification 
     </p>
     <h1 className={styles.srOnly} tabIndex={-1}>{title}</h1>
     {showMascot ? <div className={styles.headerMascot} aria-hidden="true"><img src="/pivot/home/chrome/mascot.png" alt="" /></div> : null}
-    {showNotification ? <button type="button" className={styles.notification} aria-label="알림" aria-disabled={!onNotifications || undefined} data-notification-navigation=""
-      onClick={onNotifications ?? (() => (onNotice ?? setNotice)("알림 기능은 준비 중이에요."))}><img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} /></button> : null}
+    {showNotification ? <button type="button" className={styles.notification} aria-label="알림" aria-description={hasNewNotice ? "오늘 온 새 알림이 있어요" : undefined} aria-disabled={!onNotifications || undefined} data-notification-navigation=""
+      onClick={onNotifications ?? (() => (onNotice ?? setNotice)("알림 기능은 준비 중이에요."))}><img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} />{hasNewNotice ? <span className={styles.notificationDot} aria-hidden="true" data-new-notice="" /> : null}</button> : null}
     {notice ? <p className={styles.pendingNotice} role="status">{notice}</p> : null}
   </header>;
 }

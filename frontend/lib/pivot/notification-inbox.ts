@@ -1,4 +1,5 @@
 import { getNotifications, getSession, getUnreadNotificationCount, markNotificationRead, type NotificationItem, type NotificationsResponse, type Session } from "@/lib/api";
+import { mapCoverImage, type ContentImage } from "./carousel-data";
 import type { HomeDetailTarget } from "./home";
 import { isActiveSession, requirePivotApi } from "./services";
 
@@ -12,6 +13,36 @@ function positiveId(value: unknown): value is number {
 /** New-post and recommended notices are about one post and open it. */
 export function isPostNotice(item: NotificationItem): boolean {
   return item.type === "topic_new_post" || item.type === "recommended_post";
+}
+
+/** A post notice shows the post's own title; `body` carries it and `title` names the work. */
+export function noticeHeadline(item: NotificationItem): string {
+  if (item.type === "topic_new_post") return `[NEW] ${item.body}`;
+  if (item.type === "recommended_post") return `[추천] ${item.body}`;
+  return item.title;
+}
+
+/** The post's cover. An unusable address leaves an empty thumbnail instead of breaking the inbox. */
+export function postNoticeImage(item: NotificationItem): ContentImage | undefined {
+  if (!isPostNotice(item) || !positiveId(item.contentId) || !positiveId(item.topicId)) return undefined;
+  try {
+    return mapCoverImage(item.imageUrl, "", item.contentId, item.topicId);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The bell's red dot: something unread arrived today, so old unread notices cannot keep it on forever. */
+export function hasUnreadToday(items: NotificationItem[], now = Date.now()): boolean {
+  const today = new Date(now).toDateString();
+  return items.some((item) => !item.isRead && new Date(item.createdAt).toDateString() === today);
+}
+
+/** Unread notices stay on top, newest first; everything else, read notices included, follows by time. */
+export function sortInbox<T extends NotificationItem>(items: T[]): T[] {
+  const pinned = (item: T) => Number(item.type === "system_notice" && !item.isRead);
+  return [...items].sort((a, b) => pinned(b) - pinned(a)
+    || Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.notificationId - a.notificationId);
 }
 
 /** The inbox shows operational notices and post notices that point to a post. */
@@ -30,6 +61,7 @@ export type NotificationInboxSource = {
   kind: "service" | "demo";
   list(options: { unreadOnly?: boolean; cursor?: string; signal: AbortSignal }): Promise<InboxPage>;
   count(signal: AbortSignal): Promise<number>;
+  hasNewToday(signal: AbortSignal): Promise<boolean>;
   markRead(id: number, signal: AbortSignal): Promise<string>;
 };
 
@@ -75,6 +107,14 @@ export function createServiceNotificationInbox(
       const result = await read(signal, () => api.getUnreadNotificationCount(signal));
       if (!Number.isSafeInteger(result.unreadCount) || result.unreadCount < 0) throw new Error("Invalid unread count");
       return result.unreadCount;
+    },
+    async hasNewToday(signal) {
+      // A silent background check: it only reads one boolean, so unlike the inbox it never re-verifies or refreshes
+      // the session. Newest first, so a few rows are enough even if one cannot be shown in the inbox.
+      check(signal);
+      const result = await api.getNotifications({ unreadOnly: true, limit: 5, signal });
+      check(signal);
+      return hasUnreadToday(result.items.filter(isInboxItem));
     },
     async markRead(id, signal) {
       const csrf = await verifySession(signal);
@@ -128,6 +168,10 @@ export function createDemoNotificationInbox(now = Date.now()): NotificationInbox
     async count(signal) {
       signal.throwIfAborted();
       return items.filter((item) => !item.isRead).length;
+    },
+    async hasNewToday(signal) {
+      signal.throwIfAborted();
+      return hasUnreadToday(items);
     },
     async markRead(id, signal) {
       signal.throwIfAborted();

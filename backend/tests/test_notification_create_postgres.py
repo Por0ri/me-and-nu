@@ -95,6 +95,7 @@ def test_new_post_notifications_follow_q1_works_settings_and_daily_limit(recomme
         add_member(db, "탈퇴유예", [1], withdrawn=True)
         reader = add_member(db, "이미본사람", [1, 2])
         heavy = add_member(db, "많이고름", [1, 2, 3, 4])
+        late = add_member(db, "셋째작품", [3])
         db.add(UserEvent(client_event_id=uuid4(), user_id=reader.user_id, tap_id=reader.tap_id, event_type="open",
                          content_id=post[1], event_value={}, data_source="automated_test"))
         db.add(ContentReaction(user_id=reader.user_id, tap_id=reader.tap_id, content_id=post[2], ox_feedback="X"))
@@ -102,15 +103,15 @@ def test_new_post_notifications_follow_q1_works_settings_and_daily_limit(recomme
 
     # 기간: 2.5시간이면 글 1 · 2 만 새 글
     narrow = run(pg, "new-posts", apply=False, hours=2.5)
-    assert (narrow["mode"], narrow["selected"], narrow["created"]) == ("preview", 4, 0)
+    assert (narrow["mode"], narrow["selected"], narrow["created"]) == ("preview", 2, 0)
     preview = run(pg, "new-posts", apply=False)
-    assert (preview["selected"], preview["created"]) == (5, 0)
+    assert (preview["selected"], preview["created"]) == (3, 0)
     assert sent(pg) == {}
 
     applied = run(pg, "new-posts", apply=True)
-    assert applied["created"] == 5
-    # 알림 끈 회원 · 탈퇴 유예 · 이미 열어 본 글 · 그만 볼래요 글은 빠지고, 4개 고른 회원은 최신 3개만
-    assert sent(pg) == {fan.user_id: {post[1], post[2]}, heavy.user_id: {post[1], post[2], post[3]}}
+    assert applied["created"] == 3
+    # 알림 끈 회원 · 탈퇴 유예 · 이미 열어 본 글 · 그만 볼래요 글은 빠지고, 여러 작품을 골라도 최신 1개만
+    assert sent(pg) == {fan.user_id: {post[1]}, heavy.user_id: {post[1]}, late.user_id: {post[3]}}
     with Session(pg.engine) as db:
         row = db.execute(select(Notification).where(
             Notification.user_id == fan.user_id, Notification.content_id == post[1])).scalar_one()
@@ -120,10 +121,10 @@ def test_new_post_notifications_follow_q1_works_settings_and_daily_limit(recomme
     assert (again["selected"], again["created"]) == (0, 0)
 
     items, unread = inbox(pg, fan.user_id)
-    assert [item.type for item in items] == ["topic_new_post", "topic_new_post", "system_notice"]
-    assert {item.content_id for item in items if item.type == "topic_new_post"} == {post[1], post[2]}
+    assert [item.type for item in items] == ["topic_new_post", "system_notice"]
+    assert items[0].content_id == post[1]
     assert items[-1].title == notification_service.WELCOME_TITLE
-    assert unread == 3
+    assert unread == 2
 
 
 def test_new_post_notification_waits_until_the_post_opens(recommendation_pg):
@@ -227,7 +228,7 @@ def test_recommended_notification_starts_at_rank_10_and_skips_seen_posts(recomme
     assert (items[0].content_id, unread) == (post[2], 2)
 
 
-def test_recommended_notification_stops_at_two_unread_and_new_posts_do_not_repeat_it(recommendation_pg):
+def test_recommended_notification_goes_out_daily_and_new_posts_do_not_repeat_it(recommendation_pg):
     pg = recommendation_pg
     pg.migrate("head")
     seed_demo(pg.engine)
@@ -249,17 +250,41 @@ def test_recommended_notification_stops_at_two_unread_and_new_posts_do_not_repea
     assert run(pg, "recommended", apply=True, now=days[1])["created"] == 1
     assert recommended(pg) == {fan.user_id: {post[1], post[3]}}
 
-    # 안 읽은 추천 2개면 안 보내고, 하나 읽으면 다시 보낸다
-    full = run(pg, "recommended", apply=True, now=days[2])
-    assert (full["unread_full"], full["created"]) == (1, 0)
-    with Session(pg.engine) as db:
-        oldest = db.execute(select(Notification).where(
-            Notification.user_id == fan.user_id, Notification.content_id == post[1],
-            Notification.notification_type == "recommended_post")).scalar_one()
-        oldest.read_at = days[2]
-        db.commit()
+    # 안 읽은 추천이 쌓여 있어도 다음 날 또 보낸다
     assert run(pg, "recommended", apply=True, now=days[2])["created"] == 1
     assert recommended(pg) == {fan.user_id: {post[1], post[3], post[4]}}
+
+
+def test_inbox_shows_latest_three_of_each_post_kind_and_keeps_the_rest_stored(recommendation_pg):
+    pg = recommendation_pg
+    pg.migrate("head")
+    seed_demo(pg.engine)
+    now = datetime.now(timezone.utc)
+    today = now.astimezone(notification_service.KST).date()
+    with Session(pg.engine) as db:
+        post = dict(db.execute(select(ContentEntityLink.entity_id, ContentEntityLink.content_id)
+                               .where(ContentEntityLink.sort_order == 1)).all())
+        fan = add_member(db, "많이받음", [])
+        for days_ago, work in enumerate((4, 3, 2, 1)):
+            for kind in ("topic_new_post", "recommended_post"):
+                db.add(Notification(user_id=fan.user_id, notification_type=kind, title="글", body="본문", topic_id=1,
+                                    content_id=post[work], created_at=now - timedelta(days=days_ago)))
+        add_round(db, fan, today, {10: post[1]})    # 밀려나서 안 보이는 알림의 글
+        db.commit()
+
+    items, unread = inbox(pg, fan.user_id)
+    by_kind = {kind: [item.content_id for item in items if item.type == kind]
+               for kind in ("topic_new_post", "recommended_post")}
+    assert by_kind == {"topic_new_post": [post[4], post[3], post[2]], "recommended_post": [post[4], post[3], post[2]]}
+    assert unread == 7      # 보이는 글 알림 6개 + 환영 공지
+
+    with Session(pg.engine) as db:
+        kept = db.scalar(select(func.count()).select_from(Notification).where(
+            Notification.user_id == fan.user_id, Notification.notification_type != "system_notice"))
+    assert kept == 8
+    # 안 보여도 기록이 남아 있어서 같은 글을 또 보내지 않는다
+    again = run(pg, "recommended", apply=True, now=now)
+    assert (again["candidates"], again["created"]) == (0, 0)
 
 
 def test_notice_reaches_active_members_even_with_notifications_off_and_only_once(recommendation_pg):

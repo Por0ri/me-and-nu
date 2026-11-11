@@ -22,8 +22,15 @@ function load(file, dependencies = {}) {
 }
 
 const services = load('lib/pivot/services.ts', { '@/lib/api': {}, './consent': {} });
-const { createServiceNotificationInbox, createDemoNotificationInbox, findInboxNotification, newPostTarget } =
-  load('lib/pivot/notification-inbox.ts', { '@/lib/api': {}, './services': services });
+const carouselData = {
+  mapCoverImage(value, alt, contentId) {
+    if (value === 'broken') throw new Error('Invalid content response');
+    return value ? { src: `https://api.test${value}`, alt, protected: true, contentId } : undefined;
+  },
+};
+const { formatRelativeDay } = load('lib/relative-time.ts');
+const { createServiceNotificationInbox, createDemoNotificationInbox, findInboxNotification, newPostTarget, noticeHeadline, postNoticeImage, hasUnreadToday, sortInbox } =
+  load('lib/pivot/notification-inbox.ts', { '@/lib/api': {}, './services': services, './carousel-data': carouselData });
 const owner = {
   authenticated: true, sessionState: 'active', onboardingCompleted: true,
   user: { id: 12, accountType: 'user' }, csrfToken: 'owner-csrf',
@@ -74,6 +81,68 @@ test('Service preserves pagination and full body, allows only notices and openab
   assert.equal(await source.markRead(notice.notificationId, options.signal), readAt);
   assert.equal(requests[1].init.headers['X-CSRF-Token'], owner.csrfToken);
   assert.equal(requests[1].init.signal, options.signal);
+});
+
+test('A post notice shows its own title with a kind prefix, and a notice keeps its title', () => {
+  assert.equal(noticeHeadline(newPost), '[NEW] 레제편 굿즈');
+  assert.equal(noticeHeadline({ ...newPost, type: 'recommended_post' }), '[추천] 레제편 굿즈');
+  assert.equal(noticeHeadline({ ...notice, title: '[공지] 업데이트' }), '[공지] 업데이트');
+});
+
+test('Inbox time counts calendar days after 24 hours and says 어제 for the day before', () => {
+  const now = new Date(2026, 10, 11, 23, 0).getTime();
+  const at = (day, hour) => new Date(2026, 10, day, hour, 0).toISOString();
+  assert.equal(formatRelativeDay(at(11, 3), now), '20시간 전');
+  assert.equal(formatRelativeDay(at(10, 22), now), '어제');
+  assert.equal(formatRelativeDay(at(10, 1), now), '어제');
+  assert.equal(formatRelativeDay(at(9, 23), now), '2일 전');
+  assert.equal(formatRelativeDay(at(1, 12), now), '10일 전');
+  assert.equal(formatRelativeDay(undefined, now), null);
+});
+
+test('Unread notices stay on top and return to time order once read', () => {
+  const row = (notificationId, type, isRead, createdAt) => ({ notificationId, type, isRead, createdAt });
+  const items = [
+    row(5, 'recommended_post', false, '2026-11-11T09:00:00Z'),
+    row(4, 'topic_new_post', true, '2026-11-11T08:00:00Z'),
+    row(3, 'system_notice', false, '2026-11-10T09:00:00Z'),
+    row(2, 'system_notice', false, '2026-11-01T09:00:00Z'),
+    row(1, 'topic_new_post', false, '2026-11-09T09:00:00Z'),
+  ];
+  const ids = (list) => Array.from(list, (item) => item.notificationId);
+  assert.deepEqual(ids(sortInbox(items)), [3, 2, 5, 4, 1]);
+  assert.deepEqual(ids(items), [5, 4, 3, 2, 1]);
+  assert.deepEqual(ids(sortInbox(items.map((item) => item.notificationId === 3 ? { ...item, isRead: true } : item))), [2, 5, 4, 3, 1]);
+});
+
+test('The bell dot needs an unread notice that arrived today', async () => {
+  const now = new Date(2026, 10, 11, 9, 0).getTime();
+  const today = new Date(2026, 10, 11, 0, 30).toISOString();
+  const yesterday = new Date(2026, 10, 10, 23, 30).toISOString();
+  assert.equal(hasUnreadToday([{ isRead: false, createdAt: today }], now), true);
+  assert.equal(hasUnreadToday([{ isRead: true, createdAt: today }], now), false);
+  assert.equal(hasUnreadToday([{ isRead: false, createdAt: yesterday }], now), false);
+  assert.equal(hasUnreadToday([], now), false);
+
+  const run = fixture();
+  const seen = [];
+  run.api.getNotifications = async (options) => {
+    seen.push(options);
+    return { items: [{ ...notice, createdAt: new Date().toISOString() }], nextCursor: null };
+  };
+  assert.equal(await run.source.hasNewToday(signal()), true);
+  assert.equal(seen[0].unreadOnly, true);
+  assert.equal(seen[0].limit, 5);
+});
+
+test('A post notice uses its cover, and a missing or unusable one leaves no image', () => {
+  const imageUrl = '/api/v1/contents/501/slides/1/image?topicId=1';
+  assert.equal(postNoticeImage({ ...newPost, imageUrl }).src, `https://api.test${imageUrl}`);
+  assert.equal(postNoticeImage({ ...newPost, imageUrl }).alt, '');
+  assert.equal(postNoticeImage({ ...newPost, imageUrl: null }), undefined);
+  assert.equal(postNoticeImage({ ...newPost, imageUrl: 'broken' }), undefined);
+  assert.equal(postNoticeImage({ ...notice, imageUrl }), undefined);
+  assert.equal(postNoticeImage({ ...newPost, contentId: null, imageUrl }), undefined);
 });
 
 test('A new-post notice opens its post, and other notices open nothing', () => {

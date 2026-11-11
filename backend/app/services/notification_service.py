@@ -6,9 +6,11 @@
 알림은 서버 명령(app.jobs.create_notifications)으로만 만든다. 만드는 함수는 commit 하지 않고 부른 쪽이 한다.
 - 새 글 알림: 지난 48시간 안에 공개된 글의 대표 작품(연결 순서 1)을 온보딩 Q1에서 고른 회원에게 보낸다.
   매일 아침 한 번 도는데 기간을 이틀로 둔 건, 하루 실패하거나 하루 한도에 밀린 글도 다음 날 잡기 위해서다. 이미 보낸 글은 다시 안 보낸다.
-  하루 최대 3개, 같은 작품은 하루 1개, 최신 글 먼저. 알림을 끈 회원, 이미 열어 본 글, '그만 볼래요' 글은 뺀다.
+  하루 1개, 최신 글 먼저. 알림을 끈 회원, 이미 열어 본 글, '그만 볼래요' 글은 뺀다.
 - 추천 알림: 오늘 추천의 10순위부터 내려가며 하루 1개. 위 순위는 홈에서 바로 보이니 그 아래에서 고른다.
-  안 읽은 추천 알림이 2개 쌓인 회원에겐 안 보낸다. 노출 · 열람 · 카드 넘김 · '그만 볼래요' · 전에 알림이 간 글은 뺀다.
+  노출 · 열람 · 카드 넘김 · '그만 볼래요' · 전에 알림이 간 글은 뺀다.
+- 알림함에는 새 글 · 추천을 종류별로 최신 3개만 보여 준다. 밀려난 알림은 지우지 않는다
+  (같은 글을 다시 안 보내는 기준이고, A/B 집계와 알림 효과 확인에도 쓴다).
 - 운영공지: 알림 설정과 상관없이 활동 중인 회원 전부(또는 지정한 회원)에게 보낸다.
   같은 제목·본문 공지가 이미 있는 회원은 건너뛰어서 명령을 두 번 돌려도 한 번만 생긴다.
 """
@@ -17,7 +19,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import and_, exists, func, select, text, tuple_
+from sqlalchemy import and_, exists, func, or_, select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,9 +59,9 @@ RECOMMENDED = "recommended_post"
 INBOX_TYPES = (NOTICE, NEW_POST, RECOMMENDED)
 POST_TYPES = (NEW_POST, RECOMMENDED)
 NEW_POST_WINDOW = timedelta(hours=48)
-DAILY_NEW_POSTS = 3
+DAILY_NEW_POSTS = 1
 RECOMMENDED_FROM_RANK = 10
-MAX_UNREAD_RECOMMENDED = 2
+SHOWN_PER_POST_TYPE = 3
 SEEN_EVENTS = ("impression", "open", "card_swipe")
 ACTIVE_STATUSES = ("active", "warned")
 TITLE_MAX, BODY_MAX = 100, 500
@@ -90,6 +92,25 @@ async def _ensure_welcome_notice(db: AsyncSession, user_id: int) -> None:
     await db.commit()
 
 
+def _on_display(user_id: int):
+    """공지는 전부, 글 알림은 종류별 최신 SHOWN_PER_POST_TYPE 개만 알림함에 보인다."""
+    ranked = (
+        select(
+            Notification.notification_id,
+            func.row_number().over(
+                partition_by=Notification.notification_type,
+                order_by=(Notification.created_at.desc(), Notification.notification_id.desc()),
+            ).label("position"),
+        )
+        .where(Notification.user_id == user_id, Notification.notification_type.in_(POST_TYPES))
+        .subquery()
+    )
+    return or_(
+        Notification.notification_type.not_in(POST_TYPES),
+        Notification.notification_id.in_(select(ranked.c.notification_id).where(ranked.c.position <= SHOWN_PER_POST_TYPE)),
+    )
+
+
 async def list_notifications(
     db: AsyncSession, user_id: int, *, unread_only: bool, cursor: str | None, limit: int
 ) -> NotificationsResponse:
@@ -110,6 +131,7 @@ async def list_notifications(
         .where(
             Notification.user_id == user_id,
             Notification.notification_type.in_(INBOX_TYPES),
+            _on_display(user_id),
         )
     )
     if unread_only:
@@ -157,6 +179,7 @@ async def unread_count(db: AsyncSession, user_id: int) -> UnreadCountResponse:
         select(func.count()).select_from(Notification).where(
             Notification.user_id == user_id,
             Notification.notification_type.in_(INBOX_TYPES),
+            _on_display(user_id),
             Notification.read_at.is_(None),
         )
     )
@@ -381,22 +404,18 @@ async def _recommended_candidates(db: AsyncSession, today: date) -> list[Recomme
     return [RecommendedPost(*row) for row in rows.all()]
 
 
-async def _recommended_state(
-    db: AsyncSession, user_ids: list[int], day_start: datetime,
-) -> dict[int, tuple[int, int]]:
-    """회원별 (안 읽은 추천 알림 수, 오늘 보낸 추천 알림 수)."""
+async def _recommended_today(db: AsyncSession, user_ids: list[int], day_start: datetime) -> set[int]:
+    """오늘(한국 시간) 이미 추천 알림을 받은 회원."""
     if not user_ids:
-        return {}
-    rows = await db.execute(
-        select(
-            Notification.user_id,
-            func.count().filter(Notification.read_at.is_(None)),
-            func.count().filter(Notification.created_at >= day_start),
+        return set()
+    rows = await db.scalars(
+        select(Notification.user_id).distinct().where(
+            Notification.user_id.in_(user_ids),
+            Notification.notification_type == RECOMMENDED,
+            Notification.created_at >= day_start,
         )
-        .where(Notification.user_id.in_(user_ids), Notification.notification_type == RECOMMENDED)
-        .group_by(Notification.user_id)
     )
-    return {user_id: (unread, today) for user_id, unread, today in rows.all()}
+    return set(rows.all())
 
 
 async def _sent_today(db: AsyncSession, user_ids: list[int], day_start: datetime) -> dict[int, list[int | None]]:
@@ -466,17 +485,11 @@ async def create_recommended_notifications(
     by_user: dict[int, list[RecommendedPost]] = {}
     for post in candidates:
         by_user.setdefault(post.user_id, []).append(post)
-    state = await _recommended_state(db, list(by_user), kst_day_start(now))
-    picked: list[RecommendedPost] = []
-    sent_today = unread_full = 0
-    for user_id, posts in by_user.items():
-        unread, today_count = state.get(user_id, (0, 0))
-        if today_count:
-            sent_today += 1
-        elif unread >= MAX_UNREAD_RECOMMENDED:
-            unread_full += 1
-        else:
-            picked.append(min(posts, key=lambda post: (post.rank, post.content_id)))
+    sent_today = await _recommended_today(db, list(by_user), kst_day_start(now))
+    picked = [
+        min(posts, key=lambda post: (post.rank, post.content_id))
+        for user_id, posts in by_user.items() if user_id not in sent_today
+    ]
     created = 0
     if apply:
         created = await _insert_post_notifications(
@@ -487,8 +500,7 @@ async def create_recommended_notifications(
         "service_date": today.isoformat(),
         "members": len(by_user),
         "candidates": len(candidates),
-        "sent_today": sent_today,
-        "unread_full": unread_full,
+        "sent_today": len(sent_today),
         "selected": len(picked),
         "created": created,
     }
