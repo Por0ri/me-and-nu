@@ -113,9 +113,10 @@ class ProducerReferenceTests(unittest.TestCase):
         if all((catalog.CATALOG_ROOT / name).is_file() for name in names):
             root = catalog.CATALOG_ROOT
         else:
-            producer = Path(__file__).resolve().parents[2] / "agents" / "ani_me;nu"
+            repo = Path(__file__).resolve().parents[2]
+            producer = repo / "agents" / "ani_me;nu"
             files = (producer / "config" / names[0], producer / "config" / names[1],
-                     producer / "data" / "reference" / names[2])
+                     repo / "catalog" / names[2])
             self.assertTrue(all(path.is_file() for path in files),
                             "The producer registry and work catalog must be available in the repo or Worker image")
             root = Path(self.enterContext(tempfile.TemporaryDirectory()))
