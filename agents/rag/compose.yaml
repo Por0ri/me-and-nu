@@ -1,0 +1,31 @@
+# me;nu 정보사전 DB — 작품 · 캐릭터 · 인물 · 곡 사실을 출처와 같이 저장 (모델 DB · 서비스 DB 와 별개)
+#
+#   docker compose -f agents/rag/compose.yaml up -d
+#
+# 비밀번호는 같은 폴더의 .env 에서 읽는다 (.env.example 참고)
+# 버전은 팀 서버와 같은 pg17 (나중에 서버로 옮기기 쉽게)
+
+name: ani_rag   # 폴더 이름이 바뀌어도 지금 컨테이너를 그대로 쓰려고 프로젝트 이름을 고정
+
+services:
+  menu-dict:
+    image: pgvector/pgvector:pg17
+    container_name: menu-dict
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${MENU_DICT_DB_USER}
+      POSTGRES_PASSWORD: ${MENU_DICT_DB_PASSWORD}
+      POSTGRES_DB: menu_dict
+    ports:
+      - "127.0.0.1:5436:5432"   # 이 PC 안에서만 접속 (같은 와이파이의 다른 기기에선 안 보임)
+    volumes:
+      - menu-dict-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d menu_dict"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  menu-dict-data:
+    name: menu-dict-data
