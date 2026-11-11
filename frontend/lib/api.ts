@@ -169,6 +169,7 @@ export type BookmarksResponse = { items: SavedBookmark[]; nextCursor: string | n
 export type ActivityContentCard = {
   contentId: number; title: string; topicId: number;
   summary: string | null; imageUrl: string | null; sourceName: string | null;
+  eyebrow?: string | null;
   productionType: string | null; publishedAt: string | null; subtopicNames: string[];
 };
 export type LikedContent = ActivityContentCard & { likedAt: string };

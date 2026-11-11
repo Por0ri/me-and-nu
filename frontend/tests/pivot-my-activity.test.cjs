@@ -51,6 +51,23 @@ function setup(respond) {
   } };
 }
 for (const tab of ['likes', 'recent-views']) {
+  test(`${tab}: page-one eyebrow stays verbatim and never falls back to source or taxonomy`, async () => {
+    const eyebrow = '  HOME 첫 라벨 & <소식>  ';
+    const values = [eyebrow, null, undefined, '', '  ', 42, { fake: 'text' }];
+    const env = setup(() => ({ items: values.map((eyebrow, i) => ({ ...item(41 + i), eyebrow, subtopicNames: ['액션'] })), nextCursor: null }));
+    const control = env.controller(tab); await control.load();
+    const cards = control.states.at(-1).page.cards;
+    assert.equal(cards[0].eyebrow, eyebrow);
+    assert.ok(cards.slice(1).every(card => card.eyebrow === undefined));
+    assert.ok(cards.every(card => card.sourceName === '출처' && card.imageHasEmbeddedCopy === undefined));
+    const { MyActivityScreen } = env.load('components/pivot/my-activity-screen.tsx');
+    const html = renderToStaticMarkup(React.createElement(MyActivityScreen, {
+      state: control.states.at(-1), tab, demo: false, onTab() {}, onMy() {}, onHome() {}, onSaved() {}, onViewDetail() {}, onRetry() {}, onMore() {},
+    }));
+    assert.equal((html.match(/data-saved-eyebrow/g) || []).length, 1);
+    assert.match(html, /  HOME 첫 라벨 &amp; &lt;소식&gt;  /);
+    assert.doesNotMatch(html, /출처|액션|<소식>/);
+  });
   test(`${tab}: real API client maps cards and preserves all Topic identities without savedItemId`, async () => {
     const env = setup(() => ({ items: [item(), item(42, 99)], nextCursor: 'opaque +/=' })); const control = env.controller(tab);
     await control.load(); const state = control.states.at(-1);
