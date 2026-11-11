@@ -1,6 +1,7 @@
 // Existing Playwright + Edge only; loopback fixtures, fresh contexts, no real API.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { installPageScroll } = require('./helpers/pivot-page-scroll.cjs');
 const path = require('node:path');
 const { chromium } = require(process.env.PIVOT_PLAYWRIGHT_MODULE || 'playwright');
 const { createApiFixture } = require('./helpers/pivot-api-fixture.cjs');
@@ -21,7 +22,8 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
   const data = await nav(page).evaluate(el => {
     const rect = node => node.getBoundingClientRect().toJSON();
     const hit = (node, x, y) => node.contains(document.elementFromPoint(x, y));
-    return { rect: rect(el), screen: rect(el.closest('main')), overflow: document.documentElement.scrollWidth > innerWidth,
+    return { rect: rect(el), screen: rect(el.closest('main')), home: el.closest('main').hasAttribute('data-home-state'),
+      overflow: document.documentElement.scrollWidth > innerWidth,
       buttons: [...el.querySelectorAll('button')].map(button => {
         const span = button.querySelector('span'), css = getComputedStyle(span), box = rect(button);
         return { label: button.textContent, active: button.getAttribute('aria-current'), rect: box, span: rect(span),
@@ -36,7 +38,9 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
   if (width === 375 && height === 812 && inset === 0) near(data.rect.y, 752, 'Figma y');
   assert.equal(data.overflow, false);
   assert.ok(data.rect.left >= 0 && data.rect.right <= width);
-  if (!ai || compact || width > 340) near(data.rect.x + data.rect.width / 2, width / 2, 'centered NAV');
+  if (data.home) {
+    near(data.rect.x + data.rect.width / 2, width / 2 - (width < 600 ? 30 : 0), 'HOME dock group is centered');
+  } else if (!ai || compact || width > 340) near(data.rect.x + data.rect.width / 2, width / 2, 'centered NAV');
   for (const [index, button] of data.buttons.entries()) {
     assert.equal(button.size, '12px'); assert.equal(button.line, '18px'); assert.match(button.font, /PivotPretendard/);
     assert.equal(button.weight, button.label === active ? '600' : '400');
@@ -50,7 +54,6 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
   assert.equal(data.inert, compact);
   if (ai && !compact) {
     const control = page.locator('main:visible').locator('[data-home-ai], button[aria-label="AI 질문 안내"]');
-    // Home's collision handling may move it after scrolling.
     await page.waitForFunction(() => {
       const main = [...document.querySelectorAll('main')].find(el => el.getBoundingClientRect().width > 0);
       const n = main.querySelector('nav').getBoundingClientRect();
@@ -64,7 +67,7 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
   return data;
 }
 async function lastContent(page, selector) {
-  await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
+  await page.evaluate(() => window.pivotScrollRoot().scrollTo(0, window.pivotScrollRoot().scrollHeight));
   const last = await page.locator(selector).last().boundingBox();
   const n = await nav(page).boundingBox();
   assert.ok(last.y + last.height <= n.y, `${selector} can scroll clear of NAV`);
@@ -103,6 +106,7 @@ async function expanded(page, inset = 0) {
 }
 async function run(browser, viewport) {
   const context = await browser.newContext({ viewport, isMobile: viewport.width < 600, hasTouch: viewport.width < 600, serviceWorkers: 'block' });
+  await installPageScroll(context);
   const page = await context.newPage(); page.setDefaultTimeout(15000);
   const errors = [], blocked = [], checks = {};
   const fixture = createApiFixture({ apiOrigin: 'http://127.0.0.1:8195', frontendOrigin: base }); fixture.rotate('active');
@@ -123,6 +127,10 @@ async function run(browser, viewport) {
     checks.home = await measure(page, 'HOME', { ai: true });
     await page.screenshot({ path: path.join(out, `home-${viewport.width}.png`) });
     checks.homeLast = await lastContent(page, '[data-home-post]');
+    await nav(page).getByRole('button', { name: 'HOME', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.pivotScrollRoot().scrollTop), 0, 'HOME resets the active scroll owner');
+    assert.ok(await page.locator('[data-home-state] h1').evaluate(el => el === document.activeElement));
+    checks.homeReset = true;
     // Native Tab / Shift+Tab, Enter and Space exercise the actual button handlers.
     await nav(page).getByRole('button', { name: 'HOME', exact: true }).focus();
     await page.keyboard.press('Tab'); assert.equal(await page.evaluate(() => document.activeElement.textContent), 'SAVE');
@@ -157,8 +165,8 @@ async function run(browser, viewport) {
       await nav(page).getByRole('button', { name: 'HOME', exact: true }).click(); await ready(page, 'home');
       checks[`safeHome${inset}`] = await measure(page, 'HOME', { inset, ai: true });
       checks[`safeHomeLast${inset}`] = await lastContent(page, '[data-home-post]');
-      const anchor = await page.locator('[data-home-ai]').evaluate(el => el.parentElement.getBoundingClientRect().toJSON());
-      near(anchor.y, viewport.height - Math.max(12, inset) - 48, 'Figma AI anchor follows safe area');
+      const anchor = await page.locator('[data-home-ai]').boundingBox();
+      near(anchor.y, viewport.height - Math.max(12, inset) - 48, 'Fixed AI follows safe area');
       await page.locator('[data-demo-bookmark]').first().click();
       await nav(page).getByRole('button', { name: 'SAVE', exact: true }).click(); await ready(page, 'saved');
       checks[`safeSaved${inset}`] = await measure(page, 'SAVE', { inset });
@@ -193,7 +201,9 @@ async function run(browser, viewport) {
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
   try {
     for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 812 }, { width: 390, height: 844 },
-      { width: 430, height: 932 }, { width: 1280, height: 900 }, { width: 1440, height: 1000 }]) await run(browser, viewport);
+      { width: 430, height: 932 }, { width: 1280, height: 900 }, { width: 1440, height: 1000 }]) {
+      if (!process.env.PIVOT_VIEWPORT_WIDTH || viewport.width === Number(process.env.PIVOT_VIEWPORT_WIDTH)) await run(browser, viewport);
+    }
   } finally { await browser.close(); fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify(results, null, 2)); }
   if (results.some(result => result.status === 'fail')) process.exitCode = 1;
 })().catch(error => { console.error(error); process.exitCode = 1; });

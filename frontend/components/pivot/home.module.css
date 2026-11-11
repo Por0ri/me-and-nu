@@ -2,6 +2,8 @@
    The demo's 44px disclosure occupies the space of Figma's 45px OS chrome.
    Native snap and per-post state remain the H2-A interaction baseline. */
 .screen {
+  --home-screen-width: 430px;
+  --home-screen-padding: 24px;
   --home-bg: var(--pivot-bg, #fff9fd);
   --home-surface: #fff;
   --home-ink: #27272a;
@@ -10,14 +12,18 @@
   --home-accent: var(--pivot-primary, #7043b4);
   position: relative;
   width: 100%;
-  max-width: 430px;
+  max-width: var(--home-screen-width);
   min-height: calc(100svh - 44px);
   margin-inline: auto;
-  padding: 0 24px max(100px, env(safe-area-inset-bottom));
+  padding: 0 var(--home-screen-padding) max(100px, env(safe-area-inset-bottom));
   background: var(--home-bg);
   color: var(--home-ink);
   word-break: keep-all;
   overflow-wrap: anywhere;
+}
+.screen[data-home-state] {
+  --home-ai-size: 48px;
+  --home-ai-offset: calc(var(--home-ai-size) + 8px - var(--home-screen-padding));
 }
 .header { position: relative; display: flex; align-items: center; justify-content: space-between; height: 40px; margin-inline: -24px; padding-inline: 24px; }
 .brand { display: flex; align-items: center; gap: 12px; margin: 0; }
@@ -149,18 +155,46 @@
 /* Match Detail's unchanged 40px AI dock while the shared navigation is inert. */
 .bottomBar[data-compact] { bottom: max(20px, env(safe-area-inset-bottom)); height: 40px; }
 /* Figma: 48px face / hit target; the native 64px SVG includes its shadow. */
-.aiButton { position: absolute; right: 34px; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; }
+.aiButton { position: absolute; top: 0; right: calc(-1 * var(--home-ai-offset)); width: var(--home-ai-size); height: var(--home-ai-size); padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; transition: none; }
 .aiButton img { position: absolute; left: -8px; top: 0; max-width: none; pointer-events: none; }
 /* Informational status only: let clicks, swipes and scrolling reach the content below. */
 .pendingNotice { position: fixed; z-index: 8; left: 50%; bottom: 76px; width: min(327px, calc(100vw - 48px)); margin: 0; padding: 12px; transform: translateX(-50%); border-radius: 8px; background: white; box-shadow: 0 2px 12px #0002; color: var(--home-ink); font-size: 12px; line-height: 19px; pointer-events: none; }
 @media (max-width: 340px) {
   .navigation { width: 180px; padding-inline: 6px; }
-  /* Detail's AI reaches 48px left from its right inset (34px); reserve an
-     additional 8px gap and half the 180px nav. At 320px this yields x50.
-     Home's AI has more room (16px inset). Standalone navs remain centered. */
+  /* Detail's AI needs its 34px inset, 48px target and an 8px gap. */
   .bottomBar[data-adjacent-ai]:not([data-compact]) .navigation { left: max(90px, min(50%, calc(100% - 34px - 48px - 8px - 90px))); }
   .bottomBar[data-compact] .navigation { max-width: calc(100% - 68px); }
-  .aiButton { right: 16px; } .brand { gap: 6px; } .headerMascot { right: 51px; }
+  .brand { gap: 6px; } .headerMascot { right: 51px; }
+}
+/* A separate mobile scrollport ends above the dock: full-width cards and their
+   hit targets never pass behind NAV/AI. Desktop keeps its external AI anchor. */
+@media (max-width: 599px) {
+  .screen[data-home-state] {
+    position: fixed;
+    inset: 0 0 calc(48px + max(12px, env(safe-area-inset-bottom)) + 8px);
+    min-height: 0;
+    padding-bottom: 24px;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: none;
+    scroll-padding-block: 12px;
+  }
+  .screen[data-home-demo] { top: 44px; }
+  .screen[data-home-state] .bottomBar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+  }
+  .screen[data-home-state] .bottomBar[data-adjacent-ai] .navigation {
+    position: relative;
+    left: auto;
+    transform: none;
+    flex: none;
+  }
+  .screen[data-home-state] .aiButton { position: relative; top: auto; right: auto; flex: none; }
 }
 @media (prefers-reduced-motion: reduce) { .slideTrack { scroll-behavior: auto; } .screen button { transition: none; } }
 .status { padding: 32px 20px; border: 1px solid var(--home-line); border-radius: 12px; background: var(--home-surface); text-align: center; font-size: 14px; line-height: 23px; }
@@ -169,9 +203,3 @@
 .status .button { margin-top: 20px; }
 .footer { margin-top: 24px; }
 .footer .button { width: 100%; }
-
-/* Preserve the Figma dock anchor; only the AI button moves during a collision. */
-/* Align the 48px face to the existing dock: y752 at 375x812. */
-.aiAnchor { position: absolute; right: 34px; top: 0; width: 48px; height: 48px; pointer-events: none; }
-.aiAnchor .aiButton { right: 0; top: 0; transform: translate(var(--home-ai-x, 0px), var(--home-ai-y, 0px)); transition: none; }
-@media (max-width: 340px) { .aiAnchor { right: 16px; } }

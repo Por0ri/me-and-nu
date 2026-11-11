@@ -28,7 +28,11 @@ async function enterDemo(page, consumptionType = 'world') {
   await page.locator('main[data-home-state="ready"]').waitFor();
 }
 async function position(track) {
-  return track.evaluate(e => ({ x: e.scrollLeft, width: e.clientWidth, page: Math.round(e.scrollLeft / e.clientWidth), y: scrollY }));
+  return track.evaluate(e => {
+    const main = e.closest('[data-home-state]');
+    return { x: e.scrollLeft, width: e.clientWidth, page: Math.round(e.scrollLeft / e.clientWidth),
+      y: main && getComputedStyle(main).overflowY === 'auto' ? main.scrollTop : scrollY };
+  });
 }
 async function settled(page, track) {
   let last, stable = 0;
@@ -184,7 +188,10 @@ if (require.main === module) (async () => {
           });
           assert.ok(Math.abs(geometry.width - (viewport.width - 48)) < 1);
           assert.ok(Math.abs(geometry.height / geometry.width - 408 / 327) < .01); assert.equal(geometry.fit, 'cover');
-          await page.evaluate(() => scrollTo(0, 0));
+          await page.evaluate(() => {
+            const main = document.querySelector('[data-home-state]');
+            (getComputedStyle(main).overflowY === 'auto' ? main : window).scrollTo(0, 0);
+          });
           await Promise.all([first, second, third].map(track => settled(page, track)));
           assert.deepEqual(await Promise.all([first, second, third].map(async track => (await position(track)).page)), positionsBeforeDecode,
             'Returning to the feed start preserves every post position');

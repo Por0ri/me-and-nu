@@ -5,6 +5,7 @@ import { createHomeRequestController, type HomeCardModel, type HomeDataSource, t
 import type { BookmarkControls } from "@/lib/pivot/bookmark-service";
 import type { RecentSearch } from "@/lib/pivot/recent-search";
 import { PivotHomeScreen, type HomeSearchView, type SearchNotice } from "./home-screen";
+import { scrollHomeTo } from "./home-scroll";
 
 const loading: HomeState = { status: "loading" };
 // Same pause as onboarding Q1 before asking for works while the user types.
@@ -66,7 +67,7 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
       setFound({ source, label, cards });
       // Found or not, the result has its own title row with "검색 결과 닫기", so the box starts empty again.
       setQuery("");
-      window.scrollTo({ top: 0, behavior: "instant" });
+      scrollHomeTo(0);
     } catch {
       if (!controller.signal.aborted) setSearchNotice({ message: "검색하지 못했어요.\n잠시 후 다시 시도해 주세요.", id: Date.now() });
     }

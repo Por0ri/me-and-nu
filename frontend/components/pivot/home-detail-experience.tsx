@@ -12,6 +12,7 @@ import { pendingSavedSource } from "@/lib/pivot/saved-service";
 import { createServiceBookmarkControls } from "@/lib/pivot/bookmark-service";
 import { readSavedReturn, type SavedReturnSnapshot } from "@/lib/pivot/saved-navigation";
 import { HomeController } from "./home-controller";
+import { homeScrollY, scrollHomeTo } from "./home-scroll";
 import { DetailController } from "./detail-controller";
 import { MyPageController } from "./my-page-controller";
 import { SavedController } from "./saved-controller";
@@ -90,7 +91,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     cancelAnimationFrame(restoreFrame.current);
     restoreFrame.current = requestAnimationFrame(() => {
       if (!snapshot) {
-        window.scrollTo({ top: 0, behavior: "instant" });
+        scrollHomeTo(0);
         home.current?.querySelector<HTMLHeadingElement>("h1")?.focus({ preventScroll: true });
         return;
       }
@@ -99,7 +100,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
         const saved = snapshot.tracks.find((item) => item.postId === post.dataset.homePost);
         if (track && saved) track.scrollTo({ left: saved.index * track.clientWidth, behavior: "instant" });
       });
-      window.scrollTo({ top: snapshot.scrollY, behavior: "instant" });
+      scrollHomeTo(snapshot.scrollY);
       const button = Array.from(home.current?.querySelectorAll<HTMLButtonElement>("[data-home-detail]") ?? [])
         .find((item) => item.dataset.homeDetail === snapshot.focusContentId);
       const navigation = snapshot.focusNavigation ?? "my";
@@ -139,7 +140,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   }, [detailOpen, myOpen, savedOpen, activityOpen, inquiryOpen, postId, contentId, topicId, restoreHome, restoreSaved]);
   function captureHome(focusContentId: string, focusNavigation?: HomeReturnSnapshot["focusNavigation"]): HomeReturnSnapshot {
     return {
-      path: window.location.pathname, kind: homeSource.kind, scrollY: window.scrollY,
+      path: window.location.pathname, kind: homeSource.kind, scrollY: homeScrollY(),
       query: home.current?.querySelector<HTMLInputElement>("input[type=search]")?.value ?? "",
       focusContentId, focusNavigation,
       tracks: Array.from(home.current?.querySelectorAll<HTMLElement>("[data-home-post]") ?? []).map((post) => {

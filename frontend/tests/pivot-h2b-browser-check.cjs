@@ -28,7 +28,7 @@ async function images(page) {
 (async () => {
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
   try {
-    for (const viewport of [{ width: 375, height: 812 }, { width: 390, height: 844 }]) {
+    for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 812 }, { width: 390, height: 844 }]) {
       for (const motion of ['no-preference', 'reduce']) {
         const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, reducedMotion: motion });
         const page = await context.newPage(); page.setDefaultTimeout(10000);
@@ -84,16 +84,17 @@ async function images(page) {
           near(logo.x, 24, 'Logo x'); near(logo.width, 103, 'Logo width'); near(logo.height, 20.5862, 'Logo height');
           near(mascot.width, 68, 'Mascot width'); near(mascot.height, 36, 'Mascot height');
           near(search.width, viewport.width - 48, 'Search width'); near(search.height, 36, 'Search height');
-          near(card.width, viewport.width - 48, 'Card width'); near(card.height / card.width, 408 / 327, 'Card ratio');
+          near(card.width, viewport.width - 48, 'Figma card width'); near(card.height / card.width, 408 / 327, 'Card ratio');
           near(nextCard.y - card.y - card.height, 24, 'Feed gap'); assert.equal(card.radius, '8px');
           near(detail.width, 68, 'Detail face width'); near(detail.height, 24, 'Detail face height');
           near(card.x + card.width - detail.x - detail.width, 12, 'Detail right inset');
           near(card.y + card.height - detail.y - detail.height, 12, 'Detail bottom inset');
-          near(share.width, 28, 'Share icon'); near(navigation.width, 200, 'Navigation width'); near(navigation.height, 48, 'Navigation height');
-          near(ai.width, 40, 'AI width'); near(ai.height, 40, 'AI height');
+          near(share.width, 28, 'Share icon'); near(navigation.width, viewport.width <= 340 ? 180 : 200, 'Navigation width'); near(navigation.height, 48, 'Navigation height');
+          near(ai.width, 48, 'AI width'); near(ai.height, 48, 'AI height');
+          near(ai.x - navigation.x - navigation.width, 12, 'Dock gap'); near(ai.y, navigation.y, 'AI aligns with NAV');
           if (viewport.width === 375) {
             // Figma's fake OS strip is 45px. Our truthful demo disclosure is 44px.
-            near(logo.y, 54.70703125 - 1, 'Logo y'); near(search.y, 93 - 1, 'Search y'); near(card.y, 145 - 1, 'Feed y'); near(card.height, 408, 'Card height');
+            near(logo.y, 54.70703125 - 1, 'Logo y'); near(search.y, 93 - 1, 'Search y'); near(card.y, 145 - 1, 'Feed y'); near(card.height, 408, 'Figma card height');
           }
           assert.match(await page.getByLabel('시연용 데모 안내').innerText(), /실제 추천 아님/);
           assert.deepEqual(await page.getByRole('navigation', { name: '주요 메뉴' }).getByRole('button').allTextContents(), ['HOME', 'SAVE', 'MY']);
