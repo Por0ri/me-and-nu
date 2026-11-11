@@ -91,7 +91,7 @@ async function images(page) {
           near(card.y + card.height - detail.y - detail.height, 12, 'Detail bottom inset');
           near(share.width, 28, 'Share icon'); near(navigation.width, viewport.width <= 340 ? 180 : 200, 'Navigation width'); near(navigation.height, 48, 'Navigation height');
           near(ai.width, 48, 'AI width'); near(ai.height, 48, 'AI height');
-          near(ai.x - navigation.x - navigation.width, 12, 'Dock gap'); near(ai.y, navigation.y, 'AI aligns with NAV');
+          near(ai.x - navigation.x - navigation.width, viewport.width <= 340 ? 8 : 5.5, 'Collapsed Detail dock gap'); near(ai.y, navigation.y, 'AI aligns with NAV');
           if (viewport.width === 375) {
             // Figma's fake OS strip is 45px. Our truthful demo disclosure is 44px.
             near(logo.y, 54.70703125 - 1, 'Logo y'); near(search.y, 93 - 1, 'Search y'); near(card.y, 145 - 1, 'Feed y'); near(card.height, 408, 'Figma card height');

@@ -21,10 +21,6 @@
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
-.screen[data-home-state] {
-  --home-ai-size: 48px;
-  --home-ai-offset: calc(var(--home-ai-size) + 8px - var(--home-screen-padding));
-}
 .header { position: relative; display: flex; align-items: center; justify-content: space-between; height: 40px; margin-inline: -24px; padding-inline: 24px; }
 .brand { display: flex; align-items: center; gap: 12px; margin: 0; }
 .brand > img { display: block; flex: none; max-width: none; }
@@ -154,8 +150,9 @@
 .navigation [aria-current="page"] > span { background: #efe7ff; font-weight: 600; }
 /* Match Detail's unchanged 40px AI dock while the shared navigation is inert. */
 .bottomBar[data-compact] { bottom: max(20px, env(safe-area-inset-bottom)); height: 40px; }
-/* Figma: 48px face / hit target; the native 64px SVG includes its shadow. */
-.aiButton { position: absolute; top: 0; right: calc(-1 * var(--home-ai-offset)); width: var(--home-ai-size); height: var(--home-ai-size); padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; transition: none; }
+/* Match the right edge of Detail's centered, collapsed 307px / (100vw - 68px)
+   AI dock. The 48px hit target excludes the native 64px SVG's shadow. */
+.aiButton { position: absolute; top: 0; right: calc((100% - min(307px, calc(100vw - 68px))) / 2); width: 48px; height: 48px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; transition: none; }
 .aiButton img { position: absolute; left: -8px; top: 0; max-width: none; pointer-events: none; }
 /* Informational status only: let clicks, swipes and scrolling reach the content below. */
 .pendingNotice { position: fixed; z-index: 8; left: 50%; bottom: 76px; width: min(327px, calc(100vw - 48px)); margin: 0; padding: 12px; transform: translateX(-50%); border-radius: 8px; background: white; box-shadow: 0 2px 12px #0002; color: var(--home-ink); font-size: 12px; line-height: 19px; pointer-events: none; }
@@ -166,36 +163,29 @@
   .bottomBar[data-compact] .navigation { max-width: calc(100% - 68px); }
   .brand { gap: 6px; } .headerMascot { right: 51px; }
 }
-/* A separate mobile scrollport ends above the dock: full-width cards and their
-   hit targets never pass behind NAV/AI. Desktop keeps its external AI anchor. */
-@media (max-width: 599px) {
-  .screen[data-home-state] {
-    position: fixed;
-    inset: 0 0 calc(48px + max(12px, env(safe-area-inset-bottom)) + 8px);
-    min-height: 0;
-    padding-bottom: 24px;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
-    scrollbar-width: none;
-    scroll-padding-block: 12px;
+/* Detail's 200px NAV overlaps its AI at 341–363px. Keep the approved HOME-only
+   narrow NAV through 374px, without changing the AI anchor or card width. */
+@media (min-width: 341px) and (max-width: 374px) {
+  .screen[data-home-state] .navigation {
+    width: 180px;
+    padding-inline: 6px;
+    left: max(90px, min(50%, calc(100% - 34px - 48px - 8px - 90px)));
   }
-  .screen[data-home-demo] { top: 44px; }
-  .screen[data-home-state] .bottomBar {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 12px;
-    padding-left: max(8px, env(safe-area-inset-left));
-    padding-right: max(8px, env(safe-area-inset-right));
-  }
-  .screen[data-home-state] .bottomBar[data-adjacent-ai] .navigation {
-    position: relative;
-    left: auto;
-    transform: none;
-    flex: none;
-  }
-  .screen[data-home-state] .aiButton { position: relative; top: auto; right: auto; flex: none; }
 }
+/* Keep full-width cards and hit targets above the fixed dock at every width.
+   Desktop now uses the same separate scrollport as mobile because its AI is
+   inside the feed width, matching Detail's collapsed placement. */
+.screen[data-home-state] {
+  position: fixed;
+  inset: 0 0 calc(48px + max(12px, env(safe-area-inset-bottom)) + 8px);
+  min-height: 0;
+  padding-bottom: 24px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+  scroll-padding-block: 12px;
+}
+.screen[data-home-demo] { top: 44px; }
 @media (prefers-reduced-motion: reduce) { .slideTrack { scroll-behavior: auto; } .screen button { transition: none; } }
 .status { padding: 32px 20px; border: 1px solid var(--home-line); border-radius: 12px; background: var(--home-surface); text-align: center; font-size: 14px; line-height: 23px; }
 .status p { margin: 0; }
