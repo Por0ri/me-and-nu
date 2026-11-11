@@ -723,7 +723,7 @@ async function run(browser, viewport) {
       await capture('detail-mobile-fitting');
     });
     detailSlides = null; detailMode = 'full_body';
-    await check('fixed AI: the separate feed and collapsed Detail dock keep controls clickable', async () => {
+    await check('fixed AI: the full-height feed scrolls beneath the unchanged Detail dock', async () => {
       imageFailure = null; detailMode = 'full_body'; await page.goto(base + '/pivot/home'); await home.waitFor();
       const ai = home.getByRole('button', { name: 'AI 콘텐츠 탐색', exact: true });
       const card = home.locator('[data-home-post="42"]');
@@ -742,7 +742,8 @@ async function run(browser, viewport) {
       const cardBox = await card.boundingBox();
       assert.equal(cardBox.width, Math.min(viewport.width, 430) - 48);
       const port = await home.boundingBox(), dock = await home.locator('nav').boundingBox();
-      assert.ok(Math.abs(port.y + port.height + 8 - dock.y) < 1, 'Feed stops before the dock');
+      assert.ok(Math.abs(port.y + port.height - viewport.height) < 1, 'Feed reaches the viewport bottom behind the dock');
+      assert.ok(cardBox.y + cardBox.height <= dock.y - 12, 'Scroll-to-card leaves its actions above the dock');
       assert.ok(Math.abs(size.x - dock.x - dock.width - (viewport.width <= 340 ? 8 : 5.5)) < 1, 'NAV and AI are separate');
       assert.ok(Math.abs(size.x - (viewport.width / 2 + Math.min(307, viewport.width - 68) / 2 - 48)) < 1, 'AI matches collapsed Detail');
       assert.ok(Math.abs(size.y - (viewport.height - 12 - 48)) < 1, 'AI aligns with the NAV height');
