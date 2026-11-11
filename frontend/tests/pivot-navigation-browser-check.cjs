@@ -1,6 +1,7 @@
 // Existing Playwright + Edge only; loopback fixtures, fresh contexts, no real API.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { installPageScroll } = require('./helpers/pivot-page-scroll.cjs');
 const path = require('node:path');
 const { chromium } = require(process.env.PIVOT_PLAYWRIGHT_MODULE || 'playwright');
 const { createApiFixture } = require('./helpers/pivot-api-fixture.cjs');
@@ -38,9 +39,7 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
   assert.equal(data.overflow, false);
   assert.ok(data.rect.left >= 0 && data.rect.right <= width);
   if (data.home) {
-    const reserve = Math.max(0, 40 - Math.max(0, (width - 430) / 2));
-    const previousCenter = width <= 340 ? Math.max(90, Math.min(width / 2, width - 180)) : width / 2;
-    near(data.rect.x + data.rect.width / 2, previousCenter - reserve, 'HOME NAV follows the narrower feed');
+    near(data.rect.x + data.rect.width / 2, width / 2 - (width < 600 ? 30 : 0), 'HOME dock group is centered');
   } else if (!ai || compact || width > 340) near(data.rect.x + data.rect.width / 2, width / 2, 'centered NAV');
   for (const [index, button] of data.buttons.entries()) {
     assert.equal(button.size, '12px'); assert.equal(button.line, '18px'); assert.match(button.font, /PivotPretendard/);
@@ -68,7 +67,7 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
   return data;
 }
 async function lastContent(page, selector) {
-  await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
+  await page.evaluate(() => window.pivotScrollRoot().scrollTo(0, window.pivotScrollRoot().scrollHeight));
   const last = await page.locator(selector).last().boundingBox();
   const n = await nav(page).boundingBox();
   assert.ok(last.y + last.height <= n.y, `${selector} can scroll clear of NAV`);
@@ -107,6 +106,7 @@ async function expanded(page, inset = 0) {
 }
 async function run(browser, viewport) {
   const context = await browser.newContext({ viewport, isMobile: viewport.width < 600, hasTouch: viewport.width < 600, serviceWorkers: 'block' });
+  await installPageScroll(context);
   const page = await context.newPage(); page.setDefaultTimeout(15000);
   const errors = [], blocked = [], checks = {};
   const fixture = createApiFixture({ apiOrigin: 'http://127.0.0.1:8195', frontendOrigin: base }); fixture.rotate('active');
@@ -127,6 +127,10 @@ async function run(browser, viewport) {
     checks.home = await measure(page, 'HOME', { ai: true });
     await page.screenshot({ path: path.join(out, `home-${viewport.width}.png`) });
     checks.homeLast = await lastContent(page, '[data-home-post]');
+    await nav(page).getByRole('button', { name: 'HOME', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.pivotScrollRoot().scrollTop), 0, 'HOME resets the active scroll owner');
+    assert.ok(await page.locator('[data-home-state] h1').evaluate(el => el === document.activeElement));
+    checks.homeReset = true;
     // Native Tab / Shift+Tab, Enter and Space exercise the actual button handlers.
     await nav(page).getByRole('button', { name: 'HOME', exact: true }).focus();
     await page.keyboard.press('Tab'); assert.equal(await page.evaluate(() => document.activeElement.textContent), 'SAVE');
@@ -197,7 +201,9 @@ async function run(browser, viewport) {
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
   try {
     for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 812 }, { width: 390, height: 844 },
-      { width: 430, height: 932 }, { width: 1280, height: 900 }, { width: 1440, height: 1000 }]) await run(browser, viewport);
+      { width: 430, height: 932 }, { width: 1280, height: 900 }, { width: 1440, height: 1000 }]) {
+      if (!process.env.PIVOT_VIEWPORT_WIDTH || viewport.width === Number(process.env.PIVOT_VIEWPORT_WIDTH)) await run(browser, viewport);
+    }
   } finally { await browser.close(); fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify(results, null, 2)); }
   if (results.some(result => result.status === 'fail')) process.exitCode = 1;
 })().catch(error => { console.error(error); process.exitCode = 1; });

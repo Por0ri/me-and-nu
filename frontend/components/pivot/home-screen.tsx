@@ -7,6 +7,7 @@ import { demoBookmarkNotice } from "@/lib/pivot/saved";
 import { dismissActionNotice } from "@/lib/pivot/action-notice";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { ContentCarousel } from "./content-carousel";
+import { scrollHomeTo } from "./home-scroll";
 import styles from "./home.module.css";
 import { HomeAIButton } from "./home-ai-button";
 import { useHomeExposure, useInteractions } from "./interaction-context";
@@ -54,7 +55,7 @@ export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI 
   }, [localNotice, onNotice]);
   return <div className={styles.bottomBar} data-adjacent-ai={adjacentAI || undefined} data-compact={compact || undefined}>
     <nav aria-label="주요 메뉴" className={styles.navigation}>
-      <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } window.scrollTo({ top: 0, behavior: "instant" }); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
+      <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } scrollHomeTo(0); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
       <button type="button" data-saved-navigation="" aria-current={active === "saved" ? "page" : undefined}
         aria-disabled={!onSaved && active !== "saved" || undefined} onClick={() => { if (active === "saved") { onSaved?.(); return; } if (onSaved) onSaved(); else (onNotice ?? setNotice)("SAVE 화면은 준비 중이에요. 저장은 수행하지 않아요."); }}><span>SAVE</span></button>
       <button type="button" data-my-navigation="" aria-current={active === "my" ? "page" : undefined}
@@ -356,7 +357,7 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
   }, [notice]);
   function pending(message: string) { setNotice({ message }); }
   const result = search?.result ?? null;
-  return <main className={styles.screen} data-home-state={state.status} data-search-open={search?.open || undefined} aria-busy={state.status === "loading"}>
+  return <main className={styles.screen} data-home-state={state.status} data-home-demo={demo || undefined} data-search-open={search?.open || undefined} aria-busy={state.status === "loading"}>
     <HomeHeader onNotice={pending} onNotifications={onNotifications} />
     {demo ? <aside className={styles.demoNotice} aria-label="시연용 피드 안내">
       <strong>시연용 예시 피드</strong>

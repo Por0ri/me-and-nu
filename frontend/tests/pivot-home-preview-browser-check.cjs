@@ -5,6 +5,7 @@
 // Run from frontend after approval. Screenshots/JSON may only go to the dedicated
 // OS temporary folder pivot-home-preview-v2. No existing profile or cookies are used.
 const fs = require('node:fs');
+const { installPageScroll } = require('./helpers/pivot-page-scroll.cjs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const os = require('node:os');
@@ -110,11 +111,14 @@ async function hit(locator) {
 async function aiObstructions(ai) {
   return ai.evaluate(el => {
     const button = el.getBoundingClientRect();
+    const main = el.closest('main'), port = main.getBoundingClientRect();
+    const clipped = getComputedStyle(main).overflowY === 'auto';
     const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
     const controls = [...el.closest('main').querySelectorAll('nav, [data-home-post] button')].filter(control => {
-      const rect = control.getBoundingClientRect(), css = getComputedStyle(control);
+      const rect = control.getBoundingClientRect().toJSON(), css = getComputedStyle(control);
+      if (clipped && control.tagName !== 'NAV') { rect.top = Math.max(rect.top, port.top); rect.bottom = Math.min(rect.bottom, port.bottom); }
       return !control.closest('[inert]') && css.visibility === 'visible' && css.pointerEvents !== 'none' &&
-        Number(css.opacity) > 0 && rect.width && rect.height && overlaps(button, rect);
+        Number(css.opacity) > 0 && rect.width && rect.bottom > rect.top && overlaps(button, rect);
     });
     return controls.map(control => control.getAttribute('aria-label') || control.textContent);
   });
@@ -122,6 +126,7 @@ async function aiObstructions(ai) {
 async function run(browser, viewport) {
   const context = await browser.newContext({ viewport, isMobile: viewport.width < 600, hasTouch: true,
     reducedMotion: 'reduce', serviceWorkers: 'block' });
+  await installPageScroll(context);
   const page = await context.newPage(); page.setDefaultTimeout(12000); page.setDefaultNavigationTimeout(60000);
   const calls = [], external = [], unexpected = [], errors = [], checks = [], failures = [];
   const saved = new Set(), liked = new Set(), preferences = new Map();
@@ -188,6 +193,7 @@ async function run(browser, viewport) {
     unexpected.push({ path: url.pathname, method }); return route.abort();
   });
   const check = async (name, fn) => {
+    if (process.env.PIVOT_BROWSER_CHECK && !new RegExp(process.env.PIVOT_BROWSER_CHECK).test(name)) return;
     try { await fn(); checks.push(name); } catch (error) { failures.push({ name, error: error.message }); console.error('FAIL', viewport.width, name, error.message); }
   };
   const capture = async name => {
@@ -367,7 +373,7 @@ async function run(browser, viewport) {
         await until(async () => await indexOf(track) === 0, 'previous returns first slide');
       });
     }
-    await check('Bottom copy follows the card width, 10px inset and five-stop scrim', async () => {
+    await check('Figma bottom copy: 227px text, 10px inset and five-stop scrim', async () => {
       const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
       for (const [index, expectedHeight] of [[8, 136], [9, 156]]) {
         await card.getByRole('button', { name: `${index + 1}번 슬라이드 보기`, exact: true }).click();
@@ -382,7 +388,8 @@ async function run(browser, viewport) {
             left: copy.left - stage.left, bottom: stage.bottom - copy.bottom,
             scrimHeight: scrim.getBoundingClientRect().height, gradient: getComputedStyle(scrim).backgroundImage };
         });
-        assert.equal(metrics.width, Math.min(227, metrics.stageWidth - 100));
+        assert.equal(metrics.stageWidth, Math.min(viewport.width, 430) - 48);
+        assert.equal(metrics.width, 227);
         assert.equal(metrics.left, 10); assert.equal(metrics.bottom, 10);
         assert.equal(metrics.scrimHeight, metrics.copyHeight + 20);
         if (metrics.width === 227) assert.equal(metrics.scrimHeight, expectedHeight);
@@ -416,9 +423,9 @@ async function run(browser, viewport) {
       const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
       await track.focus(); await page.keyboard.press('Home'); await until(async () => await indexOf(track) === 0, 'first slide');
       const overlay = card.locator('[data-carousel-overlay]').first();
-      await overlay.scrollIntoViewIfNeeded(); const before = await page.evaluate(() => scrollY);
+      await overlay.scrollIntoViewIfNeeded(); const before = await page.evaluate(() => window.pivotScrollRoot().scrollTop);
       await swipe(page, overlay, 0, -120, [.5, .8]);
-      await until(async () => await page.evaluate(() => scrollY) > before + 40, 'touch beginning on copy scrolls feed');
+      await until(async () => await page.evaluate(() => window.pivotScrollRoot().scrollTop) > before + 40, 'touch beginning on copy scrolls feed');
       assert.equal(await overlay.evaluate(el => el.scrollTop), 0);
       assert.equal(await indexOf(track), 0, 'vertical gesture does not change the slide');
     });
@@ -431,16 +438,16 @@ async function run(browser, viewport) {
       const settled = await indexOf(track); await page.waitForTimeout(500);
       assert.equal(await indexOf(track), settled, 'no delayed slide rollback');
       assert.equal(await track.getAttribute('data-dragging'), null);
-      await track.scrollIntoViewIfNeeded(); const before = await page.evaluate(() => scrollY);
+      await track.scrollIntoViewIfNeeded(); const before = await page.evaluate(() => window.pivotScrollRoot().scrollTop);
       await swipe(page, track, -20, -140, [.5, .7]);
-      await until(async () => await page.evaluate(() => scrollY) > before + 40, 'vertical diagonal scrolls the feed');
+      await until(async () => await page.evaluate(() => window.pivotScrollRoot().scrollTop) > before + 40, 'vertical diagonal scrolls the feed');
       assert.equal(await indexOf(track), settled); assert.equal(await track.getAttribute('data-dragging'), null);
     });
     await check('Home → Detail → Back/HOME: body, sources, AI, reactions, focus and positions', async () => {
       const card = home.locator('[data-home-post="41"]'), track = card.locator('[data-home-track]');
       await track.focus(); await page.keyboard.press('End'); await until(async () => await indexOf(track) === 9, '10th slide');
       const open = card.locator('[data-home-detail]'); await open.focus(); await open.scrollIntoViewIfNeeded();
-      const before = await page.evaluate(() => scrollY);
+      const before = await page.evaluate(() => window.pivotScrollRoot().scrollTop);
       await open.click(); const detail = page.locator('main[data-detail-state="ready"]'); await detail.waitFor();
       await until(() => detail.locator('h1').evaluate(el => el === document.activeElement), 'Detail heading focus');
       assert.equal(await detail.locator('[data-content-cover]').count(), 1);
@@ -501,12 +508,12 @@ async function run(browser, viewport) {
       const stop = detail.getByRole('button', { name: '그만 볼래요', exact: true });
       await stop.click(); await until(async () => await stop.getAttribute('aria-pressed') === 'true', 'negative preference');
       await stop.click(); await until(async () => await stop.getAttribute('aria-pressed') === 'false', 'clear preference');
-      await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
+      await page.evaluate(() => window.pivotScrollRoot().scrollTo(0, window.pivotScrollRoot().scrollHeight));
       assert.ok((await more.boundingBox()).y + (await more.boundingBox()).height < viewport.height - 60);
       await capture('detail-bottom');
       await detail.getByRole('button', { name: '뒤로가기', exact: true }).click(); await home.waitFor();
       await until(() => open.evaluate(el => el === document.activeElement), 'return card focus');
-      assert.equal(await indexOf(track), 9); assert.ok(Math.abs(await page.evaluate(() => scrollY) - before) < 2);
+      assert.equal(await indexOf(track), 9); assert.ok(Math.abs(await page.evaluate(() => window.pivotScrollRoot().scrollTop) - before) < 2);
       assert.equal(await card.getByRole('button', { name: '좋아요', exact: true }).getAttribute('aria-pressed'), 'true');
       await page.goForward(); await detail.waitFor();
       await detail.getByRole('button', { name: 'HOME', exact: true }).click(); await home.waitFor();
@@ -559,7 +566,7 @@ async function run(browser, viewport) {
       assert.equal(await detail.locator('[data-carousel-slide]').count(), 3, 'short server carousel is not padded to five');
       const track = detail.locator('[data-detail-track]'); await track.focus(); await page.keyboard.press('End');
       await until(async () => await indexOf(track) === 2, 'three-slide detail ends at page three');
-      await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
+      await page.evaluate(() => window.pivotScrollRoot().scrollTo(0, window.pivotScrollRoot().scrollHeight));
       await capture('longest-detail-bottom');
       assert.ok(await hit(detail.getByRole('button', { name: '더 볼래요', exact: true })));
     });
@@ -674,9 +681,9 @@ async function run(browser, viewport) {
       await page.keyboard.press('ArrowRight'); await until(async () => await indexOf(track) === 2, 'Detail keyboard next twice');
       if (viewport.width < 600) {
         const overlay = detail.locator('[data-carousel-slide="3"] figcaption');
-        await overlay.scrollIntoViewIfNeeded(); const before = await page.evaluate(() => scrollY);
+        await overlay.scrollIntoViewIfNeeded(); const before = await page.evaluate(() => window.pivotScrollRoot().scrollTop);
         await swipe(page, overlay, 0, -100, [.5, .8]);
-        await until(async () => await page.evaluate(() => scrollY) > before + 20, 'Detail copy gesture scrolls the article');
+        await until(async () => await page.evaluate(() => window.pivotScrollRoot().scrollTop) > before + 20, 'Detail copy gesture scrolls the article');
         assert.equal(await overlay.evaluate(el => el.scrollTop), 0);
       }
       const transcript = detail.locator('[data-detail-slide-text]'); await transcript.scrollIntoViewIfNeeded();
@@ -716,7 +723,7 @@ async function run(browser, viewport) {
       await capture('detail-mobile-fitting');
     });
     detailSlides = null; detailMode = 'full_body';
-    await check('fixed AI: the gutter keeps controls clickable and the notice is preserved', async () => {
+    await check('fixed AI: the mobile dock or desktop gutter keeps controls clickable', async () => {
       imageFailure = null; detailMode = 'full_body'; await page.goto(base + '/pivot/home'); await home.waitFor();
       const ai = home.getByRole('button', { name: 'AI 콘텐츠 탐색', exact: true });
       const card = home.locator('[data-home-post="42"]');
@@ -733,7 +740,12 @@ async function run(browser, viewport) {
       assert.ok(probes.face.every(Boolean)); assert.equal(probes.shadow, false);
       assert.equal(probes.imageWidth, 64); assert.equal(probes.events, 'none');
       const cardBox = await card.boundingBox();
-      assert.ok(Math.abs(size.x - cardBox.x - cardBox.width - 8) < 1, 'AI sits outside the feed');
+      assert.equal(cardBox.width, Math.min(viewport.width, 430) - 48);
+      if (viewport.width < 600) {
+        const port = await home.boundingBox(), dock = await home.locator('nav').boundingBox();
+        assert.ok(Math.abs(port.y + port.height + 8 - dock.y) < 1, 'Feed stops before the dock');
+        assert.ok(Math.abs(size.x - dock.x - dock.width - 12) < 1, 'NAV and AI are separate');
+      } else assert.ok(Math.abs(size.x - cardBox.x - cardBox.width - 8) < 1, 'AI sits outside the feed');
       assert.ok(Math.abs(size.y - (viewport.height - 12 - 48)) < 1, 'AI aligns with the NAV height');
       await capture('fixed-ai-gutter');
       // The existing informational button has aria-disabled=true, so locator.click waits for enabled.
@@ -756,13 +768,13 @@ async function run(browser, viewport) {
       const card = home.locator('[data-home-post="42"]'), ai = home.locator('[data-home-ai]');
       await card.evaluate(el => el.scrollIntoView({ block: 'end', behavior: 'instant' }));
       const positions = await page.evaluate(async () => {
-        const ai = document.querySelector('[data-home-ai]'), origin = scrollY, result = [];
-        for (const y of [origin - 2, origin + 2, 0, 160, 400, 650, 320, 120, 0, document.documentElement.scrollHeight]) {
-          scrollTo(0, y);
+        const ai = document.querySelector('[data-home-ai]'), origin = window.pivotScrollRoot().scrollTop, result = [];
+        for (const y of [origin - 2, origin + 2, 0, 160, 400, 650, 320, 120, 0, window.pivotScrollRoot().scrollHeight]) {
+          window.pivotScrollRoot().scrollTo(0, y);
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           const { x, y: top } = ai.getBoundingClientRect();
           const css = getComputedStyle(ai);
-          result.push({ x, top, scrollY, opacity: css.opacity, visibility: css.visibility });
+          result.push({ x, top, scrollY: window.pivotScrollRoot().scrollTop, opacity: css.opacity, visibility: css.visibility });
         }
         return result;
       });
@@ -789,7 +801,9 @@ async function run(browser, viewport) {
 (async () => {
   fs.mkdirSync(output, { recursive: true });
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
-  try { for (const viewport of [{ width: 375, height: 812 }, { width: 390, height: 844 }, { width: 1440, height: 1000 }]) await run(browser, viewport); }
+  try { for (const viewport of [{ width: 375, height: 812 }, { width: 390, height: 844 }, { width: 1440, height: 1000 }]) {
+    if (!process.env.PIVOT_VIEWPORT_WIDTH || viewport.width === Number(process.env.PIVOT_VIEWPORT_WIDTH)) await run(browser, viewport);
+  } }
   finally { await browser.close(); fs.writeFileSync(artifact('results.json'), JSON.stringify({
     geometry, fixtures: items.map(item => ({ id: item.id, agentId: item.original.id, title: item.title, bodyChars: item.body.length })), results }, null, 2)); }
   console.log(JSON.stringify(results.map(({ viewport, checks, failures }) => ({ viewport, passed: checks.length, failures })), null, 2));

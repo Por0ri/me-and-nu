@@ -23,11 +23,7 @@
 }
 .screen[data-home-state] {
   --home-ai-size: 48px;
-  /* The SVG shadow extends 8px beyond the 48px hit target. */
-  --home-ai-inset: max(8px, env(safe-area-inset-right));
   --home-ai-offset: calc(var(--home-ai-size) + 8px - var(--home-screen-padding));
-  --home-outer-gutter: max(0px, (100vw - var(--home-screen-width)) / 2);
-  --home-feed-reserve: max(0px, var(--home-ai-offset) + var(--home-ai-inset) - var(--home-outer-gutter));
 }
 .header { position: relative; display: flex; align-items: center; justify-content: space-between; height: 40px; margin-inline: -24px; padding-inline: 24px; }
 .brand { display: flex; align-items: center; gap: 12px; margin: 0; }
@@ -92,7 +88,6 @@
 .searchEmptyTitle { color: var(--home-ink); font-size: 17px; font-weight: 700; line-height: 26px; }
 .searchEmptyHelp { margin-top: 4px; color: var(--home-muted); font-size: 13px; line-height: 20px; }
 .feed > ul { display: flex; flex-direction: column; gap: 24px; list-style: none; padding: 0; margin: 0; }
-.screen[data-home-state] .feed { margin-right: var(--home-feed-reserve); }
 .feed li { min-width: 0; }
 .card { position: relative; min-width: 0; aspect-ratio: 327 / 408; border-radius: 8px; background: var(--home-surface); box-shadow: 0 0 2px #e0bafb; }
 .previewBadge { position: absolute; z-index: 3; top: 10px; left: 10px; max-width: calc(100% - 20px); margin: 0; padding: 5px 8px; border-radius: 6px; background: #f3e9fc; color: #4c2864; font-size: 11px; line-height: 1.4; pointer-events: none; }
@@ -160,31 +155,46 @@
 /* Match Detail's unchanged 40px AI dock while the shared navigation is inert. */
 .bottomBar[data-compact] { bottom: max(20px, env(safe-area-inset-bottom)); height: 40px; }
 /* Figma: 48px face / hit target; the native 64px SVG includes its shadow. */
-.aiButton { position: absolute; top: 0; right: calc(var(--home-feed-reserve) - var(--home-ai-offset)); width: var(--home-ai-size); height: var(--home-ai-size); padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; transition: none; }
+.aiButton { position: absolute; top: 0; right: calc(-1 * var(--home-ai-offset)); width: var(--home-ai-size); height: var(--home-ai-size); padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; transition: none; }
 .aiButton img { position: absolute; left: -8px; top: 0; max-width: none; pointer-events: none; }
-/* Move the HOME dock with the narrower feed so its right edge stays clear of the same card actions. */
-.screen[data-home-state] .navigation {
-  --home-nav-width: 200px;
-  --home-nav-center: 50%;
-  --home-nav-right: calc(var(--home-nav-center) + var(--home-nav-width) / 2 - var(--home-feed-reserve));
-  --home-nav-left: max(env(safe-area-inset-left), var(--home-nav-right) - var(--home-nav-width));
-  left: var(--home-nav-left);
-  width: calc(var(--home-nav-right) - var(--home-nav-left));
-  transform: none;
-}
 /* Informational status only: let clicks, swipes and scrolling reach the content below. */
 .pendingNotice { position: fixed; z-index: 8; left: 50%; bottom: 76px; width: min(327px, calc(100vw - 48px)); margin: 0; padding: 12px; transform: translateX(-50%); border-radius: 8px; background: white; box-shadow: 0 2px 12px #0002; color: var(--home-ink); font-size: 12px; line-height: 19px; pointer-events: none; }
 @media (max-width: 340px) {
   .navigation { width: 180px; padding-inline: 6px; }
   /* Detail's AI needs its 34px inset, 48px target and an 8px gap. */
   .bottomBar[data-adjacent-ai]:not([data-compact]) .navigation { left: max(90px, min(50%, calc(100% - 34px - 48px - 8px - 90px))); }
-  .screen[data-home-state] .bottomBar[data-adjacent-ai] .navigation {
-    --home-nav-width: 180px;
-    --home-nav-center: max(90px, min(50%, 100% - 180px));
-    left: var(--home-nav-left);
-  }
   .bottomBar[data-compact] .navigation { max-width: calc(100% - 68px); }
   .brand { gap: 6px; } .headerMascot { right: 51px; }
+}
+/* A separate mobile scrollport ends above the dock: full-width cards and their
+   hit targets never pass behind NAV/AI. Desktop keeps its external AI anchor. */
+@media (max-width: 599px) {
+  .screen[data-home-state] {
+    position: fixed;
+    inset: 0 0 calc(48px + max(12px, env(safe-area-inset-bottom)) + 8px);
+    min-height: 0;
+    padding-bottom: 24px;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: none;
+    scroll-padding-block: 12px;
+  }
+  .screen[data-home-demo] { top: 44px; }
+  .screen[data-home-state] .bottomBar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+  }
+  .screen[data-home-state] .bottomBar[data-adjacent-ai] .navigation {
+    position: relative;
+    left: auto;
+    transform: none;
+    flex: none;
+  }
+  .screen[data-home-state] .aiButton { position: relative; top: auto; right: auto; flex: none; }
 }
 @media (prefers-reduced-motion: reduce) { .slideTrack { scroll-behavior: auto; } .screen button { transition: none; } }
 .status { padding: 32px 20px; border: 1px solid var(--home-line); border-radius: 12px; background: var(--home-surface); text-align: center; font-size: 14px; line-height: 23px; }
