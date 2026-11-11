@@ -78,6 +78,7 @@ test('Service preserves pagination and full body, allows only notices and openab
 
 test('A new-post notice opens its post, and other notices open nothing', () => {
   assert.deepEqual({ ...newPostTarget(newPost) }, { postId: '501', contentId: '501', topicId: 1 });
+  assert.deepEqual({ ...newPostTarget({ ...newPost, type: 'recommended_post' }) }, { postId: '501', contentId: '501', topicId: 1 });
   assert.equal(newPostTarget(notice), null);
   assert.equal(newPostTarget({ ...newPost, topicId: 0 }), null);
   assert.equal(newPostTarget({ ...newPost, contentId: 1.5 }), null);

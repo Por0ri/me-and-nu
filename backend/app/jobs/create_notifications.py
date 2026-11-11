@@ -3,12 +3,15 @@
     # 새 글 알림: 매일 아침 9시 (한국 시간) 한 번
     python -m app.jobs.create_notifications new-posts --expected-database me_nu_checking --apply
 
+    # 추천 알림: 새 글 알림 다음에 매일 아침 9시 (한국 시간) 한 번. 그날 추천이 계산된 뒤에 돌립니다
+    python -m app.jobs.create_notifications recommended --expected-database me_nu_checking --apply
+
     # 운영공지: 알림을 꺼 둔 회원도 받습니다. --user-id 를 주면 그 회원에게만
     python -m app.jobs.create_notifications notice --expected-database me_nu_checking \
         --title "점검 안내" --body "11월 20일 새벽 2시부터 30분 동안 점검해요." --apply
 
 대상 DB 이름을 --expected-database 로 정확히 적어야 합니다. 결과에는 개수만 찍습니다.
---hours 는 새 글을 찾는 기간 (기본 24시간) 으로, 로컬 시험 DB에서 지난 글로 확인할 때만 늘립니다.
+--hours 는 새 글을 찾는 기간 (기본 48시간) 으로, 로컬 시험 DB에서 지난 글로 확인할 때만 늘립니다.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from app.seeds.menu_works import MenuWorksError, validate_target
 from app.services.notification_service import (
     NEW_POST_WINDOW,
     create_new_post_notifications,
+    create_recommended_notifications,
     publish_notice,
 )
 
@@ -48,6 +52,8 @@ async def run(
             if command == "new-posts":
                 window = NEW_POST_WINDOW if hours is None else timedelta(hours=hours)
                 return await create_new_post_notifications(db, apply=apply, now=now, window=window)
+            if command == "recommended":
+                return await create_recommended_notifications(db, apply=apply, now=now)
             if command == "notice":
                 return await publish_notice(
                     db, title=title or "", body=body or "", apply=apply, user_ids=user_ids, now=now,
@@ -60,14 +66,14 @@ async def run(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name, summary in (("new-posts", "새 글 알림 만들기"), ("notice", "운영공지 만들기")):
+    for name, summary in (("new-posts", "새 글 알림 만들기"), ("recommended", "추천 알림 만들기"), ("notice", "운영공지 만들기")):
         sub = commands.add_parser(name, help=summary)
         sub.add_argument("--expected-database", required=True, help="대상 DB 이름 (주소 말고 이름만)")
         sub.add_argument("--database-url", help="DB 주소. 없으면 설정값을 씁니다. 화면에 찍지 않습니다.")
         sub.add_argument("--apply", action="store_true", help="실제로 저장합니다. 없으면 미리보기입니다.")
         if name == "new-posts":
-            sub.add_argument("--hours", type=float, help="새 글을 찾는 기간 (기본 24시간)")
-        else:
+            sub.add_argument("--hours", type=float, help="새 글을 찾는 기간 (기본 48시간)")
+        elif name == "notice":
             sub.add_argument("--title", required=True, help="공지 제목 (1~100자)")
             sub.add_argument("--body", required=True, help="공지 본문 (1~500자)")
             sub.add_argument("--user-id", type=int, action="append", dest="user_ids",

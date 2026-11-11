@@ -9,15 +9,20 @@ function positiveId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-/** The inbox shows operational notices and new-post notices that point to a post. */
-export function isInboxItem(item: NotificationItem): boolean {
-  if (item.type === "system_notice") return true;
-  return item.type === "topic_new_post" && positiveId(item.contentId) && positiveId(item.topicId);
+/** New-post and recommended notices are about one post and open it. */
+export function isPostNotice(item: NotificationItem): boolean {
+  return item.type === "topic_new_post" || item.type === "recommended_post";
 }
 
-/** A new-post notice opens its post; service posts use the content ID as the post ID. */
+/** The inbox shows operational notices and post notices that point to a post. */
+export function isInboxItem(item: NotificationItem): boolean {
+  if (item.type === "system_notice") return true;
+  return isPostNotice(item) && positiveId(item.contentId) && positiveId(item.topicId);
+}
+
+/** A post notice opens its post; service posts use the content ID as the post ID. */
 export function newPostTarget(item: NotificationItem): HomeDetailTarget | null {
-  if (item.type !== "topic_new_post" || !positiveId(item.contentId) || !positiveId(item.topicId)) return null;
+  if (!isPostNotice(item) || !positiveId(item.contentId) || !positiveId(item.topicId)) return null;
   return { postId: String(item.contentId), contentId: String(item.contentId), topicId: item.topicId };
 }
 

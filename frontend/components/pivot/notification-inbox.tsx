@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { findInboxNotification, type InboxNotification, type InboxPage, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
+import { findInboxNotification, isPostNotice, type InboxNotification, type InboxPage, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { HomeHeader } from "./home-screen";
 import styles from "./notification-inbox.module.css";
@@ -19,6 +19,10 @@ function formatDetailTime(iso: string) {
   );
   return `${year}.${month}.${day} (${weekday}) ${hour}:${minute}`;
 }
+
+const TAGS: Record<InboxNotification["type"], string> = {
+  system_notice: "운영 공지", topic_new_post: "새 글", recommended_post: "추천",
+};
 
 type ListState = { page?: InboxPage; loading: boolean; failed: boolean };
 const loadingList: ListState = { loading: true, failed: false };
@@ -140,7 +144,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
   }
 
   function open(item: InboxNotification, button: HTMLButtonElement) {
-    if (item.type === "topic_new_post" && onOpenContent) {
+    if (isPostNotice(item) && onOpenContent) {
       opener.current = button;
       void openContent(item);
       return;
@@ -176,7 +180,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
             aria-label={`${item.title}, ${item.isRead ? "읽음" : "읽지 않음"}`}
             onClick={(event) => open(item, event.currentTarget)}>
             <span className={styles.meta}>
-              <span className={styles.tag}>{item.type === "topic_new_post" ? "새 글" : "운영 공지"}</span>
+              <span className={styles.tag}>{TAGS[item.type]}</span>
               <span className={styles.time}>
                 <time dateTime={item.createdAt} title={formatDetailTime(item.createdAt)}>{formatRelativeTime(item.createdAt)}</time>
                 {!item.isRead && <span className={styles.dot} aria-hidden="true" />}
@@ -204,7 +208,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
           <time dateTime={detail.createdAt}>{formatDetailTime(detail.createdAt)}</time>
         </div>
         <p className={styles.body}>{detail.body}</p>
-        {detail.type === "topic_new_post" && onOpenContent && <button type="button" className={styles.more} onClick={() => void openContent(detail)}>글 보러 가기</button>}
+        {isPostNotice(detail) && onOpenContent && <button type="button" className={styles.more} onClick={() => void openContent(detail)}>글 보러 가기</button>}
         {readState === "pending" && <p role="status">읽음 상태를 저장하고 있어요.</p>}
         {readState === "failed" && <div className={styles.feedback}>
           <p role="alert">읽음 상태를 저장하지 못했어요.</p>

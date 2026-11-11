@@ -4,7 +4,7 @@
 
 **생년월일 정책 보류 유지 (2026-10-27~28):** 수집·저장·연령 확인 방식은 통합 완료 후 결정합니다. 새 Pivot은 닉네임만 수집하고 생년월일 입력·검사·전송을 보류합니다. 생년월일 삭제 migration을 새로 적용하지 않으며 레거시 Consumer 화면·유틸리티는 기존 상태를 유지합니다.
 
-**2026-10-28 V2 로컬 구현:** 작품 검색 → 장르·소재 후보 → 소비 유형을 Pivot 화면까지 연결했습니다. 온보딩 도입 migration은 `e3a7b9c2d451`이며 부모는 `c0e5f3b8a124`입니다. 현재 서비스 target은 캐러셀 확장 `f4b8c1d9a620`에 추천 연결 표 4개(`150a601074af`), 신고·문의 표 2개, 복구 대기 세션 상태와 내부 알림 설정을 더한 `91c7a2e4b630`입니다. 기존 생년월일 삭제 `d2f6a9c4e731` 파일을 제외한 단일 head이며 준비 명령은 정확한 91c7 revision을 사용합니다. `upgrade head` 또는 `upgrade heads`로 바꾸지 않습니다. 실제 작품 30개로 수행한 기존 가입 검증은 [프론트 연결 기록](ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md), 새 캐러셀 계약과 검증 범위는 [캐러셀 DB·API 문서](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. main 병합·푸시·원격 배포는 하지 않았습니다.
+**2026-10-28 V2 로컬 구현:** 작품 검색 → 장르·소재 후보 → 소비 유형을 Pivot 화면까지 연결했습니다. 온보딩 도입 migration은 `e3a7b9c2d451`이며 부모는 `c0e5f3b8a124`입니다. 현재 서비스 target은 캐러셀 확장 `f4b8c1d9a620`에 추천 연결 표 4개(`150a601074af`), 신고·문의 표 2개, 복구 대기 세션 상태, 내부 알림 설정, 추천 알림 종류를 더한 `c8f2d6a1e947`입니다. 기존 생년월일 삭제 `d2f6a9c4e731` 파일을 제외한 단일 head이며 준비 명령은 정확한 c8f2 revision을 사용합니다. `upgrade head` 또는 `upgrade heads`로 바꾸지 않습니다. 실제 작품 30개로 수행한 기존 가입 검증은 [프론트 연결 기록](ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md), 새 캐러셀 계약과 검증 범위는 [캐러셀 DB·API 문서](CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. main 병합·푸시·원격 배포는 하지 않았습니다.
 
 아래 요청 예시는 현재 로컬 코드용입니다. 이 코드에서는 온보딩에 `birthDate`나 연령 확인값을 받지 않고 `GET/PATCH /api/v1/users/me` 응답에도 `birthDate`가 없습니다. 기존 삭제 revision은 `d2f6a9c4e731`(이전 `c0e5f3b8a124`)이며 삭제된 값은 downgrade로 복원되지 않습니다. 실제 테스트는 대상 환경의 배포 계약과 [DB 적용 상태](ERD_API_ALIGNMENT_2026-10-27.md)를 확인한 뒤 진행합니다. 현재 코드 상태는 최종 수집 정책을 뜻하지 않습니다.
 
@@ -18,7 +18,7 @@ Swagger에서 로그인 없이 기능을 확인하려면 로컬 개발 전용 �
 # 저장소 루트
 docker compose up -d postgres
 cd backend
-.\.venv\Scripts\python.exe -m alembic upgrade 91c7a2e4b630
+.\.venv\Scripts\python.exe -m alembic upgrade c8f2d6a1e947
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
 .\.venv\Scripts\python.exe scripts/run_local_api.py

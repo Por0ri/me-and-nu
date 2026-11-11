@@ -102,7 +102,7 @@ services:
 
   migrate:
     <<: *backend
-    command: ["python", "-m", "alembic", "upgrade", "91c7a2e4b630"]
+    command: ["python", "-m", "alembic", "upgrade", "c8f2d6a1e947"]
     restart: "no"
     depends_on:
       postgres:
