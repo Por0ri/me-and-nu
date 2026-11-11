@@ -28,19 +28,19 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
         const span = button.querySelector('span'), css = getComputedStyle(span), box = rect(button);
         return { label: button.textContent, active: button.getAttribute('aria-current'), rect: box, span: rect(span),
           font: css.fontFamily, size: css.fontSize, line: css.lineHeight, weight: css.fontWeight, background: css.backgroundColor,
-          hits: [.15, .5, .85].map(x => hit(button, box.x + box.width * x, box.y + box.height / 2)) };
+          hits: [1, box.width * .15, box.width * .5, box.width * .85, box.width - 1].map(x => hit(button, box.x + x, box.y + box.height / 2)) };
       }), inert: !!el.closest('[inert]') };
   });
   const { width, height } = page.viewportSize();
-  near(data.rect.width, width <= 340 ? 180 : 200, 'NAV width');
+  const narrow = width <= (data.home ? 374 : 340);
+  near(data.rect.width, narrow ? 180 : 200, 'NAV width');
   near(data.rect.height, compact ? 40 : 48, 'NAV height');
   near(data.rect.bottom, height - Math.max(compact ? 20 : 12, inset), 'NAV bottom');
   if (width === 375 && height === 812 && inset === 0) near(data.rect.y, 752, 'Figma y');
   assert.equal(data.overflow, false);
   assert.ok(data.rect.left >= 0 && data.rect.right <= width);
-  if (data.home) {
-    near(data.rect.x + data.rect.width / 2, width / 2 - (width < 600 ? 30 : 0), 'HOME dock group is centered');
-  } else if (!ai || compact || width > 340) near(data.rect.x + data.rect.width / 2, width / 2, 'centered NAV');
+  const centerX = ai && !compact && narrow ? Math.max(90, Math.min(width / 2, width - 180)) : width / 2;
+  near(data.rect.x + data.rect.width / 2, centerX, 'NAV center');
   for (const [index, button] of data.buttons.entries()) {
     assert.equal(button.size, '12px'); assert.equal(button.line, '18px'); assert.match(button.font, /PivotPretendard/);
     assert.equal(button.weight, button.label === active ? '600' : '400');
@@ -65,6 +65,31 @@ async function measure(page, active, { compact = false, inset = 0, ai = false } 
     assert.equal(overlap(data.rect, data.ai), false);
   }
   return data;
+}
+function sameCollapsedDock(home, detail) {
+  const coordinates = ({ rect, ai }) => ({
+    navCenterX: rect.x + rect.width / 2, navTop: rect.y, navWidth: rect.width, navHeight: rect.height,
+    aiX: ai.x, aiY: ai.y, aiWidth: ai.width, aiHeight: ai.height, gap: ai.x - rect.right,
+  });
+  const measured = { home: coordinates(home), detail: coordinates(detail) };
+  assert.deepEqual(measured.home, measured.detail, 'HOME matches the collapsed Detail dock');
+  return measured;
+}
+async function narrowHomeDock(page) {
+  const original = page.viewportSize(), samples = [];
+  try {
+    for (const width of [340, 341, 359, 360, 363, 364, 374, 375]) {
+      await page.setViewportSize({ ...original, width });
+      const data = await measure(page, 'HOME', { ai: true });
+      const card = await page.locator('[data-home-post]').first().boundingBox();
+      near(card.width, width - 48, 'Narrow HOME keeps full card width');
+      near(data.ai.x, width / 2 + Math.min(307, width - 68) / 2 - 48, 'Narrow HOME keeps the Detail AI anchor');
+      const gap = data.ai.x - data.rect.right;
+      assert.ok(gap >= (width < 375 ? 8 : 5.5), 'Narrow HOME NAV clears AI');
+      samples.push({ width, cardWidth: card.width, nav: data.rect, ai: data.ai, gap });
+    }
+  } finally { await page.setViewportSize(original); }
+  return samples;
 }
 async function lastContent(page, selector) {
   await page.evaluate(() => window.pivotScrollRoot().scrollTo(0, window.pivotScrollRoot().scrollHeight));
@@ -125,6 +150,7 @@ async function run(browser, viewport) {
   try {
     await page.goto(base + '/pivot/demo?view=home'); await ready(page, 'home');
     checks.home = await measure(page, 'HOME', { ai: true });
+    if (viewport.width === 320) checks.narrowHomeDock = await narrowHomeDock(page);
     await page.screenshot({ path: path.join(out, `home-${viewport.width}.png`) });
     checks.homeLast = await lastContent(page, '[data-home-post]');
     await nav(page).getByRole('button', { name: 'HOME', exact: true }).click();
@@ -142,6 +168,7 @@ async function run(browser, viewport) {
     await page.screenshot({ path: path.join(out, `saved-${viewport.width}.png`) });
     await page.locator('[data-saved-content]').first().click(); await ready(page, 'detail');
     checks.detailFromSaved = await measure(page, 'SAVE', { ai: true });
+    checks.homeDetailDock = sameCollapsedDock(checks.home, checks.detailFromSaved);
     checks.detailLast = await lastContent(page, '[aria-labelledby="detail-feedback-title"]');
     checks.expanded = await expanded(page);
     checks.collapsed = await measure(page, 'SAVE', { ai: true });
@@ -172,6 +199,7 @@ async function run(browser, viewport) {
       checks[`safeSaved${inset}`] = await measure(page, 'SAVE', { inset });
       await page.locator('[data-saved-content]').first().click(); await ready(page, 'detail');
       checks[`safeDetail${inset}`] = await measure(page, 'SAVE', { inset, ai: true });
+      checks[`safeHomeDetailDock${inset}`] = sameCollapsedDock(checks[`safeHome${inset}`], checks[`safeDetail${inset}`]);
       checks[`safeDetailLast${inset}`] = await lastContent(page, '[aria-labelledby="detail-feedback-title"]');
       checks[`safeExpanded${inset}`] = await expanded(page, inset);
       await nav(page).getByRole('button', { name: 'MY', exact: true }).click(); await ready(page, 'my');

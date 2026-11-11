@@ -183,10 +183,9 @@ async function aiChecks(page, posts, cdp) {
     assert.deepEqual([measured.width, measured.height], [48, 48]);
     near(measured.bottom, height - Math.max(12, bottom), 'AI safe-area bottom');
     near(measured.cardWidth, Math.min(width, 430) - 48, 'Original Figma card width');
-    if (mobile) {
-      near(measured.nav.top - measured.port.bottom, 8, 'Scrollport ends above the dock');
-      near(measured.x - measured.nav.right, 12, 'NAV and AI have disjoint targets');
-    } else near(measured.x - measured.cardRight, 8, 'Desktop AI stays outside the card');
+    near(measured.nav.top - measured.port.bottom, 8, 'Scrollport ends above the dock');
+    near(measured.x, width / 2 + Math.min(307, width - 68) / 2 - 48, 'AI matches the collapsed Detail dock');
+    near(measured.x - measured.nav.right, width <= 340 ? 8 : 5.5, 'NAV and AI have disjoint targets');
     near(measured.y, measured.nav.top, 'AI aligns with NAV');
     assert.ok(measured.right <= width - Math.max(8, right) + 1);
     assert.ok(measured.nav.left >= left - 1, 'NAV clears the left safe area');
@@ -209,7 +208,7 @@ async function aiChecks(page, posts, cdp) {
           return { x, right: x + width, hit: target.contains(document.elementFromPoint(x + width / 2, y + height / 2)) };
         });
         assert.ok(atDock.hit, 'Detail center remains clickable as it passes NAV');
-        if (mobile) sample.dockClearance = measured.nav.top - (measured.port.bottom + depth);
+        sample.dockClearance = measured.nav.top - (measured.port.bottom + depth);
       }
       samples.push(sample);
     }
@@ -265,6 +264,7 @@ async function aiChecks(page, posts, cdp) {
   try {
     const viewports = [{ width: 320, height: 568 }, { width: 375, height: 812 }, { width: 390, height: 844 }];
     viewports.push(aiOnly ? { width: 1280, height: 900 } : { width: 360, height: 800 });
+    if (aiOnly) viewports.push({ width: 1440, height: 1000 });
     for (const viewport of viewports) {
       const mobile = viewport.width < 600;
       for (const reducedMotion of ['no-preference', 'reduce']) {
