@@ -158,13 +158,16 @@ async function aiChecks(page, posts, cdp) {
     const clipped = getComputedStyle(main).overflowY === 'auto';
     const cards = [...main.querySelectorAll('[data-home-post]')];
     const controls = [nav, ...cards.flatMap(card => [...card.querySelectorAll('button')])];
-    const blocked = controls.filter(target => {
+    const underAI = controls.filter(target => {
       const css = getComputedStyle(target), box = target.getBoundingClientRect().toJSON();
       if (clipped && target !== nav) { box.top = Math.max(box.top, port.top); box.bottom = Math.min(box.bottom, port.bottom); }
       return css.pointerEvents !== 'none' && css.visibility === 'visible' && Number(css.opacity) > 0 &&
         box.width && box.bottom > box.top && rect.left < box.right && rect.right > box.left && rect.top < box.bottom && rect.bottom > box.top;
     }).map(e => e.getAttribute('aria-label'));
-    return { x: rect.x, y: rect.y, bottom: rect.bottom, right: rect.right, blocked, scrollY: window.pivotScrollRoot().scrollTop,
+    const hit = (target, x, y) => target.contains(document.elementFromPoint(x, y));
+    return { x: rect.x, y: rect.y, bottom: rect.bottom, right: rect.right, underAI, scrollY: window.pivotScrollRoot().scrollTop,
+      aiHits: [[24, 24], [1, 24], [47, 24], [24, 1], [24, 47]].map(([x, y]) => hit(e, rect.x + x, rect.y + y)),
+      navHits: [...nav.querySelectorAll('button')].map(button => { const b = button.getBoundingClientRect(); return hit(button, b.x + b.width / 2, b.y + b.height / 2); }),
       cardRight: Math.max(...cards.map(card => card.getBoundingClientRect().right)), cardWidth: cards[0].getBoundingClientRect().width,
       port: port.toJSON(), nav: nav.getBoundingClientRect().toJSON(),
       width: rect.width, height: rect.height, animations: e.getAnimations().length };
@@ -172,8 +175,7 @@ async function aiChecks(page, posts, cdp) {
   const offset = ({ x, y }) => [x, y];
   const scrollToDepth = depth => detail.evaluate(async (target, depth) => {
     const main = target.closest('main');
-    const edge = getComputedStyle(main).overflowY === 'auto' ? main.getBoundingClientRect().bottom
-      : main.querySelector('[data-home-ai]').getBoundingClientRect().top;
+    const edge = main.querySelector('nav').getBoundingClientRect().top;
     window.pivotScrollRoot().scrollTo({ top: window.pivotScrollRoot().scrollTop + target.getBoundingClientRect().bottom - edge - depth, behavior: 'instant' });
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return target.getBoundingClientRect().bottom - edge;
@@ -183,17 +185,33 @@ async function aiChecks(page, posts, cdp) {
     assert.deepEqual([measured.width, measured.height], [48, 48]);
     near(measured.bottom, height - Math.max(12, bottom), 'AI safe-area bottom');
     near(measured.cardWidth, Math.min(width, 430) - 48, 'Original Figma card width');
-    near(measured.nav.top - measured.port.bottom, 8, 'Scrollport ends above the dock');
+    near(measured.port.bottom, height, 'Feed extends to the viewport bottom beneath the dock');
     near(measured.x, width / 2 + Math.min(307, width - 68) / 2 - 48, 'AI matches the collapsed Detail dock');
     near(measured.x - measured.nav.right, width <= 340 ? 8 : 5.5, 'NAV and AI have disjoint targets');
     near(measured.y, measured.nav.top, 'AI aligns with NAV');
     assert.ok(measured.right <= width - Math.max(8, right) + 1);
     assert.ok(measured.nav.left >= left - 1, 'NAV clears the left safe area');
-    assert.deepEqual(measured.blocked, []);
+    assert.ok(measured.aiHits.every(Boolean), 'AI stays clickable over passing cards');
+    assert.ok(measured.navHits.every(Boolean), 'NAV stays clickable over passing cards');
     assert.equal(measured.animations, 0);
     return measured;
   };
   await settled(page, post.locator('[data-home-track]'));
+  const overlay = await nav.evaluate(el => {
+    const n = el.getBoundingClientRect(), a = el.parentElement.querySelector('[data-home-ai]').getBoundingClientRect();
+    const x = n.x + n.width / 2, y = n.y + n.height / 2, main = el.closest('main');
+    const card = [...main.querySelectorAll('[data-home-post]')].find(card => { const r = card.getBoundingClientRect(); return r.top < y && r.bottom > innerHeight; });
+    const css = getComputedStyle(el);
+    return { background: css.backgroundColor, blur: css.backdropFilter, opacity: css.opacity,
+      wrapperEvents: getComputedStyle(el.parentElement).pointerEvents,
+      contentBehindNAV: !!card && document.elementsFromPoint(x, y).some(node => card.contains(node)),
+      gapPassesThrough: !!card && card.contains(document.elementFromPoint((n.right + a.left) / 2, y)),
+      bottomPassesThrough: !!card && card.contains(document.elementFromPoint(x, innerHeight - 2)) };
+  });
+  assert.equal(overlay.background, 'rgba(255, 255, 255, 0.64)');
+  assert.equal(overlay.blur, 'blur(9px)'); assert.equal(overlay.opacity, '1');
+  assert.equal(overlay.wrapperEvents, 'none');
+  assert.ok(overlay.contentBehindNAV && overlay.gapPassesThrough && overlay.bottomPassesThrough, 'Visible feed receives input outside NAV/AI targets');
   const checkScroll = async insets => {
     const initial = await checkAnchor(insets);
     const samples = [];
@@ -201,23 +219,27 @@ async function aiChecks(page, posts, cdp) {
       near(await scrollToDepth(depth), depth, 'Card buttons pass the dock vertically');
       const measured = await checkAnchor(insets);
       assert.deepEqual(offset(measured), offset(initial), `AI stays fixed at depth ${depth}`);
-      const sample = { depth, scrollY: measured.scrollY, x: measured.x, y: measured.y };
+      const sample = { depth, scrollY: measured.scrollY, x: measured.x, y: measured.y, underAI: measured.underAI };
       if (depth === -8) {
         const atDock = await detail.evaluate(target => {
           const { x, y, width, height } = target.getBoundingClientRect();
           return { x, right: x + width, hit: target.contains(document.elementFromPoint(x + width / 2, y + height / 2)) };
         });
         assert.ok(atDock.hit, 'Detail center remains clickable as it passes NAV');
-        sample.dockClearance = measured.nav.top - (measured.port.bottom + depth);
+        sample.dockClearance = -depth;
       }
       samples.push(sample);
     }
     assert.ok(new Set(samples.map(sample => sample.scrollY)).size >= 6);
+    assert.ok(samples.some(sample => sample.underAI.length), 'Cards actually pass behind the fixed AI');
     await page.waitForTimeout(230);
     assert.deepEqual(offset(await checkAnchor(insets)), offset(initial), 'Scroll settling never moves AI');
     return samples;
   };
   const scroll = await checkScroll();
+  await home(page).evaluate(el => el.scrollTo({ top: el.scrollHeight, behavior: 'instant' }));
+  const lastCard = await post.boundingBox(), port = await home(page).boundingBox(), dock = await nav.boundingBox();
+  assert.ok(lastCard.y >= port.y && lastCard.y + lastCard.height <= dock.y - 24, 'Last card fits fully above the dock at the scroll end');
 
   const measured = await geometry(post);
   const tap = async (label, points) => {
@@ -251,13 +273,17 @@ async function aiChecks(page, posts, cdp) {
   await activate(nav.getByRole('button', { name: 'SAVE', exact: true })); await savedReady(page);
   await activate(page.locator('[data-saved-state]').getByRole('button', { name: 'HOME', exact: true })); await homeReady(page);
   await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: {} });
-  if (mobile) return { scroll, safeArea, touch: await touchChecks(page, posts.first(), cdp) };
+  if (mobile) return { overlay, lastCard, scroll, safeArea, touch: await touchChecks(page, posts.first(), cdp) };
   const first = posts.first(), track = first.locator('[data-home-track]');
   await track.focus();
   await page.keyboard.press('Home');
   await page.keyboard.press('ArrowRight');
   assert.equal((await settled(page, track)).index, 1, 'Desktop keyboard moves the horizontal carousel');
-  return { scroll, safeArea };
+  const wheelStart = await home(page).evaluate(el => el.scrollTop), box = await track.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 200);
+  await page.waitForFunction(y => document.querySelector('[data-home-state]').scrollTop > y + 100, wheelStart);
+  return { overlay, lastCard, scroll, safeArea, wheelScroll: await home(page).evaluate(el => el.scrollTop) };
 }
 (async () => {
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
@@ -266,8 +292,10 @@ async function aiChecks(page, posts, cdp) {
     viewports.push(aiOnly ? { width: 1280, height: 900 } : { width: 360, height: 800 });
     if (aiOnly) viewports.push({ width: 1440, height: 1000 });
     for (const viewport of viewports) {
+      if (process.env.PIVOT_VIEWPORT_WIDTH && viewport.width !== Number(process.env.PIVOT_VIEWPORT_WIDTH)) continue;
       const mobile = viewport.width < 600;
       for (const reducedMotion of ['no-preference', 'reduce']) {
+        if (process.env.PIVOT_REDUCED_MOTION && reducedMotion !== process.env.PIVOT_REDUCED_MOTION) continue;
         const name = `${viewport.width}-${reducedMotion}`;
         const context = await browser.newContext({ viewport, isMobile: mobile, hasTouch: mobile, reducedMotion, serviceWorkers: 'block' });
         await installPageScroll(context);

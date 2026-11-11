@@ -1,4 +1,4 @@
-/** HOME has a separate scrollport above its dock; other screens use the page. */
+/** HOME scrolls independently beneath its fixed dock; other screens use the page. */
 export function homeScrollTarget(): HTMLElement | Window {
   const screen = document.querySelector<HTMLElement>("[data-home-state]");
   return screen && getComputedStyle(screen).overflowY === "auto" ? screen : window;

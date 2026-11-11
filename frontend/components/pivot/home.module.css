@@ -172,18 +172,18 @@
     left: max(90px, min(50%, calc(100% - 34px - 48px - 8px - 90px)));
   }
 }
-/* Keep full-width cards and hit targets above the fixed dock at every width.
-   Desktop now uses the same separate scrollport as mobile because its AI is
-   inside the feed width, matching Detail's collapsed placement. */
+/* Let the feed show through the floating dock. Move the former clipped area
+   into end/focus spacing so the last card and focused controls can clear it. */
 .screen[data-home-state] {
+  --home-dock-space: calc(48px + max(12px, env(safe-area-inset-bottom)) + 8px);
   position: fixed;
-  inset: 0 0 calc(48px + max(12px, env(safe-area-inset-bottom)) + 8px);
+  inset: 0;
   min-height: 0;
-  padding-bottom: 24px;
+  padding-bottom: calc(var(--home-dock-space) + 24px);
   overflow-y: auto;
   overscroll-behavior-y: contain;
   scrollbar-width: none;
-  scroll-padding-block: 12px;
+  scroll-padding-block: 12px calc(var(--home-dock-space) + 12px);
 }
 .screen[data-home-demo] { top: 44px; }
 @media (prefers-reduced-motion: reduce) { .slideTrack { scroll-behavior: auto; } .screen button { transition: none; } }
