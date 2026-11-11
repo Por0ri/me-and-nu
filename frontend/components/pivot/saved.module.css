@@ -15,7 +15,7 @@
 .savedOverlay { position: absolute; inset: auto 0 0; display: flex; flex-direction: column; gap: 2px; padding: 16px 5px 5px; color: #fafafa; background: linear-gradient(180deg, transparent, rgb(0 0 0 / 78%) 16px, rgb(0 0 0 / 88%) 70%, #000); }
 .savedLabel { display: block; }
 .savedOverlay .title { height: auto; font-size: 10px; line-height: 14px; text-shadow: 0 1px 2px #000; }
-.savedSource { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c7acfb; font-size: 8px; line-height: 11px; text-shadow: 0 1px 2px #000; }
+.savedEyebrow { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c7acfb; font-size: 8px; line-height: 11px; text-shadow: 0 1px 2px #000; }
 .savedSummary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 8px; line-height: 11px; }
 .thumbnail:has(> .savedOverlay) [data-carousel-image-state]:not(img) { justify-content: center; padding: 8px 6px 90px; font-size: 10px; line-height: 13px; }
 .thumbnail[data-embedded-copy]:not(:has([data-carousel-image-state="loading"], [data-carousel-image-state="error"])) > .savedOverlay { width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

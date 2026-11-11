@@ -106,6 +106,17 @@ async def list_slides(db: AsyncSession, content_id: int) -> list[ContentSlide]:
     )).all())
 
 
+async def list_cover_eyebrows(db: AsyncSession, content_ids: list[int]) -> dict[int, str]:
+    """Project page-one copy for an already authorized page, without image bytes."""
+    if not content_ids:
+        return {}
+    rows = await db.execute(
+        select(ContentSlide.content_id, ContentSlide.eyebrow)
+        .where(ContentSlide.content_id.in_(content_ids), ContentSlide.page == 1)
+    )
+    return dict(rows.all())
+
+
 async def get_slide_image(db: AsyncSession, content_id: int, page: int) -> bytes | None:
     return await db.scalar(
         select(ContentSlide.image_data)
