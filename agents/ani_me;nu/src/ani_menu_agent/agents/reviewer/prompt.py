@@ -126,15 +126,33 @@ curation으로 분류한다. 원문 발표일은 카드에 넣으라고 요구�
 출력은 요청된 구조화 스키마만 따른다. 문장을 대신 고쳐 쓰지 말고 평가와 수정 지시만 반환한다.
 
 ADDITIONAL EDITORIAL GATES (must be applied, not merely mentioned in feedback):
+- For event content, use the supplied structured start/end dates and venue when present. Reject
+  reader-facing claims that the schedule or event details are unknown merely because a separate
+  fact-check was skipped. State available dates and venues directly in natural 반말; do not narrate
+  "the source page says" for ordinary schedule facts. Do not call details officially confirmed without
+  evidence. Only describe a specific price, reservation, or entry field as pending when the source itself
+  marks that field as pending; otherwise omit it or point the reader to the official notice if needed.
+- For event content, use the supplied structured start/end dates and venue when present. Reject
+  reader-facing claims that the schedule or event details are unknown merely because a separate
+  fact-check was skipped. State available dates and venues directly in natural 반말; do not narrate
+  "the source page says" for ordinary schedule facts. Do not call details officially confirmed without
+  evidence. Only describe a specific price, reservation, or entry field as pending when the source itself
+  marks that field as pending; otherwise omit it or point the reader to the official notice if needed.
+- Reusing the same image in two or more carousel cards is a hard failure, including resized or
+  recropped versions of the same source image. Request replacement images for the affected cards;
+  never approve the deck with a duplicate.
+- Flag dry press-release narration, long explanations, and product-spec lists with no fan reaction
+  or useful editorial angle. Give a specific repair direction: lead with this story's most interesting
+  point, add one natural fact-grounded fan reaction, and trim details that do not help the reader.
 - Judge whether this specific source contains a timely or evergreen fan-relevant reason to care.
   Past events must not be framed as upcoming; evergreen material should use an evergreen type.
 - Do not require 3 distinct fact IDs merely because a deck has at least 3 cards. Check every
-  factual claim against its cited verified facts. A source may provide several useful details
-  (for example, episode status, an attributed creator comment, and a confirmed air date); assess
-  those individually. Reusing one fact is not automatically a factual failure, but repeated
-  wording or pages that add no reader value must receive a low card_flow score and a concrete
-  page-level repair instruction. Clearly framed fan questions/editorial reactions need not be
-  treated as factual claims; unsupported implications still fail.
+  factual claim—including hooks, jokes, carousel cards, and detail_body—against its cited facts.
+  Preserve the source's meaning and certainty, especially names, relationships, dates, places, prices,
+  quantities, availability, and quotes. A joke may exaggerate the narrator's reaction, never the news.
+  Clearly framed fan opinions are not facts, but unsupported implications or changed claims fail;
+  quote the exact problem and give a fact-grounded correction. Reusing a fact is not automatically
+  a failure, but repetitive pages need a concrete page-level repair instruction.
 - Cover and ending need a work-specific hook/payoff. A story-specific meme, slang, or exaggerated
   fan reaction can be an excellent hook; do not dismiss it for being informal. Keep factual claims
   clear on every card while letting the fan voice continue through the middle pages. Judge the
@@ -158,8 +176,9 @@ DETAIL ARTICLE REVIEW (when detail_body is non-empty):
 - The article must read as coherent Korean prose, not as a page-by-page concatenation of cards.
 - For event, campaign, and sales content, completeness means including each available
 verified date, location, price, participation method, prize, deadline, and eligible
-  region when those details are present in source_facts. Never invent a missing condition;
-  report it as a collection gap.
+  region when those details are present in source_facts. Never invent a missing condition. If a needed
+  detail is absent, record that gap in review feedback; do not make the reader-facing copy sound like
+  an internal collection report.
 """.strip()
 
 REVIEWER_PROMPT += """
@@ -208,3 +227,24 @@ REVIEWER_PROMPT += """번역 검수 시 원문 근거와 term_glossary를 대조
 용어집에 없는 중요한 관용구·말장난·문화어가 직역되거나 소리만 옮겨져 뜻을 잃었는지 확인하고,
 문맥과 출처가 뒷받침하는 자연스러운 한국어 표현을 구체적으로 제안한다. 불확실한 숨은 뜻을
 새로 만들어 고치라고 요구하지 않는다."""
+
+REVIEWER_PROMPT += """
+
+READER-FACING FAN VOICE AND SOURCE NARRATION:
+- Check carousel copy and detail_body for a lively, natural Korean 반말 voice. Flag polite endings
+  ("~합니다/~입니다/~해요") and stiff report-style narration ("~다/~된다") when they make the copy
+  sound like a news summary. Direct callouts, fandom slang, memes, bold enthusiasm, and lowbrow humor
+  are welcome when they fit; phrases such as "야," or "어이!" are not revision reasons by themselves.
+  Ask for a change only when a phrase feels forced or the same opening is repeated mechanically.
+- For ordinary event facts, the copy should tell readers the date, place, price, or participation detail
+  directly. Return phrases that narrate the source instead of the news, such as "RE:CAL 페이지에 따르면",
+  "이 페이지를 보면", "안내에 적혀 있어", or repeated "사이트에서는 ...라고 해". Source/publisher
+  attribution belongs in the footer unless it is needed to identify an attributed opinion or uncertainty.
+- Return raw status labels such as "입장료: 공지 대기" for a natural, useful rewrite. If the source
+  explicitly marks a field as pending, explain it conversationally and say what the reader can check next.
+  If supplied facts omit a field, do not let the copy talk about missing data or claim the information is
+  unpublished; omit it when unnecessary, or briefly point fans to the official notice for that detail.
+- When returning copy for revision, quote the exact phrase and provide a short 반말 replacement. Keep
+  the work-specific joke and fan energy; do not replace them with neutral press-release prose. Do not
+  request insults, sexualized remarks, hate, harassment, or jokes that humiliate a person or group.
+""".strip()

@@ -27,7 +27,12 @@ from ani_menu_agent.agents.image import image_curator
 from ani_menu_agent.agents.information import research_information
 from ani_menu_agent.classification import infer_strong_content_type, infer_toei_press_type
 from ani_menu_agent.config import get_settings
-from ani_menu_agent.discovery import DiscoveryItem, collect_candidates, supports_discovery_adapter
+from ani_menu_agent.discovery import (
+    DiscoveryItem,
+    collect_candidates,
+    rank_candidates,
+    supports_discovery_adapter,
+)
 from ani_menu_agent.extraction import extract_page_capture, extract_page_payload
 from ani_menu_agent.generation import estimate_gpt_6_luna_cost
 from ani_menu_agent.graph import build_graph
@@ -50,6 +55,7 @@ from ani_menu_agent.readiness import (
 )
 from ani_menu_agent.source_discovery import run_source_discovery
 from ani_menu_agent.source_freshness import (
+    KST,
     candidate_is_stale,
     expiry_evidence,
     immediate_news_action_expiry,
@@ -75,6 +81,7 @@ for _stream in (sys.stdout, sys.stderr):
 console = Console(legacy_windows=False)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_PATH = PROJECT_ROOT / "examples" / "sample_content.json"
+RECAL_EXPIRY_REVISION = "recal-event-period-v2"
 
 
 def _minimal_period_capture(payload: dict, temporal: dict) -> dict:
@@ -275,30 +282,9 @@ def _rotating_catalog_work_titles(limit: int = 3) -> list[str]:
     return selected
 
 
-def _diversify_candidate_items(items: list, limit: int) -> list:
-    """Choose known-work candidates first, then use unresolved leads to fill gaps."""
-    registry = {source.id: source for source in load_source_registry().sources}
-    groups: dict[str, list] = {}
-    unresolved: list = []
-    for item in items:
-        source = registry.get(item.source_id)
-        matched = _candidate_menu_work_ids(item.model_dump(mode="json"), source) if source else []
-        if matched:
-            key = ",".join(map(str, matched))
-            groups.setdefault(key, []).append(item)
-        else:
-            unresolved.append(item)
-    selected = []
-    while groups and len(selected) < limit:
-        for key in list(groups):
-            selected.append(groups[key].pop(0))
-            if not groups[key]:
-                del groups[key]
-            if len(selected) >= limit:
-                break
-    if len(selected) < limit:
-        selected.extend(unresolved[: limit - len(selected)])
-    return selected
+def _latest_first_candidate_items(items: list, limit: int) -> list:
+    """Process the newest dated leads first, keeping undated leads after them."""
+    return rank_candidates(items)[:limit]
 
 
 def _candidate_host_matches_source(candidate_url: str, source_url: str) -> bool:
@@ -1315,20 +1301,30 @@ def crawl_generate(
             )
             AgentRepository().persist_page_capture(discovery_record, discovery_source.region)
             if original is None:
-                # Keep a readable discovery page as non-official reference evidence
-                # if it has no registered primary-source link. It can be stored for
-                # generation/review, but is never promoted to an official source.
-                source = capture_source
-                url = candidate_url
-                identity_preflight_capture = discovery_capture
-                discovery_provenance = {
+                # Keep the captured discovery page for investigation, but do not
+                # feed discovery-only material into content generation as evidence.
+                result = {
+                    "status": "original_source_unresolved",
+                    "candidate_id": candidate_id,
+                    "content_type": content_type,
+                    "title": discovery_capture.title or str(candidate.get("title") or ""),
+                    "source_url": candidate_url,
                     "discovered_via_source_id": discovery_source.id,
-                    "discovery_url": candidate_url,
-                    "discovery_title": discovery_capture.title,
                     "original_source_url": None,
-                    "original_link_label": "No registered primary-source link found",
-                    "source_authority": "non_official_reference",
+                    "reason": "Discovery page was captured, but it has no registered primary/editorial source link.",
+                    "outbound_links": [
+                        item.model_dump(mode="json")
+                        for item in discovery_capture.outbound_links[:20]
+                    ],
                 }
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                console.print(
+                    "발견 페이지는 보존했지만 등록된 원문 출처 링크가 없어 생성 대기 상태로 분류했습니다."
+                )
+                return
             else:
                 source, url, original_link_label = original
                 discovery_provenance = {
@@ -1420,7 +1416,14 @@ def crawl_generate(
                         {
                             "title": identity_preflight_capture.title,
                             "text": identity_preflight_capture.text,
-                            "published_at": candidate.get("published_at"),
+                            "published_at": (
+                                identity_preflight_capture.published_at
+                                or candidate.get("published_at")
+                            ),
+                            "event_start": identity_preflight_capture.event_start,
+                            "event_end": identity_preflight_capture.event_end,
+                            "availability_status": identity_preflight_capture.availability_status,
+                            "availability_evidence": identity_preflight_capture.availability_evidence,
                         },
                         content_type,
                     )
@@ -1784,7 +1787,7 @@ def crawl_generate(
                     "reason": (
                         "The explicit event or sales end date has passed; no page data was stored."
                         if temporal["status"] == "expired"
-                        else "No source-backed event or sales end date was found; held without storing page data."
+                        else "No source-backed event end date or explicit current goods availability status was found; held without storing page data."
                     ),
                 }
                 output.parent.mkdir(parents=True, exist_ok=True)
@@ -1797,6 +1800,10 @@ def crawl_generate(
                 return
             payload["temporal_expiry"] = temporal
             payload["event_end" if content_type == "event" else "sale_end"] = temporal["end_date"]
+            if temporal.get("availability_status"):
+                payload["availability_status"] = temporal["availability_status"]
+            if temporal.get("release_date"):
+                payload["release_date"] = temporal["release_date"]
         elif content_type == "news":
             temporal_news = immediate_news_action_expiry(payload)
             if temporal_news["status"] in {"expired", "unresolved"}:
@@ -1883,6 +1890,9 @@ def crawl_generate(
                 topic=(source.work_title_ko or str(payload.get("title") or source.name))[:300],
                 content_kind=ContentKind.INFORMATION,
                 content_type=content_type,
+                event_start=payload.get("event_start"),
+                event_end=payload.get("event_end"),
+                event_location=payload.get("event_location"),
                 menu_work_ids=candidate_work_ids,
                 work_match_evidence=work_match_evidence,
                 sources=[source_evidence],
@@ -1905,6 +1915,49 @@ def crawl_generate(
                 ] if raw_statement else [],
                 images=raw_images,
             )
+            event_date_evidence = str(payload.get("event_date_evidence") or "").strip()
+            if (
+                content_type == "event"
+                and package.event_start
+                and package.event_end
+                and event_date_evidence
+            ):
+                package.facts.append(
+                    Fact(
+                        id=f"{raw_request_id}-event-period-source",
+                        statement=(
+                            f"행사 기간: {package.event_start}부터 {package.event_end}까지"
+                        ),
+                        source_ids=[source.id],
+                        verified=False,
+                        time_sensitive=True,
+                        fact_type="event_schedule",
+                        details={
+                            "source_quote": event_date_evidence,
+                            "evidence_kind": "source_structured_event",
+                            "verification_status": "source_capture_only",
+                        },
+                    )
+                )
+            event_location_evidence = str(
+                payload.get("event_location_evidence") or ""
+            ).strip()
+            if content_type == "event" and package.event_location and event_location_evidence:
+                package.facts.append(
+                    Fact(
+                        id=f"{raw_request_id}-event-location-source",
+                        statement=f"행사 장소: {package.event_location}",
+                        source_ids=[source.id],
+                        verified=False,
+                        time_sensitive=True,
+                        fact_type="event_location",
+                        details={
+                            "source_quote": event_location_evidence,
+                            "evidence_kind": "source_structured_event",
+                            "verification_status": "source_capture_only",
+                        },
+                    )
+                )
             temporal = payload.get("temporal_expiry") or {}
             if temporal.get("status") == "active" and temporal.get("end_date"):
                 if content_type == "event":
@@ -1982,6 +2035,10 @@ def crawl_generate(
                     "text": payload.get("text", ""),
                     "main_text": payload.get("main_text", ""),
                     "published_at": payload.get("published_at"),
+                    "event_start": payload.get("event_start"),
+                    "event_end": payload.get("event_end"),
+                    "availability_status": payload.get("availability_status"),
+                    "availability_evidence": payload.get("availability_evidence"),
                 }
             )
             temporal = expiry_evidence(temporal_candidate, content_type)
@@ -2007,7 +2064,7 @@ def crawl_generate(
                             "reason": (
                                 "The explicit event or sales end date has passed; no new page data was stored."
                                 if temporal["status"] == "expired"
-                                else "No source-backed event or sales end date was found; held without storing page data."
+                                else "No source-backed event end date or explicit current goods availability status was found; held without storing page data."
                             ),
                             "menu_work_ids": package.menu_work_ids,
                         },
@@ -2021,26 +2078,75 @@ def crawl_generate(
                 )
                 return
             payload["temporal_expiry"] = temporal
-            if content_type == "event" and not package.event_end:
-                package.event_end = str(temporal["end_date"])
-            elif content_type == "goods" and not any(
-                fact.fact_type == "sales_period" and fact.details.get("sale_end")
-                for fact in package.facts
-            ):
-                package.facts.append(
-                    Fact(
-                        id=f"{package.request_id}-sales-period",
-                        statement=f"판매 종료일: {temporal['end_date']}",
-                        source_ids=[source.id],
-                        verified=False,
-                        time_sensitive=True,
-                        fact_type="sales_period",
-                        details={
-                            "sale_end": str(temporal["end_date"]),
-                            "source_quote": str(temporal.get("evidence") or ""),
-                        },
+            if content_type == "event":
+                package.event_start = package.event_start or payload.get("event_start")
+                package.event_end = package.event_end or str(temporal["end_date"])
+            elif content_type == "goods":
+                if temporal.get("end_date") and not any(
+                    fact.fact_type == "sales_period" and fact.details.get("sale_end")
+                    for fact in package.facts
+                ):
+                    package.facts.append(
+                        Fact(
+                            id=f"{package.request_id}-sales-period",
+                            statement=f"판매 종료일: {temporal['end_date']}",
+                            source_ids=[source.id],
+                            verified=False,
+                            time_sensitive=True,
+                            fact_type="sales_period",
+                            details={
+                                "sale_end": str(temporal["end_date"]),
+                                "source_quote": str(temporal.get("evidence") or ""),
+                            },
+                        )
                     )
-                )
+                elif (
+                    temporal.get("availability_status") == "upcoming_release"
+                    and temporal.get("release_date")
+                ):
+                    if not any(
+                        fact.details.get("release_date") == temporal["release_date"]
+                        for fact in package.facts
+                    ):
+                        package.facts.append(
+                            Fact(
+                                id=f"{package.request_id}-upcoming-release",
+                                statement=(
+                                    f"Scheduled product release date: {temporal['release_date']}"
+                                ),
+                                source_ids=[source.id],
+                                verified=False,
+                                time_sensitive=True,
+                                fact_type="product_availability",
+                                details={
+                                    "release_date": str(temporal["release_date"]),
+                                    "availability_status": "upcoming_release",
+                                    "source_quote": str(temporal.get("evidence") or ""),
+                                },
+                            )
+                        )
+                elif temporal.get("availability_status"):
+                    if not any(
+                        fact.fact_type == "availability_status"
+                        for fact in package.facts
+                    ):
+                        package.facts.append(
+                            Fact(
+                                id=f"{package.request_id}-availability-status",
+                                statement=f"판매 상태 확인: {temporal['availability_status']}",
+                                source_ids=[source.id],
+                                verified=False,
+                                time_sensitive=True,
+                                fact_type="availability_status",
+                                details={
+                                    "availability_status": str(temporal["availability_status"]),
+                                    "source_quote": str(temporal.get("evidence") or ""),
+                                },
+                            )
+                        )
+                    package.feed_valid_until = package.feed_valid_until or (
+                        datetime.now(KST).date() + timedelta(days=2)
+                    ).isoformat()
         # This command already knows the requested editorial type. Set it before
         # graph/storage image supplementation so event/goods restrictions apply
         # while the asset pool is being built, not only during final QA.
@@ -2437,8 +2543,11 @@ def crawl_type(
     ] = None,
     region_policy: Annotated[
         str,
-        typer.Option("--region-policy", help="kr_first, mixed, jp_first"),
-    ] = "kr_first",
+        typer.Option(
+            "--region-policy",
+            help="이전 명령과의 호환용이며 후보 정렬에는 영향을 주지 않습니다.",
+        ),
+    ] = "mixed",
     output_dir: Annotated[
         Path,
         typer.Option("--output-dir", help="이번 실행의 생성 결과 폴더"),
@@ -2582,6 +2691,13 @@ def crawl_type(
             retry_work_identity_failures
             and previous.get("status") == "work_id_unresolved_skipped"
         )
+        retry_recal_expiry_revision = (
+            retry_prior_failures
+            and content_type == "event"
+            and item.source_id in {"recal_kr", "recal_music"}
+            and previous.get("status") == "expiry_unresolved_held"
+            and previous.get("expiry_revision") != RECAL_EXPIRY_REVISION
+        )
         previous_match_audit = previous.get("work_match_audit") or {}
         retry_scope_conflict = (
             retry_unresolved_identity
@@ -2600,7 +2716,11 @@ def crawl_type(
             retry_prior_failures
             and previous.get("status") in retryable_statuses
         )
-        if not (retry_unresolved_identity or retry_other_failure):
+        if not (
+            retry_unresolved_identity
+            or retry_other_failure
+            or retry_recal_expiry_revision
+        ):
             continue
         old_fingerprint = str(previous.get("candidate_fingerprint") or "")
         current_fingerprint = discovery_candidate_fingerprint(item.model_dump(mode="json"))
@@ -2616,7 +2736,11 @@ def crawl_type(
             retry_cutoff is None
             or (previous_attempted_at is not None and previous_attempted_at < retry_cutoff)
         )
-        if retry_unresolved_identity:
+        if retry_recal_expiry_revision:
+            # Recheck Re:CAL events once under the corrected structured-date
+            # extraction policy, even if they exhausted the generic retry cap.
+            eligible_items.append(item)
+        elif retry_unresolved_identity:
             # Retry once when a prior audit has a specific, corrected resolution
             # path. The updated outcome leaves this retryable state, preventing
             # the candidate from looping on every crawler scan.
@@ -2637,7 +2761,7 @@ def crawl_type(
     fresh_items = (
         eligible_items
         if retry_candidate_id
-        else _diversify_candidate_items(eligible_items, limit)
+        else _latest_first_candidate_items(eligible_items, limit)
     )
     diversity_deferred = len(eligible_items) - len(fresh_items)
     skipped_attempted = len(collected_items) - eligible_before_stale_filter
@@ -2773,6 +2897,8 @@ def crawl_type(
             outcome["retry_count"] = int(
                 previous_candidate_attempts.get(candidate_id, {}).get("retry_count", 0)
             )
+        if content_type == "event" and item.source_id in {"recal_kr", "recal_music"}:
+            outcome["expiry_revision"] = RECAL_EXPIRY_REVISION
         outcome = _enrich_candidate_outcome(outcome)
         outcomes.append(outcome)
         try:
@@ -3050,8 +3176,11 @@ def discover(
     limit: Annotated[int, typer.Option("--limit", min=1, max=50)] = 20,
     region_policy: Annotated[
         str,
-        typer.Option("--region-policy", help="kr_first, mixed, jp_first"),
-    ] = "kr_first",
+        typer.Option(
+            "--region-policy",
+            help="이전 명령과의 호환용이며 후보 정렬에는 영향을 주지 않습니다.",
+        ),
+    ] = "mixed",
     content_type: Annotated[
         str | None,
         typer.Option("--content-type", help="선택: 10개 유형 중 지정한 유형의 출처만 수집"),
@@ -3079,7 +3208,7 @@ def discover(
             limit=limit,
             region_policy=region_policy,
             work_title=work_title,
-            exhaustive_listing=True,
+            exhaustive_listing=False,
         )
         persisted = AgentRepository().persist_discovery(
             [item.model_dump(mode="json") for item in items],

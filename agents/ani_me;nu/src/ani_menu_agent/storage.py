@@ -545,6 +545,7 @@ class AgentRepository:
         allowed = {
             PipelineJobStatus.RETRY,
             PipelineJobStatus.COMPLETED,
+            PipelineJobStatus.RETURNED,
             PipelineJobStatus.FAILED,
             PipelineJobStatus.CANCELLED,
         }
@@ -1588,11 +1589,6 @@ class AgentRepository:
         citations. Assets must come from an active primary or editorial source,
         match its allowed page/CDN hosts, and resolve to a package work ID.
         """
-        # Event and product cards require imagery of that exact event or item.
-        # A same-franchise catalog image is not a valid substitute.
-        if package.content_type in {"event", "goods"}:
-            return package.images
-
         registry = load_source_registry()
         active_image_sources = {
             source.id: source
@@ -2000,6 +1996,7 @@ class AgentRepository:
             "attempt_count": int(outcome.get("attempt_count", 1)),
             "retry_count": int(outcome.get("retry_count", 0)),
             "retry_note": str(outcome.get("retry_note") or ""),
+            "expiry_revision": outcome.get("expiry_revision"),
             "request_id": outcome.get("request_id"),
             "output": outcome.get("output"),
             "error": outcome.get("error"),
@@ -2041,6 +2038,7 @@ class AgentRepository:
                             "attempt_count",
                             "retry_count",
                             "retry_note",
+                            "expiry_revision",
                             "output",
                             "error",
                             "terminal_stage",
@@ -2199,8 +2197,10 @@ class AgentRepository:
             raise ValueError("DB 후보 레코드의 ID 또는 원문 URL이 올바르지 않습니다.")
         return payload
 
-    def list_discovery_candidates(self, content_type: str) -> list[dict[str, Any]]:
-        """Load unique durable leads for a type so retries need not refetch listings."""
+    def list_discovery_candidates(
+        self, content_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Load unique durable leads, optionally limited to a content type."""
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT payload_json FROM agent_records "
@@ -2218,7 +2218,7 @@ class AgentRepository:
             if (
                 candidate_id
                 and payload.get("url")
-                and content_type in types
+                and (content_type is None or content_type in types)
                 and candidate_id not in candidates
             ):
                 candidates[candidate_id] = payload
@@ -2300,6 +2300,8 @@ class AgentRepository:
         """공식 페이지에서 가져온 원문 캡처를 미검증 상태로 적재합니다."""
         now = _utc_now().isoformat()
         page_url = str(capture["url"])
+        event_start = capture.get("event_start")
+        event_end = event_end or capture.get("event_end")
         record_id = f"page:{hashlib.sha1(page_url.encode('utf-8')).hexdigest()[:16]}"
         crawl_request_id = f"crawl-{hashlib.sha1(page_url.encode('utf-8')).hexdigest()[:14]}"
         current_image_ids = {
@@ -2335,11 +2337,12 @@ class AgentRepository:
                     agent_type, record_id, record_kind, request_id, topic, region,
                     event_start, event_end, expires_at, status, payload_json,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_type, record_id) DO UPDATE SET
                     topic=excluded.topic,
                     region=excluded.region,
-                    event_end=excluded.event_end,
+                    event_start=COALESCE(excluded.event_start, agent_records.event_start),
+                    event_end=COALESCE(excluded.event_end, agent_records.event_end),
                     expires_at=excluded.expires_at,
                     status=excluded.status,
                     payload_json=excluded.payload_json,
@@ -2352,6 +2355,7 @@ class AgentRepository:
                     record_id,
                     title,
                     region,
+                    event_start,
                     event_end,
                     _expiration(event_end)
                     or (
@@ -2477,11 +2481,72 @@ class AgentRepository:
                     usage_records=usage_records,
                 )
 
+    @staticmethod
+    def _update_candidate_attempt_downstream_status(
+        connection,
+        request_id: str,
+        status: str,
+        updated_at: str,
+        content_type: str | None = None,
+    ) -> None:
+        """Reflect downstream terminal/return status on its originating candidate."""
+        if status not in {"ready_for_feed", "rejected_archived", "needs_crawler_update"}:
+            return
+        query = (
+            "SELECT agent_type, record_id, payload_json FROM agent_records "
+            "WHERE record_kind='candidate_attempt'"
+        )
+        params: tuple[str, ...] = ()
+        if content_type:
+            query += " AND agent_type=?"
+            params = (content_type,)
+        rows = connection.execute(query, params).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if str(payload.get("request_id") or "") != request_id:
+                continue
+            payload.setdefault("generation_status", payload.get("status"))
+            payload.setdefault("generation_terminal_stage", payload.get("terminal_stage"))
+            payload["status"] = status
+            payload["downstream_status"] = status
+            payload["downstream_updated_at"] = updated_at
+            payload["terminal_stage"] = {
+                "ready_for_feed": "feed_queue",
+                "rejected_archived": "review_archive",
+                "needs_crawler_update": "crawler_return",
+            }[status]
+            connection.execute(
+                "UPDATE agent_records SET status=?, payload_json=?, updated_at=? "
+                "WHERE agent_type=? AND record_id=? AND record_kind='candidate_attempt'",
+                (
+                    status,
+                    json.dumps(payload, ensure_ascii=False),
+                    updated_at,
+                    row["agent_type"],
+                    row["record_id"],
+                ),
+            )
+
     def set_content_status(self, request_id: str, status: str) -> None:
         with self.connect() as connection:
+            now = _utc_now().isoformat()
+            content_row = connection.execute(
+                "SELECT content_type FROM content_drafts WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
             connection.execute(
                 "UPDATE content_drafts SET status=?, updated_at=? WHERE request_id=?",
-                (status, _utc_now().isoformat(), request_id),
+                (status, now, request_id),
+            )
+            self._update_candidate_attempt_downstream_status(
+                connection,
+                request_id,
+                status,
+                now,
+                content_type=content_row["content_type"] if content_row else None,
             )
             if self.dialect == "sqlite":
                 set_erd_content_status(connection, request_id, status)
@@ -2538,6 +2603,13 @@ class AgentRepository:
                 "UPDATE agent_records SET status='rejected' WHERE request_id=?",
                 (package.request_id,),
             )
+            self._update_candidate_attempt_downstream_status(
+                connection,
+                package.request_id,
+                "rejected_archived",
+                now,
+                content_type=package.content_type,
+            )
             if self.dialect == "sqlite":
                 set_erd_content_status(connection, package.request_id, "rejected_archived", adopted=False)
 
@@ -2587,6 +2659,14 @@ class AgentRepository:
                 "UPDATE content_drafts SET status='ready_for_feed', updated_at=? "
                 "WHERE request_id=?",
                 (_utc_now().isoformat(), package.request_id),
+            )
+            downstream_updated_at = _utc_now().isoformat()
+            self._update_candidate_attempt_downstream_status(
+                connection,
+                package.request_id,
+                "ready_for_feed",
+                downstream_updated_at,
+                content_type=package.content_type,
             )
             if self.dialect == "sqlite":
                 set_erd_content_status(

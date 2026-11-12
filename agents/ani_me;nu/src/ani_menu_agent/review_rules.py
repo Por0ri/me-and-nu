@@ -168,19 +168,19 @@ _register(
 _register(
     (
         "IMAGE_VISION_MISMATCH", "IMAGE_COMPOSITION_REJECTED", "IMAGE_CROP_RISK",
-        "SUBJECT_CLIPPED",
+        "SUBJECT_CLIPPED", "IMAGE_REUSED_RAW",
     ),
     (
         'When the reviewer rates image relevance or composition below the configured '
-        'minimum, or detects a materially clipped subject, replace or repair the image '
-        'before approval.'
+        'minimum, detects a materially clipped subject, or finds one image reused across '
+        'multiple cards, replace or repair the image before approval.'
     ),
     check="both", severity="blocker", owner="image_curator",
 )
 _register(
     (
         "IMAGE_LOW_RESOLUTION", "IMAGE_USED_BEFORE", "SUBJECT_BOX_MISSING",
-        "IMAGE_ASSET_NOT_CARDWORTHY", "IMAGE_REUSED_RAW", "IMAGE_FACT_LINK_MISSING",
+        "IMAGE_ASSET_NOT_CARDWORTHY", "IMAGE_FACT_LINK_MISSING",
         "FOREIGN_IMAGE_UNEXPLAINED", "IMAGE_COPY_REGION_OVERLAP", "BOX_OVERFLOW",
         "TEXT_OVERLAY_SAFE_AREA_INVALID", "IMAGE_ONLY_PAGE", "COVER_EMPTY_GAP",
         "EDGE_ATTACHED_IMAGE", "CONTRAST_UNKNOWN",
