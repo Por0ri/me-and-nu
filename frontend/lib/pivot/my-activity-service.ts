@@ -14,6 +14,8 @@ export function mapActivityCard(item: LikedContent | ViewedContent, tab: Activit
     image: mapCoverImage(item.imageUrl, title, item.contentId, item.topicId),
     summary: typeof item.summary === "string" ? item.summary : undefined,
     sourceName: typeof item.sourceName === "string" ? item.sourceName : undefined,
+    // Preserve HOME's page-one editorial copy; source and taxonomy are not labels.
+    eyebrow: typeof item.eyebrow === "string" && item.eyebrow.trim() ? item.eyebrow : undefined,
   };
 }
 

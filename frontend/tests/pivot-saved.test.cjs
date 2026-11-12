@@ -231,14 +231,15 @@ test('Saved preserves editorial eyebrow, keeps attribution in data and omits abs
   }
 });
 
-test('Activity retains its existing overlay and protected-cover caption independently of SAVE', () => {
+test('Activity reuses the SAVE thumbnail overlay for ordinary, protected and missing images', () => {
   const { ContentListCard } = load('components/pivot/content-list-card.tsx');
-  for (const protectedImage of [false, true]) {
-    const card = { postId: '41', contentId: '41', title: '활동 제목', summary: '활동 요약', sourceName: '출처',
-      image: { src: '/cover.png', alt: '', ...(protectedImage ? { protected: true } : {}) } };
+  for (const image of [undefined, { src: '/cover.png', alt: '' }, { src: '/api/v1/contents/41/slides/1/image?topicId=7', alt: '', protected: true }]) {
+    const card = { postId: '41', contentId: '41', title: '활동 제목', summary: '활동 요약', eyebrow: '첫 슬라이드 라벨', sourceName: '출처', image };
     const html = renderToStaticMarkup(React.createElement(ContentListCard, { card, surface: 'activity', onViewDetail() {} }));
-    assert.match(html, new RegExp(`class="${protectedImage ? 'caption' : 'overlay'}"`));
-    assert.equal(html.includes('활동 요약'), !protectedImage);
-    assert.doesNotMatch(html, /savedOverlay|data-embedded-copy|data-saved-title/);
+    const saved = renderToStaticMarkup(React.createElement(ContentListCard, { card, onViewDetail() {} }));
+    assert.equal(html.replace('data-activity-content="41"', 'data-saved-content="41" data-saved-post="41"'), saved);
+    assert.match(html, /data-saved-eyebrow="">첫 슬라이드 라벨/);
+    assert.match(html, /data-saved-summary="">활동 요약/);
+    assert.doesNotMatch(html, /class="caption"|class="overlay"|출처|data-embedded-copy/);
   }
 });

@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { findInboxNotification, type InboxNotification, type InboxPage, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
-import { formatRelativeTime } from "@/lib/relative-time";
+import { findInboxNotification, isPostNotice, noticeHeadline, postNoticeImage, sortInbox, type InboxNotification, type InboxPage, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
+import { formatRelativeDay } from "@/lib/relative-time";
+import { ProtectedSlideImage } from "./content-carousel";
 import { HomeHeader } from "./home-screen";
 import styles from "./notification-inbox.module.css";
 
@@ -18,6 +19,20 @@ function formatDetailTime(iso: string) {
     detailTime.formatToParts(date).map(({ type, value }) => [type, value]),
   );
   return `${year}.${month}.${day} (${weekday}) ${hour}:${minute}`;
+}
+
+const TAGS: Record<InboxNotification["type"], string> = {
+  system_notice: "공지", topic_new_post: "NEW", recommended_post: "추천",
+};
+
+/** Decorative next to the title, so a missing picture just leaves the tinted box. */
+function PostThumbnail({ item }: { item: InboxNotification }) {
+  const image = postNoticeImage(item);
+  return <span className={styles.thumb}>
+    {image?.protected ? <ProtectedSlideImage key={image.src} src={image.src} alt="" retryable={false} />
+      : image ? <img src={image.src} alt="" width={1308} height={1632} loading="lazy" draggable={false}
+        onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+  </span>;
 }
 
 type ListState = { page?: InboxPage; loading: boolean; failed: boolean };
@@ -140,7 +155,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
   }
 
   function open(item: InboxNotification, button: HTMLButtonElement) {
-    if (item.type === "topic_new_post" && onOpenContent) {
+    if (isPostNotice(item) && onOpenContent) {
       opener.current = button;
       void openContent(item);
       return;
@@ -157,7 +172,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
     if (signal && !signal.aborted && !list.loading) void load(signal, list.page?.nextCursor ?? undefined);
   }
 
-  const visible = list.page?.items.filter((item) => !unreadOnly || !item.isRead) ?? [];
+  const visible = sortInbox(list.page?.items.filter((item) => !unreadOnly || !item.isRead) ?? []);
   const hasUnread = (unreadCount ?? 0) > 0 || list.page?.items.some((item) => !item.isRead);
   const readState = id === null ? undefined : readStates[id];
 
@@ -173,18 +188,19 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
       {visible.length > 0 && <ul className={styles.cards}>
         {visible.map((item) => <li key={item.notificationId}>
           <button type="button" className={styles.card} data-unread={!item.isRead || undefined}
-            aria-label={`${item.title}, ${item.isRead ? "읽음" : "읽지 않음"}`}
+            aria-label={`${noticeHeadline(item)}, ${item.isRead ? "읽음" : "읽지 않음"}`}
             onClick={(event) => open(item, event.currentTarget)}>
             <span className={styles.meta}>
-              <span className={styles.tag}>{item.type === "topic_new_post" ? "새 글" : "운영 공지"}</span>
+              <span className={styles.tag}>{TAGS[item.type]}</span>
               <span className={styles.time}>
-                <time dateTime={item.createdAt} title={formatDetailTime(item.createdAt)}>{formatRelativeTime(item.createdAt)}</time>
+                <time dateTime={item.createdAt} title={formatDetailTime(item.createdAt)}>{formatRelativeDay(item.createdAt)}</time>
                 {!item.isRead && <span className={styles.dot} aria-hidden="true" />}
               </span>
             </span>
-            <span className={styles.preview}>
-              <span className={styles.title}>{item.title}</span>
-              <span className={styles.summary}>{item.preview ?? item.body.replace(/\s+/g, " ").trim()}</span>
+            <span className={styles.preview} data-post={isPostNotice(item) || undefined}>
+              {isPostNotice(item) && <PostThumbnail item={item} />}
+              <span className={styles.title}>{noticeHeadline(item)}</span>
+              {!isPostNotice(item) && <span className={styles.summary}>{item.preview ?? item.body.replace(/\s+/g, " ").trim()}</span>}
               <img src="/pivot/notifications/chevron.svg" width={24} height={24} alt="" />
             </span>
           </button>
@@ -204,7 +220,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
           <time dateTime={detail.createdAt}>{formatDetailTime(detail.createdAt)}</time>
         </div>
         <p className={styles.body}>{detail.body}</p>
-        {detail.type === "topic_new_post" && onOpenContent && <button type="button" className={styles.more} onClick={() => void openContent(detail)}>글 보러 가기</button>}
+        {isPostNotice(detail) && onOpenContent && <button type="button" className={styles.more} onClick={() => void openContent(detail)}>글 보러 가기</button>}
         {readState === "pending" && <p role="status">읽음 상태를 저장하고 있어요.</p>}
         {readState === "failed" && <div className={styles.feedback}>
           <p role="alert">읽음 상태를 저장하지 못했어요.</p>

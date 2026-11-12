@@ -151,11 +151,12 @@ function SlideFigure({ slide, enabled, focusable, home = false, onTextVisibility
 }
 
 /** Keep Detail's cover/article boundary while reusing the server-sized carousel. */
-export function ContentCover({ slides, title, onCoverTextVisibilityChange }: {
-  slides: readonly HomeSlideModel[]; title: string; onCoverTextVisibilityChange?: (visible: boolean) => void;
+export function ContentCover({ slides, title, onSlideChange, onCoverTextVisibilityChange }: {
+  slides: readonly HomeSlideModel[]; title: string; onSlideChange?: (index: number) => void;
+  onCoverTextVisibilityChange?: (visible: boolean) => void;
 }) {
   return slides.length ? <div className={styles.cover} role="group" aria-label={title} data-content-cover="">
-    <ContentCarousel slides={slides} title={title} scope="detail" onCoverTextVisibilityChange={onCoverTextVisibilityChange} />
+    <ContentCarousel slides={slides} title={title} scope="detail" onSlideChange={onSlideChange} onCoverTextVisibilityChange={onCoverTextVisibilityChange} />
   </div> : null;
 }
 

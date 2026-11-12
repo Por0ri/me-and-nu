@@ -168,6 +168,31 @@ def test_service_migration_preserves_existing_content_and_adds_recommendation_ta
             assert db.scalar(text(f"SELECT count(*) FROM {table}")) == 0
 
 
+def test_daily_ranking_leaves_out_a_post_until_its_publication_time(recommendation_pg):
+    sys.path.insert(0, str(ROOT))
+    from model.scripts import daily_recommend as batch
+
+    pg = recommendation_pg
+    pg.migrate("head")
+    seed_demo(pg.engine)
+    day = datetime.now(batch.KST).date()
+    batch_url = pg.url.set(drivername="postgresql").render_as_string(hide_password=False)
+
+    def live_after_opening_in(hours):
+        with pg.engine.begin() as db:
+            target = db.scalar(text("SELECT min(content_id) FROM content"))
+            db.execute(text("UPDATE content SET published_at = now() + make_interval(hours => :h) WHERE content_id = :c"),
+                       {"h": hours, "c": target})
+        with psycopg.connect(batch_url) as connection, connection.cursor() as cur:
+            posts, _ = batch.load_posts(cur, 1, day)
+        return {post["id"]: post["until"] >= day for post in posts}, target
+
+    closed, target = live_after_opening_in(30)
+    assert closed[target] is False and sum(closed.values()) == 3
+    opened, _ = live_after_opening_in(-1)
+    assert opened[target] is True and sum(opened.values()) == 4
+
+
 def test_onboarding_batch_feed_activity_reactions_and_logout(recommendation_pg, monkeypatch):
     # The real algorithm uses an explicitly synthetic world, not private MAL/AniList datasets.
     sys.path.insert(0, str(ROOT))

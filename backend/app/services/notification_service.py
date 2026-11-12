@@ -1,20 +1,25 @@
 """알림함 (API-107 목록, API-108 미확인 개수, API-109 읽음 처리)과 알림 만들기.
 
-알림함은 운영공지(system_notice)와 새 글 알림(topic_new_post)을 보여 준다. 그 밖의 유형은
-저장된 상태로 보존하되 목록, 미확인 개수, 읽음 처리에서는 제외한다.
+알림함은 운영공지(system_notice), 새 글 알림(topic_new_post), 추천 알림(recommended_post)을 보여 준다.
+그 밖의 유형은 저장된 상태로 보존하되 목록, 미확인 개수, 읽음 처리에서는 제외한다.
 
 알림은 서버 명령(app.jobs.create_notifications)으로만 만든다. 만드는 함수는 commit 하지 않고 부른 쪽이 한다.
-- 새 글 알림: 지난 24시간 안에 공개된 글의 대표 작품(연결 순서 1)을 온보딩 Q1에서 고른 회원에게 보낸다.
-  하루 최대 3개, 같은 작품은 하루 1개, 최신 글 먼저. 알림을 끈 회원, 이미 열어 본 글, '그만 볼래요' 글은 뺀다.
+- 새 글 알림: 지난 48시간 안에 공개된 글의 대표 작품(연결 순서 1)을 온보딩 Q1에서 고른 회원에게 보낸다.
+  매일 아침 한 번 도는데 기간을 이틀로 둔 건, 하루 실패하거나 하루 한도에 밀린 글도 다음 날 잡기 위해서다. 이미 보낸 글은 다시 안 보낸다.
+  하루 1개, 최신 글 먼저. 알림을 끈 회원, 이미 열어 본 글, '그만 볼래요' 글은 뺀다.
+- 추천 알림: 오늘 추천의 10순위부터 내려가며 하루 1개. 위 순위는 홈에서 바로 보이니 그 아래에서 고른다.
+  노출 · 열람 · 카드 넘김 · '그만 볼래요' · 전에 알림이 간 글은 뺀다.
+- 알림함에는 새 글 · 추천을 종류별로 최신 3개만 보여 준다. 밀려난 알림은 지우지 않는다
+  (같은 글을 다시 안 보내는 기준이고, A/B 집계와 알림 효과 확인에도 쓴다).
 - 운영공지: 알림 설정과 상관없이 활동 중인 회원 전부(또는 지정한 회원)에게 보낸다.
   같은 제목·본문 공지가 이미 있는 회원은 건너뛰어서 명령을 두 번 돌려도 한 번만 생긴다.
 """
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import and_, exists, func, select, text, tuple_
+from sqlalchemy import and_, exists, func, or_, select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,9 +28,12 @@ from app.models import (
     Content,
     ContentEntityLink,
     ContentReaction,
+    ContentSource,
     Entity,
     Notification,
     NotificationSetting,
+    RecommendationItem,
+    RecommendationRound,
     Tap,
     TapEntity,
     UserAccount,
@@ -47,9 +55,14 @@ WELCOME_BODY = "me;nu에 오신 걸 환영해요. 서비스 운영에 관한 공
 
 NOTICE = "system_notice"
 NEW_POST = "topic_new_post"
-INBOX_TYPES = (NOTICE, NEW_POST)
-NEW_POST_WINDOW = timedelta(hours=24)
-DAILY_NEW_POSTS = 3
+RECOMMENDED = "recommended_post"
+INBOX_TYPES = (NOTICE, NEW_POST, RECOMMENDED)
+POST_TYPES = (NEW_POST, RECOMMENDED)
+NEW_POST_WINDOW = timedelta(hours=48)
+DAILY_NEW_POSTS = 1
+RECOMMENDED_FROM_RANK = 10
+SHOWN_PER_POST_TYPE = 3
+SEEN_EVENTS = ("impression", "open", "card_swipe")
 ACTIVE_STATUSES = ("active", "warned")
 TITLE_MAX, BODY_MAX = 100, 500
 KST = timezone(timedelta(hours=9))
@@ -79,6 +92,25 @@ async def _ensure_welcome_notice(db: AsyncSession, user_id: int) -> None:
     await db.commit()
 
 
+def _on_display(user_id: int):
+    """공지는 전부, 글 알림은 종류별 최신 SHOWN_PER_POST_TYPE 개만 알림함에 보인다."""
+    ranked = (
+        select(
+            Notification.notification_id,
+            func.row_number().over(
+                partition_by=Notification.notification_type,
+                order_by=(Notification.created_at.desc(), Notification.notification_id.desc()),
+            ).label("position"),
+        )
+        .where(Notification.user_id == user_id, Notification.notification_type.in_(POST_TYPES))
+        .subquery()
+    )
+    return or_(
+        Notification.notification_type.not_in(POST_TYPES),
+        Notification.notification_id.in_(select(ranked.c.notification_id).where(ranked.c.position <= SHOWN_PER_POST_TYPE)),
+    )
+
+
 async def list_notifications(
     db: AsyncSession, user_id: int, *, unread_only: bool, cursor: str | None, limit: int
 ) -> NotificationsResponse:
@@ -99,6 +131,7 @@ async def list_notifications(
         .where(
             Notification.user_id == user_id,
             Notification.notification_type.in_(INBOX_TYPES),
+            _on_display(user_id),
         )
     )
     if unread_only:
@@ -146,6 +179,7 @@ async def unread_count(db: AsyncSession, user_id: int) -> UnreadCountResponse:
         select(func.count()).select_from(Notification).where(
             Notification.user_id == user_id,
             Notification.notification_type.in_(INBOX_TYPES),
+            _on_display(user_id),
             Notification.read_at.is_(None),
         )
     )
@@ -186,13 +220,33 @@ class NewPost:
     published_at: datetime
 
 
-def new_post_title(work_name: str) -> str:
+@dataclass(frozen=True)
+class RecommendedPost:
+    """한 회원에게 보낼 수 있는 오늘 추천 글 하나."""
+
+    user_id: int
+    content_id: int
+    topic_id: int
+    work_name: str
+    title: str
+    rank: int
+
+
+def _post_title(work_name: str, label: str) -> str:
     """‘작품 이름’ 새 글. DB 제목 100자를 넘으면 작품 이름을 줄인다."""
     name = " ".join(work_name.split())
-    room = TITLE_MAX - len("‘’ 새 글")
+    room = TITLE_MAX - len(f"‘’ {label}")
     if len(name) > room:
         name = name[: room - 1] + "…"
-    return f"‘{name}’ 새 글"
+    return f"‘{name}’ {label}"
+
+
+def new_post_title(work_name: str) -> str:
+    return _post_title(work_name, "새 글")
+
+
+def recommended_title(work_name: str) -> str:
+    return _post_title(work_name, "추천 글")
 
 
 def pick_new_posts(
@@ -225,23 +279,64 @@ def _active_member():
     )
 
 
-async def _new_post_candidates(db: AsyncSession, since: datetime, until: datetime) -> list[NewPost]:
-    opened = exists().where(
+def _acted_on(event_types: tuple[str, ...]):
+    return exists().where(
         UserEvent.tap_id == Tap.tap_id,
         UserEvent.content_id == Content.content_id,
-        UserEvent.event_type == "open",
+        UserEvent.event_type.in_(event_types),
     )
-    disliked = exists().where(
+
+
+def _disliked():
+    return exists().where(
         ContentReaction.user_id == Tap.user_id,
         ContentReaction.tap_id == Tap.tap_id,
         ContentReaction.content_id == Content.content_id,
         ContentReaction.ox_feedback == "X",
     )
-    notified = exists().where(
+
+
+def _already_notified():
+    """새 글이든 추천이든 이미 알림이 간 글. 같은 글이 두 종류로 두 번 가지 않게 한다."""
+    return exists().where(
         Notification.user_id == Tap.user_id,
-        Notification.notification_type == NEW_POST,
+        Notification.notification_type.in_(POST_TYPES),
         Notification.content_id == Content.content_id,
     )
+
+
+def _in_app_on():
+    return and_(NotificationSetting.user_id == Tap.user_id, NotificationSetting.in_app_enabled.is_(True))
+
+
+def _post_row(kind: str, title: str, post: NewPost | RecommendedPost, now: datetime) -> dict:
+    return {
+        "user_id": post.user_id,
+        "notification_type": kind,
+        "title": title,
+        "body": " ".join(post.title.split())[:BODY_MAX],
+        "topic_id": post.topic_id,
+        "content_id": post.content_id,
+        "created_at": now,
+    }
+
+
+async def _insert_post_notifications(db: AsyncSession, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    result = await db.execute(
+        pg_insert(Notification)
+        .values(rows)
+        .on_conflict_do_nothing(
+            index_elements=["user_id", "notification_type", "content_id"],
+            index_where=Notification.content_id.is_not(None),
+        )
+        .returning(Notification.notification_id)
+    )
+    return len(result.all())
+
+
+async def _new_post_candidates(db: AsyncSession, since: datetime, until: datetime) -> list[NewPost]:
     rows = await db.execute(
         select(
             Tap.user_id, Content.content_id, Content.topic_id, Entity.entity_id, Entity.name,
@@ -257,19 +352,70 @@ async def _new_post_candidates(db: AsyncSession, since: datetime, until: datetim
             Tap.tap_id == TapEntity.tap_id, Tap.topic_id == Content.topic_id, Tap.deleted_at.is_(None),
         ))
         .join(UserAccount, and_(UserAccount.user_id == Tap.user_id, _active_member()))
-        .join(NotificationSetting, and_(
-            NotificationSetting.user_id == Tap.user_id, NotificationSetting.in_app_enabled.is_(True),
-        ))
+        .join(NotificationSetting, _in_app_on())
         .where(
             public_content_condition(),
             Content.published_at > since,
             Content.published_at <= until,
-            ~opened,
-            ~disliked,
-            ~notified,
+            ~_acted_on(("open",)),
+            ~_disliked(),
+            ~_already_notified(),
         )
     )
     return [NewPost(*row) for row in rows.all()]
+
+
+async def _recommended_candidates(db: AsyncSession, today: date) -> list[RecommendedPost]:
+    """오늘 추천에서 알림으로 보낼 수 있는 글. 홈과 같이 탭마다 가장 나중에 계산한 추천만 본다."""
+    rounds = (
+        select(
+            RecommendationRound.tap_id,
+            func.max(RecommendationRound.recommendation_round_id).label("round_id"),
+        )
+        .where(RecommendationRound.service_date == today)
+        .group_by(RecommendationRound.tap_id)
+        .subquery()
+    )
+    rows = await db.execute(
+        select(
+            Tap.user_id, Content.content_id, Content.topic_id, Entity.name, Content.title, RecommendationItem.rank,
+        )
+        .select_from(RecommendationItem)
+        .join(rounds, rounds.c.round_id == RecommendationItem.recommendation_round_id)
+        .join(Tap, and_(Tap.tap_id == rounds.c.tap_id, Tap.deleted_at.is_(None)))
+        .join(UserAccount, and_(UserAccount.user_id == Tap.user_id, _active_member()))
+        .join(NotificationSetting, _in_app_on())
+        .join(Content, and_(
+            Content.content_id == RecommendationItem.content_id, Content.topic_id == Tap.topic_id,
+        ))
+        .join(ContentEntityLink, and_(
+            ContentEntityLink.content_id == Content.content_id, ContentEntityLink.sort_order == 1,
+        ))
+        .join(Entity, Entity.entity_id == ContentEntityLink.entity_id)
+        .where(
+            RecommendationItem.rank >= RECOMMENDED_FROM_RANK,
+            public_content_condition(),
+            exists().where(ContentSource.content_id == Content.content_id),
+            ~_acted_on(SEEN_EVENTS),
+            ~_disliked(),
+            ~_already_notified(),
+        )
+    )
+    return [RecommendedPost(*row) for row in rows.all()]
+
+
+async def _recommended_today(db: AsyncSession, user_ids: list[int], day_start: datetime) -> set[int]:
+    """오늘(한국 시간) 이미 추천 알림을 받은 회원."""
+    if not user_ids:
+        return set()
+    rows = await db.scalars(
+        select(Notification.user_id).distinct().where(
+            Notification.user_id.in_(user_ids),
+            Notification.notification_type == RECOMMENDED,
+            Notification.created_at >= day_start,
+        )
+    )
+    return set(rows.all())
 
 
 async def _sent_today(db: AsyncSession, user_ids: list[int], day_start: datetime) -> dict[int, list[int | None]]:
@@ -312,28 +458,10 @@ async def create_new_post_notifications(
             posts, sent_today=len(works), works_today={work for work in works if work is not None},
         )
     created = 0
-    if apply and picked:
-        result = await db.execute(
-            pg_insert(Notification)
-            .values([
-                {
-                    "user_id": post.user_id,
-                    "notification_type": NEW_POST,
-                    "title": new_post_title(post.work_name),
-                    "body": " ".join(post.title.split())[:BODY_MAX],
-                    "topic_id": post.topic_id,
-                    "content_id": post.content_id,
-                    "created_at": now,
-                }
-                for post in picked
-            ])
-            .on_conflict_do_nothing(
-                index_elements=["user_id", "notification_type", "content_id"],
-                index_where=Notification.content_id.is_not(None),
-            )
-            .returning(Notification.notification_id)
+    if apply:
+        created = await _insert_post_notifications(
+            db, [_post_row(NEW_POST, new_post_title(post.work_name), post, now) for post in picked],
         )
-        created = len(result.all())
     return {
         "mode": "apply" if apply else "preview",
         "since": since.isoformat(),
@@ -341,6 +469,38 @@ async def create_new_post_notifications(
         "posts": len({post.content_id for post in candidates}),
         "members": len(by_user),
         "candidates": len(candidates),
+        "selected": len(picked),
+        "created": created,
+    }
+
+
+async def create_recommended_notifications(
+    db: AsyncSession, *, apply: bool, now: datetime | None = None,
+) -> dict:
+    """오늘 추천으로 회원당 하루 1개 추천 알림을 만든다. apply=False 면 개수만 센다."""
+    now = now or datetime.now(timezone.utc)
+    await db.execute(text("select pg_advisory_xact_lock(:key)"), {"key": CREATE_LOCK})
+    today = now.astimezone(KST).date()
+    candidates = await _recommended_candidates(db, today)
+    by_user: dict[int, list[RecommendedPost]] = {}
+    for post in candidates:
+        by_user.setdefault(post.user_id, []).append(post)
+    sent_today = await _recommended_today(db, list(by_user), kst_day_start(now))
+    picked = [
+        min(posts, key=lambda post: (post.rank, post.content_id))
+        for user_id, posts in by_user.items() if user_id not in sent_today
+    ]
+    created = 0
+    if apply:
+        created = await _insert_post_notifications(
+            db, [_post_row(RECOMMENDED, recommended_title(post.work_name), post, now) for post in picked],
+        )
+    return {
+        "mode": "apply" if apply else "preview",
+        "service_date": today.isoformat(),
+        "members": len(by_user),
+        "candidates": len(candidates),
+        "sent_today": len(sent_today),
         "selected": len(picked),
         "created": created,
     }

@@ -160,7 +160,7 @@ export type ChatJob = {
   error: { code: string; message: string } | null;
 };
 export type NotificationItem = {
-  notificationId: number; type: "system_notice" | "topic_new_post"; title: string; body: string;
+  notificationId: number; type: "system_notice" | "topic_new_post" | "recommended_post"; title: string; body: string;
   topicId: number | null; contentId: number | null; imageUrl: string | null;
   isRead: boolean; readAt: string | null; createdAt: string;
 };
@@ -169,6 +169,7 @@ export type BookmarksResponse = { items: SavedBookmark[]; nextCursor: string | n
 export type ActivityContentCard = {
   contentId: number; title: string; topicId: number;
   summary: string | null; imageUrl: string | null; sourceName: string | null;
+  eyebrow?: string | null;
   productionType: string | null; publishedAt: string | null; subtopicNames: string[];
 };
 export type LikedContent = ActivityContentCard & { likedAt: string };

@@ -321,6 +321,9 @@ def genre_affinity(state, ctx):
 W_GENRE = 0.5
 # 이미 본 글 감점 (v1 출발값 0.3). 보고 안 연 감점이 작품 취향을 빠르게 덮어서 줄임. 같은 날 같은 글 노출은 한 번만 셈 (load_visits)
 W_SEEN = 0.1
+# 끝까지 본 글 (카드 마지막 장 · 본문 80% 이상)만 본 날 포함 이 날 수 동안 후보에서 뺌. 덜 본 글은 바로 다시 후보
+# (11/3 사용자 결정. 그 전엔 열기만 해도 계속 뺐음). 백엔드 피드 (feed_service.REREAD_DAYS) 와 같은 값
+REREAD_DAYS = 14
 
 LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
 

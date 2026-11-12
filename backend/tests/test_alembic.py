@@ -25,7 +25,13 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["91c7a2e4b630"]
+    assert script.get_heads() == ["d7b3e9a1c452"]
+    search = script.get_revision("d7b3e9a1c452")
+    assert search.down_revision == "c8f2d6a1e947"
+    assert search.dependencies is None
+    recommended = script.get_revision("c8f2d6a1e947")
+    assert recommended.down_revision == "91c7a2e4b630"
+    assert recommended.dependencies is None
     settings = script.get_revision("91c7a2e4b630")
     assert settings.down_revision == "b3e7a5c19d42"
     assert settings.dependencies is None
@@ -46,7 +52,7 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     assert onboarding_v2.dependencies is None
     assert "onboarding_v2" in onboarding_v2.branch_labels
     assert "d2f6a9c4e731" not in {
-        revision.revision for revision in script.walk_revisions(base="base", head="91c7a2e4b630")
+        revision.revision for revision in script.walk_revisions(base="base", head="d7b3e9a1c452")
     }
     assert script.get_revision("c0e5f3b8a124").down_revision == (
         "b9d4e2a7f013"
@@ -167,6 +173,49 @@ def test_restoration_session_migration_only_widens_the_session_state_rule(monkey
     # The old rule rejects these sessions, so they go before it comes back.
     assert downgrade_sql.index("DELETE FROM auth_session") < downgrade_sql.index("ADD CONSTRAINT ck_auth_session_state")
     assert "CHECK (session_state IN ('anonymous', 'onboarding_pending', 'active'))" in downgrade_sql
+
+
+def test_search_log_migration_is_additive_and_guards_downgrade(monkeypatch):
+    revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("d7b3e9a1c452").module
+    buffer = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(context))
+    revision.upgrade()
+    upgrade_sql = buffer.getvalue()
+    assert "CREATE TABLE search_log" in upgrade_sql
+    assert "search_text VARCHAR(50) NOT NULL" in upgrade_sql
+    assert "FOREIGN KEY(tap_id, user_id) REFERENCES tap (tap_id, user_id) ON DELETE CASCADE" in upgrade_sql
+    assert "FOREIGN KEY(picked_work_id) REFERENCES entity (entity_id) ON DELETE SET NULL" in upgrade_sql
+    assert "ALTER TABLE" not in upgrade_sql
+
+    buffer.seek(0)
+    buffer.truncate()
+    revision.downgrade()
+    sql = buffer.getvalue()
+    assert sql.index("LOCK TABLE search_log") < sql.index("RAISE EXCEPTION") < sql.index("DROP TABLE search_log")
+
+
+def test_recommended_post_migration_only_widens_the_type_rule_and_guards_downgrade(monkeypatch):
+    revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("c8f2d6a1e947").module
+    buffer = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(context))
+    revision.upgrade()
+    upgrade_sql = buffer.getvalue()
+    assert "DROP CONSTRAINT ck_notification_type" in upgrade_sql
+    assert "'direct_message', 'recommended_post'" in upgrade_sql
+    assert "CREATE TABLE" not in upgrade_sql and "ADD COLUMN" not in upgrade_sql
+
+    buffer.seek(0)
+    buffer.truncate()
+    revision.downgrade()
+    sql = buffer.getvalue()
+    assert sql.index("LOCK TABLE notification") < sql.index("RAISE EXCEPTION") < sql.index("DROP CONSTRAINT")
+    assert "CHECK (notification_type IN ('topic_new_post', 'creator_new_post', 'system_notice', 'follow', 'direct_message'))" in sql
 
 
 def test_recommendation_migration_is_additive_and_guards_downgrade(monkeypatch):

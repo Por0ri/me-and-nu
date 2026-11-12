@@ -37,7 +37,7 @@ async function verify(browser, width) {
       const status = mode === '401' ? 401 : mode === 'error' || (mode === 'more-error' && second) ? 503 : 200;
       const offset = url.pathname.endsWith('likes') ? 40 : 60;
       const body = status !== 200 ? { code: 'AUTH_REQUIRED' } : mode === 'empty' ? { items: [], nextCursor: null }
-        : { items: (second ? [offset + 1, offset + 3] : [offset + 1, offset + 2]).map(card), nextCursor: second ? null : 'opaque +/=' };
+        : { items: (mode === 'long' ? Array.from({ length: 20 }, (_, i) => offset + i + 1) : second ? [offset + 1, offset + 3] : [offset + 1, offset + 2]).map(card), nextCursor: second || mode === 'long' ? null : 'opaque +/=' };
       if (hold) await new Promise(resolve => release.push(resolve));
       return reply(body, status);
     }
@@ -64,7 +64,7 @@ async function verify(browser, width) {
       const rect = selector => { const { width, height } = element.querySelector(selector).getBoundingClientRect(); return { width, height }; };
       return { tabs: rect('[role=tablist]'), card: rect('[data-activity-content]'), logo: rect('img[alt="me;nu"]'), back: rect('button[aria-label="뒤로가기"] img'), notification: rect('button[aria-label="알림"] img') };
     });
-    assert.equal(geometry.tabs.width, width - 48); assert.equal(geometry.tabs.height, 38);
+    assert.equal(geometry.tabs.width, Math.min(width, 430) - 48); assert.equal(geometry.tabs.height, 38);
     assert.equal(geometry.logo.width, 103); assert.equal(geometry.back.width, 24); assert.equal(geometry.notification.width, 24);
     if (width === 375) assert.ok(Math.abs(geometry.card.width - 148) < 1);
     await page.screenshot({ path: path.join(output, `likes-${width}.png`), fullPage: true });
@@ -89,6 +89,19 @@ async function verify(browser, width) {
     step = 'Saved regression'; await page.locator('[data-my-state]').getByRole('button', { name: 'SAVE', exact: true }).click();
     await page.locator('[data-saved-content="91"]').click(); await page.locator('[data-detail-state="ready"]').waitFor(); await page.getByRole('button', { name: '뒤로가기', exact: true }).click();
     await page.locator('[data-saved-state="ready"]:visible').waitFor();
+    step = 'mobile/desktop scrolling'; mode = 'long'; await visit(); await ready(20);
+    await screen.locator('[data-activity-content="60"]').scrollIntoViewIfNeeded();
+    const scrolled = await page.evaluate(() => {
+      const card = document.querySelector('[data-activity-content="60"]');
+      const rect = card.getBoundingClientRect();
+      let offset = window.scrollY; for (let node = card.parentElement; node; node = node.parentElement) offset += node.scrollTop;
+      return { offset, bottom: rect.bottom, top: rect.top, viewport: innerHeight };
+    });
+    assert.ok(scrolled.offset > 100, 'Long activity grid scrolls');
+    assert.ok(scrolled.top >= 0 && scrolled.bottom <= scrolled.viewport, 'Last card is reachable');
+    await screen.locator('[data-activity-content="60"]').click(); await page.locator('[data-detail-state="ready"]').waitFor();
+    await page.getByRole('button', { name: '뒤로가기', exact: true }).click(); await ready(20);
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-activity-content') === '60');
     for (const tab of ['likes', 'recent-views']) {
       step = `${tab} loading/empty/error`; mode = 'empty'; hold = true; await visit(tab); await untilHeld(); releaseAll(); await screen.getByText(tab === 'likes' ? '좋아요한 콘텐츠가 아직 없어요' : '최근 30일 동안 본 콘텐츠가 없어요', { exact: true }).waitFor();
       mode = 'error'; await visit(tab); await screen.getByRole('button', { name: '다시 시도', exact: true }).click();
@@ -105,14 +118,14 @@ async function verify(browser, width) {
     step = 'Demo isolation'; const apiCount = calls.length; await page.goto(`${base}/pivot/demo?view=activity`);
     await page.getByText(/Demo에서는 실제 좋아요/).waitFor(); assert.equal(calls.length, apiCount); assert.equal(await page.locator('[data-activity-content]').count(), 0);
     assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
-    results.push({ width, passed: true, geometry, checks: ['entry', 'likes', 'recent', 'pagination/retry/dedup', 'detail/back', 'MY/back', 'SAVED regression', 'loading/empty/error both lists', 'tab race', 'account/late401', '401/login', 'Demo isolation'], pageErrors: errors });
+    results.push({ width, passed: true, geometry, scrolled, checks: ['entry', 'likes', 'recent', 'pagination/retry/dedup', 'detail/back', 'MY/back', 'SAVED regression', 'mobile/desktop scroll', 'loading/empty/error both lists', 'tab race', 'account/late401', '401/login', 'Demo isolation'], pageErrors: errors });
   } catch (error) { throw new Error(`${width}px ${step}: ${error.message}`, { cause: error }); }
   finally { releaseAll(); await context.close(); }
 }
 (async () => {
   fs.mkdirSync(output, { recursive: true });
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
-  try { for (const width of [375, 320]) await verify(browser, width); }
+  try { for (const width of [320, 375, 390, 1280]) await verify(browser, width); }
   finally { await browser.close(); fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(results, null, 2)); }
   console.log(JSON.stringify(results, null, 2));
 })().catch(error => { console.error(error); process.exitCode = 1; });

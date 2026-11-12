@@ -30,9 +30,13 @@ SIGNAL = {
     "less": -2.0,
     "open": 0.3,                                                # 열어 봄 (읽은 정도를 모를 때)
     "read_full": 0.8, "read_some": 0.3, "read_bounce": -0.2,    # 읽은 정도를 알 때는 open 대신 이걸 씀
+    "swipe_some": 0.2,                                          # 카드를 넘겼지만 끝까지는 아님 (끝까지면 read_full)
     "skip": -0.05,                                              # 보여줬는데 안 누름 (노출 기록이 있을 때만)
 }
-READ_FULL, READ_BOUNCE = 0.8, 0.3   # 읽은 비율이 이 이상이면 끝까지 읽음, 이 미만이면 바로 나감
+READ_FULL, READ_BOUNCE = 0.8, 0.3   # 본문 읽은 비율이 이 이상이면 끝까지 읽음, 이 미만이면 바로 나감
+# 카드 넘김 (11/3 · 11/11 사용자 결정): 한 장이라도 넘기면 swipe_some, 마지막 장까지면 read_full. 글 길이와 상관없이
+# 같은 행동은 같은 점수라 비율로 나누지 않음. 2장 글은 한 번 넘기면 끝이라 마지막 장이어도 swipe_some
+FULL_CARDS_MIN = 3
 
 # 유형별 최신성이 약 1/e 로 줄어드는 날 수. 나머지 유형은 30일
 FRESH_TAU = {"news": 3.0, "event": 7.0, "goods": 7.0}
@@ -54,6 +58,7 @@ class Config:
     rank_scale: float = 50.0        # v0.5 순위 → 작품 취향: 1 / (1 + 순위 / rank_scale)
     add_liked_works: bool = False   # 반응이 강한 작품을 v0.5 입력(본 작품)에 더할지
     liked_threshold: float = 0.8    # 작품별 반응 합이 이 이상이면 좋아하는 작품으로 침
+    reread_days: int | None = None  # None: 연 글은 계속 뺌 (시뮬레이터). 숫자: 끝까지 본 글만 그 날 수 동안 뺌 (서비스)
 
 
 @dataclass
@@ -76,6 +81,7 @@ class UserState:
     served: np.ndarray = field(init=False)    # 글별로 보낸 목록 위쪽에 들어간 횟수 (기록 없이도 서버가 앎)
     opened: np.ndarray = field(init=False)    # 연 글 (열람·읽기 기록이 있을 때만 앎)
     blocked: np.ndarray = field(init=False)   # 그만볼래요 한 글
+    full_read_day: np.ndarray = field(init=False)   # 글별 끝까지 본 마지막 날 (reread_days 를 쓸 때만 채움, 없으면 -inf)
 
     def __post_init__(self):
         self.work_ev = np.zeros(self.n_catalog, dtype=np.float32)
@@ -85,6 +91,7 @@ class UserState:
         self.served = np.zeros(self.n_feed, dtype=np.int16)
         self.opened = np.zeros(self.n_feed, dtype=bool)
         self.blocked = np.zeros(self.n_feed, dtype=bool)
+        self.full_read_day = np.full(self.n_feed, -np.inf)
 
 
 def refresh_work_affinity(state, ctx, cfg):
@@ -110,7 +117,8 @@ def type_pref(state, cfg):
 
 
 def rank_feed(state, feed, day, cfg, k=50):
-    """오늘(day) 보여줄 글 번호 k개를 점수 순으로. 노출 기간이 지난 글, 아는 범위에서 이미 연 글·그만볼래요 한 글은 뺀다"""
+    """오늘(day) 보여줄 글 번호 k개를 점수 순으로. 노출 기간이 지난 글 · 그만볼래요 한 글은 뺀다.
+    본 글: reread_days 가 없으면 아는 범위에서 연 글을 계속 빼고, 있으면 끝까지 본 지 그 날 수가 안 된 글만 뺀다"""
     live = np.flatnonzero((feed["day"] <= day) & (feed["until"] >= day))
     pos, typ = feed["pos"][live], feed["type"][live]
     s = np.where(pos >= 0, cfg.w_work * (state.work_aff[pos] + cfg.work_feedback * np.tanh(state.work_ev[pos])), 0.0)
@@ -120,7 +128,11 @@ def rank_feed(state, feed, day, cfg, k=50):
     s = s + cfg.w_fresh * np.exp(-(day - feed["day"][live]) / TAU[typ])
     shown = state.seen if "impression" in cfg.logs else state.served   # 노출 기록이 없으면 보낸 목록으로 짐작
     s = s - cfg.w_seen * shown[live]
-    s[state.opened[live] | state.blocked[live]] = -np.inf
+    if cfg.reread_days is None:
+        read = state.opened[live]
+    else:
+        read = day - state.full_read_day[live] < cfg.reread_days
+    s[read | state.blocked[live]] = -np.inf
     if not len(s):
         return live
     top = np.argpartition(-s, min(k, len(s) - 1))[:k]
@@ -148,10 +160,28 @@ def _signal(state, feed, c, w, cfg, catalog_ids):
             state.dirty = True
 
 
-def learn(state, events, feed, cfg, catalog_ids):
+def _read_weight(ratio):
+    return SIGNAL["read_full" if ratio >= READ_FULL else ("read_bounce" if ratio < READ_BOUNCE else "read_some")]
+
+
+def _swipe_weight(index, count):
+    return SIGNAL["read_full"] if index >= count >= FULL_CARDS_MIN else SIGNAL["swipe_some"]
+
+
+def learn(state, events, feed, cfg, catalog_ids, day=None):
     """한 번 접속에서 생긴 기록으로 유저 상태를 고친다. cfg.logs 에 없는 기록은 안 모은다고 보고 버린다.
-    events: (종류, 글 번호, 값) 목록. 종류: impression · open · read(값=읽은 비율) · like · save · more · less · share"""
+    events: (종류, 글 번호, 값) 목록. 종류: impression · open · read(값=본문 읽은 비율) ·
+    swipe(값=(넘긴 뒤 장 번호, 전체 장 수)) · like · save · more · less · share.
+    swipe 는 read 기록으로 친다: 같은 글에 카드 · 본문이 둘 다 있으면 큰 점수 하나만, 넘긴 글은 보고 지나침 감점 없음.
+    day: 이 접속의 날 번호. reread_days 를 쓸 때 카드 마지막 장 · 본문 READ_FULL 이상을 끝까지 본 날로 기록"""
     logs, opened_now, shown = cfg.logs, set(), []
+    swiped, body, scored = {}, {}, set()
+    if "read" in logs:
+        for kind, c, val in events:
+            if kind == "swipe":
+                swiped[c] = max(swiped.get(c, (0, 0)), tuple(val))   # 가장 멀리 넘긴 장
+            elif kind == "read":
+                body[c] = max(body.get(c, 0.0), val)
     for kind, c, val in events:
         if kind == "impression":
             shown.append(c)
@@ -164,14 +194,26 @@ def learn(state, events, feed, cfg, catalog_ids):
             if "open" in logs and "read" not in logs:
                 _signal(state, feed, c, SIGNAL["open"], cfg, catalog_ids)
         elif kind == "read":
-            if "read" in logs:
-                key = "read_full" if val >= READ_FULL else ("read_bounce" if val < READ_BOUNCE else "read_some")
-                _signal(state, feed, c, SIGNAL[key], cfg, catalog_ids)
+            if "read" in logs and c not in swiped:                # 카드도 넘긴 글은 swipe 에서 한 번에
+                _signal(state, feed, c, _read_weight(val), cfg, catalog_ids)
+        elif kind == "swipe":
+            if c in swiped and c not in scored:                   # 같은 글 넘김이 여러 개여도 한 번만
+                scored.add(c)
+                w = _swipe_weight(*swiped[c])
+                if c in body:
+                    w = max(w, _read_weight(body[c]))
+                _signal(state, feed, c, w, cfg, catalog_ids)
+                opened_now.add(c)                                 # 넘긴 글은 보고 지나친 게 아님
         elif kind in ("more", "less", "like", "save", "share"):
             if kind in logs:
                 if kind == "less":
                     state.blocked[c] = True
                 _signal(state, feed, c, SIGNAL[kind], cfg, catalog_ids)
+    if cfg.reread_days is not None and day is not None:
+        full = {c for c, (index, count) in swiped.items() if index >= count}
+        full |= {c for c, ratio in body.items() if ratio >= READ_FULL}
+        for c in full:
+            state.full_read_day[c] = max(state.full_read_day[c], day)
     if "impression" in logs:
         for c in shown:
             if c not in opened_now:

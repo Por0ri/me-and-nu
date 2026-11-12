@@ -7,7 +7,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-NOTIFICATION_TYPES = ("topic_new_post", "creator_new_post", "system_notice", "follow", "direct_message")
+NOTIFICATION_TYPES = (
+    "topic_new_post", "creator_new_post", "system_notice", "follow", "direct_message", "recommended_post",
+)
 
 
 class Notification(Base):

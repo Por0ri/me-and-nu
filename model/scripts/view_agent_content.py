@@ -30,6 +30,7 @@ SHARE_WIDTH = 540        # 보내기용 파일의 카드 이미지 가로 (픽�
 
 DATA = pathlib.Path(__file__).resolve().parents[1] / "data"
 OUT = DATA / "agent_view"
+CATALOG = pathlib.Path(__file__).resolve().parents[2] / "catalog"   # 공용 작품 목록 (예전엔 model/data 의 사본)
 EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 CSS = """
 body{margin:0;padding:16px;font-family:system-ui,'Malgun Gothic',sans-serif;background:#f4f4f5;color:#18181b}
@@ -324,7 +325,7 @@ def main(db_path, share=None, old_db=None):
     skip = {r for (r,) in old.execute("select request_id from feed_queue")} if old else set()
     labels = {r[0]: r[1] for r in db.execute("select type_code, label_ko from content_types")}
     names = {}
-    works_csv = DATA / "menu_works.csv"
+    works_csv = CATALOG / "menu_works.csv"
     if works_csv.exists():
         with open(works_csv, encoding="utf-8-sig") as f:
             names = {int(r["menu_work_id"]): r["title_ko"] or r["title_romaji"] for r in csv.DictReader(f)}

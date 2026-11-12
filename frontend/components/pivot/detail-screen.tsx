@@ -117,7 +117,7 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
   const preferring = canReact && interactions.reactions.isPending(target, "preference");
   const selectedFeedback = demo ? feedback : reaction?.preference === "positive" ? "more" : reaction?.preference === "negative" ? "stop" : null;
   const bodyChars = state.status === "ready" ? state.article.sections.reduce((sum, section) => sum + section.paragraphs.reduce((n, text) => n + text.length, 0), 0) : 0;
-  useDetailExposure(article, target, bodyChars, demo);
+  const trackSlide = useDetailExposure(article, target, bodyChars, demo);
   async function toggleLike() {
     if (!canReact || liking) return;
     try { await interactions.reactions.toggleLike(target, initialReaction, "detail"); setNotice(interactions.reactions.value(target, initialReaction).liked ? "좋아요를 눌렀어요." : "좋아요를 취소했어요."); }
@@ -174,7 +174,8 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
     <h1 ref={heading} tabIndex={-1} className={homeStyles.srOnly}>{state.status === "ready" ? [state.article.work, state.article.title].filter(Boolean).join(" · ") : "콘텐츠 상세"}</h1>
     {state.status === "ready" ? <article ref={article} aria-label={state.article.title} data-detail-content={state.article.contentId} data-detail-post={state.article.postId}>
       {!demo && state.article.slides?.length ? <ContentCover key={state.article.contentId}
-        slides={state.article.slides} title={state.article.title} onCoverTextVisibilityChange={onCoverTextVisibilityChange} /> : <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />}
+        slides={state.article.slides} title={state.article.title} onSlideChange={(index) => trackSlide(index, state.article.slides!.length)}
+        onCoverTextVisibilityChange={onCoverTextVisibilityChange} /> : <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />}
       <div className={styles.body}>
         {state.article.sections.map((section, index) => <section key={index} className={styles.section}>
           {section.heading ? <h2>{section.heading}</h2> : null}

@@ -66,7 +66,7 @@ async function capture(page, name, hasChevron) {
     await alert(page, '알림을 불러오지 못했어요.');
     await button(page, '다시 시도').click();
     await button(page, '서비스 운영 안내, 읽지 않음').waitFor();
-    assert.equal(await inbox(page).getByText('운영 공지', { exact: true }).count(), 1);
+    assert.equal(await inbox(page).getByText('공지', { exact: true }).count(), 1);
     await button(page, '알림 더 보기').click();
     await button(page, '지난 운영 공지, 읽음').waitFor();
     assert.ok(fixture.requests.some(row => row.path === inboxPath && row.query.cursor === '9'));
@@ -106,8 +106,11 @@ async function capture(page, name, hasChevron) {
     await page.getByRole('article', { name: '지난 운영 공지' }).waitFor();
     await back(page);
     await status(page, '읽지 않은 알림이 없어요.');
+    const bellChecks = () => fixture.requests.filter(row => row.path === inboxPath && row.query.limit === '5').length;
+    const checksBefore = bellChecks();
     await back(page);
     await heading(page, '홈').waitFor();
+    while (bellChecks() === checksBefore) await page.waitForTimeout(50);
     fixture.rotate('anonymous');
     await button(page, '알림').click();
     await page.waitForURL('**/pivot/login');
