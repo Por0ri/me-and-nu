@@ -433,7 +433,15 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
         cited_dates = {
             parsed_date
             for fact_id in card.fact_ids
-            if fact_id in facts_by_id and facts_by_id[fact_id].verified
+            if fact_id in facts_by_id
+            and (
+                facts_by_id[fact_id].verified
+                or (
+                    facts_by_id[fact_id].fact_type.strip().lower() == "event_schedule"
+                    and facts_by_id[fact_id].details.get("evidence_kind")
+                    == "source_structured_event"
+                )
+            )
             for parsed_date in _date_in_quote(
                 str(facts_by_id[fact_id].details.get("source_quote") or ""),
                 default_year=source_year(facts_by_id[fact_id]),
@@ -443,8 +451,8 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
             issues.append(
                 _issue(
                     "UNSUPPORTED_DATE_CLAIM",
-                    "移대뱶???곸뿭???ъ슜???좎쭨瑜?洹쇨굅 fact_id濡?媛由ы궎?꽌?쇰줈 ?쇱튂?섏? "
-                    "?딆뒿?덈떎. ?좎쭨 ?ъ떎瑜??ㅼ떆 ?몄슜?섍굅??湲곗? ?녿뒗 ?좎쭨瑜?젣嫄고븯?몄슂.",
+                    "카드 날짜와 연결된 출처 근거가 일치하지 않습니다. 원문에 적힌 날짜와 일치하는 "
+                    "근거를 연결하거나 근거가 없는 날짜를 지우세요.",
                     card.page,
                 )
             )

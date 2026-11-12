@@ -5,9 +5,11 @@ from __future__ import annotations
 import threading
 import time
 import uuid
-from dataclasses import replace
+from datetime import datetime, timedelta
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from ani_menu_agent.agents.content_generation.graph import build_content_generation_agent
 from ani_menu_agent.agents.reviewer.graph import build_reviewer_agent
@@ -35,6 +37,29 @@ from ani_menu_agent.storage import AgentRepository
 LEASE_SECONDS = 900
 MAX_JOB_ATTEMPTS = 5
 TIME_SENSITIVE_TYPES = {"news", "event", "goods"}
+
+
+@dataclass(frozen=True)
+class PipelineJobOutcome:
+    status: PipelineJobStatus = PipelineJobStatus.COMPLETED
+    detail: str | None = None
+
+
+def _state_issue_detail(prefix: str, state: dict) -> str:
+    issues = state.get("qa_report", [])
+    details = []
+    for issue in issues:
+        if isinstance(issue, dict):
+            code = str(issue.get("code") or "")
+            message = str(issue.get("message") or "")
+            details.append(": ".join(part for part in (code, message) if part))
+        elif issue:
+            details.append(str(issue))
+    return prefix + (": " + " | ".join(details[:4]) if details else "")
+
+
+def _crawler_return_detail(state: dict) -> str:
+    return _state_issue_detail("needs_crawler_update", state)
 
 
 def _lease_heartbeat(repository: AgentRepository, job: PipelineJob, worker_id: str):
@@ -162,7 +187,7 @@ def _hold_immediate_news_package(
     return True
 
 
-def _process_generation(repository: AgentRepository, job: PipelineJob) -> None:
+def _process_generation(repository: AgentRepository, job: PipelineJob) -> PipelineJobOutcome | None:
     request_id = job.request_id
     if not request_id:
         raise ValueError("generation job is missing request_id")
@@ -218,7 +243,7 @@ def _process_generation(repository: AgentRepository, job: PipelineJob) -> None:
         updated_package = ContentPackage.model_validate(package)
         if content_type == "event" and not updated_package.event_end:
             updated_package.event_end = str(temporal["end_date"])
-        elif content_type == "goods" and not any(
+        elif content_type == "goods" and temporal.get("end_date") and not any(
             fact.fact_type == "sales_period" and fact.details.get("sale_end")
             for fact in updated_package.facts
         ):
@@ -237,6 +262,30 @@ def _process_generation(repository: AgentRepository, job: PipelineJob) -> None:
                     },
                 )
             )
+        elif content_type == "goods" and temporal.get("availability_status"):
+            source_id = updated_package.sources[0].id if updated_package.sources else "source"
+            if not any(
+                fact.fact_type == "availability_status"
+                for fact in updated_package.facts
+            ):
+                updated_package.facts.append(
+                    Fact(
+                        id=f"{request_id}-availability-status",
+                        statement=f"판매 상태 확인: {temporal['availability_status']}",
+                        source_ids=[source_id],
+                        verified=False,
+                        time_sensitive=True,
+                        fact_type="availability_status",
+                        details={
+                            "availability_status": str(temporal["availability_status"]),
+                            "source_quote": str(temporal.get("evidence") or ""),
+                        },
+                    )
+                )
+            if not updated_package.feed_valid_until:
+                updated_package.feed_valid_until = (
+                    datetime.now(ZoneInfo("Asia/Seoul")).date() + timedelta(days=2)
+                ).isoformat()
         package = updated_package.model_dump(mode="json")
         repository.persist_information(updated_package)
     state = _state_for_job(job, package)
@@ -245,14 +294,28 @@ def _process_generation(repository: AgentRepository, job: PipelineJob) -> None:
         state.update(rights_preflight(state))
         if state.get("status") == "needs_crawler_update":
             crawler_update_required(state)
-            return
+            return PipelineJobOutcome(
+                PipelineJobStatus.RETURNED, _crawler_return_detail(state)
+            )
     generated = build_content_generation_agent().invoke(state)
     state.update(generated)
     if state.get("status") == "needs_crawler_update":
         crawler_update_required(state)
-        return
+        return PipelineJobOutcome(
+            PipelineJobStatus.RETURNED, _crawler_return_detail(state)
+        )
     if state.get("status") in {"invalid_input", "generation_failed", "rejected_archived"}:
-        return
+        if state.get("status") == "generation_failed":
+            return PipelineJobOutcome(
+                PipelineJobStatus.FAILED,
+                _state_issue_detail("generation_failed", state),
+            )
+        if state.get("status") == "invalid_input":
+            return PipelineJobOutcome(
+                PipelineJobStatus.FAILED,
+                _state_issue_detail("invalid_input", state),
+            )
+        return None
     # The card renderer persists before the detail writer runs. Save the final
     # package again so its detail article and source links reach the review worker.
     if state.get("package"):
@@ -264,7 +327,7 @@ def _process_generation(repository: AgentRepository, job: PipelineJob) -> None:
     _enqueue_review(repository, job, state)
 
 
-def _process_review(repository: AgentRepository, job: PipelineJob) -> None:
+def _process_review(repository: AgentRepository, job: PipelineJob) -> PipelineJobOutcome | None:
     request_id = job.request_id
     if not request_id:
         raise ValueError("review job is missing request_id")
@@ -293,6 +356,9 @@ def _process_review(repository: AgentRepository, job: PipelineJob) -> None:
         state.update(feed_queue(state))
     elif route == "crawler_update_required":
         state.update(crawler_update_required(state))
+        return PipelineJobOutcome(
+            PipelineJobStatus.RETURNED, _crawler_return_detail(state)
+        )
     elif route == "archive_rejected":
         state.update(archive_rejected(state))
     elif route == "revision_checkpoint":
@@ -355,11 +421,14 @@ def run_queue_worker(
             continue
         stopped, lease_lost, heartbeat = _lease_heartbeat(repository, job, worker_id)
         try:
-            processor(repository, job)
+            outcome = processor(repository, job)
             if lease_lost.is_set():
                 continue
             repository.finish_pipeline_job(
-                job.job_id, worker_id=worker_id, status=PipelineJobStatus.COMPLETED
+                job.job_id,
+                worker_id=worker_id,
+                status=outcome.status if outcome else PipelineJobStatus.COMPLETED,
+                error=outcome.detail if outcome else None,
             )
         except Exception as exc:
             status = (
@@ -411,16 +480,34 @@ def run_crawler_worker(
                     # archives on every cycle and repeatedly discovers expired
                     # campaigns and old announcements.
                     limit=min(max(batch_limit, 20), 200),
-                    region_policy="kr_first",
+                    region_policy="mixed",
                     capture_images=False,
                     exhaustive_listing=False,
                 )
                 print(
                     f"crawler discovery type={content_type} "
                     f"found={len(run.items)} persisted={run.persisted_count} "
-                    f"errors={len(run.errors)}",
+                    f"rejected={run.rejected_count} errors={len(run.errors)}",
                     flush=True,
                 )
+                for source_result in run.source_results:
+                    latest_publication = source_result.latest_published_at or "unknown"
+                    page_candidate_count = sum(
+                        source_result.page_candidate_counts or []
+                    )
+                    print(
+                        f"crawler source type={content_type} "
+                        f"source={source_result.source_id} "
+                        f"status={source_result.status} "
+                        f"pages={source_result.pages_scanned} "
+                        f"page_candidates={page_candidate_count} "
+                        f"accepted={source_result.candidate_count} "
+                        f"duplicates={source_result.duplicate_candidate_count} "
+                        f"latest_published_at={latest_publication} "
+                        f"pagination_stop={source_result.pagination_stop_reason} "
+                        f"error={source_result.error or 'none'}",
+                        flush=True,
+                    )
             except Exception as exc:
                 print(
                     f"crawler discovery failed type={content_type}: "
@@ -429,36 +516,51 @@ def run_crawler_worker(
                 )
                 continue
 
-            # The batch size bounds one call, not the total backlog. Keep
-            # processing durable leads until none remain, while generation and
-            # review stay in their independent queue workers.
-            while not stop_requested() and time.monotonic() >= llm_retry_after:
-                try:
-                    summary = crawl_type(
-                        content_type=content_type,
-                        limit=batch_limit,
-                        target_passed=None,
-                        retry_candidate_id=None,
-                        retry_note=None,
-                        retry_prior_failures=True,
-                        retry_work_identity_failures=True,
-                        stored_candidates_only=True,
-                        retry_before=None,
-                        region_policy="kr_first",
-                        output_dir=Path("output/pipeline_runs"),
-                        enqueue_only=True,
-                    )
-                except Exception as exc:
-                    print(
-                        f"crawler candidate batch failed type={content_type}: "
-                        f"{type(exc).__name__}: {str(exc)[:300]}",
-                        flush=True,
-                    )
-                    break
+            # Take one durable-candidate batch per type per cycle. A large
+            # event backlog must not prevent news and goods discovery from
+            # being refreshed; the next cycle resumes the remaining backlog.
+            if stop_requested():
+                break
+            if time.monotonic() < llm_retry_after:
+                print(
+                    f"crawler candidate batch deferred type={content_type} "
+                    "reason=llm_quota_backoff; source discovery remains active",
+                    flush=True,
+                )
+                continue
+            try:
+                summary = crawl_type(
+                    content_type=content_type,
+                    limit=batch_limit,
+                    target_passed=None,
+                    retry_candidate_id=None,
+                    retry_note=None,
+                    retry_prior_failures=True,
+                    retry_work_identity_failures=True,
+                    stored_candidates_only=True,
+                    retry_before=None,
+                    region_policy="kr_first",
+                    output_dir=Path("output/pipeline_runs"),
+                    enqueue_only=True,
+                )
+            except Exception as exc:
+                print(
+                    f"crawler candidate batch failed type={content_type}: "
+                    f"{type(exc).__name__}: {str(exc)[:300]}",
+                    flush=True,
+                )
+                continue
 
-                attempted = int((summary.get("funnel") or {}).get("attempted", 0))
-                if attempted == 0:
-                    break
+            funnel = summary.get("funnel") or {}
+            attempted = int(funnel.get("attempted", 0))
+            print(
+                f"crawler candidate batch type={content_type} "
+                f"attempted={attempted} passed={summary.get('passed_this_run', 0)} "
+                f"persisted={summary.get('candidate_records_persisted', 0)} "
+                f"status_counts={funnel.get('status_counts', {})}",
+                flush=True,
+            )
+            if attempted > 0:
                 error_text = str(summary).lower()
                 if any(
                     marker in error_text
@@ -476,7 +578,6 @@ def run_crawler_worker(
                         "exhaustion; source discovery will continue",
                         flush=True,
                     )
-                    break
         for _ in range(max(1, scan_interval_seconds)):
             if stop_requested():
                 break

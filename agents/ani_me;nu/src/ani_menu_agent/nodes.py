@@ -154,6 +154,24 @@ def _normalize_structural_roles(cards: list[CopyCard]) -> list[CopyCard]:
     ]
 
 
+def _assign_images_and_compact(
+    cards: list[CopyCard], package: ContentPackage
+) -> list[CopyCard]:
+    """Drop unsupported trailing cards when the remaining exact-work art still meets policy."""
+    assigned = assign_distinct_images(cards, package)
+    minimum = POLICY.minimum_cards_for(package.content_type)
+    usable = [
+        card for card in assigned
+        if card.visual_mode == "source_image"
+        and not card.image_id.startswith("missing-source-image-")
+    ]
+    if len(usable) >= minimum and len(usable) < len(assigned):
+        return _normalize_structural_roles(
+            [card.model_copy(update={"page": index}) for index, card in enumerate(usable, 1)]
+        )
+    return assigned
+
+
 def _cover_image_issue(package: ContentPackage) -> QualityIssue | None:
     cover = next((card for card in package.cards if card.role == "cover"), None)
     if cover is None or cover.visual_mode != "source_image" or cover.image_id not in {
@@ -533,6 +551,26 @@ def layout_director(state: ContentState) -> ContentState:
             CopyCard.model_validate(card.model_dump(exclude={"layout"}))
             for card in package.cards
         ]
+        # A visual revision must re-run image eligibility. Rebuilding layouts
+        # alone preserves the old image IDs, including RE:CAL schedule cards.
+        copies = _assign_images_and_compact(copies, package)
+        missing_pages = [
+            card.page for card in copies
+            if card.visual_mode != "source_image"
+            or card.image_id.startswith("missing-source-image-")
+        ]
+        if len(copies) - len(missing_pages) < POLICY.minimum_cards_for(package.content_type):
+            issue = make_issue(
+                code="SOURCE_IMAGE_POOL_INSUFFICIENT",
+                message="There are not enough distinct eligible images for the minimum carousel. Collect more exact-work artwork; do not reuse schedule graphics.",
+                page=missing_pages[0] if missing_pages else None,
+            )
+            return {
+                "trace": append_trace(state, "layout_director"),
+                "package": package.model_dump(mode="json"),
+                "qa_report": [issue.model_dump(mode="json")],
+                "status": "needs_crawler_update",
+            }
         package.cards = build_cards(copies, package.images)
         composition_pages = {
             int(issue["page"])
@@ -603,6 +641,24 @@ def layout_director(state: ContentState) -> ContentState:
                 CopyCard.model_validate(card.model_dump(exclude={"layout"}))
                 for card in package.cards
             ]
+            copies = _assign_images_and_compact(copies, package)
+            missing_pages = [
+                card.page for card in copies
+                if card.visual_mode != "source_image"
+                or card.image_id.startswith("missing-source-image-")
+            ]
+            if len(copies) - len(missing_pages) < POLICY.minimum_cards_for(package.content_type):
+                issue = make_issue(
+                    code="SOURCE_IMAGE_POOL_INSUFFICIENT",
+                    message="There are not enough distinct eligible images for the minimum carousel. Collect more exact-work artwork; do not reuse schedule graphics.",
+                    page=missing_pages[0] if missing_pages else None,
+                )
+                return {
+                    "trace": append_trace(state, "layout_director"),
+                    "package": package.model_dump(mode="json"),
+                    "qa_report": [issue.model_dump(mode="json")],
+                    "status": "needs_crawler_update",
+                }
             package.cards = build_cards(copies, package.images)
             return {
                 "trace": append_trace(state, "layout_director"),
@@ -615,7 +671,7 @@ def layout_director(state: ContentState) -> ContentState:
     copies, upscale_usage, upscale_results = _upscale_selected_assets(
         copies, package, repository
     )
-    copies = assign_distinct_images(copies, package)
+    copies = _assign_images_and_compact(copies, package)
     missing_pages = [
         card.page
         for card in copies
@@ -708,7 +764,7 @@ def repair_visual_assignments(state: ContentState) -> ContentState:
     copies = [
         CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
     ]
-    repaired = assign_distinct_images(copies, package)
+    repaired = _assign_images_and_compact(copies, package)
     missing_pages = [
         card.page
         for card in repaired
@@ -807,6 +863,30 @@ def crawler_update_required(state: ContentState) -> ContentState:
         repository = AgentRepository()
         repository.mark_request_status(request_id, "needs_crawler_update")
         repository.set_content_status(request_id, "needs_crawler_update")
+        package = ContentPackage.model_validate(state["package"])
+        issues = state.get("qa_report", [])
+        normalized_issues = [
+            issue.model_dump(mode="json") if hasattr(issue, "model_dump") else issue
+            for issue in issues
+        ]
+        repository.upsert_record(
+            agent_type="information",
+            record_id=f"crawler-update:{request_id}",
+            record_kind="crawler_update_request",
+            package=package,
+            payload={
+                "status": "needs_crawler_update",
+                "reason_codes": [
+                    issue.get("code")
+                    for issue in normalized_issues
+                    if isinstance(issue, dict) and issue.get("code")
+                ],
+                "issues": normalized_issues,
+                "trace": list(state.get("trace", [])),
+                "return_to": "crawler",
+            },
+            status="needs_crawler_update",
+        )
     return {
         "trace": append_trace(state, "crawler_update_required"),
         "status": "needs_crawler_update",

@@ -10,7 +10,8 @@ from zoneinfo import ZoneInfo
 KST = ZoneInfo("Asia/Seoul")
 
 _EXPIRED_STATES = {
-    "cancelled", "canceled", "ended", "expired", "sold_out",
+    "cancelled", "canceled", "ended", "expired", "sold_out", "soldout",
+    "out_of_stock", "outofstock", "discontinued",
     "판매 종료", "예약 종료", "품절", "종료", "마감", "終了", "売り切れ",
 }
 _EVENT_END_KEYS = ("event_end", "event_end_at", "ends_at", "end_date")
@@ -23,6 +24,28 @@ _GOODS_END_KEYS = (
     "campaign_end",
     "valid_until",
     "expires_at",
+)
+_GOODS_ACTIVE_STATES = {
+    "available",
+    "in_stock",
+    "on_sale",
+    "selling",
+    "currently_available",
+    "preorder_open",
+    "reservation_open",
+    "販売中",
+    "予約受付中",
+    "在庫あり",
+}
+_GOODS_RELEASE_ACTION = re.compile(
+    r"(?:\u767a\u58f2|\u8ca9\u58f2|\u4e88\u7d04|\u5c55\u958b|"
+    r"\u53d7\u6ce8|\u30ea\u30ea\u30fc\u30b9|release|sale|launch|"
+    r"pre[- ]?order|\uCD9C\uC2DC|\uBC1C\uB9E4|\uD310\uB9E4|\uC608\uC57D)",
+    re.IGNORECASE,
+)
+_GOODS_RELEASE_DATE = re.compile(
+    r"(?:(20\d{2})\s*(?:\u5e74|[./-])\s*)?"
+    r"(\d{1,2})\s*(?:\u6708|[./-])\s*(\d{1,2})\s*\u65e5?"
 )
 _PERIOD_LABELS = {
     "event": re.compile(
@@ -249,6 +272,35 @@ def _labeled_expiry_date(text: str, type_code: str) -> tuple[date | None, str]:
     return None, ""
 
 
+def _upcoming_goods_release(candidate: dict) -> tuple[date, str] | None:
+    """Accept only an explicitly labeled, still-upcoming product release date."""
+    publication = candidate_publication_date(candidate)
+    reference = datetime.now(KST).date()
+    text = "\n".join(
+        str(candidate.get(key) or "")
+        for key in ("title", "summary", "text", "main_text", "raw_text")
+    )
+    upcoming: list[tuple[date, str]] = []
+    for match in _GOODS_RELEASE_DATE.finditer(text):
+        context = text[max(0, match.start() - 32) : min(len(text), match.end() + 32)]
+        if not _GOODS_RELEASE_ACTION.search(context):
+            continue
+        year_text, month_text, day_text = match.groups()
+        year = int(year_text) if year_text else (publication.year if publication else None)
+        if year is None:
+            continue
+        try:
+            release_date = date(year, int(month_text), int(day_text))
+        except ValueError:
+            continue
+        # A yearless date before the article date is ambiguous; never guess that
+        # it means next year. A passed launch date is not proof the item is sold out.
+        if release_date < reference or (publication and release_date < publication):
+            continue
+        upcoming.append((release_date, match.group(0)))
+    return min(upcoming, key=lambda item: item[0]) if upcoming else None
+
+
 def expiry_evidence(candidate: dict, type_code: str) -> dict[str, str | None]:
     """Classify event/goods expiry from explicit dates/statuses, never article age."""
     if type_code not in {"event", "goods"}:
@@ -295,6 +347,48 @@ def expiry_evidence(candidate: dict, type_code: str) -> dict[str, str | None]:
         }
     if candidate_is_stale(candidate, type_code):
         return {"status": "expired", "end_date": None, "evidence": "explicit expired status"}
+
+    if type_code == "goods":
+        # A product can remain available without a published end date. Accept it
+        # only when the source capture carries a structured, explicit availability
+        # status and its quoted source evidence. Article prose alone is not enough.
+        availability_fields = (
+            (candidate.get("availability_status"), candidate.get("availability_evidence")),
+            (candidate.get("sale_status"), candidate.get("availability_evidence")),
+            (candidate.get("sales_status"), candidate.get("availability_evidence")),
+        )
+        if isinstance(facts, list):
+            for fact in facts:
+                if not isinstance(fact, dict):
+                    continue
+                details = fact.get("details")
+                if not isinstance(details, dict):
+                    continue
+                evidence = str(details.get("source_quote") or "").strip()
+                for key in ("availability_status", "sale_status", "sales_status", "stock_status"):
+                    availability_fields += ((details.get(key), evidence),)
+        for raw_status, raw_evidence in availability_fields:
+            normalized_status = re.sub(r"[\s-]+", "_", str(raw_status or "").strip().lower())
+            evidence = str(raw_evidence or "").strip()
+            if normalized_status in _GOODS_ACTIVE_STATES and evidence:
+                return {
+                    "status": "active",
+                    "end_date": None,
+                    "evidence": evidence,
+                    "availability_status": normalized_status,
+                }
+
+    if type_code == "goods":
+        upcoming_release = _upcoming_goods_release(candidate)
+        if upcoming_release:
+            release_date, matched_text = upcoming_release
+            return {
+                "status": "active",
+                "end_date": None,
+                "evidence": f"upcoming product release: {matched_text}",
+                "availability_status": "upcoming_release",
+                "release_date": release_date.isoformat(),
+            }
 
     fact_text = "\n".join(
         str(fact.get("statement") or "")

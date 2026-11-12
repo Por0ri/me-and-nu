@@ -6,7 +6,7 @@ import ipaddress
 import json
 import re
 import socket
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -112,6 +112,213 @@ def _published_date_from_html(soup: BeautifulSoup) -> str | None:
     return None
 
 
+def _recal_event_dates_from_html(
+    soup: BeautifulSoup, source_id: str
+) -> tuple[str | None, str | None, str | None]:
+    """Read a RE:CAL detail page's Schema.org event period, when it matches h1."""
+    if source_id not in {"recal_kr", "recal_music"}:
+        return None, None, None
+
+    heading = soup.select_one("main h1, h1")
+    heading_text = (
+        re.sub(r"[^\w]+", "", heading.get_text(" ", strip=True)).casefold()
+        if heading
+        else ""
+    )
+    if not heading_text:
+        return None, None, None
+
+    def walk(value: object):
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+
+    matches: dict[tuple[str, str], str] = {}
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            records = walk(json.loads(raw))
+            for record in records:
+                raw_type = record.get("@type")
+                types = raw_type if isinstance(raw_type, list) else [raw_type]
+                if not any(
+                    str(item).rsplit("/", 1)[-1].casefold() == "event"
+                    for item in types
+                ):
+                    continue
+                name = str(record.get("name") or "")
+                normalized_name = re.sub(r"[^\w]+", "", name).casefold()
+                if not normalized_name or normalized_name != heading_text:
+                    continue
+                start_value = str(record.get("startDate") or "")[:10]
+                end_value = str(record.get("endDate") or "")[:10]
+                start_date = date.fromisoformat(start_value).isoformat()
+                end_date = date.fromisoformat(end_value).isoformat()
+                if end_date < start_date:
+                    continue
+                matches[(start_date, end_date)] = name
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+
+    if len(matches) != 1:
+        return None, None, None
+    (start_date, end_date), name = next(iter(matches.items()))
+    return (
+        start_date,
+        end_date,
+        f"Schema.org Event '{name}': startDate={start_date}, endDate={end_date}",
+    )
+
+
+def _recal_event_location_from_html(
+    soup: BeautifulSoup, source_id: str
+) -> tuple[str | None, str | None]:
+    """Read the venue from the Schema.org event matching the page heading."""
+    if source_id not in {"recal_kr", "recal_music"}:
+        return None, None
+    heading = soup.select_one("main h1, h1")
+    heading_text = (
+        re.sub(r"[^\w]+", "", heading.get_text(" ", strip=True)).casefold()
+        if heading
+        else ""
+    )
+    if not heading_text:
+        return None, None
+
+    def walk(value: object):
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+
+    matches: set[tuple[str, str, str]] = set()
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            for record in walk(json.loads(raw)):
+                raw_type = record.get("@type")
+                types = raw_type if isinstance(raw_type, list) else [raw_type]
+                if not any(
+                    str(item).rsplit("/", 1)[-1].casefold() == "event"
+                    for item in types
+                ):
+                    continue
+                name = str(record.get("name") or "")
+                normalized_name = re.sub(r"[^\w]+", "", name).casefold()
+                if not normalized_name or normalized_name != heading_text:
+                    continue
+                location = record.get("location")
+                if isinstance(location, str):
+                    place_name, street, country = location.strip(), "", ""
+                elif isinstance(location, dict):
+                    place_name = str(location.get("name") or "").strip()
+                    address = location.get("address")
+                    if isinstance(address, dict):
+                        street = str(address.get("streetAddress") or "").strip()
+                        country = str(address.get("addressCountry") or "").strip()
+                    else:
+                        street = str(address or "").strip()
+                        country = ""
+                else:
+                    continue
+                if not place_name:
+                    continue
+                location_text = place_name
+                if street:
+                    location_text += f" ({street})"
+                evidence = (
+                    f"Schema.org Event '{name}': location={place_name}; "
+                    f"streetAddress={street}; addressCountry={country}"
+                )
+                matches.add((name, location_text, evidence))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+
+    if len(matches) != 1:
+        return None, None
+    _, location_text, evidence = next(iter(matches))
+    return location_text, evidence
+
+
+def _structured_product_availability_from_html(
+    soup: BeautifulSoup,
+) -> tuple[str | None, str | None]:
+    """Read current stock/preorder state only from a matching Schema.org Product."""
+    heading = soup.select_one("main h1, h1")
+    heading_text = (
+        re.sub(r"[^\w]+", "", heading.get_text(" ", strip=True)).casefold()
+        if heading
+        else ""
+    )
+    if not heading_text:
+        return None, None
+
+    def walk(value: object):
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+
+    status_names = {
+        "instock": "in_stock",
+        "limitedavailability": "available",
+        "preorder": "preorder_open",
+        "presale": "preorder_open",
+        "outofstock": "out_of_stock",
+        "soldout": "sold_out",
+        "discontinued": "discontinued",
+    }
+    matches: set[tuple[str, str, str]] = set()
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            records = walk(json.loads(raw))
+            for record in records:
+                raw_type = record.get("@type")
+                types = raw_type if isinstance(raw_type, list) else [raw_type]
+                if not any(
+                    str(item).rsplit("/", 1)[-1].casefold() == "product"
+                    for item in types
+                ):
+                    continue
+                name = str(record.get("name") or "")
+                normalized_name = re.sub(r"[^\w]+", "", name).casefold()
+                if not normalized_name or normalized_name != heading_text:
+                    continue
+                for nested in walk(record.get("offers")):
+                    raw_availability = nested.get("availability")
+                    if not isinstance(raw_availability, str):
+                        continue
+                    availability = raw_availability.rsplit("/", 1)[-1].casefold()
+                    status = status_names.get(availability)
+                    if status:
+                        quote = f"Schema.org Product '{name}' availability={availability}"
+                        matches.add((status, availability, quote))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    if len(matches) != 1:
+        return None, None
+    status, _, evidence = next(iter(matches))
+    return status, evidence
+
+
 class PageOutboundLink(BaseModel):
     url: HttpUrl
     text: str = ""
@@ -176,6 +383,13 @@ class SourcePageCapture(BaseModel):
     url: HttpUrl
     fetched_at: str
     published_at: str | None = None
+    event_start: str | None = None
+    event_end: str | None = None
+    event_date_evidence: str | None = None
+    event_location: str | None = None
+    event_location_evidence: str | None = None
+    availability_status: str | None = None
+    availability_evidence: str | None = None
     main_text: str = ""
     text: str
     image_urls: list[HttpUrl]
@@ -1158,9 +1372,17 @@ def _is_linked_to_another_news_article(tag, page_url: str) -> bool:
         return False
     linked_path = linked.path.rstrip("/").lower()
     current_path = current.path.rstrip("/").lower()
+    is_eeo_recommendation = (
+        (current.hostname or "").lower() == "eeo.today"
+        and current_path.startswith("/media/")
+        and bool(re.fullmatch(r"/media/\d{4}/\d{2}/\d{2}/\d+", linked_path))
+    )
     return (
         linked_path != current_path
-        and "/news/" in linked_path
+        and (
+            "/news/" in linked_path
+            or is_eeo_recommendation
+        )
         and not linked_path.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif"))
     )
 
@@ -1191,6 +1413,15 @@ def _article_content_scope(soup: BeautifulSoup, page_url: str | None = None):
             hero_section = headline.find_parent("section") if headline else None
             if hero_section and hero_section.find("img"):
                 return hero_section
+        if (
+            (parsed_page.hostname or "").lower() == "eeo.today"
+            and parsed_page.path.startswith("/media/")
+        ):
+            # EEO article pages have large site-wide sidebars and related-story
+            # rails. The body is explicitly marked; treating the whole document
+            # as the image scope assigns unrelated recommendation art to this story.
+            body = soup.select_one(".article_content")
+            return body if body is not None else soup.new_tag("div")
     for selector in (
         ".news_detail_cont",
         ".entry-content",
@@ -1210,6 +1441,47 @@ def _article_content_scope(soup: BeautifulSoup, page_url: str | None = None):
 def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
     """Extract prose from a known article body when the precision parser returns nothing."""
     parsed_page = urlparse(page_url)
+    if (
+        (parsed_page.hostname or "").lower() == "recal.kr"
+        and parsed_page.path.startswith(("/ko/e/offline/", "/ko/e/music/"))
+    ):
+        # RE:CAL pages are event records, not conventional articles. Trafilatura
+        # keeps the hero summary but drops the schedule panel and sibling venue
+        # entries. Read the visible event detail area directly, stopping before
+        # the site's unrelated same-month recommendation list.
+        main = soup.select_one("main")
+        if main is not None:
+            detail = BeautifulSoup(str(main), "html.parser")
+            for tag in detail.select(
+                "script, style, noscript, iframe, nav, footer, aside, form, button, header"
+            ):
+                tag.decompose()
+            lines = [
+                re.sub(r"\s+", " ", line).strip()
+                for line in detail.get_text(separator="\n", strip=True).splitlines()
+            ]
+            lines = [line for line in lines if line]
+            for index, line in enumerate(lines):
+                if "같은 달 행사" in line:
+                    lines = lines[:index]
+                    break
+            official_links: list[str] = []
+            for anchor in main.select("a[href]"):
+                label = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True)).strip()
+                if not label or not re.search(
+                    r"공식\s*(?:공지|사이트|출처)|주최\s*(?:링크|X|계정)",
+                    label,
+                ):
+                    continue
+                href = urljoin(page_url, str(anchor.get("href") or ""))
+                if href.startswith(("https://", "http://")):
+                    entry = f"공식 출처 링크: {label} — {href}"
+                    if entry not in official_links:
+                        official_links.append(entry)
+            if lines:
+                if official_links:
+                    lines.extend(official_links)
+                return "\n".join(lines)[:24_000]
     if (
         (parsed_page.hostname or "").lower() == "onnada.com"
         and re.fullmatch(r"/character/\d+/?", parsed_page.path, re.IGNORECASE)
@@ -1419,6 +1691,15 @@ def collect_official_page(
         title = _aniplus_exhibition_title(soup, final_url) or title
 
     published_at = _published_date_from_html(soup)
+    event_start, event_end, event_date_evidence = _recal_event_dates_from_html(
+        soup, source.id
+    )
+    event_location, event_location_evidence = _recal_event_location_from_html(
+        soup, source.id
+    )
+    availability_status, availability_evidence = _structured_product_availability_from_html(
+        soup
+    )
     if source.id == "daewonmedia_kr":
         published_at = published_at or daewon_published_at
 
@@ -1579,6 +1860,13 @@ def collect_official_page(
         url=final_url,
         fetched_at=datetime.now(UTC).isoformat(),
         published_at=published_at,
+        event_start=event_start,
+        event_end=event_end,
+        event_date_evidence=event_date_evidence,
+        event_location=event_location,
+        event_location_evidence=event_location_evidence,
+        availability_status=availability_status,
+        availability_evidence=availability_evidence,
         main_text=main_text[:2_000],
         text=extracted[:excerpt_limit],
         image_urls=unique_images,

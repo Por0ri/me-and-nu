@@ -53,7 +53,20 @@ statement or source excerpt. In particular, do not speculate about how an event,
 illustration will be implemented, presented, or received unless a supplied fact explicitly says
 so. Keep each sentence traceable to the fact IDs that support it; if a sentence needs an inference,
 remove it or label it clearly as a question/opinion without making it sound announced. For
-information content, use only verified facts. For humor content, distinguish each supplied public
+information content, use only supplied source-backed facts. For event and goods content,
+`verified=false` and `verification_status=not_performed` are internal notes that no separate
+fact-check call ran; they do not mean the captured page lacks its displayed schedule or venue.
+Never turn those internal notes into reader-facing warnings such as “일정 미확인” or “검증되지
+않았어요.” State source-backed event dates and venues directly in the prose. Do not narrate the
+source page, website, or capture process (for example, “RE:CAL에 잡힌”, “페이지에 따르면”, or
+“안내에 적혀 있어”); source links are shown separately below the article. Say a price/reservation
+detail is pending only when that specific source field says so. Do not describe a listing as
+officially confirmed unless the source establishes that.
+When the source lists multiple event schedules but the supplied facts lack each exact venue/date
+pair, do not guess or imply that no schedule exists. Share the captured overall dates and known
+venue, then invite the reader to check the linked original schedule for the location-specific
+details.
+For humor content, distinguish each supplied public
 community viewpoint from verified facts. Explain the actual difference between viewpoints when at
 least two are supplied, then add me;nu's own fan take. Do not claim the sample represents a majority
 or the whole fandom, and never invent the other side of a discussion. Frame interpretations as
@@ -84,6 +97,11 @@ Fact IDs are internal evidence keys. Put them only in the returned fact_ids arra
 in the article body, headings, parentheses, brackets, or visible prose. Do not include a source list
 or AI disclosure in the body; those are rendered below the body.
 Write roughly 300–700 Korean characters in 2–5 readable paragraphs. Avoid filler and repetition.
+Keep it lively and tight: usually 2–3 short paragraphs, with one memorable fan reaction or joke
+that grows from a supplied fact. Do not begin with a generic callout such as “야,”, “어이!”,
+“이봐!”, or “친구!”. Do not explain every card again or list every product detail. Keep only the
+few dates, prices, or participation conditions a reader needs, grouped compactly. If a sentence
+merely restates the announcement without adding a useful angle, cut it.
 """.strip().replace("{BRAND_CONTEXT}", BRAND_CONTEXT)
 
 DETAIL_WRITER_PROMPT += "\n\nCANONICAL DETAIL RULES:\n" + prompt_rules(

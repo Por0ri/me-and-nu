@@ -266,6 +266,25 @@ def generate_copy_deck(
             for item in available_content_types
         },
         "evidence_based_content_type_hint": recommended_content_type,
+        "event_schedule": (
+            {
+                "start_date": package.event_start,
+                "end_date": package.event_end,
+                "venue": package.event_location,
+                "region": package.event_region,
+                "country": package.event_country,
+                "source_pages": [
+                    {
+                        "source_id": source.id,
+                        "name": source.publisher,
+                        "url": str(source.url),
+                    }
+                    for source in package.sources
+                ],
+            }
+            if package.content_type == "event"
+            else None
+        ),
         "source_facts": source_facts,
         "humor_ideas": humor_ideas,
         "community_discussion": [
@@ -325,10 +344,12 @@ def generate_copy_deck(
             "same_work_image_provenance": (
                 "Some visuals may come from a different registered page than the factual article. "
                 "Use them only as artwork for the matched work, never as evidence for dates, "
-                "events, products, or claims. Event and goods covers must use a visual from the "
-                "matching event/product source page. Interior cards may use distinct general "
-                "official artwork for the same work, but must not imply it depicts a specific "
-                "event or product unless the matching source image confirms that."
+                "events, products, or claims. For events and goods, prefer clean official artwork "
+                "for the exact matched work, such as a key visual or character illustration, for "
+                "the cover and carousel. Do not use RE:CAL schedule/map/table screenshots or other "
+                "text-heavy listing graphics as card artwork. Use a clean image of the specific "
+                "event/product only when it is visually suitable; never imply general work artwork "
+                "depicts the event or product. Event details belong in the HTML copy."
             ),
             "card_count": card_count_requirement,
             "insufficient_image_pool": (
@@ -381,11 +402,10 @@ def generate_copy_deck(
                 "react like a fan sharing news in a group chat, with unmistakable affection and "
                 "openly felt awe, chills, hype, or playful overinvestment when the story earns it. "
                 "A line like '가슴이 웅장해진다' is welcome when it truly fits; "
-                "let each story find "
-                "its own fan reaction. Make excitement specific and memorable, then add a sharp, "
-                "well-timed joke when it fits. Avoid generic press-release prose, repeated stock "
-                "catchphrases, and sexualized jokes. Do not flatten that personality into "
-                "neutral news copy."
+                "let each story find its own fan reaction. Use direct callouts, fandom slang, "
+                "shameless wordplay, and lowbrow jokes when they fit. Make the excitement specific "
+                "and memorable, and keep the copy lively instead of sounding like a press release. "
+                "Follow the fact and safety rules in BRAND_CONTEXT."
             ),
             "canonical_work_name": (
                 "Use title_ko from canonical_work_titles consistently on the cover and throughout. "
@@ -436,9 +456,11 @@ def generate_copy_deck(
                 "attributed creator comment, and a confirmed broadcast date). Cite every fact "
                 "ID that supports a factual claim on each card. A fact may support more than "
                 "one card only when each use adds a genuinely different reader benefit; do not "
-                "repeat or inflate one claim to fill pages. Non-factual fan questions or editorial "
-                "reactions are allowed only when clearly framed as such and must not imply "
-                "unsupported events, opinions, or promises. Never invent missing details. If the "
+                "repeat or inflate one claim to fill pages. Keep fan reactions distinct from facts: "
+                "a joke may hype the narrator's feelings, but must never alter or invent the work, "
+                "people, event, date, venue, price, quantity, availability, quote, or source claim. "
+                "Preserve each fact's meaning and certainty; never turn a plan or listing into a "
+                "confirmed event. Clearly frame opinion and never invent missing details. If the "
                 "evidence cannot support a useful 3-card story, return for richer source research "
                 "instead of fabricating or padding."
             ),
