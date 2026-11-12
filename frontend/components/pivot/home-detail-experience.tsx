@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import type { HomeDataSource, HomeDetailTarget } from "@/lib/pivot/home";
 import type { DetailDataSource } from "@/lib/pivot/detail";
@@ -47,12 +47,14 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const inquiryOpen = params.get("view") === "inquiry";
   const inboxSource = useMemo(() => homeSource.kind === "demo" ? createDemoNotificationInbox() : notificationSource, [homeSource.kind, notificationSource]);
   const inboxOpen = !!inboxSource && params.get("view") === "notifications";
-  const [hasNewNotice, setHasNewNotice] = useState(false);
+  const serviceHasNewNotice = useContext(NewNoticeContext);
+  const [demoHasNewNotice, setDemoHasNewNotice] = useState(false);
+  const hasNewNotice = homeSource.kind === "demo" ? demoHasNewNotice : serviceHasNewNotice;
   useEffect(() => {
-    if (!inboxSource || inboxOpen) return;   // 알림함에서 돌아오면 다시 확인해서 다 읽었으면 끈다
+    if (inboxSource?.kind !== "demo" || inboxOpen) return; // Demo stays isolated from the shared service session.
     const controller = new AbortController();
     inboxSource.hasNewToday(controller.signal).then(
-      (value) => { if (!controller.signal.aborted) setHasNewNotice(value); },
+      (value) => { if (!controller.signal.aborted) setDemoHasNewNotice(value); },
       () => {},   // 확인에 실패해도 화면은 그대로 쓴다
     );
     return () => controller.abort();

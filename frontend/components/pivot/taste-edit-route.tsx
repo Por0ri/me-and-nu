@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ApiError } from "@/lib/api";
+import { ApiError, type Session } from "@/lib/api";
 import { buildSelectionDraft, initialOnboardingState, isStateComplete, type OnboardingState } from "@/lib/pivot/onboarding";
 import { isActiveSession } from "@/lib/pivot/services";
-import { loadMyTaste, loadTasteHints, saveMyTaste, tasteCatalog, tasteEditReducer, tasteEditState, type TasteHints } from "@/lib/pivot/taste-edit";
+import { hasTasteChanges, loadMyTaste, loadTasteHints, saveMyTaste, tasteCatalog, tasteEditReducer, tasteEditState, type TasteHints } from "@/lib/pivot/taste-edit";
 import { usePivotSession } from "./pivot-session";
 import { OnboardingFlow, ResultCriteria, ResultDecorations } from "./onboarding-screens";
 import { warmUpFeed } from "@/lib/pivot/feed-warmup";
@@ -40,6 +40,7 @@ export function TasteEditRoute() {
   const { state: session, refresh, markHomeEntryPrepared } = usePivotSession();
   const [state, dispatch] = useReducer(tasteEditReducer, undefined, initialOnboardingState);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
+  const [baseline, setBaseline] = useState<{ owner: Session; selection: OnboardingState } | null>(null);
   // Hints from what the member reacted to; they arrive after the saved answers and never hold up the edit.
   const [hints, setHints] = useState<TasteHints | null>(null);
   const [saving, setSaving] = useState(false);
@@ -52,12 +53,17 @@ export function TasteEditRoute() {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const active = isActiveSession(session.session);
+  const owner = session.status === "ready" && active ? session.session : null;
+  const ready = !!owner && phase === "ready" && baseline?.owner === owner;
+  const dirty = ready && baseline !== null && hasTasteChanges(state, baseline.selection);
   useEffect(() => {
-    if (!active) return;
+    if (!owner) return;
+    setPhase("loading"); setHints(null);
     let cancelled = false;
     loadMyTaste().then((taste) => {
       if (cancelled) return;
-      dispatch({ type: "load", state: tasteEditState(taste) }); setPhase("ready");
+      const selection = tasteEditState(taste);
+      dispatch({ type: "load", state: selection }); setBaseline({ owner, selection }); setPhase("ready");
       void loadTasteHints(taste.topicId).then((found) => { if (!cancelled) setHints(found); });
     }).catch((reason) => {
       if (cancelled) return;
@@ -65,9 +71,9 @@ export function TasteEditRoute() {
       setPhase("error");
     });
     return () => { cancelled = true; };
-  }, [active, refresh, router]);
+  }, [owner, refresh, router]);
   // Back from Q1 leaves without saving.
-  const leaving = phase === "ready" && state.step === "interest";
+  const leaving = ready && state.step === "interest";
   useEffect(() => { if (leaving) router.replace(MY_PAGE); }, [leaving, router]);
 
   async function save() {
@@ -95,8 +101,8 @@ export function TasteEditRoute() {
     }
   }
   if (preparing) return <FeedLoadingScreen />;
-  if (leaving || (!slow && phase === "loading" && (active || session.status === "loading"))) return <PivotFrame decorated={false}>{null}</PivotFrame>;
-  if (!active || phase !== "ready") return <PivotFrame>
+  if (leaving || (!slow && !ready && (active || session.status === "loading"))) return <PivotFrame decorated={false}>{null}</PivotFrame>;
+  if (!ready) return <PivotFrame>
     <PivotBrand screen="consent" className={pivotStyles.consentBrand} />
     <section className={pivotStyles.gate}><h1>취향 수정하기</h1>
       <p role={phase === "error" ? "alert" : "status"}>{session.status === "loading" ? "로그인 상태를 확인하고 있어요."
@@ -109,7 +115,7 @@ export function TasteEditRoute() {
     onEdit={() => { setError(""); dispatch({ type: "edit-again" }); }} />;
   return <OnboardingFlow state={state} dispatch={dispatch} mode="service" catalog={tasteCatalog} copy={tasteQuestionCopy(hints)} onExit={() => router.replace(MY_PAGE)}
     myHeader={{ onNotifications: () => {
-      if (window.confirm("취향 수정은 아직 저장되지 않았어요. 저장하지 않고 알림함으로 이동할까요?")) {
+      if (!dirty || window.confirm("취향 수정은 아직 저장되지 않았어요. 저장하지 않고 알림함으로 이동할까요?")) {
         router.push("/pivot/home?view=notifications&from=taste");
       }
     } }}
