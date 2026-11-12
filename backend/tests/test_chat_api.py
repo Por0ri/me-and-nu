@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.api.deps import require_csrf, require_onboarding
 from app.db.session import get_db
+from app.integrations.dictionary import FactLine
 from app.main import create_app
 from app.schemas.chat import ChatMessageAccepted, ChatMessageCreate
 from app.services import chat_service
@@ -165,3 +166,76 @@ def test_related_contents_are_ranked_by_question_overlap():
     alexander = SimpleNamespace(title="전장의 중심", summary="알렉산더의 돌격", body="히다스페스 전투 장면")
     other = SimpleNamespace(title="미나리", summary="가족", body="농장")
     assert chat_service._score(tokens, alexander) > chat_service._score(tokens, other) == 0
+
+
+@pytest.mark.asyncio
+async def test_completed_job_splits_dictionary_sources():
+    message = _assistant(
+        message_body="소토자키 하루오 감독이에요.",
+        result_type="answer",
+        answer_sources=[
+            {"contentId": 37, "title": "전장의 중심", "url": "https://example.com"},
+            {"kind": "dictionary", "name": "AniList API", "url": "https://anilist.co/anime/101922"},
+        ],
+        notices=[],
+    )
+    job = await chat_service.get_job(_db_returning((message, object())), 1, 9001)
+    body = job.model_dump(by_alias=True)["result"]
+    assert [s["contentId"] for s in body["sources"]] == [37]
+    assert body["factSources"] == [{"name": "AniList API", "url": "https://anilist.co/anime/101922"}]
+
+
+def _fact(subject, text, *sources):
+    return FactLine(subject=subject, text=text, sources=tuple(sources))
+
+
+def test_fact_block_numbers_lines_under_subject_headers():
+    facts = [_fact("귀멸의 칼날", "감독: 소토자키 하루오"), _fact("귀멸의 칼날", "화수: 26"), _fact("탄지로", "생일: 7월 14일")]
+    assert chat_service._fact_block(facts) == (
+        "## 귀멸의 칼날\n[사실 1] 감독: 소토자키 하루오\n[사실 2] 화수: 26\n## 탄지로\n[사실 3] 생일: 7월 14일"
+    )
+
+
+def test_numbers_keep_valid_llm_numbers_once():
+    assert chat_service._numbers([2, "1", 2, 9, 0, True, "x"], 3) == [2, 1]
+    assert chat_service._numbers(None, 3) == []
+
+
+def test_fact_sources_follow_used_facts_without_repeating_urls():
+    anilist = ("AniList API", "https://anilist.co/anime/1")
+    facts = [_fact("a", "1", anilist), _fact("a", "2", anilist, ("위키데이터", "https://w/Q1")), _fact("a", "3")]
+    assert chat_service._fact_sources(facts, [2, 1, 3]) == [
+        {"kind": "dictionary", "name": "AniList API", "url": "https://anilist.co/anime/1"},
+        {"kind": "dictionary", "name": "위키데이터", "url": "https://w/Q1"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_answer_uses_dictionary_facts_and_skips_recent_posts(monkeypatch):
+    question = SimpleNamespace(sender_role="user", message_body="귀멸의 칼날 감독 누구야?", selected_text=None)
+    session = SimpleNamespace(chat_session_id=5, tap_id=7, anchor_content_id=None)
+    tables = {chat_service.ChatSession: session, chat_service.Tap: SimpleNamespace(topic_id=1)}
+    db = SimpleNamespace(
+        get=AsyncMock(side_effect=lambda model, _id: tables[model]),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [question])),
+        commit=AsyncMock(),
+    )
+    job = SimpleNamespace(chat_session_id=5, chat_message_id=2)
+    facts = [_fact("귀멸의 칼날 · 鬼滅の刃 (TV, 2019)", "감독: 소토자키 하루오 [AniList API]",
+                   ("AniList API", "https://anilist.co/anime/101922"))]
+    pick = AsyncMock(return_value=[])
+    ask = AsyncMock(return_value={"answer": "소토자키 하루오 감독이에요.", "used": [], "usedFacts": [1],
+                                  "evidence": "sufficient"})
+    monkeypatch.setattr(chat_service.catalog_repo, "get_active_topic", AsyncMock(return_value=SimpleNamespace(topic_id=1)))
+    monkeypatch.setattr(chat_service, "_lookup_facts", AsyncMock(return_value=facts))
+    monkeypatch.setattr(chat_service, "_pick_materials", pick)
+    monkeypatch.setattr(chat_service.llm, "ask_json", ask)
+
+    await chat_service._fill_answer(db, job)
+
+    assert pick.await_args.kwargs["allow_recent"] is False
+    assert "[사실 1] 감독: 소토자키 하루오" in ask.await_args.args[1]
+    assert job.result_type == "answer"
+    assert job.message_body == "소토자키 하루오 감독이에요."
+    assert job.answer_sources == [{"kind": "dictionary", "name": "AniList API", "url": "https://anilist.co/anime/101922"}]
+    assert job.notices == []

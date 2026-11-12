@@ -52,11 +52,19 @@ class ChatSource(CamelModel):
     url: str
 
 
+class ChatFactSource(CamelModel):
+    """정보사전 근거: 답에 쓴 사실의 출처 이름과 근거 주소 (예: AniList API, https://anilist.co/anime/1)."""
+
+    name: str
+    url: str
+
+
 class ChatJobResult(CamelModel):
     type: Literal["answer", "topicSwitchSuggested"]
     message_id: int
     content: str
     sources: list[ChatSource] = Field(default_factory=list)
+    fact_sources: list[ChatFactSource] = Field(default_factory=list)
     notices: list[dict[str, str]] = Field(default_factory=list)
     context_coverage: Literal["full", "partial", "none"] = "full"
     target_topic_id: int | None = None

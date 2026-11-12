@@ -127,3 +127,12 @@ async def test_lookup_failure_returns_empty(monkeypatch):
     monkeypatch.setattr(dictionary, "_engine", lambda: Broken())
     result = await dictionary.lookup("귀멸의 칼날 감독 누구야?")
     assert result.targets == [] and result.lines == []
+
+
+def test_core_fields_of_every_subject_come_before_other_fields(monkeypatch):
+    monkeypatch.setattr(dictionary, "MAX_LINES", 3)
+    first, second = Subject(1, "entry", "1기"), Subject(2, "entry", "2기")
+    rows = [FactRow(1, "genre", "Action", "AniList API", None), FactRow(1, "episodes", "26", "AniList API", None),
+            FactRow(2, "genre", "Action", "AniList API", None), FactRow(2, "episodes", "12", "AniList API", None)]
+    lines = dictionary.build_lines([first, second], rows)
+    assert [(line.subject, line.text.split(":")[0]) for line in lines] == [("1기", "화수"), ("1기", "장르"), ("2기", "화수")]

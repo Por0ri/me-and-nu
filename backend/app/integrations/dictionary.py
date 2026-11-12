@@ -38,11 +38,13 @@ STOP_NAMES = frozenset({
 })
 MAX_SPAN_WORDS = 6
 MIN_KEY_LENGTH = 2
+# 질문 + 고른 문장 중 이름을 찾는 앞부분 길이 (고른 문장이 길면 비교할 글자가 수천 개가 돼 느려진다)
+MAX_LOOKUP_CHARS = 700
 # 두 글자 이름이나 이름 일부로 찾은 캐릭터 · 인물은 인기(즐겨찾기 수)가 이 이상일 때만 쓴다 (엄마 · 경찰 · 군인)
 MIN_POPULARITY = 100
 MAX_TARGETS = 4
-MAX_ENTRIES = 6  # 작품 하나에서 넣는 시즌 · 극장판 수 (인기 순)
-MAX_LINES = 80
+MAX_ENTRIES = 8  # 작품 하나에서 넣는 시즌 · 극장판 수 (인기 순, 8개 넘는 작품은 30편)
+MAX_LINES = 90
 MAX_CHARS = 10_000
 # 챗봇에서 쓰지 않는 출처: KOBIS 는 저장 · 재전송 제한, 온나다 · 나무위키는 노션 "RAG 에이전트 정리"에서 보류
 EXCLUDED_SOURCES = ("kobis", "onnada", "namuwiki")
@@ -53,7 +55,8 @@ TITLE_KINDS = ("work", "entry")
 # 대상 종류마다 가져오는 칸 (이름이 _ref 로 끝나는 참고 글 칸은 넣지 않는다)
 FIELDS: dict[str, tuple[str, ...]] = {
     # 작품(시리즈) 칸의 화수 · 날짜는 특정 시즌 값이 붙어 있는 경우가 있어서 시즌 줄에서만 쓴다
-    "work": ("kr_title", "kr_ott", "kr_rating", "broadcaster", "official_site", "award"),
+    # entry_count 는 사전 칸이 아니라 여기서 센 시즌 · 극장판 수
+    "work": ("entry_count", "kr_title", "kr_ott", "kr_rating", "broadcaster", "official_site", "award"),
     "entry": ("kr_title", "status", "start_date", "end_date", "next_airing", "episodes", "duration_min",
               "main_studio", "studio", "director", "staff", "source_material", "source_work", "genre",
               "character", "theme_song", "theme_song_ja", "kr_ott", "kr_rating", "broadcaster",
@@ -66,6 +69,13 @@ FIELDS: dict[str, tuple[str, ...]] = {
 }
 # 시즌 이름 옆에만 쓰고 줄로는 내지 않는 칸
 LABEL_ONLY_FIELDS = frozenset({"format", "season_year"})
+# 핵심 칸: 줄 수 · 글자 수가 모자라면 모든 대상의 핵심 칸이 다른 칸보다 먼저 자리를 받는다
+# (시즌이 많은 작품에서 뒤쪽 시즌의 화수 · 날짜가 통째로 잘리지 않게)
+CORE_FIELDS = frozenset({
+    "entry_count", "kr_title", "status", "start_date", "end_date", "next_airing", "episodes", "main_studio",
+    "studio", "director", "birthday", "voice_actor", "voice_actor_ko", "occupation", "birth_date", "performer",
+    "appears_in", "voiced", "made", "used_in",
+})
 # 거꾸로 찾는 사실: 대상 종류 → (사전 칸, 줄 이름, 최대 개수)
 REVERSE: dict[str, tuple[tuple[str, str, int], ...]] = {
     "character": (("character", "appears_in", 3),),
@@ -74,7 +84,7 @@ REVERSE: dict[str, tuple[tuple[str, str, int], ...]] = {
     "song": (("theme_song", "used_in", 3),),
 }
 LABELS = {
-    "kr_title": "한국 공식 제목", "status": "방영 상태", "start_date": "방영 시작", "end_date": "방영 끝",
+    "entry_count": "시즌 · 극장판 수", "kr_title": "한국 공식 제목", "status": "방영 상태", "start_date": "방영 시작", "end_date": "방영 끝",
     "next_airing": "다음 방영", "episodes": "화수", "duration_min": "한 화 길이(분)",
     "main_studio": "애니메이션 제작사", "studio": "제작 참여사", "director": "감독", "staff": "제작진",
     "source_material": "원작 종류", "source_work": "원작", "genre": "장르", "character": "주요 캐릭터",
@@ -334,17 +344,15 @@ def _tag(names: list[str]) -> str:
 
 def build_lines(subjects: Sequence[Subject], rows: Sequence[FactRow]) -> list[FactLine]:
     """대상 · 칸마다 한 줄로 묶는다. 출처가 같은 값을 몇 곳에서 확인했는지와 출처끼리 다른 값을 적는다."""
-    lines: list[FactLine] = []
-    used_chars = 0
-    for subject in subjects:
-        header_counted = False
+    candidates: list[tuple[bool, int, int, FactLine]] = []  # (핵심 아님, 대상 순서, 칸 순서, 줄)
+    for subject_index, subject in enumerate(subjects):
         grouped: dict[str, dict[str, list[tuple[str, str | None]]]] = {}
         for row in rows:
             if row.subject_id == subject.entity_id and row.text:
                 grouped.setdefault(row.field, {}).setdefault(row.text, []).append((row.source_name, row.url))
         order = [f for f in FIELDS.get(subject.kind, ()) if f not in LABEL_ONLY_FIELDS]
         order += [line for _, line, _ in REVERSE.get(subject.kind, ())]
-        for name in order:
+        for field_index, name in enumerate(order):
             values = grouped.get(name)
             if not values:
                 continue
@@ -358,17 +366,26 @@ def build_lines(subjects: Sequence[Subject], rows: Sequence[FactRow]) -> list[Fa
                 body = " / ".join(f"{value} {_tag(names)}" for (value, _), names in zip(items, name_sets))
             if name in SINGLE_FIELDS and len(items) > 1:
                 body += " (출처마다 값이 다름)"
-            line = f"{LABELS.get(name, name)}: {body}"
-            cost = len(line) + (0 if header_counted else len(subject.label))
-            if len(lines) >= MAX_LINES or used_chars + cost > MAX_CHARS:
-                return lines
             sources = tuple(dict.fromkeys(
                 (source, url) for _, pairs in items for source, url in pairs if url
             ))
-            lines.append(FactLine(subject=subject.label, text=line, sources=sources))
-            used_chars += cost
-            header_counted = True
-    return lines
+            line = FactLine(subject=subject.label, text=f"{LABELS.get(name, name)}: {body}", sources=sources)
+            candidates.append((name not in CORE_FIELDS, subject_index, field_index, line))
+
+    # 핵심 칸부터 자리를 주고, 남은 자리에 나머지 칸을 넣은 뒤 원래 순서로 되돌린다
+    kept: list[tuple[int, int, FactLine]] = []
+    used_chars = 0
+    headers: set[int] = set()
+    for _, subject_index, field_index, line in sorted(candidates, key=lambda c: c[:3]):
+        cost = len(line.text) + (0 if subject_index in headers else len(line.subject))
+        if len(kept) >= MAX_LINES:
+            break
+        if used_chars + cost > MAX_CHARS:
+            continue
+        kept.append((subject_index, field_index, line))
+        used_chars += cost
+        headers.add(subject_index)
+    return [line for _, _, line in sorted(kept, key=lambda k: k[:2])]
 
 
 # ---------- 사전 읽기 ----------
@@ -384,9 +401,11 @@ def _engine() -> AsyncEngine | None:
         _engine_cache = create_async_engine(
             settings.dict_database_url,
             # 읽기만 한다: 실수로 쓰기 문장이 가도 사전 DB 가 거절한다.
-            # jit=off: 작은 조회인데 예상 비용이 커 보여서 JIT 준비에 1초 가까이 쓰는 걸 막는다
+            # jit=off: 작은 조회인데 예상 비용이 커 보여서 JIT 준비에 1초 가까이 쓰는 걸 막는다.
+            # force_custom_plan: 질문 글자 목록을 매번 값으로 넣어 빠른 목록 비교(해시)를 쓰게 한다
             connect_args={
-                "options": "-c default_transaction_read_only=on -c statement_timeout=5000 -c jit=off",
+                "options": "-c default_transaction_read_only=on -c statement_timeout=5000 -c jit=off "
+                           "-c plan_cache_mode=force_custom_plan",
                 "connect_timeout": 5,
             },
             pool_size=2,
@@ -512,7 +531,7 @@ async def lookup(question: str, menu_work_ids: Sequence[int] = ()) -> Dictionary
     engine = _engine()
     if engine is None:
         return DictionaryResult()
-    spans = question_spans(question)
+    spans = question_spans(question[:MAX_LOOKUP_CHARS])
     try:
         async with engine.connect() as conn:
             anchors: list[Hit] = []
@@ -542,9 +561,14 @@ async def _collect(conn: AsyncConnection, targets: Sequence[Hit]) -> list[FactLi
             entries.setdefault(row["parent_id"], []).append(row)
 
     plan: list[tuple[int, str, str]] = []  # (대상 번호, 종류, 이름 앞부분)
+    counted: list[FactRow] = []
     for target in targets:
         plan.append((target.entity_id, target.kind, target.name))
-        for entry in entries.get(target.entity_id, [])[:MAX_ENTRIES]:
+        found = entries.get(target.entity_id, [])
+        if found:
+            note = f" (아래에는 인기 순 {MAX_ENTRIES}개만)" if len(found) > MAX_ENTRIES else ""
+            counted.append(FactRow(target.entity_id, "entry_count", f"{len(found)}개{note}", "me;nu 정보사전", None))
+        for entry in found[:MAX_ENTRIES]:
             entry_name = entry["name_native"] or entry["name_romaji"] or ""
             plan.append((int(entry["entity_id"]), "entry", f"{target.name} · {entry_name}"))
     kinds = {entity_id: kind for entity_id, kind, _ in plan}
@@ -605,7 +629,7 @@ async def _collect(conn: AsyncConnection, targets: Sequence[Hit]) -> list[FactLi
             shown = ENUM_TEXT.get(name, {}).get(str(value)) or value_text(value)
         rows.append(FactRow(r["entity_id"], name, shown, r["source_name"], r["source_url"]))
 
-    rows += await _reverse_rows(conn, targets)
+    rows += counted + await _reverse_rows(conn, targets)
     return build_lines(subjects, rows)
 
 
