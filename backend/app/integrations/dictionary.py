@@ -177,6 +177,7 @@ class FactLine:
 class DictionaryResult:
     targets: list[Hit] = field(default_factory=list)
     lines: list[FactLine] = field(default_factory=list)
+    failed: bool = False  # 사전이 켜져 있는데 조회가 실패함 (꺼져 있는 것과 구분)
 
 
 # ---------- 글자 다루기 ----------
@@ -550,7 +551,7 @@ async def lookup(question: str, menu_work_ids: Sequence[int] = ()) -> Dictionary
             return DictionaryResult(targets=targets, lines=await _collect(conn, targets))
     except Exception:  # 사전이 없거나 느려도 챗봇은 우리 글로 답한다
         logger.exception("dictionary lookup failed")
-        return DictionaryResult()
+        return DictionaryResult(failed=True)
 
 
 async def _collect(conn: AsyncConnection, targets: Sequence[Hit]) -> list[FactLine]:

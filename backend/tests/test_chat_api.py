@@ -1,5 +1,6 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -210,26 +211,35 @@ def test_fact_sources_follow_used_facts_without_repeating_urls():
     ]
 
 
-@pytest.mark.asyncio
-async def test_answer_uses_dictionary_facts_and_skips_recent_posts(monkeypatch):
-    question = SimpleNamespace(sender_role="user", message_body="귀멸의 칼날 감독 누구야?", selected_text=None)
+def _answer_setup(monkeypatch, *, facts, reply, lookup_failed=False):
+    """_fill_answer 를 DB · 사전 · LLM 없이 돌리는 준비. (db, job, pick, ask) 를 돌려준다."""
+    question = SimpleNamespace(chat_message_id=11, sender_role="user", message_body="귀멸의 칼날 감독 누구야?",
+                               selected_text=None)
     session = SimpleNamespace(chat_session_id=5, tap_id=7, anchor_content_id=None)
     tables = {chat_service.ChatSession: session, chat_service.Tap: SimpleNamespace(topic_id=1)}
     db = SimpleNamespace(
         get=AsyncMock(side_effect=lambda model, _id: tables[model]),
         scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [question])),
+        scalar=AsyncMock(return_value=None),
+        add=Mock(),
         commit=AsyncMock(),
     )
-    job = SimpleNamespace(chat_session_id=5, chat_message_id=2)
-    facts = [_fact("귀멸의 칼날 · 鬼滅の刃 (TV, 2019)", "감독: 소토자키 하루오 [AniList API]",
-                   ("AniList API", "https://anilist.co/anime/101922"))]
+    job = SimpleNamespace(chat_session_id=5, chat_message_id=12)
     pick = AsyncMock(return_value=[])
-    ask = AsyncMock(return_value={"answer": "소토자키 하루오 감독이에요.", "used": [], "usedFacts": [1],
-                                  "evidence": "sufficient"})
+    ask = AsyncMock(return_value=reply)
     monkeypatch.setattr(chat_service.catalog_repo, "get_active_topic", AsyncMock(return_value=SimpleNamespace(topic_id=1)))
-    monkeypatch.setattr(chat_service, "_lookup_facts", AsyncMock(return_value=facts))
+    monkeypatch.setattr(chat_service, "_lookup_facts", AsyncMock(return_value=(facts, lookup_failed)))
     monkeypatch.setattr(chat_service, "_pick_materials", pick)
     monkeypatch.setattr(chat_service.llm, "ask_json", ask)
+    return db, job, pick, ask
+
+
+@pytest.mark.asyncio
+async def test_answer_uses_dictionary_facts_and_skips_recent_posts(monkeypatch):
+    facts = [_fact("귀멸의 칼날 · 鬼滅の刃 (TV, 2019)", "감독: 소토자키 하루오 [AniList API]",
+                   ("AniList API", "https://anilist.co/anime/101922"))]
+    reply = {"answer": "소토자키 하루오 감독이에요.", "used": [], "usedFacts": [1], "evidence": "sufficient"}
+    db, job, pick, ask = _answer_setup(monkeypatch, facts=facts, reply=reply)
 
     await chat_service._fill_answer(db, job)
 
@@ -239,3 +249,43 @@ async def test_answer_uses_dictionary_facts_and_skips_recent_posts(monkeypatch):
     assert job.message_body == "소토자키 하루오 감독이에요."
     assert job.answer_sources == [{"kind": "dictionary", "name": "AniList API", "url": "https://anilist.co/anime/101922"}]
     assert job.notices == []
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lookup_failed,reason", [(False, "no_evidence"), (True, "fact_lookup_failed")])
+async def test_question_without_evidence_is_recorded(monkeypatch, lookup_failed, reason):
+    reply = {"answer": "제가 가진 자료로는 확인되지 않아요.", "used": [], "usedFacts": [], "evidence": "insufficient"}
+    db, job, _, _ = _answer_setup(monkeypatch, facts=[], reply=reply, lookup_failed=lookup_failed)
+
+    await chat_service._fill_answer(db, job)
+
+    assert job.notices[0]["code"] == chat_service.INSUFFICIENT
+    record = db.add.call_args.args[0]
+    assert (record.chat_message_id, record.topic_id, record.reason) == (11, 1, reason)
+
+
+def test_day_start_follows_korean_date():
+    utc = timezone.utc
+    # 한국 11/12 01:30 과 11/12 23:59 는 둘 다 한국 11/12 0시(= UTC 11/11 15:00)부터 센다
+    assert chat_service._day_start(datetime(2026, 11, 11, 16, 30, tzinfo=utc)) == datetime(2026, 11, 11, 15, tzinfo=utc)
+    assert chat_service._day_start(datetime(2026, 11, 12, 14, 59, tzinfo=utc)) == datetime(2026, 11, 11, 15, tzinfo=utc)
+
+
+@pytest.mark.asyncio
+async def test_new_question_over_daily_limit_is_rejected(monkeypatch):
+    monkeypatch.setattr(chat_service.settings, "chat_daily_question_limit", 2)
+    session = SimpleNamespace(chat_session_id=5)
+    db = SimpleNamespace(scalar=AsyncMock(side_effect=[session, None, 2]))  # 대화 · 같은 질문 없음 · 오늘 2번
+    request = ChatMessageCreate(client_message_id="11111111-1111-4111-8111-111111111111", content="또 질문")
+    with pytest.raises(chat_service.ApiError) as error:
+        await chat_service.post_message(db, 1, 5, request)
+    assert (error.value.status_code, error.value.code) == (429, "CHAT_DAILY_LIMIT")
+
+
+@pytest.mark.asyncio
+async def test_zero_daily_limit_means_no_limit(monkeypatch):
+    monkeypatch.setattr(chat_service.settings, "chat_daily_question_limit", 0)
+    db = SimpleNamespace(scalar=AsyncMock())
+    await chat_service._check_daily_limit(db, 1)
+    db.scalar.assert_not_awaited()
