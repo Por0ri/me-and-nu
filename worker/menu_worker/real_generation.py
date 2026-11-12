@@ -179,7 +179,7 @@ def _result(result: dict, job: dict) -> tuple[str, str, dict]:
     return DISPOSITIONS[status], status, package
 
 
-def _check_cards(directory: Path, package: dict, required: bool) -> dict:
+def _check_cards(directory: Path, package: dict, required: bool, *, export_cards_to: Path | None = None) -> dict:
     cards = package.get("cards", [])
     # Match EditorialPolicy.minimum_cards_for in the isolated producer.
     minimum = 2 if package.get("content_type") in {"news", "event", "goods"} else 3
@@ -206,6 +206,11 @@ def _check_cards(directory: Path, package: dict, required: bool) -> dict:
                 image.verify()
             with Image.open(BytesIO(data)) as image:
                 image.load()
+            if export_cards_to is not None:
+                exported = export_cards_to / f"card_{page:02d}.png"
+                exported.write_bytes(data)
+                if sha256(exported.read_bytes()) != digest:
+                    raise RealGenerationError("exported_card_digest_mismatch")
             files[name] = {"sha256": digest, "bytes": len(data)}
     if (directory / "cards").exists():
         if (directory / "cards").resolve() != directory / "cards":
@@ -219,6 +224,20 @@ def _check_cards(directory: Path, package: dict, required: bool) -> dict:
 
 def validate_real_artifacts(root: Path, job: dict) -> dict:
     """Validate/finalize only the original attempt; recovery never enters the producer."""
+    evidence, _ = _verify_real_artifacts(root, job, seal_missing=True)
+    return evidence
+
+
+def read_sealed_staging_result(root: Path, job: dict, cards_output: Path) -> dict:
+    """Copy the verified PNG bytes and return the result bound to the completed ledger row."""
+    evidence, result = _verify_real_artifacts(root, job, seal_missing=False, export_cards_to=cards_output)
+    if any(job.get(key) != value for key, value in evidence.items()):
+        raise RealGenerationError("staging_ledger_mismatch")
+    return result
+
+
+def _verify_real_artifacts(root: Path, job: dict, *, seal_missing: bool,
+                           export_cards_to: Path | None = None) -> tuple[dict, dict]:
     try:
         directory = artifact_directory(root, job)
         identity = _identity(job)
@@ -232,7 +251,7 @@ def validate_real_artifacts(root: Path, job: dict) -> dict:
             finished, _ = _json(exit_record, directory, 2048)
             if finished.get("returncode") != 0 and status != "duplicate_skipped":
                 raise RealGenerationError("agent_process_failed")
-        files = _check_cards(directory, package, outcome == "ready_for_staging")
+        files = _check_cards(directory, package, outcome == "ready_for_staging", export_cards_to=export_cards_to)
         digest = sha256(original)
         files["result.json"] = {"sha256": digest, "bytes": len(original)}
         manifest = {**identity, "artifact_version": 2, "outcome": outcome, "producer_status": status, "files": files}
@@ -241,10 +260,12 @@ def validate_real_artifacts(root: Path, job: dict) -> dict:
             previous, _ = _json(path, directory, 32768)
             if previous != manifest:
                 raise RealGenerationError("manifest_mismatch")
-        else:
+        elif seal_missing:
             _atomic_write(path, _dump(manifest))
+        else:
+            raise RealGenerationError("sealed_manifest_missing")
         return {"outcome": outcome, "producer_status": status, "artifact_path": path.relative_to(root).as_posix(),
-                "result_sha256": digest}
+                "result_sha256": digest}, result
     except RealGenerationError:
         raise
     except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError, SyntaxError):

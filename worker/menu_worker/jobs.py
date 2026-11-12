@@ -12,6 +12,7 @@ import time
 from menu_worker.anime_catalog import AnimeInputError
 from menu_worker.job_contract import JobInputError
 from menu_worker.job_store import JobConflict, JobStore
+from menu_worker.real_generation import RealGenerationError
 
 
 def job_route(kind):
@@ -79,6 +80,9 @@ def main(argv=None) -> int:
     generate.add_argument("--url", required=True)
     generate.add_argument("--content-type", required=True)
     generate.add_argument("--menu-work-id", type=int, required=True)
+    export = commands.add_parser("export-staging", help="Export a sealed ready_for_staging job for the carousel importer")
+    export.add_argument("--job-id", required=True)
+    export.add_argument("--output", type=Path, required=True, help="New bundle directory under an existing parent")
     for name in ("show", "cancel", "recover", "retry-preflight"):
         commands.add_parser(name).add_argument("--job-id", required=True)
     dispatch = commands.add_parser("dispatch")
@@ -89,7 +93,7 @@ def main(argv=None) -> int:
         role = os.environ.get("CONTENT_JOB_KIND", "fake")
         if role not in {"fake", "anime", "anime_generate"}:
             raise ValueError("Invalid CONTENT_JOB_KIND")
-        if args.command in {"generate", "retry-preflight"} and role != "anime_generate":
+        if args.command in {"generate", "retry-preflight", "export-staging"} and role != "anime_generate":
             raise JobInputError("Use the dedicated generation dispatcher", "generation_profile_required")
         if role == "anime_generate" and args.command in {"submit", "smoke"}:
             raise JobInputError("Live jobs require the generate command", "probe_command_not_available")
@@ -106,6 +110,10 @@ def main(argv=None) -> int:
                 request["menu_work_id"] = args.menu_work_id
             kind = "anime_generate" if args.command == "generate" else args.kind or role
             result = store.submit(request, job_kind=kind)
+        elif args.command == "export-staging":
+            from menu_worker.staging_export import export_staging_bundle
+            result = export_staging_bundle(Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"]),
+                                           store.get(args.job_id), args.output)
         elif args.command == "show":
             result = store.get(args.job_id)
             if result is None:
@@ -136,7 +144,7 @@ def main(argv=None) -> int:
     except Exception as error:
         # Never emit raw database/provider errors, DSNs, or environment values.
         result = {"error": "content_job_command_failed", "category": type(error).__name__}
-        if isinstance(error, (AnimeInputError, JobInputError)):
+        if isinstance(error, (AnimeInputError, JobInputError, RealGenerationError)):
             result["error"] = error.code
         elif isinstance(error, JobConflict):
             result["error"] = error.code

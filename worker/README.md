@@ -214,6 +214,27 @@ docker compose @stack exec -T generation-dispatcher python -m menu_worker.jobs s
 
 키 형식이나 실행 환경의 사전 점검에 실패하면 설정 수정 후 `jobs retry-preflight --job-id <ID>`를 **generation-dispatcher**에서 명시적으로 실행할 수 있다. DB의 생성 시작 시각이 비어 있는 해당 오류만 같은 작업에서 재접수된다. 시작 시각이 기록된 뒤 timeout이나 중단이 발생하면 `needs_attention`으로 남고, `jobs recover --job-id <ID>`를 **generation-worker**에서 실행해 기존 파일만 재검증한다.
 
+### 완료된 생성 결과를 콘텐츠 적재기에서 미리 확인
+
+`generation-export`는 작업 DB와 원본 산출물을 읽기 전용으로 연다. 위에서 빌드한 생성 이미지를 사용하며 Agent 키가 필요 없다. `anime_generate` 작업에 `succeeded / ready_for_staging`이 기록된 경우, 원래 생성 시도의 manifest·요청·검수·PNG를 작업 DB의 결과 해시와 대조해 새 디렉터리에 `bundle.json`과 카드를 내보낸다. 작업 ID, 생성 시도 ID, 결과 해시는 번들의 `reviewEvidence`에 남는다.
+
+저장소 루트에서 실행한다. `$jobId`에는 완료한 작업의 UUID를 지정하고, 백엔드 실행 환경의 `DATABASE_URL`에는 미리 볼 PostgreSQL의 읽기 전용 연결을 설정한다. `$expectedDatabase`는 해당 DB의 정확한 이름이다.
+
+```powershell
+$stack = @('--env-file','worker/.env','-f','compose.worker.yaml','-f','compose.generation.yaml')
+$exportRoot = (New-Item -ItemType Directory -Force -Path 'out/carousel-staging').FullName
+docker compose @stack run --rm --no-deps -T -v "${exportRoot}:/export" generation-export --job-id $jobId --output "/export/$jobId"
+if ($LASTEXITCODE -ne 0) { throw 'Bundle export failed' }
+$bundle = Join-Path $exportRoot "$jobId/bundle.json"
+Push-Location backend
+try {
+    .\.venv\Scripts\python.exe -m app.seeds.carousel_contents --file $bundle --expected-database $expectedDatabase
+    if ($LASTEXITCODE -ne 0) { throw 'Importer dry-run failed' }
+} finally { Pop-Location }
+```
+
+처음 내보낼 때는 새 출력 경로가 필요하다. 같은 번들의 dry-run을 반복하려면 적재기 명령만 다시 실행한다. 새 콘텐츠에서 `mode=dry_run`, `created=1`, `status=pending_review`, `content_id=null`은 생성 예정 1건을 뜻한다. 서비스 적재기는 이 경로에서 읽기 전용 트랜잭션을 사용한다. 운영자 승인과 서비스 DB의 작품 링크 생성은 각각 별도 단계다.
+
 ## 콘텐츠 큐 회귀 검증
 
 단위 테스트는 네트워크 없이, DB 통합 테스트는 `jobs-db` 안의 별도 `menu_content_jobs_test` DB에서 실행한다. 통합 테스트가 테스트 DB를 생성하고 자신이 만든 작업만 정리한다. 실제 서비스 DB 이름은 허용하지 않는다.
