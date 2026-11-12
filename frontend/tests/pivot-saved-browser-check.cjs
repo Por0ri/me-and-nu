@@ -70,7 +70,7 @@ async function production(page, viewport, api, external, errors) {
 (async () => {
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
   try {
-    for (const viewport of [{ width: 320, height: 568 }, { width: 360, height: 800 }, { width: 375, height: 812 }, { width: 390, height: 844 }, { width: 1280, height: 900 }]) for (const reducedMotion of ['no-preference', 'reduce']) {
+    for (const viewport of [{ width: 320, height: 568 }, { width: 360, height: 800 }, { width: 375, height: 812 }, { width: 390, height: 844 }, { width: 1280, height: 900 }, { width: 1440, height: 1000 }]) for (const reducedMotion of ['no-preference', 'reduce']) {
       if (process.env.PIVOT_VIEWPORT_WIDTH && viewport.width !== Number(process.env.PIVOT_VIEWPORT_WIDTH)) continue;
       if (process.env.PIVOT_REDUCED_MOTION && reducedMotion !== process.env.PIVOT_REDUCED_MOTION) continue;
       const context = await browser.newContext({ viewport, isMobile: viewport.width < 500, hasTouch: viewport.width < 500, reducedMotion, serviceWorkers: 'block' });
@@ -104,6 +104,8 @@ async function production(page, viewport, api, external, errors) {
         await page.goto(base + '/pivot/demo?view=saved'); await savedReady(page);
         await page.waitForFunction(() => document.activeElement === document.querySelector('[data-saved-state] h1'));
         const saved = page.locator('[data-saved-state]');
+        assert.equal(await saved.locator('header').evaluate(e => getComputedStyle(e).position), 'sticky');
+        assert.equal(await saved.evaluate(e => getComputedStyle(e).overflowY), 'visible', 'SAVE still scrolls the document');
         const cards = saved.locator('[data-saved-content]'); assert.equal(await cards.count(), 3);
         const initialStorage = await storage(page);
         await capture(page, 'saved-' + name);

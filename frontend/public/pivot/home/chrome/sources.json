@@ -11,7 +11,8 @@
     {
       "path": "/pivot/home/chrome/notification.svg",
       "figmaAsset": "fa2ce08e-7b1c-474f-b6e1-c9f7df5de867",
-      "sha256": "283c6fbe1eb3118b952809cff0be3d59eb56d90ea70e0473f90ecd61c56eefd1"
+      "revision": "2026-11-12: node 1569:8842 Grey/600 (#71717A); original 24x24 path retained",
+      "sha256": "71468b9cb5180821c7c6457f7a69fa2ae914ab93c682a9cad6c0d0cf14e3766e"
     },
     {
       "path": "/pivot/home/chrome/save.svg",

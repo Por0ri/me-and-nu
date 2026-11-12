@@ -4,7 +4,8 @@ import assetManifest from "@/public/pivot/bc-sources.json";
 import { useDragScroll } from "@/lib/pivot/drag-scroll";
 import { q1Choices, canAdvance, isStateComplete, selectionSummary, type OnboardingAction, type OnboardingState } from "@/lib/pivot/onboarding";
 import { serviceCatalog, demoCatalog, type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
-import { QuestionProgress, WorksQuestion, TagsQuestion, type QuestionCopy } from "./onboarding-catalog-screens";
+import { QuestionProgress, WorksQuestion, TagsQuestion, MyQuestionHeader, type MyQuestionHeaderProps, type QuestionCopy } from "./onboarding-catalog-screens";
+import { HomeHeader } from "./home-screen";
 import { PivotFrame, PrimaryButton } from "./pivot-ui";
 import { useOnboardingNavigation } from "./use-onboarding-navigation";
 import styles from "./onboarding.module.css";
@@ -16,22 +17,20 @@ function Asset({ screen, variable, ...props }: { screen: string; variable: strin
 }
 type NavigationProps = { onBack: () => void; onNext: () => void; busy: boolean };
 type SubmissionProps = { submitting: boolean; error: string; onSubmit: () => void; recovery?: { label: string; onClick: () => void } };
-/** The 관심 분야 screen. manage = My Page 관심분야 관리 (2026-11 design): a back button in place of the logo, the field
+/** The 관심 분야 screen. manage = My Page 관심분야 관리: the shared back/logo/bell header, the field
  * showing the member's actual anime subscription with no selection or start action. */
 export function InterestScreen({ selected, onToggle, onNext, busy, chrome = false, manage }: Omit<NavigationProps, "onBack"> & {
-  selected: boolean; onToggle: () => void; chrome?: boolean; manage?: { onBack: () => void };
+  selected: boolean; onToggle: () => void; chrome?: boolean; manage?: { onBack: () => void; onNotifications?: () => void };
 }) {
   const chosen = selected;
   const assetScreen = chosen ? "interest-on" : "interest";
   const artwork = <span className={styles.interestArtwork}><Asset screen={assetScreen} variable="img" width={115} height={104.11} /></span>;
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
-    <header className={[styles.interestHeader, manage ? styles.manageHeader : ""].join(" ")}>
-      {manage
-        ? <button type="button" className={styles.manageBack} aria-label="뒤로가기" onClick={manage.onBack}>
-          <span><img src="/pivot/detail/back.svg" alt="" width={24} height={24} /></span>
-        </button>
-        : <Asset screen={assetScreen} variable="img4Vectorized" width={104} height={20.7859} alt="me;nu" aria-hidden={undefined} />}
-    </header>
+    {manage ? <div className={`${styles.myHeader} ${styles.manageHeader}`} data-my-interest-header="">
+      <HomeHeader title="관심분야 관리" showMascot={false} onBack={manage.onBack} onNotifications={manage.onNotifications} />
+    </div> : <header className={styles.interestHeader}>
+      <Asset screen={assetScreen} variable="img4Vectorized" width={104} height={20.7859} alt="me;nu" aria-hidden={undefined} />
+    </header>}
     <section className={styles.interestBody} aria-labelledby="interest-heading">
       <h1 id="interest-heading" tabIndex={-1}>관심 분야를<br /><em>선택</em>해주세요</h1>
       <p className={styles.interestDescription}>지금은 애니메이션부터 시작할 수 있어요</p>
@@ -56,9 +55,10 @@ export function InterestScreen({ selected, onToggle, onNext, busy, chrome = fals
     {!manage && <div className={styles.actions}><PrimaryButton disabled={!selected || busy} onClick={onNext}>애니메이션 선택하고 시작하기</PrimaryButton></div>}
   </PivotFrame>;
 }
-export function QuestionScreen({ value, onChoose, onBack, onNext, busy, chrome = false, copy }: NavigationProps & { value: string | null; onChoose: (value: string) => void; chrome?: boolean; copy?: QuestionCopy }) {
+export function QuestionScreen({ value, onChoose, onBack, onNext, busy, chrome = false, copy, myHeader }: NavigationProps & { value: string | null; onChoose: (value: string) => void; chrome?: boolean; copy?: QuestionCopy; myHeader?: MyQuestionHeaderProps }) {
   const screen = "q1" + (value ? "-on" : "");
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
+    {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
     <QuestionProgress step={3} onBack={onBack} busy={busy} />
     {copy?.hint}
     <section className={styles.questionBody} aria-labelledby="question-heading">
@@ -129,15 +129,15 @@ export function ResultScreen({ state, onReselect, busy, mode, onRestart, onDemoH
 }
 // catalog: the temporary My Page taste edit (/pivot/taste) searches through its member-only copy of the APIs.
 // copy: that edit's own words and hint boxes for Q1~Q3 (taste-hints.tsx); onboarding keeps its own.
-export function OnboardingFlow({ state, dispatch, onExit, mode, onRestart, onDemoHome, chrome = false, submission, catalog, copy }: { state: OnboardingState; dispatch: Dispatch<OnboardingAction>; onExit: () => void; mode: "demo" | "service" | "preview"; onRestart?: () => void; onDemoHome?: () => void; chrome?: boolean; submission?: SubmissionProps; catalog?: OnboardingCatalog; copy?: Partial<Record<"q1" | "q2" | "q3", QuestionCopy>> }) {
+export function OnboardingFlow({ state, dispatch, onExit, mode, onRestart, onDemoHome, chrome = false, submission, catalog, copy, myHeader }: { state: OnboardingState; dispatch: Dispatch<OnboardingAction>; onExit: () => void; mode: "demo" | "service" | "preview"; onRestart?: () => void; onDemoHome?: () => void; chrome?: boolean; submission?: SubmissionProps; catalog?: OnboardingCatalog; copy?: Partial<Record<"q1" | "q2" | "q3", QuestionCopy>>; myHeader?: MyQuestionHeaderProps }) {
   const region = useRef<HTMLDivElement>(null);
   const navigation = useOnboardingNavigation(state, dispatch, onExit);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
-    region.current?.querySelector<HTMLHeadingElement>("h1")?.focus({ preventScroll: true });
+    (region.current?.querySelector<HTMLHeadingElement>("#question-heading") ?? region.current?.querySelector<HTMLHeadingElement>("h1"))?.focus({ preventScroll: true });
   }, [state.step]);
   const busy = navigation.busy || (mode === "service" && submission?.submitting === true);
-  const shared = { onBack: navigation.back, onNext: navigation.advance, busy, chrome };
+  const shared = { onBack: navigation.back, onNext: navigation.advance, busy, chrome, myHeader };
   const catalogProps = { ...shared, state, dispatch, catalog: catalog ?? (mode === "service" ? serviceCatalog : demoCatalog), demo: mode !== "service", message: submission?.error };
   return <div ref={region} className={styles.flow}>
     {state.step === "interest" ? <InterestScreen {...shared} selected={state.interest === "animation"} onToggle={() => dispatch({ type: "toggle-interest" })} />

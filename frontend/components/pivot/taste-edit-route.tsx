@@ -108,5 +108,10 @@ export function TasteEditRoute() {
   if (state.step === "result") return <TasteEditResult state={state} saving={saving} error={error} onSave={() => void save()}
     onEdit={() => { setError(""); dispatch({ type: "edit-again" }); }} />;
   return <OnboardingFlow state={state} dispatch={dispatch} mode="service" catalog={tasteCatalog} copy={tasteQuestionCopy(hints)} onExit={() => router.replace(MY_PAGE)}
+    myHeader={{ onNotifications: () => {
+      if (window.confirm("취향 수정은 아직 저장되지 않았어요. 저장하지 않고 알림함으로 이동할까요?")) {
+        router.push("/pivot/home?view=notifications&from=taste");
+      }
+    } }}
     submission={{ submitting: saving, error, onSubmit: () => void save() }} />;
 }

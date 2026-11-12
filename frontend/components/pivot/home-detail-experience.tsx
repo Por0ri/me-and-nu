@@ -64,7 +64,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const detailFromActivity = params.get("from") === "activity";
   const selectedActivityTab = activityTab(params.get("activityTab"));
   const detailFromSaved = params.get("from") === "saved";
-  const inboxFromProfile = inboxOpen && params.get("from") === "profile";
+  const inboxFromMyRoute = inboxOpen && ["profile", "taste", "interests"].includes(params.get("from") ?? "");
   const postId = params.get("postId") ?? "";
   const contentId = params.get("contentId") ?? "";
   const topicParam = params.get("topicId");
@@ -223,7 +223,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     const query = new URLSearchParams({ view: "notifications" });
     if (unread) query.set("unread", "1");
     if (id !== undefined) query.set("notificationId", String(id));
-    if (inboxFromProfile) query.set("from", "profile");
+    if (inboxFromMyRoute) query.set("from", params.get("from")!);
     return `${window.location.pathname}?${query}`;
   }
   function openInbox() {
@@ -256,7 +256,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     if (noticeId !== null) {
       if (window.history.state?.pivotNoticeBack) window.history.back();
       else window.history.replaceState(inboxHistory(), "", inboxHref(unreadOnly));
-    } else if (window.history.state?.pivotInboxBack || inboxFromProfile) window.history.back();
+    } else if (window.history.state?.pivotInboxBack || inboxFromMyRoute) window.history.back();
     else backToHome();
   }
   function openActivity() {

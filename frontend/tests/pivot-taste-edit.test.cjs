@@ -172,3 +172,21 @@ test('My Page opens the taste edit from 내 피드 취향 조정하기 inside �
   assert.ok(at[0]>=0 && at[0]<at[1] && at[1]<at[2], 'the three 내 정보 rows, in the design order');
   assert.ok(!html.includes('취향 수정하기') && !html.includes('연결 준비 중이에요'), 'no separate box and no pending notice');
 });
+
+test('Only MY Q1-Q3 opt into the shared logo and live bell; signup and result stay unchanged', () => {
+  const React = require('react'), { renderToStaticMarkup } = require('react-dom/server');
+  const { OnboardingFlow } = tsxLoader()('components/pivot/onboarding-screens.tsx');
+  for (const step of ['q1', 'q2', 'q3', 'result']) {
+    const props = { state: { ...onboarding.initialOnboardingState(), step }, dispatch() {}, onExit() {}, mode: 'service' };
+    const render = extra => renderToStaticMarkup(React.createElement(OnboardingFlow, { ...props, ...extra }));
+    assert.doesNotMatch(render({}), /data-my-question-header|aria-label="알림"/);
+    const my = render({ myHeader: { onNotifications() {} } });
+    if (step === 'result') assert.doesNotMatch(my, /data-my-question-header|aria-label="알림"/);
+    else {
+      assert.match(my, /data-my-question-header/); assert.match(my, /alt="me;nu" width="103"/);
+      assert.match(my, /aria-label="알림" data-notification-navigation/);
+      assert.ok(my.indexOf('data-my-question-header') < my.indexOf('aria-label="온보딩 화면 탐색"'));
+      assert.match(my, new RegExp(`aria-valuenow="${step[1]}"`));
+    }
+  }
+});

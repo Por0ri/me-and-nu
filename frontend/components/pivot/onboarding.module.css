@@ -22,11 +22,13 @@
 .selected { background: #f7f2ff; border-color: #7043b4; }
 .selected .badge { color: #7043b4; }
 .interestCard.selected strong { color: #3f3f46; }
-/* My Page 관심분야 관리: the detail screen's grey round back button where the logo was, the card cannot be unpicked. */
-.interestHeader.manageHeader { justify-content: flex-start; }
-.manageBack { display: grid; place-items: center; width: 44px; height: 44px; margin: -34px 0 0 -8px; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
-.manageBack span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgb(192 192 186 / 48%); }
-.manageBack img { flex: none; max-width: none; }
+/* MY only: reuse HomeHeader inside the existing 45px space above question progress. */
+.myHeader { --home-muted: var(--pivot-muted); --home-ink: #27272a; position: sticky; top: 0; z-index: 6; flex: none; height: 40px; margin-inline: 24px; background: var(--pivot-bg); }
+.myHeader > header { background: var(--pivot-bg); }
+.myHeader + .navigation { flex: none; margin-top: 5px; }
+/* Keep the interest heading and cards at their original coordinates. */
+.manageHeader { height: 44px; margin-bottom: 69px; }
+.manageHeader > header { height: 44px; }
 .fixedCard { cursor: default; }
 .upcoming { height: 184px; border: 1px dashed #e4e4e7; border-radius: 14px; background: #f4f4f5; display: flex; flex-direction: column; align-items: center; gap: 13px; padding-top: 46px; color: #b9b9c1; }
 .upcoming strong { font-size: 16px; line-height: 24px; font-weight: 600; }

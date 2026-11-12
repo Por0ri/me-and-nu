@@ -15,7 +15,7 @@ export function PivotSavedScreen({ state, demo, onHome, onMy, onViewDetail, onRe
   state: SavedState; demo: boolean; onHome: () => void; onMy: () => void; onViewDetail: HomeDetailHandler; onRetry: () => void; onNotifications?: () => void;
 }) {
   const list = state.status === "ready" && state.saved.origin === (demo ? "demo" : "service") ? state.saved : null;
-  return <main className={homeStyles.screen} data-saved-state={state.status} data-saved-mode={demo ? "demo" : "service"}
+  return <main className={`${homeStyles.screen} ${styles.screen}`} data-saved-state={state.status} data-saved-mode={demo ? "demo" : "service"}
     aria-busy={state.status === "loading"}>
     <HomeHeader title="저장한 콘텐츠" showMascot={false} onNotifications={onNotifications} />
     {list ? <ul className={styles.grid} aria-label="저장한 콘텐츠 목록">
