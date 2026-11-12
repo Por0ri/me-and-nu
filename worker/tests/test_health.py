@@ -3,8 +3,10 @@
 from datetime import datetime, timedelta, timezone
 import io
 import json
+import os
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
@@ -12,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from menu_worker import health
+from menu_worker import health, jobs
 from menu_worker.tasks import HEARTBEAT_KEY, heartbeat
 
 
@@ -42,6 +44,45 @@ class HeartbeatTests(unittest.TestCase):
 
 
 class HealthTests(unittest.TestCase):
+    def test_dispatch_loop_invalidates_failed_batch_and_recovers_on_next_delivery(self):
+        reports = [{"published": 0, "failed": 0}, {"published": 1, "failed": 1},
+                   {"published": 1, "failed": 0}]
+        observations = []
+        with TemporaryDirectory() as directory:
+            heartbeat = Path(directory) / "dispatcher.health"
+
+            def observe(_):
+                observations.append(health.check("job-dispatcher"))
+                if len(observations) == len(reports):
+                    raise KeyboardInterrupt
+
+            with (patch.object(jobs, "DISPATCHER_HEARTBEAT", heartbeat),
+                  patch.object(health, "DISPATCHER_HEARTBEAT", heartbeat),
+                  patch.object(jobs, "JobStore"), patch.object(jobs, "dispatch_once", side_effect=reports),
+                  patch.object(jobs.time, "sleep", side_effect=observe),
+                  patch.object(health.Redis, "from_url") as client, patch("sys.stdout", new_callable=io.StringIO)):
+                client.return_value.__enter__.return_value.ping.return_value = True
+                self.assertEqual(jobs.main(["dispatch", "--loop"]), 130)
+        self.assertEqual(observations, [True, False, True])
+
+    def test_each_dispatcher_requires_fresh_loop_and_reachable_broker(self):
+        with TemporaryDirectory() as directory:
+            heartbeat = Path(directory) / "dispatcher.health"
+            with (patch.object(health, "DISPATCHER_HEARTBEAT", heartbeat),
+                  patch.object(health.Redis, "from_url") as client):
+                for role in ("job-dispatcher", "anime-dispatcher", "generation-dispatcher"):
+                    with self.subTest(role=role):
+                        heartbeat.unlink(missing_ok=True)
+                        self.assertFalse(health.check(role))
+                        heartbeat.touch()
+                        os.utime(heartbeat, (1, 1))
+                        self.assertFalse(health.check(role))
+                        heartbeat.touch()
+                        client.return_value.__enter__.return_value.ping.side_effect = ConnectionError
+                        with patch.object(sys, "argv", ["health", role]), patch("sys.stderr", new_callable=io.StringIO):
+                            self.assertEqual(health.main(), 1)
+                        client.assert_called_with(health.settings.broker_url, socket_timeout=2, socket_connect_timeout=2)
+
     def beat_health(self, age):
         client = MagicMock()
         client.__enter__.return_value = client

@@ -100,7 +100,7 @@ def _request(job: dict) -> dict:
 
 def _identity(job: dict) -> dict:
     if job.get("job_kind") != "anime_generate" or type(job.get("menu_work_id")) is not int:
-        raise RealGenerationError("unexpected_generation_kind", before_launch=True)
+        raise RealGenerationError("unexpected_generation_kind")
     return {"producer": "ani_menu_agent", "simulated": False, "job_id": str(job["job_id"]),
             "generation_attempt_id": str(job["generation_attempt_id"]), "input_sha256": job["input_sha256"],
             "request": _request(job)}

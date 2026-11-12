@@ -80,9 +80,11 @@ def run_job(store, root: Path, job_id: str, task_id: str | None = None, *, recov
         except LostClaim:
             return {"job_id": str(job_id), "processed": False, "reason": "claim_lost"}
         except RealGenerationError as error:
-            status = "needs_attention" if generation_started else "failed"
+            agent_not_launched = live and not recover and error.before_launch
+            status = "needs_attention" if generation_started and not agent_not_launched else "failed"
             completed = store.complete(job_id, token, execution_status=status,
-                                       expected_kind=expected_kind, error_code=error.code)
+                                       expected_kind=expected_kind, error_code=error.code,
+                                       agent_not_launched=agent_not_launched)
         except (ArtifactError, OSError):
             completed = store.complete(job_id, token, execution_status="needs_attention",
                                        expected_kind=expected_kind, error_code="artifact_verification_required")

@@ -121,7 +121,11 @@ docker compose --env-file worker/.env -f compose.worker.yaml exec -T job-dispatc
 
 DB의 `content_generation_job`이 영속 상태의 기준이며 `content_generation_attempt`가 실행 점유·Celery ID·중단 이력을 보관한다. `menu_worker_schema`는 마이그레이션 버전만 관리한다. 초기화는 명시된 전용 DB에만 적용하고 비어 있지 않은 미등록 DB는 거부한다. 서비스 Alembic 마이그레이션과는 분리되어 있다.
 
-dispatcher는 2초마다 확인하며 전송된 미실행 작업은 30초 뒤 재전송할 수 있다. 생성 시작 전 만료된 점유는 다시 대기 상태로 돌린다. 생성 시작 기록 이후의 중단은 `needs_attention`으로 남기며 자동 재생성하지 않는다. 만료된 점유 토큰은 새 작업 상태를 덮어쓸 수 없다.
+Dispatcher는 2초마다 미발행 작업을 확인한다. 같은 작업의 발행은 DB 행 잠금으로 직렬화하고, 브로커가 반환한 Celery ID를 기록한 뒤에는 Worker의 점유를 기다린다. 발행 실패로 기록이 없으면 다음 순회에서 재시도한다. Redis 전송 직후 DB 커밋 전에 프로세스가 중단되면 같은 작업이 다시 전달될 수 있다. 이때 Worker는 DB 점유를 획득한 한 건만 실행한다.
+
+브로커에서 메시지가 유실됐다고 확인한 경우, 해당 큐의 Dispatcher에서 `jobs show --job-id <ID>`로 `last_task_id`를 조회한 뒤 `jobs requeue-delivery --job-id <ID> --task-id <last_task_id>`를 실행한다. 조회한 발행 ID가 일치하고 작업이 아직 점유되지 않았을 때만 다음 순회에서 다시 발행한다. 생성 시작 전 점유가 만료된 작업은 자동으로 다시 대기 상태가 된다.
+
+세 Dispatcher 모두 최근 30초 이내에 실패 없이 순회를 마쳤고 해당 브로커가 Redis `PING`에 응답할 때 헬스체크를 통과한다. 일부 작업만 발행에 실패해도 그 순회에서 직전 정상 표시를 지운다.
 
 산출물은 `job-artifacts` 볼륨의 `/var/lib/menu-jobs/jobs/{job_id}/attempts/{generation_attempt_id}/`에 저장한다. 원본 결과 JSON·fixture PNG·로그를 기록하고 파일 해시가 담긴 `manifest.json`을 마지막에 원자적으로 저장한다. 모든 결과는 `simulated: true`, `producer: fake_ani_menu_agent`이며 서비스 캐러셀 적재 형식이 아니다. LLM/Agent SQLite나 실제 카드 렌더링은 사용하지 않는다.
 
@@ -214,7 +218,7 @@ docker compose @stack exec -T generation-dispatcher python -m menu_worker.jobs s
 
 `agent.log`에는 자식 프로세스의 시작과 종료 코드가 기록된다. 원문·키·공급자 응답을 보호하기 위해 stdout·stderr는 보관하지 않는다. 생성 도중 문제가 생기면 작업의 `error_code`와 해당 시도의 결과·검수 기록을 함께 확인한다.
 
-키 형식이나 실행 환경의 사전 점검에 실패하면 설정 수정 후 `jobs retry-preflight --job-id <ID>`를 **generation-dispatcher**에서 명시적으로 실행할 수 있다. DB의 생성 시작 시각이 비어 있는 해당 오류만 같은 작업에서 재접수된다. 시작 시각이 기록된 뒤 timeout이나 중단이 발생하면 `needs_attention`으로 남고, `jobs recover --job-id <ID>`를 **generation-worker**에서 실행해 기존 파일만 재검증한다.
+키·실행 환경 점검 또는 Agent 프로세스 시작에 실패해 자식 프로세스가 실행되지 않은 것이 확인되면, 원인을 수정한 뒤 **generation-dispatcher**에서 `jobs retry-preflight --job-id <ID>`로 같은 작업을 다시 접수한다. Agent 실행 후 시간 초과나 Worker 중단처럼 유료 호출 여부가 불확실한 작업은 `needs_attention`으로 남긴다. 이 경우 **generation-worker**에서 `jobs recover --job-id <ID>`로 기존 산출물만 다시 검증할 수 있다.
 
 ### 완료된 생성 결과를 콘텐츠 적재기에서 미리 확인
 

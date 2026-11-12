@@ -2,7 +2,11 @@
 from dataclasses import dataclass, field
 import os
 from collections.abc import Mapping
+from pathlib import Path
 from urllib.parse import urlsplit
+
+
+DISPATCHER_HEARTBEAT = Path("/tmp/job-dispatcher.health")
 
 
 @dataclass(frozen=True)

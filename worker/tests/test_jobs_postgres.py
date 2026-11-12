@@ -192,17 +192,104 @@ class JobStorePostgresTests(unittest.TestCase):
         failed_publish.assert_any_call(job_id)
         pending = {self.job_id(row) for row in self.store.list_pending()}
         self.assertIn(job_id, pending)
-        self.assertEqual(self.store.get(job_id)["execution_status"], "queued")
+        failed = self.store.get(job_id)
+        self.assertEqual(failed["execution_status"], "queued")
+        self.assertEqual(failed["dispatch_count"], 0)
+        self.assertIsNone(failed["last_dispatched_at"])
 
         successful_publish = Mock(return_value="unit-dispatch-task")
         report = dispatcher(self.store, publish=successful_publish)
         self.assertGreaterEqual(report["published"], 1)
         successful_publish.assert_any_call(job_id)
-        self.assertEqual(self.store.get(job_id)["execution_status"], "queued")
+        sent = self.store.get(job_id)
+        self.assertEqual(sent["execution_status"], "queued")
+        self.assertEqual(sent["dispatch_count"], 1)
+        self.assertEqual(sent["last_task_id"], "unit-dispatch-task")
+
+    def test_backlogged_delivery_is_not_republished_and_lost_receipt_can_be_requeued_once(self):
+        dispatcher = importlib.import_module("menu_worker.jobs").dispatch_once
+        job_id = self.job_id(self.store.submit(self.candidate()))
+        first = Mock(return_value="first-delivery")
+        self.assertTrue(self.store.publish_pending(job_id, first))
+        first.assert_called_once_with(job_id)
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE content_generation_job SET last_dispatched_at=clock_timestamp() - interval '1 day' "
+                "WHERE job_id=%s", (job_id,),
+            )
+        resend = Mock(return_value="second-delivery")
+        dispatcher(self.store, publish=resend)
+        self.assertNotIn(job_id, [call.args[0] for call in resend.call_args_list])
+        self.assertFalse(self.store.publish_pending(job_id, resend))
+        self.assertEqual(self.store.get(job_id)["dispatch_count"], 1)
+
+        self.assertFalse(self.store.requeue_delivery(job_id, "first-delivery", expected_kind="anime"))
+        self.assertFalse(self.store.requeue_delivery(job_id, "stale-receipt"))
+        self.assertCountEqual(self.parallel(lambda store: store.requeue_delivery(job_id, "first-delivery")),
+                              [True, False])
+        self.assertTrue(self.store.publish_pending(job_id, resend))
+        self.assertFalse(self.store.requeue_delivery(job_id, "first-delivery"))
+        current = self.store.get(job_id)
+        self.assertEqual((current["dispatch_count"], current["last_task_id"]), (2, "second-delivery"))
+        self.assertIsNotNone(self.store.claim(job_id, "second-delivery"))
+        self.assertFalse(self.store.requeue_delivery(job_id, "second-delivery"))
+        self.assertIsNone(self.store.claim(job_id, "first-delivery"))
+
+    def test_overlapping_dispatchers_send_one_message(self):
+        job_id = self.job_id(self.store.submit(self.candidate()))
+        sending, release = threading.Event(), threading.Event()
+        worker_ready = threading.Event()
+
+        def publish(candidate_id):
+            self.assertEqual(candidate_id, job_id)
+            sending.set()
+            self.assertTrue(release.wait(timeout=10))
+            return "only-delivery"
+
+        def receive():
+            worker_ready.set()
+            return self.new_store().claim(job_id, "only-delivery")
+
+        competing = Mock()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(self.store.publish_pending, job_id, publish)
+            try:
+                self.assertTrue(sending.wait(timeout=10))
+                self.assertFalse(self.new_store().publish_pending(job_id, competing))
+                claim = executor.submit(receive)
+                self.assertTrue(worker_ready.wait(timeout=10))
+            finally:
+                release.set()
+            self.assertTrue(first.result(timeout=10))
+            self.assertEqual(claim.result(timeout=10)["last_task_id"], "only-delivery")
+        competing.assert_not_called()
+        self.assertEqual(self.store.get(job_id)["dispatch_count"], 1)
+
+    def test_ambiguous_broker_acknowledgement_retries_but_only_one_delivery_can_claim(self):
+        job_id = self.job_id(self.store.submit(self.candidate()))
+        deliveries = []
+
+        def lost_ack(candidate_id):
+            deliveries.append((candidate_id, "ack-lost"))
+            raise ConnectionError("connection closed after broker acceptance")
+
+        with self.assertRaises(ConnectionError):
+            self.store.publish_pending(job_id, lost_ack)
+
+        def acknowledged(candidate_id):
+            deliveries.append((candidate_id, "ack-received"))
+            return "ack-received"
+
+        self.assertTrue(self.store.publish_pending(job_id, acknowledged))
+        self.assertEqual(deliveries, [(job_id, "ack-lost"), (job_id, "ack-received")])
+        self.assertIsNotNone(self.store.claim(*deliveries[0]))
+        self.assertIsNone(self.store.claim(*deliveries[1]))
+        self.assertEqual(self.store.get(job_id)["attempt_count"], 1)
 
     def test_live_lease_stays_claimed_but_expired_pre_generation_job_requeues(self):
         job_id = self.job_id(self.store.submit(self.candidate()))
-        claim = self.store.claim(job_id, lease_seconds=60)
+        self.assertTrue(self.store.publish_pending(job_id, Mock(return_value="original")))
+        claim = self.store.claim(job_id, "original", lease_seconds=60)
         self.store.recover_expired()
         self.assertEqual(self.store.get(job_id)["execution_status"], "running")
         self.assertIsNone(self.store.claim(job_id, lease_seconds=60))
@@ -211,7 +298,8 @@ class JobStorePostgresTests(unittest.TestCase):
         report = self.store.recover_expired()
         self.assertGreaterEqual(report["queued"], 1)
         self.assertEqual(self.store.get(job_id)["execution_status"], "queued")
-        replacement = self.store.claim(job_id, lease_seconds=60)
+        self.assertTrue(self.store.publish_pending(job_id, Mock(return_value="replacement")))
+        replacement = self.store.claim(job_id, "replacement", lease_seconds=60)
         self.assertIsNotNone(replacement)
         self.assertNotEqual(str(replacement["claim_token"]), str(claim["claim_token"]))
 
@@ -389,7 +477,9 @@ class JobStorePostgresTests(unittest.TestCase):
                 pending = {self.job_id(row) for row in self.store.list_pending(expected_kind=kind)}
                 self.assertIn(own, pending)
                 self.assertNotIn(other, pending)
-                self.assertFalse(self.store.record_dispatched(other, "incorrect-queue", expected_kind=kind))
+                wrong_queue = Mock()
+                self.assertFalse(self.store.publish_pending(other, wrong_queue, expected_kind=kind))
+                wrong_queue.assert_not_called()
                 self.assertIsNone(self.store.claim(other, expected_kind=kind))
                 self.assertEqual(self.store.get(other)["dispatch_count"], 0)
 
@@ -527,12 +617,14 @@ class JobStorePostgresTests(unittest.TestCase):
         for other in ("fake", "anime"):
             with self.subTest(other=other):
                 self.assertNotIn(job_id, {row["job_id"] for row in self.store.list_pending(expected_kind=other)})
-                self.assertFalse(self.store.record_dispatched(job_id, "wrong-kind", expected_kind=other))
+                wrong_queue = Mock()
+                self.assertFalse(self.store.publish_pending(job_id, wrong_queue, expected_kind=other))
+                wrong_queue.assert_not_called()
                 self.assertFalse(self.store.cancel(job_id, expected_kind=other))
                 self.assertIsNone(self.store.claim(job_id, expected_kind=other))
         self.assertFalse(self.store.cancel(probe["job_id"], expected_kind=kind))
         self.assertTrue(self.store.cancel(probe["job_id"], expected_kind="anime"))
-        self.assertTrue(self.store.record_dispatched(job_id, "live-task", expected_kind=kind))
+        self.assertTrue(self.store.publish_pending(job_id, Mock(return_value="live-task"), expected_kind=kind))
         claim = self.store.claim(job_id, expected_kind=kind)
         token = claim["claim_token"]
         for other in ("fake", "anime"):
@@ -556,17 +648,22 @@ class JobStorePostgresTests(unittest.TestCase):
         self.assertTrue(self.store.mark_generation_started(job_id, first["claim_token"], expected_kind=kind))
         self.assertFalse(self.store.cancel(job_id, expected_kind=kind))
         self.expire(job_id)
+        self.assertFalse(self.store.complete(job_id, first["claim_token"], expected_kind=kind, execution_status="failed",
+                                             error_code="agent_spawn_failed", agent_not_launched=True))
         for other in ("fake", "anime"):
             self.store.recover_expired(expected_kind=other)
             self.assertEqual(self.store.get(job_id)["execution_status"], "running")
         self.store.recover_expired(expected_kind=kind)
         self.assertEqual(self.store.get(job_id)["execution_status"], "needs_attention")
+        self.assertFalse(self.store.retry_preflight(job_id, expected_kind=kind))
         self.assertNotIn(job_id, {row["job_id"] for row in self.store.list_pending(expected_kind=kind)})
         self.assertIsNone(self.store.claim(job_id, expected_kind=kind))
         self.assertIsNone(self.store.claim_recovery(job_id, expected_kind="anime"))
         recovery = self.store.claim_recovery(job_id, expected_kind=kind)
         self.assertEqual(recovery["generation_attempt_id"], first["generation_attempt_id"])
         self.assertFalse(self.store.mark_generation_started(job_id, recovery["claim_token"], expected_kind=kind))
+        self.assertFalse(self.store.complete(job_id, recovery["claim_token"], expected_kind=kind, execution_status="failed",
+                                             error_code="agent_spawn_failed", agent_not_launched=True))
 
     def test_generation_completion_preserves_original_producer_status(self):
         kind = "anime_generate"
@@ -671,6 +768,7 @@ class JobStorePostgresTests(unittest.TestCase):
                 stopped = self.store.get(job_id)
                 self.assertEqual((stopped["execution_status"], stopped["error_code"]), ("needs_attention", "agent_timeout"))
                 self.assertIsNotNone(stopped["generation_started_at"])
+                self.assertFalse(self.store.retry_preflight(job_id, expected_kind=kind))
                 replay = runner.run_job(self.store, root, job_id, task_id="unit-redelivered", expected_kind=kind)
                 self.assertFalse(replay["processed"])
                 runner.run_job(self.store, root, job_id, task_id="unit-reconcile", expected_kind=kind, recover=True)
@@ -706,11 +804,64 @@ class JobStorePostgresTests(unittest.TestCase):
             self.assertEqual((directory / "manifest.json").read_bytes(), manifest)
             self.assertEqual((directory / "result.json").read_bytes(), content)
 
+    def test_setup_and_spawn_failures_allow_one_manual_retry_with_a_fresh_attempt(self):
+        runner = importlib.import_module("menu_worker.job_runner")
+        adapter = importlib.import_module("menu_worker.real_generation")
+        kind = "anime_generate"
+        job_id = self.store.submit(self.anime_candidate(), job_kind=kind)["job_id"]
+        with TemporaryDirectory(prefix="manual-launch-") as temporary:
+            root = Path(temporary).resolve()
+            with self.substituted_live_child(root) as spawn:
+                launch = spawn.side_effect
+                with patch.object(adapter, "_atomic_write", side_effect=OSError("test setup error")):
+                    runner.run_job(self.store, root, job_id, expected_kind=kind)
+                spawn.assert_not_called()
+                setup = self.store.get(job_id)
+                self.assertEqual((setup["execution_status"], setup["error_code"]), ("failed", "agent_attempt_setup_failed"))
+                self.assertIsNone(setup["generation_started_at"])
+                self.assertTrue(self.store.retry_preflight(job_id, expected_kind=kind))
+
+                spawn.side_effect = OSError("test spawn error")
+                runner.run_job(self.store, root, job_id, expected_kind=kind)
+                failed = self.store.get(job_id)
+                self.assertEqual((failed["execution_status"], failed["error_code"]), ("failed", "agent_spawn_failed"))
+                self.assertIsNone(failed["generation_started_at"])
+                self.assertEqual([attempt["generation_started_at"] for attempt in failed["attempts"]], [None, None])
+                self.assertFalse(runner.run_job(self.store, root, job_id, expected_kind=kind)["processed"])
+                self.assertCountEqual(self.parallel(lambda store: store.retry_preflight(job_id, expected_kind=kind)),
+                                      [True, False])
+                spawn.side_effect = launch
+                runner.run_job(self.store, root, job_id, expected_kind=kind)
+                self.assertFalse(runner.run_job(self.store, root, job_id, expected_kind=kind)["processed"])
+                self.assertEqual(spawn.call_count, 2)  # One failed spawn, one substituted producer.
+
+            job = self.store.get(job_id)
+            self.assertEqual((job["execution_status"], job["outcome"]), ("succeeded", "held"))
+            self.assertEqual([a["error_code"] for a in job["attempts"]],
+                             ["agent_attempt_setup_failed", "agent_spawn_failed", None])
+            self.assertEqual(len({a["attempt_id"] for a in job["attempts"]}), 3)
+            self.assertIsNotNone(job["attempts"][-1]["generation_started_at"])
+
+    def test_preflight_retry_recognizes_legacy_generation_attempt_with_confirmed_spawn_failure(self):
+        kind = "anime_generate"
+        job_id = self.store.submit(self.anime_candidate(), job_kind=kind)["job_id"]
+        legacy = self.store.claim(job_id, expected_kind=kind)
+        self.assertTrue(self.store.mark_generation_started(job_id, legacy["claim_token"], expected_kind=kind))
+        self.assertTrue(self.store.complete(job_id, legacy["claim_token"], expected_kind=kind,
+                                            execution_status="needs_attention", error_code="agent_spawn_failed"))
+        before = self.store.get(job_id)
+        self.assertTrue(self.store.retry_preflight(job_id, expected_kind=kind))
+        queued = self.store.get(job_id)
+        self.assertEqual(queued["attempts"], before["attempts"])
+        self.assertIsNone(queued["generation_started_at"])
+        next_attempt = self.store.claim(job_id, expected_kind=kind)
+        self.assertNotEqual(next_attempt["attempt_id"], legacy["attempt_id"])
+
     def test_preflight_retry_requeues_once_with_same_identity_and_full_attempt_history(self):
         kind = "anime_generate"
         job = self.store.submit(self.anime_candidate(), job_kind=kind)
         job_id = job["job_id"]
-        self.assertTrue(self.store.record_dispatched(job_id, "initial-delivery", expected_kind=kind))
+        self.assertTrue(self.store.publish_pending(job_id, Mock(return_value="initial-delivery"), expected_kind=kind))
         first = self.store.claim(job_id, task_id="initial-delivery", expected_kind=kind)
         self.assertTrue(self.store.complete(job_id, first["claim_token"], expected_kind=kind,
                                             execution_status="failed", error_code="invalid_agent_secret"))

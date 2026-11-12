@@ -1,8 +1,10 @@
 """Dedicated PostgreSQL job ledger and durable dispatch source.
 
-Every method commits before returning. No transaction spans producer execution.
-The generation-start marker is permanent: lease recovery never starts it again.
+Dispatch holds a job row lock through the broker send and receipt write.
+Workers commit their claims before running the content agent.
+Lease recovery never relaunches an attempt with a generation-start marker.
 """
+from collections.abc import Callable
 from datetime import datetime
 import os
 from pathlib import Path, PurePosixPath
@@ -19,6 +21,10 @@ DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test", "menu
 DATABASE_HOSTS = frozenset({"jobs-db", "localhost", "127.0.0.1", "::1"})
 MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql", "003_anime_work_input.sql", "004_anime_generation.sql")
 SCHEMA_VERSION = len(MIGRATIONS)
+# Older workers recorded these adapter errors as needs_attention after arming
+# the launch fence. Each is emitted exclusively before the producer starts.
+PRELAUNCH_SETUP_ERRORS = ("invalid_agent_secret", "agent_attempt_setup_failed", "agent_spawn_failed")
+PRELAUNCH_ERRORS = (*PRELAUNCH_SETUP_ERRORS, "agent_runtime_unavailable")
 
 
 class JobStoreError(RuntimeError):
@@ -169,21 +175,43 @@ class JobStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT * FROM public.content_generation_job WHERE job_kind=%s AND execution_status='queued'
-                   AND generation_started_at IS NULL
-                   AND (last_dispatched_at IS NULL OR last_dispatched_at < clock_timestamp() - INTERVAL '30 seconds')
+                   AND generation_started_at IS NULL AND last_dispatched_at IS NULL
                    ORDER BY created_at LIMIT %s""", (expected_kind, limit),
             ).fetchall()
             return _plain(rows)
 
-    def record_dispatched(self, job_id: str, task_id: str, *, expected_kind: str = "fake") -> bool:
+    def publish_pending(self, job_id: str, publish: Callable[[str], str], *, expected_kind: str = "fake") -> bool:
+        """Serialize the broker send and its receipt with other dispatchers and worker claims."""
+        validate_job_kind(expected_kind)
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT job_id FROM public.content_generation_job
+                   WHERE job_id=%s AND job_kind=%s AND execution_status='queued'
+                   AND generation_started_at IS NULL AND last_dispatched_at IS NULL FOR UPDATE SKIP LOCKED""",
+                (_identity(job_id), expected_kind),
+            ).fetchone()
+            if row is None:
+                return False
+            task_id = _task_id(publish(str(row["job_id"])))
+            if task_id is None:
+                raise ValueError("Publisher must return a task ID")
+            connection.execute(
+                """UPDATE public.content_generation_job SET last_dispatched_at=clock_timestamp(),
+                   dispatch_count=dispatch_count+1,last_task_id=%s,updated_at=clock_timestamp() WHERE job_id=%s""",
+                (task_id, row["job_id"]),
+            )
+            return True
+
+    def requeue_delivery(self, job_id: str, task_id: str, *, expected_kind: str = "fake") -> bool:
+        """Release one confirmed delivery for explicit redelivery if its exact receipt is still current."""
         validate_job_kind(expected_kind)
         with self._connect() as connection:
             return bool(connection.execute(
-                """UPDATE public.content_generation_job SET last_dispatched_at=CURRENT_TIMESTAMP,
-                   dispatch_count=dispatch_count+1,last_task_id=%s,updated_at=CURRENT_TIMESTAMP
-                   WHERE job_id=%s AND job_kind=%s AND execution_status='queued'
-                   AND generation_started_at IS NULL RETURNING job_id""",
-                (_task_id(task_id), _identity(job_id), expected_kind),
+                """UPDATE public.content_generation_job SET last_dispatched_at=NULL,
+                   updated_at=clock_timestamp() WHERE job_id=%s AND job_kind=%s AND execution_status='queued'
+                   AND generation_started_at IS NULL AND last_dispatched_at IS NOT NULL AND last_task_id=%s
+                   RETURNING job_id""",
+                (_identity(job_id), expected_kind, _task_id(task_id)),
             ).fetchone())
 
     def _claim(self, job_id: str, task_id: str | None, lease_seconds: int, *, recovery: bool, expected_kind: str) -> dict | None:
@@ -259,8 +287,11 @@ class JobStore:
     def complete(self, job_id: str, claim_token: str, *, execution_status: str, outcome: str | None = None,
                  producer_status: str | None = None, artifact_path: str | None = None,
                  result_sha256: str | None = None, error_code: str | None = None,
-                 expected_kind: str = "fake") -> bool:
+                 expected_kind: str = "fake", agent_not_launched: bool = False) -> bool:
         validate_job_kind(expected_kind)
+        if agent_not_launched and (expected_kind != "anime_generate" or execution_status != "failed"
+                                   or error_code not in PRELAUNCH_ERRORS or artifact_path or result_sha256):
+            raise ValueError("Unconfirmed pre-launch failure")
         if execution_status not in {"succeeded", "failed", "needs_attention"}:
             raise ValueError("Unsupported completion status")
         if expected_kind == "fake" and outcome not in {None, "ready_for_staging", "held", "skipped"}:
@@ -296,6 +327,8 @@ class JobStore:
             ).fetchone()
             if not row:
                 return False
+            if agent_not_launched and row["current_attempt_id"] != row["generation_attempt_id"]:
+                return False
             if execution_status == "succeeded" and row["generation_started_at"] is None:
                 return False
             if artifact_path is not None and not artifact_path.startswith(f"jobs/{row['job_id']}/attempts/{row['generation_attempt_id']}/"):
@@ -304,16 +337,18 @@ class JobStore:
             completed = connection.execute(
                 """UPDATE public.content_generation_job SET execution_status=%s,outcome=%s,producer_status=%s,
                    artifact_path=%s,result_sha256=%s,error_code=%s,finished_at=CURRENT_TIMESTAMP,
+                   generation_started_at=CASE WHEN %s THEN NULL ELSE generation_started_at END,
                    claim_token=NULL,lease_expires_at=NULL,updated_at=CURRENT_TIMESTAMP
                    WHERE job_id=%s AND lease_expires_at>clock_timestamp() RETURNING job_id""",
-                (*values, row["job_id"]),
+                (*values, agent_not_launched, row["job_id"]),
             ).fetchone()
             if not completed:
                 return False
             connection.execute(
                 """UPDATE public.content_generation_attempt SET execution_status=%s,outcome=%s,producer_status=%s,
-                   artifact_path=%s,result_sha256=%s,error_code=%s,finished_at=CURRENT_TIMESTAMP WHERE attempt_id=%s""",
-                (*values, row["current_attempt_id"]),
+                   artifact_path=%s,result_sha256=%s,error_code=%s,finished_at=CURRENT_TIMESTAMP,
+                   generation_started_at=CASE WHEN %s THEN NULL ELSE generation_started_at END WHERE attempt_id=%s""",
+                (*values, agent_not_launched, row["current_attempt_id"]),
             )
             return True
 
@@ -347,22 +382,32 @@ class JobStore:
         return counts
 
     def retry_preflight(self, job_id: str, *, expected_kind: str) -> bool:
-        """Requeue only a live job whose environment check failed before generation."""
+        """Requeue only a live job with no possibly launched producer in its history."""
         validate_job_kind(expected_kind)
         if expected_kind != "anime_generate":
             return False
         with self._connect() as connection:
             return bool(connection.execute(
-                """UPDATE public.content_generation_job AS job SET execution_status='queued',
+                """WITH legacy_prelaunch AS (
+                       SELECT attempt_id FROM public.content_generation_attempt
+                       WHERE job_id=%(job_id)s AND mode='generation' AND execution_status='needs_attention'
+                         AND generation_started_at IS NOT NULL AND error_code=ANY(%(setup_errors)s)
+                         AND artifact_path IS NULL AND result_sha256 IS NULL
+                   )
+                   UPDATE public.content_generation_job AS job SET execution_status='queued', generation_started_at=NULL,
                    current_attempt_id=NULL, generation_attempt_id=NULL, claim_token=NULL, lease_expires_at=NULL,
                    last_dispatched_at=NULL, last_task_id=NULL, error_code=NULL, finished_at=NULL,
                    updated_at=CURRENT_TIMESTAMP
-                   WHERE job_id=%s AND job_kind='anime_generate' AND execution_status='failed'
-                   AND generation_started_at IS NULL AND artifact_path IS NULL AND result_sha256 IS NULL
-                   AND error_code IN ('invalid_agent_secret','agent_runtime_unavailable')
+                   WHERE job_id=%(job_id)s AND job_kind='anime_generate' AND artifact_path IS NULL AND result_sha256 IS NULL
+                   AND ((execution_status='failed' AND generation_started_at IS NULL AND error_code=ANY(%(errors)s))
+                        OR (execution_status='needs_attention' AND error_code=ANY(%(setup_errors)s)
+                            AND current_attempt_id=generation_attempt_id
+                            AND current_attempt_id IN (SELECT attempt_id FROM legacy_prelaunch)))
                    AND NOT EXISTS (SELECT 1 FROM public.content_generation_attempt AS attempt
-                                   WHERE attempt.job_id=job.job_id AND attempt.generation_started_at IS NOT NULL)
-                   RETURNING job_id""", (_identity(job_id),),
+                                   WHERE attempt.job_id=job.job_id AND attempt.generation_started_at IS NOT NULL
+                                     AND attempt.attempt_id NOT IN (SELECT attempt_id FROM legacy_prelaunch))
+                   RETURNING job_id""", {"job_id": _identity(job_id), "errors": list(PRELAUNCH_ERRORS),
+                                         "setup_errors": list(PRELAUNCH_SETUP_ERRORS)},
             ).fetchone())
 
     def cancel(self, job_id: str, *, expected_kind: str = "fake") -> bool:

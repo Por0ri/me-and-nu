@@ -1,12 +1,14 @@
 """Role-specific probes. Errors never echo connection URLs or credentials."""
 from datetime import datetime, timezone
 import json
-from pathlib import Path
 import socket
 import sys
 from urllib.request import urlopen
 
+from redis import Redis
+
 from menu_worker.app import app, settings
+from menu_worker.config import DISPATCHER_HEARTBEAT
 from menu_worker.tasks import HEARTBEAT_KEY, result_store
 
 
@@ -22,8 +24,14 @@ def check(role: str) -> bool:
         return any(reply.get(name, {}).get("ok") == "pong"
                    for reply in worker_app.control.ping(destination=[name], timeout=3))
     if role in {"job-dispatcher", "anime-dispatcher", "generation-dispatcher"}:
-        stamp = datetime.fromisoformat(Path("/tmp/job-dispatcher.health").read_text())
-        return 0 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= 30
+        try:
+            stamp = DISPATCHER_HEARTBEAT.stat().st_mtime
+        except FileNotFoundError:
+            return False
+        if not 0 <= datetime.now(timezone.utc).timestamp() - stamp <= 30:
+            return False
+        with Redis.from_url(settings.broker_url, socket_timeout=2, socket_connect_timeout=2) as broker:
+            return bool(broker.ping())
     if role == "beat":
         # This is end-to-end freshness: Beat dispatch AND Worker consumption.
         with result_store() as client:

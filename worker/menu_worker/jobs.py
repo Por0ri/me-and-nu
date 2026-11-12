@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -10,6 +9,7 @@ import sys
 import time
 
 from menu_worker.anime_catalog import AnimeInputError
+from menu_worker.config import DISPATCHER_HEARTBEAT
 from menu_worker.job_contract import JobInputError
 from menu_worker.job_store import JobConflict, JobStore
 from menu_worker.real_generation import RealGenerationError
@@ -44,9 +44,8 @@ def dispatch_once(store, publish=None, *, expected_kind="fake") -> dict:
     report = {"published": 0, "failed": 0, "recovered": recovered}
     for job in store.list_pending(expected_kind=expected_kind):
         try:
-            task_id = publish(job["job_id"])
-            store.record_dispatched(job["job_id"], task_id, expected_kind=expected_kind)
-            report["published"] += 1
+            if store.publish_pending(job["job_id"], publish, expected_kind=expected_kind):
+                report["published"] += 1
         except Exception:
             # The committed queued row is the retry source; publication is not completion.
             report["failed"] += 1
@@ -85,6 +84,9 @@ def main(argv=None) -> int:
     export.add_argument("--output", type=Path, required=True, help="New bundle directory under an existing parent")
     for name in ("show", "cancel", "recover", "retry-preflight"):
         commands.add_parser(name).add_argument("--job-id", required=True)
+    requeue = commands.add_parser("requeue-delivery", help="Replace a confirmed, lost delivery")
+    requeue.add_argument("--job-id", required=True)
+    requeue.add_argument("--task-id", required=True, help="last_task_id observed on the queued job")
     dispatch = commands.add_parser("dispatch")
     dispatch.add_argument("--loop", action="store_true")
     args = parser.parse_args(argv)
@@ -123,17 +125,25 @@ def main(argv=None) -> int:
             result = {"job_id": args.job_id, "cancelled": store.cancel(args.job_id, expected_kind=role)}
         elif args.command == "retry-preflight":
             result = {"job_id": args.job_id, "requeued": store.retry_preflight(args.job_id, expected_kind=role)}
+        elif args.command == "requeue-delivery":
+            result = {"job_id": args.job_id,
+                      "requeued": store.requeue_delivery(args.job_id, args.task_id, expected_kind=role)}
         elif args.command == "recover":
             from menu_worker.job_runner import run_job
             store.recover_expired(expected_kind=role)
             result = run_job(store, Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"]), args.job_id,
                              recover=True, expected_kind=role)
         else:
+            if args.loop:
+                DISPATCHER_HEARTBEAT.unlink(missing_ok=True)
             while True:
                 result = dispatch_once(store, expected_kind=role)
                 if not args.loop:
                     break
-                Path("/tmp/job-dispatcher.health").write_text(datetime.now(timezone.utc).isoformat())
+                if result["failed"]:
+                    DISPATCHER_HEARTBEAT.unlink(missing_ok=True)
+                else:
+                    DISPATCHER_HEARTBEAT.touch()
                 if result["published"] or result["failed"]:
                     print(json.dumps(result, default=str), flush=True)
                 time.sleep(2)
