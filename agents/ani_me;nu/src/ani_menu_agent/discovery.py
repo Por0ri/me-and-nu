@@ -170,11 +170,16 @@ def _listing_card_published_at(anchor) -> str | None:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).date().isoformat()
     except ValueError:
-        match = re.search(r"(20\d{2})[./年-](\d{1,2})[./月-](\d{1,2})", value)
+        match = re.search(
+            r"(20\d{2})\s*\u5e74\s*(\d{1,2})\s*\u6708\s*(\d{1,2})\s*\u65e5?"
+            r"|(20\d{2})[./-](\d{1,2})[./-](\d{1,2})",
+            value,
+        )
         if match:
+            parts = match.groups()[:3] if match.group(1) else match.groups()[3:]
             try:
-                return datetime(*(int(part) for part in match.groups())).date().isoformat()
-            except ValueError:
+                return datetime(*(int(part) for part in parts)).date().isoformat()
+            except (TypeError, ValueError):
                 return None
         for date_format in ("%B %d, %Y", "%b %d, %Y"):
             try:
@@ -182,6 +187,20 @@ def _listing_card_published_at(anchor) -> str | None:
             except ValueError:
                 continue
         return None
+
+
+def _publication_order(value: str | None) -> float:
+    """Return a newest-first sort key; undated candidates follow dated ones."""
+    if not value:
+        return float("inf")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return float("inf")
+    return -parsed.timestamp()
 
 
 def _listing_anchor_title(anchor, source: Source) -> str:
@@ -235,7 +254,8 @@ def _listing_anchor_title(anchor, source: Source) -> str:
 
     if source.id == "src_www_toei_anim_co_jp":
         title = re.sub(
-            r"^\s*20\d{2}[./年-]\d{1,2}[./月-]\d{1,2}日?\s*(?:ニュース|NEWS)?\s*",
+            r"^\s*20\d{2}(?:\u5e74\d{1,2}\u6708\d{1,2}\u65e5?|[./-]\d{1,2}[./-]\d{1,2})\s*"
+            r"(?:\u30cb\u30e5\u30fc\u30b9|NEWS)?\s*",
             "",
             title,
             flags=re.IGNORECASE,
@@ -1526,8 +1546,19 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         }:
             raw_title = " ".join(anchor.get_text(" ", strip=True).split())
             date_match = re.match(
-                r"\s*(20\d{2})[./年-](\d{1,2})[./月-](\d{1,2})日?", raw_title
+                r"\s*(?:(20\d{2})\s*\u5e74\s*(\d{1,2})\s*\u6708\s*(\d{1,2})\s*\u65e5?"
+                r"|(20\d{2})[./-](\d{1,2})[./-](\d{1,2}))",
+                raw_title,
             )
+            if date_match:
+                try:
+                    parts = date_match.groups()[:3] if date_match.group(1) else date_match.groups()[3:]
+                    published_at = datetime(*(int(part) for part in parts)).date().isoformat()
+                except (TypeError, ValueError):
+                    pass
+        if source.id == "eeo_events" and not published_at:
+            # EEO archive URLs encode publication date as /media/YYYY/MM/DD/<id>.
+            date_match = re.fullmatch(r"/media/(20\d{2})/(\d{2})/(\d{2})/\d+", path)
             if date_match:
                 try:
                     published_at = datetime(
@@ -1535,6 +1566,7 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
                     ).date().isoformat()
                 except ValueError:
                     pass
+
         seen.add(normalized_url)
         candidate_types = [item.value for item in source.content_types]
         if source.id == "src_www_toei_anim_co_jp":
@@ -1556,9 +1588,11 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
                 published_at=published_at,
             )
         )
-        if len(candidates) >= limit:
-            return candidates
-    return candidates
+    # Listings are not always rendered in publication order. Sort the page's
+    # candidates before applying its batch limit so a newer item lower in the
+    # HTML does not lose to an older item near the top.
+    candidates.sort(key=lambda item: _publication_order(item.published_at))
+    return candidates[:limit]
 
 
 def _respect_interval(url: str, seconds: float) -> None:
@@ -1584,81 +1618,20 @@ def _get_with_backoff(client: httpx.Client, url: str, min_interval: float) -> ht
 
 def rank_candidates(
     items: list[DiscoveryItem],
-    region_policy: str = "kr_first",
+    region_policy: str = "mixed",
 ) -> list[DiscoveryItem]:
-    priorities = {
-        "kr_first": {"KR": 0, "JP": 1, "global": 2},
-        "mixed": {"KR": 0, "JP": 0, "global": 1},
-        "jp_first": {"JP": 0, "KR": 1, "global": 2},
-    }
-    region_order = priorities.get(region_policy, priorities["kr_first"])
+    """Rank all leads newest-first, regardless of region or source.
 
-    def publication_order(value: str | None) -> float:
-        if not value:
-            return float("inf")
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            try:
-                parsed = parsedate_to_datetime(value)
-            except (TypeError, ValueError, OverflowError):
-                return float("inf")
-        return -parsed.timestamp()
-
-    ordered = sorted(
-        items,
-        key=lambda item: (
-            region_order.get(item.region, 3),
-            item.source_id != "anilist",
-            publication_order(item.published_at),
-        ),
-    )
-    # Interleave both publishers and explicitly resolvable works. This is a
-    # soft ordering preference, not a per-work quota: if only one work has
-    # usable current candidates, all of its candidates remain available.
-    registry = {source.id: source for source in load_source_registry().sources}
-
-    def work_key(item: DiscoveryItem) -> str:
-        matched = resolve_title_work_ids(item.title)
-        if not matched:
-            source = registry.get(item.source_id)
-            if source:
-                for source_title in (source.work_title_ko, source.work_title_original):
-                    if source_title:
-                        matched = resolve_title_work_ids(source_title)
-                        if matched:
-                            break
-        return ":".join(str(value) for value in matched) if matched else f"unresolved:{item.id}"
-
-    by_source: dict[str, list[DiscoveryItem]] = {}
-    for item in ordered:
-        by_source.setdefault(item.source_id, []).append(item)
-
-    for source_id, source_items in by_source.items():
-        by_work: dict[str, list[DiscoveryItem]] = {}
-        for item in source_items:
-            by_work.setdefault(work_key(item), []).append(item)
-        interleaved: list[DiscoveryItem] = []
-        while by_work:
-            for work_id in list(by_work):
-                interleaved.append(by_work[work_id].pop(0))
-                if not by_work[work_id]:
-                    del by_work[work_id]
-        by_source[source_id] = interleaved
-
-    ranked: list[DiscoveryItem] = []
-    while by_source:
-        for source_id in list(by_source):
-            ranked.append(by_source[source_id].pop(0))
-            if not by_source[source_id]:
-                del by_source[source_id]
-    return ranked
+    ``region_policy`` remains accepted for compatibility, but is ignored.
+    """
+    del region_policy
+    return sorted(items, key=lambda item: _publication_order(item.published_at))
 
 
 def collect_candidates(
     limit: int = 20,
     timeout: float = 15.0,
-    region_policy: str = "kr_first",
+    region_policy: str = "mixed",
     content_type: str | None = None,
     work_title: str | None = None,
     source_ids: set[str] | None = None,
@@ -1666,11 +1639,18 @@ def collect_candidates(
     source_report: list[dict[str, object]] | None = None,
     birthday_catalog: list[DiscoveryItem] | None = None,
     exhaustive_listing: bool = False,
+    known_candidate_ids_by_source: dict[str, set[str]] | None = None,
 ) -> tuple[list[DiscoveryItem], list[str]]:
     """활성 출처 중 선택 유형을 지원하는 곳에서 미검증 후보만 수집합니다."""
     errors: list[str] = []
     items: list[DiscoveryItem] = []
     active = _collectable_sources_for_type(content_type, source_ids)
+    known_candidate_ids_by_source = known_candidate_ids_by_source or {}
+    latest_first_sources = {
+        "eeo_events",
+        "daewonmedia_kr",
+        "src_www_toei_anim_co_jp",
+    }
     headers = {"User-Agent": "me-nu-content-agent/0.3 (https://github.com/Por0ri/me-and-nu)"}
     robots_cache = {}
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
@@ -1682,6 +1662,7 @@ def collect_candidates(
             page_candidate_counts: list[int] = []
             duplicate_candidate_count = 0
             listing_stop_reason = "not_applicable"
+            observed_listing_items: list[DiscoveryItem] = []
             try:
                 if rss_source.collection in {"rss", "youtube_rss"}:
                     if rss_source.collection == "youtube_rss" and rss_source.feed_url is None:
@@ -1780,17 +1761,36 @@ def collect_candidates(
                             )
                             pages_scanned += 1
                             page_candidate_counts.append(len(page_items))
+                            observed_listing_items.extend(page_items)
                             # Discovery follows the source archive regardless of article age.
                             # Time validity is checked only after source facts are captured.
                             page_new_count = 0
+                            reached_known_candidate = False
+                            known_ids = known_candidate_ids_by_source.get(
+                                rss_source.id, set()
+                            )
                             for item in page_items:
                                 candidate_url = str(item.url)
+                                if (
+                                    rss_source.id in latest_first_sources
+                                    and (item.id in known_ids or candidate_url in known_ids)
+                                ):
+                                    reached_known_candidate = True
+                                    break
                                 if candidate_url in seen_source_urls:
                                     duplicate_candidate_count += 1
                                     continue
                                 seen_source_urls.add(candidate_url)
                                 items.append(item)
                                 page_new_count += 1
+                            if reached_known_candidate:
+                                listing_stop_reason = "known_candidate_overlap"
+                                break
+                            if rss_source.id in latest_first_sources and not known_ids:
+                                # Establish the cursor from the newest page on the
+                                # first pass; later passes stop at its known overlap.
+                                listing_stop_reason = "latest_first_initial_page"
+                                break
                             if page_new_count == 0:
                                 listing_stop_reason = "no_new_candidates"
                                 break
@@ -1952,6 +1952,18 @@ def collect_candidates(
                 if source_report is not None:
                     source_errors = errors[source_error_count:]
                     source_candidate_count = len(items) - source_item_count
+                    source_publication_dates = [
+                        item.published_at
+                        for item in (
+                            [*observed_listing_items, *items[source_item_count:]]
+                        )
+                        if item.published_at
+                    ]
+                    latest_published_at = (
+                        min(source_publication_dates, key=_publication_order)
+                        if source_publication_dates
+                        else None
+                    )
                     source_report.append(
                         {
                             "source_id": rss_source.id,
@@ -1968,6 +1980,7 @@ def collect_candidates(
                             ),
                             "attempted": attempted,
                             "candidate_count": source_candidate_count,
+                            "latest_published_at": latest_published_at,
                             "pages_scanned": pages_scanned,
                             "page_candidate_counts": page_candidate_counts,
                             "duplicate_candidate_count": duplicate_candidate_count,

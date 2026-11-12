@@ -5,6 +5,7 @@ import { API_UNAUTHORIZED_EVENT } from "@/lib/api";
 import { orderedHomeSlides, type HomeSlideModel } from "@/lib/pivot/home";
 import homeStyles from "./home.module.css";
 import styles from "./content-carousel.module.css";
+import { HomeEntryImage } from "./home-entry-image";
 
 type ImageState = { status: "loading" } | { status: "ready"; url: string } | { status: "error"; message: string };
 
@@ -93,11 +94,12 @@ function SlideImage({ slide, enabled }: { slide: HomeSlideModel; enabled: boolea
   return slide.image && !failed
     ? <img src={slide.image.src} alt={slide.image.alt} className={styles.image} width={1308} height={1632}
         loading="lazy" draggable={false} onError={() => setFailed(true)} />
-    : <div className={styles.imageState} role="img" aria-label="이미지 준비 중">이미지 준비 중</div>;
+    : <div className={styles.imageState} role="img" data-home-image-state={failed ? "error" : "missing"} aria-label="이미지 준비 중">이미지 준비 중</div>;
 }
 
-function SlideFigure({ slide, enabled, focusable, home = false, onTextVisibilityChange }: {
+function SlideFigure({ slide, enabled, focusable, home = false, onTextVisibilityChange, onFirstImageReady }: {
   slide: HomeSlideModel; enabled: boolean; focusable: boolean; home?: boolean; onTextVisibilityChange?: (visible: boolean) => void;
+  onFirstImageReady?: () => void;
 }) {
   const figure = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -139,7 +141,9 @@ function SlideFigure({ slide, enabled, focusable, home = false, onTextVisibility
     maxHeight: `max(0px, calc(100% - max(56px, ${box.y * 100}%) - 12px))`,
   } : undefined;
   return <figure ref={figure} className={styles.stage}>
-    <SlideImage key={slide.image?.src ?? "missing"} slide={slide} enabled={enabled} />
+    <HomeEntryImage onReady={onFirstImageReady}>
+      <SlideImage key={slide.image?.src ?? "missing"} slide={slide} enabled={enabled} />
+    </HomeEntryImage>
     {home && overlay ? <div className={styles.previewScrim} aria-hidden="true" /> : null}
     {overlay ? <figcaption className={styles.overlay} style={region} tabIndex={!home && focusable ? 0 : -1}
       aria-label={home ? "카드 미리보기" : "카드 본문"} data-slide-overlay="" data-carousel-overlay="">
@@ -160,9 +164,10 @@ export function ContentCover({ slides, title, onSlideChange, onCoverTextVisibili
   </div> : null;
 }
 
-export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home", onSlideChange, onCoverTextVisibilityChange }: {
+export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home", onSlideChange, onCoverTextVisibilityChange, onFirstImageReady }: {
   slides: readonly HomeSlideModel[]; title: string; labelledBy?: string; scope?: "home" | "detail"; onSlideChange?: (index: number) => void;
   onCoverTextVisibilityChange?: (visible: boolean) => void;
+  onFirstImageReady?: () => void;
 }) {
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
@@ -245,6 +250,7 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
           aria-label={`${index + 1} / ${slides.length}`} data-home-slide={scope === "home" ? slide.id : undefined}
           data-content-slide={slide.page ?? index + 1} data-carousel-slide={slide.page ?? index + 1} aria-hidden={current !== index} inert={current !== index}>
           <SlideFigure slide={slide} enabled={Math.abs(current - index) <= 1} focusable={current === index} home={scope === "home"}
+            onFirstImageReady={index === 0 ? onFirstImageReady : undefined}
             onTextVisibilityChange={scope === "detail" && index === 0 ? onCoverTextVisibilityChange : undefined} />
         </div>)}
     </div>

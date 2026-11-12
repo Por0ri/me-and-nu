@@ -203,4 +203,13 @@ test('screen exposes labeled single-select inputs, validation, errors and truthf
   assert.match(render({ ...filled, detail: '가'.repeat(501) }), /aria-invalid="true"/);
   assert.match(render(filled, true), /Demo에서는 실제 문의를 접수하지 않아요/);
   assert.match(render(filled, true), /type="submit" disabled/);
+  for (const status of ['editing', 'submitting', 'error', 'unavailable']) {
+    assert.doesNotMatch(render({ ...filled, status }), /<dialog/);
+  }
+  const received = { ...filled, status: 'received', message: '문의가 접수되었어요.' };
+  const receipt = render(received);
+  assert.match(receipt, /<dialog[^>]*aria-modal="true"[^>]*aria-labelledby="inquiry-received-title"/);
+  assert.match(receipt, /문의 접수 완료/); assert.match(receipt, /문의가 정상적으로 접수되었어요!/);
+  assert.match(receipt, /autoFocus=""/i); assert.doesNotMatch(receipt, /문의가 접수되었어요\./);
+  assert.doesNotMatch(render(received, true), /<dialog|문의 접수 완료/);
 });

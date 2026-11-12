@@ -24,6 +24,7 @@ class PipelineJobStatus(StrEnum):
     LEASED = "leased"
     RETRY = "retry"
     COMPLETED = "completed"
+    RETURNED = "returned"
     FAILED = "failed"
     CANCELLED = "cancelled"
 

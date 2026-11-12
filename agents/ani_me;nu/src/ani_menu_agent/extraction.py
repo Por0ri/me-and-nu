@@ -301,7 +301,11 @@ def _infer_event_location_from_facts(
     countries: set[str] = set()
     source_folded = source_text.casefold()
     for fact in facts:
-        if not fact.verified or fact.fact_type.strip().lower() not in {
+        source_structured_event = (
+            fact.details.get("evidence_kind") == "source_structured_event"
+            and bool(fact.details.get("source_quote"))
+        )
+        if (not fact.verified and not source_structured_event) or fact.fact_type.strip().lower() not in {
             "event_location",
             "event_venue",
             "venue",

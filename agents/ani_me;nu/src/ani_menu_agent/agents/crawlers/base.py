@@ -47,6 +47,7 @@ class SourceCrawlResult:
     status: str
     attempted: bool
     candidate_count: int = 0
+    latest_published_at: str | None = None
     pages_scanned: int = 0
     page_candidate_counts: list[int] | None = None
     duplicate_candidate_count: int = 0
@@ -202,6 +203,20 @@ class TypeCrawlerAgent:
         source_report: list[dict] = []
         birthday_catalog: list[DiscoveryItem] = []
         try:
+            known_candidate_ids_by_source: dict[str, set[str]] = {}
+            for stored in AgentRepository().list_discovery_candidates():
+                source_id = str(stored.get("source_id") or "")
+                if source_id not in {
+                    "eeo_events",
+                    "daewonmedia_kr",
+                    "src_www_toei_anim_co_jp",
+                }:
+                    continue
+                known_candidate_ids_by_source.setdefault(source_id, set()).update(
+                    value
+                    for value in (stored.get("id"), stored.get("url"))
+                    if value
+                )
             items, errors = collect_candidates(
                 limit=state["limit"],
                 timeout=state["timeout"],
@@ -213,6 +228,7 @@ class TypeCrawlerAgent:
                 birthday_catalog=birthday_catalog,
                 source_report=source_report,
                 exhaustive_listing=state.get("exhaustive_listing", True),
+                known_candidate_ids_by_source=known_candidate_ids_by_source,
             )
         except (httpx.HTTPError, ValueError) as exc:
             return {
@@ -470,7 +486,7 @@ class TypeCrawlerAgent:
         work_title: str | None = None,
         limit: int = 20,
         timeout: float = 15.0,
-        region_policy: str = "kr_first",
+        region_policy: str = "mixed",
         repository: AgentRepository | None = None,
         capture_images: bool = True,
         unfiltered_sources: set[str] | None = None,

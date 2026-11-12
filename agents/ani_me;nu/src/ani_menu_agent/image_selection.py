@@ -46,6 +46,7 @@ def _normalized_source_url(url: str) -> str:
     path = re.sub(r"_(?:on|off)(?=\.[^.]+$)", "", path, flags=re.IGNORECASE)
     rendition_params = {
         "auto",
+        "bg-color",
         "fit",
         "format",
         "h",
@@ -87,7 +88,14 @@ def image_belongs_to_package_sources(
 ) -> bool:
     """Accept source-page images or provenance-checked official art for the same work."""
     image_page = _source_page_key(str(image.source_url))
+    image_url_parts = urlsplit(str(image.url or ""))
+    image_host = (image_url_parts.hostname or "").lower()
     same_source_page = any(_source_page_key(str(source.url)) == image_page for source in sources)
+    if package is not None and package.content_type == "event" and image_host == "recal.kr":
+        # RE:CAL event-page graphics are schedule/listing visuals. Keep them as
+        # source evidence, but use artwork for the matched anime on event cards.
+        # This avoids date/venue tables becoming the carousel's main image.
+        return False
     if (
         package is not None
         and image.menu_work_ids

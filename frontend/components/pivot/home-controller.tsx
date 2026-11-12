@@ -1,20 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createHomeRequestController, type HomeCardModel, type HomeDataSource, type HomeDetailHandler, type HomeState, type HomeWorkSuggestion } from "@/lib/pivot/home";
 import type { BookmarkControls } from "@/lib/pivot/bookmark-service";
 import type { RecentSearch } from "@/lib/pivot/recent-search";
 import { PivotHomeScreen, type HomeSearchView, type SearchNotice } from "./home-screen";
 import { scrollHomeTo } from "./home-scroll";
+import { FeedLoadingScreen } from "./feed-loading-screen";
+import styles from "./home.module.css";
 
 const loading: HomeState = { status: "loading" };
 // Same pause as onboarding Q1 before asking for works while the user types.
 const SUGGEST_DELAY_MS = 250;
 
-export function HomeController({ source, onRestart, onViewDetail, onReady, restoreQuery, onMy, onSaved, onNotifications, bookmarks }: {
+export function HomeController({ source, onRestart, onViewDetail, onReady, restoreQuery, onMy, onSaved, onNotifications, bookmarks, skipEntryLoading = false }: {
   source: HomeDataSource; onRestart?: () => void; onViewDetail?: HomeDetailHandler; onReady?: () => void; restoreQuery?: string;
   onMy?: () => void;
   onSaved?: () => void; onNotifications?: () => void; bookmarks?: BookmarkControls;
+  skipEntryLoading?: boolean;
 }) {
   const [request, setRequest] = useState<{ source: HomeDataSource; state: HomeState }>({ source, state: loading });
   const [attempt, setAttempt] = useState(0);
@@ -37,8 +40,13 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
   useEffect(() => { setRecent({ source, entries: source.recent?.list() ?? [] }); }, [source]);
   // Never flash the previous source's data before the new effect starts.
   const state = request.source === source ? request.state : loading;
+  const [imageReady, setImageReady] = useState<HomeState | null>(null);
+  const firstImageReady = useCallback(() => setImageReady(state), [state]);
+  const needsImage = state.status === "ready" && !!state.home.cards[0]?.slides.length;
+  const preparing = source.kind === "service" && !skipEntryLoading &&
+    (state.status === "loading" || (needsImage && imageReady !== state));
   useEffect(() => { if (restoreQuery !== undefined) setQuery(restoreQuery); }, [restoreQuery]);
-  useEffect(() => { if (state.status === "ready") onReady?.(); }, [state.status, onReady]);
+  useEffect(() => { if (!preparing && (state.status === "ready" || state.status === "empty")) onReady?.(); }, [state.status, preparing, onReady]);
 
   const typed = query.trim();
   useEffect(() => {
@@ -96,8 +104,14 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
     onRemoveRecent: (entry) => { if (store) setRecent({ source, entries: store.remove(entry) }); },
     onClearRecent: () => { if (store) setRecent({ source, entries: store.clear() }); },
   } : undefined;
-  return <PivotHomeScreen state={state} demo={source.kind === "demo"} query={query} onQueryChange={setQuery}
-    onSearch={source.search ? (value) => void run({ label: value }) : undefined} search={search}
-    searchNotice={searchNotice} onSearchNoticeEnd={() => setSearchNotice(null)}
-    onRetry={() => setAttempt((value) => value + 1)} onRestart={onRestart} onViewDetail={onViewDetail} onMy={onMy} onSaved={onSaved} onNotifications={onNotifications} bookmarks={bookmarks} />;
+  return <>
+    <div inert={preparing} aria-hidden={preparing || undefined}>
+      <PivotHomeScreen state={state} demo={source.kind === "demo"} query={query} onQueryChange={setQuery} preparing={preparing}
+        onFirstImageReady={source.kind === "service" && !skipEntryLoading ? firstImageReady : undefined}
+        onSearch={source.search ? (value) => void run({ label: value }) : undefined} search={search}
+        searchNotice={searchNotice} onSearchNoticeEnd={() => setSearchNotice(null)}
+        onRetry={() => setAttempt((value) => value + 1)} onRestart={onRestart} onViewDetail={onViewDetail} onMy={onMy} onSaved={onSaved} onNotifications={onNotifications} bookmarks={bookmarks} />
+    </div>
+    {preparing ? <div className={styles.entryLoading} data-home-entry-loading=""><FeedLoadingScreen /></div> : null}
+  </>;
 }

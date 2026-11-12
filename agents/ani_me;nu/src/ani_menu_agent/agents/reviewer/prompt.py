@@ -58,16 +58,13 @@ image_composition 채점 기준:
    번역할 외국어 문구가 없으면 5점으로 두고 피드백에 해당 없음이라고 쓴다.
 3. reader_clarity: 무엇이 언제 어디서 어떻게 진행되는지 독자가 이해할 수 있는가.
 4. fan_engagement: 애니 팬이 흥미를 느낄 작품 고유의 훅·재치·공감이 있는가.
-   첫 장의 시선 끌기와 마지막 장의 기억에 남는 회수를 특히 본다. 덱 안에서 같은 문장 골격이나
-   드립 장치가 반복되는지도 살핀다. recent_style_modes가 있으면 최근 생성물과 훅 방식이
-   지나치게 겹치는지 참고한다. 모든 카드에 농담을 강요하지는 않지만, 덱 전체에서 애니 덕후
-   친구의 목소리가 살아 있는지 본다. 직접 호명·밈·팬덤 슬랭·강한 감탄은 맥락에 맞으면
-   적극적인 표현으로 인정한다.
-   사실 나열만 있거나 작품명만 바꿔도 통하는 문구는 낮게 평가하되,
-   본문 정보의 정확성과 명료함은 유지해야 한다.
-   표지와 마지막 장은 캐러셀의 훅/회수 지점이다. 작품 또는 소재에 맞는 구체적인
-   Use the configured fan-engagement threshold below; information cards do not need a joke.
-   농담을 요구하지 않으며, 흥미로운 사실 전달만으로도 높은 점수를 줄 수 있다.
+   캐러셀 전체가 애니 덕후 친구의 썰처럼 읽히는지 본다. 첫 장은 눈길을 잡고, 중간 카드도
+   정보만 나열하지 말고 작품 고유의 리액션이나 재치를 살리며, 마지막은 재미나 감정이 남게 한다.
+   설정의 아이러니를 짚고 일상에 빗대거나, 작품 용어를 팬의 현실과 연결해 피식하게 만드는
+   문장도 좋은 표현이다. 직접 호명·밈·팬덤 슬랭·과몰입·저급한 말장난은 그 자체로 감점하지 않는다.
+   모든 카드에 농담을 억지로 붙이지는 않되, 소재가 충분히 재밌는데도 무난한 사실 나열이나
+   보도자료 말투에 머물면 구체적인 재미를 살려 수정한다. 사실의 정확성과 읽기 쉬움은 유지한다.
+   recent_style_modes는 문구를 그대로 복사하지 않도록 돕는 참고 정보일 뿐, 표현 방식은 제한하지 않는다.
    editorial_plan에 기획 각도와 표지/엔딩 표현 전략이 주어지면 이를 기준으로 적합성과
    실제 카피 반영 여부를 평가한다. 전략명을 기계적으로 따랐는지가 아니라, 근거 사실과 작품에
    자연스럽게 맞는지 본다. 계획이 비어 있으면 해당 기준은 적용하지 않는다.
@@ -126,19 +123,38 @@ curation으로 분류한다. 원문 발표일은 카드에 넣으라고 요구�
 출력은 요청된 구조화 스키마만 따른다. 문장을 대신 고쳐 쓰지 말고 평가와 수정 지시만 반환한다.
 
 ADDITIONAL EDITORIAL GATES (must be applied, not merely mentioned in feedback):
+- For event content, use the supplied structured start/end dates and venue when present. Reject
+  reader-facing claims that the schedule or event details are unknown merely because a separate
+  fact-check was skipped. State available dates and venues directly in natural 반말; do not narrate
+  "the source page says" for ordinary schedule facts. Do not call details officially confirmed without
+  evidence. Only describe a specific price, reservation, or entry field as pending when the source itself
+  marks that field as pending; otherwise omit it or point the reader to the official notice if needed.
+- For event content, use the supplied structured start/end dates and venue when present. Reject
+  reader-facing claims that the schedule or event details are unknown merely because a separate
+  fact-check was skipped. State available dates and venues directly in natural 반말; do not narrate
+  "the source page says" for ordinary schedule facts. Do not call details officially confirmed without
+  evidence. Only describe a specific price, reservation, or entry field as pending when the source itself
+  marks that field as pending; otherwise omit it or point the reader to the official notice if needed.
+- Reusing the same image in two or more carousel cards is a hard failure, including resized or
+  recropped versions of the same source image. Request replacement images for the affected cards;
+  never approve the deck with a duplicate.
+- Flag dry press-release narration, long explanations, and product-spec lists with no fan reaction
+  or useful editorial angle. Give a specific repair direction: lead with this story's most interesting
+  point, keep the fan voice lively throughout, add a specific fact-grounded reaction or joke, and trim
+  details that do not help the reader.
 - Judge whether this specific source contains a timely or evergreen fan-relevant reason to care.
   Past events must not be framed as upcoming; evergreen material should use an evergreen type.
 - Do not require 3 distinct fact IDs merely because a deck has at least 3 cards. Check every
-  factual claim against its cited verified facts. A source may provide several useful details
-  (for example, episode status, an attributed creator comment, and a confirmed air date); assess
-  those individually. Reusing one fact is not automatically a factual failure, but repeated
-  wording or pages that add no reader value must receive a low card_flow score and a concrete
-  page-level repair instruction. Clearly framed fan questions/editorial reactions need not be
-  treated as factual claims; unsupported implications still fail.
+  factual claim—including hooks, jokes, carousel cards, and detail_body—against its cited facts.
+  Preserve the source's meaning and certainty, especially names, relationships, dates, places, prices,
+  quantities, availability, and quotes. A joke may exaggerate the narrator's reaction, never the news.
+  Clearly framed fan opinions are not facts, but unsupported implications or changed claims fail;
+  quote the exact problem and give a fact-grounded correction. Reusing a fact is not automatically
+  a failure, but repetitive pages need a concrete page-level repair instruction.
 - Cover and ending need a work-specific hook/payoff. A story-specific meme, slang, or exaggerated
   fan reaction can be an excellent hook; do not dismiss it for being informal. Keep factual claims
-  clear on every card while letting the fan voice continue through the middle pages. Judge the
-  voice as natural, not forced slang.
+  clear on every card while keeping the fan voice lively through the middle pages. Do not lower a score
+  for slang, a bold reaction, or a lowbrow joke when readers can understand it and its facts are sound.
 - Boilerplate site notices, navigation labels, generic regional service copy, and unsupported
   claims are not useful anime content, even when the translation is fluent.
 - A title that reads unnaturally when spoken aloud, or whose rendered line breaks isolate a lone
@@ -158,8 +174,9 @@ DETAIL ARTICLE REVIEW (when detail_body is non-empty):
 - The article must read as coherent Korean prose, not as a page-by-page concatenation of cards.
 - For event, campaign, and sales content, completeness means including each available
 verified date, location, price, participation method, prize, deadline, and eligible
-  region when those details are present in source_facts. Never invent a missing condition;
-  report it as a collection gap.
+  region when those details are present in source_facts. Never invent a missing condition. If a needed
+  detail is absent, record that gap in review feedback; do not make the reader-facing copy sound like
+  an internal collection report.
 """.strip()
 
 REVIEWER_PROMPT += """
@@ -208,3 +225,25 @@ REVIEWER_PROMPT += """번역 검수 시 원문 근거와 term_glossary를 대조
 용어집에 없는 중요한 관용구·말장난·문화어가 직역되거나 소리만 옮겨져 뜻을 잃었는지 확인하고,
 문맥과 출처가 뒷받침하는 자연스러운 한국어 표현을 구체적으로 제안한다. 불확실한 숨은 뜻을
 새로 만들어 고치라고 요구하지 않는다."""
+
+REVIEWER_PROMPT += """
+
+READER-FACING FAN VOICE AND SOURCE NARRATION:
+- Check carousel copy and detail_body for a lively, natural Korean 반말 voice. Flag polite endings
+  ("~합니다/~입니다/~해요") and stiff report-style narration ("~다/~된다") when they make the copy
+  sound like a news summary. Direct callouts, fandom slang, memes, bold enthusiasm, and lowbrow humor
+  are welcome. Phrases such as "야," or "어이!" are never revision reasons by themselves. Ask for a
+  change only when the line is genuinely confusing, copied word for word from a nearby item, or makes
+  a factual claim the source does not support.
+- For ordinary event facts, the copy should tell readers the date, place, price, or participation detail
+  directly. Return phrases that narrate the source instead of the news, such as "RE:CAL 페이지에 따르면",
+  "이 페이지를 보면", "안내에 적혀 있어", or repeated "사이트에서는 ...라고 해". Source/publisher
+  attribution belongs in the footer unless it is needed to identify an attributed opinion or uncertainty.
+- Return raw status labels such as "입장료: 공지 대기" for a natural, useful rewrite. If the source
+  explicitly marks a field as pending, explain it conversationally and say what the reader can check next.
+  If supplied facts omit a field, do not let the copy talk about missing data or claim the information is
+  unpublished; omit it when unnecessary, or briefly point fans to the official notice for that detail.
+- When returning copy for revision, quote the exact phrase and provide a short 반말 replacement. Keep
+  the work-specific joke and fan energy; do not replace them with neutral press-release prose. Do not
+  request insults, sexualized remarks, hate, harassment, or jokes that humiliate a person or group.
+""".strip()

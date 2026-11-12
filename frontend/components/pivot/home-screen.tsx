@@ -7,6 +7,7 @@ import { demoBookmarkNotice } from "@/lib/pivot/saved";
 import { dismissActionNotice } from "@/lib/pivot/action-notice";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { ContentCarousel } from "./content-carousel";
+import { HomeEntryImage } from "./home-entry-image";
 import { scrollHomeTo } from "./home-scroll";
 import styles from "./home.module.css";
 import { HomeAIButton } from "./home-ai-button";
@@ -172,12 +173,13 @@ function HomeSlideImage({ image }: { image: HomeSlideModel["image"] }) {
   return image?.src && !failed
     ? <img className={styles.cardImage} src={image.src} alt={image.alt} loading="lazy" draggable={false}
         width={327} height={408} onError={() => setFailed(true)} />
-    : <div className={styles.imagePlaceholder} role="img" aria-label="이미지 준비 중">이미지 준비 중</div>;
+    : <div className={styles.imagePlaceholder} role="img" data-home-image-state={failed ? "error" : "missing"} aria-label="이미지 준비 중">이미지 준비 중</div>;
 }
 
-export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice, impressions = true }: {
+export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice, impressions = true, onFirstImageReady }: {
   card: HomeCardModel; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: BookmarkControls;
   notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void; impressions?: boolean;
+  onFirstImageReady?: () => void;
 }) {
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
@@ -246,7 +248,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
       {demo ? <p className={styles.exampleLabel}>시연용 콘텐츠</p> : null}
       <h3 id={`${id}-title`}>{card.title}</h3>
     </div>
-    {serviceCarousel ? <ContentCarousel key={card.id} slides={slides} title={card.title} labelledBy={`${id}-title`} scope="home" onSlideChange={recordSlide} /> : slides.length ? <>
+    {serviceCarousel ? <ContentCarousel key={card.id} slides={slides} title={card.title} labelledBy={`${id}-title`} scope="home" onSlideChange={recordSlide} onFirstImageReady={onFirstImageReady} /> : slides.length ? <>
       <div className={styles.carousel} role="region" aria-roledescription="캐러셀" aria-labelledby={`${id}-title`}>
         <div id={`${id}-track`} ref={track} className={styles.slideTrack} tabIndex={0} data-home-track=""
           aria-label="좌우로 슬라이드 탐색" aria-describedby={`${id}-help`}
@@ -264,7 +266,9 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
           {slides.map((slide, index) => <div key={slide.id} className={styles.slide} role="group"
             aria-roledescription="슬라이드" aria-label={`${index + 1} / ${slides.length}`} data-home-slide={slide.id}>
             <figure>
-              <HomeSlideImage key={slide.image?.src ?? "missing"} image={slide.image} />
+              <HomeEntryImage onReady={index === 0 ? onFirstImageReady : undefined}>
+                <HomeSlideImage key={slide.image?.src ?? "missing"} image={slide.image} />
+              </HomeEntryImage>
               <figcaption className={slide.image ? styles.srOnly : styles.summary}>{slide.description}</figcaption>
             </figure>
           </div>)}
@@ -316,13 +320,14 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
   </article>;
 }
 
-export function HomeFeed({ cards, demo, onViewDetail, bookmarks, notice, onNotice, label = "콘텐츠 피드", impressions = true }: {
+export function HomeFeed({ cards, demo, onViewDetail, bookmarks, notice, onNotice, label = "콘텐츠 피드", impressions = true, onFirstImageReady }: {
   cards: readonly HomeCardModel[]; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: BookmarkControls;
   notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void; label?: string; impressions?: boolean;
+  onFirstImageReady?: () => void;
 }) {
   return <section aria-label={label} className={styles.feed}>
     <h2 className={styles.srOnly}>{label}</h2>
-    <ul>{cards.map((card) => <li key={card.id}><HomeCard card={card} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={onNotice} impressions={impressions} /></li>)}</ul>
+    <ul>{cards.map((card, index) => <li key={card.id}><HomeCard card={card} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={onNotice} impressions={impressions} onFirstImageReady={index === 0 ? onFirstImageReady : undefined} /></li>)}</ul>
   </section>;
 }
 
@@ -335,7 +340,7 @@ export function HomeStatus({ state, onRetry }: { state: Exclude<HomeState, { sta
   </section>;
 }
 
-export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onRestart, onViewDetail, onMy, onSaved, onNotifications, bookmarks }: {
+export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onRestart, onViewDetail, onMy, onSaved, onNotifications, bookmarks, onFirstImageReady, preparing = false }: {
   state: HomeState;
   demo: boolean;
   query: string;
@@ -351,6 +356,8 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
   onSaved?: () => void;
   onNotifications?: () => void;
   bookmarks?: BookmarkControls;
+  onFirstImageReady?: () => void;
+  preparing?: boolean;
 }) {
   // Keep only the latest feedback, at its existing screen or card location.
   const [notice, setNotice] = useState<HomeNotice>({ message: "" });
@@ -362,13 +369,15 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
   function pending(message: string) { setNotice({ message }); }
   const result = search?.result ?? null;
   return <main className={styles.screen} data-home-state={state.status} data-home-demo={demo || undefined} data-search-open={search?.open || undefined} aria-busy={state.status === "loading"}>
-    <HomeHeader onNotice={pending} onNotifications={onNotifications} />
+    <div className={styles.stickyHeader} data-home-sticky-header="">
+      <HomeHeader onNotice={pending} onNotifications={onNotifications} />
+      <WorkSearchField value={query} onChange={onQueryChange} onSubmit={onSearch} notice={searchNotice} onNoticeEnd={onSearchNoticeEnd}
+        search={search} active={!!search?.open} />
+    </div>
     {demo ? <aside className={styles.demoNotice} aria-label="시연용 피드 안내">
       <strong>시연용 예시 피드</strong>
       <p>실제 추천 결과가 아니에요. 선택한 답변과 관계없이 같은 예시를 보여드려요.</p>
     </aside> : null}
-    <WorkSearchField value={query} onChange={onQueryChange} onSubmit={onSearch} notice={searchNotice} onNoticeEnd={onSearchNoticeEnd}
-      search={search} active={!!search?.open} />
     {search?.open ? <button type="button" className={styles.searchDim} aria-label="검색 닫기" tabIndex={-1} onClick={search.onBack} /> : null}
     {result && search ? <section aria-labelledby="home-search-results">
       <div className={styles.resultsHeader}>
@@ -379,7 +388,7 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
         ? <HomeFeed cards={result.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} label="검색 결과 글" impressions={false} />
         : <SearchEmpty label={result.label} />}
     </section>
-      : state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} /> : <HomeStatus state={state} onRetry={onRetry} />}
+      : state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} onFirstImageReady={onFirstImageReady} impressions={!preparing} /> : <HomeStatus state={state} onRetry={onRetry} />}
     {demo && onRestart ? <footer className={styles.footer}><button type="button" onClick={onRestart} className={styles.button}>처음부터 시연</button></footer> : null}
     <HomeNavigation onMy={onMy} onSaved={onSaved} onNotice={pending} />
     {notice.message && !notice.postId ? <p className={styles.pendingNotice} role="status">{notice.message}</p> : null}

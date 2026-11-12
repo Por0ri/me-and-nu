@@ -1152,6 +1152,102 @@
       "region": "global",
       "discovery_enabled": false,
       "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-09T06:05:09.042356+00:00; 후보 유형: news"
+    },
+    {
+      "id": "src_1kuji_com",
+      "name": "1kuji.com",
+      "url": "https://1kuji.com/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "global",
+      "discovery_enabled": false,
+      "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-10T15:04:04.397953+00:00; 후보 유형: goods"
+    },
+    {
+      "id": "src_comicw_net",
+      "name": "comicw.net",
+      "url": "https://comicw.net/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "global",
+      "discovery_enabled": false,
+      "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-10T21:24:26.524831+00:00; 후보 유형: event"
+    },
+    {
+      "id": "src_www_goodsmile_com",
+      "name": "www.goodsmile.com",
+      "url": "https://www.goodsmile.com/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "global",
+      "discovery_enabled": false,
+      "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-11T00:29:07.137657+00:00; 후보 유형: goods"
+    },
+    {
+      "id": "src_chiikawamogumogu_shop",
+      "name": "chiikawamogumogu.shop",
+      "url": "https://chiikawamogumogu.shop/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "global",
+      "discovery_enabled": false,
+      "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-11T02:59:50.261559+00:00; 후보 유형: goods"
+    },
+    {
+      "id": "src_www_toei_anim_co_jp_2",
+      "name": "www.toei-anim.co.jp",
+      "url": "https://www.toei-anim.co.jp/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "global",
+      "discovery_enabled": false,
+      "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-11T05:53:08.187924+00:00; 후보 유형: news"
+    },
+    {
+      "id": "src_cystore_com",
+      "name": "cystore.com",
+      "url": "https://cystore.com/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "global",
+      "discovery_enabled": false,
+      "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-11T09:26:42.751605+00:00; 후보 유형: goods"
+    },
+    {
+      "id": "src_nagano_market_jp",
+      "name": "nagano-market.jp",
+      "url": "https://nagano-market.jp/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "global",
+      "discovery_enabled": false,
+      "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-11T09:43:43.271161+00:00; 후보 유형: goods"
+    },
+    {
+      "id": "src_parks2_bandainamco_am_co_jp",
+      "name": "parks2.bandainamco-am.co.jp",
+      "url": "https://parks2.bandainamco-am.co.jp/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "global",
+      "discovery_enabled": false,
+      "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-12T02:03:06.839653+00:00; 후보 유형: goods"
     }
   ]
 }

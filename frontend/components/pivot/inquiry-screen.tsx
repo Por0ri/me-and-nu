@@ -6,6 +6,33 @@ import { HomeHeader, HomeNavigation } from "./home-screen";
 import homeStyles from "./home.module.css";
 import styles from "./inquiry.module.css";
 
+function InquiryReceivedDialog({ onClose }: { onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    const trigger = document.activeElement as HTMLElement | null;
+    element?.showModal();
+    return () => {
+      element?.close();
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    };
+  }, []);
+  return <dialog ref={dialog} className={styles.receivedDialog} aria-modal="true"
+    aria-labelledby="inquiry-received-title" aria-describedby="inquiry-received-body inquiry-received-help"
+    onKeyDown={event => {
+      if (event.key === "Tab") { event.preventDefault(); event.currentTarget.querySelector("button")?.focus(); }
+    }}
+    onCancel={event => { event.preventDefault(); onClose(); }}
+    onClose={event => { if (event.currentTarget.isConnected && !event.currentTarget.open) onClose(); }}>
+    <h2 id="inquiry-received-title">문의 접수 완료</h2>
+    <div className={styles.receivedCopy}>
+      <p id="inquiry-received-body">문의가 정상적으로 접수되었어요!</p>
+      <p id="inquiry-received-help">보내주신 문의 내용은 확인 후<br />필요한 조치를 진행할게요.</p>
+    </div>
+    <button type="button" autoFocus onClick={onClose}>확인</button>
+  </dialog>;
+}
+
 export function InquiryScreen({ state, demo, available, onChange, onSubmit, onMy, onHome, onSaved, onNotifications }: {
   state: InquiryState; demo: boolean; available: boolean; onChange: (draft: Partial<InquiryDraft>) => void;
   onSubmit: () => void; onMy: () => void; onHome: () => void; onSaved: () => void; onNotifications?: () => void;
@@ -44,12 +71,13 @@ export function InquiryScreen({ state, demo, available, onChange, onSubmit, onMy
       <div id="inquiry-feedback" className={styles.feedback}>
         {length > INQUIRY_LIMIT ? <p role="alert">세부 내용은 500자까지 입력할 수 있어요.</p> : null}
         {demo ? <p role="status">Demo에서는 실제 문의를 접수하지 않아요. 로그인 후 이용해주세요.</p> : null}
-        {state.message ? <p role={state.status === "received" ? "status" : "alert"}>{state.message}</p> : null}
+        {state.message && state.status !== "received" ? <p role="alert">{state.message}</p> : null}
       </div>
       <button className={styles.submit} type="submit" disabled={demo || !available || locked || Boolean(inquiryValidation(state))}>
         {busy ? "접수 중…" : state.status === "error" ? "다시 시도" : "접수하기"}
       </button>
     </form>
     <HomeNavigation active="my" onHome={onHome} onMy={onMy} onSaved={onSaved} hideAI />
+    {!demo && available && state.status === "received" ? <InquiryReceivedDialog onClose={onMy} /> : null}
   </main>;
 }

@@ -29,7 +29,7 @@
 .dialog p { margin: 0 0 16px; font-size: 14px; line-height: 22px; text-align: center; }
 .dialogActions { display: flex; gap: 12px; }
 .screen .dialogActions button { flex: 1; min-height: 44px; padding: 8px; border: .5px solid #9c79e6; border-radius: 999px; background: #fafafa; color: #7043b4; font-size: 16px; font-weight: 600; line-height: 24px; }
-.screen .dialogActions button:last-child { background: #9c79e6; color: white; }
+.screen .dialogActions button:last-child { background: var(--pivot-primary, #7043b4); color: white; }
 /* 범수님 1363:8767. Service-only overrides preserve the Demo dialogs. */
 .logoutDialog { padding: 32px 8px; }
 .logoutDialog[open] { display: flex; flex-direction: column; align-items: center; gap: 16px; }
@@ -44,7 +44,6 @@
 .withdrawalDialog { max-height: calc(100dvh - 32px); padding-inline: 22px; }
 .withdrawalDialog strong, .withdrawalDialog .withdrawalError { color: #b42318; }
 .withdrawalDialog .withdrawalQuestion { color: #71717a; font-size: 12px; line-height: 18px; }
-.screen .withdrawalDialog .dialogActions button:last-child { background: #7043b4; }
 .screen .withdrawalDialog .dialogActions button:is(:disabled, [aria-disabled="true"]) { cursor: wait; opacity: .65; }
 .withdrawalDialog .withdrawalProgress { margin: 0; }
 .withdrawalDialog .withdrawalProgress:not(:empty) { margin-top: 12px; }
