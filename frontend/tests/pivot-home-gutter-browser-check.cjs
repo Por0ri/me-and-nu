@@ -34,9 +34,9 @@ async function drag(page, dx, dy) {
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch({ channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge', headless: true });
   try {
-    for (const width of [375, 1280, 1440]) {
+    for (const [width, height] of [[320, 568], [375, 812], [390, 844], [1280, 900], [1440, 1000]]) {
       if (process.env.PIVOT_VIEWPORT_WIDTH && width !== Number(process.env.PIVOT_VIEWPORT_WIDTH)) continue;
-      const context = await browser.newContext({ viewport: { width, height: width === 375 ? 812 : 900 }, hasTouch: true, reducedMotion: 'reduce', serviceWorkers: 'block' });
+      const context = await browser.newContext({ viewport: { width, height }, hasTouch: true, reducedMotion: 'reduce', serviceWorkers: 'block' });
       await installPageScroll(context);
       const errors = [], unexpected = [];
       await context.route('**/*', route => {
@@ -62,7 +62,20 @@ async function drag(page, dx, dy) {
         near(geometry.card.x, (width - Math.min(width, 430)) / 2 + 24, 'Unchanged card inset');
         near(geometry.header.width, Math.min(width, 430), 'Unchanged header width');
         near(geometry.ai.x, width / 2 + Math.min(307, width - 68) / 2 - 48, 'Unchanged AI anchor');
-        near(geometry.nav.x, width / 2 - 100, 'Unchanged NAV anchor');
+        near(geometry.nav.x, width === 320 ? 50 : width / 2 - 100, 'Unchanged NAV anchor');
+        near(geometry.header.y, 44, 'Unchanged initial header top');
+        near(geometry.card.y, 144, 'Unchanged initial card top');
+        const chrome = home.locator('[data-home-sticky-header]');
+        const initial = await chrome.boundingBox();
+        const stickySamples = [];
+        for (const top of [0, 120, 400, 10000, 0]) {
+          await scroll(page, top);
+          const current = await chrome.boundingBox();
+          near(current.y, initial.y, 'Sticky header top'); near(current.height, 100, 'Header plus search height');
+          const bell = await home.locator('[data-notification-navigation]').boundingBox();
+          assert.equal(await page.evaluate(b => document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)?.closest('[data-notification-navigation]') !== null, bell), true, 'Bell retains hit target above cards');
+          stickySamples.push({scroll:await y(page),top:current.y});
+        }
         const samples = [];
         for (const [label, x] of [['left', 20], ['right', width - 20], ['center', width / 2]]) {
           await scroll(page, 200); await wheel(page, x, 120);
@@ -82,6 +95,11 @@ async function drag(page, dx, dy) {
         await wheel(page, 20, 0, 100); near(await y(page), 220, 'Horizontal gutter input does not scroll vertically');
         await scroll(page, 0);
         const track = home.locator('[data-home-track]').first(), box = await track.boundingBox();
+        await track.focus(); await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(() => { const e = document.querySelector('[data-home-track]'); return Math.abs(e.scrollLeft - e.clientWidth) < 1; });
+        await page.keyboard.press('Home');
+        await page.waitForFunction(() => document.querySelector('[data-home-track]').scrollLeft === 0);
+        await scroll(page, 0);
         await page.mouse.move(box.x + 50, box.y + 100); await page.mouse.wheel(160, 0);
         await page.waitForFunction(() => document.querySelector('[data-home-track]').scrollLeft > 0);
         near(await y(page), 0, 'Horizontal carousel wheel preserves vertical position');
@@ -103,6 +121,9 @@ async function drag(page, dx, dy) {
           await drag(page, 0, -100); assert.ok(await y(page) > 30, 'Mobile vertical drag over carousel');
         }
         const open = home.locator('[data-home-detail]').nth(1);
+        // Capture a settled page, not an in-flight native wheel snap (notably at 320px).
+        await track.evaluate(e => e.scrollTo({ left: e.clientWidth, behavior: 'instant' }));
+        await page.waitForFunction(() => { const e = document.querySelector('[data-home-track]'); return Math.abs(e.scrollLeft - e.clientWidth) < 1; });
         await open.scrollIntoViewIfNeeded(); await open.focus();
         const before = await y(page), slideBefore = await track.evaluate(e => e.scrollLeft);
         await open.click();
@@ -136,7 +157,7 @@ async function drag(page, dx, dy) {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
         await page.screenshot({ path: path.join(out, `home-${width}.png`) });
-        results.push({ width, status: 'pass', browser: browser.version(), geometry, detailGeometry, samples, before, errors });
+        results.push({ width, height, status: 'pass', browser: browser.version(), geometry, detailGeometry, samples, stickySamples, before, errors });
         console.log('PASS HOME gutters ' + width);
       } catch (error) {
         results.push({ width, status: 'fail', error: error.stack });

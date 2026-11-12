@@ -29,12 +29,13 @@ import { NewNoticeContext } from "./home-screen";
 const noSubscribe = () => () => {};
 const noSnapshot = () => 0;
 
-export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, activitySource, inquirySource, reportSource, notificationSource, demoBookmarks, onRestart, onLogout, onWithdraw }: {
+export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, activitySource, inquirySource, reportSource, notificationSource, demoBookmarks, onRestart, onLogout, onWithdraw, skipEntryLoading }: {
   homeSource: HomeDataSource; detailSource: DetailDataSource; mySource?: MyPageDataSource; savedSource?: SavedDataSource;
   activitySource?: ActivityDataSource;
   inquirySource?: InquirySource;
   reportSource?: ReportSource;
   notificationSource?: NotificationInboxSource;
+  skipEntryLoading?: boolean;
   demoBookmarks?: DemoBookmarkControls; onRestart?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>;
 }) {
   const params = useSearchParams();
@@ -302,7 +303,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   }
   return <NewNoticeContext.Provider value={hasNewNotice}><InteractionViewContext.Provider value={detailOpen ? "detail" : myOpen ? "my" : savedOpen ? "saved" : activityOpen ? "activity" : inquiryOpen ? "inquiry" : inboxOpen ? "notifications" : "home"}>
     <div ref={home} hidden={detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen || inboxOpen}>
-      <HomeController source={homeSource} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} onNotifications={inboxSource ? openInbox : undefined} bookmarks={bookmarks} />
+      <HomeController source={homeSource} skipEntryLoading={skipEntryLoading} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} onNotifications={inboxSource ? openInbox : undefined} bookmarks={bookmarks} />
     </div>
     {inboxOpen && <NotificationInbox key={String(unreadOnly)} source={inboxSource} unreadOnly={unreadOnly} id={noticeId}
       onFilter={selectInboxFilter} onOpen={openNotice} onOpenContent={openInboxContent} onBack={backFromInbox} />}

@@ -37,7 +37,7 @@ function TasteEditResult({ state, saving, error, onSave, onEdit }: { state: Onbo
 
 export function TasteEditRoute() {
   const router = useRouter();
-  const { state: session, refresh } = usePivotSession();
+  const { state: session, refresh, markHomeEntryPrepared } = usePivotSession();
   const [state, dispatch] = useReducer(tasteEditReducer, undefined, initialOnboardingState);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   // Hints from what the member reacted to; they arrive after the saved answers and never hold up the edit.
@@ -79,6 +79,7 @@ export function TasteEditRoute() {
       // Saving drops the recent rounds, so the next feed waits for a new one: the loading screen covers it.
       if (mounted.current) setPreparing(true);
       await warmUpFeed(state.topicId, since);
+      if (session.session) markHomeEntryPrepared?.(session.session);
       if (mounted.current) router.replace("/pivot/home");
     } catch (reason) {
       if (!mounted.current) return;
