@@ -8,9 +8,10 @@ import type { ConsentDraft } from "@/lib/pivot/consent";
 import type { OnboardingProfile } from "@/lib/pivot/onboarding-service";
 import { initialOnboardingState, onboardingReducer, type OnboardingState, type OnboardingAction } from "@/lib/pivot/onboarding";
 
-type SessionState = { status: "loading" | "ready" | "error" | "disconnected"; session: Session | null; message?: string };
+type SessionState = { status: "loading" | "ready" | "error" | "disconnected"; session: Session | null; message?: string; homeEntryPrepared?: boolean };
 type ContextValue = { state: SessionState; refresh: () => void; logout: () => Promise<void>; withdraw?: () => Promise<void>; restoreAccount?: () => Promise<void>; returnToLogin?: () => void; draft: ConsentDraft | null; rememberDraft: (draft: ConsentDraft) => void; onboarding: OnboardingState; dispatchOnboarding: Dispatch<OnboardingAction>; profile: OnboardingProfile; rememberProfile: (profile: OnboardingProfile) => void; completeOnboarding: (session: Session) => void };
-const Context = createContext<ContextValue | null>(null);
+type FeedEntryContext = ContextValue & { markHomeEntryPrepared?: (owner: Session) => void };
+const Context = createContext<FeedEntryContext | null>(null);
 function accountSessionChanged() {
   return new ApiError("로그인 상태가 바뀌었어요. 다시 로그인해 주세요.", 403, "ACCOUNT_SESSION_CHANGED");
 }
@@ -60,7 +61,8 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
     if (!isActiveSession(session)) throw new Error("가입 완료 상태를 확인하지 못했어요.");
     epoch.current++;
     setDraft(null); setProfile({ nickname: "" }); dispatchOnboarding({ type: "reset" });
-    setState({ status: "ready", session });
+    // Onboarding already owns its loading screen and warm-up.
+    setState({ status: "ready", session, homeEntryPrepared: true });
   }, []);
   const logout = useCallback(() => {
     if (changingAccount.current) return Promise.reject(new Error("계정 요청을 처리하고 있어요."));
@@ -176,7 +178,11 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
     window.addEventListener("pageshow", restored);
     return () => window.removeEventListener("pageshow", restored);
   }, [refresh]);
-  return <Context.Provider value={{ state, refresh, logout, withdraw, restoreAccount, returnToLogin: () => endSession(), draft, rememberDraft: setDraft, onboarding, dispatchOnboarding, profile, rememberProfile: setProfile, completeOnboarding }}>{children}</Context.Provider>;
+  const markHomeEntryPrepared = useCallback((owner: Session) => {
+    setState(current => current.status === "ready" && current.session === owner && isActiveSession(owner)
+      ? { ...current, homeEntryPrepared: true } : current);
+  }, []);
+  return <Context.Provider value={{ state, refresh, logout, withdraw, restoreAccount, returnToLogin: () => endSession(), draft, rememberDraft: setDraft, onboarding, dispatchOnboarding, profile, rememberProfile: setProfile, completeOnboarding, markHomeEntryPrepared }}>{children}</Context.Provider>;
 }
 export function usePivotSession() {
   const value = useContext(Context);

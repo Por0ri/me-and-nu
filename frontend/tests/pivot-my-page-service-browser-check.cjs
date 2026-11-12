@@ -22,6 +22,7 @@ const until = async predicate => {
 async function verify(browser, viewport) {
   const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, reducedMotion: 'reduce', serviceWorkers: 'block' });
   const page = await context.newPage(); page.setDefaultTimeout(15000);
+  page.setDefaultNavigationTimeout(60000);
   let step = 'initial loading', userId = 7, mode = 'valid', hold = true, pending = [];
   let logoutFails = false, logoutCalls = 0, tasteWrites = 0, pageErrors = 0, leakedConsole = false;
   const checks = [], blocked = [], calls = [];
@@ -57,6 +58,7 @@ async function verify(browser, viewport) {
       if (method === 'GET' && url.pathname === '/api/v1/topics/83/feed') return reply({ selectedTopicId: 83, sections: [], nextCursor: null, emptyReason: null });
       if (method === 'GET' && url.pathname === '/api/v1/users/me/bookmarks') return reply({ items: [], nextCursor: null });
       if (method === 'GET' && url.pathname === '/api/v1/users/me/notification-settings') return reply({ inAppEnabled: true, nightInAppEnabled: false, version: 1 });
+      if (method === 'GET' && url.pathname === '/api/v1/users/me/notifications') return reply({ items: [], nextCursor: null });
       if (method === 'GET' && url.pathname === '/api/v1/topics') return reply({ topics: [{ id: 83, code: 'anime', name: '애니메이션' }] });
       if (method === 'GET' && url.pathname === '/api/v1/me/taste') return reply(taste);
       if (method === 'GET' && url.pathname === '/api/v1/me/taste/hints') return reply({ topicId: 83, enough: false, contents: 0, works: [], genres: [], themes: [], types: [] });
@@ -156,8 +158,16 @@ async function verify(browser, viewport) {
     assert.equal(await page.getByRole('radio', { name: '설정과 세계관을 파고든다', exact: true }).isChecked(), true);
     await page.getByRole('radio', { name: '새로운 소식을 빠르게 확인한다', exact: true }).check();
     await page.getByRole('button', { name: '선택 완료', exact: true }).click();
+    await page.evaluate(() => {
+      window.duplicateEntryLoading = false;
+      new MutationObserver(() => { if (document.querySelector('[data-home-entry-loading]')) window.duplicateEntryLoading = true; })
+        .observe(document.body, { childList: true, subtree: true });
+    });
     await page.getByRole('button', { name: '새로운 피드 보러가기', exact: true }).click();
-    await page.waitForURL('**/pivot/home'); assert.equal(tasteWrites, 1); await visit(); await ready();
+    await page.waitForURL('**/pivot/home');
+    await page.locator('[data-home-state="empty"], [data-home-state="ready"]').waitFor();
+    assert.equal(await page.evaluate(() => window.duplicateEntryLoading), false, 'taste warm-up keeps its original loader without a second entry gate');
+    assert.equal(tasteWrites, 1); await visit(); await ready();
     checks.push('taste route, Q1-Q3 prefill/edit and mocked save');
     step = 'user switch and cancellation';
     userId = 8; hold = true; await refresh(); await until(() => pending.length > 0);
