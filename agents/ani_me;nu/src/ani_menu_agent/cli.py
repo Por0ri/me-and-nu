@@ -68,6 +68,7 @@ from ani_menu_agent.storage import AgentRepository, discovery_candidate_fingerpr
 from ani_menu_agent.work_aliases import find_named_works
 from ani_menu_agent.work_catalog import (
     load_work_catalog,
+    registered_service_work_ids,
     resolve_menu_work_ids,
     resolve_work_matches,
 )
@@ -1143,12 +1144,35 @@ def crawl_generate(
         ),
     ] = False,
     prepare_only: bool = False,
+    expected_work_id: Annotated[
+        int | None,
+        typer.Option(
+            "--expected-work-id", min=1,
+            help="직접 URL을 기존 작품 하나에 한정한다. 불일치하면 유료 추출 전에 종료한다.",
+        ),
+    ] = None,
 ) -> None:
     """승인된 원문 수집부터 카드 생성 및 독립 검수까지 실행합니다."""
     registry = load_source_registry()
     run_started = perf_counter()
     stage_timings: dict[str, float] = {}
     requested_content_type = content_type
+    request_evidence = {}
+    if expected_work_id is not None:
+        if candidate_id or retry_failed or not source_id or not url or not content_type:
+            raise typer.BadParameter("--expected-work-id requires a single --source, --url and --content-type")
+        request_evidence["expected_work_request"] = {
+            "source_id": source_id, "source_url": url, "content_type": content_type,
+            "menu_work_id": expected_work_id,
+        }
+
+    def write_bound_skip(status: str, **details) -> None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps({**request_evidence, "status": status, **details}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
     identity_preflight_started = perf_counter()
     discovery_provenance = None
     candidate_work_ids: list[int] = []
@@ -1373,6 +1397,22 @@ def crawl_generate(
         raise typer.BadParameter(
             f"Source {source.id} does not support requested type {content_type}."
         )
+
+    if expected_work_id is not None:
+        try:
+            submitted = urlparse(url)
+            valid_source_url = (
+                submitted.scheme == "https" and submitted.hostname == urlparse(str(source.url)).hostname
+                and submitted.username is None and submitted.password is None and not submitted.fragment
+                and submitted.port in {None, 443}
+            )
+        except ValueError:
+            valid_source_url = False
+        if not valid_source_url:
+            raise typer.BadParameter("The article must belong to its registered HTTPS source")
+        registered_ids = registered_service_work_ids(source.work_title_ko, source.work_title_original)
+        if registered_ids != {expected_work_id}:
+            raise typer.BadParameter("The expected work does not match the registered source")
 
     if candidate_id:
         candidate_work_ids = _candidate_menu_work_ids(candidate, source, content_type)
@@ -1624,11 +1664,42 @@ def crawl_generate(
                 url,
                 expand_related_pages=False,
                 max_cta_detail_pages=1,
-                review_ambiguous_links=not prepare_only,
+                review_ambiguous_links=not prepare_only and expected_work_id is None,
             )
+        if expected_work_id is not None:
+            final = urlparse(str(capture.url))
+            if (
+                capture.source_id != source.id or final.scheme != "https" or final.hostname != submitted.hostname
+                or final.port not in {None, 443} or final.username is not None or final.password is not None
+                or final.path.rstrip("/") != submitted.path.rstrip("/") or final.query != submitted.query
+            ):
+                write_bound_skip("source_redirect_skipped", reason="captured_article_url_mismatch")
+                return
+            if capture.text.strip():
+                # The article must identify its work independently of the registered source.
+                match_context = {"content_type": content_type, "source_url": str(capture.url), "keep_ambiguous": True}
+                work_match_evidence = resolve_work_matches(titles=[capture.title], **match_context)
+                about = [reference for reference in capture.structured_work_references if reference.relation == "about"]
+                if about:
+                    work_match_evidence.extend(resolve_work_matches(structured_references=about, **match_context))
+                if not work_match_evidence:
+                    for link in capture.outbound_links:
+                        # A link back to the same publisher (e.g. its navigation bar)
+                        # repeats the source identity and does not identify this article.
+                        link_host = urlparse(str(link.url)).hostname or ""
+                        if link_host == final.hostname or link_host.endswith("." + final.hostname):
+                            continue
+                        work_match_evidence.extend(resolve_work_matches(outbound_links=[link], **match_context))
+                candidate_work_ids = list(dict.fromkeys(match.menu_work_id for match in work_match_evidence))
+                if candidate_work_ids != [expected_work_id]:
+                    write_bound_skip(
+                        "work_id_unresolved_skipped", source_url=str(capture.url),
+                        matched_work_ids=candidate_work_ids, reason="captured_article_work_mismatch",
+                    )
+                    return
         if capture is not identity_preflight_capture:
             work_match_usage_records.extend(capture.link_review_usage)
-        if not prepare_only:
+        if not prepare_only and (expected_work_id is None or candidate_work_ids):
             capture.image_text_evidence, image_ocr_usage = extract_page_image_text(capture, source)
             work_match_usage_records.extend(image_ocr_usage)
             ocr_text_blocks = [
@@ -1647,6 +1718,7 @@ def crawl_generate(
             output.write_text(
                 json.dumps(
                     {
+                        **request_evidence,
                         "status": "needs_crawler_update",
                         "candidate_id": candidate_id,
                         "content_type": content_type,
@@ -1675,6 +1747,12 @@ def crawl_generate(
         if source.id == "src_www_toei_anim_co_jp":
             headline_type = infer_toei_press_type(capture.title)
             if headline_type != "news":
+                if expected_work_id is not None and headline_type != requested_content_type:
+                    write_bound_skip(
+                        "content_type_mismatch_skipped", requested_content_type=requested_content_type,
+                        evidence_content_type=headline_type, source_url=str(capture.url),
+                    )
+                    return
                 content_type = headline_type
         payload_prepare_started = perf_counter()
         payload = capture.model_dump(mode="json")
@@ -1776,6 +1854,7 @@ def crawl_generate(
                     else "expiry_unresolved_held"
                 )
                 result = {
+                    **request_evidence,
                     "status": status,
                     "candidate_id": candidate_id,
                     "content_type": content_type,
@@ -1813,6 +1892,7 @@ def crawl_generate(
                     else "expiry_unresolved_held"
                 )
                 result = {
+                    **request_evidence,
                     "status": status,
                     "candidate_id": candidate_id,
                     "content_type": content_type,
@@ -1988,6 +2068,12 @@ def crawl_generate(
             package, extraction_usage = extract_page_payload(payload)
             detected_type = infer_strong_content_type(package)
         if detected_type and detected_type != content_type:
+            if expected_work_id is not None:
+                write_bound_skip(
+                    "content_type_mismatch_skipped", requested_content_type=requested_content_type,
+                    evidence_content_type=detected_type, source_url=str(capture.url), request_id=package.request_id,
+                )
+                return
             supported_types = {item.value for item in source.content_types}
             if detected_type not in supported_types:
                 output.parent.mkdir(parents=True, exist_ok=True)
@@ -2052,6 +2138,7 @@ def crawl_generate(
                 output.write_text(
                     json.dumps(
                         {
+                            **request_evidence,
                             "status": status,
                             "candidate_id": candidate_id,
                             "request_id": package.request_id,
@@ -2183,6 +2270,7 @@ def crawl_generate(
         output.write_text(
             json.dumps(
                 {
+                    **request_evidence,
                     "status": "stale_evidence_persisted",
                     "request_id": package.request_id,
                     "topic": package.topic,
@@ -2209,6 +2297,7 @@ def crawl_generate(
         output.write_text(
             json.dumps(
                 {
+                    **request_evidence,
                     "status": "duplicate_evidence_persisted",
                     "duplicate_of": duplicate,
                     "request_id": package.request_id,
@@ -2268,6 +2357,7 @@ def crawl_generate(
             },
         )
         prepared = {
+            **request_evidence,
             "status": "generation_pending",
             "request_id": package.request_id,
             "content_type": content_type,
@@ -2304,6 +2394,7 @@ def crawl_generate(
     if work_match_audit:
         result["work_match_audit"] = work_match_audit
     _add_usage_summary(result)
+    result.update(request_evidence)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

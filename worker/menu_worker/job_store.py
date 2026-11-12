@@ -17,7 +17,7 @@ from menu_worker.job_contract import JobInput, validate_job_kind, validate_job_r
 
 DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test", "menu_content_jobs_migration_test"})
 DATABASE_HOSTS = frozenset({"jobs-db", "localhost", "127.0.0.1", "::1"})
-MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql", "003_anime_work_input.sql")
+MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql", "003_anime_work_input.sql", "004_anime_generation.sql")
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
@@ -142,8 +142,11 @@ class JobStore:
                 if previous["job_kind"] != job_kind or previous["input_sha256"] != input_hash:
                     raise JobConflict("idempotency_conflict", previous["job_id"])
                 return {**_plain(previous), "created": False}
+            # The probe and generation indexes may each have an owner for this URL.
+            collision_kinds = ["anime_generate"] if job_kind == "anime_generate" else ["fake", "anime"]
             previous = connection.execute(
-                "SELECT job_id FROM public.content_generation_job WHERE canonical_url=%s", (canonical_url,)
+                "SELECT job_id FROM public.content_generation_job WHERE canonical_url=%s AND job_kind=ANY(%s)",
+                (canonical_url, collision_kinds),
             ).fetchone()
             if previous:
                 raise JobConflict("candidate_exists", previous["job_id"])
@@ -268,6 +271,12 @@ class JobStore:
                     raise ValueError("An anime probe can only record routing verification")
             elif outcome is not None:
                 raise ValueError("An incomplete anime probe cannot record an outcome")
+        if expected_kind == "anime_generate":
+            if execution_status == "succeeded":
+                if outcome not in {"ready_for_staging", "held", "skipped", "rejected"}:
+                    raise ValueError("Unsupported live producer outcome")
+            elif outcome is not None:
+                raise ValueError("An incomplete generation cannot record a producer outcome")
         for value in (producer_status, error_code):
             if value is not None and (not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", value)):
                 raise ValueError("Status and error codes must be bounded identifiers")
@@ -337,10 +346,30 @@ class JobStore:
                 counts[status] = counts.get(status, 0) + 1
         return counts
 
-    def cancel(self, job_id: str) -> bool:
+    def retry_preflight(self, job_id: str, *, expected_kind: str) -> bool:
+        """Requeue only a live job whose environment check failed before generation."""
+        validate_job_kind(expected_kind)
+        if expected_kind != "anime_generate":
+            return False
+        with self._connect() as connection:
+            return bool(connection.execute(
+                """UPDATE public.content_generation_job AS job SET execution_status='queued',
+                   current_attempt_id=NULL, generation_attempt_id=NULL, claim_token=NULL, lease_expires_at=NULL,
+                   last_dispatched_at=NULL, last_task_id=NULL, error_code=NULL, finished_at=NULL,
+                   updated_at=CURRENT_TIMESTAMP
+                   WHERE job_id=%s AND job_kind='anime_generate' AND execution_status='failed'
+                   AND generation_started_at IS NULL AND artifact_path IS NULL AND result_sha256 IS NULL
+                   AND error_code IN ('invalid_agent_secret','agent_runtime_unavailable')
+                   AND NOT EXISTS (SELECT 1 FROM public.content_generation_attempt AS attempt
+                                   WHERE attempt.job_id=job.job_id AND attempt.generation_started_at IS NOT NULL)
+                   RETURNING job_id""", (_identity(job_id),),
+            ).fetchone())
+
+    def cancel(self, job_id: str, *, expected_kind: str = "fake") -> bool:
+        validate_job_kind(expected_kind)
         with self._connect() as connection:
             return bool(connection.execute(
                 """UPDATE public.content_generation_job SET execution_status='cancelled',finished_at=CURRENT_TIMESTAMP,
-                   updated_at=CURRENT_TIMESTAMP WHERE job_id=%s AND execution_status='queued'
-                   AND generation_started_at IS NULL RETURNING job_id""", (_identity(job_id),),
+                   updated_at=CURRENT_TIMESTAMP WHERE job_id=%s AND job_kind=%s AND execution_status='queued'
+                   AND generation_started_at IS NULL RETURNING job_id""", (_identity(job_id), expected_kind),
             ).fetchone())

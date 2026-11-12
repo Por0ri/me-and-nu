@@ -45,14 +45,14 @@ _SEQUEL_SUFFIX = re.compile(
     r"|\s*第?[0-9０-９一二三四五六七八九十]+期)",
     re.IGNORECASE,
 )
-@lru_cache(maxsize=1)
-def load_work_catalog() -> list[dict[str, Any]]:
+@lru_cache(maxsize=2)
+def load_work_catalog(*, include_agent_works: bool = True) -> list[dict[str, Any]]:
     """Load canonical works without collapsing sequel/entry rows into one work."""
     rows: list[dict[str, Any]] = []
-    for path in (
-        _WORK_LIST_DIRECTORY / "menu_works.csv",
-        _CATALOG_DIRECTORY / "agent_works.csv",
-    ):
+    paths = [_WORK_LIST_DIRECTORY / "menu_works.csv"]
+    if include_agent_works:
+        paths.append(_CATALOG_DIRECTORY / "agent_works.csv")
+    for path in paths:
         if not path.is_file():
             continue
         with path.open(encoding="utf-8-sig", newline="") as stream:
@@ -200,6 +200,17 @@ def _normalize_catalog_title(value: str) -> str:
         normalized,
     )
     return re.sub(r"\s+", " ", normalized).strip()
+
+
+def registered_service_work_ids(*source_titles: str | None) -> set[int]:
+    """Match the registered source's titles against the service catalog for a bound request."""
+    titles = {_normalize_catalog_title(title) for title in source_titles if title} - {""}
+    title_fields = ("title_ko", "title_native", "title_romaji", "title_english")
+    return {
+        row["menu_work_id"]
+        for row in load_work_catalog(include_agent_works=False)
+        if any(_normalize_catalog_title(row.get(field) or "") in titles for field in title_fields)
+    }
 
 
 def _title_spelling_variants(value: str) -> tuple[str, ...]:
@@ -450,14 +461,14 @@ _CURATION_MARKER = re.compile(
 )
 
 
-def _headline_character_work_ids(title: str) -> list[int]:
-    """Resolve character aliases in a headline; multiple works require collab wording."""
+def _headline_character_work_ids(title: str, *, keep_ambiguous: bool = False) -> list[int]:
+    """Resolve character aliases, normally retaining multiple works only for collaborations."""
     matches = [
         match for match in find_named_works(title or "")
         if match.kind == "character"
     ]
     ids = list(dict.fromkeys(match.menu_work_id for match in matches))
-    if len(ids) > 1 and not _COLLABORATION_MARKER.search(title or ""):
+    if not keep_ambiguous and len(ids) > 1 and not _COLLABORATION_MARKER.search(title or ""):
         return ids[:1]
     return ids
 
@@ -475,17 +486,19 @@ def resolve_work_matches(
     outbound_links: list[Any] | None = None,
     content_type: str | None = None,
     source_url: str | None = None,
+    keep_ambiguous: bool = False,
 ) -> list[WorkMatchEvidence]:
     """Resolve work identity from explicit titles and publisher-declared metadata.
 
     Free-form article prose, summaries, image content, and LLM guesses are never
-    treated as identity evidence. The first available evidence tier wins.
+    treated as identity evidence. The first available evidence tier wins. A bound
+    request keeps ambiguous matches so the caller can reject multiple works.
     """
     def evidence_for(title: str, basis: str, confidence: float, url: str | None = None):
         ids = _match_title_work_ids(title, source_url)
         if not ids:
             return []
-        if not _headline_names_multiple_works(title, ids, content_type):
+        if not keep_ambiguous and not _headline_names_multiple_works(title, ids, content_type):
             ids = ids[:1]
         folded = title.casefold()
         aliases = [
@@ -519,7 +532,7 @@ def resolve_work_matches(
     # excluded until their Japanese-name coverage is reliable.
     for title in titles or []:
         title = str(title or "").strip()
-        character_work_ids = _headline_character_work_ids(title)
+        character_work_ids = _headline_character_work_ids(title, keep_ambiguous=keep_ambiguous)
         if not character_work_ids:
             continue
         matches_by_id = {
@@ -625,7 +638,7 @@ def resolve_work_matches(
             ),
             "",
         )
-        if not _headline_names_multiple_works(multi_work_title, list(unique)):
+        if not keep_ambiguous and not _headline_names_multiple_works(multi_work_title, list(unique)):
             return list(unique.values())[:1]
         return list(unique.values())
 

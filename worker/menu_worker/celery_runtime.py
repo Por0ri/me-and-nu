@@ -6,7 +6,8 @@ from menu_worker.config import Settings
 
 
 def create_app(name: str, settings: Settings, *, modules: tuple[str, ...], default_queue: str,
-               result_prefix: str, other_queues: tuple[str, ...] = ()) -> Celery:
+               result_prefix: str, other_queues: tuple[str, ...] = (), visibility_timeout: int = 90,
+               soft_time_limit: int = 15, time_limit: int = 20) -> Celery:
     app = Celery(name, include=modules)
     app.conf.update(
         broker_url=settings.broker_url,
@@ -27,15 +28,14 @@ def create_app(name: str, settings: Settings, *, modules: tuple[str, ...], defau
         worker_cancel_long_running_tasks_on_connection_loss=True,
         broker_connection_retry_on_startup=True,
         broker_connection_timeout=3,
-        # Both local probes complete within 50 seconds. Each app has its own broker.
-        broker_transport_options={"visibility_timeout": 90, "socket_timeout": 3, "socket_connect_timeout": 3},
-        result_backend_transport_options={"visibility_timeout": 90, "global_keyprefix": result_prefix},
-        visibility_timeout=90,
+        broker_transport_options={"visibility_timeout": visibility_timeout, "socket_timeout": 3, "socket_connect_timeout": 3},
+        result_backend_transport_options={"visibility_timeout": visibility_timeout, "global_keyprefix": result_prefix},
+        visibility_timeout=visibility_timeout,
         redis_socket_timeout=3,
         redis_socket_connect_timeout=3,
         result_expires=3600,
         task_publish_retry_policy={"max_retries": 3, "interval_start": 0, "interval_step": 0.2, "interval_max": 1},
-        task_soft_time_limit=15,
-        task_time_limit=20,
+        task_soft_time_limit=soft_time_limit,
+        task_time_limit=time_limit,
     )
     return app

@@ -1,6 +1,7 @@
 *
 !requirements.txt
 !Dockerfile
+!Dockerfile.generation
 !flowerconfig.py
 !setup_local.py
 !menu_worker/

@@ -15,7 +15,10 @@ from menu_worker.job_store import JobConflict, JobStore
 
 
 def job_route(kind):
-    if kind == "anime":
+    if kind == "anime_generate":
+        from menu_worker.generation_app import app
+        task, queue = "content.anime_generate", "anime-generation-live"
+    elif kind == "anime":
         from menu_worker.anime_app import app
         task, queue = "content.anime_probe", "anime-generation"
     elif kind == "fake":
@@ -70,7 +73,13 @@ def main(argv=None) -> int:
     submit.add_argument("--content-type", default="news")
     submit.add_argument("--menu-work-id", type=int, help="Existing catalog work ID for an anime source")
     submit.add_argument("--kind", choices=("fake", "anime"), help="Default: the current dispatcher's kind")
-    for name in ("show", "cancel", "recover"):
+    generate = commands.add_parser("generate", help="Request one real, billable run in the generation profile")
+    generate.add_argument("--idempotency-key", required=True)
+    generate.add_argument("--source", required=True)
+    generate.add_argument("--url", required=True)
+    generate.add_argument("--content-type", required=True)
+    generate.add_argument("--menu-work-id", type=int, required=True)
+    for name in ("show", "cancel", "recover", "retry-preflight"):
         commands.add_parser(name).add_argument("--job-id", required=True)
     dispatch = commands.add_parser("dispatch")
     dispatch.add_argument("--loop", action="store_true")
@@ -78,27 +87,34 @@ def main(argv=None) -> int:
     try:
         store = JobStore()
         role = os.environ.get("CONTENT_JOB_KIND", "fake")
-        if role not in {"fake", "anime"}:
+        if role not in {"fake", "anime", "anime_generate"}:
             raise ValueError("Invalid CONTENT_JOB_KIND")
+        if args.command in {"generate", "retry-preflight"} and role != "anime_generate":
+            raise JobInputError("Use the dedicated generation dispatcher", "generation_profile_required")
+        if role == "anime_generate" and args.command in {"submit", "smoke"}:
+            raise JobInputError("Live jobs require the generate command", "probe_command_not_available")
         if args.command == "init-db":
             schema = store.initialize()
             result = {"schema": f"content-jobs-v{schema['version']}", "initialized": True}
         elif args.command == "smoke":
             from menu_worker.job_checks import smoke
             result = smoke(store, kind=role)
-        elif args.command == "submit":
+        elif args.command in {"submit", "generate"}:
             request = {"idempotency_key": args.idempotency_key, "source_id": args.source,
                        "source_url": args.url, "content_type": args.content_type}
             if args.menu_work_id is not None:
                 request["menu_work_id"] = args.menu_work_id
-            result = store.submit(request, job_kind=args.kind or role)
+            kind = "anime_generate" if args.command == "generate" else args.kind or role
+            result = store.submit(request, job_kind=kind)
         elif args.command == "show":
             result = store.get(args.job_id)
             if result is None:
                 print(json.dumps({"error": "job_not_found"}), file=sys.stderr)
                 return 1
         elif args.command == "cancel":
-            result = {"job_id": args.job_id, "cancelled": store.cancel(args.job_id)}
+            result = {"job_id": args.job_id, "cancelled": store.cancel(args.job_id, expected_kind=role)}
+        elif args.command == "retry-preflight":
+            result = {"job_id": args.job_id, "requeued": store.retry_preflight(args.job_id, expected_kind=role)}
         elif args.command == "recover":
             from menu_worker.job_runner import run_job
             store.recover_expired(expected_kind=role)

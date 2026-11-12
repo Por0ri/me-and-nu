@@ -16,6 +16,7 @@ ADMIN_DB = "menu_content_jobs_test"
 MIGRATION_DB = "menu_content_jobs_migration_test"
 V1_SQL = Path(__file__).resolve().parents[1] / "menu_worker/migrations/001_content_jobs.sql"
 V2_SQL = V1_SQL.with_name("002_job_kind.sql")
+V3_SQL = V1_SQL.with_name("003_anime_work_input.sql")
 
 
 @unittest.skipUnless(os.environ.get(ADMIN_ENV), "Run tests/run_postgres.py on the isolated jobs-db service")
@@ -77,16 +78,16 @@ class JobSchemaMigrationTests(unittest.TestCase):
 
     def test_fresh_install_and_concurrent_or_repeated_initialize(self):
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [3, 3])
+        self.assertEqual([result["version"] for result in results], [4, 4])
         self.assertCountEqual([result["created"] for result in results], [True, False])
         store = self.store()
         repeated = store.initialize()
-        self.assertEqual(repeated["version"], 3)
+        self.assertEqual(repeated["version"], 4)
         self.assertFalse(repeated["created"])
-        for kind in ("fake", "anime"):
+        for kind in ("fake", "anime", "anime_generate"):
             request = {"idempotency_key": kind, "source_id": "fixture", "content_type": "news",
                        "source_url": f"https://example.invalid/success/fresh-{kind}"}
-            if kind == "anime":
+            if kind != "fake":
                 request.update(source_id="one_piece_official", content_type="goods", menu_work_id=8,
                                source_url="https://one-piece.com/news/82812/index.html")
             job = store.submit(request, job_kind=kind)
@@ -151,7 +152,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
         job_ids, inputs = self.seed_v1()
         old_jobs, old_attempts = self.snapshot()
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [3, 3])
+        self.assertEqual([result["version"] for result in results], [4, 4])
         self.assertFalse(self.store().initialize()["created"])
         jobs, attempts = self.snapshot()
         self.assertEqual(len(jobs), len(old_jobs))
@@ -220,7 +221,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
             ids = {phase: self.seed_v2_anime_probe(connection, phase) for phase in phases}
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [3, 3])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [4, 4])
         store = self.store()
         self.assertFalse(store.initialize()["created"])
         jobs, attempts = self.snapshot()
@@ -249,6 +250,59 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 self.assertIsNone(store.claim(ids[phase], expected_kind="anime"))
                 self.assertIsNone(store.claim_recovery(ids[phase], expected_kind="anime"))
         self.assertEqual(store.list_pending(expected_kind="anime"), [])
+
+    def test_concurrent_v3_upgrade_preserves_probe_and_allows_one_generation_for_its_url(self):
+        self.seed_v1()
+        with self.connect() as connection:
+            for migration in (V2_SQL, V3_SQL):
+                connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
+        probe_id, attempt_id = uuid4(), uuid4()
+        request = {"idempotency_key": "v3-article", "source_id": "one_piece_official", "menu_work_id": 8,
+                   "source_url": "https://one-piece.com/news/82812/index.html", "content_type": "goods"}
+        identity = {key: value for key, value in request.items() if key != "idempotency_key"}
+        identity["job_kind"] = "anime"
+        input_hash = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        path = f"jobs/{probe_id}/attempts/{attempt_id}/manifest.json"
+        result_hash = hashlib.sha256(b"v3-retained-probe").hexdigest()
+        with self.connect() as connection:
+            self.assertEqual(connection.execute("SELECT version FROM public.menu_worker_schema").fetchone()["version"], 3)
+            connection.execute(
+                """INSERT INTO public.content_generation_job
+                   (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,menu_work_id,input_sha256,
+                    job_kind,execution_status,outcome,producer_status,current_attempt_id,generation_attempt_id,
+                    attempt_count,generation_started_at,finished_at,artifact_path,result_sha256)
+                   VALUES (%s,%s,%s,%s,%s,%s,8,%s,'anime','succeeded','routing_verified','anime_probe_completed',
+                           %s,%s,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,%s,%s)""",
+                (probe_id, request["idempotency_key"], request["source_id"], request["source_url"], request["source_url"],
+                 request["content_type"], input_hash, attempt_id, attempt_id, path, result_hash),
+            )
+            connection.execute(
+                """INSERT INTO public.content_generation_attempt
+                   (attempt_id,job_id,attempt_no,mode,celery_task_id,claim_token,execution_status,generation_started_at,
+                    outcome,producer_status,artifact_path,result_sha256,finished_at)
+                   VALUES (%s,%s,1,'generation','original-probe',%s,'succeeded',CURRENT_TIMESTAMP,
+                           'routing_verified','anime_probe_completed',%s,%s,CURRENT_TIMESTAMP)""",
+                (attempt_id, probe_id, uuid4(), path, result_hash),
+            )
+        before = self.snapshot()
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [4, 4])
+        self.assertEqual(self.snapshot(), before)
+        store = self.store()
+        self.assertFalse(store.initialize()["created"])
+        self.assertFalse(store.submit(request, job_kind="anime")["created"])
+
+        probe = store.get(str(probe_id))
+        generated = store.submit({**request, "idempotency_key": "new-generation"}, job_kind="anime_generate")
+        self.assertTrue(generated["created"])
+        self.assertNotEqual(generated["input_sha256"], probe["input_sha256"])
+        self.assertEqual(generated["canonical_url"], probe["canonical_url"])
+        self.assertEqual(store.get(str(probe_id)), probe)
+        storage = importlib.import_module("menu_worker.job_store")
+        for kind, owner in (("anime", probe_id), ("anime_generate", generated["job_id"])):
+            with self.subTest(kind=kind), self.assertRaises(storage.JobConflict) as conflict:
+                store.submit({**request, "idempotency_key": f"duplicate-{kind}"}, job_kind=kind)
+            self.assertEqual(conflict.exception.code, "candidate_exists")
+            self.assertEqual(conflict.exception.existing_job_id, str(owner))
 
 
 if __name__ == "__main__":

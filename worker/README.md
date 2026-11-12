@@ -9,7 +9,7 @@ Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 �
 | `beat` | 기본 30초 간격으로 heartbeat 작업 전송 |
 | `flower` | Worker·작업 상태 조회. 로컬 접속·인증·읽기 전용 설정 사용 |
 | `jobs-db` | 전용 PostgreSQL 17. 콘텐츠 작업·실행 이력 저장, 호스트 포트 없음 |
-| `job-init` | 작업 전용 DB를 v3로 초기화하거나 기존 v1/v2 데이터에 순차 마이그레이션 적용 |
+| `job-init` | 작업 전용 DB를 v4로 초기화하거나 기존 v1~v3 작업을 보존하며 마이그레이션 |
 | `job-worker` | `content-generation` 큐의 가짜 Agent 실행, 동시 실행 1개 |
 | `job-dispatcher` | fake 작업 전달 및 중단된 fake 작업 정리 |
 | `anime-redis`, `anime-worker`, `anime-dispatcher` | 선택형 `anime` 프로필. 별도 Redis와 산출물 볼륨에서 애니 큐 전달을 점검 |
@@ -182,6 +182,37 @@ Worker 이미지는 애니 Agent의 `sources.json`, `source_type_map.json`, `men
 검증 완료 시 `routing_verified`와 결과 JSON의 `validated_input`에서 출처, 정규화 URL, 유형, 작품 ID를 확인할 수 있다. 이 단계는 URL 등록 범위를 오프라인으로 검사한다. 기사 존재·본문 검증, LLM 생성, 새 작품 등록은 후속 단계다. smoke는 중복되지 않는 합성 기사 경로를 사용한다.
 
 작업 DB의 v3 마이그레이션은 이전 완료 작업의 ID·상태·해시·산출물 경로를 보존한다. 작품 ID 없이 대기하던 v2 anime fixture는 `LEGACY_ANIME_FIXTURE_RETIRED`로 종료한다. 기존 실행의 점유가 만료되면 생성 시작 전에는 취소하고, 시작 후에는 `needs_attention`으로 기록한다.
+
+## 수동 실제 생성과 무과금 점검
+
+작업 DB v4는 같은 원문 URL의 점검 작업과 실제 생성을 각각 한 건씩 기록한다. 요청 키는 모든 종류에서 유일하므로 실제 생성에는 별도 키를 쓴다. 일반 `anime` 큐의 `submit`과 `smoke`는 v3의 오프라인 검증을 실행한다. 서비스 도면과 작업 DB 도면의 반영 사항은 [ERD V1.2 검토](../docs/erd/ERD_V1_2_GENERATION_REVIEW.md)를 참고한다.
+
+**무과금 이미지 검사.** 전용 키 없이 빌드한 뒤 네트워크를 끈 컨테이너에서 실행한다. 실제 Agent CLI, 두 카탈로그의 일치, 한글 텍스트 렌더링, PNG 디코딩과 오프라인 검수 그래프를 확인한다.
+
+```powershell
+$stack = @('--env-file','worker/.env','-f','compose.worker.yaml','-f','compose.generation.yaml','--profile','generation')
+docker compose @stack build generation-worker
+docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,size=128m me-nu-anime-generation:local python tests/check_generation_image.py
+```
+
+**유료 단건 실행.** 운영자가 출처·작품과 공급자 측 비용 한도를 정한 경우에 사용한다. `ANIME_LLM_KEY_HOST_FILE`에는 키 한 줄만 담긴 전용 파일의 절대 경로를 지정한다. 이 파일은 generation Worker에만 읽기 전용으로 연결된다. 기본 이미지와 점검 명령은 이 파일을 요구하지 않는다.
+
+```powershell
+$env:ANIME_LLM_KEY_HOST_FILE = 'C:\private\anime-api-key.txt'
+docker compose @stack up -d --wait generation-worker generation-dispatcher
+$job = docker compose @stack exec -T generation-dispatcher python -m menu_worker.jobs generate --idempotency-key live-one-piece-82812 --source one_piece_official --url https://one-piece.com/news/82812/index.html --content-type goods --menu-work-id 8 | ConvertFrom-Json
+docker compose @stack exec -T generation-dispatcher python -m menu_worker.jobs show --job-id $job.job_id
+```
+
+전용 Redis·Worker가 `anime_generate`를 점유하고 Agent의 `crawl-generate --expected-work-id`를 실행한다. 원문을 수집한 뒤 기사 증거에서 확인한 작품이 요청과 일치해야 유료 추출로 진행한다. 이미지 후보는 최대 4개, 실행 제한은 20분이다. 한 번의 생성 안에 여러 모델 호출과 검수·수정이 발생할 수 있다. 이 두 제한은 금액 상한이 아니다.
+
+`ready_for_staging`은 독립 검수와 원본 카드 PNG 검증을 통과한 결과다. 뉴스·이벤트·굿즈는 2~10장, 나머지는 3~10장을 허용한다. Agent가 승인으로 표시해도 검수 요약에 `hard_blockers`가 남거나 개별 QA에 `severity=blocker`가 있으면 Worker는 `needs_attention`과 `agent_review_incomplete`를 기록한다. 파일을 복구할 때도 같은 검사를 거친다.
+
+`held`, `skipped`, `rejected`는 원래 producer 상태와 함께 기록한다. 결과 JSON·검수/사용량 기록·카드·manifest는 전용 `generation-artifacts` 볼륨의 원래 생성 시도 디렉터리에 보관한다. 서비스 공개는 별도 검수·적재 단계다.
+
+`agent.log`에는 자식 프로세스의 시작과 종료 코드가 기록된다. 원문·키·공급자 응답을 보호하기 위해 stdout·stderr는 보관하지 않는다. 생성 도중 문제가 생기면 작업의 `error_code`와 해당 시도의 결과·검수 기록을 함께 확인한다.
+
+키 형식이나 실행 환경의 사전 점검에 실패하면 설정 수정 후 `jobs retry-preflight --job-id <ID>`를 **generation-dispatcher**에서 명시적으로 실행할 수 있다. DB의 생성 시작 시각이 비어 있는 해당 오류만 같은 작업에서 재접수된다. 시작 시각이 기록된 뒤 timeout이나 중단이 발생하면 `needs_attention`으로 남고, `jobs recover --job-id <ID>`를 **generation-worker**에서 실행해 기존 파일만 재검증한다.
 
 ## 콘텐츠 큐 회귀 검증
 

@@ -1,0 +1,91 @@
+# Optional overlay for one paid anime job at a time. Combine with compose.worker.yaml.
+x-generation-env: &generation-env
+  CONTENT_JOB_KIND: anime_generate
+  CONTENT_JOB_DATABASE_URL: "postgresql://menu_jobs:${CONTENT_JOB_DB_PASSWORD:?Run python worker/setup_local.py}@jobs-db:5432/menu_content_jobs"
+  CONTENT_JOB_ARTIFACT_ROOT: /var/lib/menu-jobs
+  CELERY_BROKER_URL: redis://generation-redis:6379/0
+  CELERY_RESULT_BACKEND: redis://generation-redis:6379/1
+
+x-generation: &generation
+  profiles: [generation]
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [tasks]
+  environment: *generation-env
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+  depends_on:
+    generation-redis: {condition: service_healthy}
+    jobs-db: {condition: service_healthy}
+    job-init: {condition: service_completed_successfully}
+  logging:
+    driver: json-file
+    options: {max-size: "5m", max-file: "2"}
+
+services:
+  generation-redis:
+    extends: {file: compose.worker.yaml, service: redis-tasks}
+    profiles: [generation]
+    volumes: [generation-redis-data:/data]
+
+  generation-dispatcher:
+    <<: *generation
+    image: me-nu-worker:local
+    command: [python, -m, menu_worker.jobs, dispatch, --loop]
+    volumes: [generation-artifacts:/var/lib/menu-jobs:ro]
+    mem_limit: 256m
+    cpus: "0.50"
+    pids_limit: 64
+    healthcheck:
+      test: [CMD, python, -m, menu_worker.health, generation-dispatcher]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  generation-worker:
+    <<: *generation
+    image: me-nu-anime-generation:local
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.generation
+      additional_contexts:
+        runtime-base: service:worker
+        anime-project: "./agents/ani_me;nu"
+        anime-works: ./catalog
+    environment:
+      <<: *generation-env
+      ANIME_AGENT_ROOT: /opt/ani-agent
+      ANIME_AGENT_PYTHON: /opt/ani-venv/bin/python
+      ANIME_LLM_KEY_FILE: /run/secrets/anime_llm_key
+    command: [celery, -A, "menu_worker.generation_app:app", worker, --loglevel=INFO, --concurrency=1, --queues=anime-generation-live, "--hostname=generate@%h", --events]
+    networks: [tasks, generation-egress]
+    volumes:
+      - generation-artifacts:/var/lib/menu-jobs
+      - type: bind
+        # Building the image only needs the path expression. Starting the service
+        # requires an existing, readable raw key file and never creates one.
+        source: ${ANIME_LLM_KEY_HOST_FILE:-./worker/.env.missing-generation-key}
+        target: /run/secrets/anime_llm_key
+        read_only: true
+        bind: {create_host_path: false}
+    mem_limit: 1536m
+    cpus: "1.0"
+    pids_limit: 192
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=128m"]
+    stop_grace_period: 3780s
+    healthcheck:
+      test: [CMD, python, -m, menu_worker.health, generation-worker]
+      interval: 15s
+      timeout: 7s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  generation-redis-data:
+  generation-artifacts:
+
+networks:
+  generation-egress:

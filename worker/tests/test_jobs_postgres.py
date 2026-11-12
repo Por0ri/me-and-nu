@@ -5,7 +5,8 @@ and removes only its own jobs. Run separately from other lease-recovery tests.
 """
 
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
+from io import StringIO
 import importlib
 import json
 import os
@@ -486,6 +487,281 @@ class JobStorePostgresTests(unittest.TestCase):
         self.assertEqual(job["error_code"], "input_identity_mismatch")
         self.assertIsNone(job["generation_started_at"])
         self.assertIsNone(job["attempts"][0]["generation_started_at"])
+
+    def test_concurrent_generation_submissions_share_one_url_independently_of_probe(self):
+        request = self.anime_candidate()
+        probe = self.store.submit(request, job_kind="anime")
+
+        def submit(store):
+            attempt = {**request, "idempotency_key": f"{self.namespace}-{uuid.uuid4().hex}"}
+            try:
+                row = store.submit(attempt, job_kind="anime_generate")
+                return row["job_id"], row["created"], attempt
+            except self.JobConflict as error:
+                self.assertEqual(error.code, "candidate_exists")
+                return error.existing_job_id, False, attempt
+
+        results = self.parallel(submit)
+        self.assertCountEqual([created for _, created, _ in results], [True, False])
+        self.assertEqual(len({job_id for job_id, _, _ in results}), 1)
+        owner, _, admitted = next(result for result in results if result[1])
+        self.assertNotEqual(owner, probe["job_id"])
+        replay = self.store.submit(admitted, job_kind="anime_generate")
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["job_id"], owner)
+        self.assertNotEqual(replay["input_sha256"], probe["input_sha256"])
+        with self.assertRaises(self.JobConflict) as conflict:
+            self.store.submit(request, job_kind="anime_generate")
+        self.assertEqual(conflict.exception.code, "idempotency_conflict")
+        self.assertEqual(conflict.exception.existing_job_id, probe["job_id"])
+
+    def test_generation_kind_fences_and_preflight_failure_before_start(self):
+        request = self.anime_candidate()
+        probe = self.store.submit(request, job_kind="anime")
+        kind = "anime_generate"
+        job = self.store.submit({**request, "idempotency_key": self.namespace}, job_kind=kind)
+        job_id = job["job_id"]
+        own = {row["job_id"] for row in self.store.list_pending(expected_kind=kind)}
+        self.assertIn(job_id, own)
+        self.assertNotIn(probe["job_id"], own)
+        for other in ("fake", "anime"):
+            with self.subTest(other=other):
+                self.assertNotIn(job_id, {row["job_id"] for row in self.store.list_pending(expected_kind=other)})
+                self.assertFalse(self.store.record_dispatched(job_id, "wrong-kind", expected_kind=other))
+                self.assertFalse(self.store.cancel(job_id, expected_kind=other))
+                self.assertIsNone(self.store.claim(job_id, expected_kind=other))
+        self.assertFalse(self.store.cancel(probe["job_id"], expected_kind=kind))
+        self.assertTrue(self.store.cancel(probe["job_id"], expected_kind="anime"))
+        self.assertTrue(self.store.record_dispatched(job_id, "live-task", expected_kind=kind))
+        claim = self.store.claim(job_id, expected_kind=kind)
+        token = claim["claim_token"]
+        for other in ("fake", "anime"):
+            with self.subTest(stolen_token=other):
+                self.assertFalse(self.store.mark_generation_started(job_id, token, expected_kind=other))
+                self.assertFalse(self.store.renew_lease(job_id, token, expected_kind=other))
+                self.assertFalse(self.store.complete(job_id, token, expected_kind=other, execution_status="failed",
+                                                     error_code="wrong_consumer"))
+        self.assertTrue(self.store.complete(job_id, token, expected_kind=kind, execution_status="failed",
+                                            error_code="preflight_failed"))
+        result = self.store.get(job_id)
+        self.assertEqual(result["execution_status"], "failed")
+        self.assertIsNone(result["generation_started_at"])
+        self.assertIsNone(result["attempts"][0]["generation_started_at"])
+        self.assertIsNone(self.store.claim_recovery(job_id, expected_kind=kind))
+
+    def test_generation_interruption_can_recover_only_original_attempt(self):
+        kind = "anime_generate"
+        job_id = self.store.submit(self.anime_candidate(), job_kind=kind)["job_id"]
+        first = self.store.claim(job_id, expected_kind=kind)
+        self.assertTrue(self.store.mark_generation_started(job_id, first["claim_token"], expected_kind=kind))
+        self.assertFalse(self.store.cancel(job_id, expected_kind=kind))
+        self.expire(job_id)
+        for other in ("fake", "anime"):
+            self.store.recover_expired(expected_kind=other)
+            self.assertEqual(self.store.get(job_id)["execution_status"], "running")
+        self.store.recover_expired(expected_kind=kind)
+        self.assertEqual(self.store.get(job_id)["execution_status"], "needs_attention")
+        self.assertNotIn(job_id, {row["job_id"] for row in self.store.list_pending(expected_kind=kind)})
+        self.assertIsNone(self.store.claim(job_id, expected_kind=kind))
+        self.assertIsNone(self.store.claim_recovery(job_id, expected_kind="anime"))
+        recovery = self.store.claim_recovery(job_id, expected_kind=kind)
+        self.assertEqual(recovery["generation_attempt_id"], first["generation_attempt_id"])
+        self.assertFalse(self.store.mark_generation_started(job_id, recovery["claim_token"], expected_kind=kind))
+
+    def test_generation_completion_preserves_original_producer_status(self):
+        kind = "anime_generate"
+        dispositions = (("ready_for_staging", "ready_for_feed"), ("held", "needs_crawler_update"),
+                        ("skipped", "duplicate_skipped"), ("rejected", "rejected_archived"))
+        for outcome, original in dispositions:
+            with self.subTest(outcome=outcome):
+                article = int(uuid.uuid4().hex[:12], 16)
+                request = self.anime_candidate(idempotency_key=f"{self.namespace}-{outcome}",
+                                              source_url=f"https://one-piece.com/news/{article}/index.html")
+                job_id = self.store.submit(request, job_kind=kind)["job_id"]
+                claim = self.store.claim(job_id, expected_kind=kind)
+                self.assertTrue(self.store.mark_generation_started(job_id, claim["claim_token"], expected_kind=kind))
+                path = f"jobs/{job_id}/attempts/{claim['generation_attempt_id']}/manifest.json"
+                self.assertTrue(self.store.complete(job_id, claim["claim_token"], expected_kind=kind,
+                                                    execution_status="succeeded", outcome=outcome,
+                                                    producer_status=original, artifact_path=path, result_sha256="a" * 64))
+                result = self.store.get(job_id)
+                self.assertEqual((result["outcome"], result["producer_status"]), (outcome, original))
+                attempt = result["attempts"][0]
+                self.assertEqual((attempt["outcome"], attempt["producer_status"]), (outcome, original))
+
+    @contextmanager
+    def substituted_live_child(self, root, *, timeout=False):
+        """Keep the real command builder and verifier. Substitute external process I/O."""
+        runner = importlib.import_module("menu_worker.job_runner")
+        adapter = importlib.import_module("menu_worker.real_generation")
+        test_key = root / "test-secret"
+        test_key.write_text("sk-manual-queue-test-never-sent", encoding="ascii")
+
+        def launch(argv, *, cwd, env, **kwargs):
+            self.assertIn("crawl-generate", argv)
+            self.assertTrue(kwargs["start_new_session"])
+            self.assertEqual(env["ANI_MENU_DATABASE_BACKEND"], "sqlite")
+            self.assertNotIn("CONTENT_JOB_DATABASE_URL", env)
+            self.assertNotIn("DATABASE_URL", env)
+            output = Path(argv[argv.index("--output") + 1])
+            self.assertEqual(output, Path(cwd) / "result.json")
+            if not timeout:
+                binding = {
+                    "source_id": argv[argv.index("--source") + 1],
+                    "source_url": argv[argv.index("--url") + 1],
+                    "content_type": argv[argv.index("--content-type") + 1],
+                    "menu_work_id": int(argv[argv.index("--expected-work-id") + 1]),
+                }
+                # A producer hold exercises manifest finalization without making
+                # any claim about real reviews, generated cards or provider usage.
+                output.write_text(json.dumps({"status": "needs_crawler_update", "expected_work_request": binding,
+                                              "qa_report": [{"code": "UNIT_CHILD_NO_PROVIDER"}]}), encoding="utf-8")
+            return Mock(pid=101, returncode=0, poll=Mock(return_value=None if timeout else 0))
+
+        with (patch.object(runner, "preflight_real"), patch.object(adapter, "KEY_FILE", test_key),
+              patch.object(adapter.subprocess, "Popen", side_effect=launch) as spawn,
+              patch.object(adapter, "_stop_group"),
+              patch.object(adapter, "TIMEOUT_SECONDS", 0 if timeout else adapter.TIMEOUT_SECONDS)):
+            yield spawn
+
+    def test_manual_generation_cli_and_worker_with_substituted_child(self):
+        cli = importlib.import_module("menu_worker.jobs")
+        runner = importlib.import_module("menu_worker.job_runner")
+        adapter = importlib.import_module("menu_worker.real_generation")
+        request = self.anime_candidate()
+        probe_id = self.store.submit(request, job_kind="anime")["job_id"]
+        output = StringIO()
+        with (patch.dict(os.environ, {"CONTENT_JOB_KIND": "anime_generate"}),
+              patch.object(cli, "JobStore", return_value=self.store), redirect_stdout(output)):
+            code = cli.main(["generate", "--idempotency-key", self.namespace + "-manual", "--source", request["source_id"],
+                             "--url", request["source_url"], "--content-type", request["content_type"],
+                             "--menu-work-id", str(request["menu_work_id"])])
+        self.assertEqual(code, 0)
+        live_id = json.loads(output.getvalue())["job_id"]
+        self.assertNotEqual(probe_id, live_id)
+        with TemporaryDirectory(prefix="manual-queue-") as temporary:
+            root = Path(temporary).resolve()
+            with self.substituted_live_child(root) as spawn:
+                runner.run_job(self.store, root, probe_id, task_id="unit-probe", expected_kind="anime")
+                spawn.assert_not_called()
+                report = runner.run_job(self.store, root, live_id, task_id="unit-live", expected_kind="anime_generate")
+                self.assertTrue(report["processed"])
+                replay = runner.run_job(self.store, root, live_id, task_id="unit-redelivery", expected_kind="anime_generate")
+                self.assertFalse(replay["processed"])
+                spawn.assert_called_once()
+            live, probe = self.store.get(live_id), self.store.get(probe_id)
+            self.assertEqual((probe["execution_status"], probe["outcome"]), ("succeeded", "routing_verified"))
+            self.assertEqual((live["execution_status"], live["outcome"], live["producer_status"]),
+                             ("succeeded", "held", "needs_crawler_update"))
+            self.assertEqual(live["attempt_count"], 1)
+            evidence = adapter.validate_real_artifacts(root, live)
+            self.assertEqual(evidence["result_sha256"], live["result_sha256"])
+            manifest = json.loads((root / live["artifact_path"]).read_bytes())
+            self.assertEqual(manifest["generation_attempt_id"], live["generation_attempt_id"])
+            self.assertEqual(manifest["request"]["source_url"], request["source_url"])
+
+    def test_live_timeout_and_unfinished_recovery_never_relaunch_child(self):
+        runner = importlib.import_module("menu_worker.job_runner")
+        kind = "anime_generate"
+        job_id = self.store.submit(self.anime_candidate(), job_kind=kind)["job_id"]
+        with TemporaryDirectory(prefix="manual-timeout-") as temporary:
+            root = Path(temporary).resolve()
+            with self.substituted_live_child(root, timeout=True) as spawn:
+                runner.run_job(self.store, root, job_id, task_id="unit-timeout", expected_kind=kind)
+                stopped = self.store.get(job_id)
+                self.assertEqual((stopped["execution_status"], stopped["error_code"]), ("needs_attention", "agent_timeout"))
+                self.assertIsNotNone(stopped["generation_started_at"])
+                replay = runner.run_job(self.store, root, job_id, task_id="unit-redelivered", expected_kind=kind)
+                self.assertFalse(replay["processed"])
+                runner.run_job(self.store, root, job_id, task_id="unit-reconcile", expected_kind=kind, recover=True)
+                spawn.assert_called_once()
+            final = self.store.get(job_id)
+            self.assertEqual(final["execution_status"], "needs_attention")
+            self.assertEqual(final["generation_attempt_id"], stopped["generation_attempt_id"])
+            self.assertEqual([row["mode"] for row in final["attempts"]], ["generation", "recovery"])
+            self.assertIsNone(final["artifact_path"])
+
+    def test_live_artifacts_recover_after_completion_write_error_without_second_launch(self):
+        runner = importlib.import_module("menu_worker.job_runner")
+        kind = "anime_generate"
+        job_id = self.store.submit(self.anime_candidate(), job_kind=kind)["job_id"]
+        with TemporaryDirectory(prefix="manual-recovery-") as temporary:
+            root = Path(temporary).resolve()
+            with self.substituted_live_child(root) as spawn:
+                with (patch.object(self.store, "complete", side_effect=RuntimeError("test completion write error")),
+                      self.assertRaises(RuntimeError)):
+                    runner.run_job(self.store, root, job_id, task_id="unit-uncommitted-result", expected_kind=kind)
+                before = self.store.get(job_id)
+                directory = root / "jobs" / job_id / "attempts" / before["generation_attempt_id"]
+                content = (directory / "result.json").read_bytes()
+                manifest = (directory / "manifest.json").read_bytes()
+                self.expire(job_id)
+                self.store.recover_expired(expected_kind=kind)
+                self.assertEqual(self.store.get(job_id)["execution_status"], "needs_attention")
+                runner.run_job(self.store, root, job_id, task_id="unit-restore", expected_kind=kind, recover=True)
+                spawn.assert_called_once()
+            final = self.store.get(job_id)
+            self.assertEqual((final["execution_status"], final["outcome"]), ("succeeded", "held"))
+            self.assertEqual(final["generation_attempt_id"], before["generation_attempt_id"])
+            self.assertEqual((directory / "manifest.json").read_bytes(), manifest)
+            self.assertEqual((directory / "result.json").read_bytes(), content)
+
+    def test_preflight_retry_requeues_once_with_same_identity_and_full_attempt_history(self):
+        kind = "anime_generate"
+        job = self.store.submit(self.anime_candidate(), job_kind=kind)
+        job_id = job["job_id"]
+        self.assertTrue(self.store.record_dispatched(job_id, "initial-delivery", expected_kind=kind))
+        first = self.store.claim(job_id, task_id="initial-delivery", expected_kind=kind)
+        self.assertTrue(self.store.complete(job_id, first["claim_token"], expected_kind=kind,
+                                            execution_status="failed", error_code="invalid_agent_secret"))
+        before = self.store.get(job_id)
+        for wrong_role in ("fake", "anime"):
+            self.assertFalse(self.store.retry_preflight(job_id, expected_kind=wrong_role))
+        self.assertCountEqual(self.parallel(lambda store: store.retry_preflight(job_id, expected_kind=kind)),
+                              [True, False])
+        queued = self.store.get(job_id)
+        self.assertEqual(queued["execution_status"], "queued")
+        for field in ("job_id", "job_kind", "idempotency_key", "input_sha256", "created_at", "menu_work_id",
+                      "source_url", "canonical_url", "attempt_count", "dispatch_count", "attempts"):
+            self.assertEqual(queued[field], before[field], field)
+        for field in ("current_attempt_id", "generation_attempt_id", "generation_started_at", "claim_token",
+                      "lease_expires_at", "last_dispatched_at", "last_task_id", "error_code", "finished_at"):
+            self.assertIsNone(queued[field], field)
+        self.assertIn(job_id, {row["job_id"] for row in self.store.list_pending(expected_kind=kind)})
+        second = self.store.claim(job_id, expected_kind=kind)
+        self.assertEqual(second["attempt_count"], 2)
+        self.assertNotEqual(second["attempt_id"], first["attempt_id"])
+        self.assertFalse(self.store.mark_generation_started(job_id, first["claim_token"], expected_kind=kind))
+        self.assertTrue(self.store.complete(job_id, second["claim_token"], expected_kind=kind,
+                                            execution_status="failed", error_code="agent_runtime_unavailable"))
+        self.assertTrue(self.store.retry_preflight(job_id, expected_kind=kind))
+        history = self.store.get(job_id)["attempts"]
+        self.assertEqual([row["error_code"] for row in history], ["invalid_agent_secret", "agent_runtime_unavailable"])
+
+    def test_preflight_retry_refuses_started_ambiguous_other_error_or_other_kind(self):
+        live = "anime_generate"
+        cases = ((live, "failed", "invalid_agent_secret", True),
+                 (live, "needs_attention", "agent_runtime_unavailable", False),
+                 (live, "failed", "input_identity_mismatch", False),
+                 ("anime", "failed", "invalid_agent_secret", False),
+                 ("fake", "failed", "agent_runtime_unavailable", False))
+        for index, (kind, status, code, started) in enumerate(cases):
+            with self.subTest(kind=kind, status=status, code=code, started=started):
+                if kind == "fake":
+                    request = self.candidate()
+                else:
+                    article = int(uuid.uuid4().hex[:12], 16)
+                    request = self.anime_candidate(idempotency_key=f"{self.namespace}-{index}",
+                                                  source_url=f"https://one-piece.com/news/{article}/index.html")
+                job_id = self.store.submit(request, job_kind=kind)["job_id"]
+                claim = self.store.claim(job_id, expected_kind=kind)
+                if started:
+                    self.assertTrue(self.store.mark_generation_started(job_id, claim["claim_token"], expected_kind=kind))
+                self.assertTrue(self.store.complete(job_id, claim["claim_token"], expected_kind=kind,
+                                                    execution_status=status, error_code=code))
+                before = self.store.get(job_id)
+                self.assertFalse(self.store.retry_preflight(job_id, expected_kind=live))
+                self.assertEqual(self.store.get(job_id), before)
 
 
 if __name__ == "__main__":

@@ -11,15 +11,17 @@ from menu_worker.tasks import HEARTBEAT_KEY, result_store
 
 
 def check(role: str) -> bool:
-    if role in {"worker", "job-worker", "anime-worker"}:
-        prefix = {"worker": "runtime", "job-worker": "content", "anime-worker": "anime"}[role]
+    nodes = {"worker": "runtime", "job-worker": "content", "anime-worker": "anime", "generation-worker": "generate"}
+    if role in nodes:
         worker_app = app
         if role == "anime-worker":
             from menu_worker.anime_app import app as worker_app
-        name = f"{prefix}@{socket.gethostname()}"
+        elif role == "generation-worker":
+            from menu_worker.generation_app import app as worker_app
+        name = f"{nodes[role]}@{socket.gethostname()}"
         return any(reply.get(name, {}).get("ok") == "pong"
                    for reply in worker_app.control.ping(destination=[name], timeout=3))
-    if role in {"job-dispatcher", "anime-dispatcher"}:
+    if role in {"job-dispatcher", "anime-dispatcher", "generation-dispatcher"}:
         stamp = datetime.fromisoformat(Path("/tmp/job-dispatcher.health").read_text())
         return 0 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= 30
     if role == "beat":

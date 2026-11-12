@@ -73,7 +73,10 @@ class JobStoreGuardTests(unittest.TestCase):
         invalid = (("fake", "succeeded", "routing_verified", "anime_probe_completed"),
                    ("anime", "succeeded", "ready_for_staging", "ready_for_feed"),
                    ("anime", "succeeded", "routing_verified", "ready_for_feed"),
-                   ("anime", "failed", "routing_verified", "anime_probe_completed"))
+                   ("anime", "failed", "routing_verified", "anime_probe_completed"),
+                   ("anime_generate", "succeeded", "routing_verified", "anime_probe_completed"),
+                   ("anime_generate", "succeeded", "ready_for_staging", ""),
+                   ("anime_generate", "needs_attention", "held", "needs_crawler_update"))
         with patch("menu_worker.job_store.psycopg.connect") as connect:
             for kind, status, outcome, original in invalid:
                 with self.subTest(kind=kind, outcome=outcome), self.assertRaises(ValueError):

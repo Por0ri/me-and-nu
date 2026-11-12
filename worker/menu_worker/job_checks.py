@@ -10,6 +10,8 @@ from menu_worker.jobs import job_route, send_delivery
 
 
 def smoke_input(kind, scenario, key):
+    if kind not in {"fake", "anime"}:
+        raise ValueError("Probe source requires a probe queue")
     if kind == "anime":
         # Synthetic article path on the catalog's One Piece source, never fetched.
         article = uuid4().int % 10**16
@@ -18,6 +20,8 @@ def smoke_input(kind, scenario, key):
 
 
 def smoke(store, timeout=60, *, kind="fake"):
+    if kind not in {"fake", "anime"}:
+        raise ValueError("Smoke checks require a probe queue")
     namespace = "smoke-" + uuid4().hex
     expected = {"success": ("succeeded", "ready_for_staging"), "held": ("succeeded", "held"),
                 "skipped": ("succeeded", "skipped"), "fail": ("failed", None)}

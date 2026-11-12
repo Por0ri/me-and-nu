@@ -13,7 +13,7 @@ CONTENT_TYPES = frozenset({
 })
 FIXTURE_SCENARIOS = frozenset({"success", "held", "skipped", "fail", "slow"})
 INPUT_FIELDS = frozenset({"idempotency_key", "source_id", "source_url", "content_type"})
-JOB_KINDS = frozenset({"fake", "anime"})
+JOB_KINDS = frozenset({"fake", "anime", "anime_generate"})
 
 
 class JobInputError(ValueError):
@@ -25,7 +25,7 @@ class JobInputError(ValueError):
 
 def validate_job_kind(value: str) -> str:
     if not isinstance(value, str) or value not in JOB_KINDS:
-        raise JobInputError("job_kind must be fake or anime")
+        raise JobInputError("Unsupported job kind")
     return value
 
 
@@ -112,14 +112,14 @@ def validate_input(value: Mapping) -> JobInput:
 def validate_job_request(value: JobInput | Mapping, job_kind: str) -> tuple[JobInput, str, str]:
     validate_job_kind(job_kind)
     request = value if isinstance(value, JobInput) else validate_input(value)
-    if job_kind == "anime" and request.source_id == "fixture":
+    if job_kind in {"anime", "anime_generate"} and request.source_id == "fixture":
         raise JobInputError("Choose a registered anime source and work", "registered_source_required")
     if job_kind == "fake" and request.source_id != "fixture":
         raise JobInputError("Fake jobs require fixture input", "fixture_source_required")
     canonical_url = request.canonical_url
     identity = {"source_id": request.source_id, "source_url": canonical_url, "content_type": request.content_type}
-    if job_kind == "anime":
-        identity.update(job_kind="anime", menu_work_id=request.menu_work_id)
+    if job_kind in {"anime", "anime_generate"}:
+        identity.update(job_kind=job_kind, menu_work_id=request.menu_work_id)
     # The v1/v2 fake identity remains byte-for-byte compatible.
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     return request, canonical_url, hashlib.sha256(encoded).hexdigest()
