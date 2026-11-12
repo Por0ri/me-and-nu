@@ -1236,6 +1236,18 @@
       "region": "global",
       "discovery_enabled": false,
       "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-11T09:43:43.271161+00:00; 후보 유형: goods"
+    },
+    {
+      "id": "src_parks2_bandainamco_am_co_jp",
+      "name": "parks2.bandainamco-am.co.jp",
+      "url": "https://parks2.bandainamco-am.co.jp/",
+      "category": "source_discovery",
+      "role": "discovery",
+      "collection": "html",
+      "status": "technical_review",
+      "region": "global",
+      "discovery_enabled": false,
+      "notes": "출처 후보의 홈페이지와 예시 링크는 기술 검증을 통과했지만, 유형별 최신 목록 페이지는 별도 확인이 필요해 자동 수집을 비활성화함. 원문 사실 근거로 직접 승인하지 않음. 검증일 2026-11-12T02:03:06.839653+00:00; 후보 유형: goods"
     }
   ]
 }
