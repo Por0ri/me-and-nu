@@ -51,7 +51,9 @@ services:
     restart: unless-stopped
     command: [redis-server, --appendonly, "yes", --appendfsync, everysec, --maxmemory, 128mb, --maxmemory-policy, noeviction]
     volumes: [redis-tasks-data:/data]
-    networks: [tasks]
+    networks: [tasks, monitor]
+    ports:
+      - "127.0.0.1:${REDIS_TASKS_PORT:-6380}:6379"
     mem_limit: 256m
     cpus: "0.25"
     pids_limit: 32
@@ -70,6 +72,8 @@ services:
     <<: *queue-redis
     profiles: [anime]
     volumes: [anime-redis-data:/data]
+    ports:
+      - "127.0.0.1:${ANIME_REDIS_PORT:-6381}:6379"
 
   worker:
     <<: *runtime
@@ -209,7 +213,6 @@ services:
   flower:
     <<: *runtime
     # Docker Desktop needs a normal bridge for published localhost ports.
-    # Only Flower joins this bridge; broker and workers remain internal.
     networks: [tasks, monitor]
     depends_on:
       redis-tasks:

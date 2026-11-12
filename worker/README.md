@@ -30,7 +30,9 @@ docker compose --env-file worker/.env -f compose.worker.yaml ps
 
 초기화 명령은 Flower와 전용 DB 비밀번호를 `worker/.env`에 저장한다. 기존 파일에는 누락된 `CONTENT_JOB_DB_PASSWORD`만 추가하며 기존 Flower 설정은 보존한다. 비밀번호는 출력하지 않는다. 파일은 Git에서 제외된다. DB 비밀번호는 최초 볼륨 초기화 때 적용되므로 볼륨을 만든 뒤 임의로 바꾸지 않는다. Flower 접속 정보는 본인의 로컬 파일에서 확인한다.
 
-[Flower](http://127.0.0.1:5555)는 기본적으로 `127.0.0.1:5555`에만 열린다. 로그인에는 `FLOWER_BASIC_AUTH`의 `사용자:비밀번호`를 사용한다. 포트가 이미 사용 중이면 `worker/.env`의 `FLOWER_PORT`를 바꾸고 위 기동 명령을 다시 실행한다. Redis는 호스트 포트를 열지 않는다.
+[Flower](http://127.0.0.1:5555)는 기본적으로 `127.0.0.1:5555`에만 열린다. 로그인에는 `FLOWER_BASIC_AUTH`의 `사용자:비밀번호`를 사용한다. 포트가 이미 사용 중이면 `worker/.env`의 `FLOWER_PORT`를 바꾸고 위 기동 명령을 다시 실행한다.
+
+호스트 PC의 Redis Insight에서 기본 작업 큐는 `redis://127.0.0.1:6380/0`, `anime` 프로필의 애니 작업 큐는 `redis://127.0.0.1:6381/0`으로 연결한다. 두 Redis 모두 DB 0에 대기 메시지를, DB 1에 Celery 결과를 저장한다. 포트는 `worker/.env`의 `REDIS_TASKS_PORT`와 `ANIME_REDIS_PORT`로 조정할 수 있다.
 
 로그인이 실패하면 `FLOWER_BASIC_AUTH=사용자:비밀번호`에서 첫 번째 `:` 앞부분을 사용자 이름에, 뒷부분을 비밀번호에 입력했는지 확인한다. 설정 줄 전체를 입력하지 않는다. `worker/.env`를 편집한 뒤에는 아래 명령으로 Flower 컨테이너를 다시 생성해야 적용된다. `restart`만으로는 변경된 환경변수를 읽지 않는다. 적용 후에도 이전 로그인 정보가 계속 사용되면 브라우저의 새 시크릿 창에서 접속한다.
 
@@ -73,7 +75,7 @@ docker compose --env-file worker/.env -f compose.worker.yaml down
 
 `down`은 컨테이너와 네트워크를 종료하고 영속 볼륨은 보존한다. 이후 같은 기동 명령으로 다시 시작할 수 있다. Beat는 스케줄 볼륨의 프로세스 잠금을 사용해 두 번째 인스턴스 실행을 거부한다. 프로세스 종료 시 잠금은 자동 해제된다.
 
-Redis는 작업 전용 볼륨에 AOF를 저장하며 `appendfsync everysec`을 사용한다. 비정상 호스트 종료 시 최근 약 1초의 기록이 유실될 수 있으므로, 이 설정만으로 콘텐츠 작업의 무손실 실행을 보장하지 않는다. 결과는 1시간 뒤 만료되고, Flower는 최근 2,000개 작업 상태를 별도 볼륨에 보존한다. `tasks` 네트워크는 내부 전용이며, Flower만 localhost 포트 연결을 위한 `monitor` 네트워크에도 참여한다.
+Redis는 작업 전용 볼륨에 AOF를 저장하며 `appendfsync everysec`을 사용한다. 비정상 호스트 종료 시 최근 약 1초의 기록이 유실될 수 있으므로, 이 설정만으로 콘텐츠 작업의 무손실 실행을 보장하지 않는다. 결과는 1시간 뒤 만료되고, Flower는 최근 2,000개 작업 상태를 별도 볼륨에 보존한다. `tasks` 네트워크는 내부 전용이며, Flower와 `redis-tasks`, `anime-redis`는 localhost 포트 연결을 위해 `monitor` 네트워크에도 참여한다.
 
 ## 구현 범위
 
