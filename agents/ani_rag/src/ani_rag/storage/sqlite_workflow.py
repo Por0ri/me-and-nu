@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import sqlite3
 import uuid
 from dataclasses import asdict, replace
@@ -18,10 +19,11 @@ from typing import Sequence
 from urllib.parse import urlsplit
 
 from ani_rag.content import (
-    CardDraft, CardLayout, ContentDraft, ContentEntityLink, ContentTag,
+    CardDraft, CardLayout, ContentDraft, ContentEntityLink, ContentTag, DuplicateContentError,
     ImageAsset, ImageEntityLink, NormalizedBox, SupportedClaim, TEXT_ONLY_ASSET_ID,
 )
 from ani_rag.image_ingest import ImageCandidate
+from ani_rag.image_quality import image_resolution_tier
 from ani_rag.models import EvidenceDocument, RagContentType
 from ani_rag.retrieval import EvidenceChunk, RetrievedEvidence
 from ani_rag.review import ReviewResult
@@ -49,11 +51,103 @@ def _claim_evidence_id(claim_id: str, document_id: str, chunk_id: str) -> str:
     return f"ce_{hashlib.sha256(f'{claim_id}:{document_id}:{chunk_id}'.encode()).hexdigest()[:28]}"
 
 
+def _topic_terms(value: str) -> set[str]:
+    return {
+        item for item in re.findall(r"[0-9a-z가-힣]+", value.casefold())
+        if len(item) > 1
+    }
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    return len(left & right) / max(1, len(left | right))
+
+
+def _draft_topic_fields(draft: ContentDraft) -> tuple[str, str, str]:
+    plan = draft.ai_judgment_basis.get("editorial_plan", {})
+    angle = str(plan.get("angle", "")) if isinstance(plan, dict) else ""
+    return draft.title, draft.summary or "", angle
+
+
+def _topic_duplicate_score(
+    candidate: tuple[str, str, str], existing: tuple[str, str, str],
+) -> tuple[float, float, float]:
+    candidate_title, candidate_summary, candidate_angle = candidate
+    existing_title, existing_summary, existing_angle = existing
+    title_similarity = _jaccard(_topic_terms(candidate_title), _topic_terms(existing_title))
+    candidate_detail = _topic_terms(f"{candidate_summary} {candidate_angle}")
+    existing_detail = _topic_terms(f"{existing_summary} {existing_angle}")
+    detail_similarity = _jaccard(candidate_detail, existing_detail)
+    candidate_all = _topic_terms(" ".join(candidate))
+    existing_all = _topic_terms(" ".join(existing))
+    all_similarity = _jaccard(candidate_all, existing_all)
+    return title_similarity, detail_similarity, all_similarity
+
+
+def _is_near_duplicate_topic(
+    candidate: tuple[str, str, str], existing: tuple[str, str, str],
+) -> bool:
+    title_similarity, detail_similarity, all_similarity = _topic_duplicate_score(candidate, existing)
+    return (
+        title_similarity >= 0.62
+        or (detail_similarity >= 0.45 and all_similarity >= 0.38)
+        or all_similarity >= 0.54
+    )
+
+
 class SQLiteDraftRepository:
     """Draft/claim persistence over the same dedicated connection as SQLiteRagStore."""
 
     def __init__(self, store: SQLiteRagStore) -> None:
         self.store = store
+
+    async def recent_topics(
+        self, menu_work_ids: Sequence[int], *, limit: int = 30,
+    ) -> Sequence[dict[str, str]]:
+        return await asyncio.to_thread(self._recent_topics, tuple(menu_work_ids), limit)
+
+    def _recent_topics(
+        self, menu_work_ids: Sequence[int], limit: int,
+    ) -> tuple[dict[str, str], ...]:
+        if not menu_work_ids or limit < 1:
+            return ()
+        wanted = set(menu_work_ids)
+        with self.store._lock:
+            rows = self.store._connection.execute(
+                """SELECT title,summary,ai_judgment_basis_json,menu_work_ids_json,content_type
+                   FROM rag_content_draft ORDER BY created_at DESC LIMIT 500"""
+            ).fetchall()
+        topics: list[dict[str, str]] = []
+        for row in rows:
+            try:
+                linked_works = set(json.loads(row["menu_work_ids_json"] or "[]"))
+                basis = json.loads(row["ai_judgment_basis_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not wanted.intersection(linked_works):
+                continue
+            plan = basis.get("editorial_plan", {}) if isinstance(basis, dict) else {}
+            topics.append({
+                "content_type": str(row["content_type"] or ""),
+                "title": str(row["title"] or ""),
+                "summary": str(row["summary"] or ""),
+                "editorial_angle": str(plan.get("angle", "")) if isinstance(plan, dict) else "",
+            })
+            if len(topics) >= limit:
+                break
+        return tuple(topics)
+
+    async def find_duplicate_topic(self, draft: ContentDraft) -> str | None:
+        return await asyncio.to_thread(self._find_duplicate_topic, draft)
+
+    def _find_duplicate_topic(self, draft: ContentDraft) -> str | None:
+        candidate = _draft_topic_fields(draft)
+        for topic in self._recent_topics(draft.menu_work_ids, 500):
+            existing = (
+                topic["title"], topic["summary"], topic["editorial_angle"],
+            )
+            if _is_near_duplicate_topic(candidate, existing):
+                return topic["title"] or "untitled existing draft"
+        return None
 
     async def save(
         self, draft: ContentDraft, retrieval: RetrievedEvidence,
@@ -78,8 +172,28 @@ class SQLiteDraftRepository:
         if set(rendered_by_id) != expected_card_ids:
             raise ValueError("Every draft page must have exactly one rendered PNG plate")
         store = self.store
-        with store._transaction():
-            _execute_with_stage(store._connection, "retrieval",
+        with store._transaction(immediate=True):
+            duplicate_title = self._find_duplicate_topic(draft)
+            if duplicate_title:
+                raise DuplicateContentError(f"recent_work_topic_duplicate:{duplicate_title[:120]}")
+            main_card = draft.cards[0]
+            if main_card.image_asset_id != TEXT_ONLY_ASSET_ID:
+                duplicate_cover = store._connection.execute(
+                    """SELECT 1 FROM rag_content_card c
+                       JOIN rag_card_image ci ON ci.card_id=c.card_id
+                       JOIN rag_image_asset used ON used.asset_id=ci.asset_id
+                       JOIN rag_image_asset selected ON selected.asset_id=?
+                       WHERE c.page_no=1 AND (
+                           used.asset_id=selected.asset_id
+                           OR (selected.content_sha256 IS NOT NULL
+                               AND used.content_sha256=selected.content_sha256)
+                           OR used.source_url=selected.source_url
+                       ) LIMIT 1""",
+                    (main_card.image_asset_id,),
+                ).fetchone()
+                if duplicate_cover:
+                    raise DuplicateContentError("cover_image_already_used_by_another_content")
+            _execute_with_stage(store._connection, "retrieval", 
                 """INSERT INTO rag_retrieval(retrieval_id,query_text,content_type,work_ids_json,
                    seed_evidence_ids_json,retrieved_at,backend) VALUES(?,?,?,?,?,?,?)""",
                 (retrieval.retrieval_id, retrieval.query, retrieval.content_type.value,
@@ -89,7 +203,7 @@ class SQLiteDraftRepository:
             for chunk in retrieval.chunks:
                 if chunk.evidence_id not in documents:
                     raise ValueError(f"Chunk {chunk.chunk_id!r} has no retrieval document")
-                _execute_with_stage(store._connection, "chunk",
+                _execute_with_stage(store._connection, "chunk", 
                     """INSERT OR IGNORE INTO rag_chunk(chunk_id,document_id,locator,source_kind,
                        source_index,chunk_text,start_offset,end_offset,language,created_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?)""",
@@ -98,11 +212,11 @@ class SQLiteDraftRepository:
                      chunk.language, retrieval.retrieved_at.isoformat()),
                 )
             for rank, chunk in enumerate(retrieval.chunks, start=1):
-                _execute_with_stage(store._connection, "retrieval_hit",
+                _execute_with_stage(store._connection, "retrieval_hit", 
                     "INSERT INTO rag_retrieval_hit(retrieval_id,chunk_id,rank,score) VALUES(?,?,?,?)",
                     (retrieval.retrieval_id, chunk.chunk_id, rank, chunk.score),
                 )
-            _execute_with_stage(store._connection, "content_draft",
+            _execute_with_stage(store._connection, "content_draft", 
                 """INSERT INTO rag_content_draft(draft_id,content_type,topic_id,topic_label,title,body,summary,
                    keyword_json,thumbnail_url,is_sponsored,is_changed_notice,ai_judgment_basis_json,
                    event_detail_id,published_at,valid_until,embedding_json,source_footer,ai_disclosure,menu_work_ids_json,
@@ -120,7 +234,7 @@ class SQLiteDraftRepository:
                  draft.created_at.isoformat(), datetime.now(timezone.utc).isoformat()),
             )
             for evidence_id in draft.evidence_ids:
-                _execute_with_stage(store._connection, "draft_evidence",
+                _execute_with_stage(store._connection, "draft_evidence", 
                     "INSERT INTO rag_draft_evidence(draft_id,document_id,relation) VALUES(?,?,?)",
                     (draft.draft_id, evidence_id, "support"),
                 )
@@ -131,7 +245,7 @@ class SQLiteDraftRepository:
                 ).fetchone()
                 if source_row is not None:
                     metadata = json.loads(source_row["metadata_json"])
-                    _execute_with_stage(store._connection, "content_source",
+                    _execute_with_stage(store._connection, "content_source", 
                         """INSERT INTO rag_content_source(draft_id,source_url,raw_document_id,source_site_id,publisher,published_at,is_primary)
                            VALUES(?,?,?,?,?,?,?)""",
                         (draft.draft_id, source_row["url"], source_row["raw_document_id"], source_row["source_site_id"],
@@ -139,18 +253,18 @@ class SQLiteDraftRepository:
                          int(evidence_id == draft.evidence_ids[0])),
                     )
             for link in draft.entity_links:
-                _execute_with_stage(store._connection, "content_entity_link",
+                _execute_with_stage(store._connection, "content_entity_link", 
                     """INSERT INTO rag_content_entity_link(draft_id,entity_id,link_method,created_at,sort_order)
                        VALUES(?,?,?,?,?)""",
                     (draft.draft_id, link.entity_id, link.link_method, draft.created_at.isoformat(), link.sort_order),
                 )
             for tag in draft.tags:
-                _execute_with_stage(store._connection, "content_tag",
+                _execute_with_stage(store._connection, "content_tag", 
                     "INSERT INTO rag_content_tag(draft_id,subtopic_id,tagged_by,tagged_at) VALUES(?,?,?,?)",
                     (draft.draft_id, tag.subtopic_id, tag.tagged_by, draft.created_at.isoformat()),
                 )
             for position, card in enumerate(draft.cards, start=1):
-                _execute_with_stage(store._connection, "content_card",
+                _execute_with_stage(store._connection, "content_card", 
                     """INSERT INTO rag_content_card(card_id,draft_id,page_no,role,title,body,card_image_url,
                        source_image_url,source_page_url,image_rights_status,image_credit)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
@@ -158,12 +272,12 @@ class SQLiteDraftRepository:
                      card.card_image_url, card.source_image_url, card.source_page_url,
                      card.image_rights_status, card.image_credit),
                 )
-                _execute_with_stage(store._connection, "card_image",
+                _execute_with_stage(store._connection, "card_image", 
                     "INSERT INTO rag_card_image(card_id,asset_id) VALUES(?,?)",
                     (card.card_id, None if card.image_asset_id == TEXT_ONLY_ASSET_ID else card.image_asset_id),
                 )
                 rendered = rendered_by_id[card.card_id]
-                _execute_with_stage(store._connection, "rendered_card",
+                _execute_with_stage(store._connection, "rendered_card", 
                     """INSERT INTO rag_rendered_card(
                        draft_id,card_id,image_png,width,height,frontend_copy_json,
                        frontend_layout_json,created_at) VALUES(?,?,?,?,?,?,?,?)""",
@@ -181,7 +295,7 @@ class SQLiteDraftRepository:
         connection = self.store._connection
         for index, claim in enumerate(claims):
             identifier = _claim_id(draft.draft_id, card_id, offset + index)
-            _execute_with_stage(connection, "claim",
+            _execute_with_stage(connection, "claim", 
                 "INSERT INTO rag_claim(claim_id,draft_id,card_id,sequence_no,claim_text,attribution) VALUES(?,?,?,?,?,?)",
                 (identifier, draft.draft_id, card_id, index + 1, claim.text, claim.attribution),
             )
@@ -192,7 +306,7 @@ class SQLiteDraftRepository:
                 excerpt_id = None
                 if chunk.source_kind == "excerpt" and chunk.source_index is not None:
                     excerpt_id = self.store._excerpt_id(chunk.evidence_id, chunk.source_index)
-                _execute_with_stage(connection, "claim_evidence",
+                _execute_with_stage(connection, "claim_evidence", 
                     """INSERT INTO rag_claim_evidence(claim_evidence_id,claim_id,document_id,excerpt_id,chunk_id)
                        VALUES(?,?,?,?,?)""",
                     (_claim_evidence_id(identifier, chunk.evidence_id, chunk_id), identifier,
@@ -492,6 +606,47 @@ class SQLiteImageReader:
             ).fetchall()
             assets = tuple(self._asset(row) for row in rows)
 
+            cover_rows = self.store._connection.execute(
+                """SELECT DISTINCT a.asset_id,a.content_sha256,a.source_url FROM rag_content_draft d
+                    JOIN rag_content_card c ON c.draft_id=d.draft_id AND c.page_no=1
+                    JOIN rag_card_image ci ON ci.card_id=c.card_id
+                    JOIN rag_image_asset a ON a.asset_id=ci.asset_id""",
+            ).fetchall()
+            used_cover_fingerprints = {
+                str(value)
+                for row in cover_rows
+                for value in (row["content_sha256"] or row["asset_id"], row["source_url"])
+            }
+
+            recent_rows = self.store._connection.execute(
+                f"""SELECT d.draft_id,MAX(d.created_at) AS used_at
+                    FROM rag_content_draft d
+                    JOIN rag_content_card c ON c.draft_id=d.draft_id
+                    JOIN rag_card_image ci ON ci.card_id=c.card_id
+                    JOIN rag_image_work_link w ON w.asset_id=ci.asset_id
+                    WHERE w.status='matched' AND w.menu_work_id IN ({marks})
+                    GROUP BY d.draft_id ORDER BY used_at DESC LIMIT 20""",
+                tuple(work_ids),
+            ).fetchall()
+            recent_draft_ids = tuple(str(row["draft_id"]) for row in recent_rows)
+            usage_by_fingerprint: dict[str, tuple[int, str]] = {}
+            if recent_draft_ids:
+                draft_marks = ",".join("?" for _ in recent_draft_ids)
+                usage_rows = self.store._connection.execute(
+                    f"""SELECT DISTINCT d.draft_id,a.asset_id,a.content_sha256,d.created_at AS used_at
+                        FROM rag_content_draft d
+                        JOIN rag_content_card c ON c.draft_id=d.draft_id
+                        JOIN rag_card_image ci ON ci.card_id=c.card_id
+                        JOIN rag_image_asset a ON a.asset_id=ci.asset_id
+                        WHERE d.draft_id IN ({draft_marks})""",
+                    recent_draft_ids,
+                ).fetchall()
+                for row in usage_rows:
+                    fingerprint = str(row["content_sha256"] or row["asset_id"])
+                    previous = usage_by_fingerprint.get(fingerprint, (0, ""))
+                    used_at = str(row["used_at"] or "")
+                    usage_by_fingerprint[fingerprint] = (previous[0] + 1, max(previous[1], used_at))
+
         # Keep every downloaded Kitsu size on disk, but expose only the best
         # size for each underlying cover/character image to the copy selector.
         variant_rank = {"original": 0, "large": 1, "medium": 2, "small": 3, "tiny": 4}
@@ -501,29 +656,60 @@ class SQLiteImageReader:
             if asset.source_id == "kitsu_anime_catalog" and len(parts) == 2 and parts[-1] in variant_rank:
                 base_role, variant = parts
                 key = (asset.source_id, asset.source_native_id or asset.asset_id, base_role)
-                rank = (variant_rank[variant], -(asset.width or 0) * (asset.height or 0))
+                # A named "original" variant can still be smaller than the CDN's
+                # large variant. Prefer actual pixel dimensions before labels.
+                rank = (-(asset.width or 0) * (asset.height or 0), variant_rank[variant])
             else:
                 key = (asset.asset_id,)
                 rank = (0, 0)
             previous = selected.get(key)
             if previous is None or rank < previous[0]:
                 selected[key] = (rank, asset)
-        return tuple(sorted(
-            (value[1] for value in selected.values()),
-            key=lambda item: (item.source_id, item.image_role, item.alt_text or "", item.asset_id),
-        ))
+        candidates = [value[1] for value in selected.values()]
+        candidates = [replace(
+            asset,
+            recent_use_count=usage_by_fingerprint.get(asset.content_sha256 or asset.asset_id, (0, ""))[0],
+            last_used_at=usage_by_fingerprint.get(asset.content_sha256 or asset.asset_id, (0, ""))[1] or None,
+            used_as_cover_before=(
+                (asset.content_sha256 or asset.asset_id) in used_cover_fingerprints
+                or asset.source_url in used_cover_fingerprints
+            ),
+        ) for asset in candidates]
+        unique_candidates: dict[str, ImageAsset] = {}
+        for asset in sorted(candidates, key=lambda item: (
+            item.recent_use_count, item.last_used_at or "", item.asset_id,
+        )):
+            unique_candidates.setdefault(asset.content_sha256 or asset.asset_id, asset)
+        candidates = list(unique_candidates.values())
+        rank = lambda item: (
+            image_resolution_tier(item.width, item.height), item.recent_use_count,
+            item.last_used_at or "", item.source_id,
+            item.image_role, item.alt_text or "", item.asset_id,
+        )
+        # Cover-used artwork remains available for later cards. The generator and
+        # draft writer enforce uniqueness only for page 1.
+        return tuple(sorted(candidates, key=rank))
 
     def _asset(self, row: sqlite3.Row) -> ImageAsset:
         links = self.store._connection.execute(
             "SELECT menu_work_id FROM rag_image_work_link WHERE asset_id=? AND status='matched' ORDER BY menu_work_id",
             (row["asset_id"],),
         ).fetchall()
-        entity_rows = self.store._connection.execute(
-            """SELECT l.entity_id,l.relation_type,l.source_document_id,l.source_chunk_id,l.status,e.name
-               FROM rag_image_entity_link l JOIN rag_entity e ON e.entity_id=l.entity_id
-               WHERE l.asset_id=? AND l.status='matched' ORDER BY l.entity_id,l.relation_type""",
-            (row["asset_id"],),
-        ).fetchall()
+        optional_entity_tables = {
+            str(item["name"]) for item in self.store._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?,?)",
+                ("rag_image_entity_link", "rag_entity"),
+            ).fetchall()
+        }
+        if optional_entity_tables == {"rag_image_entity_link", "rag_entity"}:
+            entity_rows = self.store._connection.execute(
+                """SELECT l.entity_id,l.relation_type,l.source_document_id,l.source_chunk_id,l.status,e.name
+                   FROM rag_image_entity_link l JOIN rag_entity e ON e.entity_id=l.entity_id
+                   WHERE l.asset_id=? AND l.status='matched' ORDER BY l.entity_id,l.relation_type""",
+                (row["asset_id"],),
+            ).fetchall()
+        else:
+            entity_rows = ()
         return ImageAsset(
             asset_id=str(row["asset_id"]), source_url=str(row["source_url"]), source_id=str(row["source_id"]),
             work_link_status=str(row["work_link_status"]),

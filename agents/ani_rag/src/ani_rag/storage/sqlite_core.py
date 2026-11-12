@@ -8,24 +8,18 @@ enable SQLite foreign keys on that connection.
 from __future__ import annotations
 
 import asyncio
-import csv
 import hashlib
 import json
-import os
 import re
 import sqlite3
-import tempfile
 import threading
-import unicodedata
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from pathlib import Path
-from typing import Iterator, Mapping, Sequence
+from typing import Iterator, Sequence
 
 from ani_rag.adapter import canonical_source_url
-from ani_rag.catalog import DEFAULT_REFERENCE_DIR, LocalWorkCatalog, temporary_work_id
-from ani_rag.interfaces import StoredEvidenceReference, WorkIdentity
+from ani_rag.interfaces import StoredEvidenceReference
 from ani_rag.models import (
     AuthorAttribution,
     CollectionMethod,
@@ -39,6 +33,7 @@ from ani_rag.models import (
     WorkRegistration,
 )
 from ani_rag.queues import QueueItem, QueueName, QueueStatus
+from ani_rag.profiles import get_content_profile
 from ani_rag.retrieval import (
     GenerationWorkRequest,
     GenerationWorkStatus,
@@ -67,138 +62,68 @@ def _evidence_content_hash(document: EvidenceDocument) -> str:
     return hashlib.sha256(f"{source_text}\n{excerpt_fingerprint}".encode("utf-8")).hexdigest()
 
 
-_AGENT_WORK_FIELDS = (
-    "menu_work_id", "title_ko", "title_ko_source", "title_ko_check", "title_romaji",
-    "title_english", "title_native", "first_year", "last_year", "n_entries",
-    "popularity", "anilist_ids",
-)
-_EXTERNAL_FIELDS = (
-    "menu_work_id", "source_id", "external_id", "source_url", "canonical_title",
-    "format", "year", "registered_at",
-)
+def _diversify_generation_batch(
+    pending: Sequence[GenerationWorkRequest], limit: int,
+) -> tuple[GenerationWorkRequest, ...]:
+    """Dispatch older work first while balancing available works and content types."""
+    remaining = list(enumerate(pending))
+    selected: list[GenerationWorkRequest] = []
+    work_counts: dict[int | str, int] = {}
+    type_counts: dict[str, int] = {}
+    pair_counts: dict[tuple[int | str, str], int] = {}
+    selected_topics: list[tuple[int | str, set[str]]] = []
+
+    while remaining and len(selected) < limit:
+        def priority(item: tuple[int, GenerationWorkRequest]) -> tuple[int, int, int, float, int]:
+            order, request = item
+            work_key: int | str = min(request.menu_work_ids) if request.menu_work_ids else f"unlinked:{request.work_id}"
+            kind = request.content_type.value
+            topic_terms = _generation_topic_terms(request.query)
+            similarities = [
+                len(topic_terms & prior_terms) / max(1, len(topic_terms | prior_terms))
+                for prior_work, prior_terms in selected_topics
+                if prior_work == work_key and topic_terms and prior_terms
+            ]
+            return (
+                work_counts.get(work_key, 0),
+                type_counts.get(kind, 0),
+                pair_counts.get((work_key, kind), 0),
+                max(similarities, default=0.0),
+                order,
+            )
+
+        chosen_index = min(range(len(remaining)), key=lambda index: priority(remaining[index]))
+        _, request = remaining.pop(chosen_index)
+        selected.append(request)
+        work_key = min(request.menu_work_ids) if request.menu_work_ids else f"unlinked:{request.work_id}"
+        kind = request.content_type.value
+        work_counts[work_key] = work_counts.get(work_key, 0) + 1
+        type_counts[kind] = type_counts.get(kind, 0) + 1
+        pair_counts[(work_key, kind)] = pair_counts.get((work_key, kind), 0) + 1
+        selected_topics.append((work_key, _generation_topic_terms(request.query)))
+    return tuple(selected)
 
 
-@contextmanager
-def _shared_catalog_lock(directory: Path) -> Iterator[None]:
-    lock_path = directory / ".menu_work_catalog.lock"
-    lock_path.touch(exist_ok=True)
-    with lock_path.open("r+b") as stream:
-        if os.name == "nt":
-            import msvcrt
-
-            if lock_path.stat().st_size == 0:
-                stream.write(b"0")
-                stream.flush()
-            stream.seek(0)
-            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
-                stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-
-
-def _read_csv(path: Path, fields: Sequence[str]) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8-sig", newline="") as stream:
-        reader = csv.DictReader(stream)
-        if reader.fieldnames and not set(fields).issubset(reader.fieldnames):
-            raise ValueError(f"Unexpected columns in shared catalog file: {path.name}")
-        return list(reader)
-
-
-def _atomic_csv_write(path: Path, fields: Sequence[str], rows: Sequence[Mapping[str, str]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8-sig", newline="", dir=path.parent,
-            prefix=f".{path.name}.", suffix=".tmp", delete=False,
-        ) as stream:
-            temporary_path = Path(stream.name)
-            writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
-            writer.writeheader()
-            writer.writerows(rows)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary_path, path)
-    finally:
-        if temporary_path is not None and temporary_path.exists():
-            temporary_path.unlink()
-
-
-def _persist_agent_work(menu_work_id: int, registration: WorkRegistration) -> None:
-    directory = DEFAULT_REFERENCE_DIR
-    works_path = directory / "agent_works.csv"
-    external_path = directory / "menu_work_external_entries.csv"
-    normalized_name = "".join(
-        character for character in unicodedata.normalize("NFKC", registration.name).casefold()
-        if character.isalnum()
-    )
-    title_fields = {"title_ko": "", "title_romaji": "", "title_english": "", "title_native": ""}
-    for title in (registration.name, *registration.aliases):
-        if re.search(r"[\uac00-\ud7a3]", title):
-            title_fields["title_ko"] = title_fields["title_ko"] or title
-        elif re.search(r"[\u3040-\u30ff\u3400-\u9fff]", title):
-            title_fields["title_native"] = title_fields["title_native"] or title
-        else:
-            title_fields["title_english"] = title_fields["title_english"] or title
-            title_fields["title_romaji"] = title_fields["title_romaji"] or title
-    work_row = {
-        "menu_work_id": str(menu_work_id),
-        **title_fields,
-        "title_ko_source": "",
-        "title_ko_check": "temporary; team review pending" if title_fields["title_ko"] else "",
-        "first_year": "",
-        "last_year": "",
-        "n_entries": "0",
-        "popularity": "0",
-        "anilist_ids": "",
+def _generation_topic_terms(query: str) -> set[str]:
+    generic = {"anime", "animation", "guide", "profile", "information", "about", "story", "work"}
+    return {
+        term for term in re.findall(r"[0-9a-z가-힣]+", query.casefold())
+        if len(term) > 1 and term not in generic
     }
-    with _shared_catalog_lock(directory):
-        works = _read_csv(works_path, _AGENT_WORK_FIELDS)
-        existing = next((row for row in works if row.get("menu_work_id") == str(menu_work_id)), None)
-        if existing is not None:
-            existing_names = [existing.get(field, "") for field in ("title_ko", "title_romaji", "title_english", "title_native")]
-            existing_keys = {
-                "".join(character for character in unicodedata.normalize("NFKC", value).casefold() if character.isalnum())
-                for value in existing_names if value
-            }
-            if normalized_name not in existing_keys:
-                raise ValueError(f"Temporary work ID collision in agent_works.csv: {menu_work_id}")
-        else:
-            works.append(work_row)
-            _atomic_csv_write(works_path, _AGENT_WORK_FIELDS, works)
 
-        for source_id, external_id in registration.external_ids.items():
-            if "kitsu" not in source_id.casefold() or not external_id.isdigit():
-                continue
-            external_rows = _read_csv(external_path, _EXTERNAL_FIELDS)
-            match = next((row for row in external_rows if row.get("source_id") == "kitsu_anime_catalog" and row.get("external_id") == external_id), None)
-            if match is not None:
-                if match.get("menu_work_id") != str(menu_work_id):
-                    raise ValueError(f"Kitsu ID already maps to a different menu_work_id: {external_id}")
-                continue
-            external_rows.append({
-                "menu_work_id": str(menu_work_id),
-                "source_id": "kitsu_anime_catalog",
-                "external_id": external_id,
-                "source_url": f"https://kitsu.io/anime/{external_id}",
-                "canonical_title": registration.name,
-                "format": "",
-                "year": "",
-                "registered_at": datetime.now(timezone.utc).isoformat(),
-            })
-            _atomic_csv_write(external_path, _EXTERNAL_FIELDS, external_rows)
+
+_GENERIC_RETRIEVAL_TERMS = frozenset({
+    "a", "an", "and", "about", "anime", "character", "characters", "birthday",
+    "voice", "actor", "actors", "profile", "work", "guide", "people", "music",
+    "the", "this", "that", "with", "from", "what", "who", "story",
+})
+
+
+def _retrieval_terms(query: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(
+        token for token in re.findall(r"[^\W_]+", query.casefold())
+        if len(token) > 1 and token not in _GENERIC_RETRIEVAL_TERMS
+    ))[:16]
 
 
 class SQLiteRagStore:
@@ -269,20 +194,24 @@ class SQLiteRagStore:
             )
 
     async def upsert_and_schedule_generation(
-        self, document: EvidenceDocument, *, retrieval_query: str
+        self, document: EvidenceDocument, *, retrieval_query: str | None = None,
+        schedule_generation: bool = True,
     ) -> StoredEvidenceReference:
-        if not retrieval_query.strip():
+        if schedule_generation and not (retrieval_query or "").strip():
             raise ValueError("A bounded retrieval query is required for generation backlog")
-        return await asyncio.to_thread(self._upsert_and_schedule_generation, document, retrieval_query)
+        return await asyncio.to_thread(
+            self._upsert_and_schedule_generation, document, retrieval_query or "", schedule_generation,
+        )
 
-    def _upsert_and_schedule_generation(self, document: EvidenceDocument, query: str) -> StoredEvidenceReference:
+    def _upsert_and_schedule_generation(
+        self, document: EvidenceDocument, query: str, schedule_generation: bool = True,
+    ) -> StoredEvidenceReference:
         canonical_url = canonical_source_url(document.source_url)
         body_hash = _evidence_content_hash(document)
         now = datetime.now(timezone.utc).isoformat()
-        query_digest = hashlib.sha256(query.strip().encode("utf-8")).hexdigest()[:20]
+        query_digest = hashlib.sha256(query.strip().encode("utf-8")).hexdigest()[:20] if schedule_generation else None
         disposition = "inserted"
         canonical_id = document.document_id
-        agent_work_row: tuple[int, WorkRegistration] | None = None
         with self._transaction(immediate=True):
             source = self._connection.execute(
                 "SELECT source_site_id FROM rag_source WHERE source_id=?", (document.source_id,)
@@ -301,11 +230,6 @@ class SQLiteRagStore:
                 new_work_row: tuple[int, WorkRegistration] | None = None
                 if document.new_work_registration is not None:
                     assigned_id, is_new = self._resolve_or_assign_work_id(document.new_work_registration)
-                    if assigned_id == temporary_work_id(
-                        document.new_work_registration.name,
-                        document.new_work_registration.external_ids,
-                    ):
-                        agent_work_row = (assigned_id, document.new_work_registration)
                     stored_document = replace(
                         stored_document, work_link_status=WorkLinkStatus.MATCHED,
                         menu_work_ids=(assigned_id,), candidate_menu_work_ids=(),
@@ -337,11 +261,6 @@ class SQLiteRagStore:
                 new_work_row: tuple[int, WorkRegistration] | None = None
                 if document.new_work_registration is not None:
                     assigned_id, is_new = self._resolve_or_assign_work_id(document.new_work_registration)
-                    if assigned_id == temporary_work_id(
-                        document.new_work_registration.name,
-                        document.new_work_registration.external_ids,
-                    ):
-                        agent_work_row = (assigned_id, document.new_work_registration)
                     stored_document = replace(
                         document, work_link_status=WorkLinkStatus.MATCHED,
                         menu_work_ids=(assigned_id,), candidate_menu_work_ids=(),
@@ -402,16 +321,17 @@ class SQLiteRagStore:
                         (f"wl_{stored_document.document_id}_{index}", stored_document.document_id, work_id,
                          candidate_id, status.value, stored_document.metadata.get("work_match_method")),
                     )
-            work_id = f"gw_{canonical_id}_{query_digest}"
-            self._connection.execute(
-                """INSERT OR IGNORE INTO rag_generation_work(
-                     work_id,content_type,retrieval_query,seed_evidence_ids_json,menu_work_ids_json,
-                     status,queue_job_id,dedupe_key,created_at,updated_at)
-                   VALUES(?,?,?,?,?,'pending',NULL,?,?,?)""",
-                (work_id, document.content_type.value, query.strip(), _json([canonical_id]),
-                 _json(list(stored_document.menu_work_ids) if disposition == "inserted" else list(document.menu_work_ids)), f"generation:{work_id}", now, now),
-            )
-            if disposition == "duplicate" and stored_document.work_link_status is WorkLinkStatus.MATCHED:
+            if schedule_generation:
+                work_id = f"gw_{canonical_id}_{query_digest}"
+                self._connection.execute(
+                    """INSERT OR IGNORE INTO rag_generation_work(
+                         work_id,content_type,retrieval_query,seed_evidence_ids_json,menu_work_ids_json,
+                         status,queue_job_id,dedupe_key,created_at,updated_at)
+                       VALUES(?,?,?,?,?,'pending',NULL,?,?,?)""",
+                    (work_id, document.content_type.value, query.strip(), _json([canonical_id]),
+                     _json(list(stored_document.menu_work_ids) if disposition == "inserted" else list(document.menu_work_ids)), f"generation:{work_id}", now, now),
+                )
+            if schedule_generation and disposition == "duplicate" and stored_document.work_link_status is WorkLinkStatus.MATCHED:
                 self._connection.execute(
                     "UPDATE rag_generation_work SET menu_work_ids_json=?,updated_at=? WHERE seed_evidence_ids_json=? AND status IN ('pending','enqueued','waiting_for_evidence')",
                     (_json(list(stored_document.menu_work_ids)), now, _json([canonical_id])),
@@ -432,12 +352,10 @@ class SQLiteRagStore:
                             "UPDATE rag_queue_job SET payload_json=?,updated_at=? WHERE job_id=? AND status='pending'",
                             (_json(queue_payload), now, backlog_row["queue_job_id"]),
                         )
-        if agent_work_row is not None:
-            _persist_agent_work(*agent_work_row)
         return StoredEvidenceReference(canonical_id, canonical_id, disposition)
 
     def _resolve_or_assign_work_id(self, registration: WorkRegistration) -> tuple[int, bool]:
-        """Resolve DB-local duplicates or assign the shared deterministic temporary ID."""
+        """Resolve DB-local duplicate identities or mint the next ID in this transaction."""
         rows = self._connection.execute(
             "SELECT menu_work_id,canonical_name,aliases_json,external_ids_json FROM rag_work_catalog"
         ).fetchall()
@@ -449,30 +367,13 @@ class SQLiteRagStore:
             external = {(str(key).casefold().strip(), str(value).casefold().strip()) for key, value in existing_external.items()}
             if wanted_name == name or wanted_external & external:
                 return int(row["menu_work_id"]), False
-        registration_titles = (registration.name, *registration.aliases)
-        local = LocalWorkCatalog()
-        local_result = local.resolve_sync(
-            WorkIdentity(titles=registration_titles, external_ids=registration.external_ids)
-        )
-        if local_result.status is WorkLinkStatus.MATCHED:
-            return local_result.menu_work_ids[0], True
-        if local_result.status is WorkLinkStatus.AMBIGUOUS:
-            raise ValueError("New-work registration conflicts with multiple shared catalog IDs")
-        assigned_id = temporary_work_id(registration.name, registration.external_ids)
-        known_titles = local.titles_for_work_id(assigned_id)
-        normalized_title = "".join(
-            character for character in unicodedata.normalize("NFKC", registration.name).casefold()
-            if character.isalnum()
-        )
-        known_keys = {
-            "".join(character for character in unicodedata.normalize("NFKC", value).casefold() if character.isalnum())
-            for value in known_titles
-        }
-        if known_keys and normalized_title not in known_keys:
-            raise ValueError(f"Temporary work ID collision with shared catalog ID {assigned_id}")
-        if any(int(row["menu_work_id"]) == assigned_id for row in rows):
-            raise ValueError(f"Temporary work ID collision with RAG database ID {assigned_id}")
-        return assigned_id, True
+        maximum = self._connection.execute(
+            "SELECT COALESCE(MAX(menu_work_id),0) AS maximum FROM rag_work_catalog"
+        ).fetchone()
+        linked_maximum = self._connection.execute(
+            "SELECT COALESCE(MAX(menu_work_id),0) AS maximum FROM rag_work_link WHERE menu_work_id IS NOT NULL"
+        ).fetchone()
+        return max(self._menu_work_id_floor, int(maximum["maximum"]), int(linked_maximum["maximum"])) + 1, True
 
     async def fetch_candidates(self, request: RetrievalRequest) -> Sequence[EvidenceDocument]:
         return await asyncio.to_thread(self._fetch_candidates, request)
@@ -495,29 +396,63 @@ class SQLiteRagStore:
 
     def _fetch_candidates(self, request: RetrievalRequest) -> Sequence[EvidenceDocument]:
         with self._lock:
+            accepted_types = tuple(
+                item.value for item in get_content_profile(request.content_type).accepted_evidence_types
+            )
+            if not accepted_types:
+                return ()
+            type_marks = ",".join("?" for _ in accepted_types)
             selected: list[str] = []
+            source_clause = ""
+            source_params: tuple[object, ...] = ()
+            if request.source_ids:
+                source_marks = ",".join("?" for _ in request.source_ids)
+                source_clause = f" AND source_id IN ({source_marks})"
+                source_params = tuple(request.source_ids)
             if request.seed_evidence_ids:
                 marks = ",".join("?" for _ in request.seed_evidence_ids)
                 rows = self._connection.execute(
-                    f"SELECT document_id FROM rag_document WHERE content_type=? AND document_id IN ({marks})",
-                    (request.content_type.value, *request.seed_evidence_ids),
+                    f"SELECT document_id FROM rag_document WHERE evidence_type IN ({type_marks}){source_clause} AND document_id IN ({marks})",
+                    (*accepted_types, *source_params, *request.seed_evidence_ids),
                 ).fetchall()
                 selected.extend(str(row["document_id"]) for row in rows)
             remaining = request.candidate_limit - len(selected)
             if remaining > 0:
-                params: list[object] = [request.content_type.value]
-                work_clause = ""
+                params: list[object] = []
+                from_clause = "rag_document d"
+                where_clauses: list[str] = []
                 if request.menu_work_ids:
                     work_marks = ",".join("?" for _ in request.menu_work_ids)
-                    work_clause = f" AND EXISTS (SELECT 1 FROM rag_work_link w WHERE w.document_id=d.document_id AND w.status='matched' AND w.menu_work_id IN ({work_marks}))"
+                    from_clause = "rag_work_link w JOIN rag_document d ON d.document_id=w.document_id"
+                    where_clauses.extend(("w.status='matched'", f"w.menu_work_id IN ({work_marks})"))
                     params.extend(request.menu_work_ids)
+                where_clauses.append("d.evidence_type IN (" + type_marks + ")")
+                params.extend(accepted_types)
+                if request.source_ids:
+                    source_marks = ",".join("?" for _ in request.source_ids)
+                    where_clauses.append(f"d.source_id IN ({source_marks})")
+                    params.extend(request.source_ids)
+                query_terms = _retrieval_terms(request.query)
+                if query_terms:
+                    patterns = tuple(f"%{term}%" for term in query_terms)
+                    title_terms = " OR ".join("lower(d.title) LIKE ?" for _ in patterns)
+                    body_terms = " OR ".join("lower(d.raw_text) LIKE ?" for _ in patterns)
+                    excerpt_terms = " OR ".join("lower(e.excerpt_text) LIKE ?" for _ in patterns)
+                    where_clauses.append(
+                        "( " + title_terms + " OR " + body_terms +
+                        " OR EXISTS (SELECT 1 FROM rag_excerpt e WHERE e.document_id=d.document_id AND (" + excerpt_terms + ")) )"
+                    )
+                    params.extend(patterns)
+                    params.extend(patterns)
+                    params.extend(patterns)
                 excluded = ""
                 if selected:
                     excluded = " AND d.document_id NOT IN (" + ",".join("?" for _ in selected) + ")"
                     params.extend(selected)
                 params.append(remaining)
+                group_clause = " GROUP BY d.document_id" if request.menu_work_ids else ""
                 rows = self._connection.execute(
-                    "SELECT d.document_id FROM rag_document d WHERE d.content_type=?" + work_clause + excluded +
+                    "SELECT d.document_id FROM " + from_clause + " WHERE " + " AND ".join(where_clauses) + excluded + group_clause +
                     " ORDER BY d.published_at IS NULL, d.published_at DESC, d.fetched_at DESC LIMIT ?", params
                 ).fetchall()
                 selected.extend(str(row["document_id"]) for row in rows)
@@ -572,17 +507,64 @@ class SQLiteRagStore:
             raise ValueError("Backlog limit must be between 1 and 500")
         return await asyncio.to_thread(self._pending_generation_work, limit)
 
+    async def enqueue_generation_work(self, item: GenerationWorkRequest) -> bool:
+        """Queue a caller-selected request only when its seed evidence has the requested work link."""
+        return await asyncio.to_thread(self._enqueue_generation_work, item)
+
+    def _enqueue_generation_work(self, item: GenerationWorkRequest) -> bool:
+        seed_marks = ",".join("?" for _ in item.seed_evidence_ids)
+        with self._lock:
+            seed_rows = self._connection.execute(
+                f"SELECT document_id FROM rag_document WHERE document_id IN ({seed_marks})",
+                tuple(item.seed_evidence_ids),
+            ).fetchall()
+            if {str(row["document_id"]) for row in seed_rows} != set(item.seed_evidence_ids):
+                raise ValueError("Every generation seed must exist as stored RAG evidence")
+            if item.menu_work_ids:
+                work_marks = ",".join("?" for _ in item.menu_work_ids)
+                matched_rows = self._connection.execute(
+                    f"""SELECT DISTINCT document_id FROM rag_work_link
+                        WHERE document_id IN ({seed_marks}) AND menu_work_id IN ({work_marks})
+                          AND status='matched'""",
+                    (*item.seed_evidence_ids, *item.menu_work_ids),
+                ).fetchall()
+                if {str(row["document_id"]) for row in matched_rows} != set(item.seed_evidence_ids):
+                    raise ValueError("Every seed must be explicitly matched to one of the requested local work IDs")
+        payload = _json({
+            "work_id": item.work_id,
+            "content_type": item.content_type.value,
+            "query": item.query,
+            "seed_evidence_ids": item.seed_evidence_ids,
+            "menu_work_ids": item.menu_work_ids,
+            "top_k": item.top_k,
+            "candidate_limit": item.candidate_limit,
+        })
+        dedupe_key = f"explicit:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
+        now = _iso(datetime.now(timezone.utc))
+        with self._transaction():
+            cursor = self._connection.execute(
+                """INSERT OR IGNORE INTO rag_generation_work(
+                     work_id,content_type,retrieval_query,seed_evidence_ids_json,menu_work_ids_json,
+                     status,queue_job_id,dedupe_key,created_at,updated_at)
+                   VALUES(?,?,?,?,?,'pending',NULL,?,?,?)""",
+                (item.work_id, item.content_type.value, item.query, _json(list(item.seed_evidence_ids)),
+                 _json(list(item.menu_work_ids)), dedupe_key, now, now),
+            )
+            return cursor.rowcount == 1
+
     def _pending_generation_work(self, limit: int) -> Sequence[GenerationWorkRequest]:
         with self._lock:
             rows = self._connection.execute(
-                "SELECT * FROM rag_generation_work WHERE status='pending' ORDER BY created_at,work_id LIMIT ?", (limit,)
+                "SELECT * FROM rag_generation_work WHERE status='pending' ORDER BY created_at,work_id LIMIT 500"
             ).fetchall()
-            return tuple(GenerationWorkRequest(
+            pending = tuple(GenerationWorkRequest(
                 work_id=str(row["work_id"]), query=str(row["retrieval_query"]),
                 content_type=RagContentType(row["content_type"]),
                 seed_evidence_ids=tuple(json.loads(row["seed_evidence_ids_json"])),
                 menu_work_ids=tuple(json.loads(row["menu_work_ids_json"])),
             ) for row in rows)
+            return _diversify_generation_batch(pending, limit)
+
 
     async def mark_generation_enqueued(self, work_id: str, job_id: str) -> None:
         await asyncio.to_thread(self._mark_generation_enqueued, work_id, job_id)

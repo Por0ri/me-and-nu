@@ -356,9 +356,11 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                 )
             )
         key = image_visual_key(image)
-        if (
-            image.used_in_previous_content
-            or key in package.prior_image_fingerprints
+        is_main_card = card.role == "cover" or card.page == min(
+            item.page for item in package.cards
+        )
+        if is_main_card and (
+            bool(image_visual_keys(image).intersection(package.prior_image_fingerprints))
             or image.fingerprint in package.prior_image_fingerprints
         ):
             issues.append(

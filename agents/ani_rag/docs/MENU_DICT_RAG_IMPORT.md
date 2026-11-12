@@ -26,4 +26,23 @@ Expected useful lanes are `character`, `guide`, and `people`, with some `music` 
 - `scripts/import_menu_dict_archive.py` requires an existing RAG SQLite file and an explicit `--confirm-import` flag. It is idempotent and must be run only while workers using that DB are stopped.
 - Imported evidence is searchable by the existing RAG retrieval path after persistence. Content generation remains a separate explicit queue action; bulk import does not queue hundreds of thousands of drafts.
 
-No import has been run. The current crawler/generator/reviewer processes are still running, so the live RAG database was deliberately left untouched. The next application step is to stop those workers, confirm the selected RAG DB path, and invoke the importer against that already-provisioned database. No tests, worker, MCP call, schema migration, or generation job was run for this import preparation.
+## Import result — 2026-11-10
+
+The approved full dump was imported into the existing `ani_rag/data/ani_rag_live_20261109.sqlite3` database with the versioned policy and matching archive SHA-256. The importer added six `snapshot_import_only` source rows, all with MCP collection disabled. It yielded 639,790 eligible fact documents and inserted all 639,790; 0 were already present. It did not apply schema, create generation queue jobs, or change the period project database.
+
+| Source | Documents |
+|---|---:|
+| AniList | 573,195 |
+| Wikidata | 56,194 |
+| MADB | 5,166 |
+| Korean Wikipedia | 2,920 |
+| KMRB | 1,176 |
+| English Wikipedia | 1,139 |
+
+The imported corpus currently maps to 90,718 `character`, 247,078 `guide`, and 301,994 `people` evidence documents. No `music` documents were produced by the current importer/policy from this archive snapshot. The live DB already contains 4 ANN and 1 Kitsu documents, so total document count is 639,795.
+
+The importer initially exposed that `pgdumplib` omits trailing nullable columns in some table rows. `menu_dict_archive.py` now restores those trailing NULLs for entity/source rows; the import then completed successfully. A read-only lookup confirmed 8,742 AniList facts linked to local work ID 1, including 358 character facts, 5,138 guide facts, and 2,587 people facts.
+
+The live DB has `ix_rag_excerpt_document(document_id, excerpt_id)` and `ix_rag_work_link_document(document_id, link_id)`, applied after explicit user approval. Read-only query plans confirmed both indexes are used. A read-only RAG retrieval for local work ID 1 returned five AniList chunks, including Armin Arlert character facts, in about five seconds. Search candidate selection now checks query terms in document titles, raw text, and excerpts before lexical reranking; it does not use embeddings or establish truth by score alone. The broad-web candidate path now searches the two reusable reference sources `ann_encyclopedia` and `anilist`, carrying that scope through generation and review revisions.
+
+This only verifies a one-query retrieval path. No content generation, worker, MCP call, migration, or test was run. The DB has the full eligible snapshot evidence and source links, but the current retrieval backend remains lexical rather than vector-based. The importer did not create generation queue jobs.

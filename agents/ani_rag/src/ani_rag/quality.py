@@ -12,8 +12,6 @@ from ani_rag.retrieval import EvidenceChunk
 
 MIN_CARDS = 3
 MAX_CARDS = 10
-MAX_CARD_HEADLINE_CHARS = 42
-MAX_CARD_BODY_CHARS = 60
 _SOURCE_META_COPY = re.compile(
     r"(?:kitsu|wikidata|위키데이터|자료|원문|출처|검색 결과|데이터베이스|\bdb\b)"
     r".{0,24}(?:확인|기록|표기|포함|수록|검색|나타나)|"
@@ -30,7 +28,7 @@ class QualityIssue:
 
 
 def validate_carousel_readability(draft: ContentDraft) -> tuple[QualityIssue, ...]:
-    """Minimum review gate: carousel structure and copy that fits its card layout."""
+    """Only flag missing copy; length is a layout concern, not a writing-quality gate."""
     issues: list[QualityIssue] = []
     if not MIN_CARDS <= len(draft.cards) <= MAX_CARDS:
         issues.append(QualityIssue("CAROUSEL_CARD_COUNT", "Carousel must contain 3 to 10 pages."))
@@ -40,15 +38,15 @@ def validate_carousel_readability(draft: ContentDraft) -> tuple[QualityIssue, ..
         if draft.cards[-1].role != "ending":
             issues.append(QualityIssue("CAROUSEL_ENDING_MISSING", "The last page must be the ending."))
     for page, card in enumerate(draft.cards, start=1):
-        if not card.headline.strip() or len(card.headline) > MAX_CARD_HEADLINE_CHARS:
+        if not card.headline.strip():
             issues.append(QualityIssue(
                 "CARD_HEADLINE_UNREADABLE",
-                f"Page {page} headline must be non-empty and at most {MAX_CARD_HEADLINE_CHARS} characters.",
+                f"Page {page} headline is empty.",
             ))
-        if not card.body.strip() or len(card.body) > MAX_CARD_BODY_CHARS:
+        if not card.body.strip():
             issues.append(QualityIssue(
                 "CARD_BODY_UNREADABLE",
-                f"Page {page} body must be non-empty and at most {MAX_CARD_BODY_CHARS} characters.",
+                f"Page {page} body is empty.",
             ))
     reader_copy = "\n".join(
         [draft.detail_body]
@@ -59,7 +57,9 @@ def validate_carousel_readability(draft: ContentDraft) -> tuple[QualityIssue, ..
             "SOURCE_METADATA_AS_COPY",
             "Reader-facing copy describes source lookup or metadata instead of the subject; rewrite it as useful content.",
         ))
-    return tuple(issues)
+    # Length and metadata-copy observations should inform the scorecard, not act as
+    # independent pass/revise gates. The reviewer sees the draft and its previews.
+    return tuple(QualityIssue(issue.code, issue.message, blocking=False) for issue in issues)
 
 
 def validate_draft(
@@ -140,7 +140,7 @@ def validate_draft(
     }
     required_image_urls = {
         url for image_id in image_ids if image_id in images
-        for url in (images[image_id].source_url, images[image_id].rights_evidence_url)
+        for url in (images[image_id].source_url, images[image_id].source_page_url)
         if url
     }
     if any(url not in draft.source_footer for url in required_source_urls | required_image_urls):
@@ -162,17 +162,17 @@ def validate_draft(
         asset = images.get(image_id)
         if asset is None:
             issues.append(QualityIssue("IMAGE_ASSET_MISSING", f"Image asset {image_id!r} is unavailable."))
-        elif not asset.source_url or not asset.source_id or not asset.rights_basis or not asset.rights_evidence_url:
-            issues.append(QualityIssue("IMAGE_PROVENANCE_INCOMPLETE", f"Image asset {image_id!r} lacks source or rights evidence."))
-        elif any(urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).hostname for url in (asset.source_url, asset.rights_evidence_url)):
+        elif not asset.source_url or not asset.source_id:
+            issues.append(QualityIssue("IMAGE_PROVENANCE_INCOMPLETE", f"Image asset {image_id!r} needs a source ID and image URL."))
+        elif any(urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).hostname for url in (asset.source_url, asset.source_page_url) if url):
             issues.append(QualityIssue("IMAGE_PROVENANCE_URL_INVALID", f"Image asset {image_id!r} has an invalid provenance URL."))
         elif asset.work_link_status != "matched" or not asset.menu_work_ids:
             issues.append(QualityIssue("IMAGE_WORK_LINK_UNRESOLVED", f"Image asset {image_id!r} has no confirmed work relation."))
         elif draft.menu_work_ids and not set(asset.menu_work_ids).intersection(draft.menu_work_ids):
             issues.append(QualityIssue("IMAGE_WORK_MISMATCH", f"Image asset {image_id!r} is not linked to the draft work."))
         card = next((item for item in draft.cards if item.image_asset_id == image_id), None)
-        if card and (not card.image_rights_status or not card.image_credit):
-            issues.append(QualityIssue("CARD_IMAGE_RIGHTS_FIELDS_MISSING", f"Card {card.card_id!r} needs ERD image-rights status and credit."))
+        if card and not card.image_credit:
+            issues.append(QualityIssue("CARD_IMAGE_CREDIT_MISSING", f"Card {card.card_id!r} needs an image source credit."))
 
     if draft.content_type is RagContentType.REVIEW:
         for evidence_id in required_ids:

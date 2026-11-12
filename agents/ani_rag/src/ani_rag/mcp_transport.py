@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -68,6 +69,8 @@ class StreamableHTTPMCPClient:
         self._request_id = 0
         self._session_id: str | None = None
         self._protocol_version: str | None = None
+        self._tool_names: frozenset[str] | None = None
+        self._tool_names_checked_at = 0.0
 
     def initialize(self) -> dict[str, Any]:
         result = self._request("initialize", {
@@ -82,6 +85,8 @@ class StreamableHTTPMCPClient:
         return result
 
     def list_tools(self) -> frozenset[str]:
+        if self._tool_names is not None and time.monotonic() - self._tool_names_checked_at < 60:
+            return self._tool_names
         if self._protocol_version is None:
             self.initialize()
         result = self._request("tools/list", {})
@@ -91,7 +96,9 @@ class StreamableHTTPMCPClient:
         names = {item.get("name") for item in tools if isinstance(item, dict)}
         if any(not isinstance(name, str) or not name for name in names):
             raise RuntimeError("MCP tools/list contained an invalid tool name")
-        return frozenset(names)
+        self._tool_names = frozenset(names)
+        self._tool_names_checked_at = time.monotonic()
+        return self._tool_names
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if name not in self.list_tools():
@@ -145,12 +152,15 @@ class StreamableHTTPMCPClient:
         self, payload: dict[str, Any], headers: dict[str, str], *, allow_empty: bool = False
     ) -> dict[str, Any]:
         request = Request(self.server.endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        request_id = payload.get("id")
         try:
             with _MCP_OPENER.open(request, timeout=self.timeout_seconds) as response:
                 session_id = response.headers.get("Mcp-Session-Id")
                 if session_id:
                     self._session_id = session_id
                 content_type = response.headers.get("Content-Type", "")
+                if "text/event-stream" in content_type.casefold():
+                    return _read_matching_sse(response, request_id, allow_empty=allow_empty)
                 raw = response.read(_MAX_RESPONSE_BYTES + 1)
         except HTTPError as error:
             detail = error.read(2048).decode("utf-8", "replace")
@@ -164,21 +174,6 @@ class StreamableHTTPMCPClient:
                 return {}
             raise RuntimeError("MCP endpoint returned an empty response")
         body = raw.decode("utf-8", "replace")
-        if "text/event-stream" in content_type.casefold():
-            messages: list[dict[str, Any]] = []
-            for block in body.split("\n\n"):
-                data = "\n".join(line[6:] for line in block.splitlines() if line.startswith("data: "))
-                if data:
-                    try:
-                        value = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(value, dict):
-                        messages.append(value)
-            match = next((item for item in messages if item.get("id") == payload.get("id")), None)
-            if match is None:
-                raise RuntimeError("MCP SSE response contained no matching JSON-RPC message")
-            return match
         value = json.loads(body)
         if isinstance(value, list):
             match = next((item for item in value if isinstance(item, dict) and item.get("id") == payload.get("id")), None)
@@ -188,3 +183,40 @@ class StreamableHTTPMCPClient:
         if not isinstance(value, dict):
             raise RuntimeError("MCP endpoint returned an invalid JSON-RPC response")
         return value
+
+
+def _read_matching_sse(response: Any, request_id: int | None, *, allow_empty: bool) -> dict[str, Any]:
+    """Read SSE events until this request's response arrives; never wait for stream EOF."""
+    data_lines: list[str] = []
+    total_bytes = 0
+    while True:
+        line = response.readline(_MAX_RESPONSE_BYTES - total_bytes + 1)
+        if not line:
+            if allow_empty and total_bytes == 0:
+                return {}
+            break
+        total_bytes += len(line)
+        if total_bytes > _MAX_RESPONSE_BYTES:
+            raise RuntimeError("MCP response exceeded the configured 25 MiB limit")
+        decoded = line.decode("utf-8", "replace").rstrip("\r\n")
+        if decoded.startswith("data:"):
+            data_lines.append(decoded[5:].lstrip())
+            continue
+        if decoded or not data_lines:
+            continue
+        value_text = "\n".join(data_lines)
+        data_lines.clear()
+        try:
+            value = json.loads(value_text)
+        except json.JSONDecodeError:
+            continue
+        if request_id is None and allow_empty:
+            return {}
+        messages = value if isinstance(value, list) else [value]
+        match = next((
+            item for item in messages
+            if isinstance(item, dict) and item.get("id") == request_id
+        ), None)
+        if match is not None:
+            return match
+    raise RuntimeError("MCP SSE response contained no matching JSON-RPC message")
