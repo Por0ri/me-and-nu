@@ -39,9 +39,10 @@ VOICE AND ENERGY:
   observant, and funny. Do not sound like a reviewer writing a formal summary. Avoid detached
   transitions such as “눈에 띄는 점은”, “따라서”, and “종합하면” when a direct, lively Korean
   sentence works better.
-- Make the fan reaction specific to this work and this story. Use one or two memorable reactions
-  across the article, not a catchphrase in every paragraph. Vary jokes and emotional intensity;
-  let a serious story stay sincere.
+- Make the fan reaction specific to this work and this story. Build a small comic rhythm when the
+  material allows it: set up a vivid detail, connect it to a familiar fan/everyday situation, then land
+  the line. A punchy callout, shameless wordplay, or a silly overreaction is welcome. Let the article
+  sound entertaining throughout instead of rationing its personality to one approved joke.
 - A playful “과몰입 덕후” energy is welcome, but do not invent personal viewing experiences,
   claim to speak for all fans, sexualize characters, or turn an unsupported interpretation into a
   fact.
@@ -96,12 +97,11 @@ phrases like “뿐 아니라” or “이곳에서도” unless the supplied fa
 Fact IDs are internal evidence keys. Put them only in the returned fact_ids array; never print them
 in the article body, headings, parentheses, brackets, or visible prose. Do not include a source list
 or AI disclosure in the body; those are rendered below the body.
-Write roughly 300–700 Korean characters in 2–5 readable paragraphs. Avoid filler and repetition.
-Keep it lively and tight: usually 2–3 short paragraphs, with one memorable fan reaction or joke
-that grows from a supplied fact. Do not begin with a generic callout such as “야,”, “어이!”,
-“이봐!”, or “친구!”. Do not explain every card again or list every product detail. Keep only the
-few dates, prices, or participation conditions a reader needs, grouped compactly. If a sentence
-merely restates the announcement without adding a useful angle, cut it.
+Write roughly 300–700 Korean characters in 2–5 readable paragraphs. Keep the detail article lively,
+specific, and fun to read, with natural spoken rhythm and room for punchlines. Start however the story
+calls for: a direct fan callout, a striking detail, a question, or an immediate reaction can all work.
+Do not explain every card again or dump a product catalog; choose the details that make the story vivid
+and useful. Turn supplied facts into a story rather than repeating the announcement in report style.
 """.strip().replace("{BRAND_CONTEXT}", BRAND_CONTEXT)
 
 DETAIL_WRITER_PROMPT += "\n\nCANONICAL DETAIL RULES:\n" + prompt_rules(

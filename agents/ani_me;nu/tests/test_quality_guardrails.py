@@ -1006,10 +1006,10 @@ def test_large_cover_gap_is_rejected() -> None:
     assert "COVER_EMPTY_GAP" in issue_codes(payload)
 
 
-def test_generic_ending_joke_is_rejected() -> None:
+def test_ending_joke_is_not_rejected_for_using_a_familiar_phrase() -> None:
     payload = deepcopy(load_sample())
     payload["cards"][-1]["title_lines"] = ["지갑이 열린다"]
-    assert "ENDING_GENERIC" in issue_codes(payload)
+    assert "ENDING_GENERIC" not in issue_codes(payload)
 
 
 def test_official_image_without_reuse_permission_is_rejected() -> None:

@@ -14,8 +14,6 @@ from ani_menu_agent.image_selection import (
 from ani_menu_agent.models import ContentKind, ContentPackage, QualityIssue
 from ani_menu_agent.policy import (
     AGENT_MONOLOGUE_TERMS,
-    EXCESSIVE_PUNCTUATION,
-    GENERIC_HUMOR_TERMS,
     POLICY,
 )
 from ani_menu_agent.review_rules import RULES, decision_metadata, make_issue, score_penalty
@@ -857,22 +855,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                         "핵심 사실은 유지하고 엔딩 문구를 짧게 다듬으세요.",
                         ending.page,
 
-                    )
-                )
-            if any(term in ending_text for term in GENERIC_HUMOR_TERMS):
-                issues.append(
-                    _issue(
-                        "ENDING_GENERIC",
-                        "작품명만 바꿔도 성립하는 상투적 드립입니다.",
-                        ending.page,
-                    )
-                )
-            if any(mark in ending_text for mark in EXCESSIVE_PUNCTUATION):
-                issues.append(
-                    _issue(
-                        "ENDING_LOUD",
-                        "데드팬 결말에 과한 감탄·웃음 표시가 있습니다.",
-                        ending.page,
                     )
                 )
     return issues
