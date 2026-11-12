@@ -1,12 +1,15 @@
 """Opt-in tests against a disposable local carousel_test PostgreSQL database.
 
 Every test owns a random schema. No configured application database is used.
+Set ONE_PIECE_TEST_BUNDLE to the exported bundle.json to replay the original
+five cards in place of the generated One Piece fixture.
 """
 
 from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import os
+from pathlib import Path
 from uuid import uuid4
 import asyncio
 import json
@@ -21,11 +24,14 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.pool import NullPool
 
-from test_carousel_import import raw_bundle  # noqa: F401 -- shared synthetic PNG fixture
+from test_carousel_import import make_raw_bundle, raw_bundle  # noqa: F401 -- shared synthetic PNG fixture
 
 
 TARGET = "f4b8c1d9a620"
 PARENT = "e3a7b9c2d451"
+ONE_PIECE_REQUEST = "crawl-beede57ab611dd"
+ONE_PIECE_SOURCE = "https://one-piece.com/news/82918/index.html"
+ONE_PIECE_DIGEST = "636c52dddc9cdef12505633df380f2b7321e2c7aaf3b253b7f7c52400bec9941"
 
 
 @pytest.fixture
@@ -142,13 +148,43 @@ def _run_async(task):
     return asyncio.run(task)
 
 
+@pytest.fixture
+def one_piece_bundle(tmp_path):
+    from app.seeds.carousel_contents import load_bundle
+
+    archive = os.environ.get("ONE_PIECE_TEST_BUNDLE")
+    if archive:
+        # Verify the archived digest and PNGs at the original trial date, even
+        # if the feed deadline has since passed. Only edit the test's own copy.
+        original = load_bundle(Path(archive), now=datetime(2026, 11, 12, tzinfo=timezone.utc))
+        item, = original.items
+        assert item.digest == ONE_PIECE_DIGEST
+        for asset in item.raw.assets:
+            copy = tmp_path / asset.path
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes(item.images[asset.page])
+        return original.document.model_dump(exclude_unset=True)
+
+    raw = make_raw_bundle(tmp_path, pages=5)
+    package = raw["items"][0]["package"]
+    package.update(request_id=ONE_PIECE_REQUEST, content_type="goods", menu_work_ids=[8])
+    package["sources"][0].update(url=ONE_PIECE_SOURCE, title="원피스 공식 굿즈 소식")
+    package["cards"][0]["title_lines"] = ["원피스 굿즈 테스트"]
+    return raw
+
+
 def _live_bundle(tmp_path, raw_bundle):
     from app.seeds.carousel_contents import load_bundle
 
     now = datetime.now(timezone.utc)
     package = raw_bundle["items"][0]["package"]
-    package["feed_valid_until"] = (now + timedelta(days=2)).isoformat()
-    package["purge_at"] = (now + timedelta(days=32)).isoformat()
+    expiry = datetime.fromisoformat(package["feed_valid_until"])
+    if expiry <= now + timedelta(hours=1):
+        # Shift all deadlines together so historical bundles remain replayable.
+        shift = now + timedelta(days=2) - expiry
+        for key in ("feed_valid_until", "purge_at", "retention_expires_at"):
+            if package.get(key):
+                package[key] = (datetime.fromisoformat(package[key]) + shift).isoformat()
     file = tmp_path / "bundle.json"
     file.write_text(json.dumps(raw_bundle, ensure_ascii=False), encoding="utf-8")
     pending = load_bundle(file)
@@ -160,7 +196,15 @@ def _live_bundle(tmp_path, raw_bundle):
     return pending, approved
 
 
-def test_import_approval_and_authenticated_api_roundtrip(carousel_pg, tmp_path, raw_bundle, monkeypatch):
+async def _authenticated_feed_cards(client):
+    response = await client.get("/api/v1/topics/1/feed", params={"limit": 100})
+    assert response.status_code == 200, response.text
+    feed = response.json()
+    assert feed["selectedTopicId"] == 1 and feed["nextCursor"] is None
+    return [card for section in feed["sections"] for card in section["contents"]]
+
+
+def test_one_piece_duplicate_import_and_approval_in_authenticated_feed(carousel_pg, tmp_path, one_piece_bundle, monkeypatch):
     from httpx import ASGITransport, AsyncClient
     from sqlalchemy import func, select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -171,13 +215,17 @@ def test_import_approval_and_authenticated_api_roundtrip(carousel_pg, tmp_path, 
     from app.core.security import csrf_token_for_session, hash_token
     from app.db.session import get_db
     from app.main import create_app
-    from app.models import AgentRun, AuthSession, Content, ContentSlide, Draft, Tap, Topic, UserAccount
-    from app.seeds.carousel_contents import import_bundle
+    from app.models import (
+        AgentRun, AuthSession, Content, ContentSlide, Draft, Entity, EntityExternalId,
+        RecommendationItem, RecommendationRound, Tap, Topic, UserAccount,
+    )
+    from app.seeds.carousel_contents import import_bundle, run
 
     engine, url, migrate = carousel_pg
-    migrate(TARGET)
+    migrate("head")
     for key, value in {"session_backend": "postgres", "enable_dev_auth_bypass": False,
-                       "session_cookie_secure": False, "redis_url": None}.items():
+                       "session_cookie_secure": False, "redis_url": None,
+                       "checking_carousel_test_preview_enabled": False}.items():
         monkeypatch.setattr(settings, key, value)
     now = datetime.now(timezone.utc)
     token = "carousel-test-" + uuid4().hex
@@ -185,15 +233,23 @@ def test_import_approval_and_authenticated_api_roundtrip(carousel_pg, tmp_path, 
         db.add_all([Topic(topic_id=1, topic_code="anime", topic_name="애니", is_active=True),
                     Topic(topic_id=2, topic_code="other", topic_name="다른 토픽", is_active=True)])
         user = UserAccount(nickname="합성 테스트 사용자", auth_provider="kakao", provider_user_id=uuid4().hex,
-                           onboarding_completed_at=now)
+                           onboarding_completed_at=now - timedelta(days=2))
         db.add(user)
         db.flush()
         user_id = user.user_id
+        work = Entity(name="원피스", topic_id=1)
+        db.add(work)
+        db.flush()
+        db.add(EntityExternalId(provider="menu_work", external_id="8", entity_id=work.entity_id))
         db.add(Tap(user_id=user_id, topic_id=1))
         db.add(AuthSession(user_id=user_id, session_state="active", session_token_hash=hash_token(token),
                            csrf_token_hash=hash_token(csrf_token_for_session(token)), created_at=now,
                            last_accessed_at=now, expires_at=now + timedelta(hours=1)))
-    pending, approved = _live_bundle(tmp_path, raw_bundle)
+    pending, approved = _live_bundle(tmp_path, one_piece_bundle)
+
+    async def apply(bundle):
+        return await run(bundle=bundle, apply=True, expected_database="carousel_test",
+                         database_url=url.render_as_string(hide_password=False))
 
     async def scenario():
         async_engine = create_async_engine(url, poolclass=NullPool)
@@ -212,32 +268,41 @@ def test_import_approval_and_authenticated_api_roundtrip(carousel_pg, tmp_path, 
                 preview = await import_bundle(db, pending)
                 assert preview["created"] == 1
                 assert await db.scalar(select(func.count()).select_from(Content)) == 0
-            async with factory() as db, db.begin():
-                first = await import_bundle(db, pending, apply=True)
-            content_id = first["items"][0]["content_id"]
+            first = await apply(pending)
+            item, = first["items"]
+            assert first["created"] == 1 and first["work_links"]["links_added"] == 1
+            assert item["request_id"] == ONE_PIECE_REQUEST and item["status"] == "pending_review"
+            content_id = item["content_id"]
+            duplicate = await apply(pending)
+            assert duplicate["created"] == 0 and duplicate["unchanged"] == 1
+            assert duplicate["items"] == [item] and duplicate["work_links"]["links_added"] == 0
+            async with factory() as db:
+                stored = (await db.scalars(select(Content))).one()
+                assert (stored.content_id, stored.status, stored.judgment_status, stored.published_at) == (
+                    content_id, "pending_review", "needs_review", None)
             detail_url = f"/api/v1/contents/{content_id}?topicId=1"
             image_url = f"/api/v1/contents/{content_id}/slides/1/image?topicId=1"
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
                 assert (await client.get(image_url)).status_code == 401
                 client.cookies.set(settings.session_cookie_name, token)
                 client.headers["X-CSRF-Token"] = csrf_token_for_session(token)
+                assert await _authenticated_feed_cards(client) == []
                 assert (await client.get(detail_url)).status_code == 404
                 assert (await client.get(image_url)).status_code == 404
-                async with factory() as db, db.begin():
-                    promoted = await import_bundle(db, approved, apply=True)
-                    assert promoted["created"] == 0 and promoted["review_updated"] == 1
-                feed = await client.get("/api/v1/topics/1/feed")
-                assert feed.status_code == 200, feed.text
-                card = feed.json()["sections"][0]["contents"][0]
-                assert card["id"] == content_id
-                assert [slide["page"] for slide in card["slides"]] == [1, 2, 3]
+                promoted = await apply(approved)
+                assert promoted["created"] == 0 and promoted["review_updated"] == 1
+                assert promoted["items"] == [{**item, "status": "active"}]
+                card, = await _authenticated_feed_cards(client)
+                assert card["id"] == content_id and card["sourceUrl"] == ONE_PIECE_SOURCE
+                assert card["recommendationId"] is None and card["publishedAt"]
+                assert [slide["page"] for slide in card["slides"]] == [1, 2, 3, 4, 5]
                 assert card["imageUrl"] == image_url
                 assert card["summary"]
                 detail = await client.get(detail_url)
                 assert detail.status_code == 200, detail.text
                 payload = detail.json()
                 assert payload["displayMode"] == "full_body"
-                assert payload["body"] == raw_bundle["items"][0]["package"]["detail_body"]
+                assert payload["body"] == pending.items[0].package.detail_body
                 assert len(payload["sources"]) == 1
                 assert payload["notices"][0]["code"] == "AI_GENERATED"
                 assert "operator_review" not in detail.text and "reviewEvidence" not in detail.text
@@ -254,11 +319,18 @@ def test_import_approval_and_authenticated_api_roundtrip(carousel_pg, tmp_path, 
                 for source_image in (tmp_path / "cards").glob("*.png"):
                     source_image.unlink()
                 assert (await client.get(image_url)).content == image.content
+                again = await apply(approved)
+                assert (again["created"], again["review_updated"], again["unchanged"]) == (0, 0, 1)
+                assert again["items"] == promoted["items"]
+                replay_card, = await _authenticated_feed_cards(client)
+                assert (replay_card["id"], replay_card["publishedAt"]) == (content_id, card["publishedAt"])
                 async with factory() as db, db.begin():
-                    again = await import_bundle(db, approved, apply=True)
-                    assert again["unchanged"] == 1
+                    stored = (await db.scalars(select(Content))).one()
+                    assert (stored.content_id, stored.status, stored.judgment_status) == (content_id, "active", "confirmed")
                     assert await db.scalar(select(func.count()).select_from(AgentRun)) == 1
-                    assert await db.scalar(select(func.count()).select_from(ContentSlide)) == 3
+                    assert await db.scalar(select(func.count()).select_from(ContentSlide)) == 5
+                    assert await db.scalar(select(func.count()).select_from(RecommendationRound)) == 0
+                    assert await db.scalar(select(func.count()).select_from(RecommendationItem)) == 0
                     assert (await db.scalar(select(Draft))).status == "published"
                     await db.execute(text("UPDATE content SET feed_valid_until=now()-interval '1 second'"))
                 assert (await client.get("/api/v1/topics/1/feed")).json()["sections"] == []
