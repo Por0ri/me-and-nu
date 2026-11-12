@@ -69,7 +69,8 @@
 .detail dt { color: #71717a; margin-bottom: 8px; }
 .detail dd { margin: 0; }
 .body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
-.sources { padding-left: 20px; list-style: disc; line-height: 1.8; }
+.sources { padding-left: 20px; list-style: disc; line-height: 1.8; overflow-wrap: anywhere; }
+.sources li + li { margin-top: 16px; }
 .sources a { color: #7043b4; overflow-wrap: anywhere; }
 .sources p { color: #71717a; font-size: 12px; }
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
