@@ -255,7 +255,7 @@ async def test_answer_uses_dictionary_facts_and_skips_recent_posts(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lookup_failed,reason", [(False, "no_evidence"), (True, "fact_lookup_failed")])
 async def test_question_without_evidence_is_recorded(monkeypatch, lookup_failed, reason):
-    reply = {"answer": "제가 가진 자료로는 확인되지 않아요.", "used": [], "usedFacts": [], "evidence": "insufficient"}
+    reply = {"answer": "내가 가진 자료로는 확인이 안 돼.", "used": [], "usedFacts": [], "evidence": "insufficient"}
     db, job, _, _ = _answer_setup(monkeypatch, facts=[], reply=reply, lookup_failed=lookup_failed)
 
     await chat_service._fill_answer(db, job)
@@ -289,3 +289,48 @@ async def test_zero_daily_limit_means_no_limit(monkeypatch):
     db = SimpleNamespace(scalar=AsyncMock())
     await chat_service._check_daily_limit(db, 1)
     db.scalar.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_answer_needs_no_evidence(monkeypatch):
+    reply = {"kind": "chat", "answer": "탄지로는 정말 다정한 주인공이죠!", "used": [], "usedFacts": [], "evidence": None}
+    db, job, _, _ = _answer_setup(monkeypatch, facts=[], reply=reply)
+    await chat_service._fill_answer(db, job)
+    assert job.result_type == "answer"
+    assert job.notices == [{"code": chat_service.GENERAL}]
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_out_of_scope_is_blocked_without_sources(monkeypatch):
+    facts = [_fact("a", "1", ("AniList API", "https://anilist.co/anime/1"))]
+    reply = {"kind": "out_of_scope", "answer": "애니 이야기라면 도와드릴게요.", "used": [1], "usedFacts": [1],
+             "evidence": None}
+    db, job, _, _ = _answer_setup(monkeypatch, facts=facts, reply=reply)
+    await chat_service._fill_answer(db, job)
+    assert job.result_type == "blocked"
+    assert job.answer_sources == []
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unknown_kind_is_treated_as_fact(monkeypatch):
+    reply = {"kind": "something", "answer": "답", "used": [], "usedFacts": [], "evidence": "sufficient"}
+    db, job, _, _ = _answer_setup(monkeypatch, facts=[], reply=reply)
+    await chat_service._fill_answer(db, job)
+    assert job.notices[0]["code"] == chat_service.INSUFFICIENT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_type,notices,coverage", [
+    ("answer", [{"code": "GENERAL_ANSWER"}], "none"),
+    ("blocked", [{"code": "GENERAL_ANSWER"}], "none"),
+    ("answer", [{"code": "EVIDENCE_INSUFFICIENT", "message": "x"}], "partial"),
+    ("answer", [], "full"),
+])
+async def test_job_coverage_hides_internal_notices(result_type, notices, coverage):
+    message = _assistant(message_body="답", result_type=result_type, notices=notices, answer_sources=[])
+    job = await chat_service.get_job(_db_returning((message, object())), 1, 9001)
+    assert job.result.type == "answer"
+    assert job.result.context_coverage == coverage
+    assert all(notice.get("code") != "GENERAL_ANSWER" for notice in job.result.notices)

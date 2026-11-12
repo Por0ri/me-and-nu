@@ -136,3 +136,12 @@ def test_core_fields_of_every_subject_come_before_other_fields(monkeypatch):
             FactRow(2, "genre", "Action", "AniList API", None), FactRow(2, "episodes", "12", "AniList API", None)]
     lines = dictionary.build_lines([first, second], rows)
     assert [(line.subject, line.text.split(":")[0]) for line in lines] == [("1기", "화수"), ("1기", "장르"), ("2기", "화수")]
+
+
+def test_wanted_fields_follow_question_words():
+    director = dictionary.wanted_fields("귀멸의 칼날 감독 누구야?")
+    assert "director" in director and "entry_count" in director and "theme_song" not in director
+    assert "theme_song" in dictionary.wanted_fields("진격의 거인 OP 누가 불렀어?")
+    assert "episodes" in dictionary.wanted_fields("그럼 몇 화까지 있어?")
+    assert dictionary.wanted_fields("탄지로 멋있지 않아?") == dictionary.CORE_FIELDS
+    assert "theme_song" not in dictionary.wanted_fields("Opus 라는 작품 어때?")  # 영어 낱말은 단어 전체만

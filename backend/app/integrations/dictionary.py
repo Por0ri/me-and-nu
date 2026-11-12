@@ -76,6 +76,34 @@ CORE_FIELDS = frozenset({
     "studio", "director", "birthday", "voice_actor", "voice_actor_ko", "occupation", "birth_date", "performer",
     "appears_in", "voiced", "made", "used_in",
 })
+# 질문에 맞는 칸만 넣기: 질문 속 낱말 → 넣을 칸. 맞는 낱말이 없으면 핵심 칸(CORE_FIELDS)만 넣는다.
+# 한글 낱말은 띄어쓰기를 지운 질문 안에 들어 있으면 맞고, 영어 낱말(op · ed …)은 단어 전체가 같아야 맞는다
+FOCUS_WORDS: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
+    (("감독", "연출"), frozenset({"director"})),
+    (("제작사", "스튜디오", "제작"), frozenset({"main_studio", "studio"})),
+    (("성우", "목소리", "더빙", "cv"), frozenset({"character", "voice_actor", "voice_actor_ko", "voiced"})),
+    (("캐릭터", "주인공", "등장인물", "인물"), frozenset({"character", "appears_in"})),
+    (("오프닝", "엔딩", "주제가", "노래", "곡", "가수", "부른", "불렀", "op", "ed", "ost"),
+     frozenset({"theme_song", "theme_song_ja", "performer", "song_title_ja", "song_credit", "release_date",
+                "sang", "used_in"})),
+    (("몇화", "화수", "에피소드", "몇기", "몇편", "시즌"), frozenset({"episodes", "entry_count", "duration_min"})),
+    (("언제", "방영", "개봉", "나와", "나왔", "나오", "출시", "다음화", "완결", "끝났", "끝나"),
+     frozenset({"start_date", "end_date", "next_airing", "status", "release_date"})),
+    (("원작", "작가", "만화", "소설", "라노벨", "웹툰"), frozenset({"source_material", "source_work", "staff"})),
+    (("음악", "작곡", "작사", "편곡"), frozenset({"staff", "theme_song_ja", "song_credit"})),
+    (("장르",), frozenset({"genre"})),
+    (("어디서", "볼수", "보는곳", "스트리밍", "넷플릭스", "티빙", "라프텔", "왓챠", "디즈니", "방송사", "ott"),
+     frozenset({"kr_ott", "broadcaster"})),
+    (("등급", "관람가", "연령"), frozenset({"kr_rating"})),
+    (("생일", "나이", "몇살", "혈액형", "태어", "출신", "고향"),
+     frozenset({"birthday", "age", "blood_type", "birth_date", "person_blood_type", "home_town", "birthplace"})),
+    (("공식", "사이트", "홈페이지", "트위터"), frozenset({"official_site"})),
+    (("수상", "상받", "어워드"), frozenset({"award"})),
+    (("맡은", "출연", "연기", "대표작", "필모"), frozenset({"voiced", "directed"})),
+    (("만든작품", "작품목록", "작품들"), frozenset({"made", "directed", "voiced", "appears_in"})),
+)
+# 어떤 질문이든 넣는 칸 (시즌 · 극장판 수, 한국 공식 제목)
+IDENTITY_FIELDS = frozenset({"entry_count", "kr_title"})
 # 거꾸로 찾는 사실: 대상 종류 → (사전 칸, 줄 이름, 최대 개수)
 REVERSE: dict[str, tuple[tuple[str, str, int], ...]] = {
     "character": (("character", "appears_in", 3),),
@@ -205,6 +233,17 @@ def question_spans(question: str) -> dict[str, list[tuple[int, int]]]:
                 if len(key) >= MIN_KEY_LENGTH and key not in STOP_NAMES:
                     spans.setdefault(key, []).append((start, end))
     return spans
+
+
+def wanted_fields(question: str) -> frozenset[str]:
+    """질문에 맞는 칸만 고른다 (감독 → 감독, 성우 → 캐릭터 · 성우 …). 맞는 낱말이 없으면 핵심 칸."""
+    joined = name_key(question)
+    words = set(_WORD.findall(question.lower()))
+    picked: set[str] = set()
+    for keys, names in FOCUS_WORDS:
+        if any((key in words) if key.isascii() else (key in joined) for key in keys):
+            picked |= names
+    return frozenset(picked | IDENTITY_FIELDS) if picked else CORE_FIELDS
 
 
 def display_name(name_ko: str | None, alias_ko: str | None, native: str | None, romaji: str | None) -> str:
@@ -433,9 +472,10 @@ def _popularity(alias: str) -> str:
 
 
 def _adult(alias: str) -> str:
+    # 대상 번호로 바로 찾게 집계 모양으로 쓴다. exists 로 쓰면 사실 105만 줄을 통째로 훑는 계획이 나올 때가 있다
     return (
-        f"exists (select 1 from dict.fact x where x.entity_id = {alias}.entity_id "
-        f"and x.field = 'is_adult' and x.value = 'true'::jsonb)"
+        f"coalesce((select bool_or(x.value = 'true'::jsonb) from dict.fact x "
+        f"where x.entity_id = {alias}.entity_id and x.field = 'is_adult'), false)"
     )
 
 
@@ -527,12 +567,19 @@ async def _rows(conn: AsyncConnection, sql: Any, **params: Any) -> list[Any]:
     return list((await conn.execute(sql, params)).mappings().all())
 
 
-async def lookup(question: str, menu_work_ids: Sequence[int] = ()) -> DictionaryResult:
-    """질문 속 이름(+ 보고 있는 글의 작품)으로 사전 사실을 찾는다. 실패하면 빈 결과."""
+async def lookup(
+    question: str, menu_work_ids: Sequence[int] = (), *, focus_text: str | None = None
+) -> DictionaryResult:
+    """질문 속 이름(+ 보고 있는 글의 작품)으로 사전 사실을 찾는다. 실패하면 빈 결과.
+
+    넣을 칸은 focus_text(없으면 question)의 낱말로 고른다. 이어 묻기("그럼 몇 화?")는
+    대상을 앞 질문에서 찾고 칸은 지금 질문에서 고르려고 둘을 나눠 받는다.
+    """
     engine = _engine()
     if engine is None:
         return DictionaryResult()
     spans = question_spans(question[:MAX_LOOKUP_CHARS])
+    wanted = wanted_fields(focus_text if focus_text is not None else question)
     try:
         async with engine.connect() as conn:
             anchors: list[Hit] = []
@@ -548,13 +595,13 @@ async def lookup(question: str, menu_work_ids: Sequence[int] = ()) -> Dictionary
             targets = _unique(anchors + choose_targets(hits, spans))[:MAX_TARGETS]
             if not targets:
                 return DictionaryResult()
-            return DictionaryResult(targets=targets, lines=await _collect(conn, targets))
+            return DictionaryResult(targets=targets, lines=await _collect(conn, targets, wanted))
     except Exception:  # 사전이 없거나 느려도 챗봇은 우리 글로 답한다
         logger.exception("dictionary lookup failed")
         return DictionaryResult(failed=True)
 
 
-async def _collect(conn: AsyncConnection, targets: Sequence[Hit]) -> list[FactLine]:
+async def _collect(conn: AsyncConnection, targets: Sequence[Hit], wanted: frozenset[str]) -> list[FactLine]:
     work_ids = [t.entity_id for t in targets if t.kind == "work"]
     entries: dict[int, list[Any]] = {}
     if work_ids:
@@ -566,14 +613,17 @@ async def _collect(conn: AsyncConnection, targets: Sequence[Hit]) -> list[FactLi
     for target in targets:
         plan.append((target.entity_id, target.kind, target.name))
         found = entries.get(target.entity_id, [])
-        if found:
+        if found and "entry_count" in wanted:
             note = f" (아래에는 인기 순 {MAX_ENTRIES}개만)" if len(found) > MAX_ENTRIES else ""
             counted.append(FactRow(target.entity_id, "entry_count", f"{len(found)}개{note}", "me;nu 정보사전", None))
         for entry in found[:MAX_ENTRIES]:
             entry_name = entry["name_native"] or entry["name_romaji"] or ""
             plan.append((int(entry["entity_id"]), "entry", f"{target.name} · {entry_name}"))
     kinds = {entity_id: kind for entity_id, kind, _ in plan}
-    fields = sorted({name for kind in kinds.values() for name in FIELDS[kind]})
+    # 질문에 맞는 칸만 가져온다 (시즌 이름 옆 형식 · 연도는 늘 가져온다)
+    fields = sorted({
+        name for kind in kinds.values() for name in FIELDS[kind] if name in wanted or name in LABEL_ONLY_FIELDS
+    })
     raw = [r for r in await _rows(conn, _FACTS_SQL, ids=list(kinds), fields=fields, excluded=list(EXCLUDED_SOURCES))
            if r["field"] in FIELDS[kinds[r["entity_id"]]]]
 
@@ -630,12 +680,14 @@ async def _collect(conn: AsyncConnection, targets: Sequence[Hit]) -> list[FactLi
             shown = ENUM_TEXT.get(name, {}).get(str(value)) or value_text(value)
         rows.append(FactRow(r["entity_id"], name, shown, r["source_name"], r["source_url"]))
 
-    rows += counted + await _reverse_rows(conn, targets)
+    rows += counted + await _reverse_rows(conn, targets, wanted)
     return build_lines(subjects, rows)
 
 
-async def _reverse_rows(conn: AsyncConnection, targets: Sequence[Hit]) -> list[FactRow]:
-    wanted = [(target, spec) for target in targets for spec in REVERSE.get(target.kind, ())]
+async def _reverse_rows(conn: AsyncConnection, targets: Sequence[Hit], fields: frozenset[str]) -> list[FactRow]:
+    wanted = [
+        (target, spec) for target in targets for spec in REVERSE.get(target.kind, ()) if spec[1] in fields
+    ]
     if not wanted:
         return []
     raw = await _rows(conn, _REVERSE_SQL, ids=sorted({t.entity_id for t, _ in wanted}),
