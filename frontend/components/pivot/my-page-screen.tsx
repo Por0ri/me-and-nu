@@ -76,8 +76,8 @@ function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
   </dialog>;
 }
 
-export function PivotMyPageScreen({ state, demo, notificationScope, notificationSource, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout, onWithdraw, onNotifications }: {
-  state: MyPageState; demo: boolean; notificationScope?: object; notificationSource?: NotificationSettingsSource; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>; onNotifications?: () => void;
+export function PivotMyPageScreen({ state, demo, notificationScope, notificationSource, onNavigate, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout, onWithdraw, onNotifications }: {
+  state: MyPageState; demo: boolean; notificationScope?: object; notificationSource?: NotificationSettingsSource; onNavigate: (path: string) => void; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>; onNotifications?: () => void;
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
@@ -145,11 +145,11 @@ export function PivotMyPageScreen({ state, demo, notificationScope, notification
       {profile ? <>
         <section className={`${styles.card} ${styles.profile}`} aria-label={demo ? "시연용 가상 프로필" : "프로필"}>
           <div><p className={styles.nickname}>{profile.nickname}님</p><p className={styles.email}>{profile.maskedEmail}</p></div>
-          <button type="button" className={styles.edit} onClick={() => !demo ? window.location.assign("/pivot/profile") : pending("프로필 수정")}><span>프로필 수정<Chevron /></span></button>
+          <button type="button" className={styles.edit} onClick={() => !demo ? onNavigate("/pivot/profile") : pending("프로필 수정")}><span>프로필 수정<Chevron /></span></button>
         </section>
         <MenuSection title="내 정보">
           {["내 활동", TASTE_EDIT, "관심분야 관리"].map((label, index) => <button key={label} type="button" className={styles.row}
-            onClick={() => label === "내 활동" && onActivity ? onActivity() : ROW_PAGES[label] && !demo ? window.location.assign(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
+            onClick={() => label === "내 활동" && onActivity ? onActivity() : ROW_PAGES[label] && !demo ? onNavigate(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
         <MyNotificationSettings demo={demo} scope={notificationScope} source={notificationSource} />
         <MenuSection title="이용 안내">
