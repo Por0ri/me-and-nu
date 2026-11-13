@@ -7,7 +7,7 @@ Foundation 기준: Checking `1823b0444ae2737faad865768e1d6af354ac3309`, 2026-11-
 
 - FE: `/admin` → `/admin/contents` → `/admin/contents/[contentId]`.
 - BE: Content 조회 Repository/Service/Pydantic DTO 및 기본 정보·ContentSource 상세 조회.
-- 관리자 데이터 조회 라우터와 서버 `require_admin` 경계를 구현했다. **기본 앱에는 라우터를 등록하지 않았다.** 실제 앱에서 아래 URL은 세션 유무와 관계없이 404이며 OpenAPI에도 없다. 권한 저장소와 운영 조회 범위가 확정되기 전 공개를 금지한다.
+- 관리자 데이터 조회 라우터와 서버 `require_admin` 경계를 구현했다. **기본 앱에는 라우터를 등록하지 않았다.** 실제 앱에서 아래 URL은 세션 유무와 관계없이 404이며 OpenAPI에도 없다. 운영 연결에는 대상 DB에 적용된 권한 테이블, 실제 Provider와 운영 조회 범위가 필요하다.
 - FE는 기존 세션 조회와 `apiRequest`를 사용한다. 인증 여부는 로그인 안내에만 쓰며 `accountType`, `UserAccount.role`, 이메일, 요청 헤더로 관리자 권한을 판정하지 않는다.
 - 정상 로그인 후 미등록 API의 404는 `조회 연결 준비 중`으로 표시한다. 401/403, 서버·네트워크 오류, 성공한 빈 결과, 상세 `CONTENT_NOT_FOUND`를 구분한다.
 - Mock은 테스트의 메모리 DB·HTTP interception에만 존재한다. 서비스·Demo 화면에 관리자 가상 데이터 경로를 추가하지 않았다.
@@ -31,19 +31,19 @@ Foundation 기준: Checking `1823b0444ae2737faad865768e1d6af354ac3309`, 2026-11-
 
 - `app/api/admin_deps.py`의 `require_admin`을 관리자 라우터 전체에 적용한다. 기존 HttpOnly 쿠키 스키마와 세션 Repository(토큰 해시·만료·회수, PostgreSQL/Redis 선택), 사용자 조회를 재사용한다. 개발용 인증 우회가 있는 `get_optional_auth_context`는 호출하지 않는다. 유효한 실제 active 세션과 active 사용자만 권한 조회 단계에 진입한다.
 - `AdminPermissionProvider.can_read_contents(db, user_id=...)`는 매 요청 현재 서버 권한을 조회해야 한다. 권한 결과를 세션이나 프로세스에 캐시하지 않는다. `True`만 허용하고, 미부여·회수·불명확한 결과는 403으로 거부한다. 기본 Provider는 항상 거부하며 허용 구현은 격리 테스트 내부에만 존재한다.
-- `admin_account`의 실제 Schema·Migration·업무용 계정 연결·권한 부여/회수 담당은 미확정이다. DB 모델, 관리자 계정, 이메일 허용 목록, 개발 백도어, 실행 환경의 활성화 플래그를 추가하지 않았다. 운영 등록에는 실제 Provider와 조회 범위 검토를 마친 후 명시적인 코드 변경이 필요하다.
-- `admin_action_log` 연동은 조치 종류·기록 정책·Schema 확정 대기다. 이번 API는 GET 조회만 제공하며 승인·수정·발행 등의 조치와 로그 저장은 구현하지 않는다. 조회 감사 기록 필요 여부도 BE 확인 대상이다.
+- BE가 준비한 마이그레이션 `47c1a8d6b302`는 ERD V1.2의 `admin_account`와 `admin_action_log`를 생성한다. Provider에서 세션의 `user_id`를 `admin_account.user_id`와 연결하고, `revoked_at IS NULL`인 부여 기록 중 콘텐츠 조회가 허용된 `role`을 확인한다. 허용할 역할과 권한 부여·회수 담당은 팀에서 정한다.
+- `admin_action_log.admin_account_id`는 조치를 수행한 관리자 권한 행을 참조한다. 콘텐츠 목록·상세 GET까지 기록할지는 팀에서 정한다. 현재 기본 앱의 라우터 등록과 실제 로그 기록은 후속 작업이다.
 - 등록된 격리 앱의 응답: 비로그인/유효하지 않은 세션 401 `AUTH_REQUIRED`, 비관리자/권한 회수 403 `ADMIN_REQUIRED`, 인증·권한 검증 장애 503, 잘못된 query/path 422, 없는 콘텐츠 404 `CONTENT_NOT_FOUND`, 조회 장애 500. 권한 검사 전에 콘텐츠 Service를 호출하지 않으며 실패 응답에 데이터나 내부 오류 원문을 포함하지 않는다. 기존 공통 처리로 응답은 `private, no-store`다.
 - FE 화면·공통 Client·조회 훅은 기존 구현을 그대로 사용한다. 조회 권한 검증 장애 503도 재시도 가능한 오류로 표시하며, 미등록 경로 404의 `조회 연결 준비 중`과 구분한다.
 
 ## 권한 연결 전 필수 결정
 
-1. DB 등 신뢰 가능한 서버 측 관리자 권한 저장·부여·회수 정책. 모든 데이터 경로에 권한 의존성 적용, 로컬 인증 우회 거부, 권한 검증 오류 시 거부.
+1. 관리자 권한 부여·회수 담당과 콘텐츠를 조회할 수 있는 `role` 값, 목록·상세 조회의 감사 로그 저장 여부.
 2. 검수 대기 기준: `Content.status=pending_review`인지 `judgment_status=needs_review`인지, Draft만 있는 항목을 포함할지.
 3. 실제 운영/Checking 미리보기/삭제/만료 데이터 포함 범위.
 4. Figma 단일 상태의 표시 규칙과 검수·발행 상태의 명칭. `active`를 게시 완료로 변환하지 않았다. `publishedAt`은 시각 자체만 표시한다.
 
-격리 앱에서 비로그인 401·비관리자 403·허용 관리자 200·권한 회수/검증 장애 거부를 검증한다. 기본 앱의 미등록 라우트 테스트도 유지한다. 권한 DB 준비 없이 라우트만 연결하면 안 된다. 이번 작업은 migration·권한 부여·배포를 하지 않는다.
+격리 앱에서 비로그인 401·비관리자 403·허용 관리자 200·권한 회수/검증 장애 거부를 검증한다. 기본 앱의 미등록 라우트 테스트도 유지한다. 대상 DB의 마이그레이션 적용, 실제 Provider 연결, 운영 조회 범위를 확인한 뒤 라우터를 등록한다.
 
 ## 화면 범위
 

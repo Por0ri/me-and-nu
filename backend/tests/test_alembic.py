@@ -25,7 +25,10 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["d7b3e9a1c452"]
+    assert script.get_heads() == ["47c1a8d6b302"]
+    admin = script.get_revision("47c1a8d6b302")
+    assert admin.down_revision == "d7b3e9a1c452"
+    assert admin.dependencies is None
     search = script.get_revision("d7b3e9a1c452")
     assert search.down_revision == "c8f2d6a1e947"
     assert search.dependencies is None
@@ -52,7 +55,7 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     assert onboarding_v2.dependencies is None
     assert "onboarding_v2" in onboarding_v2.branch_labels
     assert "d2f6a9c4e731" not in {
-        revision.revision for revision in script.walk_revisions(base="base", head="d7b3e9a1c452")
+        revision.revision for revision in script.walk_revisions(base="base", head=admin.revision)
     }
     assert script.get_revision("c0e5f3b8a124").down_revision == (
         "b9d4e2a7f013"
