@@ -1,5 +1,7 @@
 """정보사전 조회 규칙 (DB 없이 도는 부분)."""
 
+from pathlib import Path
+
 import pytest
 
 from app.integrations import dictionary
@@ -145,3 +147,12 @@ def test_wanted_fields_follow_question_words():
     assert "episodes" in dictionary.wanted_fields("그럼 몇 화까지 있어?")
     assert dictionary.wanted_fields("탄지로 멋있지 않아?") == dictionary.CORE_FIELDS
     assert "theme_song" not in dictionary.wanted_fields("Opus 라는 작품 어때?")  # 영어 낱말은 단어 전체만
+
+
+def test_index_sql_uses_the_same_name_expression_as_lookup():
+    # 색인 식과 조회 식이 글자 하나라도 다르면 색인을 안 타고 별칭 25만 개를 다시 훑는다
+    sql = (Path(__file__).resolve().parents[1] / "scripts" / "dictionary_indexes.sql").read_text(encoding="utf-8")
+    assert f"regexp_replace(lower(alias), '{dictionary._SQL_DROP}', '', 'g')" in sql
+    assert "string_to_array(lower(alias), ' ')" in sql
+    assert dictionary._NAME_KEY in dictionary._HITS_SQL.text
+    assert f"{dictionary._NAME_PIECES} && " in dictionary._HITS_SQL.text

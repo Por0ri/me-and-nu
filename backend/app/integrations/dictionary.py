@@ -490,22 +490,27 @@ _ENTITY_COLUMNS = f"""
     {_adult('e')} as adult
 """
 
-# 별칭마다 비교용 글자를 한 번만 만들고 질문 글자 목록과 맞춘다 (질문 글자 수만큼 반복해 훑지 않게)
+# 별칭 비교용 글자 식. backend/scripts/dictionary_indexes.sql 의 색인 식과 글자 하나까지 같아야 색인을 탄다
+# (패턴을 바인드 값이 아니라 SQL 글자로 넣는 이유도 같다. _SQL_DROP 은 코드 상수라 따옴표가 없다)
+_NAME_KEY = f"regexp_replace(lower(a.alias), '{_SQL_DROP}', '', 'g')"
+_NAME_PIECES = "string_to_array(lower(a.alias), ' ')"
+
+# whole: 질문 글자 목록과 별칭 전체 비교 (alias_name_key 색인)
+# part: 질문 단어와 별칭 조각 비교 (alias_name_pieces 색인으로 후보를 좁힌 뒤 조각 글자를 정확히 맞춘다)
 _HITS_SQL = text(f"""
 with whole as (
-    select n.key, n.entity_id
-    from (select regexp_replace(lower(a.alias), :drop, '', 'g') as key, a.entity_id
-          from dict.alias a where not a.is_candidate) n
-    where n.key = any(cast(:keys as text[]))
+    select {_NAME_KEY} as key, a.entity_id
+    from dict.alias a
+    where not a.is_candidate and {_NAME_KEY} = any(cast(:keys as text[]))
 ),
 part as (
-    select n.key, n.entity_id
-    from (select regexp_replace(piece, :drop, '', 'g') as key, a.entity_id
-          from dict.alias a
-          join dict.entity pe on pe.entity_id = a.entity_id and pe.kind in ('character', 'person')
-          cross join lateral unnest(string_to_array(lower(a.alias), ' ')) as piece
-          where not a.is_candidate and a.alias like '% %' and a.alias ~ '[가-힣]') n
-    where n.key = any(cast(:words as text[]))
+    select w.key, a.entity_id
+    from dict.alias a
+    join dict.entity pe on pe.entity_id = a.entity_id and pe.kind in ('character', 'person')
+    cross join lateral unnest({_NAME_PIECES}) as piece
+    join unnest(cast(:words as text[])) as w(key) on w.key = regexp_replace(piece, '{_SQL_DROP}', '', 'g')
+    where not a.is_candidate and a.alias like '% %' and {_NAME_PIECES} && cast(:words as text[])
+      and a.alias ~ '[가-힣]'
 ),
 hit as (
     select key, entity_id, true as whole from whole
@@ -590,7 +595,7 @@ async def lookup(
                 words = [key for key, places in spans.items() if any(end - start == 1 for start, end in places)]
                 # "-" 는 비교용 글자에 남지 않아서 아무것과도 안 맞는다 (빈 목록 대신)
                 hits = [_hit(row) for row in await _rows(
-                    conn, _HITS_SQL, keys=list(spans), words=words or ["-"], drop=_SQL_DROP
+                    conn, _HITS_SQL, keys=list(spans), words=words or ["-"]
                 )]
             targets = _unique(anchors + choose_targets(hits, spans))[:MAX_TARGETS]
             if not targets:
