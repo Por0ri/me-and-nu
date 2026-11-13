@@ -620,6 +620,60 @@ class JobStorePostgresTests(unittest.TestCase):
         self.assertEqual(len({row["job_id"] for row in jobs}), 3)
         self.assertEqual([row["canonical_url"] for row in jobs], list(urls))
 
+    def test_discovery_slot_is_route_scoped_and_released_on_failure(self):
+        second = self.new_store()
+        with self.assertRaisesRegex(RuntimeError, "scan interrupted"):
+            with self.store.discovery_slot("prtimes_rss", "news") as first:
+                self.assertTrue(first)
+                with second.discovery_slot("prtimes_rss", "news") as overlapping:
+                    self.assertFalse(overlapping)
+                with second.discovery_slot("prtimes_rss", "goods") as independent:
+                    self.assertTrue(independent)
+                raise RuntimeError("scan interrupted")
+        with second.discovery_slot("prtimes_rss", "news") as retry:
+            self.assertTrue(retry)
+
+    def test_generation_reuses_historical_one_piece_ref_identity_without_mutating_sealed_input(self):
+        from menu_worker.job_contract import job_input_hash
+
+        request = self.anime_candidate()
+        base = request["source_url"]
+        legacy_url = base + "?ref=homepage&story=one"
+        legacy = self.validate_input({**request, "source_url": legacy_url})
+        kind = "anime_generate"
+        old_hash = job_input_hash(legacy, kind, legacy_url)
+        with self.connection() as conn:
+            owner = conn.execute(
+                """INSERT INTO content_generation_job
+                   (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,input_sha256,job_kind,menu_work_id)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING job_id""",
+                (uuid.uuid4(), legacy.idempotency_key, legacy.source_id, legacy_url, legacy_url,
+                 legacy.content_type, old_hash, kind, legacy.menu_work_id),
+            ).fetchone()[0]
+        clean = {**request, "source_url": base + "?story=one"}
+        replay = self.store.submit(clean, job_kind=kind)
+        self.assertEqual((replay["job_id"], replay["created"], replay["canonical_url"], replay["input_sha256"]),
+                         (str(owner), False, legacy_url, old_hash))
+        with self.assertRaises(self.JobConflict) as conflict:
+            self.store.submit({**clean, "idempotency_key": self.namespace + "-auto"}, job_kind=kind)
+        self.assertEqual((conflict.exception.code, conflict.exception.existing_job_id), ("candidate_exists", str(owner)))
+
+        def simultaneous_submit(store):
+            variant = uuid.uuid4().hex
+            try:
+                row = store.submit({**request, "source_url": base + "?ref=" + variant + "&story=two",
+                                    "idempotency_key": self.namespace + variant}, job_kind=kind)
+                return (row["job_id"], row["created"])
+            except self.JobConflict as exc:
+                self.assertEqual(exc.code, "candidate_exists")
+                return (exc.existing_job_id, False)
+
+        pair = self.parallel(simultaneous_submit)
+        self.assertCountEqual([created for _, created in pair], [True, False])
+        self.assertEqual(pair[0][0], pair[1][0])
+        self.assertNotEqual(str(owner), pair[0][0])
+        self.assertEqual(self.store.get(pair[0][0])["canonical_url"], base + "?story=two")
+
     def test_generation_kind_fences_and_preflight_failure_before_start(self):
         request = self.anime_candidate()
         probe = self.store.submit(request, job_kind="anime")

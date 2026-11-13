@@ -103,6 +103,23 @@ def canonical_anime_url(value: str) -> str:
     return _anime_urls(value)[0]
 
 
+def one_piece_news_path(source_id: str, canonical_url: str) -> str | None:
+    path = canonical_url.partition("?")[0]
+    if source_id == "one_piece_official" and re.fullmatch(r"https://one-piece\.com/news/[0-9]+/index\.html", path):
+        return path
+    return None
+
+
+def generation_article_key(source_id: str, canonical_url: str) -> str:
+    """One Piece's numbered news articles use ref for attribution. Keep all other query fields."""
+    path = one_piece_news_path(source_id, canonical_url)
+    if path is None:
+        return canonical_url
+    pairs = parse_qsl(urlsplit(canonical_url).query, keep_blank_values=True)
+    kept = [(key, value) for key, value in pairs if key.lower() != "ref"]
+    return path + ("?" + urlencode(kept) if kept else "")
+
+
 def source_url_for_storage(value: str) -> str:
     return _anime_urls(value)[1]
 

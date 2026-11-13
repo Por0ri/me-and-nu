@@ -5,6 +5,7 @@ Workers commit their claims before running the content agent.
 Lease recovery never relaunches an attempt with a generation-start marker.
 """
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime
 import os
 from pathlib import Path, PurePosixPath
@@ -15,6 +16,7 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
+from menu_worker.anime_catalog import generation_article_key, one_piece_news_path
 from menu_worker.job_contract import JobInput, JobInputError, job_input_hash, validate_job_kind, validate_job_request
 
 DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test", "menu_content_jobs_migration_test"})
@@ -135,7 +137,26 @@ class JobStore:
 
     def submit(self, request: JobInput | dict, *, job_kind: str = "fake") -> dict:
         request, canonical_url, input_hash = validate_job_request(request, job_kind)
+        news_path = one_piece_news_path(request.source_id, canonical_url) if job_kind == "anime_generate" else None
         with self._connect() as connection:
+            if news_path:
+                # Older v6 rows may include ref in their sealed URL and artifact digest.
+                # Serialize manual and scheduled admissions while consulting those identities.
+                connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 1))", (news_path,))
+                same_key = connection.execute(
+                    "SELECT * FROM public.content_generation_job WHERE idempotency_key=%s", (request.idempotency_key,)
+                ).fetchone()
+                if same_key:
+                    return self._replay(same_key, request, job_kind, canonical_url)
+                siblings = connection.execute(
+                    """SELECT job_id,candidate_url FROM public.content_generation_job
+                       WHERE job_kind='anime_generate' AND source_id=%s AND duplicate_of_job_id IS NULL
+                         AND (candidate_url=%s OR candidate_url LIKE %s)
+                       ORDER BY created_at,job_id""", (request.source_id, news_path, news_path + "?%"),
+                )
+                for sibling in siblings:
+                    if generation_article_key(request.source_id, sibling["candidate_url"]) == canonical_url:
+                        raise JobConflict("candidate_exists", sibling["job_id"])
             created = connection.execute(
                 """INSERT INTO public.content_generation_job
                    (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,input_sha256,job_kind,menu_work_id)
@@ -149,13 +170,7 @@ class JobStore:
                 "SELECT * FROM public.content_generation_job WHERE idempotency_key=%s", (request.idempotency_key,)
             ).fetchone()
             if previous:
-                # A pre-v5 row may have sealed a trailing slash in its digest.
-                # Check the stored representation against the same logical request.
-                if (previous["job_kind"] != job_kind or previous["source_id"] != request.source_id
-                        or previous["candidate_url"] != canonical_url
-                        or previous["input_sha256"] != job_input_hash(request, job_kind, previous["canonical_url"])):
-                    raise JobConflict("idempotency_conflict", previous["job_id"])
-                return {**_plain(previous), "created": False}
+                return self._replay(previous, request, job_kind, canonical_url)
             # The probe and generation indexes may each have an owner for this URL.
             collision_kinds = ["anime_generate"] if job_kind == "anime_generate" else ["fake", "anime"]
             previous = connection.execute(
@@ -166,6 +181,31 @@ class JobStore:
             if previous:
                 raise JobConflict("candidate_exists", previous["job_id"])
             raise JobStoreError("Concurrent submission changed; repeat the same idempotency key")
+
+    @staticmethod
+    def _replay(previous, request, job_kind, canonical_url):
+        stored_identity = previous["candidate_url"]
+        if job_kind == "anime_generate":
+            stored_identity = generation_article_key(previous["source_id"], stored_identity)
+        # Compare logical identity, but verify the digest against the originally sealed URL.
+        if (previous["job_kind"] != job_kind or previous["source_id"] != request.source_id
+                or stored_identity != canonical_url
+                or previous["input_sha256"] != job_input_hash(request, job_kind, previous["canonical_url"])):
+            raise JobConflict("idempotency_conflict", previous["job_id"])
+        return {**_plain(previous), "created": False}
+
+    @contextmanager
+    def discovery_slot(self, source_id: str, content_type: str):
+        # The short-lived connection owns the session lock across the HTTP scan.
+        # Close releases it even on failure. No transaction stays open during collection.
+        with self._connect() as connection:
+            connection.commit()
+            connection.autocommit = True
+            route = f"anime-discovery:{source_id}:{content_type}"
+            acquired = connection.execute(
+                "SELECT pg_try_advisory_lock(hashtextextended(%s, 2)) AS ok", (route,)
+            ).fetchone()["ok"]
+            yield acquired
 
     def get(self, job_id: str) -> dict | None:
         with self._connect() as connection:

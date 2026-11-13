@@ -1,6 +1,6 @@
 # Celery Worker · Beat · Flower 로컬 실행 기반
 
-Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 독립 실행 환경이다. Python 3.12, Celery 5.6.3, Flower 2.2.0을 사용하며 Compose 프로젝트 이름은 `me-nu-worker`다. 단건 콘텐츠 큐는 가짜 Agent로 접수·상태·저장·복구를 구현했다. 실제 애니 Agent·LLM·서비스 적재 연결은 후속 범위다.
+콘텐츠 작업 전용 Celery 환경이다. Python 3.12, Celery 5.6.3, Flower 2.2.0을 사용하며 Compose 프로젝트 이름은 `me-nu-worker`다. 기본 구성은 무과금 점검용이다. 선택 구성으로 기존 애니 Agent의 정기 기사 수집과 단건 콘텐츠 생성을 연결할 수 있다.
 
 | 서비스 | 역할 |
 | --- | --- |
@@ -13,8 +13,10 @@ Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 �
 | `job-worker` | `content-generation` 큐의 가짜 Agent 실행, 동시 실행 1개 |
 | `job-dispatcher` | fake 작업 전달 및 중단된 fake 작업 정리 |
 | `anime-redis`, `anime-worker`, `anime-dispatcher` | 선택형 `anime` 프로필. 별도 Redis와 산출물 볼륨에서 애니 큐 전달을 점검 |
+| `discovery-worker` | `compose.discovery.yaml`에서 Beat가 보낸 출처별 수집을 실행하고 확인된 기사만 작업 DB에 접수 |
+| `generation-redis`, `generation-dispatcher`, `generation-worker` | `compose.generation.yaml`의 `generation` 프로필. 접수된 기사를 읽고 실제 Agent로 콘텐츠 생성 |
 
-이 Compose는 콘텐츠 작업용 PostgreSQL을 별도로 실행한다. 서비스 API·서비스 PostgreSQL·실제 콘텐츠 Agent·추천 모델은 실행하지 않는다. 기존 로그인 세션 Redis와도 분리되어 있다. Checking의 추천 컨테이너와 매일 추천 계산 일정은 기존 구성을 따른다. 작업 이미지에는 기존 backend/model/agents 소스나 서비스 환경 파일이 포함되지 않는다.
+작업은 전용 PostgreSQL과 Redis를 사용한다. 수집·생성용 이미지에 기존 Agent와 출처·작품 카탈로그를 포함한다. 서비스 API와 추천 배치는 기존 배포 구성에서 실행한다.
 
 ## 시작
 
@@ -77,19 +79,38 @@ docker compose --env-file worker/.env -f compose.worker.yaml down
 
 Redis는 작업 전용 볼륨에 AOF를 저장하며 `appendfsync everysec`을 사용한다. 비정상 호스트 종료 시 최근 약 1초의 기록이 유실될 수 있으므로, 이 설정만으로 콘텐츠 작업의 무손실 실행을 보장하지 않는다. 결과는 1시간 뒤 만료되고, Flower는 최근 2,000개 작업 상태를 별도 볼륨에 보존한다. `tasks` 네트워크는 내부 전용이며, Flower와 `redis-tasks`, `anime-redis`는 localhost 포트 연결을 위해 `monitor` 네트워크에도 참여한다.
 
-## 구현 범위
+## 기사 수집부터 콘텐츠 생성까지
 
-현재 단계는 로컬 실행 기반과 가짜 Agent 단건 큐다. 서버 배포·도메인 연결·실제 콘텐츠 정기 생성은 포함하지 않는다. 실제 Agent를 연결할 때는 다음 항목이 추가로 필요하다.
+`compose.discovery.yaml`을 추가하면 Beat가 출처·유형별로 수집을 예약한다. 기본값은 PR TIMES 뉴스(`prtimes_rss:news`)를 15분마다 최대 5건 확인하는 것이다. 기존 Agent가 목록을 한 번 읽고 후보의 등록된 원문 기사와 작품 ID를 확인한다. 발견 매체에서 공식 원문을 특정하기 어렵거나 작품을 하나로 정할 수 없으면 해당 기사를 건너뛴다. 원피스 공식 뉴스 목록처럼 수집이 꺼진 출처도 발견 매체에서 연결된 개별 원문의 출처로는 사용할 수 있다.
 
-- 실제 출처 등록·입력 검증과 기존 콘텐츠 중복 검사 연결.
-- 기존 애니 Agent의 Python 3.12 실행 환경·한글 폰트·영속 출력 연결.
-- 생성 결과와 원본 PNG 보존, 기존 검수·bundle 검증·적재 계약 유지.
-- 유료 생성 재시도와 완료 결과 재적재의 분리, 후보·시도·비용 제한.
-- 실제 출처 discovery와 업무별 Beat 일정.
+수집 Worker는 검증을 통과한 기사를 전용 작업 DB에 `anime_generate`로 접수한다. 같은 출처·기사 URL의 기존 수동 작업과 반복 수집이 한 작업을 공유한다. 원피스 공식 뉴스의 숫자 기사 경로에서 `ref`만 다른 URL도 접수 시 기존 작업을 조회한다. 다른 기사 식별 쿼리는 보존한다. 이 규칙을 적용하기 전에 `ref` 차이로 이미 두 작업이 만들어졌다면 그 두 작업의 실행·내보내기 이력은 별개로 남는다.
 
-기존 `agent_run.queue_task_id`의 캐러셀 적재 식별자와 새 Celery 실행 ID는 별도로 관리해야 한다. 추천 계산을 Celery로 이전하는 작업은 이 실행 기반에 포함하지 않는다.
+첫 회차에는 현재 목록에서 한도 안에 들어오는 기사도 접수 대상이다. 이후 회차도 현재 목록을 기준으로 수집하므로 중단 중이거나 한 주기에 한도보다 많은 새 기사가 올라오면 일부 기사가 빠질 수 있다.
 
-각 Worker는 동시 실행 1개다. 점검 작업의 soft/hard 제한은 15/20초, 가짜 콘텐츠 작업은 45/50초, Redis visibility timeout은 90초다. 실제 장시간 Agent를 연결할 때는 실행 제한·재전달·중단 복구 정책을 함께 바꿔야 한다. 가짜 Agent의 성공 결과를 유료 생성 복구 검증으로 간주하지 않는다.
+수집만 켜려면 저장소 루트에서 아래 명령을 실행한다. `generation-dispatcher`와 `generation-worker`가 꺼져 있으면 접수된 기사는 작업 DB에서 대기한다. 두 서비스가 이미 켜져 있으면 새로 접수한 기사도 바로 생성 대상이 된다.
+
+```powershell
+$discovery = @('--env-file','worker/.env','-f','compose.worker.yaml','-f','compose.discovery.yaml')
+docker compose @discovery up -d --build --wait
+docker compose @discovery logs --tail 50 beat discovery-worker
+```
+
+`worker/.env`에서 `ANIME_DISCOVERY_ROUTES`에 등록된 `출처ID:유형`을 쉼표로 구분해 지정한다. 유형은 `news`, `event`, `goods`이고 각 출처에서 허용한 유형만 수집한다. `ANIME_DISCOVERY_INTERVAL_SECONDS`는 5~86400초, `ANIME_DISCOVERY_LIMIT`은 출처·유형별 회차당 1~20건이다. 가동 중인 조합에 같은 Compose 파일들을 사용해 설정 변경을 적용한다.
+
+수집 결과는 Flower의 `content.anime_discover`에서 확인한다. `discovered`는 발견 후보, `submitted`는 신규 작업, `duplicates`는 기존 작업, `unresolved`는 원문·작품을 확정할 수 없는 후보, `rejected`는 접수 검증 탈락, `fetch_failed`는 회차 내에 읽지 못한 후보 수다. 일부만 읽으면 `partial`, 같은 출처·유형의 이전 수집이 실행 중이면 `already_running`으로 표시된다. 목록 전체 호출이 실패하면 해당 작업은 실패로 기록되고 다음 Beat 주기에 다시 시도한다.
+
+실제 생성을 함께 가동할 때는 아래 **유료 단건 실행**의 전용 키와 비용 한도를 준비한 뒤 두 Compose 파일을 함께 사용한다. 생성 Worker는 이미 대기 중인 작업도 처리한다. 생성 결과는 기존 검수와 `export-staging` 흐름을 따른다.
+
+```powershell
+docker compose @discovery -f compose.generation.yaml --profile generation up -d --build --wait discovery-worker beat generation-worker generation-dispatcher
+```
+
+정기 수집을 끄려면 수집 Worker를 중지하고 기본 설정으로 Beat를 다시 기동한다.
+
+```powershell
+docker compose @discovery stop discovery-worker
+docker compose --env-file worker/.env -f compose.worker.yaml up -d beat
+```
 
 ## 가짜 Agent 단건 콘텐츠 큐
 
@@ -263,6 +284,11 @@ docker compose --env-file worker/.env -f compose.worker.yaml exec -T job-worker 
 ```
 
 DB 통합 테스트는 동시 접수·점유, 전송 실패, 점유 만료, 오래된 토큰 차단, 생성 결과 저장 실패 후 재생성 없는 복구, 종류별 점유·완료 및 복구를 검증한다. v1 업그레이드 검사는 실험용 DB `menu_content_jobs_migration_test`를 새로 만들어 사용한 뒤 정리하며, 같은 이름의 기존 DB가 있으면 중단한다. 네트워크 없는 실행에서는 DB 테스트가 명시적으로 skip된다.
+
+정기 수집 회귀는 두 단계로 확인한다.
+
+- 수집 이미지에서 외부 네트워크를 끄고 `PYTHONPATH=/app:/opt/ani-agent/src /opt/ani-venv/bin/python tests/check_discovery_agent.py`를 실행한다. 저장된 RSS·기사 HTML을 사용해 실제 Agent의 출처·작품 확인을 검증한다.
+- 임시 Docker 내부 네트워크에 PostgreSQL 17(`jobs-db`)과 Redis 두 개(`redis-tasks`, `generation-redis`)를 준비한다. 생성 이미지에서 `CONTENT_JOB_TEST_DATABASE_URL`을 비어 있는 `menu_content_jobs_test`로 지정한 뒤 `python -B tests/check_discovery_cycle.py`를 실행한다. 테스트 프로세스가 Beat와 두 Worker를 기동한다. 실제 API 키는 필요 없다.
 
 ## 2026-11-02 로컬 검증
 

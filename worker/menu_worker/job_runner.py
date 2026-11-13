@@ -4,7 +4,7 @@ from pathlib import Path
 from threading import Event, Thread
 
 from menu_worker.job_artifacts import ArtifactError, FakeAgentError, generate_anime_probe, generate_fake, validate_artifacts
-from menu_worker.anime_catalog import AnimeInputError
+from menu_worker.anime_catalog import AnimeInputError, generation_article_key
 from menu_worker.job_contract import INPUT_FIELDS, JobInputError, job_input_hash, validate_job_request
 from menu_worker.real_generation import RealGenerationError, generate_real, preflight_real, validate_real_artifacts
 
@@ -61,7 +61,10 @@ def run_job(store, root: Path, job_id: str, task_id: str | None = None, *, recov
                     request, candidate, _ = validate_job_request(fields, expected_kind)
                     # v4 manifests bind the original path, including any trailing slash.
                     digest = job_input_hash(request, expected_kind, job["canonical_url"])
-                    if candidate != job["candidate_url"] or digest != job["input_sha256"]:
+                    stored_identity = job["candidate_url"]
+                    if live:
+                        stored_identity = generation_article_key(job["source_id"], stored_identity)
+                    if candidate != stored_identity or digest != job["input_sha256"]:
                         raise JobInputError("Stored input identity mismatch", "input_identity_mismatch")
                 if live:
                     preflight_real()

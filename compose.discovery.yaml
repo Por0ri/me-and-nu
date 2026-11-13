@@ -1,0 +1,53 @@
+# Opt in to periodic article collection by adding this file to compose.worker.yaml.
+x-discovery-routes: &discovery-routes
+  ANIME_DISCOVERY_ROUTES: ${ANIME_DISCOVERY_ROUTES-prtimes_rss:news}
+
+services:
+  beat:
+    environment:
+      <<: *discovery-routes
+      ANIME_DISCOVERY_INTERVAL_SECONDS: ${ANIME_DISCOVERY_INTERVAL_SECONDS:-900}
+
+  discovery-worker:
+    image: me-nu-anime-discovery:local
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.generation
+      additional_contexts:
+        runtime-base: service:worker
+        anime-project: "./agents/ani_me;nu"
+        anime-works: ./catalog
+    init: true
+    read_only: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      <<: *discovery-routes
+      ANIME_DISCOVERY_LIMIT: ${ANIME_DISCOVERY_LIMIT:-5}
+      CELERY_BROKER_URL: redis://redis-tasks:6379/0
+      CELERY_RESULT_BACKEND: redis://redis-tasks:6379/1
+      CONTENT_JOB_DATABASE_URL: "postgresql://menu_jobs:${CONTENT_JOB_DB_PASSWORD:?Run python worker/setup_local.py}@jobs-db:5432/menu_content_jobs"
+    command: [celery, -A, "menu_worker.discovery_app:app", worker, --loglevel=INFO, --concurrency=1, --queues=anime-discovery, "--hostname=discovery@%h", --events]
+    networks: [tasks, discovery-egress]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    mem_limit: 768m
+    cpus: "1.0"
+    pids_limit: 96
+    stop_grace_period: 340s
+    depends_on:
+      redis-tasks: {condition: service_healthy}
+      job-init: {condition: service_completed_successfully}
+      jobs-db: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -m, menu_worker.health, discovery-worker]
+      interval: 15s
+      timeout: 7s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+
+networks:
+  discovery-egress:

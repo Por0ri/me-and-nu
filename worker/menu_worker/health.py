@@ -13,13 +13,16 @@ from menu_worker.tasks import HEARTBEAT_KEY, result_store
 
 
 def check(role: str) -> bool:
-    nodes = {"worker": "runtime", "job-worker": "content", "anime-worker": "anime", "generation-worker": "generate"}
+    nodes = {"worker": "runtime", "job-worker": "content", "anime-worker": "anime",
+             "generation-worker": "generate", "discovery-worker": "discovery"}
     if role in nodes:
         worker_app = app
         if role == "anime-worker":
             from menu_worker.anime_app import app as worker_app
         elif role == "generation-worker":
             from menu_worker.generation_app import app as worker_app
+        elif role == "discovery-worker":
+            from menu_worker.discovery_app import app as worker_app
         name = f"{nodes[role]}@{socket.gethostname()}"
         return any(reply.get(name, {}).get("ok") == "pong"
                    for reply in worker_app.control.ping(destination=[name], timeout=3))

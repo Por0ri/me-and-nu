@@ -126,7 +126,9 @@ def validate_job_request(value: JobInput | Mapping, job_kind: str) -> tuple[JobI
         raise JobInputError("Fake jobs require fixture input", "fixture_source_required")
     canonical_url = request.canonical_url
     if job_kind in {"anime", "anime_generate"}:
-        from menu_worker.anime_catalog import source_url_for_storage
+        from menu_worker.anime_catalog import generation_article_key, source_url_for_storage
+        if job_kind == "anime_generate":
+            canonical_url = generation_article_key(request.source_id, canonical_url)
         request = replace(request, source_url=source_url_for_storage(request.source_url),
                           canonical_hint=canonical_url if request.canonical_hint is not None else None)
     return request, canonical_url, job_input_hash(request, job_kind, canonical_url)
