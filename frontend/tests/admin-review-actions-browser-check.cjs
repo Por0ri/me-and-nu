@@ -24,7 +24,7 @@ async function verify(browser, width) {
       user: { id: 7, accountType: 'user' }, onboardingCompleted: true, csrfToken: 'fixture' });
     if (failure) return reply({ code: failure === 401 ? 'AUTH_REQUIRED' : 'ADMIN_REQUIRED' }, failure);
     return reply({ contentId: 2, title: '검수 대상 콘텐츠', status, judgmentStatus,
-      createdAt: '2026-11-13T00:00:00Z', publishedAt: '2099-01-01T00:00:00Z', summary: '검수 요약',
+      createdAt: '2026-11-13T00:00:00Z', updatedAt: '2026-11-13T00:12:34.123400-03:30', publishedAt: '2099-01-01T00:00:00Z', summary: '검수 요약',
       body: '기존 본문 유지', sources: [{ url: 'https://example.org', title: '원문', publisher: '테스트', role: 'primary', citationOrder: 1 }] });
   });
   const ready = () => page.locator('[data-admin-detail="ready"]').waitFor();

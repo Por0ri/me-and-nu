@@ -150,4 +150,4 @@ def test_review_detail_return_uses_identical_query_and_no_visibility_claim(revie
     assert review_api.client.get(path).json() == before
     future = review_api.client.get("/api/v1/admin/contents/10").json()
     assert future["status"] == "active" and future["publishedAt"].startswith("2099")
-    assert set(future) == {"contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "summary", "body", "sources"}
+    assert set(future) == {"contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources"}

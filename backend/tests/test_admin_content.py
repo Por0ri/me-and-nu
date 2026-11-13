@@ -17,7 +17,7 @@ from app.db.session import get_db
 from app.main import create_app
 from app.models import UserAccount
 from app.repositories import admin_content_repository as repo
-from app.schemas.admin_content import AdminContentItem, AdminContentQuery
+from app.schemas.admin_content import AdminContentDetail, AdminContentItem, AdminContentQuery
 from app.services import admin_content_service as service
 
 
@@ -29,6 +29,7 @@ def db():
             content_id BIGINT PRIMARY KEY, title TEXT NOT NULL,
             judgment_status TEXT NOT NULL, status TEXT NOT NULL,
             created_at TIMESTAMP NOT NULL, published_at TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT '2026-11-13 09:12:34.123456+09:00',
             summary TEXT, body TEXT
         )"""))
         # Same timestamps, all review states and publication states, literal
@@ -42,8 +43,8 @@ def db():
             (6, "삭제 콘텐츠", "failed", "deleted", "2026-11-09 00:00:00"),
         ]
         connection.execute(text("""INSERT INTO content
-            (content_id, title, judgment_status, status, created_at, summary, body)
-            VALUES (:id, :title, :judgment, :status, :created, NULL, '본문')"""),
+            (content_id, title, judgment_status, status, created_at, updated_at, summary, body)
+            VALUES (:id, :title, :judgment, :status, :created, '2026-11-13 09:12:34.123456+09:00', NULL, '본문')"""),
             [dict(id=id, title=title, judgment=judgment, status=status, created=created)
              for id, title, judgment, status, created in rows])
 
@@ -141,8 +142,11 @@ async def test_detail_reuses_sources_and_returns_only_allowlisted_fields(db, mon
     assert detail.body == "본문"
     assert detail.sources[0].publisher is None
     assert detail.sources[0].url == source.source_url
+    assert detail.model_dump(mode="json", by_alias=True)["updatedAt"] == "2026-11-13T09:12:34.123456+09:00"
+    assert detail.updated_at != detail.created_at
+    assert "content.updated_at" in str(db.statements[0].compile(dialect=postgresql.dialect()))
     assert set(detail.model_dump(by_alias=True)) == {
-        "contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "summary", "body", "sources",
+        "contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources",
     }
     sources.assert_awaited_once_with(db, 2)
     with pytest.raises(ApiError) as exc:
@@ -150,6 +154,15 @@ async def test_detail_reuses_sources_and_returns_only_allowlisted_fields(db, mon
     assert exc.value.status_code == 404
     assert exc.value.code == "CONTENT_NOT_FOUND"
     assert sources.await_count == 1
+
+
+@pytest.mark.parametrize("version", [{}, {"updated_at": None}, {"updated_at": datetime(2026, 11, 13)},
+                                     {"updated_at": 1794528000}, {"updated_at": "2026-11-13T00:00:00.1234567Z"}])
+def test_detail_requires_an_aware_db_datetime_without_coercion_or_fallback(version):
+    with pytest.raises(ValidationError):
+        AdminContentDetail(content_id=2, title="title", judgment_status="needs_review", status="active",
+                           created_at=datetime(2026, 11, 12, tzinfo=timezone.utc), published_at=None,
+                           summary=None, body=None, sources=[], **version)
 
 
 @pytest.mark.asyncio

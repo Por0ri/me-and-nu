@@ -15,7 +15,7 @@ async function verify(browser, width) {
   let mode = 'normal', authenticated = true, hold = false, release;
   const unexpected = [], errors = [], calls = [];
   const item = { contentId: 7, title: '원래 제목', status: 'active', judgmentStatus: 'confirmed', createdAt: '2026-11-13T00:00:00Z', publishedAt: null };
-  const detail = { ...item, summary: '기존 요약', body: '<script>window.injected = true</script>\n기존 본문',
+  const detail = { ...item, updatedAt: '2026-11-13T09:12:34.000001+09:00', summary: '기존 요약', body: '<script>window.injected = true</script>\n기존 본문',
     sources: [{ url: 'https://example.org/original', title: '기존 출처', publisher: '기존 발행처', role: 'primary', citationOrder: 7 }] };
   page.on('pageerror', error => errors.push(error.message));
   await context.route('**/*', async route => {
@@ -35,7 +35,8 @@ async function verify(browser, width) {
       if (mode === 'missing') return reply({ code: 'CONTENT_NOT_FOUND' }, 404);
       if (mode === 'unavailable') return reply({ code: 'NOT_FOUND' }, 404);
       if (mode === 'error') return reply({ message: 'private error' }, 503);
-      if (url.pathname.endsWith('/7')) return reply(detail);
+      if (url.pathname.endsWith('/7')) return reply({ ...detail, updatedAt: mode === 'version-missing' ? undefined
+        : mode === 'version-invalid' ? '2026-11-13T00:12:34.1234567Z' : detail.updatedAt });
       if (url.pathname === '/api/v1/admin/contents') return reply({ items: [item], page: Number(url.searchParams.get('page')),
         pageSize: Number(url.searchParams.get('pageSize')), total: 1 });
     }
@@ -129,6 +130,11 @@ async function verify(browser, width) {
     assert.equal(await page.locator('[data-admin-form]').count(), 0);
     mode = 'normal'; await page.reload(); await ready();
     assert.equal(await page.getByLabel('제목 (필수)', { exact: true }).inputValue(), detail.title);
+    for (const next of ['version-missing', 'version-invalid']) {
+      mode = next; await page.reload(); await page.locator('[data-admin-editor="error"]').waitFor();
+      assert.equal(await page.locator('[data-admin-form]').isVisible(), false);
+    }
+    mode = 'normal'; await page.getByRole('button', { name: '다시 시도', exact: true }).click(); await ready();
     for (const [next, status] of [['401', 'login-required'], ['unavailable', 'unavailable'], ['missing', 'not-found']]) {
       mode = next; await page.reload(); await page.locator(`[data-admin-editor="${status}"]`).waitFor();
       assert.equal(await page.locator('[data-admin-form]').count(), 0);

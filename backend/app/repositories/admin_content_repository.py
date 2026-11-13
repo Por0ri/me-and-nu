@@ -45,7 +45,7 @@ async def list_contents(db: AsyncSession, query: AdminContentQuery):
 
 async def get_content(db: AsyncSession, content_id: int):
     result = await db.execute(
-        select(*_ITEM_COLUMNS, Content.summary, Content.body)
+        select(*_ITEM_COLUMNS, Content.updated_at, Content.summary, Content.body)
         .where(Content.content_id == content_id)
     )
     return result.mappings().one_or_none()

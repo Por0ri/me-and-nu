@@ -12,6 +12,9 @@ export type AdminContentItem = {
 };
 export type AdminContentPage = { items: AdminContentItem[]; page: number; pageSize: number; total: number };
 export type AdminContentDetail = AdminContentItem & {
+  // DB Content version: forward verbatim as expectedUpdatedAt in a future review request.
+  // Date conversion would discard microseconds. This does not version Draft/Source/Carousel.
+  updatedAt: string;
   summary: string | null; body: string | null;
   sources: { url: string; title: string | null; publisher: string | null; role: string; citationOrder: number | null }[];
 };
@@ -49,6 +52,16 @@ function invalid(): never { throw new ApiError("콘텐츠 응답을 확인하지
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function integer(value: unknown, min: number): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= min; }
 function timestamp(value: unknown): value is string { return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)); }
+function contentVersion(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  // Match the DB/Python microsecond range without parsing or normalizing via Date.
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.\d{1,6})?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+  if (!parts || parts[0] !== value || parts[7] === "-00:00") return false; // Unknown offset is not a trusted version.
+  const year = Number(parts[1]), month = Number(parts[2]), day = Number(parts[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1];
+}
 function nullableText(value: unknown): value is string | null { return value === null || typeof value === "string"; }
 function isItem(value: unknown): value is AdminContentItem {
   return record(value) && integer(value.contentId, 1) && typeof value.title === "string" &&
@@ -70,7 +83,7 @@ export async function loadAdminContent(contentId: number, signal?: AbortSignal):
   const value = await apiRequest<unknown>(`/api/v1/admin/contents/${contentId}`, { signal });
   if (!isItem(value) || value.contentId !== contentId) invalid();
   const detail = value as unknown as Record<string, unknown>;
-  if (!nullableText(detail.summary) || !nullableText(detail.body) || !Array.isArray(detail.sources) ||
+  if (!contentVersion(detail.updatedAt) || !nullableText(detail.summary) || !nullableText(detail.body) || !Array.isArray(detail.sources) ||
     !detail.sources.every(source => record(source) && typeof source.url === "string" && nullableText(source.title) &&
       nullableText(source.publisher) && typeof source.role === "string" &&
       (source.citationOrder === null || integer(source.citationOrder, 1)))) invalid();

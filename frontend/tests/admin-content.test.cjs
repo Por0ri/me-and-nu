@@ -10,6 +10,7 @@ const root = path.join(__dirname, '..');
 const plain = value => JSON.parse(JSON.stringify(value));
 const item = (id = 2) => ({ contentId: id, title: '달빛 콘텐츠', judgmentStatus: 'needs_review', status: 'active',
   createdAt: '2026-11-12T00:00:00Z', publishedAt: null });
+const detailOf = () => ({ ...item(), updatedAt: '2026-11-13T09:12:34.123456+09:00', summary: null, body: null, sources: [] });
 const page = (items = [item()]) => ({ items, page: 1, pageSize: 20, total: items.length });
 function runtime(respond = () => page()) {
   const modules = new Map(), calls = [];
@@ -59,7 +60,7 @@ test('review rationale accepts Unicode and rejects blank, oversized and control 
 
 test('review confirmation exposes an honest disconnected state and disabled execution', () => {
   const { ContentReviewPanel } = runtime().load('components/admin/content-review-panel.tsx');
-  const html = renderToStaticMarkup(React.createElement(ContentReviewPanel, { content: item() }));
+  const html = renderToStaticMarkup(React.createElement(ContentReviewPanel, { content: detailOf() }));
   assert.match(html, /승인 내용 확인/); assert.match(html, /반려 내용 확인/);
   assert.match(html, /<dialog[^>]+aria-labelledby="review-title"/);
   assert.match(html, /disabled=""[^>]*>승인 실행 \(미연결\)/);
@@ -140,6 +141,9 @@ test('successful empty result is distinct from API failure, login, permission an
     await assert.rejects(env.api.loadAdminContents(env.api.parseAdminQuery(new URLSearchParams())), error => {
       const failure = env.api.adminFailure(error); assert.equal(failure.status, expected); assert.doesNotMatch(failure.message, /secret/); return true;
     });
+    await assert.rejects(env.api.loadAdminContent(2), error => {
+      const failure = env.api.adminFailure(error); assert.equal(failure.status, expected); assert.doesNotMatch(failure.message, /secret/); return true;
+    });
   }
 });
 
@@ -153,7 +157,7 @@ test('invalid wire data cannot become a successful list', async () => {
 });
 
 test('detail ID and source fields are validated, unsafe source URLs cannot be links', async () => {
-  const detail = { ...item(), summary: null, body: '<script>not executable</script>', sources: [
+  const detail = { ...detailOf(), body: '<script>not executable</script>', sources: [
     { url: 'https://example.com/source', title: null, publisher: null, role: 'primary', citationOrder: 1 },
   ] };
   const env = runtime(() => detail);
@@ -161,6 +165,46 @@ test('detail ID and source fields are validated, unsafe source URLs cannot be li
   await assert.rejects(env.api.loadAdminContent(3), error => error.code === 'INVALID_ADMIN_RESPONSE');
   assert.equal(env.api.safeSourceUrl('https://example.com/source'), 'https://example.com/source');
   for (const url of ['javascript:alert(1)', 'data:text/html,x', 'https://name:password@example.com', '/relative']) assert.equal(env.api.safeSourceUrl(url), undefined);
+});
+
+test('detail preserves the exact version string for a future expectedUpdatedAt payload', async () => {
+  for (const updatedAt of ['2026-11-13T00:12:34Z', '2026-11-13T00:12:34+00:00',
+    '2026-11-13T00:12:34.1Z', '2026-11-13T00:12:34.12Z', '2026-11-13T00:12:34.123Z',
+    '2026-11-13T00:12:34.1234Z', '2026-11-13T00:12:34.12345Z', '2026-11-13T00:12:34.123456Z',
+    '2026-11-13T09:12:34.000001+09:00', '2026-11-12T20:42:34.123400-03:30',
+    '2000-02-29T23:59:59.000000Z', '2024-02-29T00:00:00Z', '0001-01-01T00:00:00Z', '9999-12-31T23:59:59Z']) {
+    const detail = { ...detailOf(), updatedAt }, env = runtime(() => detail);
+    const parsed = await env.api.loadAdminContent(2);
+    assert.deepEqual(plain(parsed), detail);
+    const futurePayload = JSON.stringify({ expectedUpdatedAt: parsed.updatedAt });
+    assert.equal(JSON.parse(futurePayload).expectedUpdatedAt, updatedAt);
+    assert.equal(env.calls.length, 1);
+    assert.equal(env.calls[0].init.method ?? 'GET', 'GET');
+  }
+  // Adjacent DB versions inside the same JS millisecond remain distinguishable.
+  const versions = [];
+  for (const updatedAt of ['2026-11-13T00:12:34.123456Z', '2026-11-13T00:12:34.123457Z']) {
+    const env = runtime(() => ({ ...detailOf(), updatedAt }));
+    versions.push((await env.api.loadAdminContent(2)).updatedAt);
+  }
+  assert.notEqual(...versions);
+});
+
+test('detail rejects missing, invalid, ambiguous or unsupported precision versions', async () => {
+  const invalid = [undefined, null, '', 1794528000, {}, 'not a date',
+    '2026-11-13', '2026-11-13T00:12:34', '2026-11-13T00:12:34.123456',
+    '2026-11-13T00:12:34-00:00', '2026-11-13T00:12:34+24:00', '2026-11-13T00:12:34+09:60',
+    '2026-11-13T00:12:34+0900', '2026-11-13T00:12:34+09:00:30', '2026-11-13T00:12:34Zjunk',
+    '2026-11-13T00:12:34.1234567Z', '2026-11-13T00:12:34.1234560Z', '2026-11-13T00:12:34.Z',
+    '2026-11-13T00:12:34,123456Z', '2026-11-13 00:12:34Z', ' 2026-11-13T00:12:34Z',
+    '2026-11-13T00:12:34Z\n', '2026-11-13T00:12:34Z ', '0000-01-01T00:00:00Z',
+    '2026-00-13T00:12:34Z', '2026-13-13T00:12:34Z', '2026-11-00T00:12:34Z', '2026-11-31T00:12:34Z',
+    '2026-02-29T00:12:34Z', '1900-02-29T00:12:34Z', '2024-02-30T00:12:34Z',
+    '2026-11-13T24:00:00Z', '2026-11-13T00:60:00Z', '2026-11-13T00:12:60Z'];
+  for (const updatedAt of invalid) {
+    const env = runtime(() => ({ ...detailOf(), updatedAt }));
+    await assert.rejects(env.api.loadAdminContent(2), error => error.code === 'INVALID_ADMIN_RESPONSE', String(updatedAt));
+  }
 });
 
 test('an aborted read suppresses a late 401 event', async () => {
@@ -173,7 +217,7 @@ test('an aborted read suppresses a late 401 event', async () => {
 });
 
 test('source display preserves stored metadata and response order without inventing review values', async () => {
-  const detail = { ...item(), summary: null, body: null, sources: [
+  const detail = { ...detailOf(), sources: [
     { url: 'https://example.com/source', title: '원문 제목', publisher: '발행처 이름', role: 'primary', citationOrder: 7 },
     { url: 'http://example.org/reference', title: '참고 제목', publisher: null, role: 'unrecognized-role', citationOrder: 2 },
   ] };
