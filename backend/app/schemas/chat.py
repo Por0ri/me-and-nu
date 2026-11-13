@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import ConfigDict, Field, field_validator
 
 from app.schemas.common import CamelModel
+from app.schemas.feed import FeedCard
 
 AI_NOTICE = "AI가 생성한 답변입니다. 부정확한 내용이 포함될 수 있으니 출처와 근거를 확인해 주세요."
 
@@ -65,6 +66,8 @@ class ChatJobResult(CamelModel):
     content: str
     sources: list[ChatSource] = Field(default_factory=list)
     fact_sources: list[ChatFactSource] = Field(default_factory=list)
+    # 글 찾기 답에서 고른 글: 홈 피드와 같은 카드 (지금 공개 중인 글만, 저장 상태는 조회 시점 값)
+    contents: list[FeedCard] = Field(default_factory=list)
     notices: list[dict[str, str]] = Field(default_factory=list)
     context_coverage: Literal["full", "partial", "none"] = "full"
     target_topic_id: int | None = None

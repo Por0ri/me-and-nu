@@ -211,11 +211,11 @@ def test_fact_sources_follow_used_facts_without_repeating_urls():
     ]
 
 
-def _answer_setup(monkeypatch, *, facts, reply, lookup_failed=False):
-    """_fill_answer 를 DB · 사전 · LLM 없이 돌리는 준비. (db, job, pick, ask) 를 돌려준다."""
+def _answer_setup(monkeypatch, *, facts, reply, lookup_failed=False, found=None):
+    """_fill_answer 를 DB · 사전 · 글 찾기 · LLM 없이 돌리는 준비. (db, job, pick, ask) 를 돌려준다."""
     question = SimpleNamespace(chat_message_id=11, sender_role="user", message_body="귀멸의 칼날 감독 누구야?",
                                selected_text=None)
-    session = SimpleNamespace(chat_session_id=5, tap_id=7, anchor_content_id=None)
+    session = SimpleNamespace(chat_session_id=5, user_id=3, tap_id=7, anchor_content_id=None)
     tables = {chat_service.ChatSession: session, chat_service.Tap: SimpleNamespace(topic_id=1)}
     db = SimpleNamespace(
         get=AsyncMock(side_effect=lambda model, _id: tables[model]),
@@ -230,6 +230,7 @@ def _answer_setup(monkeypatch, *, facts, reply, lookup_failed=False):
     monkeypatch.setattr(chat_service.catalog_repo, "get_active_topic", AsyncMock(return_value=SimpleNamespace(topic_id=1)))
     monkeypatch.setattr(chat_service, "_lookup_facts", AsyncMock(return_value=(facts, lookup_failed)))
     monkeypatch.setattr(chat_service, "_pick_materials", pick)
+    monkeypatch.setattr(chat_service.chat_finder, "find", AsyncMock(return_value=found))
     monkeypatch.setattr(chat_service.llm, "ask_json", ask)
     return db, job, pick, ask
 
@@ -325,6 +326,7 @@ async def test_unknown_kind_is_treated_as_fact(monkeypatch):
 @pytest.mark.parametrize("result_type,notices,coverage", [
     ("answer", [{"code": "GENERAL_ANSWER"}], "none"),
     ("blocked", [{"code": "GENERAL_ANSWER"}], "none"),
+    ("answer", [{"code": "NO_MATCHING_CONTENT"}], "none"),
     ("answer", [{"code": "EVIDENCE_INSUFFICIENT", "message": "x"}], "partial"),
     ("answer", [], "full"),
 ])
@@ -333,4 +335,105 @@ async def test_job_coverage_hides_internal_notices(result_type, notices, coverag
     job = await chat_service.get_job(_db_returning((message, object())), 1, 9001)
     assert job.result.type == "answer"
     assert job.result.context_coverage == coverage
-    assert all(notice.get("code") != "GENERAL_ANSWER" for notice in job.result.notices)
+    assert all(notice.get("code") not in chat_service.INTERNAL_NOTICES for notice in job.result.notices)
+
+
+# ---------- 글 찾기 (카드로 답하기) ----------
+
+def _found(*content_ids, base_missing=False):
+    contents = [SimpleNamespace(content_id=content_id, title=f"글 {content_id}", summary=f"요약 {content_id}",
+                                content_type="event", published_at=None) for content_id in content_ids]
+    return chat_service.chat_finder.Found(conditions=["작품: 나루토"], contents=contents, base_missing=base_missing)
+
+
+@pytest.mark.asyncio
+async def test_find_answer_keeps_picked_cards_in_order(monkeypatch):
+    reply = {"kind": "find", "answer": "나루토면 이 두 개부터 봐.", "picks": [2, "1", 2, 9], "used": [], "usedFacts": []}
+    db, job, pick, ask = _answer_setup(monkeypatch, facts=[], reply=reply, found=_found(301, 302))
+
+    await chat_service._fill_answer(db, job)
+
+    prompt = ask.await_args.args[1]
+    assert "[찾은 글]\n찾은 조건: 작품: 나루토" in prompt and "[글 2] 글 302 (행사)" in prompt
+    assert pick.await_args.kwargs["allow_recent"] is False  # 찾은 글이 있으면 최근 글을 따로 넣지 않는다
+    assert job.answer_sources == [{"kind": "card", "contentId": 302}, {"kind": "card", "contentId": 301}]
+    assert job.notices == []
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_without_matching_post_is_recorded(monkeypatch):
+    reply = {"kind": "find", "answer": "나루토 굿즈 글은 아직 없어.", "picks": [], "used": [], "usedFacts": []}
+    db, job, _, _ = _answer_setup(monkeypatch, facts=[], reply=reply, found=_found(301))
+
+    await chat_service._fill_answer(db, job)
+
+    assert job.notices == [{"code": chat_service.NO_CONTENT}]
+    assert db.add.call_args.args[0].reason == "no_evidence"
+
+
+@pytest.mark.asyncio
+async def test_find_asking_back_for_a_base_work_is_not_recorded(monkeypatch):
+    reply = {"kind": "find", "answer": "뭐랑 비슷한 거?", "picks": [], "used": [], "usedFacts": []}
+    db, job, _, _ = _answer_setup(monkeypatch, facts=[], reply=reply, found=_found(base_missing=True))
+
+    await chat_service._fill_answer(db, job)
+
+    assert job.notices == [{"code": chat_service.NO_CONTENT}]
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_without_candidates_is_a_general_answer(monkeypatch):
+    reply = {"kind": "find", "answer": "이 글 말고 다른 건 홈에서 물어봐.", "picks": [1], "used": [], "usedFacts": []}
+    db, job, _, _ = _answer_setup(monkeypatch, facts=[], reply=reply, found=None)
+
+    await chat_service._fill_answer(db, job)
+
+    assert job.answer_sources == []
+    assert job.notices == [{"code": chat_service.GENERAL}]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_search_gets_previous_question_and_shown_cards(monkeypatch):
+    reply = {"kind": "find", "answer": "더 있어.", "picks": [1], "used": [], "usedFacts": []}
+    db, job, _, _ = _answer_setup(monkeypatch, facts=[], reply=reply, found=_found(303))
+    earlier = SimpleNamespace(sender_role="user", message_body="판타지 콘텐츠 찾아줘", selected_text=None)
+    answer = SimpleNamespace(sender_role="assistant", message_body="이거 봐.",
+                             answer_sources=[{"kind": "card", "contentId": 301}, {"kind": "dictionary", "url": "x"}])
+    now = SimpleNamespace(chat_message_id=11, sender_role="user", message_body="더 보여줘", selected_text=None)
+    db.scalars = AsyncMock(return_value=SimpleNamespace(all=lambda: [now, answer, earlier]))  # 최신순
+
+    await chat_service._fill_answer(db, job)
+
+    kwargs = chat_service.chat_finder.find.await_args.kwargs
+    assert (kwargs["question"], kwargs["previous"], kwargs["shown"]) == ("더 보여줘", "판타지 콘텐츠 찾아줘", [301])
+    assert (kwargs["user_id"], kwargs["tap_id"], kwargs["anchor_content_id"]) == (3, 7, None)
+
+
+@pytest.mark.asyncio
+async def test_completed_job_returns_cards_apart_from_sources(monkeypatch):
+    message = _assistant(message_body="이거 봐.", result_type="answer", notices=[], answer_sources=[
+        {"kind": "card", "contentId": 41}, {"contentId": 37, "title": "전장의 중심", "url": "https://example.com"},
+    ])
+    cards = AsyncMock(return_value=[])
+    monkeypatch.setattr(chat_service, "_cards", cards)
+    session = SimpleNamespace(tap_id=7)
+
+    job = await chat_service.get_job(_db_returning((message, session)), 3, 9001)
+
+    assert cards.await_args.args[1:] == (3, session, [41])
+    assert [source.content_id for source in job.result.sources] == [37]
+
+
+@pytest.mark.asyncio
+async def test_cards_keep_pick_order_and_drop_hidden_or_disliked_posts(monkeypatch):
+    posts = {41: SimpleNamespace(content_id=41), 42: SimpleNamespace(content_id=42), 44: SimpleNamespace(content_id=44)}
+    monkeypatch.setattr(chat_service.recommendation_repo, "contents_by_id", AsyncMock(return_value=posts))
+    monkeypatch.setattr(chat_service.recommendation_repo, "negative_content_ids", AsyncMock(return_value={42}))
+    monkeypatch.setattr(chat_service, "feed_card", AsyncMock(side_effect=lambda db, content, **_: content.content_id))
+    db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(tap_id=7, topic_id=1)))
+
+    cards = await chat_service._cards(db, 3, SimpleNamespace(tap_id=7), [44, 43, 42, 41])
+
+    assert cards == [44, 41]  # 43 은 지금 공개 중이 아니고, 42 는 '그만볼래요'

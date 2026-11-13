@@ -68,7 +68,7 @@ async def post_chat_message(
     "/jobs/{jobId}",
     response_model=ChatJobResponse,
     summary="AI 답변 생성 상태·결과 (API-053)",
-    description="status는 processing, completed, failed 중 하나입니다. completed면 result에 답변, 근거 콘텐츠(sources), 정보사전 근거(factSources: 출처 이름 · 근거 주소)가 있습니다.",
+    description="status는 processing, completed, failed 중 하나입니다. completed면 result에 답변, 근거 콘텐츠(sources), 정보사전 근거(factSources: 출처 이름 · 근거 주소), 글 찾기 답에서 고른 글(contents: 홈 피드와 같은 카드)이 있습니다.",
     responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "CHAT_JOB_NOT_FOUND"}},
 )
 async def get_chat_job(
