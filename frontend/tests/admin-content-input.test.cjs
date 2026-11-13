@@ -33,6 +33,7 @@ test('create input requires title; optional empty values normalize without stora
 
 test('stored values load exactly and only author fields enter the request', () => {
   const detail = { title: '기존 제목', summary: null, body: '<script>plain</script>\n본문', status: 'active', judgmentStatus: 'confirmed',
+    updatedAt: '2026-11-13T09:12:34.123456+09:00',
     sources: [{ url: 'https://example.org', title: '원문', role: 'primary', citationOrder: 7, publisher: '발행처' }] };
   const form = input.contentFormValue(detail);
   assert.deepEqual(plain(form), { title: detail.title, summary: '', body: detail.body, sources: [{ url: 'https://example.org', title: '원문' }] });
@@ -40,6 +41,7 @@ test('stored values load exactly and only author fields enter the request', () =
   assert.deepEqual(Object.keys(request), ['title', 'summary', 'body', 'sources']);
   assert.deepEqual(Object.keys(request.sources[0]), ['url', 'title']);
   assert.equal(detail.sources[0].role, 'primary');
+  assert.equal(detail.updatedAt, '2026-11-13T09:12:34.123456+09:00');
 });
 
 test('Unicode length agrees with Pydantic; invalid controls and oversized text are rejected', () => {

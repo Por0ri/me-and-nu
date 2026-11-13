@@ -1,6 +1,6 @@
 """Isolated HTTP + real SQL/session checks. No service DB, accounts or migrations."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -22,6 +22,7 @@ from app.db.session import get_db
 from app.main import create_app
 from app.models import AuthSession, ContentSource, SourceSite, UserAccount
 from app.repositories.auth_session_repository import utcnow
+from app.schemas.admin_content_review import AdminContentReviewRequest
 from app.services import admin_content_service as service
 from app.services.admin_permission_provider import get_admin_permission_provider
 
@@ -38,9 +39,11 @@ def api(monkeypatch):
         connection.execute(text("""CREATE TABLE content (
             content_id BIGINT PRIMARY KEY, title TEXT NOT NULL,
             judgment_status TEXT NOT NULL, status TEXT NOT NULL,
-            created_at TIMESTAMP NOT NULL, published_at TIMESTAMP, summary TEXT, body TEXT
+            created_at TIMESTAMP NOT NULL, published_at TIMESTAMP, summary TEXT, body TEXT,
+            updated_at TIMESTAMP NOT NULL DEFAULT '2026-11-13 09:12:34.123456+09:00'
         )"""))
-        connection.execute(text("""INSERT INTO content VALUES
+        connection.execute(text("""INSERT INTO content
+            (content_id, title, judgment_status, status, created_at, published_at, summary, body) VALUES
             (1, '달빛 OST', 'pending', 'active', '2026-11-10 00:00:00', NULL, NULL, '본문'),
             (2, '달빛 소식', 'needs_review', 'pending_review', '2026-11-11 00:00:00', NULL, '요약', '상세 본문'),
             (3, '달빛 100%_특집', 'needs_review', 'active', '2026-11-11 00:00:00', NULL, NULL, '본문')
@@ -229,6 +232,7 @@ def test_allowed_admin_http_query_uses_existing_real_sql(api, query, ids, total)
     assert body["total"] == total
     assert body["page"] == query.get("page", 1)
     assert body["pageSize"] == query.get("pageSize", 20)
+    assert all("updatedAt" not in item for item in body["items"])
     assert response.headers["cache-control"] == "private, no-store"
 
 
@@ -242,11 +246,46 @@ def test_detail_sources_and_missing_content_use_existing_service(api):
         {"url": "https://example.org/primary", "title": "원문", "publisher": "테스트 출처", "role": "primary", "citationOrder": 1},
         {"url": "https://example.org/extra", "title": None, "publisher": None, "role": "material", "citationOrder": None},
     ]
-    assert set(body) == {"contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "summary", "body", "sources"}
+    assert body["updatedAt"] == "2026-11-13T09:12:34.123456+09:00"
+    assert set(body) == {"contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources"}
     assert api.client.get(PATHS[0] + "/1").json()["sources"] == []
     missing = api.client.get(PATHS[0] + "/999")
     assert missing.status_code == 404
     assert missing.json()["code"] == "CONTENT_NOT_FOUND"
+
+
+@pytest.mark.parametrize("stored", [
+    "2026-11-13T00:12:34.123456+00:00", "2026-11-13T09:12:34.000001+09:00",
+    "2026-11-12T20:42:34.123400-03:30", "2026-11-13T00:12:34+00:00",
+])
+def test_detail_preserves_changed_db_version_through_http_and_review_contract(api, stored):
+    login(api)
+    before = api.client.get(PATHS[1]).json()
+    with api.engine.begin() as db:
+        db.execute(text("UPDATE content SET updated_at = :value WHERE content_id = 2"), {"value": stored})
+    response = api.client.get(PATHS[1])
+    assert response.status_code == 200
+    body = response.json()
+    assert body["updatedAt"] == stored.replace("+00:00", "Z")
+    assert {key: value for key, value in body.items() if key != "updatedAt"} == {
+        key: value for key, value in before.items() if key != "updatedAt"
+    }
+    # Validate the next slice's DTO locally; never execute a review POST.
+    request = AdminContentReviewRequest(
+        requestId="00000000-0000-4000-8000-000000000001", action="approve", rationale="검토 완료",
+        expectedStatus=body["status"], expectedJudgmentStatus=body["judgmentStatus"], expectedUpdatedAt=body["updatedAt"],
+    )
+    expected = datetime.fromisoformat(stored)
+    assert request.expected_updated_at == expected
+    assert request.expected_updated_at.microsecond == expected.microsecond
+    assert request.expected_updated_at.utcoffset() == expected.utcoffset()
+
+
+def test_detail_openapi_requires_updated_at_only_on_detail(api):
+    schemas = api.client.get("/openapi.json").json()["components"]["schemas"]
+    assert "updatedAt" in schemas["AdminContentDetail"]["required"]
+    assert schemas["AdminContentDetail"]["properties"]["updatedAt"]["format"] == "date-time"
+    assert "updatedAt" not in schemas["AdminContentItem"]["properties"]
 
 
 @pytest.mark.parametrize("suffix", ["?page=0", "?pageSize=101", "?status=published", "?judgmentStatus=approved", "/0", "/invalid"])

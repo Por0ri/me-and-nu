@@ -94,6 +94,7 @@ def test_create_plan_has_no_storage_defaults_or_side_effects():
 async def test_update_reuses_read_boundary_preserves_original_and_never_touches_session(monkeypatch):
     original = AdminContentDetail(content_id=7, title="원래 제목", summary=None, body="원래 본문",
         judgment_status="confirmed", status="active", created_at=datetime(2026, 11, 13, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 11, 13, 0, 12, 34, 123456, tzinfo=timezone.utc),
         published_at=None, sources=[{"url": "https://example.org", "title": "원문", "publisher": "발행처",
                                     "role": "primary", "citationOrder": 7}])
     read = AsyncMock(return_value=original)

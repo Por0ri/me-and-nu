@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import AwareDatetime, Field, field_validator
 
 from app.schemas.common import CamelModel
 from app.schemas.feed import ContentSourceResponse
@@ -43,6 +43,8 @@ class AdminContentListResponse(CamelModel):
 
 
 class AdminContentDetail(AdminContentItem):
+    # The DB datetime is the version. Never infer a timezone or substitute a clock.
+    updated_at: AwareDatetime = Field(strict=True)
     summary: str | None
     body: str | None
     sources: list[ContentSourceResponse]

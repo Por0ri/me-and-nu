@@ -41,7 +41,11 @@ async function verify(browser, width) {
     }
     if (/^\/api\/v1\/admin\/contents\/\d+$/.test(url.pathname)) {
       if (mode === 'detail-missing') return reply({ code: 'CONTENT_NOT_FOUND' }, 404);
-      return reply({ ...item(Number(url.pathname.split('/').at(-1))), summary: '요약', body: '<script>window.adminInjected = true</script>\n본문 확인', sources: mode === 'no-sources' ? [] : [
+      return reply({ ...item(Number(url.pathname.split('/').at(-1))),
+        updatedAt: mode === 'version-missing' ? undefined : mode === 'version-invalid' ? '2026-02-30T00:12:34Z'
+          : mode === 'version-no-zone' ? '2026-11-13T00:12:34.123456'
+          : mode === 'version-overprecision' ? '2026-11-13T00:12:34.1234567Z' : '2026-11-13T09:12:34.123456+09:00',
+        summary: '요약', body: '<script>window.adminInjected = true</script>\n본문 확인', sources: mode === 'no-sources' ? [] : [
         { url: 'https://example.com/source', title: '참고 출처', publisher: '출처 발행처', role: 'primary', citationOrder: 7 },
         { url: 'javascript:alert(1)', title: '잘못된 출처', publisher: null, role: 'material', citationOrder: 2 },
         { url: 'https://example.org/' + 'a'.repeat(160), title: null, publisher: null, role: 'unrecognized-role', citationOrder: null },
@@ -116,6 +120,14 @@ async function verify(browser, width) {
     mode = 'no-sources'; await page.reload();
     await page.getByText('등록된 출처가 없습니다.', { exact: true }).waitFor();
     assert.equal(await sources.count(), 0);
+    step = 'required detail version';
+    for (const invalid of ['version-missing', 'version-invalid', 'version-no-zone', 'version-overprecision']) {
+      mode = invalid; await page.reload(); await page.locator('[data-admin-detail="error"]').waitFor();
+      assert.equal(await page.getByRole('button', { name: '승인 내용 확인' }).count(), 0);
+      assert.equal(await page.getByRole('link', { name: '콘텐츠 수정', exact: true }).count(), 0);
+    }
+    mode = 'normal'; await page.getByRole('button', { name: '다시 시도', exact: true }).click();
+    await page.locator('[data-admin-detail="ready"]').waitFor();
     mode = 'normal';
     await changeList(() => page.getByRole('link', { name: '← 콘텐츠 목록' }).click(), { page: '2' });
     assert.equal(page.url(), beforeDetail);
@@ -146,7 +158,7 @@ async function verify(browser, width) {
     mode = 'detail-missing'; await page.goto(`${base}/admin/contents/999`); await page.locator('[data-admin-detail="not-found"]').waitFor();
     await page.goto(`${base}/admin/contents?page=0`); await page.getByRole('link', { name: '조건 초기화' }).waitFor();
     assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
-    results.push({ width, passed: true, assets, checks: ['loading', 'search', 'independent filters', 'page/size', 'detail/return', 'source metadata/order', 'nullable/empty sources', 'source wrapping', 'GET only', 'empty', 'error/retry', '401/403', 'unregistered API', 'anonymous', 'late response', '404', 'invalid query', 'safe text/links'] });
+    results.push({ width, passed: true, assets, checks: ['loading', 'search', 'independent filters', 'page/size', 'detail/return', 'required valid detail version/retry', 'source metadata/order', 'nullable/empty sources', 'source wrapping', 'GET only', 'empty', 'error/retry', '401/403', 'unregistered API', 'anonymous', 'late response', '404', 'invalid query', 'safe text/links'] });
   } catch (error) {
     await page.screenshot({ path: path.join(output, `failure-${width}.png`), fullPage: true });
     throw new Error(`${width}px ${step}: ${error.message}`, { cause: error });
