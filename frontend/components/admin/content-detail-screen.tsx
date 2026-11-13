@@ -36,6 +36,7 @@ export function ContentDetailScreen({ contentId }: { contentId: number }) {
     <section className={styles.panel} data-admin-detail={state.status}>
       {state.status !== "ready" ? <AdminStatus state={state} retry={retry} /> : <article className={styles.detail}>
         <p className={styles.note}>콘텐츠 #{state.data.contentId}</p><h2>{state.data.title || "제목 없음"}</h2>
+        <a className={styles.secondaryButton} href={`/admin/contents/${contentId}/edit${back.slice("/admin/contents".length)}`}>콘텐츠 수정</a>
         <dl><div><dt>검수 상태</dt><dd>{state.data.judgmentStatus}</dd></div><div><dt>콘텐츠 상태</dt><dd>{state.data.status}</dd></div>
           <div><dt>생성 시각</dt><dd>{adminDate(state.data.createdAt)}</dd></div><div><dt>발행 시각</dt><dd>{adminDate(state.data.publishedAt)}</dd></div></dl>
         <h3>요약</h3><p className={styles.body}>{state.data.summary || "등록된 요약이 없습니다."}</p>

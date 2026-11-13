@@ -33,6 +33,7 @@ export function ContentsScreen({ query, state, retry, navigate }: {
   const start = Math.max(1, Math.min(query.page - 2, pages - 4));
   return <>
     <div className={styles.heading}><h1>콘텐츠 관리</h1><p>콘텐츠를 검색하고 검수 상태를 확인하세요.</p></div>
+    {state.status === "ready" && <a className={styles.backLink} href={`/admin/contents/new?${adminQueryString(query)}`}>콘텐츠 등록</a>}
     <section className={styles.panel} aria-label="콘텐츠 목록" data-admin-state={state.status}>
       <div className={styles.panelTitle}>콘텐츠 목록</div>
       <form className={styles.filters} onSubmit={event => { event.preventDefault(); navigate({ ...query, q: search.trim(), page: 1 }); }}>
