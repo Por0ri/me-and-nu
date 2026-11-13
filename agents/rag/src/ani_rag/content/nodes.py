@@ -11,7 +11,7 @@ from ani_rag.content.generation import generate_copy_deck
 from ani_rag.content.image_selection import assign_distinct_images
 from ani_rag.content.layout_engine import build_cards, reflow_for_composition
 from ani_rag.content.models import ContentPackage, CopyCard, QualityIssue
-from ani_rag.content.policy import POLICY
+from ani_rag.content.policy import COVER_EYEBROW_BY_KIND, POLICY, request_kind
 from ani_rag.content.quality import check_copy, check_sources
 from ani_rag.content.review_rules import make_issue
 from ani_rag.content.source_policy import (
@@ -67,6 +67,14 @@ def _normalize_structural_roles(cards: list[CopyCard]) -> list[CopyCard]:
         )
         for index, card in enumerate(ordered)
     ]
+
+
+def _fix_cover_eyebrow(request_id: str, cards: list[CopyCard]) -> list[CopyCard]:
+    """11/12 서원: 입문 가이드 · 원작 이야기 표지 머릿글은 글마다 다르지 않게 코드가 고정한다."""
+    label = COVER_EYEBROW_BY_KIND.get(request_kind(request_id))
+    if not label:
+        return cards
+    return [card.model_copy(update={"eyebrow": label}) if card.role == "cover" else card for card in cards]
 
 
 def _cover_image_issue(package: ContentPackage) -> QualityIssue | None:
@@ -344,7 +352,7 @@ def copy_writer(state: ContentState) -> ContentState:
         )
         generated_cards = revised.deck.cards
         usage_records.append(revised.usage.model_dump(mode="json"))
-    generated_cards = _normalize_structural_roles(generated_cards)
+    generated_cards = _fix_cover_eyebrow(package.request_id, _normalize_structural_roles(generated_cards))
     if not existing_cards:
         # Catch copy-only defects before layout and image rendering. These issues have
         # enough evidence to repair in the copy writer and do not require recrawling.

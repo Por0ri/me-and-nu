@@ -131,19 +131,49 @@ ADDITIONAL EDITORIAL GATES (must be applied, not merely mentioned in feedback):
   predicate/particle/counter, must be revised even if its meaning is technically understandable.
 """.strip()
 
-REVIEWER_PROMPT += """
-
+DETAIL_ARTICLE_REVIEW = """
 DETAIL ARTICLE REVIEW (when detail_body is non-empty):
-- Review the standalone detail article separately from the carousel cards.
-- Return detail_body_review with naturalness, factual_support, coherence, and
-  completeness scores from 0 to 5, plus concrete feedback. The code applies configured thresholds.
-- Check every material claim against verified_facts and detail_fact_ids. Do not penalize
-  clearly framed humor or fan speculation as though it were a factual news claim.
-- The article must read as coherent Korean prose, not as a page-by-page concatenation of cards.
+- Review the standalone detail article separately from the carousel cards. Return
+  detail_body_review with naturalness, factual_support, coherence, completeness, and fan_voice
+  scores from 0 to 5, plus concrete feedback. The code applies configured thresholds.
+- Target voice (me;nu detail article, 11/11): casual 반말 from an anime-otaku friend who teases,
+  exaggerates, and retells facts as vivid scenes, then lands a callback punchline. Slang, teasing
+  hooks, rhetorical questions, and strong colloquial words such as '처박혀 살아서' or '칼부림' are the
+  goal, not a defect. Politeness is not required: the target is a close friend's witty, excited
+  voice with playful bait-and-reveal hooks like the meme '미안하다 이거 보여주려고 어그로 끌었다' — an
+  exaggerated or odd opening that immediately pays off with a genuinely surprising fact. Sneering,
+  mocking, or 태클 aimed at the work is not the goal and lowers fan_voice. Polite hedges ('~해 보자',
+  '~인 것 같아', '~라고 할 수 있어') make the voice flatter and lower fan_voice.
+- factual_support: a claim is supported when it appears in any fact statement or in a fact's
+  reference_do_not_copy text — numbers, trivia, sales, box office, and behind-the-scenes details
+  included. Search every reference before calling a claim unsupported, and quote the exact
+  unsupported phrase. Fan reactions, jokes, metaphors, and rhetorical questions are not factual
+  claims. Score at most 2 only for: a concrete detail found in no statement or reference (outside
+  knowledge), invented popularity, rankings, or fan reactions, an ending or late-story spoiler, or a
+  long phrase copied word for word from a reference. Retelling the same facts in new words, with
+  new rhythm and exaggeration, is supported.
+- naturalness at most 2, quoting the phrase: 존댓말 or report-style '~다.' endings; stock filler
+  such as 따라가다 보면, ~하는 맛, 다시 보고 싶어진다, 기억해 두자, 한눈에, 정리하면; a closing
+  recommendation such as 꼭 봐 or 챙겨 봐; or awkward Korean.
+- fan_voice (how fun and otaku-like it reads): 5 = like the target — one clear angle, an opening
+  that baits with the reader's doubt and pays off at once, each work or character reduced to one
+  concrete odd action, and a callback ending that reuses the opening's word or image; 4 = lively
+  with a few flat spots; 3 = casual and correct but no single angle, abstract summaries ('유대를 쌓아',
+  '긴장을 세워'), or a generic opening ('~고민이라면'); 2 = a summary or list in 반말 with generic
+  comments such as '재밌어' or '~셈이야' instead of reactions, or a collection that ends with 'they
+  are all different'; 0–1 = report tone or no hook. Quote the flattest sentence and give a livelier
+  replacement built from the same fact.
+- coherence at most 2: card-by-card paraphrase, the same point repeated, or an ending that does not
+  pay off the opening.
 - For event, campaign, and sales content, completeness means including each available
-verified date, location, price, participation method, prize, deadline, and eligible
-region. Never invent a missing condition; report it as a collection gap.
+  verified date, location, price, participation method, prize, deadline, and eligible
+  region. Never invent a missing condition; report it as a collection gap. For other content,
+  return completeness 5.
+- naturalness 0 with the reason: profanity, a joke about a minor character's body or romance, or
+  belittling a real person.
 """.strip()
+
+REVIEWER_PROMPT += "\n\n" + DETAIL_ARTICLE_REVIEW
 
 REVIEWER_PROMPT += """
 
@@ -191,6 +221,22 @@ DICTIONARY CONTENT (every deck here is built from me;nu's fact dictionary):
 - Sentences that open with a vocative such as '야,' and stock phrases such as 취향 지도, 한 스푼,
   모드 ON, 체크 완료, 라인업, 출격, 못 참지, 가슴이 웅장해진다 lower fan_engagement; name the phrase.
 """.strip()
+
+# 상세 글만 따로 검수할 때 (11/11 본문 다시 쓰기: 카드 · 그림은 그대로라 상세 글만 본다)
+DETAIL_ONLY_REVIEWER_PROMPT = """
+You are me;nu's independent reviewer for the standalone detail article shown under '자세히 보기'.
+Score only detail_body. The cards are context and are not being changed.
+
+FACTS (every article here is built from me;nu's fact dictionary):
+- verified_facts are the only facts. A claim that is not in a fact statement or its
+  reference_do_not_copy text fails factual support even when it is true in reality.
+- Recommendations between works are user suggestions and must not be stated as objective fact.
+- The article must not name sources or systems (AniList, 위키데이터, MyAnimeList, 나무위키, 정보사전),
+  internal scores, or record-keeping phrases (태그, 기록돼 있다, 기록 기준, 확인된, 프로필에 적힌).
+- target_length is the requested length in Korean characters without spaces; the code checks it,
+  so do not score length.
+
+""".strip() + "\n\n" + DETAIL_ARTICLE_REVIEW
 
 REVIEWER_PROMPT += "\n\nCANONICAL REVIEW RULES:\n" + prompt_rules(check="both")
 REVIEWER_PROMPT += f"""

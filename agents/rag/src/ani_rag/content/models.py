@@ -463,6 +463,8 @@ class DetailBodyReview(BaseModel):
     factual_support: int = Field(ge=0, le=5)
     coherence: int = Field(ge=0, le=5)
     completeness: int = Field(ge=0, le=5)
+    # 11/11: 덕후 말맛 (얼마나 재밌고 어그로 끄는지). 검수가 안 주면 3 (통과선)
+    fan_voice: int = Field(default=3, ge=0, le=5)
     feedback: str = ""
 
 

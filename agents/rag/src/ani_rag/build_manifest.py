@@ -24,6 +24,7 @@ import html
 import json
 import pathlib
 import re
+import zlib
 import struct
 import sys
 import time
@@ -100,56 +101,49 @@ TAG_KO = {
     "Racing": "레이싱",
 }
 SONG_KIND = {"OP": "오프닝", "ED": "엔딩"}
-# 소재 겹침 글의 장르 이름표 (11/11 서원: 표지와 맨 위 작은 글씨만 봐도 어떤 장르를 좋아하는 사람에게 권하는지 보이게)
-# (이름, 작은 글씨, 맞출 소재, 맞출 장르, 참고 멘트 — 멘트는 그대로 베끼지 말고 글마다 새로 쓰게 한다)
-OVERLAP_THEMES = (
-    ("다크 판타지", "다크 판타지 추천", {"악마", "고어", "저주", "뱀파이어", "요괴", "신체 공포", "디스토피아"},
-     {"판타지", "공포", "초자연"}, ("다크 판타지 좋아하는 사람 여기", "어둡고 잔혹한 세계가 당긴다면")),
-    ("복수극", "복수극 추천", {"복수", "안티히어로"}, set(), ("복수극 끝까지 달리고 싶다면", "참았던 분노가 터지는 이야기")),
-    ("칼싸움 액션", "칼싸움 액션 추천", {"검술", "사무라이", "닌자", "무술"}, {"액션"},
-     ("칼 부딪히는 소리에 심장 뛰는 사람", "검 하나로 승부하는 이야기")),
-    ("반전 · 두뇌 싸움", "반전 애니 추천", {"심리", "음모", "데스 게임", "탐정", "범죄"}, {"미스터리", "심리", "스릴러"},
-     ("반전에 소름 돋고 싶다면", "머리 쓰는 싸움이 좋다면")),
-    ("눈물 나는 이야기", "눈물 버튼 애니 추천", {"비극"}, {"드라마"}, ("눈물 흘리고 싶은 사람", "휴지 챙기고 보는 애니")),
-    ("설렘 로맨스", "설렘 로맨스 추천", {"삼각관계", "짝사랑", "결혼", "동거", "츤데레", "쿨데레"}, {"로맨스"},
-     ("설렘이 부족한 요즘이라면", "심장이 간질간질해지는 로맨스")),
-    ("학원 청춘물", "학원 청춘물 추천", {"학교", "동아리", "성장", "10대 중심 출연진"}, {"일상"},
-     ("교복 입은 청춘이 그리울 때", "학교 가는 길이 이야기가 되는")),
-    ("이세계 판타지", "이세계 판타지 추천", {"이세계", "환생", "던전", "드래곤", "엘프", "마법", "가상 세계"}, {"판타지", "모험"},
-     ("이세계로 떠나고 싶은 날", "검과 마법의 세계로")),
-    ("SF · 로봇", "SF · 로봇 애니 추천", {"로봇", "우주", "인공지능", "사이버펑크", "외계인"}, {"SF", "메카"},
-     ("로봇과 우주에 설레는 사람", "미래가 궁금해지는 이야기")),
-    ("서바이벌", "서바이벌 애니 추천", {"생존", "배틀 로얄", "괴수", "포스트 아포칼립스"}, set(),
-     ("살아남아야 끝나는 이야기", "숨 막히는 생존극이 당긴다면")),
-    ("힐링 일상", "힐링 애니 추천", {"힐링", "음식", "시골", "가족", "동물"}, {"일상"},
-     ("지친 하루 끝에 보는 애니", "보기만 해도 마음이 풀리는")),
-    ("열혈 스포츠", "스포츠 애니 추천", {"농구", "야구", "배구", "축구", "수영", "권투", "테니스", "사이클", "레이싱"}, {"스포츠"},
-     ("땀 냄새 나는 열혈 스포츠", "승부욕에 불붙는 애니")),
-    ("소년 배틀", "배틀 소년만화 추천", {"소년만화", "초능력", "슈퍼히어로", "토너먼트", "고아"}, {"액션", "모험"},
-     ("뜨거운 배틀물이 당긴다면", "주인공이 강해지는 맛")),
-    ("시간 여행 · 루프", "타임루프 애니 추천", {"시간 루프", "시간 조작", "시간 도약"}, set(),
-     ("시간을 되돌릴 수 있다면", "같은 하루가 반복된다면")),
-    ("음악 · 아이돌", "음악 애니 추천", {"아이돌", "밴드"}, {"음악"}, ("노래로 이어지는 이야기", "무대 위의 반짝임")),
-    ("코미디", "코미디 애니 추천", {"패러디", "슬랩스틱", "초현실 코미디", "풍자"}, {"코미디"},
-     ("생각 없이 웃고 싶은 날", "웃다가 배 아픈 애니")),
-)
-
-
-def overlap_theme(shared_tags: list[list[str]], shared_genres: list[list[str]]) -> dict:
-    """겹치는 소재 · 장르로 장르 이름표를 고른다. 맞는 게 없으면 가장 많이 겹친 소재 두 개로 만든다"""
-    tag_count = Counter(t for tags in shared_tags for t in tags)
-    genre_count = Counter(g for genres in shared_genres for g in genres)
-    best, best_score = None, 0.0
-    for label, eyebrow, tags, genres, hooks in OVERLAP_THEMES:
-        score = 2 * sum(tag_count[t] for t in tags) + 0.5 * sum(genre_count[g] for g in genres)
-        if score > best_score:
-            best, best_score = (label, eyebrow, hooks), score
-    if best and best_score >= 4:
-        label, eyebrow, hooks = best
-    else:
-        label = " · ".join(t for t, _ in tag_count.most_common(2)) or "소재가 닮은 애니"
-        eyebrow, hooks = f"{label} 애니 추천", ()
-    return {"label": label, "eyebrow": eyebrow, "hooks": hooks}
+# 소재 겹침 → 소재 모음 (11/12 서원): 태그 하나가 주제 ('좀비물', '뱀파이어물'). AniList 태그 → 머릿글에 쓸 이름.
+# 여기 있는 태그만 주제로 쓴다 (출연진 성별 · 연령층 · 형식 태그, 민감한 태그는 일부러 뺌). 머릿글은 '{이름} 애니 모음'
+THEME_TAGS = {
+    "School": "학원물", "Magic": "마법물", "Coming of Age": "성장물", "Ensemble Cast": "군상극",
+    "Urban Fantasy": "현대 판타지", "Super Power": "초능력물", "Philosophy": "철학적인", "Isekai": "이세계물",
+    "Female Harem": "하렘물", "Demons": "악마물", "Parody": "패러디", "Anti-Hero": "안티히어로",
+    "School Club": "동아리물", "Slapstick": "슬랩스틱 코미디", "Found Family": "유사 가족", "Tsundere": "츤데레",
+    "Crime": "범죄물", "Gore": "고어", "Work": "직장물", "Swordplay": "검술 액션", "Surreal Comedy": "병맛 코미디",
+    "Travel": "여행물", "Family Life": "가족물", "Love Triangle": "삼각관계", "Survival": "생존물", "Revenge": "복수극",
+    "Cute Girls Doing Cute Things": "미소녀 일상물", "War": "전쟁물", "Politics": "정치물", "Kuudere": "쿨데레",
+    "Henshin": "변신 히어로", "Rural": "시골 배경", "Medieval": "중세 배경", "Historical": "역사물",
+    "Guns": "총격 액션", "Iyashikei": "힐링물", "Military": "밀리터리", "Dystopian": "디스토피아",
+    "Post-Apocalyptic": "포스트 아포칼립스", "Youkai": "요괴물", "Detective": "탐정물", "Otaku Culture": "오타쿠",
+    "Satire": "풍자", "Mythology": "신화", "Monster Girl": "몬스터 소녀", "Anthropomorphism": "의인화",
+    "Video Games": "게임", "Witch": "마녀", "Body Horror": "보디 호러", "Animals": "동물", "Fugitive": "도주극",
+    "Cohabitation": "동거물", "Martial Arts": "무술 액션", "Assassins": "암살자", "Aliens": "외계인",
+    "Battle Royale": "배틀로얄", "Vampire": "뱀파이어물", "Royal Affairs": "왕실·궁중", "Virtual World": "가상 현실",
+    "Hikikomori": "히키코모리", "Police": "경찰물", "Unrequited Love": "짝사랑", "Death Game": "데스 게임",
+    "Conspiracy": "음모", "Ghost": "유령", "Robots": "로봇", "Drawing": "그림·창작", "Lost Civilization": "고대 문명",
+    "Amnesia": "기억 상실", "Coastal": "바닷가 마을", "Food": "음식", "Artificial Intelligence": "인공지능",
+    "Cyberpunk": "사이버펑크", "Curses": "저주", "Yuri": "백합물", "Exorcism": "퇴마물", "Class Struggle": "계급 갈등",
+    "Dungeon": "던전", "Boarding School": "기숙학교", "Delinquents": "불량 학생", "Maids": "메이드", "Space": "우주",
+    "Gangs": "조폭·갱", "Fairy Tale": "동화", "Noir": "누아르", "Teacher": "선생님", "Dragons": "드래곤",
+    "Parenthood": "육아", "Writing": "작가", "Terrorism": "테러", "Super Robot": "슈퍼로봇", "Angels": "천사",
+    "Economics": "경제", "Outdoor Activities": "캠핑·야외 활동", "Medicine": "의학", "Band": "밴드",
+    "Steampunk": "스팀펑크", "Memory Manipulation": "기억 조작", "Chuunibyou": "중2병", "Elf": "엘프",
+    "Cultivation": "수련", "Twins": "쌍둥이", "Samurai": "사무라이", "Acting": "배우·연기", "Cyborg": "사이보그",
+    "Cosmic Horror": "코즈믹 호러", "Kingdom Management": "왕국 경영", "Real Robot": "리얼로봇", "Gyaru": "갸루",
+    "Yandere": "얀데레", "Mafia": "마피아", "Idol": "아이돌", "Zombie": "좀비물", "Marriage": "결혼",
+    "Kaiju": "괴수물", "Ninja": "닌자", "Gambling": "도박", "Restaurant": "음식점", "Espionage": "첩보물",
+    "Creature Taming": "몬스터 조련", "Dissociative Identities": "다중 인격", "Criminal Organization": "범죄 조직",
+    "Yakuza": "야쿠자", "College": "대학 생활", "Interspecies": "이종족", "Arranged Marriage": "정략결혼",
+    "Superhero": "슈퍼히어로", "Exiled": "추방물", "Athletics": "육상", "Fake Relationship": "계약 연애",
+    "Fitness": "운동", "Rock Music": "록 밴드", "Prison": "감옥", "Alchemy": "연금술", "Necromancy": "강령술",
+    "Fashion": "패션", "Classic Literature": "고전 문학",
+}
+THEME_SIZE = 5  # 글 하나에 작품 수
+THEME_PARTS = 2  # 한 주제에서 만들 글 수 (인기순 1~5위 · 6~10위)
+THEME_PER_WORK = 3  # 한 작품이 나오는 소재 모음 글 수 상한 (다른 주제끼리)
+# 표지 큰 글씨 둘째 줄 (11/12 서원: 전부 '5선' 이면 식상하고 똑같아 보임 → 글마다 돌려 씀, 같은 주제 두 글은 서로 다르게)
+THEME_SUFFIXES = ("{label} 애니 {n}선", "{label} 애니 모음", "{label} 애니 추천", "{label} 애니 {n}편",
+                  "{label} 애니 정주행 리스트")
+THEME_MIN_RANK = 80  # 태그 순위(그 소재가 작품에서 얼마나 중심인지, 0~100) 이 값 이상인 작품만
 QUOTA = {"like": 3, "overlap": 1, "studio": 1, "themes": 3, "artist": 2, "va": 3, "director": 2, "intro": 2,
          "bdaybook": 1, "birthday": 2, "basic": 2, "krva": 2, "origin": 1, "author": 1, "place": 2, "boxoffice": 3,
          "award": 2, "bdaymonth": 3, "profile": 2}
@@ -387,6 +381,14 @@ class Ctx:
             rows.sort(key=lambda x: (x.source != "anilist", x.fact_id))
         return out
 
+    def va_role_counts(self) -> dict[int, int]:
+        """성우 → 맡은 배역 수 (한 캐릭터에 성우가 여럿일 때 본 성우를 고르는 데 씀)"""
+        if getattr(self, "_va_counts", None) is None:
+            self.cur.execute("""select value_entity_id, count(*) from dict.fact
+                                where field = 'voice_actor' and value_entity_id is not null group by 1""")
+            self._va_counts = dict(self.cur.fetchall())
+        return self._va_counts
+
     def name(self, entity: int) -> str:
         """확정 한국어 이름 → 원어 → 로마자"""
         _, _, native, romaji, _ = self.ent[entity]
@@ -505,13 +507,17 @@ class Deck:
 
     def page(self, *, work: int | None = None, image: tuple | None = None, eyebrow: str | None = None,
              title: list[str] | None = None, prefix: str | None = None, original: str | None = None,
-             facts=(), note: str = "", body: list[str] | None = None, extra: int | None = None) -> None:
+             facts=(), note: str = "", body: list[str] | None = None, extra: int | None = None,
+             suffix: str | None = None, song_only: bool = False, must_say: str | None = None) -> None:
         """장 하나의 계획. title 은 그대로 쓰는 큰 글씨, prefix 는 노래 카드의 첫 줄 (둘째 줄은 「노래 제목」).
+        suffix 는 큰 글씨 둘째 줄을 코드가 고정 (첫 줄만 글쓰기가 씀, {n} 은 작품 카드 수로 바뀜, 11/12).
+        song_only 는 큰 글씨를 「노래 제목」 한 줄만, must_say 는 본문에 꼭 들어갈 말 (가수 이름, 11/12 밤).
         body 는 코드가 정하는 본문 앞 문장, extra 는 그 뒤에 글쓰기가 붙일 수 있는 문장 수 (0 이면 없음)"""
         self.card_plan.append({"work": work, "image": image, "eyebrow": eyebrow, "title_lines": title,
                                "title_prefix": prefix, "song_original": original,
                                "fact_ids": [f for f in facts if f], "note": note,
-                               "body_head": body, "body_extra_max": extra})
+                               "body_head": body, "body_extra_max": extra, "title_suffix": suffix,
+                               "title_song_only": song_only or None, "body_must_include": must_say})
 
     def fact(self, statement: str, row: Row, fact_type: str = "general", **details) -> str | None:
         if len(self.facts) >= MAX_FACTS:
@@ -705,61 +711,62 @@ def pick_curation(ctx: Ctx) -> list[Deck]:
 
 
 def pick_overlap(ctx: Ctx) -> list[Deck]:
-    """기준 작품과 태그 · 장르가 가장 많이 겹치는 인기작을 고른다 (AniList 추천이 아니라 겹침 기준)"""
+    """소재 모음 (11/12 서원): 태그 하나가 주제 ('좀비물'). 그 태그가 뚜렷한(순위 70 이상) 인기작을 인기순으로
+    5편씩, 한 주제에서 최대 2개 글 (1~5위 · 6~10위). 같은 주제 안에서는 작품이 겹치지 않고, 한 작품은 소재 모음
+    전체에서 3개 글까지만 나온다. 작품이 적은 주제부터 고른다 (흔한 주제가 인기작을 먼저 다 가져가지 않게).
+    표지는 포스터 바둑판 + 어떤 소재 모음인지 밝히는 큰 글씨, 다음 장부터 한 장에 한 편.
+    머릿글은 모든 장 '○○ 애니 모음' 고정, 큰 글씨는 애니 제목만, 작은 글씨는 그 애니 소개"""
     works = [w for w in ctx.order[:top(300)] if ctx.ok_work(w)]
     rep_entry = {ctx.work_entries[w][0]: w for w in works}
-    rows = ctx.rows(rep_entry, ("tag", "genre"))
+    rows = ctx.rows(rep_entry, ("tag",))
     tags: dict[int, dict[str, Row]] = defaultdict(dict)
-    genres: dict[int, set[str]] = defaultdict(set)
     for (entry, field), items in rows.items():
-        work = rep_entry[entry]
         for row in items:
-            if field == "genre" and row.value in GENRE_KO:
-                genres[work].add(GENRE_KO[row.value])
-            elif field == "tag" and row.value.get("name") in TAG_KO and (row.value.get("rank") or 0) >= 70 \
-                    and not row.value.get("spoiler") and not row.value.get("adult"):
-                tags[work][TAG_KO[row.value["name"]]] = row
+            name = row.value.get("name")
+            if name in THEME_TAGS and (row.value.get("rank") or 0) >= THEME_MIN_RANK and not row.value.get("spoiler")                     and not row.value.get("adult"):
+                tags[rep_entry[entry]][name] = row
+    fits = {t: [w for w in works if t in tags[w]] for t in THEME_TAGS}  # works 는 인기순
+    uses: Counter = Counter()
     decks: list[Deck] = []
-    for base in ctx.order[:top(60)]:
-        if len(decks) == QUOTA["overlap"] + SPARE:
-            break
-        if not ctx.free(base) or len(tags[base]) < 5:
-            continue
-        near = [b for b in works if b != base and len(tags[base].keys() & tags[b].keys()) >= 2]
-        chosen = sorted(near, key=lambda b: (-(2 * len(tags[base].keys() & tags[b].keys())
-                                               + len(genres[base] & genres[b])), ctx.rank[b]))[:5]
-        if len(chosen) < 4:
-            continue
-        title = ctx.title[base]
-        wa_ = "과" if has_batchim(title) else "와"
-        shared_of = {b: sorted(tags[base].keys() & tags[b].keys(), key=lambda t: -tags[b][t].value["rank"])
-                     for b in chosen}
-        same_of = {b: sorted(genres[base] & genres[b]) for b in chosen}
-        theme = overlap_theme(list(shared_of.values()), list(same_of.values()))
-        hooks = f" (참고 멘트: {' / '.join(theme['hooks'])} — 그대로 베끼지 말고 이 글에 맞게)" if theme["hooks"] else ""
-        d = Deck(ctx, "overlap", f"w{ctx.menu_id[base]}", "curation", f"〈{title}〉{wa_} 소재가 겹치는 작품들",
-                 [base, *chosen], [f"〈{title}〉", "소재가 겹치는 작품"],
-                 f"'{theme['label']}' 을 좋아하는 사람에게 〈{title}〉{wa_} 함께 권하는 글. 표지 큰 글씨만 봐도 "
-                 f"'{theme['label']}' 추천이라는 게 바로 보여야 한다{hooks}. 작품 카드는 그 작품이 어떤 이야기인지 "
-                 "짧게 소개하고, 겹치는 소재를 카드마다 반복하지 않는다")
-        summaries = ctx.rows(entries_of(ctx, chosen), WORK_FIELDS)
-        items = []
-        for b in chosen:
-            shared, same = shared_of[b], same_of[b]
-            other = ctx.title[b]
-            head = f"〈{other}〉{'은' if has_batchim(other) else '는'}"
-            text = f"{head} 〈{title}〉{wa_} 소재({', '.join(shared[:4])})가 겹친다."
-            if same:
-                text += f" 장르({', '.join(same[:2])})도 같다."
-            fid = d.fact(text, tags[b][shared[0]], "tag_overlap", shared_tags=shared, shared_genres=same)
-            items.append((b, [fid, *add_work_summary(d, b, summaries, with_episodes=False)]))
-        d.page(work=base, image=("work", base), eyebrow=theme["eyebrow"], facts=[items[0][1][0]],
-               note=f"큰 글씨: '{theme['label']}' 을 좋아하는 사람에게 권하는 글이라는 게 바로 보이는 멘트 + 〈{title}〉")
-        for b, fids in items:
-            d.page(work=b, image=("work", b), eyebrow=theme["eyebrow"], title=[ctx.title[b]], facts=fids,
-                   note="이 작품이 어떤 이야기인지 한두 문장. 겹치는 소재는 반복하지 않는다")
-        d.plan = [("kitsu", w, 0) for w in [base, *chosen]] + [("kitsu", base, 2)]
-        decks.append(d)
+    for tag in sorted(THEME_TAGS, key=lambda t: (len(fits[t]), t)):
+        label = THEME_TAGS[tag]
+        eyebrow = f"{label} 애니 모음"
+        pool = [w for w in fits[tag] if uses[w] < THEME_PER_WORK and ctx.free(w)]
+        for part in range(THEME_PARTS):
+            if len(decks) == QUOTA["overlap"] + SPARE:
+                return decks
+            picked = pool[part * THEME_SIZE:(part + 1) * THEME_SIZE]
+            if len(picked) < THEME_SIZE:
+                break
+            uses.update(picked)
+            slug = re.sub(r"[^a-z0-9]+", "", tag.lower())
+            other = (" 같은 소재의 다른 글(인기순 앞쪽 다섯 편)이 따로 있으니 표지 멘트는 그것과 다르게 쓴다." if part
+                     else "")
+            d = Deck(ctx, "overlap", f"t{slug}{part + 1}", "curation", eyebrow if not part else f"{eyebrow} 2",
+                     picked, [label, "애니 모음"],
+                     f"'{label}' 좋아하는 사람에게 권하는 애니 모음. 표지는 포스터 바둑판이고, 표지 큰 글씨 둘째 줄은 "
+                     "코드가 '○○ 애니 모음' 같은 이름표로 넣는다. 첫 줄은 이 작품들의 분위기를 담은 짧고 재치 있는 말."
+                     + other + " 다음 장부터 한 장에 작품 하나 — 큰 글씨는 "
+                     "애니 제목만, 본문은 그 작품이 어떤 이야기인지 짧게 소개한다. 소재 이름은 카드마다 반복하지 않는다")
+            summaries = ctx.rows(entries_of(ctx, picked), WORK_FIELDS)
+            items = []
+            for w in picked:
+                fid = d.fact(f"〈{ctx.title[w]}〉에는 '{label}' 소재가 두드러진다.", tags[w][tag], "work_tags",
+                             theme=label, tag=tag)
+                items.append((w, [fid, *add_work_summary(d, w, summaries, with_episodes=False)]))
+            # 11/12 서원: '뱀파이어가 / 한 가지 맛일 리 없지' 처럼 첫 줄만으로는 무슨 모음인지 안 읽힘 → 둘째 줄 고정
+            suffix = THEME_SUFFIXES[(zlib.crc32(tag.encode()) + part) % len(THEME_SUFFIXES)].replace("{label}", label)
+            d.page(work=picked[0], image=("collage",), eyebrow=eyebrow, facts=[items[0][1][0], items[1][1][0]],
+                   suffix=suffix,
+                   note=(f"큰 글씨는 두 줄. 둘째 줄 '{suffix.replace('{n}', 'N')}' 은 코드가 넣으니 첫 줄만 쓴다: 이 작품들의 "
+                         "분위기나 공통 특징을 담은 짧고 재치 있는 말 (15자 안쪽. 비유 · 밈 · 말장난 좋음, 예: '압도적인 "
+                         "분위기의', '어둠의 맛도', '피 냄새 진한'). 둘째 줄과 이어 읽어도 어색하지 않게. "
+                         "본문: 이 작품들에 공통으로 끌리는 재미를 한 문장"))
+            for w, fids in items:
+                d.page(work=w, image=("work", w), eyebrow=eyebrow, title=[ctx.title[w]], facts=fids,
+                       note="이 작품이 어떤 이야기인지 한두 문장 (줄거리 참고 글을 새로 씀). 소재 이름은 반복하지 않는다")
+            d.plan = [("kitsu", w, 0) for w in picked] + [("kitsu", picked[0], 2)]
+            decks.append(d)
     return decks
 
 
@@ -849,6 +856,11 @@ def song_line(ctx: Ctx, d: Deck, song: int, kind: str, lead: str, row: Row, rows
         parts = [f"{label} {c[k]}" for label, k in labels if c.get(k)]
         if parts:
             fids.append(d.fact(f"「{title}」의 작사 · 작곡 · 편곡: {', '.join(parts)}.", credit[0], "song_credit"))
+    # 11/12 밤: 노래 소개 글은 사전에 없어서, 쓰인 회차를 곡 설명 재료로 더한다 (발매일은 잘못 붙은 음반이 있어 안 씀)
+    eps = next((v.get("episodes") for v in (row.value.get("versions") or []) if v.get("episodes")), None)
+    if eps and re.fullmatch(r"[\d\s,\-]+", str(eps)):
+        eps_ko = re.sub(r"\s*-\s*", "~", str(eps)).replace(" ", "")
+        fids.append(d.fact(f"{lead} {eps_ko}화 {SONG_KIND.get(kind, kind)} 곡이 「{title}」이다.", row, "theme_song"))
     return [f for f in fids if f], artists, title
 
 
@@ -893,6 +905,30 @@ def pick_music(ctx: Ctx) -> list[Deck]:
                  "부른 사람 · 만든 사람 같은 곡 이야기를 짧게 쓴다")
         entries = {r.entity for r in have}
         years = ctx.rows(entries, ("start_year",))
+        # 11/12 밤 서원: 머릿글 연도는 그 곡이 쓰인 시즌 연도. 같은 곡이 총집편 · OVA 항목에도 붙어 있으면
+        # TV 시리즈 항목을 먼저 쓴다 (〈진격의 거인〉 「심장을 바쳐라!」가 2017년 시즌인데 2013년으로 나옴)
+        formats = ctx.rows(entries, ("format",))
+        def series_first(r: Row) -> tuple:
+            f = formats.get((r.entity, "format"))
+            return (0 if f and f[0].value in ("TV", "TV_SHORT", "ONA") else 1, year_of(years, r))
+        # 같은 노래가 노래 항목 두 개로 따로 들어 있기도 해서 (「홍련의 화살」, 일본어 제목 항목과 로마자 항목) 일본어 제목 ·
+        # 원어 이름 · 로마자 이름 중 하나라도 같으면 같은 노래로 묶는다
+        titles = ctx.rows({r.target for r in have}, ("song_title_ja",))
+        def song_keys(r: Row) -> set[str]:
+            ja = titles.get((r.target, "song_title_ja"))
+            names = [ja[0].value if ja else None, ctx.ent[r.target][2], ctx.ent[r.target][3]]
+            return {re.sub(r"\W+", "", str(n).lower()) for n in names if n} - {""} or {str(r.target)}
+        groups: list[list] = []  # [이름 묶음, 고른 줄]
+        for r in have:
+            keys = song_keys(r)
+            group = next((g for g in groups if g[0] & keys), None)
+            if group is None:
+                groups.append([keys, r])
+            else:
+                group[0] |= keys
+                if series_first(r) < series_first(group[1]):
+                    group[1] = r
+        have = [g[1] for g in groups]
         have.sort(key=lambda r: (year_of(years, r), r.value.get("type") != "OP", r.value.get("sequence") or 0))
         have = have[:8]
         rows = ctx.rows({r.target for r in have}, SONG_FIELDS)
@@ -910,10 +946,12 @@ def pick_music(ctx: Ctx) -> list[Deck]:
             kind = SONG_KIND.get(r.value.get("type"), "주제가")
             singer = " · ".join(a.strip() for a in artists[:2])
             japanese = re.search(r"[ぁ-ヿ㐀-鿿]", singer)  # 한국어 이름이 없는 가수는 첫 줄을 글쓰기가 한국어 발음으로 쓴다
+            # 11/12 밤 서원: 큰 글씨는 노래 제목만, 부른 사람은 작은 글씨(본문)에 꼭
             d.page(work=work, image=("entry", r.entity), eyebrow=f"{year}년 · {kind}" if year else kind,
-                   prefix=None if japanese else f"{singer}의", original=original, facts=fids,
-                   note=("큰 글씨 두 줄: '부른 사람(한국어 발음 표기)의' / '「노래 제목」'. " if japanese else "")
-                   + "본문: 부른 사람 · 만든 사람 같은 곡 이야기를 한두 문장")
+                   original=original, facts=fids, song_only=True, must_say=None if japanese else artists[0].strip(),
+                   note=("큰 글씨: 「노래 제목」 한 줄만 (부른 사람 이름은 넣지 않음). 본문 첫 문장에 부른 사람 이름을 꼭 "
+                         + ("한국어 발음 표기로 " if japanese else f"'{singer}' 그대로 ")
+                         + "쓰고, 곡 이야기(만든 사람 · 쓰인 회차 등 사실에 있는 것)를 한두 문장"))
         d.plan = [("kitsu_entries", work), ("kitsu", work, 3)]
         decks.append(d)
         made += 1
@@ -1200,7 +1238,8 @@ def pick_directors(ctx: Ctx) -> list[Deck]:
         # 11/11 서원: 모든 장 작은 글씨 '○○ 감독 작품 모음', 큰 글씨는 애니 제목만
         eyebrow = f"{name} 감독 작품 모음"
         bio = person_bio(ctx, d, person, name, "어떤 감독인지 (경력 · 소속 · 연출 특징이 참고 글에 있으면 그것)")
-        d.page(work=lead, image=("still", lead), eyebrow=eyebrow, facts=[bio, made[lead]],
+        # 11/11 서원: 표지는 감독 얼굴보다 '어떤 작품을 만들었나'가 궁금하니 다음 장 작품들의 포스터 바둑판
+        d.page(work=lead, image=("collage",), eyebrow=eyebrow, facts=[bio, made[lead]],
                note=("큰 글씨: 이 작품들 감독이 같은 사람이라는 발견이 보이는 멘트. 본문: 이 감독이 어떤 사람인지 한 문장 "
                      "(참고 글에 있는 만큼만, 연출 특징이 있으면 그것을 먼저)"))
         for w, fids in items:
@@ -1359,11 +1398,13 @@ def profile_note(name: str, says: list[str]) -> str:
 def pick_profile(ctx: Ctx, mains: dict[int, dict[int, Row]]) -> list[Deck]:
     """주연 프로필 비교 (11/11 서원 아이디어): 키 · 혈액형 · 나이 (+ 있으면 몸무게).
     - 키 · 몸무게는 AniList 소개 글의 'Height · Weight' 줄, 혈액형 · 나이는 AniList 칸
+    - AniList 에 없는 칸만 나무위키 정보 표 값으로 채운다 (11/11 밤 서원, load_namuwiki --load-numbers)
     - 나이는 시간 도약(Time Skip)이 있는 작품과 '16-17'처럼 여러 값인 경우 뺀다 (작품 안에서 나이를 먹으니까)
     - 2칸 이상 있는 주연이 3명 이상인 작품만. 표지는 주연 얼굴 바둑판"""
     works = [w for w in ctx.order[:top(300)] if ctx.free(w)]
     chars = {c for w in works for c in mains.get(w, {})}
-    rows = ctx.rows(chars, ("character_description_ref", "blood_type", "age", "gender"))
+    rows = ctx.rows(chars, ("character_description_ref", "blood_type", "age", "gender",
+                            "namu_height_cm", "namu_weight_kg", "namu_blood_type", "namu_age"))
     tags = ctx.rows([ctx.work_entries[w][0] for w in works], ("tag",))
     decks: list[Deck] = []
     for w in works:
@@ -1395,6 +1436,17 @@ def pick_profile(ctx: Ctx, mains: dict[int, dict[int, Row]]) -> list[Deck]:
             a = rows.get((c, "age"))
             if a and re.fullmatch(r"\d{1,3}", str(a[0].value)) and not skip_age:
                 p["age"] = (a[0].value, a[0])
+            # AniList 에 없는 칸만 나무위키 정보 표 값으로 채운다 (출처는 그 나무위키 문서)
+            if "height" not in p and (n := rows.get((c, "namu_height_cm"))):
+                p["height"] = (str(n[0].value), n[0])
+            if "weight" not in p and (n := rows.get((c, "namu_weight_kg"))):
+                p["weight"] = (str(n[0].value), n[0])
+            if "blood" not in p and (n := rows.get((c, "namu_blood_type"))) and str(n[0].value) in ("A", "B", "O", "AB"):
+                p["blood"] = (f"{n[0].value}형", n[0])
+            if (n := rows.get((c, "namu_age"))) and re.fullmatch(r"\d{1,3}", str(n[0].value)):
+                raw_age.setdefault(c, int(str(n[0].value)))
+                if "age" not in p and not skip_age:
+                    p["age"] = (str(n[0].value), n[0])
             if len(p) >= 2:
                 cands.append((c, p))
         if len(cands) < 3:
@@ -1403,7 +1455,7 @@ def pick_profile(ctx: Ctx, mains: dict[int, dict[int, Row]]) -> list[Deck]:
         title = ctx.title[w]
         d = Deck(ctx, "profile", f"w{ctx.menu_id[w]}", "character", f"〈{title}〉 주연 프로필", [w],
                  [f"〈{title}〉", "주연 프로필"],
-                 f"〈{title}〉 주연들의 키 · 혈액형 · 나이를 한 명씩 보여 주는 프로필 비교 글. 사실에 있는 항목만 쓴다")
+                 f"〈{title}〉 주연들의 키 · 혈액형 · 몸무게 · 나이를 한 명씩 보여 주는 프로필 비교 글. 사실에 있는 항목만 쓴다")
         items = []
         names = {c: d.cname(c) for c, _ in cands}
         for c, p in cands:
@@ -1589,6 +1641,11 @@ def add_cast_lines(d: Deck, w: int, title: str, cast: dict[int, Row], limit: int
         name = d.cname(c)
         fid = d.fact(f"{eun(name)} 〈{title}〉의 주연 캐릭터다.", cast[c], "character_role")
         va = [r for r in favs.get((c, "voice_actor"), []) if r.target]
+        if len(va) > 1:
+            # 11/13: 어린 시절 성우가 먼저 올 때가 있음 (목소리의 형태 이시다 쇼야 = 이리노 미유, 어린 시절 마츠오카 마유).
+            # 사전에 배역 구분이 없어서 배역이 더 많은 성우(본 성우인 경우가 대부분)를 고른다
+            counts = ctx.va_role_counts()
+            va.sort(key=lambda r: -counts.get(r.target, 0))
         if va:
             d.fact(f"{name}의 일본어 성우는 {ida(d.pname(va[0].target))}.", va[0], "voice_role")
         if c in ctx.anilist:
@@ -1758,20 +1815,34 @@ def pick_origin(ctx: Ctx) -> list[Deck]:
                  "애니를 본 사람이 원작이 궁금해지게 만드는 글. 1장 표지, 2장 원작이 어떤 작품인지(작가 · 형태), "
                  "3장 연재 기간과 분량, 4장 애니 정보로 마무리.")
         d.target_cards = 4
-        d.plan_reason = "표지 → 원작 소개 → 연재 기간 · 분량 → 애니 정보"
+        d.plan_reason = "표지(원작 책 표지) → 원작 소개 → 연재 기간 · 분량 → 애니 정보"
         d.pname(pid)
-        d.fact(f"〈{title}〉의 원작은 {author}의 {ida(kind)}.", row, "source_work")
+        src = d.fact(f"〈{title}〉의 원작은 {author}의 {ida(kind)}.", row, "source_work")
         start, end = date_ko(v["start"]), date_ko(v.get("end"))
-        d.fact(f"〈{title}〉 원작은 {start}부터 {end}까지 연재됐다.", row, "source_work")
+        period = d.fact(f"〈{title}〉 원작은 {start}부터 {end}까지 연재됐다.", row, "source_work")
         amount = f"총 {v['volumes']}권" + (f", {v['chapters']}화" if v.get("chapters") else "")
-        d.fact(f"〈{title}〉 원작 분량은 {ida(amount)}.", row, "source_work")
+        size = d.fact(f"〈{title}〉 원작 분량은 {ida(amount)}.", row, "source_work")
         info = rows.get((entry, "source_info"), [])
         magazines = [m["ko"] for r in info for m in r.value.get("magazine") or [] if m.get("ko")]
+        mag = None
         if magazines:
-            d.fact(f"〈{title}〉 원작의 연재지는 {ida(magazines[0])}.", next(r for r in info if r.value.get("magazine")),
-                   "source_info")
-        add_work_summary(d, w, ctx.rows([entry], WORK_FIELDS))
-        d.plan = [("kitsu", w, 3), ("kitsu_entries", w)]
+            mag = d.fact(f"〈{title}〉 원작의 연재지는 {ida(magazines[0])}.",
+                         next(r for r in info if r.value.get("magazine")), "source_info")
+        summary = add_work_summary(d, w, ctx.rows([entry], WORK_FIELDS))
+        # 11/12 서원: 표지는 원작 만화책(소설) 표지 — 포스터를 쓰면 같은 작품의 다른 글과 표지가 겹친다.
+        # 책 표지를 못 받으면 글을 만들지 않는다 (build 단계에서 표지 그림을 확인)
+        manga = re.search(r"anilist\.co/manga/(\d+)", row.url or "")
+        if not manga:
+            continue
+        d.page(work=w, image=("manga", manga.group(1)), eyebrow="원작 이야기", facts=[src],
+               note=f"큰 글씨: 〈{title}〉 애니를 본 사람이 원작이 궁금해지는 한마디. 본문: 원작이 어떤 책인지 한 문장")
+        d.page(work=w, image=("work", w), eyebrow="원작 소개", facts=[src, mag],
+               note="원작이 어떤 작품인지 (작가 · 형태 · 연재지 중 사실에 있는 것)")
+        d.page(work=w, image=("still", w), eyebrow="연재 기간 · 분량", facts=[period, size],
+               note="연재 기간과 분량 (권수 · 화수)")
+        d.page(work=w, image=("any_of_work", w), eyebrow="애니 정보", facts=summary[:3],
+               note="애니 정보로 마무리 (방영 연도 · 화수 · 제작사 등 사실에 있는 것). 원작과 이어지는 한마디")
+        d.plan = [("manga_cover", manga.group(1), w, f"〈{title}〉 원작"), ("kitsu", w, 3), ("kitsu_entries", w)]
         decks.append(d)
     by_author: dict[int, list[int]] = defaultdict(list)
     for w, row in origins.items():
@@ -1801,18 +1872,27 @@ def pick_origin(ctx: Ctx) -> list[Deck]:
         # 11/11 서원: 표지는 작가 중심 (작은 글씨 비움, 큰 글씨 '○○ 작가의 원작 애니 모음', 본문은 어떤 작가인지)
         intro = person_bio(ctx, d, pid, name, "어떤 이야기를 쓰는 작가인지 (작풍 · 특징이 참고 글에 있으면 그것)")
         eyebrow = f"{name} 원작 애니 모음"
-        # 11/11 서원: 표지는 그 작가가 쓴 책 사진 → 원작 책 표지 바둑판 (AniList 만화 · 소설 표지)
-        d.page(work=lead, image=("collage",), eyebrow="", title=[f"{name} 작가의", "원작 애니 모음"],
+        # 11/11 서원: 표지는 그 작가가 쓴 책 사진 → 원작 책 표지 바둑판 (AniList 만화 · 소설 표지).
+        # 책 표지: 원작 사실의 출처가 AniList 만화 · 소설 페이지라 그 번호로 받는다. 2권 이상이면 바둑판(2권은 나란히),
+        # 1권 이하면 작가 사진, 사진도 없으면 작품 그림
+        books = list(dict.fromkeys(
+            (m.group(1), w) for w in chosen for m in [re.search(r"anilist\.co/manga/(\d+)", origins[w].url or "")] if m))
+        cover: tuple = ("collage",)
+        photo = None
+        if len({mid for mid, _ in books}) < 2:
+            ctx.cur.execute("""select external_id from dict.external_id
+                               where source_id = 'anilist' and id_kind = 'staff' and entity_id = %s""", (pid,))
+            photo = ctx.cur.fetchone()
+            cover = ("staff", photo[0]) if photo else ("work", lead)
+        d.page(work=lead, image=cover, eyebrow="", title=[f"{name} 작가의", "원작 애니 모음"],
                facts=[intro, items[0][1][0]],
                note=("본문: 이 작가가 어떤 이야기를 쓰는 사람인지 한 문장 (예: '독특한 캐릭터 설정과 막힘없는 이야기가 "
                      "특징인 ○○ 작가의 작품들'). 참고 글 · 사실에 있는 만큼만 쓰고, 없으면 대표작 이름으로 소개한다"))
         for w, fids in items:
             d.page(work=w, image=("work", w), eyebrow=eyebrow, title=[f"〈{ctx.title[w]}〉"], facts=fids,
                    note="이 작품이 어떤 이야기인지 한두 문장. 작가 이름은 카드마다 반복하지 않는다")
-        # 책 표지: 원작 사실의 출처가 AniList 만화 · 소설 페이지라 그 번호로 표지를 받는다 (책이 3권 이상일 때 바둑판)
-        books = list(dict.fromkeys(
-            (m.group(1), w) for w in chosen for m in [re.search(r"anilist\.co/manga/(\d+)", origins[w].url or "")] if m))
         d.plan = ([("manga_cover", mid, w, ctx.title[w]) for mid, w in books]
+                  + ([("staff", photo[0], name, lead)] if photo else [])
                   + [("kitsu", w, 0) for w in chosen] + [("kitsu", lead, 2)])
         decks.append(d)
         made += 1
@@ -2485,7 +2565,7 @@ def make_collage(deck: Deck) -> None:
     else:
         posters = [img for img in deck.images if img["asset_kind"] in ("catalog_poster", "catalog_cover")]
     posters = posters[:min(6, items)]
-    if len(posters) < 3:
+    if len(posters) < (2 if deck.kind == "author" else 3):  # 작가 책은 2권이어도 나란히 (11/11 서원)
         return
     width, height = 1308, 1632
     cols = 2 if len(posters) <= 4 else 3
@@ -2532,6 +2612,90 @@ def make_collage(deck: Deck) -> None:
         "attribution_text": f"공개 Kitsu 카탈로그 포스터 {len(posters)}장을 한 장에 모음 (사용 허가 확인과는 별개)"})
 
 
+# 주제가 글 '음악 재생 화면' (11/12 서원 시안 확정): 흐린 배경 + 자르지 않은 그림 + 고정 위치 재생 막대 · 버튼.
+# 그림 안에 글자는 넣지 않는다 (글자는 앱이 카드 아래쪽 66% 지점부터 얹음)
+PLAYER_W, PLAYER_H = 1308, 1632
+# 11/12 밤 서원: 앱에서 글자(카드 66% = 1077px 부터)와 버튼이 겹침 → 막대 · 버튼을 올려 글자와 100px 띄움
+PLAYER_BAR_Y, PLAYER_BTN_Y = 850, 945  # 11/12 밤 서원: 30px 다시 아래로
+PLAYER_ART_TOP, PLAYER_ART_BOTTOM, PLAYER_ART_W = 70, 850 - 55, 1308 - 2 * 110
+
+
+def player_card(img, progress: float):
+    """한 장의 재생 화면 그림 (PIL 그림을 받아 PIL 그림을 돌려줌). progress 는 재생 막대 점 위치 (0~1)"""
+    from PIL import Image, ImageDraw, ImageFilter
+    W, H = PLAYER_W, PLAYER_H
+
+    def fill(w: int, h: int, blur: int, dark: float):
+        s = max(w / img.width, h / img.height)
+        big = img.resize((int(img.width * s) + 1, int(img.height * s) + 1))
+        left, top = (big.width - w) // 2, (big.height - h) // 2
+        big = big.crop((left, top, left + w, top + h)).filter(ImageFilter.GaussianBlur(blur))
+        return Image.blend(big, Image.new("RGB", (w, h), (8, 8, 14)), dark)
+
+    bg = fill(W, H, 48, 0.6).convert("RGBA")
+    shade = Image.new("L", (1, H))  # 아래 글자 자리는 더 어둡게 (흰 글씨가 잘 보이게)
+    for y in range(H):
+        shade.putpixel((0, y), int(max(0, (y - H * 0.55) / (H * 0.45)) * 150))
+    bg = Image.alpha_composite(bg, Image.merge("RGBA", [Image.new("L", (W, H), 6)] * 3 + [shade.resize((W, H))]))
+    s = min(PLAYER_ART_W / img.width, (PLAYER_ART_BOTTOM - PLAYER_ART_TOP) / img.height)  # 자르지 않고 크기만
+    art = img.resize((max(1, int(img.width * s)), max(1, int(img.height * s))), Image.LANCZOS)
+    x, y = (W - art.width) // 2, PLAYER_ART_TOP + (PLAYER_ART_BOTTOM - PLAYER_ART_TOP - art.height) // 2
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle((x + 8, y + 22, x + art.width + 8, y + art.height + 22), 30,
+                                             fill=(0, 0, 0, 140))
+    bg = Image.alpha_composite(bg, shadow.filter(ImageFilter.GaussianBlur(24)))
+    mask = Image.new("L", art.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, *art.size), 28, fill=255)
+    art = art.convert("RGBA")
+    art.putalpha(mask)
+    bg.alpha_composite(art, (x, y))
+    ui = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(ui)
+    left, right, bar = 190, W - 190, PLAYER_BAR_Y
+    d.rounded_rectangle((left, bar - 4, right, bar + 4), 4, fill=(255, 255, 255, 70))
+    cut = left + int((right - left) * progress)
+    d.rounded_rectangle((left, bar - 4, cut, bar + 4), 4, fill=(255, 255, 255, 200))
+    d.ellipse((cut - 14, bar - 14, cut + 14, bar + 14), fill=(255, 255, 255, 215))
+    c, cy = W // 2, PLAYER_BTN_Y
+    d.ellipse((c - 58, cy - 58, c + 58, cy + 58), fill=(255, 255, 255, 200))  # 가운데 일시정지 (11/12 밤: 살짝 작게)
+    d.rounded_rectangle((c - 21, cy - 27, c - 7, cy + 27), 4, fill=(15, 15, 22, 220))
+    d.rounded_rectangle((c + 7, cy - 27, c + 21, cy + 27), 4, fill=(15, 15, 22, 220))
+    for sign in (-1, 1):  # 이전 · 다음
+        bx = c + sign * 215
+        d.polygon([(bx - sign * 25, cy - 29), (bx - sign * 25, cy + 29), (bx + sign * 20, cy)], fill=(255, 255, 255, 200))
+        d.rounded_rectangle((bx + sign * 20 - 4, cy - 29, bx + sign * 20 + 5, cy + 29), 3, fill=(255, 255, 255, 200))
+    for sign in (-1, 1):  # 양 끝 동그라미
+        bx = c + sign * 395
+        d.ellipse((bx - 12, cy - 12, bx + 12, cy + 12), fill=(255, 255, 255, 140))
+    return Image.alpha_composite(bg, ui).convert("RGB")
+
+
+def make_players(deck: Deck) -> None:
+    """주제가 글: 장별 계획의 그림을 전부 재생 화면 그림으로 바꾼다 (resolve_plan 뒤에 부름). 재생 막대 점은 장이
+    넘어갈수록 앞으로 간다. 그림 출처 · 사용 조건은 원본 그림 것을 그대로 물려받는다 (바둑판 표지와 같은 방식)"""
+    from PIL import Image
+    pages = deck.resolved_plan
+    by_id = {img["id"]: img for img in deck.images}
+    folder = TRIAL / "images" / deck.request_id
+    folder.mkdir(parents=True, exist_ok=True)
+    for k, page in enumerate(pages):
+        src = by_id[page["image_id"]]
+        with Image.open(src["local_path"]) as source:
+            img = source.convert("RGB")
+        path = folder / f"player_{k + 1}.png"
+        player_card(img, 0.12 + 0.76 * k / max(1, len(pages) - 1)).save(path, "PNG", optimize=True)
+        data = path.read_bytes()
+        tag = hashlib.sha1(data).hexdigest()[:16]
+        new = {**src, "id": f"player-{tag}",
+               "url": f"{src['url']}{'&' if '?' in src['url'] else '?'}player={tag}",
+               "local_path": str(path), "width": PLAYER_W, "height": PLAYER_H, "media_type": "image/png",
+               "file_size_bytes": len(data), "fingerprint": hashlib.sha256(data).hexdigest(),
+               "has_alpha": False, "alpha_coverage": None, "subject_box": None, "derived_from_image_id": src["id"],
+               "source_description": f"{src.get('source_description') or '작품 그림'} — 음악 재생 화면 틀에 넣은 카드 그림"}
+        deck.images.append(new)
+        page["image_id"] = new["id"]
+
+
 def resolve_plan(deck: Deck) -> bool:
     """장별 계획의 그림 열쇠를 실제 그림 번호로 바꾼다. 장마다 다른 그림, 그 카드 작품의 그림만 쓴다.
     알맞은 그림이 없는 작품 카드는 뺀다 (다른 작품 그림을 붙이면 검수에서 막힘 — 11/10 종말의 세라프 카드)"""
@@ -2548,6 +2712,8 @@ def resolve_plan(deck: Deck) -> bool:
             return img["source_url"] == f"https://anilist.co/character/{key[1]}"
         if kind == "staff":
             return img["source_url"] == f"https://anilist.co/staff/{key[1]}"
+        if kind == "manga":  # 원작 책 표지 (11/12 원작 이야기 표지)
+            return img["source_url"] == f"https://anilist.co/manga/{key[1]}"
         if kind == "entry":
             kid, aid = ctx.kitsu.get(key[1]), ctx.anilist.get(key[1])
             return ((bool(kid) and img["asset_kind"] == "catalog_poster" and img["source_url"] == f"{KITSU}/{kid}")
@@ -2570,6 +2736,9 @@ def resolve_plan(deck: Deck) -> bool:
         keys = [k for k in (page.get("image"), ("work", work) if work else None, ("still", work) if work else None,
                             ("any_of_work", work) if work else None) if k]
         img = next((i for k in keys for i in deck.images if i["id"] not in used and match(i, k)), None)
+        if img is None and getattr(deck, "reuse_images", False) and resolved:
+            # 11/12 밤 서원: 그림이 모자란 주제가는 같은 그림을 돌려 씀 (재생 화면 틀 · 막대 위치가 장마다 달라 그림 파일은 다름)
+            img = next((i for k in keys for i in deck.images if match(i, k)), None)
         if img is None:
             if not resolved:
                 return False  # 표지 그림이 없으면 글을 만들지 않는다
@@ -2582,6 +2751,8 @@ def resolve_plan(deck: Deck) -> bool:
     for number, page in enumerate(resolved, 1):
         page["page"] = number
         page["role"] = "cover" if number == 1 else ("ending" if number == len(resolved) else "detail")
+        if page.get("title_suffix"):
+            page["title_suffix"] = page["title_suffix"].replace("{n}", str(len(resolved) - 1))
     deck.resolved_plan = resolved
     deck.target_cards = len(resolved)
     return True
@@ -2595,13 +2766,18 @@ def main() -> None:
     parser.add_argument("--mass", action="store_true", help="대량 생산: 넓은 범위 · 작품 겹침 허용 · 결과는 .cache/mass")
     parser.add_argument("--cap", type=int, default=100, help="대량 생산에서 유형마다 최대 글 수 (이달의 생일은 전부)")
     parser.add_argument("--count", action="store_true", help="그림을 받지 않고 고른 글감 수만 센다")
+    parser.add_argument("--out", type=pathlib.Path, help="결과 폴더 (대량 생산 기본은 .cache/mass)")
+    parser.add_argument("--kinds", default="", help="이 세부 유형만 그림 받고 저장 (쉼표로, 예: profile)")
     args = parser.parse_args()
     known = (*ALL_TYPES, *NEW_TYPES)
     only = [t for t in known if t in args.only.split(",")]
+    kinds = {k for k in args.kinds.split(",") if k}
     out = TRIAL
     if args.mass:
         MASS = True
         out = PACKAGE_ROOT / ".cache" / "mass"
+    if args.out:
+        out = args.out
         for kind in QUOTA:
             QUOTA[kind] = args.cap
         QUOTA["bdaymonth"] = 10 ** 6
@@ -2628,6 +2804,8 @@ def main() -> None:
     (out / "fixtures").mkdir(parents=True, exist_ok=True)
     written: dict[str, int] = defaultdict(int)
     for d in decks:
+        if kinds and d.kind not in kinds:
+            continue
         if written[d.kind] >= QUOTA[d.kind]:
             continue  # 목표를 채웠으면 예비 글감은 그림도 받지 않음
         if MASS and (out / "manifests" / f"{d.request_id}.json").exists():
@@ -2639,6 +2817,8 @@ def main() -> None:
         if d.card_plan and not resolve_plan(d):
             print(f"건너뜀 {d.request_id}: 장별 계획에 맞는 그림이 모자람 (그림 {len(d.images)}장)")
             continue
+        if d.kind == "themes":  # 11/12 서원: 주제가 글은 모든 장을 음악 재생 화면으로
+            make_players(d)
         if len(d.images) < (d.target_cards or 3) or not d.facts:
             print(f"건너뜀 {d.request_id}: 그림 {len(d.images)}장 · 사실 {len(d.facts)}개")
             continue

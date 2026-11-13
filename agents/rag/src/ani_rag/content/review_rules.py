@@ -208,6 +208,36 @@ _register(
     ),
     check="both", severity="revise", owner="copy_writer",
 )
+# 11/12 서원: 표지 작은 설명이 글마다 들쭉날쭉해서 (서버 글 64개가 빈 칸) 비어 있으면 통과 못 하게 막는다
+_register(
+    ("COVER_BODY_MISSING",),
+    (
+        'The cover needs one short body sentence under the headline, grounded in a supplied fact; '
+        'leave it empty only when the card plan says so.'
+    ),
+    check="code", severity="blocker", owner="copy_writer",
+)
+# 11/12 밤: 주제가 시범에서 표지 큰 글씨가 '하나코 군 노래,' 로 끊긴 채 통과함
+_register(
+    ("TITLE_DANGLING",),
+    (
+        'A headline must not end with a dangling comma; finish the phrase or drop the comma.'
+    ),
+    check="code", severity="blocker", owner="copy_writer",
+)
+_register(
+    ("COVER_MODIFIER_FORM",),
+    (
+        'On a topic-collection cover, the first headline line is a short, witty Korean line placed before the '
+        'fixed second line that names the collection; metaphors and memes are welcome.'
+    ),
+    check="code", severity="blocker", owner="copy_writer",
+)
+_register(
+    ("SONG_SINGER_MISSING",),
+    'On a theme-song card the headline is only the song title, so the body must name the singer.',
+    check="code", severity="blocker", owner="copy_writer",
+)
 _register(
     ("COPY_DATA_TALK",),
     (
@@ -216,13 +246,52 @@ _register(
     ),
     check="code", severity="revise", owner="copy_writer",
 )
+# 11/11: 상세 글 문제는 점수만 깎고 통과하던 구멍이 있어서 (1차 1,462개 중 143개) 고칠 때까지 통과 못 하게 막는다
 _register(
     ("DETAIL_BODY_DATA_TALK",),
     (
         'The detail article must not name data sources, internal scores, tags, or '
         'record-keeping phrases; state the fact itself the way a content creator would.'
     ),
-    check="code", severity="revise", owner="detail_writer",
+    check="code", severity="blocker", owner="detail_writer",
+)
+_register(
+    ("DETAIL_BODY_CONTAMINATED",),
+    (
+        'The detail article is only Korean reader-facing prose: no invisible characters, no letters '
+        'from other scripts, no notes to yourself, length memos, instructions, fact IDs, JSON, or '
+        'markdown, and no English words that do not appear in the supplied facts.'
+    ),
+    check="code", severity="blocker", owner="detail_writer",
+)
+_register(
+    ("DETAIL_BODY_PROFANITY",),
+    'Strong colloquial teasing is fine, but never use profanity or slurs in the detail article.',
+    check="code", severity="blocker", owner="detail_writer",
+)
+_register(
+    ("DETAIL_BODY_COPIED",),
+    (
+        'Retell reference text in your own words and order; never reproduce a phrase of twenty or more '
+        'characters from a reference word for word.'
+    ),
+    check="code", severity="blocker", owner="detail_writer",
+)
+_register(
+    ("DETAIL_BODY_FAN_VOICE",),
+    (
+        'The detail article must read like an anime-otaku friend teasing the reader: vivid retellings, '
+        'fan reactions, and a callback ending, not a casual-sounding summary.'
+    ),
+    check="llm", severity="blocker", owner="detail_writer",
+)
+_register(
+    ("DETAIL_BODY_STOCK_PHRASE",),
+    (
+        'Do not pad the detail article with stock phrases such as 따라가다 보면, ~하는 맛, '
+        '다시 보고 싶어진다, 기억해 두자, 한눈에, 정리하면; say the concrete fact instead.'
+    ),
+    check="code", severity="blocker", owner="detail_writer",
 )
 _register(
     (
@@ -255,7 +324,7 @@ _register(
         'The detail article should read naturally, follow a clear paragraph flow, and make '
         'no claim beyond the linked facts.'
     ),
-    check="llm", severity="revise", owner="detail_writer",
+    check="llm", severity="blocker", owner="detail_writer",
 )
 _register(
     (

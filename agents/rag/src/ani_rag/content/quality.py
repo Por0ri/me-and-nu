@@ -13,14 +13,33 @@ from ani_rag.content.image_selection import (
 from ani_rag.content.models import ContentKind, ContentPackage, QualityIssue
 from ani_rag.content.policy import (
     AGENT_MONOLOGUE_TERMS,
+    COVER_BODY_OPTIONAL_KINDS,
     DATA_TALK_PATTERNS,
+    DETAIL_STOCK_PATTERNS,
     EXCESSIVE_PUNCTUATION,
     GENERIC_HUMOR_TERMS,
     POLICY,
+    detail_length_range,
+    request_kind,
 )
 from ani_rag.content.review_rules import RULES, decision_metadata, make_issue, score_penalty
 
 _DATA_TALK = re.compile("|".join(DATA_TALK_PATTERNS))
+_DETAIL_STOCK = re.compile("|".join(DETAIL_STOCK_PATTERNS))
+# 11/11: 1차 본문 41개에 섞여 있던 것들 (보이지 않는 글자, 아랍 · 러시아 · 칸나다 문자, "[100자 이상]",
+# "Actually edit typo", "[f1-f4]", "】【。", "**굵게**")
+INVISIBLE_CHARS = re.compile(r"[​-‏‪-‮⁠-⁤﻿]")
+_FOREIGN_SCRIPT = re.compile(r"[Ѐ-ԯ԰-ࣿऀ-෿฀-๿Ⴀ-ჿ]")
+_DETAIL_LEAK = re.compile(
+    r"[가-힣]。|\*\*|fact_ids?|(?<![A-Za-z0-9])f\d{1,3}(?![A-Za-z0-9])"
+    r"|\[[^\]]{0,40}(?:\d+\s*자|사실|카드|근거|문장|아티클|본문)[^\]]{0,40}\]"
+)
+# 【】 는 제목에 원래 들어가기도 해서 (【최애의 아이】) 사실 · 카드에 없는 것만 오염으로 본다
+_LENTICULAR = re.compile(r"【[^【】]{1,40}】")
+_LATIN_WORD = re.compile(r"[A-Za-z][A-Za-z'’\-]{3,}")
+# 11/11 서원: 말투는 세게 가도 욕은 안 된다 ("그냥 욕만 없으면 될 것 같아"). '시발점'은 걸리지 않게
+_PROFANITY = re.compile(r"존나|졸라|ㅈㄴ|씨발|씨바|시발(?!점)|ㅅㅂ|개새|병신|ㅂㅅ|좆|지랄|닥쳐|꺼져|엿\s?먹")
+_LATIN_OK = {"blu-ray", "mbti"}
 
 
 def _data_talk(text: str) -> str:
@@ -557,6 +576,55 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                     last.page,
                 )
             )
+        # 11/12 서원: 소재 모음 표지 첫 줄은 둘째 줄('○○물 애니 모음' 등, 코드가 고정) 앞의 짧은 말
+        plan_cover = next((p for p in package.card_plan if p.get("page") == first.page), {})
+        suffix = plan_cover.get("title_suffix")
+        if suffix and first.role == "cover":
+            # 11/12 저녁 서원: 둘째 줄이 무슨 모음인지 밝히니 첫 줄은 재치 있게 써도 됨 → 길이만 본다
+            head = first.title_lines[0].strip() if len(first.title_lines) > 1 else ""
+            if not head or len(head.replace(" ", "")) > 15:
+                issues.append(
+                    _issue(
+                        "COVER_MODIFIER_FORM",
+                        f"표지 큰 글씨 첫 줄을 '{suffix}' 앞에 붙는 짧고 재치 있는 말로 다시 쓰세요 (15자 안쪽).",
+                        first.page,
+                    )
+                )
+        # 11/12 밤 서원: 주제가 노래 카드는 큰 글씨에 노래 제목만, 작은 글씨에 부른 사람 이름이 꼭 들어간다
+        for page in package.card_plan:
+            must = page.get("body_must_include")
+            card = next((c for c in package.cards if c.page == page.get("page")), None)
+            if must and card is not None and must not in " ".join(card.body_sentences):
+                issues.append(
+                    _issue(
+                        "SONG_SINGER_MISSING",
+                        f"작은 글씨 첫 문장에 부른 사람 이름 '{must}' 를 그대로 넣으세요.",
+                        card.page,
+                    )
+                )
+        # 11/12 서원: 사전 글 표지는 작은 설명까지 채운다 (프로필 · 이달의 생일만 비워도 됨)
+        kind = request_kind(package.request_id)
+        if (kind and kind not in COVER_BODY_OPTIONAL_KINDS and first.role == "cover"
+                and not " ".join(first.body_sentences).strip()):
+            issues.append(
+                _issue(
+                    "COVER_BODY_MISSING",
+                    "표지 아래 작은 설명이 비었습니다. 큰 제목을 받쳐 주는 짧은 문장 하나를 "
+                    "근거 사실 안에서 쓰세요.",
+                    first.page,
+                )
+            )
+    # 11/12 밤: 큰 글씨가 쉼표로 끝나며 끊긴 카드 ('하나코 군 노래,' 다음 줄이 빠짐)
+    for card in package.cards:
+        lines = [line.strip() for line in card.title_lines if line.strip()]
+        if lines and lines[-1][-1] in ",，、·":
+            issues.append(
+                _issue(
+                    "TITLE_DANGLING",
+                    "큰 글씨가 쉼표로 끝나 문장이 끊겼습니다. 다음 줄을 채우거나 쉼표 없이 끝나게 쓰세요.",
+                    card.page,
+                )
+            )
 
     fact_ids = {fact.id for fact in package.facts}
     for card in package.cards:
@@ -926,6 +994,70 @@ def check_layout(package: ContentPackage) -> list[QualityIssue]:
     return issues
 
 
+def detail_body_contamination(package: ContentPackage, body: str | None = None) -> list[str]:
+    """상세 글에 섞인 것 (없으면 빈 목록): 보이지 않는 글자, 다른 문자권 글자, 지시문 · 사실 번호 · 꾸밈 기호,
+    사실 · 카드 · 참고 글 어디에도 없는 영어 낱말 (작품 · 노래 이름처럼 사실에 있는 영어는 괜찮다)"""
+    text = package.detail_body if body is None else body
+    found = []
+    if INVISIBLE_CHARS.search(text):
+        found.append("보이지 않는 글자")
+    found += [f"다른 문자 '{m.group(0)}'" for m in list(_FOREIGN_SCRIPT.finditer(text))[:3]]
+    found += [f"'{m.group(0)}'" for m in list(_DETAIL_LEAK.finditer(text))[:3]]
+    corpus = " ".join([
+        package.topic,
+        *(fact.statement for fact in package.facts),
+        *(str(value) for fact in package.facts for key, value in fact.details.items()
+          if key.endswith("_reference_do_not_copy") or key == "source_quote"),
+        *(" ".join([*card.title_lines, *card.body_sentences]) for card in package.cards),
+        *(f"{term.original} {term.korean}" for term in package.term_glossary),
+    ]).lower()
+    stray = sorted({word for word in _LATIN_WORD.findall(text)
+                    if word.lower() not in corpus and word.lower() not in _LATIN_OK})
+    if stray:
+        found.append("사실에 없는 영어 " + ", ".join(stray[:5]))
+    covered: set[int] = set()
+    for match in _LENTICULAR.finditer(text):
+        covered.update(range(match.start(), match.end()))
+        if match.group(0).lower() not in corpus:
+            found.append(f"'{match.group(0)}'")
+    found += [f"'{m.group(0)}'" for m in re.finditer(r"[【】]", text) if m.start() not in covered][:2]
+    return found
+
+
+_COPY_RUN = 20  # 공백 뺀 글자 수
+
+
+def _squash(text: str | None) -> str:
+    return re.sub(r"\s", "", text or "")
+
+
+def detail_body_copied(package: ContentPackage) -> list[str]:
+    """참고 글과 공백 빼고 20자 넘게 똑같이 이어지는 구절 (11/11: 나무위키 약관상 문장을 옮기지 않는다).
+    사실 문장 · 카드 · 용어집에도 있는 구절(긴 작품명 등)은 빼고 본다"""
+    refs = [_squash(str(value)) for fact in package.facts for key, value in fact.details.items()
+            if key.endswith("_reference_do_not_copy") and value]
+    if not refs:
+        return []
+    known = _squash(" ".join([
+        *(fact.statement for fact in package.facts),
+        *(" ".join([*card.title_lines, *card.body_sentences]) for card in package.cards),
+        *(term.korean for term in package.term_glossary),
+    ]))
+    body = _squash(package.detail_body)
+    found, i = [], 0
+    while i <= len(body) - _COPY_RUN:
+        window = body[i:i + _COPY_RUN]
+        if window not in known and any(window in ref for ref in refs):
+            j = i + _COPY_RUN
+            while j < len(body) and any(body[i:j + 1] in ref for ref in refs):
+                j += 1
+            found.append(body[i:j])
+            i = j
+        else:
+            i += 1
+    return found
+
+
 def check_detail_body(package: ContentPackage) -> list[QualityIssue]:
     """Ensure detail copy is distinct, cited, and grounded in package evidence."""
     if not package.detail_body:
@@ -937,6 +1069,79 @@ def check_detail_body(package: ContentPackage) -> list[QualityIssue]:
                 "DETAIL_BODY_LENGTH",
                 f"자세히 보기 글은 {POLICY.min_detail_chars}~{POLICY.max_detail_chars}자 범위여야 합니다.",
 
+            )
+        )
+    # 유형별 길이 (공백 뺀 글자 수, 11/11 서원). 조금 넘치거나 모자란 건 봐준다
+    low, high = detail_length_range(
+        package.request_id,
+        any(fact.fact_type == "namu_character_reference" for fact in package.facts),
+    )
+    chars = len(re.sub(r"\s", "", package.detail_body))
+    if not int(low * 0.9) <= chars <= int(high * 1.15):
+        issues.append(
+            _issue(
+                "DETAIL_BODY_LENGTH",
+                f"자세히 보기 글은 공백 빼고 {low}~{high}자로 씁니다 (지금 {chars}자).",
+            )
+        )
+    dirt = detail_body_contamination(package)
+    if dirt:
+        issues.append(
+            _issue(
+                "DETAIL_BODY_CONTAMINATED",
+                "상세 글에 본문이 아닌 글자가 섞였습니다 (" + "; ".join(dirt) + "). "
+                "메모 · 지시문 · 사실 번호 없이 한국어 본문만 다시 쓰세요.",
+            )
+        )
+    stock = sorted({match.group(0) for match in _DETAIL_STOCK.finditer(package.detail_body)})
+    stock += [f"'{word}' {package.detail_body.count(word)}번" for word in ("셈이", "재밌")
+              if package.detail_body.count(word) >= 2]
+    # 생일 글이 날짜 · 달력 얘기로 분량을 채우던 것 (11/11 시범: 〈주술회전〉 생일 모음이 달력 · 출석부 비유만 반복)
+    kind = (package.request_id or "").split("-")[2] if (package.request_id or "").count("-") >= 2 else ""
+    calendar = sum(package.detail_body.count(word) for word in ("달력", "출석부", "날짜 간격"))
+    if kind in ("bdaybook", "bdaymonth") and calendar >= 2:
+        stock.append(f"달력 · 출석부 얘기 {calendar}번 (날짜는 한 번만 말하고 캐릭터의 성격 · 버릇 · 관계로 채우세요)")
+    if kind in ("bdaybook", "bdaymonth"):
+        # 11/11 전체 실행 첫 결과: '달력' 낱말만 피하고 "10월만 유독 바빠져"처럼 같은 달 얘기를 되풀이함
+        months = re.findall(r"(\d{1,2})\s?월", package.detail_body)
+        if len(months) > len(set(months)) + 1:
+            stock.append(f"같은 달 얘기 되풀이 ({len(months)}번, 생일 날짜는 한 번씩만 말하세요)")
+        reference_ids = {fact.id for fact in package.facts
+                         if any(key.endswith("_reference_do_not_copy") and value for key, value in fact.details.items())}
+        if reference_ids and not reference_ids & set(package.detail_fact_ids):
+            stock.append("캐릭터 참고 글을 하나도 안 씀 (성격 · 버릇 · 관계를 참고 글에서 가져와 채우세요)")
+    # 11/11: 원작 이야기 · 입문 가이드가 권수 · 화수 · 날짜만 늘어놓고 붙여 준 나무위키 문단을 안 씀 (〈전생슬〉 · 〈최애의 아이〉)
+    if kind in ("origin", "basic", "intro", "bdaybook", "bdaymonth"):
+        namu_ids = {fact.id for fact in package.facts if fact.fact_type.startswith("namu_")}
+        if namu_ids and not namu_ids & set(package.detail_fact_ids):
+            stock.append("붙여 준 나무위키 문단을 하나도 안 씀 (특징 · 평가 · 뒷이야기 · 성격을 한 문단은 거기서 가져오세요)")
+    if kind in ("origin", "basic"):
+        # 날짜 하나("2014년 5월 30일")는 숫자 하나로 센다
+        numbers = re.findall(r"\d+", re.sub(r"\d{4}\s?년\s?\d{1,2}\s?월\s?\d{1,2}\s?일", "0", package.detail_body))
+        if len(numbers) > 8:
+            stock.append(f"숫자 나열 ({len(numbers)}개, 연도 · 권수 · 화수는 한 문단에 몰아서 한 번씩만)")
+    if stock:
+        issues.append(
+            _issue(
+                "DETAIL_BODY_STOCK_PHRASE",
+                f"상투 문구 · 같은 맺음말 반복을 빼고 구체적인 사실이나 반응으로 다시 쓰세요: {', '.join(stock)}",
+            )
+        )
+    swear = sorted({match.group(0) for match in _PROFANITY.finditer(package.detail_body)})
+    if swear:
+        issues.append(
+            _issue(
+                "DETAIL_BODY_PROFANITY",
+                f"욕설은 쓰지 않습니다: {', '.join(swear)}. 센 입말은 괜찮지만 욕 없이 다시 쓰세요.",
+            )
+        )
+    copied = detail_body_copied(package)
+    if copied:
+        issues.append(
+            _issue(
+                "DETAIL_BODY_COPIED",
+                "참고 글을 그대로 옮긴 구절이 있습니다: " + " / ".join(f"'{c[:40]}'" for c in copied[:3])
+                + ". 같은 사실을 네 말과 순서로 다시 쓰세요.",
             )
         )
     talk = _data_talk(package.detail_body)

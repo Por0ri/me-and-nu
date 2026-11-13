@@ -36,7 +36,7 @@ class EditorialPolicy:
     # Transparent cutouts and other layouts keep the stricter general limit above.
     # 작은 캐릭터 사진은 3.5배까지 키워서 카드에 크게 넣는다 (렌더러가 선명하게 보정)
     max_low_res_spotlight_upscale: float = 3.5
-    # 사전 글은 사실이 적어도 부풀리지 않도록 상세 글을 짧게 쓴다
+    # 상세 글의 바깥 한계 (공백 포함). 유형별 길이는 아래 DETAIL_LENGTH_BY_KIND (11/11)
     min_detail_chars: int = 100
     max_detail_chars: int = 3000
     quality_pass_score: int = 68
@@ -68,6 +68,10 @@ class EditorialPolicy:
     content_type_fit_minimum: int = 2
     detail_factual_support_minimum: int = 3
     detail_completeness_minimum: int = 3
+    # 상세 글 자연스러움 · 흐름은 3점부터 통과 (11/11: 2점 본문이 고치지 않고 통과한 구멍을 막음)
+    detail_language_minimum: int = 3
+    # 상세 글 덕후 말맛도 3점부터 (반말로 사실만 요약한 글은 2점이라 다시 쓴다)
+    detail_fan_voice_minimum: int = 3
     language_korean_minimum: int = 2
     language_translation_minimum: int = 2
     language_clarity_minimum: int = 2
@@ -82,6 +86,51 @@ class EditorialPolicy:
 
 
 POLICY = EditorialPolicy()
+
+# 상세 글 길이 (공백 뺀 글자 수, 11/11 서원). 키는 글 번호의 세 번째 조각 (dict-<묶음>-<유형>-…)
+# 11/11 밤 서원: 처음 정한 길이(350~550 등)로 쓰니 폰에서 28줄이라 너무 길어서 3분의 2 정도로 줄임
+DETAIL_LENGTH_BY_KIND: dict[str, tuple[int, int]] = {
+    **dict.fromkeys(("like", "overlap", "va", "krva", "studio", "director", "artist", "themes", "award",
+                     "boxoffice"), (250, 380)),
+    **dict.fromkeys(("intro", "basic", "origin", "author", "place"), (220, 320)),
+    **dict.fromkeys(("profile", "bdaybook", "bdaymonth"), (180, 260)),
+}
+# 프로필 · 생일 글에 캐릭터 참고 글(나무위키 성격 · 특징 문단)이 붙으면 더 쓸 거리가 있다
+DETAIL_LENGTH_WITH_CHARACTER_REF = (220, 300)
+DETAIL_LENGTH_DEFAULT = (220, 320)
+
+
+def request_kind(request_id: str) -> str:
+    """사전 글의 유형 (글 번호의 세 번째 조각, dict-<묶음>-<유형>-…). 사전 글이 아니면 빈 문자열"""
+    parts = (request_id or "").split("-")
+    return parts[2] if len(parts) > 2 and parts[0] == "dict" else ""
+
+
+# 11/12 서원: 표지는 머릿글 · 큰 제목 · 작은 설명을 다 채운다 (서버 글 64개가 AI 가 칸을 비워 들쭉날쭉했음).
+# 입문 가이드 · 원작 이야기 표지 머릿글은 AI 가 아니라 코드가 고정해서 넣는다.
+COVER_EYEBROW_BY_KIND = {"basic": "입문 가이드", "origin": "원작 이야기"}
+# 표지 작은 설명을 비워도 되는 유형 (11/11 서원 결정: 프로필 표지는 큰 글씨만, 이달의 생일은 비우거나 짧은 축하)
+COVER_BODY_OPTIONAL_KINDS = frozenset({"profile", "bdaymonth"})
+
+
+def detail_length_range(request_id: str, has_character_ref: bool = False) -> tuple[int, int]:
+    """(최소, 최대) 공백 뺀 글자 수"""
+    kind = request_kind(request_id)
+    if has_character_ref and kind in ("profile", "bdaybook", "bdaymonth"):
+        return DETAIL_LENGTH_WITH_CHARACTER_REF
+    return DETAIL_LENGTH_BY_KIND.get(kind, DETAIL_LENGTH_DEFAULT)
+
+
+# 상세 글에 쓰지 않는 상투 문구 (11/11 서원 본문 가이드)
+DETAIL_STOCK_PATTERNS = (
+    r"따라가다\s?보면", r"하는\s?맛", r"다시\s?보고\s?싶어", r"기억해\s?(?:두|둬|둘)", r"한눈에", r"정리하면",
+    r"살펴보자", r"알아보자",
+    # 11/11 시범 18개에서 글마다 되풀이된 맺음말
+    r"또렷해", r"선명해", r"감상\s?포인트", r"떠올려\s?(?:봐|보자|보면)", r"출발(?:점|선)(?:부터|이|은)?\s?(?:확실히\s?|매번\s?)?다르",
+    r"한\s?장르에\s?머물지", r"선명하", r"떠올려\s?보게", r"이렇게\s?(?:다르|달라)",
+    # 흔한 도입 · 흐린 끝맺음, 예시 문구 베끼기 (11/11 밤: 예시의 펀치라인을 그대로 쓰지 않게)
+    r"고민이라면", r"궁금하다면", r"출발선", r"갈래야", r"스케일\s?사기", r"잡화점", r"장르\s?환승", r"진짜는\s?그다음",
+)
 
 # 작품명만 바꾸면 재사용 가능한 상투 문구는 기본 차단한다.
 GENERIC_HUMOR_TERMS = (
@@ -112,7 +161,7 @@ EXCESSIVE_PUNCTUATION = ("ㅋㅋ", "ㅎㅎ", "!!!", "???", "?!?", "!!")
 # 독자가 보는 글에 나오면 안 되는 자료 설명 말투 (11/10 서원: "분석한 사실만 적어 놓은 느낌")
 # 출처 이름 · 내부 점수 · 기록 말투. "흥행 기록" 처럼 자연스러운 말은 걸리지 않게 좁게 잡는다.
 DATA_TALK_PATTERNS = (
-    r"AniList", r"애니리스트", r"위키데이터", r"Wikidata", r"MyAnimeList", r"마이애니메리스트",
+    r"AniList", r"애니리스트", r"위키데이터", r"Wikidata", r"MyAnimeList", r"마이애니메리스트", r"나무\s?위키",
     r"정보\s?사전", r"추천\s?점수", r"추천\s?기록", r"사용자\s?추천", r"(?<!해시)태그",
     r"기록(?:돼|되어)\s?있", r"로\s?기록(?:돼|되어|된|됐)", r"기록\s?기준", r"확인된",
     r"프로필에\s?적힌", r"작품\s?기준",

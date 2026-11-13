@@ -83,6 +83,16 @@ def _apply_card_plan(deck, package):
             joined = " ".join(card.title_lines)
             song = joined[joined.index("「"):] if "「" in joined else f"「{page.get('song_original') or ''}」"
             update["title_lines"] = [page["title_prefix"], song.strip()]
+        elif page.get("title_song_only"):
+            # 큰 글씨는 「노래 제목」 한 줄만 (11/12 밤 주제가 노래 카드)
+            joined = " ".join(card.title_lines)
+            song = joined[joined.index("「"):] if "「" in joined else f"「{page.get('song_original') or ''}」"
+            update["title_lines"] = [song.strip()]
+        elif page.get("title_suffix"):
+            # 둘째 줄은 코드가 고정, 첫 줄은 글쓰기가 쓴 꾸밈말 (11/12 소재 모음 표지)
+            suffix = page["title_suffix"]
+            first = next((line.strip() for line in card.title_lines if line.strip() and line.strip() != suffix), "")
+            update["title_lines"] = [first, suffix] if first else [suffix]
         if page.get("body_head") is not None:
             # 본문 앞 문장을 코드가 정하고, 글쓰기 문장은 body_extra_max 개까지만 뒤에 붙인다 (11/11 프로필:
             # '161cm · O형' + '아스타보다 크다.' 처럼. '기억해 두자' 같은 군더더기는 걸러 낸다)
@@ -327,7 +337,8 @@ def generate_copy_deck(
         "card_plan": [
             {key: page.get(key) for key in ("page", "role", "eyebrow", "title_lines", "title_prefix",
                                             "song_original", "image_id", "fact_ids", "note", "body_head",
-                                            "body_extra_max")}
+                                            "body_extra_max", "title_suffix", "title_song_only",
+                                            "body_must_include")}
             for page in package.card_plan
         ],
         "available_images": image_catalog,
@@ -393,7 +404,11 @@ def generate_copy_deck(
                 "given, use it verbatim. When title_lines is given, use it verbatim. When title_prefix is "
                 "given, title_lines must be exactly two lines: the prefix verbatim, then only the song title "
                 "in 「」 (a natural Korean reading or translation of song_original, with the original in "
-                "parentheses only when it helps). When title_lines and title_prefix are both null, write "
+                "parentheses only when it helps). When title_suffix is given, title_lines must be exactly two "
+                "lines: your own short first line following note, then title_suffix verbatim. When title_song_only is "
+                "true, title_lines is exactly one line: only the song title in 「」 (a natural Korean reading or "
+                "translation of song_original, original in parentheses only when it helps), with no singer name. "
+                "When body_must_include is given, the first body sentence must contain it verbatim. When title_lines and title_prefix are both null, write "
                 "the headline yourself following note. Write body_sentences for every card following its "
                 "note: on item cards, a short natural introduction of that page's item only; never repeat "
                 "the deck's shared trait (the same studio, director, author, award, voice actor, or theme) "
