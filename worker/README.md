@@ -226,6 +226,8 @@ docker compose @stack exec -T generation-dispatcher python -m menu_worker.jobs s
 
 키·실행 환경 점검 또는 Agent 프로세스 시작에 실패해 자식 프로세스가 실행되지 않은 것이 확인되면, 원인을 수정한 뒤 **generation-dispatcher**에서 `jobs retry-preflight --job-id <ID>`로 같은 작업을 다시 접수한다. Agent 실행 후 시간 초과나 Worker 중단처럼 유료 호출 여부가 불확실한 작업은 `needs_attention`으로 남긴다. 이 경우 **generation-worker**에서 `jobs recover --job-id <ID>`로 기존 산출물만 다시 검증할 수 있다.
 
+v4에서 같은 기사로 여러 생성 작업이 접수됐다면 재시도는 v5 대표 작업 ID로 요청한다. 같은 기사로 묶인 생성 작업 중 하나라도 실행 중이거나 결과가 남았거나 Agent가 시작됐을 가능성이 있으면 `requeued: false`를 반환한다. 모든 시도가 시작 전에 끝났다고 확인된 경우에만 대표 작업을 한 번 다시 대기열에 넣는다. 같은 URL의 무과금 라우팅 점검은 별도로 취급한다.
+
 ### 완료된 생성 결과를 콘텐츠 적재기에서 미리 확인
 
 `generation-export`는 작업 DB와 원본 산출물을 읽기 전용으로 연다. 위에서 빌드한 생성 이미지를 사용하며 Agent 키가 필요 없다. `anime_generate` 작업에 `succeeded / ready_for_staging`이 기록된 경우, 원래 생성 시도의 manifest·요청·검수·PNG를 작업 DB의 결과 해시와 대조해 새 디렉터리에 `bundle.json`과 카드를 내보낸다. 작업 ID, 생성 시도 ID, 결과 해시는 번들의 `reviewEvidence`에 남는다.

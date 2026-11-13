@@ -311,52 +311,125 @@ class JobSchemaMigrationTests(unittest.TestCase):
             self.assertEqual(conflict.exception.code, "candidate_exists")
             self.assertEqual(conflict.exception.existing_job_id, str(owner))
 
-    def test_v4_slash_collision_preserves_keys_and_fences_unstarted_deliveries(self):
-        kind = "anime_generate"
-        request = {"source_id": "one_piece_official", "content_type": "goods", "menu_work_id": 8}
-        storage = importlib.import_module("menu_worker.job_store")
+    def install_v4(self):
         with self.connect() as connection:
             for migration in (V1_SQL, V2_SQL, V3_SQL, V4_SQL):
                 connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
 
-        def seed(connection, key, url, status, started, *, job_kind=kind):
-            job_id, attempt_id, token = uuid4(), uuid4(), uuid4()
-            identity = {**request, "job_kind": job_kind, "source_url": url}
-            digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    def seed_v4_job(self, connection, key, url, status, started, *, job_kind="anime_generate", error_code=None):
+        request = {"source_id": "one_piece_official", "content_type": "goods", "menu_work_id": 8}
+        job_id, attempt_id, token = uuid4(), uuid4(), uuid4()
+        identity = {**request, "job_kind": job_kind, "source_url": url}
+        digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        connection.execute(
+            """INSERT INTO public.content_generation_job
+               (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,menu_work_id,input_sha256,
+                job_kind,execution_status,claim_token,lease_expires_at,generation_started_at,error_code)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                       CASE WHEN %s THEN clock_timestamp()+INTERVAL '1 hour' END,
+                       CASE WHEN %s THEN CURRENT_TIMESTAMP END, %s)""",
+            (job_id, key, request["source_id"], url, url, request["content_type"], request["menu_work_id"],
+             digest, job_kind, status, token if status == "running" else None, status == "running", started,
+             error_code),
+        )
+        if status not in {"queued", "cancelled"}:
             connection.execute(
-                """INSERT INTO public.content_generation_job
-                   (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,menu_work_id,input_sha256,
-                    job_kind,execution_status,claim_token,lease_expires_at,generation_started_at,error_code)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                           CASE WHEN %s THEN clock_timestamp()+INTERVAL '1 hour' END,
-                           CASE WHEN %s THEN CURRENT_TIMESTAMP END, %s)""",
-                (job_id, key, request["source_id"], url, url, request["content_type"], request["menu_work_id"],
-                 digest, job_kind, status, token if status == "running" else None, status == "running", started,
-                 "agent_spawn_failed" if status == "failed" else None),
+                """INSERT INTO public.content_generation_attempt
+                   (attempt_id,job_id,attempt_no,mode,claim_token,execution_status,generation_started_at,error_code)
+                   VALUES (%s,%s,1,'generation',%s,%s,CASE WHEN %s THEN CURRENT_TIMESTAMP END,%s)""",
+                (attempt_id, job_id, token, status, started, error_code),
             )
-            if status != "queued":
-                connection.execute(
-                    """INSERT INTO public.content_generation_attempt
-                       (attempt_id,job_id,attempt_no,mode,claim_token,execution_status,generation_started_at,error_code)
-                       VALUES (%s,%s,1,'generation',%s,%s,CASE WHEN %s THEN CURRENT_TIMESTAMP END,%s)""",
-                    (attempt_id, job_id, token, status, started, "agent_spawn_failed" if status == "failed" else None),
-                )
-                connection.execute(
-                    """UPDATE public.content_generation_job SET current_attempt_id=%s,generation_attempt_id=%s,
-                       attempt_count=1 WHERE job_id=%s""", (attempt_id, attempt_id, job_id),
-                )
-            return str(job_id), str(token)
+            connection.execute(
+                """UPDATE public.content_generation_job SET current_attempt_id=%s,generation_attempt_id=%s,
+                   attempt_count=1 WHERE job_id=%s""", (attempt_id, attempt_id, job_id),
+            )
+        return str(job_id), str(token)
+
+    def test_group_retry_blocks_timeout_and_recovery_after_v4_upgrade(self):
+        kind = "anime_generate"
+        url = "https://one-piece.com/news/82812"
+        self.install_v4()
+        with self.connect() as connection:
+            spawn, _ = self.seed_v4_job(connection, "legacy-spawn", url, "needs_attention", True,
+                                        error_code="agent_spawn_failed")
+            timeout, _ = self.seed_v4_job(connection, "legacy-timeout", url + "/", "needs_attention", True,
+                                          error_code="agent_timeout")
+            # Match a v4 database where the older spawn failure became the v5 representative.
+            connection.execute("UPDATE public.content_generation_job SET created_at=created_at-INTERVAL '1 day' "
+                               "WHERE job_id=%s", (spawn,))
+            running = dict(self.seed_v4_job(connection, key, spelling, "running", True) for key, spelling in
+                           (("live-a", url + "?id=42"), ("live-b", url + "/?id=42")))
+        store = self.store()
+        store.initialize()
+        self.assertFalse(store.retry_preflight(spawn, expected_kind=kind))
+        self.assertFalse(store.retry_preflight(timeout, expected_kind=kind))
+        for job_id in (spawn, timeout):
+            self.assertIsNone(store.claim(job_id, expected_kind=kind))
+            self.assertFalse(store.publish_pending(job_id, self.fail, expected_kind=kind))
+
+        owner, sibling = sorted(running, key=lambda job_id: store.get(job_id)["duplicate_of_job_id"] is not None)
+        self.assertEqual(store.get(sibling)["duplicate_of_job_id"], owner)
+        # Both were armed at migration time. Only the owner subsequently confirms it never spawned.
+        self.assertTrue(store.complete(owner, running[owner], expected_kind=kind, execution_status="failed",
+                                       error_code="agent_spawn_failed", agent_not_launched=True))
+        self.assertFalse(store.retry_preflight(owner, expected_kind=kind))
+        self.assertTrue(store.complete(sibling, running[sibling], expected_kind=kind,
+                                       execution_status="needs_attention", error_code="agent_timeout"))
+        recovery = store.claim_recovery(sibling, expected_kind=kind)
+        self.assertIsNotNone(recovery)
+        self.assertFalse(store.retry_preflight(owner, expected_kind=kind))
+        self.assertTrue(store.complete(sibling, recovery["claim_token"], expected_kind=kind,
+                                       execution_status="needs_attention", error_code="artifact_verification_failed"))
+        self.assertFalse(store.retry_preflight(owner, expected_kind=kind))
+        self.assertEqual(store.list_pending(expected_kind=kind), [])
+        self.assertFalse(store.publish_pending(owner, self.fail, expected_kind=kind))
+        self.assertIsNone(store.claim(owner, expected_kind=kind))
+
+    def test_group_with_only_confirmed_prelaunch_failures_requeues_one_owner(self):
+        kind = "anime_generate"
+        url = "https://one-piece.com/news/82812"
+        self.install_v4()
+        with self.connect() as connection:
+            first, _ = self.seed_v4_job(connection, "env", url, "needs_attention", True,
+                                        error_code="invalid_agent_secret")
+            second, _ = self.seed_v4_job(connection, "spawn", url + "/", "needs_attention", True,
+                                         error_code="agent_spawn_failed")
+            self.seed_v4_job(connection, "probe", url, "needs_attention", True, job_kind="anime",
+                             error_code="artifact_verification_required")
+        store = self.store()
+        store.initialize()
+        owner, sibling = sorted((first, second), key=lambda job_id: store.get(job_id)["duplicate_of_job_id"] is not None)
+        self.assertFalse(store.retry_preflight(sibling, expected_kind=kind))
+        barrier = threading.Barrier(2, timeout=10)
+
+        def retry_owner():
+            barrier.wait()
+            return self.store().retry_preflight(owner, expected_kind=kind)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(retry_owner) for _ in range(2)]
+            self.assertCountEqual([future.result(timeout=20) for future in futures], [True, False])
+        self.assertEqual([row["job_id"] for row in store.list_pending(expected_kind=kind)], [owner])
+        self.assertIsNone(store.claim(sibling, expected_kind=kind))
+        self.assertIsNotNone(store.claim(owner, expected_kind=kind))
+
+    def test_v4_slash_collision_preserves_keys_and_fences_unstarted_deliveries(self):
+        kind = "anime_generate"
+        request = {"source_id": "one_piece_official", "content_type": "goods", "menu_work_id": 8}
+        storage = importlib.import_module("menu_worker.job_store")
+        self.install_v4()
 
         base = "https://one-piece.com/news/82812"
         with self.connect() as connection:
-            claimed, token = seed(connection, "claimed", base + "?id=8", "running", False)
-            owner, _ = seed(connection, "owner", base + "/?id=8", "needs_attention", True)
-            failed, _ = seed(connection, "failed", base + "?id=9", "failed", False)
-            queued, _ = seed(connection, "queued", base + "/?id=9", "queued", False)
-            running_pair = dict(seed(connection, key, url, "running", True) for key, url in
+            claimed, token = self.seed_v4_job(connection, "claimed", base + "?id=8", "running", False)
+            owner, _ = self.seed_v4_job(connection, "owner", base + "/?id=8", "needs_attention", True)
+            failed, _ = self.seed_v4_job(connection, "failed", base + "?id=9", "failed", False,
+                                         error_code="agent_spawn_failed")
+            queued, _ = self.seed_v4_job(connection, "queued", base + "/?id=9", "queued", False)
+            running_pair = dict(self.seed_v4_job(connection, key, url, "running", True) for key, url in
                                 (("running-a", base + "?id=10"), ("running-b", base + "/?id=10")))
             probe_url = base + "/?id=11"
-            probe_id, _ = seed(connection, "legacy-probe", probe_url, "queued", False, job_kind="anime")
+            probe_id, _ = self.seed_v4_job(connection, "legacy-probe", probe_url, "queued", False, job_kind="anime")
         old_jobs, old_attempts = self.snapshot()
         self.assertEqual([item["version"] for item in self.initialize_concurrently()], [5, 5])
         jobs, attempts = self.snapshot()

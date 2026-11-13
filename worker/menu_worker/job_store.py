@@ -388,15 +388,23 @@ class JobStore:
         return counts
 
     def retry_preflight(self, job_id: str, *, expected_kind: str) -> bool:
-        """Requeue only a live job with no possibly launched producer in its history."""
+        """Requeue the live owner only if no job for the article may have launched its producer."""
         validate_job_kind(expected_kind)
         if expected_kind != "anime_generate":
             return False
         with self._connect() as connection:
             return bool(connection.execute(
-                """WITH legacy_prelaunch AS (
-                       SELECT attempt_id FROM public.content_generation_attempt
-                       WHERE job_id=%(job_id)s AND mode='generation' AND execution_status='needs_attention'
+                """WITH article_jobs AS (
+                       SELECT job_id, execution_status, generation_started_at, generation_attempt_id,
+                              artifact_path, result_sha256
+                       FROM public.content_generation_job
+                       WHERE job_id=%(job_id)s OR duplicate_of_job_id=%(job_id)s
+                   ), article_attempts AS (
+                       SELECT attempt.* FROM public.content_generation_attempt AS attempt
+                       JOIN article_jobs USING (job_id)
+                   ), legacy_prelaunch AS (
+                       SELECT attempt_id FROM article_attempts
+                       WHERE mode='generation' AND execution_status='needs_attention'
                          AND generation_started_at IS NOT NULL AND error_code=ANY(%(setup_errors)s)
                          AND artifact_path IS NULL AND result_sha256 IS NULL
                    )
@@ -410,9 +418,18 @@ class JobStore:
                         OR (execution_status='needs_attention' AND error_code=ANY(%(setup_errors)s)
                             AND current_attempt_id=generation_attempt_id
                             AND current_attempt_id IN (SELECT attempt_id FROM legacy_prelaunch)))
-                   AND NOT EXISTS (SELECT 1 FROM public.content_generation_attempt AS attempt
-                                   WHERE attempt.job_id=job.job_id AND attempt.generation_started_at IS NOT NULL
-                                     AND attempt.attempt_id NOT IN (SELECT attempt_id FROM legacy_prelaunch))
+                   AND NOT EXISTS (
+                       SELECT 1 FROM article_jobs AS member
+                       WHERE member.execution_status IN ('running','succeeded')
+                          OR member.artifact_path IS NOT NULL OR member.result_sha256 IS NOT NULL
+                          OR (member.generation_started_at IS NOT NULL AND NOT EXISTS (
+                              SELECT 1 FROM legacy_prelaunch WHERE attempt_id=member.generation_attempt_id))
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM article_attempts
+                       WHERE execution_status='succeeded' OR artifact_path IS NOT NULL OR result_sha256 IS NOT NULL
+                          OR (generation_started_at IS NOT NULL AND attempt_id NOT IN (SELECT attempt_id FROM legacy_prelaunch))
+                   )
                    RETURNING job_id""", {"job_id": _identity(job_id), "errors": list(PRELAUNCH_ERRORS),
                                          "setup_errors": list(PRELAUNCH_SETUP_ERRORS)},
             ).fetchone())
