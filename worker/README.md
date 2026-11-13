@@ -9,7 +9,7 @@ Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 �
 | `beat` | 기본 30초 간격으로 heartbeat 작업 전송 |
 | `flower` | Worker·작업 상태 조회. 로컬 접속·인증·읽기 전용 설정 사용 |
 | `jobs-db` | 전용 PostgreSQL 17. 콘텐츠 작업·실행 이력 저장, 호스트 포트 없음 |
-| `job-init` | 작업 전용 DB를 v5로 초기화하거나 기존 v1~v4 작업을 마이그레이션 |
+| `job-init` | 작업 전용 DB를 v6로 초기화하거나 기존 v1~v5 작업을 마이그레이션 |
 | `job-worker` | `content-generation` 큐의 가짜 Agent 실행, 동시 실행 1개 |
 | `job-dispatcher` | fake 작업 전달 및 중단된 fake 작업 정리 |
 | `anime-redis`, `anime-worker`, `anime-dispatcher` | 선택형 `anime` 프로필. 별도 Redis와 산출물 볼륨에서 애니 큐 전달을 점검 |
@@ -230,14 +230,18 @@ v4에서 같은 기사로 여러 생성 작업이 접수됐다면 재시도는 v
 
 ### 완료된 생성 결과를 콘텐츠 적재기에서 미리 확인
 
-`generation-export`는 작업 DB와 원본 산출물을 읽기 전용으로 연다. 위에서 빌드한 생성 이미지를 사용하며 Agent 키가 필요 없다. `anime_generate` 작업에 `succeeded / ready_for_staging`이 기록된 경우, 원래 생성 시도의 manifest·요청·검수·PNG를 작업 DB의 결과 해시와 대조해 새 디렉터리에 `bundle.json`과 카드를 내보낸다. 작업 ID, 생성 시도 ID, 결과 해시는 번들의 `reviewEvidence`에 남는다.
+`generation-export`는 `succeeded / ready_for_staging`이고 생산자 검수 상태가 `ready_for_feed`인 `anime_generate` 작업을 내보낸다. 원본 산출물은 읽기 전용으로 열고, 해당 시도의 manifest·요청·검수 결과·PNG를 검증한다. 검증이 끝나면 전용 작업 DB에 기사별 선택을 기록하고 새 출력 경로에 `bundle.json`과 카드를 공개한다. 번들의 `reviewEvidence`에서 선택된 작업 ID, 생성 시도 ID, 결과 해시를 확인할 수 있다. 내보내기에는 Agent 키가 필요 없다.
+
+v4에서 같은 출처와 정규화된 기사 URL로 접수한 작업이 여러 건이면 검수를 통과한 작업 ID를 지정한다. 대표 작업이 보류됐어도 다른 작업을 지정할 수 있다. 둘 다 통과했다면 먼저 검증을 마치고 DB에 선택을 기록한 결과만 내보낸다. 이후 다른 작업 ID로 요청하면 `staging_result_already_selected`와 선택된 `existing_job_id`가 반환된다. 출력 파일 쓰기가 중단됐을 때는 같은 작업 ID와 결과 해시로 새 경로에 다시 내보낼 수 있다. 작업·시도 이력은 그대로 조회된다.
+
+v6 전환 시에는 이전 버전의 내보내기를 종료하고 최신 Worker 및 생성 이미지를 빌드한다. 아래 명령은 `job-init`이 전용 작업 DB 마이그레이션을 마친 뒤 실행된다. v5까지는 내보낸 기록이 없으므로 이미 전달한 번들이 있다면 해당 번들의 `reviewEvidence.resultSha256`을 작업 기록과 대조한 뒤 `reviewEvidence.jobId`를 v6에서 먼저 내보낸다.
 
 저장소 루트에서 실행한다. `$jobId`에는 완료한 작업의 UUID를 지정하고, 백엔드 실행 환경의 `DATABASE_URL`에는 미리 볼 PostgreSQL의 읽기 전용 연결을 설정한다. `$expectedDatabase`는 해당 DB의 정확한 이름이다.
 
 ```powershell
 $stack = @('--env-file','worker/.env','-f','compose.worker.yaml','-f','compose.generation.yaml')
 $exportRoot = (New-Item -ItemType Directory -Force -Path 'out/carousel-staging').FullName
-docker compose @stack run --rm --no-deps -T -v "${exportRoot}:/export" generation-export --job-id $jobId --output "/export/$jobId"
+docker compose @stack run --rm -T -v "${exportRoot}:/export" generation-export --job-id $jobId --output "/export/$jobId"
 if ($LASTEXITCODE -ne 0) { throw 'Bundle export failed' }
 $bundle = Join-Path $exportRoot "$jobId/bundle.json"
 Push-Location backend

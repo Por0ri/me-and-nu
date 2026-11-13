@@ -118,8 +118,7 @@ def main(argv=None) -> int:
             result = store.submit(request, job_kind=kind)
         elif args.command == "export-staging":
             from menu_worker.staging_export import export_staging_bundle
-            result = export_staging_bundle(Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"]),
-                                           store.get(args.job_id), args.output)
+            result = export_staging_bundle(Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"]), store, args.job_id, args.output)
         elif args.command == "show":
             result = store.get(args.job_id)
             if result is None:

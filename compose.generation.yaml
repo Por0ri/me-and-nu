@@ -54,11 +54,9 @@ services:
     restart: "no"
     entrypoint: [python, -m, menu_worker.jobs, export-staging]
     command: [--help]
-    environment:
-      <<: *generation-env
-      PGOPTIONS: "-c default_transaction_read_only=on"
     depends_on:
       jobs-db: {condition: service_healthy}
+      job-init: {condition: service_completed_successfully}
     volumes: [generation-artifacts:/var/lib/menu-jobs:ro]
 
   generation-worker:

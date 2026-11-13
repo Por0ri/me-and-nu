@@ -1,4 +1,4 @@
-"""Exercise the operator export CLI using a sealed attempt and a read-only ledger double."""
+"""Exercise the operator export CLI using a sealed attempt and a job ledger double."""
 from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 from io import BytesIO, StringIO
@@ -14,11 +14,49 @@ from menu_worker import jobs, real_generation
 from menu_worker.job_artifacts import artifact_directory, sha256
 
 
+def seal_ready_attempt(root, job):
+    """Build the same reviewed two-card result for unit and PostgreSQL CLI tests."""
+    from PIL import Image
+
+    folder = artifact_directory(root, job, create=True)
+    request_id = "crawl-" + sha256(job["canonical_url"].encode())[:14]
+    card_dir = folder / "cards" / request_id
+    card_dir.mkdir(parents=True)
+    cards = []
+    images = {}
+    box = {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}
+    for page in (1, 2):
+        image = BytesIO()
+        Image.new("L", (1308, 1632), color=page).save(image, "PNG")
+        images[page] = image.getvalue()
+        (card_dir / f"card_{page:02d}.png").write_bytes(images[page])
+        cards.append({"page": page, "rendered_image_key": sha256(images[page]),
+                      "role": "cover" if page == 1 else "ending", "title_lines": [f"Test page {page}"],
+                      "layout": {"image_box": box, "copy_box": box, "text_overlay_box": box}, "fact_ids": ["f1"]})
+    source_id = job["source_id"]
+    package = {
+        "request_id": request_id, "content_type": "goods", "menu_work_ids": [8], "cards": cards,
+        "detail_body": "Synthetic source-backed detail.", "feed_valid_until": "2099-01-01T00:00:00Z",
+        "sources": [{"id": source_id, "title": "Official source", "url": job["canonical_url"]}],
+        "facts": [{"id": "f1", "statement": "Test fact.", "source_ids": [source_id]}],
+        "detail_fact_ids": ["f1"], "detail_source_ids": [source_id],
+    }
+    result = {
+        "package": package, "expected_work_request": real_generation._request(job),
+        "status": "ready_for_feed", "review_mode": "llm", "editorial_decision": "approved_for_feed",
+        "quality_report": {"decision": "pass_candidate", "hard_blockers": []}, "qa_report": [],
+        "language_review": {"tone": "pass"}, "usage_records": [{"stage": "review", "total_tokens": 0}],
+    }
+    (folder / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    (folder / "launch.json").write_text(json.dumps(real_generation._identity(job)), encoding="utf-8")
+    (folder / "exit.json").write_text('{"returncode": 0}', encoding="utf-8")
+    evidence = real_generation.validate_real_artifacts(root, job)
+    return evidence, folder, package, images
+
+
 @unittest.skipUnless(importlib.util.find_spec("PIL"), "Run in the generation image for PNG decoding")
 class StagingExportTests(unittest.TestCase):
     def setUp(self):
-        from PIL import Image
-
         temporary = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
         self.root = temporary / "artifacts"
         self.root.mkdir()
@@ -33,43 +71,11 @@ class StagingExportTests(unittest.TestCase):
         }
         identity = {**real_generation._request(self.job), "job_kind": "anime_generate"}
         self.job["input_sha256"] = sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
-        self.folder = artifact_directory(self.root, self.job, create=True)
-        request_id = "export-offline-goods"
-        card_dir = self.folder / "cards" / request_id
-        card_dir.mkdir(parents=True)
-        cards = []
-        self.images = {}
-        box = {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}
-        for page in (1, 2):
-            image = BytesIO()
-            Image.new("L", (1308, 1632), color=page).save(image, "PNG")
-            self.images[page] = image.getvalue()
-            (card_dir / f"card_{page:02d}.png").write_bytes(self.images[page])
-            cards.append({"page": page, "rendered_image_key": sha256(self.images[page]),
-                          "role": "cover" if page == 1 else "ending", "title_lines": [f"Test page {page}"],
-                          "layout": {"image_box": box, "copy_box": box, "text_overlay_box": box}, "fact_ids": ["f1"]})
-        source_id = self.job["source_id"]
-        self.package = {
-            "request_id": request_id, "content_type": "goods", "menu_work_ids": [8], "cards": cards,
-            "detail_body": "Synthetic source-backed detail.", "feed_valid_until": "2099-01-01T00:00:00Z",
-            "sources": [{"id": source_id, "title": "Official source", "url": self.job["canonical_url"]}],
-            "facts": [{"id": "f1", "statement": "Test fact.", "source_ids": [source_id]}],
-            "detail_fact_ids": ["f1"], "detail_source_ids": [source_id],
-        }
-        result = {
-            "package": self.package, "expected_work_request": real_generation._request(self.job),
-            "status": "ready_for_feed", "review_mode": "llm", "editorial_decision": "approved_for_feed",
-            "quality_report": {"decision": "pass_candidate", "hard_blockers": []}, "qa_report": [],
-            "language_review": {"tone": "pass"}, "usage_records": [{"stage": "review", "total_tokens": 0}],
-        }
-        (self.folder / "result.json").write_text(json.dumps(result), encoding="utf-8")
-        (self.folder / "launch.json").write_text(json.dumps(real_generation._identity(self.job)), encoding="utf-8")
-        (self.folder / "exit.json").write_text('{"returncode": 0}', encoding="utf-8")
-        evidence = real_generation.validate_real_artifacts(self.root, self.job)
+        evidence, self.folder, self.package, self.images = seal_ready_attempt(self.root, self.job)
         self.job.update(evidence)
         self.job["attempts"] = [{"attempt_id": attempt, "job_id": self.job["job_id"], "mode": "generation",
                                  "attempt_no": 1, "execution_status": "succeeded", **evidence}]
-        self.store = Mock(spec_set=["get"])
+        self.store = Mock(spec_set=["get", "select_staging_result"])
         self.store.get.return_value = self.job
         self.enterContext(patch.object(jobs, "JobStore", return_value=self.store))
 
@@ -86,6 +92,7 @@ class StagingExportTests(unittest.TestCase):
         code, report = self.invoke()
         self.assertEqual(code, 0, report)
         self.store.get.assert_called_once_with(self.job["job_id"])
+        self.store.select_staging_result.assert_called_once_with(self.job)
         document = json.loads((self.output / "bundle.json").read_bytes())
         self.assertEqual((document["schemaVersion"], document["producer"], document["topicCode"]),
                          (1, "ani_menu_agent", "anime"))
@@ -106,6 +113,17 @@ class StagingExportTests(unittest.TestCase):
         self.assertEqual(manifest.read_bytes(), sealed)
         files = {path.relative_to(self.output).as_posix() for path in self.output.rglob("*") if path.is_file()}
         self.assertEqual(files, {"bundle.json", *(asset["path"] for asset in item["assets"])})
+
+    def test_selected_result_can_retry_after_bundle_publication_fails(self):
+        def publication_failure(*args):
+            self.store.select_staging_result.assert_called_once_with(self.job)
+            raise OSError("simulated rename failure")
+
+        with patch.object(Path, "rename", side_effect=publication_failure):
+            self.assertNotEqual(self.invoke()[0], 0)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertTrue((self.output / "bundle.json").is_file())
 
     def test_completed_recovery_exports_the_original_generation_attempt(self):
         first, = self.job["attempts"]

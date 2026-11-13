@@ -1,14 +1,18 @@
 """Exercise schema upgrades in a database created by this invocation."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 import importlib
+import importlib.util
+from io import StringIO
 import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 
@@ -80,11 +84,11 @@ class JobSchemaMigrationTests(unittest.TestCase):
 
     def test_fresh_install_and_concurrent_or_repeated_initialize(self):
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [5, 5])
+        self.assertEqual([result["version"] for result in results], [6, 6])
         self.assertCountEqual([result["created"] for result in results], [True, False])
         store = self.store()
         repeated = store.initialize()
-        self.assertEqual(repeated["version"], 5)
+        self.assertEqual(repeated["version"], 6)
         self.assertFalse(repeated["created"])
         for kind in ("fake", "anime", "anime_generate"):
             request = {"idempotency_key": kind, "source_id": "fixture", "content_type": "news",
@@ -154,7 +158,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
         job_ids, inputs = self.seed_v1()
         old_jobs, old_attempts = self.snapshot()
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [5, 5])
+        self.assertEqual([result["version"] for result in results], [6, 6])
         self.assertFalse(self.store().initialize()["created"])
         jobs, attempts = self.snapshot()
         self.assertEqual(len(jobs), len(old_jobs))
@@ -223,7 +227,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
             ids = {phase: self.seed_v2_anime_probe(connection, phase) for phase in phases}
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [5, 5])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [6, 6])
         store = self.store()
         self.assertFalse(store.initialize()["created"])
         jobs, attempts = self.snapshot()
@@ -287,7 +291,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 (attempt_id, probe_id, uuid4(), path, result_hash),
             )
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [5, 5])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [6, 6])
         jobs, attempts = self.snapshot()
         self.assertEqual(attempts, old_attempts)
         for before, after in zip(old_jobs, jobs, strict=True):
@@ -344,6 +348,120 @@ class JobSchemaMigrationTests(unittest.TestCase):
                    attempt_count=1 WHERE job_id=%s""", (attempt_id, attempt_id, job_id),
             )
         return str(job_id), str(token)
+
+    def migrated_export_pair(self):
+        """Keep both v4 producers armed so either can finish after the v5 deduplication."""
+        if importlib.util.find_spec("PIL") is None:
+            self.skipTest("Run the sealed export integration tests in the generation image")
+        from menu_worker import jobs
+
+        self.install_v4()
+        url = "https://one-piece.com/news/82812/index.html"
+        with self.connect() as connection:
+            plain, _ = self.seed_v4_job(connection, "export-plain", url, "running", True)
+            slash, _ = self.seed_v4_job(connection, "export-slash", url + "/", "running", True)
+        self.store().initialize()
+        owner, alias = sorted((plain, slash), key=lambda key: self.store().get(key)["duplicate_of_job_id"] is not None)
+        self.assertEqual(self.store().get(alias)["duplicate_of_job_id"], owner)
+        self.export_root = Path(self.enterContext(TemporaryDirectory())).resolve()
+        self.enterContext(patch.dict(os.environ, {"CONTENT_JOB_KIND": "anime_generate",
+                                                  "CONTENT_JOB_ARTIFACT_ROOT": str(self.export_root)}))
+        self.enterContext(patch.object(jobs, "JobStore", self.store))
+        self.enterContext(redirect_stdout(StringIO()))
+        self.enterContext(redirect_stderr(StringIO()))
+        return owner, alias
+
+    def finish_export_attempt(self, job_id, *, held=False):
+        from menu_worker import real_generation
+        from menu_worker.job_artifacts import artifact_directory
+        from test_staging_export import seal_ready_attempt
+
+        store = self.store()
+        job = store.get(job_id)
+        if held:
+            folder = artifact_directory(self.export_root, job, create=True)
+            (folder / "launch.json").write_text(json.dumps(real_generation._identity(job)), encoding="utf-8")
+            result = {"status": "needs_crawler_update", "expected_work_request": real_generation._request(job)}
+            (folder / "result.json").write_text(json.dumps(result), encoding="utf-8")
+            (folder / "exit.json").write_text('{"returncode": 0}', encoding="utf-8")
+            evidence = real_generation.validate_real_artifacts(self.export_root, job)
+        else:
+            evidence, folder, _, _ = seal_ready_attempt(self.export_root, job)
+        self.assertTrue(store.complete(job_id, job["claim_token"], expected_kind="anime_generate",
+                                       execution_status="succeeded", **evidence))
+        return folder
+
+    def export_cli(self, job_id, destination):
+        from menu_worker import jobs
+        output = self.export_root / destination
+        code = jobs.main(["export-staging", "--job-id", job_id, "--output", str(output)])
+        if code:
+            self.assertFalse(output.exists())
+        else:
+            item, = json.loads((output / "bundle.json").read_bytes())["items"]
+            self.assertEqual(item["reviewEvidence"]["jobId"], job_id)
+            self.assertEqual([asset["page"] for asset in item["assets"]], [1, 2])
+            for asset in item["assets"]:
+                self.assertEqual(hashlib.sha256((output / asset["path"]).read_bytes()).hexdigest(), asset["sha256"])
+        return code
+
+    def test_concurrent_ready_siblings_export_one_job_and_preserve_history_on_replay(self):
+        owner, alias = self.migrated_export_pair()
+        for key in (owner, alias):
+            self.finish_export_attempt(key)
+        before = self.snapshot()
+        barrier = threading.Barrier(2, timeout=10)
+
+        def export(key):
+            barrier.wait()
+            return self.export_cli(key, key)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            codes = list(pool.map(export, (owner, alias), timeout=25))
+        self.assertCountEqual(codes, [0, 1])
+        winner, loser = ((owner, alias) if codes[0] == 0 else (alias, owner))
+        self.assertEqual(self.export_cli(winner, "replay"), 0)
+        self.assertEqual((self.export_root / "replay/bundle.json").read_bytes(),
+                         (self.export_root / winner / "bundle.json").read_bytes())
+        with redirect_stderr(StringIO()) as errors:
+            self.assertEqual(self.export_cli(loser, "other-job"), 1)
+        denied = json.loads(errors.getvalue())
+        self.assertEqual(denied["error"], "staging_result_already_selected")
+        self.assertEqual(denied["existing_job_id"], winner)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_only_ready_sibling_can_export_while_completed_owner_is_held(self):
+        owner, alias = self.migrated_export_pair()
+        self.finish_export_attempt(owner, held=True)
+        self.finish_export_attempt(alias)
+        before = self.snapshot()
+        self.assertEqual(self.export_cli(owner, "held"), 1)
+        self.assertEqual(self.export_cli(alias, "ready"), 0)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_late_owner_cannot_replace_already_exported_sibling(self):
+        owner, alias = self.migrated_export_pair()
+        self.finish_export_attempt(alias)
+        self.assertEqual(self.export_cli(alias, "first"), 0)
+        self.finish_export_attempt(owner)
+        before = self.snapshot()
+        self.assertEqual(self.export_cli(owner, "late"), 1)
+        self.assertEqual(self.export_cli(alias, "again"), 0)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_bad_seal_leaves_valid_duplicate_eligible_for_export(self):
+        owner, alias = self.migrated_export_pair()
+        folder = self.finish_export_attempt(owner)
+        self.finish_export_attempt(alias)
+        before = self.snapshot()
+        result = folder / "result.json"
+        original = result.read_bytes()
+        result.write_bytes(original + b"\n")
+        self.assertEqual(self.export_cli(owner, "bad-seal"), 1)
+        self.assertEqual(self.export_cli(alias, "good-seal"), 0)
+        result.write_bytes(original)
+        self.assertEqual(self.export_cli(owner, "repaired-loser"), 1)
+        self.assertEqual(self.snapshot(), before)
 
     def test_group_retry_blocks_timeout_and_recovery_after_v4_upgrade(self):
         kind = "anime_generate"
@@ -431,7 +549,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
             probe_url = base + "/?id=11"
             probe_id, _ = self.seed_v4_job(connection, "legacy-probe", probe_url, "queued", False, job_kind="anime")
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [5, 5])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [6, 6])
         jobs, attempts = self.snapshot()
         for before, after in zip(old_jobs, jobs, strict=True):
             for column in ("job_id", "canonical_url", "input_sha256", "idempotency_key", "generation_attempt_id"):

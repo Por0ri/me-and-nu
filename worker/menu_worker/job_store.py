@@ -15,12 +15,12 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
-from menu_worker.job_contract import JobInput, job_input_hash, validate_job_kind, validate_job_request
+from menu_worker.job_contract import JobInput, JobInputError, job_input_hash, validate_job_kind, validate_job_request
 
 DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test", "menu_content_jobs_migration_test"})
 DATABASE_HOSTS = frozenset({"jobs-db", "localhost", "127.0.0.1", "::1"})
 MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql", "003_anime_work_input.sql", "004_anime_generation.sql",
-              "005_article_identity.sql")
+              "005_article_identity.sql", "006_staging_selection.sql")
 SCHEMA_VERSION = len(MIGRATIONS)
 # Older workers recorded these adapter errors as needs_attention after arming
 # the launch fence. Each is emitted exclusively before the producer starts.
@@ -114,7 +114,10 @@ class JobStore:
                 if len(versions) != 1 or versions[0]["version"] not in range(1, SCHEMA_VERSION + 1):
                     raise JobStoreError("Unsupported content-job schema version")
                 installed = versions[0]["version"]
-                for table in ("content_generation_job", "content_generation_attempt"):
+                tables = ["content_generation_job", "content_generation_attempt"]
+                if installed >= 6:
+                    tables.append("content_staging_selection")
+                for table in tables:
                     exists = connection.execute("SELECT to_regclass(%s) AS name", ("public." + table,)).fetchone()["name"]
                     if not exists:
                         raise JobStoreError("Content-job schema is incomplete")
@@ -173,6 +176,40 @@ class JobStore:
                 "SELECT * FROM public.content_generation_attempt WHERE job_id=%s ORDER BY attempt_no", (_identity(job_id),)
             ).fetchall()
             return _plain(row)
+
+    def select_staging_result(self, job: dict) -> None:
+        """Commit the verified result for this article before making its bundle visible."""
+        with self._connect() as connection:
+            article = connection.execute(
+                """SELECT COALESCE(duplicate_of_job_id, job_id) AS article_job_id
+                   FROM public.content_generation_job
+                   WHERE job_id=%(job_id)s AND job_kind='anime_generate' AND execution_status='succeeded'
+                     AND outcome='ready_for_staging' AND producer_status='ready_for_feed'
+                     AND generation_attempt_id=%(generation_attempt_id)s AND result_sha256=%(result_sha256)s
+                     AND artifact_path=%(artifact_path)s FOR SHARE""", job,
+            ).fetchone()
+            if article is None:
+                raise JobInputError("Verified result no longer matches the job ledger", "staging_ledger_mismatch")
+
+            inserted = connection.execute(
+                """INSERT INTO public.content_staging_selection
+                       (article_job_id, selected_job_id, generation_attempt_id, result_sha256)
+                   VALUES (%(article_job_id)s, %(job_id)s, %(generation_attempt_id)s, %(result_sha256)s)
+                   ON CONFLICT (article_job_id) DO NOTHING RETURNING selected_job_id""", {**job, **article},
+            ).fetchone()
+            if inserted is not None:
+                return
+            # A separate statement sees the competing transaction's committed selection.
+            selected = connection.execute(
+                """SELECT selected_job_id, generation_attempt_id, result_sha256 FROM public.content_staging_selection
+                   WHERE article_job_id=%(article_job_id)s""", article,
+            ).fetchone()
+            if str(selected["selected_job_id"]) != job["job_id"]:
+                raise JobConflict("staging_result_already_selected", selected["selected_job_id"])
+            if (str(selected["generation_attempt_id"]), selected["result_sha256"]) != (
+                job["generation_attempt_id"], job["result_sha256"]
+            ):
+                raise JobInputError("Selected result differs from the sealed result", "staging_ledger_mismatch")
 
     def list_pending(self, limit: int = 100, *, expected_kind: str = "fake") -> list[dict]:
         validate_job_kind(expected_kind)

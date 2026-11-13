@@ -4,10 +4,12 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from menu_worker.job_store import JobStore
 from menu_worker.real_generation import RealGenerationError, read_sealed_staging_result
 
 
-def export_staging_bundle(root: Path, job: dict | None, output: Path) -> dict:
+def export_staging_bundle(root: Path, store: JobStore, job_id: str, output: Path) -> dict:
+    job = store.get(job_id)
     if job is None:
         raise RealGenerationError("job_not_found")
     if job["job_kind"] != "anime_generate":
@@ -43,6 +45,7 @@ def export_staging_bundle(root: Path, job: dict | None, output: Path) -> dict:
         (staged / "bundle.json").write_text(
             json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")), encoding="utf-8"
         )
+        store.select_staging_result(job)
         # POSIX rename can replace an empty directory; reserve the name first.
         # Windows rename already refuses any existing destination.
         reserved = False
