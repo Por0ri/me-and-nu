@@ -42,6 +42,30 @@ function runtime(respond = () => page()) {
   return { load, calls, browser, api: load('lib/admin-content.ts') };
 }
 
+test('review preparation eligibility stays separate from server write permission', () => {
+  const { canPrepareReview } = runtime().load('lib/admin-content-review.ts');
+  for (const status of ['active', 'pending_review', 'hidden', 'deleted']) {
+    for (const judgmentStatus of ['needs_review', 'pending', 'confirmed', 'failed']) {
+      assert.equal(canPrepareReview({ status, judgmentStatus }), judgmentStatus === 'needs_review' && ['active', 'pending_review'].includes(status));
+    }
+  }
+});
+
+test('review rationale accepts Unicode and rejects blank, oversized and control input', () => {
+  const { reviewRationaleError } = runtime().load('lib/admin-content-review.ts');
+  for (const value of ['  ', 'x'.repeat(2001), 'a\x00b', 'a\ud800b']) assert.ok(reviewRationaleError(value));
+  for (const value of ['출처 확인\n완료', '😀'.repeat(2000), '  검토 완료  ']) assert.equal(reviewRationaleError(value), null);
+});
+
+test('review confirmation exposes an honest disconnected state and disabled execution', () => {
+  const { ContentReviewPanel } = runtime().load('components/admin/content-review-panel.tsx');
+  const html = renderToStaticMarkup(React.createElement(ContentReviewPanel, { content: item() }));
+  assert.match(html, /승인 내용 확인/); assert.match(html, /반려 내용 확인/);
+  assert.match(html, /<dialog[^>]+aria-labelledby="review-title"/);
+  assert.match(html, /disabled=""[^>]*>승인 실행 \(미연결\)/);
+  assert.match(html, /확인 단계 · 미저장/); assert.doesNotMatch(html, /승인 완료|저장 성공/);
+});
+
 test('no implicit queue filter; URL preserves independent states and page size', () => {
   const { api } = runtime();
   assert.deepEqual(plain(api.parseAdminQuery(new URLSearchParams())), { mode: 'all', q: '', judgmentStatus: '', status: '', page: 1, pageSize: 20 });
