@@ -70,7 +70,8 @@ test('successful empty result is distinct from API failure, login, permission an
   const empty = runtime(() => page([]));
   assert.deepEqual(plain(await empty.api.loadAdminContents(empty.api.parseAdminQuery(new URLSearchParams()))), page([]));
   for (const [status, code, expected] of [[401, 'AUTH_REQUIRED', 'login-required'], [403, 'ADMIN_REQUIRED', 'forbidden'],
-    [404, 'NOT_FOUND', 'unavailable'], [404, 'CONTENT_NOT_FOUND', 'not-found'], [500, 'PRIVATE_DETAIL', 'error']]) {
+    [404, 'NOT_FOUND', 'unavailable'], [404, 'CONTENT_NOT_FOUND', 'not-found'], [500, 'PRIVATE_DETAIL', 'error'],
+    [503, 'ADMIN_AUTH_UNAVAILABLE', 'error'], [503, 'ADMIN_PERMISSION_UNAVAILABLE', 'error']]) {
     const env = runtime(() => new Response(JSON.stringify({ code, message: 'internal secret' }), { status }));
     await assert.rejects(env.api.loadAdminContents(env.api.parseAdminQuery(new URLSearchParams())), error => {
       const failure = env.api.adminFailure(error); assert.equal(failure.status, expected); assert.doesNotMatch(failure.message, /secret/); return true;
