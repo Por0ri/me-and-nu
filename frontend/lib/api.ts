@@ -153,6 +153,10 @@ export type ChatJob = {
     messageId: number;
     content: string;
     sources: Array<{ contentId: number; title: string; url: string }>;
+    /** 정보사전 근거: 출처 이름 · 근거 주소 */
+    factSources?: Array<{ name: string; url: string }>;
+    /** 글 찾기 답에서 고른 글. 홈 피드와 같은 카드 모양 */
+    contents?: FeedCard[];
     notices: Array<{ code?: string; message?: string }>;
     contextCoverage: "full" | "partial" | "none";
     targetTopicId: number | null;

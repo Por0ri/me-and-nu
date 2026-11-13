@@ -13,6 +13,7 @@ import styles from "./detail.module.css";
 import { useDetailExposure, useInteractions } from "./interaction-context";
 import type { ReportSource } from "@/lib/pivot/report";
 import { ReportDialog } from "./report-dialog";
+import { ChatSheet, DETAIL_CHAT_COPY } from "./chat-sheet";
 
 function DetailImage({ article }: { article: DetailArticle }) {
   const [failed, setFailed] = useState(false);
@@ -108,8 +109,13 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
   }, [noticeState]);
   const [feedback, setFeedback] = useState<"more" | "stop" | null>(null);
   const [aiExpanded, setAiExpanded] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const target = state.status === "ready" ? { postId: state.article.postId, contentId: state.article.contentId,
     ...(state.article.topicId === undefined ? {} : { topicId: state.article.topicId }) } : null;
+  // 서비스 글에서만 AI 대화를 연다 (시연 화면은 기존 준비 중 안내).
+  const anchorContentId = target ? Number(target.contentId) : NaN;
+  const chatPlace = !demo && target?.topicId && Number.isSafeInteger(anchorContentId) && anchorContentId > 0
+    ? { kind: "detail" as const, topicId: target.topicId, contentId: anchorContentId } : null;
   const initialReaction = state.status === "ready" ? state.article : {};
   const reaction = target ? interactions?.reactions.value(target, initialReaction) : undefined;
   const canReact = !demo && !!target && !!target.topicId && !!interactions;
@@ -216,12 +222,13 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
     {/* Keep shared navigation consistent with Home and My Page. */}
     <div inert={aiExpanded}><HomeNavigation active={fromActivity ? "my" : fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI adjacentAI compact={aiExpanded} /></div>
     <div className={styles.aiDock}>
-      {aiExpanded ? <div className={styles.aiPrompt}><button type="button" aria-disabled="true"
-        onClick={() => setNotice("AI 질문 기능은 준비 중이에요. 질문을 전송하지 않아요.")}>이 콘텐츠에서 어떤 점이 궁금하세요?</button></div> : null}
+      {aiExpanded ? <div className={styles.aiPrompt}><button type="button" aria-disabled={chatPlace ? undefined : "true"} aria-haspopup={chatPlace ? "dialog" : undefined}
+        onClick={() => { if (chatPlace) setChatOpen(true); else setNotice("AI 질문 기능은 준비 중이에요. 질문을 전송하지 않아요."); }}>이 콘텐츠에서 어떤 점이 궁금하세요?</button></div> : null}
       <button type="button" className={styles.aiButton} aria-label="AI 질문 안내" aria-expanded={aiExpanded}
         onClick={() => setAiExpanded((expanded) => !expanded)}><img src={aiExpanded ? "/pivot/detail/ai-expanded.svg" : "/pivot/detail/ai.svg"} alt="" /></button>
     </div>
     {notice ? <p role="status" className={styles.notice}>{notice}</p> : null}
     {reportOpen && readyArticle ? <ReportDialog contentId={readyArticle.contentId} source={reportSource} demo={demo} onClose={closeReport} /> : null}
+    {chatOpen && chatPlace ? <ChatSheet place={chatPlace} copy={DETAIL_CHAT_COPY} onClose={() => setChatOpen(false)} /> : null}
   </main>;
 }

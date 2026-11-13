@@ -1,0 +1,161 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const ts = require('typescript');
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
+
+const root = path.join(__dirname, '..');
+class ApiError extends Error {
+  constructor(message, status, code) { super(message); this.status = status; this.code = code; }
+}
+const modules = new Map();
+function load(relative) {
+  if (modules.has(relative)) return modules.get(relative).exports;
+  const mod = { exports: {} };
+  modules.set(relative, mod);
+  const output = ts.transpileModule(fs.readFileSync(path.join(root, relative), 'utf8'), { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
+  } }).outputText;
+  vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, URL, setTimeout, clearTimeout, crypto: globalThis.crypto,
+    require(name) {
+      if (name === '@/lib/api') return { ApiError, apiBaseUrl: 'http://localhost:8100' };
+      if (name === './services') return { requirePivotApi() {} };
+      if (name === 'react' || name === 'react/jsx-runtime') return require(name);
+      if (name.endsWith('.module.css')) return { default: new Proxy({}, { get: (_, key) => String(key) }), __esModule: true };
+      const file = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(relative), name);
+      return load(file + (fs.existsSync(path.join(root, file + '.tsx')) ? '.tsx' : '.ts'));
+    },
+  });
+  return mod.exports;
+}
+const chat = load('lib/pivot/chat-service.ts');
+const { ChatSheet, HOME_CHAT_COPY, DETAIL_CHAT_COPY } = load('components/pivot/chat-sheet.tsx');
+const { HomeAIChat } = load('components/pivot/home-ai-chat.tsx');
+
+// The modules run in a separate VM realm; compare their values as plain JSON.
+const plain = value => JSON.parse(JSON.stringify(value));
+const feedCard = (id, extra = {}) => ({
+  kind: 'content', id, topicId: 2, recommendationId: null, title: `글 ${id}`, productionType: 'ai', summary: `요약 ${id}`,
+  imageUrl: null, sourceName: '에이전트', sourceUrl: 'https://example.com/' + id, publishedAt: '2026-11-13T00:00:00Z',
+  saved: false, savedItemId: null, recommendationReason: null, seen: false, isPromotional: false, notices: [],
+  myReaction: { liked: false, preference: null }, ...extra,
+});
+const result = (extra = {}) => ({ type: 'answer', messageId: 9, content: '판타지도 결이 좀 달라.', sources: [], factSources: [],
+  contents: [], notices: [], contextCoverage: 'full', targetTopicId: null, ...extra });
+
+test('answer keeps picked cards in order and drops only the broken ones', () => {
+  const answer = chat.mapChatAnswer(result({ contents: [
+    feedCard(7, { imageUrl: '/api/v1/contents/7/slides/1/image?topicId=2' }), feedCard(8, { topicId: 3 }), feedCard(5, { title: ' ' }), feedCard(4),
+  ] }), 2);
+  assert.deepEqual(plain(answer.cards.map(card => card.contentId)), ['7', '4']);
+  assert.deepEqual(plain(answer.cards[0].image), { src: 'http://localhost:8100/api/v1/contents/7/slides/1/image?topicId=2', alt: '글 7', protected: true });
+  assert.equal(answer.cards[1].summary, '요약 4');
+  assert.equal(answer.text, '판타지도 결이 좀 달라.');
+});
+
+test('references skip the open post and posts already shown as cards; unsafe fact links are dropped', () => {
+  const answer = chat.mapChatAnswer(result({
+    contents: [feedCard(7)],
+    sources: [{ contentId: 3, title: '보고 있는 글', url: '' }, { contentId: 7, title: '카드 글', url: '' }, { contentId: 11, title: '참고 글', url: '' }],
+    factSources: [{ name: 'AniList', url: 'https://anilist.co/anime/1' }, { name: '같은 주소', url: 'https://anilist.co/anime/1' },
+      { name: '스크립트', url: 'javascript:alert(1)' }, { name: '위키데이터', url: 'https://www.wikidata.org/wiki/Q1' }],
+    notices: [{ code: 'EVIDENCE_INSUFFICIENT', message: '확인된 자료가 부족해서 단정하진 않았어.' }],
+  }), 2, 3);
+  assert.deepEqual(plain(answer.references.map(card => [card.contentId, card.title])), [['11', '참고 글']]);
+  assert.deepEqual(plain(answer.facts.map(fact => fact.name)), ['AniList', '위키데이터']);
+  assert.deepEqual(plain(answer.notes), ['확인된 자료가 부족해서 단정하진 않았어.']);
+});
+
+function fakeApi(jobs, { topics = [{ id: 2, code: 'anime', status: 'active', deletedAt: null }], sendErrors = [] } = {}) {
+  const calls = [];
+  return { calls, api: {
+    async getMyTopics() { calls.push(['topics']); return { topics }; },
+    async createChatSession(topicId, anchor) { calls.push(['session', topicId, anchor]); return { sessionId: 40 + calls.length, topicId, anchorContentId: anchor ?? null, aiNotice: 'AI 안내' }; },
+    async sendChatMessage(sessionId, content) {
+      calls.push(['send', sessionId, content]);
+      const error = sendErrors.shift(); if (error) throw error;
+      return { userMessageId: 1, jobId: 77, status: 'processing' };
+    },
+    async getChatJob(jobId) { calls.push(['job', jobId]); return jobs.shift(); },
+  } };
+}
+const deps = (api, clock = { now: 0 }) => ({ api, guard() {}, sleep: async ms => { clock.now += ms; }, now: () => clock.now, newId: () => 'id' });
+
+test('home question finds the active Topic, waits for the job and keeps the conversation', async () => {
+  const { api, calls } = fakeApi([{ status: 'processing' }, { status: 'completed', result: result({ contents: [feedCard(7)] }) }]);
+  const conversation = chat.createChatConversation({ kind: 'home' }, deps(api));
+  const seen = [];
+  conversation.subscribe(() => seen.push(conversation.snapshot().busy));
+  await conversation.ask('  판타지 애니 찾아줘 ');
+  const { turns, busy, aiNotice } = conversation.snapshot();
+  assert.deepEqual(calls.map(call => call[0]), ['topics', 'session', 'send', 'job', 'job']);
+  assert.deepEqual(calls[1], ['session', 2, undefined]);
+  assert.equal(calls[2][2], '판타지 애니 찾아줘');
+  assert.equal(busy, false); assert.equal(aiNotice, 'AI 안내'); assert.ok(seen.includes(true));
+  assert.deepEqual(plain(turns.map(turn => turn.role === 'user' ? turn.text : turn.status)), ['판타지 애니 찾아줘', 'answered']);
+  assert.deepEqual(plain(turns[1].answer.cards.map(card => card.contentId)), ['7']);
+  await conversation.ask('더 보여줘');
+  assert.equal(calls.filter(call => call[0] === 'session').length, 1, 'the same session continues');
+});
+
+test('detail question uses the open post as the anchor and never asks for Topics', async () => {
+  const { api, calls } = fakeApi([{ status: 'completed', result: result() }]);
+  await chat.createChatConversation({ kind: 'detail', topicId: 2, contentId: 3 }, deps(api)).ask('이 글 핵심만 알려줘');
+  assert.deepEqual(calls.slice(0, 2), [['session', 2, 3], ['send', 41, '이 글 핵심만 알려줘']]);
+});
+
+test('an expired session is replaced once', async () => {
+  const { api, calls } = fakeApi([{ status: 'completed', result: result() }], { sendErrors: [new ApiError('gone', 404, 'CHAT_SESSION_NOT_FOUND')] });
+  const conversation = chat.createChatConversation({ kind: 'detail', topicId: 2, contentId: 3 }, deps(api));
+  await conversation.ask('질문');
+  assert.deepEqual(calls.map(call => call[0]), ['session', 'send', 'session', 'send', 'job']);
+  assert.equal(conversation.snapshot().turns[1].status, 'answered');
+});
+
+test('limits, failures and slow answers become retryable messages', async () => {
+  const cases = [
+    [fakeApi([], { sendErrors: [new ApiError('limit', 429, 'CHAT_DAILY_LIMIT')] }).api, '오늘 물어볼 수 있는 질문을 다 썼어. 내일 다시 물어봐.'],
+    [fakeApi([{ status: 'failed', error: { code: 'GENERATION_FAILED', message: '실패' } }]).api, '답을 만들지 못했어. 다시 물어봐 줘.'],
+    [fakeApi(Array.from({ length: 60 }, () => ({ status: 'processing' }))).api, '답이 너무 늦어. 다시 물어봐 줘.'],
+    [fakeApi([], { sendErrors: [new TypeError('Failed to fetch')] }).api, '인터넷 연결을 확인하고 다시 물어봐 줘.'],
+  ];
+  for (const [api, message] of cases) {
+    const conversation = chat.createChatConversation({ kind: 'detail', topicId: 2, contentId: 3 }, deps(api));
+    await conversation.ask('질문');
+    const turn = conversation.snapshot().turns[1];
+    assert.equal(turn.status, 'error'); assert.equal(turn.message, message); assert.equal(turn.question, '질문');
+    assert.equal(conversation.snapshot().busy, false);
+  }
+});
+
+test('blank, too long and overlapping questions are not sent', async () => {
+  let release;
+  const { api, calls } = fakeApi([]);
+  api.getChatJob = () => new Promise(resolve => { release = resolve; });
+  const conversation = chat.createChatConversation({ kind: 'detail', topicId: 2, contentId: 3 }, deps(api));
+  await conversation.ask('   ');
+  await conversation.ask('가'.repeat(501));
+  const first = conversation.ask('첫 질문');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await conversation.ask('겹친 질문');
+  release({ status: 'completed', result: result() });
+  await first;
+  assert.deepEqual(calls.filter(call => call[0] === 'send').map(call => call[2]), ['첫 질문']);
+});
+
+test('the sheet opens with the design copy and examples; the home dock keeps its AI label', () => {
+  const home = renderToStaticMarkup(React.createElement(ChatSheet, { place: { kind: 'detail', topicId: 2, contentId: 99 }, copy: HOME_CHAT_COPY, onClose() {} }));
+  assert.match(home, /<dialog/);
+  assert.ok(home.includes('어떤 콘텐츠를 찾고 계시나요?'));
+  assert.ok(home.includes('placeholder="보고싶은 콘텐츠가 무엇인가요?"'));
+  for (const example of HOME_CHAT_COPY.examples) assert.ok(home.includes(example.replace(/'/g, '&#x27;')), example);
+  assert.equal(DETAIL_CHAT_COPY.placeholder, '콘텐츠 내용 중 궁금한 점이 있나요?');
+  const dock = renderToStaticMarkup(React.createElement(HomeAIChat, { expanded: true, onExpandedChange() {} }));
+  assert.match(dock, /aria-label="AI 콘텐츠 탐색" aria-expanded="true"/);
+  assert.ok(dock.includes('/pivot/detail/ai-expanded.svg'));
+  assert.ok(dock.includes('어떤 콘텐츠를 찾고 계시나요? 무엇이든 물어보세요!'));
+  assert.doesNotMatch(dock, /<dialog/);
+});
