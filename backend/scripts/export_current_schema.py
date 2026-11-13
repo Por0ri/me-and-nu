@@ -20,6 +20,7 @@ from sqlalchemy.schema import AddConstraint, CreateIndex, CreateTable  # noqa: E
 
 import app.models  # noqa: E402, F401 -- register every mapped table
 from app.db.base import Base  # noqa: E402
+from app.db.migration_policy import SERVICE_SCHEMA_REVISION  # noqa: E402
 
 
 def render_schema() -> str:
@@ -39,7 +40,7 @@ def render_schema() -> str:
         "-- Constraint names follow ORM metadata and can differ from migration history.",
         "-- Only SQL server defaults are emitted; Python defaults/onupdate are not triggers.",
         "-- Use Alembic migrations to change existing databases; do not apply this snapshot.",
-        "-- Service migration target: d7b3e9a1c452 (onboarding V2 + carousel + recommendation + content report · inquiry + restoration session + in-app preferences + recommended notification type + search log); do not upgrade all heads.",
+        f"-- Service migration target: {SERVICE_SCHEMA_REVISION}; do not upgrade all heads.",
         "-- Birth-date policy is deferred: existing birth_date columns/data are preserved.",
         "-- Absence of birth_date here describes ORM metadata, not approval to drop it.",
         "",

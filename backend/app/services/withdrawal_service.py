@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
-from app.models import AuthSession, CreatorChannel, UserAccount
+from app.models import AdminAccount, AuthSession, CreatorChannel, UserAccount
 from app.repositories.auth_session_repository import (
     create_auth_session,
     discard_uncommitted_session,
@@ -59,6 +59,12 @@ async def request_withdrawal(
     )
     if channel is not None:
         raise ApiError(409, "WITHDRAWAL_BLOCKED", "연결된 크리에이터 채널이 있어 탈퇴할 수 없습니다.")
+    # 회수된 권한도 관리자 이력에 남아 회원 삭제를 막는다.
+    grant = await db.scalar(
+        select(AdminAccount.admin_account_id).where(AdminAccount.user_id == user.user_id).limit(1)
+    )
+    if grant is not None:
+        raise ApiError(409, "WITHDRAWAL_BLOCKED", "관리자 권한 이력이 있어 탈퇴할 수 없습니다.")
     now = utcnow()
     user.account_status = "withdrawn"
     user.withdrawn_at = now

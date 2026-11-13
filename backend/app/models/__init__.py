@@ -1,3 +1,4 @@
+from app.models.admin import AdminAccount, AdminActionLog
 from app.models.agent import (
     AgentRun,
     AgentRunSource,
@@ -45,6 +46,8 @@ from app.models.v1 import (
 )
 
 __all__ = [
+    "AdminAccount",
+    "AdminActionLog",
     "AgentRun",
     "AgentRunSource",
     "AgentRunStep",
