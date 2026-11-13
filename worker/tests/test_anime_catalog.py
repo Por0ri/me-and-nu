@@ -48,15 +48,58 @@ class AnimeCatalogTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, code)
 
     def test_accepts_article_and_normalizes_origin_path_and_tracking(self):
-        value = "HTTPS://PUBLISHER.ORG:443/series/a/%31%32%33/index.html?utm_source=x&lang=ja&id=4"
+        value = ("HTTPS://PUBLISHER.ORG:443/series/a/%31%32%33/index.html/"
+                 "?UtM_custom=x&lang=ja&id=4&fbCLid=visitor&gCLiD=visitor#section")
         self.assertEqual(self.validate(source_url=value), "https://publisher.org/series/a/123/index.html?id=4&lang=ja")
         self.assertEqual(self.validate(source_url="https://publisher.org/series/a/index.html?id=42"),
                          "https://publisher.org/series/a/index.html?id=42")
 
+    def test_raw_storage_retains_path_origin_order_and_encoding_but_removes_tracking_and_fragments(self):
+        raw = "HTTPS://PUBLISHER.ORG:443/series/a/%31/index.html/?story=two%20words&extra=%7e"
+        self.assertEqual(catalog.source_url_for_storage(raw), raw)
+        self.assertEqual(catalog.source_url_for_storage(raw + "&%75TM_extra=SECRET#fragment"), raw)
+        self.assertEqual(catalog.source_url_for_storage(raw + "#fragment"), raw)
+        self.assertEqual(catalog.source_url_for_storage("https://publisher.org?p=4"), "https://publisher.org?p=4")
+        self.assertEqual(catalog.source_url_for_storage("https://publisher.org#fragment"), "https://publisher.org/")
+        self.assertEqual(catalog.source_url_for_storage("https://publisher.org?utm_id=1"), "https://publisher.org/")
+        self.assertEqual(catalog.canonical_anime_url("https://publisher.org/?utm_token=SECRET#fragment"),
+                         "https://publisher.org/")
+
+    def test_preserves_public_query_identifiers_and_distinct_values(self):
+        listing = "https://publisher.org/series/a/index.html"
+        for key in ("slug", "story", "episode_id"):
+            with self.subTest(key=key):
+                self.assertEqual(self.validate(source_url=f"{listing}?{key}=one"), f"{listing}?{key}=one")
+                self.assertNotEqual(self.validate(source_url=f"{listing}?{key}=one"),
+                                    self.validate(source_url=f"{listing}?{key}=two"))
+        article = "https://publisher.org/series/a/123"
+        self.assertEqual(self.validate(source_url=article + "?z=2&unknown=kept&lang=ja#chapter"),
+                         article + "?lang=ja&unknown=kept&z=2")
+
+    def test_prefers_an_in_scope_article_hint_and_falls_back_to_the_request(self):
+        article = "https://publisher.org/series/a/123/index.html"
+        listing = "https://publisher.org/series/a/index.html"
+        hint = "https://publisher.org/series/a/42/index.html"
+        for request in (article, listing):
+            self.assertEqual(self.validate(source_url=request, canonical_url=hint + "/?utm_x=y#details"), hint)
+        for invalid_hint in ("not a URL", "https://other.org/series/a/story", "https://publisher.org/series/b/42",
+                             hint + "?token=SECRET", "https://publisher.org/series/a/picture.png", listing, 42):
+            with self.subTest(invalid_hint=invalid_hint):
+                self.assertEqual(self.validate(source_url=article, canonical_url=invalid_hint), article)
+                self.assert_rejected("source_path_mismatch", source_url=listing, canonical_url=invalid_hint)
+        for request, error in (("https://other.org/series/a/article", "source_host_mismatch"),
+                               ("https://publisher.org/series/b/42", "source_path_mismatch"),
+                               ("https://publisher.org/series/a/picture.png", "source_path_mismatch"),
+                               (article + "?token=SECRET", "invalid_source_query")):
+            with self.subTest(request=request):
+                self.assert_rejected(error, source_url=request, canonical_url=hint)
+
     def test_article_identity_cannot_escape_its_registered_scope(self):
         for url in ("https://publisher.org/series/b/123", "https://publisher.org/series/aa/123",
                     "https://publisher.org/series/a/", "https://publisher.org/series/a/index.html",
-                    "https://publisher.org/series/a/index.htm?lang=ja", "https://publisher.org/series/a/picture.png"):
+                    "https://publisher.org/series/a/index.htm?lang=ja", "https://publisher.org/series/a/picture.png",
+                    "https://publisher.org/series/a/index.html?lang=ja&utm_new=x#id=9",
+                    "https://publisher.org/series/a/index.html?id="):
             with self.subTest(url=url):
                 self.assert_rejected("source_path_mismatch", source_url=url)
         for host in ("cdn.publisher.org", "x.publisher.org", "publisher.org.com"):
@@ -71,12 +114,13 @@ class AnimeCatalogTests(unittest.TestCase):
 
     def test_rejects_unsafe_url_syntax_without_echoing_it(self):
         for url in ("https://user:SECRET@publisher.org/series/a/123", "https://publisher.org:8080/series/a/123",
-                    "http://publisher.org/series/a/123", "https://publisher.org/series/a/123#x",
+                    "http://publisher.org/series/a/123",
                     "https://127.0.0.1/series/a/123", "https://x.local/series/a/123",
                     "https://publisher.org/series/a/%2e%2e/b", "https://publisher.org/series/a/x%2fy",
                     "https://publisher.org/series/a/x%255cy", "https://publisher.org/series/a/x%0dy",
                     "https://publisher.org/series/a/x%00", "https://publisher.org/series/a/x%zz",
-                    "https://publisher.org/series/a/123?%74oken=SECRET", "https://publisher.org/series/a/123?utm_token=SECRET",
+                    "https://publisher.org/series/a/123?%74oken=SECRET", "https://publisher.org/series/a/123?apiKey=SECRET",
+                    "https://publisher.org/series/a/123?session_id=SECRET", "https://publisher.org/series/a/123?access_token=SECRET",
                     "https://publisher.org/series/a/123?X-Amz-Credential=SECRET", "https://publisher.org/series/a/123?id=1&id=2"):
             with self.subTest(url=url), self.assertRaises(catalog.AnimeInputError) as caught:
                 self.validate(source_url=url)

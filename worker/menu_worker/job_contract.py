@@ -1,6 +1,6 @@
 """Admission rules for the fake queue and the offline anime input probe."""
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import re
@@ -13,6 +13,7 @@ CONTENT_TYPES = frozenset({
 })
 FIXTURE_SCENARIOS = frozenset({"success", "held", "skipped", "fail", "slow"})
 INPUT_FIELDS = frozenset({"idempotency_key", "source_id", "source_url", "content_type"})
+OPTIONAL_FIELDS = frozenset({"menu_work_id", "canonical_url"})
 JOB_KINDS = frozenset({"fake", "anime", "anime_generate"})
 
 
@@ -63,6 +64,7 @@ class JobInput:
     source_url: str
     content_type: str
     menu_work_id: int | None = None
+    canonical_hint: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.idempotency_key, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.idempotency_key):
@@ -72,6 +74,8 @@ class JobInput:
         if not isinstance(self.content_type, str) or self.content_type not in CONTENT_TYPES:
             raise JobInputError("Unsupported content_type")
         if self.source_id == "fixture":
+            if self.canonical_hint is not None:
+                raise JobInputError("Only registered anime sources accept canonical_url")
             if self.menu_work_id is not None:
                 raise JobInputError("Fake input cannot select a work", "unexpected_menu_work_id")
             canonical_source_url(self.source_url)
@@ -83,7 +87,8 @@ class JobInput:
         if self.source_id == "fixture":
             return canonical_source_url(self.source_url)
         from menu_worker.anime_catalog import validate_anime_source
-        return validate_anime_source(self.source_id, self.source_url, self.content_type, self.menu_work_id)
+        return validate_anime_source(self.source_id, self.source_url, self.content_type, self.menu_work_id,
+                                     canonical_url=self.canonical_hint)
 
     @property
     def input_sha256(self) -> str:
@@ -100,13 +105,16 @@ class JobInput:
         fields = {name: getattr(self, name) for name in sorted(INPUT_FIELDS)}
         if self.menu_work_id is not None:
             fields["menu_work_id"] = self.menu_work_id
+        if self.canonical_hint is not None:
+            fields["canonical_url"] = self.canonical_hint
         return fields
 
 
 def validate_input(value: Mapping) -> JobInput:
-    if not isinstance(value, Mapping) or set(value) not in (INPUT_FIELDS, INPUT_FIELDS | {"menu_work_id"}):
+    if not isinstance(value, Mapping) or not INPUT_FIELDS <= value.keys() <= INPUT_FIELDS | OPTIONAL_FIELDS:
         raise JobInputError("Unsupported or missing input fields")
-    return JobInput(**value)
+    fields = dict(value)
+    return JobInput(canonical_hint=fields.pop("canonical_url", None), **fields)
 
 
 def validate_job_request(value: JobInput | Mapping, job_kind: str) -> tuple[JobInput, str, str]:
@@ -117,9 +125,17 @@ def validate_job_request(value: JobInput | Mapping, job_kind: str) -> tuple[JobI
     if job_kind == "fake" and request.source_id != "fixture":
         raise JobInputError("Fake jobs require fixture input", "fixture_source_required")
     canonical_url = request.canonical_url
+    if job_kind in {"anime", "anime_generate"}:
+        from menu_worker.anime_catalog import source_url_for_storage
+        request = replace(request, source_url=source_url_for_storage(request.source_url),
+                          canonical_hint=canonical_url if request.canonical_hint is not None else None)
+    return request, canonical_url, job_input_hash(request, job_kind, canonical_url)
+
+
+def job_input_hash(request: JobInput, job_kind: str, canonical_url: str) -> str:
     identity = {"source_id": request.source_id, "source_url": canonical_url, "content_type": request.content_type}
     if job_kind in {"anime", "anime_generate"}:
         identity.update(job_kind=job_kind, menu_work_id=request.menu_work_id)
     # The v1/v2 fake identity remains byte-for-byte compatible.
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-    return request, canonical_url, hashlib.sha256(encoded).hexdigest()
+    return hashlib.sha256(encoded).hexdigest()

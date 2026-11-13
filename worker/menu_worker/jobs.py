@@ -79,6 +79,8 @@ def main(argv=None) -> int:
     generate.add_argument("--url", required=True)
     generate.add_argument("--content-type", required=True)
     generate.add_argument("--menu-work-id", type=int, required=True)
+    for command in (submit, generate):
+        command.add_argument("--canonical-url", help="Article canonical URL supplied by the registered source")
     export = commands.add_parser("export-staging", help="Export a sealed ready_for_staging job for the carousel importer")
     export.add_argument("--job-id", required=True)
     export.add_argument("--output", type=Path, required=True, help="New bundle directory under an existing parent")
@@ -110,6 +112,8 @@ def main(argv=None) -> int:
                        "source_url": args.url, "content_type": args.content_type}
             if args.menu_work_id is not None:
                 request["menu_work_id"] = args.menu_work_id
+            if args.canonical_url is not None:
+                request["canonical_url"] = args.canonical_url
             kind = "anime_generate" if args.command == "generate" else args.kind or role
             result = store.submit(request, job_kind=kind)
         elif args.command == "export-staging":

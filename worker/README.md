@@ -9,7 +9,7 @@ Celery 작업 전달, 주기 실행, 재시도와 모니터링을 확인하는 �
 | `beat` | 기본 30초 간격으로 heartbeat 작업 전송 |
 | `flower` | Worker·작업 상태 조회. 로컬 접속·인증·읽기 전용 설정 사용 |
 | `jobs-db` | 전용 PostgreSQL 17. 콘텐츠 작업·실행 이력 저장, 호스트 포트 없음 |
-| `job-init` | 작업 전용 DB를 v4로 초기화하거나 기존 v1~v3 작업을 보존하며 마이그레이션 |
+| `job-init` | 작업 전용 DB를 v5로 초기화하거나 기존 v1~v4 작업을 마이그레이션 |
 | `job-worker` | `content-generation` 큐의 가짜 Agent 실행, 동시 실행 1개 |
 | `job-dispatcher` | fake 작업 전달 및 중단된 fake 작업 정리 |
 | `anime-redis`, `anime-worker`, `anime-dispatcher` | 선택형 `anime` 프로필. 별도 Redis와 산출물 볼륨에서 애니 큐 전달을 점검 |
@@ -184,6 +184,12 @@ Worker 이미지는 애니 Agent의 `sources.json`, `source_type_map.json`, `men
 - 출처가 활성 상태이고 단건 실행에 허용된 역할·수집 방식·콘텐츠 유형이어야 한다. URL의 호스트와 경로는 등록된 출처 범위에 있어야 한다.
 - 작품 ID가 카탈로그에 있고, 출처에 기재된 작품명이 정확히 그 작품 하나로 연결돼야 한다. 종합 매체처럼 본문을 읽어야 작품을 특정할 수 있는 출처는 `source_work_unresolved`로 거부한다.
 - 잘못된 입력은 DB 접수 전에 오류 코드와 종료 코드 1을 반환한다. Worker는 실행 직전에 출처·작품과 입력 해시를 다시 확인한다.
+
+애니 점검(`submit`)과 수동 생성(`generate`) 모두 출처가 제공한 절대 HTTPS canonical URL을 `--canonical-url`로 받을 수 있다. 요청 URL과 같은 등록 출처의 기사로 검증되면 이 주소를 사용하고, 생략했거나 유효하지 않으면 요청 URL로 기사를 판별한다. 큐는 이 과정에서 웹 페이지를 요청하지 않는다.
+
+작업 DB v5의 기사 중복 키는 각 큐에서 `source_id`와 정규화한 URL의 조합이다. 기사 경로 끝의 슬래시와 fragment는 제거하고 사이트 루트의 `/`는 유지한다. `utm_*`, `fbclid`, `gclid`는 대소문자와 관계없이 제외한다. 허용된 다른 쿼리 값은 보존하므로 `?id=1`과 `?id=2`는 서로 다른 기사다. 같은 키로 재시도하면 기존 작업을 반환하고, 다른 키로 같은 기사를 제출하면 `candidate_exists`와 기존 작업 ID를 반환한다. 무과금 점검과 수동 생성은 같은 기사를 각각 한 번 처리할 수 있다.
+
+v4에서 이미 두 주소로 접수한 경우에는 기존 작업 ID, 입력 해시, 산출물과 시도 이력을 보존한다. 완료했거나 생성이 시작된 작업을 우선 대표로 두고, 실행 전인 중복 작업은 `DUPLICATE_ARTICLE`로 취소한다. 이력에서 `duplicate_of_job_id`로 대표 작업을 조회할 수 있다.
 
 검증 완료 시 `routing_verified`와 결과 JSON의 `validated_input`에서 출처, 정규화 URL, 유형, 작품 ID를 확인할 수 있다. 이 단계는 URL 등록 범위를 오프라인으로 검사한다. 기사 존재·본문 검증, LLM 생성, 새 작품 등록은 후속 단계다. smoke는 중복되지 않는 합성 기사 경로를 사용한다.
 

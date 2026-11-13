@@ -582,8 +582,13 @@ class JobStorePostgresTests(unittest.TestCase):
         request = self.anime_candidate()
         probe = self.store.submit(request, job_kind="anime")
 
-        def submit(store):
-            attempt = {**request, "idempotency_key": f"{self.namespace}-{uuid.uuid4().hex}"}
+        barrier = threading.Barrier(2, timeout=10)
+
+        def submit(suffix):
+            store = self.new_store()
+            attempt = {**request, "source_url": request["source_url"] + suffix,
+                       "idempotency_key": f"{self.namespace}-{uuid.uuid4().hex}"}
+            barrier.wait()
             try:
                 row = store.submit(attempt, job_kind="anime_generate")
                 return row["job_id"], row["created"], attempt
@@ -591,12 +596,13 @@ class JobStorePostgresTests(unittest.TestCase):
                 self.assertEqual(error.code, "candidate_exists")
                 return error.existing_job_id, False, attempt
 
-        results = self.parallel(submit)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(submit, ("", "/?UTM_extra=campaign&fbclid=x&gclid=y#images")))
         self.assertCountEqual([created for _, created, _ in results], [True, False])
         self.assertEqual(len({job_id for job_id, _, _ in results}), 1)
         owner, _, admitted = next(result for result in results if result[1])
         self.assertNotEqual(owner, probe["job_id"])
-        replay = self.store.submit(admitted, job_kind="anime_generate")
+        replay = self.store.submit({**admitted, "source_url": request["source_url"] + "/#retry"}, job_kind="anime_generate")
         self.assertFalse(replay["created"])
         self.assertEqual(replay["job_id"], owner)
         self.assertNotEqual(replay["input_sha256"], probe["input_sha256"])
@@ -604,6 +610,15 @@ class JobStorePostgresTests(unittest.TestCase):
             self.store.submit(request, job_kind="anime_generate")
         self.assertEqual(conflict.exception.code, "idempotency_conflict")
         self.assertEqual(conflict.exception.existing_job_id, probe["job_id"])
+
+    def test_article_path_and_identifying_query_select_distinct_jobs(self):
+        request = self.anime_candidate()
+        base = request["source_url"]
+        urls = (base + "?story=one", base + "?story=two", base.replace("index.html", "next.html") + "?story=one")
+        jobs = [self.store.submit({**request, "source_url": url, "idempotency_key": f"{self.namespace}-{n}"},
+                                  job_kind="anime_generate") for n, url in enumerate(urls)]
+        self.assertEqual(len({row["job_id"] for row in jobs}), 3)
+        self.assertEqual([row["canonical_url"] for row in jobs], list(urls))
 
     def test_generation_kind_fences_and_preflight_failure_before_start(self):
         request = self.anime_candidate()
@@ -731,10 +746,12 @@ class JobStorePostgresTests(unittest.TestCase):
         with (patch.dict(os.environ, {"CONTENT_JOB_KIND": "anime_generate"}),
               patch.object(cli, "JobStore", return_value=self.store), redirect_stdout(output)):
             code = cli.main(["generate", "--idempotency-key", self.namespace + "-manual", "--source", request["source_id"],
-                             "--url", request["source_url"], "--content-type", request["content_type"],
+                             "--url", request["source_url"].replace("index.html", "mobile.html") + "?utm_extra=x#top",
+                             "--canonical-url", request["source_url"] + "/#content", "--content-type", request["content_type"],
                              "--menu-work-id", str(request["menu_work_id"])])
         self.assertEqual(code, 0)
         live_id = json.loads(output.getvalue())["job_id"]
+        self.assertEqual(self.store.get(live_id)["source_url"], request["source_url"].replace("index.html", "mobile.html"))
         self.assertNotEqual(probe_id, live_id)
         with TemporaryDirectory(prefix="manual-queue-") as temporary:
             root = Path(temporary).resolve()

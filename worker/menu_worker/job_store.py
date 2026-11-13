@@ -15,11 +15,12 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
-from menu_worker.job_contract import JobInput, validate_job_kind, validate_job_request
+from menu_worker.job_contract import JobInput, job_input_hash, validate_job_kind, validate_job_request
 
 DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test", "menu_content_jobs_migration_test"})
 DATABASE_HOSTS = frozenset({"jobs-db", "localhost", "127.0.0.1", "::1"})
-MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql", "003_anime_work_input.sql", "004_anime_generation.sql")
+MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql", "003_anime_work_input.sql", "004_anime_generation.sql",
+              "005_article_identity.sql")
 SCHEMA_VERSION = len(MIGRATIONS)
 # Older workers recorded these adapter errors as needs_attention after arming
 # the launch fence. Each is emitted exclusively before the producer starts.
@@ -145,14 +146,19 @@ class JobStore:
                 "SELECT * FROM public.content_generation_job WHERE idempotency_key=%s", (request.idempotency_key,)
             ).fetchone()
             if previous:
-                if previous["job_kind"] != job_kind or previous["input_sha256"] != input_hash:
+                # A pre-v5 row may have sealed a trailing slash in its digest.
+                # Check the stored representation against the same logical request.
+                if (previous["job_kind"] != job_kind or previous["source_id"] != request.source_id
+                        or previous["candidate_url"] != canonical_url
+                        or previous["input_sha256"] != job_input_hash(request, job_kind, previous["canonical_url"])):
                     raise JobConflict("idempotency_conflict", previous["job_id"])
                 return {**_plain(previous), "created": False}
             # The probe and generation indexes may each have an owner for this URL.
             collision_kinds = ["anime_generate"] if job_kind == "anime_generate" else ["fake", "anime"]
             previous = connection.execute(
-                "SELECT job_id FROM public.content_generation_job WHERE canonical_url=%s AND job_kind=ANY(%s)",
-                (canonical_url, collision_kinds),
+                """SELECT job_id FROM public.content_generation_job WHERE source_id=%s AND candidate_url=%s
+                   AND duplicate_of_job_id IS NULL AND job_kind=ANY(%s)""",
+                (request.source_id, canonical_url, collision_kinds),
             ).fetchone()
             if previous:
                 raise JobConflict("candidate_exists", previous["job_id"])
@@ -398,7 +404,8 @@ class JobStore:
                    current_attempt_id=NULL, generation_attempt_id=NULL, claim_token=NULL, lease_expires_at=NULL,
                    last_dispatched_at=NULL, last_task_id=NULL, error_code=NULL, finished_at=NULL,
                    updated_at=CURRENT_TIMESTAMP
-                   WHERE job_id=%(job_id)s AND job_kind='anime_generate' AND artifact_path IS NULL AND result_sha256 IS NULL
+                   WHERE job_id=%(job_id)s AND job_kind='anime_generate' AND duplicate_of_job_id IS NULL
+                   AND artifact_path IS NULL AND result_sha256 IS NULL
                    AND ((execution_status='failed' AND generation_started_at IS NULL AND error_code=ANY(%(errors)s))
                         OR (execution_status='needs_attention' AND error_code=ANY(%(setup_errors)s)
                             AND current_attempt_id=generation_attempt_id

@@ -1,4 +1,4 @@
-"""Exercise fresh and v1 schemas in a database created by this invocation."""
+"""Exercise schema upgrades in a database created by this invocation."""
 
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import threading
 import unittest
 from uuid import uuid4
@@ -17,6 +18,7 @@ MIGRATION_DB = "menu_content_jobs_migration_test"
 V1_SQL = Path(__file__).resolve().parents[1] / "menu_worker/migrations/001_content_jobs.sql"
 V2_SQL = V1_SQL.with_name("002_job_kind.sql")
 V3_SQL = V1_SQL.with_name("003_anime_work_input.sql")
+V4_SQL = V1_SQL.with_name("004_anime_generation.sql")
 
 
 @unittest.skipUnless(os.environ.get(ADMIN_ENV), "Run tests/run_postgres.py on the isolated jobs-db service")
@@ -78,11 +80,11 @@ class JobSchemaMigrationTests(unittest.TestCase):
 
     def test_fresh_install_and_concurrent_or_repeated_initialize(self):
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [4, 4])
+        self.assertEqual([result["version"] for result in results], [5, 5])
         self.assertCountEqual([result["created"] for result in results], [True, False])
         store = self.store()
         repeated = store.initialize()
-        self.assertEqual(repeated["version"], 4)
+        self.assertEqual(repeated["version"], 5)
         self.assertFalse(repeated["created"])
         for kind in ("fake", "anime", "anime_generate"):
             request = {"idempotency_key": kind, "source_id": "fixture", "content_type": "news",
@@ -152,7 +154,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
         job_ids, inputs = self.seed_v1()
         old_jobs, old_attempts = self.snapshot()
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [4, 4])
+        self.assertEqual([result["version"] for result in results], [5, 5])
         self.assertFalse(self.store().initialize()["created"])
         jobs, attempts = self.snapshot()
         self.assertEqual(len(jobs), len(old_jobs))
@@ -221,7 +223,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
             ids = {phase: self.seed_v2_anime_probe(connection, phase) for phase in phases}
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [4, 4])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [5, 5])
         store = self.store()
         self.assertFalse(store.initialize()["created"])
         jobs, attempts = self.snapshot()
@@ -284,9 +286,14 @@ class JobSchemaMigrationTests(unittest.TestCase):
                            'routing_verified','anime_probe_completed',%s,%s,CURRENT_TIMESTAMP)""",
                 (attempt_id, probe_id, uuid4(), path, result_hash),
             )
-        before = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [4, 4])
-        self.assertEqual(self.snapshot(), before)
+        old_jobs, old_attempts = self.snapshot()
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [5, 5])
+        jobs, attempts = self.snapshot()
+        self.assertEqual(attempts, old_attempts)
+        for before, after in zip(old_jobs, jobs, strict=True):
+            self.assertEqual({column: after[column] for column in before}, before)
+            self.assertEqual(after["candidate_url"], before["canonical_url"])
+            self.assertIsNone(after["duplicate_of_job_id"])
         store = self.store()
         self.assertFalse(store.initialize()["created"])
         self.assertFalse(store.submit(request, job_kind="anime")["created"])
@@ -303,6 +310,115 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 store.submit({**request, "idempotency_key": f"duplicate-{kind}"}, job_kind=kind)
             self.assertEqual(conflict.exception.code, "candidate_exists")
             self.assertEqual(conflict.exception.existing_job_id, str(owner))
+
+    def test_v4_slash_collision_preserves_keys_and_fences_unstarted_deliveries(self):
+        kind = "anime_generate"
+        request = {"source_id": "one_piece_official", "content_type": "goods", "menu_work_id": 8}
+        storage = importlib.import_module("menu_worker.job_store")
+        with self.connect() as connection:
+            for migration in (V1_SQL, V2_SQL, V3_SQL, V4_SQL):
+                connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
+
+        def seed(connection, key, url, status, started, *, job_kind=kind):
+            job_id, attempt_id, token = uuid4(), uuid4(), uuid4()
+            identity = {**request, "job_kind": job_kind, "source_url": url}
+            digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            connection.execute(
+                """INSERT INTO public.content_generation_job
+                   (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,menu_work_id,input_sha256,
+                    job_kind,execution_status,claim_token,lease_expires_at,generation_started_at,error_code)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           CASE WHEN %s THEN clock_timestamp()+INTERVAL '1 hour' END,
+                           CASE WHEN %s THEN CURRENT_TIMESTAMP END, %s)""",
+                (job_id, key, request["source_id"], url, url, request["content_type"], request["menu_work_id"],
+                 digest, job_kind, status, token if status == "running" else None, status == "running", started,
+                 "agent_spawn_failed" if status == "failed" else None),
+            )
+            if status != "queued":
+                connection.execute(
+                    """INSERT INTO public.content_generation_attempt
+                       (attempt_id,job_id,attempt_no,mode,claim_token,execution_status,generation_started_at,error_code)
+                       VALUES (%s,%s,1,'generation',%s,%s,CASE WHEN %s THEN CURRENT_TIMESTAMP END,%s)""",
+                    (attempt_id, job_id, token, status, started, "agent_spawn_failed" if status == "failed" else None),
+                )
+                connection.execute(
+                    """UPDATE public.content_generation_job SET current_attempt_id=%s,generation_attempt_id=%s,
+                       attempt_count=1 WHERE job_id=%s""", (attempt_id, attempt_id, job_id),
+                )
+            return str(job_id), str(token)
+
+        base = "https://one-piece.com/news/82812"
+        with self.connect() as connection:
+            claimed, token = seed(connection, "claimed", base + "?id=8", "running", False)
+            owner, _ = seed(connection, "owner", base + "/?id=8", "needs_attention", True)
+            failed, _ = seed(connection, "failed", base + "?id=9", "failed", False)
+            queued, _ = seed(connection, "queued", base + "/?id=9", "queued", False)
+            running_pair = dict(seed(connection, key, url, "running", True) for key, url in
+                                (("running-a", base + "?id=10"), ("running-b", base + "/?id=10")))
+            probe_url = base + "/?id=11"
+            probe_id, _ = seed(connection, "legacy-probe", probe_url, "queued", False, job_kind="anime")
+        old_jobs, old_attempts = self.snapshot()
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [5, 5])
+        jobs, attempts = self.snapshot()
+        for before, after in zip(old_jobs, jobs, strict=True):
+            for column in ("job_id", "canonical_url", "input_sha256", "idempotency_key", "generation_attempt_id"):
+                self.assertEqual(after[column], before[column], column)
+        for before, after in zip(old_attempts, attempts, strict=True):
+            if str(before["job_id"]) == claimed:
+                self.assertEqual((after["execution_status"], after["error_code"]), ("cancelled", "DUPLICATE_ARTICLE"))
+            else:
+                self.assertEqual(after, before)
+
+        store = self.store()
+        loser = store.get(claimed)
+        self.assertEqual((loser["duplicate_of_job_id"], loser["execution_status"], loser["error_code"]),
+                         (owner, "cancelled", "DUPLICATE_ARTICLE"))
+        self.assertFalse(store.mark_generation_started(claimed, token, expected_kind=kind))
+        self.assertIsNone(store.claim(claimed, expected_kind=kind))
+        self.assertEqual(store.get(failed)["duplicate_of_job_id"], queued)
+        self.assertFalse(store.retry_preflight(failed, expected_kind=kind))
+        for running, claim_token in running_pair.items():
+            if store.get(running)["duplicate_of_job_id"] is not None:
+                self.assertTrue(store.complete(running, claim_token, expected_kind=kind, execution_status="failed",
+                                               error_code="agent_spawn_failed", agent_not_launched=True))
+                self.assertFalse(store.retry_preflight(running, expected_kind=kind))
+        self.assertEqual([row["job_id"] for row in store.list_pending(expected_kind=kind)], [queued])
+        for key, expected in (("owner", owner), ("claimed", claimed)):
+            for url in (base + "?id=8", base + "/?id=8"):
+                replay = store.submit({**request, "idempotency_key": key, "source_url": url}, job_kind=kind)
+                self.assertEqual((replay["job_id"], replay["created"]), (expected, False))
+        alternate = {**request, "idempotency_key": "other", "source_url": base + "?id=8"}
+        with self.assertRaises(storage.JobConflict) as conflict:
+            store.submit(alternate, job_kind=kind)
+        self.assertEqual((conflict.exception.code, conflict.exception.existing_job_id), ("candidate_exists", owner))
+        with self.assertRaises(storage.JobConflict) as conflict:
+            store.submit({**alternate, "idempotency_key": "owner", "content_type": "news"}, job_kind=kind)
+        self.assertEqual(conflict.exception.code, "idempotency_conflict")
+        self.assertTrue(store.submit(alternate, job_kind="anime")["created"])
+        runner = importlib.import_module("menu_worker.job_runner")
+        artifacts = importlib.import_module("menu_worker.job_artifacts")
+        old_probe = next(row for row in old_jobs if str(row["job_id"]) == probe_id)
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            self.assertTrue(runner.run_job(store, root, probe_id, expected_kind="anime")["processed"])
+            probe = store.get(probe_id)
+            self.assertEqual((probe["execution_status"], probe["outcome"]), ("succeeded", "routing_verified"))
+            self.assertEqual((probe["canonical_url"], probe["input_sha256"]), (probe_url, old_probe["input_sha256"]))
+            self.assertEqual(artifacts.validate_artifacts(root, probe)["result_sha256"], probe["result_sha256"])
+            result = json.loads((root / probe["artifact_path"]).with_name("result.json").read_bytes())
+            self.assertEqual((result["validated_input"]["canonical_url"], result["input_sha256"], result["llm_calls"]),
+                             (probe_url, old_probe["input_sha256"], 0))
+        # Exercise the DB's source dimension independently of each registry's path scope.
+        with self.connect() as connection:
+            second = connection.execute(
+                """INSERT INTO public.content_generation_job
+                   (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,menu_work_id,input_sha256,job_kind)
+                   SELECT %s,'separate-source','other_official',source_url,canonical_url,content_type,menu_work_id,
+                          input_sha256,job_kind FROM public.content_generation_job WHERE job_id=%s
+                   RETURNING source_id,candidate_url,duplicate_of_job_id""", (uuid4(), owner),
+            ).fetchone()
+            self.assertEqual(second, {"source_id": "other_official", "candidate_url": base + "?id=8",
+                                      "duplicate_of_job_id": None})
 
 
 if __name__ == "__main__":

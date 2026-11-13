@@ -9,9 +9,14 @@ from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsp
 
 CATALOG_ROOT = Path("/app/anime-catalog")
 _TITLE_COLUMNS = ("title_ko", "title_native", "title_romaji", "title_english")
-_ARTICLE_PARAMETERS = {"id", "idx", "no", "p", "article_id", "articleid", "news_id", "newsid", "post_id", "postid"}
-_LOCALE_PARAMETERS = {"lang", "locale"}
-_TRACKING_PARAMETERS = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id", "fbclid", "gclid"}
+_ARTICLE_PARAMETERS = {
+    "id", "idx", "no", "p", "article_id", "articleid", "news_id", "newsid", "post_id", "postid",
+    "slug", "story", "episode_id", "episodeid",
+}
+_PRIVATE_QUERY_WORDS = {
+    "auth", "authorization", "bearer", "cookie", "credential", "credentials", "jwt", "key", "oauth",
+    "passwd", "password", "pwd", "secret", "session", "sid", "sig", "signature", "token",
+}
 _NONPUBLIC_SUFFIXES = {"example", "invalid", "test", "local", "localhost", "internal", "onion", "arpa"}
 
 
@@ -21,11 +26,20 @@ class AnimeInputError(ValueError):
         super().__init__(code)
 
 
-def canonical_anime_url(value: str) -> str:
-    """Normalize the public URL syntax used for job identity. This does not resolve DNS."""
-    if (not isinstance(value, str) or not 1 <= len(value) <= 2048 or "#" in value or "\\" in value
+def _private_query_key(key: str) -> bool:
+    words = re.split(r"[\W_]+", re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key).lower())
+    compact = "".join(words)
+    return (not _PRIVATE_QUERY_WORDS.isdisjoint(words)
+            or compact.startswith(("xamz", "xgoog"))
+            or compact.endswith(("token", "secret", "password", "signature", "credential", "sessionid",
+                                 "apikey", "accesskey", "accesskeyid", "privatekey")))
+
+
+def _anime_urls(value: str) -> tuple[str, str]:
+    """Return the article identity and the original public request spelling, without network I/O."""
+    if (not isinstance(value, str) or not 1 <= len(value) <= 2048 or "\\" in value
             or any(not char.isprintable() or char.isspace() for char in value)
-            or re.search(r"%(?![a-fA-F0-9]{2})", value)):
+            or re.search(r"%(?![a-fA-F0-9]{2})", value.partition("#")[0])):
         raise AnimeInputError("invalid_source_url")
     try:
         parsed = urlsplit(value)
@@ -58,23 +72,39 @@ def canonical_anime_url(value: str) -> str:
     except (UnicodeError, ValueError):
         raise AnimeInputError("invalid_source_url") from None
 
-    # Only public article identifiers and locale selectors belong in a submitted URL.
-    # Tracking parameters do not identify the article. Other parameters can carry credentials.
     kept = []
+    raw_fields = []
     seen = set()
-    for key, item in pairs:
+    for raw_field, (key, item) in zip(parsed.query.split("&"), pairs):
         lowered = key.lower()
-        if lowered in _TRACKING_PARAMETERS:
+        if lowered.startswith("utm_") or lowered in {"fbclid", "gclid"}:
             continue
-        if (lowered not in _ARTICLE_PARAMETERS | _LOCALE_PARAMETERS or lowered in seen
-                or not re.fullmatch(r"[\w.~-]{1,160}", item)):
+        if (not re.fullmatch(r"[\w.~-]{1,80}", key) or _private_query_key(key) or lowered in seen
+                or not re.fullmatch(r"[\w.,+~ -]{0,160}", item)):
             raise AnimeInputError("invalid_source_query")
         seen.add(lowered)
         kept.append((key, item))
-    result = urlunsplit(("https", host, "/".join(clean_segments), urlencode(sorted(kept)), ""))
-    if len(result) > 2048:
+        raw_fields.append(raw_field)
+    path = "/".join(clean_segments).rstrip("/") or "/"
+    canonical = urlunsplit(("https", host, path, urlencode(sorted(kept)), ""))
+    stored = value.partition("#")[0]
+    if len(raw_fields) != len(pairs):
+        stored = stored.partition("?")[0]
+        if raw_fields:
+            stored += "?" + "&".join(raw_fields)
+    if not parsed.path and "?" not in stored:
+        stored += "/"
+    if max(len(canonical), len(stored)) > 2048:
         raise AnimeInputError("invalid_source_url")
-    return result
+    return canonical, stored
+
+
+def canonical_anime_url(value: str) -> str:
+    return _anime_urls(value)[0]
+
+
+def source_url_for_storage(value: str) -> str:
+    return _anime_urls(value)[1]
 
 
 def _load_source(source_id: str, content_type: str) -> tuple[dict, list[dict]]:
@@ -100,27 +130,24 @@ def _load_source(source_id: str, content_type: str) -> tuple[dict, list[dict]]:
     return source, sources
 
 
-def _article_directory(path: str) -> str:
-    listing = path.rstrip("/")
+def _article_directory(path: str, listing: str) -> str:
     if not path.endswith("/") and PurePosixPath(listing).suffix:
         return listing.rsplit("/", 1)[0]
     return listing
 
 
-def _validate_article_scope(canonical: str, source: dict, sources: list[dict]) -> None:
+def _is_registered_article(canonical: str, source: dict, sources: list[dict]) -> bool:
+    """Reject foreign paths and assets; an in-scope listing alone is not an article."""
     article = urlsplit(canonical)
     registered = urlsplit(canonical_anime_url(source["url"]))
     if article.hostname != registered.hostname:
         raise AnimeInputError("source_host_mismatch")
     listing = registered.path.rstrip("/")
     # A registry endpoint can be a listing file (e.g. /news/index.html).
-    directory = _article_directory(registered.path)
+    directory = _article_directory(urlsplit(source["url"]).path, listing)
     path = article.path.rstrip("/")
-    identifies_article = any(key.lower() in _ARTICLE_PARAMETERS for key, _ in parse_qsl(article.query))
-    if path in {directory, listing, directory + "/index.html", directory + "/index.htm"}:
-        if not identifies_article:
-            raise AnimeInputError("source_path_mismatch")
-    elif not path.startswith(directory + "/"):
+    is_listing = path in {directory, listing, directory + "/index.html", directory + "/index.htm"}
+    if not is_listing and not path.startswith(directory + "/"):
         raise AnimeInputError("source_path_mismatch")
     # An umbrella publisher endpoint must not authorize another registered series' pages.
     for other in sources:
@@ -129,7 +156,7 @@ def _validate_article_scope(canonical: str, source: dict, sources: list[dict]) -
         peer = urlsplit(other["url"])
         if peer.hostname != article.hostname:
             continue
-        peer_directory = _article_directory(peer.path)
+        peer_directory = _article_directory(peer.path, peer.path.rstrip("/"))
         if len(peer_directory) >= len(directory) and (path == peer_directory or path.startswith(peer_directory + "/")):
             raise AnimeInputError("source_path_mismatch")
     suffix = PurePosixPath(path).suffix.lower()
@@ -138,6 +165,8 @@ def _validate_article_scope(canonical: str, source: dict, sources: list[dict]) -
         allowed_suffixes.add(".json")
     if suffix not in allowed_suffixes:
         raise AnimeInputError("source_path_mismatch")
+    return not is_listing or any(key.lower() in _ARTICLE_PARAMETERS and item.strip()
+                                 for key, item in parse_qsl(article.query))
 
 
 def _normalized_title(text: str) -> str:
@@ -171,7 +200,8 @@ def _validate_source_work(source: dict, menu_work_id: int) -> None:
         raise AnimeInputError("source_work_mismatch")
 
 
-def validate_anime_source(source_id: str, source_url: str, content_type: str, menu_work_id: int) -> str:
+def validate_anime_source(source_id: str, source_url: str, content_type: str, menu_work_id: int,
+                          canonical_url: str | None = None) -> str:
     """Validate current source, article scope, type and exact registered work. Return canonical URL."""
     if not isinstance(source_id, str) or not re.fullmatch(r"[a-z0-9_]{1,100}", source_id):
         raise AnimeInputError("invalid_source_id")
@@ -182,7 +212,16 @@ def validate_anime_source(source_id: str, source_url: str, content_type: str, me
     canonical = canonical_anime_url(source_url)
     try:
         source, sources = _load_source(source_id, content_type)
-        _validate_article_scope(canonical, source, sources)
+        is_article = _is_registered_article(canonical, source, sources)
+        if canonical_url is not None:
+            try:
+                candidate = canonical_anime_url(canonical_url)
+                if _is_registered_article(candidate, source, sources):
+                    canonical, is_article = candidate, True
+            except AnimeInputError:
+                pass  # A publisher hint is optional; the request must still identify an article.
+        if not is_article:
+            raise AnimeInputError("source_path_mismatch")
         _validate_source_work(source, menu_work_id)
     except AnimeInputError:
         raise
