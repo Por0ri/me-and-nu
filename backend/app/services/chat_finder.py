@@ -4,7 +4,8 @@
 모아 LLM 에 후보로 넘긴다. 어떤 글을 보여 줄지 고르고 소개하는 일은 chat_service 가 LLM 에 맡긴다.
 
 조건 (서로 다른 조건은 모두 맞아야 하고, 같은 조건 안에서는 하나만 맞아도 된다)
-- 작품: 우리 작품 목록(entity)의 이름 · 별칭이 질문에 있을 때. 세 글자 이상 낱말은 이름 일부로도 찾는다
+- 작품: 우리 작품 목록(entity)의 이름 · 별칭이 질문에 있을 때. 세 글자 이상 낱말은 이름 일부로도 찾는다.
+  맞는 이름이 하나도 없으면 한 글자만 다른 네 글자 이상 한글 이름으로 고쳐 읽는다 (사카모테 데이즈 → 사카모토 데이즈)
 - 장르 · 소재: 온보딩 칩(preference_tag)의 한국어 이름과 몇 가지 다른 말 (로코 → 로맨스 + 코미디).
   칩이 둘 이상이면 모두 가진 작품의 글을 먼저 찾고, 없으면 하나라도 가진 작품의 글
 - 글 종류: 에이전트 글 종류 (팝업 · 전시 → 행사, OST → 음악 …) · 카드뉴스
@@ -14,6 +15,7 @@
 줄 세우기는 홈 검색과 같다: 오늘(없으면 어제) 추천 순서, 그다음 최신순.
 '그만볼래요' 한 글과 보고 있는 글은 빼고, "더 보여줘" 처럼 조건 없이 이어 물으면 이미 보여 준 글도 뺀다.
 딱 맞는 글이 없으면 글 종류 조건만 빼고 한 번 더 찾는다 (LLM 이 "행사 글은 없고 대신 …" 이라고 말할 수 있게).
+그래도 물은 작품의 글이 없으면 장르 · 소재 칩이 겹치는 작품의 글을 대신 넘긴다 ("나루토 글은 아직 없어 …").
 """
 
 import re
@@ -43,6 +45,7 @@ SIMILAR_WORKS = 20
 MIN_SHARED_TAGS = 2  # 비슷한 작품: 기준 작품과 겹쳐야 하는 장르 · 소재 칩 수
 MAX_NAME_PART_WORKS = 3  # 이름 일부가 이보다 많은 작품에 맞으면 흔한 낱말로 보고 버린다
 MIN_NAME_PART_LENGTH = 3
+MIN_TYPO_NAME_LENGTH = 4  # 한 글자 오타로 보고 맞춰 볼 이름의 최소 글자 수 (한글 이름만)
 SUMMARY_LIMIT = 160
 WORKS_TTL_SECONDS = 300  # 작품 이름 목록은 5분 동안 다시 읽지 않는다
 
@@ -89,6 +92,7 @@ _SIMILAR = re.compile(r"비슷|유사|같은\s*(느낌|분위기|장르|류)|이
 # '음악 애니' · '음악 장르' 는 장르(음악 칩), 그냥 '음악' 은 글 종류(음악 글)
 _GENRE_AFTER = r"(?=\s*(애니|작품|장르|만화))"
 _NOT_GENRE_AFTER = r"(?!\s*(애니|작품|장르|만화))"
+_HANGUL = re.compile(r"[가-힣]+")
 # 작품 이름으로 보지 않는 낱말 (글 종류 · 장르 다른 말 · 찾기 말)
 _RESERVED = frozenset(
     {dictionary.name_key(word) for words in TYPE_WORDS.values() for word in words}
@@ -120,9 +124,12 @@ class Found:
     labels: dict[int, str] = field(default_factory=dict)  # 글 번호 → '같은 작품' · '비슷한 작품'
     relaxed: bool = False  # 딱 맞는 글이 없어서 글 종류 조건을 빼고 찾았다
     base_missing: bool = False  # 비슷한 글을 찾는데 기준 작품을 못 정했다 (LLM 이 되묻는다)
+    substituted: bool = False  # 물은 작품의 글이 없어서 장르 · 소재가 비슷한 작품 글을 대신 찾았다
 
     def prompt_block(self) -> str:
         head = "찾은 조건: " + " / ".join(self.conditions)
+        if self.substituted:
+            head += " (이 작품 글이 아직 없어서 장르 · 소재가 비슷한 작품 글을 찾았다)"
         if self.relaxed:
             head += " (딱 맞는 글이 없어서 글 종류 조건은 빼고 찾았다)"
         lines = [head]
@@ -148,6 +155,7 @@ class _Ask:
     card_news: bool = False
     mine: str | None = None  # viewed · liked · saved
     similar: bool = False
+    corrections: tuple[tuple[str, str], ...] = ()  # (질문에 쓴 이름, 고쳐 읽은 작품 이름)
 
     @property
     def has_conditions(self) -> bool:
@@ -159,6 +167,7 @@ class _WorkIndex:
     names: dict[int, str]  # 작품 번호 → 이름
     keys: dict[str, set[int]]  # 비교용 이름 · 별칭 → 작품 번호들
     loaded_at: float
+    masks: dict[str, set[str]] | None = None  # 한 글자를 가린 한글 이름 → 이름들 (오타 찾기, 처음 쓸 때 만든다)
 
 
 _work_indexes: dict[int, _WorkIndex] = {}
@@ -194,10 +203,55 @@ async def _work_index(db: AsyncSession, topic_id: int) -> _WorkIndex:
     return index
 
 
+def _typo_masks(index: _WorkIndex) -> dict[str, set[str]]:
+    """한 글자를 '*' 로 가린 한글 이름 → 원래 이름들. 처음 오타를 찾을 때 한 번 만든다."""
+    if index.masks is None:
+        masks: dict[str, set[str]] = {}
+        for key in index.keys:
+            if len(key) >= MIN_TYPO_NAME_LENGTH and _HANGUL.fullmatch(key):
+                for position in range(len(key)):
+                    masks.setdefault(key[:position] + "*" + key[position + 1:], set()).add(key)
+        index.masks = masks
+    return index.masks
+
+
+def _typo_hits(index: _WorkIndex, text: str, words: list[re.Match],
+               reserved: frozenset[str]) -> list[tuple[int, int, int, int, set[int]]]:
+    """맞는 이름이 하나도 없을 때만: 한 글자만 다른 한글 이름 ("사카모테 데이즈" → "사카모토 데이즈").
+
+    질문 낱말(찾기 말 · 장르 · 글 종류 · '애니' 같은 흔한 말)이 섞인 묶음은 이름으로 보지 않고,
+    맞는 작품이 너무 많으면 버린다.
+    """
+    masks = _typo_masks(index)
+    # 이 말로 시작하는 낱말은 질문 낱말로 본다 ("팝업이나" · "판타지물" · "애니로")
+    blocked = [word for word in reserved | dictionary.STOP_NAMES if len(word) >= 2]
+
+    def question_word(word: str) -> bool:
+        key = dictionary.name_key(word)
+        return _wants(word) or any(key.startswith(other) for other in blocked)
+
+    hits: list[tuple[int, int, int, int, set[int]]] = []
+    for key, places in dictionary.question_spans(text).items():
+        if len(key) < MIN_TYPO_NAME_LENGTH or not _HANGUL.fullmatch(key) or key in index.keys:
+            continue
+        names = set().union(*(masks.get(key[:position] + "*" + key[position + 1:], set())
+                              for position in range(len(key))))
+        ids = set().union(*(index.keys[name] for name in names)) if names else set()
+        if not 0 < len(ids) <= MAX_NAME_PART_WORKS:
+            continue
+        for start, end in places:
+            if not any(question_word(word.group()) for word in words[start:end]):
+                hits.append((end - start, len(key), start, end, ids))
+    return hits
+
+
 def _match_works(
     index: _WorkIndex, text: str, reserved: frozenset[str],
-) -> tuple[tuple[int, ...], list[tuple[int, int]]]:
-    """질문 속 작품 → (작품 번호들, 이름이 차지한 글자 범위들). 긴 이름이 먼저, 겹치는 짧은 이름은 버린다."""
+) -> tuple[tuple[int, ...], list[tuple[int, int]], tuple[tuple[str, str], ...]]:
+    """질문 속 작품 → (작품 번호들, 이름이 차지한 글자 범위들, 오타를 고쳐 읽은 이름들).
+
+    긴 이름이 먼저, 겹치는 짧은 이름은 버린다.
+    """
     hits: list[tuple[int, int, int, int, set[int]]] = []  # (단어 수, 글자 수, 시작, 끝, 작품들)
     for key, places in dictionary.question_spans(text).items():
         if key in reserved:
@@ -211,6 +265,10 @@ def _match_works(
                 ids = part if 0 < len(part) <= MAX_NAME_PART_WORKS else None
         for start, end in places if ids else ():
             hits.append((end - start, len(key), start, end, ids))
+    words = list(dictionary._WORD.finditer(text))  # question_spans 와 같은 단어 자르기
+    typo = not hits
+    if typo:
+        hits = _typo_hits(index, text, words, reserved)
     hits.sort(key=lambda hit: (-hit[0], -hit[1], hit[2]))
     taken: list[tuple[int, int, set[int]]] = []
     for _, _, start, end, ids in hits:
@@ -220,8 +278,12 @@ def _match_works(
     works: list[int] = []
     for _, _, ids in taken:
         works.extend(entity_id for entity_id in sorted(ids) if entity_id not in works)
-    words = list(dictionary._WORD.finditer(text))  # question_spans 와 같은 단어 자르기
-    return tuple(works), [(words[start].start(), words[end - 1].end()) for start, end, _ in taken]
+    spans = [(words[start].start(), words[end - 1].end()) for start, end, _ in taken]
+    corrections = tuple(
+        (text[span_start:span_end], _names(index, sorted(ids)))
+        for (span_start, span_end), (_, _, ids) in zip(spans, taken)
+    ) if typo else ()
+    return tuple(works), spans, corrections
 
 
 def _match_tags(text: str, tags: list, free) -> tuple:
@@ -251,7 +313,7 @@ def _wants(text: str) -> bool:
 def _read(text: str, index: _WorkIndex, tags: list) -> _Ask:
     """소문자로 바꾼 질문에서 찾기 조건을 읽는다. 작품 이름 자리의 낱말은 장르 · 글 종류로 보지 않는다."""
     reserved = _RESERVED | {dictionary.name_key(tag.display_name) for tag in tags}
-    works, taken = _match_works(index, text, reserved)
+    works, taken, corrections = _match_works(index, text, reserved)
 
     def free(match: re.Match) -> bool:
         start, end = match.span()
@@ -267,6 +329,7 @@ def _read(text: str, index: _WorkIndex, tags: list) -> _Ask:
         card_news=bool(_CARD_NEWS.search(text)),
         mine=mine,
         similar=similar,
+        corrections=corrections,
     )
 
 
@@ -413,9 +476,13 @@ async def _collect(db: AsyncSession, ask: _Ask, index: _WorkIndex, *, user_id: i
         if not base:
             found.base_missing = True  # 무엇과 비슷한 글인지 모른다 → LLM 이 되묻는다
             return found
-    elif ask.works:
-        filters.append(_linked_to(list(ask.works)))
+    work_filter = None
+    if ask.works and not base:
+        work_filter = _linked_to(list(ask.works))
+        filters.append(work_filter)
         found.conditions.append("작품: " + _names(index, ask.works))
+    for typed, name in ask.corrections:
+        found.conditions.append(f"이름 고쳐 읽음: 질문의 '{typed}' → {name}")
     if ask.tags:
         found.conditions.append("장르 · 소재: " + " · ".join(tag.display_name for tag in ask.tags))
     if ask.types:
@@ -451,6 +518,10 @@ async def _collect(db: AsyncSession, ask: _Ask, index: _WorkIndex, *, user_id: i
         if ids:
             found.relaxed = bool(ask.types) and not with_types
             break
+    if not ids and work_filter is not None and not ask.mine:
+        # 물은 작품의 글이 없다: 장르 · 소재 칩이 겹치는 작품의 글을 대신 넘긴다 ("나루토 글은 아직 없어 …")
+        ids = await _substitute_ids(db, topic_id, list(ask.works), [f for f in filters if f is not work_filter],
+                                    ask, tag_ids, exclude, ordered, found)
 
     chosen = ids[: MAX_MINE if ask.mine else MAX_CANDIDATES]
     rows = await recommendation_repo.contents_by_id(db, chosen, topic_id)
@@ -467,10 +538,36 @@ async def _similar_ids(db: AsyncSession, topic_id: int, base: list[int], extra: 
     same = ordered(await _search(db, topic_id, [*extra, _linked_to(base)], exclude))[:MAX_SAME_WORK]
     works = await _similar_works(db, base)
     others = ordered(await _search(db, topic_id, [*extra, _linked_to(works)], exclude | set(same))) if works else []
-    if others:
-        closeness = {entity_id: position for position, entity_id in enumerate(works)}
-        main = await recommendation_repo.main_works(db, others)
-        # 안정 정렬: 같은 작품 안에서는 추천 순서 그대로
-        others.sort(key=lambda content_id: closeness.get(main.get(content_id), len(closeness)))
+    others = await _by_closeness(db, others, works)
     found.labels = {content_id: "같은 작품" for content_id in same} | {content_id: "비슷한 작품" for content_id in others}
     return same + others
+
+
+async def _by_closeness(db: AsyncSession, ids: list[int], works: list[int]) -> list[int]:
+    """비슷한 작품 글을 많이 겹치는 작품 먼저. 안정 정렬이라 같은 작품 안에서는 추천 순서 그대로."""
+    if not ids:
+        return ids
+    closeness = {entity_id: position for position, entity_id in enumerate(works)}
+    main = await recommendation_repo.main_works(db, ids)
+    return sorted(ids, key=lambda content_id: closeness.get(main.get(content_id), len(closeness)))
+
+
+async def _substitute_ids(db: AsyncSession, topic_id: int, asked: list[int], filters: list, ask: _Ask,
+                          tag_ids: list[int], exclude: set[int], ordered, found: Found) -> list[int]:
+    """물은 작품 대신 칩이 겹치는 작품의 글. 글 종류 조건은 먼저 지키고, 없으면 빼고 한 번 더."""
+    works = await _similar_works(db, asked)
+    if not works:
+        return []
+    for with_types in ((True, False) if ask.types else (True,)):
+        extra = [*filters, _linked_to(works)]
+        if tag_ids:
+            extra.append(_tagged(tag_ids, every=False))
+        if with_types and ask.types:
+            extra.append(Content.content_type.in_(ask.types))
+        ids = await _by_closeness(db, ordered(await _search(db, topic_id, extra, exclude)), works)
+        if ids:
+            found.substituted = True
+            found.relaxed = bool(ask.types) and not with_types
+            found.labels = {content_id: "비슷한 작품" for content_id in ids}
+            return ids
+    return []

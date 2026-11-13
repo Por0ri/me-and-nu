@@ -17,7 +17,7 @@ from app.services import chat_finder
 from test_fe_integration_seed import AsyncAdapter
 
 KST = timezone(timedelta(hours=9))
-NARUTO, FRIEREN, BOCCHI, MADOKA, DUNGEON = 901, 902, 903, 904, 905
+NARUTO, FRIEREN, BOCCHI, MADOKA, DUNGEON, ONEPIECE = 901, 902, 903, 904, 905, 906
 TAGS = {1: ("genre", "fantasy", "판타지"), 2: ("genre", "adventure", "모험"), 3: ("genre", "music", "음악"),
         4: ("theme", "magic", "마법"), 5: ("genre", "comedy", "코미디")}
 
@@ -42,7 +42,8 @@ def _tags():
 def _read(question):
     ask = chat_finder._read(question.lower(), _index(), _tags())
     return SimpleNamespace(wants=ask.wants, works=ask.works, tags=[tag.display_name for tag in ask.tags],
-                           types=ask.types, card_news=ask.card_news, mine=ask.mine, similar=ask.similar)
+                           types=ask.types, card_news=ask.card_news, mine=ask.mine, similar=ask.similar,
+                           corrections=ask.corrections)
 
 
 def test_design_chips_become_conditions():
@@ -75,6 +76,31 @@ def test_part_of_a_name_must_point_to_few_works():
     assert chat_finder._read("마왕 글 보여줘", index, _tags()).works == ()  # 두 글자는 이름 일부로 찾지 않는다
 
 
+def test_one_letter_typo_in_a_long_korean_name_is_read_as_that_work():
+    index = _index()
+    index.names[1100] = "사카모토 데이즈"
+    index.keys["사카모토데이즈"] = {1100}
+    index.keys.update({f"스쿨{n}데이즈": {1101 + n} for n in range(3)})  # '데이즈' 하나로는 작품이 너무 많다
+    ask = chat_finder._read("사카모테 데이즈 관련 콘텐츠 보여줘", index, _tags())
+    assert (ask.works, ask.corrections) == ((1100,), (("사카모테 데이즈", "사카모토 데이즈"),))
+    bocchi = _read("봇치 더 락 관련 글 보여줘")
+    assert (bocchi.works, bocchi.corrections) == ((BOCCHI,), (("봇치 더 락", "봇치 더 록!"),))
+    # 맞는 이름이 있으면 고쳐 읽지 않고, 두 글자가 다르거나 세 글자 이하면 이름으로 보지 않는다
+    assert (_read("나루토 글 보여줘").works, _read("나루토 글 보여줘").corrections) == ((NARUTO,), ())
+    assert chat_finder._read("사카모테 대이즈 글 보여줘", index, _tags()).works == ()
+    assert _read("나르토 글 보여줘").works == ()
+
+
+def test_question_words_are_never_read_as_a_misspelled_name():
+    # 질문 낱말 묶음과 한 글자만 다른 작품 이름이 있어도 고쳐 읽지 않는다
+    index = _index()
+    near = {1200: "판타지애나", 1201: "애니추천해요", 1202: "팝업이다", 1203: "요즘볼만해"}
+    index.names.update(near)
+    index.keys.update({name: {entity_id} for entity_id, name in near.items()})
+    for question in ("판타지 애니 찾아줘", "애니 추천해줘", "팝업이나 전시 보여줘", "요즘 볼만한 콘텐츠 추천해줘"):
+        assert chat_finder._read(question.lower(), index, _tags()).works == (), question
+
+
 def test_my_records_and_similar_words():
     assert _read("예전에 본 콘텐츠 중에 고양이 나오는 거 찾아줘").mine == "viewed"
     assert _read("일본 콘텐츠 보여줘").mine is None  # '일본' 의 '본' 은 본 글이 아니다
@@ -100,6 +126,8 @@ def test_prompt_block_lists_posts_with_type_work_and_day():
         "성수에서 열려"
     )
     assert chat_finder.Found(conditions=["조건 없음: 오늘 추천 순서"]).prompt_block().endswith("(조건에 맞는 글 없음)")
+    substituted = chat_finder.Found(conditions=["작품: 원피스"], substituted=True).prompt_block()
+    assert substituted.startswith("찾은 조건: 작품: 원피스 (이 작품 글이 아직 없어서 장르 · 소재가 비슷한 작품 글을 찾았다)")
 
 
 # ---------- 조건에 맞는 글 모으기 (SQLite) ----------
@@ -111,7 +139,8 @@ POSTS = {  # 글 번호: (작품, 글 종류)
     505: (DUNGEON, "guide"), 506: (MADOKA, "news"), 507: (BOCCHI, "music"), 508: (None, "event"),
     509: (FRIEREN, "news"),
 }
-WORK_TAGS = {NARUTO: (2, 5), FRIEREN: (1, 2, 4), BOCCHI: (3, 5), MADOKA: (1, 4), DUNGEON: (1, 2, 5)}
+WORK_TAGS = {NARUTO: (2, 5), FRIEREN: (1, 2, 4), BOCCHI: (3, 5), MADOKA: (1, 4), DUNGEON: (1, 2, 5),
+             ONEPIECE: (2, 5)}  # 원피스는 글이 없다
 
 
 @pytest.fixture
@@ -149,7 +178,7 @@ def engine():
             {"entity_id": entity_id, "topic_id": 1, "name": name, "aliases": aliases}
             for entity_id, name, aliases in [(NARUTO, "나루토", []), (FRIEREN, "장송의 프리렌", ["프리렌"]),
                                              (BOCCHI, "봇치 더 록!", []), (MADOKA, "마법소녀 마도카☆마기카", []),
-                                             (DUNGEON, "던전밥", [])]])
+                                             (DUNGEON, "던전밥", []), (ONEPIECE, "원피스", [])]])
         connection.execute(PreferenceTag.__table__.insert(), [
             {"tag_id": tag_id, "topic_id": 1, "kind": kind, "code": code, "display_name": name, "sort_order": tag_id,
              "is_active": True} for tag_id, (kind, code, name) in TAGS.items()])
@@ -198,7 +227,8 @@ async def _find(engine, question, *, anchor=None, previous=None, shown=()):
                                        anchor_content_id=anchor, question=question, previous=previous, shown=shown)
         return found if found is None else SimpleNamespace(
             ids=[content.content_id for content in found.contents], conditions=found.conditions,
-            relaxed=found.relaxed, labels=found.labels, works=found.work_names, base_missing=found.base_missing)
+            relaxed=found.relaxed, labels=found.labels, works=found.work_names, base_missing=found.base_missing,
+            substituted=found.substituted)
 
 
 @pytest.mark.asyncio
@@ -264,6 +294,25 @@ async def test_no_conditions_on_home_use_today_rank(engine):
     found = await _find(engine, "요즘 볼만한 거 추천해줘")
     assert found.ids == [504, 501, 507, 508, 506, 505, 503, 502]
     assert found.conditions == ["조건 없음: 오늘 추천 순서"]
+
+
+@pytest.mark.asyncio
+async def test_misspelled_work_is_searched_and_the_reading_is_passed_on(engine):
+    found = await _find(engine, "봇치 더 락 관련 글 보여줘")
+    assert found.ids == [507]
+    assert found.conditions == ["작품: 봇치 더 록!", "이름 고쳐 읽음: 질문의 '봇치 더 락' → 봇치 더 록!"]
+
+
+@pytest.mark.asyncio
+async def test_work_without_posts_gets_posts_of_works_sharing_chips(engine):
+    # 원피스(모험 · 코미디) 글은 없다 → 칩 2개가 겹치는 나루토 · 던전밥 글. 나루토 안에서는 추천 순서 그대로
+    found = await _find(engine, "원피스 관련 콘텐츠 보여줘")
+    assert (found.ids, found.substituted, found.conditions) == ([501, 502, 505], True, ["작품: 원피스"])
+    assert set(found.labels.values()) == {"비슷한 작품"}
+    # 글 종류도 물었으면 그 종류를 먼저 지키고
+    assert (await _find(engine, "원피스 행사 보여줘")).ids == [501]
+    # 작품 글이 있으면 대신 찾지 않는다
+    assert (await _find(engine, "나루토 굿즈 보여줘")).substituted is False
 
 
 @pytest.mark.asyncio
