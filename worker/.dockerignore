@@ -1,0 +1,12 @@
+*
+!requirements.txt
+!Dockerfile
+!Dockerfile.generation
+!flowerconfig.py
+!setup_local.py
+!menu_worker/
+!menu_worker/*.py
+!menu_worker/migrations/
+!menu_worker/migrations/*.sql
+!tests/
+!tests/*.py
