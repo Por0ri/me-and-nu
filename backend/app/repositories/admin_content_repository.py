@@ -1,10 +1,10 @@
 """Unrestricted operational reads, for a future server-authorized admin boundary.
 
-Do not wire these into public/consumer routes. Queue membership and data scope
-are not decided: omitted filters deliberately mean all stored Content rows.
+Do not wire these into public/consumer routes. The review mode includes only
+needs_review Content rows; the default still reads all stored Content rows.
 """
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Content
@@ -18,6 +18,15 @@ _ITEM_COLUMNS = (
 
 async def list_contents(db: AsyncSession, query: AdminContentQuery):
     conditions = []
+    order = [Content.created_at.desc(), Content.content_id.desc()]
+    if query.mode == "review":
+        conditions.append(Content.judgment_status == "needs_review")
+        # Sort the entire result before pagination, including inconsistent states.
+        order.insert(0, case(
+            (Content.status == "active", 0),
+            (Content.status == "pending_review", 1),
+            else_=2,
+        ))
     if query.q is not None:
         # Treat SQL wildcard characters as literal title text, using bind params.
         conditions.append(Content.title.icontains(query.q, autoescape=True))
@@ -28,7 +37,7 @@ async def list_contents(db: AsyncSession, query: AdminContentQuery):
     total = await db.scalar(select(func.count()).select_from(Content).where(*conditions))
     result = await db.execute(
         select(*_ITEM_COLUMNS).where(*conditions)
-        .order_by(Content.created_at.desc(), Content.content_id.desc())
+        .order_by(*order)
         .offset((query.page - 1) * query.page_size).limit(query.page_size)
     )
     return list(result.mappings().all()), total

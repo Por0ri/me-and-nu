@@ -13,6 +13,7 @@ ContentStatus = Literal["active", "hidden", "pending_review", "deleted"]
 
 
 class AdminContentQuery(CamelModel):
+    mode: Literal["all", "review"] = "all"
     q: str | None = Field(default=None, max_length=300)
     judgment_status: JudgmentStatus | None = None
     status: ContentStatus | None = None

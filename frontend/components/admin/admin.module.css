@@ -26,6 +26,10 @@
 .heading p { color: #71717a; font-size: 14px; line-height: 22px; margin: 4px 0 0; }
 .panel { background: #fff; border: 1px solid #e4e4e7; border-radius: 16px; padding: 24px; box-shadow: 0 2px 4px #27272a03; }
 .panelTitle { font-size: 18px; font-weight: 600; color: #7043b4; padding-bottom: 14px; border-bottom: 1px solid #e7e1f2; margin-bottom: 20px; }
+.modes { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.reviewPriority, .reviewHint { display: block; width: fit-content; margin-top: 8px; font-size: 12px; }
+.reviewPriority { color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 4px; padding: 3px 8px; font-weight: 600; }
+.reviewHint { color: #71717a; }
 .filters { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
 .filters label { display: flex; flex-direction: column; gap: 8px; color: #52525b; font-size: 12px; font-weight: 500; }
 .filters select { height: 44px; border: 1px solid #d4d4d8; border-radius: 6px; background: #fff; color: #27272a; padding: 0 28px 0 12px; min-width: 120px; }

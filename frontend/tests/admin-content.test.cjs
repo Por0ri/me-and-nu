@@ -44,11 +44,11 @@ function runtime(respond = () => page()) {
 
 test('no implicit queue filter; URL preserves independent states and page size', () => {
   const { api } = runtime();
-  assert.deepEqual(plain(api.parseAdminQuery(new URLSearchParams())), { q: '', judgmentStatus: '', status: '', page: 1, pageSize: 20 });
+  assert.deepEqual(plain(api.parseAdminQuery(new URLSearchParams())), { mode: 'all', q: '', judgmentStatus: '', status: '', page: 1, pageSize: 20 });
   const query = api.parseAdminQuery(new URLSearchParams('q=+달빛%25_+&judgmentStatus=needs_review&status=active&page=2&pageSize=50'));
   assert.equal(query.q, '달빛%_');
   assert.deepEqual(plain(api.parseAdminQuery(new URLSearchParams(api.adminQueryString(query)))), plain(query));
-  for (const value of ['page=0', 'page=-1', 'page=1.2', 'page=1000001', 'pageSize=101', 'status=published', 'judgmentStatus=approved', 'q=' + 'a'.repeat(301)]) {
+  for (const value of ['mode=invalid', 'mode=', 'page=0', 'page=-1', 'page=1.2', 'page=1000001', 'pageSize=101', 'status=published', 'judgmentStatus=approved', 'q=' + 'a'.repeat(301)]) {
     assert.throws(() => api.parseAdminQuery(new URLSearchParams(value)));
   }
 });
@@ -64,6 +64,46 @@ test('list uses existing credentialed no-store API client and exact DTO fields',
   assert.equal(parsed.searchParams.get('status'), 'active');
   assert.equal(parsed.searchParams.get('pageSize'), '20');
   assert.equal(init.credentials, 'include'); assert.equal(init.cache, 'no-store'); assert.equal(init.signal, signal);
+});
+
+test('review mode preserves URL filters and requests the server queue without client sorting', async () => {
+  const rows = [item(4), { ...item(99), status: 'pending_review', createdAt: '2026-11-13T00:00:00Z' }];
+  const data = { items: rows, page: 2, pageSize: 2, total: 7 };
+  const env = runtime(() => data);
+  const query = env.api.parseAdminQuery(new URLSearchParams('mode=review&q=+달빛%25_+&judgmentStatus=needs_review&page=2&pageSize=2'));
+  const roundTrip = env.api.parseAdminQuery(new URLSearchParams(env.api.adminQueryString(query)));
+  assert.deepEqual(plain(roundTrip), plain(query));
+  assert.equal(roundTrip.mode, 'review');
+  assert.deepEqual(plain(await env.api.loadAdminContents(query)), data);
+  assert.equal(new URL(env.calls[0].url).search, '?' + env.api.adminQueryString(query));
+  for (const mode of [undefined, 'all']) {
+    assert.equal(new URLSearchParams(env.api.adminQueryString({ ...query, mode })).has('mode'), false);
+  }
+});
+
+test('review mode rejects a successful response containing completed judgments', async () => {
+  for (const judgmentStatus of ['pending', 'confirmed', 'failed']) {
+    const env = runtime(() => page([{ ...item(), judgmentStatus }]));
+    await assert.rejects(env.api.loadAdminContents(env.api.parseAdminQuery(new URLSearchParams('mode=review'))),
+      error => error.code === 'INVALID_ADMIN_RESPONSE');
+    // All mode continues to accept the same stored states.
+    assert.equal((await env.api.loadAdminContents(env.api.parseAdminQuery(new URLSearchParams()))).items[0].judgmentStatus, judgmentStatus);
+  }
+});
+
+test('review screen marks priority without claiming public visibility and carries the full detail query', () => {
+  const env = runtime(); const { ContentsScreen } = env.load('components/admin/contents-screen.tsx');
+  const query = env.api.parseAdminQuery(new URLSearchParams('mode=review&q=달빛&judgmentStatus=needs_review&page=2&pageSize=3'));
+  const rows = [item(2), { ...item(1), status: 'pending_review' }, { ...item(8), status: 'hidden' }];
+  const html = renderToStaticMarkup(React.createElement(ContentsScreen, {
+    query, state: { status: 'ready', data: { items: rows, page: 2, pageSize: 3, total: 9 } }, retry() {}, navigate() {},
+  }));
+  assert.match(html, /aria-pressed="true"[^>]*>검수 대기/);
+  assert.match(html, /우선 확인/); assert.match(html, /일반 비공개 대기/); assert.match(html, /상태 확인 필요/);
+  assert.match(html, /needs_review<\/span>/); assert.match(html, /active<\/span>/);
+  assert.doesNotMatch(html, /공개 중|미리보기 중/);
+  assert.ok(html.includes(`/admin/contents/2?${env.api.adminQueryString(query).replaceAll('&', '&amp;')}`));
+  assert.match(html, /<strong>9<\/strong>/);
 });
 
 test('successful empty result is distinct from API failure, login, permission and disconnected routes', async () => {
