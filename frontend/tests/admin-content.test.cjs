@@ -107,6 +107,58 @@ test('an aborted read suppresses a late 401 event', async () => {
   await assert.rejects(result); assert.equal(unauthorized, 0);
 });
 
+test('source display preserves stored metadata and response order without inventing review values', async () => {
+  const detail = { ...item(), summary: null, body: null, sources: [
+    { url: 'https://example.com/source', title: '원문 제목', publisher: '발행처 이름', role: 'primary', citationOrder: 7 },
+    { url: 'http://example.org/reference', title: '참고 제목', publisher: null, role: 'unrecognized-role', citationOrder: 2 },
+  ] };
+  const env = runtime(() => detail);
+  const { ContentSources } = env.load('components/admin/content-detail-screen.tsx');
+  const data = await env.api.loadAdminContent(2);
+  const html = renderToStaticMarkup(React.createElement(ContentSources, { sources: data.sources }));
+  assert.match(html, /href="https:\/\/example.com\/source" target="_blank" rel="noopener noreferrer">원문 제목<\/a>/);
+  assert.match(html, /URL: https:\/\/example.com\/source/);
+  assert.match(html, /발행처: 발행처 이름/);
+  assert.match(html, /역할: primary · 인용 순서: 7/);
+  assert.match(html, /역할: unrecognized-role · 인용 순서: 2/);
+  assert.ok(html.indexOf('원문 제목') < html.indexOf('참고 제목'));
+  assert.doesNotMatch(html, /<button|<input|<select|검증 완료|승인/);
+  assert.deepEqual(plain(data), detail);
+  assert.equal(env.calls.length, 1);
+});
+
+test('source display handles empty sources, nullable metadata and blank text', () => {
+  const env = runtime(); const { ContentSources } = env.load('components/admin/content-detail-screen.tsx');
+  const render = sources => renderToStaticMarkup(React.createElement(ContentSources, { sources }));
+  assert.equal(render([]), '<p>등록된 출처가 없습니다.</p>');
+  const nullable = render([{ url: 'https://example.com/', title: null, publisher: null, role: 'material', citationOrder: null }]);
+  assert.match(nullable, />https:\/\/example.com\/<\/a>/);
+  assert.match(nullable, /발행처: —/);
+  assert.match(nullable, /역할: material · 인용 순서: —/);
+  assert.doesNotMatch(nullable, /null|undefined/);
+  const blank = render([{ url: ' ', title: ' ', publisher: ' ', role: ' ', citationOrder: null }]);
+  assert.match(blank, /출처 링크를 표시할 수 없습니다/);
+  assert.match(blank, /URL: — \(유효하지 않은 URL\)/);
+  assert.match(blank, /발행처: —/);
+  assert.match(blank, /역할: — · 인용 순서: —/);
+  assert.doesNotMatch(blank, /<a\b/);
+});
+
+test('invalid source URLs stay plain text and every source field is escaped', () => {
+  const env = runtime(); const { ContentSources } = env.load('components/admin/content-detail-screen.tsx');
+  for (const url of ['', 'not a URL', '/relative', 'javascript:alert(1)', 'data:text/html,<script>x</script>',
+    'https://user:password@example.com', 'ftp://example.com/source']) {
+    const html = renderToStaticMarkup(React.createElement(ContentSources, { sources: [
+      { url, title: '<script>title</script>', publisher: '<img src=x onerror=alert(1)>', role: '<b>primary</b>', citationOrder: null },
+    ] }));
+    assert.doesNotMatch(html, /<a\b|<script\b|<img\b|<b>/);
+    assert.match(html, /유효하지 않은 URL/);
+    assert.match(html, /&lt;script&gt;title&lt;\/script&gt;/);
+    assert.match(html, /발행처: &lt;img/);
+    assert.match(html, /역할: &lt;b&gt;primary&lt;\/b&gt;/);
+  }
+});
+
 test('screen separates loading/error/empty and preserves both status values and detail return query', () => {
   const env = runtime(); const { ContentsScreen } = env.load('components/admin/contents-screen.tsx');
   const query = env.api.parseAdminQuery(new URLSearchParams('q=달빛&status=active'));

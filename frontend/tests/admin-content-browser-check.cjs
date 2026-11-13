@@ -22,6 +22,7 @@ async function verify(browser, width) {
     if (!local(url)) { unexpected.push(url.origin); return route.abort(); }
     if (url.pathname === '/favicon.ico') return route.fulfill({ status: 204 });
     if (!url.pathname.startsWith('/api/')) return route.continue();
+    assert.equal(route.request().method(), 'GET', 'Admin reads must not mutate data');
     calls.push(url.pathname + url.search);
     const reply = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {});
     if (url.pathname === '/api/v1/auth/session') return reply({ authenticated, sessionState: authenticated ? 'active' : 'anonymous',
@@ -40,9 +41,10 @@ async function verify(browser, width) {
     }
     if (/^\/api\/v1\/admin\/contents\/\d+$/.test(url.pathname)) {
       if (mode === 'detail-missing') return reply({ code: 'CONTENT_NOT_FOUND' }, 404);
-      return reply({ ...item(Number(url.pathname.split('/').at(-1))), summary: '요약', body: '<script>window.adminInjected = true</script>\n본문 확인', sources: [
-        { url: 'https://example.com/source', title: '참고 출처', publisher: null, role: 'primary', citationOrder: 1 },
+      return reply({ ...item(Number(url.pathname.split('/').at(-1))), summary: '요약', body: '<script>window.adminInjected = true</script>\n본문 확인', sources: mode === 'no-sources' ? [] : [
+        { url: 'https://example.com/source', title: '참고 출처', publisher: '출처 발행처', role: 'primary', citationOrder: 7 },
         { url: 'javascript:alert(1)', title: '잘못된 출처', publisher: null, role: 'material', citationOrder: 2 },
+        { url: 'https://example.org/' + 'a'.repeat(160), title: null, publisher: null, role: 'unrecognized-role', citationOrder: null },
       ] });
     }
     unexpected.push(url.pathname); return route.abort();
@@ -93,6 +95,28 @@ async function verify(browser, width) {
     await page.locator('[data-admin-detail="ready"]').waitFor();
     assert.equal(await page.evaluate(() => window.adminInjected), undefined);
     assert.equal(await page.locator('a[href^="javascript:"]').count(), 0);
+    step = 'source metadata, nullable values and empty sources';
+    const sources = page.locator('[data-admin-detail="ready"] ul > li');
+    assert.equal(await sources.count(), 3);
+    const sourceLink = sources.nth(0).getByRole('link', { name: '참고 출처', exact: true });
+    assert.equal(await sourceLink.getAttribute('href'), 'https://example.com/source');
+    assert.equal(await sourceLink.getAttribute('target'), '_blank');
+    assert.equal(await sourceLink.getAttribute('rel'), 'noopener noreferrer');
+    assert.match(await sources.nth(0).innerText(), /URL: https:\/\/example.com\/source/);
+    assert.match(await sources.nth(0).innerText(), /발행처: 출처 발행처/);
+    assert.match(await sources.nth(0).innerText(), /역할: primary · 인용 순서: 7/);
+    assert.equal(await sources.nth(1).getByRole('link').count(), 0);
+    assert.match(await sources.nth(1).innerText(), /URL: javascript:alert\(1\) \(유효하지 않은 URL\)/);
+    assert.match(await sources.nth(1).innerText(), /역할: material · 인용 순서: 2/);
+    assert.match(await sources.nth(2).innerText(), /발행처: —/);
+    assert.match(await sources.nth(2).innerText(), /역할: unrecognized-role · 인용 순서: —/);
+    assert.equal(await sources.nth(2).getByRole('link').innerText(), 'https://example.org/' + 'a'.repeat(160));
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: path.join(output, `sources-${width}.png`), fullPage: true });
+    mode = 'no-sources'; await page.reload();
+    await page.getByText('등록된 출처가 없습니다.', { exact: true }).waitFor();
+    assert.equal(await sources.count(), 0);
+    mode = 'normal';
     await changeList(() => page.getByRole('link', { name: '← 콘텐츠 목록' }).click(), { page: '2' });
     assert.equal(page.url(), beforeDetail);
     await changeList(() => page.getByLabel('페이지당', { exact: true }).selectOption('50'), { page: '1', pageSize: '50' }, 45);
@@ -122,7 +146,7 @@ async function verify(browser, width) {
     mode = 'detail-missing'; await page.goto(`${base}/admin/contents/999`); await page.locator('[data-admin-detail="not-found"]').waitFor();
     await page.goto(`${base}/admin/contents?page=0`); await page.getByRole('link', { name: '조건 초기화' }).waitFor();
     assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
-    results.push({ width, passed: true, assets, checks: ['loading', 'search', 'independent filters', 'page/size', 'detail/return', 'empty', 'error/retry', '401/403', 'unregistered API', 'anonymous', 'late response', '404', 'invalid query', 'safe text/links'] });
+    results.push({ width, passed: true, assets, checks: ['loading', 'search', 'independent filters', 'page/size', 'detail/return', 'source metadata/order', 'nullable/empty sources', 'source wrapping', 'GET only', 'empty', 'error/retry', '401/403', 'unregistered API', 'anonymous', 'late response', '404', 'invalid query', 'safe text/links'] });
   } catch (error) {
     await page.screenshot({ path: path.join(output, `failure-${width}.png`), fullPage: true });
     throw new Error(`${width}px ${step}: ${error.message}`, { cause: error });
