@@ -32,6 +32,10 @@ def upgrade() -> None:
             ["granted_by_admin_id"], ["admin_account.admin_account_id"], name="fk_admin_account_granted_by_admin_id"
         ),
     )
+    op.create_index(
+        "uq_admin_account_user_id", "admin_account", ["user_id"], unique=True,
+        postgresql_where=sa.text("revoked_at IS NULL"), sqlite_where=sa.text("revoked_at IS NULL"),
+    )
     op.create_table(
         "admin_action_log",
         sa.Column("admin_action_log_id", primary_key_type, autoincrement=True, nullable=False),

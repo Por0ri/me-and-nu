@@ -32,6 +32,7 @@ Foundation 기준: Checking `1823b0444ae2737faad865768e1d6af354ac3309`, 2026-11-
 - `app/api/admin_deps.py`의 `require_admin`을 관리자 라우터 전체에 적용한다. 기존 HttpOnly 쿠키 스키마와 세션 Repository(토큰 해시·만료·회수, PostgreSQL/Redis 선택), 사용자 조회를 재사용한다. 개발용 인증 우회가 있는 `get_optional_auth_context`는 호출하지 않는다. 유효한 실제 active 세션과 active 사용자만 권한 조회 단계에 진입한다.
 - `AdminPermissionProvider.can_read_contents(db, user_id=...)`는 매 요청 현재 서버 권한을 조회해야 한다. 권한 결과를 세션이나 프로세스에 캐시하지 않는다. `True`만 허용하고, 미부여·회수·불명확한 결과는 403으로 거부한다. 기본 Provider는 항상 거부하며 허용 구현은 격리 테스트 내부에만 존재한다.
 - BE가 준비한 마이그레이션 `47c1a8d6b302`는 ERD V1.2의 `admin_account`와 `admin_action_log`를 생성한다. Provider에서 세션의 `user_id`를 `admin_account.user_id`와 연결하고, `revoked_at IS NULL`인 부여 기록 중 콘텐츠 조회가 허용된 `role`을 확인한다. 허용할 역할과 권한 부여·회수 담당은 팀에서 정한다.
+- `uq_admin_account_user_id`는 회원당 활성 권한을 한 건으로 제한한다. 역할을 바꿀 때는 기존 행의 `revoked_at`을 기록하고 새 행을 추가한다. 권한을 회수한 경우에도 부여 이력이 남아 있으므로, 회원 탈퇴 신청은 계정이나 세션을 변경하기 전에 `409 WITHDRAWAL_BLOCKED`를 반환한다.
 - `admin_action_log.admin_account_id`는 조치를 수행한 관리자 권한 행을 참조한다. 콘텐츠 목록·상세 GET까지 기록할지는 팀에서 정한다. 현재 기본 앱의 라우터 등록과 실제 로그 기록은 후속 작업이다.
 - 등록된 격리 앱의 응답: 비로그인/유효하지 않은 세션 401 `AUTH_REQUIRED`, 비관리자/권한 회수 403 `ADMIN_REQUIRED`, 인증·권한 검증 장애 503, 잘못된 query/path 422, 없는 콘텐츠 404 `CONTENT_NOT_FOUND`, 조회 장애 500. 권한 검사 전에 콘텐츠 Service를 호출하지 않으며 실패 응답에 데이터나 내부 오류 원문을 포함하지 않는다. 기존 공통 처리로 응답은 `private, no-store`다.
 - FE 화면·공통 Client·조회 훅은 기존 구현을 그대로 사용한다. 조회 권한 검증 장애 503도 재시도 가능한 오류로 표시하며, 미등록 경로 404의 `조회 연결 준비 중`과 구분한다.

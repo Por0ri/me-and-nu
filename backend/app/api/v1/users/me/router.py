@@ -94,7 +94,14 @@ async def patch_profile(
     description="API-009. 계정을 바로 막고 30일 뒤 삭제를 예약합니다. 데이터는 유예 기간 동안 그대로 둡니다. 지금 세션을 끝내고 쿠키를 지우며, 다른 기기의 세션도 더는 인증되지 않습니다. 유예 안에 같은 소셜 계정으로 로그인하면 복구 대기 세션을 받고 POST /auth/withdrawal-restorations 로 되돌릴 수 있습니다(API-010). 유예가 끝나면 회원과 연결 데이터(관심 분야 · 온보딩 답 · 좋아요 · 저장 · O/X · 행동 기록 · 알림 · 챗봇 대화 · 추천 결과 · 문의)를 지우고, 콘텐츠 신고는 글 검토용으로 남기되 신고자만 비웁니다. mode는 grace만 지원하고 immediate는 422 WITHDRAWAL_MODE_UNSUPPORTED입니다. 명세의 소셜 재인증은 아직 없습니다. 온보딩을 마친 회원만 쓸 수 있고 X-CSRF-Token이 필요합니다.",
     responses={
         **COMMON_ERRORS,
-        409: {"model": ErrorResponse, "description": "크리에이터 채널이 연결된 계정(WITHDRAWAL_BLOCKED)", "content": {"application/json": {"example": {"code": "WITHDRAWAL_BLOCKED", "message": "연결된 크리에이터 채널이 있어 탈퇴할 수 없습니다."}}}},
+        409: {
+            "model": ErrorResponse,
+            "description": "크리에이터 채널이 연결되어 있거나 관리자 권한을 부여받은 이력이 있는 계정(WITHDRAWAL_BLOCKED)",
+            "content": {"application/json": {"examples": {
+                "creator_channel": {"value": {"code": "WITHDRAWAL_BLOCKED", "message": "연결된 크리에이터 채널이 있어 탈퇴할 수 없습니다."}},
+                "admin_history": {"value": {"code": "WITHDRAWAL_BLOCKED", "message": "관리자 권한 이력이 있어 탈퇴할 수 없습니다."}},
+            }}},
+        },
         422: {"model": ErrorResponse, "description": "mode 없음 · 잘못된 값(VALIDATION_ERROR) 또는 지원하지 않는 즉시 삭제(WITHDRAWAL_MODE_UNSUPPORTED)", "content": {"application/json": {"example": {"code": "WITHDRAWAL_MODE_UNSUPPORTED", "message": "즉시 삭제는 지원하지 않습니다. mode=grace 로 요청해 주세요."}}}},
     },
 )

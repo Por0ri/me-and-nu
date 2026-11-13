@@ -88,10 +88,13 @@ async function verify(browser, fixture, width) {
     await button(logoutDialog, '취소').click();
 
     await trigger.click();
-    fixture.state.failNext = { path: profile, method: 'DELETE', status: 409, code: 'WITHDRAWAL_BLOCKED' };
-    await button(dialog, '탈퇴').click();
-    await message(dialog, 'alert', '연결된 크리에이터 채널');
-    assert.equal(fixture.state.phase, 'active');
+    for (const reason of ['연결된 크리에이터 채널이 있어 탈퇴할 수 없습니다.', '관리자 권한 이력이 있어 탈퇴할 수 없습니다.']) {
+      fixture.state.failNext = { path: profile, method: 'DELETE', status: 409, code: 'WITHDRAWAL_BLOCKED', message: reason };
+      await button(dialog, '탈퇴').click();
+      await message(dialog, 'alert', reason);
+      assert.equal(await dialog.getByRole('alert').innerText(), reason);
+      assert.equal(fixture.state.phase, 'active');
+    }
     fixture.state.failNext = { path: profile, method: 'DELETE', status: 503 };
     await button(dialog, '탈퇴').click();
     await message(dialog, 'alert', '탈퇴 신청을 확인하지 못했어요');
@@ -113,7 +116,7 @@ async function verify(browser, fixture, width) {
     if (out) await page.screenshot({ path: path.join(out, `login-${width}.png`), fullPage: true });
     assert.equal(await my().count(), 0);
     assert.deepEqual(writes(profile).map(row => [row.method, row.query.mode, row.csrf]),
-      Array.from({ length: 3 }, () => ['DELETE', 'grace', 'fixture-active-csrf']));
+      Array.from({ length: 4 }, () => ['DELETE', 'grace', 'fixture-active-csrf']));
 
     await button(page, '카카오 로그인').click();
     await page.getByRole('link', { name: 'Mock OAuth callback' }).click();

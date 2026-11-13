@@ -7,12 +7,44 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
+from sqlalchemy.dialects import postgresql
 
 from app.models import AdminAccount, AdminActionLog
 
 
 PARENT = "d7b3e9a1c452"
 REVISION = "47c1a8d6b302"
+
+
+@pytest.mark.parametrize("schema_source", ["migration", "model"])
+def test_only_one_active_grant_per_user_and_revoked_history_is_preserved(schema_source):
+    accounts = AdminAccount.__table__
+    with sa.create_engine("sqlite://").begin() as db:
+        db.exec_driver_sql("PRAGMA foreign_keys = ON")
+        db.exec_driver_sql("CREATE TABLE user_account (user_id BIGINT PRIMARY KEY)")
+        db.exec_driver_sql("INSERT INTO user_account VALUES (7), (8)")
+        if schema_source == "migration":
+            config = Config()
+            config.set_main_option("script_location", "alembic")
+            config.attributes["connection"] = db
+            command.stamp(config, PARENT)
+            command.upgrade(config, REVISION)
+        else:
+            accounts.create(db)
+
+        for role in ("operator", "reviewer"):
+            grant_id = db.scalar(accounts.insert().values(user_id=7, role=role).returning(accounts.c.admin_account_id))
+            with pytest.raises(sa.exc.IntegrityError, match="UNIQUE constraint failed: admin_account.user_id"):
+                db.execute(accounts.insert().values(user_id=7, role="analyst"))
+            db.execute(accounts.update().where(accounts.c.admin_account_id == grant_id).values(revoked_at=sa.func.now()))
+
+        db.execute(accounts.insert().values(user_id=7, role="analyst"))
+        db.execute(accounts.insert().values(user_id=8, role="analyst"))
+        grants = db.execute(
+            sa.select(accounts.c.role, accounts.c.revoked_at.is_(None))
+            .where(accounts.c.user_id == 7).order_by(accounts.c.admin_account_id)
+        ).all()
+        assert grants == [("operator", False), ("reviewer", False), ("analyst", True)]
 
 
 def test_admin_migration_roundtrip_preserves_grants_and_actions():
@@ -71,6 +103,10 @@ def test_admin_migration_emits_postgres_history_guard_and_native_types(monkeypat
     for column in expected_columns:
         assert column in upgrade_sql
     assert "TIMESTAMP WITH TIME ZONE" in upgrade_sql
+    index_sql = "CREATE UNIQUE INDEX uq_admin_account_user_id ON admin_account (user_id) WHERE revoked_at IS NULL"
+    assert index_sql in upgrade_sql
+    active_index = next(index for index in AdminAccount.__table__.indexes if index.name == "uq_admin_account_user_id")
+    assert str(sa.schema.CreateIndex(active_index).compile(dialect=postgresql.dialect())) == index_sql
 
     revision.downgrade()
     sql = output.getvalue()[len(upgrade_sql):]

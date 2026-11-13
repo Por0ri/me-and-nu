@@ -704,6 +704,7 @@ CREATE TABLE user_operation (
 );
 
 -- Indexes (including partial unique indexes).
+CREATE UNIQUE INDEX uq_admin_account_user_id ON admin_account (user_id) WHERE revoked_at IS NULL;
 CREATE INDEX idx_agent_run_requested_by_user_id ON agent_run (requested_by_user_id);
 CREATE INDEX idx_agent_run_topic_status_created_at ON agent_run (topic_id, status, created_at DESC);
 CREATE UNIQUE INDEX uq_agent_run_queue_task_id ON agent_run (queue_task_id) WHERE queue_task_id IS NOT NULL;

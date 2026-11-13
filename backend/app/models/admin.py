@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
-    JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, false, func,
+    JSON, BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, false, func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -25,6 +25,13 @@ class AdminAccount(Base):
     )
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "uq_admin_account_user_id", user_id, unique=True,
+            postgresql_where=revoked_at.is_(None), sqlite_where=revoked_at.is_(None),
+        ),
+    )
 
 
 class AdminActionLog(Base):
