@@ -5,7 +5,7 @@ export const judgmentStatuses = ["pending", "confirmed", "needs_review", "failed
 export const contentStatuses = ["active", "hidden", "pending_review", "deleted"] as const;
 export type JudgmentStatus = typeof judgmentStatuses[number];
 export type ContentStatus = typeof contentStatuses[number];
-export type AdminContentQuery = { q: string; judgmentStatus: JudgmentStatus | ""; status: ContentStatus | ""; page: number; pageSize: number };
+export type AdminContentQuery = { mode?: "all" | "review"; q: string; judgmentStatus: JudgmentStatus | ""; status: ContentStatus | ""; page: number; pageSize: number };
 export type AdminContentItem = {
   contentId: number; title: string; judgmentStatus: JudgmentStatus; status: ContentStatus;
   createdAt: string; publishedAt: string | null;
@@ -19,6 +19,7 @@ export type AdminFailure = { status: "login-required" | "forbidden" | "unavailab
 export type AdminReadState<T> = { status: "loading" } | { status: "ready"; data: T } | AdminFailure;
 
 export function parseAdminQuery(params: Pick<URLSearchParams, "get">): AdminContentQuery {
+  const mode = params.get("mode") ?? "all";
   const q = (params.get("q") ?? "").trim();
   const judgmentStatus = params.get("judgmentStatus") ?? "";
   const status = params.get("status") ?? "";
@@ -28,14 +29,15 @@ export function parseAdminQuery(params: Pick<URLSearchParams, "get">): AdminCont
     if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > max) throw new Error("조회 조건을 확인해 주세요.");
     return Number(value);
   };
-  if (q.length > 300 || (judgmentStatus && !judgmentStatuses.includes(judgmentStatus as JudgmentStatus)) ||
+  if (!["all", "review"].includes(mode) || q.length > 300 || (judgmentStatus && !judgmentStatuses.includes(judgmentStatus as JudgmentStatus)) ||
     (status && !contentStatuses.includes(status as ContentStatus))) throw new Error("조회 조건을 확인해 주세요.");
-  return { q, judgmentStatus: judgmentStatus as AdminContentQuery["judgmentStatus"], status: status as AdminContentQuery["status"],
+  return { mode: mode as AdminContentQuery["mode"], q, judgmentStatus: judgmentStatus as AdminContentQuery["judgmentStatus"], status: status as AdminContentQuery["status"],
     page: number("page", 1, 1_000_000), pageSize: number("pageSize", 20, 100) };
 }
 
 export function adminQueryString(query: AdminContentQuery): string {
   const params = new URLSearchParams();
+  if (query.mode === "review") params.set("mode", "review");
   if (query.q) params.set("q", query.q);
   if (query.judgmentStatus) params.set("judgmentStatus", query.judgmentStatus);
   if (query.status) params.set("status", query.status);
@@ -57,7 +59,8 @@ function isItem(value: unknown): value is AdminContentItem {
 export async function loadAdminContents(query: AdminContentQuery, signal?: AbortSignal): Promise<AdminContentPage> {
   const value = await apiRequest<unknown>(`/api/v1/admin/contents?${adminQueryString(query)}`, { signal });
   if (!record(value) || value.page !== query.page || value.pageSize !== query.pageSize || !integer(value.total, 0) ||
-    !Array.isArray(value.items) || !value.items.every(isItem) || value.items.length > query.pageSize ||
+    !Array.isArray(value.items) || !value.items.every(isItem) ||
+    (query.mode === "review" && value.items.some(item => item.judgmentStatus !== "needs_review")) || value.items.length > query.pageSize ||
     value.items.length > value.total || new Set(value.items.map(item => item.contentId)).size !== value.items.length) invalid();
   return value as AdminContentPage;
 }

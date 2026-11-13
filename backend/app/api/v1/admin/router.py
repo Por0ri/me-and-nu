@@ -33,7 +33,7 @@ async def list_contents(
     query: Annotated[AdminContentQuery, Query()],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AdminContentListResponse:
-    """제목·독립 상태 필터, 페이지 조회. 생성일 내림차순, 동률은 ID 내림차순."""
+    """전체 또는 needs_review 대기함. 대기함은 active, pending_review 순 우선 조회."""
     return await admin_content_service.list_contents(db, query)
 
 

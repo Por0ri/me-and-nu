@@ -3,6 +3,9 @@
 Foundation 기준: Checking `1823b0444ae2737faad865768e1d6af354ac3309`, 2026-11-12.
 권한·HTTP 기반 추가 기준: Checking `eb14ebf20effb8fcf5a4c90e61cd9dcc6a00f5ed`, 2026-11-13.
 
+검수 대기함 추가 기준: Checking `ff4191414e44eb9bde6bfa61f6d9e63d8114134f`, 2026-11-13.
+`mode=review`의 확정된 조회 기준·우선순위·검증 결과는 [검수 대기함 계약](ADMIN_P0_1_REVIEW_INBOX.md)을 따른다. 아래 기본 조회 계약은 `mode` 생략 또는 `mode=all`에 해당한다.
+
 ## 현재 연결 범위
 
 - FE: `/admin` → `/admin/contents` → `/admin/contents/[contentId]`.
