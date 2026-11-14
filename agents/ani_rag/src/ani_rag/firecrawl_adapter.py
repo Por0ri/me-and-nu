@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Sequence
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from ani_rag.adapter import ReadRequest, ReadResult, SearchHit, SearchRequest
 from ani_rag.mcp_transport import DEFAULT_MCP_CONFIG_PATH, StreamableHTTPMCPClient, load_mcp_endpoints
 from ani_rag.models import EvidenceExcerpt
-from ani_rag.image_ingest import kitsu_image_references
+from ani_rag.image_ingest import WebImageSearchHit, kitsu_image_references
+from ani_rag.web_discovery import WebCandidateHit, WebCandidatePage, _validate_candidate_url
 
 
 class MCPToolCallError(RuntimeError):
@@ -45,10 +46,12 @@ class MCPToolCallError(RuntimeError):
 
 
 class FirecrawlMCPAdapter:
-    """Implements bounded host-filtered search and single-page reads."""
+    """Implements source-bound reads and a separate bounded web-candidate search."""
 
     def __init__(self, *, config_path=DEFAULT_MCP_CONFIG_PATH) -> None:
         self.config_path = config_path
+        self._web_discovery_paused = False
+        self._clients: dict[str, StreamableHTTPMCPClient] = {}
 
     async def list_tools(self, mcp_server_alias: str) -> frozenset[str]:
         return await asyncio.to_thread(self._client(mcp_server_alias).list_tools)
@@ -58,6 +61,182 @@ class FirecrawlMCPAdapter:
 
     async def read(self, request: ReadRequest) -> ReadResult:
         return await asyncio.to_thread(self._read_sync, request)
+
+    async def search_web(self, query: str, *, limit: int) -> Sequence[WebCandidateHit]:
+        """Search across web domains for candidate leads; results are not evidence."""
+        self._ensure_web_discovery_active()
+        if not query.strip() or not 1 <= limit <= 5:
+            raise ValueError("Web discovery requires a query and a 1-5 candidate limit")
+        live_tools = await self.list_tools("firecrawl")
+        if "firecrawl_search" not in live_tools:
+            raise PermissionError("Firecrawl MCP server does not expose firecrawl_search")
+        try:
+            return await asyncio.to_thread(self._search_web_sync, query.strip(), limit)
+        except Exception as error:
+            self._pause_web_discovery_if_needed(error)
+            raise
+
+    async def search_images(self, query: str, *, limit: int = 8) -> tuple[WebImageSearchHit, ...]:
+        """Search image results only; returned URLs remain untrusted until downloaded and visually checked."""
+        self._ensure_web_discovery_active()
+        if not query.strip() or not 1 <= limit <= 10:
+            raise ValueError("Web image search requires a query and a 1-10 result limit")
+        live_tools = await self.list_tools("firecrawl")
+        if "firecrawl_search" not in live_tools:
+            raise PermissionError("Firecrawl MCP server does not expose firecrawl_search")
+        try:
+            return await asyncio.to_thread(self._search_images_sync, query.strip(), limit)
+        except Exception as error:
+            self._pause_web_discovery_if_needed(error)
+            raise
+
+    def _search_images_sync(self, query: str, limit: int) -> tuple[WebImageSearchHit, ...]:
+        result = self._client("firecrawl").call_tool("firecrawl_search", {
+            "query": query,
+            "sources": ["images"],
+            "limit": limit,
+            "objective": (
+                "Find distinct, clean anime art that visibly depicts the exact named character or scene. "
+                "For a character portrait, show that one character clearly and large. Exclude multi-character "
+                "collages, manga-panel grids, merchandise product photos, framed posters, and images whose "
+                "embedded text competes with the subject. Return direct image and original page URLs. "
+                "Search only; do not crawl domains."
+            ),
+        })
+        if result.get("isError") is True:
+            raise MCPToolCallError("web_image_search", result)
+        payload = _extract_payload(result)
+        if payload.get("success") is False:
+            raise RuntimeError("Firecrawl image search response reported failure")
+        data = payload.get("data")
+        rows = data.get("images") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            raise RuntimeError("Firecrawl image search response omitted the images results array")
+
+        hits: list[WebImageSearchHit] = []
+        seen: set[tuple[str, str]] = set()
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            image_value = item.get("imageUrl") or item.get("image_url") or item.get("image")
+            if isinstance(image_value, dict):
+                image_value = image_value.get("url")
+            page_value = item.get("sourceUrl") or item.get("source_url") or item.get("pageUrl")
+            page_value = page_value or item.get("url")
+            # Some providers use `url` for the image and `link` for its containing page.
+            if not isinstance(image_value, str) and isinstance(item.get("url"), str):
+                image_value = item.get("url")
+                page_value = item.get("sourceUrl") or item.get("source_url") or item.get("link")
+            title = item.get("title") or item.get("alt") or item.get("name")
+            description = item.get("description") or item.get("snippet") or ""
+            if not isinstance(image_value, str) or not isinstance(page_value, str):
+                continue
+            if not isinstance(title, str) or not title.strip():
+                title = str(description or "Web image result")[:300]
+            try:
+                _validate_candidate_url(image_value)
+                _validate_candidate_url(page_value)
+                hit = WebImageSearchHit(
+                    image_url=image_value,
+                    source_page_url=page_value,
+                    title=title[:300],
+                    description=description[:800] if isinstance(description, str) else "",
+                    native_id=str(item.get("id"))[:200] if item.get("id") is not None else None,
+                )
+            except (TypeError, ValueError):
+                continue
+            signature = (hit.image_url, hit.source_page_url)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            hits.append(hit)
+            if len(hits) >= limit:
+                break
+        return tuple(hits)
+
+    def _search_web_sync(self, query: str, limit: int) -> Sequence[WebCandidateHit]:
+        client = self._client("firecrawl")
+        result = client.call_tool("firecrawl_search", {
+            "query": query,
+            "sources": ["web"],
+            "limit": limit,
+            "objective": (
+                "Search the public web for a small set of original pages relevant to this topic. "
+                "Return candidate URLs only; this is discovery, not an endorsement of factual accuracy. "
+                "Do not crawl domains or follow links."
+            ),
+        })
+        if result.get("isError") is True:
+            raise MCPToolCallError("web_discovery_search", result)
+        payload = _extract_payload(result)
+        if payload.get("success") is False:
+            raise RuntimeError("Firecrawl web search response reported failure")
+        data = payload.get("data")
+        results = data.get("web") if isinstance(data, dict) else None
+        if not isinstance(results, list):
+            raise RuntimeError("Firecrawl web search response omitted the web results array")
+        hits: list[WebCandidateHit] = []
+        seen: set[str] = set()
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            title = item.get("title")
+            if not isinstance(url, str) or not isinstance(title, str) or not title.strip():
+                continue
+            try:
+                _validate_candidate_url(url)
+                hit = WebCandidateHit(
+                    title=title[:500], url=url,
+                    snippet=item.get("description", "")[:1200]
+                    if isinstance(item.get("description"), str) else "",
+                    published_at=_published_at(item),
+                )
+            except (TypeError, ValueError):
+                continue
+            if hit.url in seen:
+                continue
+            seen.add(hit.url)
+            hits.append(hit)
+            if len(hits) >= limit:
+                break
+        return tuple(hits)
+
+    async def read_web_candidate(self, hit: WebCandidateHit) -> WebCandidatePage:
+        """Read one result page with the result's exact host as a temporary boundary."""
+        self._ensure_web_discovery_active()
+        _validate_candidate_url(hit.url)
+        live_tools = await self.list_tools("firecrawl")
+        if "firecrawl_scrape" not in live_tools:
+            raise PermissionError("Firecrawl MCP server does not expose firecrawl_scrape")
+        request = ReadRequest(
+            source_id="web_discovery_candidate", url=hit.url,
+            mcp_server_alias="firecrawl", tool_name="firecrawl_scrape",
+            allowed_hosts=frozenset({hit.host}),
+        )
+        try:
+            result = await self.read(request)
+        except Exception as error:
+            self._pause_web_discovery_if_needed(error)
+            raise
+        if not result.redirects_verified:
+            raise PermissionError("Web candidate read did not verify same-host URL handling")
+        body = (result.body or "")[:120_000]
+        return WebCandidatePage(
+            hit=hit, title=result.title, final_url=result.url, body=body,
+            language=result.language, published_at=result.published_at or hit.published_at,
+            fetched_at=datetime.now(timezone.utc),
+        )
+
+    def _ensure_web_discovery_active(self) -> None:
+        if self._web_discovery_paused:
+            raise PermissionError("Broad-web discovery is paused after an MCP rate-limit/auth failure")
+
+    def _pause_web_discovery_if_needed(self, error: Exception) -> None:
+        if bool(getattr(error, "rate_limited", False)) or bool(
+            getattr(error, "operator_action_required", False)
+        ):
+            self._web_discovery_paused = True
 
     def _search_sync(self, request: SearchRequest) -> Sequence[SearchHit]:
         if request.source_id == "kitsu_anime_catalog":
@@ -260,12 +439,17 @@ class FirecrawlMCPAdapter:
         )
 
     def _client(self, alias: str) -> StreamableHTTPMCPClient:
+        cached = self._clients.get(alias)
+        if cached is not None:
+            return cached
         endpoints = load_mcp_endpoints(self.config_path)
         try:
             endpoint = endpoints[alias]
         except KeyError as error:
             raise PermissionError(f"MCP server alias {alias!r} is not configured") from error
-        return StreamableHTTPMCPClient(endpoint)
+        client = StreamableHTTPMCPClient(endpoint)
+        self._clients[alias] = client
+        return client
 
 
 def _extract_payload(result: dict[str, Any]) -> dict[str, Any]:

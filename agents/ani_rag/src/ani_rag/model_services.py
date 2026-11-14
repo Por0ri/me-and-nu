@@ -10,6 +10,7 @@ import base64
 import json
 import logging
 import os
+import re
 import uuid
 from io import BytesIO
 from datetime import datetime, timezone
@@ -37,6 +38,7 @@ from ani_rag.agents.content_generation.renderer import render_review_preview
 from ani_rag.retrieval import RetrievedEvidence
 
 logger = logging.getLogger(__name__)
+_INTERNAL_CITATION_MARKER = re.compile(r"\(\s*C\d+(?:\s*,\s*C\d+)*\s*\)", re.IGNORECASE)
 
 class StructuredModel(Protocol):
     async def generate_json(
@@ -50,11 +52,10 @@ _CLAIM_SCHEMA: dict[str, object] = {
     "type": "object", "additionalProperties": False,
     "properties": {
         "text": {"type": "string"},
-        "evidence_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-        "evidence_chunk_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}, "minItems": 1},
         "attribution": {"type": ["string", "null"]},
     },
-    "required": ["text", "evidence_ids", "evidence_chunk_ids", "attribution"],
+    "required": ["text", "evidence_refs", "attribution"],
 }
 
 _CARD_SCHEMA: dict[str, object] = {
@@ -153,19 +154,28 @@ def _claim_payload(claim: SupportedClaim) -> dict[str, object]:
     }
 
 
-def _claim_from_payload(raw: object, *, evidence_ids: set[str], chunk_sources: Mapping[str, str]) -> SupportedClaim:
+def _claim_reference_payload(
+    claim: SupportedClaim, *, citation_ref_by_chunk: Mapping[str, str],
+) -> dict[str, object]:
+    try:
+        refs = tuple(dict.fromkeys(citation_ref_by_chunk[item] for item in claim.evidence_chunk_ids))
+    except KeyError as error:
+        raise ValueError("Stored claim references a chunk outside the current retrieval") from error
+    return {"text": claim.text, "evidence_refs": list(refs), "attribution": claim.attribution}
+
+
+def _claim_from_payload(
+    raw: object, *, citation_refs: Mapping[str, tuple[str, str]],
+) -> SupportedClaim:
     if not isinstance(raw, dict):
         raise ValueError("Model returned a claim that is not an object")
-    ids = _string_tuple(raw.get("evidence_ids"), "claim evidence_ids")
-    chunks = _string_tuple(raw.get("evidence_chunk_ids"), "claim evidence_chunk_ids")
-    if not set(ids) <= evidence_ids:
-        raise ValueError("Model cited evidence outside the retrieved set")
-    if not set(chunks) <= set(chunk_sources):
-        raise ValueError("Model cited chunks outside the retrieved set")
-    if any(chunk_sources[chunk_id] not in ids for chunk_id in chunks):
-        raise ValueError("Claim chunk does not belong to one of the claim's evidence documents")
-    if not set(ids) <= {chunk_sources[chunk_id] for chunk_id in chunks}:
-        raise ValueError("Every claim evidence document needs one of that document's retrieved chunks")
+    refs = _string_tuple(raw.get("evidence_refs"), "claim evidence_refs")
+    unknown = set(refs) - set(citation_refs)
+    if unknown:
+        raise ValueError(f"Model cited unknown retrieval references: {', '.join(sorted(unknown))}")
+    pairs = tuple(citation_refs[ref] for ref in refs)
+    ids = tuple(dict.fromkeys(evidence_id for evidence_id, _chunk_id in pairs))
+    chunks = tuple(dict.fromkeys(chunk_id for _evidence_id, chunk_id in pairs))
     attribution = raw.get("attribution")
     if attribution is not None and not isinstance(attribution, str):
         raise ValueError("Claim attribution must be a string or null")
@@ -181,6 +191,61 @@ def _required_text(value: object, field_name: str) -> str:
     return value.strip()
 
 
+def _reader_copy(value: object, field_name: str) -> str:
+    """Remove internal retrieval handles from public-facing copy deterministically."""
+    cleaned = _INTERNAL_CITATION_MARKER.sub("", _required_text(value, field_name))
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    if not cleaned.strip():
+        raise ValueError(f"Model output field {field_name} contains only internal citation markers")
+    return cleaned.strip()
+
+
+def _name_terms(value: str) -> set[str]:
+    return set(re.findall(r"[0-9a-z\u3040-\u30ff\u3400-\u9fff]+", value.casefold()))
+
+
+def _alt_text_depicts(label: str, alt_text: str | None) -> bool:
+    if not alt_text:
+        return False
+    label_text = label.casefold().split("depicted:", 1)[-1].strip()
+    label_terms = {term for term in _name_terms(label_text) if len(term) > 1}
+    copy_terms = {term for term in _name_terms(label) if len(term) > 1}
+    if not label_terms or not label_terms <= copy_terms:
+        return False
+    return True
+
+
+def _exact_character_asset_for_claims(
+    claims: Sequence[SupportedClaim], *, documents: Mapping[str, EvidenceDocument],
+    image_candidates: Sequence[ImageAsset], used_fingerprints: set[str],
+    for_cover: bool = False,
+) -> ImageAsset | None:
+    character_evidence_ids = {
+        evidence_id for claim in claims for evidence_id in claim.evidence_ids
+        if (document := documents.get(evidence_id)) is not None
+        and document.content_type.value == "character"
+    }
+    if not character_evidence_ids:
+        return None
+    claim_text = " ".join(claim.text for claim in claims).casefold()
+    matches = [
+        asset for asset in image_candidates
+        if asset.image_role.casefold().split(":", 1)[0] in {"character", "character_art"}
+        and asset.alt_text and _alt_text_depicts(claim_text, asset.alt_text)
+        and (asset.content_sha256 or asset.asset_id) not in used_fingerprints
+        and not (for_cover and asset.used_as_cover_before)
+    ]
+    if not matches:
+        return None
+    specificity = max(len(_name_terms(asset.alt_text or "")) for asset in matches)
+    matches = [asset for asset in matches if len(_name_terms(asset.alt_text or "")) == specificity]
+    labels = {" ".join(sorted(_name_terms(asset.alt_text or ""))) for asset in matches}
+    if len(labels) != 1:
+        return None
+    return min(matches, key=lambda asset: (asset.recent_use_count, asset.last_used_at or "", asset.asset_id))
+
+
 def _string_tuple(value: object, field_name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item.strip() for item in value):
         raise ValueError(f"Model output field {field_name} must be a non-empty string array")
@@ -192,8 +257,8 @@ def _string_tuple(value: object, field_name: str) -> tuple[str, ...]:
 
 def _enforce_review_scorecard(
     scorecard: Mapping[str, object], expected_cards: int,
-) -> tuple[list[QualityIssue], tuple[str, ...]]:
-    """Validate scorecard shape and prevent weak copy from passing on format alone."""
+) -> tuple[list[QualityIssue], tuple[str, ...], int]:
+    """Turn the card/detail rubric into one score; no single soft metric is a gate."""
 
     raw_cards = scorecard.get("cards")
     if not isinstance(raw_cards, list) or len(raw_cards) != expected_cards:
@@ -206,34 +271,30 @@ def _enforce_review_scorecard(
     detail = scorecard.get("detail")
     if not isinstance(detail, dict):
         raise ValueError("Reviewer scorecard must include a detail article evaluation")
-    issues: list[QualityIssue] = []
-    repairs: list[str] = []
-    card_minima = {
-        "korean_naturalness": (3, "natural Korean"),
-        "translation_naturalness": (3, "natural translation"),
-        "reader_clarity": (3, "reader clarity"),
-        "fan_engagement": (3, "reader interest"),
-        "card_flow": (3, "carousel flow"),
-        "image_relevance": (3, "work- and copy-relevant imagery"),
-        "image_composition": (3, "image composition"),
-    }
-    for card in raw_cards:
-        page = int(card["page"])
-        for field, (minimum, label) in card_minima.items():
-            if int(card[field]) < minimum:
-                message = f"Page {page} needs stronger {label}; add a specific useful point and make the copy engaging."
-                repairs.append(message)
-                issues.append(QualityIssue("LOW_READER_VALUE", message, blocking=True))
-    for field, minimum, label in (
-        ("naturalness", 3, "natural Korean"),
-        ("coherence", 3, "coherence"),
-        ("completeness", 3, "substantive coverage"),
-    ):
-        if int(detail[field]) < minimum:
-            message = f"The detail article needs stronger {label}; add supported context instead of repeating metadata or cards."
-            repairs.append(message)
-            issues.append(QualityIssue("WEAK_DETAIL_ARTICLE", message, blocking=True))
-    return issues, tuple(dict.fromkeys(repairs))
+    card_scores = [int(card["card_score"]) for card in raw_cards]
+    card_dimensions = [
+        int(card[field])
+        for card in raw_cards
+        for field in (
+            "korean_naturalness", "translation_naturalness", "reader_clarity",
+            "fan_engagement", "card_flow", "safety_respect", "image_relevance",
+            "image_composition",
+        )
+    ]
+    detail_scores = [
+        int(detail[field])
+        for field in ("naturalness", "factual_support", "coherence", "completeness")
+    ]
+    weighted_total = (
+        (sum(card_scores) / len(card_scores)) * 0.70
+        + (sum(card_dimensions) / len(card_dimensions) * 20.0) * 0.20
+        + (sum(detail_scores) / len(detail_scores) * 20.0) * 0.10
+    )
+    aggregate = max(0, min(100, round(weighted_total)))
+    if aggregate >= 60:
+        return [], (), aggregate
+    message = f"Overall review score is {aggregate}/100; improve the weakest pages and review again."
+    return [QualityIssue("OVERALL_SCORE_BELOW_PASS", message, blocking=False)], (message,), aggregate
 
 
 class EvidenceBoundGenerationService(GenerationService):
@@ -246,21 +307,37 @@ class EvidenceBoundGenerationService(GenerationService):
     async def generate(
         self, retrieval: RetrievedEvidence, *, image_candidates: Sequence[ImageAsset] = (),
         revision_instructions: Sequence[str] = (),
+        avoid_recent_topics: Sequence[Mapping[str, str]] = (),
     ) -> ContentDraft:
         if not retrieval.documents or not retrieval.chunks:
             raise ValueError("Cannot generate without retrieved evidence documents and chunks")
         if len(image_candidates) < 3:
             raise ValueError("Cannot generate a carousel without at least three matched source images")
+        max_cards = min(10, len(image_candidates))
         document_by_id = {item.document_id: item for item in retrieval.documents}
         chunk_by_id = {item.chunk_id: item for item in retrieval.chunks}
         if any(chunk.evidence_id not in document_by_id for chunk in retrieval.chunks):
             raise ValueError("Retrieved chunk does not have its source document in this retrieval result")
+        citation_refs = {
+            f"C{index}": (chunk.evidence_id, chunk.chunk_id)
+            for index, chunk in enumerate(retrieval.chunks, start=1)
+        }
+        citation_ref_by_chunk = {chunk_id: ref for ref, (_evidence_id, chunk_id) in citation_refs.items()}
         lane_policy = get_content_profile(retrieval.content_type)
         profile = {
             "content_type": retrieval.content_type.value,
             "query": retrieval.query,
-            "max_cards": 10,
+            "max_cards": min(10, len(image_candidates)),
             "image_mode": "source_images",
+            "image_selection_policy": {
+                "recent_use_count": "Prefer candidates with 0 recent uses; otherwise choose the least recently used candidates.",
+                "cover_image_reuse": "The first card must use an image with used_as_cover_before=false. Images used as a cover before remain allowed on later cards.",
+                "subject_match": "A readable image from the confirmed work or a related character is a valid broad fit; exact sentence/scene/action matching is not required.",
+                "character_portrait": "Prefer the named character's portrait when convenient, but related characters and representative work art are also valid.",
+                "work_art": "Use appealing work cover/key art on any card about that work, including detail cards.",
+                "music": "Dedicated music/album/artist art is preferred when available; representative imagery from the same work is also valid.",
+            },
+            "avoid_recent_topics": [dict(item) for item in avoid_recent_topics[:30]],
             "menu_work_ids": list(retrieval.menu_work_ids),
             "lane_policy": {
                 "purpose": lane_policy.purpose,
@@ -269,12 +346,15 @@ class EvidenceBoundGenerationService(GenerationService):
                 "preserve_context": list(lane_policy.preserve_context),
                 "handling_rule": lane_policy.handling_rule,
             },
-            "evidence": [self._document_payload(item) for item in retrieval.documents],
+            "evidence": [
+                {key: value for key, value in self._document_payload(item).items() if key != "document_id"}
+                for item in retrieval.documents
+            ],
             "retrieved_chunks": [{
-                "chunk_id": chunk.chunk_id, "evidence_id": chunk.evidence_id,
+                "citation_ref": f"C{index}",
                 "text": chunk.text, "locator": chunk.locator,
                 "source_url": chunk.source_url, "language": chunk.language,
-            } for chunk in retrieval.chunks],
+            } for index, chunk in enumerate(retrieval.chunks, start=1)],
             "image_candidates": [{
                 "asset_id": item.asset_id, "source_id": item.source_id,
                 "source_native_id": item.source_native_id,
@@ -283,6 +363,9 @@ class EvidenceBoundGenerationService(GenerationService):
                 "source_url": item.source_url, "work_link_status": item.work_link_status,
                 "menu_work_ids": list(item.menu_work_ids), "rights_basis": item.rights_basis,
                 "rights_evidence_url": item.rights_evidence_url,
+                "recent_use_count": item.recent_use_count,
+                "last_used_at": item.last_used_at,
+                "used_as_cover_before": item.used_as_cover_before,
                 "entity_links": [{
                     "entity_id": link.entity_id, "entity_name": link.entity_name,
                     "relation_type": link.relation_type,
@@ -292,36 +375,100 @@ class EvidenceBoundGenerationService(GenerationService):
             } for item in image_candidates],
             "revision_instructions": list(revision_instructions),
         }
-        generated = await self.model.generate_json(
-            system_prompt=COPY_WRITER_PROMPT,
-            user_payload={
-                "task": ("Create a reader-valued carousel copy deck only from supplied RAG evidence. "
-                         "Select a distinct, relevant matched source image for every card."),
-                "materials": profile,
+        deck_payload: dict[str, object] = {
+            "task": ("Create a reader-valued carousel copy deck only from supplied RAG evidence. "
+                     "Select a different readable image linked to the confirmed work for every card; "
+                     "the cover image must not have been used as a cover by another content, while those images may appear on later cards. "
+                     "the exact character, scene, or action in the copy need not appear in the image. "
+                     "Prefer full-size, sharp images over thumbnails when dimensions are available; never "
+                     "stretch a visibly small image to fill the page. For panorama-shaped art, use a larger "
+                     "display crop only when the main subjects remain visible. Prefer images with recent_use_count 0. Related character art and representative "
+                     "work art may be used across the carousel. Also avoid repeating the topic, hook, or "
+                     "editorial angle of any item in avoid_recent_topics, including paraphrases and "
+                     "cross-type rewrites; choose a different supported fact cluster or wait if none exists."),
+            "claim_citation_contract": (
+                "For every claim, return a non-empty evidence_refs array using exact labels C1, C2, etc. "
+                "copied from retrieved_chunks. Every card must use a non-empty image_asset_id copied exactly "
+                "from image_candidates. Return roles in this order: cover, zero or more detail cards, ending. "
+                "Do not invent references or return document/chunk IDs; keep C# refs out of reader-facing copy."
+            ),
+            "materials": profile,
+        }
+        deck_schema = {
+            **COPY_DECK_SCHEMA,
+            "properties": {
+                **COPY_DECK_SCHEMA["properties"],
+                "cards": {
+                    **COPY_DECK_SCHEMA["properties"]["cards"],
+                    "maxItems": max_cards,
+                },
             },
-            schema_name="ani_rag_copy_deck", schema=COPY_DECK_SCHEMA,
-        )
-        if not isinstance(generated, Mapping):
-            raise ValueError("Structured model returned a non-object generation result")
-        cards_raw = generated.get("cards")
-        if not isinstance(cards_raw, list) or not 3 <= len(cards_raw) <= 10:
-            raise ValueError("Copy deck must contain three to ten cards")
-        if not isinstance(cards_raw[0], dict) or cards_raw[0].get("role") != "cover":
-            raise ValueError("The first card must be the cover")
-        if not isinstance(cards_raw[-1], dict) or cards_raw[-1].get("role") != "ending":
-            raise ValueError("The final card must be the ending")
-        if any(not isinstance(card, dict) or card.get("role") != "detail" for card in cards_raw[1:-1]):
-            raise ValueError("Only interior cards may use the detail role")
+        }
         image_by_id = {item.asset_id: item for item in image_candidates}
+
+        def validate_deck_envelope(value: object) -> list[dict[str, object]]:
+            if not isinstance(value, Mapping):
+                raise ValueError("Structured model returned a non-object generation result")
+            raw_cards = value.get("cards")
+            if not isinstance(raw_cards, list) or not 3 <= len(raw_cards) <= max_cards:
+                raise ValueError(f"Copy deck must contain three to {max_cards} cards based on distinct eligible images")
+            normalized_cards: list[dict[str, object]] = []
+            for index, raw_card in enumerate(raw_cards):
+                if not isinstance(raw_card, dict):
+                    raise ValueError("Generation output card must be an object")
+                role = "cover" if index == 0 else "ending" if index == len(raw_cards) - 1 else "detail"
+                card = {**raw_card, "role": role}
+                if not isinstance(card, dict):
+                    raise ValueError("Generation output card must be an object")
+                image_id = _required_text(card.get("image_asset_id"), "image_asset_id")
+                if image_id not in image_by_id:
+                    raise ValueError("Generation selected an image asset not provided by the image repository")
+                if index == 0 and image_by_id[image_id].used_as_cover_before:
+                    raise ValueError("The cover image was already used as another content's cover")
+                raw_claims = card.get("claims")
+                if not isinstance(raw_claims, list) or not raw_claims:
+                    raise ValueError("Every card needs at least one evidence-linked claim")
+                for raw_claim in raw_claims:
+                    _claim_from_payload(raw_claim, citation_refs=citation_refs)
+                normalized_cards.append(card)
+            return normalized_cards
+
+        generated: Mapping[str, object] | None = None
+        cards_raw: list[dict[str, object]] | None = None
+        repair_error: str | None = None
+        for attempt in range(2):
+            payload = dict(deck_payload)
+            if repair_error:
+                payload["repair_feedback"] = (
+                    "Your prior structured draft was rejected by deterministic validation. Correct this exact issue "
+                    f"without weakening evidence links or changing the requested work identity: {repair_error}"
+                )
+            candidate = await self.model.generate_json(
+                system_prompt=COPY_WRITER_PROMPT,
+                user_payload=payload,
+                schema_name="ani_rag_copy_deck",
+                schema=deck_schema,
+            )
+            try:
+                cards_raw = validate_deck_envelope(candidate)
+                generated = {**candidate, "cards": cards_raw}
+                break
+            except ValueError as error:
+                if attempt == 1:
+                    raise
+                repair_error = str(error)
+        if generated is None or cards_raw is None:
+            raise ValueError("Structured model could not return a valid copy deck after one repair")
+        cards_raw = generated.get("cards")
         used_images: set[str] = set()
+        used_asset_ids: list[str] = []
         claim_evidence_ids: list[str] = []
         claim_chunk_ids: list[str] = []
 
         def claims(raw_claims: object) -> tuple[SupportedClaim, ...]:
             if not isinstance(raw_claims, list) or not raw_claims:
                 raise ValueError("Every card and the detail article need structured claims")
-            result = tuple(_claim_from_payload(item, evidence_ids=set(document_by_id),
-                                               chunk_sources={key: value.evidence_id for key, value in chunk_by_id.items()})
+            result = tuple(_claim_from_payload(item, citation_refs=citation_refs)
                            for item in raw_claims)
             for claim in result:
                 claim_evidence_ids.extend(claim.evidence_ids)
@@ -332,20 +479,29 @@ class EvidenceBoundGenerationService(GenerationService):
         for index, raw_card in enumerate(cards_raw, start=1):
             if not isinstance(raw_card, dict):
                 raise ValueError("Generation output card must be an object")
-            image_id = _required_text(raw_card.get("image_asset_id"), "image_asset_id")
-            if image_id not in image_by_id:
+            card_claims = claims(raw_card.get("claims"))
+            proposed_image_id = _required_text(raw_card.get("image_asset_id"), "image_asset_id")
+            if proposed_image_id not in image_by_id:
                 raise ValueError("Generation selected an image asset not provided by the image repository")
-            if image_id in used_images:
-                raise ValueError("Carousel image assets must be distinct")
-            used_images.add(image_id)
+            selected = _exact_character_asset_for_claims(
+                card_claims, documents=document_by_id, image_candidates=image_candidates,
+                used_fingerprints=used_images, for_cover=index == 1,
+            )
+            image_id = selected.asset_id if selected is not None else proposed_image_id
             asset = image_by_id[image_id]
+            image_fingerprint = asset.content_sha256 or image_id
+            if image_fingerprint in used_images:
+                raise ValueError("Carousel pages cannot reuse the same underlying image bytes")
+            used_images.add(image_fingerprint)
+            used_asset_ids.append(image_id)
             cards.append(CardDraft(
                 card_id=f"card_{index}_{uuid.uuid4().hex[:8]}",
                 role=_required_text(raw_card.get("role"), "card role"),
-                headline=_required_text(raw_card.get("headline"), "card headline"),
-                body=_required_text(raw_card.get("body"), "card body"),
-                claims=claims(raw_card.get("claims")), image_asset_id=image_id,
+                headline=_reader_copy(raw_card.get("headline"), "card headline"),
+                body=_reader_copy(raw_card.get("body"), "card body"),
+                claims=card_claims, image_asset_id=image_id,
                 source_image_url=asset.source_url,
+                source_page_url=asset.source_page_url or asset.source_url,
                 image_rights_status="not_checked",
                 image_credit=asset.source_id,
             ))
@@ -354,12 +510,20 @@ class EvidenceBoundGenerationService(GenerationService):
             system_prompt=DETAIL_WRITER_PROMPT,
             user_payload={
                 "task": "Write a standalone detail article; do not concatenate or paraphrase the cards sentence by sentence.",
+                "claim_citation_contract": (
+                    "For each claim, return only evidence_refs such as C1 or C2 copied from retrieved_chunks. "
+                    "Do not invent references or return document/chunk IDs; each ref is mapped to its exact "
+                    "source document and chunk by the application. Keep C# refs out of all reader-facing copy."
+                ),
                 "content_type": retrieval.content_type.value,
                 "editorial_angle": _required_text(generated.get("editorial_angle"), "editorial_angle"),
                 "menu_work_ids": list(retrieval.menu_work_ids),
                 "cards": [
                     {"role": card.role, "headline": card.headline, "body": card.body,
-                     "claims": [_claim_payload(claim) for claim in card.claims]}
+                     "claims": [
+                         _claim_reference_payload(claim, citation_ref_by_chunk=citation_ref_by_chunk)
+                         for claim in card.claims
+                     ]}
                     for card in cards
                 ],
                 "evidence": profile["evidence"],
@@ -381,9 +545,12 @@ class EvidenceBoundGenerationService(GenerationService):
             f"\ucd9c\ucc98 ({document_by_id[evidence_id].source_id}) {document_by_id[evidence_id].title}: {document_by_id[evidence_id].source_url}"
             for evidence_id in attached_evidence
         ]
-        for image_id in used_images:
+        for image_id in used_asset_ids:
             asset = image_by_id[image_id]
-            footer_lines.append(f"\uc774\ubbf8\uc9c0 \ucd9c\ucc98 ({asset.source_id}): {asset.source_url}")
+            image_page_url = asset.source_page_url or asset.source_url
+            footer_lines.append(f"\uc774\ubbf8\uc9c0 \ucd9c\ucc98 ({asset.source_id}): {image_page_url}")
+            if asset.source_url != image_page_url:
+                footer_lines.append(f"\uc6d0\ubcf8 \uc774\ubbf8\uc9c0: {asset.source_url}")
         keywords = generated.get("keywords")
         if not isinstance(keywords, list) or any(not isinstance(item, str) or not item.strip() for item in keywords):
             raise ValueError("Generation keywords must be a string array")
@@ -391,13 +558,13 @@ class EvidenceBoundGenerationService(GenerationService):
                                  for work_id in document_by_id[evidence_id].menu_work_ids}))
         return ContentDraft(
             draft_id=f"draft_{uuid.uuid4().hex}", content_type=retrieval.content_type,
-            title=_required_text(generated.get("title"), "title"), cards=tuple(cards),
-            detail_body=_required_text(detail_result.get("body"), "detail body"),
+            title=_reader_copy(generated.get("title"), "title"), cards=tuple(cards),
+            detail_body=_reader_copy(detail_result.get("body"), "detail body"),
             detail_claims=detail_claims, evidence_ids=attached_evidence,
             menu_work_ids=work_ids, retrieval_id=retrieval.retrieval_id,
             created_at=datetime.now(timezone.utc), source_footer="\n".join(footer_lines),
             retrieved_chunk_ids=attached_chunks,
-            summary=_required_text(generated.get("summary"), "summary"),
+            summary=_reader_copy(generated.get("summary"), "summary"),
             ai_disclosure=AI_DISCLOSURE,
             keywords=tuple(dict.fromkeys(item.strip() for item in keywords)),
             ai_judgment_basis={"generation_service": self.reviewer_facing_label,
@@ -536,16 +703,34 @@ class EvidenceBoundIndependentReviewer(IndependentReviewer):
         scorecard = raw.get("scorecard")
         if not isinstance(scorecard, dict):
             raise ValueError("Reviewer scorecard must be an object")
-        score_issues, score_repairs = _enforce_review_scorecard(scorecard, len(draft.cards))
+        score_issues, score_repairs, aggregate_score = _enforce_review_scorecard(
+            scorecard, len(draft.cards),
+        )
+        scorecard = {**scorecard, "aggregate_score": aggregate_score}
         issues.extend(score_issues)
         if score_repairs:
             revision_instructions = tuple(dict.fromkeys((*revision_instructions, *score_repairs)))
-            if decision in {ReviewDecision.PASS, ReviewDecision.HUMAN_REVIEW}:
-                decision = ReviewDecision.REVISE
-        if decision is ReviewDecision.PASS and any(item.blocking for item in issues):
-            decision = ReviewDecision.REVISE
-            revision_instructions = tuple(dict.fromkeys((*revision_instructions,
-                "Resolve every blocking issue returned by independent review.")))
+        score_cards = scorecard.get("cards")
+        if not isinstance(score_cards, list):
+            raise ValueError("Reviewer scorecard must contain card scores")
+        severe_safety_flag = any(
+            bool(card.get("safety_blocker"))
+            for card in score_cards if isinstance(card, Mapping)
+        )
+        # Soft editorial issues and one weak dimension cannot overturn the total score.
+        # A severe safety flag remains a revision hold; factual support is already scored.
+        decision = (
+            ReviewDecision.REVISE
+            if severe_safety_flag or aggregate_score < 60
+            else ReviewDecision.PASS
+        )
+        issues = [QualityIssue(item.code, item.message, blocking=False) for item in issues]
+        if severe_safety_flag:
+            safety_note = "Resolve the reported severe safety concern before publication."
+            issues.append(QualityIssue("SAFETY_REVIEW_HOLD", safety_note, blocking=False))
+            revision_instructions = tuple(dict.fromkeys((*revision_instructions, safety_note)))
+        if decision is ReviewDecision.REVISE and not revision_instructions:
+            revision_instructions = ("Improve the lowest-scoring pages while preserving supported facts.",)
         if decision is ReviewDecision.PASS and len(preview_urls) != len(draft.cards):
             issues.append(QualityIssue(
                 code="VISUAL_REVIEW_UNAVAILABLE",

@@ -263,7 +263,11 @@ def distinct_editorial_images(
     # usable source rather than discarding it after seeing a low-res duplicate.
     for image in sorted(images, key=lambda item: item.width * item.height, reverse=True):
         if (
-            image.used_in_previous_content
+            (
+                card_role == "cover"
+                and package is not None
+                and bool(image_visual_keys(image).intersection(package.prior_image_fingerprints))
+            )
             or image.vision_review_rejected
             or image.download_status not in {"downloaded", "available"}
             or image.width < 1

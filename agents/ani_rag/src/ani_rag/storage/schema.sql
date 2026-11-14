@@ -388,6 +388,8 @@ CREATE TABLE IF NOT EXISTS rag_queue_job (
 
 CREATE INDEX IF NOT EXISTS ix_rag_document_type_date ON rag_document(content_type, published_at);
 CREATE INDEX IF NOT EXISTS ix_rag_work_link_work ON rag_work_link(menu_work_id, status);
+CREATE INDEX IF NOT EXISTS ix_rag_excerpt_document ON rag_excerpt(document_id, excerpt_id);
+CREATE INDEX IF NOT EXISTS ix_rag_work_link_document ON rag_work_link(document_id, link_id);
 CREATE INDEX IF NOT EXISTS ix_rag_queue_claim ON rag_queue_job(queue_name, status, created_at);
 CREATE INDEX IF NOT EXISTS ix_rag_generation_pending ON rag_generation_work(status, created_at);
 CREATE INDEX IF NOT EXISTS ix_rag_chunk_document ON rag_chunk(document_id, start_offset);
