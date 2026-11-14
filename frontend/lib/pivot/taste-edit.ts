@@ -1,7 +1,7 @@
 // My Page taste edit (temporary, 2026-11 user test): onboarding Q1~Q3 again with the saved answers.
 // Remove together with /pivot/taste, the My Page button and the backend /me/taste router.
 import { apiRequest, getSession, getTopics } from "@/lib/api";
-import { initialOnboardingState, onboardingReducer, q1Choices, validId, type OnboardingAction, type OnboardingState, type OnboardingWork, type Q1Choice, type UiSelection } from "./onboarding";
+import { initialOnboardingState, onboardingReducer, q1Choices, selectionKey, validId, type OnboardingAction, type OnboardingState, type OnboardingWork, type Q1Choice, type UiSelection } from "./onboarding";
 import { validatePreferenceOptions, validateWorkPage, type OnboardingCatalog, type WorkPage } from "./onboarding-catalog";
 import { animeTopicId } from "./onboarding-service";
 import { requirePivotApi } from "./services";
@@ -95,6 +95,14 @@ export function tasteEditState(taste: MyTaste): OnboardingState {
 }
 
 export type TasteEditAction = OnboardingAction | { type: "load"; state: OnboardingState } | { type: "edit-again" };
+/** Compare editable answers, not question navigation, search text, option metadata or selection order. */
+export function hasTasteChanges(current: OnboardingState, initial: OnboardingState): boolean {
+  return current.topicId !== initial.topicId || current.interest !== initial.interest
+    || selectionKey(current.favoriteWorks.map(work => work.entityId)) !== selectionKey(initial.favoriteWorks.map(work => work.entityId))
+    || selectionKey(current.preferenceTagIds) !== selectionKey(initial.preferenceTagIds)
+    || current.consumptionType !== initial.consumptionType;
+}
+
 /** The onboarding reducer, except a changed work set keeps the chosen chips: every active chip stays selectable. */
 export function tasteEditReducer(state: OnboardingState, action: TasteEditAction): OnboardingState {
   if (action.type === "load") return action.state;

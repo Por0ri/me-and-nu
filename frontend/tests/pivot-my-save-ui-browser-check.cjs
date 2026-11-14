@@ -156,7 +156,7 @@ async function verify(browser, width, height) {
     await page.getByRole('radio', { name: '새로운 소식을 빠르게 확인한다', exact: true }).check(); await button(page, '선택 완료').click();
     await button(page, '새로운 피드 보러가기').waitFor(); assert.equal(await page.locator('[data-home-header]').count(), 0); await shot('taste-result');
     await button(page, '새로운 피드 보러가기').click(); await page.waitForURL('**/pivot/home'); await home.waitFor(); assert.equal(tasteWrites, 1);
-    await page.goto(base + '/pivot/taste'); await page.locator('#question-heading').waitFor(); page.once('dialog', dialog => dialog.accept()); await button(page.locator('[data-my-question-header]'), '알림').click();
+    await page.goto(base + '/pivot/taste'); await page.locator('#question-heading').waitFor(); await button(page.locator('[data-my-question-header]'), '알림').click();
     await page.getByRole('main', { name: '알림함', exact: true }).waitFor(); await button(page.getByRole('main', { name: '알림함', exact: true }), '뒤로가기').click(); await page.locator('#question-heading').waitFor();
     step = 'session boundary'; fixture.state.userId = 13; taste = { ...taste, works: [fixture.works[2]] };
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));

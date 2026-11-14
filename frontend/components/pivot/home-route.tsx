@@ -5,11 +5,11 @@ import { createServiceActivitySource } from "@/lib/pivot/my-activity-service";
 import { createServiceInquirySource } from "@/lib/pivot/inquiry-service";
 import { createServiceReportSource } from "@/lib/pivot/report-service";
 import { createServiceHomeSource } from "@/lib/pivot/home-service";
-import { createServiceNotificationInbox } from "@/lib/pivot/notification-inbox";
 import { pendingDetailSource } from "@/lib/pivot/detail-service";
 import { isActiveSession } from "@/lib/pivot/services";
 import { Suspense, useMemo, useRef } from "react";
 import { usePivotSession } from "./pivot-session";
+import { useNotificationSource } from "./new-notice-provider";
 import { HomeDetailExperience } from "./home-detail-experience";
 import { ACTIVITY_BOUNDARY_EVENT, ACTIVITY_RESUME_EVENT, createActivityQueue } from "@/lib/pivot/activity";
 import { createReactionControls } from "@/lib/pivot/reaction-service";
@@ -31,7 +31,7 @@ export function HomeRoute() {
   const activitySource = useMemo(() => createServiceActivitySource(() => sessionRef.current), [state.session]);
   const inquirySource = useMemo(() => createServiceInquirySource(() => sessionRef.current), [state.session]);
   const reportSource = useMemo(() => createServiceReportSource(() => sessionRef.current), [state.session]);
-  const notificationSource = useMemo(() => createServiceNotificationInbox(() => sessionRef.current, refresh), [state.session, refresh]);
+  const notificationSource = useNotificationSource();
   const interactions = useMemo(() => {
     const activity = createActivityQueue(userId ?? 0, () => sessionRef.current);
     return { activity, reactions: createReactionControls(activity) };

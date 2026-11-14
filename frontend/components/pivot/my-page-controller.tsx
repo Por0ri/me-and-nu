@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createMyPageRequestController, type MyPageDataSource, type MyPageState } from "@/lib/pivot/my-page";
 import { PivotMyPageScreen } from "./my-page-screen";
 
 const loading: MyPageState = { status: "loading" };
 export function MyPageController({ source, onHome, onSaved, onActivity, onInquiry, onLogout, onWithdraw, onNotifications }: { source: MyPageDataSource; onHome: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>; onNotifications?: () => void }) {
+  const router = useRouter();
   const [request, setRequest] = useState<{ source: MyPageDataSource; state: MyPageState }>();
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -14,5 +16,5 @@ export function MyPageController({ source, onHome, onSaved, onActivity, onInquir
     return () => controller.cancel();
   }, [source, attempt]);
   const state = request?.source === source ? request.state : loading;
-  return <PivotMyPageScreen key={source.kind} state={state} demo={source.kind === "demo"} notificationScope={source} notificationSource={source.kind === "service" ? source.notificationSettings : undefined} onHome={onHome} onSaved={onSaved} onActivity={onActivity} onInquiry={onInquiry} onLogout={onLogout} onWithdraw={onWithdraw} onNotifications={onNotifications} onRetry={() => setAttempt((value) => value + 1)} />;
+  return <PivotMyPageScreen key={source.kind} state={state} demo={source.kind === "demo"} notificationScope={source} notificationSource={source.kind === "service" ? source.notificationSettings : undefined} onNavigate={(path) => router.push(path)} onHome={onHome} onSaved={onSaved} onActivity={onActivity} onInquiry={onInquiry} onLogout={onLogout} onWithdraw={onWithdraw} onNotifications={onNotifications} onRetry={() => setAttempt((value) => value + 1)} />;
 }

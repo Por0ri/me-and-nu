@@ -71,6 +71,21 @@ test('Saving sends the version 2 answers with PUT and rejects a response for ano
   await assert.rejects(other.saveMyTaste(selection),/내 취향을 확인하지 못했어요/);
 });
 
+test('Unsaved taste compares answer sets, ignores navigation/metadata/order, and clears after reverting', () => {
+  const m = setup(async () => taste), initial = m.tasteEditState(taste);
+  for (const step of ['q1', 'q2', 'q3', 'result']) {
+    assert.equal(m.hasTasteChanges({ ...initial, step, optionsKey: 'loaded', preferenceOptions: [tag(101, 'genre')] }, initial), false);
+  }
+  assert.equal(m.hasTasteChanges({ ...initial, favoriteWorks: [...initial.favoriteWorks].reverse(), preferenceTagIds: [...initial.preferenceTagIds].reverse() }, initial), false);
+  for (const change of [{ favoriteWorks: [] }, { favoriteWorks: [work(13)] }, { preferenceTagIds: [] }, { consumptionType: 'news' }, { consumptionType: null }, { topicId: 84 }]) {
+    assert.equal(m.hasTasteChanges({ ...initial, ...change }, initial), true);
+  }
+  const removed = m.tasteEditReducer(initial, { type: 'toggle-work', work: initial.favoriteWorks[0] });
+  assert.equal(m.hasTasteChanges(removed, initial), true);
+  const restored = m.tasteEditReducer(removed, { type: 'toggle-work', work: initial.favoriteWorks[0] });
+  assert.equal(m.hasTasteChanges(restored, initial), false);
+});
+
 const hints={topicId:83,enough:true,contents:6,works:[{entityId:11,name:'진격의 거인',percent:62},{entityId:12,name:'나루토',percent:20}],
   genres:[{tagId:101,name:'코미디'},{tagId:102,name:'로맨스'}],themes:[{tagId:201,name:'성장'}],
   types:[{answer:'ost',percent:42},{answer:'news',percent:20},{answer:'goods',percent:18},{answer:'events',percent:8},{answer:'world',percent:7},{answer:'relationships',percent:5}]};
