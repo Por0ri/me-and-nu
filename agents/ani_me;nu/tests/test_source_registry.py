@@ -45,6 +45,18 @@ def test_source_registry_is_valid() -> None:
     assert all(
         not supports_discovery_adapter(by_id[source_id]) for source_id in work_scoped_official_ids
     )
+    assert {
+        source.id: source.targeted_discovery_types for source in registry.sources
+        if source.targeted_discovery_types
+    } == {"one_piece_official": [ContentType.GOODS]}
+    one_piece = by_id["one_piece_official"]
+    assert all(
+        supports_discovery_adapter(one_piece, content_type=kind.value, targeted=True)
+        == (kind == ContentType.GOODS) for kind in one_piece.content_types
+    )
+    assert not supports_discovery_adapter(one_piece, content_type="goods")
+    assert not supports_discovery_adapter(one_piece, targeted=True)
+    assert ContentType.NEWS in one_piece.content_types
     # Keep these records for attribution/reference; do not poll each franchise site
     # as a recurring source of new candidates.
     assert all(by_id[source_id].content_types for source_id in work_scoped_official_ids)

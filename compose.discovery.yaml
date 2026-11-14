@@ -1,6 +1,6 @@
 # Opt in to periodic article collection by adding this file to compose.worker.yaml.
 x-discovery-routes: &discovery-routes
-  ANIME_DISCOVERY_ROUTES: ${ANIME_DISCOVERY_ROUTES-prtimes_rss:news}
+  ANIME_DISCOVERY_ROUTES: ${ANIME_DISCOVERY_ROUTES-one_piece_official:goods}
 
 services:
   beat:

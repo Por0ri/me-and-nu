@@ -349,6 +349,9 @@ def _source_type_codes(source_id: str) -> list[str]:
 
 def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
     """Narrow broad source capabilities to the topic actually signaled by a candidate."""
+    if source.id == "one_piece_official" and item.content_types == ["goods"]:
+        # The listing parser already verified the publisher's explicit category.
+        return {"goods"}
     # Classify the article topic from its headline, not the listing route.
     # Broad paths such as /news-event otherwise make every article look like an event.
     title = item.title.casefold()
@@ -499,13 +502,18 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
     return inferred & available
 
 
-def supports_discovery_adapter(source: Source, *, work_title: str | None = None) -> bool:
+def supports_discovery_adapter(
+    source: Source, *, work_title: str | None = None, content_type: str | None = None,
+    targeted: bool = False,
+) -> bool:
     """Return whether discovery.py has an implementation for this source route.
 
     This is a code-capability check, not proof that a live endpoint is reachable,
     permitted, or currently returning useful results.
     """
-    if not source.discovery_enabled:
+    if not source.discovery_enabled and not (targeted and content_type in source.targeted_discovery_types):
+        return False
+    if content_type is not None and content_type not in source.content_types:
         return False
     if source.status == "trend_only":
         return (
@@ -548,9 +556,11 @@ def _collectable_sources_for_type(
     return {
         source.id: source
         for source in load_source_registry().sources
-        if supports_discovery_adapter(source, work_title=work_title or "adapter-check")
-        if content_type is None or content_type in {item.value for item in source.content_types}
         if source_ids is None or source.id in source_ids
+        if supports_discovery_adapter(
+            source, work_title=work_title or "adapter-check", content_type=content_type,
+            targeted=source_ids is not None,
+        )
     }
 
 
@@ -1460,8 +1470,9 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
             continue
         detail_query = (
             parsed.query
-            if source.id == "spy_family_official"
-            and re.fullmatch(r"p=\d+", parsed.query)
+            if source.id == "one_piece_official" or (
+                source.id == "spy_family_official" and re.fullmatch(r"p=\d+", parsed.query)
+            )
             else ""
         )
         normalized_url = parsed._replace(
@@ -1470,6 +1481,13 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         if normalized_url in seen:
             continue
         path = parsed.path.rstrip("/").lower()
+        if source.id == "one_piece_official":
+            # The news page also links to archives, prize draws, events and figures.
+            # Use the official card category before truncating to the scan limit.
+            if not re.fullmatch(r"/news/[0-9]+/index\.html/?", parsed.path):
+                continue
+            if not any(tag.get_text(strip=True) == "グッズ" for tag in anchor.select(".el-tag__item")):
+                continue
         if source.id == "natsume_official" and not path.startswith("/news/"):
             continue
         if source.id == "spy_family_official" and not re.fullmatch(r"p=\d+", parsed.query):
@@ -1569,7 +1587,9 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
 
         seen.add(normalized_url)
         candidate_types = [item.value for item in source.content_types]
-        if source.id == "src_www_toei_anim_co_jp":
+        if source.id == "one_piece_official":
+            candidate_types = ["goods"]
+        elif source.id == "src_www_toei_anim_co_jp":
             # The corporate archive mixes ordinary announcements, events,
             # pop-ups, and merchandise on one listing. Route each lead by its
             # headline so period-sensitive items reach the right lane.

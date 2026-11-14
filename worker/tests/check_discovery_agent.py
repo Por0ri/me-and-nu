@@ -41,6 +41,21 @@ class InstalledDiscoveryTests(unittest.TestCase):
     def collect(self):
         return _collect("prtimes_rss", "news", 5)
 
+    def test_direct_one_piece_goods_uses_the_registered_article_and_work(self):
+        listing = "https://one-piece.com/news/index.html"
+        html = (f'<li><a href="{self.original}"><h3>withCAT illustration Ver.</h3>'
+                '<p class="el-tag__item">グッズ</p></a></li>')
+        with patch("ani_menu_agent.discovery._get_html_with_client", return_value=(html, listing)) as fetch:
+            result = _collect("one_piece_official", "goods", 5)
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual(fetch.call_args.args[1], listing)
+        self.assertEqual(self.fetches, [self.original])
+        self.assertEqual(result, {
+            "discovered": 1, "unresolved": 0, "fetch_failed": 0,
+            "articles": [{"source_id": "one_piece_official", "source_url": self.original,
+                          "content_type": "goods", "menu_work_id": 8, "canonical_url": ARTICLE}],
+        })
+
     def test_rss_to_official_article_and_registered_work(self):
         self.assertEqual(self.collect(), {
             "discovered": 1, "unresolved": 0, "fetch_failed": 0,

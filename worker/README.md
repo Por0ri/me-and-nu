@@ -81,7 +81,7 @@ Redis는 작업 전용 볼륨에 AOF를 저장하며 `appendfsync everysec`을 �
 
 ## 기사 수집부터 콘텐츠 생성까지
 
-`compose.discovery.yaml`을 추가하면 Beat가 출처·유형별로 수집을 예약한다. 기본값은 PR TIMES 뉴스(`prtimes_rss:news`)를 15분마다 최대 5건 확인하는 것이다. 기존 Agent가 목록을 한 번 읽고 후보의 등록된 원문 기사와 작품 ID를 확인한다. 발견 매체에서 공식 원문을 특정하기 어렵거나 작품을 하나로 정할 수 없으면 해당 기사를 건너뛴다. 원피스 공식 뉴스 목록처럼 수집이 꺼진 출처도 발견 매체에서 연결된 개별 원문의 출처로는 사용할 수 있다.
+`compose.discovery.yaml`을 추가하면 Beat가 기본으로 원피스 공식 굿즈(`one_piece_official:goods`) 한 경로를 예약한다. 15분마다 ONE PIECE.com 공식 뉴스 목록에서 발행사가 굿즈(`グッズ`)로 분류한 개별 기사를 최대 5건 찾아 원문과 작품 ID `8`을 확인한다. 이 수집 권한은 출처와 유형을 명시한 경로에 적용한다. 목록 조회에는 LLM 키가 필요 없다.
 
 수집 Worker는 검증을 통과한 기사를 전용 작업 DB에 `anime_generate`로 접수한다. 같은 출처·기사 URL의 기존 수동 작업과 반복 수집이 한 작업을 공유한다. 원피스 공식 뉴스의 숫자 기사 경로에서 `ref`만 다른 URL도 접수 시 기존 작업을 조회한다. 다른 기사 식별 쿼리는 보존한다. 이 규칙을 적용하기 전에 `ref` 차이로 이미 두 작업이 만들어졌다면 그 두 작업의 실행·내보내기 이력은 별개로 남는다.
 
@@ -95,7 +95,7 @@ docker compose @discovery up -d --build --wait
 docker compose @discovery logs --tail 50 beat discovery-worker
 ```
 
-`worker/.env`에서 `ANIME_DISCOVERY_ROUTES`에 등록된 `출처ID:유형`을 쉼표로 구분해 지정한다. 유형은 `news`, `event`, `goods`이고 각 출처에서 허용한 유형만 수집한다. `ANIME_DISCOVERY_INTERVAL_SECONDS`는 5~86400초, `ANIME_DISCOVERY_LIMIT`은 출처·유형별 회차당 1~20건이다. 가동 중인 조합에 같은 Compose 파일들을 사용해 설정 변경을 적용한다.
+`worker/.env`에서 `ANIME_DISCOVERY_ROUTES`를 생략하면 원피스 공식 굿즈를 수집한다. 기존 파일에 `prtimes_rss:news` 등 경로를 직접 지정했다면 그 값이 우선한다. 여러 경로는 등록된 `출처ID:유형`을 쉼표로 구분하고, 모든 일정을 끄려면 이 값을 빈 문자열로 설정한다. 각 출처는 허용한 유형만 수집한다. `ANIME_DISCOVERY_INTERVAL_SECONDS`는 5~86400초, `ANIME_DISCOVERY_LIMIT`은 출처·유형별 회차당 1~20건이다.
 
 수집 결과는 Flower의 `content.anime_discover`에서 확인한다. `discovered`는 발견 후보, `submitted`는 신규 작업, `duplicates`는 기존 작업, `unresolved`는 원문·작품을 확정할 수 없는 후보, `rejected`는 접수 검증 탈락, `fetch_failed`는 회차 내에 읽지 못한 후보 수다. 일부만 읽으면 `partial`, 같은 출처·유형의 이전 수집이 실행 중이면 `already_running`으로 표시된다. 목록 전체 호출이 실패하면 해당 작업은 실패로 기록되고 다음 Beat 주기에 다시 시도한다.
 

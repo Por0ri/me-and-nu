@@ -109,8 +109,8 @@ def _collect(source_id: str, content_type: str, limit: int) -> dict:
 
     sources = load_source_registry().sources
     source = next((item for item in sources if item.id == source_id), None)
-    if (source is None or source.status != "active" or not supports_discovery_adapter(source)
-            or content_type not in {kind.value for kind in source.content_types}):
+    if (source is None or source.status != "active"
+            or not supports_discovery_adapter(source, targeted=True, content_type=content_type)):
         raise DiscoveryError("discovery_source_unavailable")
     deadline = time.monotonic() + 210
     try:

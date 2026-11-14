@@ -35,6 +35,9 @@ class Source(BaseModel):
     feed_url: HttpUrl | None = None
     min_interval_seconds: float = Field(default=2.0, ge=0.0, le=3600.0)
     discovery_enabled: bool = True
+    # Explicit source-ID and type requests may use these routes even when
+    # the source is excluded from the Agent's general discovery schedule.
+    targeted_discovery_types: list[ContentType] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_status(self) -> "Source":

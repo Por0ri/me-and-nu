@@ -452,6 +452,42 @@ def test_source_can_be_crawlable_without_being_a_discovery_root() -> None:
     assert not supports_discovery_adapter(source)
 
 
+def test_targeted_one_piece_goods_uses_registered_detail_and_publisher_category(monkeypatch) -> None:
+    from ani_menu_agent.sources import load_source_registry
+
+    source = next(s for s in load_source_registry().sources if s.id == "one_piece_official")
+    monkeypatch.setattr("ani_menu_agent.discovery.load_source_registry",
+                        lambda: SourceRegistry(version=1, sources=[source]))
+    requested = []
+    html = """
+    <ul>
+      <li><a href="/news/index.html?category=goods"><h3>グッズの一覧を見る</h3><p class="el-tag__item">グッズ</p></a></li>
+      <li><a href="/news/101/index.html"><h3>新しいグッズが登場する展示</h3><p class="el-tag__item">イベント</p></a></li>
+      <li><a href="/news/story/index.html"><h3>グッズの特集について</h3><p class="el-tag__item">グッズ</p></a></li>
+      <li><a href="/news/102/index.html"><h3>新しいグッズを解説します</h3></a></li>
+      <li><a href="https://other.example/news/103/index.html"><h3>Official overseas store</h3><p class="el-tag__item">グッズ</p></a></li>
+      <li><a href="/news/104/index.html?story=2&amp;ref=home#cards"><h3>withCAT illustration Ver.</h3><p class="el-tag__item">グッズ</p>
+      <time datetime="2026-11-13">2026/11/13</time></a></li>
+    </ul>
+    """
+
+    def fetch(_client, url, _source, _timeout, _robots_cache):
+        requested.append(url)
+        return html, url
+
+    monkeypatch.setattr("ani_menu_agent.discovery._get_html_with_client", fetch)
+    for kind, ids in (("goods", None), ("news", {source.id}), (None, {source.id})):
+        assert collect_candidates(content_type=kind, source_ids=ids, limit=1) == ([], [])
+    assert not requested
+    items, errors = collect_candidates(content_type="goods", source_ids={source.id}, limit=1)
+    assert requested == [str(source.url)]
+    assert not errors
+    item, = items
+    assert str(item.url) == "https://one-piece.com/news/104/index.html?story=2&ref=home"
+    assert item.content_types == ["goods"]
+    assert item.published_at == "2026-11-13"
+
+
 def test_active_primary_html_source_can_discover_its_own_article_urls(monkeypatch) -> None:
     from ani_menu_agent.models import ContentType
 
