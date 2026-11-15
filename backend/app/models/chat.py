@@ -94,7 +94,8 @@ class ChatMessage(Base):
     written_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    # 답변 근거 출처: [{"contentId": 301, "url": "..."}]
+    # 답변 근거 출처: 우리 글 [{"contentId": 301, "title": "...", "url": "..."}]
+    # + 정보사전 [{"kind": "dictionary", "name": "AniList API", "url": "..."}]
     answer_sources: Mapped[list | None] = mapped_column(JSONB)
     # 같은 질문을 두 번 보내면 같은 작업을 돌려준다(API-052).
     client_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
