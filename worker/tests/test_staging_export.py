@@ -35,7 +35,8 @@ def seal_ready_attempt(root, job):
                       "layout": {"image_box": box, "copy_box": box, "text_overlay_box": box}, "fact_ids": ["f1"]})
     source_id = job["source_id"]
     package = {
-        "request_id": request_id, "content_type": "goods", "menu_work_ids": [8], "cards": cards,
+        "request_id": request_id, "content_type": job["content_type"], "menu_work_ids": [job["menu_work_id"]],
+        "cards": cards,
         "detail_body": "Synthetic source-backed detail.", "feed_valid_until": "2099-01-01T00:00:00Z",
         "sources": [{"id": source_id, "title": "Official source", "url": job["canonical_url"]}],
         "facts": [{"id": "f1", "statement": "Test fact.", "source_ids": [source_id]}],

@@ -12,7 +12,7 @@ WORKER_ROOT = Path(__file__).resolve().parents[1]
 
 def run_python(source, *arguments, overrides=None):
     # Each registry check needs fresh Celery import/finalization state.
-    env = {key: value for key, value in os.environ.items() if not key.startswith("CELERY_")}
+    env = {key: value for key, value in os.environ.items() if not key.startswith(("CELERY_", "ANIME_DISCOVERY_"))}
     env.update(overrides or {})
     return subprocess.run(
         [sys.executable, "-B", "-c", textwrap.dedent(source), *arguments],
@@ -32,25 +32,29 @@ class QueueRoutingTests(unittest.TestCase):
                 apps[module] = app
                 app.loader.import_default_modules()
 
-            fake, anime, live = apps['app'], apps['anime_app'], apps['generation_app']
+            fake, anime, live, discovery = (apps[name] for name in ('app', 'anime_app', 'generation_app', 'discovery_app'))
             def project_tasks(app):
                 return {name for name in app.tasks if name.startswith(('runtime.', 'content.'))}
 
             assert project_tasks(fake) == {'runtime.probe', 'runtime.heartbeat', 'content.fake_generate'}
             assert project_tasks(anime) == {'content.anime_probe'}
             assert project_tasks(live) == {'content.anime_generate'}
+            assert project_tasks(discovery) == {'content.anime_discover'}
             assert set(fake.amqp.queues) == {'runtime', 'content-generation'}
             assert set(anime.amqp.queues) == {'anime-generation'}
             assert set(live.amqp.queues) == {'anime-generation-live'}
+            assert set(discovery.amqp.queues) == {'anime-discovery'}
             assert fake.amqp.router.route({}, 'content.fake_generate')['queue'].name == 'content-generation'
             assert anime.amqp.router.route({}, 'content.anime_probe')['queue'].name == 'anime-generation'
             assert live.amqp.router.route({}, 'content.anime_generate')['queue'].name == 'anime-generation-live'
             assert set(fake.conf.beat_schedule) == {'runtime-heartbeat'}
             assert not anime.conf.beat_schedule
             assert not live.conf.beat_schedule
+            assert not discovery.conf.beat_schedule
             assert fake.conf.broker_url == 'redis://redis-tasks:6379/0'
             assert anime.conf.broker_url == 'redis://anime-redis:6379/0'
             assert live.conf.broker_url == 'redis://generation-redis:6379/0'
+            assert discovery.conf.broker_url == fake.conf.broker_url
             assert fake.conf.result_backend == 'redis://redis-tasks:6379/1'
             assert anime.conf.result_backend == 'redis://anime-redis:6379/1'
             assert live.conf.result_backend == 'redis://generation-redis:6379/1'
@@ -64,10 +68,45 @@ class QueueRoutingTests(unittest.TestCase):
             assert task.soft_time_limit in (None, live.conf.task_soft_time_limit)
             assert task.time_limit in (None, live.conf.task_time_limit)
         """
-        for order in (("app", "anime_app", "generation_app"), ("generation_app", "anime_app", "app")):
+        modules = ("app", "anime_app", "generation_app", "discovery_app")
+        for order in (modules, tuple(reversed(modules))):
             with self.subTest(order=order):
                 result = run_python(script, *order)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_beat_routes_each_opted_in_source_and_type_to_discovery_only(self):
+        script = """
+            from menu_worker.app import app
+            app.loader.import_default_modules()
+            assert 'content.anime_discover' not in app.tasks
+            assert 'runtime-heartbeat' in app.conf.beat_schedule
+            discovery = {name: entry for name, entry in app.conf.beat_schedule.items() if name != 'runtime-heartbeat'}
+            expected = [('prtimes_rss', 'news'), ('prtimes_rss', 'goods')]
+            assert len(discovery) == len(expected)
+            for source, kind in expected:
+                entry = discovery[f'anime-article-discovery-{source}-{kind}']
+                assert entry['task'] == 'content.anime_discover'
+                assert entry['args'] == (source, kind)
+                assert entry['schedule'] == 300
+                assert entry['options']['expires'] == 300
+                route = app.amqp.router.route(entry['options'].copy(), entry['task'])
+                assert route['queue'].name == 'anime-discovery'
+        """
+        result = run_python(script, overrides={
+            "ANIME_DISCOVERY_ROUTES": "prtimes_rss:news,prtimes_rss:goods",
+            "ANIME_DISCOVERY_INTERVAL_SECONDS": "300",
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_bad_schedule_interval_is_rejected_before_beat_starts(self):
+        for interval in ("0", "8.5", "86401"):
+            with self.subTest(interval=interval):
+                result = run_python("import menu_worker.app", overrides={
+                    "ANIME_DISCOVERY_ROUTES": "prtimes_rss:news",
+                    "ANIME_DISCOVERY_INTERVAL_SECONDS": interval,
+                })
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ANIME_DISCOVERY_INTERVAL_SECONDS", result.stderr)
 
     def test_anime_app_refuses_fake_broker_or_result_store(self):
         for key, value in (("CELERY_BROKER_URL", "redis://redis-tasks:6379/0"),
@@ -104,7 +143,8 @@ class QueueRoutingTests(unittest.TestCase):
                 assert health.check(role)
                 ping.assert_called_with(destination=[name], timeout=3)
         """
-        for values in (("anime_app", "anime-worker", "anime"), ("generation_app", "generation-worker", "generate")):
+        for values in (("anime_app", "anime-worker", "anime"), ("generation_app", "generation-worker", "generate"),
+                       ("discovery_app", "discovery-worker", "discovery")):
             with self.subTest(role=values[1]):
                 result = run_python(script, *values)
                 self.assertEqual(result.returncode, 0, result.stderr)
