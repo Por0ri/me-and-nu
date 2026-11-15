@@ -146,16 +146,29 @@ test('blank, too long and overlapping questions are not sent', async () => {
   assert.deepEqual(calls.filter(call => call[0] === 'send').map(call => call[2]), ['첫 질문']);
 });
 
-test('the sheet opens with the design copy and examples; the home dock keeps its AI label', () => {
+test('the sheet opens like the design: handle, centred title, examples and input, no notice before a question', () => {
   const home = renderToStaticMarkup(React.createElement(ChatSheet, { place: { kind: 'detail', topicId: 2, contentId: 99 }, copy: HOME_CHAT_COPY, onClose() {} }));
   assert.match(home, /<dialog/);
+  assert.match(home, /aria-label="AI 대화 닫기"/);
   assert.ok(home.includes('어떤 콘텐츠를 찾고 계시나요?'));
   assert.ok(home.includes('placeholder="보고싶은 콘텐츠가 무엇인가요?"'));
-  for (const example of HOME_CHAT_COPY.examples) assert.ok(home.includes(example.replace(/'/g, '&#x27;')), example);
+  for (const example of HOME_CHAT_COPY.examples) assert.ok(home.includes(example), example);
+  assert.ok(HOME_CHAT_COPY.examples.includes('‘나루토’ 관련 카드뉴스 보여줘'));
+  assert.ok(!home.includes('AI가 생성한 답변'), 'the AI notice appears only after the first question');
   assert.equal(DETAIL_CHAT_COPY.placeholder, '콘텐츠 내용 중 궁금한 점이 있나요?');
-  const dock = renderToStaticMarkup(React.createElement(HomeAIChat, { expanded: true, onExpandedChange() {} }));
-  assert.match(dock, /aria-label="AI 콘텐츠 탐색" aria-expanded="true"/);
-  assert.ok(dock.includes('/pivot/detail/ai-expanded.svg'));
-  assert.ok(dock.includes('어떤 콘텐츠를 찾고 계시나요? 무엇이든 물어보세요!'));
-  assert.doesNotMatch(dock, /<dialog/);
+});
+
+test('the home dock keeps its AI label; the face and the bar share one 48px circle and appear only when expanded', () => {
+  const open = renderToStaticMarkup(React.createElement(HomeAIChat, { expanded: true, onExpandedChange() {} }));
+  assert.match(open, /aria-label="AI 콘텐츠 탐색" aria-expanded="true"/);
+  assert.ok(open.includes('/pivot/detail/ai-expanded.svg'));
+  assert.ok(open.includes('어떤 콘텐츠를 찾고 계시나요? 무엇이든 물어보세요!'));
+  assert.doesNotMatch(open, /<dialog|inert=""/);
+  const closed = renderToStaticMarkup(React.createElement(HomeAIChat, { expanded: false, onExpandedChange() {} }));
+  assert.match(closed, /aria-expanded="false"/);
+  assert.ok(closed.includes('/pivot/home/chrome/ai.svg'));
+  assert.match(closed, /inert=""/, 'the folded bar cannot be focused or clicked');
+  const css = fs.readFileSync(path.join(root, 'components/pivot/chat.module.css'), 'utf8');
+  assert.match(css, /\.dockFace \{[^}]*width: 48px; height: 48px;/);
+  assert.match(css, /\.dockLayer \{[^}]*height: 48px;/);
 });

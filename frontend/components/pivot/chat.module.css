@@ -1,28 +1,35 @@
-/* AI 대화 시트 (홈 · 상세 공용). <dialog> 는 맨 위 층에 뜨지만 글꼴 · 색 · pointer-events 는 부모에서 물려받으므로 직접 둔다. */
+/* AI 대화 시트 (홈 · 상세 공용, 디자인 시안 11/13). <dialog> 는 맨 위 층에 뜨지만 글꼴 · 색 · pointer-events 는
+   부모에서 물려받으므로 직접 둔다. 바닥은 화면(키보드가 올라오면 키보드 위)에 붙고, 높이는 내용만큼이다. */
 .sheet {
   position: fixed; inset: auto;
   left: calc(var(--report-viewport-left, 0px) + var(--report-viewport-width, 100vw) / 2);
   top: calc(var(--report-viewport-top, 0px) + var(--report-viewport-height, 100dvh));
-  transform: translate(-50%, -100%);
+  transform: translate(-50%, calc(-100% + var(--chat-drag, 0px)));
   width: min(430px, var(--report-viewport-width, 100vw)); max-width: none;
-  height: min(640px, calc(var(--report-viewport-height, 100dvh) - 40px)); max-height: none;
+  height: auto; max-height: none;
   margin: 0; padding: 0; border: 0; border-radius: 24px 24px 0 0;
   background: #fff; color: #27272a; font-family: PivotPretendard, sans-serif;
   pointer-events: auto; overflow: hidden; word-break: keep-all; overflow-wrap: anywhere;
-  box-shadow: 0 -8px 24px #0000001f;
+  transition: transform 200ms ease;
+  animation: chatSheetIn 260ms cubic-bezier(.2, .8, .2, 1);
 }
-.sheet::backdrop { background: rgb(0 0 0 / 40%); }
-.panel { display: flex; flex-direction: column; height: 100%; }
-.header { display: flex; align-items: center; gap: 8px; padding: 14px 10px 12px 18px; background: linear-gradient(90deg, rgb(247 242 255), rgb(240 228 253)); }
-.face { flex: none; width: 40px; height: 40px; }
-.header h2 { flex: 1; min-width: 0; margin: 0; font-size: 16px; font-weight: 700; line-height: 24px; }
+.sheet[data-dragging] { transition: none; }
+.sheet::backdrop { background: rgb(0 0 0 / 50%); animation: chatFadeIn 200ms ease; }
+@keyframes chatSheetIn { from { transform: translate(-50%, 0); } to { transform: translate(-50%, -100%); } }
+@keyframes chatFadeIn { from { opacity: 0; } to { opacity: 1; } }
+.panel { display: flex; flex-direction: column; max-height: min(720px, calc(var(--report-viewport-height, 100dvh) - 40px)); padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+.header { flex: none; display: flex; flex-direction: column; align-items: center; padding: 4px 24px 18px; touch-action: none; user-select: none; }
+.handle { position: relative; width: 64px; height: 24px; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: grab; }
+.handle::before { content: ""; position: absolute; top: 10px; left: 50%; width: 36px; height: 5px; border-radius: 999px; background: #d8d8d4; transform: translateX(-50%); }
+.handle:focus-visible { outline: 2px solid var(--pivot-primary, #7043b4); outline-offset: -2px; }
+.header h2 { margin: 4px 0 0; color: #27272a; font-size: 18px; font-weight: 700; line-height: 26px; text-align: center; }
 .header h2:focus { outline: none; }
-.close { display: grid; place-items: center; flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #27272a; }
-.log { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 16px 20px; overflow-y: auto; overscroll-behavior: contain; }
+.log { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 0 24px 4px; overflow-y: auto; overscroll-behavior: contain; }
 .log:focus { outline: none; }
-.examplesTitle { margin: 0 0 10px; color: #71717a; font-size: 12px; font-weight: 500; line-height: 18px; }
-.examples { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.examples button { min-height: 36px; padding: 8px 14px; border: 1px solid #e0bafb; border-radius: 999px; background: #f7f2ff; color: #3f3f46; font-size: 13px; line-height: 19px; text-align: left; }
+.examples { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin: 0; padding: 0; list-style: none; }
+/* 버튼 · 입력창 글자는 pivot.module.css 의 `.root button, .root input { font: inherit }` 보다 구체적인 선택자로 정한다 */
+.sheet .examples button { min-height: 35px; padding: 8px 10px; border: 0; border-radius: 8px; background: #efe7ff; color: #3f3f46; font: inherit; font-size: 13px; line-height: 19px; text-align: left; }
+.aiNotice { margin: 0; color: #a1a1aa; font-size: 11px; line-height: 16px; text-align: center; }
 .question { align-self: flex-end; max-width: 80%; margin: 0; padding: 10px 14px; border-radius: 16px 16px 4px 16px; background: var(--pivot-primary, #7043b4); color: #fff; font-size: 14px; line-height: 21px; white-space: pre-wrap; }
 .answer { display: flex; align-items: flex-start; gap: 8px; }
 .avatar { flex: none; width: 32px; height: 32px; }
@@ -34,31 +41,58 @@
 .typing span:nth-child(2) { animation-delay: .15s; }
 .typing span:nth-child(3) { animation-delay: .3s; }
 @keyframes chatTyping { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
-.cards { display: flex; gap: 8px; width: calc(100% + 20px); margin: 0 -20px 0 0; padding: 2px 20px 4px 2px; overflow-x: auto; list-style: none; scroll-snap-type: x proximity; scrollbar-width: thin; scrollbar-color: #e4e4e7 transparent; }
+.cards { display: flex; gap: 8px; width: calc(100% + 24px); margin: 0 -24px 0 0; padding: 2px 24px 4px 2px; overflow-x: auto; list-style: none; scroll-snap-type: x proximity; scrollbar-width: thin; scrollbar-color: #e4e4e7 transparent; }
 .cards li { flex: none; scroll-snap-align: start; }
-.card { display: block; width: 120px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
-.thumb { position: relative; display: block; width: 120px; height: 150px; overflow: hidden; border-radius: 8px; background: #efe7ff; box-shadow: 0 0 2px #e0bafb; }
+/* 마우스로 잡아 넘기기 (lib/pivot/drag-scroll.ts 가 data-scrollable · data-dragging 을 단다) */
+.cards[data-scrollable="true"] { cursor: grab; }
+.cards[data-dragging] { cursor: grabbing; scroll-snap-type: none; }
+.cards img { -webkit-user-drag: none; user-select: none; pointer-events: none; }
+.card { display: block; width: 144px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.thumb { position: relative; display: block; width: 144px; height: 180px; overflow: hidden; border-radius: 8px; background: #efe7ff; box-shadow: 0 0 2px #e0bafb; }
 .thumb > img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.thumb [data-carousel-image-state]:not(img) { justify-content: center; padding: 8px; font-size: 10px; line-height: 13px; }
+.thumb [data-carousel-image-state]:not(img) { justify-content: flex-start; padding: 14px 8px; font-size: 10px; line-height: 13px; }
 .placeholder { display: grid; place-items: center; height: 100%; color: #71717a; font-size: 11px; }
-.cardTitle { display: -webkit-box; margin-top: 6px; overflow: hidden; color: #27272a; font-size: 12px; font-weight: 600; line-height: 17px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+/* 홈 피드처럼 글씨를 그림 위에: 아래쪽을 어둡게 깔고 소제목(연보라) · 제목(흰 굵은 글씨) */
+.cardOverlay { position: absolute; inset: auto 0 0; display: flex; flex-direction: column; gap: 3px; padding: 30px 9px 10px; background: linear-gradient(180deg, transparent, rgb(0 0 0 / 62%) 38%, rgb(0 0 0 / 82%)); color: #fff; pointer-events: none; }
+.cardEyebrow { overflow: hidden; color: #c7acfb; font-size: 9px; font-weight: 600; line-height: 12px; white-space: nowrap; text-overflow: ellipsis; text-shadow: 0 1px 2px #000; }
+.cardTitle { display: -webkit-box; overflow: hidden; color: #fff; font-size: 12px; font-weight: 700; line-height: 16px; -webkit-box-orient: vertical; -webkit-line-clamp: 3; text-shadow: 0 1px 2px #000; }
 .meta { margin: 0; color: #71717a; font-size: 12px; line-height: 18px; }
 .meta a, .meta button { padding: 0; border: 0; background: none; color: var(--pivot-primary, #7043b4); font: inherit; text-align: left; text-decoration: underline; text-underline-offset: 2px; }
-.retry { min-height: 32px; padding: 4px 12px; border: 1px solid var(--pivot-primary, #7043b4); border-radius: 8px; background: #fff; color: var(--pivot-primary, #7043b4); font-size: 12px; }
-.composer { display: flex; align-items: center; gap: 8px; margin: 4px 16px 0; padding: 4px 4px 4px 16px; border: 1px solid #e0bafb; border-radius: 24px; background: #fff; box-shadow: 0 1px 5px rgb(206 191 250 / 50%); }
-.composer:focus-within { outline: 2px solid var(--pivot-primary, #7043b4); outline-offset: 2px; }
-.composer input { flex: 1; min-width: 0; height: 36px; padding: 0; border: 0; background: transparent; color: #27272a; font: inherit; font-size: 14px; line-height: 20px; }
-.composer input:focus { outline: none; }
-.composer input::placeholder { color: #71717a; opacity: 1; }
-.send { display: grid; place-items: center; flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--pivot-primary, #7043b4); color: #fff; }
-.send:disabled { background: #d4d4d8; }
-.aiNotice { margin: 8px 20px max(12px, env(safe-area-inset-bottom)); color: #a1a1aa; font-size: 11px; line-height: 16px; text-align: center; }
+.sheet .retry { min-height: 32px; padding: 4px 12px; border: 1px solid var(--pivot-primary, #7043b4); border-radius: 8px; background: #fff; color: var(--pivot-primary, #7043b4); font: inherit; font-size: 12px; }
+.composer { flex: none; display: flex; align-items: center; gap: 8px; margin: 16px 24px 0; padding: 4px 4px 4px 14px; border-radius: 8px; background: #fff; box-shadow: 0 2px 12px rgb(0 0 0 / 10%); }
+.composer:focus-within { box-shadow: 0 2px 12px rgb(0 0 0 / 10%), 0 0 0 2px #c7acfb; }
+.sheet .composer input { flex: 1; min-width: 0; height: 30px; padding: 0; border: 0; background: transparent; color: #27272a; font: inherit; font-size: 13px; line-height: 20px; }
+.sheet .composer input:focus { outline: none; }
+.sheet .composer input::placeholder { color: #a1a1aa; opacity: 1; }
+.send { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: #f4f4f5; color: #27272a; }
+
+/* 하단 마스코트 · 안내 바 (홈 · 상세 공용, chat-dock.tsx). 놓이는 곳은 하단 바(home.module.css .bottomBar)와 같은
+   자리 · 크기다. 접힌 마스코트는 기존 자리(가운데 307px 칸의 오른쪽 끝), 펼치면 알약이 최대 340px 까지 펼쳐지고
+   마스코트는 오른쪽 끝으로 옮겨 간다. 동그라미는 두 상태 모두 48px. */
+.dockLayer { position: fixed; z-index: 7; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); width: min(100%, 430px); height: 48px; transform: translateX(-50%); pointer-events: none; }
+.navFade nav { transition: opacity 180ms ease; }
+.navFade[data-ai-open] nav { opacity: 0; }
+.dockPill { position: absolute; z-index: 1; top: 0; bottom: 0; left: calc(50% - 100px); right: calc(50% - 100px); border-radius: 24px; background: linear-gradient(90deg, rgb(247 242 255 / 72%), rgb(224 186 251 / 72%)); backdrop-filter: blur(12px); box-shadow: 0 6px 18px #0000001f; opacity: 0; pointer-events: none; transition: left 340ms cubic-bezier(.2, .8, .2, 1), right 340ms cubic-bezier(.2, .8, .2, 1), opacity 160ms ease; }
+/* 펼친 바: 너비 최대 340px, 양옆 여백은 36px 이상 (PC 430px 에서 340px · 휴대폰 390px 에서 318px, 카드보다 안쪽).
+   단 접힌 마스코트 자리보다 바깥으로는 가지 않아 마스코트가 왼쪽으로 움직이지 않는다 */
+.dockPill[data-expanded] {
+  left: min(calc((100% - min(307px, calc(100vw - 68px))) / 2), max(36px, calc((100% - 340px) / 2)));
+  right: min(calc((100% - min(307px, calc(100vw - 68px))) / 2), max(36px, calc((100% - 340px) / 2)));
+  opacity: 1; pointer-events: auto;
+}
+/* 글씨는 마스코트를 뺀 자리의 가운데, 12px (홈 문구 폭 237px: 가장 좁은 375px 휴대폰의 243px 자리에도 한 줄).
+   그보다 좁은 화면에서는 끝을 … 로 */
+.dockPill .dockPrompt { display: flex; align-items: center; justify-content: center; width: calc(100% - 50px); height: 100%; padding: 0 2px 0 12px; border: 0; border-radius: 24px; background: transparent; color: #52525b; font: inherit; font-size: 12px; line-height: 16px; letter-spacing: -0.2px; opacity: 0; transition: opacity 140ms ease; }
+.dockPill .dockPrompt span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dockPill[data-expanded] .dockPrompt { opacity: 1; transition-delay: 160ms; }
+.dockFace { position: absolute; z-index: 2; top: 0; right: calc((100% - min(307px, calc(100vw - 68px))) / 2); width: 48px; height: 48px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; transition: right 340ms cubic-bezier(.2, .8, .2, 1); }
+.dockFace[aria-expanded="true"] { right: min(calc((100% - min(307px, calc(100vw - 68px))) / 2), max(36px, calc((100% - 340px) / 2))); }
+/* 얼굴 없는 그림(64px 캔버스)과 얼굴 그림(56px 캔버스, 동그라미 40px)을 둘 다 동그라미 48px 로 맞춘다 */
+.dockFace img { position: absolute; top: 0; left: -8px; width: 64px; height: auto; max-width: none; pointer-events: none; }
+.dockFace img[data-face="on"] { left: -9.6px; width: 67.2px; animation: chatFaceIn 220ms ease; }
+@keyframes chatFaceIn { from { opacity: .4; transform: scale(.9); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
+  .sheet, .sheet::backdrop, .dockFace img[data-face="on"] { animation: none; }
+  .sheet, .dockPill, .dockPill .dockPrompt, .dockFace, .navFade nav { transition: none; }
   .typing span { animation: none; opacity: .6; }
 }
-
-/* 홈 하단 바: 마스코트를 누르면 상세(detail.module.css .aiPrompt)와 같은 40px 안내 바가 펼쳐진다. */
-.homePrompt { position: absolute; z-index: 1; top: 0; left: 50%; width: min(307px, calc(100vw - 68px)); height: 40px; transform: translateX(-50%); border-radius: 24px; background: linear-gradient(90deg, rgb(247 242 255 / 60%), rgb(224 186 251 / 60%)); backdrop-filter: blur(12px); box-shadow: 0 8px 24px #0000001f; pointer-events: auto; }
-.homePrompt button { display: flex; align-items: center; width: calc(100% - 48px); height: 40px; padding: 2px 0 2px 16px; border: 0; border-radius: 24px; background: transparent; color: #52525b; font-size: 12px; line-height: 15px; text-align: left; }
-.homeAiButton { z-index: 2; }
-.homeAiButton[aria-expanded="true"] { width: 40px; height: 40px; }

@@ -12,6 +12,7 @@ import { scrollHomeTo } from "./home-scroll";
 import styles from "./home.module.css";
 import { HomeAIButton } from "./home-ai-button";
 import { HomeAIChat } from "./home-ai-chat";
+import chatStyles from "./chat.module.css";
 import { useHomeExposure, useInteractions } from "./interaction-context";
 
 type HomeNotice = { message: string; postId?: string };
@@ -65,7 +66,9 @@ export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI 
       setLocalNotice(current => current === localNotice ? { message: "" } : current);
     });
   }, [localNotice, onNotice]);
-  return <div className={styles.bottomBar} data-adjacent-ai={adjacentAI || undefined} data-compact={compact || aiOpen || undefined}>
+  // AI 바가 펼쳐지면 같은 높이(48px)의 바가 메뉴 알약 자리를 덮고, 메뉴는 흐려지며 누를 수 없게 된다.
+  return <div className={chat && !hideAI ? `${styles.bottomBar} ${chatStyles.navFade}` : styles.bottomBar} data-adjacent-ai={adjacentAI || undefined}
+    data-compact={compact || undefined} data-ai-open={aiOpen || undefined}>
     <nav aria-label="주요 메뉴" className={styles.navigation} inert={aiOpen || undefined}>
       <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } scrollHomeTo(0); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
       <button type="button" data-saved-navigation="" aria-current={active === "saved" ? "page" : undefined}
