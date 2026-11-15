@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 from threading import Event, Thread
+import time
 
 from menu_worker.job_artifacts import ArtifactError, FakeAgentError, generate_anime_probe, generate_fake, validate_artifacts
 from menu_worker.anime_catalog import AnimeInputError, generation_article_key
@@ -43,16 +44,33 @@ class Lease:
         self.thread.join(timeout=6)
 
 
-def run_job(store, root: Path, job_id: str, task_id: str | None = None, *, recover=False, expected_kind="fake") -> dict:
+def run_job(store, root: Path, job_id: str, task_id: str | None = None, *, recover=False,
+            expected_kind="fake", retry_failures=False) -> dict:
     claim = store.claim_recovery if recover else store.claim
     job = claim(job_id, task_id=task_id, lease_seconds=30, expected_kind=expected_kind)
     if job is None:
         return {"job_id": str(job_id), "processed": False}
+    retry_delay = 0
+    while True:
+        report, next_job = _run_attempt(store, root, job, recover=recover, expected_kind=expected_kind,
+                                        retry_failures=retry_failures, retry_delay=retry_delay)
+        if next_job is None:
+            return report
+        job = next_job
+        retry_delay = min(job["attempt_count"] - 1, 2)
+
+
+def _run_attempt(store, root, job, *, recover, expected_kind, retry_failures, retry_delay):
+    job_id = job["job_id"]
     token = job["claim_token"]
     live = expected_kind == "anime_generate"
     generation_started = recover
+    next_job = None
     with Lease(store, job) as lease:
         try:
+            if retry_delay:
+                time.sleep(retry_delay)
+                lease.ensure()
             if not recover:
                 if expected_kind in {"anime", "anime_generate"}:
                     fields = {key: job[key] for key in INPUT_FIELDS}
@@ -81,20 +99,29 @@ def run_job(store, root: Path, job_id: str, task_id: str | None = None, *, recov
             completed = store.complete(job_id, token, execution_status="failed",
                                        expected_kind=expected_kind, error_code=error.code)
         except FakeAgentError:
-            completed = store.complete(job_id, token, execution_status="failed",
-                                       expected_kind=expected_kind, error_code="fake_generation_failed")
+            if retry_failures and not recover:
+                next_job = store.retry_failure(job_id, token, expected_kind=expected_kind,
+                                               error_code="fake_generation_failed")
+            completed = bool(next_job) or store.complete(job_id, token, execution_status="failed",
+                                                         expected_kind=expected_kind, error_code="fake_generation_failed")
         except LostClaim:
-            return {"job_id": str(job_id), "processed": False, "reason": "claim_lost"}
+            return {"job_id": str(job_id), "processed": False, "reason": "claim_lost"}, None
         except RealGenerationError as error:
             agent_not_launched = live and not recover and error.before_launch
             status = "needs_attention" if generation_started and not agent_not_launched else "failed"
-            completed = store.complete(job_id, token, execution_status=status,
-                                       expected_kind=expected_kind, error_code=error.code,
-                                       agent_not_launched=agent_not_launched)
+            if retry_failures and agent_not_launched:
+                next_job = store.retry_failure(job_id, token, expected_kind=expected_kind,
+                                               error_code=error.code, agent_not_launched=True)
+            completed = bool(next_job) or store.complete(job_id, token, execution_status=status,
+                                                         expected_kind=expected_kind, error_code=error.code,
+                                                         agent_not_launched=agent_not_launched)
         except (ArtifactError, OSError):
             completed = store.complete(job_id, token, execution_status="needs_attention",
                                        expected_kind=expected_kind, error_code="artifact_verification_required")
-    return {"job_id": str(job_id), "processed": completed, "execution_status": store.get(job_id)["execution_status"]}
+    if next_job is not None:
+        return None, next_job
+    return {"job_id": str(job_id), "processed": completed,
+            "execution_status": store.get(job_id)["execution_status"]}, None
 
 
 def execute_delivery(job_id, task_id, worker_name, *, expected_kind):
@@ -103,7 +130,7 @@ def execute_delivery(job_id, task_id, worker_name, *, expected_kind):
         if os.environ.get("CONTENT_JOB_KIND") != expected_kind:
             raise RuntimeError("Unexpected worker role")
         root = Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"])
-        result = run_job(JobStore(), root, job_id, task_id, expected_kind=expected_kind)
+        result = run_job(JobStore(), root, job_id, task_id, expected_kind=expected_kind, retry_failures=True)
         return {**result, "worker": worker_name, "worker_kind": expected_kind}
     except Exception:
         # DB errors can contain credentials. The dispatcher reconciles expired claims.

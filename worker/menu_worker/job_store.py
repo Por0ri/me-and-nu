@@ -28,6 +28,10 @@ SCHEMA_VERSION = len(MIGRATIONS)
 # the launch fence. Each is emitted exclusively before the producer starts.
 PRELAUNCH_SETUP_ERRORS = ("invalid_agent_secret", "agent_attempt_setup_failed", "agent_spawn_failed")
 PRELAUNCH_ERRORS = (*PRELAUNCH_SETUP_ERRORS, "agent_runtime_unavailable")
+MAX_GENERATION_ATTEMPTS = 3
+# These failures confirm that the producer never ran. Configuration/input
+# errors still require correction rather than automatic retries.
+AUTO_RETRY_PRELAUNCH_ERRORS = ("agent_attempt_setup_failed", "agent_spawn_failed")
 
 
 class JobStoreError(RuntimeError):
@@ -311,24 +315,105 @@ class JobStore:
                 return None
             if bool(row["generation_started_at"]) != recovery:
                 return None
-            attempt, token = uuid4(), uuid4()
-            number = row["attempt_count"] + 1
-            mode = "recovery" if recovery else "generation"
-            connection.execute(
-                """INSERT INTO public.content_generation_attempt
-                   (attempt_id,job_id,attempt_no,mode,celery_task_id,claim_token)
-                   VALUES (%s,%s,%s,%s,%s,%s)""",
-                (attempt, row["job_id"], number, mode, task_id, token),
-            )
+            if not recovery and self._generation_attempts(connection, row["job_id"]) >= MAX_GENERATION_ATTEMPTS:
+                connection.execute(
+                    """UPDATE public.content_generation_job SET execution_status='failed',
+                       error_code='GENERATION_ATTEMPTS_EXHAUSTED',finished_at=CURRENT_TIMESTAMP,
+                       updated_at=CURRENT_TIMESTAMP WHERE job_id=%s""", (row["job_id"],),
+                )
+                return None
+            return self._start_attempt(connection, row, task_id, lease_seconds, recovery=recovery)
+
+    @staticmethod
+    def _generation_attempts(connection, job_id) -> int:
+        return connection.execute(
+            """SELECT count(*) AS total FROM public.content_generation_attempt
+               WHERE mode='generation' AND job_id IN (
+                   SELECT job_id FROM public.content_generation_job WHERE job_id=%s OR duplicate_of_job_id=%s
+               )""", (job_id, job_id),
+        ).fetchone()["total"]
+
+    @staticmethod
+    def _start_attempt(connection, row, task_id, lease_seconds, *, recovery, retry_token=None):
+        attempt, token = uuid4(), uuid4()
+        number = row["attempt_count"] + 1
+        mode = "recovery" if recovery else "generation"
+        connection.execute(
+            """INSERT INTO public.content_generation_attempt
+               (attempt_id,job_id,attempt_no,mode,celery_task_id,claim_token)
+               VALUES (%s,%s,%s,%s,%s,%s)""",
+            (attempt, row["job_id"], number, mode, task_id, token),
+        )
+        row = connection.execute(
+            """UPDATE public.content_generation_job SET execution_status='running',current_attempt_id=%s,
+               generation_attempt_id=%s,attempt_count=%s,claim_token=%s,
+               generation_started_at=CASE WHEN %s THEN generation_started_at ELSE NULL END,
+               lease_expires_at=clock_timestamp() + (%s * INTERVAL '1 second'),
+               error_code=NULL,finished_at=NULL,updated_at=CURRENT_TIMESTAMP
+               WHERE job_id=%s AND (NOT %s OR (claim_token=%s AND lease_expires_at>clock_timestamp())) RETURNING *""",
+            (attempt, row["generation_attempt_id"] if recovery else attempt, number, token,
+             recovery, lease_seconds, row["job_id"], retry_token is not None, retry_token),
+        ).fetchone()
+        if row is None:
+            return None
+        return {**_plain(row), "attempt_id": str(attempt), "mode": mode}
+
+    def retry_failure(self, job_id: str, claim_token: str, *, error_code: str,
+                      expected_kind: str, agent_not_launched: bool = False, lease_seconds: int = 30) -> dict | None:
+        """Seal a safe failure and claim its next attempt without exposing a queued row.
+
+        The same Celery delivery owns all attempts. Dispatchers and duplicate
+        deliveries cannot claim the job between retries, and old tokens are fenced.
+        """
+        validate_job_kind(expected_kind)
+        lease_seconds = _lease(lease_seconds)
+        if expected_kind == "fake":
+            if error_code != "fake_generation_failed" or agent_not_launched:
+                return None
+        elif expected_kind != "anime_generate" or not agent_not_launched or error_code not in AUTO_RETRY_PRELAUNCH_ERRORS:
+            return None
+        with self._connect() as connection:
             row = connection.execute(
-                """UPDATE public.content_generation_job SET execution_status='running',current_attempt_id=%s,
-                   generation_attempt_id=%s,attempt_count=%s,claim_token=%s,
-                   lease_expires_at=clock_timestamp() + (%s * INTERVAL '1 second'),
-                   error_code=NULL,finished_at=NULL,updated_at=CURRENT_TIMESTAMP
-                   WHERE job_id=%s RETURNING *""",
-                (attempt, row["generation_attempt_id"] if recovery else attempt, number, token, lease_seconds, row["job_id"]),
+                """SELECT * FROM public.content_generation_job WHERE job_id=%s AND claim_token=%s
+                   AND job_kind=%s AND execution_status='running' AND lease_expires_at>clock_timestamp()
+                   AND duplicate_of_job_id IS NULL AND current_attempt_id=generation_attempt_id
+                   AND artifact_path IS NULL AND result_sha256 IS NULL FOR UPDATE""",
+                (_identity(job_id), _identity(claim_token), expected_kind),
             ).fetchone()
-            return {**_plain(row), "attempt_id": str(attempt), "mode": mode}
+            if not row or self._generation_attempts(connection, row["job_id"]) >= MAX_GENERATION_ATTEMPTS:
+                return None
+            if expected_kind == "anime_generate":
+                unsafe = connection.execute(
+                    """SELECT 1 FROM public.content_generation_job AS member
+                       WHERE (member.job_id=%s OR member.duplicate_of_job_id=%s) AND (
+                           (member.job_id<>%s AND (member.execution_status IN ('running','succeeded')
+                               OR member.generation_started_at IS NOT NULL))
+                           OR member.artifact_path IS NOT NULL OR member.result_sha256 IS NOT NULL
+                           OR EXISTS (SELECT 1 FROM public.content_generation_attempt AS previous
+                               WHERE previous.job_id=member.job_id AND previous.attempt_id<>%s
+                               AND (previous.generation_started_at IS NOT NULL
+                                   OR previous.execution_status IN ('running','succeeded')
+                                   OR previous.artifact_path IS NOT NULL OR previous.result_sha256 IS NOT NULL)))
+                       LIMIT 1""", (row["job_id"], row["job_id"], row["job_id"], row["current_attempt_id"]),
+                ).fetchone()
+                if unsafe:
+                    return None
+            attempt = connection.execute(
+                """UPDATE public.content_generation_attempt SET execution_status='failed',error_code=%s,
+                   generation_started_at=CASE WHEN %s THEN NULL ELSE generation_started_at END,
+                   finished_at=CURRENT_TIMESTAMP WHERE attempt_id=%s AND mode='generation'
+                   AND execution_status='running' RETURNING celery_task_id""",
+                (error_code, agent_not_launched, row["current_attempt_id"]),
+            ).fetchone()
+            if attempt is None:
+                return None
+            next_job = self._start_attempt(connection, row, attempt["celery_task_id"], lease_seconds,
+                                           recovery=False, retry_token=row["claim_token"])
+            if next_job is None:
+                # A blocked attempt update may outlive the lease. Neither the
+                # failure nor the new attempt may survive that lost claim.
+                connection.rollback()
+            return next_job
 
     def claim(self, job_id: str, task_id: str | None = None, lease_seconds: int = 30,
               *, expected_kind: str = "fake") -> dict | None:
@@ -447,6 +532,8 @@ class JobStore:
                 started = row["generation_started_at"] is not None
                 status = "needs_attention" if started else "queued"
                 code = "GENERATION_INTERRUPTED" if started else "LEASE_EXPIRED_BEFORE_GENERATION"
+                if not started and self._generation_attempts(connection, row["job_id"]) >= MAX_GENERATION_ATTEMPTS:
+                    status, code = "failed", "GENERATION_ATTEMPTS_EXHAUSTED"
                 if row["job_kind"] == "anime" and row["menu_work_id"] is None:
                     status = "needs_attention" if started else "cancelled"
                     code = "LEGACY_ANIME_FIXTURE_RETIRED"
@@ -459,7 +546,7 @@ class JobStore:
                     """UPDATE public.content_generation_job SET execution_status=%s,error_code=%s,
                        claim_token=NULL,lease_expires_at=NULL,last_dispatched_at=NULL,updated_at=CURRENT_TIMESTAMP,
                        finished_at=CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE finished_at END
-                       WHERE job_id=%s""", (status, code, status == "cancelled", row["job_id"]),
+                       WHERE job_id=%s""", (status, code, status in {"cancelled", "failed"}, row["job_id"]),
                 )
                 counts[status] = counts.get(status, 0) + 1
         return counts
@@ -490,6 +577,7 @@ class JobStore:
                    last_dispatched_at=NULL, last_task_id=NULL, error_code=NULL, finished_at=NULL,
                    updated_at=CURRENT_TIMESTAMP
                    WHERE job_id=%(job_id)s AND job_kind='anime_generate' AND duplicate_of_job_id IS NULL
+                   AND (SELECT count(*) FROM article_attempts WHERE mode='generation') < %(max_attempts)s
                    AND artifact_path IS NULL AND result_sha256 IS NULL
                    AND ((execution_status='failed' AND generation_started_at IS NULL AND error_code=ANY(%(errors)s))
                         OR (execution_status='needs_attention' AND error_code=ANY(%(setup_errors)s)
@@ -508,7 +596,8 @@ class JobStore:
                           OR (generation_started_at IS NOT NULL AND attempt_id NOT IN (SELECT attempt_id FROM legacy_prelaunch))
                    )
                    RETURNING job_id""", {"job_id": _identity(job_id), "errors": list(PRELAUNCH_ERRORS),
-                                         "setup_errors": list(PRELAUNCH_SETUP_ERRORS)},
+                                         "setup_errors": list(PRELAUNCH_SETUP_ERRORS),
+                                         "max_attempts": MAX_GENERATION_ATTEMPTS},
             ).fetchone())
 
     def cancel(self, job_id: str, *, expected_kind: str = "fake") -> bool:

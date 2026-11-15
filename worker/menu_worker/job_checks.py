@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from menu_worker.job_artifacts import validate_artifacts
 from menu_worker.job_contract import JobInput
+from menu_worker.job_store import MAX_GENERATION_ATTEMPTS
 from menu_worker.jobs import job_route, send_delivery
 
 
@@ -55,7 +56,8 @@ def smoke(store, timeout=60, *, kind="fake"):
     report = {}
     for scenario, job_id in jobs.items():
         row = store.get(job_id)
-        if row["attempt_count"] != 1:
+        expected_attempts = MAX_GENERATION_ATTEMPTS if kind == "fake" and scenario == "fail" else 1
+        if row["attempt_count"] != expected_attempts:
             raise RuntimeError("Unexpected generation attempt count")
         receipt = app.AsyncResult(row["attempts"][0]["celery_task_id"]).get(timeout=timeout)
         if (row["job_kind"] != kind or not receipt["processed"] or receipt["worker_kind"] != kind

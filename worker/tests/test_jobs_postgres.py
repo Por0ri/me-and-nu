@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import sys
 import threading
+import time
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
@@ -984,6 +985,211 @@ class JobStorePostgresTests(unittest.TestCase):
                 before = self.store.get(job_id)
                 self.assertFalse(self.store.retry_preflight(job_id, expected_kind=live))
                 self.assertEqual(self.store.get(job_id), before)
+
+    def test_simultaneous_safe_retry_keeps_one_delivery_and_fences_previous_token(self):
+        kind = "anime_generate"
+        job_id = self.store.submit(self.anime_candidate(), job_kind=kind)["job_id"]
+        task_id = "same-live-delivery"
+        self.assertTrue(self.store.publish_pending(job_id, Mock(return_value=task_id), expected_kind=kind))
+        first = self.store.claim(job_id, task_id=task_id, lease_seconds=60, expected_kind=kind)
+        self.assertTrue(self.store.mark_generation_started(job_id, first["claim_token"], expected_kind=kind))
+
+        claims = self.parallel(lambda store: store.retry_failure(
+            job_id, first["claim_token"], error_code="agent_spawn_failed", expected_kind=kind,
+            agent_not_launched=True, lease_seconds=60,
+        ))
+        owners = [claim for claim in claims if claim is not None]
+        self.assertEqual(len(owners), 1)
+        current = owners[0]
+        self.assertNotEqual(current["claim_token"], first["claim_token"])
+        self.assertNotEqual(current["attempt_id"], first["attempt_id"])
+        self.assertFalse(self.store.renew_lease(job_id, first["claim_token"], expected_kind=kind))
+        self.assertFalse(self.store.complete(
+            job_id, first["claim_token"], execution_status="failed", error_code="agent_spawn_failed",
+            expected_kind=kind, agent_not_launched=True,
+        ))
+        self.assertTrue(self.store.renew_lease(job_id, current["claim_token"], expected_kind=kind))
+        self.assertIsNone(self.store.claim(job_id, "duplicate-delivery", expected_kind=kind))
+        self.assertNotIn(job_id, {row["job_id"] for row in self.store.list_pending(expected_kind=kind)})
+        publisher = Mock(return_value="unexpected-second-delivery")
+        self.assertFalse(self.store.publish_pending(job_id, publisher, expected_kind=kind))
+        publisher.assert_not_called()
+
+        job = self.store.get(job_id)
+        self.assertEqual((job["execution_status"], job["attempt_count"], job["dispatch_count"]), ("running", 2, 1))
+        self.assertEqual([attempt["celery_task_id"] for attempt in job["attempts"]], [task_id, task_id])
+        self.assertEqual([attempt["execution_status"] for attempt in job["attempts"]], ["failed", "running"])
+        self.assertEqual(job["attempts"][0]["error_code"], "agent_spawn_failed")
+        self.assertIsNotNone(job["attempts"][0]["finished_at"])
+        self.assertEqual([attempt["generation_started_at"] for attempt in job["attempts"]], [None, None])
+
+    def test_manual_preflight_retries_share_three_generation_attempt_limit(self):
+        kind = "anime_generate"
+        job_id = self.store.submit(self.anime_candidate(), job_kind=kind)["job_id"]
+        for number in range(1, 4):
+            claim = self.store.claim(job_id, lease_seconds=60, expected_kind=kind)
+            self.assertIsNotNone(claim)
+            self.assertEqual(claim["attempt_count"], number)
+            self.assertTrue(self.store.complete(
+                job_id, claim["claim_token"], execution_status="failed", error_code="invalid_agent_secret",
+                expected_kind=kind,
+            ))
+            if number < 3:
+                self.assertTrue(self.store.retry_preflight(job_id, expected_kind=kind))
+
+        exhausted = self.store.get(job_id)
+        self.assertFalse(self.store.retry_preflight(job_id, expected_kind=kind))
+        self.assertIsNone(self.store.claim(job_id, expected_kind=kind))
+        self.assertEqual(self.store.get(job_id), exhausted)
+        self.assertEqual(exhausted["execution_status"], "failed")
+        self.assertEqual([attempt["attempt_no"] for attempt in exhausted["attempts"]], [1, 2, 3])
+        self.assertEqual([attempt["mode"] for attempt in exhausted["attempts"]], ["generation"] * 3)
+        self.assertEqual([attempt["error_code"] for attempt in exhausted["attempts"]], ["invalid_agent_secret"] * 3)
+
+    def test_expired_prelaunch_lease_stops_after_three_generation_attempts(self):
+        kind = "anime_generate"
+        job_id = self.store.submit(self.anime_candidate(), job_kind=kind)["job_id"]
+        for number in range(1, 4):
+            claim = self.store.claim(job_id, lease_seconds=60, expected_kind=kind)
+            self.assertIsNotNone(claim)
+            self.assertEqual(claim["attempt_count"], number)
+            self.expire(job_id)
+            report = self.store.recover_expired(expected_kind=kind)
+            expected_status = "queued" if number < 3 else "failed"
+            self.assertGreaterEqual(report[expected_status], 1)
+            self.assertEqual(self.store.get(job_id)["execution_status"], expected_status)
+
+        exhausted = self.store.get(job_id)
+        self.assertEqual(exhausted["error_code"], "GENERATION_ATTEMPTS_EXHAUSTED")
+        self.assertIsNotNone(exhausted["finished_at"])
+        self.assertIsNone(exhausted["claim_token"])
+        self.assertIsNone(exhausted["lease_expires_at"])
+        self.assertEqual([attempt["execution_status"] for attempt in exhausted["attempts"]], ["failed"] * 3)
+        self.assertEqual([attempt["error_code"] for attempt in exhausted["attempts"]],
+                         ["LEASE_EXPIRED_BEFORE_GENERATION", "LEASE_EXPIRED_BEFORE_GENERATION",
+                          "GENERATION_ATTEMPTS_EXHAUSTED"])
+        self.assertIsNone(self.store.claim(job_id, expected_kind=kind))
+        self.assertFalse(self.store.retry_preflight(job_id, expected_kind=kind))
+        self.assertNotIn(job_id, {row["job_id"] for row in self.store.list_pending(expected_kind=kind)})
+        self.assertEqual(self.store.get(job_id), exhausted)
+
+    def test_artifact_recovery_remains_available_after_three_generation_attempts(self):
+        kind = "anime_generate"
+        job_id = self.store.submit(self.anime_candidate(), job_kind=kind)["job_id"]
+        for _ in range(2):
+            claim = self.store.claim(job_id, lease_seconds=60, expected_kind=kind)
+            self.assertTrue(self.store.complete(
+                job_id, claim["claim_token"], execution_status="failed", error_code="invalid_agent_secret",
+                expected_kind=kind,
+            ))
+            self.assertTrue(self.store.retry_preflight(job_id, expected_kind=kind))
+        third = self.store.claim(job_id, lease_seconds=60, expected_kind=kind)
+        self.assertEqual(third["attempt_count"], 3)
+        self.assertTrue(self.store.mark_generation_started(job_id, third["claim_token"], expected_kind=kind))
+        self.expire(job_id)
+        self.store.recover_expired(expected_kind=kind)
+        self.assertEqual(self.store.get(job_id)["execution_status"], "needs_attention")
+        self.assertIsNone(self.store.claim(job_id, expected_kind=kind))
+        self.assertFalse(self.store.retry_preflight(job_id, expected_kind=kind))
+
+        recovery = self.store.claim_recovery(job_id, "artifact-check-only", lease_seconds=60, expected_kind=kind)
+        self.assertIsNotNone(recovery)
+        self.assertEqual((recovery["attempt_count"], recovery["mode"]), (4, "recovery"))
+        self.assertEqual(recovery["generation_attempt_id"], third["attempt_id"])
+        self.assertNotEqual(recovery["attempt_id"], third["attempt_id"])
+        self.assertFalse(self.store.mark_generation_started(job_id, recovery["claim_token"], expected_kind=kind))
+        self.assertIsNone(self.store.retry_failure(
+            job_id, recovery["claim_token"], error_code="agent_spawn_failed", expected_kind=kind,
+            agent_not_launched=True,
+        ))
+        self.assertTrue(self.store.complete(
+            job_id, recovery["claim_token"], execution_status="needs_attention",
+            error_code="artifact_verification_required", expected_kind=kind,
+        ))
+        self.assertIsNone(self.store.claim(job_id, expected_kind=kind))
+        self.assertFalse(self.store.retry_preflight(job_id, expected_kind=kind))
+        job = self.store.get(job_id)
+        self.assertEqual([attempt["mode"] for attempt in job["attempts"]], ["generation"] * 3 + ["recovery"])
+        self.assertEqual(job["generation_attempt_id"], third["attempt_id"])
+
+    def test_live_safe_retry_refuses_sibling_generation_or_result_evidence(self):
+        kind = "anime_generate"
+        for evidence in ("started", "result"):
+            with self.subTest(evidence=evidence):
+                request = self.anime_candidate(
+                    idempotency_key=f"{self.namespace}-{evidence}",
+                    source_url=self.anime_candidate()["source_url"] + "?story=" + evidence,
+                )
+                job_id = self.store.submit(request, job_kind=kind)["job_id"]
+                claim = self.store.claim(job_id, lease_seconds=60, expected_kind=kind)
+                self.assertTrue(self.store.mark_generation_started(job_id, claim["claim_token"], expected_kind=kind))
+                sibling_id = str(uuid.uuid4())
+                artifact = f"jobs/{sibling_id}/attempts/{uuid.uuid4()}/manifest.json" if evidence == "result" else None
+                # Model preserved v4 history without invoking any producer or mutating its sealed input.
+                with self.connection() as connection:
+                    connection.execute(
+                        """INSERT INTO content_generation_job
+                           (job_id,idempotency_key,source_id,source_url,canonical_url,content_type,input_sha256,
+                            job_kind,menu_work_id,execution_status,duplicate_of_job_id,generation_started_at,
+                            artifact_path,result_sha256)
+                           SELECT %s,%s,source_id,source_url,canonical_url,content_type,input_sha256,
+                                  job_kind,menu_work_id,'needs_attention',job_id,
+                                  CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,%s,%s
+                           FROM content_generation_job WHERE job_id=%s AND idempotency_key LIKE %s""",
+                        (sibling_id, f"{self.namespace}-{evidence}-legacy", evidence == "started", artifact,
+                         "b" * 64 if artifact else None, job_id, self.namespace + "%"),
+                    )
+                before, sibling = self.store.get(job_id), self.store.get(sibling_id)
+                self.assertIsNotNone(sibling)
+                self.assertIsNone(self.store.retry_failure(
+                    job_id, claim["claim_token"], error_code="agent_spawn_failed", expected_kind=kind,
+                    agent_not_launched=True,
+                ))
+                self.assertEqual(self.store.get(job_id), before)
+                self.assertEqual(self.store.get(sibling_id), sibling)
+
+    def test_retry_waiting_on_attempt_lock_rolls_back_when_lease_expires(self):
+        job_id = self.store.submit(self.candidate())["job_id"]
+        claim = self.store.claim(job_id, "one-delivery", lease_seconds=5)
+        before = self.store.get(job_id)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            # Release this lock before joining the retry thread, including on assertion failure.
+            with self.connection() as blocker:
+                blocker.execute(
+                    "SELECT attempt_id FROM content_generation_attempt WHERE attempt_id=%s AND job_id=%s FOR UPDATE",
+                    (claim["attempt_id"], job_id),
+                ).fetchone()
+                future = executor.submit(
+                    self.new_store().retry_failure, job_id, claim["claim_token"],
+                    error_code="fake_generation_failed", expected_kind="fake", lease_seconds=60,
+                )
+                locked = False
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    with self.connection() as observer:
+                        row = observer.execute(
+                            "SELECT job_id FROM content_generation_job WHERE job_id=%s FOR UPDATE SKIP LOCKED",
+                            (job_id,),
+                        ).fetchone()
+                    if row is None:
+                        locked = True
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(locked, "Retry must hold the job lock before its lease expires")
+                expired = False
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    with self.connection() as observer:
+                        expired = observer.execute(
+                            "SELECT lease_expires_at<=clock_timestamp() FROM content_generation_job WHERE job_id=%s",
+                            (job_id,),
+                        ).fetchone()[0]
+                    if expired:
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(expired, "The original lease must expire while retry waits on the attempt lock")
+            self.assertIsNone(future.result(timeout=10))
+        self.assertEqual(self.store.get(job_id), before)
 
 
 if __name__ == "__main__":
