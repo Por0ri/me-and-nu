@@ -1,6 +1,6 @@
 # 사용량 누락 수정과 한정 재개 준비
 
-2026-11-16. Checking `fb251dc` 기준 후속 변경이다. 실제 LLM 호출, 서비스 DB 쓰기, 운영 큐 접수, 자동 수집·유료 생성 활성화는 수행하지 않았다. 서버는 기존 검증된 `checking-b7b0da8` 생성 이미지를 시작하지 않은 상태로 유지한다. 이번 변경은 저장소 코드와 무과금 검증이며 새 생성 이미지의 서버 배포·가동을 뜻하지 않는다.
+2026-11-16. Checking `fb251dc` 기준 수정은 `ada3fed`에 반영했다. 소스 회귀 검증 이후 서버에서 새 이미지를 빌드·검증하고 생성 Worker를 `checking-ada3fed`의 시작하지 않은 상태로 교체했다. 실제 LLM 호출, 서비스 DB 쓰기, 운영 큐 접수, 자동 수집·유료 생성 활성화는 수행하지 않았다.
 
 ## 유형 불일치 사용량
 
@@ -60,7 +60,20 @@ python -B -m menu_worker.bounded_resume \
 - 격리 추천 DB에서 기존 피드·콘텐츠 적재·승인·추천 배치 222건 및 subtest 4건 통과.
 - 서버 읽기 전용 전후 대조: 기존 서비스 10개, 공개 콘텐츠 4건/PNG 12장, 추천 63회차/6,300항목, 작업·검수 이력과 비용 checkpoint 동일. 생성 Worker `created`, 자동 수집·유료 생성 꺼짐.
 
-이번 검증은 기존 테스트 이미지에 수정된 소스를 읽기 전용으로 연결해 수행했다. 실제 서버의 새 이미지 배포 검증으로 해석하지 않는다. 로컬 기록은 `out/bounded-resume-2026-11-16/`에 있다. 테스트용 임시 PostgreSQL/Redis만 정리하고 기존 로컬 서비스는 유지한다.
+위 소스 회귀는 기존 테스트 이미지에 수정된 소스를 읽기 전용으로 연결해 수행했다. 로컬 기록은 `out/bounded-resume-2026-11-16/`에 있다. 테스트용 임시 PostgreSQL/Redis만 정리하고 기존 로컬 서비스는 유지했다. 별도의 실제 서버 이미지 검증·배포 결과는 아래에 구분한다.
+
+## 새 이미지 검증 및 비활성 배포 완료
+
+- 서버 Checking 소스를 `ada3feda5cdea7cac0856f4bb2ef72b1158f0e94`로 fast-forward하고 `me-nu-worker:checking-ada3fed`, `me-nu-anime-generation:checking-ada3fed`를 빌드했다. 기존 API 기준과 비교해 backend/model/Checking 배포 설정 변경이 없음을 확인했다.
+- 생성 이미지 ID는 `sha256:2122ccd94f90d6157a2146f7dcddce0f596598dcbc541dde388d19f7ce219892`다. 소스 bind mount 없이 이미지에 설치된 Agent CLI·Controller·재개 모듈의 Git blob을 검증한 커밋과 대조했다.
+- 키 없는 네트워크 차단 컨테이너에서 Worker 단위 **164건**, 실제 Worker→Agent 표지 연결 **4건** 통과. Agent CLI의 유형 불일치·미계측·redirect **6개 사례**를 실제 Worker 비용 해석까지 연결해 통과했다.
+- 읽기 전용 기존 checkpoint를 이용해 누적 비용·5회 보존, 기본 plan 모드, 검토한 해시 없는 apply 차단을 확인했다. 테스트용 임시 plan은 `/tmp` 안에서만 검사했고 실제 재개 계획이나 새 checkpoint는 만들지 않았다.
+- 작업 DB는 `default_transaction_read_only=on`, 산출물과 state는 읽기 전용 mount로 연결했다. 기존 작업 4건의 DB/attempt/봉인 결과/비용 증거 및 $1 예약을 새 재개 검증기로 대조했고, 기존 공개 4044를 포함한 표지 이력 4개도 정상적으로 읽었다. 원본 파일이나 과거 비용 기록을 수정하지 않았다.
+- 활성 Compose의 이미지 태그 두 곳만 바꾼 뒤 생성 Worker 하나만 `create`로 교체했다. 컨테이너 `9b4086f8f509e0aac2dfd0295695439d8de8bb9a6e5243acae8c63ce245605e2`는 `created`, 시작 이력 없음, 키 마운트 0, 호스트 포트 0, 내부 네트워크만 사용한다. 명령은 기존 `menu_worker.jobs --help`이며 자동 수집·유료 생성은 꺼져 있다.
+- API 이미지 `d78de66` 및 기존 서비스 10개를 재시작하지 않았다. 배포 전후 공개 콘텐츠 4건/PNG 12장, 추천 63회차/6,300항목, 작업/시도/검수/선택 이력, runtime.env, checkpoint, 표지 bootstrap 및 비용 summary 해시가 같다.
+- 추정비용 `$0.03266106`＋미계측 예약 `$1.00`＝차감 `$1.03266106`, 보수적 잔여 `$3.96733894`, 사용한 5회·추가 승인 0회를 유지했다. API health 3개도 정상이다.
+
+로컬 기록: `out/bounded-resume-deploy-2026-11-16/`. 서버 검증 로그: `/home/ubuntu/me-nu-bounded-resume-tools-20261116/`. 비공개 환경 파일·Compose 백업과 배포 결과: `/home/ubuntu/me-nu-bounded-resume-deploy-20261116/`. 과거 종료한 Controller 컨테이너 두 개에 대한 Compose orphan 경고는 이력 보존 대상이므로 삭제하지 않았다.
 
 ## 검토 중 보강 및 조회 기록
 
