@@ -239,6 +239,16 @@ docker compose @stack exec -T generation-dispatcher python -m menu_worker.jobs s
 
 전용 Redis·Worker가 `anime_generate`를 점유하고 Agent의 `crawl-generate --expected-work-id`를 실행한다. 원문을 수집한 뒤 기사 증거에서 확인한 작품이 요청과 일치해야 유료 추출로 진행한다. 이미지 후보는 최대 4개, 실행 제한은 20분이다. 한 번의 생성 안에 여러 모델 호출과 검수·수정이 발생할 수 있다. 이 두 제한은 금액 상한이 아니다.
 
+**작업 간 이전 표지 이력.** 생성 Worker는 전용 작업 DB의 완료된 결과와 원래 봉인된 산출물을 검증하여, 첫 카드가 사용한 이미지 metadata만 새 시도의 `cover-history.json`에 전달한다. ready/held/rejected/skipped 중 표지가 있는 결과, 보존된 과거 성공 시도와 중복 작업 이력을 포함한다. Agent의 SQLite는 계속 시도마다 분리되며 서비스 콘텐츠 DB나 추천 DB는 조회·수정하지 않는다. Agent는 기존 DB 표지 이력과 전달받은 visual key를 합쳐 같은 표지를 차단한다. 이력에 있는 이미지도 본문 카드에는 사용할 수 있고, 현재 request 자체는 제외한다.
+
+전용 PostgreSQL session lock으로 이력 조회부터 결과 완료까지 생성을 직렬화한다. 잠금이 바쁘면 해당 배달만 재발행 대상으로 돌리고, 잠금 연결 자체가 불가능하면 broker 메시지를 requeue한다. 생성 중 잠금 연결을 잃으면 subprocess를 중단한다. **모든 generation Worker를 함께 갱신하고 구버전 Worker를 중지해야 한다.** 이 잠금을 모르는 구버전 Worker와의 혼용은 지원하지 않는다.
+
+새 표지 파일은 job/attempt ID와 SHA-256으로 연결하며 Agent가 수집 전과 생성·수정 시 검증한다. 누락·변조·잘못된 이전 완료 결과는 생성 전에 `cover_history_invalid` 또는 `cover_history_unavailable`로 차단한다. 이 설정 오류를 자동 3회 재시도하지 않는다. 새 산출물 manifest는 v3이고 기존 v2 산출물은 그대로 조회·내보내기 가능하다. 작업 DB 스키마는 v7 그대로다.
+
+이전 로컬 생성처럼 전용 작업 DB에 없는 승인된 표지는 별도 검증한 snapshot을 읽기 전용으로 마운트하고 Worker에 `ANIME_COVER_HISTORY_BOOTSTRAP_FILE`과 `ANIME_COVER_HISTORY_BOOTSTRAP_SHA256`을 함께 지정할 수 있다. 둘 중 하나만 있거나 해시가 다르면 차단한다. 이미지 URL을 다운로드하거나 파일 경로를 열지 않고 식별 정보만 사용한다. 이 설정은 생성 기능이나 API 키를 활성화하지 않는다.
+
+차단 범위는 **검증·봉인이 완료된 이전 표지**다. 생성 여부가 불명확한 `needs_attention` 시도는 임의로 이력에 넣지 않는다. 기존 정책대로 다음 작업은 진행할 수 있으며, 나중에 그 시도를 복구해 공개하려면 이후 생성물과 표지 중복을 다시 검수해야 한다. 미확정 생성물이나 별도 수동 적재 경로의 모든 이미지까지 자동으로 보호한다고 해석하면 안 된다. 이력 증거가 10,000행을 넘으면 일부만 사용하지 않고 중단하므로 보관 정책을 별도 검토해야 한다.
+
 `ready_for_staging`은 독립 검수와 원본 카드 PNG 검증을 통과한 결과다. 뉴스·이벤트·굿즈는 2~10장, 나머지는 3~10장을 허용한다. Agent가 승인으로 표시해도 검수 요약에 `hard_blockers`가 남거나 개별 QA에 `severity=blocker`가 있으면 Worker는 `needs_attention`과 `agent_review_incomplete`를 기록한다. 파일을 복구할 때도 같은 검사를 거친다.
 
 `held`, `skipped`, `rejected`는 원래 producer 상태와 함께 기록한다. 결과 JSON·검수/사용량 기록·카드·manifest는 전용 `generation-artifacts` 볼륨의 원래 생성 시도 디렉터리에 보관한다. 서비스 공개는 별도 검수·적재 단계다.

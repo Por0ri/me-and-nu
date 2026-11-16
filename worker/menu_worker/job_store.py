@@ -27,7 +27,8 @@ SCHEMA_VERSION = len(MIGRATIONS)
 # Older workers recorded these adapter errors as needs_attention after arming
 # the launch fence. Each is emitted exclusively before the producer starts.
 PRELAUNCH_SETUP_ERRORS = ("invalid_agent_secret", "agent_attempt_setup_failed", "agent_spawn_failed")
-PRELAUNCH_ERRORS = (*PRELAUNCH_SETUP_ERRORS, "agent_runtime_unavailable")
+PRELAUNCH_ERRORS = (*PRELAUNCH_SETUP_ERRORS, "agent_runtime_unavailable",
+                    "cover_history_invalid", "cover_history_unavailable")
 MAX_GENERATION_ATTEMPTS = 3
 # These failures confirm that the producer never ran. Configuration/input
 # errors still require correction rather than automatic retries.
@@ -212,6 +213,128 @@ class JobStore:
                 "SELECT pg_try_advisory_lock(hashtextextended(%s, 2)) AS ok", (route,)
             ).fetchone()["ok"]
             yield acquired
+
+    @contextmanager
+    def generation_history_guard(self):
+        """Serialize generation/history snapshots without an open transaction.
+
+        The caller must check the dedicated lock connection at its launch fence
+        and while the producer runs. Closing it also releases the session lock.
+        """
+        connection = None
+        try:
+            try:
+                connection = self._connect()
+                connection.commit()
+                connection.autocommit = True
+                acquired = connection.execute(
+                    "SELECT pg_try_advisory_lock(hashtextextended(%s, 3)) AS ok",
+                    ("generation-history-v1",),
+                ).fetchone()["ok"]
+            except (psycopg.Error, JobStoreError):
+                raise JobStoreError("cover_history_unavailable") from None
+
+            def check():
+                try:
+                    if connection.execute("SELECT 1 AS ok").fetchone()["ok"] != 1:
+                        raise JobStoreError("cover_history_unavailable")
+                except psycopg.Error:
+                    raise JobStoreError("cover_history_unavailable") from None
+
+            yield check if acquired else None
+        finally:
+            if connection is not None:
+                connection.close()
+
+    def generation_history_busy(self, exclude_job_id: str) -> bool:
+        """Keep a new producer behind another live generation launch fence.
+
+        The session lock may be released before its old subprocess has stopped.
+        An unexpired started claim still fences that handoff; unresolved or
+        expired jobs retain the existing next-job progress policy.
+        """
+        try:
+            with self._connect() as connection:
+                connection.commit()
+                connection.execute("SET TRANSACTION READ ONLY")
+                return connection.execute(
+                    """SELECT EXISTS (
+                        SELECT 1 FROM public.content_generation_job
+                        WHERE job_kind='anime_generate' AND job_id<>%s AND execution_status='running'
+                          AND generation_started_at IS NOT NULL AND lease_expires_at>CURRENT_TIMESTAMP
+                    ) AS busy""", (_identity(exclude_job_id),),
+                ).fetchone()["busy"]
+        except psycopg.Error:
+            raise JobStoreError("cover_history_unavailable") from None
+
+    def cover_history_sources(self, exclude_job_id: str) -> list[dict]:
+        """Read completed generation evidence, preserving every original input.
+
+        Artifacts still require read_sealed_staging_result() verification before
+        use. Unresolved attempts without a succeeded ledger/attempt are omitted:
+        their unverified artifacts cannot safely seed history or block the queue.
+        No result, attempt, article owner or legacy URL is rewritten here.
+        """
+        evidence_keys = ("outcome", "producer_status", "artifact_path", "result_sha256")
+        try:
+            excluded = _identity(exclude_job_id)
+            with self._connect() as connection:
+                connection.commit()
+                connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                rows = connection.execute(
+                    """WITH evidence AS (
+                        SELECT j.job_id, TRUE AS ledger, j.generation_attempt_id AS attempt_id,
+                               'generation' AS mode, j.outcome, j.producer_status, j.artifact_path,
+                               j.result_sha256, j.finished_at
+                        FROM public.content_generation_job j
+                        WHERE j.job_kind='anime_generate' AND j.job_id<>%(excluded)s
+                          AND j.execution_status='succeeded'
+                        UNION ALL
+                        SELECT a.job_id, FALSE, a.attempt_id, a.mode, a.outcome, a.producer_status,
+                               a.artifact_path, a.result_sha256, a.finished_at
+                        FROM public.content_generation_attempt a
+                        JOIN public.content_generation_job j ON j.job_id=a.job_id
+                        WHERE j.job_kind='anime_generate' AND j.job_id<>%(excluded)s
+                          AND a.execution_status='succeeded'
+                    )
+                    SELECT to_jsonb(j) AS job, to_jsonb(e) AS evidence, to_jsonb(g) AS generation
+                    FROM evidence e JOIN public.content_generation_job j ON j.job_id=e.job_id
+                    LEFT JOIN public.content_generation_attempt g ON g.job_id=j.job_id
+                      AND g.attempt_id=substring(e.artifact_path FROM
+                          '^jobs/[0-9a-f-]{36}/attempts/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/manifest[.]json$')::uuid
+                      AND e.artifact_path=('jobs/' || j.job_id::text || '/attempts/' || g.attempt_id::text
+                                           || '/manifest.json')
+                    ORDER BY j.created_at,j.job_id,e.ledger DESC,e.attempt_id LIMIT 10001""",
+                    {"excluded": excluded},
+                ).fetchall()
+            if len(rows) > 10000:
+                raise JobStoreError("cover_history_invalid")
+            sources = {}
+            for row in rows:
+                job, evidence, generation = row["job"], row["evidence"], row["generation"]
+                if (not generation or generation["mode"] != "generation"
+                        or generation["generation_started_at"] is None or not evidence["finished_at"]
+                        or evidence["outcome"] not in {"ready_for_staging", "held", "rejected", "skipped"}
+                        or not isinstance(evidence["producer_status"], str)
+                        or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", evidence["producer_status"])
+                        or not isinstance(evidence["result_sha256"], str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", evidence["result_sha256"])
+                        or (evidence["mode"] == "generation"
+                            and evidence["attempt_id"] != generation["attempt_id"])):
+                    raise JobStoreError("cover_history_invalid")
+                identity = (job["job_id"], generation["attempt_id"])
+                source = {**job, **{key: evidence[key] for key in evidence_keys},
+                          "execution_status": "succeeded", "generation_attempt_id": generation["attempt_id"],
+                          "generation_started_at": generation["generation_started_at"]}
+                previous = sources.get(identity)
+                if previous and any(previous[key] != source[key] for key in evidence_keys):
+                    raise JobStoreError("cover_history_invalid")
+                sources[identity] = source
+            return list(sources.values())
+        except psycopg.Error:
+            raise JobStoreError("cover_history_unavailable") from None
+        except (KeyError, TypeError, ValueError):
+            raise JobStoreError("cover_history_invalid") from None
 
     def get(self, job_id: str) -> dict | None:
         with self._connect() as connection:

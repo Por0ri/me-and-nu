@@ -785,7 +785,8 @@ class JobStorePostgresTests(unittest.TestCase):
                                               "qa_report": [{"code": "UNIT_CHILD_NO_PROVIDER"}]}), encoding="utf-8")
             return Mock(pid=101, returncode=0, poll=Mock(return_value=None if timeout else 0))
 
-        with (patch.object(runner, "preflight_real"), patch.object(adapter, "KEY_FILE", test_key),
+        with (patch.object(runner, "preflight_real"), patch.object(runner, "preflight_snapshot"),
+              patch.object(adapter, "KEY_FILE", test_key),
               patch.object(adapter.subprocess, "Popen", side_effect=launch) as spawn,
               patch.object(adapter, "_stop_group"),
               patch.object(adapter, "TIMEOUT_SECONDS", 0 if timeout else adapter.TIMEOUT_SECONDS)):

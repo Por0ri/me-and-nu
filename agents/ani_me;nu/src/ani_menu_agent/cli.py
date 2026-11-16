@@ -27,6 +27,7 @@ from ani_menu_agent.agents.image import image_curator
 from ani_menu_agent.agents.information import research_information
 from ani_menu_agent.classification import infer_strong_content_type, infer_toei_press_type
 from ani_menu_agent.config import get_settings
+from ani_menu_agent.cover_history import CoverHistoryError, validate_cover_history_environment
 from ani_menu_agent.discovery import (
     DiscoveryItem,
     collect_candidates,
@@ -1153,6 +1154,10 @@ def crawl_generate(
     ] = None,
 ) -> None:
     """승인된 원문 수집부터 카드 생성 및 독립 검수까지 실행합니다."""
+    try:
+        validate_cover_history_environment()
+    except CoverHistoryError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     registry = load_source_registry()
     run_started = perf_counter()
     stage_timings: dict[str, float] = {}

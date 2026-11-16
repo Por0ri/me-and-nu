@@ -83,6 +83,7 @@ def preflight_real() -> None:
         check = subprocess.run([str(AGENT_PYTHON), "-B", "-s", "-c",
             "import sys,inspect; from ani_menu_agent.cli import crawl_generate; "
             "from ani_menu_agent.work_catalog import load_work_entries; "
+            "from ani_menu_agent.cover_history import validate_cover_history_environment; "
             "assert sys.version_info[:2] == (3,12) and 'expected_work_id' in inspect.signature(crawl_generate).parameters; "
             "assert load_work_entries()"],
             cwd=AGENT_ROOT, env=_environment(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -242,8 +243,23 @@ def _verify_real_artifacts(root: Path, job: dict, *, seal_missing: bool,
         directory = artifact_directory(root, job)
         identity = _identity(job)
         receipt, _ = _json(directory / "launch.json", directory, 8192)
-        if receipt != identity:
+        history_digest = receipt.get("cover_history_sha256")
+        expected_receipt = {**identity, "cover_history_sha256": history_digest} if history_digest is not None else identity
+        if receipt != expected_receipt:
             raise RealGenerationError("attempt_identity_mismatch")
+        history_files = {}
+        if history_digest is not None:
+            from menu_worker.cover_history import validate_snapshot
+            if not isinstance(history_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", history_digest):
+                raise RealGenerationError("cover_history_invalid")
+            history_data = _bytes(directory / "cover-history.json", directory, MAX_JSON)
+            if sha256(history_data) != history_digest:
+                raise RealGenerationError("cover_history_invalid")
+            try:
+                validate_snapshot(history_data, job)
+            except RealGenerationError:
+                raise RealGenerationError("cover_history_invalid") from None
+            history_files["cover-history.json"] = {"sha256": history_digest, "bytes": len(history_data)}
         result, original = _json(directory / "result.json", directory, MAX_JSON)
         outcome, status, package = _result(result, job)
         exit_record = directory / "exit.json"
@@ -252,9 +268,11 @@ def _verify_real_artifacts(root: Path, job: dict, *, seal_missing: bool,
             if finished.get("returncode") != 0 and status != "duplicate_skipped":
                 raise RealGenerationError("agent_process_failed")
         files = _check_cards(directory, package, outcome == "ready_for_staging", export_cards_to=export_cards_to)
+        files.update(history_files)
         digest = sha256(original)
         files["result.json"] = {"sha256": digest, "bytes": len(original)}
-        manifest = {**identity, "artifact_version": 2, "outcome": outcome, "producer_status": status, "files": files}
+        manifest = {**expected_receipt, "artifact_version": 3 if history_files else 2,
+                    "outcome": outcome, "producer_status": status, "files": files}
         path = directory / "manifest.json"
         if path.is_symlink() or path.exists():
             previous, _ = _json(path, directory, 32768)
@@ -291,12 +309,20 @@ def _stop_group(child):
 
 
 def generate_real(root: Path, job: dict, pulse) -> None:
+    from menu_worker.cover_history import history_environment, validate_snapshot
+    snapshot = job.get("_cover_history_snapshot")
+    validate_snapshot(snapshot, job)
     try:
         directory = artifact_directory(root, job, create=True)
         if any(directory.iterdir()):
             raise RealGenerationError("generation_attempt_already_exists")
         identity = _identity(job)
         env = _environment(directory, _key())
+        history_path = directory / "cover-history.json"
+        _atomic_write(history_path, snapshot)
+        history_path.chmod(0o400)
+        env.update(history_environment(history_path, snapshot, job))
+        identity["cover_history_sha256"] = sha256(snapshot)
         with (directory / "launch.json").open("xb") as stream:
             stream.write(_dump(identity))
             stream.flush()

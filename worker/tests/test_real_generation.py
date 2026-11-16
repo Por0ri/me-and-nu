@@ -23,6 +23,8 @@ class RealGenerationTests(unittest.TestCase):
         self.job = {"job_id": str(uuid4()), "generation_attempt_id": str(uuid4()), "job_kind": "anime_generate",
                     "input_sha256": "c" * 64, "source_id": "one_piece_official", "content_type": "goods",
                     "menu_work_id": 8, "canonical_url": "https://one-piece.com/news/82812/index.html"}
+        self.job["_cover_history_snapshot"] = real._dump({"schema_version": 1,
+            "consumer": {key: self.job[key] for key in ("job_id", "generation_attempt_id")}, "entries": []})
         key = self.root / "secret"
         key.write_text("sk-test-offline-only-no-provider-call\n", encoding="ascii")
         self.enterContext(patch.object(real, "KEY_FILE", key))
@@ -58,6 +60,8 @@ class RealGenerationTests(unittest.TestCase):
             self.assertEqual(options["env"]["OPENAI_API_KEY"], "sk-test-offline-only-no-provider-call")
             folder = Path(options["cwd"])
             self.assertEqual(options["env"]["ANI_MENU_DATABASE_PATH"], str(folder / "agent.sqlite3"))
+            self.assertEqual(options["env"]["ANI_MENU_COVER_HISTORY_FILE"], str(folder / "cover-history.json"))
+            self.assertEqual(options["env"]["ANI_MENU_COVER_HISTORY_SHA256"], sha256(self.job["_cover_history_snapshot"]))
             data = {"expected_work_request": real._request(self.job), "status": "duplicate_skipped", "request_id": "crawl-123"}
             (folder / "result.json").write_text(json.dumps(data), encoding="utf-8")
             return Mock(pid=231, returncode=2, poll=Mock(return_value=2))
@@ -74,6 +78,21 @@ class RealGenerationTests(unittest.TestCase):
             stop.assert_called_once()
         folder = artifact_directory(self.root, self.job)
         self.assertNotIn(b"sk-test", (folder / "agent.log").read_bytes())
+        manifest = json.loads((folder / "manifest.json").read_text())
+        self.assertEqual(manifest["artifact_version"], 3)
+        self.assertIn("cover-history.json", manifest["files"])
+        (folder / "cover-history.json").chmod(0o600)
+        (folder / "cover-history.json").write_bytes(b"{}")
+        with self.assertRaisesRegex(real.RealGenerationError, "cover_history_invalid"):
+            real.read_sealed_staging_result(self.root, {**self.job, **result})
+
+    def test_missing_history_fails_before_launch(self):
+        del self.job["_cover_history_snapshot"]
+        with patch.object(real.subprocess, "Popen") as spawn, self.assertRaises(real.RealGenerationError) as caught:
+            real.generate_real(self.root, self.job, lambda: None)
+        self.assertEqual(caught.exception.code, "cover_history_invalid")
+        self.assertTrue(caught.exception.before_launch)
+        spawn.assert_not_called()
 
     def test_missing_secret_is_safe_prelaunch_failure(self):
         real.KEY_FILE.unlink()
