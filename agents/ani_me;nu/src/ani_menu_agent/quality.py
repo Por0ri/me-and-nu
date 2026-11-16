@@ -73,10 +73,50 @@ def _card_cites_source_date_as_scheduled_fact(
             fact is None
             or not fact.verified
             or source_id not in fact.source_ids
-            or fact.fact_type.strip().lower() not in scheduled_fact_types
         ):
             continue
         quote = str(fact.details.get("source_quote") or "")
+        fact_type = fact.fact_type.strip().lower()
+        if fact_type == "product_sales":
+            # Extraction may classify a documented preorder start as product_sales.
+            # Do not exempt all dates in that broad fact type: require the explicit
+            # start field, a matching source sentence, and preorder-start card copy.
+            if fact.details.get("preorder_start") != publication_date.isoformat():
+                continue
+            visible_copy = " ".join([*card.title_lines, *card.body_sentences])
+            preorder_start = r"(?:予約|예약|pre[- ]?orders?).{0,60}(?:開始|スタート|시작|개시|start|began|begin|open)"
+            if (
+                not re.search(preorder_start, visible_copy, re.IGNORECASE)
+                or re.search(r"게시일|발표일|기사\s*(?:게시|발표)|publication\s*date|投稿日|公開日", visible_copy, re.IGNORECASE)
+                # A separate sentence saying that preorders started must not
+                # excuse a date presented as their deadline or cancellation.
+                or re.search(
+                    r"마감|종료|취소|연기|중단|締切|終了|取消|延期|中止|"
+                    r"\b(?:deadline|closed?|ends?|cancel\w*|postpon\w*)\b|"
+                    r"(?:시작|개시).{0,12}(?:않|아니|아님)|"
+                    r"(?:開始|スタート).{0,8}(?:ません|ない)|\b(?:not|never)\b",
+                    visible_copy, re.IGNORECASE,
+                )
+            ):
+                continue
+            for sentence in re.split(r"[。！？!?\r\n]", quote):
+                if (
+                    set(_date_in_quote(sentence, default_year=publication_date.year))
+                    != {publication_date.isoformat()}
+                    or not re.search(preorder_start, sentence, re.IGNORECASE)
+                    or re.search(
+                        r"未定|延期|中止|取消|取り消し|연기|취소|미정|"
+                        r"公開|投稿|掲載|게시|발표|publish|publication|"
+                        r"(?:開始|スタート).{0,8}(?:ません|ない)|"
+                        r"(?:시작|개시).{0,8}(?:않|아니)|\b(?:not|never)\b",
+                        sentence, re.IGNORECASE,
+                    )
+                ):
+                    continue
+                return True
+            continue
+        if fact_type not in scheduled_fact_types:
+            continue
         if publication_date.isoformat() in _date_in_quote(
             quote, default_year=publication_date.year
         ):
