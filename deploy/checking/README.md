@@ -13,7 +13,7 @@
 | 백엔드 이미지 | `me-nu-backend-checking:<40자리 커밋 SHA>` |
 | 서비스 마이그레이션 | `d7b3e9a1c452` |
 
-DB/Redis 비밀번호는 서버의 `init`에서 서로 다른 난수로 생성한다. 다른 환경의 회원·동의·세션·북마크·DB 덤프는 복사하지 않는다. API와 migration의 개발 인증 우회, 개발 API, LLM/TMDB/OpenAI 키는 비활성화돼 있다. 기존 에이전트 코드나 생년월일 정책은 바꾸지 않는다. DB의 기존 nullable `birth_date`와 값은 유지하며 물리 삭제 `d2`는 포함하지 않는다.
+DB/Redis 비밀번호는 서버의 `init`에서 서로 다른 난수로 생성한다. 다른 환경의 회원·동의·세션·북마크·DB 덤프는 복사하지 않는다. API와 migration의 개발 인증 우회, 개발 API, TMDB/OpenAI 키는 비활성화돼 있다. LLM 키는 챗봇 답에만 쓰며, 서버 전용 `.env`의 `CHECKING_LLM_KEY`로 API 컨테이너에만 넣는다(migration에는 넣지 않는다). 기본값은 빈칸이고 빈칸이면 챗봇 답만 실패한다. 기존 환경 파일에도 `CHECKING_LLM_KEY=` 줄을 추가해야 배포 guard를 통과한다. `check`는 키 값 대신 키가 들어 있는지(`set`/`empty`)만 출력한다. 기존 에이전트 코드나 생년월일 정책은 바꾸지 않는다. DB의 기존 nullable `birth_date`와 값은 유지하며 물리 삭제 `d2`는 포함하지 않는다.
 
 상시 제한은 API 512 MiB/0.50 CPU, PostgreSQL 512 MiB/0.35 CPU, Redis 128 MiB/0.15 CPU로 합계 1,152 MiB/1.0 CPU다. PostgreSQL은 shared buffers 128 MB/최대 연결 30개, Redis는 데이터 48 MB와 `noeviction`을 사용한다. 일회성 migration은 256 MiB/0.25 CPU다. 8 GB/2 CPU 공유 호스트의 소규모 팀 검증을 위한 초기 상한이며 이미지 빌드·OS·기존 서비스 자원은 별도다. 실제 포트 충돌과 여유 자원을 먼저 확인한다.
 

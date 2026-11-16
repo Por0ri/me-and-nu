@@ -33,7 +33,7 @@ x-environment: &environment
   NAVER_OAUTH_ENABLED: ${CHECKING_NAVER_OAUTH_ENABLED:-false}
   NAVER_CLIENT_ID: ${CHECKING_NAVER_CLIENT_ID:-}
   NAVER_CLIENT_SECRET: ${CHECKING_NAVER_CLIENT_SECRET:-}
-  # This environment tests login/content/bookmarks; it does not invoke paid agents.
+  # Paid agents stay off. Only the api service below overrides LLM_KEY, for chatbot answers.
   TMDB_KEY: ""
   LLM_KEY: ""
   OPENAI_API_KEY: ""
@@ -121,6 +121,10 @@ services:
 
   api:
     <<: *backend
+    environment:
+      <<: *environment
+      # Chatbot answers only; an empty CHECKING_LLM_KEY keeps them off. migrate never gets the key.
+      LLM_KEY: ${CHECKING_LLM_KEY:-}
     restart: unless-stopped
     mem_limit: 512m
     cpus: "0.50"

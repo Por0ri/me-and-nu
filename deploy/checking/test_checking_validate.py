@@ -30,7 +30,7 @@ def values():
     {"CHECKING_FORWARDED_ALLOW_IPS": "0.0.0.0"}, {"CHECKING_FORWARDED_ALLOW_IPS": "127.0.0.0/8"},
     {"CHECKING_KAKAO_OAUTH_ENABLED": "true"}, {"CHECKING_NAVER_OAUTH_ENABLED": "yes"},
     {"DATABASE_URL": "postgresql://old/labs"}, {"CHECKING_NAVER_CLIENT_ID": "$(command)"},
-    {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "yes"},
+    {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "yes"}, {"CHECKING_LLM_KEY": "synthetic key"},
 ])
 def test_unsafe_values_rejected(change):
     with pytest.raises(guard.GuardError):
@@ -48,19 +48,23 @@ def test_enabled_provider_requires_separate_complete_configuration():
     assert guard.validate_values(configured) is configured
 
 
-@pytest.fixture(scope="module")
-def rendered():
-    if not shutil.which("docker"):
-        pytest.skip("Docker Compose CLI is unavailable; rendering does not require its daemon")
+def render(settings):
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith("CHECKING_") and key not in ("COMPOSE_FILE", "COMPOSE_PROJECT_NAME", "COMPOSE_PROFILES")}
-    environment.update(values())
+    environment.update(settings)
     result = subprocess.run(["docker", "--context", "default", "compose", "--env-file", str(MODULE.with_name(".env.example")),
                              "-p", "me-nu-checking", "-f", str(guard.ROOT / "compose.checking.yaml"),
                              "config", "--format", "json"],
                             capture_output=True, text=True, env=environment, cwd=guard.ROOT, timeout=30)
     assert result.returncode == 0, "Compose rendering failed; raw config is not printed"
     return json.loads(result.stdout)
+
+
+@pytest.fixture(scope="module")
+def rendered():
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose CLI is unavailable; rendering does not require its daemon")
+    return render(values())
 
 
 def test_standalone_compose_is_isolated_and_bounded(rendered):
@@ -85,10 +89,25 @@ def test_checking_preview_requires_matching_explicit_opt_in(rendered):
         guard.validate_values(values(), {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "true"})
 
 
+def test_llm_key_reaches_only_the_api_from_the_checking_file(rendered):
+    assert values()["CHECKING_LLM_KEY"] == ""
+    assert rendered["services"]["api"]["environment"]["LLM_KEY"] == ""
+    configured = values() | {"CHECKING_LLM_KEY": "synthetic-llm-key"}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["LLM_KEY"] == "synthetic-llm-key"
+    assert config["services"]["migrate"]["environment"]["LLM_KEY"] == ""
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="LLM_KEY"):
+        guard.validate_config(config, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_LLM_KEY"):
+        guard.validate_values(configured, {"CHECKING_LLM_KEY": "other-key"})
+
+
 @pytest.mark.parametrize("change", [
     "project", "volume", "external_volume", "network", "public_data", "extra_service", "api_origin",
     "database", "cookie", "redis_prefix", "port", "public_port", "udp", "db_port", "memory", "cpu",
-    "zero_memory", "dev_api", "dev_bypass", "llm", "tmdb", "openai", "redis", "pg_buffers", "image",
+    "zero_memory", "dev_api", "dev_bypass", "llm", "migrate_llm", "tmdb", "openai", "redis", "pg_buffers", "image",
     "build_context", "entrypoint", "api_command", "migration_head", "migration_previous", "migration_dob", "startup_gate",
     "api_mount", "db_mount", "privileged", "host_network", "writeable", "capabilities", "proxy", "oauth",
 ])
@@ -116,6 +135,7 @@ def test_config_cannot_cross_environment_or_enable_unsafe_runtime(rendered, chan
     elif change == "dev_api": env["ENABLE_DEV_API"] = "true"
     elif change == "dev_bypass": env["ENABLE_DEV_AUTH_BYPASS"] = "true"
     elif change == "llm": env["LLM_KEY"] = "synthetic-key"
+    elif change == "migrate_llm": config["services"]["migrate"]["environment"]["LLM_KEY"] = "synthetic-key"
     elif change == "tmdb": env["TMDB_KEY"] = "synthetic-key"
     elif change == "openai": env["OPENAI_API_KEY"] = "synthetic-key"
     elif change == "redis": config["services"]["redis"]["command"][2] = "old-password"
@@ -152,6 +172,7 @@ def test_initialize_is_exclusive_and_never_prints_secret_values(tmp_path, monkey
     original = guard.ENV_FILE.read_bytes()
     parsed = guard.read_environment(guard.ENV_FILE)
     assert parsed["CHECKING_KAKAO_OAUTH_ENABLED"] == parsed["CHECKING_NAVER_OAUTH_ENABLED"] == "false"
+    assert parsed["CHECKING_LLM_KEY"] == ""
     output = capsys.readouterr().out
     assert parsed["CHECKING_POSTGRES_PASSWORD"] not in output
     assert parsed["CHECKING_REDIS_PASSWORD"] not in output
