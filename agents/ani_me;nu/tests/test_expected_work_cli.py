@@ -14,10 +14,13 @@ from ani_menu_agent.sources.page_collector import SourcePageCapture
 URL = "https://one-piece.com/news/82812/index.html"
 
 
-def invoke(tmp_path, work=8):
+def invoke(tmp_path, work=8, *, bound=True):
     path = tmp_path / "result.json"
-    result = CliRunner().invoke(cli.app, ["crawl-generate", "--source", "one_piece_official", "--url", URL,
-        "--content-type", "goods", "--expected-work-id", str(work), "--output", str(path)])
+    arguments = ["crawl-generate", "--source", "one_piece_official", "--url", URL,
+        "--content-type", "goods", "--output", str(path)]
+    if bound:
+        arguments += ["--expected-work-id", str(work)]
+    result = CliRunner().invoke(cli.app, arguments)
     return result, json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
@@ -77,6 +80,28 @@ def test_capture_redirect_to_another_article_is_skipped_before_llm(monkeypatch, 
     monkeypatch.setattr(cli, "collect_official_page", lambda *_a, **_kw: capture("ONE PIECE", URL.replace("82812", "12345")))
     result, saved = invoke(tmp_path)
     assert result.exit_code == 0 and saved["status"] == "source_redirect_skipped"
+    assert saved["usage_records"] == []
+    assert saved["usage_summary"]["llm_calls"] == 0
+    assert saved["usage_summary"]["estimated_cost_usd"] == 0
+
+
+@pytest.mark.parametrize(("title", "url", "status"), [
+    ("ONE PIECE", URL.replace("82812", "12345"), "source_redirect_skipped"),
+    ("무관한 공지", URL, "work_id_unresolved_skipped"),
+])
+def test_boundary_skip_preserves_usage_already_in_capture(monkeypatch, tmp_path, title, url, status):
+    usage = {"stage": "link_review", "input_tokens": 10, "output_tokens": 2,
+             "total_tokens": 12, "estimated_cost_usd": 0.001}
+    page = capture(title, url, link_review_usage=[usage])
+    monkeypatch.setattr(cli, "collect_official_page", lambda *_a, **_kw: page)
+
+    result, saved = invoke(tmp_path)
+
+    assert result.exit_code == 0, result.exception
+    assert saved["status"] == status
+    assert saved["usage_records"] == [usage]
+    assert saved["usage_summary"]["llm_calls"] == 1
+    assert saved["usage_summary"]["estimated_cost_usd"] == 0.001
 
 
 @pytest.mark.parametrize(("page", "matched_ids"), [
@@ -124,12 +149,13 @@ def test_missing_goods_end_date_preserves_bound_request(monkeypatch, tmp_path):
     assert saved["expected_work_request"]["menu_work_id"] == 8
 
 
-def test_reclassified_article_stops_before_generating_another_type(monkeypatch, tmp_path):
+@pytest.mark.parametrize("extraction_usage", [{}, None])
+def test_reclassified_article_with_missing_usage_does_not_claim_zero_calls(monkeypatch, tmp_path, extraction_usage):
     monkeypatch.setattr(cli, "collect_official_page", lambda *_a, **_kw: capture("ONE PIECE 가을 신상품"))
     monkeypatch.setattr(cli, "extract_page_image_text", lambda *_: ([], []))
     monkeypatch.setattr(cli, "AgentRepository", object)
     monkeypatch.setattr(cli, "expiry_evidence", lambda *_: {"status": "active", "end_date": "2099-12-31"})
-    monkeypatch.setattr(cli, "extract_page_payload", lambda _: (SimpleNamespace(request_id="test-request"), {}))
+    monkeypatch.setattr(cli, "extract_page_payload", lambda _: (SimpleNamespace(request_id="test-request"), extraction_usage))
     monkeypatch.setattr(cli, "infer_strong_content_type", lambda _: "event")
     result, saved = invoke(tmp_path)
 
@@ -137,6 +163,57 @@ def test_reclassified_article_stops_before_generating_another_type(monkeypatch, 
     assert saved["status"] == "content_type_mismatch_skipped"
     assert saved["evidence_content_type"] == "event"
     assert saved["expected_work_request"]["content_type"] == "goods"
+    assert saved["usage_records"] == [{}]
+    assert saved["usage_summary"]["llm_calls"] == 1
+    assert saved["cost_accounting"]["complete"] is False
+
+
+@pytest.mark.parametrize("bound", [True, False])
+def test_reclassified_article_preserves_all_paid_usage_without_generation(monkeypatch, tmp_path, bound):
+    # Include distinct receipts so a later extraction result cannot overwrite
+    # earlier link-review/OCR spending or count a receipt twice.
+    link_usage = {"stage": "link_review", "input_tokens": 10, "output_tokens": 2,
+                  "total_tokens": 12, "estimated_cost_usd": 0.001}
+    ocr_usage = {"stage": "image_ocr", "input_tokens": 20, "cached_input_tokens": 5,
+                 "output_tokens": 3, "total_tokens": 23, "estimated_cost_usd": 0.002}
+    fact_usage = {"stage": "fact_extraction", "input_tokens": 30, "output_tokens": 4,
+                  "total_tokens": 34, "estimated_cost_usd": 0.004}
+    page = capture("ONE PIECE 가을 신상품", link_review_usage=[link_usage])
+    monkeypatch.setattr(cli, "collect_official_page", lambda *_a, **_kw: page)
+    monkeypatch.setattr(cli, "extract_page_image_text", lambda *_: ([], [ocr_usage]))
+    monkeypatch.setattr(cli, "AgentRepository", object)
+    monkeypatch.setattr(cli, "_run_generation_from_db", forbidden)
+    monkeypatch.setattr(cli, "expiry_evidence", lambda *_: {"status": "active", "end_date": "2099-12-31"})
+    monkeypatch.setattr(cli, "extract_page_payload", lambda _: (
+        SimpleNamespace(request_id="paid-type-mismatch", topic="ONE PIECE", sources=[]), fact_usage))
+    monkeypatch.setattr(cli, "infer_strong_content_type", lambda _: "event")
+    if not bound:
+        registry = cli.load_source_registry()
+        source = next(item for item in registry.sources if item.id == "one_piece_official")
+        goods_only = source.model_copy(update={"content_types": [item for item in source.content_types if item.value == "goods"]})
+        monkeypatch.setattr(cli, "load_source_registry", lambda: SimpleNamespace(sources=[goods_only]))
+
+    result, saved = invoke(tmp_path, bound=bound)
+
+    assert result.exit_code == 0, result.exception
+    assert saved["status"] == "content_type_mismatch_skipped"
+    assert saved["request_id"] == "paid-type-mismatch"
+    assert saved["requested_content_type"] == "goods"
+    assert saved["evidence_content_type"] == "event"
+    assert saved["usage_records"] == [fact_usage, link_usage, ocr_usage]
+    summary = saved["usage_summary"]
+    assert summary["llm_calls"] == 3
+    assert summary["input_tokens"] == 60
+    assert summary["cached_input_tokens"] == 5
+    assert summary["output_tokens"] == 9
+    assert summary["total_tokens"] == 69
+    assert summary["estimated_cost_usd"] == 0.007
+    assert saved.get("cost_accounting", {}).get("complete") is not False
+    assert list(tmp_path.iterdir()) == [tmp_path / "result.json"]
+    if bound:
+        assert saved["expected_work_request"]["menu_work_id"] == 8
+    else:
+        assert saved["supported_source_types"] == ["goods"]
 
 
 def freeze_release_check(monkeypatch):
