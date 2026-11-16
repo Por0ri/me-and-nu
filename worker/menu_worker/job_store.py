@@ -22,7 +22,7 @@ from menu_worker.job_contract import JobInput, JobInputError, job_input_hash, va
 DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test", "menu_content_jobs_migration_test"})
 DATABASE_HOSTS = frozenset({"jobs-db", "localhost", "127.0.0.1", "::1"})
 MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql", "003_anime_work_input.sql", "004_anime_generation.sql",
-              "005_article_identity.sql", "006_staging_selection.sql")
+              "005_article_identity.sql", "006_staging_selection.sql", "007_independent_reviews.sql")
 SCHEMA_VERSION = len(MIGRATIONS)
 # Older workers recorded these adapter errors as needs_attention after arming
 # the launch fence. Each is emitted exclusively before the producer starts.
@@ -123,6 +123,8 @@ class JobStore:
                 tables = ["content_generation_job", "content_generation_attempt"]
                 if installed >= 6:
                     tables.append("content_staging_selection")
+                if installed >= 7:
+                    tables.append("content_generation_review")
                 for table in tables:
                     exists = connection.execute("SELECT to_regclass(%s) AS name", ("public." + table,)).fetchone()["name"]
                     if not exists:
@@ -221,31 +223,108 @@ class JobStore:
             ).fetchall()
             return _plain(row)
 
-    def select_staging_result(self, job: dict) -> None:
-        """Commit the verified result for this article before making its bundle visible."""
+    @staticmethod
+    def _staging_article(connection, job: dict, *, reviewed: bool) -> dict:
+        # Recovery can finish the result on a later recovery attempt. Preserve
+        # that history and bind its artifacts to the original generation attempt.
+        outcome, producer = (("rejected", "rejected_archived") if reviewed
+                             else ("ready_for_staging", "ready_for_feed"))
+        article = connection.execute(
+            """SELECT COALESCE(j.duplicate_of_job_id, j.job_id) AS article_job_id
+               FROM public.content_generation_job j
+               JOIN public.content_generation_attempt a
+                 ON a.attempt_id=j.generation_attempt_id AND a.job_id=j.job_id AND a.mode='generation'
+               WHERE j.job_id=%(job_id)s AND j.job_kind='anime_generate' AND j.execution_status='succeeded'
+                 AND j.outcome=%(required_outcome)s AND j.producer_status=%(required_producer)s
+                 AND j.generation_attempt_id=%(generation_attempt_id)s AND j.result_sha256=%(result_sha256)s
+                 AND j.artifact_path=%(artifact_path)s FOR SHARE OF j, a""",
+            {**job, "required_outcome": outcome, "required_producer": producer},
+        ).fetchone()
+        if article is None:
+            raise JobInputError("Verified result no longer matches the job ledger", "staging_ledger_mismatch")
+        return article
+
+    def register_staging_review(self, job: dict, review: dict) -> dict:
+        """Append an already verified, sealed review without changing generation history."""
+        try:
+            review_id = _identity(review["review_id"])
+            hashes = (review["review_result_sha256"], review["artifact_sha256"])
+            artifact_path = review["artifact_path"]
+            if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in hashes):
+                raise ValueError
+            if not isinstance(artifact_path, str) or not artifact_path:
+                raise ValueError
+            path = PurePosixPath(artifact_path)
+            if (path.is_absolute() or ".." in path.parts or "\\" in artifact_path
+                    or path.as_posix() != artifact_path or artifact_path == "."):
+                raise ValueError
+            if artifact_path != f"reviews/{_identity(job['job_id'])}/{review_id}.json":
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise JobInputError("A sealed independent review identity is required", "staging_review_mismatch") from None
+        values = {
+            "review_id": review_id, "job_id": job["job_id"],
+            "generation_attempt_id": job["generation_attempt_id"], "source_result_sha256": job["result_sha256"],
+            "review_result_sha256": hashes[0], "artifact_path": artifact_path, "artifact_sha256": hashes[1],
+        }
         with self._connect() as connection:
-            article = connection.execute(
-                """SELECT COALESCE(duplicate_of_job_id, job_id) AS article_job_id
-                   FROM public.content_generation_job
-                   WHERE job_id=%(job_id)s AND job_kind='anime_generate' AND execution_status='succeeded'
-                     AND outcome='ready_for_staging' AND producer_status='ready_for_feed'
-                     AND generation_attempt_id=%(generation_attempt_id)s AND result_sha256=%(result_sha256)s
-                     AND artifact_path=%(artifact_path)s FOR SHARE""", job,
+            self._staging_article(connection, job, reviewed=True)
+            inserted = connection.execute(
+                """INSERT INTO public.content_generation_review
+                       (review_id, job_id, generation_attempt_id, source_result_sha256,
+                        review_result_sha256, artifact_path, artifact_sha256)
+                   VALUES (%(review_id)s, %(job_id)s, %(generation_attempt_id)s, %(source_result_sha256)s,
+                           %(review_result_sha256)s, %(artifact_path)s, %(artifact_sha256)s)
+                   ON CONFLICT DO NOTHING RETURNING *""", values,
             ).fetchone()
-            if article is None:
-                raise JobInputError("Verified result no longer matches the job ledger", "staging_ledger_mismatch")
+            if inserted is not None:
+                return _plain(inserted)
+            # ON CONFLICT waits for a concurrent registrant. This new statement
+            # then sees that committed row, which must identify the same seal.
+            existing = connection.execute(
+                """SELECT * FROM public.content_generation_review
+                   WHERE job_id=%(job_id)s AND generation_attempt_id=%(generation_attempt_id)s
+                     AND source_result_sha256=%(source_result_sha256)s
+                     AND review_result_sha256=%(review_result_sha256)s""", values,
+            ).fetchone()
+            if existing is None or any(_plain(existing[key]) != _plain(value) for key, value in values.items()):
+                raise JobInputError("Registered review differs from the sealed review", "staging_review_mismatch")
+            return _plain(existing)
+
+    def get_staging_review(self, review_id: str) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM public.content_generation_review WHERE review_id=%s", (_identity(review_id),)
+            ).fetchone()
+            return _plain(row) if row is not None else None
+
+    def select_staging_result(self, job: dict, *, review_id: str | None = None) -> None:
+        """Commit the verified result for this article before making its bundle visible."""
+        review_id = _identity(review_id) if review_id is not None else None
+        with self._connect() as connection:
+            article = self._staging_article(connection, job, reviewed=review_id is not None)
+            if review_id is not None:
+                registered = connection.execute(
+                    """SELECT review_id FROM public.content_generation_review
+                       WHERE review_id=%(review_id)s AND job_id=%(job_id)s
+                         AND generation_attempt_id=%(generation_attempt_id)s
+                         AND source_result_sha256=%(result_sha256)s FOR SHARE""", {**job, "review_id": review_id},
+                ).fetchone()
+                if registered is None:
+                    raise JobInputError("Review does not belong to the sealed result", "staging_review_mismatch")
 
             inserted = connection.execute(
                 """INSERT INTO public.content_staging_selection
-                       (article_job_id, selected_job_id, generation_attempt_id, result_sha256)
-                   VALUES (%(article_job_id)s, %(job_id)s, %(generation_attempt_id)s, %(result_sha256)s)
-                   ON CONFLICT (article_job_id) DO NOTHING RETURNING selected_job_id""", {**job, **article},
+                       (article_job_id, selected_job_id, generation_attempt_id, result_sha256, review_id)
+                   VALUES (%(article_job_id)s, %(job_id)s, %(generation_attempt_id)s, %(result_sha256)s, %(review_id)s)
+                   ON CONFLICT (article_job_id) DO NOTHING RETURNING selected_job_id""",
+                {**job, **article, "review_id": review_id},
             ).fetchone()
             if inserted is not None:
                 return
             # A separate statement sees the competing transaction's committed selection.
             selected = connection.execute(
-                """SELECT selected_job_id, generation_attempt_id, result_sha256 FROM public.content_staging_selection
+                """SELECT selected_job_id, generation_attempt_id, result_sha256, review_id FROM public.content_staging_selection
                    WHERE article_job_id=%(article_job_id)s""", article,
             ).fetchone()
             if str(selected["selected_job_id"]) != job["job_id"]:
@@ -254,6 +333,8 @@ class JobStore:
                 job["generation_attempt_id"], job["result_sha256"]
             ):
                 raise JobInputError("Selected result differs from the sealed result", "staging_ledger_mismatch")
+            if selected["review_id"] != review_id:
+                raise JobInputError("Another review is already selected for this result", "staging_review_already_selected")
 
     def list_pending(self, limit: int = 100, *, expected_kind: str = "fake") -> list[dict]:
         validate_job_kind(expected_kind)

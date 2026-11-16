@@ -228,7 +228,7 @@ def validate_real_artifacts(root: Path, job: dict) -> dict:
     return evidence
 
 
-def read_sealed_staging_result(root: Path, job: dict, cards_output: Path) -> dict:
+def read_sealed_staging_result(root: Path, job: dict, cards_output: Path | None = None) -> dict:
     """Copy the verified PNG bytes and return the result bound to the completed ledger row."""
     evidence, result = _verify_real_artifacts(root, job, seal_missing=False, export_cards_to=cards_output)
     if any(job.get(key) != value for key, value in evidence.items()):

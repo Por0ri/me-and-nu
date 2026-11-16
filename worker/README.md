@@ -9,7 +9,7 @@
 | `beat` | 기본 30초 간격으로 heartbeat 작업 전송 |
 | `flower` | Worker·작업 상태 조회. 로컬 접속·인증·읽기 전용 설정 사용 |
 | `jobs-db` | 전용 PostgreSQL 17. 콘텐츠 작업·실행 이력 저장, 호스트 포트 없음 |
-| `job-init` | 작업 전용 DB를 v6로 초기화하거나 기존 v1~v5 작업을 마이그레이션 |
+| `job-init` | 작업 전용 DB를 v7로 초기화하거나 기존 v1~v6 작업을 마이그레이션 |
 | `job-worker` | `content-generation` 큐의 가짜 Agent 실행, 동시 실행 1개 |
 | `job-dispatcher` | fake 작업 전달 및 중단된 fake 작업 정리 |
 | `anime-redis`, `anime-worker`, `anime-dispatcher` | 선택형 `anime` 프로필. 별도 Redis와 산출물 볼륨에서 애니 큐 전달을 점검 |
@@ -140,7 +140,7 @@ docker compose --env-file worker/.env -f compose.worker.yaml exec -T job-dispatc
 
 같은 요청 키에 다른 입력은 `idempotency_conflict`, 다른 키로 같은 정규화 URL을 제출하면 `candidate_exists`와 기존 작업 ID를 반환한다. `utm_*`, `fbclid`, `gclid`는 URL 중복 판단에서 제외한다. 현재 실제 Agent 식별자가 URL 기반이므로 유형만 바꿔 동일 URL을 다시 접수할 수 없다.
 
-DB의 `content_generation_job`이 영속 상태의 기준이며 `content_generation_attempt`가 실행 점유·Celery ID·중단 이력을 보관한다. `menu_worker_schema`는 마이그레이션 버전만 관리한다. 초기화는 명시된 전용 DB에만 적용하고 비어 있지 않은 미등록 DB는 거부한다. 서비스 Alembic 마이그레이션과는 분리되어 있다.
+DB의 `content_generation_job`이 영속 상태의 기준이며 `content_generation_attempt`가 실행 점유·Celery ID·중단 이력을 보관한다. `content_generation_review`는 기존 결과에 대한 독립 검수 증거를 추가로 기록하고, `content_staging_selection`은 기사별로 내보낼 결과와 검수를 고정한다. `menu_worker_schema`는 마이그레이션 버전만 관리한다. 초기화는 명시된 전용 DB에만 적용하고 비어 있지 않은 미등록 DB는 거부한다. 서비스 Alembic 마이그레이션과는 분리되어 있다.
 
 Dispatcher는 2초마다 미발행 작업을 확인한다. 같은 작업의 발행은 DB 행 잠금으로 직렬화하고, 브로커가 반환한 Celery ID를 기록한 뒤에는 Worker의 점유를 기다린다. 발행 실패로 기록이 없으면 다음 순회에서 재시도한다. Redis 전송 직후 DB 커밋 전에 프로세스가 중단되면 같은 작업이 다시 전달될 수 있다. 이때 Worker는 DB 점유를 획득한 한 건만 실행한다.
 
@@ -255,7 +255,7 @@ v4에서 같은 기사로 여러 생성 작업이 접수됐다면 재시도는 v
 
 v4에서 같은 출처와 정규화된 기사 URL로 접수한 작업이 여러 건이면 검수를 통과한 작업 ID를 지정한다. 대표 작업이 보류됐어도 다른 작업을 지정할 수 있다. 둘 다 통과했다면 먼저 검증을 마치고 DB에 선택을 기록한 결과만 내보낸다. 이후 다른 작업 ID로 요청하면 `staging_result_already_selected`와 선택된 `existing_job_id`가 반환된다. 출력 파일 쓰기가 중단됐을 때는 같은 작업 ID와 결과 해시로 새 경로에 다시 내보낼 수 있다. 작업·시도 이력은 그대로 조회된다.
 
-v6 전환 시에는 이전 버전의 내보내기를 종료하고 최신 Worker 및 생성 이미지를 빌드한다. 아래 명령은 `job-init`이 전용 작업 DB 마이그레이션을 마친 뒤 실행된다. v5까지는 내보낸 기록이 없으므로 이미 전달한 번들이 있다면 해당 번들의 `reviewEvidence.resultSha256`을 작업 기록과 대조한 뒤 `reviewEvidence.jobId`를 v6에서 먼저 내보낸다.
+v7 전환 시에는 이전 버전의 내보내기를 종료하고 최신 Worker 및 생성 이미지를 빌드한다. `job-init` 또는 `python -m menu_worker.jobs init-db`로 전용 작업 DB만 마이그레이션한다. v6의 작업·시도·기존 선택은 유지되며, 기존 선택의 `review_id`는 `NULL`로 남는다. v5까지는 내보낸 기록이 없으므로 이미 전달한 번들이 있다면 해당 번들의 `reviewEvidence.resultSha256`을 작업 기록과 대조한 뒤 `reviewEvidence.jobId`를 최신 버전에서 먼저 내보낸다. 이번 독립 검수 연결의 검증 범위는 격리 DB이며, 운영 작업 DB 전환과 서비스 DB 마이그레이션은 포함하지 않는다.
 
 저장소 루트에서 실행한다. `$jobId`에는 완료한 작업의 UUID를 지정하고, 백엔드 실행 환경의 `DATABASE_URL`에는 미리 볼 PostgreSQL의 읽기 전용 연결을 설정한다. `$expectedDatabase`는 해당 DB의 정확한 이름이다.
 
@@ -274,6 +274,30 @@ try {
 
 처음 내보낼 때는 새 출력 경로가 필요하다. 같은 번들의 dry-run을 반복하려면 적재기 명령만 다시 실행한다. 새 콘텐츠에서 `mode=dry_run`, `created=1`, `status=pending_review`, `content_id=null`은 생성 예정 1건을 뜻한다. 서비스 적재기는 이 경로에서 읽기 전용 트랜잭션을 사용한다. 운영자 승인과 서비스 DB의 작품 링크 생성은 각각 별도 단계다.
 
+### 원본 반려 이력을 보존하고 기존 독립 검수 연결
+
+v7의 `register-staging-review`는 이미 수행한 독립 LLM 검수의 결과 파일을 등록한다. Agent를 실행하거나 추가 LLM 호출을 하지 않는다. 대상은 `anime_generate / succeeded / rejected / rejected_archived` 작업이며, 원본 결과 JSON·manifest·PNG·작업·시도 상태는 변경하지 않는다. 원본 결과 해시가 일치하고, 검수 대상 콘텐츠가 상태 필드를 제외한 원본 package와 같으며, 독립 검수와 blocker 검사 및 원본 카드 검증을 통과해야 등록할 수 있다.
+
+등록은 전용 작업 DB의 `content_generation_review`에 새 증거를 추가하고 산출물 루트의 `reviews/{job_id}/{review_id}.json`에 검수 파일을 보존한다. 같은 증거의 재등록은 동일한 `review_id`를 반환한다. 해당 ID를 지정한 내보내기는 원본 결과 해시와 등록된 검수 해시를 다시 확인하며, 번들의 `reviewEvidence`에 두 증거를 함께 담는다.
+
+아래 명령은 Worker Python 환경에서 실행한다. `CONTENT_JOB_KIND=anime_generate`, 전용 `CONTENT_JOB_DATABASE_URL`, 기존 산출물이 있는 절대 경로의 `CONTENT_JOB_ARTIFACT_ROOT`가 설정되어 있어야 한다. 등록 단계에는 산출물 루트의 `reviews/` 디렉터리 생성·추가 권한이 필요하다. 기본 `generation-export` Compose 서비스는 산출물을 읽기 전용으로 연결하므로 그대로 등록용으로 사용하지 않는다. API 키는 필요 없다.
+
+```powershell
+# 작업 DB가 v7이 아닌 경우, 전용 검증 환경에서 먼저 실행한다.
+python -m menu_worker.jobs init-db
+
+# $sourceResultSha256은 jobs show에 기록된 원본 result_sha256이다.
+# $reviewResult는 이미 완료된 독립 검수 JSON 파일의 경로다.
+$review = python -m menu_worker.jobs register-staging-review --job-id $jobId --review-result $reviewResult --source-result-sha256 $sourceResultSha256 | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'Review registration failed' }
+python -m menu_worker.jobs export-staging --job-id $jobId --review-id $review.review_id --output $newBundleDirectory
+if ($LASTEXITCODE -ne 0) { throw 'Reviewed bundle export failed' }
+```
+
+등록 후에는 위 `generation-export` Compose 명령에 `--review-id $review.review_id`를 추가해 내보낼 수도 있다. `$newBundleDirectory`는 부모 디렉터리가 존재하는 새 출력 경로여야 한다. 이미 기사별 결과가 선택됐다면 다른 작업으로 바꿀 수 없고, 같은 작업에서도 선택한 검수를 다른 `review_id`로 바꿀 수 없다. 같은 작업·원본 해시·검수 ID로 새 경로에 다시 내보내는 것은 허용한다.
+
+독립 LLM 검수 통과는 운영자의 공개 승인이 아니다. 번들은 기존 적재기의 기본 검수 대기 규칙을 따르며, 운영자가 별도로 승인·공개하기 전에는 피드에 노출하지 않는다. dry-run은 `--apply` 없이 실행한다. 이 등록·내보내기 과정은 자동 수집이나 유료 생성을 켜지 않으며 서비스 DB에 쓰지 않는다.
+
 ## 콘텐츠 큐 회귀 검증
 
 ### 작업 실행 재시도
@@ -291,7 +315,7 @@ try {
 한도는 작업 DB의 생성 모드 시도 이력으로 검사한다. 시작 전 점유 만료와 수동 `retry-preflight`도
 3회 한도를 우회하지 못한다. 이미 3회를 넘긴 과거 이력은 삭제하지 않는다. 생성 시작 후 시간 초과·
 중단·산출물 오류는 기존처럼 `needs_attention`으로 보존하며 자동 재생성하지 않는다. `recover`는
-기존 산출물만 검증하므로 생성 시도 한도와 별도로 실행할 수 있다. 작업 DB 스키마는 v6 그대로다.
+기존 산출물만 검증하므로 생성 시도 한도와 별도로 실행할 수 있다. 재시도 정책 자체는 스키마 변경을 요구하지 않으며, 위 독립 검수 등록·내보내기는 작업 DB v7을 사용한다.
 
 `tests/check_retry_continuation.py`는 격리된 PostgreSQL과 Redis, 실제 Celery Worker에서
 재시도 소진 또는 성공 후 다른 기사 작업이 처리되는지 확인한다. 실제 생성기만 대체하며 LLM은 호출하지 않는다.

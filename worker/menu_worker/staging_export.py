@@ -8,13 +8,13 @@ from menu_worker.job_store import JobStore
 from menu_worker.real_generation import RealGenerationError, read_sealed_staging_result
 
 
-def export_staging_bundle(root: Path, store: JobStore, job_id: str, output: Path) -> dict:
+def export_staging_bundle(root: Path, store: JobStore, job_id: str, output: Path, *, review_id: str | None = None) -> dict:
     job = store.get(job_id)
     if job is None:
         raise RealGenerationError("job_not_found")
     if job["job_kind"] != "anime_generate":
         raise RealGenerationError("unexpected_generation_kind")
-    if (job["execution_status"], job["outcome"], job["producer_status"]) != (
+    if review_id is None and (job["execution_status"], job["outcome"], job["producer_status"]) != (
         "succeeded", "ready_for_staging", "ready_for_feed"
     ):
         raise RealGenerationError("job_not_ready_for_staging")
@@ -32,6 +32,11 @@ def export_staging_bundle(root: Path, store: JobStore, job_id: str, output: Path
         cards.mkdir(parents=True)
         result = read_sealed_staging_result(root, job, cards)
         package = result["package"]
+        original_result = result
+        review_row = None
+        if review_id is not None:
+            from menu_worker.review_evidence import read_staging_review
+            result, review_row = read_staging_review(root, store, job, review_id, original_result)
         assets = [{"page": card["page"], "path": f"cards/card_{card['page']:02d}.png",
                    "sha256": card["rendered_image_key"]} for card in package["cards"]]
         evidence = {key: result[key] for key in (
@@ -40,12 +45,20 @@ def export_staging_bundle(root: Path, store: JobStore, job_id: str, output: Path
         ) if key in result}
         evidence.update(jobId=job["job_id"], generationAttemptId=job["generation_attempt_id"],
                         resultSha256=job["result_sha256"], operatorReviewCreated=False)
+        if review_row is not None:
+            evidence.update(reviewId=review_row["review_id"], reviewResultSha256=review_row["review_result_sha256"],
+                            reviewArtifactSha256=review_row["artifact_sha256"],
+                            originalGeneration={"status": original_result["status"], "outcome": job["outcome"],
+                                                "resultSha256": job["result_sha256"]})
         document = {"schemaVersion": 1, "producer": "ani_menu_agent", "topicCode": "anime",
                     "items": [{"package": package, "assets": assets, "reviewEvidence": evidence}]}
         (staged / "bundle.json").write_text(
             json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")), encoding="utf-8"
         )
-        store.select_staging_result(job)
+        if review_id is None:
+            store.select_staging_result(job)
+        else:
+            store.select_staging_result(job, review_id=review_id)
         # POSIX rename can replace an empty directory; reserve the name first.
         # Windows rename already refuses any existing destination.
         reserved = False
@@ -63,5 +76,6 @@ def export_staging_bundle(root: Path, store: JobStore, job_id: str, output: Path
             raise
 
     return {"job_id": job["job_id"], "generation_attempt_id": job["generation_attempt_id"],
+            **({"review_id": review_id} if review_id is not None else {}),
             "result_sha256": job["result_sha256"], "bundle_path": str(output / "bundle.json"),
             "cards": len(assets)}

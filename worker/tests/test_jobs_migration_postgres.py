@@ -84,11 +84,11 @@ class JobSchemaMigrationTests(unittest.TestCase):
 
     def test_fresh_install_and_concurrent_or_repeated_initialize(self):
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [6, 6])
+        self.assertEqual([result["version"] for result in results], [7, 7])
         self.assertCountEqual([result["created"] for result in results], [True, False])
         store = self.store()
         repeated = store.initialize()
-        self.assertEqual(repeated["version"], 6)
+        self.assertEqual(repeated["version"], 7)
         self.assertFalse(repeated["created"])
         for kind in ("fake", "anime", "anime_generate"):
             request = {"idempotency_key": kind, "source_id": "fixture", "content_type": "news",
@@ -158,7 +158,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
         job_ids, inputs = self.seed_v1()
         old_jobs, old_attempts = self.snapshot()
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [6, 6])
+        self.assertEqual([result["version"] for result in results], [7, 7])
         self.assertFalse(self.store().initialize()["created"])
         jobs, attempts = self.snapshot()
         self.assertEqual(len(jobs), len(old_jobs))
@@ -227,7 +227,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
             ids = {phase: self.seed_v2_anime_probe(connection, phase) for phase in phases}
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [6, 6])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [7, 7])
         store = self.store()
         self.assertFalse(store.initialize()["created"])
         jobs, attempts = self.snapshot()
@@ -291,7 +291,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 (attempt_id, probe_id, uuid4(), path, result_hash),
             )
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [6, 6])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [7, 7])
         jobs, attempts = self.snapshot()
         self.assertEqual(attempts, old_attempts)
         for before, after in zip(old_jobs, jobs, strict=True):
@@ -348,6 +348,49 @@ class JobSchemaMigrationTests(unittest.TestCase):
                    attempt_count=1 WHERE job_id=%s""", (attempt_id, attempt_id, job_id),
             )
         return str(job_id), str(token)
+
+    def test_v6_upgrade_preserves_rejected_history_and_selected_ready_result(self):
+        self.install_v4()
+        with self.connect() as connection:
+            ready_id, ready_token = self.seed_v4_job(
+                connection, "v6-ready", "https://one-piece.com/news/82812/index.html", "running", True)
+            rejected_id, rejected_token = self.seed_v4_job(
+                connection, "v6-rejected", "https://one-piece.com/news/82813/index.html", "running", True)
+        # A deployed v4 ledger is already committed before initialize() opens
+        # its migration transaction. Finish the fixture's deferred attempt FKs
+        # before v5 performs its first ALTER TABLE, matching that boundary.
+        with self.connect() as connection:
+            for name in ("005_article_identity.sql", "006_staging_selection.sql"):
+                connection.execute(V1_SQL.with_name(name).read_text(encoding="utf-8"), prepare=False)
+        store = self.store()
+        for job_id, token, outcome, producer in (
+            (ready_id, ready_token, "ready_for_staging", "ready_for_feed"),
+            (rejected_id, rejected_token, "rejected", "rejected_archived"),
+        ):
+            job = store.get(job_id)
+            self.assertTrue(store.complete(
+                job_id, token, expected_kind="anime_generate", execution_status="succeeded",
+                outcome=outcome, producer_status=producer,
+                artifact_path=f"jobs/{job_id}/attempts/{job['generation_attempt_id']}/manifest.json",
+                result_sha256=hashlib.sha256(job_id.encode()).hexdigest(),
+            ))
+        ready = store.get(ready_id)
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO public.content_staging_selection
+                   (article_job_id, selected_job_id, generation_attempt_id, result_sha256)
+                   VALUES (%(job_id)s, %(job_id)s, %(generation_attempt_id)s, %(result_sha256)s)""", ready)
+            before_selection = connection.execute("SELECT * FROM public.content_staging_selection").fetchone()
+        before = self.snapshot()
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [7, 7])
+        self.assertEqual(self.snapshot(), before)
+        with self.connect() as connection:
+            selected = connection.execute("SELECT * FROM public.content_staging_selection").fetchone()
+            self.assertEqual(connection.execute("SELECT count(*) AS n FROM public.content_generation_review").fetchone()["n"], 0)
+        self.assertEqual({key: selected[key] for key in before_selection}, before_selection)
+        self.assertIsNone(selected["review_id"])
+        store.select_staging_result(ready)
+        self.assertEqual(self.snapshot(), before)
 
     def migrated_export_pair(self):
         """Keep both v4 producers armed so either can finish after the v5 deduplication."""
@@ -549,7 +592,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
             probe_url = base + "/?id=11"
             probe_id, _ = self.seed_v4_job(connection, "legacy-probe", probe_url, "queued", False, job_kind="anime")
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [6, 6])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [7, 7])
         jobs, attempts = self.snapshot()
         for before, after in zip(old_jobs, jobs, strict=True):
             for column in ("job_id", "canonical_url", "input_sha256", "idempotency_key", "generation_attempt_id"):

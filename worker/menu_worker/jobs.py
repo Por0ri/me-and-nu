@@ -84,6 +84,11 @@ def main(argv=None) -> int:
     export = commands.add_parser("export-staging", help="Export a sealed ready_for_staging job for the carousel importer")
     export.add_argument("--job-id", required=True)
     export.add_argument("--output", type=Path, required=True, help="New bundle directory under an existing parent")
+    export.add_argument("--review-id", help="Registered independent review of an unchanged rejected result")
+    review = commands.add_parser("register-staging-review", help="Register existing independent LLM review evidence; no model call")
+    review.add_argument("--job-id", required=True)
+    review.add_argument("--review-result", type=Path, required=True)
+    review.add_argument("--source-result-sha256", required=True)
     for name in ("show", "cancel", "recover", "retry-preflight"):
         commands.add_parser(name).add_argument("--job-id", required=True)
     requeue = commands.add_parser("requeue-delivery", help="Replace a confirmed, lost delivery")
@@ -97,7 +102,7 @@ def main(argv=None) -> int:
         role = os.environ.get("CONTENT_JOB_KIND", "fake")
         if role not in {"fake", "anime", "anime_generate"}:
             raise ValueError("Invalid CONTENT_JOB_KIND")
-        if args.command in {"generate", "retry-preflight", "export-staging"} and role != "anime_generate":
+        if args.command in {"generate", "retry-preflight", "export-staging", "register-staging-review"} and role != "anime_generate":
             raise JobInputError("Use the dedicated generation dispatcher", "generation_profile_required")
         if role == "anime_generate" and args.command in {"submit", "smoke"}:
             raise JobInputError("Live jobs require the generate command", "probe_command_not_available")
@@ -118,7 +123,12 @@ def main(argv=None) -> int:
             result = store.submit(request, job_kind=kind)
         elif args.command == "export-staging":
             from menu_worker.staging_export import export_staging_bundle
-            result = export_staging_bundle(Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"]), store, args.job_id, args.output)
+            result = export_staging_bundle(Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"]), store, args.job_id, args.output,
+                                           **({"review_id": args.review_id} if args.review_id is not None else {}))
+        elif args.command == "register-staging-review":
+            from menu_worker.review_evidence import register_staging_review
+            result = register_staging_review(Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"]), store, args.job_id,
+                                             args.review_result, args.source_result_sha256)
         elif args.command == "show":
             result = store.get(args.job_id)
             if result is None:
