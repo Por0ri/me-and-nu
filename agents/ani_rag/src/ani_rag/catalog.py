@@ -1,11 +1,10 @@
-"""Conservative work resolver backed by the shared canonical and temporary lists."""
+"""Conservative work resolver backed only by the copied local CSV snapshot."""
 
 from __future__ import annotations
 
 import csv
 import re
 import unicodedata
-import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,9 +15,7 @@ from ani_rag.models import (
     WorkEntryFormat, WorkEntryRelation, WorkLinkStatus, WorkRegistration,
 )
 
-_REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_WORK_LIST_DIR = _REPOSITORY_ROOT / "catalog"
-DEFAULT_REFERENCE_DIR = _REPOSITORY_ROOT / "agents" / "ani_me;nu" / "data" / "reference"
+DEFAULT_REFERENCE_DIR = Path(__file__).resolve().parents[2] / "data" / "reference"
 _SPACE = re.compile(r"\s+")
 
 
@@ -51,30 +48,13 @@ def normalize_title(value: str) -> str:
     return _SPACE.sub(" ", value)
 
 
-def _temporary_title_key(value: str) -> str:
-    """Share the period agent's punctuation-insensitive stable title key."""
-    normalized = unicodedata.normalize("NFKC", value).casefold()
-    return "".join(character for character in normalized if character.isalnum())
-
-
-def temporary_work_id(name: str, external_ids: Mapping[str, str] | None = None) -> int:
-    """Return the shared deterministic temporary ID for a new work."""
-    for source_id, external_id in sorted((external_ids or {}).items()):
-        if "kitsu" in source_id.casefold() and external_id.isdigit() and int(external_id) > 0:
-            return 1_000_000 + int(external_id)
-    key = _temporary_title_key(name)
-    if len(key) < 3:
-        raise ValueError("Temporary work ID requires a normalized title with at least 3 characters")
-    return 2_000_000 + zlib.crc32(key.encode("utf-8")) % 1_000_000_000
-
-
 class LocalWorkCatalog:
     """Exact title/registered identifier lookup; never accesses the source project or creates IDs."""
 
     def __init__(self, reference_dir: Path = DEFAULT_REFERENCE_DIR) -> None:
         self.reference_dir = reference_dir.resolve()
         if self.reference_dir != DEFAULT_REFERENCE_DIR.resolve():
-            raise ValueError("Work matching is restricted to the shared ani_me;nu reference directory")
+            raise ValueError("Work matching is restricted to ani_rag/data/reference snapshot files")
         self._titles: dict[str, set[int]] = {}
         self._work_titles: dict[int, set[str]] = {}
         self._search_titles: dict[int, list[str]] = {}
@@ -83,10 +63,9 @@ class LocalWorkCatalog:
         self._characters: dict[str, set[int]] = {}
         self._load()
 
-    def _rows(self, filename: str, directory: Path | None = None):
-        base = (directory or self.reference_dir).resolve()
-        path = (base / filename).resolve()
-        if base not in path.parents:
+    def _rows(self, filename: str):
+        path = (self.reference_dir / filename).resolve()
+        if self.reference_dir not in path.parents:
             raise ValueError("Reference file escaped the local snapshot directory")
         with path.open("r", encoding="utf-8-sig", newline="") as stream:
             yield from csv.DictReader(stream)
@@ -103,11 +82,12 @@ class LocalWorkCatalog:
             self._titles.setdefault(normalized, set()).add(identifier)
 
     def _load(self) -> None:
-        for row in self._rows("menu_works.csv", DEFAULT_WORK_LIST_DIR):
-            self._add_work_row(row)
-        for row in self._rows("agent_works.csv"):
-            self._add_work_row(row)
-        for row in self._rows("menu_work_entries.csv", DEFAULT_WORK_LIST_DIR):
+        for row in self._rows("menu_works.csv"):
+            for field in ("title_ko", "title_romaji", "title_english", "title_native"):
+                self._add_title(row.get(field), row.get("menu_work_id"))
+                self._remember_work_title(row.get(field), row.get("menu_work_id"))
+                self._add_search_title(row.get(field), row.get("menu_work_id"))
+        for row in self._rows("menu_work_entries.csv"):
             work_id_text = row.get("menu_work_id")
             try:
                 work_id = int(work_id_text or "")
@@ -141,21 +121,14 @@ class LocalWorkCatalog:
                 self._add_search_title(row.get("alias"), row.get("menu_work_id"))
         for row in self._rows("menu_work_external_entries.csv"):
             self._add_external(row.get("source_id", ""), row.get("external_id", ""), row.get("menu_work_id", ""))
-        if (self.reference_dir / "work_characters.csv").is_file():
-            for row in self._rows("work_characters.csv"):
-                name = normalize_title(row.get("name", ""))
-                try:
-                    work_id = int(row.get("menu_work_id", ""))
-                except (TypeError, ValueError):
-                    continue
-                if name and work_id > 0:
-                    self._characters.setdefault(name, set()).add(work_id)
-
-    def _add_work_row(self, row: Mapping[str, str]) -> None:
-        for field in ("title_ko", "title_romaji", "title_english", "title_native"):
-            self._add_title(row.get(field), row.get("menu_work_id"))
-            self._remember_work_title(row.get(field), row.get("menu_work_id"))
-            self._add_search_title(row.get(field), row.get("menu_work_id"))
+        for row in self._rows("work_characters.csv"):
+            name = normalize_title(row.get("name", ""))
+            try:
+                work_id = int(row.get("menu_work_id", ""))
+            except (TypeError, ValueError):
+                continue
+            if name and work_id > 0:
+                self._characters.setdefault(name, set()).add(work_id)
 
     def _add_external(self, source: str, external_id: str, work_id: str) -> None:
         if not source or not external_id:

@@ -1,6 +1,6 @@
 # `menu_dict.dump` → ani_rag 검토 및 가져오기 계약 초안
 
-작성일: 2026-11-09
+작성일: 2026-11-09  
 상태: 초안; 실제 덤프 검토 및 AniList snapshot 사용 결정은 [`MENU_DICT_RAG_IMPORT.md`](MENU_DICT_RAG_IMPORT.md)에 갱신
 
 ## 2026-11-09 업데이트

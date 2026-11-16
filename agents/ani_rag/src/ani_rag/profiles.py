@@ -79,7 +79,7 @@ CONTENT_PROFILES: Mapping[RagContentType, ContentProfile] = MappingProxyType(
         RagContentType.CURATION: ContentProfile(
             content_type=RagContentType.CURATION,
             purpose="Polls, rankings, recommendations, and editorial selection sets.",
-            accepted_evidence_types=(EvidenceType.CURATION_RESULT,),
+            accepted_evidence_types=(EvidenceType.CURATION_RESULT, EvidenceType.REFERENCE_FACT),
             work_identity_priority="contextual",
             preserve_context=(
                 "survey_window",
@@ -87,7 +87,10 @@ CONTENT_PROFILES: Mapping[RagContentType, ContentProfile] = MappingProxyType(
                 "aggregation_method",
                 "publisher_context",
             ),
-            handling_rule="Store as attributed aggregate/editorial output, never as objective fact.",
+            handling_rule=(
+                "Use reference facts as factual support for editorial groupings; use curation results only with "
+                "their sample and method context, and never present an editorial selection as an objective ranking."
+            ),
         ),
         RagContentType.REVIEW: ContentProfile(
             content_type=RagContentType.REVIEW,

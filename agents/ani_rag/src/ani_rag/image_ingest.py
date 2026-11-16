@@ -53,6 +53,27 @@ class ImageCandidate:
 
 
 @dataclass(frozen=True)
+class WebImageSearchHit:
+    """Unverified image-search result; it has no local work link until vision review."""
+
+    image_url: str
+    source_page_url: str
+    title: str
+    description: str = ""
+    native_id: str | None = None
+
+    def __post_init__(self) -> None:
+        for value in (self.image_url, self.source_page_url, self.title):
+            if not value.strip():
+                raise ValueError("Web image result needs an image URL, source page, and title")
+
+
+class WebImageSearchAdapter(Protocol):
+    async def search_images(self, query: str, *, limit: int) -> tuple[WebImageSearchHit, ...]:
+        """Return bounded image candidates with both direct-image and source-page URLs."""
+
+
+@dataclass(frozen=True)
 class ImageIngestFailure:
     source_url: str
     error_type: str

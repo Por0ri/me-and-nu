@@ -16,6 +16,7 @@ from ani_rag.settings import SourceStatus
 from ani_rag.structured_mcp import StructuredCollectionRequest
 from ani_rag.workers import CollectionWorker, StructuredCollectionWorker
 from ani_rag.workers import run_worker_forever
+from ani_rag.web_discovery import WebCandidateAssessmentWorker, WebDiscoveryWorker
 
 
 @dataclass(frozen=True)
@@ -39,10 +40,14 @@ class MCPCrawlerAgent:
     def __init__(
         self, *, url_worker: CollectionWorker,
         structured_worker: StructuredCollectionWorker,
+        web_discovery_worker: WebDiscoveryWorker | None = None,
+        web_candidate_worker: WebCandidateAssessmentWorker | None = None,
         recurring_plans: Sequence[RecurringCollectionPlan] = (),
     ):
         self.url_worker = url_worker
         self.structured_worker = structured_worker
+        self.web_discovery_worker = web_discovery_worker
+        self.web_candidate_worker = web_candidate_worker
         self.recurring_plans = tuple(recurring_plans)
         self._last_scheduled_slots: dict[str, int] = {}
         plan_ids = [plan.plan_id for plan in self.recurring_plans]
@@ -56,12 +61,20 @@ class MCPCrawlerAgent:
     async def run_structured_once(self) -> bool:
         return await self.structured_worker.run_once()
 
+    async def run_web_discovery_once(self) -> bool:
+        return await self.web_discovery_worker.run_once() if self.web_discovery_worker else False
+
+    async def run_web_candidate_once(self) -> bool:
+        return await self.web_candidate_worker.run_once() if self.web_candidate_worker else False
+
     async def run_once(self) -> bool:
         """Schedule due bounded queries, then consume at most one request per adapter."""
         scheduled = await self._enqueue_due_plans()
         url_worked = await self.run_url_once()
         structured_worked = await self.run_structured_once()
-        return scheduled or url_worked or structured_worked
+        web_search_worked = await self.run_web_discovery_once()
+        candidate_worked = await self.run_web_candidate_once()
+        return scheduled or url_worked or structured_worked or web_search_worked or candidate_worked
 
     def _validate_plans(self) -> None:
         registry = self.url_worker.registry

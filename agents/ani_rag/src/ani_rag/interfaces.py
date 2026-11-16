@@ -83,6 +83,7 @@ class EvidenceRepository(Protocol):
     """Persistence/outbox port; adapter must commit the document and pending generation row atomically."""
 
     async def upsert_and_schedule_generation(
-        self, document: EvidenceDocument, *, retrieval_query: str
+        self, document: EvidenceDocument, *, retrieval_query: str | None = None,
+        schedule_generation: bool = True,
     ) -> StoredEvidenceReference:
-        """Upsert canonical evidence and an idempotent pending generation-work row in one transaction."""
+        """Upsert canonical evidence and optionally queue generation atomically."""

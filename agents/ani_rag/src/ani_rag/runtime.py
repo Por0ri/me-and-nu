@@ -40,9 +40,18 @@ from ani_rag.workers import (
     CollectionWorker,
     GenerationWorker,
     GenerationQueueReconciler,
+    ImageReader,
     ReviewWorker,
     StructuredCollectionWorker,
 )
+from ani_rag.web_discovery import (
+    WebCandidateAssessmentWorker,
+    WebDiscoveryAdapter,
+    WebDiscoveryRequest,
+    WebDiscoveryWorker,
+    enqueue_web_discovery,
+)
+from ani_rag.web_images import ImageSearchAdapter, WebSearchImageReader
 
 
 @dataclass(frozen=True)
@@ -50,7 +59,7 @@ class GenerationReviewRuntime:
     """Constructed adapters and one-item workers; nothing is started automatically."""
 
     store: SQLiteRagStore
-    images: SQLiteImageReader
+    images: ImageReader
     drafts: SQLiteDraftRepository
     generation_worker: GenerationWorker
     review_worker: ReviewWorker
@@ -62,7 +71,7 @@ class AniRagRuntime:
     """Convenience composition of all three independent role agents."""
 
     store: SQLiteRagStore
-    images: SQLiteImageReader
+    images: ImageReader
     drafts: SQLiteDraftRepository
     collection_worker: CollectionWorker
     structured_collection_worker: StructuredCollectionWorker
@@ -79,6 +88,7 @@ def compose_crawler_agent(
     *,
     registry: EvergreenSourceRegistry,
     url_mcp: MCPReadSearchAdapter,
+    web_discovery_adapter: WebDiscoveryAdapter | None = None,
     structured_mcp: StructuredMCPAdapter,
     work_match_model: StructuredModel,
     work_catalog: WorkCatalogResolver | None = None,
@@ -93,6 +103,17 @@ def compose_crawler_agent(
         local_catalog, work_match_model, database_candidates=store.work_catalog_candidates,
     )
     images = SQLiteImageReader(store)
+    web_discovery_worker = (
+        WebDiscoveryWorker(store, web_discovery_adapter)
+        if web_discovery_adapter is not None else None
+    )
+    web_candidate_worker = (
+        WebCandidateAssessmentWorker(
+            store, web_discovery_adapter, resolver, DatabaseEvidenceRetriever(store),
+            evidence_model=work_match_model,
+        )
+        if web_discovery_adapter is not None else None
+    )
     return MCPCrawlerAgent(
         url_worker=CollectionWorker(
             queues=store, registry=registry, adapter=url_mcp, evidence=store,
@@ -104,6 +125,8 @@ def compose_crawler_agent(
             work_catalog=resolver, image_repository=images, image_asset_dir=image_asset_dir,
             image_entity_catalog=image_entity_catalog,
         ),
+        web_discovery_worker=web_discovery_worker,
+        web_candidate_worker=web_candidate_worker,
         recurring_plans=recurring_plans,
     )
 
@@ -112,10 +135,14 @@ def compose_content_generation_agent(
     connection: sqlite3.Connection,
     *,
     generation_model: StructuredModel,
+    image_search_adapter: ImageSearchAdapter | None = None,
+    image_asset_dir: Path | None = None,
 ) -> ContentGenerationAgent:
     """Compose only the database-polling generation role."""
     store = SQLiteRagStore(connection)
-    images = SQLiteImageReader(store)
+    images = _generation_image_reader(
+        store, image_search_adapter=image_search_adapter, image_asset_dir=image_asset_dir,
+    )
     drafts = SQLiteDraftRepository(store)
     worker = GenerationWorker(
         queues=store, backlog=store, retriever=DatabaseEvidenceRetriever(store),
@@ -146,6 +173,8 @@ def compose_generation_review_runtime(
     *,
     generation_model: StructuredModel,
     review_model: StructuredModel,
+    image_search_adapter: ImageSearchAdapter | None = None,
+    image_asset_dir: Path | None = None,
 ) -> GenerationReviewRuntime:
     """Wire RAG's generation/review components over a caller-owned DB connection.
 
@@ -156,7 +185,9 @@ def compose_generation_review_runtime(
     """
 
     store = SQLiteRagStore(connection)
-    images = SQLiteImageReader(store)
+    images = _generation_image_reader(
+        store, image_search_adapter=image_search_adapter, image_asset_dir=image_asset_dir,
+    )
     drafts = SQLiteDraftRepository(store)
     generation_worker = GenerationWorker(
         queues=store,
@@ -187,6 +218,8 @@ def compose_runtime(
     *,
     registry: EvergreenSourceRegistry,
     url_mcp: MCPReadSearchAdapter,
+    web_discovery_adapter: WebDiscoveryAdapter | None = None,
+    image_search_adapter: ImageSearchAdapter | None = None,
     structured_mcp: StructuredMCPAdapter,
     generation_model: StructuredModel,
     review_model: StructuredModel,
@@ -208,17 +241,35 @@ def compose_runtime(
         local_catalog, work_match_model or generation_model,
         database_candidates=store.work_catalog_candidates,
     )
-    images = SQLiteImageReader(store)
+    effective_image_search = image_search_adapter or _image_search_capable(
+        web_discovery_adapter, url_mcp,
+    )
+    images = _generation_image_reader(
+        store, image_search_adapter=effective_image_search,
+        image_asset_dir=image_asset_dir,
+    )
+    collection_images = SQLiteImageReader(store)
     drafts = SQLiteDraftRepository(store)
     collection_worker = CollectionWorker(
         queues=store, registry=registry, adapter=url_mcp, evidence=store,
-        work_catalog=resolver, image_repository=images, image_asset_dir=image_asset_dir,
+        work_catalog=resolver, image_repository=collection_images, image_asset_dir=image_asset_dir,
         image_entity_catalog=image_entity_catalog,
     )
     structured_collection_worker = StructuredCollectionWorker(
         queues=store, registry=registry, adapter=structured_mcp, evidence=store,
-        work_catalog=resolver, image_repository=images, image_asset_dir=image_asset_dir,
+        work_catalog=resolver, image_repository=collection_images, image_asset_dir=image_asset_dir,
         image_entity_catalog=image_entity_catalog,
+    )
+    web_discovery_worker = (
+        WebDiscoveryWorker(store, web_discovery_adapter)
+        if web_discovery_adapter is not None else None
+    )
+    web_candidate_worker = (
+        WebCandidateAssessmentWorker(
+            store, web_discovery_adapter, resolver, DatabaseEvidenceRetriever(store),
+            evidence_model=work_match_model or generation_model,
+        )
+        if web_discovery_adapter is not None else None
     )
     generation_worker = GenerationWorker(
         queues=store, backlog=store, retriever=DatabaseEvidenceRetriever(store),
@@ -240,6 +291,8 @@ def compose_runtime(
         queue_reconciler=GenerationQueueReconciler(store, store),
         crawler_agent=MCPCrawlerAgent(
             url_worker=collection_worker, structured_worker=structured_collection_worker,
+            web_discovery_worker=web_discovery_worker,
+            web_candidate_worker=web_candidate_worker,
             recurring_plans=recurring_plans,
         ),
         content_generation_agent=ContentGenerationAgent(
@@ -247,6 +300,34 @@ def compose_runtime(
         ),
         reviewer_agent=IndependentReviewAgent(review_worker),
     )
+
+
+def _image_search_capable(*candidates: object) -> ImageSearchAdapter | None:
+    return next((item for item in candidates if callable(getattr(item, "search_images", None))), None)  # type: ignore[return-value]
+
+
+def _generation_image_reader(
+    store: SQLiteRagStore, *, image_search_adapter: ImageSearchAdapter | None,
+    image_asset_dir: Path | None,
+) -> ImageReader:
+    local = SQLiteImageReader(store)
+    if image_search_adapter is None:
+        # Constructing the adapter is local-only. MCP connection/tool discovery
+        # happens only when a generation job explicitly searches for images.
+        from ani_rag.firecrawl_adapter import FirecrawlMCPAdapter
+
+        image_search_adapter = FirecrawlMCPAdapter()
+    destination = image_asset_dir or Path(__file__).resolve().parents[2] / "data" / "image_assets"
+    return WebSearchImageReader(local, image_search_adapter, asset_dir=destination)
+
+
+async def enqueue_web_discovery_request(
+    runtime: AniRagRuntime, request: WebDiscoveryRequest,
+) -> QueueItem:
+    """Queue broad-web candidate discovery for a configured runtime; no worker runs here."""
+    if runtime.crawler_agent.web_discovery_worker is None:
+        raise RuntimeError("compose_runtime needs an explicit web_discovery_adapter for broad-web discovery")
+    return await enqueue_web_discovery(runtime.store, request)
 
 
 async def enqueue_url_collection(runtime: AniRagRuntime, request: CollectionRequest) -> QueueItem:

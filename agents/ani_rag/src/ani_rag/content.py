@@ -15,6 +15,10 @@ TEXT_ONLY_ASSET_ID = "text_only_gradient"
 AI_DISCLOSURE = "\uc774 \ucf58\ud150\uce20\ub294 \uc6d0\ubb38\uacfc \ud655\uc778 \uc790\ub8cc\ub97c \ubc14\ud0d5\uc73c\ub85c AI\ub97c \uc0ac\uc6a9\ud574 \uc0dd\uc131\u00b7\uc815\ub9ac\ud588\uc2b5\ub2c8\ub2e4."
 
 
+class DuplicateContentError(ValueError):
+    """Raised when a draft repeats a recent work-specific content angle."""
+
+
 @dataclass(frozen=True)
 class SupportedClaim:
     text: str
@@ -124,6 +128,9 @@ class ImageAsset:
     width: int | None = None
     height: int | None = None
     entity_links: tuple[ImageEntityLink, ...] = ()
+    recent_use_count: int = 0
+    last_used_at: str | None = None
+    used_as_cover_before: bool = False
 
 
 @dataclass(frozen=True)
@@ -229,7 +236,11 @@ def assemble_detail_article(draft: ContentDraft) -> str:
     ))
 
 class GenerationService(Protocol):
-    async def generate(self, retrieval: RetrievedEvidence, *, image_candidates: Sequence[ImageAsset] = (), revision_instructions: Sequence[str] = ()) -> ContentDraft:
+    async def generate(
+        self, retrieval: RetrievedEvidence, *, image_candidates: Sequence[ImageAsset] = (),
+        revision_instructions: Sequence[str] = (),
+        avoid_recent_topics: Sequence[Mapping[str, str]] = (),
+    ) -> ContentDraft:
         """Generate only from the retrieved stored documents and chunk context."""
 
 

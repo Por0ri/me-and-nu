@@ -90,6 +90,7 @@ class MenuDictArchiveReader:
     def _read_entities(self) -> dict[int, ArchiveEntity]:
         entities: dict[int, ArchiveEntity] = {}
         for row in self._rows("entity"):
+            row = _pad_trailing_nulls(row, 7, table="dict.entity")
             entity_id, kind, work_id, parent_id, name_ko, name_native, name_romaji = row
             identifier = int(entity_id)
             if identifier in entities:
@@ -112,6 +113,7 @@ class MenuDictArchiveReader:
     def _read_sources(self) -> dict[str, ArchiveSource]:
         result: dict[str, ArchiveSource] = {}
         for row in self._rows("source"):
+            row = _pad_trailing_nulls(row, 6, table="dict.source")
             source_id, name, license_text, attribution, _recheck, notes = row
             result[str(source_id)] = ArchiveSource(
                 str(source_id), str(name), str(license_text), str(attribution or ""), str(notes or ""),
@@ -163,7 +165,19 @@ class MenuDictArchiveReader:
             value = _decode_json_value(raw_value)
             related = self.entities.get(int(value_entity_id)) if value_entity_id is not None else None
             fact_text = _render_fact(entity, field_name, value, related)
-            work_ids = tuple(sorted(self._source_work_links.get(entity.entity_id, set())))
+            if entity.kind == "work" and entity.menu_work_id is not None:
+                # Work-level facts belong to this work only. Relation fan-out is
+                # useful for people/character entities, but must not relabel an
+                # entry's own facts as belonging to every related work.
+                work_ids = (entity.menu_work_id,)
+                work_match_method = "menu_dict_work_identity"
+            elif entity.kind == "entry" and entity.parent_id is not None:
+                parent = self.entities.get(entity.parent_id)
+                work_ids = (parent.menu_work_id,) if parent and parent.menu_work_id is not None else ()
+                work_match_method = "menu_dict_entry_parent"
+            else:
+                work_ids = tuple(sorted(self._source_work_links.get(entity.entity_id, set())))
+                work_match_method = "menu_dict_explicit_entity_relation"
             # A person or studio linked to many franchises must not be falsely
             # presented as belonging to a single requested work.
             if len(work_ids) > 50:
@@ -188,7 +202,7 @@ class MenuDictArchiveReader:
                 "permission_confirmation": str(source_policy.get("permission_confirmation", "")),
             }
             if work_ids:
-                metadata["work_match_method"] = "menu_dict_entry_parent_or_explicit_entity_relation"
+                metadata["work_match_method"] = work_match_method
             yield EvidenceDocument(
                 document_id=f"md_{fact_key}",
                 content_type=content_type,
@@ -295,3 +309,11 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _pad_trailing_nulls(row: object, column_count: int, *, table: str) -> tuple[object, ...]:
+    """pgdumplib omits trailing NULLs from some rows; restore the table arity."""
+    values = tuple(row)  # type: ignore[arg-type]
+    if len(values) > column_count:
+        raise ValueError(f"{table} row has {len(values)} columns; expected at most {column_count}")
+    return values + (None,) * (column_count - len(values))

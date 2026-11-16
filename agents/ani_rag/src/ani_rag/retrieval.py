@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import uuid
 from dataclasses import dataclass
@@ -12,8 +13,10 @@ from enum import StrEnum
 from typing import Protocol, Sequence
 
 from ani_rag.models import EvidenceDocument, RagContentType, WorkLinkStatus
+from ani_rag.profiles import get_content_profile
 
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
+DEFAULT_MIN_RETRIEVAL_SCORE = 0.20
 
 
 @dataclass(frozen=True)
@@ -21,17 +24,23 @@ class RetrievalRequest:
     query: str
     content_type: RagContentType
     menu_work_ids: tuple[int, ...] = ()
+    source_ids: tuple[str, ...] = ()
     seed_evidence_ids: tuple[str, ...] = ()
     top_k: int = 8
     candidate_limit: int = 100
+    min_retrieval_score: float = DEFAULT_MIN_RETRIEVAL_SCORE
 
     def __post_init__(self) -> None:
         if not self.query.strip():
             raise ValueError("RAG retrieval needs an explicit query")
         if not 1 <= self.top_k <= self.candidate_limit <= 1000:
             raise ValueError("Retrieval limits must satisfy 1 <= top_k <= candidate_limit <= 1000")
+        if not math.isfinite(self.min_retrieval_score) or not 0.0 <= self.min_retrieval_score <= 1.0:
+            raise ValueError("min_retrieval_score must be finite and between 0 and 1")
         if any(work_id <= 0 for work_id in self.menu_work_ids):
             raise ValueError("Retrieval work IDs must be positive")
+        if any(not source_id.strip() for source_id in self.source_ids):
+            raise ValueError("Retrieval source IDs must be non-empty")
 
 
 @dataclass(frozen=True)
@@ -106,6 +115,9 @@ class EvidenceCandidateRepository(Protocol):
 
 
 class GenerationBacklogRepository(Protocol):
+    async def enqueue_generation_work(self, item: GenerationWorkRequest) -> bool:
+        """Add one explicitly selected, evidence-seeded generation request idempotently."""
+
     async def pending_generation_work(self, *, limit: int) -> Sequence[GenerationWorkRequest]:
         """Read transactional outbox/backlog rows, including pre-existing eligible evidence."""
 
@@ -279,9 +291,14 @@ class DatabaseEvidenceRetriever:
     async def retrieve(self, request: RetrievalRequest) -> RetrievedEvidence:
         documents = await self.candidates.fetch_candidates(request)
         unique_documents = {document.document_id: document for document in documents[:request.candidate_limit]}
+        accepted_evidence_types = set(get_content_profile(request.content_type).accepted_evidence_types)
         allowed: list[EvidenceDocument] = []
         for document in unique_documents.values():
-            if document.content_type is not request.content_type:
+            # A source document's collection lane does not define every format it
+            # can support. Reuse it only when this requested lane explicitly
+            # accepts the preserved evidence type (for example, ANN reference
+            # facts collected through the guide lane can support people/music).
+            if document.evidence_type not in accepted_evidence_types:
                 continue
             if request.menu_work_ids and (
                 document.work_link_status is not WorkLinkStatus.MATCHED

@@ -44,19 +44,20 @@ def render_text_free_cards(draft: ContentDraft, assets: dict[str, ImageAsset]) -
         background = _source_background(foreground, card.layout.background_style).convert("RGBA")
         art_box = card.layout.image_box
         art_area = (int(WIDTH * art_box.width), int(HEIGHT * art_box.height))
-        _paste_uncropped(background, foreground, (
+        placement = (
             int(WIDTH * art_box.x), int(HEIGHT * art_box.y),
             art_area[0], art_area[1],
-        ))
-        if card.layout.background_style == "gradient":
-            fade = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-            pixels = fade.load()
-            y0 = int(HEIGHT * card.layout.text_overlay_box.y)
-            for row in range(y0, HEIGHT):
-                alpha = round(150 * (row - y0) / max(1, HEIGHT - y0 - 1))
-                for column in range(WIDTH):
-                    pixels[column, row] = (9, 12, 18, alpha)
-            background = Image.alpha_composite(background, fade).convert("RGB")
+        )
+        is_panorama = foreground.width / max(1, foreground.height) >= 2.4
+        panorama_crop = is_panorama and card.layout.image_emphasis == "dominant"
+        if panorama_crop:
+            _paste_panorama_crop(background, foreground, placement)
+        else:
+            _paste_uncropped(background, foreground, placement)
+        background = _soften_copy_zone(background, card.layout)
+        background = Image.alpha_composite(
+            background.convert("RGBA"), _copy_scrim(card.layout)
+        ).convert("RGB")
         output = BytesIO()
         background.save(output, format="PNG", optimize=True)
         rendered.append(
@@ -68,6 +69,9 @@ def render_text_free_cards(draft: ContentDraft, assets: dict[str, ImageAsset]) -
                     "template": card.layout.template,
                     "image_emphasis": card.layout.image_emphasis,
                     "background_style": card.layout.background_style,
+                    "source_image_width": foreground.width,
+                    "source_image_height": foreground.height,
+                    "panorama_crop": panorama_crop,
                     "image_box": {
                         "x": card.layout.image_box.x, "y": card.layout.image_box.y,
                         "width": card.layout.image_box.width, "height": card.layout.image_box.height,
@@ -103,6 +107,67 @@ def _source_background(image: Image.Image, style: str) -> Image.Image:
     return Image.blend(blurred, palette, blend)
 
 
+def _copy_scrim(layout) -> Image.Image:
+    """Fade the artwork under the HTML copy without adding a hard text panel."""
+    box = layout.text_overlay_box
+    left = round(box.x * WIDTH)
+    top = round(box.y * HEIGHT)
+    right = round((box.x + box.width) * WIDTH)
+    bottom = round((box.y + box.height) * HEIGHT)
+    color = (5, 7, 10)
+    gradient = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(gradient)
+
+    if box.y >= 0.50:
+        fade_start = max(0, top - round(0.17 * HEIGHT))
+        span = max(1, HEIGHT - fade_start)
+        for y in range(fade_start, HEIGHT):
+            alpha = round(150 * ((y - fade_start) / span) ** 0.90)
+            draw.line((0, y, WIDTH, y), fill=(*color, alpha))
+    elif box.y + box.height <= 0.43:
+        fade_end = min(HEIGHT, bottom + round(0.18 * HEIGHT))
+        span = max(1, fade_end)
+        for y in range(fade_end):
+            alpha = round(205 * max(0.0, 1 - y / span) ** 0.85)
+            draw.line((0, y, WIDTH, y), fill=(*color, alpha))
+    elif box.x < 0.30:
+        fade_end = min(WIDTH, right + round(0.22 * WIDTH))
+        span = max(1, fade_end)
+        for x in range(fade_end):
+            alpha = round(210 * max(0.0, 1 - x / span) ** 0.82)
+            draw.line((x, 0, x, HEIGHT), fill=(*color, alpha))
+    elif box.x + box.width > 0.70:
+        fade_start = max(0, left - round(0.22 * WIDTH))
+        span = max(1, WIDTH - fade_start)
+        for x in range(fade_start, WIDTH):
+            alpha = round(210 * ((x - fade_start) / span) ** 0.82)
+            draw.line((x, 0, x, HEIGHT), fill=(*color, alpha))
+    else:
+        span = max(1, bottom - top)
+        for y in range(max(0, top), min(HEIGHT, bottom)):
+            alpha = round(198 * min(1.0, (y - top + 1) / span * 3))
+            draw.line((0, y, WIDTH, y), fill=(*color, alpha))
+    return gradient
+
+
+def _soften_copy_zone(canvas: Image.Image, layout) -> Image.Image:
+    """Apply a faint blur only behind lower copy; keep the source artwork visible."""
+    box = layout.text_overlay_box
+    if box.y < 0.50:
+        return canvas
+    top = max(0, round((box.y - 0.14) * HEIGHT))
+    copy_top = max(top + 1, round(box.y * HEIGHT))
+    mask = Image.new("L", (WIDTH, HEIGHT), 0)
+    draw = ImageDraw.Draw(mask)
+    span = max(1, copy_top - top)
+    for y in range(top, HEIGHT):
+        alpha = round(76 * min(1.0, (y - top) / span))
+        draw.line((0, y, WIDTH, y), fill=alpha)
+    softened = canvas.filter(ImageFilter.GaussianBlur(radius=max(10, HEIGHT // 90)))
+    canvas.paste(softened, (0, 0), mask)
+    return canvas
+
+
 def _paste_uncropped(
     canvas: Image.Image,
     image: Image.Image,
@@ -116,22 +181,57 @@ def _paste_uncropped(
     x = left + (width - contained.width) // 2
     y = top + (height - contained.height) // 2
 
-    # The central artwork stays crisp. Only its outer edge fades into the same
-    # image's enlarged, blurred background, avoiding a hard rectangular tile.
-    feather = max(1, min(min(contained.size) // 3, max(48, min(contained.size) // 5)))
-    edge_mask = Image.new("L", contained.size, 255)
-    mask_draw = ImageDraw.Draw(edge_mask)
-    for inset in range(feather):
-        progress = inset / max(1, feather - 1)
-        alpha = round(255 * progress**0.72)
-        mask_draw.rectangle(
-            (inset, inset, contained.width - inset - 1, contained.height - inset - 1),
-            fill=alpha,
-        )
-    edge_mask = edge_mask.filter(ImageFilter.GaussianBlur(radius=max(3, feather // 7)))
+    # Smooth gradients avoid the inner rectangular outline made by nested frames.
+    edge_mask = _feather_mask(contained.size)
     art = contained
     art.putalpha(ImageChops.multiply(art.getchannel("A"), edge_mask))
     canvas.alpha_composite(art, (x, y))
+
+
+def _paste_panorama_crop(
+    canvas: Image.Image,
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+) -> None:
+    """Enlarge an ultra-wide image for a dominant card over full-source blur bleed."""
+    left, top, width, height = box
+    if width <= 0 or height <= 0:
+        raise ValueError("Image layout box must have positive dimensions")
+    cropped = ImageOps.fit(
+        image.convert("RGBA"), (width, height), method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
+    cropped.putalpha(ImageChops.multiply(cropped.getchannel("A"), _feather_mask(cropped.size)))
+    canvas.alpha_composite(cropped, (left, top))
+
+
+def _feather_mask(size: tuple[int, int]) -> Image.Image:
+    """Create a smooth four-edge mask without a visible rectangular inner frame."""
+    width, height = size
+    if width <= 1 or height <= 1:
+        return Image.new("L", size, 255)
+    fade_x = max(1, min(width // 4, max(32, width // 12)))
+    fade_y = max(1, min(height // 4, max(28, height // 9)))
+    horizontal = Image.new("L", size, 255)
+    vertical = Image.new("L", size, 255)
+    horizontal_draw = ImageDraw.Draw(horizontal)
+    vertical_draw = ImageDraw.Draw(vertical)
+
+    def smooth(distance: int, fade: int) -> int:
+        t = min(1.0, max(0.0, distance / fade))
+        return round(255 * t * t * (3 - 2 * t))
+
+    for x in range(fade_x):
+        alpha = smooth(x, fade_x)
+        horizontal_draw.line((x, 0, x, height - 1), fill=alpha)
+        horizontal_draw.line((width - 1 - x, 0, width - 1 - x, height - 1), fill=alpha)
+    for y in range(fade_y):
+        alpha = smooth(y, fade_y)
+        vertical_draw.line((0, y, width - 1, y), fill=alpha)
+        vertical_draw.line((0, height - 1 - y, width - 1, height - 1 - y), fill=alpha)
+    return ImageChops.multiply(horizontal, vertical).filter(
+        ImageFilter.GaussianBlur(radius=max(2, min(fade_x, fade_y) // 12))
+    )
 
 
 def render_review_preview(png: bytes, card) -> bytes:

@@ -1257,6 +1257,33 @@ class AgentRepository:
                     (card.rendered_image_key, package.request_id, card.page),
                 )
 
+    def prior_cover_image_fingerprints(self, *, exclude_request_id: str) -> list[str]:
+        """Return visual identities used on another content's first card only."""
+        with self.connect() as connection:
+            rows = []
+            for table in ("content_drafts", "feed_queue", "rejected_archive"):
+                rows.extend(connection.execute(
+                    f"SELECT request_id, package_json FROM {table} WHERE request_id<>?",
+                    (exclude_request_id,),
+                ).fetchall())
+        fingerprints: set[str] = set()
+        for row in rows:
+            try:
+                stored = json.loads(row["package_json"])
+                cards = sorted(stored.get("cards", []), key=lambda item: item.get("page", 0))
+                if not cards:
+                    continue
+                main_image_id = str(cards[0].get("image_id") or "")
+                image_payload = next(
+                    (item for item in stored.get("images", []) if item.get("id") == main_image_id),
+                    None,
+                )
+                if image_payload:
+                    fingerprints.update(image_visual_keys(ImageAsset.model_validate(image_payload)))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return sorted(fingerprints)
+
     def recent_copy_examples(
         self,
         *,
@@ -1736,7 +1763,7 @@ class AgentRepository:
                 continue
             if image.download_status not in {"downloaded", "available"}:
                 continue
-            if image.used_in_previous_content or image.official != (configured.role == "primary"):
+            if image.official != (configured.role == "primary"):
                 continue
             if image.rights_status == RightsStatus.NEEDS_REVIEW:
                 allowed = (

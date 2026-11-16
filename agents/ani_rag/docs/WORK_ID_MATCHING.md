@@ -30,12 +30,12 @@
 
 검증된 새 작품 제안은 `EvidenceDocument.new_work_registration`으로 저장 경계에 전달한다. SQLite RAG adapter는 하나의 트랜잭션 안에서 다음을 수행한다.
 
-1. 공유 `catalog/` 및 `ani_me;nu/data/reference/agent_works.csv`에서 같은 제목·별칭·외부 ID를 재확인하고, RAG DB 안에서도 중복을 확인한다.
-2. 신규 항목은 Kitsu ID가 있으면 `1,000,000 + int(kitsu_id)`, 없으면 정규화 제목의 CRC32로 `2,000,000 + crc32(title) % 1,000,000,000`을 계산한다. 최대 ID + 1을 사용하지 않는다.
-3. DB 트랜잭션에는 작품명·별칭·외부 ID·원문 URL·정확 근거 인용을 기록하고, 트랜잭션 성공 후 공유 `agent_works.csv`에 같은 임시 작품을 원자적으로 저장한다. 정식 `catalog/`는 읽기만 한다.
+1. RAG 전용 작품 카탈로그에서 같은 이름·별칭·외부 ID가 이미 등록됐는지 재확인한다.
+2. 새 항목이면 `max(로컬 reference 최대 menu_work_id, RAG 작품 카탈로그 최대 menu_work_id, RAG에 이미 연결된 최대 menu_work_id) + 1`을 지정한다.
+3. 작품명·별칭·외부 ID·원문 URL·정확 근거 인용을 `rag_work_catalog`에 기록한다.
 4. 같은 작품 ID가 연결된 원문·excerpt·work link와 generation backlog를 저장한다.
 
-DB 트랜잭션이 실패하면 원문·관계 데이터는 롤백된다. 공유 CSV 기록은 DB 커밋 뒤에 원자적으로 쓰며, 기록이 실패하면 원문 재시도에서 같은 결정적 ID로 다시 저장할 수 있다. 실제 DB 스키마나 기존 DB는 이 변경에서 적용·수정하지 않는다.
+실패가 발생하면 트랜잭션 전체가 롤백되므로 작품 ID만 남기지 않는다. 이 로직은 코드로 작성돼 있지만 실제 DB 스키마에 적용하거나 실행하지 않았다.
 
 ## ERD 경계
 

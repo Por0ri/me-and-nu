@@ -4,7 +4,7 @@ This is a read-only source snapshot copied into the independent ani_rag workspac
 
 ## Editorial prompts and translation policy
 
-Original relative path: `prompts.py`
+Original relative path: `prompts.py`  
 SHA-256: `ea1b9a87a59fab5de7fc5ad1af6ae81a2da70f6d29bcc07b65273dad69583f4c`
 
 ```python
@@ -402,7 +402,7 @@ EDITOR_IN_CHIEF = f"""
 
 ## Generation detail article prompt
 
-Original relative path: `agents/content_generation/detail_writer.py`
+Original relative path: `agents/content_generation/detail_writer.py`  
 SHA-256: `b3f625026ba9216f4ed0db562937e91fa214c6cfacd67a0001afff5f7af8ca20`
 
 ```python
@@ -699,7 +699,7 @@ def write_detail_body(state: ContentState) -> ContentState:
 
 ## Independent reviewer prompt
 
-Original relative path: `agents/reviewer/prompt.py`
+Original relative path: `agents/reviewer/prompt.py`  
 SHA-256: `223fafd71aaa5c870209375dac3747a2c3819cea135bc866833ce9b512b71c4b`
 
 ```python
@@ -914,7 +914,7 @@ REVIEWER_PROMPT += """번역 검수 시 원문 근거와 term_glossary를 대조
 
 ## Editorial policy
 
-Original relative path: `policy.py`
+Original relative path: `policy.py`  
 SHA-256: `9612f162d668cdea9adea0262e154963efcc665a48d51a91c3c07e96952b4e15`
 
 ```python
@@ -1028,7 +1028,7 @@ EXCESSIVE_PUNCTUATION = ("ㅋㅋ", "ㅎㅎ", "!!!", "???", "?!?", "!!")
 
 ## Canonical review rules
 
-Original relative path: `review_rules.py`
+Original relative path: `review_rules.py`  
 SHA-256: `5b1946d54f11b496e6ce27a091eaafa3392e2d0866bb2982aa5441f1e0a533a6`
 
 ```python

@@ -693,6 +693,21 @@ def _catalog_work_titles_in_text(text: str) -> list[str]:
     return [title for _, title in sorted(matches)]
 
 
+def _is_automated_mastodon_status(status: dict) -> bool:
+    account = status.get("account")
+    if isinstance(account, dict) and account.get("bot"):
+        return True
+    tags = status.get("tags", [])
+    if not isinstance(tags, list):
+        return False
+    automation_tags = {"bot", "bots", "autopost", "automated", "rssbot", "feedbot"}
+    return any(
+        isinstance(tag, dict)
+        and _normalized_tag(str(tag.get("name") or "")) in automation_tags
+        for tag in tags
+    )
+
+
 def _thread_worth_fetching(status: dict) -> bool:
     """Spend a Mastodon context lookup only on a non-bot, work-specific post with replies."""
     if (
@@ -704,7 +719,7 @@ def _thread_worth_fetching(status: dict) -> bool:
     ):
         return False
     account = status.get("account")
-    if not isinstance(account, dict) or account.get("bot"):
+    if not isinstance(account, dict) or _is_automated_mastodon_status(status):
         return False
     try:
         if int(status.get("replies_count") or 0) < 1:
@@ -716,9 +731,6 @@ def _thread_worth_fetching(status: dict) -> bool:
         for tag in status.get("tags", [])
         if isinstance(tag, dict) and tag.get("name")
     ]
-    automation_tags = {"bot", "bots", "autopost", "automated", "rssbot", "feedbot"}
-    if {_normalized_tag(tag) for tag in tags} & automation_tags:
-        return False
     body = BeautifulSoup(str(status.get("content") or ""), "html.parser").get_text(
         " ", strip=True
     )
@@ -835,6 +847,7 @@ def _clean_public_mastodon_status(status: dict) -> dict[str, str] | None:
         or status.get("visibility") != "public"
         or status.get("sensitive")
         or status.get("reblog")
+        or _is_automated_mastodon_status(status)
     ):
         return None
     url = status.get("url")
@@ -878,29 +891,27 @@ def _mastodon_thread_posts(
     except (httpx.HTTPError, ValueError):
         return []
     descendants = context.get("descendants", []) if isinstance(context, dict) else []
-    candidates = [root]
+    distinct_posts = [root]
     seen_statuses = {root["_status_id"]}
+    seen_authors = {root["_author_key"]}
     for descendant in descendants if isinstance(descendants, list) else []:
         clean = _clean_public_mastodon_status(descendant)
         if clean and clean["_status_id"] not in seen_statuses:
             seen_statuses.add(clean["_status_id"])
-            candidates.append(clean)
-        if len(candidates) >= 6:
+            author = clean["_author_key"]
+            if author in seen_authors:
+                continue
+            seen_authors.add(author)
+            distinct_posts.append(clean)
+        if len(distinct_posts) >= 6:
             break
-    authors = {post["_author_key"] for post in candidates}
-    if len(authors) < 2:
+    if len(distinct_posts) < 2:
         return []
     # Account IDs are used only in memory to deduplicate. Never persist them.
-    result = []
-    seen_authors: set[str] = set()
-    for post in candidates:
-        author = post.pop("_author_key", "")
+    for post in distinct_posts:
+        post.pop("_author_key", None)
         post.pop("_status_id", None)
-        if author in seen_authors:
-            continue
-        seen_authors.add(author)
-        result.append(post)
-    return result
+    return distinct_posts
 
 
 def parse_kitsu_search(payload: dict, source: Source, limit: int = 10) -> list[DiscoveryItem]:

@@ -11,6 +11,7 @@ from ani_menu_agent.config import get_settings
 from ani_menu_agent.image_selection import (
     cover_usable_editorial_images,
     distinct_editorial_images,
+    image_visual_keys,
 )
 from ani_menu_agent.models import (
     CONTENT_TYPE_GUIDANCE,
@@ -156,6 +157,10 @@ def generate_copy_deck(
         raise RuntimeError("OPENAI_API_KEY 또는 LLM_KEY가 필요합니다.")
     repository = AgentRepository()
 
+    package.prior_image_fingerprints = repository.prior_cover_image_fingerprints(
+        exclude_request_id=package.request_id,
+    )
+
     source_facts = [fact.model_dump(mode="json") for fact in package.facts]
     humor_ideas = (
         [fact.model_dump(mode="json") for fact in package.facts]
@@ -205,7 +210,9 @@ def generate_copy_deck(
             "asset_kind": image.asset_kind,
             "depicted_entities": image.depicted_entities,
             "asset_metadata_confidence": image.asset_metadata_confidence,
-            "used_before": image.used_in_previous_content,
+            "used_as_cover_before": bool(
+                image_visual_keys(image).intersection(package.prior_image_fingerprints)
+            ),
             "related_fact_ids": image.related_fact_ids,
             "visual_match": image.visual_match,
             "detected_languages": image.detected_languages,
