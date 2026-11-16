@@ -4,10 +4,12 @@ from ani_menu_agent.image_selection import (
     assign_distinct_images,
     cover_usable_editorial_images,
     distinct_editorial_images,
+    image_visual_keys,
 )
 from ani_menu_agent.models import (
     ContentPackage,
     CopyCard,
+    Fact,
     ImageAsset,
     RightsStatus,
     SourceEvidence,
@@ -491,7 +493,23 @@ def test_event_can_use_provenance_checked_same_work_art_fallback() -> None:
 
 
 @pytest.mark.parametrize("role,page", [("cover", 1), ("detail", 2)])
-def test_event_fallback_explains_generic_art_is_not_event_imagery(role, page) -> None:
+@pytest.mark.parametrize("artwork_kind", ["official", "reference"])
+@pytest.mark.parametrize(
+    "content_type,expected_explanation",
+    [
+        (
+            "event",
+            "동일 작품의 이미지를 보조 시각자료로 사용합니다. 행사 현장 사진이나 행사 전용 이미지는 아닙니다.",
+        ),
+        (
+            "goods",
+            "동일 작품의 이미지를 보조 시각자료로 사용합니다. 상품 실물 사진은 아닙니다.",
+        ),
+    ],
+)
+def test_event_and_goods_fallback_explains_reference_art(
+    role, page, artwork_kind, content_type, expected_explanation
+) -> None:
     event_page = SourceEvidence(
         id="work_official",
         title="Pop-up event notice",
@@ -501,40 +519,45 @@ def test_event_fallback_explains_generic_art_is_not_event_imagery(role, page) ->
         role="primary",
         allowed_asset_hosts=["work.example.com"],
     )
+    is_official = artwork_kind == "official"
+    artwork_host = "work.example.com" if is_official else "catalog.example.com"
     artwork_page = SourceEvidence(
-        id="work_official",
-        title="Official character visual",
-        url="https://work.example.com/character/hero/",
-        publisher="Work Official",
-        is_official=True,
-        role="primary",
-        allowed_asset_hosts=["work.example.com"],
+        id="work_official" if is_official else "work_catalog",
+        title="Official character visual" if is_official else "Catalog poster",
+        url=f"https://{artwork_host}/character/hero/",
+        publisher="Work Official" if is_official else "Work Catalog",
+        is_official=is_official,
+        role="primary" if is_official else "reference",
+        allowed_asset_hosts=[artwork_host],
     )
     image = ImageAsset(
         id="work-key-visual",
-        url="https://work.example.com/assets/key-visual.jpg",
+        url=f"https://{artwork_host}/assets/key-visual.jpg",
         source_url=str(artwork_page.url),
         provenance_source=artwork_page,
-        official=True,
+        official=is_official,
         menu_work_ids=[70],
-        asset_kind="official_key_visual",
+        asset_kind="official_key_visual" if is_official else "catalog_poster",
         asset_metadata_confidence=0.9,
-        rights_status=RightsStatus.OFFICIAL_PUBLIC_RISK_ACCEPTED,
+        rights_status=(RightsStatus.OFFICIAL_PUBLIC_RISK_ACCEPTED if is_official
+                       else RightsStatus.PUBLIC_EDITORIAL_RISK_ACCEPTED),
         rights_evidence_url=artwork_page.url,
         rights_checked_at="2026-10-23T00:00:00Z",
-        attribution_text="Work Official key visual",
+        attribution_text="Work Official key visual" if is_official else "Work Catalog poster",
         download_status="downloaded",
         width=1200,
         height=675,
     )
     package = ContentPackage(
-        request_id="work-event",
+        request_id=f"work-{content_type}",
         topic="Work pop-up",
         content_kind="information",
-        content_type="event",
+        content_type=content_type,
         menu_work_ids=[70],
         sources=[event_page],
         images=[image],
+        facts=[Fact(id="official-fact", statement="Confirmed official announcement.",
+                    source_ids=[event_page.id], verified=True)],
     )
     card = CopyCard(
         page=page,
@@ -542,15 +565,88 @@ def test_event_fallback_explains_generic_art_is_not_event_imagery(role, page) ->
         eyebrow="Work pop-up",
         title_lines=["Event details"],
         body_sentences=["Confirmed dates and venue details."],
-        image_id="missing-source-image-2",
+        fact_ids=["official-fact"],
+        image_id=f"missing-source-image-{page}",
     )
+    original_card = card.model_dump()
+    original_package = package.model_dump()
 
     assigned = assign_distinct_images([card], package)
 
     assert assigned[0].image_id == image.id
-    assert "동일 작품" in assigned[0].image_explanation
-    assert "행사 전용 이미지는 아닙니다" in assigned[0].image_explanation
-    assert assigned[0].fact_ids == card.fact_ids
+    assert assigned[0].image_explanation == expected_explanation
+    assert "??" not in assigned[0].image_explanation
+    assert "\ufffd" not in assigned[0].image_explanation
+    assert assigned[0].fact_ids == ["official-fact"]
+    assert assigned[0].visual_mode == "source_image"
+    assert assigned[0].image_reuse_mode == "unique"
+    updated_fields = {"image_id", "image_explanation", "visual_mode", "image_reuse_mode"}
+    assert assigned[0].model_dump(exclude=updated_fields) == card.model_dump(exclude=updated_fields)
+    assert card.model_dump() == original_card
+    assert package.model_dump() == original_package
+
+
+@pytest.mark.parametrize(
+    "reason,role,page",
+    [("no_images", "cover", 1), ("no_images", "detail", 2), ("previous_cover", "cover", 1)],
+)
+def test_missing_image_explanation_preserves_assignment_and_blocker(reason, role, page) -> None:
+    from ani_menu_agent.layout_engine import build_cards
+    from ani_menu_agent.quality import check_images
+
+    source = SourceEvidence(
+        id="work_official", title="Official announcement",
+        url="https://work.example.com/news/current/", publisher="Work Official",
+        is_official=True, role="primary", allowed_asset_hosts=["work.example.com"],
+    )
+    image = ImageAsset(
+        id="previous-cover", url="https://work.example.com/assets/official.jpg",
+        source_url=source.url, fingerprint="a" * 64, storage_key="original-cover-asset",
+        official=True, rights_status=RightsStatus.OFFICIAL_PUBLIC_RISK_ACCEPTED,
+        rights_evidence_url=source.url, rights_checked_at="2026-11-16T00:00:00Z",
+        attribution_text="Work Official", download_status="downloaded", width=1200, height=1200,
+    )
+    package = ContentPackage(
+        request_id=f"missing-{reason}-{role}", topic="Official announcement",
+        content_kind="information", content_type="news", sources=[source],
+        images=[image] if reason == "previous_cover" else [],
+        facts=[Fact(id="kept-fact", statement="Verified announcement remains unchanged.",
+                    source_ids=[source.id], verified=True)],
+    )
+    if reason == "previous_cover":
+        # Prove the history gate, rather than an unusable source asset, removes it.
+        assert cover_usable_editorial_images(package.images, package.sources, package) == [image]
+        package.prior_image_fingerprints = sorted(image_visual_keys(image))
+        assert cover_usable_editorial_images(package.images, package.sources, package) == []
+        assert distinct_editorial_images(package.images, package.sources, package, card_role="detail") == [image]
+    card = CopyCard(
+        page=page, role=role, title_lines=["Verified announcement"],
+        body_sentences=["The original facts and copy stay intact."], fact_ids=["kept-fact"],
+        image_id=image.id if reason == "previous_cover" else "unresolved-image",
+    )
+    original_card = card.model_dump()
+    original_package = package.model_dump()
+
+    assigned, = assign_distinct_images([card], package)
+
+    assert assigned.image_explanation == "조건에 맞는 출처 이미지를 찾지 못해 이미지 배정을 보류했습니다."
+    assert "??" not in assigned.image_explanation
+    assert "\ufffd" not in assigned.image_explanation
+    assert assigned.image_id == f"missing-source-image-{page}"
+    assert assigned.visual_mode == "source_image"
+    assert assigned.image_reuse_mode == "missing_source_image"
+    assert assigned.fact_ids == ["kept-fact"]
+    updated_fields = {"image_id", "image_explanation", "visual_mode", "image_reuse_mode"}
+    assert assigned.model_dump(exclude=updated_fields) == card.model_dump(exclude=updated_fields)
+    assert card.model_dump() == original_card
+    assert package.model_dump() == original_package
+
+    checked = package.model_copy(update={"cards": build_cards([assigned], package.images)})
+    blockers = [issue for issue in check_images(checked) if issue.code == "SOURCE_IMAGE_MISSING"]
+    assert len(blockers) == 1
+    assert blockers[0].severity == "blocker"
+    assert blockers[0].owner == "crawler"
+    assert blockers[0].page == page
 
 
 def test_event_detail_cannot_borrow_another_event_visual_or_goods_photo() -> None:
