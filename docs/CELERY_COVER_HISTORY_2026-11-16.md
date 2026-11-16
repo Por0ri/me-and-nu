@@ -32,7 +32,19 @@
 - guard admission 장애 시 일반 task 실패로 처리하면 메시지가 ACK될 수 있어 명시적 broker requeue로 보완했다.
 - 검증 명령의 단일 phase 인자, PYTHONPATH와 bind mount 범위를 바로잡았다. 이미지에 내장된 출처·작품 파일을 가리는 전체 `/app` 마운트를 제거했다. 서버·유료 호출과 무관한 로컬 검증 설정 오류다.
 - 추가 PG 테스트가 probe 제외를 확인하려고 기존 작업 종류를 직접 바꾸다가 불변 제약에 걸렸다. 종류 변경은 허용하지 않고 별도 probe를 정상 접수하는 테스트로 수정했다. 기존 DB 제약과 업무 코드는 유지했다.
+- 서버의 `docker compose create`는 `--no-deps`를 지원하지 않아 첫 교체 명령이 거절됐다. 당시 활성 compose만 교체됐고 기존 Worker는 정지 상태 그대로였다. 생성 전용 overlay에서 generation-worker의 depends_on만 `!reset {}`로 비우고 dry-run 후 생성했다. DB/Redis 등 의존 컨테이너는 건드리지 않았으며, 원래 Worker·compose·데이터가 기준과 일치하는 상태에서만 재개했다.
 
 ## 배포
 
-검증 완료 후 Checking에 커밋·푸시하고 서버에 비활성 배포한다. API와 추천 컨테이너는 재시작하지 않는다. 생성 Worker는 새 이미지·표지 초기 이력으로 생성만 하고 시작하지 않으며 키 마운트를 제거한다. 전후 작업 이력, 공개 4건·PNG 12장, 추천 행 수와 서비스 컨테이너를 비교한다.
+2026-11-16 KST 비활성 배포 완료. 코드 커밋은 `b624d92029fe4e85d38e44a7c9c93a9a6b4bec9d`이며 Checking에 반영했다.
+
+- 서버 이미지: `me-nu-anime-generation:checking-b624d92`, ID `sha256:0ea1b7abb68bbd996e392766bffd334acb2d766b9e6f120d3129125efe8d5cd1`.
+- 서버에서 빌드한 정확한 이미지로 Worker 123건 및 Worker→Agent bridge 4건 재통과. 기존 작업 결과 4건을 읽기 전용으로 검증하고 bootstrap과 합쳐 공개 4건의 표지 entry를 실제 Agent loader가 읽는지 확인했다.
+- generation Worker는 `created`, 한 번도 시작하지 않음, 키 마운트 0, 호스트 포트 0, 내부 네트워크만 연결. 수집 Controller는 완료 상태이며 자동 수집·유료 생성은 꺼져 있다.
+- 기존 API 포함 서비스 10개의 컨테이너 ID·이미지·시작 시각·환경/마운트 해시 보존. API/DB/Redis health 정상, API와 추천 서비스 재시작 없음.
+- 공개 콘텐츠 4044–4047의 본문·출처·작품 연결·승인 상태·Draft 및 PNG 12장 SHA 보존. 추천 63회차/6,300항목 유지. 서비스 DB 적재·추천 재계산 없음.
+- 전용 작업 DB v7와 작업/시도/검수/선택 이력 해시, broker pending/unacked 0, 기존 Controller checkpoint와 runtime.env 보존.
+- 첫 공개 콘텐츠 4044 bootstrap SHA: `cdceca43ad5d661ebc3c4928d01c79918d0d3ebd73697dec408819c2ecdb23a6`. 원래 반려 result SHA와 독립 검수 이력은 그대로다.
+- 서버 백업·검증 기록: `/home/ubuntu/me-nu-cover-history-deploy-20261116`. 기존 compose/runtime.env/Worker 로그를 보존했다. 작업 DB 기존 전체 백업도 유지한다. 신규 LLM 호출·추가 비용은 0이다.
+
+기존 공개 콘텐츠의 표지를 교체하거나 중복 이미지를 소급 제거하지 않았다. 이 배포는 향후 생성 시 검증된 이전 표지를 전달하는 변경이며, 유료 생성을 활성화한 배포가 아니다.
