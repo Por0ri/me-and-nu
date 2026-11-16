@@ -56,7 +56,7 @@ async def get_topic_feed(
     response_model=FeedSearchResponse,
     tags=["피드"],
     summary="작품 이름으로 콘텐츠 검색",
-    description="작품 이름이나 별칭에 검색어가 들어간 작품(띄어쓰기 무시)의 공개 콘텐츠를 오늘(없으면 어제) 추천 순서, 그다음 최신순으로 최대 20개 반환합니다. workId를 주면(검색어 아래 추천 작품을 고른 경우) 그 작품의 콘텐츠만 반환합니다. works는 맞는 작품의 정식 이름입니다(글이 없어도 채움). 홈은 검색 결과 화면에 이 카드만 보여 주고 노출 기록을 남기지 않습니다. 검색 카드는 recommendationId 없이 recommendationReason에 검색 결과 문구를 담습니다.",
+    description="작품 이름이나 별칭에 검색어가 들어간 작품(띄어쓰기 무시)의 공개 콘텐츠를 오늘(없으면 어제) 추천 순서, 그다음 최신순으로 최대 20개 반환합니다. workId를 주면(검색어 아래 추천 작품을 고른 경우) 그 작품의 콘텐츠만 반환합니다. works는 맞는 작품의 정식 이름입니다(글이 없어도 채움). 홈은 검색 결과 화면에 이 카드만 보여 주고 노출 기록을 남기지 않습니다. 검색 카드는 recommendationId 없이 recommendationReason에 검색 결과 문구를 담습니다. 실행된 검색은 서버에 기록합니다(저장에 실패해도 결과는 반환).",
     responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "TOPIC_NOT_FOUND"}},
 )
 async def search_topic_contents(

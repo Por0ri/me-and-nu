@@ -1,0 +1,287 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const ts = require('typescript');
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
+const root = path.join(__dirname, '..');
+const plain = value => JSON.parse(JSON.stringify(value));
+const item = (id = 2) => ({ contentId: id, title: '달빛 콘텐츠', judgmentStatus: 'needs_review', status: 'active',
+  createdAt: '2026-11-12T00:00:00Z', publishedAt: null });
+const detailOf = () => ({ ...item(), updatedAt: '2026-11-13T09:12:34.123456+09:00', summary: null, body: null, sources: [] });
+const page = (items = [item()]) => ({ items, page: 1, pageSize: 20, total: items.length });
+function runtime(respond = () => page()) {
+  const modules = new Map(), calls = [];
+  const browser = new EventTarget();
+  const context = vm.createContext({ AbortController, URL, URLSearchParams, Headers, Response, Event, window: browser,
+    Intl, process: { env: { NEXT_PUBLIC_API_BASE_URL: 'http://localhost:8196' } },
+    fetch: async (url, init) => {
+      calls.push({ url, init }); const value = await respond(new URL(url), init);
+      return value instanceof Response ? value : new Response(JSON.stringify(value));
+    },
+  });
+  function load(file) {
+    file = file.replaceAll('\\', '/');
+    if (modules.has(file)) return modules.get(file).exports;
+    const mod = { exports: {} }; modules.set(file, mod);
+    const js = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), { compilerOptions: {
+      module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
+    } }).outputText;
+    const requireModule = name => {
+      if (name === 'react' || name === 'react/jsx-runtime') return require(name);
+      if (name === 'next/link') return { __esModule: true, default: props => React.createElement('a', props) };
+      if (name === 'next/navigation') return {};
+      if (name.endsWith('.module.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) };
+      const relative = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(file), name);
+      return load(relative + (fs.existsSync(path.join(root, relative + '.tsx')) ? '.tsx' : '.ts'));
+    };
+    vm.runInContext(`(function(module,exports,require){${js}\n})`, context)(mod, mod.exports, requireModule);
+    return mod.exports;
+  }
+  return { load, calls, browser, api: load('lib/admin-content.ts') };
+}
+
+test('review preparation eligibility stays separate from server write permission', () => {
+  const { canPrepareReview } = runtime().load('lib/admin-content-review.ts');
+  for (const status of ['active', 'pending_review', 'hidden', 'deleted']) {
+    for (const judgmentStatus of ['needs_review', 'pending', 'confirmed', 'failed']) {
+      assert.equal(canPrepareReview({ status, judgmentStatus }), judgmentStatus === 'needs_review' && ['active', 'pending_review'].includes(status));
+    }
+  }
+});
+
+test('review rationale accepts Unicode and rejects blank, oversized and control input', () => {
+  const { reviewRationaleError } = runtime().load('lib/admin-content-review.ts');
+  for (const value of ['  ', 'x'.repeat(2001), 'a\x00b', 'a\ud800b']) assert.ok(reviewRationaleError(value));
+  for (const value of ['출처 확인\n완료', '😀'.repeat(2000), '  검토 완료  ']) assert.equal(reviewRationaleError(value), null);
+});
+
+test('review confirmation exposes an honest disconnected state and disabled execution', () => {
+  const { ContentReviewPanel } = runtime().load('components/admin/content-review-panel.tsx');
+  const html = renderToStaticMarkup(React.createElement(ContentReviewPanel, { content: detailOf() }));
+  assert.match(html, /승인 내용 확인/); assert.match(html, /반려 내용 확인/);
+  assert.match(html, /<dialog[^>]+aria-labelledby="review-title"/);
+  assert.match(html, /disabled=""[^>]*>승인 실행 \(미연결\)/);
+  assert.match(html, /확인 단계 · 미저장/); assert.doesNotMatch(html, /승인 완료|저장 성공/);
+});
+
+test('no implicit queue filter; URL preserves independent states and page size', () => {
+  const { api } = runtime();
+  assert.deepEqual(plain(api.parseAdminQuery(new URLSearchParams())), { mode: 'all', q: '', judgmentStatus: '', status: '', page: 1, pageSize: 20 });
+  const query = api.parseAdminQuery(new URLSearchParams('q=+달빛%25_+&judgmentStatus=needs_review&status=active&page=2&pageSize=50'));
+  assert.equal(query.q, '달빛%_');
+  assert.deepEqual(plain(api.parseAdminQuery(new URLSearchParams(api.adminQueryString(query)))), plain(query));
+  for (const value of ['mode=invalid', 'mode=', 'page=0', 'page=-1', 'page=1.2', 'page=1000001', 'pageSize=101', 'status=published', 'judgmentStatus=approved', 'q=' + 'a'.repeat(301)]) {
+    assert.throws(() => api.parseAdminQuery(new URLSearchParams(value)));
+  }
+});
+
+test('list uses existing credentialed no-store API client and exact DTO fields', async () => {
+  const env = runtime(); const query = env.api.parseAdminQuery(new URLSearchParams('q=달빛%25_&judgmentStatus=needs_review&status=active'));
+  const signal = new AbortController().signal;
+  assert.deepEqual(plain(await env.api.loadAdminContents(query, signal)), page());
+  const { url, init } = env.calls[0]; const parsed = new URL(url);
+  assert.equal(parsed.pathname, '/api/v1/admin/contents');
+  assert.equal(parsed.searchParams.get('q'), '달빛%_');
+  assert.equal(parsed.searchParams.get('judgmentStatus'), 'needs_review');
+  assert.equal(parsed.searchParams.get('status'), 'active');
+  assert.equal(parsed.searchParams.get('pageSize'), '20');
+  assert.equal(init.credentials, 'include'); assert.equal(init.cache, 'no-store'); assert.equal(init.signal, signal);
+});
+
+test('review mode preserves URL filters and requests the server queue without client sorting', async () => {
+  const rows = [item(4), { ...item(99), status: 'pending_review', createdAt: '2026-11-13T00:00:00Z' }];
+  const data = { items: rows, page: 2, pageSize: 2, total: 7 };
+  const env = runtime(() => data);
+  const query = env.api.parseAdminQuery(new URLSearchParams('mode=review&q=+달빛%25_+&judgmentStatus=needs_review&page=2&pageSize=2'));
+  const roundTrip = env.api.parseAdminQuery(new URLSearchParams(env.api.adminQueryString(query)));
+  assert.deepEqual(plain(roundTrip), plain(query));
+  assert.equal(roundTrip.mode, 'review');
+  assert.deepEqual(plain(await env.api.loadAdminContents(query)), data);
+  assert.equal(new URL(env.calls[0].url).search, '?' + env.api.adminQueryString(query));
+  for (const mode of [undefined, 'all']) {
+    assert.equal(new URLSearchParams(env.api.adminQueryString({ ...query, mode })).has('mode'), false);
+  }
+});
+
+test('review mode rejects a successful response containing completed judgments', async () => {
+  for (const judgmentStatus of ['pending', 'confirmed', 'failed']) {
+    const env = runtime(() => page([{ ...item(), judgmentStatus }]));
+    await assert.rejects(env.api.loadAdminContents(env.api.parseAdminQuery(new URLSearchParams('mode=review'))),
+      error => error.code === 'INVALID_ADMIN_RESPONSE');
+    // All mode continues to accept the same stored states.
+    assert.equal((await env.api.loadAdminContents(env.api.parseAdminQuery(new URLSearchParams()))).items[0].judgmentStatus, judgmentStatus);
+  }
+});
+
+test('review screen marks priority without claiming public visibility and carries the full detail query', () => {
+  const env = runtime(); const { ContentsScreen } = env.load('components/admin/contents-screen.tsx');
+  const query = env.api.parseAdminQuery(new URLSearchParams('mode=review&q=달빛&judgmentStatus=needs_review&page=2&pageSize=3'));
+  const rows = [item(2), { ...item(1), status: 'pending_review' }, { ...item(8), status: 'hidden' }];
+  const html = renderToStaticMarkup(React.createElement(ContentsScreen, {
+    query, state: { status: 'ready', data: { items: rows, page: 2, pageSize: 3, total: 9 } }, retry() {}, navigate() {},
+  }));
+  assert.match(html, /aria-pressed="true"[^>]*>검수 대기/);
+  assert.match(html, /우선 확인/); assert.match(html, /일반 비공개 대기/); assert.match(html, /상태 확인 필요/);
+  assert.match(html, /needs_review<\/span>/); assert.match(html, /active<\/span>/);
+  assert.doesNotMatch(html, /공개 중|미리보기 중/);
+  assert.ok(html.includes(`/admin/contents/2?${env.api.adminQueryString(query).replaceAll('&', '&amp;')}`));
+  assert.match(html, /<strong>9<\/strong>/);
+});
+
+test('successful empty result is distinct from API failure, login, permission and disconnected routes', async () => {
+  const empty = runtime(() => page([]));
+  assert.deepEqual(plain(await empty.api.loadAdminContents(empty.api.parseAdminQuery(new URLSearchParams()))), page([]));
+  for (const [status, code, expected] of [[401, 'AUTH_REQUIRED', 'login-required'], [403, 'ADMIN_REQUIRED', 'forbidden'],
+    [404, 'NOT_FOUND', 'unavailable'], [404, 'CONTENT_NOT_FOUND', 'not-found'], [500, 'PRIVATE_DETAIL', 'error'],
+    [503, 'ADMIN_AUTH_UNAVAILABLE', 'error'], [503, 'ADMIN_PERMISSION_UNAVAILABLE', 'error']]) {
+    const env = runtime(() => new Response(JSON.stringify({ code, message: 'internal secret' }), { status }));
+    await assert.rejects(env.api.loadAdminContents(env.api.parseAdminQuery(new URLSearchParams())), error => {
+      const failure = env.api.adminFailure(error); assert.equal(failure.status, expected); assert.doesNotMatch(failure.message, /secret/); return true;
+    });
+    await assert.rejects(env.api.loadAdminContent(2), error => {
+      const failure = env.api.adminFailure(error); assert.equal(failure.status, expected); assert.doesNotMatch(failure.message, /secret/); return true;
+    });
+  }
+});
+
+test('invalid wire data cannot become a successful list', async () => {
+  for (const response of [null, {}, { ...page(), total: -1 }, { ...page(), page: 2 }, { ...page(), pageSize: 50 },
+    page([item(), item()]), page([{ ...item(), status: 'published' }]), page([{ ...item(), judgmentStatus: 'approved' }]),
+    page([{ ...item(), createdAt: 'bad date' }]), page([{ ...item(), contentId: Number.MAX_SAFE_INTEGER + 1 }])]) {
+    const env = runtime(() => response);
+    await assert.rejects(env.api.loadAdminContents(env.api.parseAdminQuery(new URLSearchParams())), error => error.code === 'INVALID_ADMIN_RESPONSE');
+  }
+});
+
+test('detail ID and source fields are validated, unsafe source URLs cannot be links', async () => {
+  const detail = { ...detailOf(), body: '<script>not executable</script>', sources: [
+    { url: 'https://example.com/source', title: null, publisher: null, role: 'primary', citationOrder: 1 },
+  ] };
+  const env = runtime(() => detail);
+  assert.deepEqual(plain(await env.api.loadAdminContent(2)), detail);
+  await assert.rejects(env.api.loadAdminContent(3), error => error.code === 'INVALID_ADMIN_RESPONSE');
+  assert.equal(env.api.safeSourceUrl('https://example.com/source'), 'https://example.com/source');
+  for (const url of ['javascript:alert(1)', 'data:text/html,x', 'https://name:password@example.com', '/relative']) assert.equal(env.api.safeSourceUrl(url), undefined);
+});
+
+test('detail preserves the exact version string for a future expectedUpdatedAt payload', async () => {
+  for (const updatedAt of ['2026-11-13T00:12:34Z', '2026-11-13T00:12:34+00:00',
+    '2026-11-13T00:12:34.1Z', '2026-11-13T00:12:34.12Z', '2026-11-13T00:12:34.123Z',
+    '2026-11-13T00:12:34.1234Z', '2026-11-13T00:12:34.12345Z', '2026-11-13T00:12:34.123456Z',
+    '2026-11-13T09:12:34.000001+09:00', '2026-11-12T20:42:34.123400-03:30',
+    '2000-02-29T23:59:59.000000Z', '2024-02-29T00:00:00Z', '0001-01-01T00:00:00Z', '9999-12-31T23:59:59Z']) {
+    const detail = { ...detailOf(), updatedAt }, env = runtime(() => detail);
+    const parsed = await env.api.loadAdminContent(2);
+    assert.deepEqual(plain(parsed), detail);
+    const futurePayload = JSON.stringify({ expectedUpdatedAt: parsed.updatedAt });
+    assert.equal(JSON.parse(futurePayload).expectedUpdatedAt, updatedAt);
+    assert.equal(env.calls.length, 1);
+    assert.equal(env.calls[0].init.method ?? 'GET', 'GET');
+  }
+  // Adjacent DB versions inside the same JS millisecond remain distinguishable.
+  const versions = [];
+  for (const updatedAt of ['2026-11-13T00:12:34.123456Z', '2026-11-13T00:12:34.123457Z']) {
+    const env = runtime(() => ({ ...detailOf(), updatedAt }));
+    versions.push((await env.api.loadAdminContent(2)).updatedAt);
+  }
+  assert.notEqual(...versions);
+});
+
+test('detail rejects missing, invalid, ambiguous or unsupported precision versions', async () => {
+  const invalid = [undefined, null, '', 1794528000, {}, 'not a date',
+    '2026-11-13', '2026-11-13T00:12:34', '2026-11-13T00:12:34.123456',
+    '2026-11-13T00:12:34-00:00', '2026-11-13T00:12:34+24:00', '2026-11-13T00:12:34+09:60',
+    '2026-11-13T00:12:34+0900', '2026-11-13T00:12:34+09:00:30', '2026-11-13T00:12:34Zjunk',
+    '2026-11-13T00:12:34.1234567Z', '2026-11-13T00:12:34.1234560Z', '2026-11-13T00:12:34.Z',
+    '2026-11-13T00:12:34,123456Z', '2026-11-13 00:12:34Z', ' 2026-11-13T00:12:34Z',
+    '2026-11-13T00:12:34Z\n', '2026-11-13T00:12:34Z ', '0000-01-01T00:00:00Z',
+    '2026-00-13T00:12:34Z', '2026-13-13T00:12:34Z', '2026-11-00T00:12:34Z', '2026-11-31T00:12:34Z',
+    '2026-02-29T00:12:34Z', '1900-02-29T00:12:34Z', '2024-02-30T00:12:34Z',
+    '2026-11-13T24:00:00Z', '2026-11-13T00:60:00Z', '2026-11-13T00:12:60Z'];
+  for (const updatedAt of invalid) {
+    const env = runtime(() => ({ ...detailOf(), updatedAt }));
+    await assert.rejects(env.api.loadAdminContent(2), error => error.code === 'INVALID_ADMIN_RESPONSE', String(updatedAt));
+  }
+});
+
+test('an aborted read suppresses a late 401 event', async () => {
+  let finish; const waiting = new Promise(resolve => finish = resolve);
+  const env = runtime(() => waiting), controller = new AbortController(); let unauthorized = 0;
+  env.browser.addEventListener('api:unauthorized', () => unauthorized++);
+  const result = env.api.loadAdminContents(env.api.parseAdminQuery(new URLSearchParams()), controller.signal);
+  controller.abort(); finish(new Response('{}', { status: 401 }));
+  await assert.rejects(result); assert.equal(unauthorized, 0);
+});
+
+test('source display preserves stored metadata and response order without inventing review values', async () => {
+  const detail = { ...detailOf(), sources: [
+    { url: 'https://example.com/source', title: '원문 제목', publisher: '발행처 이름', role: 'primary', citationOrder: 7 },
+    { url: 'http://example.org/reference', title: '참고 제목', publisher: null, role: 'unrecognized-role', citationOrder: 2 },
+  ] };
+  const env = runtime(() => detail);
+  const { ContentSources } = env.load('components/admin/content-detail-screen.tsx');
+  const data = await env.api.loadAdminContent(2);
+  const html = renderToStaticMarkup(React.createElement(ContentSources, { sources: data.sources }));
+  assert.match(html, /href="https:\/\/example.com\/source" target="_blank" rel="noopener noreferrer">원문 제목<\/a>/);
+  assert.match(html, /URL: https:\/\/example.com\/source/);
+  assert.match(html, /발행처: 발행처 이름/);
+  assert.match(html, /역할: primary · 인용 순서: 7/);
+  assert.match(html, /역할: unrecognized-role · 인용 순서: 2/);
+  assert.ok(html.indexOf('원문 제목') < html.indexOf('참고 제목'));
+  assert.doesNotMatch(html, /<button|<input|<select|검증 완료|승인/);
+  assert.deepEqual(plain(data), detail);
+  assert.equal(env.calls.length, 1);
+});
+
+test('source display handles empty sources, nullable metadata and blank text', () => {
+  const env = runtime(); const { ContentSources } = env.load('components/admin/content-detail-screen.tsx');
+  const render = sources => renderToStaticMarkup(React.createElement(ContentSources, { sources }));
+  assert.equal(render([]), '<p>등록된 출처가 없습니다.</p>');
+  const nullable = render([{ url: 'https://example.com/', title: null, publisher: null, role: 'material', citationOrder: null }]);
+  assert.match(nullable, />https:\/\/example.com\/<\/a>/);
+  assert.match(nullable, /발행처: —/);
+  assert.match(nullable, /역할: material · 인용 순서: —/);
+  assert.doesNotMatch(nullable, /null|undefined/);
+  const blank = render([{ url: ' ', title: ' ', publisher: ' ', role: ' ', citationOrder: null }]);
+  assert.match(blank, /출처 링크를 표시할 수 없습니다/);
+  assert.match(blank, /URL: — \(유효하지 않은 URL\)/);
+  assert.match(blank, /발행처: —/);
+  assert.match(blank, /역할: — · 인용 순서: —/);
+  assert.doesNotMatch(blank, /<a\b/);
+});
+
+test('invalid source URLs stay plain text and every source field is escaped', () => {
+  const env = runtime(); const { ContentSources } = env.load('components/admin/content-detail-screen.tsx');
+  for (const url of ['', 'not a URL', '/relative', 'javascript:alert(1)', 'data:text/html,<script>x</script>',
+    'https://user:password@example.com', 'ftp://example.com/source']) {
+    const html = renderToStaticMarkup(React.createElement(ContentSources, { sources: [
+      { url, title: '<script>title</script>', publisher: '<img src=x onerror=alert(1)>', role: '<b>primary</b>', citationOrder: null },
+    ] }));
+    assert.doesNotMatch(html, /<a\b|<script\b|<img\b|<b>/);
+    assert.match(html, /유효하지 않은 URL/);
+    assert.match(html, /&lt;script&gt;title&lt;\/script&gt;/);
+    assert.match(html, /발행처: &lt;img/);
+    assert.match(html, /역할: &lt;b&gt;primary&lt;\/b&gt;/);
+  }
+});
+
+test('screen separates loading/error/empty and preserves both status values and detail return query', () => {
+  const env = runtime(); const { ContentsScreen } = env.load('components/admin/contents-screen.tsx');
+  const query = env.api.parseAdminQuery(new URLSearchParams('q=달빛&status=active'));
+  const render = state => renderToStaticMarkup(React.createElement(ContentsScreen, { query, state, retry() {}, navigate() {} }));
+  assert.match(render({ status: 'loading' }), /불러오는 중/);
+  const error = render({ status: 'error', message: '네트워크 오류' });
+  assert.match(error, /다시 시도/); assert.doesNotMatch(error, /조회된 콘텐츠가 없습니다|data-admin-empty/);
+  assert.match(render({ status: 'ready', data: page([]) }), /조회된 콘텐츠가 없습니다/);
+  assert.match(render({ status: 'login-required', message: '로그인 필요' }), /href="\/pivot\/login"/);
+  assert.match(render({ status: 'forbidden', message: '관리자 권한 없음' }), /접근 권한이 없습니다/);
+  assert.match(render({ status: 'unavailable', message: '연결 준비' }), /조회 연결 준비 중/);
+  const html = render({ status: 'ready', data: page([{ ...item(), title: '<script>x</script>' }]) });
+  assert.match(html, /needs_review<\/span>/); assert.match(html, /active<\/span>/);
+  assert.match(html, /href="\/admin\/contents\/2\?q=/); assert.match(html, /&amp;status=active/);
+  assert.match(html, /&lt;script&gt;x&lt;\/script&gt;/); assert.doesNotMatch(html, /<script>x/);
+  assert.match(html, /09:00/);
+});

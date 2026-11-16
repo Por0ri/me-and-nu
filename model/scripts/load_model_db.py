@@ -3,7 +3,7 @@
 # anilist 스키마: fetch_anilist.py 가 만든 파일(media · media_recent · links · detail .jsonl)
 #   1) anilist.media_raw: 받은 원본 (작품 번호 · 부분 · JSON). 다시 받지 않고도 표를 새로 만들 수 있게 남긴다
 #   2) 원본에서 표를 새로 만든다: 작품 · 장르 · 태그 · 관계 · 커뮤니티 추천 · 스튜디오 · 제작진 · 캐릭터 · 성우
-# menu 스키마: make_work_catalog.py 가 만든 me;nu 작품 번호 목록 (menu_works · menu_work_entries .csv)
+# menu 스키마: me;nu 작품 번호 목록 (레포 맨 위 catalog/ 의 menu_works · menu_work_entries .csv, 서버 · 에이전트와 같은 파일)
 #   한 번 붙은 번호는 안 바꾸는 규칙이라, DB 에 있던 작품의 번호가 새 파일에서 달라지면 넣지 않고 멈춘다
 # 여러 번 돌려도 같은 결과 (원본은 덮어쓰고 표는 지우고 다시 만듦)
 #
@@ -21,6 +21,7 @@ CONTAINER = os.environ.get("ANIME_DB_CONTAINER", "anime-db")
 DB = "anime_db"
 DATA = pathlib.Path(__file__).resolve().parents[1] / "data"
 SRC = DATA / "anilist"
+CATALOG = pathlib.Path(__file__).resolve().parents[2] / "catalog"   # 공용 작품 목록 (예전엔 model/data 의 사본)
 PARTS = [("media.jsonl", "base"), ("media_recent.jsonl", "base"), ("links.jsonl", "links"), ("detail.jsonl", "detail")]
 WORK_COLS = ["menu_work_id", "title_ko", "title_ko_source", "title_ko_check", "title_romaji", "title_english",
              "title_native", "first_year", "last_year", "n_entries", "popularity"]
@@ -34,7 +35,7 @@ create table if not exists menu.work (
   title_romaji text, title_english text, title_native text,
   first_year int, last_year int, n_entries int, popularity int
 );
-comment on table menu.work is 'me;nu 작품 번호. 시리즈 하나에 번호 하나, 한 번 붙은 번호는 안 바꿈 (make_work_catalog.py)';
+comment on table menu.work is 'me;nu 작품 번호. 시리즈 하나에 번호 하나, 한 번 붙은 번호는 안 바꿈 (레포 맨 위 catalog/)';
 create table if not exists menu.work_entry (
   anilist_id int primary key, mal_id int, menu_work_id int not null,
   format text, year int, title_ko text, title_romaji text, title_english text, title_native text, popularity int
@@ -218,8 +219,8 @@ def main():
     for (aid, part), m in rows.items():
         w.writerow([aid, part, json.dumps(m, ensure_ascii=False)])
     script = (SCHEMA + buf.getvalue() + TABLES
-              + CATALOG_SCHEMA + copy_block("work_in", DATA / "menu_works.csv", WORK_COLS)
-              + copy_block("entry_in", DATA / "menu_work_entries.csv", ENTRY_COLS) + CATALOG_SWAP + REPORT)
+              + CATALOG_SCHEMA + copy_block("work_in", CATALOG / "menu_works.csv", WORK_COLS)
+              + copy_block("entry_in", CATALOG / "menu_work_entries.csv", ENTRY_COLS) + CATALOG_SWAP + REPORT)
     cmd = ["docker", "exec", "-i", CONTAINER, "sh", "-c", f'psql -U "$POSTGRES_USER" -d {DB} -v ON_ERROR_STOP=1 -q']
     print(f"원본 {len(rows):,}개 넣는 중 ({len(script.encode('utf-8')) / 1e6:.1f}MB)", flush=True)
     subprocess.run(cmd, input=script.encode("utf-8"), check=True)

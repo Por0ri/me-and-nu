@@ -2,8 +2,11 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MyPageState } from "@/lib/pivot/my-page";
+import type { NotificationSettingsSource } from "@/lib/pivot/notification-settings";
 import type { MyPagePolicyType } from "@/lib/pivot/policy-document";
 import { MyPagePolicyDialog } from "./my-page-policy-dialog";
+import { MyNotificationSettings } from "./my-notification-settings";
+import { WithdrawalDialog } from "./withdrawal-dialog";
 import { HomeHeader, HomeNavigation } from "./home-screen";
 import homeStyles from "./home.module.css";
 import styles from "./my-page.module.css";
@@ -33,7 +36,7 @@ function DemoAccountDialog({ action, onClose }: { action: "로그아웃" | "회�
     <h2 id="my-account-title">Demo {action} 안내</h2>
     <p id="my-account-description">{action === "로그아웃"
       ? "가상 프로필로 체험 중이에요. 실제 로그인 세션이 없어 로그아웃을 수행하지 않아요."
-      : "시연용 화면이에요. 계정 삭제를 요청하거나 개인정보를 삭제하지 않아요. 실제 회원탈퇴 기능은 준비 중이에요."}</p>
+      : "시연용 화면이라 실제 계정 삭제 API를 호출하거나 개인정보를 삭제하지 않아요."}</p>
     <div className={styles.dialogActions}>
       <button type="button" autoFocus onClick={onClose}>취소</button>
       <button type="button" onClick={onClose}>확인</button>
@@ -73,16 +76,15 @@ function ServiceLogoutDialog({ busy, error, onConfirm, onClose }: {
   </dialog>;
 }
 
-export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout }: {
-  state: MyPageState; demo: boolean; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>;
+export function PivotMyPageScreen({ state, demo, notificationScope, notificationSource, onNavigate, onHome, onRetry, onSaved, onActivity, onInquiry, onLogout, onWithdraw, onNotifications }: {
+  state: MyPageState; demo: boolean; notificationScope?: object; notificationSource?: NotificationSettingsSource; onNavigate: (path: string) => void; onHome: () => void; onRetry: () => void; onSaved?: () => void; onActivity?: () => void; onInquiry?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>; onNotifications?: () => void;
 }) {
   const screen = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
   const [policy, setPolicy] = useState<MyPagePolicyType | null>(null);
   const closingPolicy = useRef(false);
-  const [notifications, setNotifications] = useState(true);
-  const [nightNotifications, setNightNotifications] = useState(false);
   const [accountDialog, setAccountDialog] = useState<"로그아웃" | "회원탈퇴" | null>(null);
+  const [withdrawalDialog, setWithdrawalDialog] = useState(false);
   const [logoutDialog, setLogoutDialog] = useState(false);
   const [logoutError, setLogoutError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
@@ -134,33 +136,22 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
       if (mounted.current) setLoggingOut(false);
     }
   }
-  // Settings are demo-only local state. A future Service profile must not enable
-  // these controls before the notification policy/write adapter are agreed.
   const profile = state.status === "ready" && state.profile.origin === (demo ? "demo" : "service") ? state.profile : null;
   return <main ref={screen} className={`${homeStyles.screen} ${styles.screen}`} data-my-state={state.status} data-my-mode={demo ? "demo" : "service"}
     aria-busy={state.status === "loading" && !logoutDialog}>
-    <HomeHeader title="마이페이지" showMascot={false} onNotice={setNotice} />
+    <HomeHeader title="마이페이지" showMascot={false} onNotice={setNotice} onNotifications={onNotifications} />
     <div className={styles.content}>
       <p className={styles.intro}>내 정보와 설정을 관리해보세요</p>
       {profile ? <>
         <section className={`${styles.card} ${styles.profile}`} aria-label={demo ? "시연용 가상 프로필" : "프로필"}>
           <div><p className={styles.nickname}>{profile.nickname}님</p><p className={styles.email}>{profile.maskedEmail}</p></div>
-          <button type="button" className={styles.edit} onClick={() => !demo ? window.location.assign("/pivot/profile") : pending("프로필 수정")}><span>프로필 수정<Chevron /></span></button>
+          <button type="button" className={styles.edit} onClick={() => !demo ? onNavigate("/pivot/profile") : pending("프로필 수정")}><span>프로필 수정<Chevron /></span></button>
         </section>
         <MenuSection title="내 정보">
           {["내 활동", TASTE_EDIT, "관심분야 관리"].map((label, index) => <button key={label} type="button" className={styles.row}
-            onClick={() => label === "내 활동" && onActivity ? onActivity() : ROW_PAGES[label] && !demo ? window.location.assign(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
+            onClick={() => label === "내 활동" && onActivity ? onActivity() : ROW_PAGES[label] && !demo ? onNavigate(ROW_PAGES[label]) : pending(label)}>{label}<Chevron last={index === 2} /></button>)}
         </MenuSection>
-        <MenuSection title="알림 설정">
-          <button type="button" role="switch" aria-checked={demo && notifications} aria-describedby={demo ? "my-demo-help" : undefined} aria-disabled={!demo || undefined}
-            className={styles.row} onClick={() => demo ? setNotifications((value) => !value) : pending("알림 설정")}>
-            알림 허용<img src={`/pivot/my/switch-${demo && notifications ? "on" : "off"}.svg`} alt="" width={33} height={18} />
-          </button>
-          <button type="button" role="switch" aria-checked={demo && nightNotifications} aria-describedby={demo ? "my-demo-help" : undefined} aria-disabled={!demo || undefined}
-            className={styles.row} onClick={() => demo ? setNightNotifications((value) => !value) : pending("알림 설정")}>
-            21시 이후 알림 허용<img src={`/pivot/my/switch-${demo && nightNotifications ? "on" : "off"}.svg`} alt="" width={33} height={18} />
-          </button>
-        </MenuSection>
+        <MyNotificationSettings demo={demo} scope={notificationScope} source={notificationSource} />
         <MenuSection title="이용 안내">
           {["문의 및 신고", "이용약관", "개인정보처리방침"].map((label, index) => <button key={label} type="button" className={styles.row}
             aria-haspopup={index ? "dialog" : undefined}
@@ -169,7 +160,13 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
         <MenuSection>
           {(["로그아웃", "회원탈퇴"] as const).map((label, index) => <button key={label} type="button" className={`${styles.row} ${styles.account}`}
             disabled={label === "로그아웃" && loggingOut} aria-busy={label === "로그아웃" && loggingOut || undefined}
-            onClick={() => demo ? setAccountDialog(label) : label === "로그아웃" && onLogout ? confirmLogout() : pending(label)}>{label}<Chevron muted last={index === 1} /></button>)}
+            aria-haspopup={demo || (index === 0 ? onLogout : onWithdraw) ? "dialog" : undefined}
+            onClick={() => {
+              if (demo) setAccountDialog(label);
+              else if (label === "로그아웃" && onLogout) confirmLogout();
+              else if (label === "회원탈퇴" && onWithdraw) { setNotice(""); setWithdrawalDialog(true); }
+              else pending(label);
+            }}>{label}<Chevron muted last={index === 1} /></button>)}
         </MenuSection>
         {demo ? <p id="my-demo-help" className={styles.help}>시연용 가상 프로필이에요. 알림 선택은 이 화면에서만 적용되며, 화면을 떠나거나 새로고침하면 초기화돼요.</p> : null}
       </> : <section className={homeStyles.status} aria-label="My Page 연결 상태">
@@ -187,5 +184,6 @@ export function PivotMyPageScreen({ state, demo, onHome, onRetry, onSaved, onAct
     {policy ? <MyPagePolicyDialog type={policy} demo={demo} onClose={closePolicy} /> : null}
     {accountDialog ? <DemoAccountDialog action={accountDialog} onClose={() => setAccountDialog(null)} /> : null}
     {logoutDialog && !demo ? <ServiceLogoutDialog busy={loggingOut} error={logoutError} onConfirm={() => void logout()} onClose={closeLogout} /> : null}
+    {withdrawalDialog && !demo && onWithdraw ? <WithdrawalDialog withdraw={onWithdraw} onClose={() => setWithdrawalDialog(false)} /> : null}
   </main>;
 }

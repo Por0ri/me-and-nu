@@ -12,10 +12,11 @@ import uuid
 import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event as sql_event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from app.api.deps import AuthContext, get_optional_auth_context
 from app.core.exceptions import ApiError
@@ -26,6 +27,8 @@ from app.models import (
     Content, ContentReaction, ContentSlide, ContentSource, ContentTag, SourceSite, Subtopic, Tap, Topic, UserEvent,
 )
 from app.services import my_activity_service as service
+from app.services import feed_service
+from app.repositories import carousel_repository
 from app.services.my_activity_service import counts_as_viewed
 
 NOW = datetime(2026, 11, 6, 12, tzinfo=timezone.utc)
@@ -72,7 +75,7 @@ def event(event_id, user_id, tap_id, content_id, kind, at, *, source="production
 
 @pytest.fixture
 def db(monkeypatch):
-    engine = create_engine("sqlite+pysqlite:///:memory:")
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     models = (Topic, Subtopic, Tap, Content, ContentSlide, SourceSite, ContentSource, ContentTag, ContentReaction, UserEvent)
     with monkeypatch.context() as patch:
         patch.setattr(UserEvent.__table__.c.event_value, "server_default", None)   # PostgreSQL 전용 기본값
@@ -107,8 +110,116 @@ def db(monkeypatch):
             event(8, ME, 7, 305, "impression", NOW - HOUR),                                    # 보이기만 함
             event(9, OTHER, 9, 303, "open", NOW - HOUR),                                       # 다른 회원
         ])
+        session.add_all([
+            ContentSlide(content_id=content_id, page=page, role="cover" if page == 1 else "body",
+                         eyebrow=eyebrow, title_lines=["제목"], body_sentences=[],
+                         layout_json={"imageBox": {"x": 0, "y": 0, "width": 1, "height": 1},
+                                      "copyBox": {"x": 0.06, "y": 0.67, "width": 0.88, "height": 0.29}},
+                         image_data=b"must not load", image_sha256="a" * 64, image_width=1308, image_height=1632)
+            for content_id, page, eyebrow in [
+                (301, 1, "  HOME 첫 라벨 & 소식  "), (301, 2, "두 번째 라벨"),
+                (302, 2, "첫 장이 없으면 null"), (303, 1, "취소 / 지난 기록"),
+                (304, 1, "숨긴 글 라벨"), (305, 1, "다른 회원 라벨"),
+            ]
+        ])
         session.commit()
         yield SessionAdapter(session)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("list_name", ["likes", "recent_views"])
+async def test_eyebrow_batches_only_the_authorized_result_page_without_image_bytes(db, monkeypatch, list_name):
+    get = (lambda **kw: service.get_liked_contents(db, ME, **kw)) if list_name == "likes" else (
+        lambda **kw: service.get_recent_views(db, ME, now=NOW, **kw))
+    lookup = AsyncMock(wraps=carousel_repository.list_cover_eyebrows)
+    monkeypatch.setattr(carousel_repository, "list_cover_eyebrows", lookup)
+    statements = []
+    def record(_conn, _cursor, statement, *_args):
+        statements.append(statement)
+    engine = db.session.get_bind()
+    sql_event.listen(engine, "before_cursor_execute", record)
+    try:
+        for limit, expected_ids in [(20, [302, 301]), (1, [302])]:
+            statements.clear(); lookup.reset_mock()
+            page = await get(topic_id=None, cursor=None, limit=limit)
+            assert [item.content_id for item in page.items] == expected_ids
+            lookup.assert_awaited_once_with(db, expected_ids)
+            projections = [sql for sql in statements if sql.startswith("SELECT content_slide.content_id, content_slide.eyebrow")]
+            assert len(projections) == 1, "One eyebrow query per page, independent of item count"
+            assert all("image_data" not in sql for sql in statements)
+            assert "title_lines" not in projections[0]
+            assert page.items[0].eyebrow is None, "Only page=1 is a cover; source and subtopics are not fallbacks"
+            if limit == 20:
+                assert page.items[1].eyebrow == "  HOME 첫 라벨 & 소식  "
+        second = await get(topic_id=None, cursor=page.next_cursor, limit=1)
+        assert [item.content_id for item in second.items] == [301]
+        assert second.items[0].eyebrow == "  HOME 첫 라벨 & 소식  "
+        db.session.get(Tap, 7).deleted_at = NOW
+        db.session.commit()
+        statements.clear(); lookup.reset_mock()
+        empty = await get(topic_id=None, cursor=None, limit=20)
+        assert empty.items == []
+        lookup.assert_awaited_once_with(db, [])
+        assert not any(sql.startswith("SELECT content_slide.") for sql in statements), "Empty page executes zero cover lookups"
+    finally:
+        sql_event.remove(engine, "before_cursor_execute", record)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["likes", "recent-views"])
+async def test_api_eyebrow_is_nullable_and_matches_home_first_slide(db, monkeypatch, path):
+    app = create_app(enable_dev_api=False)
+    user = SimpleNamespace(user_id=ME, onboarding_completed_at=NOW)
+    async def context(_request: Request):
+        return AuthContext(session=SimpleNamespace(session_state="active"), raw_token="test", user=user)
+    async def database():
+        yield db
+    original_views = service.get_recent_views
+    async def views_at_fixture_time(*args, **kwargs):
+        return await original_views(*args, now=NOW, **kwargs)
+    monkeypatch.setattr(service, "get_recent_views", views_at_fixture_time)
+    app.dependency_overrides[get_optional_auth_context] = context
+    app.dependency_overrides[get_db] = database
+    # Use the same projection that HOME serializes, without loading image bytes.
+    content = SimpleNamespace(content_id=301, topic_id=1, ai_judgment_basis={"method": "carousel_import_v1"})
+    home_slides = await feed_service._slides(db, content)
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/users/me/{path}")
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["contentId"] for item in body["items"]] == [302, 301]
+    assert body["items"][0]["eyebrow"] is None
+    assert body["items"][1]["eyebrow"] == home_slides[0].eyebrow == "  HOME 첫 라벨 & 소식  "
+    stamp = "likedAt" if path == "likes" else "viewedAt"
+    assert set(body["items"][0]) == {"contentId", "title", "topicId", "summary", "imageUrl", "sourceName",
+                                     "eyebrow", "productionType", "publishedAt", "subtopicNames", stamp}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("list_name", ["likes", "recent_views"])
+@pytest.mark.parametrize("unavailable", ["deleted", "expired", "unapproved", "no_source", "inactive_topic"])
+async def test_eyebrow_never_reintroduces_unavailable_content(db, monkeypatch, list_name, unavailable):
+    content = db.session.get(Content, 301)
+    if unavailable == "deleted":
+        content.deleted_at = NOW
+    elif unavailable == "expired":
+        content.feed_valid_until = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    elif unavailable == "unapproved":
+        content.ai_judgment_basis = {"method": "carousel_import_v1"}
+        content.judgment_status = "needs_review"
+        content.feed_valid_until = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    elif unavailable == "no_source":
+        db.session.delete(db.session.get(ContentSource, 301))
+    else:
+        db.session.get(Topic, 1).is_active = False
+    db.session.commit()
+    lookup = AsyncMock(wraps=carousel_repository.list_cover_eyebrows)
+    monkeypatch.setattr(carousel_repository, "list_cover_eyebrows", lookup)
+    get = service.get_liked_contents if list_name == "likes" else service.get_recent_views
+    page = await get(db, ME, topic_id=None, cursor=None, limit=20, **({"now": NOW} if list_name == "recent_views" else {}))
+    expected = [] if unavailable == "inactive_topic" else [302]
+    assert [item.content_id for item in page.items] == expected
+    lookup.assert_awaited_once_with(db, expected)
 
 
 @pytest.mark.parametrize(("kind", "value", "expected"), [
@@ -153,6 +264,10 @@ async def test_lists_page_with_their_own_cursor_and_topic_filter(db, list_name):
         assert caught.value.code == "INVALID_CURSOR"
     with pytest.raises(ApiError) as caught:   # 다른 목록의 cursor 는 못 씀
         await other(db, ME, topic_id=1, cursor=first.next_cursor, limit=1)
+    assert caught.value.code == "INVALID_CURSOR"
+    with pytest.raises(ApiError) as caught:   # 다른 회원의 cursor 는 재사용할 수 없음
+        method = service.get_liked_contents if list_name == "likes" else service.get_recent_views
+        await method(db, OTHER, topic_id=1, cursor=first.next_cursor, limit=1)
     assert caught.value.code == "INVALID_CURSOR"
     with pytest.raises(ApiError) as caught:   # 관심 분야로 고르지 않은 분야
         await get(topic_id=2, cursor=None, limit=1)

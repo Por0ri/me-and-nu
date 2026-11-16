@@ -7,9 +7,9 @@ import { MyActivityScreen } from "./my-activity-screen";
 
 const loading: ActivityState = { status: "loading" };
 const unavailable: ActivityState = { status: "unconfigured", message: "로그인 상태를 확인한 뒤 내 활동을 다시 열어주세요." };
-export function MyActivityController({ source, demo, tab, onTab, onHome, onMy, onSaved, onViewDetail }: {
+export function MyActivityController({ source, demo, tab, onTab, onHome, onMy, onSaved, onViewDetail, onNotifications }: {
   source?: ActivityDataSource; demo: boolean; tab: ActivityTab; onTab: (tab: ActivityTab) => void;
-  onHome: () => void; onMy: () => void; onSaved: () => void; onViewDetail: HomeDetailHandler;
+  onHome: () => void; onMy: () => void; onSaved: () => void; onViewDetail: HomeDetailHandler; onNotifications?: () => void;
 }) {
   const [request, setRequest] = useState<{ source: ActivityDataSource; tab: ActivityTab; state: ActivityState }>();
   const controller = useRef<ReturnType<typeof createActivityRequestController> | null>(null);
@@ -23,6 +23,6 @@ export function MyActivityController({ source, demo, tab, onTab, onHome, onMy, o
   }, [source, tab, demo]);
   let state = !source || demo ? unavailable : request?.source === source && request.tab === tab ? request.state : loading;
   if (source && !demo) { try { source.assertCurrent(); } catch { state = loading; } }
-  return <MyActivityScreen state={state} tab={tab} demo={demo} onTab={onTab} onHome={onHome} onMy={onMy} onSaved={onSaved} onViewDetail={onViewDetail}
+  return <MyActivityScreen state={state} tab={tab} demo={demo} onTab={onTab} onHome={onHome} onMy={onMy} onSaved={onSaved} onViewDetail={onViewDetail} onNotifications={onNotifications}
     onRetry={() => { void controller.current?.load(); }} onMore={() => { void controller.current?.loadMore(); }} />;
 }

@@ -47,6 +47,22 @@ _GOODS_RELEASE_DATE = re.compile(
     r"(?:(20\d{2})\s*(?:\u5e74|[./-])\s*)?"
     r"(\d{1,2})\s*(?:\u6708|[./-])\s*(\d{1,2})\s*\u65e5?"
 )
+_GOODS_RELEASE_PERIOD = re.compile(
+    r"(?<!\d)(20\d{2})\s*年\s*(\d{1,2})\s*月"
+    r"[ \t]*(上旬|中旬|下旬)?[ \t]*(?:頃|ごろ)?"
+)
+_GOODS_RELEASE_PERIOD_PREFIX = re.compile(
+    r"(?:発売(?:予定|日)?|販売開始(?:予定|日)?|リリース(?:予定|日)?)"
+    r"\s*[:：]?\s*[-・]?\s*$"
+)
+_GOODS_RELEASE_PERIOD_SUFFIX = re.compile(
+    r"\s*(?:発売(?:予定)?|販売開始(?:予定)?|リリース(?:予定)?)"
+)
+_GOODS_RELEASE_PERIOD_NEGATION = re.compile(
+    r"(?:では(?:あり)?ません|ではない|ではなく|未定|延期|中止|撤回|取消|取り消し|"
+    r"変更(?:済み?|(?:いた)?しました|(?:と|に)なりました|予定|(?:と|に)なる予定|"
+    r"されました|されています|しています|(?:いた)?します))"
+)
 _PERIOD_LABELS = {
     "event": re.compile(
         r"(?:행사|이벤트|전시|팝업|운영)\s*기간|개최\s*기간|행사\s*일정|개최|"
@@ -301,6 +317,91 @@ def _upcoming_goods_release(candidate: dict) -> tuple[date, str] | None:
     return min(upcoming, key=lambda item: item[0]) if upcoming else None
 
 
+def _upcoming_goods_release_period(candidate: dict) -> dict[str, str | None] | None:
+    """Keep explicitly labeled Japanese release periods at their source precision.
+
+    Window bounds are comparison metadata, not announced release dates. Require
+    the whole window to remain in the future; once it starts, the phrase alone
+    cannot establish whether the product is still upcoming or available.
+    """
+    publication = candidate_publication_date(candidate)
+    reference = datetime.now(KST).date()
+    texts = [
+        str(candidate.get(key) or "")
+        for key in ("title", "summary", "text", "main_text", "raw_text")
+    ]
+    # The source-backed phrase survives capture -> package -> DB reload as a
+    # provenance-tagged fact. Reparse that phrase, never persisted numeric bounds.
+    facts = candidate.get("facts")
+    for fact in facts if isinstance(facts, list) else []:
+        if not isinstance(fact, dict) or fact.get("fact_type") not in {
+            "product_availability", "product_release_period"
+        }:
+            continue
+        details = fact.get("details")
+        if isinstance(details, dict) and details.get("evidence_kind") == "source_release_window":
+            texts.append(str(details.get("source_quote") or details.get("release_text") or ""))
+
+    periods: dict[tuple[date, date, str], str] = {}
+    for text in texts:
+        for match in _GOODS_RELEASE_PERIOD.finditer(text):
+            suffix = _GOODS_RELEASE_PERIOD_SUFFIX.match(text, match.end())
+            prefix_text = text[max(0, match.start() - 32) : match.start()]
+            prefix = _GOODS_RELEASE_PERIOD_PREFIX.search(prefix_text)
+            if suffix:
+                quote = text[match.start() : suffix.end()].strip()
+            elif prefix and (
+                match.end() == len(text) or text[match.end()] in "\r\n、。．,;；)）"
+            ):
+                quote = (prefix_text[prefix.start() :] + match.group(0)).strip()
+            else:
+                continue
+            # Qualifiers such as "予定でしたが延期" invalidate the quoted
+            # schedule even when an unchanged title still repeats it. Keep this
+            # bounded to the same sentence/line so a normal next-line notice
+            # that release dates may change does not invalidate the schedule.
+            boundaries = ("\n", "\r", "。", "．", "!", "！", "?", "？")
+            clause_start = max(text.rfind(mark, 0, match.start()) for mark in boundaries) + 1
+            clause_ends = [text.find(mark, match.end()) for mark in boundaries]
+            clause_end = min(
+                [end for end in clause_ends if end >= 0] + [len(text), match.end() + 80]
+            )
+            clause = text[max(clause_start, match.start() - 80) : clause_end]
+            if _GOODS_RELEASE_PERIOD_NEGATION.search(clause):
+                return None
+            year, month = int(match.group(1)), int(match.group(2))
+            section = match.group(3)
+            try:
+                last_day = calendar.monthrange(year, month)[1]
+                first, last, precision = {
+                    None: (1, last_day, "month"),
+                    "上旬": (1, 10, "early_month"),
+                    "中旬": (11, 20, "mid_month"),
+                    "下旬": (21, last_day, "late_month"),
+                }[section]
+                start, end = date(year, month, first), date(year, month, last)
+            except ValueError:
+                continue
+            periods.setdefault((start, end, precision), quote)
+    # Do not guess which of conflicting release periods applies to this product.
+    if len(periods) != 1:
+        return None
+    (start, end, precision), quote = next(iter(periods.items()))
+    if reference >= start or (publication and publication > start):
+        return None
+    return {
+        "status": "active",
+        "end_date": None,
+        "evidence": f"upcoming product release period: {quote}",
+        "availability_status": "upcoming_release",
+        "release_date": None,
+        "release_precision": precision,
+        "release_window_start": start.isoformat(),
+        "release_window_end": end.isoformat(),
+        "release_text": quote,
+    }
+
+
 def expiry_evidence(candidate: dict, type_code: str) -> dict[str, str | None]:
     """Classify event/goods expiry from explicit dates/statuses, never article age."""
     if type_code not in {"event", "goods"}:
@@ -406,6 +507,10 @@ def expiry_evidence(candidate: dict, type_code: str) -> dict[str, str | None]:
             "end_date": parsed.isoformat(),
             "evidence": quote,
         }
+    if type_code == "goods":
+        release_period = _upcoming_goods_release_period(candidate)
+        if release_period:
+            return release_period
     return {"status": "unresolved", "end_date": None, "evidence": None}
 
 

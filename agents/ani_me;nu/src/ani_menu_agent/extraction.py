@@ -590,6 +590,9 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
                     "explicit sale or preorder end date in fact.details as sale_end, sales_end, "
                     "preorder_end, or deadline only when the source states it and the evidence quote "
                     "contains it. Record an explicit availability status as availability_status. "
+                    "Preserve month-only and early/mid/late-month release wording at its source "
+                    "precision, including qualifiers such as planned or around. Never invent a "
+                    "day, release_date, event period, or sale_end from an approximate release period. "
                     "Never treat a product release date as a sale end date. If the source gives no "
                     "validity end or status, leave it unknown; do not infer expiration from age.",
                 ),

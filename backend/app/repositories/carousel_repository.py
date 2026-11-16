@@ -64,7 +64,8 @@ def public_content_condition():
     Legacy publications keep their existing review behavior. Imported carousels
     require approval, except for explicitly marked previews in a matching local
     test service or the opted-in Checking stack. All paths require 2..10
-    contiguous slides and a future expiry.
+    contiguous slides and a future expiry. A publication time in the future
+    keeps any content closed until that moment.
     PNG decoding and hash verification are the import boundary's job.
     """
     count = (
@@ -82,6 +83,7 @@ def public_content_condition():
         Content.status == "active",
         Content.deleted_at.is_(None),
         or_(Content.feed_valid_until.is_(None), Content.feed_valid_until > func.now()),
+        or_(Content.published_at.is_(None), Content.published_at <= func.now()),
         or_(
             ~imported,
             and_(
@@ -104,6 +106,17 @@ async def list_slides(db: AsyncSession, content_id: int) -> list[ContentSlide]:
         .where(ContentSlide.content_id == content_id)
         .order_by(ContentSlide.page)
     )).all())
+
+
+async def list_cover_eyebrows(db: AsyncSession, content_ids: list[int]) -> dict[int, str]:
+    """Project page-one copy for an already authorized page, without image bytes."""
+    if not content_ids:
+        return {}
+    rows = await db.execute(
+        select(ContentSlide.content_id, ContentSlide.eyebrow)
+        .where(ContentSlide.content_id.in_(content_ids), ContentSlide.page == 1)
+    )
+    return dict(rows.all())
 
 
 async def get_slide_image(db: AsyncSession, content_id: int, page: int) -> bytes | None:

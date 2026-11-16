@@ -143,13 +143,14 @@ def test_information_deck_rejects_reused_interior_evidence() -> None:
     assert "CARD_FACT_REUSED" in {issue.code for issue in run_quality_checks(package)}
 
 
-def test_stale_source_blocks_time_sensitive_information() -> None:
+def test_old_publication_date_alone_does_not_expire_information() -> None:
     payload = load_sample()
     payload["sources"][0]["published_at"] = "2025-01-01T09:00:00+09:00"
     payload["facts"][0]["time_sensitive"] = True
     package = ContentPackage.model_validate(payload)
 
-    assert "SOURCE_STALE" in {issue.code for issue in run_quality_checks(package)}
+    # Lifecycle uses source-backed validity evidence, not the article's age.
+    assert "SOURCE_STALE" not in {issue.code for issue in run_quality_checks(package)}
 
 
 def test_missing_source_publication_date_does_not_block_content() -> None:
@@ -630,7 +631,7 @@ def test_small_official_portrait_uses_immersive_layout_without_cropping() -> Non
     assert layout.image_offset_y == 0.0
 
 
-def test_raw_image_reuse_remains_actionable_and_uses_shared_score_penalty() -> None:
+def test_raw_image_reuse_remains_a_publication_blocker() -> None:
     payload = load_sample()
     payload["cards"][2]["image_id"] = payload["cards"][1]["image_id"]
     package = ContentPackage.model_validate(payload)
@@ -639,15 +640,15 @@ def test_raw_image_reuse_remains_actionable_and_uses_shared_score_penalty() -> N
     report = score_quality(package, issues, language_score=20, safety_score=10)
 
     assert reuse_issue.owner == "image_curator"
-    assert reuse_issue.severity == "revise"
-    assert report["decision"] == "pass_candidate"
-    assert "IMAGE_REUSED_RAW" not in report["hard_blockers"]
-    assert "IMAGE_REUSED_RAW" in report["actionable_issues"]
-    assert report["revision_deductions"] >= score_penalty("IMAGE_REUSED_RAW")
+    assert reuse_issue.severity == "blocker"
+    assert report["decision"] != "pass_candidate"
+    assert "IMAGE_REUSED_RAW" in report["hard_blockers"]
+    # Blockers are reported separately from the revise-only actionable list.
+    assert "IMAGE_REUSED_RAW" not in report["actionable_issues"]
     assert score_quality(
         package, issues, language_score=20, safety_score=10,
         card_language_scores={3: 54},
-    )["decision"] == "revise"
+    )["decision"] != "pass_candidate"
 
 
 def test_unused_incomplete_campaign_fact_does_not_block_other_content() -> None:
@@ -1136,7 +1137,7 @@ def test_layout_director_blocks_when_image_pool_is_smaller_than_deck() -> None:
 
     payload = load_sample()
     package = ContentPackage.model_validate(payload)
-    package.images = package.images[:3]
+    package.images = package.images[:1]
     copies = [CopyCard.model_validate(card) for card in payload["cards"]]
     result = layout_director(
         {

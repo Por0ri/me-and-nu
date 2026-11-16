@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
 from app.models import Content
-from app.repositories import content_repository
+from app.repositories import carousel_repository, content_repository
 from app.repositories import my_activity_repository as repo
 from app.schemas.my_activity import LikedContentItem, LikedContentsResponse, RecentViewsResponse, ViewedContentItem
 from app.services.cursor import decode_cursor, encode_cursor
@@ -71,11 +71,14 @@ async def get_liked_contents(
     after = _position(cursor, context, "likedAt")
     rows = await repo.list_liked_contents(db, user_id, topic_id=topic_id, after=after, limit=limit + 1)
     page = rows[:limit]
+    eyebrows = await carousel_repository.list_cover_eyebrows(
+        db, [content.content_id for _, content in page]
+    )
     items = []
     for liked_at, content in page:
         card = await _card(db, content)
         if card is not None:
-            items.append(LikedContentItem(**card, liked_at=_utc(liked_at)))
+            items.append(LikedContentItem(**card, eyebrow=eyebrows.get(content.content_id), liked_at=_utc(liked_at)))
     next_cursor = None
     if len(rows) > limit and page:
         last_at, last = page[-1]
@@ -109,12 +112,15 @@ async def get_recent_views(
         ordered = [position for position in ordered if position < after]
     visible = await repo.get_visible_contents(db, [content_id for _, content_id in ordered])
     page = [(at, visible[content_id]) for at, content_id in ordered if content_id in visible][: limit + 1]
+    eyebrows = await carousel_repository.list_cover_eyebrows(
+        db, [content.content_id for _, content in page[:limit]]
+    )
 
     items = []
     for viewed_at, content in page[:limit]:
         card = await _card(db, content)
         if card is not None:
-            items.append(ViewedContentItem(**card, viewed_at=viewed_at))
+            items.append(ViewedContentItem(**card, eyebrow=eyebrows.get(content.content_id), viewed_at=viewed_at))
     next_cursor = None
     if len(page) > limit:
         last_at, last = page[limit - 1]

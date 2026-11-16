@@ -30,7 +30,7 @@ def agent_contract(tmp_path, monkeypatch, raw_bundle):
     config = importlib.import_module("ani_menu_agent.config")
     models = importlib.import_module("ani_menu_agent.models")
     storage = importlib.import_module("ani_menu_agent.storage")
-    moment = datetime.now(UTC)
+    moment = datetime.now(UTC) - timedelta(minutes=1)    # SQLite now() 는 초 단위라 같은 초에 넣은 글은 아직 안 열린 글이 됨
     settings = config.Settings(
         _env_file=None,
         ANI_MENU_DATABASE_BACKEND="sqlite",

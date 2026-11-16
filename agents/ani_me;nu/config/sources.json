@@ -578,12 +578,13 @@
       "status": "active",
       "region": "JP",
       "discovery_enabled": false,
+      "targeted_discovery_types": ["goods"],
       "allowed_asset_hosts": [
         "one-piece.com"
       ],
       "work_title_ko": "원피스",
       "work_title_original": "ONE PIECE",
-      "notes": "Direct official-page crawling verified on 2026-10-21: robots allows the character index, HTML facts and official image URLs are collectible. Candidate discovery remains disabled because listing pages were noisy. Public image reuse risk remains separately recorded; source activation does not grant image rights."
+      "notes": "The named goods route collects numbered news articles tagged グッズ by the publisher. General discovery stays disabled because the mixed listing includes navigation and other topics. Direct official-page crawling was verified on 2026-10-21. Public image reuse risk remains separately recorded; source activation does not grant image rights."
     },
     {
       "id": "bleach_anime_official",

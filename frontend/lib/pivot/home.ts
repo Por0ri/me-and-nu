@@ -80,16 +80,23 @@ export type HomeState =
   | { status: "unconfigured"; message: string };
 
 /** Instance-local request lifecycle. Cancellation also guards sources that ignore abort. */
-export function createHomeRequestController(source: HomeDataSource, publish: (state: HomeState) => void) {
+export function createHomeRequestController(source: HomeDataSource, publish: (state: HomeState) => void, timeoutMs = 15_000) {
   let generation = 0;
   let active: AbortController | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   return {
     async load(): Promise<void> {
       const request = ++generation;
+      clearTimeout(timer);
       active?.abort();
       const controller = new AbortController();
       active = controller;
       publish({ status: "loading" });
+      timer = setTimeout(() => {
+        if (request !== generation || controller.signal.aborted) return;
+        controller.abort();
+        publish({ status: "error", reason: "network", message: "콘텐츠 준비가 지연되고 있어요. 다시 시도해 주세요." });
+      }, timeoutMs);
       try {
         const result = await source.load({ signal: controller.signal });
         if (request !== generation || controller.signal.aborted) return;
@@ -105,11 +112,12 @@ export function createHomeRequestController(source: HomeDataSource, publish: (st
           publish({ status: "error", message: "콘텐츠를 불러오지 못했어요. 다시 시도해 주세요." });
         }
       } finally {
-        if (active === controller) active = null;
+        if (active === controller) { clearTimeout(timer); active = null; }
       }
     },
     cancel() {
       generation++;
+      clearTimeout(timer);
       active?.abort();
       active = null;
     },

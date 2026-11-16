@@ -60,7 +60,8 @@ def load_series():
     with open(WORK_LIST / "menu_work_entries.csv", encoding="utf-8-sig", newline="") as f:
         entries = list(csv.DictReader(f))
     work_of = {int(r["anilist_id"]): int(r["menu_work_id"]) for r in entries}
-    popularity = {int(r["anilist_id"]): float(r["popularity"]) for r in entries}
+    # 인기 0 · 빈칸 (AniList 관계 자료가 없는 성인물 시즌 등)은 1 로 침: 시즌이 다 0 인 작품도 시즌끼리 같은 비중으로 나눔
+    popularity = {int(r["anilist_id"]): max(float(r["popularity"] or 0), 1.0) for r in entries}
     media = {}                                                   # 두 파일에 다 있는 편은 뒤 파일 것 하나만 (service.load_features 와 같음)
     for name in ("media.jsonl", "media_recent.jsonl"):
         for line in open(ANILIST / name, encoding="utf-8"):

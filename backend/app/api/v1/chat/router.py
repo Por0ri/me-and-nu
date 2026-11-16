@@ -44,7 +44,11 @@ async def create_chat_session(
     response_model=ChatMessageAccepted,
     summary="질문 전송·AI 답변 생성 (API-052)",
     description="질문을 접수하고 jobId를 돌려줍니다. 답은 GET /chat/jobs/{jobId}로 조회합니다. 같은 clientMessageId는 같은 작업을 돌려줍니다.",
-    responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "CHAT_SESSION_NOT_FOUND"}},
+    responses={
+        **COMMON_ERRORS,
+        404: {"model": ErrorResponse, "description": "CHAT_SESSION_NOT_FOUND"},
+        429: {"model": ErrorResponse, "description": "CHAT_DAILY_LIMIT: 오늘(한국 날짜) 질문 가능 횟수를 모두 사용함"},
+    },
 )
 async def post_chat_message(
     request: ChatMessageCreate,
@@ -64,7 +68,7 @@ async def post_chat_message(
     "/jobs/{jobId}",
     response_model=ChatJobResponse,
     summary="AI 답변 생성 상태·결과 (API-053)",
-    description="status는 processing, completed, failed 중 하나입니다. completed면 result에 답변과 근거 콘텐츠가 있습니다.",
+    description="status는 processing, completed, failed 중 하나입니다. completed면 result에 답변, 근거 콘텐츠(sources), 정보사전 근거(factSources: 출처 이름 · 근거 주소), 글 찾기 답에서 고른 글(contents: 홈 피드와 같은 카드)이 있습니다.",
     responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "CHAT_JOB_NOT_FOUND"}},
 )
 async def get_chat_job(

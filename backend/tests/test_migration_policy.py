@@ -15,8 +15,10 @@ def test_service_target_does_not_include_deferred_birth_removal():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     ancestors = {r.revision for r in script.iterate_revisions(SERVICE_SCHEMA_REVISION, "base")}
     assert "c0e5f3b8a124" in ancestors
+    assert "b3e7a5c19d42" in ancestors
+    assert script.get_heads() == [SERVICE_SCHEMA_REVISION]
     assert DEFERRED_BIRTH_REVISION not in ancestors
-    for name in ("compose.labs.yaml", "compose.deploy.yaml"):
+    for name in ("compose.labs.yaml", "compose.deploy.yaml", "compose.checking.yaml"):
         text = (Path("..") / name).read_text(encoding="utf-8")
         command = next(line for line in text.splitlines() if "alembic" in line and "upgrade" in line)
         assert SERVICE_SCHEMA_REVISION in command
@@ -28,6 +30,7 @@ def test_service_target_does_not_include_deferred_birth_removal():
     ({SERVICE_SCHEMA_REVISION, DEFERRED_BIRTH_REVISION}, True),
     ({DEFERRED_BIRTH_REVISION}, False),
     ({"c0e5f3b8a124"}, False),
+    ({"b3e7a5c19d42"}, False),
     ({SERVICE_SCHEMA_REVISION, "unknown"}, False),
     (set(), False),
 ])

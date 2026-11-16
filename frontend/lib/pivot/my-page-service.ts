@@ -1,6 +1,7 @@
 import { getProfile, type Session } from "@/lib/api";
 import { maskProfileEmail, type MyPageDataSource } from "./my-page";
 import { isActiveSession, requirePivotApi } from "./services";
+import { createServiceNotificationSettingsSource } from "./notification-settings-service";
 
 /** Bind each source to one session; never carry an identity across session changes. */
 export function createServiceMyPageSource(
@@ -12,6 +13,7 @@ export function createServiceMyPageSource(
   const userId = owner?.user?.id;
   return {
     kind: "service",
+    notificationSettings: createServiceNotificationSettingsSource(readSession),
     async load({ signal }) {
       const checkSession = () => {
         signal.throwIfAborted();

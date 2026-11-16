@@ -165,7 +165,7 @@ async function verifyProduction(browser) {
         await logout.click(); await dialog.getByRole('button', { name: '확인' }).click();
         await dialog.waitFor({ state: 'detached' });
         const withdraw = my.getByRole('button', { name: '회원탈퇴', exact: true });
-        await withdraw.click(); assert.match(await dialog.innerText(), /계정 삭제를 요청하거나 개인정보를 삭제하지 않아요/);
+        await withdraw.click(); assert.match(await dialog.innerText(), /실제 계정 삭제 API를 호출하거나 개인정보를 삭제하지 않아요/);
         await capture(page, 'my-withdrawal-' + name);
         await dialog.getByRole('button', { name: '취소' }).click();
         await withdraw.click(); await dialog.getByRole('button', { name: '확인' }).click(); await dialog.waitFor({ state: 'detached' });

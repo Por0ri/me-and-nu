@@ -83,12 +83,15 @@ export function useHomeExposure(ref: RefObject<HTMLElement | null>, target: Home
   };
 }
 
+/** Detail measures reading time and, like Home, the user's own swipes on its cover carousel (surface=detail). */
 export function useDetailExposure(ref: RefObject<HTMLElement | null>, target: HomeDetailTarget | null, bodyChars: number, demo: boolean) {
   const scope = useContext(InteractionContext), view = useContext(InteractionViewContext);
   const postId = target?.postId, contentId = target?.contentId, topicId = target?.topicId;
+  const carousel = useRef(createCarouselMeasurement());
   useEffect(() => {
     const element = ref.current;
     if (demo || !scope || !element || view !== "detail" || !postId || !contentId) return;
+    carousel.current = createCarouselMeasurement();   // each post starts at its cover
     const target = { postId, contentId, topicId }, exposure = createExposure();
     function scroll() {
       if (!foreground(element!)) return;
@@ -100,13 +103,25 @@ export function useDetailExposure(ref: RefObject<HTMLElement | null>, target: Ho
       if (value.duration > 0) scope!.activity.record(target, "open", { surface: "detail", activeMs: value.duration, scrollPct: value.scrollPct, bodyChars: Math.min(1000000, bodyChars) });
     }
     function visible() { if (!foreground(element!)) finish(); else { exposure.setVisible(true); scroll(); } }
+    // Same rule as Home: only a move shortly after the user's own input counts as a swipe.
+    const pointer = () => carousel.current.interact();
+    const wheel = (event: WheelEvent) => { if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) pointer(); };
+    const keyboard = (event: KeyboardEvent) => { if (["ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) pointer(); };
     visible();
+    element.addEventListener("pointerdown", pointer, { passive: true });
+    element.addEventListener("wheel", wheel, { passive: true });
+    element.addEventListener("keydown", keyboard);
     window.addEventListener("scroll", scroll, { passive: true });
     window.addEventListener("resize", scroll);
     document.addEventListener("visibilitychange", visible);
     window.addEventListener("pagehide", finish);
     window.addEventListener(ACTIVITY_BOUNDARY_EVENT, finish);
     window.addEventListener(ACTIVITY_RESUME_EVENT, visible);
-    return () => { window.removeEventListener(ACTIVITY_RESUME_EVENT, visible); window.removeEventListener("scroll", scroll); window.removeEventListener("resize", scroll); document.removeEventListener("visibilitychange", visible); window.removeEventListener("pagehide", finish); window.removeEventListener(ACTIVITY_BOUNDARY_EVENT, finish); finish(); };
+    return () => { window.removeEventListener(ACTIVITY_RESUME_EVENT, visible); element.removeEventListener("pointerdown", pointer); element.removeEventListener("wheel", wheel); element.removeEventListener("keydown", keyboard); window.removeEventListener("scroll", scroll); window.removeEventListener("resize", scroll); document.removeEventListener("visibilitychange", visible); window.removeEventListener("pagehide", finish); window.removeEventListener(ACTIVITY_BOUNDARY_EVENT, finish); finish(); };
   }, [scope, view, ref, demo, postId, contentId, topicId, bodyChars]);
+  return (index: number, count: number) => {
+    const moved = carousel.current.move(index, count);
+    if (moved && !demo && view === "detail" && postId && contentId && ref.current && foreground(ref.current))
+      scope?.activity.record({ postId, contentId, topicId }, "card_swipe", { surface: "detail", cardIndex: index + 1, cardCount: count });
+  };
 }

@@ -5,7 +5,16 @@ import { useDragScroll } from "@/lib/pivot/drag-scroll";
 import { type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
 import { MAX_PREFERENCE_TAGS_PER_KIND, selectedPreferenceCount, canAdvance, selectionKey, type OnboardingAction, type OnboardingState, type OnboardingWork } from "@/lib/pivot/onboarding";
 import { PivotFrame, PrimaryButton } from "./pivot-ui";
+import { HomeHeader } from "./home-screen";
 import styles from "./onboarding.module.css";
+
+/** Explicit opt-in for MY questions; signup and result screens keep their existing chrome. */
+export type MyQuestionHeaderProps = { onNotifications: () => void };
+export function MyQuestionHeader({ onNotifications }: MyQuestionHeaderProps) {
+  return <div className={styles.myHeader} data-my-question-header="">
+    <HomeHeader title="내 피드 취향 조정하기" showMascot={false} onNotifications={onNotifications} />
+  </div>;
+}
 
 export function QuestionProgress({ step, onBack, busy }: { step: 1 | 2 | 3; onBack: () => void; busy: boolean }) {
   return <nav className={styles.navigation} aria-label="온보딩 화면 탐색">
@@ -19,7 +28,7 @@ export function QuestionProgress({ step, onBack, busy }: { step: 1 | 2 | 3; onBa
 }
 /** Another flow's words for a question (My Page taste edit): its heading, description and a box above them. */
 export type QuestionCopy = { heading?: string; description?: ReactNode; hint?: ReactNode };
-type Props = { state: OnboardingState; dispatch: Dispatch<OnboardingAction>; catalog: OnboardingCatalog; onBack: () => void; onNext: () => void; busy: boolean; chrome?: boolean; demo: boolean; message?: string; copy?: QuestionCopy };
+type Props = { state: OnboardingState; dispatch: Dispatch<OnboardingAction>; catalog: OnboardingCatalog; onBack: () => void; onNext: () => void; busy: boolean; chrome?: boolean; demo: boolean; message?: string; copy?: QuestionCopy; myHeader?: MyQuestionHeaderProps };
 /** Search results show three at a time and 작품 더보기 adds three (2026-11 design feedback: the list was too long).
  * Pages still load 20 at a time; the next page is asked for only when the loaded ones run out. */
 export const RESULTS_STEP = 3;
@@ -27,7 +36,7 @@ const errorMessage = (error: unknown) => error instanceof ApiError && error.stat
   : error instanceof ApiError && error.code === "CSRF_INVALID" ? "로그인 확인 정보가 바뀌었어요. 다시 시도해 주세요."
   : "목록을 불러오지 못했어요. 연결을 확인하고 다시 시도해 주세요.";
 
-export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, chrome = false, demo, message, copy }: Props) {
+export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, chrome = false, demo, message, copy, myHeader }: Props) {
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<OnboardingWork[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -85,6 +94,7 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
   function toggle(work: OnboardingWork) { dispatch({ type: "toggle-work", work }); }
   function search(value: string) { ++request.current; controller.current?.abort(); setQuery(value); }
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
+    {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
     <QuestionProgress step={1} onBack={onBack} busy={busy} />
     {copy?.hint}
     <section className={styles.questionBody} aria-labelledby="question-heading">
@@ -171,7 +181,7 @@ export function discoveredTags<T extends { kind: string; sourceEntityIds: number
     .sort((a, b) => b.sourceEntityIds.length - a.sourceEntityIds.length).slice(0, limit);
 }
 
-export function TagsQuestion({ state, dispatch, catalog, onBack, onNext, busy, chrome = false, message, copy }: Props) {
+export function TagsQuestion({ state, dispatch, catalog, onBack, onNext, busy, chrome = false, message, copy, myHeader }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -195,6 +205,7 @@ export function TagsQuestion({ state, dispatch, catalog, onBack, onNext, busy, c
   const found = !copy && !loading && !error
     ? (["genre", "theme"] as const).map(kind => [kind, discoveredTags(state.preferenceOptions, kind)] as const).filter(([, tags]) => tags.length > 0) : [];
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
+    {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
     <QuestionProgress step={2} onBack={onBack} busy={busy} />
     {copy?.hint}
     {found.length > 0 && <section className={styles.discovered} aria-labelledby="discovered-heading">

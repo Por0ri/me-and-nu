@@ -13,6 +13,8 @@ import { ProfileEditScreen } from "./profile-edit-screen";
 import pivotStyles from "./pivot.module.css";
 
 const MY_PAGE = "/pivot/home?view=my";
+// Back from the inbox returns here (home-detail-experience reads from=profile).
+const INBOX = "/pivot/home?view=notifications&from=profile";
 
 export function ProfileEditRoute() {
   const router = useRouter();
@@ -50,7 +52,7 @@ export function ProfileEditRoute() {
       if (mounted.current) setSaving(false);
     }
   }
-  if (active && profile) return <ProfileEditScreen profile={profile} onBack={() => router.replace(MY_PAGE)} onSave={(nickname) => void save(nickname)}
+  if (active && profile) return <ProfileEditScreen profile={profile} onBack={() => router.replace(MY_PAGE)} onNotifications={() => router.push(INBOX)} onSave={(nickname) => void save(nickname)}
     onType={() => setMessage("")} saving={saving} message={message} check={checkMyNickname} />;
   if (session.status === "loading" || (active && !failed)) return <PivotFrame decorated={false}>{null}</PivotFrame>;
   return <PivotFrame>

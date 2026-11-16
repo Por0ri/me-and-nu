@@ -37,9 +37,11 @@ function loginHarness() {
     'react/jsx-runtime': require('react/jsx-runtime'),
     '@/lib/pivot/services': {
       oauthErrorMessage: () => '',
+      isRestorationSession: () => false,
       async startSnsLogin(provider) { starts.push(provider); },
     },
     './pivot-session': {usePivotSession: () => ({state:{status:'ready',session:null},refresh(){}})},
+    './account-restoration-screen': {AccountRestorationScreen:'section'},
     './pivot-ui': {PivotAsset:'img', PivotBrand:'div', PivotFrame:'main', PrimaryButton:'button'},
     './pivot.module.css': {default:{kakao:'kakao',naver:'naver'},__esModule:true},
   };

@@ -9,13 +9,14 @@ import { pendingDetailSource } from "@/lib/pivot/detail-service";
 import { isActiveSession } from "@/lib/pivot/services";
 import { Suspense, useMemo, useRef } from "react";
 import { usePivotSession } from "./pivot-session";
+import { useNotificationSource } from "./new-notice-provider";
 import { HomeDetailExperience } from "./home-detail-experience";
 import { ACTIVITY_BOUNDARY_EVENT, ACTIVITY_RESUME_EVENT, createActivityQueue } from "@/lib/pivot/activity";
 import { createReactionControls } from "@/lib/pivot/reaction-service";
 import { InteractionProvider } from "./interaction-context";
 
 export function HomeRoute() {
-  const { state, refresh, logout } = usePivotSession();
+  const { state, refresh, logout, withdraw } = usePivotSession();
   const sessionRef = useRef(state.session);
   sessionRef.current = state.status === "ready" ? state.session : null;
   const userId = state.session?.user?.id;
@@ -30,6 +31,7 @@ export function HomeRoute() {
   const activitySource = useMemo(() => createServiceActivitySource(() => sessionRef.current), [state.session]);
   const inquirySource = useMemo(() => createServiceInquirySource(() => sessionRef.current), [state.session]);
   const reportSource = useMemo(() => createServiceReportSource(() => sessionRef.current), [state.session]);
+  const notificationSource = useNotificationSource();
   const interactions = useMemo(() => {
     const activity = createActivityQueue(userId ?? 0, () => sessionRef.current);
     return { activity, reactions: createReactionControls(activity) };
@@ -50,5 +52,5 @@ export function HomeRoute() {
       {state.status === "error" && <button type="button" onClick={refresh}>다시 확인</button>}
     </main>;
   }
-  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience mySource={mySource} activitySource={activitySource} inquirySource={inquirySource} reportSource={reportSource} homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} /></InteractionProvider></Suspense>;
+  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience key={state.session?.csrfToken} skipEntryLoading={state.homeEntryPrepared} mySource={mySource} activitySource={activitySource} inquirySource={inquirySource} reportSource={reportSource} notificationSource={notificationSource} homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} onWithdraw={withdraw} /></InteractionProvider></Suspense>;
 }

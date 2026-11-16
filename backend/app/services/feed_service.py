@@ -2,11 +2,15 @@ import asyncio
 import base64
 import binascii
 from datetime import datetime, timedelta, timezone
+import logging
 import struct
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import ApiError
+from app.models import SearchLog
 from app.repositories import catalog_repository as catalog_repo
 from app.repositories import content_repository as content_repo
 from app.repositories import carousel_repository as carousel_repo
@@ -29,9 +33,12 @@ from app.schemas.feed import (
 from app.services.cursor import decode_cursor, encode_cursor
 from app.services.feed_ranking import FeedSlot, order_feed
 
+logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 # Newest public contents considered after the day's ranked list (the model ranks 100).
 LATEST_POOL = 500
+# 끝까지 본 글 (카드 마지막 장 · 본문 80% 이상)은 본 날 포함 이 날 수 동안 피드에서 뺌 (모델 service.REREAD_DAYS 와 같은 값)
+REREAD_DAYS = 14
 # Up to 100 ranked cards plus 500 latest cards. IDs are packed once, separately
 # from the JSON header, so even BIGINT IDs stay below a 7 KB query value.
 MAX_SNAPSHOT_ITEMS = 600
@@ -292,7 +299,9 @@ async def _recommended_feed(
         latest = await recommendation_repo.latest_content_ids(db, topic_id, as_of, LATEST_POOL)
         ordered = order_feed(
             ranked, latest,
-            opened=await recommendation_repo.opened_content_ids(db, tap.tap_id, as_of),
+            fully_read=await recommendation_repo.fully_read_content_ids(
+                db, tap.tap_id, _kst_day_start(as_of) - timedelta(days=REREAD_DAYS - 1), as_of,
+            ),
             negative=negative,
             shown_today=await recommendation_repo.shown_content_ids(db, tap.tap_id, _kst_day_start(as_of), as_of),
             main_work=await recommendation_repo.main_works(db, [slot.content_id for slot in ranked] + latest),
@@ -334,6 +343,16 @@ async def suggest_works(db: AsyncSession, user_id: int, topic_id: int, *, q: str
                                    works=[WorkSuggestion(entity_id=work.entity_id, name=work.name) for work in works])
 
 
+async def _log_search(db: AsyncSession, row: SearchLog) -> None:
+    """Keep the search for later analysis. A search still answers if this fails; what was searched is never logged."""
+    try:
+        db.add(row)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("검색 기록을 저장하지 못했습니다.")
+
+
 async def search_feed(
     db: AsyncSession, user_id: int, topic_id: int, *, q: str, work_id: int | None = None,
 ) -> FeedSearchResponse:
@@ -368,7 +387,14 @@ async def search_feed(
                            reason=f"‘{names[entity_id]}’ 검색 결과예요")
         if card is not None:
             cards.append(card)
-    return FeedSearchResponse(selected_topic_id=topic_id, query=query, works=[work.name for work in works], contents=cards)
+    response = FeedSearchResponse(selected_topic_id=topic_id, query=query, works=[work.name for work in works], contents=cards)
+    if query:
+        await _log_search(db, SearchLog(
+            user_id=user_id, tap_id=tap.tap_id, search_text=query,
+            picked_work_id=work_id if work_id in names else None, matched_work_ids=list(names),
+            result_count=len(cards), data_source=settings.event_data_source,
+        ))
+    return response
 
 
 async def get_feed(

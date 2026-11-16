@@ -17,6 +17,7 @@ class ActivityContentCard(CamelModel):
     summary: str | None = None
     image_url: str | None = None
     source_name: str | None = None
+    eyebrow: str | None = None
     production_type: str | None = None
     published_at: datetime | None = None
     subtopic_names: list[str] = Field(default_factory=list)

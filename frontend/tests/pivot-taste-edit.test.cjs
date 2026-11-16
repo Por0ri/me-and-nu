@@ -71,6 +71,21 @@ test('Saving sends the version 2 answers with PUT and rejects a response for ano
   await assert.rejects(other.saveMyTaste(selection),/내 취향을 확인하지 못했어요/);
 });
 
+test('Unsaved taste compares answer sets, ignores navigation/metadata/order, and clears after reverting', () => {
+  const m = setup(async () => taste), initial = m.tasteEditState(taste);
+  for (const step of ['q1', 'q2', 'q3', 'result']) {
+    assert.equal(m.hasTasteChanges({ ...initial, step, optionsKey: 'loaded', preferenceOptions: [tag(101, 'genre')] }, initial), false);
+  }
+  assert.equal(m.hasTasteChanges({ ...initial, favoriteWorks: [...initial.favoriteWorks].reverse(), preferenceTagIds: [...initial.preferenceTagIds].reverse() }, initial), false);
+  for (const change of [{ favoriteWorks: [] }, { favoriteWorks: [work(13)] }, { preferenceTagIds: [] }, { consumptionType: 'news' }, { consumptionType: null }, { topicId: 84 }]) {
+    assert.equal(m.hasTasteChanges({ ...initial, ...change }, initial), true);
+  }
+  const removed = m.tasteEditReducer(initial, { type: 'toggle-work', work: initial.favoriteWorks[0] });
+  assert.equal(m.hasTasteChanges(removed, initial), true);
+  const restored = m.tasteEditReducer(removed, { type: 'toggle-work', work: initial.favoriteWorks[0] });
+  assert.equal(m.hasTasteChanges(restored, initial), false);
+});
+
 const hints={topicId:83,enough:true,contents:6,works:[{entityId:11,name:'진격의 거인',percent:62},{entityId:12,name:'나루토',percent:20}],
   genres:[{tagId:101,name:'코미디'},{tagId:102,name:'로맨스'}],themes:[{tagId:201,name:'성장'}],
   types:[{answer:'ost',percent:42},{answer:'news',percent:20},{answer:'goods',percent:18},{answer:'events',percent:8},{answer:'world',percent:7},{answer:'relationships',percent:5}]};
@@ -144,7 +159,7 @@ test('Taste edit questions use their own words under the hints; onboarding keeps
   const bare=renderToStaticMarkup(React.createElement(QuestionScreen,{...base,copy:tasteQuestionCopy({...shownHints,enough:false}).q3}));
   assert.doesNotMatch(bare,/많이 본 콘텐츠 유형|이전 열람 성향/);
   const onboardingHtml=renderToStaticMarkup(React.createElement(QuestionScreen,base));
-  assert.match(onboardingHtml,/덕질할 때 주로 무엇을 하나요\?/);
+  assert.match(onboardingHtml,/어떤 콘텐츠를 주로 보고싶나요\?/);
   assert.doesNotMatch(onboardingHtml,/많이 본 콘텐츠 유형|더 보고싶나요/);
 });
 
@@ -171,4 +186,22 @@ test('My Page opens the taste edit from 내 피드 취향 조정하기 inside �
   const at=['내 활동','내 피드 취향 조정하기','관심분야 관리'].map(label=>box.indexOf(label));
   assert.ok(at[0]>=0 && at[0]<at[1] && at[1]<at[2], 'the three 내 정보 rows, in the design order');
   assert.ok(!html.includes('취향 수정하기') && !html.includes('연결 준비 중이에요'), 'no separate box and no pending notice');
+});
+
+test('Only MY Q1-Q3 opt into the shared logo and live bell; signup and result stay unchanged', () => {
+  const React = require('react'), { renderToStaticMarkup } = require('react-dom/server');
+  const { OnboardingFlow } = tsxLoader()('components/pivot/onboarding-screens.tsx');
+  for (const step of ['q1', 'q2', 'q3', 'result']) {
+    const props = { state: { ...onboarding.initialOnboardingState(), step }, dispatch() {}, onExit() {}, mode: 'service' };
+    const render = extra => renderToStaticMarkup(React.createElement(OnboardingFlow, { ...props, ...extra }));
+    assert.doesNotMatch(render({}), /data-my-question-header|aria-label="알림"/);
+    const my = render({ myHeader: { onNotifications() {} } });
+    if (step === 'result') assert.doesNotMatch(my, /data-my-question-header|aria-label="알림"/);
+    else {
+      assert.match(my, /data-my-question-header/); assert.match(my, /alt="me;nu" width="103"/);
+      assert.match(my, /aria-label="알림" data-notification-navigation/);
+      assert.ok(my.indexOf('data-my-question-header') < my.indexOf('aria-label="온보딩 화면 탐색"'));
+      assert.match(my, new RegExp(`aria-valuenow="${step[1]}"`));
+    }
+  }
 });

@@ -48,7 +48,7 @@ export function InterestManageRoute() {
   const state = owner && result?.owner === owner && result.attempt === attempt ? result.state : null;
   if (state?.status === "ready" || state?.status === "empty") {
     return <InterestScreen selected={state.status === "ready"} onToggle={() => {}} onNext={() => {}} busy={false}
-      manage={{ onBack: () => router.replace(MY_PAGE) }} />;
+      manage={{ onBack: () => router.replace(MY_PAGE), onNotifications: () => router.push("/pivot/home?view=notifications&from=interests") }} />;
   }
   const loading = session.status === "loading" || (!!owner && !state);
   const failed = state?.status === "error" || session.status === "error";

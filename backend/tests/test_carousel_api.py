@@ -19,7 +19,7 @@ from app.db.session import get_db
 from app.main import create_app
 from app.models import AgentRun, Content, ContentSlide, ContentSource, Draft, SavedItem, Tap, Topic, UserAccount
 from app.repositories import bookmark_repository, carousel_repository, content_repository
-from app.services import feed_service, reaction_service
+from app.services import bookmark_service, feed_service, reaction_service
 from test_fe_integration_seed import AsyncAdapter, memory_db  # noqa: F401
 from test_checking_carousel_preview_config import configure_checking
 
@@ -82,7 +82,7 @@ def carousel_db(memory_db):
                 deleted_at=now if content_id == 107 else None,
                 feed_valid_until=(None if legacy or content_id == 109 else
                                   now + timedelta(days=-1 if content_id == 102 else 1)),
-                published_at=now + timedelta(seconds=content_id),
+                published_at=now - timedelta(days=1) + timedelta(seconds=content_id),
             ))
             if content_id != 108:
                 for source_no in (1, 2):
@@ -134,6 +134,9 @@ async def test_feed_detail_keep_order_sources_full_body_and_public_fields_only(c
     try:
         feed = await feed_service.get_feed(carousel_db.db, 1, 1, subtopic_id=None, cursor=None, limit=20)
         detail = await feed_service.get_content_detail(carousel_db.db, 1, 1, 101)
+        saved = await bookmark_service.get_saved_bookmarks(
+            carousel_db.db, 1, topic_id=1, q=None, cursor=None, limit=20,
+        )
     finally:
         event.remove(carousel_db.engine, "before_cursor_execute", capture)
     body = detail.model_dump(by_alias=True)
@@ -151,6 +154,11 @@ async def test_feed_detail_keep_order_sources_full_body_and_public_fields_only(c
     assert all("image_data" not in statement for statement in statements)
     items = {item.id: item for item in feed.sections[0].contents}
     assert items[101].slides == detail.slides
+    saved_items = {item.content_id: item for item in saved.items}
+    assert list(saved_items) == [112, 111, 110, 101]
+    assert saved_items[101].eyebrow == items[101].slides[0].eyebrow == detail.slides[0].eyebrow
+    assert saved_items[112].eyebrow == items[112].slides[0].eyebrow
+    assert saved_items[110].eyebrow is None and saved_items[111].eyebrow is None
     assert len(items[112].slides) == 10
     assert items[110].slides == [] and items[110].notices == []
     assert items[111].slides == []
@@ -320,6 +328,38 @@ async def test_withdrawal_after_metadata_read_still_blocks_image_bytes(carousel_
     assert await content_repository.get_public_content(carousel_db.db, 101, 1)
     carousel_db.session.execute(update(Content).where(Content.content_id == 101).values(status="hidden"))
     assert await carousel_repository.get_slide_image(carousel_db.db, 101, 1) is None
+
+
+@pytest.mark.asyncio
+async def test_content_stays_closed_until_its_publication_time(carousel_db):
+    db, now = carousel_db.db, datetime.now(timezone.utc)
+
+    async def visible():
+        listed = await content_repository.list_public_contents(db, 1, subtopic_id=None, after=None, limit=20)
+        saved = await bookmark_repository.list_saved_bookmarks(db, 1, topic_id=1, q=None, after=None, limit=20)
+        return (101 in [item.content_id for item in listed],
+                101 in [content.content_id for _, content in saved],
+                await content_repository.get_public_content(db, 101, 1) is not None,
+                await content_repository.get_visible_content(db, 101) is not None,
+                await carousel_repository.get_slide_image(db, 101, 1) is not None)
+
+    def open_at(moment):
+        carousel_db.session.execute(update(Content).where(Content.content_id == 101).values(published_at=moment))
+
+    open_at(now + timedelta(hours=1))
+    assert await visible() == (False,) * 5
+    for operation in (reaction_service.set_like, reaction_service.set_bookmark):
+        with pytest.raises(ApiError) as exc:
+            await operation(db, 1, 1, 101)
+        assert exc.value.code == "CONTENT_NOT_FOUND"
+    with pytest.raises(ApiError) as exc:
+        await feed_service.get_content_slide_image(db, 1, 1, 101, 1)
+    assert exc.value.code == "CONTENT_NOT_FOUND"
+
+    open_at(now - timedelta(minutes=1))
+    assert await visible() == (True,) * 5
+    open_at(None)   # 공개 시각이 없는 글은 지금처럼 보인다
+    assert await visible() == (True,) * 5
 
 
 @pytest.mark.asyncio

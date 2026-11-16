@@ -19,7 +19,7 @@ function load(relative) {
   const output = ts.transpileModule(fs.readFileSync(path.join(root, relative), 'utf8'), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
-  vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, structuredClone,
+  vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, structuredClone, setTimeout, clearTimeout,
     require(name) {
       if (name === '@/lib/api') return {};
       if (name === './services') return { requirePivotApi() { throw new Error('Test origin not enabled'); } };
@@ -69,6 +69,32 @@ function renderSearch(search, query = '') {
       onPick() {}, onRemoveRecent() {}, onClearRecent() {}, ...search },
   }));
 }
+
+test('A stalled feed aborts, offers retry and ignores a late answer', async () => {
+  const pending = deferred(), states = [];
+  let calls = 0, signal;
+  const controller = createHomeRequestController({ kind: 'demo', load(options) {
+    signal = options.signal;
+    return ++calls === 1 ? pending.promise : Promise.resolve(result('retry'));
+  } }, state => states.push(state), 10);
+  const first = controller.load();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(signal.aborted, true);
+  assert.equal(states.at(-1).status, 'error');
+  await controller.load();
+  pending.resolve(result('obsolete')); await first;
+  assert.equal(states.at(-1).home.cards[0].id, 'retry');
+});
+
+test('Only service entry uses the accessible loading artwork; completed onboarding skips it', () => {
+  const service = renderToStaticMarkup(React.createElement(HomeController, { source: pendingHomeSource }));
+  assert.match(service, /data-home-entry-loading/);
+  assert.match(service, /inert="" aria-hidden="true"/);
+  assert.match(service, /취향을 불러오는 중/);
+  for (const props of [{ source: mockHomeSource }, { source: pendingHomeSource, skipEntryLoading: true }]) {
+    assert.doesNotMatch(renderToStaticMarkup(React.createElement(HomeController, props)), /data-home-entry-loading/);
+  }
+});
 
 test('Home search opens recent searches or matching works over a dimmed screen while typing', () => {
   const idle = renderSearch({});

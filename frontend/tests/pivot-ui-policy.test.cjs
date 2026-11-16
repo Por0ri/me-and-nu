@@ -49,7 +49,10 @@ test('My Page 관심분야 관리: actual subscription state, back button, no ch
     assert.match(html, selected ? />선택중</ : />미가입</);
     assert.match(html, selected ? /이미 애니메이션을 탐색중입니다/ : /가입된 애니메이션 관심 분야가 없어요\./);
     assert.doesNotMatch(html, selected ? /미가입|가입된 애니메이션 관심 분야가 없어요/ : /선택중|이미 애니메이션을 탐색중입니다/);
-    assert.doesNotMatch(html, /type="checkbox"|애니메이션 선택하고 시작하기|alt="me;nu"/);
+    assert.doesNotMatch(html, /type="checkbox"|애니메이션 선택하고 시작하기/);
+    assert.match(html, /alt="me;nu" width="103"/);
+    assert.match(html, /Little discoveries<br\/>for a more you/);
+    assert.match(html, /aria-label="알림"/);
   }
   const onboarding = renderToStaticMarkup(React.createElement(InterestScreen, { selected: true, onToggle() {}, onNext() {}, busy: false }));
   assert.match(onboarding, /선택 완료/); assert.match(onboarding, /애니메이션 선택하고 시작하기/); assert.doesNotMatch(onboarding, /뒤로가기/);

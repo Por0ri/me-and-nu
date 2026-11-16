@@ -1,3 +1,5 @@
+import type { NotificationSettingsSource } from "./notification-settings";
+
 // FE display model only. This is not an agreed server DTO or API contract.
 export type MyPageProfile = { origin: "demo" | "service"; nickname: string; maskedEmail: string };
 export type MyPageResult =
@@ -6,6 +8,7 @@ export type MyPageResult =
 export type MyPageState = MyPageResult | { status: "loading" } | { status: "error"; message: string };
 export type MyPageDataSource = {
   kind: "demo" | "service";
+  notificationSettings?: NotificationSettingsSource;
   load(options: { signal: AbortSignal }): Promise<MyPageResult>;
 };
 

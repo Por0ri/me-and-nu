@@ -11,8 +11,8 @@ import onboardingStyles from "./onboarding.module.css";
 import styles from "./profile-edit.module.css";
 
 /** 저장하기 turns on only for a changed nickname that passes the onboarding rule and duplicate check. */
-export function ProfileEditScreen({ profile, onBack, onSave, onType, saving = false, message = "", check }: {
-  profile: EditableProfile; onBack: () => void; onSave: (nickname: string) => void; onType?: () => void;
+export function ProfileEditScreen({ profile, onBack, onNotifications, onSave, onType, saving = false, message = "", check }: {
+  profile: EditableProfile; onBack: () => void; onNotifications?: () => void; onSave: (nickname: string) => void; onType?: () => void;
   saving?: boolean; message?: string; check?: NicknameCheckRequest;
 }) {
   const [typed, setTyped] = useState(profile.nickname);
@@ -23,7 +23,7 @@ export function ProfileEditScreen({ profile, onBack, onSave, onType, saving = fa
     if (ready) onSave(typed);
   }
   return <main className={`${homeStyles.screen} ${styles.screen}`} data-profile-edit="">
-    <HomeHeader title="프로필 수정" showMascot={false} onBack={onBack} />
+    <HomeHeader title="프로필 수정" showMascot={false} onBack={onBack} onNotifications={onNotifications} />
     <form className={styles.content} onSubmit={submit} noValidate>
       <h2 className={styles.title}>프로필에 표시되는 닉네임을 변경할 수 있어요</h2>
       <div className={`${onboardingStyles.profileField} ${styles.card}`}>

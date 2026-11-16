@@ -78,6 +78,10 @@ def engine():
 
 @pytest.fixture
 def raw_bundle(tmp_path):
+    return make_raw_bundle(tmp_path)
+
+
+def make_raw_bundle(tmp_path, *, pages=3):
     image = BytesIO()
     Image.new("RGB", (1308, 1632), "white").save(image, format="PNG")
     binary = image.getvalue()
@@ -86,7 +90,7 @@ def raw_bundle(tmp_path):
     assets = []
     cards = []
     box = {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}
-    for page in range(1, 4):
+    for page in range(1, pages + 1):
         (tmp_path / "cards" / f"{page}.png").write_bytes(binary)
         assets.append({"page": page, "path": f"cards/{page}.png", "sha256": digest})
         cards.append({"page": page, "role": "cover" if page == 1 else "body", "eyebrow": "소식",

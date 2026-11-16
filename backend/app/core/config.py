@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # 외부 서비스 키 (없으면 해당 기능만 꺼진다)
     tmdb_key: str | None = Field(default=None, repr=False)
     llm_key: str | None = Field(default=None, repr=False)
+    # 정보사전(RAG 사전 DB) 읽기 전용 주소. 없으면 챗봇은 우리 글로만 답한다
+    dict_database_url: str | None = Field(default=None, repr=False)
+    # 한 사람이 하루(한국 시각)에 보낼 수 있는 챗봇 질문 수. 0 이면 제한 없음
+    chat_daily_question_limit: int = Field(default=30, ge=0)
     # 활동 기록(user_event)의 출처. 실서비스 서버만 production으로 둔다
     event_data_source: Literal["production", "local_demo", "automated_test", "imported"] = "local_demo"
 

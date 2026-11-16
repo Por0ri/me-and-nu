@@ -1,24 +1,32 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { orderedHomeSlides, type HomeCardModel, type HomeDetailHandler, type HomeSlideModel, type HomeState, type HomeWorkSuggestion } from "@/lib/pivot/home";
 import type { RecentSearch } from "@/lib/pivot/recent-search";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
 import { dismissActionNotice } from "@/lib/pivot/action-notice";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { ContentCarousel } from "./content-carousel";
+import { HomeEntryImage } from "./home-entry-image";
+import { scrollHomeTo } from "./home-scroll";
 import styles from "./home.module.css";
 import { HomeAIButton } from "./home-ai-button";
+import { HomeAIChat } from "./home-ai-chat";
+import chatStyles from "./chat.module.css";
 import { useHomeExposure, useInteractions } from "./interaction-context";
 
 type HomeNotice = { message: string; postId?: string };
 
-export function HomeHeader({ title = "홈", showMascot = true, onNotice, onBack }: {
-  title?: string; showMascot?: boolean; onNotice?: (message: string) => void;
+/** Whether an unread notification arrived today; every screen's header bell shows the same dot. */
+export const NewNoticeContext = createContext(false);
+
+export function HomeHeader({ title = "홈", showMascot = true, showNotification = true, onNotice, onBack, onNotifications }: {
+  title?: string; showMascot?: boolean; showNotification?: boolean; onNotice?: (message: string) => void; onNotifications?: () => void;
   /** A round back button before the logo (My Page sub-pages such as 프로필 수정, 2026-11 design). */
   onBack?: () => void;
 } = {}) {
   const [notice, setNotice] = useState("");
+  const hasNewNotice = useContext(NewNoticeContext);
   return <header className={styles.header} data-home-header="">
     <p className={styles.brand}>
       {onBack ? <button type="button" className={styles.headerBack} aria-label="뒤로가기" onClick={onBack}>
@@ -29,20 +37,26 @@ export function HomeHeader({ title = "홈", showMascot = true, onNotice, onBack 
     </p>
     <h1 className={styles.srOnly} tabIndex={-1}>{title}</h1>
     {showMascot ? <div className={styles.headerMascot} aria-hidden="true"><img src="/pivot/home/chrome/mascot.png" alt="" /></div> : null}
-    <button type="button" className={styles.notification} aria-label="알림" aria-disabled="true"
-      onClick={() => (onNotice ?? setNotice)("알림 기능은 준비 중이에요.")}><img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} /></button>
+    {showNotification ? <button type="button" className={styles.notification} aria-label="알림" aria-description={hasNewNotice ? "오늘 온 새 알림이 있어요" : undefined} aria-disabled={!onNotifications || undefined} data-notification-navigation=""
+      onClick={onNotifications ?? (() => (onNotice ?? setNotice)("알림 기능은 준비 중이에요."))}><img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} />{hasNewNotice ? <span className={styles.notificationDot} aria-hidden="true" data-new-notice="" /> : null}</button> : null}
     {notice ? <p className={styles.pendingNotice} role="status">{notice}</p> : null}
   </header>;
 }
 
-export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI = false, adjacentAI = !hideAI, compact = false, onNotice }: {
+export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI = false, adjacentAI = !hideAI, compact = false, onNotice, chat = false, onViewDetail }: {
   onHome?: () => void; onMy?: () => void; onSaved?: () => void; active?: "home" | "my" | "saved"; hideAI?: boolean;
   /** Reserve the adjacent AI area, including Detail's separately rendered AI. */
   adjacentAI?: boolean;
   /** Detail's expanded AI covers an inert, 40px navigation bar. */
   compact?: boolean;
   onNotice?: (message: string) => void;
+  /** 서비스 홈: AI 버튼이 대화를 연다. 시연 화면은 기존 준비 중 안내를 그대로 둔다. */
+  chat?: boolean;
+  /** AI 대화 속 글 카드를 누르면 여는 상세 */
+  onViewDetail?: HomeDetailHandler;
 } = {}) {
+  const [aiExpanded, setAiExpanded] = useState(false);
+  const aiOpen = chat && !hideAI && aiExpanded;
   const [localNotice, setLocalNotice] = useState({ message: "" });
   const notice = localNotice.message;
   function setNotice(message: string) { setLocalNotice({ message }); }
@@ -52,15 +66,18 @@ export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI 
       setLocalNotice(current => current === localNotice ? { message: "" } : current);
     });
   }, [localNotice, onNotice]);
-  return <div className={styles.bottomBar} data-adjacent-ai={adjacentAI || undefined} data-compact={compact || undefined}>
-    <nav aria-label="주요 메뉴" className={styles.navigation}>
-      <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } window.scrollTo({ top: 0, behavior: "instant" }); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
+  // AI 바가 펼쳐지면 같은 높이(48px)의 바가 메뉴 알약 자리를 덮고, 메뉴는 흐려지며 누를 수 없게 된다.
+  return <div className={chat && !hideAI ? `${styles.bottomBar} ${chatStyles.navFade}` : styles.bottomBar} data-adjacent-ai={adjacentAI || undefined}
+    data-compact={compact || undefined} data-ai-open={aiOpen || undefined}>
+    <nav aria-label="주요 메뉴" className={styles.navigation} inert={aiOpen || undefined}>
+      <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } scrollHomeTo(0); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
       <button type="button" data-saved-navigation="" aria-current={active === "saved" ? "page" : undefined}
         aria-disabled={!onSaved && active !== "saved" || undefined} onClick={() => { if (active === "saved") { onSaved?.(); return; } if (onSaved) onSaved(); else (onNotice ?? setNotice)("SAVE 화면은 준비 중이에요. 저장은 수행하지 않아요."); }}><span>SAVE</span></button>
       <button type="button" data-my-navigation="" aria-current={active === "my" ? "page" : undefined}
         aria-disabled={!onMy && active !== "my" || undefined} onClick={() => { if (active === "my") { onMy?.(); return; } if (onMy) onMy(); else (onNotice ?? setNotice)("MY 화면은 준비 중이에요."); }}><span>MY</span></button>
     </nav>
-    {!hideAI ? <HomeAIButton onNotice={onNotice ?? setNotice} /> : null}
+    {hideAI ? null : chat ? <HomeAIChat expanded={aiExpanded} onExpandedChange={setAiExpanded} onViewDetail={onViewDetail} />
+      : <HomeAIButton onNotice={onNotice ?? setNotice} />}
     {notice ? <p className={styles.pendingNotice} role="status">{notice}</p> : null}
   </div>;
 }
@@ -167,12 +184,13 @@ function HomeSlideImage({ image }: { image: HomeSlideModel["image"] }) {
   return image?.src && !failed
     ? <img className={styles.cardImage} src={image.src} alt={image.alt} loading="lazy" draggable={false}
         width={327} height={408} onError={() => setFailed(true)} />
-    : <div className={styles.imagePlaceholder} role="img" aria-label="이미지 준비 중">이미지 준비 중</div>;
+    : <div className={styles.imagePlaceholder} role="img" data-home-image-state={failed ? "error" : "missing"} aria-label="이미지 준비 중">이미지 준비 중</div>;
 }
 
-export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice, impressions = true }: {
+export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice, impressions = true, onFirstImageReady }: {
   card: HomeCardModel; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: BookmarkControls;
   notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void; impressions?: boolean;
+  onFirstImageReady?: () => void;
 }) {
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
@@ -241,7 +259,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
       {demo ? <p className={styles.exampleLabel}>시연용 콘텐츠</p> : null}
       <h3 id={`${id}-title`}>{card.title}</h3>
     </div>
-    {serviceCarousel ? <ContentCarousel key={card.id} slides={slides} title={card.title} labelledBy={`${id}-title`} scope="home" onSlideChange={recordSlide} /> : slides.length ? <>
+    {serviceCarousel ? <ContentCarousel key={card.id} slides={slides} title={card.title} labelledBy={`${id}-title`} scope="home" onSlideChange={recordSlide} onFirstImageReady={onFirstImageReady} /> : slides.length ? <>
       <div className={styles.carousel} role="region" aria-roledescription="캐러셀" aria-labelledby={`${id}-title`}>
         <div id={`${id}-track`} ref={track} className={styles.slideTrack} tabIndex={0} data-home-track=""
           aria-label="좌우로 슬라이드 탐색" aria-describedby={`${id}-help`}
@@ -259,7 +277,9 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
           {slides.map((slide, index) => <div key={slide.id} className={styles.slide} role="group"
             aria-roledescription="슬라이드" aria-label={`${index + 1} / ${slides.length}`} data-home-slide={slide.id}>
             <figure>
-              <HomeSlideImage key={slide.image?.src ?? "missing"} image={slide.image} />
+              <HomeEntryImage onReady={index === 0 ? onFirstImageReady : undefined}>
+                <HomeSlideImage key={slide.image?.src ?? "missing"} image={slide.image} />
+              </HomeEntryImage>
               <figcaption className={slide.image ? styles.srOnly : styles.summary}>{slide.description}</figcaption>
             </figure>
           </div>)}
@@ -311,13 +331,14 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
   </article>;
 }
 
-export function HomeFeed({ cards, demo, onViewDetail, bookmarks, notice, onNotice, label = "콘텐츠 피드", impressions = true }: {
+export function HomeFeed({ cards, demo, onViewDetail, bookmarks, notice, onNotice, label = "콘텐츠 피드", impressions = true, onFirstImageReady }: {
   cards: readonly HomeCardModel[]; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: BookmarkControls;
   notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void; label?: string; impressions?: boolean;
+  onFirstImageReady?: () => void;
 }) {
   return <section aria-label={label} className={styles.feed}>
     <h2 className={styles.srOnly}>{label}</h2>
-    <ul>{cards.map((card) => <li key={card.id}><HomeCard card={card} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={onNotice} impressions={impressions} /></li>)}</ul>
+    <ul>{cards.map((card, index) => <li key={card.id}><HomeCard card={card} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={onNotice} impressions={impressions} onFirstImageReady={index === 0 ? onFirstImageReady : undefined} /></li>)}</ul>
   </section>;
 }
 
@@ -330,7 +351,7 @@ export function HomeStatus({ state, onRetry }: { state: Exclude<HomeState, { sta
   </section>;
 }
 
-export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onRestart, onViewDetail, onMy, onSaved, bookmarks }: {
+export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onRestart, onViewDetail, onMy, onSaved, onNotifications, bookmarks, onFirstImageReady, preparing = false }: {
   state: HomeState;
   demo: boolean;
   query: string;
@@ -344,7 +365,10 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
   onViewDetail?: HomeDetailHandler;
   onMy?: () => void;
   onSaved?: () => void;
+  onNotifications?: () => void;
   bookmarks?: BookmarkControls;
+  onFirstImageReady?: () => void;
+  preparing?: boolean;
 }) {
   // Keep only the latest feedback, at its existing screen or card location.
   const [notice, setNotice] = useState<HomeNotice>({ message: "" });
@@ -355,14 +379,16 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
   }, [notice]);
   function pending(message: string) { setNotice({ message }); }
   const result = search?.result ?? null;
-  return <main className={styles.screen} data-home-state={state.status} data-search-open={search?.open || undefined} aria-busy={state.status === "loading"}>
-    <HomeHeader onNotice={pending} />
+  return <main className={styles.screen} data-home-state={state.status} data-home-demo={demo || undefined} data-search-open={search?.open || undefined} aria-busy={state.status === "loading"}>
+    <div className={styles.stickyHeader} data-home-sticky-header="">
+      <HomeHeader onNotice={pending} onNotifications={onNotifications} />
+      <WorkSearchField value={query} onChange={onQueryChange} onSubmit={onSearch} notice={searchNotice} onNoticeEnd={onSearchNoticeEnd}
+        search={search} active={!!search?.open} />
+    </div>
     {demo ? <aside className={styles.demoNotice} aria-label="시연용 피드 안내">
       <strong>시연용 예시 피드</strong>
       <p>실제 추천 결과가 아니에요. 선택한 답변과 관계없이 같은 예시를 보여드려요.</p>
     </aside> : null}
-    <WorkSearchField value={query} onChange={onQueryChange} onSubmit={onSearch} notice={searchNotice} onNoticeEnd={onSearchNoticeEnd}
-      search={search} active={!!search?.open} />
     {search?.open ? <button type="button" className={styles.searchDim} aria-label="검색 닫기" tabIndex={-1} onClick={search.onBack} /> : null}
     {result && search ? <section aria-labelledby="home-search-results">
       <div className={styles.resultsHeader}>
@@ -373,9 +399,9 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
         ? <HomeFeed cards={result.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} label="검색 결과 글" impressions={false} />
         : <SearchEmpty label={result.label} />}
     </section>
-      : state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} /> : <HomeStatus state={state} onRetry={onRetry} />}
+      : state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} onFirstImageReady={onFirstImageReady} impressions={!preparing} /> : <HomeStatus state={state} onRetry={onRetry} />}
     {demo && onRestart ? <footer className={styles.footer}><button type="button" onClick={onRestart} className={styles.button}>처음부터 시연</button></footer> : null}
-    <HomeNavigation onMy={onMy} onSaved={onSaved} onNotice={pending} />
+    <HomeNavigation onMy={onMy} onSaved={onSaved} onNotice={pending} chat={!demo} onViewDetail={onViewDetail} />
     {notice.message && !notice.postId ? <p className={styles.pendingNotice} role="status">{notice.message}</p> : null}
   </main>;
 }

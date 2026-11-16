@@ -1,17 +1,19 @@
 // Reuse an installed Playwright + Edge. No package installation or backend calls.
-// Optional fourth argument "before" records the unfixed layout without changing it.
+// Optional fourth argument "before" records the layout, or "ai" checks AI scroll stability.
 const fs = require('node:fs');
+const { installPageScroll } = require('./helpers/pivot-page-scroll.cjs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.PIVOT_PLAYWRIGHT_MODULE || 'playwright');
 const base = process.argv[2] || 'http://127.0.0.1:3104';
 const out = process.argv[3] || path.join(require('node:os').tmpdir(), 'pivot-home-hit-area');
 const beforeFix = process.argv[4] === 'before';
+const aiOnly = process.argv[4] === 'ai';
 const near = (actual, expected, label) => assert.ok(Math.abs(actual - expected) <= 1, label + ': ' + actual + ' / ' + expected);
 fs.mkdirSync(out, { recursive: true });
 const results = [];
 const home = page => page.locator('[data-home-state="ready"]');
-const snapshot = page => page.evaluate(() => ({ y: scrollY,
+const snapshot = page => page.evaluate(() => ({ y: window.pivotScrollRoot().scrollTop,
   query: document.querySelector('[data-home-state] input')?.value,
   tracks: [...document.querySelectorAll('[data-home-track]')].map(e => Math.round(e.scrollLeft / e.clientWidth)) }));
 async function homeReady(page) {
@@ -20,7 +22,7 @@ async function homeReady(page) {
 }
 async function restored(page, expected) {
   await homeReady(page);
-  await page.waitForFunction(s => Math.abs(scrollY - s.y) < 1
+  await page.waitForFunction(s => Math.abs(window.pivotScrollRoot().scrollTop - s.y) < 1
     && document.querySelector('[data-home-state] input').value === s.query
     && [...document.querySelectorAll('[data-home-track]')].every((e, i) => Math.round(e.scrollLeft / e.clientWidth) === s.tracks[i]), expected);
   assert.deepEqual(await snapshot(page), expected);
@@ -33,7 +35,7 @@ async function savedReady(page) {
   await page.locator('[data-saved-state="ready"]').waitFor({ state: 'visible' });
 }
 async function position(track) {
-  return track.evaluate(e => ({ x: e.scrollLeft, width: e.clientWidth, index: Math.round(e.scrollLeft / e.clientWidth), y: scrollY }));
+  return track.evaluate(e => ({ x: e.scrollLeft, width: e.clientWidth, index: Math.round(e.scrollLeft / e.clientWidth), y: window.pivotScrollRoot().scrollTop }));
 }
 async function settled(page, track) {
   let last, stable = 0;
@@ -98,7 +100,7 @@ async function geometry(post) {
       document.querySelector('[aria-label="시연용 데모 안내"]')].filter(Boolean).map(e => ({
         label: e.getAttribute('aria-label'), rect: rect(e), pointerEvents: getComputedStyle(e).pointerEvents,
         zIndex: getComputedStyle(e).zIndex }));
-    return { card, scrollY, controls, overlaps, points, probes, visual, chrome };
+    return { card, scrollY: window.pivotScrollRoot().scrollTop, controls, overlaps, points, probes, visual, chrome };
   });
 }
 async function toggleAt(page, button, point) {
@@ -114,7 +116,7 @@ async function toggleAt(page, button, point) {
 }
 async function swipe(page, cdp, track, dx, dy) {
   const b = await track.boundingBox();
-  const x = b.x + b.width / 2 - dx / 2, y = b.y + b.height / 2 - dy / 2;
+  const x = b.x + b.width / 2 - dx / 2 - 4, y = b.y + b.height / 2 - dy / 2;
   assert.ok(y > 44 && y + dy > 44 && y < page.viewportSize().height - 64 && y + dy < page.viewportSize().height - 64);
   assert.ok(await track.evaluate((e, p) => e.contains(document.elementFromPoint(p.x, p.y)), { x, y }), 'Touch starts on the slide, outside controls');
   const points = (px, py) => [{ x: px, y: py, id: 1, radiusX: 2, radiusY: 2, force: 1 }];
@@ -144,13 +146,159 @@ async function touchChecks(page, post, cdp) {
   assert.ok(diagonalX.index > 0); assert.ok(Math.abs(diagonalX.y - diagonalXStart.y) < 10);
   return { start, horizontal, verticalStart, vertical, diagonalStart, diagonal, diagonalXStart, diagonalX };
 }
+async function aiChecks(page, posts, cdp) {
+  const { width, height } = page.viewportSize();
+  const mobile = width < 600;
+  const post = posts.last(), detail = post.locator('[data-home-detail]');
+  const ai = home(page).locator('[data-home-ai]');
+  const nav = home(page).getByRole('navigation', { name: '주요 메뉴' });
+  const state = () => ai.evaluate(e => {
+    const rect = e.getBoundingClientRect(), nav = e.parentElement.querySelector('nav');
+    const main = e.closest('main'), port = main.getBoundingClientRect();
+    const clipped = getComputedStyle(main).overflowY === 'auto';
+    const cards = [...main.querySelectorAll('[data-home-post]')];
+    const controls = [nav, ...cards.flatMap(card => [...card.querySelectorAll('button')])];
+    const underAI = controls.filter(target => {
+      const css = getComputedStyle(target), box = target.getBoundingClientRect().toJSON();
+      if (clipped && target !== nav) { box.top = Math.max(box.top, port.top); box.bottom = Math.min(box.bottom, port.bottom); }
+      return css.pointerEvents !== 'none' && css.visibility === 'visible' && Number(css.opacity) > 0 &&
+        box.width && box.bottom > box.top && rect.left < box.right && rect.right > box.left && rect.top < box.bottom && rect.bottom > box.top;
+    }).map(e => e.getAttribute('aria-label'));
+    const hit = (target, x, y) => target.contains(document.elementFromPoint(x, y));
+    return { x: rect.x, y: rect.y, bottom: rect.bottom, right: rect.right, underAI, scrollY: window.pivotScrollRoot().scrollTop,
+      aiHits: [[24, 24], [1, 24], [47, 24], [24, 1], [24, 47]].map(([x, y]) => hit(e, rect.x + x, rect.y + y)),
+      navHits: [...nav.querySelectorAll('button')].map(button => { const b = button.getBoundingClientRect(); return hit(button, b.x + b.width / 2, b.y + b.height / 2); }),
+      cardRight: Math.max(...cards.map(card => card.getBoundingClientRect().right)), cardWidth: cards[0].getBoundingClientRect().width,
+      port: port.toJSON(), nav: nav.getBoundingClientRect().toJSON(),
+      width: rect.width, height: rect.height, animations: e.getAnimations().length };
+  });
+  const offset = ({ x, y }) => [x, y];
+  const scrollToDepth = depth => detail.evaluate(async (target, depth) => {
+    const main = target.closest('main');
+    const edge = main.querySelector('nav').getBoundingClientRect().top;
+    window.pivotScrollRoot().scrollTo({ top: window.pivotScrollRoot().scrollTop + target.getBoundingClientRect().bottom - edge - depth, behavior: 'instant' });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return target.getBoundingClientRect().bottom - edge;
+  }, depth);
+  const checkAnchor = async ({ bottom = 0, right = 0, left = 0 } = {}) => {
+    const measured = await state();
+    assert.deepEqual([measured.width, measured.height], [48, 48]);
+    near(measured.bottom, height - Math.max(12, bottom), 'AI safe-area bottom');
+    near(measured.cardWidth, Math.min(width, 430) - 48, 'Original Figma card width');
+    near(measured.port.bottom, height, 'Feed extends to the viewport bottom beneath the dock');
+    near(measured.x, width / 2 + Math.min(307, width - 68) / 2 - 48, 'AI matches the collapsed Detail dock');
+    near(measured.x - measured.nav.right, width <= 340 ? 8 : 5.5, 'NAV and AI have disjoint targets');
+    near(measured.y, measured.nav.top, 'AI aligns with NAV');
+    assert.ok(measured.right <= width - Math.max(8, right) + 1);
+    assert.ok(measured.nav.left >= left - 1, 'NAV clears the left safe area');
+    assert.ok(measured.aiHits.every(Boolean), 'AI stays clickable over passing cards');
+    assert.ok(measured.navHits.every(Boolean), 'NAV stays clickable over passing cards');
+    assert.equal(measured.animations, 0);
+    return measured;
+  };
+  await settled(page, post.locator('[data-home-track]'));
+  const overlay = await nav.evaluate(el => {
+    const n = el.getBoundingClientRect(), a = el.parentElement.querySelector('[data-home-ai]').getBoundingClientRect();
+    const x = n.x + n.width / 2, y = n.y + n.height / 2, main = el.closest('main');
+    const card = [...main.querySelectorAll('[data-home-post]')].find(card => { const r = card.getBoundingClientRect(); return r.top < y && r.bottom > innerHeight; });
+    const css = getComputedStyle(el);
+    return { background: css.backgroundColor, blur: css.backdropFilter, opacity: css.opacity,
+      wrapperEvents: getComputedStyle(el.parentElement).pointerEvents,
+      contentBehindNAV: !!card && document.elementsFromPoint(x, y).some(node => card.contains(node)),
+      gapPassesThrough: !!card && card.contains(document.elementFromPoint((n.right + a.left) / 2, y)),
+      bottomPassesThrough: !!card && card.contains(document.elementFromPoint(x, innerHeight - 2)) };
+  });
+  assert.equal(overlay.background, 'rgba(255, 255, 255, 0.64)');
+  assert.equal(overlay.blur, 'blur(9px)'); assert.equal(overlay.opacity, '1');
+  assert.equal(overlay.wrapperEvents, 'none');
+  assert.ok(overlay.contentBehindNAV && overlay.gapPassesThrough && overlay.bottomPassesThrough, 'Visible feed receives input outside NAV/AI targets');
+  const checkScroll = async insets => {
+    const initial = await checkAnchor(insets);
+    const samples = [];
+    for (const depth of [-8, 8, 44, 100, 160, 100, 6, -8]) {
+      near(await scrollToDepth(depth), depth, 'Card buttons pass the dock vertically');
+      const measured = await checkAnchor(insets);
+      assert.deepEqual(offset(measured), offset(initial), `AI stays fixed at depth ${depth}`);
+      const sample = { depth, scrollY: measured.scrollY, x: measured.x, y: measured.y, underAI: measured.underAI };
+      if (depth === -8) {
+        const atDock = await detail.evaluate(target => {
+          const { x, y, width, height } = target.getBoundingClientRect();
+          return { x, right: x + width, hit: target.contains(document.elementFromPoint(x + width / 2, y + height / 2)) };
+        });
+        assert.ok(atDock.hit, 'Detail center remains clickable as it passes NAV');
+        sample.dockClearance = -depth;
+      }
+      samples.push(sample);
+    }
+    assert.ok(new Set(samples.map(sample => sample.scrollY)).size >= 6);
+    assert.ok(samples.some(sample => sample.underAI.length), 'Cards actually pass behind the fixed AI');
+    await page.waitForTimeout(230);
+    assert.deepEqual(offset(await checkAnchor(insets)), offset(initial), 'Scroll settling never moves AI');
+    return samples;
+  };
+  const scroll = await checkScroll();
+  await home(page).evaluate(el => el.scrollTo({ top: el.scrollHeight, behavior: 'instant' }));
+  const lastCard = await post.boundingBox(), port = await home(page).boundingBox(), dock = await nav.boundingBox();
+  assert.ok(lastCard.y >= port.y && lastCard.y + lastCard.height <= dock.y - 24, 'Last card fits fully above the dock at the scroll end');
+
+  const measured = await geometry(post);
+  const tap = async (label, points) => {
+    assert.ok(points.every(point => point.target), `${label} center, edge and corner hit targets`);
+    const { x, y } = points[0];
+    if (mobile) await page.touchscreen.tap(x, y);
+    else await page.mouse.click(x, y);
+  };
+  await tap('좋아요', measured.probes['좋아요']);
+  await post.getByRole('status').filter({ hasText: '좋아요 기능은 준비 중' }).waitFor();
+  const bookmark = post.locator('[data-demo-bookmark]');
+  assert.ok(measured.points.every(p => p.bookmark), 'Save retains its center, edge and corner hit targets');
+  await toggleAt(page, bookmark, measured.points[0]);
+  const expected = await snapshot(page);
+  await tap('Detail', measured.probes[await detail.getAttribute('aria-label')]);
+  await detailReady(page);
+  await page.locator('[data-detail-state]').getByRole('button', { name: '뒤로가기', exact: true }).click();
+  await restored(page, expected);
+
+  await settled(page, post.locator('[data-home-track]'));
+  const insets = { bottom: 34, right: 16, left: 16 };
+  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets });
+  await page.waitForFunction(h => document.querySelector('[data-home-ai]').getBoundingClientRect().bottom === h - 34, height);
+  const safeArea = await checkScroll(insets);
+  await nav.getByRole('button', { name: 'MY', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  assert.ok(await ai.evaluate(e => e === document.activeElement), 'Tab reaches AI from NAV');
+  await page.keyboard.press('Enter');
+  await home(page).getByRole('status').filter({ hasText: 'AI 콘텐츠 탐색은 준비 중이에요.' }).waitFor();
+  const activate = button => mobile ? button.tap() : button.click();
+  await activate(nav.getByRole('button', { name: 'SAVE', exact: true })); await savedReady(page);
+  await activate(page.locator('[data-saved-state]').getByRole('button', { name: 'HOME', exact: true })); await homeReady(page);
+  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: {} });
+  if (mobile) return { overlay, lastCard, scroll, safeArea, touch: await touchChecks(page, posts.first(), cdp) };
+  const first = posts.first(), track = first.locator('[data-home-track]');
+  await track.focus();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowRight');
+  assert.equal((await settled(page, track)).index, 1, 'Desktop keyboard moves the horizontal carousel');
+  const wheelStart = await home(page).evaluate(el => el.scrollTop), box = await track.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 200);
+  await page.waitForFunction(y => document.querySelector('[data-home-state]').scrollTop > y + 100, wheelStart);
+  return { overlay, lastCard, scroll, safeArea, wheelScroll: await home(page).evaluate(el => el.scrollTop) };
+}
 (async () => {
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
   try {
-    for (const viewport of [{ width: 320, height: 568 }, { width: 360, height: 800 }, { width: 375, height: 812 }, { width: 390, height: 844 }]) {
+    const viewports = [{ width: 320, height: 568 }, { width: 375, height: 812 }, { width: 390, height: 844 }];
+    viewports.push(aiOnly ? { width: 1280, height: 900 } : { width: 360, height: 800 });
+    if (aiOnly) viewports.push({ width: 1440, height: 1000 });
+    for (const viewport of viewports) {
+      if (process.env.PIVOT_VIEWPORT_WIDTH && viewport.width !== Number(process.env.PIVOT_VIEWPORT_WIDTH)) continue;
+      const mobile = viewport.width < 600;
       for (const reducedMotion of ['no-preference', 'reduce']) {
+        if (process.env.PIVOT_REDUCED_MOTION && reducedMotion !== process.env.PIVOT_REDUCED_MOTION) continue;
         const name = `${viewport.width}-${reducedMotion}`;
-        const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, reducedMotion, serviceWorkers: 'block' });
+        const context = await browser.newContext({ viewport, isMobile: mobile, hasTouch: mobile, reducedMotion, serviceWorkers: 'block' });
+        await installPageScroll(context);
         const page = await context.newPage(); page.setDefaultTimeout(8000);
         const api = [], external = [], errors = [], evidence = { name, viewport, reducedMotion, browser: browser.version(), cards: [] };
         await context.route('**/*', async route => {
@@ -163,13 +311,21 @@ async function touchChecks(page, post, cdp) {
         page.on('pageerror', e => errors.push(e.message));
         page.on('console', e => { if (e.type() === 'error') errors.push(e.text()); });
         try {
-          await page.goto(base + '/pivot/demo?view=home'); await homeReady(page);
+          await page.goto(base + '/pivot/demo?view=home', aiOnly ? { timeout: 30000 } : {}); await homeReady(page);
           await page.waitForFunction(() => document.activeElement === document.querySelector('[data-home-state] h1'));
           const posts = home(page).locator('[data-home-post]');
+          if (aiOnly) {
+            await page.screenshot({ path: path.join(out, name + '.png'), timeout: 30000 });
+            evidence.ai = await aiChecks(page, posts, await context.newCDPSession(page));
+            assert.deepEqual({ api, external, errors }, { api: [], external: [], errors: [] });
+            results.push({ ...evidence, status: 'pass' });
+            console.log(`PASS HOME AI ${name}`);
+            continue;
+          }
           const initialStorage = await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage }, cookie: document.cookie }));
           for (const index of [0, 1]) {
             const post = posts.nth(index), bookmark = post.locator('[data-demo-bookmark]');
-            await page.evaluate(y => scrollTo({ top: y, behavior: 'instant' }), index ? 554 : 0);
+            await page.evaluate(y => window.pivotScrollRoot().scrollTo({ top: y, behavior: 'instant' }), index ? 554 : 0);
             await settled(page, post.locator('[data-home-track]'));
             const measured = await geometry(post); evidence.cards.push({ index, ...measured });
             if (index === 0) await page.screenshot({ path: path.join(out, name + '.png'), style: 'nextjs-portal { visibility: hidden !important; }' });
@@ -185,9 +341,9 @@ async function touchChecks(page, post, cdp) {
             near(measured.card.bottom - measured.visual.detail.bottom, 12, 'Detail face bottom inset');
             if (viewport.width === 375) {
               near(measured.card.width, 327, 'Figma card width'); near(measured.card.height, 408, 'Figma card height');
-              near(measured.visual.reactionStart, 262, 'Figma reactions start');
-              near(measured.visual.reactionEnd, 360, 'Figma reactions end');
-              near(measured.visual.detailStart, 372, 'Figma Detail start');
+              near(measured.card.height - measured.visual.reactionStart, 146, 'Reaction stack top reserve');
+              near(measured.card.height - measured.visual.reactionEnd, 48, 'Reaction stack bottom inset');
+              near(measured.card.height - measured.visual.detailStart, 36, 'Detail face top inset');
               assert.ok(Math.abs(measured.visual.gap - 12) < .1, 'Figma visual gap remains 12px');
             }
             assert.ok(measured.points.every(p => p.bookmark), 'Bookmark center, edges and corners must hit the bookmark');
@@ -242,7 +398,7 @@ async function touchChecks(page, post, cdp) {
           if (!beforeFix) {
             await home(page).getByRole('searchbox').fill('Home hit area regression');
             const post = posts.nth(1), bookmark = post.locator('[data-demo-bookmark]');
-            await page.evaluate(() => scrollTo({ top: 554, behavior: 'instant' }));
+            await page.evaluate(() => window.pivotScrollRoot().scrollTo({ top: 554, behavior: 'instant' }));
             const state = await snapshot(page), contentId = await bookmark.getAttribute('data-demo-bookmark');
             await toggleAt(page, bookmark); assert.equal(await bookmark.getAttribute('aria-pressed'), 'false');
             await home(page).getByRole('button', { name: 'SAVE', exact: true }).click(); await savedReady(page);
@@ -284,7 +440,7 @@ async function touchChecks(page, post, cdp) {
             evidence.overlayProbes = [];
             for (const [index, targetY] of [[0, 20], [1, viewport.height - 40], [1, viewport.height / 2]]) {
               const probe = posts.nth(index).locator('[data-demo-bookmark]');
-              await probe.evaluate((e, y) => { const r = e.getBoundingClientRect(); scrollTo({ top: scrollY + r.y + r.height / 2 - y, behavior: 'instant' }); }, targetY);
+              await probe.evaluate((e, y) => { const r = e.getBoundingClientRect(); window.pivotScrollRoot().scrollTo({ top: window.pivotScrollRoot().scrollTop + r.y + r.height / 2 - y, behavior: 'instant' }); }, targetY);
               const measured = await geometry(posts.nth(index));
               evidence.overlayProbes.push({ index, targetY, center: measured.points[0], scrollY: measured.scrollY });
               if (targetY === viewport.height / 2) {

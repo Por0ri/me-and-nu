@@ -264,7 +264,36 @@ def _process_generation(repository: AgentRepository, job: PipelineJob) -> Pipeli
             )
         elif content_type == "goods" and temporal.get("availability_status"):
             source_id = updated_package.sources[0].id if updated_package.sources else "source"
-            if not any(
+            release_text = str(temporal.get("release_text") or "").strip()
+            if (
+                temporal.get("availability_status") == "upcoming_release"
+                and temporal.get("release_precision")
+                and release_text
+            ):
+                if not any(
+                    fact.fact_type == "product_availability"
+                    and fact.details.get("evidence_kind") == "source_release_window"
+                    and fact.details.get("source_quote") == release_text
+                    for fact in updated_package.facts
+                ):
+                    updated_package.facts.append(
+                        Fact(
+                            id=f"{request_id}-upcoming-release-period",
+                            statement=release_text,
+                            source_ids=[source_id],
+                            verified=False,
+                            time_sensitive=True,
+                            fact_type="product_availability",
+                            details={
+                                "availability_status": "upcoming_release",
+                                "release_precision": str(temporal["release_precision"]),
+                                "release_text": release_text,
+                                "source_quote": release_text,
+                                "evidence_kind": "source_release_window",
+                            },
+                        )
+                    )
+            elif not any(
                 fact.fact_type == "availability_status"
                 for fact in updated_package.facts
             ):
