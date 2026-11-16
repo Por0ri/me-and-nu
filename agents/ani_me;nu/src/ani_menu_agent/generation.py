@@ -440,6 +440,12 @@ def generate_copy_deck(
                 "scope. Do not add evaluative details (such as memorable music) unless the "
                 "source says so."
             ),
+            "release_date_precision": (
+                "Preserve source release precision and uncertainty: a month or early/mid/late "
+                "month stays a period, with planned/around wording retained. Never convert it "
+                "to an exact release day or sales deadline. Internal comparison window bounds "
+                "are not publisher-announced dates and must not appear as such in copy."
+            ),
             "creative_variety": (
                 "Write freely in the anime-fan friend's voice. The cover_mode and ending_mode "
                 "fields describe the resulting copy; they do not restrict which fandom expression, "

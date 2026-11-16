@@ -70,7 +70,7 @@ def writes(monkeypatch):
     monkeypatch.setattr(
         reviewer, "AgentRepository",
         lambda: SimpleNamespace(
-            persist_generated_content=lambda _package, status, report: persisted.append(
+            persist_generated_content=lambda _package, status, report, *, usage_records=None: persisted.append(
                 (status, report)
             ),
         ),
@@ -140,10 +140,22 @@ def test_incomplete_fixture_review_still_cannot_write_or_enter_live_routes(
     assert writes == []
 
 
-def test_unverified_fact_returns_before_llm_and_cannot_publish(package, writes):
+def test_unverified_fact_alone_still_requires_independent_review(package, writes):
     package["facts"][0]["verified"] = False
     result = reviewer.review_content({"package": package, "trace": []})
-    assert "FACT_UNVERIFIED" in result["quality_report"]["hard_blockers"]
+    # Checking records verification confidence for the independent reviewer;
+    # the flag alone no longer sends an otherwise sourced draft to the crawler.
+    assert "FACT_UNVERIFIED" not in result["quality_report"]["hard_blockers"]
+    assert result["status"] == "review_api_required"
+    assert result["editorial_decision"] == "review_required"
+    assert nodes.route_review(result) == "end"
+    assert [status for status, _report in writes] == ["review_api_required"]
+
+
+def test_missing_fact_source_returns_before_llm_and_cannot_publish(package, writes):
+    package["facts"][0]["source_ids"] = ["missing-source"]
+    result = reviewer.review_content({"package": package, "trace": []})
+    assert "FACT_SOURCE_MISSING" in result["quality_report"]["hard_blockers"]
     assert result["status"] == "needs_crawler_update"
     assert nodes.route_review(result) == "crawler_update_required"
     assert [status for status, _report in writes] == ["needs_crawler_update"]

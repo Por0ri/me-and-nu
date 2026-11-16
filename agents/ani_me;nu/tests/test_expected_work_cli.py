@@ -1,11 +1,14 @@
 """The optional queue boundary accepts an existing work before any paid fact extraction."""
 import json
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
 from ani_menu_agent import cli, work_catalog
+from ani_menu_agent import source_freshness
+from ani_menu_agent.models import ContentPackage
 from ani_menu_agent.sources.page_collector import SourcePageCapture
 
 URL = "https://one-piece.com/news/82812/index.html"
@@ -134,3 +137,85 @@ def test_reclassified_article_stops_before_generating_another_type(monkeypatch, 
     assert saved["status"] == "content_type_mismatch_skipped"
     assert saved["evidence_content_type"] == "event"
     assert saved["expected_work_request"]["content_type"] == "goods"
+
+
+def freeze_release_check(monkeypatch):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 16, 12, tzinfo=tz)
+
+    monkeypatch.setattr(source_freshness, "datetime", FixedDatetime)
+    monkeypatch.setattr(cli, "datetime", FixedDatetime)
+
+
+def one_piece_mid_month_capture():
+    return capture("TVアニメ『ONE PIECE』withCAT グッズ").model_copy(update={
+        "published_at": "2026-11-13",
+        "text": "グッズは2026年11月13日より予約受付が開始しています。\n発売日：\n2027年2月中旬頃発売予定",
+    })
+
+
+def test_mid_month_goods_reaches_extraction_without_fabricating_a_day(monkeypatch, tmp_path):
+    freeze_release_check(monkeypatch)
+    monkeypatch.setattr(cli, "collect_official_page", lambda *_a, **_kw: one_piece_mid_month_capture())
+    monkeypatch.setattr(cli, "extract_page_image_text", lambda *_: ([], []))
+    monkeypatch.setattr(cli, "AgentRepository", object)
+    observed = []
+
+    def record(payload):
+        observed.append(payload)
+        raise ValueError("stop at substituted extraction")
+
+    monkeypatch.setattr(cli, "extract_page_payload", record)
+    result, saved = invoke(tmp_path)
+    assert result.exit_code != 0 and saved is None
+    assert len(observed) == 1
+    temporal = observed[0]["temporal_expiry"]
+    assert observed[0]["menu_work_ids"] == [8]
+    assert temporal["status"] == "active"
+    assert temporal["release_precision"] == "mid_month"
+    assert temporal["release_window_start"] == "2027-02-11"
+    assert temporal["release_window_end"] == "2027-02-20"
+    assert temporal.get("release_date") is None
+    assert observed[0].get("release_date") is None
+    assert observed[0].get("sale_end") is None
+
+
+def test_mid_month_evidence_survives_cli_recheck_and_storage_boundary(monkeypatch, tmp_path):
+    freeze_release_check(monkeypatch)
+    monkeypatch.setattr(cli, "collect_official_page", lambda *_a, **_kw: one_piece_mid_month_capture())
+    monkeypatch.setattr(cli, "extract_page_image_text", lambda *_: ([], []))
+    package = ContentPackage(
+        request_id="period-goods", topic="원피스 굿즈",
+        content_kind="information", content_type="goods",
+    )
+    monkeypatch.setattr(cli, "extract_page_payload", lambda _: (package, {}))
+    monkeypatch.setattr(cli, "infer_strong_content_type", lambda _: "goods")
+    monkeypatch.setattr(cli, "_add_same_work_catalog_images", lambda *_a, **_kw: 0)
+    persisted = []
+
+    class StopAtPersistence(RuntimeError):
+        pass
+
+    class Repository:
+        def persist_page_capture(self, payload, *args, package):
+            persisted.append((payload, package.model_dump(mode="json")))
+            raise StopAtPersistence()
+
+    monkeypatch.setattr(cli, "AgentRepository", Repository)
+    result, _ = invoke(tmp_path)
+    assert isinstance(result.exception, StopAtPersistence)
+    assert len(persisted) == 1
+    payload, stored = persisted[0]
+    fact = next(item for item in stored["facts"] if item["details"].get("evidence_kind") == "source_release_window")
+    assert fact["verified"] is False
+    assert fact["details"]["release_precision"] == "mid_month"
+    assert "2027年2月中旬" in fact["details"]["source_quote"]
+    assert "release_date" not in fact["details"]
+    assert "sale_end" not in fact["details"]
+    assert "release_window_start" not in fact["details"]
+    assert stored["event_start"] is None and stored["event_end"] is None
+    assert stored["feed_valid_until"] == "2026-11-18"
+    assert payload["temporal_expiry"]["release_precision"] == "mid_month"
+    assert source_freshness.expiry_evidence(stored, "goods")["status"] == "active"

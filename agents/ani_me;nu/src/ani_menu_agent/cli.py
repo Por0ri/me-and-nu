@@ -2189,6 +2189,39 @@ def crawl_generate(
                     )
                 elif (
                     temporal.get("availability_status") == "upcoming_release"
+                    and temporal.get("release_precision")
+                    and temporal.get("release_text")
+                    and not temporal.get("release_date")
+                ):
+                    release_text = str(temporal["release_text"])
+                    if not any(
+                        fact.details.get("evidence_kind") == "source_release_window"
+                        and fact.details.get("source_quote") == release_text
+                        for fact in package.facts
+                    ):
+                        package.facts.append(
+                            Fact(
+                                id=f"{package.request_id}-upcoming-release-period",
+                                statement=f"출시 예정 시기(원문): {release_text}",
+                                source_ids=[source.id],
+                                verified=False,
+                                time_sensitive=True,
+                                fact_type="product_availability",
+                                details={
+                                    "availability_status": "upcoming_release",
+                                    "release_precision": str(temporal["release_precision"]),
+                                    "release_text": release_text,
+                                    "source_quote": release_text,
+                                    "evidence_kind": "source_release_window",
+                                },
+                            )
+                        )
+                    # Keep the existing short recheck window for availability without an end date.
+                    package.feed_valid_until = package.feed_valid_until or (
+                        datetime.now(KST).date() + timedelta(days=2)
+                    ).isoformat()
+                elif (
+                    temporal.get("availability_status") == "upcoming_release"
                     and temporal.get("release_date")
                 ):
                     if not any(
