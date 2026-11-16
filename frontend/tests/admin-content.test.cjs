@@ -285,3 +285,30 @@ test('screen separates loading/error/empty and preserves both status values and 
   assert.match(html, /&lt;script&gt;x&lt;\/script&gt;/); assert.doesNotMatch(html, /<script>x/);
   assert.match(html, /09:00/);
 });
+
+test('Figma statistics and unavailable tabs never invent operating metrics or published status', () => {
+  const env = runtime(); const { ContentsScreen } = env.load('components/admin/contents-screen.tsx');
+  const query = env.api.parseAdminQuery(new URLSearchParams());
+  const html = renderToStaticMarkup(React.createElement(ContentsScreen, {
+    query, state: { status: 'ready', data: page([{ ...item(), judgmentStatus: 'confirmed', publishedAt: '2026-11-01T00:00:00Z' }]) }, retry() {}, navigate() {},
+  }));
+  const stats = html.match(/<section[^>]*data-admin-statistics="unavailable"[\s\S]*?<\/section>/)[0];
+  assert.equal((stats.match(/<article/g) || []).length, 3);
+  assert.doesNotMatch(stats, /\d[,.]?\d*%|11,578|1,247|<strong>\d/);
+  for (const label of ['게시 중', '예약 발행', '신고 접수']) assert.match(html, new RegExp(`<button[^>]*disabled=""[^>]*>${label}</button>`));
+  const row = html.match(/<tr data-admin-content=[\s\S]*?<\/tr>/)[0];
+  assert.match(row, /confirmed<\/span>/); assert.match(row, /active<\/span>/);
+  assert.doesNotMatch(row, /게시 중|예약 발행|신고 접수|애니메이션/);
+  for (const label of ['분류', '분야', '조회수']) assert.ok(row.includes(`aria-label="${label} 연결 전">—`));
+});
+
+test('Figma pagination follows server total without treating unavailable metrics as counts', () => {
+  const env = runtime(); const { ContentsScreen } = env.load('components/admin/contents-screen.tsx');
+  const query = env.api.parseAdminQuery(new URLSearchParams('page=7&pageSize=20'));
+  const html = renderToStaticMarkup(React.createElement(ContentsScreen, {
+    query, state: { status: 'ready', data: { items: [item()], page: 7, pageSize: 20, total: 200 } }, retry() {}, navigate() {},
+  }));
+  assert.match(html, /<strong>200<\/strong>/);
+  assert.match(html, /aria-label="7페이지" aria-current="page"/);
+  assert.match(html, /aria-label="1페이지"/); assert.match(html, /aria-label="10페이지"/);
+});
