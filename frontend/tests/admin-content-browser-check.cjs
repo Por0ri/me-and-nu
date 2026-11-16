@@ -88,6 +88,7 @@ async function verify(browser, width) {
     await page.getByRole('textbox', { name: '콘텐츠명 검색' }).fill('달빛%_');
     await changeList(() => page.getByRole('button', { name: '검색', exact: true }).click(), { q: '달빛%_' });
     assert.equal(lastList().searchParams.get('q'), '달빛%_');
+    await page.getByRole('button', { name: '상세 필터', exact: true }).click();
     await changeList(() => page.getByLabel('검수 상태', { exact: true }).selectOption('needs_review'), { judgmentStatus: 'needs_review' });
     await changeList(() => page.getByLabel('콘텐츠 상태', { exact: true }).selectOption('active'), { status: 'active' });
     assert.equal(lastList().searchParams.get('judgmentStatus'), 'needs_review'); assert.equal(lastList().searchParams.get('status'), 'active');
@@ -151,6 +152,7 @@ async function verify(browser, width) {
     step = 'late response cancellation';
     mode = 'normal'; holdNext = true; await page.goto(`${base}/admin/contents`);
     await untilHeld();
+    await page.getByRole('button', { name: '상세 필터', exact: true }).click();
     mode = '403'; await page.getByLabel('콘텐츠 상태', { exact: true }).selectOption('hidden');
     await page.locator('section[data-admin-state="forbidden"]').waitFor(); releaseAll();
     assert.equal(await page.locator('[data-admin-content]').count(), 0);
