@@ -30,3 +30,6 @@ Thumbs.db
 *.zip
 # Agent outputs
 agent/out/
+
+# Chatbot eval results (local only)
+backend/scripts/chat_eval/results/
