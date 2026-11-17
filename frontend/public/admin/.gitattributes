@@ -1,0 +1,13 @@
+# Preserve downloaded Figma SVG bytes and their recorded SHA-256 on every checkout.
+users-active.svg -text
+contents-inactive.svg -text
+member-chevron.svg -text
+download.svg -text
+sort-down.svg -text
+member-back.svg -text
+member-forward.svg -text
+memo-add.svg -text
+memo-edit.svg -text
+memo-delete.svg -text
+history-close.svg -text
+history-forward.svg -text
