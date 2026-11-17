@@ -76,6 +76,21 @@ def test_part_of_a_name_must_point_to_few_works():
     assert chat_finder._read("마왕 글 보여줘", index, _tags()).works == ()  # 두 글자는 이름 일부로 찾지 않는다
 
 
+def test_common_words_are_not_read_as_part_of_a_name():
+    index = _index()
+    for entity_id, name in {1300: "그래도 세계는 아름다워", 1301: "마법소녀 사이트", 1302: "카구야 님은 고백받고 싶어"}.items():
+        index.names[entity_id] = name
+        index.keys[chat_finder.dictionary.name_key(name)] = {entity_id}
+
+    def works(question):
+        return chat_finder._read(question.lower(), index, _tags()).works
+
+    assert works("그래도 알려줘") == ()  # 흔한 낱말은 이름 일부로 보지 않는다
+    assert works("무료로 보는 사이트 알려줘") == ()
+    assert works("그래도 세계는 아름다워 글 보여줘") == (1300,)  # 이름 전체는 그대로 찾는다
+    assert works("카구야 글 보여줘") == (1302,)  # 흔한 낱말이 아니면 이름 일부로 찾는다
+
+
 def test_one_letter_typo_in_a_long_korean_name_is_read_as_that_work():
     index = _index()
     index.names[1100] = "사카모토 데이즈"
@@ -237,6 +252,30 @@ async def test_genre_search_follows_today_rank_then_newest(engine):
     assert found.ids == [504, 506, 505, 503]  # 509 는 그만볼래요
     assert found.conditions == ["장르 · 소재: 판타지"]
     assert found.works[504] == "장송의 프리렌"
+
+
+@pytest.mark.asyncio
+async def test_newest_upload_type_does_not_crowd_out_other_posts(engine):
+    # 가장 최근에 넣은 묶음이 프리렌 인물 글 12개고, 제목에 '판타지'가 든 모음 글은 오래됐다
+    now = datetime.now(timezone.utc)
+    people = list(range(601, 613))
+    posts = [{"content_id": content_id, "topic_id": 1, "production_type": "ai", "title": f"성우 글 {content_id}",
+              "summary": None, "content_type": "people", "status": "active", "judgment_status": "confirmed",
+              "published_at": now - timedelta(hours=1, minutes=700 - content_id)} for content_id in people]
+    posts.append({"content_id": 700, "topic_id": 1, "production_type": "ai", "title": "판타지 애니 모음",
+                  "summary": None, "content_type": "curation", "status": "active", "judgment_status": "confirmed",
+                  "published_at": now - timedelta(days=3)})
+    with engine.begin() as connection:
+        connection.execute(Content.__table__.insert(), posts)
+        connection.execute(ContentSource.__table__.insert(), [
+            {"content_id": post["content_id"], "source_url": f"https://example.com/{post['content_id']}",
+             "source_role": "primary"} for post in posts])
+        connection.execute(ContentEntityLink.__table__.insert(), [
+            {"content_id": post["content_id"], "entity_id": FRIEREN if post["content_id"] in people else MADOKA,
+             "topic_id": 1, "link_method": "carousel", "sort_order": 1} for post in posts])
+    found = await _find(engine, "판타지 애니 글 찾아줘")
+    # 오늘 추천(504) → 제목에 '판타지'(700) → 글 종류를 번갈아 최신순 (인물 · 소식 · 가이드 · 음악, 그다음 남은 인물)
+    assert found.ids == [504, 700, 612, 506, 505, 503, 611, 610, 609, 608]
 
 
 @pytest.mark.asyncio

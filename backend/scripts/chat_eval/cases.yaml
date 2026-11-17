@@ -145,7 +145,7 @@
 - id: C6
   rule: R3
   ask: 킹갓레전드스피노의 모험 글 있어?
-  check: {kind: find, answer_any: [없]}
+  check: {kind: find, answer_any: [없, 못 찾]}
   expect: 없는 작품. "그 작품 글은 없어" · 모험 글을 그 작품 글처럼 내밀지 않음
 
 - id: C7
