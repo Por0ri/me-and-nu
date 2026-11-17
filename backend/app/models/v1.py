@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -50,7 +51,7 @@ class AuthSession(Base):
     __table_args__ = (
         UniqueConstraint("session_token_hash", name="uq_auth_session_token_hash"),
         CheckConstraint(
-            "session_state IN ('anonymous', 'onboarding_pending', 'active')",
+            "session_state IN ('anonymous', 'onboarding_pending', 'restoration_pending', 'active')",
             name="ck_auth_session_state",
         ),
         CheckConstraint(
@@ -148,6 +149,10 @@ class NotificationSetting(Base):
         ForeignKey("user_account.user_id", ondelete="CASCADE"),
         primary_key=True,
     )
+    # PM implementation baseline (2026-11-09); existing category/consent fields retain their meaning.
+    in_app_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    night_in_app_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     report_result: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
@@ -169,6 +174,8 @@ class NotificationSetting(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+    __table_args__ = (CheckConstraint("version >= 1", name="ck_notification_setting_version"),)
 
 
 class Tap(Base):

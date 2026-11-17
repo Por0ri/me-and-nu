@@ -30,7 +30,7 @@ def agent_contract(tmp_path, monkeypatch, raw_bundle):
     config = importlib.import_module("ani_menu_agent.config")
     models = importlib.import_module("ani_menu_agent.models")
     storage = importlib.import_module("ani_menu_agent.storage")
-    moment = datetime.now(UTC)
+    moment = datetime.now(UTC) - timedelta(minutes=1)    # SQLite now() 는 초 단위라 같은 초에 넣은 글은 아직 안 열린 글이 됨
     settings = config.Settings(
         _env_file=None,
         ANI_MENU_DATABASE_BACKEND="sqlite",
@@ -238,8 +238,8 @@ def test_short_agent_package_stays_outside_checking_carousel_contract(agent_cont
     package = persist()
     bundle_path, _ = export(package)
     document = json.loads(bundle_path.read_text(encoding="utf-8"))
-    document["items"][0]["package"]["cards"] = document["items"][0]["package"]["cards"][:2]
-    document["items"][0]["assets"] = document["items"][0]["assets"][:2]
+    document["items"][0]["package"]["cards"] = document["items"][0]["package"]["cards"][:1]
+    document["items"][0]["assets"] = document["items"][0]["assets"][:1]
     bundle_path.write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(seed.CarouselImportError):
         seed.load_bundle(bundle_path, now=moment)

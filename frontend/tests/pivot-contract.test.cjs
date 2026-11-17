@@ -187,8 +187,9 @@ const remotePairs = [
   ['https://test.me-nu.kr', 'https://api.test.me-nu.kr'],
   ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr'],
   ['https://checking.me-nu.kr', 'https://api.checking.me-nu.kr'],
+  ['https://www.me-nu.kr', 'https://api.me-nu.kr'],
 ];
-test('Remote API access keeps staging, backend-labs and Checking environments paired', () => {
+test('Remote API access keeps staging, backend-labs, Checking and main environments paired', () => {
   for (const [frontend, api] of remotePairs) {
     assert.equal(s.isPivotApiAllowed(false, frontend, api), true);
     for (const [, otherApi] of remotePairs) {
@@ -235,15 +236,54 @@ test('Remote API access keeps staging, backend-labs and Checking environments pa
   assert.equal(s.isPivotApiAllowed(false, 'http://localhost:3000', 'http://localhost:8000'), false);
 });
 
+test('Main API connection rejects unapproved origins and non-origin URLs', () => {
+  for (const frontend of [
+    'https://me-nu.kr',
+    'https://preview.vercel.app',
+    'https://me-nu.kr.example.com',
+    'https://www.me-nu.kr.example.com',
+    'https://fakewww.me-nu.kr',
+    'http://www.me-nu.kr',
+    'https://www.me-nu.kr:444',
+    'https://user:password@www.me-nu.kr',
+    'https://www.me-nu.kr/path',
+    'https://www.me-nu.kr?preview=true',
+    'https://www.me-nu.kr#preview',
+  ]) {
+    assert.equal(s.isPivotApiAllowed(true, frontend, 'https://api.me-nu.kr'), false, frontend);
+  }
+  for (const api of [
+    'https://api.me-nu.kr.example.com',
+    'http://api.me-nu.kr',
+    'https://api.me-nu.kr:444',
+    'https://user:password@api.me-nu.kr',
+    'https://api.me-nu.kr/path',
+    'https://api.me-nu.kr?proxy=other',
+    'https://api.me-nu.kr#fragment',
+  ]) {
+    assert.equal(s.isPivotApiAllowed(true, 'https://www.me-nu.kr', api), false, api);
+  }
+});
+
 test('Session routes use current user accounts without manufacturing onboarding completion', () => {
   const active = {authenticated:true, sessionState:'active', onboardingCompleted:true, user:{id:7, accountType:'user'}};
   assert.equal(s.isActiveSession(active), true);
+  for (const introSession of [null, { authenticated: false }, session, active]) {
+    assert.equal(s.resolvePivotSessionRoute(introSession, '/pivot'), null, 'intro waits for its own transition regardless of session');
+  }
   assert.equal(s.resolvePivotSessionRoute(active, '/pivot/login'), '/pivot/home');
   assert.equal(s.resolvePivotSessionRoute(active, '/pivot/consent'), '/pivot/home');
   assert.equal(s.resolvePivotSessionRoute(active, '/pivot/home'), null);
   assert.equal(s.resolvePivotSessionRoute(session, '/pivot/home'), '/pivot/consent');
+  assert.equal(s.resolvePivotSessionRoute(session, '/pivot/login'), '/pivot/consent');
   assert.equal(s.resolvePivotSessionRoute(session, '/pivot/consent'), null);
   assert.equal(s.resolvePivotSessionRoute(null, '/pivot/home'), '/pivot/login');
+  const restoring = { authenticated: false, sessionState: 'restoration_pending', user: null, onboardingCompleted: true };
+  assert.equal(s.isActiveSession(restoring), false);
+  assert.equal(s.resolvePivotSessionRoute(restoring, '/pivot/login'), null);
+  for (const path of ['/pivot', '/pivot/home', '/pivot/consent', '/pivot/profile']) {
+    assert.equal(s.resolvePivotSessionRoute(restoring, path), '/pivot/login');
+  }
   for (const invalid of [session, {...active, user:null}, {...active, onboardingCompleted:false},
     {...active, user:{id:7,accountType:'consumer'}}, {...active, user:{id:0,accountType:'user'}}]) {
     assert.equal(s.isActiveSession(invalid), false);
@@ -294,7 +334,7 @@ test('OAuth navigation rejects arbitrary hosts, wrong callback and unexpected sc
   assert.doesNotMatch(s.oauthErrorMessage('<script>untrusted</script>'), /script|untrusted/);
 });
 
-test('OAuth callbacks cannot cross between staging, backend-labs and Checking', () => {
+test('OAuth callbacks cannot cross between staging, backend-labs, Checking and main', () => {
   for (const provider of ['kakao', 'naver']) {
     for (const [, api] of remotePairs) for (const [, otherApi] of remotePairs) {
       if (api !== otherApi) assert.throws(() => s.validateAuthorizationUrl(providerUrl(provider, api), provider, otherApi));

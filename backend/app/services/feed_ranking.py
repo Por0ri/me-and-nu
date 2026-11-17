@@ -2,8 +2,8 @@
 
 The model ranks up to 100 contents once a day. At each visit the feed keeps
 that order, continues with the remaining public contents newest first, drops
-contents the user already opened or marked "그만볼래요", and moves everything
-already shown today to the back. A card feed shows only a few cards per visit,
+contents the user read to the end in the last 14 days or marked "그만볼래요",
+and moves everything already shown today to the back. A card feed shows only a few cards per visit,
 so a card whose main work repeats the previous card's yields to the next card
 about another work. Callers pass one snapshot time for every page so the order
 does not shift while the user scrolls.
@@ -44,13 +44,13 @@ def order_feed(
     ranked: list[FeedSlot],
     latest: list[int],
     *,
-    opened: set[int],
+    fully_read: set[int],
     negative: set[int],
     shown_today: set[int],
     main_work: dict[int, int] | None = None,
 ) -> list[FeedSlot]:
     in_ranked = {slot.content_id for slot in ranked}
-    hidden = opened | negative
+    hidden = fully_read | negative
     candidates = ranked + [FeedSlot(content_id) for content_id in latest if content_id not in in_ranked]
     candidates = [slot for slot in candidates if slot.content_id not in hidden]
     works = main_work or {}

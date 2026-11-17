@@ -24,7 +24,7 @@ function browserModules(fixture, initialCookie = '') {
       assert.equal(init.cache, 'no-store', 'authenticated responses must not be cached');
       const headers = new Headers(init.headers); if (jar) headers.set('Cookie', jar);
       calls.push({ url, method: init.method || 'GET', signal: init.signal });
-      const response = fixture.dispatch(url, { ...init, headers });
+      const response = await fixture.dispatch(url, { ...init, headers });
       if (response.headers?.['Set-Cookie']) jar = response.headers['Set-Cookie'].split(';')[0];
       return new Response(response.status === 204 ? null : JSON.stringify(response.body ?? null), { status: response.status, headers: response.headers });
     },
@@ -44,6 +44,60 @@ function browserModules(fixture, initialCookie = '') {
   }
   return { load, calls, events, get cookie() { return jar; }, browser };
 }
+
+test('Withdrawal requires HTTP 202 and sends the pinned CSRF with grace mode only', async () => {
+  const fixture = createApiFixture();
+  fixture.rotate('active');
+  const api = browserModules(fixture, 'fixture_session=fixture-active').load('lib/api.ts');
+  const path = '/api/v1/users/me';
+  fixture.state.failNext = { path, method: 'DELETE', status: 200 };
+  await assert.rejects(api.requestWithdrawal(fixture.state.csrf), { code: 'INVALID_RESPONSE' });
+  fixture.state.failNext = { path, method: 'DELETE', status: 409, code: 'WITHDRAWAL_BLOCKED' };
+  await assert.rejects(api.requestWithdrawal(fixture.state.csrf), { code: 'WITHDRAWAL_BLOCKED' });
+  await api.requestWithdrawal(fixture.state.csrf);
+  assert.deepEqual(fixture.requests.map(row => [row.method, row.path, row.query.mode, row.csrf, row.body]),
+    Array.from({ length: 3 }, () => ['DELETE', path, 'grace', 'fixture-active-csrf', null]));
+  assert.equal((await api.getSession({ fresh: true })).sessionState, 'anonymous');
+});
+
+test('Restoration uses pending CSRF and a fresh session read supplies the rotated CSRF', async () => {
+  const fixture = createApiFixture();
+  fixture.rotate('restoration_pending');
+  const api = browserModules(fixture, 'fixture_session=fixture-restoration_pending').load('lib/api.ts');
+  const pending = await api.getSession();
+  assert.equal(pending.authenticated, false);
+  assert.equal(pending.scheduledDeleteAt, '2027-01-01T00:00:00Z');
+  const result = await api.restoreWithdrawal(pending.csrfToken);
+  const active = await api.getSession({ fresh: true });
+  assert.equal(active.user.id, result.user.id);
+  assert.notEqual(active.csrfToken, pending.csrfToken);
+  await api.logout();
+  assert.deepEqual(fixture.requests.map(row => [row.method, row.path, row.csrf]), [
+    ['GET', '/api/v1/auth/session', null],
+    ['POST', '/api/v1/auth/withdrawal-restorations', pending.csrfToken],
+    ['GET', '/api/v1/auth/session', null],
+    ['POST', '/api/v1/auth/logout', active.csrfToken],
+  ]);
+});
+
+test('A late 401 from the withdrawn session cannot replace the withdrawal result', async () => {
+  const fixture = createApiFixture();
+  fixture.rotate('active');
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const browser = browserModules({
+    dispatch(url, init) {
+      if (url.endsWith('/api/v1/users/me') && init.method !== 'DELETE') return held;
+      return fixture.dispatch(url, init);
+    },
+  }, 'fixture_session=fixture-active');
+  const api = browser.load('lib/api.ts');
+  const read = api.getProfile();
+  await api.requestWithdrawal(fixture.state.csrf);
+  release({ status: 401, body: { code: 'AUTH_REQUIRED' } });
+  await assert.rejects(read, { code: 'AUTH_REQUIRED' });
+  assert.deepEqual(browser.events, []);
+});
 
 test('real API client + adapters preserve topic and saved state through Home → Detail → Save → refresh → Saved → remove', async () => {
   const fixture = createApiFixture(); fixture.rotate('active');

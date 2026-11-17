@@ -1,5 +1,6 @@
 import type { CarouselLayout } from "@/lib/api";
 import type { ContentImage, PublicationMetadata } from "./carousel-data";
+import type { RecentSearchStore } from "./recent-search";
 
 // Display models shared by Demo and the authenticated API adapter.
 export type HomeSlideModel = {
@@ -54,9 +55,21 @@ export type HomeLoadError = {
   message: string;
 };
 
+/** Work search: matching works' official names (even without cards) and their cards. */
+export type HomeSearchResult = { works: string[]; cards: HomeCardModel[] };
+/** A work suggested under the search box while typing, like onboarding Q1. */
+export type HomeWorkSuggestion = { id: number; name: string };
+
 export interface HomeDataSource {
   readonly kind: "demo" | "service";
   load(options: { signal: AbortSignal }): Promise<HomeLoadResult>;
+  /** Cards about works matching the query (only workId's when a suggestion was picked), shown alone as
+   *  the search result. Demo has no search. */
+  search?(query: string, options: { signal: AbortSignal; workId?: number }): Promise<HomeSearchResult>;
+  /** Up to three works whose name or alias contains the query, with or without cards. */
+  suggest?(query: string, options: { signal: AbortSignal }): Promise<HomeWorkSuggestion[]>;
+  /** The member's recent searches in this browser. */
+  readonly recent?: RecentSearchStore;
 }
 
 export type HomeState =
@@ -67,16 +80,23 @@ export type HomeState =
   | { status: "unconfigured"; message: string };
 
 /** Instance-local request lifecycle. Cancellation also guards sources that ignore abort. */
-export function createHomeRequestController(source: HomeDataSource, publish: (state: HomeState) => void) {
+export function createHomeRequestController(source: HomeDataSource, publish: (state: HomeState) => void, timeoutMs = 15_000) {
   let generation = 0;
   let active: AbortController | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   return {
     async load(): Promise<void> {
       const request = ++generation;
+      clearTimeout(timer);
       active?.abort();
       const controller = new AbortController();
       active = controller;
       publish({ status: "loading" });
+      timer = setTimeout(() => {
+        if (request !== generation || controller.signal.aborted) return;
+        controller.abort();
+        publish({ status: "error", reason: "network", message: "콘텐츠 준비가 지연되고 있어요. 다시 시도해 주세요." });
+      }, timeoutMs);
       try {
         const result = await source.load({ signal: controller.signal });
         if (request !== generation || controller.signal.aborted) return;
@@ -92,11 +112,12 @@ export function createHomeRequestController(source: HomeDataSource, publish: (st
           publish({ status: "error", message: "콘텐츠를 불러오지 못했어요. 다시 시도해 주세요." });
         }
       } finally {
-        if (active === controller) active = null;
+        if (active === controller) { clearTimeout(timer); active = null; }
       }
     },
     cancel() {
       generation++;
+      clearTimeout(timer);
       active?.abort();
       active = null;
     },

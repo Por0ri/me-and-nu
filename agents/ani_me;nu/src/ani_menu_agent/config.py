@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     image_upscale_enabled: bool = Field(
         default=False, validation_alias="ANI_MENU_IMAGE_UPSCALE_ENABLED"
     )
+    image_ocr_enabled: bool = Field(default=True, validation_alias="ANI_MENU_IMAGE_OCR_ENABLED")
     image_edit_model: str = Field(
         default="gpt-image-2.5-sunburst", validation_alias="ANI_MENU_IMAGE_EDIT_MODEL"
     )
@@ -45,6 +46,10 @@ class Settings(BaseSettings):
     duplicate_baseline_path: str | None = Field(
         default=None, validation_alias="ANI_MENU_DUPLICATE_BASELINE_PATH"
     )
+    cover_history_file: str | None = Field(default=None, validation_alias="ANI_MENU_COVER_HISTORY_FILE")
+    cover_history_sha256: str | None = Field(default=None, validation_alias="ANI_MENU_COVER_HISTORY_SHA256")
+    cover_history_job_id: str | None = Field(default=None, validation_alias="ANI_MENU_COVER_HISTORY_JOB_ID")
+    cover_history_attempt_id: str | None = Field(default=None, validation_alias="ANI_MENU_COVER_HISTORY_ATTEMPT_ID")
     openai_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("OPENAI_API_KEY", "LLM_KEY"),

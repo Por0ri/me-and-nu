@@ -68,6 +68,8 @@ def redis_auth_environment(monkeypatch):
     find_user = AsyncMock(return_value=user)
     monkeypatch.setattr(deps, "get_user_by_id", find_user)
     monkeypatch.setattr(dev_auth, "authenticate_user", AsyncMock(return_value=user))
+    # 이 파일의 가짜 DB 는 중복 닉네임 확인을 못 함 → "겹치는 회원 없음"으로 대답 (중복 확인은 test_onboarding_nickname.py 에서 따로 봄)
+    monkeypatch.setattr(onboarding_service, "nickname_taken", AsyncMock(return_value=False))
 
     async def override_database():
         yield database
@@ -293,7 +295,7 @@ def onboarding_request(environment, csrf, **changes):
     return environment.client.post(
         "/api/v1/onboarding/complete",
         json={
-            "nickname": "새 이름",
+            "nickname": "새이름",
             "accountType": "user",
             "topicId": 1,
             "answers": {"q1": "world", "q2": "releases"},

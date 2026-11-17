@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Policy } from "@/lib/api";
 import { policyKey, policyLabel, type ConsentDraft } from "@/lib/pivot/consent";
 import { previewPolicies } from "@/lib/pivot/preview";
+import { isSamplePolicy, policyContent } from "@/lib/pivot/policy-document";
+import { PolicyDialog, PolicyDocumentContent } from "./policy-dialog";
 import { PivotAsset, PivotBrand, PivotFrame, PrimaryButton } from "./pivot-ui";
 import { useConsent } from "./use-consent";
 import styles from "./pivot.module.css";
@@ -20,16 +22,6 @@ function ConsentCheckbox({ label, checked, partial = false, onChange, all = fals
       {partial && <span className={styles.partial} aria-hidden="true" />}
     </span><span>{label}</span>
   </label>;
-}
-function PolicyDialog({ policy, onClose }: { policy: Policy; onClose: () => void }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { dialog.current?.showModal(); }, []);
-  return <dialog ref={dialog} className={styles.dialog} aria-labelledby="policy-title" onClose={onClose}>
-    <h2 id="policy-title">{policyLabel(policy)}</h2>
-    <p className={styles.policyVersion}>버전 {policy.policyVersion} · {policy.required ? "필수" : "선택"}</p>
-    <div className={styles.policyText}>{policy.text}</div>
-    <PrimaryButton autoFocus onClick={() => dialog.current?.close()}>닫기</PrimaryButton>
-  </dialog>;
 }
 type ConsentScreenProps = { initialDraft?: ConsentDraft; preview?: boolean; onContinue?: (draft: ConsentDraft) => void };
 type ConsentModel = ReturnType<typeof useConsent>;
@@ -83,6 +75,10 @@ function ConsentView({ model, preview = false, onContinue }: ConsentScreenProps 
           : "약관 선택을 확인했어요. 기본 정보 입력으로 이동해요." : ""}
       </p>
     </div>
-    {opened && <PolicyDialog policy={opened} onClose={() => setOpened(null)} />}
+    {opened && <PolicyDialog title={policyLabel(opened)} onClose={() => setOpened(null)}>
+      <p className={styles.policyVersion}>버전 {opened.policyVersion} · {opened.required ? "필수" : "선택"}</p>
+      {isSamplePolicy(opened) ? <p role="status">테스트 환경 안내이며, 실제 서비스의 법적 정책 문서가 아니에요.</p> : null}
+      <PolicyDocumentContent title={policyLabel(opened)} content={policyContent(opened.text)} />
+    </PolicyDialog>}
   </PivotFrame>;
 }

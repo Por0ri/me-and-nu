@@ -27,6 +27,22 @@ def _host_matches(url: str, registered_url: str) -> bool:
     )
 
 
+def _url_key(value: str) -> str:
+    parsed = urlparse(value)
+    return parsed._replace(fragment="").geturl().rstrip("/")
+
+
+def _explicit_official_link_label(value: str) -> bool:
+    return bool(
+        re.search(
+            r"official\s*(?:site|website)?|公式\s*(?:サイト|ホームページ)|"
+            r"作品\s*サイト|番組\s*サイト|特設\s*サイト",
+            value,
+            re.IGNORECASE,
+        )
+    )
+
+
 def _is_federated_public_post(url: str) -> bool:
     """Mastodon timelines can return public posts hosted on another instance."""
     parsed = urlparse(url)
@@ -41,10 +57,10 @@ def validate_generation_sources(
 ) -> set[str]:
     """Reject evidence collected under a source that is not currently approved.
 
-    Discovery leads are not evidence. Information facts require an active first-party
-    source, or an active editorial source for attributed review, curation, event, goods,
-    or factual humor coverage. Community humor facts require an approved automated trend
-    signal. This also invalidates stale records.
+    Discovery leads are not evidence by themselves. A captured page from an active
+    discovery source can be used as attributed, non-official reference evidence when no
+    registered primary-source link is available. Facts still need to point to a captured
+    source URL; authority is represented by the source role instead of blocking storage.
     """
     kind = ContentKind(content_kind)
     registry = {source.id: source for source in load_source_registry().sources}
@@ -77,7 +93,7 @@ def validate_generation_sources(
                     configured.status == "active"
                     and bool(editorial_types)
                     and editorial_types
-                    <= {"review", "curation", "humor", "people", "event", "goods"}
+                    <= {"news", "review", "curation", "humor", "people", "event", "goods"}
                     and _value(record, "is_official", False) is False
                     and _value(record, "role", "") == "editorial"
                 )
@@ -87,6 +103,14 @@ def validate_generation_sources(
                     configured.status == "active"
                     and bool(reference_types)
                     and reference_types <= {"guide", "people", "character", "curation"}
+                    and _value(record, "is_official", False) is False
+                    and _value(record, "role", "") == "reference"
+                )
+            elif configured.role == "discovery":
+                approved = (
+                    configured.status == "active"
+                    and configured.discovery_enabled
+                    and configured.collection in {"html", "rss"}
                     and _value(record, "is_official", False) is False
                     and _value(record, "role", "") == "reference"
                 )
@@ -102,6 +126,83 @@ def validate_generation_sources(
         if approved:
             eligible_ids.add(source_id)
 
+    # Linked pages are not promoted to registered or official sources. They can
+    # support facts only when the package preserves a complete link trail back to
+    # an independently approved registry source and the destination matched the
+    # same work. The parent source continues to determine the allowed content type.
+    if kind == ContentKind.INFORMATION:
+        allowed_relationships = {"cta_target", "same_site_detail"}
+        allowed_methods = {
+            "static_markup_literal",
+            "static_js_handler_literal",
+            "same_site_article_link",
+        }
+        for _ in range(len(source_records)):
+            added = False
+            for source_id, record in source_records.items():
+                if source_id in eligible_ids or source_id in registry:
+                    continue
+                parent_id = str(_value(record, "parent_source_evidence_id", "") or "")
+                parent = source_records.get(parent_id)
+                parent_url = str(_value(parent, "url", "")) if parent else ""
+                linked_from_url = str(_value(record, "linked_from_url", ""))
+                discovery_root_id = str(
+                    _value(record, "discovered_via_source_id", "") or ""
+                )
+                discovery_root = source_records.get(discovery_root_id)
+                discovery_url = str(_value(record, "discovery_url", ""))
+                discovery_root_url = str(_value(discovery_root, "url", ""))
+                child_url = str(_value(record, "url", ""))
+                relationship = str(_value(record, "link_relationship", ""))
+                method = str(_value(record, "link_discovery_method", ""))
+                classification = str(_value(record, "link_classification", ""))
+                root_configured = registry.get(discovery_root_id)
+                if (
+                    parent_id not in eligible_ids
+                    or not parent_url
+                    or _url_key(linked_from_url) != _url_key(parent_url)
+                    or not discovery_root_id
+                    or discovery_root_id not in registry
+                    or discovery_root_id not in eligible_ids
+                    or str(_value(discovery_root, "id", "")) != discovery_root_id
+                    or _url_key(discovery_url) != _url_key(discovery_root_url)
+                    or not child_url.startswith("https://")
+                    or not str(_value(record, "link_label", "") or "").strip()
+                    or not _value(record, "target_work_match", False)
+                    or classification not in {"official_verified", "related_page"}
+                    or float(_value(record, "link_classification_confidence", 0) or 0)
+                    < 0.78
+                    or relationship not in allowed_relationships
+                    or method not in allowed_methods
+                    or _value(record, "is_official", False) is not False
+                    or _value(record, "role", "") != "reference"
+                ):
+                    continue
+                if relationship == "same_site_detail" and not _host_matches(
+                    child_url, parent_url
+                ):
+                    continue
+                if classification == "official_verified":
+                    explicit_direct_claim = (
+                        relationship == "cta_target"
+                        and root_configured is not None
+                        and root_configured.role == "primary"
+                        and _explicit_official_link_label(
+                            str(_value(record, "link_label", ""))
+                        )
+                    )
+                    inherited_claim = (
+                        relationship == "same_site_detail"
+                        and str(_value(parent, "link_classification", ""))
+                        == "official_verified"
+                    )
+                    if not (explicit_direct_claim or inherited_claim):
+                        continue
+                eligible_ids.add(source_id)
+                added = True
+            if not added:
+                break
+
     required_role = (
         "활성 1차/리뷰·큐레이션 편집 출처"
         if kind == ContentKind.INFORMATION
@@ -115,8 +216,6 @@ def validate_generation_sources(
 
     for fact in facts:
         fact_source_ids = set(fact.get("source_ids", []))
-        if kind == ContentKind.INFORMATION and fact.get("verified") is not True:
-            raise ValueError(f"검증되지 않은 사실은 생성에 사용할 수 없습니다: {fact.get('id')}")
         if not fact_source_ids or not fact_source_ids <= eligible_ids:
             invalid = sorted(fact_source_ids - eligible_ids)
             raise ValueError(

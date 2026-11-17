@@ -1,3 +1,8 @@
+import httpx
+import pytest
+from httpx import Client as OriginalHttpxClient
+from httpx import MockTransport
+
 from ani_menu_agent.discovery import (
     DiscoveryItem,
     _collectable_sources_for_type,
@@ -178,6 +183,10 @@ def test_mastodon_parser_fails_closed_for_nonpublic_or_sensitive_posts(monkeypat
             "content": body,
             "url": "https://mastodon.example/@a/1",
             "tags": [{"name": "meme"}],
+            "community_posts": [
+                {"text": body, "url": "https://mastodon.example/@a/1"},
+                {"text": body, "url": "https://mastodon.example/@c/3"},
+            ],
         },
         {
             "id": "sensitive",
@@ -186,6 +195,10 @@ def test_mastodon_parser_fails_closed_for_nonpublic_or_sensitive_posts(monkeypat
             "content": body,
             "url": "https://mastodon.example/@b/2",
             "tags": [{"name": "meme"}],
+            "community_posts": [
+                {"text": body, "url": "https://mastodon.example/@b/2"},
+                {"text": body, "url": "https://mastodon.example/@c/3"},
+            ],
         },
     ]
 
@@ -232,6 +245,18 @@ def test_mastodon_parser_accepts_engaged_english_discussion_and_skips_bots(monke
             "tags": [{"name": "Naruto"}],
             "favourites_count": 2,
             "reblogs_count": 2,
+            "community_posts": [
+                {
+                    "text": "Naruto fans keep debating the ending.",
+                    "url": "https://mastodon.example/@user/2",
+                    "published_at": "2026-10-21T02:00:00Z",
+                },
+                {
+                    "text": "That final choice still lives in my head.",
+                    "url": "https://mastodon.example/@other/3",
+                    "published_at": "2026-10-21T03:00:00Z",
+                },
+            ],
         },
     ]
 
@@ -450,6 +475,42 @@ def test_source_can_be_crawlable_without_being_a_discovery_root() -> None:
     )
 
     assert not supports_discovery_adapter(source)
+
+
+def test_targeted_one_piece_goods_uses_registered_detail_and_publisher_category(monkeypatch) -> None:
+    from ani_menu_agent.sources import load_source_registry
+
+    source = next(s for s in load_source_registry().sources if s.id == "one_piece_official")
+    monkeypatch.setattr("ani_menu_agent.discovery.load_source_registry",
+                        lambda: SourceRegistry(version=1, sources=[source]))
+    requested = []
+    html = """
+    <ul>
+      <li><a href="/news/index.html?category=goods"><h3>グッズの一覧を見る</h3><p class="el-tag__item">グッズ</p></a></li>
+      <li><a href="/news/101/index.html"><h3>新しいグッズが登場する展示</h3><p class="el-tag__item">イベント</p></a></li>
+      <li><a href="/news/story/index.html"><h3>グッズの特集について</h3><p class="el-tag__item">グッズ</p></a></li>
+      <li><a href="/news/102/index.html"><h3>新しいグッズを解説します</h3></a></li>
+      <li><a href="https://other.example/news/103/index.html"><h3>Official overseas store</h3><p class="el-tag__item">グッズ</p></a></li>
+      <li><a href="/news/104/index.html?story=2&amp;ref=home#cards"><h3>withCAT illustration Ver.</h3><p class="el-tag__item">グッズ</p>
+      <time datetime="2026-11-13">2026/11/13</time></a></li>
+    </ul>
+    """
+
+    def fetch(_client, url, _source, _timeout, _robots_cache):
+        requested.append(url)
+        return html, url
+
+    monkeypatch.setattr("ani_menu_agent.discovery._get_html_with_client", fetch)
+    for kind, ids in (("goods", None), ("news", {source.id}), (None, {source.id})):
+        assert collect_candidates(content_type=kind, source_ids=ids, limit=1) == ([], [])
+    assert not requested
+    items, errors = collect_candidates(content_type="goods", source_ids={source.id}, limit=1)
+    assert requested == [str(source.url)]
+    assert not errors
+    item, = items
+    assert str(item.url) == "https://one-piece.com/news/104/index.html?story=2&ref=home"
+    assert item.content_types == ["goods"]
+    assert item.published_at == "2026-11-13"
 
 
 def test_active_primary_html_source_can_discover_its_own_article_urls(monkeypatch) -> None:
@@ -771,7 +832,7 @@ def test_html_listing_rejects_site_navigation_outside_configured_board_path() ->
     assert items[0].title == "이번 분기 신작 이야기"
 
 
-def test_work_specific_public_post_does_not_need_trend_tags_or_engagement() -> None:
+def test_work_specific_public_post_needs_distinct_author_discussion_not_engagement() -> None:
     source = Source(
         id="mastodon_social_anime",
         name="Mastodon test",
@@ -796,6 +857,18 @@ def test_work_specific_public_post_does_not_need_trend_tags_or_engagement() -> N
         "tags": [{"name": "Naruto"}],
         "favourites_count": 0,
         "reblogs_count": 0,
+        "community_posts": [
+            {
+                "text": "Naruto fans are still discussing Kakashi's quiet moments.",
+                "url": "https://mastodon.social/@fan/123",
+                "published_at": "2026-10-29T00:00:00Z",
+            },
+            {
+                "text": "Team 7's growth is still my favorite part.",
+                "url": "https://mastodon.social/@anotherfan/456",
+                "published_at": "2026-10-29T01:00:00Z",
+            },
+        ],
     }
 
     items = parse_mastodon_tag_timeline([post], source)
@@ -804,6 +877,110 @@ def test_work_specific_public_post_does_not_need_trend_tags_or_engagement() -> N
     assert len(post_items) == 1
     assert str(post_items[0].title).startswith("\ub098\ub8e8\ud1a0")
     assert str(post_items[0].url) == "https://mastodon.social/@fan/123"
+
+
+@pytest.mark.parametrize(
+    ("reply_authors", "reply_flags", "expected_candidates"),
+    [
+        ([], [], 0),
+        (["other"], [{}], 1),
+        (["root"], [{}], 0),
+        (["bot"], [{"bot": True}], 0),
+        (["bot"], [{"tags": [{"name": "feedbot"}]}], 0),
+        (["bot", "other"], [{"bot": True}, {}], 1),
+        (["private", "sensitive"], [{"visibility": "private"}, {"sensitive": True}], 0),
+        (["root", "other"], [{"id": "201"}, {"id": "201"}], 0),
+        (["root", "root", "root", "root", "root", "other"], [{}, {}, {}, {}, {}, {}], 1),
+    ],
+)
+def test_mastodon_fake_http_thread_flow_requires_two_distinct_public_people(
+    monkeypatch, reply_authors, reply_flags, expected_candidates
+) -> None:
+    from ani_menu_agent import discovery
+
+    source = Source(
+        id="mastodon_test",
+        name="Mastodon test",
+        url="https://mastodon.example/api/v1/timelines/tag/anime",
+        category="community_trend",
+        content_types=[ContentType.HUMOR],
+        role="trend",
+        collection="api",
+        status="trend_only",
+        region="global",
+    )
+    monkeypatch.setattr(
+        "ani_menu_agent.discovery.load_source_registry",
+        lambda: SourceRegistry(version=1, sources=[source]),
+    )
+    monkeypatch.setattr(
+        "ani_menu_agent.discovery._catalog_work_titles_for_tags",
+        lambda _tags: ["Naruto"],
+    )
+    monkeypatch.setattr("ani_menu_agent.discovery._respect_interval", lambda *_args: None)
+
+    def status(status_id, author, **flags):
+        account_id = {
+            "root": "account-root",
+            "other": "account-other",
+            "bot": "account-bot",
+            "private": "account-private",
+            "sensitive": "account-sensitive",
+        }[author]
+        data = {
+            "id": status_id,
+            "url": f"https://mastodon.example/@{author}/{status_id}",
+            "visibility": "public",
+            "sensitive": False,
+            "created_at": "2026-10-29T00:00:00Z",
+            "content": "Naruto fans are discussing the story and its characters in depth.",
+            "tags": [{"name": "Naruto"}],
+            "account": {"id": account_id, "acct": author, "bot": False},
+        }
+        data.update(flags)
+        if flags.get("bot"):
+            data["account"]["bot"] = True
+        return data
+
+    root = status("100", "root", replies_count=len(reply_authors))
+    replies = [
+        status(str(index + 200), author, **reply_flags[index])
+        for index, author in enumerate(reply_authors)
+    ]
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        if request.url.path == "/api/v1/timelines/tag/Naruto":
+            return httpx.Response(200, json=[root])
+        if request.url.path == "/api/v1/statuses/100/context":
+            return httpx.Response(200, json={"ancestors": [], "descendants": replies})
+        return httpx.Response(404, json={"error": "unexpected URL"})
+
+    transport = MockTransport(handler)
+
+    def fake_client(**kwargs):
+        return OriginalHttpxClient(transport=transport, **kwargs)
+
+    monkeypatch.setattr(discovery.httpx, "Client", fake_client)
+    items, errors = collect_candidates(
+        timeout=2,
+        content_type="humor",
+        work_title="Naruto",
+        source_ids={source.id},
+    )
+
+    candidates = [item for item in items if item.is_community_post]
+    assert errors == []
+    assert len(candidates) == expected_candidates
+    assert calls[0].endswith("/api/v1/timelines/tag/Naruto")
+    if reply_authors:
+        assert calls[1].endswith("/api/v1/statuses/100/context")
+    if candidates:
+        serialized = candidates[0].model_dump_json()
+        assert "account-root" not in serialized
+        assert "account-other" not in serialized
+        assert len(candidates[0].community_posts) == 2
 
 
 def test_region_policy_is_configurable() -> None:

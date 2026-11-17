@@ -1,11 +1,16 @@
 import csv
 import json
+import zlib
 from pathlib import Path
 
 from ani_menu_agent import work_catalog
 from ani_menu_agent.models import StructuredWorkReference
 from ani_menu_agent.sources.models import Source, SourceRegistry
-from ani_menu_agent.work_catalog_registration import register_unmatched_work_from_kitsu
+from ani_menu_agent.work_catalog_registration import (
+    _normalize_title,
+    register_new_work_from_source_title,
+    register_unmatched_work_from_kitsu,
+)
 
 
 def _write_catalog(directory: Path) -> None:
@@ -28,6 +33,15 @@ def _write_catalog(directory: Path) -> None:
         writer = csv.DictWriter(stream, fieldnames=list(row), lineterminator="\n")
         writer.writeheader()
         writer.writerow(row)
+
+
+def _use_catalog_paths(monkeypatch, directory: Path) -> None:
+    monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", directory)
+    monkeypatch.setattr(work_catalog, "_WORK_LIST_DIRECTORY", directory)
+    work_catalog.load_work_catalog.cache_clear()
+    work_catalog.load_work_entries.cache_clear()
+    work_catalog.load_work_external_entries.cache_clear()
+    work_catalog._aliases.cache_clear()
 
 
 def _kitsu_source_registry():
@@ -104,11 +118,11 @@ def _install_fake_kitsu(monkeypatch, payload: dict) -> None:
     monkeypatch.setattr("ani_menu_agent.work_catalog_registration.pace_host", lambda *_args: None)
 
 
-def test_exact_kitsu_title_registers_next_id_and_future_title_matching(monkeypatch, tmp_path):
+def test_exact_kitsu_title_registers_stable_temporary_id_and_future_title_matching(
+    monkeypatch, tmp_path
+):
     _write_catalog(tmp_path)
-    monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", tmp_path)
-    work_catalog.load_work_catalog.cache_clear()
-    work_catalog._aliases.cache_clear()
+    _use_catalog_paths(monkeypatch, tmp_path)
     _install_fake_kitsu(monkeypatch, _kitsu_payload(("9901", "Mysterious Anime")))
 
     evidence = register_unmatched_work_from_kitsu(
@@ -116,11 +130,13 @@ def test_exact_kitsu_title_registers_next_id_and_future_title_matching(monkeypat
     )
 
     assert evidence is not None
-    assert evidence.menu_work_id == 11
+    assert evidence.menu_work_id == 1_009_901
     assert evidence.basis == "kitsu_catalog_title"
-    assert work_catalog.resolve_title_work_ids("Mysterious Anime") == [11]
+    assert work_catalog.resolve_title_work_ids("Mysterious Anime") == [1_009_901]
     with (tmp_path / "menu_works.csv").open(encoding="utf-8-sig", newline="") as stream:
-        registered = next(row for row in csv.DictReader(stream) if row["menu_work_id"] == "11")
+        assert len(list(csv.DictReader(stream))) == 1
+    with (tmp_path / "agent_works.csv").open(encoding="utf-8-sig", newline="") as stream:
+        registered = next(row for row in csv.DictReader(stream) if row["menu_work_id"] == "1009901")
     assert registered["title_english"] == "Mysterious Anime"
     assert registered["anilist_ids"] == ""
     with (tmp_path / "menu_work_external_entries.csv").open(
@@ -128,16 +144,38 @@ def test_exact_kitsu_title_registers_next_id_and_future_title_matching(monkeypat
     ) as stream:
         external = list(csv.DictReader(stream))
     assert external[0]["external_id"] == "9901"
-    assert external[0]["menu_work_id"] == "11"
+    assert external[0]["menu_work_id"] == "1009901"
+
+
+def test_kitsu_confirmed_movie_title_can_map_to_existing_parent_id(monkeypatch, tmp_path):
+    _write_catalog(tmp_path)
+    _use_catalog_paths(monkeypatch, tmp_path)
+    _install_fake_kitsu(monkeypatch, _kitsu_payload(("9906", "Existing Work: The Movie")))
+
+    evidence = register_unmatched_work_from_kitsu(
+        ["Existing Work: The Movie announces a new theatrical release"],
+        existing_menu_work_id=10,
+    )
+
+    assert evidence is not None
+    assert evidence.menu_work_id == 10
+    assert evidence.basis == "kitsu_catalog_entry_title"
+    with (tmp_path / "menu_works.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert len(list(csv.DictReader(stream))) == 1
+    with (tmp_path / "menu_work_external_entries.csv").open(
+        encoding="utf-8-sig", newline=""
+    ) as stream:
+        external = list(csv.DictReader(stream))
+    assert external[0]["external_id"] == "9906"
+    assert external[0]["menu_work_id"] == "10"
+    assert work_catalog.resolve_title_work_ids("Existing Work: The Movie") == [10]
 
 
 def test_unknown_work_is_not_registered_without_full_catalog_title_match(
     monkeypatch, tmp_path
 ):
     _write_catalog(tmp_path)
-    monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", tmp_path)
-    work_catalog.load_work_catalog.cache_clear()
-    work_catalog._aliases.cache_clear()
+    _use_catalog_paths(monkeypatch, tmp_path)
     _install_fake_kitsu(monkeypatch, _kitsu_payload(("9902", "Mysterious Anime")))
 
     evidence = register_unmatched_work_from_kitsu(["A mysterious new anime was announced"])
@@ -150,9 +188,7 @@ def test_unknown_work_is_not_registered_without_full_catalog_title_match(
 
 def test_ambiguous_kitsu_title_results_are_not_registered(monkeypatch, tmp_path):
     _write_catalog(tmp_path)
-    monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", tmp_path)
-    work_catalog.load_work_catalog.cache_clear()
-    work_catalog._aliases.cache_clear()
+    _use_catalog_paths(monkeypatch, tmp_path)
     _install_fake_kitsu(
         monkeypatch,
         _kitsu_payload(("9903", "Mysterious Anime"), ("9904", "Mysterious Anime")),
@@ -169,9 +205,7 @@ def test_structured_about_title_can_register_catalog_confirmed_new_work(
     monkeypatch, tmp_path
 ):
     _write_catalog(tmp_path)
-    monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", tmp_path)
-    work_catalog.load_work_catalog.cache_clear()
-    work_catalog._aliases.cache_clear()
+    _use_catalog_paths(monkeypatch, tmp_path)
     _install_fake_kitsu(monkeypatch, _kitsu_payload(("9905", "Mysterious Anime")))
 
     evidence = register_unmatched_work_from_kitsu(
@@ -182,4 +216,31 @@ def test_structured_about_title_can_register_catalog_confirmed_new_work(
     )
 
     assert evidence is not None
-    assert evidence.menu_work_id == 11
+    assert evidence.menu_work_id == 1_009_905
+
+
+def test_source_title_gets_stable_temporary_id_without_writing_canonical_catalog(
+    monkeypatch, tmp_path
+):
+    _write_catalog(tmp_path)
+    _use_catalog_paths(monkeypatch, tmp_path)
+    title = "새로운 작품!"
+    expected_id = 2_000_000 + zlib.crc32(
+        _normalize_title(title).encode("utf-8")
+    ) % 1_000_000_000
+
+    first = register_new_work_from_source_title(
+        title, "https://example.com/announcement"
+    )
+    second = register_new_work_from_source_title(
+        title, "https://example.com/another-announcement"
+    )
+
+    assert first == second == expected_id
+    with (tmp_path / "menu_works.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert len(list(csv.DictReader(stream))) == 1
+    with (tmp_path / "agent_works.csv").open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert len(rows) == 1
+    assert rows[0]["menu_work_id"] == str(expected_id)
+    assert rows[0]["title_ko"] == title

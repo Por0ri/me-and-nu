@@ -1,0 +1,17 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "page": "범수님",
+  "frames": ["1363:5857", "1363:5904", "1363:5951", "1363:6045", "1363:7298", "1363:6092", "1363:7543"],
+  "assets": [
+    {
+      "path": "/pivot/inquiry/check.svg",
+      "node": "I1363:5918;1363:6494",
+      "figmaAsset": "8f1f23ba-07d9-49ec-aa1a-4c554585c767",
+      "sha256": "3b6ea2aa0ca2a503dc132d84789758effbf8f2d3644576df397e2f46a9af52c7",
+      "width": 18,
+      "height": 18
+    }
+  ],
+  "sharedAssets": ["/pivot/home/chrome/logo.svg", "/pivot/home/chrome/notification.svg", "/pivot/detail/back.svg"],
+  "nativeChrome": "OS status bar and keyboard overlays 1363:6441 / 1363:7705 are provided by the device."
+}

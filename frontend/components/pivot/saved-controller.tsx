@@ -6,8 +6,8 @@ import type { HomeDetailHandler } from "@/lib/pivot/home";
 import { PivotSavedScreen } from "./saved-screen";
 
 const loading: SavedState = { status: "loading" };
-export function SavedController({ source, onHome, onMy, onViewDetail, onReady }: {
-  source: SavedDataSource; onHome: () => void; onMy: () => void; onViewDetail: HomeDetailHandler; onReady: () => void;
+export function SavedController({ source, onHome, onMy, onViewDetail, onReady, onNotifications }: {
+  source: SavedDataSource; onHome: () => void; onMy: () => void; onViewDetail: HomeDetailHandler; onReady: () => void; onNotifications?: () => void;
 }) {
   const [request, setRequest] = useState<{ source: SavedDataSource; state: SavedState }>();
   const [attempt, setAttempt] = useState(0);
@@ -19,5 +19,5 @@ export function SavedController({ source, onHome, onMy, onViewDetail, onReady }:
   }, [source, attempt]);
   const state = request?.source === source ? request.state : loading;
   useEffect(() => { if (state.status === "ready" || state.status === "empty") onReady(); }, [state.status, onReady]);
-  return <PivotSavedScreen state={state} demo={source.kind === "demo"} onHome={onHome} onMy={onMy} onViewDetail={onViewDetail} onRetry={() => setAttempt((value) => value + 1)} />;
+  return <PivotSavedScreen state={state} demo={source.kind === "demo"} onHome={onHome} onMy={onMy} onViewDetail={onViewDetail} onNotifications={onNotifications} onRetry={() => setAttempt((value) => value + 1)} />;
 }

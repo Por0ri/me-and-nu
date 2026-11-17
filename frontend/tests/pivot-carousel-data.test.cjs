@@ -49,6 +49,16 @@ const detail = () => ({ ...feed(), contentId: 17, displayMode: 'full_body', body
     { url: 'https://example.com/article', title: '원문', publisher: '공식 출처', role: 'primary', citationOrder: 1 },
   ] });
 
+test('Two slides remain valid for HOME and DETAIL; one slide is still rejected', () => {
+  for (const count of [2, 1]) {
+    const two = slides().filter(slide => slide.page <= count);
+    for (const map of [() => mapFeedCard({ ...feed(), slides: two }, 42), () => mapContentDetail({ ...detail(), slides: two }, target)]) {
+      if (count === 1) assert.throws(map);
+      else assert.deepEqual(plain(map().slides.map(slide => slide.page)), [1, 2]);
+    }
+  }
+});
+
 test('Feed and detail map every service slide in page order and retain identity, bookmark and independent body', () => {
   const card = mapFeedCard(feed(), 42), article = mapContentDetail(detail(), target);
   assert.deepEqual(plain(card.slides.map(item => item.page)), [1, 2, 3]);
@@ -61,6 +71,24 @@ test('Feed and detail map every service slide in page order and retain identity,
   assert.equal(article.displayMode, 'full_body'); assert.equal(article.publisher, '공식 출처');
   assert.deepEqual(plain(article.sources.map(item => item.title)), ['원문', '둘째']);
   assert.equal(article.notices[0].code, 'AI_GENERATED');
+});
+
+test('Carousel feed and detail hide review and preview labels and preserve the original API notices', () => {
+  const review = { code: 'REVIEW_REQUIRED', message: '검토 필요' };
+  const preview = { code: 'DEV_PREVIEW', message: '개발용 미리보기' };
+  const publicNotices = [
+    { code: 'AI_GENERATED', message: 'AI가 생성한 콘텐츠입니다.' },
+    { code: 'SPOILER', message: '스포일러 포함' },
+  ];
+  const allNotices = [review, preview, ...publicNotices];
+  for (const [serviceSlides, expected] of [[slides(), publicNotices], [[], allNotices]]) {
+    const feedResponse = { ...feed(), slides: serviceSlides, notices: structuredClone(allNotices) };
+    const detailResponse = { ...detail(), slides: serviceSlides, notices: structuredClone(allNotices) };
+    assert.deepEqual(plain(mapFeedCard(feedResponse, 42).notices), expected);
+    assert.deepEqual(plain(mapContentDetail(detailResponse, target).notices), expected);
+    assert.deepEqual(feedResponse.notices, allNotices);
+    assert.deepEqual(detailResponse.notices, allNotices);
+  }
 });
 
 test('Legacy no-slide content keeps its existing single-cover feed and excerpt-only detail', () => {
@@ -98,9 +126,9 @@ for (const [name, value] of Object.entries({
   assert.throws(() => protectedSlideImage(value, 17, 42, 1, '카드'), error => error.code === 'INVALID_CONTENT_RESPONSE');
 });
 
-for (const name of ['two', 'eleven', 'gap', 'duplicate', 'wrongDimensions', 'badBox', 'badText', 'null']) test(`Invalid ${name} carousel fails closed`, () => {
+for (const name of ['one', 'eleven', 'gap', 'duplicate', 'wrongDimensions', 'badBox', 'badText', 'null']) test(`Invalid ${name} carousel fails closed`, () => {
   const data = feed();
-  if (name === 'two') data.slides.pop();
+  if (name === 'one') data.slides = data.slides.filter(slide => slide.page === 1);
   if (name === 'eleven') data.slides = Array(11).fill(data.slides[0]);
   if (name === 'gap') data.slides[0].page = 4;
   if (name === 'duplicate') data.slides[0].page = 1;
@@ -138,6 +166,33 @@ test('Home preserves typed HTTP and transport error reasons', async () => {
     const result = await source.load({ signal: new AbortController().signal });
     assert.equal(result.reason, reason); assert.doesNotMatch(result.message, /private/);
   }
+});
+
+test('Work search asks for the active Topic and keeps the search reason without a recommendation id', async () => {
+  const calls = [], card = { ...feed(), recommendationReason: '‘하이큐!!’ 검색 결과예요' };
+  const api = (selectedTopicId, works = ['하이큐!!']) => ({ async getMyTopics() { return topics; }, async getFeed() {},
+    async searchFeed(topicId, q, init, workId) { calls.push([topicId, q, workId]); return { selectedTopicId, query: q, works, contents: [card] }; } });
+  const { works, cards } = await createServiceHomeSource(api(42), () => {}).search('하이큐', { signal: new AbortController().signal });
+  await createServiceHomeSource(api(42), () => {}).search('하이큐!!', { signal: new AbortController().signal, workId: 901 });
+  assert.deepEqual(calls, [[42, '하이큐', undefined], [42, '하이큐!!', 901]]); assert.deepEqual(plain(works), ['하이큐!!']);
+  assert.equal(cards.length, 1); assert.equal(cards[0].id, '17');
+  assert.equal(cards[0].recommendationReason, '‘하이큐!!’ 검색 결과예요'); assert.equal(cards[0].recommendationId, undefined);
+  for (const bad of [api(7), api(42, [17])]) {
+    await assert.rejects(createServiceHomeSource(bad, () => {}).search('하이큐', { signal: new AbortController().signal }));
+  }
+});
+
+test('Work suggestions ask for the active Topic and keep the returned works with their ids', async () => {
+  const calls = [], signal = new AbortController().signal;
+  const api = (selectedTopicId, works) => ({ async getMyTopics() { return topics; }, async getFeed() {},
+    async searchWorks(topicId, q) { calls.push([topicId, q]); return { selectedTopicId, query: q, works }; } });
+  const found = await createServiceHomeSource(api(42, [{ entityId: 12, name: '진격의 거인' }, { entityId: 13, name: '진격의 거인 극장판' }]), () => {}).suggest('진격', { signal });
+  assert.deepEqual(plain(found), [{ id: 12, name: '진격의 거인' }, { id: 13, name: '진격의 거인 극장판' }]);
+  assert.deepEqual(calls, [[42, '진격']]);
+  for (const bad of [api(7, []), api(42, [{ entityId: 0, name: '진격의 거인' }]), api(42, [{ entityId: 12, name: ' ' }]), api(42, null)]) {
+    await assert.rejects(createServiceHomeSource(bad, () => {}).suggest('진격', { signal }));
+  }
+  assert.deepEqual(plain(await createServiceHomeSource({ async getMyTopics() { return topics; }, async getFeed() {} }, () => {}).suggest('진격', { signal })), []);
 });
 
 test('Aborted API reads never dispatch a stale unauthorized event before or after JSON parsing', async () => {

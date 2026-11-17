@@ -21,24 +21,14 @@
 
 - 원본 커밋: `f645df0dbe738d1223f60e5f28bd15197bdc0f71`, `agent/contents/contents.json` 및 대응 Markdown 49편.
 - 원본 `subtopic`은 글 유형이며 기존 `content_type`으로 보존되어 있습니다.
-- 콘텐츠별 임시 태그와 근거: `backend/app/seeds/agent_interest_topics.json`.
+- 콘텐츠별 임시 태그와 근거: `backend/app/seeds/agent_interest_topics.json` (2026-11-03 삭제, `chore/movie-agent` 브랜치에 보존).
 - 등록 및 연결: `subtopic`과 `content_tag`를 사용합니다. 새 DB 컬럼이나 테이블은 만들지 않습니다.
 - 기존 콘텐츠 본문·제목·출처, 작품·앨범 분류 및 기존 구독은 보존합니다. 이번 작업은 관심사와 연결을 추가합니다.
-- 원본 적재 매핑 `agent_content_subtopics.json`은 유지합니다. 원본 콘텐츠의 중복 적재 검사와 임시 관심사 추가 작업은 별도 명령으로 실행합니다.
+- 원본 적재 매핑 `agent_content_subtopics.json`도 2026-11-03 삭제했습니다 (`chore/movie-agent` 브랜치에 보존).
 
 ## 적용과 재실행
 
-`backend` 디렉터리에서 실행합니다. 먼저 원본 콘텐츠가 적재되어 있어야 합니다.
-
-```powershell
-# 기본 동작은 읽기 전용 미리보기
-.\.venv\Scripts\python.exe -m app.seeds.agent_interests --git-ref f645df0
-
-# 임시 세부 주제와 콘텐츠 연결 추가
-.\.venv\Scripts\python.exe -m app.seeds.agent_interests --git-ref f645df0 --apply
-```
-
-동일한 매핑을 다시 적용해도 중복 주제·연결을 만들지 않습니다. 원본 불일치나 모호한 동일 이름이 있으면 중단합니다. 목록을 수정해 재실행하더라도 이전 연결을 자동 삭제하지 않습니다.
+`agent_contents`·`agent_interests` seed는 2026-11-03 영화 Agent 코드와 함께 삭제했습니다. 이미 적용된 DB의 주제·연결은 그대로입니다. 다시 적용해야 하면 `chore/movie-agent` 브랜치에서 seed를 되살려 실행합니다.
 
 화면 목록은 `frontend/lib/onboarding/provisional-interests.json`에 있습니다. 매핑 JSON의 분야별 이름과 순서를 복사한 파일이며, 목록 변경 시 두 파일을 함께 갱신해야 합니다. `api-catalog.ts`는 실제 API에서 조회한 주제의 이름을 대조해 DB ID를 선택합니다. 존재하지 않거나 이름이 중복된 선택지는 오류로 처리합니다.
 

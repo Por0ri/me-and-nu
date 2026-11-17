@@ -10,7 +10,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const completePath = '/api/v1/onboarding/complete';
 const selection = { interest: 'animation', topicId: 271, favoriteEntityIds: [101, 102], preferenceTagIds: [201, 301], consumptionType: 'ost' };
 // Synthetic test input only; this file never contacts Labs or a real account.
-const profile = { nickname: '  로컬 검증 회원  ' };
+const profile = { nickname: '  로컬검증회원  ' };
 
 // The complete API client, consent mapper, onboarding service, and bookmark
 // controls share one module graph. Only the HTTP/browser boundary is replaced.
@@ -89,7 +89,7 @@ for (const optionalAgreed of [false, true]) {
     assert.equal(flow.fixture.state.onboardingCompletions, 1);
     const post = completions(flow.fixture)[0];
     assert.deepEqual(post.body, {
-      nickname: '로컬 검증 회원', accountType: 'user', topicId: 271,
+      nickname: '로컬검증회원', accountType: 'user', topicId: 271,
       consents: [
         { type: 'terms', policyVersion: 'fixture-v1', agreed: true },
         { type: 'privacy', policyVersion: 'fixture-v2', agreed: true },

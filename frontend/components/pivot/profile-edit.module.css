@@ -1,0 +1,13 @@
+/* My Page 프로필 수정 (2026-11 design). The card and the nickname box are the onboarding .profileField ones;
+   these rules only place them and fill in what onboarding scopes to its own frame. */
+.screen { padding-bottom: 40px; }
+.content { display: flex; flex-direction: column; padding-top: 16px; }
+.title { margin: 0; color: #27272a; font-size: 16px; font-weight: 600; line-height: 24px; }
+.content > .card { margin-top: 12px; padding-top: 16px; }
+.who .name { margin: 0; color: #27272a; font-size: 16px; font-weight: 600; line-height: 24px; overflow-wrap: anywhere; }
+.who .email { margin: 4px 0 0; color: #71717a; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+.divider { height: 1px; margin: 16px -8px 29px; border: 0; background: #d4d4d8; }
+.card p[role="alert"] { margin-top: 10px; color: #ff0000; font-size: 15px; line-height: 22px; }
+/* The design keeps the same light border while typing. */
+.card input:focus-visible { outline: none; }
+.actions { margin-top: 42px; }

@@ -1,5 +1,7 @@
 # Type crawler roles
 
+These are content-type role declarations, not a one-to-one map to the new time-sensitive and evergreen collection lanes. Do not move or delete a whole role based only on its filename; see [`CRAWLER_LANE_CLASSIFICATION.md`](../../../docs/CRAWLER_LANE_CLASSIFICATION.md) for the current migration boundary.
+
 The ten files beside `base.py` are intentionally small role declarations, not ten duplicated crawling engines. Each class defines its content type, allowed source roles, purpose, image-capture policy, and multilingual lexical signals. The humor role covers both community trends and sourced production behind-scenes/making-of leads. `base.py` owns the shared LangGraph workflow: source-registry allowlisting, adapter checks, discovery collection, candidate validation, deduplication, persistence, and optional same-page image capture.
 
 ## End-to-end route

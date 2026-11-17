@@ -2,12 +2,12 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Content, ContentEntityLink, ContentReaction, ContentSource, RecommendationItem, RecommendationRound,
-    UserEvent,
+    TapPreferenceTag, UserAccount, UserEvent,
 )
 from app.repositories.carousel_repository import public_content_condition
 
@@ -33,6 +33,31 @@ async def latest_round(
         .order_by(RecommendationRound.service_date.desc(), RecommendationRound.recommendation_round_id.desc())
         .limit(1)
     )
+
+
+async def work_contents(db: AsyncSession, topic_id: int, entity_ids: list[int]) -> list[tuple[Content, int]]:
+    """Visible contents linked to any of the works, newest first, each with its first linked work."""
+    rows = (await db.execute(
+        select(Content, ContentEntityLink.entity_id)
+        .join(ContentEntityLink, ContentEntityLink.content_id == Content.content_id)
+        .where(ContentEntityLink.entity_id.in_(entity_ids), *_visible(topic_id))
+        .order_by(Content.published_at.desc().nulls_last(), Content.content_id.desc(), ContentEntityLink.sort_order)
+    )).all()
+    found, seen = [], set()
+    for content, entity_id in rows:
+        if content.content_id not in seen:
+            seen.add(content.content_id)
+            found.append((content, entity_id))
+    return found
+
+
+async def onboarding_completed_at(db: AsyncSession, user_id: int) -> datetime | None:
+    return await db.scalar(select(UserAccount.onboarding_completed_at).where(UserAccount.user_id == user_id))
+
+
+async def taste_edited_at(db: AsyncSession, tap_id: int) -> datetime | None:
+    """Last save of the taste answers: a My Page edit re-inserts every chip row."""
+    return await db.scalar(select(func.max(TapPreferenceTag.created_at)).where(TapPreferenceTag.tap_id == tap_id))
 
 
 async def get_round(db: AsyncSession, round_id: int, tap_id: int) -> RecommendationRound | None:
@@ -72,10 +97,22 @@ async def latest_content_ids(db: AsyncSession, topic_id: int, as_of: datetime, l
     return list(rows.scalars().all())
 
 
-async def opened_content_ids(db: AsyncSession, tap_id: int, as_of: datetime) -> set[int]:
+FULL_READ_SCROLL_PCT = 80   # 본문을 이만큼 이상 내렸으면 끝까지 읽은 글 (모델 content_v1.READ_FULL 0.8 과 같음)
+
+
+async def fully_read_content_ids(db: AsyncSession, tap_id: int, since: datetime, as_of: datetime) -> set[int]:
+    """Posts read to the end since `since`: the card deck swiped to its last card, or the body scrolled
+    at least FULL_READ_SCROLL_PCT. A post opened but not finished stays a candidate (11/3 rule)."""
+    value = UserEvent.event_value
+    card_end = and_(
+        UserEvent.event_type == "card_swipe",
+        value["card_index"].as_integer() >= value["card_count"].as_integer(),
+    )
+    body_end = and_(UserEvent.event_type == "open", value["scroll_pct"].as_float() >= FULL_READ_SCROLL_PCT)
     rows = await db.execute(
         select(UserEvent.content_id).distinct().where(
-            UserEvent.tap_id == tap_id, UserEvent.event_type == "open", UserEvent.received_at <= as_of,
+            UserEvent.tap_id == tap_id, or_(card_end, body_end),
+            UserEvent.occurred_at >= since, UserEvent.received_at <= as_of,
         )
     )
     return set(rows.scalars().all())

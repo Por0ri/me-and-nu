@@ -164,8 +164,8 @@ export default function ContentBrowser({ fixedTopicId, subtopicId }: Props) {
               <Link href={`/contents/${card.id}?topicId=${selectedTopicId}${subtopicId === undefined ? "" : `&subtopicId=${subtopicId}`}`} className="block h-full">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="rounded-full bg-teal-300/10 px-2.5 py-1 font-semibold text-teal-200">{productionLabel(card.productionType)}</span>
-                  {needsReview(card.notices, card.summary) && <span className="rounded-full bg-amber-300/10 px-2.5 py-1 font-semibold text-amber-200">검토 필요</span>}
-                  {card.notices.some((notice) => notice.code === "DEV_PREVIEW") && <span className="rounded-full bg-orange-300/10 px-2.5 py-1 font-semibold text-orange-200">개발용 미리보기</span>}
+                  {!card.slides?.length && needsReview(card.notices, card.summary) && <span className="rounded-full bg-amber-300/10 px-2.5 py-1 font-semibold text-amber-200">검토 필요</span>}
+                  {!card.slides?.length && card.notices.some((notice) => notice.code === "DEV_PREVIEW") && <span className="rounded-full bg-orange-300/10 px-2.5 py-1 font-semibold text-orange-200">개발용 미리보기</span>}
                   {publishedDate(card.publishedAt) && <span className="text-slate-500">{publishedDate(card.publishedAt)}</span>}
                 </div>
                 <h3 className="mt-4 text-lg font-bold leading-7 text-slate-100">{card.title}</h3>

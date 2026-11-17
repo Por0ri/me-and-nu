@@ -2,7 +2,9 @@
 
 import base64
 import json
+import re
 from time import perf_counter
+from urllib.parse import urlsplit
 
 from langchain_openai import ChatOpenAI
 
@@ -43,6 +45,273 @@ SAFETY_THRESHOLD = int(SCORE_THRESHOLDS["safety_minimum_per_card"])
 def _score_quality(package: ContentPackage, issues: list[QualityIssue], **kwargs):
     return score_quality(package, issues, thresholds=SCORE_THRESHOLDS, **kwargs)
 
+
+def _review_minimal_editorial(state: ContentState, package: ContentPackage) -> ContentState:
+    """Review copy readability and retain a hard visual relevance gate."""
+    cards = sorted(package.cards, key=lambda card: card.page)
+    failures: list[str] = []
+    if not 2 <= len(cards) <= 10:
+        failures.append("Carousel must contain 2 to 10 cards.")
+    if any(not (card.title_lines or card.body_sentences) for card in cards):
+        failures.append("A card has neither a title nor body copy.")
+    image_ids = [card.image_id for card in cards if card.image_id]
+    if len(image_ids) != len(set(image_ids)):
+        failures.append("An image is repeated within the carousel.")
+    images_by_id = {image.id: image for image in package.images}
+    recal_schedule_pages = [
+        card.page
+        for card in cards
+        if package.content_type == "event"
+        and card.image_id in images_by_id
+        and (urlsplit(str(images_by_id[card.image_id].url or "")).hostname or "").lower()
+        in {"recal.kr", "www.recal.kr"}
+    ]
+    if recal_schedule_pages:
+        failures.append(
+            "Event cards use RE:CAL schedule/listing graphics as artwork; replace them with distinct exact-work images."
+        )
+    event_copy = " ".join(
+        [*(line for card in cards for line in card.title_lines),
+         *(sentence for card in cards for sentence in card.body_sentences),
+         package.detail_body]
+    )
+    schedule_copy_failure = False
+    if package.content_type == "event" and (package.event_start or package.event_end):
+        schedule_caveat_pattern = re.compile(
+            r"(?:행사\s*정보|세부\s*(?:정보|내용)|실제\s*일정|일정|날짜|장소|"
+            r"개최(?:\s*(?:정보|일정))?).{0,28}"
+            r"(?:미확인|확인되지|검증되지|미검증|검증\s*전|확정되지)"
+            r"|(?:미확인|확인되지|검증되지|미검증|검증\s*전|확정되지).{0,28}"
+            r"(?:행사|일정|날짜|장소|개최)",
+            re.IGNORECASE,
+        )
+        schedule_copy_failure = bool(schedule_caveat_pattern.search(event_copy))
+        if schedule_copy_failure:
+            failures.append(
+                "Event copy says its schedule is unknown even though structured event dates are supplied; "
+                "rewrite it by stating the supplied dates directly in natural Korean. Keep source-page "
+                "and website narration out of the card and article copy; the source link is shown separately."
+            )
+
+    settings = get_settings()
+    if not settings.openai_api_key:
+        report = {
+            "mode": "minimal_editorial",
+            "decision": "pending_language_review",
+            "total": 0,
+            "reason": "Reviewer model API is not configured; copy and image relevance were not evaluated.",
+        }
+        AgentRepository().persist_generated_content(
+            package, "review_api_required", report,
+            usage_records=state.get("usage_records", []),
+        )
+        return {
+            "trace": append_trace(state, "minimal_editorial_review"),
+            "quality_report": report,
+            "quality_score": 0,
+            "qa_report": [],
+            "review_mode": "not_evaluated",
+            "needs_revision": False,
+            "review_failures": state.get("review_failures", 0),
+            "editorial_decision": "review_required",
+            "status": "review_api_required",
+            "usage_records": state.get("usage_records", []),
+        }
+    if failures:
+        report = {
+            "mode": "minimal_editorial",
+            "decision": "revise",
+            "total": 0,
+            "issues": failures,
+        }
+        issues = [
+            {
+                "code": (
+                    "EVENT_SCHEDULE_GRAPHIC_AS_ART"
+                    if "RE:CAL schedule/listing graphics" in item
+                    else "CAROUSEL_SHAPE"
+                ),
+                "message": item,
+            }
+            for item in failures
+        ]
+        AgentRepository().persist_generated_content(
+            package, "review_returned", report,
+            usage_records=state.get("usage_records", []),
+        )
+        return {
+            "trace": append_trace(state, "minimal_editorial_review"),
+            "quality_report": report,
+            "quality_score": 0,
+            "qa_report": issues,
+            "review_mode": "minimal_editorial",
+            "needs_revision": True,
+            "revision_owner": "copy_writer" if schedule_copy_failure else "layout_director",
+            "revision_owners": ["copy_writer"] if schedule_copy_failure else ["layout_director"],
+            "review_failures": int(state.get("review_failures", 0)) + 1,
+            "editorial_decision": "revise",
+            "status": "review_returned",
+            "usage_records": state.get("usage_records", []),
+        }
+
+    model = ChatOpenAI(model=settings.model_name, api_key=settings.openai_api_key)
+    structured = model.with_structured_output(
+        LanguageReview, method="function_calling", include_raw=True
+    )
+    message_content, attached_pages, missing_image_pages = _review_message_content(
+        package, minimal_editorial=True
+    )
+    started = perf_counter()
+    response = structured.invoke(
+        [
+            (
+                "system",
+                "You are a concise Korean carousel copy editor and image relevance reviewer. "
+                "Judge attached artwork itself, not its source metadata.",
+            ),
+            ("human", message_content),
+        ]
+    )
+    elapsed = perf_counter() - started
+    review = response.get("parsed")
+    usage_records = list(state.get("usage_records", []))
+    raw = response.get("raw")
+    usage = getattr(raw, "usage_metadata", None) or {}
+    input_tokens = int(usage.get("input_tokens", 0) or 0)
+    output_tokens = int(usage.get("output_tokens", 0) or 0)
+    input_details = usage.get("input_token_details") or {}
+    cached_tokens = int(input_details.get("cache_read", 0) or 0)
+    cache_write_tokens = int(input_details.get("cache_write", input_details.get("cache_creation", 0)) or 0)
+    usage_records.append(
+        UsageRecord(
+            model=settings.model_name,
+            stage="review",
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_tokens,
+            cache_write_tokens=cache_write_tokens,
+            output_tokens=output_tokens,
+            total_tokens=int(usage.get("total_tokens", input_tokens + output_tokens) or 0),
+            estimated_cost_usd=estimate_gpt_6_luna_cost(
+                input_tokens, cached_tokens, cache_write_tokens, output_tokens
+            ),
+            elapsed_seconds=elapsed,
+        ).model_dump(mode="json")
+    )
+
+    expected_pages = {card.page for card in cards}
+    reviewed_pages = {card.page for card in review.cards} if review else set()
+    failed_pages: list[int] = []
+    unsafe_pages: list[int] = []
+    visual_issues: list[QualityIssue] = []
+    if review is None or expected_pages != reviewed_pages:
+        failures.append("Copy and image review is missing or has mismatched card numbers.")
+    else:
+        for card_review in review.cards:
+            if card_review.safety_blocker:
+                unsafe_pages.append(card_review.page)
+            if min(
+                card_review.korean_naturalness,
+                card_review.translation_naturalness,
+                card_review.reader_clarity,
+                card_review.fan_engagement,
+                card_review.card_flow,
+            ) < 2:
+                failed_pages.append(card_review.page)
+        if failed_pages:
+            failures.append("Cards need copy revision: " + ", ".join(map(str, failed_pages)))
+        if unsafe_pages:
+            failures.append("Cards contain a clear safety issue: " + ", ".join(map(str, unsafe_pages)))
+        if missing_image_pages:
+            visual_issues.append(
+                make_issue(
+                    code="IMAGE_VISION_REVIEW_MISSING",
+                    message=(
+                        "A card preview could not be loaded for image review; passing is blocked. Cards: "
+                        + ", ".join(map(str, missing_image_pages))
+                    ),
+                    page=missing_image_pages[0],
+                )
+            )
+        required_visual_fields = {"image_relevance", "image_composition", "visual_feedback"}
+        for card_review in review.cards:
+            absent = required_visual_fields - card_review.model_fields_set
+            if absent:
+                visual_issues.append(
+                    make_issue(
+                        code="IMAGE_VISION_REVIEW_MISSING",
+                        message=(
+                            f"Card {card_review.page} lacks explicit visual review fields: "
+                            f"{', '.join(sorted(absent))}. Passing is blocked."
+                        ),
+                        page=card_review.page,
+                    )
+                )
+        if not visual_issues:
+            visual_issues.extend(_visual_issues(review, package))
+        for card in cards:
+            if card.visual_mode != "source_image" or not card.image_id:
+                visual_issues.append(
+                    make_issue(
+                        code="IMAGE_VISION_REVIEW_MISSING",
+                        message=f"Card {card.page} has no source image to review; passing is blocked.",
+                        page=card.page,
+                    )
+                )
+
+    all_failures = [*failures, *(issue.message for issue in visual_issues)]
+    decision = "revise" if all_failures else "pass_candidate"
+    score_values = [
+        getattr(card, field)
+        for card in (review.cards if review else [])
+        for field in (
+            "korean_naturalness",
+            "translation_naturalness",
+            "reader_clarity",
+            "fan_engagement",
+            "card_flow",
+        )
+    ]
+    score = round(sum(score_values) / max(1, len(score_values)) * 20) if score_values else 0
+    report = {
+        "mode": "minimal_editorial",
+        "decision": decision,
+        "total": score,
+        "issues": [*failures, *(issue.model_dump(mode="json") for issue in visual_issues)],
+        "reviewed_pages": sorted(reviewed_pages),
+        "image_reviewed_pages": sorted(set(attached_pages)),
+        "summary": review.summary if review else "Review result was invalid.",
+        "dimensions": {
+            "carousel_shape": "pass",
+            "copy_readability": score,
+            "image_relevance": "fail" if any(i.code == "IMAGE_VISION_MISMATCH" for i in visual_issues) else "pass",
+            "image_composition": "fail" if any(i.code == "IMAGE_COMPOSITION_REJECTED" for i in visual_issues) else "pass",
+            "clear_safety_blockers": "pass" if not unsafe_pages else unsafe_pages,
+            "fact_checking": "skipped_by_policy",
+            "copyright_review": "skipped_by_policy",
+        },
+    }
+    status = "review_returned" if all_failures else "review_passed"
+    AgentRepository().persist_generated_content(
+        package, status, report, usage_records=usage_records
+    )
+    qa_report = [
+        {"code": "COPY_READABILITY", "message": item} for item in failures
+    ] + [issue.model_dump(mode="json") for issue in visual_issues]
+    visual_revise = bool(visual_issues)
+    return {
+        "trace": append_trace(state, "minimal_editorial_review"),
+        "quality_report": report,
+        "quality_score": score,
+        "qa_report": qa_report,
+        "review_mode": "minimal_editorial",
+        "needs_revision": bool(all_failures),
+        "revision_owner": ("layout_director" if visual_revise else "copy_writer") if all_failures else "",
+        "revision_owners": (["layout_director"] if visual_revise else []) + (["copy_writer"] if failures else []),
+        "review_failures": int(state.get("review_failures", 0)) + int(bool(all_failures)),
+        "editorial_decision": "revise" if all_failures else "approved_for_feed",
+        "status": status,
+        "usage_records": usage_records,
+    }
 
 def _review_payload(package: ContentPackage) -> dict:
     images = {image.id: image for image in package.images}
@@ -117,10 +386,9 @@ def _review_payload(package: ContentPackage) -> dict:
             }
             for item in recent_copy
         ],
-        "verified_facts": [
+        "source_facts": [
             fact.model_dump(mode="json")
             for fact in package.facts
-            if fact.verified or package.content_kind.value == "humor"
         ],
         "cards": cards,
         "detail_body": package.detail_body,
@@ -129,25 +397,52 @@ def _review_payload(package: ContentPackage) -> dict:
     }
 
 
-def _review_message_content(package: ContentPackage) -> tuple[list[dict], list[int], list[int]]:
+def _review_message_content(
+    package: ContentPackage, *, minimal_editorial: bool = False
+) -> tuple[list[dict], list[int], list[int]]:
     """Attach temporary text-overlay previews without changing persisted card PNGs."""
     repository = AgentRepository()
-    parts: list[dict] = [
-        {
-            "type": "text",
-            "text": (
-                "아래 JSON의 page와 같은 순서로 카드 미리보기 이미지가 뒤따른다. "
-                "각 첨부 이미지는 텍스트 없는 저장용 PNG 위에 카피를 임시로 합성한 검수용 모형이다. "
-                "실제 저장 PNG에는 글자가 없고, 모형의 글꼴·줄바꿈은 프론트엔드 HTML과 다를 수 있다. "
-                "카피와 이미지가 함께 놓였을 때의 균형을 참고하되, 글꼴 차이는 감점하지 마라. "
-                "image_relevance는 검수용 카피를 제외한 원본 그림 자체를 기준으로 평가하라. "
-                "이미지가 카드 주제와 맞는지, "
-                "잘리거나 깨지거나 피사체를 알아볼 수 없을 만큼 작지는 않은지 눈으로 확인하라. "
-                "원본 비율 때문에 생긴 여백은 정상이다. 검수용 카피를 이미지 원본에 포함된 글자로 "
-                "오인하지 말고, JSON 문구와 기존 언어 평가로 언어 품질을 판단하라.\n"
-                + json.dumps(_review_payload(package), ensure_ascii=False)
-            ),
+    if minimal_editorial:
+        payload = {
+            "content_type": package.content_type,
+            "event_schedule": {
+                "start_date": package.event_start,
+                "end_date": package.event_end,
+                "venue": package.event_location,
+            } if package.content_type == "event" else None,
+            "cards": [
+                {
+                    "page": card.page,
+                    "role": card.role,
+                    "title": card.title_lines,
+                    "body": card.body_sentences,
+                }
+                for card in sorted(package.cards, key=lambda item: item.page)
+            ],
         }
+        instructions = (
+            "Evaluate Korean readability and image relevance only. Each attached image follows the "
+            "card with the matching page number in the JSON. Inspect the visible artwork itself: "
+            "if it depicts a different anime, character, event, or unrelated recommendation, give "
+            "image_relevance 0 or 1 and explain why in visual_feedback. Do not infer relevance "
+            "from metadata. Check that the source image is legible and composed well enough for a card. "
+            "Do not fact-check, research sources, or assess copyright. For event copy, compare it "
+            "with the supplied event_schedule: when a start/end date is present, reject generic "
+            "claims that the schedule or event information is unknown. A missing price or entry "
+            "method does not make the listed dates or venue unknown. Ignore the temporary text overlay "
+            "when judging the original image. Return all page numbers and explicit image_relevance, "
+            "image_composition, and visual_feedback fields for every card.\n"
+        )
+    else:
+        payload = _review_payload(package)
+        instructions = (
+            "The attached previews follow the JSON page order. Each preview temporarily overlays "
+            "copy on the text-free stored PNG. Judge image_relevance from the original artwork, "
+            "and check whether it fits the card topic and remains identifiable and well composed. "
+            "Do not mistake the temporary overlay for text in the original image.\n"
+        )
+    parts: list[dict] = [
+        {"type": "text", "text": instructions + json.dumps(payload, ensure_ascii=False)}
     ]
     attached_pages: list[int] = []
     missing_pages: list[int] = []
@@ -164,8 +459,7 @@ def _review_message_content(package: ContentPackage) -> tuple[list[dict], list[i
             binary = render_review_preview(binary, card, package)
             media_type = "image/png"
         except Exception:
-            # The persisted card plate stays text-free; if a preview mock
-            # cannot be rendered, review the original plate as a fallback.
+            # Review the original image plate if the temporary overlay cannot be rendered.
             pass
         encoded = base64.b64encode(binary).decode("ascii")
         parts.append(
@@ -179,7 +473,6 @@ def _review_message_content(package: ContentPackage) -> tuple[list[dict], list[i
         )
         attached_pages.append(card.page)
     return parts, attached_pages, missing_pages
-
 
 def _visual_issues(review: LanguageReview, package: ContentPackage) -> list[QualityIssue]:
     """Turn pixel-level reviewer findings into repairable, page-scoped image issues."""
@@ -339,6 +632,8 @@ def _score_language(
 def review_content(state: ContentState) -> ContentState:
     """Review a generated package independently; never use fixture approval for publishing."""
     package = ContentPackage.model_validate(state["package"])
+    if state.get("minimal_review"):
+        return _review_minimal_editorial(state, package)
     issues = run_quality_checks(package)
     if state.get("allow_llm", False) and not package.detail_body.strip():
         issues.append(
@@ -362,7 +657,9 @@ def review_content(state: ContentState) -> ContentState:
             else "review_returned"
         )
         if not offline_fixture:
-            AgentRepository().persist_generated_content(package, status, code_report)
+            AgentRepository().persist_generated_content(
+                package, status, code_report, usage_records=state.get("usage_records", [])
+            )
         return {
             "trace": append_trace(state, "review_agent"),
             "qa_report": [issue.model_dump(mode="json") for issue in issues],
@@ -398,7 +695,9 @@ def review_content(state: ContentState) -> ContentState:
                 if pending["decision"] == "pending_language_review"
                 else "review_returned"
             )
-            AgentRepository().persist_generated_content(package, status, pending)
+            AgentRepository().persist_generated_content(
+                package, status, pending, usage_records=state.get("usage_records", [])
+            )
             return {
                 "trace": append_trace(state, "review_agent"),
                 "qa_report": [issue.model_dump(mode="json") for issue in issues],
@@ -461,7 +760,9 @@ def review_content(state: ContentState) -> ContentState:
             )
             issues.append(issue)
             report = _score_quality(package, issues)
-            AgentRepository().persist_generated_content(package, "review_output_invalid", report)
+            AgentRepository().persist_generated_content(
+                package, "review_output_invalid", report, usage_records=usage_records
+            )
             decision = str(report["decision"])
             return {
                 "trace": append_trace(state, "review_agent"),
@@ -625,7 +926,9 @@ def review_content(state: ContentState) -> ContentState:
         editorial_decision = decision
 
     if review_mode != "offline_fixture":
-        AgentRepository().persist_generated_content(package, status, report)
+        AgentRepository().persist_generated_content(
+            package, status, report, usage_records=state.get("usage_records", [])
+        )
     return {
         "trace": append_trace(state, "review_agent"),
         "package": package.model_dump(mode="json"),

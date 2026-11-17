@@ -157,3 +157,40 @@ class UserEvent(Base):
         Index("idx_user_event_content_type", "content_id", "event_type"),
         Index("idx_user_event_recommendation_item", "recommendation_item_id"),
     )
+
+
+class SearchLog(Base):
+    """One row per Home search that actually ran; what is typed before running it is not kept.
+
+    matched_work_ids empty: the catalog lacks the work. Works but result_count 0: no post about it yet.
+    picked_work_id: the member chose that work from the suggestions, so the intent is exact.
+    """
+
+    __tablename__ = "search_log"
+
+    search_log_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("user_account.user_id", ondelete="CASCADE"), nullable=False
+    )
+    tap_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    search_text: Mapped[str] = mapped_column(String(50), nullable=False)
+    picked_work_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("entity.entity_id", ondelete="SET NULL")
+    )
+    matched_work_ids: Mapped[list[int]] = mapped_column(JSONB, nullable=False)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    searched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    data_source: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tap_id", "user_id"], ["tap.tap_id", "tap.user_id"],
+            name="fk_search_log_tap_owner", ondelete="CASCADE",
+        ),
+        CheckConstraint("result_count >= 0", name="ck_search_log_result_count"),
+        CheckConstraint(_one_of("data_source", DATA_SOURCES), name="ck_search_log_data_source"),
+        Index("idx_search_log_user_searched", "user_id", "searched_at"),
+        Index("idx_search_log_tap_searched", "tap_id", "searched_at"),
+    )

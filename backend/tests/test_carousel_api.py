@@ -14,12 +14,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AuthContext, get_optional_auth_context
 from app.core.exceptions import ApiError
+from app.core.config import settings
 from app.db.session import get_db
 from app.main import create_app
 from app.models import AgentRun, Content, ContentSlide, ContentSource, Draft, SavedItem, Tap, Topic, UserAccount
 from app.repositories import bookmark_repository, carousel_repository, content_repository
-from app.services import feed_service, reaction_service
+from app.services import bookmark_service, feed_service, reaction_service
 from test_fe_integration_seed import AsyncAdapter, memory_db  # noqa: F401
+from test_checking_carousel_preview_config import configure_checking
 
 
 def png_bytes():
@@ -80,7 +82,7 @@ def carousel_db(memory_db):
                 deleted_at=now if content_id == 107 else None,
                 feed_valid_until=(None if legacy or content_id == 109 else
                                   now + timedelta(days=-1 if content_id == 102 else 1)),
-                published_at=now + timedelta(seconds=content_id),
+                published_at=now - timedelta(days=1) + timedelta(seconds=content_id),
             ))
             if content_id != 108:
                 for source_no in (1, 2):
@@ -90,7 +92,7 @@ def carousel_db(memory_db):
                         source_title=f"출처 {source_no}", source_role="primary" if source_no == 1 else "citation",
                         citation_order=source_no,
                     ))
-            pages = [] if legacy else ([1, 2] if content_id == 104 else
+            pages = [] if legacy else ([1] if content_id == 104 else
                     ([1, 3, 4] if content_id == 105 else list(range(1, 11 if content_id == 112 else 4))))
             for page in reversed(pages):
                 connection.execute(ContentSlide.__table__.insert().values(
@@ -132,6 +134,9 @@ async def test_feed_detail_keep_order_sources_full_body_and_public_fields_only(c
     try:
         feed = await feed_service.get_feed(carousel_db.db, 1, 1, subtopic_id=None, cursor=None, limit=20)
         detail = await feed_service.get_content_detail(carousel_db.db, 1, 1, 101)
+        saved = await bookmark_service.get_saved_bookmarks(
+            carousel_db.db, 1, topic_id=1, q=None, cursor=None, limit=20,
+        )
     finally:
         event.remove(carousel_db.engine, "before_cursor_execute", capture)
     body = detail.model_dump(by_alias=True)
@@ -149,6 +154,11 @@ async def test_feed_detail_keep_order_sources_full_body_and_public_fields_only(c
     assert all("image_data" not in statement for statement in statements)
     items = {item.id: item for item in feed.sections[0].contents}
     assert items[101].slides == detail.slides
+    saved_items = {item.content_id: item for item in saved.items}
+    assert list(saved_items) == [112, 111, 110, 101]
+    assert saved_items[101].eyebrow == items[101].slides[0].eyebrow == detail.slides[0].eyebrow
+    assert saved_items[112].eyebrow == items[112].slides[0].eyebrow
+    assert saved_items[110].eyebrow is None and saved_items[111].eyebrow is None
     assert len(items[112].slides) == 10
     assert items[110].slides == [] and items[110].notices == []
     assert items[111].slides == []
@@ -160,6 +170,135 @@ async def test_metadata_keeps_png_deferred_and_image_returns_exact_bytes(carouse
     slides = await carousel_repository.list_slides(carousel_db.db, 101)
     assert "image_data" in inspect(slides[0]).unloaded
     assert await feed_service.get_content_slide_image(carousel_db.db, 1, 1, 101, 2) == carousel_db.png
+
+
+@pytest.mark.asyncio
+async def test_local_test_preview_shares_feed_detail_save_and_image_scope(carousel_db, monkeypatch):
+    monkeypatch.setattr(settings, "database_url", "postgresql://u:p@127.0.0.1/checking_live_e2e")
+    monkeypatch.setattr(settings, "event_data_source", "local_demo")
+    carousel_db.session.execute(update(Content).where(Content.content_id == 103).values(
+        ai_judgment_basis={"method": "carousel_import_v1", "preview": True,
+                           "local_test_preview": {"database": "checking_live_e2e", "quality_approval": "not_reviewed"}},
+    ))
+    feed = await feed_service.get_feed(carousel_db.db, 1, 1, subtopic_id=None, cursor=None, limit=20)
+    item = next(item for item in feed.sections[0].contents if item.id == 103)
+    assert [notice["code"] for notice in item.notices] == ["REVIEW_REQUIRED", "DEV_PREVIEW", "AI_GENERATED"]
+    detail = await feed_service.get_content_detail(carousel_db.db, 1, 1, 103)
+    assert detail.display_mode == "full_body" and detail.body == "독립 상세 본문"
+    assert detail.notices == item.notices
+    assert await feed_service.get_content_slide_image(carousel_db.db, 1, 1, 103, 1) == carousel_db.png
+    saved = await bookmark_repository.list_saved_bookmarks(carousel_db.db, 1, topic_id=1, q=None, after=None, limit=20)
+    assert 103 in [content.content_id for _, content in saved]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["remote", "production_db", "production_events", "other_database", "forged_review", "missing_marker", "query_override"])
+async def test_unapproved_preview_stays_hidden_outside_matching_local_test(carousel_db, monkeypatch, case):
+    url = "postgresql://u:p@127.0.0.1/checking_live_e2e"
+    source = "local_demo"
+    marker = {"database": "checking_live_e2e", "quality_approval": "not_reviewed"}
+    if case == "remote":
+        url = "postgresql://u:p@db.example.com/checking_live_e2e"
+    elif case == "production_db":
+        url = "postgresql://u:p@127.0.0.1/checking"
+    elif case == "production_events":
+        source = "production"
+    elif case == "other_database":
+        marker["database"] = "other_e2e"
+    elif case == "forged_review":
+        marker["quality_approval"] = "approved"
+    elif case == "missing_marker":
+        marker = None
+    else:
+        url += "?hostaddr=10.0.0.1"
+    monkeypatch.setattr(settings, "database_url", url)
+    monkeypatch.setattr(settings, "event_data_source", source)
+    carousel_db.session.execute(update(Content).where(Content.content_id == 103).values(
+        ai_judgment_basis={"method": "carousel_import_v1", "preview": True, "local_test_preview": marker},
+    ))
+    assert await content_repository.get_public_content(carousel_db.db, 103, 1) is None
+    assert await carousel_repository.get_slide_image(carousel_db.db, 103, 1) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["expired", "missing_slide", "missing_sources", "hidden", "deleted"])
+async def test_local_preview_keeps_expiry_media_and_withdrawal_gates(carousel_db, monkeypatch, case):
+    monkeypatch.setattr(settings, "database_url", "postgresql://u:p@localhost/checking_live_e2e")
+    monkeypatch.setattr(settings, "event_data_source", "automated_test")
+    changes = {"ai_judgment_basis": {"method": "carousel_import_v1", "preview": True,
+               "local_test_preview": {"database": "checking_live_e2e", "quality_approval": "not_reviewed"}}}
+    if case == "expired":
+        changes["feed_valid_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    elif case == "missing_slide":
+        carousel_db.session.execute(delete(ContentSlide).where(ContentSlide.content_id == 103, ContentSlide.page == 2))
+    elif case == "missing_sources":
+        carousel_db.session.execute(delete(ContentSource).where(ContentSource.content_id == 103))
+    elif case == "hidden":
+        changes["status"] = "hidden"
+    else:
+        changes["deleted_at"] = datetime.now(timezone.utc)
+    carousel_db.session.execute(update(Content).where(Content.content_id == 103).values(**changes))
+    assert await content_repository.get_public_content(carousel_db.db, 103, 1) is None
+    assert await carousel_repository.get_slide_image(carousel_db.db, 103, 1) is None
+
+
+def set_checking_preview(carousel_db):
+    basis = {"method": "carousel_import_v1", "preview": True, "checking_test_preview": {
+        "database": "me_nu_checking", "environment": "checking", "quality_approval": "not_reviewed"}}
+    carousel_db.session.execute(update(Content).where(Content.content_id == 103).values(ai_judgment_basis=basis))
+    return basis
+
+
+@pytest.mark.asyncio
+async def test_checking_preview_shares_feed_detail_save_reaction_image_and_test_notices(carousel_db, monkeypatch):
+    configure_checking(monkeypatch, settings)
+    set_checking_preview(carousel_db)
+    feed = await feed_service.get_feed(carousel_db.db, 1, 1, subtopic_id=None, cursor=None, limit=20)
+    card = next(item for section in feed.sections for item in section.contents if item.id == 103)
+    assert {notice["code"] for notice in card.notices} >= {"REVIEW_REQUIRED", "DEV_PREVIEW", "AI_GENERATED"}
+    detail = await feed_service.get_content_detail(carousel_db.db, 1, 1, 103)
+    assert {notice["code"] for notice in detail.notices} >= {"REVIEW_REQUIRED", "DEV_PREVIEW", "AI_GENERATED"}
+    saved = await bookmark_repository.list_saved_bookmarks(carousel_db.db, 1, topic_id=1, q=None, after=None, limit=20)
+    assert 103 in [content.content_id for _, content in saved]
+    await reaction_service.set_bookmark(carousel_db.db, 1, 1, 103)
+    await reaction_service.set_like(carousel_db.db, 1, 1, 103)
+    assert await feed_service.get_content_slide_image(carousel_db.db, 1, 1, 103, 1) == carousel_db.png
+    # Turning off the explicit test scope hides the same stored rows everywhere.
+    monkeypatch.setattr(settings, "checking_carousel_test_preview_enabled", False)
+    assert await content_repository.get_public_content(carousel_db.db, 103, 1) is None
+    assert await carousel_repository.get_slide_image(carousel_db.db, 103, 1) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["production", "labs", "wrong_db", "url_override", "wrong_origin",
+    "wrong_marker", "approved", "local_marker", "expired", "missing_slide", "missing_sources", "hidden", "deleted"])
+async def test_checking_preview_cannot_escape_scope_or_skip_validity_gates(carousel_db, monkeypatch, case):
+    configure_checking(monkeypatch, settings)
+    basis = set_checking_preview(carousel_db)
+    changes = {}
+    if case == "production": monkeypatch.setattr(settings, "event_data_source", "production")
+    elif case == "labs": monkeypatch.setattr(settings, "menu_deployment_env", "labs")
+    elif case == "wrong_db": monkeypatch.setattr(settings, "database_url", settings.database_url.replace("/me_nu_checking", "/me_nu"))
+    elif case == "url_override": monkeypatch.setattr(settings, "database_url", settings.database_url + "?hostaddr=10.0.0.1")
+    elif case == "wrong_origin": monkeypatch.setattr(settings, "oauth_frontend_origin", "https://me-nu.kr")
+    elif case == "approved": changes["judgment_status"] = "confirmed"
+    elif case == "wrong_marker":
+        basis["checking_test_preview"]["database"] = "another"
+        changes["ai_judgment_basis"] = basis
+    elif case == "local_marker":
+        changes["ai_judgment_basis"] = {"method": "carousel_import_v1", "preview": True,
+            "local_test_preview": {"database": "me_nu_checking", "quality_approval": "not_reviewed"}}
+    elif case == "expired": changes["feed_valid_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    elif case == "missing_slide":
+        carousel_db.session.execute(delete(ContentSlide).where(ContentSlide.content_id == 103, ContentSlide.page == 2))
+    elif case == "missing_sources":
+        carousel_db.session.execute(delete(ContentSource).where(ContentSource.content_id == 103))
+    elif case == "hidden": changes["status"] = "hidden"
+    else: changes["deleted_at"] = datetime.now(timezone.utc)
+    if changes:
+        carousel_db.session.execute(update(Content).where(Content.content_id == 103).values(**changes))
+    assert await content_repository.get_public_content(carousel_db.db, 103, 1) is None
+    assert await carousel_repository.get_slide_image(carousel_db.db, 103, 1) is None
 
 
 @pytest.mark.asyncio
@@ -189,6 +328,38 @@ async def test_withdrawal_after_metadata_read_still_blocks_image_bytes(carousel_
     assert await content_repository.get_public_content(carousel_db.db, 101, 1)
     carousel_db.session.execute(update(Content).where(Content.content_id == 101).values(status="hidden"))
     assert await carousel_repository.get_slide_image(carousel_db.db, 101, 1) is None
+
+
+@pytest.mark.asyncio
+async def test_content_stays_closed_until_its_publication_time(carousel_db):
+    db, now = carousel_db.db, datetime.now(timezone.utc)
+
+    async def visible():
+        listed = await content_repository.list_public_contents(db, 1, subtopic_id=None, after=None, limit=20)
+        saved = await bookmark_repository.list_saved_bookmarks(db, 1, topic_id=1, q=None, after=None, limit=20)
+        return (101 in [item.content_id for item in listed],
+                101 in [content.content_id for _, content in saved],
+                await content_repository.get_public_content(db, 101, 1) is not None,
+                await content_repository.get_visible_content(db, 101) is not None,
+                await carousel_repository.get_slide_image(db, 101, 1) is not None)
+
+    def open_at(moment):
+        carousel_db.session.execute(update(Content).where(Content.content_id == 101).values(published_at=moment))
+
+    open_at(now + timedelta(hours=1))
+    assert await visible() == (False,) * 5
+    for operation in (reaction_service.set_like, reaction_service.set_bookmark):
+        with pytest.raises(ApiError) as exc:
+            await operation(db, 1, 1, 101)
+        assert exc.value.code == "CONTENT_NOT_FOUND"
+    with pytest.raises(ApiError) as exc:
+        await feed_service.get_content_slide_image(db, 1, 1, 101, 1)
+    assert exc.value.code == "CONTENT_NOT_FOUND"
+
+    open_at(now - timedelta(minutes=1))
+    assert await visible() == (True,) * 5
+    open_at(None)   # 공개 시각이 없는 글은 지금처럼 보인다
+    assert await visible() == (True,) * 5
 
 
 @pytest.mark.asyncio
@@ -231,7 +402,7 @@ async def test_image_http_auth_validation_and_private_png_contract(carousel_db):
         assert (await client.get("/api/v1/contents/101/slides/0/image?topicId=1")).status_code == 422
         assert (await client.get("/api/v1/contents/101/slides/11/image?topicId=1")).status_code == 422
         assert (await client.get("/api/v1/contents/101/slides/1/image?topicId=9223372036854775808")).status_code == 422
-        carousel_db.session.execute(delete(ContentSlide).where(ContentSlide.content_id == 101, ContentSlide.page == 3))
+        carousel_db.session.execute(delete(ContentSlide).where(ContentSlide.content_id == 101, ContentSlide.page.in_((2, 3))))
         unavailable = await client.get(url)
         assert unavailable.status_code == 404
         assert unavailable.headers["cache-control"] == "private, no-store"

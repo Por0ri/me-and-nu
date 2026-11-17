@@ -55,6 +55,7 @@ uv run ani-menu generate-db <request_id> --kind information
 
 ## 주요 문서
 
+- [수집·생성·검수 파이프라인 분리 계획](docs/PIPELINE_REFACTOR_PLAN.md)
 - [에이전트 아키텍처·점수·재시도](docs/AGENT_ARCHITECTURE.md)
 - [카드 제작 및 이미지 잘림 가드레일](docs/CARD_GUARDRAILS.md)
 - [DB 저장·보존 정책](docs/DATA_STORAGE.md)

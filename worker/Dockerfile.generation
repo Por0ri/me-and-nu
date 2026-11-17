@@ -1,0 +1,32 @@
+# Named build contexts come from compose.generation.yaml.
+FROM runtime-base AS agent-deps
+USER root
+WORKDIR /opt/ani-agent
+ENV UV_PROJECT_ENVIRONMENT=/opt/ani-venv \
+    UV_PYTHON_DOWNLOADS=never
+RUN python -m pip install --only-binary=:all: uv==0.9.28
+COPY --from=anime-project /pyproject.toml /uv.lock /README.md ./
+RUN uv sync --frozen --no-dev --no-install-project --no-cache --python /usr/local/bin/python
+COPY --from=anime-project /src/ani_menu_agent/ ./src/ani_menu_agent/
+RUN uv sync --frozen --no-dev --no-cache --python /usr/local/bin/python
+
+FROM runtime-base
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --only-binary=:all: Pillow==12.3.0
+COPY --from=agent-deps /opt/ani-venv/ /opt/ani-venv/
+COPY --from=agent-deps /opt/ani-agent/ /opt/ani-agent/
+COPY --from=anime-project /config/sources.json /config/source_type_map.json /opt/ani-agent/config/
+COPY --from=anime-works /menu_works.csv /menu_work_entries.csv /catalog/
+COPY --from=anime-project /data/reference/agent_works.csv /data/reference/menu_work_aliases.csv /data/reference/menu_work_external_entries.csv /data/reference/menu_work_franchises.csv /data/reference/menu_work_parent_overrides.csv /opt/ani-agent/data/reference/
+COPY --from=anime-project /examples/sample_content.json /opt/ani-agent/examples/
+ENV ANIME_AGENT_ROOT=/opt/ani-agent \
+    ANIME_AGENT_PYTHON=/opt/ani-venv/bin/python \
+    ANI_MENU_DATABASE_BACKEND=sqlite \
+    ANI_MENU_DATABASE_PATH=/tmp/ani-menu-smoke.sqlite3 \
+    LANGSMITH_TRACING=false \
+    LANGCHAIN_TRACING_V2=false
+USER 10001:10001
+CMD ["/opt/ani-venv/bin/python", "-m", "ani_menu_agent.cli", "--help"]

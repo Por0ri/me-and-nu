@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -18,7 +18,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
 from app.models import Content, ContentSlide, ContentSource, SavedItem, Tap, Topic
-from app.repositories import bookmark_repository
+from app.repositories import bookmark_repository, carousel_repository
 from app.services import bookmark_service
 from app.services.cursor import encode_cursor
 
@@ -55,8 +55,9 @@ def test_bookmarks_openapi_has_one_get_route_and_v12_fields():
     item = spec["components"]["schemas"]["SavedBookmarkItem"]
     assert set(item["properties"]) == {
         "savedItemId", "contentId", "title", "topicId", "tags", "resurfaceEnabled",
-        "summary", "imageUrl", "sourceName", "productionType", "publishedAt", "subtopicNames",
+        "summary", "imageUrl", "sourceName", "eyebrow", "productionType", "publishedAt", "subtopicNames",
     }
+    assert item["properties"]["eyebrow"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
 
 
 def test_bookmarks_requires_login_and_completed_onboarding(monkeypatch):
@@ -119,6 +120,8 @@ async def test_bookmarks_service_cursor_search_and_actual_saved_ids(monkeypatch)
 
     monkeypatch.setattr(bookmark_service, "require_active_tap", AsyncMock(return_value=object()))
     monkeypatch.setattr(bookmark_service.repo, "list_saved_bookmarks", list_rows)
+    eyebrows = AsyncMock(side_effect=[{301: "  편집 라벨 & 소식  "}, {303: ""}])
+    monkeypatch.setattr(carousel_repository, "list_cover_eyebrows", eyebrows)
     monkeypatch.setattr(
         bookmark_service.content_repository, "get_primary_source",
         AsyncMock(return_value=(SimpleNamespace(source_title=None), None)),
@@ -134,6 +137,8 @@ async def test_bookmarks_service_cursor_search_and_actual_saved_ids(monkeypatch)
     assert body["items"][0]["summary"] == "요약"
     assert body["items"][0]["imageUrl"] is None
     assert body["items"][0]["sourceName"] is None
+    assert body["items"][0]["eyebrow"] == "  편집 라벨 & 소식  "
+    assert body["items"][1]["eyebrow"] is None
     assert body["items"][1]["resurfaceEnabled"] is False
     assert body["items"][0]["tags"] == ["영화 정보"]
     assert first.next_cursor is not None
@@ -142,6 +147,8 @@ async def test_bookmarks_service_cursor_search_and_actual_saved_ids(monkeypatch)
     )
     assert [item.saved_item_id for item in second.items] == [61]
     assert second.next_cursor is None
+    assert second.items[0].eyebrow == ""
+    assert [call.args[1] for call in eyebrows.await_args_list] == [[301, 302], [303]]
     assert calls == [
         (11, 1, "영화", None, 3),
         (11, 1, "영화", (rows[1][0].saved_at, 62), 3),
@@ -242,6 +249,15 @@ async def test_repository_filters_full_saved_scope_before_pagination(monkeypatch
             ]
         ]
         connection.execute(SavedItem.__table__.insert(), saved_rows)
+        connection.execute(ContentSlide.__table__.insert(), [
+            {"content_id": content_id, "page": page, "role": "cover" if page == 1 else "body",
+             "eyebrow": eyebrow, "title_lines": ["제목"], "body_sentences": [], "layout_json": {},
+             "image_data": b"not loaded", "image_sha256": "a" * 64, "image_width": 1308, "image_height": 1632}
+            for content_id, page, eyebrow in [
+                (301, 1, "  HOME 첫 라벨 & 소식  "), (301, 2, "두 번째 라벨"),
+                (302, 2, "표지가 없는 콘텐츠"), (304, 1, "타인 콘텐츠 라벨"),
+            ]
+        ])
         with Session(bind=connection) as session:
             class SessionAdapter:
                 async def execute(self, statement):
@@ -264,6 +280,19 @@ async def test_repository_filters_full_saved_scope_before_pagination(monkeypatch
             no_match = await bookmark_repository.list_saved_bookmarks(
                 db, 11, topic_id=1, q="없는 검색어", after=None, limit=20,
             )
+            statements = []
+            event.listen(connection, "before_cursor_execute", lambda conn, cursor, statement, *args: statements.append(statement))
+            cover_labels = await carousel_repository.list_cover_eyebrows(
+                db, [content.content_id for _, content in all_rows],
+            )
+            assert cover_labels == {301: "  HOME 첫 라벨 & 소식  "}
+            assert len(statements) == 1, "A full saved page needs only one eyebrow query"
+            assert "image_data" not in statements[0]
+            assert "title_lines" not in statements[0], "Only content_id and eyebrow are projected"
+            assert await carousel_repository.list_cover_eyebrows(db, []) == {}
+            assert len(statements) == 1, "Empty pages must not query slides"
+            assert await carousel_repository.list_cover_eyebrows(db, [301]) == cover_labels
+            assert len(statements) == 2, "Query count does not scale with saved item count"
 
     assert [saved.saved_item_id for saved, _ in all_rows] == [3, 2, 1]
     assert all_rows[0][0].saved_tags == ["movie info"]

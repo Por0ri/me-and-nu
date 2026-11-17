@@ -7,6 +7,7 @@ const approvedRemoteApis = new Map([
   ["https://test.me-nu.kr", "https://api.test.me-nu.kr"],
   ["https://labs.me-nu.kr", "https://api.labs.me-nu.kr"],
   ["https://checking.me-nu.kr", "https://api.checking.me-nu.kr"],
+  ["https://www.me-nu.kr", "https://api.me-nu.kr"],
 ]);
 
 function isBareOrigin(url: URL): boolean {
@@ -52,7 +53,13 @@ export function isActiveSession(session: Session | null): boolean {
     session.onboardingCompleted === true && session.user?.accountType === "user" &&
     Number.isSafeInteger(session.user.id) && session.user.id > 0;
 }
+export function isRestorationSession(session: Session | null): boolean {
+  return session?.sessionState === "restoration_pending" && session.authenticated === false && session.user === null;
+}
 export function resolvePivotSessionRoute(session: Session | null, pathname: string): string | null {
+  if (isRestorationSession(session)) return pathname === "/pivot/login" ? null : "/pivot/login";
+  // The intro owns its transition, including for accounts still onboarding.
+  if (pathname === "/pivot") return null;
   if (isActiveSession(session)) {
     return ["/pivot/login", "/pivot/consent", "/pivot/onboarding"].includes(pathname) ? "/pivot/home" : null;
   }
@@ -65,10 +72,10 @@ export async function restorePivotSession(): Promise<Session> {
   requirePivotApi();
   return getSession();
 }
-export async function loadPivotPolicies() {
+export async function loadPivotPolicies(signal?: AbortSignal) {
   requirePivotApi();
-  const response = await getPolicies();
-  return validatePolicies(response.consentItems);
+  const response = await getPolicies(signal);
+  return validatePolicies(response?.consentItems);
 }
 
 export function oauthErrorMessage(code: string | null): string {

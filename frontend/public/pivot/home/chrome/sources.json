@@ -11,6 +11,7 @@
     {
       "path": "/pivot/home/chrome/notification.svg",
       "figmaAsset": "fa2ce08e-7b1c-474f-b6e1-c9f7df5de867",
+      "revision": "2026-11-12: node 1569:8842 Grey/600 (#71717A); original 24x24 path retained",
       "sha256": "71468b9cb5180821c7c6457f7a69fa2ae914ab93c682a9cad6c0d0cf14e3766e"
     },
     {
@@ -45,8 +46,9 @@
     },
     {
       "path": "/pivot/home/chrome/ai.svg",
-      "figmaAsset": "58c1cb36-d3a8-4731-989a-579ddb5ceee2",
-      "sha256": "4f2d69dcf36aeb8014e94c07796c22e99069702f12f83b4b5e85aa2fb342e62d"
+      "figmaAsset": "3a33ed94-1afa-4d33-8eb8-6945c693369c",
+      "sha256": "f1375eb4067ff69be9b292e5854f7aaf7d4e28383782c015f710c19baa41a870",
+      "node": "I1272:3863;1167:4367"
     }
   ]
 }

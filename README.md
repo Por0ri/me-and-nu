@@ -8,6 +8,8 @@ Next.js, FastAPI, PostgreSQL, Redis 기반 로컬 V1 테스트 프로젝트입�
 
 팀 테스트 서버용 Dockerfile, 독립 Compose 설정, 환경변수 준비와 실행 순서는 [백엔드 배포 안내](deploy/README.md)를 참고하세요. 카카오·네이버 OAuth 백엔드와 프론트 없이 확인하는 절차는 [OAuth 설정 안내](docs/OAUTH_T02_1_SETUP.md)에 정리했습니다. 기본 예제의 OAuth 설정은 비활성이며, 이미 구성된 환경의 앱 등록·DB 적용·배포 상태는 각 환경 기록을 확인하세요.
 
+Celery Worker·Beat·Flower와 가짜 Agent 단건 콘텐츠 큐의 로컬 실행·접수·조회·복구는 [작업 큐 실행 안내](worker/README.md)를 참고하세요. 작업 DB는 별도 PostgreSQL을 사용하며 실제 LLM 호출과 서비스 콘텐츠 적재는 연결하지 않았습니다. 기존 추천 배치는 유지합니다.
+
 ## 준비
 
 - Docker Compose, Node.js 20.9 이상, Python 및 PowerShell
@@ -33,7 +35,7 @@ docker compose up -d postgres redis
 cd backend
 if (!(Test-Path .venv)) { py -m venv .venv }
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m alembic upgrade 150a601074af
+.\.venv\Scripts\python.exe -m alembic upgrade d7b3e9a1c452
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
 .\.venv\Scripts\python.exe scripts/run_local_api.py
@@ -41,16 +43,13 @@ if (!(Test-Path .venv)) { py -m venv .venv }
 
 Windows에서는 위 실행 스크립트가 PostgreSQL 비동기 연결에 맞는 이벤트 루프를 사용합니다. 자동 재시작은 하지 않으므로 코드 변경 후에는 기존 서버를 종료하고 다시 실행하세요. 이미 `http://localhost:8000/health/db`가 정상 응답하면 서버가 실행 중입니다. 같은 8000번 포트로 중복 실행하면 Windows에서 `WinError 10013` 또는 `10048`이 발생할 수 있습니다.
 
-API의 회원 유형은 `user` 하나입니다. 이 서비스 반영 후보의 Alembic head와 명시적 migration target은 추천 연결 표 4개를 더한 `150a601074af` 하나이며 캐러셀 `f4b8c1d9a620`과 온보딩 V2 `e3a7b9c2d451`을 포함합니다. 생년월일 삭제 `d2f6a9c4e731` 파일은 제외했고, 기존 생년월일 컬럼과 값은 보존합니다. 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 위 revision을 명시합니다. 과거 d2가 이미 적용된 DB는 이 후보에 해당 migration 이력이 없으므로 별도 이력 검토 없이 자동 업그레이드하지 않습니다. 환경별 실제 revision을 먼저 확인하세요. 이 저장소의 설정 변경만으로 DB 적용이나 배포가 이루어지지는 않습니다.
+API의 회원 유형은 `user` 하나입니다. 이 서비스 반영 후보의 Alembic head와 명시적 migration target은 추천 연결 표 4개(`150a601074af`), 신고·문의 표 2개, 복구 대기 세션 상태, 내부 알림 설정, 추천 알림 종류, 검색 기록 표를 더한 `d7b3e9a1c452` 하나이며 캐러셀 `f4b8c1d9a620`과 온보딩 V2 `e3a7b9c2d451`을 포함합니다. 생년월일 삭제 `d2f6a9c4e731` 파일은 제외했고, 기존 생년월일 컬럼과 값은 보존합니다. 적용 대상을 고정하기 위해 `upgrade head/heads` 대신 위 revision을 명시합니다. 과거 d2가 이미 적용된 DB는 이 후보에 해당 migration 이력이 없으므로 별도 이력 검토 없이 자동 업그레이드하지 않습니다. 환경별 실제 revision을 먼저 확인하세요. 이 저장소의 설정 변경만으로 DB 적용이나 배포가 이루어지지는 않습니다.
 
 `app.seeds.v1_local`은 정책, 영화 Topic·Subtopic, 로컬 공개 콘텐츠를 멱등적으로 준비합니다. `app.seeds.dev_user`는 로컬 테스트용 데모 사용자를 준비합니다. 기존 영화 Agent와 저장 로직은 별개입니다. 서버 실행 중 [Swagger UI](http://localhost:8000/docs), [OpenAPI JSON](http://localhost:8000/openapi.json), [ReDoc](http://localhost:8000/redoc)을 확인할 수 있습니다.
 
 ## Swagger에서 로그인 없이 테스트
 
 `backend/.env`에 `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 설정하고 위 마이그레이션과 두 seed를 실행한 뒤 `localhost:8000/docs`를 여세요. 루프백 요청의 보호 API는 데모 사용자로 처리되어 세션 쿠키와 CSRF 헤더 없이 실행할 수 있습니다. `ENABLE_DEV_AUTH_BYPASS=false`로 바꾸고 서버를 다시 시작하면 일반 인증이 복원됩니다. 기존 로그인 API `POST /api/v1/dev/auth/login`은 `ENABLE_DEV_API=true`일 때 Swagger의 **개발용 인증** 아래에 있습니다.
-
-영화 Agent를 실행해 저장한 초안과 판정은 Swagger의 **개발용 Agent 결과 → `GET /api/v1/dev/agent-runs`**에서 확인합니다. 실행 명령과 상세 조회 순서는 [Swagger 테스트 가이드](docs/SWAGGER_TEST_GUIDE.md)에 있습니다. 승인되고 추가 사실 확인이 필요 없는 초안은 저장 후 공개 피드로 자동 발행됩니다.
-공개 피드 테스트에서는 같은 Swagger 그룹의 `POST /api/v1/dev/agent-runs/{agentRunId}/publish`로 발행을 재시도할 수 있습니다. 탈락 초안은 로컬 테스트 모드에서만 `publish-preview`로 게시하며 검토 필요 상태로 표시됩니다.
 
 ## 프론트엔드 실행
 
@@ -95,6 +94,6 @@ npm run build
 
 ## 현재 범위와 이후 연결 지점
 
-현재 로컬 구현 범위는 세션·OAuth·정책·온보딩·프로필·Topic/Subtopic·구독·피드·콘텐츠 상세·O/X·좋아요·북마크·저장 목록·AI 대화·운영공지입니다. Redis는 익명·로그인 세션 저장에 적용되었으며 조회 캐시와 Celery 작업 큐는 아직 연결하지 않았습니다. 공개 콘텐츠는 DB에서 조회하고, 추천 이유와 노출 여부는 추천·이벤트 로그가 연결되기 전의 기본값입니다. AI 대화는 LLM 설정과 현재 분야의 공개 콘텐츠 근거가 필요하며 내부 AgentRun 조회와 구분합니다. 2026-10-28 통합 작업 공간에서는 실제 Kakao 로그인·V2 온보딩·피드·상세·북마크·로그아웃과 재접근 차단을 확인했습니다. Naver는 로그인 폼 도달까지만 확인했으며 자세한 결과와 후보 재검증 상태는 [서비스 흐름 검증](docs/SERVICE_FLOW_E2E_2026-10-28.md)을 따릅니다. 과거 원격 결과는 [OAuth 안내](docs/OAUTH_T02_1_SETUP.md)와 [Labs 배포 기록](docs/BACKEND_LABS_ENVIRONMENT_2026-10-27.md)에 보존합니다. 이번 후보 준비에서 원격 push·배포는 하지 않았습니다.
+현재 로컬 구현 범위는 세션·OAuth·정책·온보딩·프로필·Topic/Subtopic·구독·피드·콘텐츠 상세·O/X·좋아요·북마크·저장 목록·AI 대화·운영공지입니다. Redis는 익명·로그인 세션 저장에 적용되었습니다. Celery Worker·Beat·Flower는 별도 Redis를 사용하는 독립 로컬 실행 기반으로 추가했으며, 실제 콘텐츠 생성과 AI 대화 작업은 아직 연결하지 않았습니다. 조회 캐시는 후속 범위입니다. 공개 콘텐츠는 DB에서 조회하며 추천·이벤트 흐름은 기존 Checking 구현을 유지합니다. AI 대화는 LLM 설정과 현재 분야의 공개 콘텐츠 근거가 필요하며 내부 AgentRun 조회와 구분합니다. 2026-10-28 통합 작업 공간에서는 실제 Kakao 로그인·V2 온보딩·피드·상세·북마크·로그아웃과 재접근 차단을 확인했습니다. Naver는 로그인 폼 도달까지만 확인했으며 자세한 결과와 후보 재검증 상태는 [서비스 흐름 검증](docs/SERVICE_FLOW_E2E_2026-10-28.md)을 따릅니다. 과거 원격 결과는 [OAuth 안내](docs/OAUTH_T02_1_SETUP.md)와 [Labs 배포 기록](docs/BACKEND_LABS_ENVIRONMENT_2026-10-27.md)에 보존합니다. 이번 Celery 실행 기반은 로컬 구현이며 서버 배포 상태를 뜻하지 않습니다.
 
 오류는 `{ "code": "...", "message": "..." }` 형식입니다. 주요 상태 코드는 조회 200, 생성 201, 성공한 삭제·로그아웃 204, 인증 없음 401, CSRF 또는 온보딩 필요 403, 미존재 404, 중복·상태 충돌 409, 입력·cursor 오류 422입니다.

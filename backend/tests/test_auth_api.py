@@ -19,6 +19,7 @@ from app.models.user import UserAccount
 from app.repositories.auth_session_repository import find_auth_session
 from app.schemas.onboarding import OnboardingRequest
 from app.schemas.profile import ProfilePatchRequest
+from app.services import onboarding_service
 from app.services.user_service import EmailAlreadyRegisteredError
 
 
@@ -225,8 +226,10 @@ def test_login_rejects_invalid_credentials(auth_environment, monkeypatch):
     assert response.json()["code"] == "AUTH_REQUIRED"
 
 
-def test_profile_patch_contract(auth_environment):
+def test_profile_patch_contract(auth_environment, monkeypatch):
     client, user, _, sessions = auth_environment
+    # 이 파일의 가짜 DB 는 중복 닉네임 확인을 못 함 → "겹치는 회원 없음"으로 대답 (중복 확인은 test_onboarding_nickname.py 에서 따로 봄)
+    monkeypatch.setattr(onboarding_service, "nickname_taken", AsyncMock(return_value=False))
     user.onboarding_completed_at = datetime.now(timezone.utc)
     raw = create_session_id()
     sessions[raw] = SimpleNamespace(
@@ -245,9 +248,9 @@ def test_profile_patch_contract(auth_environment):
     missing_image = client.patch("/api/v1/users/me", json={"profileImageId": 501}, headers={"X-CSRF-Token": csrf})
     assert missing_image.status_code == 404
     assert missing_image.json()["code"] == "IMAGE_NOT_FOUND"
-    patched = client.patch("/api/v1/users/me", json={"nickname": "새 이름"}, headers={"X-CSRF-Token": csrf})
+    patched = client.patch("/api/v1/users/me", json={"nickname": "새이름"}, headers={"X-CSRF-Token": csrf})
     assert patched.status_code == 200
-    assert patched.json()["nickname"] == "새 이름"
+    assert patched.json()["nickname"] == "새이름"
     assert patched.json()["accountType"] == "user"
     assert "birthDate" not in patched.json()
     assert patched.headers["cache-control"] == "private, no-store"
@@ -267,7 +270,7 @@ def test_swagger_omits_birth_date_and_age_confirmation_contracts():
 
 
 def test_v11_nickname_length_is_checked_after_trimming():
-    nickname = " " + "가" * 30 + " "
+    nickname = " " + "가" * 20 + " "
     onboarding = OnboardingRequest.model_validate({
         "nickname": nickname,
         "accountType": "user",
@@ -276,8 +279,8 @@ def test_v11_nickname_length_is_checked_after_trimming():
         "consents": [{"type": "terms", "policyVersion": "v1", "agreed": True}],
     })
     profile = ProfilePatchRequest.model_validate({"nickname": nickname})
-    assert onboarding.nickname == "가" * 30
-    assert profile.nickname == "가" * 30
+    assert onboarding.nickname == "가" * 20
+    assert profile.nickname == "가" * 20
 
 
 @pytest.mark.asyncio

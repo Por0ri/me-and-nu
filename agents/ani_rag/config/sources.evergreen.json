@@ -1,0 +1,262 @@
+{
+  "version": 1,
+  "description": "RAG MCP source allowlist. Only entries with status approved may be used; is_collecting remains an explicit separate activation switch.",
+  "sources": [
+    {
+      "source_id": "frieren_official",
+      "name": "Frieren Official Anime Character Page",
+      "mcp_server": "firecrawl",
+      "content_types": [
+        "character"
+      ],
+      "allowed_tools": [
+        "search",
+        "read"
+      ],
+      "status": "draft",
+      "usage_notes": "Work-scoped official source. Search is restricted to frieren-anime.jp and returned URLs are exact-host filtered; reads are one page at a time. Do not activate: Firecrawl did not attest the redirect chain or final URL.",
+      "allowed_hosts": [
+        "frieren-anime.jp"
+      ],
+      "tool_bindings": {
+        "search": "firecrawl_search",
+        "read": "firecrawl_scrape"
+      },
+      "source_kind": "official_anime_site",
+      "collect_method": "mcp",
+      "site_url": "https://frieren-anime.jp/character/",
+      "source_grade": "primary",
+      "copyright_status": "unknown",
+      "license_basis": "unknown",
+      "is_collecting": false
+    },
+    {
+      "source_id": "ann_encyclopedia",
+      "name": "Anime News Network Encyclopedia",
+      "mcp_server": "firecrawl",
+      "content_types": [
+        "character",
+        "guide",
+        "people",
+        "music"
+      ],
+      "allowed_tools": [
+        "search",
+        "read"
+      ],
+      "status": "approved",
+      "usage_notes": "Work-ID-seeded encyclopedia lookup only: query canonical local work titles/verified aliases one work at a time, and accept only /encyclopedia/ pages. News, reviews, interviews, features, interest feeds, and page-sidebar cards are outside scope. Preserve each encyclopedia item as its own raw document with ANN URL id as source_native_id. Eligible output types are character, guide, people, and music only when that page contains direct supporting facts; one source page may yield additional content plans if each format has sufficient evidence. Episode records may support guide content; staff/cast and their linked works may support people/curation; theme-song records may support music. Never turn metadata counts or ratings into editorial review or fandom consensus. Reads require exact request/sourceURL/url equality for no-redirect cases or a complete verified in-host redirect chain. Keep calls sequential and low-rate, stop on 429, and do not enable recurring collection. Do not use images from ANN pages in this scope.",
+      "allowed_hosts": [
+        "www.animenewsnetwork.com"
+      ],
+      "allowed_path_prefixes": [
+        "/encyclopedia/"
+      ],
+      "tool_bindings": {
+        "search": "firecrawl_search",
+        "read": "firecrawl_scrape"
+      },
+      "source_kind": "reference_encyclopedia",
+      "collect_method": "mcp",
+      "site_url": "https://www.animenewsnetwork.com/encyclopedia/search/name",
+      "source_grade": "reference",
+      "copyright_status": "unknown",
+      "license_basis": "internal_reference_lookup_only; cite source; no image reuse or verbatim article output",
+      "is_collecting": false,
+      "allowed_media_hosts": [
+        "cdn.animenewsnetwork.com"
+      ]
+    },
+    {
+      "source_id": "wikidata_character_catalog",
+      "name": "Wikidata Anime Character Relationships",
+      "mcp_server": "wikidata",
+      "content_types": [
+        "character"
+      ],
+      "allowed_tools": [
+        "search",
+        "read"
+      ],
+      "status": "approved",
+      "usage_notes": "Character identity and work-relationship discovery lead. Search local work titles with search_items; request P674 for character relationships and P18/P154 when collecting available character/work image candidates. Preserve Wikidata item URLs/QIDs and statement references. Convert Commons filenames to Special:FilePath and download only through the separately allowlisted Commons media hosts. Pilot results cited Wikipedia via imported references, so do not treat Wikidata alone as primary factual confirmation. No broad SPARQL crawl or recurring plan; source collection remains disabled until explicitly scheduled.",
+      "allowed_hosts": [
+        "www.wikidata.org"
+      ],
+      "tool_bindings": {
+        "search": "search_items",
+        "read": "get_statement_values"
+      },
+      "source_kind": "structured_reference_catalog",
+      "collect_method": "mcp",
+      "site_url": "https://www.wikidata.org/wiki/Wikidata:Main_Page",
+      "source_grade": "reference",
+      "copyright_status": "unknown",
+      "license_basis": "identity_and_relationship_lookup_only; retain item URLs and statement references; verify terms before redistributing records",
+      "is_collecting": false,
+      "allowed_media_hosts": [
+        "commons.wikimedia.org",
+        "upload.wikimedia.org"
+      ]
+    },
+    {
+      "source_id": "kitsu_anime_catalog",
+      "name": "Kitsu Anime Catalog API",
+      "mcp_server": "firecrawl",
+      "content_types": [
+        "character",
+        "guide"
+      ],
+      "allowed_tools": [
+        "search",
+        "read"
+      ],
+      "status": "approved",
+      "usage_notes": "Collect all distinct cover and included character image variants returned by filtered JSON:API lookups for a locally matched work ID. Preserve local menu_work_id, Kitsu anime/character IDs, source image URL, API page URL, image role, and downloaded file hash. Download only from separately allowlisted media.kitsu.app; do not search the entire media host. The content-generation worker selects from the linked image pool for each card. Query one work title at a time, page[limit] no higher than 20, and follow same-host pagination links. Preserve synopsis attribution. No recurring plan or worker enabled.",
+      "allowed_hosts": [
+        "kitsu.io"
+      ],
+      "tool_bindings": {
+        "search": "firecrawl_scrape",
+        "read": "firecrawl_scrape"
+      },
+      "source_kind": "reference_catalog_api",
+      "collect_method": "mcp",
+      "site_url": "https://kitsu.io/api/edge/anime",
+      "source_grade": "reference",
+      "copyright_status": "unknown",
+      "license_basis": "internal image candidate collection requested; preserve source and work provenance; no rights evaluation gate in this pilot",
+      "is_collecting": false,
+      "allowed_media_hosts": [
+        "media.kitsu.app"
+      ]
+    },
+    {
+      "source_id": "flyingdog_music",
+      "name": "FlyingDog Music Official Releases",
+      "mcp_server": "firecrawl",
+      "content_types": [
+        "music"
+      ],
+      "allowed_tools": [
+        "search",
+        "read"
+      ],
+      "status": "approved",
+      "usage_notes": "Use the official FlyingDog release list and linked release detail pages for the label's own music records. Preserve explicit artist, album/single title, release date, catalog code, source URL, and anime/title tie-in; do not infer a work link from an artist alone. Firecrawl search/read were verified on 2026-11-09 and the release page returned jacket image candidates from www.jvcmusic.co.jp. Download returned page images only from that exact host and attach them only after local work-ID resolution. Make one bounded query at a time, use sequential low-rate requests, stop on 429, and do not configure recurring collection until a safe rate is confirmed. No audio or lyrics. Collection remains disabled.",
+      "allowed_hosts": [
+        "www.jvcmusic.co.jp"
+      ],
+      "tool_bindings": {
+        "search": "firecrawl_search",
+        "read": "firecrawl_scrape"
+      },
+      "source_kind": "primary_music_label_catalog",
+      "collect_method": "mcp",
+      "site_url": "https://www.jvcmusic.co.jp/flyingdog/",
+      "source_grade": "primary",
+      "copyright_status": "unknown",
+      "license_basis": "record source attribution and work/image provenance; no audio or lyrics",
+      "is_collecting": false,
+      "allowed_media_hosts": [
+        "www.jvcmusic.co.jp"
+      ]
+    },
+    {
+      "source_id": "anime_trending_polls",
+      "name": "Anime Trending Polls and Weekly Charts",
+      "mcp_server": "firecrawl",
+      "content_types": [
+        "curation"
+      ],
+      "allowed_tools": [
+        "search",
+        "read"
+      ],
+      "status": "approved",
+      "usage_notes": "Narrow approval for Anime Trending poll/chart pages only, using one bounded query at a time and exact-host filtered search. A bounded Firecrawl MCP search and single-page read were verified on 2026-11-09; the requested chart URL and final URL were identical. Treat every result as a self-selected Anime Trending community poll, never as general fandom consensus or an objective quality fact. Preserve season, chart week, date exactly as displayed in the body, title, rank, movement, previous/peak position, exact page URL, and collection timestamp. Respondent count and sample composition were not exposed and must remain unknown. Firecrawl published_at was null; Firecrawl body showed NOVEMBER 7, 2026 while a separate web rendering showed NOVEMBER 8, so preserve the raw page value and flag date conflicts instead of normalizing them. Collect only page-returned image candidates from the allowlisted media hosts; exclude Discord widget avatars. Stop on 429; this bounded check does not establish recurring rate limits. Collection remains disabled.",
+      "allowed_hosts": [
+        "www.anitrendz.com"
+      ],
+      "tool_bindings": {
+        "search": "firecrawl_search",
+        "read": "firecrawl_scrape"
+      },
+      "source_kind": "community_poll_curated_ranking",
+      "collect_method": "mcp",
+      "site_url": "https://www.anitrendz.com/polls",
+      "source_grade": "community",
+      "copyright_status": "unknown",
+      "license_basis": "attributed poll result reference; preserve poll window and sampling limitations; no verbatim article text or unreviewed image reuse",
+      "is_collecting": false,
+      "allowed_media_hosts": [
+        "www.anitrendz.com",
+        "firebasestorage.googleapis.com",
+        "anitrendz.net"
+      ]
+    },
+    {
+      "source_id": "anime_corner",
+      "name": "Anime Corner Reviews",
+      "mcp_server": "firecrawl",
+      "content_types": [
+        "review"
+      ],
+      "allowed_tools": [
+        "search",
+        "read"
+      ],
+      "status": "approved",
+      "usage_notes": "Narrow approval for attributed review articles discoverable through the /category/review/ archive, not general Anime Corner news/features or its separate poll results. A bounded Firecrawl MCP search and read were verified on 2026-11-09. The representative article returned an author, publication date, first-person opinions, and article citations; retain author, date, claims, and cited evidence as separate attributed fields, and never present review opinions as facts or copy review prose. Read only one exact article URL per request; require source/final URL to remain on the exact host and preserve redirect verification. The article returned 32 image candidates from static.animecorner.me; keep image provenance linked to the article and resolved local work. Collection remains disabled; no recurring rate was established.",
+      "allowed_hosts": [
+        "animecorner.me"
+      ],
+      "tool_bindings": {
+        "search": "firecrawl_search",
+        "read": "firecrawl_scrape"
+      },
+      "source_kind": "editorial_review_archive",
+      "collect_method": "mcp",
+      "site_url": "https://animecorner.me/category/review/",
+      "source_grade": "editorial_opinion",
+      "copyright_status": "unknown",
+      "license_basis": "attributed opinion evidence only; preserve author and source URL; no verbatim review prose",
+      "is_collecting": false,
+      "allowed_media_hosts": [
+        "static.animecorner.me"
+      ]
+    },
+    {
+      "source_id": "anime_corner_interviews",
+      "name": "Anime Corner Interviews",
+      "mcp_server": "firecrawl",
+      "content_types": [
+        "people",
+        "humor"
+      ],
+      "allowed_tools": [
+        "search",
+        "read"
+      ],
+      "status": "approved",
+      "usage_notes": "Narrow approval for the Anime Corner interview archive and linked interview articles. A bounded Firecrawl MCP search, archive read, and article read were verified on 2026-11-09. For people records, keep interviewee and statements attributed. For humor, use only firsthand, source-attributed production anecdotes (for example, a cast member describing approved improvisation in a dub); never reclassify community jokes, speculation, or editorial framing as facts. Preserve speaker, interviewer/publisher, publication date, exact source URL, claim/excerpt, original language, and linked work identity separately. The article returned four image candidates from static.animecorner.me; preserve source/article/work provenance. Read one exact article per request; exact-host search can also return author/archive pages, so only consume links identified on the interview archive as interview articles. Collection remains disabled and recurring request rate is untested.",
+      "allowed_hosts": [
+        "animecorner.me"
+      ],
+      "tool_bindings": {
+        "search": "firecrawl_search",
+        "read": "firecrawl_scrape"
+      },
+      "source_kind": "editorial_interview_archive",
+      "collect_method": "mcp",
+      "site_url": "https://animecorner.me/category/anime-corner/interview/",
+      "source_grade": "firsthand_interview_statement",
+      "copyright_status": "unknown",
+      "license_basis": "attributed interview statements and production anecdotes; preserve original source and speaker; no verbatim interview output",
+      "is_collecting": false,
+      "allowed_media_hosts": [
+        "static.animecorner.me"
+      ]
+    }
+  ]
+}

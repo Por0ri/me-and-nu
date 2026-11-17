@@ -21,7 +21,7 @@ def _alias_match_expression(element, *, sqlite=False):
         # PostgreSQL's function output is otherwise named after the function,
         # whereas SQLite's json_each already exposes a column named value.
         aliases = func.jsonb_array_elements_text(column).table_valued("value").render_derived(name="work_alias")
-    return exists(select(1).select_from(aliases).where(aliases.c.value.ilike(pattern, escape="\\")))
+    return exists(select(1).select_from(aliases).where(_compact(aliases.c.value).ilike(pattern, escape="\\")))
 
 
 @compiles(_AliasMatches)
@@ -38,15 +38,23 @@ def _literal_pattern(query: str) -> str:
     return "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
+def _compact(column):
+    # Spaces are ignored on both sides, so "장송의프리렌" finds "장송의 프리렌".
+    return func.replace(column, " ", "")
+
+
 async def search_works(
     db: AsyncSession, topic_id: int, *, query: str, after_id: int | None, limit: int,
 ) -> list[Entity]:
-    pattern = _literal_pattern(query)
+    compact = "".join(query.split())
+    if not compact:
+        return []
+    pattern = _literal_pattern(compact)
     statement = select(Entity).where(
         Entity.topic_id == topic_id,
         Entity.entity_type == "anime",
         Entity.is_active.is_(True),
-        or_(Entity.name.ilike(pattern, escape="\\"), _AliasMatches(Entity.aliases, pattern)),
+        or_(_compact(Entity.name).ilike(pattern, escape="\\"), _AliasMatches(Entity.aliases, pattern)),
     )
     if after_id is not None:
         statement = statement.where(Entity.entity_id > after_id)

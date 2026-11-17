@@ -7,6 +7,27 @@ const base = process.argv[2] || 'http://127.0.0.1:3100';
 const out = process.argv[3] || path.join(require('node:os').tmpdir(), 'pivot-my-page');
 const mode = process.argv[4] || 'development';
 const results = [];
+if (!['localhost', '127.0.0.1'].includes(new URL(base).hostname)) throw new Error('Local Mock API checks only');
+// Keep Demo/production checks; the Service now fails through a mocked API.
+const serviceReads = {
+  '/api/v1/auth/session': { authenticated: true, sessionState: 'active', onboardingCompleted: true,
+    user: { id: 7, accountType: 'user' }, csrfToken: 'mock-csrf' },
+  '/api/v1/users/me': { code: 'UNAVAILABLE' },
+  '/api/v1/me/topics': { topics: [] },
+};
+async function mockServiceRead(route, api) {
+  const request = route.request(), url = new URL(request.url());
+  const allowed = request.method() === 'GET' && ['localhost', '127.0.0.1'].includes(url.hostname)
+    && Object.hasOwn(serviceReads, url.pathname);
+  api.push({ method: request.method(), path: url.pathname, allowed });
+  if (!allowed) return route.abort();
+  return route.fulfill({ status: url.pathname === '/api/v1/users/me' ? 503 : 200,
+    contentType: 'application/json', body: JSON.stringify(serviceReads[url.pathname]) });
+}
+function assertServiceReads(api) {
+  assert.ok(api.some(request => request.path === '/api/v1/users/me'));
+  assert.ok(api.every(request => request.allowed), 'Only mocked local GET requests are allowed');
+}
 fs.mkdirSync(out, { recursive: true });
 const snapshot = page => page.evaluate(() => ({ y: scrollY, query: document.querySelector('input[type=search]')?.value,
   tracks: [...document.querySelectorAll('[data-home-track]')].map(e => Math.round(e.scrollLeft / e.clientWidth)) }));
@@ -34,8 +55,9 @@ async function verifyProduction(browser) {
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (url.pathname === '/favicon.ico') { await route.fulfill({ status: 204 }); return; }
-      if (url.pathname.startsWith('/api/')) { api.push(url.href); await route.abort(); return; }
+      if (url.pathname.startsWith('/api/')) { await mockServiceRead(route, api); return; }
       if (url.origin !== new URL(base).origin) { external.push(url.href); await route.abort(); return; }
+      if (!['GET', 'HEAD'].includes(route.request().method())) { external.push('blocked write'); await route.abort(); return; }
       await route.continue();
     });
     page.on('pageerror', error => pageErrors.push(error.message));
@@ -48,20 +70,22 @@ async function verifyProduction(browser) {
         checks.push({ route, httpStatus: 404, mockProfile: false });
       }
       await page.goto(base + '/pivot/home?view=my');
-      await page.locator('[data-my-state="unconfigured"]').waitFor();
+      await page.locator('[data-my-state="error"]').waitFor();
       assert.doesNotMatch(await page.locator('body').innerText(), /미뉴|example.com|시연용|회원탈퇴/);
       assert.equal(await page.getByRole('switch').count(), 0);
       await capture(page, 'production-my-service-' + viewport.width);
-      await page.reload(); await page.locator('[data-my-state="unconfigured"]').waitFor();
+      await page.getByRole('button', { name: '다시 시도', exact: true }).click();
+      await page.locator('[data-my-state="error"]').waitFor();
+      await page.reload(); await page.locator('[data-my-state="error"]').waitFor();
       await page.getByRole('button', { name: 'HOME', exact: true }).click();
-      await page.locator('[data-home-state="unconfigured"]').waitFor({ state: 'visible' });
+      await page.locator('[data-home-state="empty"]').waitFor({ state: 'visible' });
       await page.getByRole('button', { name: 'MY', exact: true }).click();
-      await page.locator('[data-my-state="unconfigured"]').waitFor();
-      assert.deepEqual(api, []); assert.deepEqual(external, []); assert.deepEqual(pageErrors, []);
+      await page.locator('[data-my-state="error"]').waitFor();
+      assertServiceReads(api); assert.deepEqual(external, []); assert.deepEqual(pageErrors, []);
       // A deliberately blocked document produces an expected HTTP 404 console
-      // entry. Keep those distinct from unexpected JS/runtime failures.
-      assert.ok(consoleErrors.every(error => /Failed to load resource: the server responded with a status of 404 \(Not Found\)/.test(error)));
-      results.push({ name: 'production-' + viewport.width, status: 'pass', checks, service: 'unconfigured', expected404Console: consoleErrors, api, external, pageErrors });
+      // entry; the mocked profile failure also returns 503. Keep those distinct from unexpected JS/runtime failures.
+      assert.ok(consoleErrors.every(error => /Failed to load resource: the server responded with a status of (?:404 \(Not Found\)|503 \(Service Unavailable\))/.test(error)));
+      results.push({ name: 'production-' + viewport.width, status: 'pass', checks, service: 'mock-profile-error', expected404Console: consoleErrors, api, external, pageErrors });
       console.log('PASS My Page production ' + viewport.width);
     } finally { await context.close(); }
   }
@@ -77,8 +101,9 @@ async function verifyProduction(browser) {
       await context.route('**/*', async route => {
         const url = new URL(route.request().url());
         if (url.pathname === '/favicon.ico') { await route.fulfill({ status: 204 }); return; }
-        if (url.pathname.startsWith('/api/')) { api.push(url.href); await route.abort(); return; }
+        if (url.pathname.startsWith('/api/')) { await mockServiceRead(route, api); return; }
         if (url.origin !== new URL(base).origin) { external.push(url.href); await route.abort(); return; }
+        if (!['GET', 'HEAD'].includes(route.request().method())) { external.push('blocked write'); await route.abort(); return; }
         await route.continue();
       });
       await context.addInitScript(() => {
@@ -101,7 +126,7 @@ async function verifyProduction(browser) {
         const geometries = await my.locator('img').evaluateAll(items => items.map(e => {
           const r = e.getBoundingClientRect(); return { src: e.getAttribute('src'), width: r.width, height: r.height, loaded: e.complete && e.naturalWidth > 0 };
         }));
-        assert.equal(geometries.length, 12);
+        assert.equal(geometries.length, 13); // Existing PR #21 taste-edit chevron.
         for (const image of geometries) {
           assert.equal(image.loaded, true, image.src);
           if (image.src.includes('chevron')) assert.deepEqual([image.width, image.height], [16, 24]);
@@ -140,7 +165,7 @@ async function verifyProduction(browser) {
         await logout.click(); await dialog.getByRole('button', { name: '확인' }).click();
         await dialog.waitFor({ state: 'detached' });
         const withdraw = my.getByRole('button', { name: '회원탈퇴', exact: true });
-        await withdraw.click(); assert.match(await dialog.innerText(), /계정 삭제를 요청하거나 개인정보를 삭제하지 않아요/);
+        await withdraw.click(); assert.match(await dialog.innerText(), /실제 계정 삭제 API를 호출하거나 개인정보를 삭제하지 않아요/);
         await capture(page, 'my-withdrawal-' + name);
         await dialog.getByRole('button', { name: '취소' }).click();
         await withdraw.click(); await dialog.getByRole('button', { name: '확인' }).click(); await dialog.waitFor({ state: 'detached' });
@@ -193,17 +218,20 @@ async function verifyProduction(browser) {
         assert.equal(await more.getAttribute('aria-pressed'), 'false');
         await detail.getByRole('button', { name: 'HOME', exact: true }).click();
         await home.waitFor({ state: 'visible' });
+        assert.deepEqual(api, [], 'Demo remains isolated from all APIs');
         await page.goto(base + '/pivot/home?view=my&detailState=error');
-        await page.locator('[data-my-state="unconfigured"]').waitFor();
+        await page.locator('[data-my-state="error"]').waitFor();
         assert.equal(await my.getByRole('switch').count(), 0);
         assert.doesNotMatch(await page.locator('body').innerText(), /시연용|미뉴|example.com|회원탈퇴|하이큐/);
         await capture(page, 'my-service-' + name);
-        await page.reload(); await page.locator('[data-my-state="unconfigured"]').waitFor();
+        await page.getByRole('button', { name: '다시 시도', exact: true }).click();
+        await page.locator('[data-my-state="error"]').waitFor();
+        await page.reload(); await page.locator('[data-my-state="error"]').waitFor();
         await my.getByRole('button', { name: 'HOME', exact: true }).click();
-        await page.locator('[data-home-state="unconfigured"]').waitFor({ state: 'visible' });
+        await page.locator('[data-home-state="empty"]').waitFor({ state: 'visible' });
         await page.locator('[data-home-state]').getByRole('button', { name: 'MY', exact: true }).click();
-        await page.locator('[data-my-state="unconfigured"]').waitFor();
-        assert.deepEqual(api, []); assert.deepEqual(external, []); assert.deepEqual(errors, []);
+        await page.locator('[data-my-state="error"]').waitFor();
+        assertServiceReads(api); assert.deepEqual(external, []); assert.ok(errors.every(error => /Failed to load resource: the server responded with a status of 503 \(Service Unavailable\)/.test(error)));
         results.push({ name, status: 'pass', browser: browser.version(), profile, geometries, before, beforeDetail, detailY, api, external, errors });
         console.log('PASS My Page ' + name);
       } catch (error) {

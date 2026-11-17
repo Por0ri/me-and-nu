@@ -4,6 +4,10 @@ import type { DemoBookmarkControls, SavedDataSource } from "./saved";
 
 export type DemoSavedSource = SavedDataSource & DemoBookmarkControls & { reset(): void };
 
+// Explicit local asset provenance: public/pivot/saved/sources.json. This is not
+// a URL-pattern heuristic; service images never inherit this Demo-only flag.
+const verifiedEmbeddedCovers = new Set(["/pivot/home/slide-1.png", "/pivot/home/slide-5.png"]);
+
 // One store per DemoFlow mount. No module-global user state or browser storage.
 export function createDemoSavedSource(): DemoSavedSource {
   const initial = mockMagazines.map((article) => article.contentId);
@@ -16,7 +20,8 @@ export function createDemoSavedSource(): DemoSavedSource {
     async load() {
       return { status: "ready", saved: { origin: "demo", cards: ids.flatMap((id) => {
         const article = mockMagazines.find((item) => item.contentId === id);
-        return article ? [structuredClone({ postId: article.postId, contentId: article.contentId, title: article.title, image: article.image })] : [];
+        return article ? [structuredClone({ postId: article.postId, contentId: article.contentId, title: article.title, image: article.image,
+          ...(article.image && verifiedEmbeddedCovers.has(article.image.src) ? { imageHasEmbeddedCopy: true as const } : {}) })] : [];
       }) } };
     },
     has(target) { return !!matches(target) && ids.includes(target.contentId); },

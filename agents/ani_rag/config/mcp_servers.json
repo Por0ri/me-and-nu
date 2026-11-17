@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "transport": "streamable_http",
+  "servers": {
+    "firecrawl": {
+      "endpoint": "https://mcp.firecrawl.dev/v2/mcp"
+    },
+    "wikidata": {
+      "endpoint": "https://wd-mcp.wmcloud.org/mcp/"
+    }
+  }
+}

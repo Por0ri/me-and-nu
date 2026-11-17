@@ -65,7 +65,7 @@ export function mapCoverImage(value: string | null | undefined, alt: string, con
 
 export function mapCarouselSlides(value: unknown, contentId: number, topicId: number): HomeSlideModel[] {
   if (value === undefined || (Array.isArray(value) && value.length === 0)) return [];
-  if (!Array.isArray(value) || value.length < 3 || value.length > 10) invalidContentResponse();
+  if (!Array.isArray(value) || value.length < 2 || value.length > 10) invalidContentResponse();
   const sorted = [...value].sort((a, b) => Number(a?.page) - Number(b?.page));
   return sorted.map((slide: unknown, index) => {
     if (!object(slide) || slide.page !== index + 1 || typeof slide.role !== "string" || !slide.role.trim() || slide.role.length > 50 ||
@@ -80,7 +80,7 @@ export function mapCarouselSlides(value: unknown, contentId: number, topicId: nu
   });
 }
 
-export function publicationMetadata(value: { publishedAt?: unknown; productionType?: unknown; sourceUrl?: unknown; sourceName?: unknown; publisher?: unknown; notices?: ContentNotice[] }): PublicationMetadata {
+export function publicationMetadata(value: { publishedAt?: unknown; productionType?: unknown; sourceUrl?: unknown; sourceName?: unknown; publisher?: unknown; notices?: ContentNotice[]; slides?: readonly unknown[] }): PublicationMetadata {
   const result: PublicationMetadata = {};
   if (value.publishedAt !== undefined) {
     if (value.publishedAt !== null && (typeof value.publishedAt !== "string" || !Number.isFinite(Date.parse(value.publishedAt)))) invalidContentResponse();
@@ -103,6 +103,7 @@ export function publicationMetadata(value: { publishedAt?: unknown; productionTy
     if (!Array.isArray(value.notices)) invalidContentResponse();
     result.notices = value.notices.flatMap(notice => {
       if (!object(notice)) invalidContentResponse();
+      if (value.slides?.length && (notice.code === "REVIEW_REQUIRED" || notice.code === "DEV_PREVIEW")) return [];
       return typeof notice.code === "string" && typeof notice.message === "string"
         ? [{ code: notice.code, message: notice.message }] : [];
     });

@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:policy-review": "node scripts/dev-policy-review.cjs",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",

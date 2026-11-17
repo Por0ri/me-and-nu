@@ -1,0 +1,7 @@
+/* 범수님 1569:9000 / 1569:9041; shared header, 2-column cards and navigation. */
+.screen > header { height: 44px; }
+.tabs { display: flex; gap: 1px; height: 38px; margin-top: 16px; margin-bottom: 12px; padding: 4px 12px; border-radius: 8px; background: var(--home-surface); box-shadow: 0 0 2px #e0bafb; }
+.tabs button { flex: 1; min-width: 0; height: 30px; padding: 2px 8px; border: 0; border-radius: 8px; background: transparent; color: #71717a; font-size: 12px; font-weight: 500; line-height: 18px; white-space: nowrap; }
+.tabs button[aria-selected="true"] { background: #efe7ff; color: #6439a6; }
+.more { display: block; margin: 16px auto 0; }
+.message { margin: 16px 0 0; font-size: 12px; line-height: 18px; text-align: center; }

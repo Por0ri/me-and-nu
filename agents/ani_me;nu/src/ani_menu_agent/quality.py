@@ -1,7 +1,7 @@
 """LLM을 쓰지 않고도 매번 동일하게 적용되는 품질 검사."""
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from urllib.parse import urlparse
 
 from ani_menu_agent.classification import infer_strong_content_type
@@ -14,11 +14,10 @@ from ani_menu_agent.image_selection import (
 from ani_menu_agent.models import ContentKind, ContentPackage, QualityIssue
 from ani_menu_agent.policy import (
     AGENT_MONOLOGUE_TERMS,
-    EXCESSIVE_PUNCTUATION,
-    GENERIC_HUMOR_TERMS,
     POLICY,
 )
 from ani_menu_agent.review_rules import RULES, decision_metadata, make_issue, score_penalty
+from ani_menu_agent.source_freshness import candidate_is_stale
 
 
 def _issue(
@@ -74,10 +73,50 @@ def _card_cites_source_date_as_scheduled_fact(
             fact is None
             or not fact.verified
             or source_id not in fact.source_ids
-            or fact.fact_type.strip().lower() not in scheduled_fact_types
         ):
             continue
         quote = str(fact.details.get("source_quote") or "")
+        fact_type = fact.fact_type.strip().lower()
+        if fact_type == "product_sales":
+            # Extraction may classify a documented preorder start as product_sales.
+            # Do not exempt all dates in that broad fact type: require the explicit
+            # start field, a matching source sentence, and preorder-start card copy.
+            if fact.details.get("preorder_start") != publication_date.isoformat():
+                continue
+            visible_copy = " ".join([*card.title_lines, *card.body_sentences])
+            preorder_start = r"(?:予約|예약|pre[- ]?orders?).{0,60}(?:開始|スタート|시작|개시|start|began|begin|open)"
+            if (
+                not re.search(preorder_start, visible_copy, re.IGNORECASE)
+                or re.search(r"게시일|발표일|기사\s*(?:게시|발표)|publication\s*date|投稿日|公開日", visible_copy, re.IGNORECASE)
+                # A separate sentence saying that preorders started must not
+                # excuse a date presented as their deadline or cancellation.
+                or re.search(
+                    r"마감|종료|취소|연기|중단|締切|終了|取消|延期|中止|"
+                    r"\b(?:deadline|closed?|ends?|cancel\w*|postpon\w*)\b|"
+                    r"(?:시작|개시).{0,12}(?:않|아니|아님)|"
+                    r"(?:開始|スタート).{0,8}(?:ません|ない)|\b(?:not|never)\b",
+                    visible_copy, re.IGNORECASE,
+                )
+            ):
+                continue
+            for sentence in re.split(r"[。！？!?\r\n]", quote):
+                if (
+                    set(_date_in_quote(sentence, default_year=publication_date.year))
+                    != {publication_date.isoformat()}
+                    or not re.search(preorder_start, sentence, re.IGNORECASE)
+                    or re.search(
+                        r"未定|延期|中止|取消|取り消し|연기|취소|미정|"
+                        r"公開|投稿|掲載|게시|발표|publish|publication|"
+                        r"(?:開始|スタート).{0,8}(?:ません|ない)|"
+                        r"(?:시작|개시).{0,8}(?:않|아니)|\b(?:not|never)\b",
+                        sentence, re.IGNORECASE,
+                    )
+                ):
+                    continue
+                return True
+            continue
+        if fact_type not in scheduled_fact_types:
+            continue
         if publication_date.isoformat() in _date_in_quote(
             quote, default_year=publication_date.year
         ):
@@ -161,37 +200,15 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                                 card.page,
                             )
                         )
-            has_current_claim = any(
-                fact.time_sensitive and source.id in fact.source_ids for fact in package.facts
+    if package.content_type == "event" and candidate_is_stale(
+        {"event_end": package.event_end}, "event"
+    ):
+        issues.append(
+            _issue(
+                "EVENT_ALREADY_ENDED",
+                "Verified event end date has passed; do not present the event as upcoming.",
             )
-            if (
-                package.content_kind == ContentKind.INFORMATION
-                and has_current_claim
-                and published_date
-                and published_date < date.today() - timedelta(days=90)
-            ):
-                issues.append(
-                    _issue(
-                        "SOURCE_STALE",
-                        "시의성 사실의 원문 게시일이 90일을 넘었습니다. "
-                        "최신 공지/상태를 재확인하거나 상시 정보로 다시 분류하세요.",
-
-                    )
-                )
-    if package.content_type == "event" and package.event_end:
-        try:
-            event_end = date.fromisoformat(package.event_end[:10])
-        except ValueError:
-            event_end = None
-        if event_end and event_end < date.today():
-            issues.append(
-                _issue(
-                    "EVENT_ALREADY_ENDED",
-                    "행사 종료일이 지났습니다. 종료된 행사를 진행 예정처럼 생성하지 말고 "
-                    "최신 후보를 사용하세요.",
-
-                )
-            )
+        )
     for fact in package.facts:
         missing = sorted(set(fact.source_ids) - source_ids)
         if missing:
@@ -233,10 +250,6 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
                         next(card.page for card in package.cards if fact.id in card.fact_ids),
                     )
                 )
-        if package.content_kind == ContentKind.INFORMATION and not fact.verified:
-            issues.append(
-                _issue("FACT_UNVERIFIED", f"미검증 사실: {fact.statement}")
-            )
         if fact.fact_type == "campaign" and fact.id in used_fact_ids:
             required = {"participation_steps", "prize", "deadline", "region"}
             missing = sorted(key for key in required if not fact.details.get(key))
@@ -383,9 +396,11 @@ def check_images(package: ContentPackage) -> list[QualityIssue]:
                 )
             )
         key = image_visual_key(image)
-        if (
-            image.used_in_previous_content
-            or key in package.prior_image_fingerprints
+        is_main_card = card.role == "cover" or card.page == min(
+            item.page for item in package.cards
+        )
+        if is_main_card and (
+            bool(image_visual_keys(image).intersection(package.prior_image_fingerprints))
             or image.fingerprint in package.prior_image_fingerprints
         ):
             issues.append(
@@ -458,7 +473,15 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
         cited_dates = {
             parsed_date
             for fact_id in card.fact_ids
-            if fact_id in facts_by_id and facts_by_id[fact_id].verified
+            if fact_id in facts_by_id
+            and (
+                facts_by_id[fact_id].verified
+                or (
+                    facts_by_id[fact_id].fact_type.strip().lower() == "event_schedule"
+                    and facts_by_id[fact_id].details.get("evidence_kind")
+                    == "source_structured_event"
+                )
+            )
             for parsed_date in _date_in_quote(
                 str(facts_by_id[fact_id].details.get("source_quote") or ""),
                 default_year=source_year(facts_by_id[fact_id]),
@@ -468,8 +491,8 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
             issues.append(
                 _issue(
                     "UNSUPPORTED_DATE_CLAIM",
-                    "移대뱶???곸뿭???ъ슜???좎쭨瑜?洹쇨굅 fact_id濡?媛由ы궎?꽌?쇰줈 ?쇱튂?섏? "
-                    "?딆뒿?덈떎. ?좎쭨 ?ъ떎瑜??ㅼ떆 ?몄슜?섍굅??湲곗? ?녿뒗 ?좎쭨瑜?젣嫄고븯?몄슂.",
+                    "카드 날짜와 연결된 출처 근거가 일치하지 않습니다. 원문에 적힌 날짜와 일치하는 "
+                    "근거를 연결하거나 근거가 없는 날짜를 지우세요.",
                     card.page,
                 )
             )
@@ -641,24 +664,24 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
 
                 )
             )
-    if not POLICY.min_cards <= len(package.cards) <= POLICY.max_cards:
+    minimum_cards = POLICY.minimum_cards_for(package.content_type)
+    if not minimum_cards <= len(package.cards) <= POLICY.max_cards:
         issues.append(
-            _issue("CARD_COUNT", f"카드는 {POLICY.min_cards}~{POLICY.max_cards}장이어야 합니다.")
+            _issue("CARD_COUNT", f"카드는 {minimum_cards}~{POLICY.max_cards}장이어야 합니다.")
         )
     if package.content_kind == ContentKind.INFORMATION:
-        known_verified_ids = {fact.id for fact in package.facts if fact.verified}
-        used_verified_ids = {
+        known_source_fact_ids = {fact.id for fact in package.facts}
+        used_source_fact_ids = {
             fact_id
             for card in package.cards
             for fact_id in card.fact_ids
-            if fact_id in known_verified_ids
+            if fact_id in known_source_fact_ids
         }
-        if len(used_verified_ids) < 1:
+        if len(used_source_fact_ids) < 1:
             issues.append(
                 _issue(
                     "FACT_DIVERSITY_LOW",
-                    "카드뉴스에 활용된 검증 사실이 3개 미만입니다. 한 가지 사실을 늘려 쓰지 말고 "
-                    "서로 다른 근거를 더 수집하거나 이 자료를 후보에서 제외하세요.",
+                    "카드뉴스에서 출처가 연결된 사실을 하나 이상 사용해야 합니다.",
 
                 )
             )
@@ -876,22 +899,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
 
                     )
                 )
-            if any(term in ending_text for term in GENERIC_HUMOR_TERMS):
-                issues.append(
-                    _issue(
-                        "ENDING_GENERIC",
-                        "작품명만 바꿔도 성립하는 상투적 드립입니다.",
-                        ending.page,
-                    )
-                )
-            if any(mark in ending_text for mark in EXCESSIVE_PUNCTUATION):
-                issues.append(
-                    _issue(
-                        "ENDING_LOUD",
-                        "데드팬 결말에 과한 감탄·웃음 표시가 있습니다.",
-                        ending.page,
-                    )
-                )
     return issues
 
 
@@ -1075,14 +1082,6 @@ def check_detail_body(package: ContentPackage) -> list[QualityIssue]:
         )
     for fact_id in set(package.detail_fact_ids) & facts_by_id.keys():
         fact = facts_by_id[fact_id]
-        if package.content_kind == ContentKind.INFORMATION and not fact.verified:
-            issues.append(
-                _issue(
-                    "DETAIL_BODY_FACT_UNVERIFIED",
-                    f"상세글이 미검증 정보 팩트를 참조합니다: {fact_id}",
-
-                )
-            )
         if not set(fact.source_ids) & source_ids:
             issues.append(
                 _issue(
@@ -1126,7 +1125,7 @@ SCORE_THRESHOLDS = {
 }
 
 FACT_BLOCKERS = {
-    "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
+    "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING",
     "CAMPAIGN_DETAILS_MISSING", "COPY_UNGROUNDED", "SOURCE_STALE", "EVENT_ALREADY_ENDED",
     "FACT_DIVERSITY_LOW", "UNSUPPORTED_DATE_CLAIM", "SOURCE_PUBLICATION_DATE_SHOWN",
     "EVENT_PERIOD_MISSING", "GOODS_RELEASE_PERIOD_MISSING",

@@ -76,7 +76,11 @@ def render_cards(state: ContentState) -> ContentState:
     package = repository.persist_rendered_cards(package, png_by_page)
     # Persist copy and page metadata at the generation boundary, not only after
     # the independent reviewer runs. The reviewer can later update this draft.
-    repository.persist_generated_content(package, "generated_pending_review")
+    repository.persist_generated_content(
+        package,
+        "generated_pending_review",
+        usage_records=usage_records,
+    )
     elapsed = perf_counter() - started
     return {
         "trace": append_trace(state, "card_renderer"),

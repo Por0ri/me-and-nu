@@ -1,0 +1,5 @@
+# Candidate block only. Do not replace the existing Checking/Labs/Test blocks.
+# Install only after main API, DNS, OAuth and publication-transition validation.
+api.me-nu.kr {
+    reverse_proxy 127.0.0.1:8003
+}

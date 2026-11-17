@@ -1,6 +1,7 @@
-import { ApiError, getFeed, getMyTopics, type FeedCard, type Session } from "@/lib/api";
+import { ApiError, getFeed, getMyTopics, searchFeed, searchWorks, type FeedCard, type Session } from "@/lib/api";
 import { requirePivotApi } from "./services";
 import type { HomeCardModel, HomeDataSource, HomeLoadError } from "./home";
+import { createRecentSearchStore } from "./recent-search";
 import { invalidContentResponse, mapCarouselSlides, publicationMetadata } from "./carousel-data";
 import { activeTopicId, isPositiveId, LIST_PAGE_SIZE, MAX_LIST_PAGES, nextPageCursor, optionalImage, requireTitle } from "./service-data";
 
@@ -39,12 +40,19 @@ function loadError(error: unknown): HomeLoadError {
 }
 
 export function createServiceHomeSource(
-  api: { getMyTopics: typeof getMyTopics; getFeed: typeof getFeed } = { getMyTopics, getFeed },
+  api: { getMyTopics: typeof getMyTopics; getFeed: typeof getFeed; searchFeed?: typeof searchFeed; searchWorks?: typeof searchWorks } = { getMyTopics, getFeed, searchFeed, searchWorks },
   guard: () => void = requirePivotApi,
   readSession?: () => Session | null,
 ): HomeDataSource {
+  // The search APIs belong to the member's active Topic; null means no searchable Topic.
+  async function searchTopic(signal: AbortSignal): Promise<number | null> {
+    guard(); signal.throwIfAborted();
+    const topicResponse = await api.getMyTopics({}, { signal });
+    try { return activeTopicId(topicResponse); } catch { invalidContentResponse(); }
+  }
   return {
     kind: "service",
+    recent: createRecentSearchStore(() => readSession ? activeUserId(readSession()) : null),
     async load({ signal }) {
       guard(); signal.throwIfAborted();
       const initialUser = readSession ? activeUserId(readSession()) : null;
@@ -86,6 +94,28 @@ export function createServiceHomeSource(
         signal.throwIfAborted();
         return loadError(error);
       }
+    },
+    async search(q, { signal, workId }) {
+      guard(); signal.throwIfAborted();
+      if (!api.searchFeed) return { works: [], cards: [] };
+      const id = await searchTopic(signal);
+      if (id === null) return { works: [], cards: [] };
+      const response = await api.searchFeed(id, q, { signal }, workId);
+      signal.throwIfAborted();
+      if (!response || response.selectedTopicId !== id || !Array.isArray(response.contents) ||
+        !Array.isArray(response.works) || response.works.some((name) => typeof name !== "string")) invalidContentResponse();
+      return { works: response.works, cards: response.contents.map((item) => mapFeedCard(item, id)) };
+    },
+    async suggest(q, { signal }) {
+      guard(); signal.throwIfAborted();
+      if (!api.searchWorks) return [];
+      const id = await searchTopic(signal);
+      if (id === null) return [];
+      const response = await api.searchWorks(id, q, { signal });
+      signal.throwIfAborted();
+      if (!response || response.selectedTopicId !== id || !Array.isArray(response.works) || response.works.some((work) =>
+        !isPositiveId(work?.entityId) || typeof work.name !== "string" || !work.name.trim())) invalidContentResponse();
+      return response.works.map((work) => ({ id: work.entityId, name: work.name }));
     },
   };
 }
