@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     menu_deployment_env: str = ""
     checking_carousel_test_preview_enabled: bool = False
     database_echo: bool = False
+    # Unset values keep SQLAlchemy's existing defaults for each deployment.
+    database_pool_size: int | None = Field(default=None, gt=0)
+    database_max_overflow: int | None = Field(default=None, ge=0)
     redis_url: str | None = Field(default=None, repr=False)
     redis_key_prefix: str = Field(default="me_nu", min_length=1)
     redis_socket_timeout_seconds: float = Field(default=0.5, gt=0)

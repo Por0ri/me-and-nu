@@ -7,6 +7,7 @@ const approvedRemoteApis = new Map([
   ["https://test.me-nu.kr", "https://api.test.me-nu.kr"],
   ["https://labs.me-nu.kr", "https://api.labs.me-nu.kr"],
   ["https://checking.me-nu.kr", "https://api.checking.me-nu.kr"],
+  ["https://www.me-nu.kr", "https://api.me-nu.kr"],
 ]);
 
 function isBareOrigin(url: URL): boolean {

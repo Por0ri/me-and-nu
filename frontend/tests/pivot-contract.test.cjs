@@ -187,8 +187,9 @@ const remotePairs = [
   ['https://test.me-nu.kr', 'https://api.test.me-nu.kr'],
   ['https://labs.me-nu.kr', 'https://api.labs.me-nu.kr'],
   ['https://checking.me-nu.kr', 'https://api.checking.me-nu.kr'],
+  ['https://www.me-nu.kr', 'https://api.me-nu.kr'],
 ];
-test('Remote API access keeps staging, backend-labs and Checking environments paired', () => {
+test('Remote API access keeps staging, backend-labs, Checking and main environments paired', () => {
   for (const [frontend, api] of remotePairs) {
     assert.equal(s.isPivotApiAllowed(false, frontend, api), true);
     for (const [, otherApi] of remotePairs) {
@@ -233,6 +234,35 @@ test('Remote API access keeps staging, backend-labs and Checking environments pa
   ]) assert.equal(s.isPivotApiAllowed(true, frontend, api), false, `${frontend} -> ${api}`);
   assert.equal(s.isPivotApiAllowed(true, 'http://localhost:3000', 'http://localhost:8000'), true);
   assert.equal(s.isPivotApiAllowed(false, 'http://localhost:3000', 'http://localhost:8000'), false);
+});
+
+test('Main API connection rejects unapproved origins and non-origin URLs', () => {
+  for (const frontend of [
+    'https://me-nu.kr',
+    'https://preview.vercel.app',
+    'https://me-nu.kr.example.com',
+    'https://www.me-nu.kr.example.com',
+    'https://fakewww.me-nu.kr',
+    'http://www.me-nu.kr',
+    'https://www.me-nu.kr:444',
+    'https://user:password@www.me-nu.kr',
+    'https://www.me-nu.kr/path',
+    'https://www.me-nu.kr?preview=true',
+    'https://www.me-nu.kr#preview',
+  ]) {
+    assert.equal(s.isPivotApiAllowed(true, frontend, 'https://api.me-nu.kr'), false, frontend);
+  }
+  for (const api of [
+    'https://api.me-nu.kr.example.com',
+    'http://api.me-nu.kr',
+    'https://api.me-nu.kr:444',
+    'https://user:password@api.me-nu.kr',
+    'https://api.me-nu.kr/path',
+    'https://api.me-nu.kr?proxy=other',
+    'https://api.me-nu.kr#fragment',
+  ]) {
+    assert.equal(s.isPivotApiAllowed(true, 'https://www.me-nu.kr', api), false, api);
+  }
 });
 
 test('Session routes use current user accounts without manufacturing onboarding completion', () => {
@@ -304,7 +334,7 @@ test('OAuth navigation rejects arbitrary hosts, wrong callback and unexpected sc
   assert.doesNotMatch(s.oauthErrorMessage('<script>untrusted</script>'), /script|untrusted/);
 });
 
-test('OAuth callbacks cannot cross between staging, backend-labs and Checking', () => {
+test('OAuth callbacks cannot cross between staging, backend-labs, Checking and main', () => {
   for (const provider of ['kakao', 'naver']) {
     for (const [, api] of remotePairs) for (const [, otherApi] of remotePairs) {
       if (api !== otherApi) assert.throws(() => s.validateAuthorizationUrl(providerUrl(provider, api), provider, otherApi));
