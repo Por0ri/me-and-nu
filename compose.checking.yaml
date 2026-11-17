@@ -33,10 +33,11 @@ x-environment: &environment
   NAVER_OAUTH_ENABLED: ${CHECKING_NAVER_OAUTH_ENABLED:-false}
   NAVER_CLIENT_ID: ${CHECKING_NAVER_CLIENT_ID:-}
   NAVER_CLIENT_SECRET: ${CHECKING_NAVER_CLIENT_SECRET:-}
-  # Paid agents stay off. Only the api service below overrides LLM_KEY, for chatbot answers.
+  # Paid agents stay off. Only the api service below overrides LLM_KEY and DICT_DATABASE_URL, for chatbot answers.
   TMDB_KEY: ""
   LLM_KEY: ""
   OPENAI_API_KEY: ""
+  DICT_DATABASE_URL: ""
 
 x-backend: &backend
   image: me-nu-backend-checking:${CHECKING_IMAGE_TAG:?Set the exact 40-character Git commit}
@@ -125,6 +126,8 @@ services:
       <<: *environment
       # Chatbot answers only; an empty CHECKING_LLM_KEY keeps them off. migrate never gets the key.
       LLM_KEY: ${CHECKING_LLM_KEY:-}
+      # Chatbot fact lookups only: read-only menu_dict on this stack's PostgreSQL. Empty keeps the dictionary off.
+      DICT_DATABASE_URL: ${CHECKING_DICT_DATABASE_URL:-}
     restart: unless-stopped
     mem_limit: 512m
     cpus: "0.50"

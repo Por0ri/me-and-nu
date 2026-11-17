@@ -31,6 +31,11 @@ def values():
     {"CHECKING_KAKAO_OAUTH_ENABLED": "true"}, {"CHECKING_NAVER_OAUTH_ENABLED": "yes"},
     {"DATABASE_URL": "postgresql://old/labs"}, {"CHECKING_NAVER_CLIENT_ID": "$(command)"},
     {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "yes"}, {"CHECKING_LLM_KEY": "synthetic key"},
+    # The dictionary must be the read-only reader on this stack's PostgreSQL, with its own password.
+    {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://me_nu_checking:" + "0123456789abcdef" * 4 + "@postgres:5432/me_nu_checking"},
+    {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "a1b2c3d4e5f60789" * 4 + "@db.example.com:5432/menu_dict"},
+    {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "0123456789abcdef" * 4 + "@postgres:5432/menu_dict"},
+    {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "a" * 64 + "@postgres:5432/menu_dict"},
 ])
 def test_unsafe_values_rejected(change):
     with pytest.raises(guard.GuardError):
@@ -104,10 +109,29 @@ def test_llm_key_reaches_only_the_api_from_the_checking_file(rendered):
         guard.validate_values(configured, {"CHECKING_LLM_KEY": "other-key"})
 
 
+DICTIONARY = "postgresql+psycopg://menu_dict_reader:" + "a1b2c3d4e5f60789" * 4 + "@postgres:5432/menu_dict"
+
+
+def test_dictionary_reaches_only_the_api_from_the_checking_file(rendered):
+    assert values()["CHECKING_DICT_DATABASE_URL"] == ""
+    assert rendered["services"]["api"]["environment"]["DICT_DATABASE_URL"] == ""
+    configured = values() | {"CHECKING_DICT_DATABASE_URL": DICTIONARY}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["DICT_DATABASE_URL"] == DICTIONARY
+    assert config["services"]["migrate"]["environment"]["DICT_DATABASE_URL"] == ""
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="DICT_DATABASE_URL"):
+        guard.validate_config(config, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_DICT_DATABASE_URL"):
+        guard.validate_values(configured, {"CHECKING_DICT_DATABASE_URL": ""})
+
+
 @pytest.mark.parametrize("change", [
     "project", "volume", "external_volume", "network", "public_data", "extra_service", "api_origin",
     "database", "cookie", "redis_prefix", "port", "public_port", "udp", "db_port", "memory", "cpu",
-    "zero_memory", "dev_api", "dev_bypass", "llm", "migrate_llm", "tmdb", "openai", "redis", "pg_buffers", "image",
+    "zero_memory", "dev_api", "dev_bypass", "llm", "migrate_llm", "dictionary", "migrate_dictionary",
+    "tmdb", "openai", "redis", "pg_buffers", "image",
     "build_context", "entrypoint", "api_command", "migration_head", "migration_previous", "migration_dob", "startup_gate",
     "api_mount", "db_mount", "privileged", "host_network", "writeable", "capabilities", "proxy", "oauth",
 ])
@@ -136,6 +160,8 @@ def test_config_cannot_cross_environment_or_enable_unsafe_runtime(rendered, chan
     elif change == "dev_bypass": env["ENABLE_DEV_AUTH_BYPASS"] = "true"
     elif change == "llm": env["LLM_KEY"] = "synthetic-key"
     elif change == "migrate_llm": config["services"]["migrate"]["environment"]["LLM_KEY"] = "synthetic-key"
+    elif change == "dictionary": env["DICT_DATABASE_URL"] = DICTIONARY
+    elif change == "migrate_dictionary": config["services"]["migrate"]["environment"]["DICT_DATABASE_URL"] = DICTIONARY
     elif change == "tmdb": env["TMDB_KEY"] = "synthetic-key"
     elif change == "openai": env["OPENAI_API_KEY"] = "synthetic-key"
     elif change == "redis": config["services"]["redis"]["command"][2] = "old-password"
@@ -172,7 +198,7 @@ def test_initialize_is_exclusive_and_never_prints_secret_values(tmp_path, monkey
     original = guard.ENV_FILE.read_bytes()
     parsed = guard.read_environment(guard.ENV_FILE)
     assert parsed["CHECKING_KAKAO_OAUTH_ENABLED"] == parsed["CHECKING_NAVER_OAUTH_ENABLED"] == "false"
-    assert parsed["CHECKING_LLM_KEY"] == ""
+    assert parsed["CHECKING_LLM_KEY"] == parsed["CHECKING_DICT_DATABASE_URL"] == ""
     output = capsys.readouterr().out
     assert parsed["CHECKING_POSTGRES_PASSWORD"] not in output
     assert parsed["CHECKING_REDIS_PASSWORD"] not in output

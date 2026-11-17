@@ -44,6 +44,39 @@ sudo bash deploy/checking/checking.sh status
 
 검증한 bundle/PNG만 Checking 실행 컨테이너에 전달한 뒤 `python -m app.seeds.carousel_contents --file <bundle.json> --expected-database me_nu_checking --checking-test-preview`로 dry-run하고, 동일 명령에 `--apply`를 추가해 적재한다. 로컬 사용자·세션·DB 파일이나 API 키는 전달하지 않는다. `--review-record-file`과 함께 사용할 수 없으며 `active / needs_review`, `checking_test_preview` 범위를 기록한다. 기존 QC 보류 결과와 원본 이미지·digest를 유지하고 승인 기록을 만들지 않는다. 카드뉴스 상세에는 AI 생성 안내를 표시한다. 미리보기 및 검토 필요 여부는 API의 `DEV_PREVIEW`와 `REVIEW_REQUIRED`로 확인할 수 있다. 재실행은 동일 콘텐츠를 추가하지 않으며 플래그를 끄면 기존 미리보기 행도 공개 조회에서 제외된다.
 
+## 챗봇 정보사전
+
+챗봇 사실 답(감독·성우·화수·주제가 등)의 근거인 정보사전은 이 스택의 PostgreSQL 안에 별도 DB `menu_dict`로 두고, API만 읽기 전용 계정 `menu_dict_reader`로 읽는다. 서버 전용 `.env`의 `CHECKING_DICT_DATABASE_URL`은 빈칸이거나 `postgresql+psycopg://menu_dict_reader:<64자리 hex>@postgres:5432/menu_dict` 모양이어야 하고, 비밀번호는 DB/Redis 비밀번호와 달라야 한다. 서비스 DB 계정·다른 호스트 주소는 guard가 거부하며 migration에는 넣지 않는다. 기본값은 빈칸이고 빈칸이면 챗봇은 서비스 글만 근거로 답한다. 기존 환경 파일에도 `CHECKING_DICT_DATABASE_URL=` 줄을 추가해야 guard를 통과한다. `check`는 값 대신 `set`/`empty`만 출력한다. 출처는 비상업 기준으로 사용하며, 상업 전환 시 다시 확인한다.
+
+넣는 순서 (비밀번호·덤프 내용은 출력하거나 작업 로그에 남기지 않는다)
+
+1. 서버 디스크 여유를 확인한다. 복원 후 약 0.6 GB가 늘어난다.
+2. 원본 정보사전에서 읽기만 하는 덤프를 만든다: `pg_dump -Fc --no-owner --no-privileges -d menu_dict -f menu_dict.dump`. 검증한 덤프만 서버로 옮긴다.
+3. 읽기 전용 계정 비밀번호를 `openssl rand -hex 32`로 따로 만들고, 계정과 DB를 만든 뒤 복원한다.
+
+```bash
+compose=(docker --context default compose --env-file deploy/checking/.env -p me-nu-checking -f compose.checking.yaml)
+"${compose[@]}" exec -T postgres psql -U me_nu_checking -d me_nu_checking -v ON_ERROR_STOP=1 -v pw="$DICT_READER_PASSWORD" <<'SQL'
+CREATE ROLE menu_dict_reader LOGIN PASSWORD :'pw';
+ALTER ROLE menu_dict_reader SET default_transaction_read_only = on;
+CREATE DATABASE menu_dict;
+REVOKE CONNECT ON DATABASE me_nu_checking FROM PUBLIC;
+SQL
+"${compose[@]}" exec -T postgres pg_restore -U me_nu_checking -d menu_dict --no-owner --no-privileges --exit-on-error < menu_dict.dump
+"${compose[@]}" exec -T postgres psql -U me_nu_checking -d menu_dict -v ON_ERROR_STOP=1 <<'SQL'
+REVOKE ALL ON DATABASE menu_dict FROM PUBLIC;
+GRANT CONNECT ON DATABASE menu_dict TO menu_dict_reader;
+GRANT USAGE ON SCHEMA dict TO menu_dict_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA dict TO menu_dict_reader;
+SQL
+"${compose[@]}" exec -T postgres psql -U me_nu_checking -d menu_dict -v ON_ERROR_STOP=1 < backend/scripts/dictionary_indexes.sql
+```
+
+4. `backend/scripts/dictionary_indexes.sql`은 덤프에 색인이 이미 있어도 그대로 돌린다(있으면 건너뛴다). 색인이 없으면 조회가 5초 제한을 넘는다.
+5. 서버 `.env`에 `CHECKING_DICT_DATABASE_URL`을 넣고 `check` → `up`으로 API를 다시 만든다. 감독·성우·몇 화 질문으로 답 아래 "근거"가 붙는지 확인한다.
+
+끄려면 `CHECKING_DICT_DATABASE_URL=`로 비우고 `check` → `up`한다. `menu_dict`와 계정은 남아도 API가 읽지 않는다.
+
 ## 도메인·TLS·FE·OAuth
 
 FE 호스팅에서 `Checking` 브랜치에만 `checking.me-nu.kr`을 연결하고 `NEXT_PUBLIC_API_BASE_URL=https://api.checking.me-nu.kr`로 새 빌드를 만든다. 기존 Main/Test/Labs 도메인과 환경변수는 유지한다. DNS에서 API 도메인은 백엔드 호스트로 연결하고 기존 Caddy 사이트를 유지한 채 다음 블록을 추가한다.
