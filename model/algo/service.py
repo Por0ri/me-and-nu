@@ -21,6 +21,8 @@ import json
 import math
 import pathlib
 import pickle
+import re
+from collections import deque
 from datetime import timedelta
 
 import numpy as np
@@ -287,19 +289,71 @@ def exposure_end(ctype, published, event_start=None, event_end=None):
 
 def make_feed(posts, ctx):
     """글 목록 → v1 글 표. posts: dict 목록 (type · menu_work_id(없으면 None) · published · until, 날짜는 date).
-    작품이 없거나 목록 밖인 글은 pos = -1 (작품 취향 0)"""
+    작품이 없거나 목록 밖인 글은 pos = -1 (작품 취향 0).
+    글에 works (연결 작품 번호, 연결 순서) · anchor (기준 작품 자리, 없으면 None) 가 있으면 (11/16 결정):
+    pos = 기준 작품 자리 (기준이 없는 모음은 -1), rel_pos · rel_w = 기준이 아닌 연결 작품 자리 · 무게 W_RELATED.
+    팬 추천 (kind like) 은 기준 작품만 봄 (11/17: 글 안 추천작을 고른 사람에겐 맞지 않는 글)"""
     day = lambda x: (x.toordinal() - 719163)                     # date → 1970-01-01 부터 날 수 (anime_ranker.DAY 와 같은 기준)
-    pos = [int(ctx["cw_pos"][ctx["row"][ctx["rep_of"][p["menu_work_id"]]]]) if p["menu_work_id"] in ctx["rep_of"] else -1
-           for p in posts]
-    return {"pos": np.array(pos, dtype=np.int64),
+    pos, rel = [], []
+    for p in posts:
+        works = p.get("works")
+        if works is None:
+            pos.append(_cw_pos(ctx, p["menu_work_id"]))
+            rel.append([])
+            continue
+        a = p.get("anchor")
+        pos.append(_cw_pos(ctx, works[a]) if a is not None else -1)
+        others = [] if p.get("kind") == "like" else [_cw_pos(ctx, w) for j, w in enumerate(works) if j != a]
+        rel.append([q for q in others if q >= 0])
+    feed = {"pos": np.array(pos, dtype=np.int64),
             "type": np.array([v1.TYPE_INDEX[p["type"]] for p in posts], dtype=np.int64),
             "day": np.array([day(p["published"]) for p in posts], dtype=np.int64),
             "until": np.array([day(p["until"]) for p in posts], dtype=np.int64)}
+    k = max((len(r) for r in rel), default=0)
+    if k:
+        rel_pos = np.full((len(posts), k), -1, dtype=np.int64)
+        for n, r in enumerate(rel):
+            rel_pos[n, :len(r)] = r
+        feed.update(rel_pos=rel_pos, rel_w=np.where(rel_pos >= 0, W_RELATED, 0.0))
+    return feed
+
+
+def chip_weights(state, ctx):
+    """고른 장르 · 소재 칩 → (작품 표에서 찾은 칩 이름 목록, 카탈로그 작품 × 칩 무게). 장르는 있으면 1, 소재는 그 소재가
+    작품에서 얼마나 중심인지 (AniList 태그 순위 / 100). 표에 없는 칩은 뺌. 찾은 칩이 없으면 ([], None)"""
+    col = ctx["feature_col"]
+    found = [(g, col.get(g, col.get("g:" + ar.GENRE_ALIAS.get(g, g)))) for g in state.genres]
+    found += [(th, col.get("t:" + th)) for th in state.themes]
+    found = [(name, j) for name, j in found if j is not None]
+    if not found:
+        return [], None
+    w = np.asarray(ctx["X"][np.ix_(ctx["cw_rows"], [j for _, j in found])], dtype=np.float32)
+    return [name for name, _ in found], w
+
+
+def _picked_positions(state, ctx):
+    # 고른 작품 (같은 시리즈의 시즌 · 극장판 포함) 의 카탈로그 자리 (v1.refresh_work_affinity 가 1 로 두는 자리와 같음)
+    mine = {ctx["series"].get(a, a) for a in state.history.anime.tolist()}
+    own = [ctx["row"][x] for s in mine for x in ctx["series_items"].get(s, (s,)) if x in ctx["row"]]
+    p = ctx["cw_pos"][np.array(own, dtype=np.int64)] if own else np.array([], dtype=np.int64)
+    return p[p >= 0]
 
 
 def work_affinity(state, ctx, cfg):
-    """v1 작품 취향을 시리즈 단위로: 글은 시리즈 대표 자리를 보므로, 대표 자리에 그 시리즈 작품 중 가장 높은 취향을 둔다"""
+    """작품 취향 (카탈로그 자리별 0~1). 고른 작품 (같은 시리즈 포함) = 1.
+    고른 작품 밖 (11/17 사용자 결정 "인기작이 아니라 고른 장르 · 소재에 맞는 작품"):
+      (칩 맞춤 ÷ 카탈로그 최댓값 + W_POP_TIE × 인기) ÷ (1 + W_POP_TIE). 칩 맞춤 = 고른 칩 무게 평균.
+      인기는 칩이 거의 같게 맞는 작품끼리 순서를 정하는 정도 (11/17: 동점이면 같은 장르 · 소재 안에서 인기작 먼저).
+    찾은 칩이 없으면 예전 v0.5 순위 취향 (인기 · 같이 본 기록 중심) 그대로.
+    글은 시리즈 대표 자리를 보므로, 대표 자리에 그 시리즈 작품 중 가장 높은 취향을 둔다"""
     v1.refresh_work_affinity(state, ctx, cfg)
+    state.chip_names, state.chip_w = chip_weights(state, ctx)
+    if state.chip_w is not None:
+        fit = state.chip_w.mean(axis=1)
+        top = float(fit.max())
+        other = ((fit / top if top > 0 else fit) + W_POP_TIE * ctx["pop_norm"][ctx["cw_rows"]]) / (1 + W_POP_TIE)
+        state.work_aff[:] = other.astype(state.work_aff.dtype)
+        state.work_aff[_picked_positions(state, ctx)] = 1.0
     aff, pos, row = state.work_aff, ctx["cw_pos"], ctx["row"]
     for s, items in ctx["series_items"].items():
         if len(items) > 1:
@@ -315,7 +369,8 @@ def genre_affinity(state, ctx):
 
 # ## 5. 서비스 연결 (매일 추천 계산 = scripts/daily_recommend.py)
 # 유저 테스트 동안 v1 비중은 고정. 서비스에 맞춰 바꾸는 건 아래 입력 대응표 · 장르 · 소재 가산 (W_GENRE) · 보여 줄 순서 규칙 (arrange) ·
-# 추천 이유 문구뿐 (W_GENRE · arrange 는 10/31 사용자 결정)
+# 추천 이유 문구뿐 (W_GENRE · arrange 는 10/31 사용자 결정). 11/17 베타 전: 고른 작품 밖 작품 취향을 칩 맞춤으로 (work_affinity),
+# 여러 작품 글 (make_feed · v1.work_parts) · 보여 줄 자리 (compose) · 이유 (explain) 추가. 시뮬레이터 계산은 그대로
 
 # 글 점수의 작품 몫에 더하는 장르 · 소재 유사도 비중. 로컬 시험 계정 4명으로 고른 출발값 (1.0 부터 고른 유형 글이 줄어듦) → 테스트 뒤 다시 정함
 W_GENRE = 0.5
@@ -326,6 +381,15 @@ W_SEEN = 0.1
 REREAD_DAYS = 14
 
 LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
+
+# 여러 작품 글 · 보여 줄 자리 · 이유 (11/16 · 11/17 사용자와 정함, EXPERIMENTS 부록 A #36 ~ #43). 값은 출발값 → 베타 기록으로 다시 정함
+W_RELATED = 0.5                         # 글에 같이 연결된 (기준이 아닌) 작품의 무게. 글의 작품 몫은 무게 × 작품 몫 중 가장 큰 값
+W_POP_TIE = 0.3                         # 고른 작품 밖 작품 취향: 칩이 거의 같게 맞을 때 인기작 먼저 (work_affinity)
+ANCHOR_FIRST = ("like", "studio")       # 1번 연결 작품이 기준인 RAG 글 종류 (팬 추천 · 제작사). 그 밖은 제목이 집은 작품
+SIDE_SLOTS = (4, 8)                     # 곁들임 자리 = 하루 최대 2개
+DISCOVER_FROM, DISCOVER_EVERY = 6, 4    # 다른 작품 자리 6 · 10 · 14 ...번째
+SIDE_CHIP_MIN = 0.5                     # 이유 문구에 칩 이름을 쓸 만큼 그 칩이 작품에 있는 정도 (소재 순위 50 이상)
+_OVERLAP_ID = re.compile(r"dict-curation-overlap-(?:t([a-z0-9]+?)[123]|(w\d+))(?:-v\d+)?")
 
 # 온보딩 답 → v1 유형. Q3(덕질 방식) 6개 = consumption_type · 예전(v1) 답의 q1, 그리고 예전 q2(받고 싶은 소식) 3개.
 # Q3 를 유형 10개 문장으로 바꾸면 답이 유형 코드로 오므로 표에 없는 코드는 그대로 씀
@@ -357,6 +421,125 @@ def user_types(answers):
     return out
 
 
+def post_kind(request_id):
+    """RAG 글 번호 (agent_run.input_payload.request_id) → (글 종류, 소재 키, 소재 슬러그).
+    형식 dict-{유형}-{종류}-{...}. 소재 모음은 dict-curation-overlap-t{슬러그}{1|2|3}[-vN] (옛 형식 w{번호} 는 그 번호가 소재 키,
+    슬러그 없음). RAG 가 아닌 글은 (None, None, None)"""
+    rid = request_id or ""
+    if not rid.startswith("dict-"):
+        return None, None, None
+    parts = rid.split("-")
+    kind = parts[2] if len(parts) > 2 else None
+    m = _OVERLAP_ID.fullmatch(rid) if kind == "overlap" else None
+    if m:
+        return kind, m.group(1) or m.group(2), m.group(1)
+    return kind, None, None
+
+
+def anchor_of(works, names, title, kind):
+    """글의 기준 작품 자리 (11/16 결정 1번). 작품이 하나면 그 작품, 팬 추천 · 제작사는 1번,
+    그 밖 (가수 · 감독 · 소재 모음 등)은 제목이 이름을 그대로 쓴 작품 (연결 앞 순서 먼저, 두 글자 이상). 없으면 None = 모음"""
+    if not works:
+        return None
+    if len(works) == 1 or kind in ANCHOR_FIRST:
+        return 0
+    return next((j for j, n in enumerate(names or ()) if n and len(n) >= 2 and n in (title or "")), None)
+
+
+def chip_slug(name):
+    # AniList 이름 → RAG 소재 슬러그 (소문자 · 영숫자만)
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
+def chip_labels(user, features):
+    """유저가 고른 칩 → {AniList 이름: 화면 이름}. features = preferences.load_chip_features 결과"""
+    out = {}
+    for tag in user.get("preference_tags", ()):
+        f = features.get((tag["kind"], tag["code"]))
+        if f is not None and tag.get("label"):
+            out.setdefault(f.name, tag["label"])
+    return out
+
+
+def _rounds(items, feed):
+    # 같은 작품 글은 한 바퀴에 하나씩 (작품마다 가장 높은 글 → 두 번째 글 ...). 한 바퀴 안은 들어온 순서. 작품 없는 글은 글마다 따로
+    count, keyed = {}, []
+    for n, i in enumerate(items):
+        p = int(feed["pos"][i])
+        k = p if p >= 0 else ("post", i)
+        keyed.append((count.get(k, 0), n, i))
+        count[k] = count.get(k, 0) + 1
+    return [i for *_, i in sorted(keyed)]
+
+
+def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100):
+    """점수 순 글 번호 → 보여 줄 순서 [(글 번호, 자리), ...] (11/16 · 11/17 결정). 자리 = pinned · side · discover · score
+    1. 팬 추천은 기준 작품이 고른 작품 (같은 시리즈 포함) 인 글만 남김
+    2. 맨 위 = 기준 작품이 고른 작품인 글 중 아직 안 본 글 (10/31 arrange 와 같음, 같은 작품은 한 바퀴에 하나씩)
+    3. SIDE_SLOTS 번째 = 곁들임 (하루 최대 2개): 팬 추천이 아닌 여러 작품 글 중 고른 작품이 기준이 아닌 자리에 있거나
+       소재 모음의 소재가 고른 칩인 글. 점수 순, 한 번 본 글은 빼고 서로 다른 소재
+    4. DISCOVER_FROM 부터 DISCOVER_EVERY 마다 = 다른 작품: 기준 작품이 고른 작품이 아닌 안 본 글, 점수 순 (한 바퀴에 하나씩)
+    5. 그 자리 글이 없으면 맨 위 → 나머지 점수 순으로 채움. 같은 소재 모음은 하루 하나 (11/17 RAG 요청: 미루지 않고 뺌)
+    chip_slugs: 고른 칩의 소재 슬러그 집합 (chip_slug). seen: 글별 노출 횟수"""
+    mine = {_cw_pos(ctx, w) for w in picked} - {-1}
+    unseen = lambda i: seen is None or not seen[i]
+    at = lambda i: int(feed["pos"][i])
+    order = [i for i in order if posts[i].get("kind") != "like" or at(i) in mine]
+    pinned = [i for i in order if at(i) in mine and unseen(i)]
+    pinned_set = set(pinned)
+
+    def is_side(i):
+        p = posts[i]
+        works = p.get("works") or ()
+        if p.get("kind") == "like" or len(works) < 2 or at(i) in mine:
+            return False
+        a = p.get("anchor")
+        return (any(j != a and _cw_pos(ctx, w) in mine for j, w in enumerate(works))
+                or bool(p.get("slug") and p["slug"] in chip_slugs))
+
+    side, side_themes = [], set()
+    for i in order:
+        if len(side) == len(SIDE_SLOTS):
+            break
+        key = posts[i].get("theme")
+        if i in pinned_set or not unseen(i) or not is_side(i) or (key and key in side_themes):
+            continue
+        side.append(i)
+        if key:
+            side_themes.add(key)
+    side_set = set(side)
+    rest = _rounds([i for i in order if i not in pinned_set and i not in side_set], feed)
+    queues = {"pinned": deque(_rounds(pinned, feed)), "side": deque(side),
+              "discover": deque(i for i in rest if unseen(i) and at(i) >= 0 and at(i) not in mine), "score": deque(rest)}
+    out, used, themes = [], set(), set()
+
+    def take(name):
+        q = queues[name]
+        while q:
+            i = q.popleft()
+            key = posts[i].get("theme")
+            if i in used or (key and key in themes):
+                continue
+            used.add(i)
+            if key:
+                themes.add(key)
+            return i
+        return None
+
+    while len(out) < top_n:
+        n = len(out) + 1
+        first = ("side" if n in SIDE_SLOTS else
+                 "discover" if n >= DISCOVER_FROM and (n - DISCOVER_FROM) % DISCOVER_EVERY == 0 else None)
+        for name in ([first] if first else []) + ["pinned", "score"]:
+            i = take(name)
+            if i is not None:
+                out.append((i, name))
+                break
+        else:
+            break
+    return out
+
+
 def arrange(order, feed, picked, ctx, seen=None):
     """점수 순 글 번호 → 보여 줄 순서 (10/31 결정). Q1 에서 고른 작품 (같은 시리즈 포함)의 글 중 아직 안 본 글을 맨 위로.
     seen: 글별 노출 횟수 → 한 번이라도 보고 안 연 글은 다음 계산부터 맨 위 고정에서 빠지고 점수 순서로 (연 글은 순위에서 빠짐).
@@ -378,11 +561,10 @@ def arrange(order, feed, picked, ctx, seen=None):
 
 
 def score_parts(state, feed, i, day, cfg):
-    """v1.rank_feed 와 같은 계산으로 글 i 의 점수 조각 (작품 취향 (장르 · 소재 유사도 포함), 유형 취향, 새 글, 이미 본 만큼 감점). 합 = 순위 점수"""
-    p, ty = int(feed["pos"][i]), int(feed["type"][i])
-    work = cfg.w_work * (float(state.work_aff[p]) + cfg.work_feedback * math.tanh(float(state.work_ev[p]))) if p >= 0 else 0.0
-    if p >= 0 and cfg.w_genre and state.genre_sim is not None:
-        work += cfg.w_genre * float(state.genre_sim[p])
+    """v1.rank_feed 와 같은 계산으로 글 i 의 점수 조각 (작품 취향 (장르 · 소재 유사도 · 같이 연결된 작품 포함), 유형 취향, 새 글,
+    이미 본 만큼 감점). 합 = 순위 점수"""
+    ty = int(feed["type"][i])
+    work = float(v1.work_parts(state, feed, np.array([i]), cfg)[0])
     shown = state.seen if "impression" in cfg.logs else state.served
     return (work, cfg.w_type * float(v1.type_pref(state, cfg)[ty]),
             cfg.w_fresh * math.exp(-(day - int(feed["day"][i])) / float(v1.TAU[ty])), -cfg.w_seen * float(shown[i]))
@@ -422,4 +604,135 @@ def reason(parts, work, picked, type_code, ctx):
     text = REASONS[kind].format(work=name, 을=_josa(name, ("을", "를")), 와=_josa(name, ("과", "와")),
                                 type=TYPE_LABELS.get(type_code, type_code))
     return {"text": text, "kind": kind, "work": about,
+            "parts": {k: round(x, 4) for k, x in zip(("work", "type", "fresh", "seen"), parts)}}
+
+
+# 11/17 결정 6번: 이유 = "왜 이 작품" + "어떤 글". 점수에 실제로 쓴 것만 말함 (같이 본 기록은 점수에서 빠져서 안 씀)
+TYPE_STORY = {"character": "캐릭터 이야기", "music": "노래 이야기", "guide": "작품 가이드", "people": "인물 이야기",
+              "news": "새 소식", "event": "행사 소식", "goods": "굿즈 소식", "review": "리뷰", "humor": "유머 글",
+              "behind": "비하인드 이야기"}
+
+
+def _ieyo(word):
+    return _josa(word, ("이에요", "예요"))
+
+
+def _title(ctx, w, fallback=""):
+    # 작품 이름: 목록의 한글 제목 → 글에 연결된 이름 (모델 파일에 없는 새 작품) → 원어 제목
+    info = ctx["works"].get(w) or {}
+    return info.get("title_ko") or fallback or info.get("title") or ""
+
+
+def _chip_fit(state, q):
+    return float(state.chip_w[q].mean()) if state.chip_w is not None and q >= 0 else 0.0
+
+
+def _matched_chips(state, q, labels, k=2):
+    # 카탈로그 자리 q 작품에 SIDE_CHIP_MIN 이상 있는 고른 칩의 화면 이름, 진한 순 k 개
+    if state.chip_w is None or q < 0:
+        return []
+    w = state.chip_w[q]
+    names = [state.chip_names[n] for n in sorted(range(len(w)), key=lambda n: -float(w[n])) if w[n] >= SIDE_CHIP_MIN]
+    return [labels[n] for n in names if n in labels][:k]
+
+
+def _closest_picked(ctx, w, picked):
+    # 고른 작품 중 작품 특징 (장르 · 태그 · 제작사 · 제작진 · 성우) 이 가장 닮은 작품 (코사인 > 0), 없으면 None
+    if w not in ctx["rep_of"]:
+        return None
+    X, vn, row = ctx["X"], ctx["vnorm"], ctx["row"]
+    r = row[ctx["rep_of"][w]]
+    best, out = 0.0, None
+    for m in picked:
+        if m in ctx["rep_of"] and m != w:
+            s = row[ctx["rep_of"][m]]
+            norm = float(vn[r] * vn[s])
+            c = float(X[r] @ X[s]) / norm if norm > 0 else 0.0
+            if c > best:
+                best, out = c, m
+    return out
+
+
+def _picked_text(name, post):
+    # 고른 작품 글: 맨 위 글이 다 "골라서 추천해요" 로 같아서 글 종류별 문구 (11/17)
+    kind, ty = post.get("kind"), post["type"]
+    if kind == "like":
+        return f"‘{name}’ 팬들이 추천한 다음 작품이에요"
+    if kind in ("bdaymonth", "birthday"):
+        return f"고른 ‘{name}’ 캐릭터의 생일 글이에요"
+    if kind == "origin":
+        return f"고른 ‘{name}’의 원작 이야기예요"
+    if ty == "curation":
+        return f"고른 ‘{name}’ 관련 모음이에요"
+    story = TYPE_STORY.get(ty)
+    if story:
+        return f"고른 ‘{name}’의 {story}{_ieyo(story)}"
+    return REASONS["picked"].format(work=name, 을=_josa(name, ("을", "를")))
+
+
+def explain(parts, post, slot, picked, state, ctx, labels):
+    """점수 조각 · 글 · 자리 → 추천 이유 (text = 카드 문구). labels = chip_labels 결과 {AniList 이름: 화면 이름}.
+    1. 기준 작품이 고른 작품 → 글 종류별 문구 ("고른 ‘원피스’의 캐릭터 이야기예요" · "‘원피스’ 팬들이 추천한 다음 작품이에요")
+    2. 고른 작품이 같이 연결된 여러 작품 글 → "‘원피스’도 나오는 글이에요"
+    3. 곁들임 자리 · 기준 없는 모음의 소재가 고른 칩 → "고른 ‘고어’ 소재 모음이에요"
+    4. 그 밖: 점수 조각 중 가장 큰 것 + 작품에 진하게 있는 고른 칩 → "고른 ‘호러’ · ‘고어’ 취향에 맞는 작품이에요" ·
+       "고른 ‘힐링’ 작품의 노래 이야기예요" · "새로 올라온 ‘호러’ 작품 글이에요". 칩이 없으면 가장 닮은 고른 작품 · 유형 · 새 글
+    자리 (slot) 도 남겨 베타 뒤 자리별 반응을 비교한다"""
+    works = post.get("works")
+    if works is None:
+        works = [post["menu_work_id"]] if post.get("menu_work_id") is not None else []
+        a = 0 if works else None
+    else:
+        a = post.get("anchor")
+    names = post.get("names") or ()
+    name_at = lambda j: names[j] if j is not None and j < len(names) else ""
+    pos = [_cw_pos(ctx, w) for w in works]
+    mine = {}
+    for m in picked:
+        q = _cw_pos(ctx, m)
+        if q >= 0:
+            mine.setdefault(q, m)
+    kind = about = text = None
+    if a is not None and pos[a] in mine:
+        about = mine[pos[a]]
+        kind, text = "picked", _picked_text(_title(ctx, about, name_at(a)), post)
+    elif post.get("kind") != "like" and len(works) > 1:
+        hits = [j for j, q in enumerate(pos) if j != a and q in mine]     # 같이 나오는 고른 작품 (제목에 이름이 있는 것 먼저)
+        j = next((j for j in hits if name_at(j) and name_at(j) in (post.get("title") or "")), hits[0] if hits else None)
+        theme = {chip_slug(n): lab for n, lab in labels.items()}.get(post.get("slug") or "")
+        if j is not None:
+            about = mine[pos[j]]
+            kind, text = "with_picked", f"‘{_title(ctx, about, name_at(j))}’도 나오는 글이에요"
+        elif theme and (slot == "side" or a is None):
+            kind, text = "theme", f"고른 ‘{theme}’ 소재 모음이에요"
+    if text is None:
+        j = a if a is not None else (max(range(len(pos)), key=lambda n: _chip_fit(state, pos[n])) if pos else None)
+        q = pos[j] if j is not None else -1
+        chips = _matched_chips(state, q, labels)
+        big = ("work", "type", "fresh")[int(np.argmax(parts[:3]))]
+        if big == "work" and not works:
+            big = "fresh"
+        if big == "work" and chips:
+            kind, text = "chips", "고른 " + " · ".join(f"‘{c}’" for c in chips) + " 취향에 맞는 작품이에요"
+        elif big == "work":
+            m = _closest_picked(ctx, works[j], picked)
+            if m is not None:
+                about, nm = m, _title(ctx, m)
+                kind, text = "similar", f"‘{nm}’{_josa(nm, ('과', '와'))} 분위기가 닮은 작품이에요"
+            else:
+                kind, text = "taste", REASONS["taste"]
+        elif big == "type" and chips:
+            story = TYPE_STORY.get(post["type"])
+            kind = "chips_type"
+            text = (f"고른 ‘{chips[0]}’ 작품의 {story}{_ieyo(story)}" if story
+                    else f"고른 ‘{chips[0]}’ 작품이 나오는 {TYPE_LABELS.get(post['type'], post['type'])} 글이에요")
+        elif big == "type":
+            kind, text = "type", REASONS["type"].format(type=TYPE_LABELS.get(post["type"], post["type"]))
+        elif chips:
+            kind, text = "chips_fresh", f"새로 올라온 ‘{chips[0]}’ 작품 글이에요"
+        else:
+            kind, text = "fresh", REASONS["fresh"]
+        if about is None and j is not None:
+            about = works[j]
+    return {"text": text, "kind": kind, "work": about, "slot": slot,
             "parts": {k: round(x, 4) for k, x in zip(("work", "type", "fresh", "seen"), parts)}}
