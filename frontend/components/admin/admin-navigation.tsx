@@ -16,7 +16,7 @@ export function AdminNavigation() {
     const active = pathname === href || pathname.startsWith(`${href}/`);
     return icon === "contents" || icon === "users"
       ? <Link key={icon} className={active ? styles.navActive : styles.navLink} href={href} aria-current={active ? "page" : undefined}>
-        <img src={`/admin/${icon}.svg`} alt="" />{label}</Link>
+        <img src={`/admin/${icon === "users" && active ? "users-active" : icon === "contents" && !active ? "contents-inactive" : icon}.svg`} alt="" />{label}</Link>
       : <span key={icon} className={styles.navDisabled} aria-disabled="true" title={`${label} 준비 중`}><img src={`/admin/${icon}.svg`} alt="" />{label}<span className={styles.srOnly}> 준비 중</span></span>;
   })}</nav>;
 }

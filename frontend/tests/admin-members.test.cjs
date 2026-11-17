@@ -66,7 +66,7 @@ test('detail keeps unavailable blocks, masks raw identity and disables every wri
   const data = { ...fixtures.memberFixtures[0], maskedEmail: 'private@example.test', savedCount: null, likedCount: 0, onboarding: null, history: null };
   const html = render('components/admin/member-detail-screen.tsx', 'MemberDetailScreen', { state: { status: 'ready', data }, back: '/admin/users?page=2' });
   assert.doesNotMatch(html, /private@example|진격의 거인/); assert.match(html, /답변 연결 준비 중/); assert.match(html, /변경 이력 연결 준비 중/);
-  assert.match(html, /disabled=""[^>]*[^<]*>\+ 메모 작성/);
+  assert.match(html, /disabled=""[^>]*><img[^>]*src="\/admin\/memo-add.svg"[^>]*\/>메모 작성/);
   assert.match(html, /disabled="" aria-label="메모 수정 준비 중"/); assert.match(html, /disabled="" aria-label="메모 삭제 준비 중"/);
   assert.match(html, /<dialog[^>]+aria-labelledby="nickname-history-title"/);
 });

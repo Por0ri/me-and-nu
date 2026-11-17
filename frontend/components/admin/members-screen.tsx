@@ -45,10 +45,10 @@ export function MembersScreen({ query, state, navigate, statistics }: {
           <input id="member-search" value={search} onChange={event => setSearch(event.target.value)} maxLength={300} placeholder="이름, 닉네임, 이메일로 검색" autoComplete="off" />
         </form>
         <label className={styles.sort}><span className={shared.srOnly}>회원 정렬</span><select value={query.sort} onChange={event => navigate({ ...query, sort: event.target.value as MemberQuery["sort"], page: 1 })}>
-          <option value="recent">최근 가입순</option><option value="oldest">오래된 가입순</option></select></label>
+          <option value="recent">최근 가입순</option><option value="oldest">오래된 가입순</option></select><img src="/admin/sort-down.svg" alt="" /></label>
         <div className={styles.providers} role="group" aria-label="가입 경로 필터">{[["", "전체"], ...Object.entries(memberProviders)].map(([provider, label]) =>
           <button type="button" key={provider} aria-pressed={query.provider === provider} onClick={() => navigate({ ...query, provider: provider as MemberQuery["provider"], page: 1 })}>{label}</button>)}</div>
-        <button type="button" className={`${shared.secondaryButton} ${styles.export}`} disabled title="회원 내보내기 준비 중">CSV 내보내기</button>
+        <button type="button" className={`${shared.secondaryButton} ${styles.export}`} disabled title="회원 내보내기 준비 중"><img src="/admin/download.svg" alt="" />CSV 내보내기</button>
       </div>
       <div className={shared.resultBar}><p>회원 목록 <strong>{data ? data.total.toLocaleString("ko-KR") : "—"}</strong></p></div>
       <div className={`${shared.tableScroll} ${styles.table}`} tabIndex={0} role="region" aria-label="회원 목록 표, 가로 스크롤 가능"><table>
@@ -57,7 +57,7 @@ export function MembersScreen({ query, state, navigate, statistics }: {
         <thead><tr>{["선택", "닉네임", "이메일", "가입 경로", "관심 분야", "최근 접속일", "상태", "상세"].map((label, index) => <th key={label} scope="col">{index === 0 || index === 7 ? <span className={shared.srOnly}>{label}</span> : label}</th>)}</tr></thead>
         <tbody>{data?.items.map(item => <tr key={item.id} data-member-row={item.id}>
           <td><input type="checkbox" disabled aria-label={`${item.nickname} 선택 준비 중`} /></td><td>{item.nickname}</td><td>{privateEmail(item.maskedEmail)}</td><td>{item.provider ? memberProviders[item.provider] : "—"}</td><td>{item.domain ?? "—"}</td>
-          <td>{memberDate(item.lastSeenAt)}</td><td><MemberBadge status={item.status} /></td><td><Link href={`/admin/users/${encodeURIComponent(item.id)}?${memberQueryString(query)}`} aria-label={`${item.nickname} 회원 상세`}>회원 상세 <span aria-hidden="true">›</span></Link></td>
+          <td>{memberDate(item.lastSeenAt)}</td><td><MemberBadge status={item.status} /></td><td><Link href={`/admin/users/${encodeURIComponent(item.id)}?${memberQueryString(query)}`} aria-label={`${item.nickname} 회원 상세`}>회원 상세 <img src="/admin/member-chevron.svg" alt="" /></Link></td>
         </tr>)}</tbody>
       </table></div>
       {state.status !== "ready" ? <AdminStatus subject="회원" state={state} /> : data?.items.length === 0 ? <div className={shared.feedback} role="status" data-member-empty>
