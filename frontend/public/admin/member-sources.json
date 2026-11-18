@@ -1,0 +1,139 @@
+{
+  "fileKey": "iLGLjporSKRHdHBdhsKEvV",
+  "verifiedAt": "2026-11-17",
+  "source": "Figma get_design_context; original HTTPS SVG downloads with TLS verification",
+  "assets": [
+    {
+      "file": "users-active.svg",
+      "width": 20,
+      "height": 20,
+      "sha256": "bdfc8166338798ec0a39f4dddf65e053a3afbc2520782eaa61b81006cf60c7b2",
+      "frameId": "2344:12723",
+      "nodeId": "I2344:13043;2225:59;2222:11314;2210:11298",
+      "name": "회원 메뉴 활성",
+      "previousFallback": "/admin/users.svg (비활성 색상)",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/85fa1967-3487-4ab3-af7b-f5d5cf4656d6.svg"
+    },
+    {
+      "file": "contents-inactive.svg",
+      "width": 20,
+      "height": 20,
+      "sha256": "8ced6b3076fa1180aaf2aa61651bba1db4eec7af8f1449adc69202980cefe0d6",
+      "frameId": "2344:12723",
+      "nodeId": "I2344:13043;2225:17;2222:11322;2225:7",
+      "name": "콘텐츠 메뉴 비활성",
+      "previousFallback": "/admin/contents.svg (활성 색상)",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/57fa236c-7485-43ae-b2fa-72b1dd6259f1.svg"
+    },
+    {
+      "file": "member-chevron.svg",
+      "width": 15,
+      "height": 24,
+      "sha256": "bcf9ceb8822796a07306570ff12a29d8d28177b7a41db3a0ca6bc554e37e5c67",
+      "frameId": "2344:12723",
+      "nodeId": "2414:7881",
+      "name": "회원 상세 chevron_forward",
+      "previousFallback": "문자 ›",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/1a6461f0-f614-4231-b8a9-829d78c1dade.svg"
+    },
+    {
+      "file": "download.svg",
+      "width": 14,
+      "height": 14,
+      "sha256": "bb96b546f73a745b7b7a329cb2cb0a04f1c5a1cb527ccfe448bb5b7638e2cf72",
+      "frameId": "2344:12723",
+      "nodeId": "2354:15030",
+      "name": "CSV download",
+      "previousFallback": "텍스트만 표시",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/ffbd0005-1fde-4c4c-b77c-6d52cd282515.svg"
+    },
+    {
+      "file": "sort-down.svg",
+      "width": 24,
+      "height": 24,
+      "sha256": "a399dcce025f5d77349713ff9fc93f0f4736ef36f16b7774100a3b4682b5500a",
+      "frameId": "2344:12723",
+      "nodeId": "I2389:7643;2375:7596",
+      "name": "정렬 keyboard_arrow_down",
+      "previousFallback": "브라우저 기본 select 화살표",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/98d2ba17-6a53-4358-878b-a9dee36f3948.svg"
+    },
+    {
+      "file": "member-back.svg",
+      "width": 48,
+      "height": 48,
+      "sha256": "8b7a3e62e2982b8f999b0b17ed7ce3227be780ad9cc5b4ebc1babe64291e5497",
+      "frameId": "2417:7908",
+      "nodeId": "2417:8242",
+      "name": "회원 목록 arrow_back",
+      "previousFallback": "문자 ←",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/6ebac78c-0bed-49ac-be66-26935cb58b35.svg"
+    },
+    {
+      "file": "member-forward.svg",
+      "width": 24,
+      "height": 24,
+      "sha256": "8f22c54c0292da2c3cc58ae035f6a9e08dfd7338769a13f3c105e038fd3852eb",
+      "frameId": "2417:7908",
+      "nodeId": "I2570:8263;2570:8258",
+      "name": "이력 전체 보기 arrow_forward",
+      "previousFallback": "문자 →",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/610feca5-be33-4fd7-9ee7-69886151435e.svg"
+    },
+    {
+      "file": "memo-add.svg",
+      "width": 24,
+      "height": 24,
+      "sha256": "2b4807414186eb418bde8924db0f1b8ff34d133dbc737f59bd819735d0e439b9",
+      "frameId": "2417:7908",
+      "nodeId": "I2459:1294;2570:8347",
+      "name": "메모 add",
+      "previousFallback": "문자 +",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/09ff8d3e-ab8d-41a5-8147-03f9c8212157.svg"
+    },
+    {
+      "file": "memo-edit.svg",
+      "width": 28,
+      "height": 28,
+      "sha256": "7719909e14c0e77daa648efa5267f2f38b58e5623b3146d077de2d2b2c2d6976",
+      "frameId": "2417:7908",
+      "nodeId": "I2459:1294;2570:8400",
+      "name": "메모 edit",
+      "previousFallback": "수정 텍스트",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/54246ba1-3b73-43f8-9b83-049b4de60468.svg"
+    },
+    {
+      "file": "memo-delete.svg",
+      "width": 28,
+      "height": 28,
+      "sha256": "db4116b6e7a2ad33e4527885817d9c7dc99cc14b88e1add0ae9dec3cf3930a11",
+      "frameId": "2417:7908",
+      "nodeId": "I2459:1294;2570:8389",
+      "name": "메모 delete",
+      "previousFallback": "삭제 텍스트",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/40deb741-3edc-4ec9-8786-43979c65f10f.svg"
+    },
+    {
+      "file": "history-close.svg",
+      "width": 48,
+      "height": 48,
+      "sha256": "5c66ddf3f25ccd49776bb8cdcb32dee5eb05a9e7e1da867718af5917954477f2",
+      "frameId": "2570:8505",
+      "nodeId": "2570:8827",
+      "name": "이력 패널 close",
+      "previousFallback": "문자 ×",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/7499d526-284b-447c-8c1e-b0733beab27d.svg"
+    },
+    {
+      "file": "history-forward.svg",
+      "width": 24,
+      "height": 24,
+      "sha256": "b853d205ac8822d8e3097ed4edeb3fd60942ccd28d4f739c008d31a39a26547c",
+      "frameId": "2570:8505",
+      "nodeId": "I2570:8846;2570:8841",
+      "name": "이력 행 arrow_forward",
+      "previousFallback": "문자 →",
+      "sourceUrl": "https://www.figma.com/api/mcp/asset/57f2cc50-a3e3-419d-802e-d2084c9c4964.svg"
+    }
+  ]
+}
