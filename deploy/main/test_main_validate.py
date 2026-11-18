@@ -130,6 +130,7 @@ class MainPreparationTest(unittest.TestCase):
     def test_chatbot_settings_are_optional_and_reported_without_values(self):
         report = guard.validate(self.values())
         self.assertEqual((report["chatbot_llm_key"], report["chatbot_dictionary"]), ("empty", "empty"))
+        self.assertEqual(report["chatbot_daily_total_limit"], 100)
         values = self.chatbot_values()
         report = guard.validate(values)
         self.assertEqual((report["chatbot_llm_key"], report["chatbot_dictionary"]), ("set", "set"))
@@ -162,9 +163,15 @@ class MainPreparationTest(unittest.TestCase):
         with self.assertRaises(guard.GuardError):
             guard.validate(values | {"MAIN_LLM_KEY": "two words"})
 
+    def test_chatbot_daily_total_limit_is_an_explicit_positive_number(self):
+        self.assertEqual(guard.validate(self.values() | {"MAIN_CHAT_DAILY_TOTAL_LIMIT": "5000"})["chatbot_daily_total_limit"], 5000)
+        for value in ("0", "", "-100", "1000000", "5,000", "0100"):  # 0 would mean unlimited
+            with self.subTest(value=value), self.assertRaises(guard.GuardError):
+                guard.validate(self.values() | {"MAIN_CHAT_DAILY_TOTAL_LIMIT": value})
+
     def test_compose_passes_chatbot_settings_to_the_api_only_from_the_server_file(self):
         self.assertIsNotNone(shutil.which("docker"), "Docker Compose CLI is required for offline rendering only")
-        values = self.chatbot_values() | {"MAIN_IMAGE_TAG": "a" * 40}
+        values = self.chatbot_values() | {"MAIN_IMAGE_TAG": "a" * 40, "MAIN_CHAT_DAILY_TOTAL_LIMIT": "5000"}
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / "main.env"
             env_file.write_text("\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8")
@@ -179,9 +186,10 @@ class MainPreparationTest(unittest.TestCase):
         self.assertEqual(api_environment["LLM_KEY"], values["MAIN_LLM_KEY"])
         self.assertEqual(api_environment["DICT_DATABASE_URL"], values["MAIN_DICT_DATABASE_URL"])
         self.assertEqual((api_environment["OPENAI_API_KEY"], api_environment["TMDB_KEY"]), ("", ""))
+        self.assertEqual(api_environment["CHAT_DAILY_TOTAL_LIMIT"], "5000")
         guard.validate_config(config, values)
         for name, key, value in (("other_dictionary", "DICT_DATABASE_URL", ""), ("paid_key", "OPENAI_API_KEY", "synthetic"),
-                                 ("other_llm_key", "LLM_KEY", "synthetic-other")):
+                                 ("other_llm_key", "LLM_KEY", "synthetic-other"), ("other_limit", "CHAT_DAILY_TOTAL_LIMIT", "100")):
             with self.subTest(name=name), self.assertRaises(guard.GuardError):
                 modified = copy.deepcopy(config)
                 modified["services"]["api"]["environment"][key] = value

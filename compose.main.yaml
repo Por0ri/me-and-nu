@@ -55,6 +55,8 @@ services:
       OPENAI_API_KEY: ""
       # Read-only chatbot dictionary shared with Checking (menu_dict); empty answers from our posts only.
       DICT_DATABASE_URL: ${MAIN_DICT_DATABASE_URL:-}
+      # All users' chatbot questions per day, counted together with Checking (same database).
+      CHAT_DAILY_TOTAL_LIMIT: ${MAIN_CHAT_DAILY_TOTAL_LIMIT:?Set the shared chatbot daily question limit}
 
 networks:
   data:

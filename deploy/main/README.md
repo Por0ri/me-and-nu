@@ -102,8 +102,10 @@ API는 기존 `me-nu-checking_data` 외부 네트워크에서 `postgres`/`redis`
   주소는 Checking 서버 파일의 `CHECKING_DICT_DATABASE_URL`과 같은 값을 서버 안에서 복사하고
   출력하지 않는다. 검사는 `menu_dict_reader` 계정, `postgres:5432/menu_dict`, 서비스 DB/Redis와
   다른 64자리 hex 비밀번호만 허용한다. LLM 키도 서버 안에서만 넣고 출력하지 않는다.
-- 하루 질문 한도(한 사람 30번, 모든 사용자 합쳐 5,000번)는 같은 DB에서 세므로 메인과
-  Checking을 합쳐 센다.
+- 모든 사용자를 합친 하루 질문 상한은 `MAIN_CHAT_DAILY_TOTAL_LIMIT`(1~999999 정수, 0 = 무제한은 받지
+  않음)이다. 같은 DB에서 세므로 메인과 Checking을 합쳐 세고, Checking의
+  `CHECKING_CHAT_DAILY_TOTAL_LIMIT`와 늘 같은 값으로 둔다. 바꿀 때는 숫자만 고치고 API 컨테이너를
+  다시 만든다(이미지는 다시 만들지 않는다). 한 사람 한도(30번)는 코드 기본값이다.
 - 메인 서비스 DB 풀은 2개라서 챗봇은 LLM 답을 기다리기 전에 DB 연결을 돌려준다. 사전 조회는
   서비스 풀과 따로 API마다 최대 4개(기본 2 + overflow 2) 연결을 짧게 쓴다.
 - 끄려면 `MAIN_LLM_KEY=`로 비우고 API 컨테이너를 다시 만든다.
