@@ -1,5 +1,7 @@
 # 관리자 콘텐츠 승인·반려 FE 연동 준비
 
+> BE 후속 답변과 구현: [관리자 BE 1차 통합 계약](ADMIN_BE_INTEGRATION_2026-11-18.md). 아래는 FE PR #86 당시 기록이다. 현재 Router 등록·DB Provider·timezone 응답·상세 review 메타데이터·재시도 보존 범위는 후속 계약을 따른다. FE 실행 버튼은 여전히 후속 연결 대상이다.
+
 기준은 fetch로 확인한 `origin/Checking` `66494e1406e7be20ae45df2f47f5b130a7e9ba7b`이다. 작업 브랜치는 독립 worktree의 `claude/menu-admin-api-setup-7702cd`이다.
 
 BE의 권한 Provider·PR #71·Migration·Router 등록은 BE 담당이며 이번 작업에서 변경하지 않았다. 관리자 권한도 부여하지 않았다. 승인·반려 POST는 여전히 어떤 화면에서도 호출하지 않는다.
@@ -10,7 +12,7 @@ BE의 권한 Provider·PR #71·Migration·Router 등록은 BE 담당이며 이�
 
 - `loadAdminContents`·`loadAdminContent`는 기존 `apiRequest`로 `/api/v1/admin/contents`를 호출한다. `credentials: include`, `cache: no-store`, AbortSignal을 사용한다.
 - 응답을 엄격하게 검증한다. 페이지·건수·중복 ID, review 모드의 `needs_review`, 상세 ID, 출처 필드를 확인하고, 어긋나면 `INVALID_ADMIN_RESPONSE`로 실패한다.
-- 상세 `updatedAt`은 Date로 바꾸지 않고 문자열 그대로 보존한다. 소수 6자리와 offset이 필수이고 `-00:00`은 거부한다.
+- 상세 `updatedAt`은 Date로 바꾸지 않고 문자열 그대로 보존한다. 소수는 생략하거나 1–6자리이며 offset은 필수이고 `-00:00`은 거부한다.
 - 오류 상태 대응: 401 → 로그인 필요, 403 → 권한 없음, 404 `CONTENT_NOT_FOUND` → 없음, 그 밖의 404 → 연결 준비 중(Router 미등록), 나머지 → 오류.
 - `useAdminRead`는 세션 미인증, focus·visibility·pageshow 재조회, `api:unauthorized`를 처리한다.
 

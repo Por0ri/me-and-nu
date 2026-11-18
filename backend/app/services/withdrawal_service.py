@@ -53,6 +53,11 @@ async def request_withdrawal(
     store: RedisSessionStore | None,
 ) -> datetime:
     """계정을 막고 지금 세션을 끝낸 뒤 삭제 예정 시각을 돌려줍니다."""
+    # Grant/bootstrap transactions take this same lock before inserting history.
+    # Re-read after waiting: authentication may have loaded a stale account.
+    user = await lock_user(db, user.user_id)
+    if user is None or user.account_status != "active":
+        raise ApiError(409, "WITHDRAWAL_STATE_CONFLICT", "계정 상태가 변경되었습니다. 다시 확인해 주세요.")
     # 채널이 있는 계정은 외래 키 때문에 유예가 끝나도 못 지우므로 신청할 때 거절합니다.
     channel = await db.scalar(
         select(CreatorChannel.creator_channel_id).where(CreatorChannel.user_id == user.user_id).limit(1)

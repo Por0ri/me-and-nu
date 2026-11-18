@@ -1,5 +1,7 @@
 # ADMIN P0-1: 콘텐츠 승인·반려 첫 Slice
 
+> 이후 통합: [2026-11-18 BE 계약](ADMIN_BE_INTEGRATION_2026-11-18.md). 아래의 미등록 Router·기본 거부 Provider·updatedAt 미제공·PG 미검증 설명은 당시 기록이다. 현재 계약과 검증 결과는 후속 문서를 따른다.
+
 기준 Checking: `104fd9b006b5ccda35d4fd3d219f544c4c8e6db4` (PR #73 병합).
 로컬 브랜치: `codex/admin-p0-1-review-actions-1113`. 작성일: 2026-11-13 KST.
 

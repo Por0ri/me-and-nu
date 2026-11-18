@@ -27,7 +27,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import AgentRun, Content, ContentSource, Draft, Topic
+from app.models import AdminActionLog, AgentRun, Content, ContentSource, Draft, Topic
 from app.core.carousel_preview import checking_preview_database
 from app.models.content_slide import ContentSlide
 from app.repositories.content_work_repository import link_carousel_works
@@ -419,35 +419,59 @@ async def import_bundle(db, bundle: PreparedBundle, *, apply: bool = False, now:
     for item in bundle.items:
         if item.expires_at <= moment:
             raise CarouselImportError("Content expired before import.")
-        run = await db.scalar(select(AgentRun).where(AgentRun.queue_task_id == item.queue_task_id))
+        run = await db.scalar(select(AgentRun).where(AgentRun.queue_task_id == item.queue_task_id)
+                              .execution_options(populate_existing=True))
         draft = content = None
         previous_review = None
+        admin_reviewed = False
         if run:
             output = run.output_payload or {}
             if run.topic_id != topic.topic_id or output.get("method") != METHOD or output.get("digest") != item.digest:
                 raise CarouselImportError("Existing producer request has a different immutable digest.")
-            draft = await db.scalar(select(Draft).where(Draft.agent_run_id == run.agent_run_id))
-            content = None if draft is None else await db.scalar(select(Content).where(Content.source_draft_id == draft.draft_id))
+            # The importer advisory lock only serializes other importers. Share
+            # the admin review's Content -> Draft row-lock order as well, and
+            # refresh identity-map values after any wait for that transaction.
+            content_query = select(Content).where(Content.source_draft_id.in_(
+                select(Draft.draft_id).where(Draft.agent_run_id == run.agent_run_id)))
+            if apply:
+                content_query = content_query.with_for_update()
+            content = await db.scalar(content_query.execution_options(populate_existing=True))
+            if content is not None:
+                draft_query = select(Draft).where(Draft.draft_id == content.source_draft_id)
+                if apply:
+                    draft_query = draft_query.with_for_update()
+                draft = await db.scalar(draft_query.execution_options(populate_existing=True))
             if draft is None or content is None:
                 raise CarouselImportError("Existing import is incomplete; reconcile it before retrying.")
             await _verify_stored_copy(db, item, run, draft, content)
             previous_basis = content.ai_judgment_basis or {}
+            previous_review = previous_basis.get("operator_review")
+            # Administrator decisions live in the atomic audit transaction,
+            # independently of producer/import metadata. Missing audit storage
+            # or query failure must propagate; it is not permission to publish.
+            admin_reviewed = await db.scalar(select(AdminActionLog.admin_action_log_id).where(
+                AdminActionLog.target_type == "content",
+                AdminActionLog.target_id == content.content_id,
+                AdminActionLog.action_type.in_(("content.approve", "content.reject")),
+            ).limit(1)) is not None
+            incoming = bundle.reviews.get(item.digest)
+            if admin_reviewed and incoming is not None and incoming.model_dump() != previous_review:
+                raise CarouselImportError("Administrator-reviewed content cannot be changed by an import.")
             other_scopes = {"local_test_preview", "checking_test_preview"} - {preview_scope}
-            if (preview_scope and (previous_basis.get("preview") is not True
+            if not admin_reviewed and ((preview_scope and (previous_basis.get("preview") is not True
                     or previous_basis.get(preview_scope) != preview_metadata
                     or any(previous_basis.get(scope) is not None for scope in other_scopes)
                     or previous_basis.get("operator_review") is not None)) or (
                     not preview_scope and (any(previous_basis.get(scope) is not None for scope in other_scopes)
-                                           or previous_basis.get("preview") is True)):
+                                           or previous_basis.get("preview") is True))):
                 raise CarouselImportError("Existing import has a different publication scope; reconcile before changing it.")
-            previous_review = (content.ai_judgment_basis or {}).get("operator_review")
         review, changed = _review_transition(previous_review, bundle.reviews.get(item.digest))
-        plans.append((item, run, draft, content, review, changed))
+        plans.append((item, run, draft, content, review, changed, admin_reviewed))
     report = {"mode": "apply" if apply else "dry_run", "created": 0, "review_updated": 0, "unchanged": 0, "items": []}
     if preview_scope:
         report["publication_scope"] = preview_scope
         report["quality_approved"] = False
-    for item, run, draft, content, review, changed in plans:
+    for item, run, draft, content, review, changed, admin_reviewed in plans:
         status, judgment, draft_status, outcome = _state(review)
         if preview_scope:
             # Expose only in the explicit test service; this is not a QC approval.
@@ -498,7 +522,8 @@ async def import_bundle(db, bundle: PreparedBundle, *, apply: bool = False, now:
             if status == "active" and content.published_at is None:
                 content.published_at = moment
         report["items"].append({"request_id": item.package.request_id, "digest": item.digest,
-            "content_id": content.content_id if content else None, "status": content.status if content and not changed else status})
+            "content_id": content.content_id if content else None, "status": content.status if content and not changed else status,
+            "admin_review_protected": admin_reviewed})
     if apply:
         await db.flush()
     return report

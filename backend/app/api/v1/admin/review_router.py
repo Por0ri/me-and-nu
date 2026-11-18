@@ -1,6 +1,4 @@
-"""Test-only wiring until permission DB integration is approved. NOT included
-by the read router, V1 router or runtime app; there is no enable switch.
-"""
+"""Review writes use real session/CSRF, current grants and a fresh transaction."""
 
 from typing import Annotated
 

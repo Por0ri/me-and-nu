@@ -98,7 +98,8 @@ async def review_content(
                 result = dict(content_id=content_id, draft_id=draft["draft_id"], action=request.action,
                     status=content_values["status"], judgment_status=content_values["judgment_status"],
                     draft_status=draft_values["status"],
-                    published_at=content_values["published_at"], updated_at=now)
+                    published_at=_utc(content_values["published_at"]) if content_values["published_at"] is not None else None,
+                    updated_at=now)
                 audit_id = await repo.append_audit(db, admin_account_id=grant.admin_account_id,
                     action_type=f"content.{request.action}", target_type="content", target_id=content_id,
                     before_value={"content": _snapshot(content), "draft": _snapshot(draft)},
@@ -114,4 +115,4 @@ async def review_content(
         code = getattr(error.orig, "sqlstate", None)
         if code in {"40001", "40P01", "55P03"} or getattr(error.orig, "sqlite_errorcode", None) in {5, 6, 517}:
             raise _conflict() from None
-        raise ApiError(503, "ADMIN_REVIEW_UNAVAILABLE", "검수 저장에 실패했습니다. 같은 요청 ID로 다시 시도해 주세요.") from None
+        raise ApiError(503, "ADMIN_REVIEW_UNAVAILABLE", "검수 처리 결과를 확인할 수 없습니다. 같은 요청으로 다시 확인해 주세요.") from None

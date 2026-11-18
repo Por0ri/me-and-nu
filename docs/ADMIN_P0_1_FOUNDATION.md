@@ -1,5 +1,7 @@
 # ADMIN P0-1: 콘텐츠 조회 기반
 
+> 이후 통합: [2026-11-18 BE 계약](ADMIN_BE_INTEGRATION_2026-11-18.md). 아래는 구현 당시 기록이며 Router 미등록·Provider 미구현 설명은 현재 통합 코드에 적용하지 않는다.
+
 Foundation 기준: Checking `1823b0444ae2737faad865768e1d6af354ac3309`, 2026-11-12.
 권한·HTTP 기반 추가 기준: Checking `eb14ebf20effb8fcf5a4c90e61cd9dcc6a00f5ed`, 2026-11-13.
 

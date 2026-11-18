@@ -146,7 +146,7 @@ async def test_detail_reuses_sources_and_returns_only_allowlisted_fields(db, mon
     assert detail.updated_at != detail.created_at
     assert "content.updated_at" in str(db.statements[0].compile(dialect=postgresql.dialect()))
     assert set(detail.model_dump(by_alias=True)) == {
-        "contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources",
+        "contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources", "review",
     }
     sources.assert_awaited_once_with(db, 2)
     with pytest.raises(ApiError) as exc:
@@ -173,7 +173,7 @@ async def test_storage_failure_is_not_an_empty_success(monkeypatch):
 
 
 @pytest.mark.parametrize("logged_in", [False, True])
-def test_unregistered_api_is_closed_to_anonymous_and_real_user_session(monkeypatch, logged_in):
+def test_admin_runtime_cannot_use_consumer_auth_override_or_client_claims(monkeypatch, logged_in):
     app = create_app(enable_dev_api=False)
     user = UserAccount(user_id=7, nickname="회원", account_status="active", auth_provider="kakao", provider_user_id="fixture",
                        onboarding_completed_at=datetime(2026, 11, 1, tzinfo=timezone.utc))
@@ -195,7 +195,7 @@ def test_unregistered_api_is_closed_to_anonymous_and_real_user_session(monkeypat
             assert session.json()["user"] == {"id": 7, "accountType": "user"}
         for path in ("/api/v1/admin/contents", "/api/v1/admin/contents/2"):
             response = client.get(path, headers={"X-Role": "admin", "X-Admin": "true"}, params={"role": "admin"})
-            assert response.status_code == 404
+            assert response.status_code == 401
             assert "items" not in response.json() and "title" not in response.json()
-        assert not any(path.startswith("/api/v1/admin") for path in client.get("/openapi.json").json()["paths"])
+        assert "/api/v1/admin/contents" in client.get("/openapi.json").json()["paths"]
     read.assert_not_awaited()
