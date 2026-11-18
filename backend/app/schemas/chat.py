@@ -28,7 +28,7 @@ class ChatSessionResponse(CamelModel):
 class ChatMessageCreate(CamelModel):
     client_message_id: uuid.UUID
     content: str = Field(max_length=500)
-    selected_text: str | None = Field(default=None, max_length=2000)
+    selected_text: str | None = Field(default=None, max_length=500)  # 질문과 같은 상한 (프롬프트에 그대로 들어간다)
 
     @field_validator("content", mode="before")
     @classmethod

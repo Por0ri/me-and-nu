@@ -43,10 +43,21 @@ def test_question_allows_500_korean_characters_after_trimming():
     message = ChatMessageCreate(
         client_message_id="11111111-1111-4111-8111-111111111111",
         content=f" \n{question}\t ",
-        selected_text="나" * 2000,
+        selected_text="나" * 500,
     )
     assert message.content == question
-    assert message.selected_text == "나" * 2000
+    assert message.selected_text == "나" * 500
+
+
+def test_selected_text_rejects_501_characters():
+    with pytest.raises(ValidationError) as error:
+        ChatMessageCreate(
+            client_message_id="11111111-1111-4111-8111-111111111111",
+            content="이 문장 무슨 뜻이야?",
+            selected_text="나" * 501,
+        )
+    assert error.value.errors()[0]["loc"] == ("selected_text",)
+    assert error.value.errors()[0]["type"] == "string_too_long"
 
 
 def test_question_rejects_501_korean_characters():
@@ -71,7 +82,7 @@ def test_non_string_question_returns_validation_error(content):
 def test_openapi_documents_question_and_selection_limits():
     schema = create_app(enable_dev_api=False).openapi()["components"]["schemas"]["ChatMessageCreate"]
     assert schema["properties"]["content"]["maxLength"] == 500
-    assert {"type": "string", "maxLength": 2000} in schema["properties"]["selectedText"]["anyOf"]
+    assert {"type": "string", "maxLength": 500} in schema["properties"]["selectedText"]["anyOf"]
 
 
 @pytest.mark.parametrize("question,expected_status", [
@@ -277,7 +288,8 @@ def test_day_start_follows_korean_date():
 async def test_new_question_over_daily_limit_is_rejected(monkeypatch):
     monkeypatch.setattr(chat_service.settings, "chat_daily_question_limit", 2)
     session = SimpleNamespace(chat_session_id=5)
-    db = SimpleNamespace(scalar=AsyncMock(side_effect=[session, None, 2]))  # 대화 · 같은 질문 없음 · 오늘 2번
+    db = SimpleNamespace(scalar=AsyncMock(side_effect=[session, None, 2]),  # 대화 · 같은 질문 없음 · 오늘 2번
+                         execute=AsyncMock())
     request = ChatMessageCreate(client_message_id="11111111-1111-4111-8111-111111111111", content="또 질문")
     with pytest.raises(chat_service.ApiError) as error:
         await chat_service.post_message(db, 1, 5, request)
@@ -285,11 +297,59 @@ async def test_new_question_over_daily_limit_is_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_daily_count_locks_the_user_first(monkeypatch):
+    """한꺼번에 보낸 질문이 모두 '0번'으로 세지지 않게, 세기 전에 그 사용자 줄을 잠근다."""
+    from sqlalchemy.dialects import postgresql
+
+    monkeypatch.setattr(chat_service.settings, "chat_daily_question_limit", 30)
+    monkeypatch.setattr(chat_service.settings, "chat_daily_total_limit", 0)
+    order = []
+    db = SimpleNamespace(execute=AsyncMock(side_effect=lambda stmt: order.append(("lock", stmt))),
+                         scalar=AsyncMock(side_effect=lambda stmt: order.append(("count", stmt)) or 0))
+    await chat_service._check_daily_limit(db, 7)
+    assert [step for step, _ in order] == ["lock", "count"]
+    sql = str(order[0][1].compile(dialect=postgresql.dialect()))
+    assert "FROM user_account" in sql and sql.rstrip().endswith("FOR UPDATE")
+
+
+@pytest.mark.asyncio
 async def test_zero_daily_limit_means_no_limit(monkeypatch):
     monkeypatch.setattr(chat_service.settings, "chat_daily_question_limit", 0)
-    db = SimpleNamespace(scalar=AsyncMock())
+    monkeypatch.setattr(chat_service.settings, "chat_daily_total_limit", 0)
+    db = SimpleNamespace(scalar=AsyncMock(), execute=AsyncMock())
     await chat_service._check_daily_limit(db, 1)
     db.scalar.assert_not_awaited()
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_service_total_limit_rejects_when_everyone_used_it_up(monkeypatch):
+    """한 사람은 한도가 남아도, 모든 사용자를 합친 수가 상한이면 다른 코드로 429."""
+    from sqlalchemy.dialects import postgresql
+
+    monkeypatch.setattr(chat_service.settings, "chat_daily_question_limit", 30)
+    monkeypatch.setattr(chat_service.settings, "chat_daily_total_limit", 3)
+    counts = []
+    db = SimpleNamespace(execute=AsyncMock(),
+                         scalar=AsyncMock(side_effect=lambda stmt: counts.append(stmt) or (1 if len(counts) == 1 else 3)))
+    with pytest.raises(chat_service.ApiError) as error:
+        await chat_service._check_daily_limit(db, 7)
+    assert (error.value.status_code, error.value.code) == (429, "CHAT_SERVICE_DAILY_LIMIT")
+    mine, everyone = (str(stmt.compile(dialect=postgresql.dialect())) for stmt in counts)
+    assert "chat_session.user_id" in mine and "user_id" not in everyone
+
+
+@pytest.mark.asyncio
+async def test_service_total_limit_works_without_per_user_limit(monkeypatch):
+    monkeypatch.setattr(chat_service.settings, "chat_daily_question_limit", 0)
+    monkeypatch.setattr(chat_service.settings, "chat_daily_total_limit", 5000)
+    db = SimpleNamespace(execute=AsyncMock(), scalar=AsyncMock(return_value=4999))
+    await chat_service._check_daily_limit(db, 7)  # 4,999번째까지는 받는다
+    db.execute.assert_not_awaited()  # 한 사람 한도가 꺼져 있으면 사용자 잠금도 하지 않는다
+    db.scalar.return_value = 5000
+    with pytest.raises(chat_service.ApiError) as error:
+        await chat_service._check_daily_limit(db, 7)
+    assert error.value.code == "CHAT_SERVICE_DAILY_LIMIT"
 
 
 @pytest.mark.asyncio
@@ -437,3 +497,25 @@ async def test_cards_keep_pick_order_and_drop_hidden_or_disliked_posts(monkeypat
     cards = await chat_service._cards(db, 3, SimpleNamespace(tap_id=7), [44, 43, 42, 41])
 
     assert cards == [44, 41]  # 43 은 지금 공개 중이 아니고, 42 는 '그만볼래요'
+
+
+@pytest.mark.asyncio
+async def test_llm_call_caps_output_tokens(monkeypatch):
+    """"길게 써 줘" 같은 주입으로 답 하나의 비용이 커지지 않게 출력 상한을 같이 보낸다."""
+    import json
+
+    import httpx
+
+    from app.integrations import llm
+
+    sent = {}
+
+    def handler(request):
+        sent.update(json.loads(request.content))
+        return httpx.Response(200, json={"output": [{"content": [{"type": "output_text", "text": '{"answer": "응"}'}]}]})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(llm.httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(llm.settings, "llm_key", "test-key")
+    assert await llm.ask_json("지시", "질문") == {"answer": "응"}
+    assert sent["max_output_tokens"] == llm.MAX_OUTPUT_TOKENS == 2000

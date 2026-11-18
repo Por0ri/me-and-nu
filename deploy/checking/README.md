@@ -13,7 +13,7 @@
 | 백엔드 이미지 | `me-nu-backend-checking:<40자리 커밋 SHA>` |
 | 서비스 마이그레이션 | `d7b3e9a1c452` |
 
-DB/Redis 비밀번호는 서버의 `init`에서 서로 다른 난수로 생성한다. 다른 환경의 회원·동의·세션·북마크·DB 덤프는 복사하지 않는다. API와 migration의 개발 인증 우회, 개발 API, LLM/TMDB/OpenAI 키는 비활성화돼 있다. 기존 에이전트 코드나 생년월일 정책은 바꾸지 않는다. DB의 기존 nullable `birth_date`와 값은 유지하며 물리 삭제 `d2`는 포함하지 않는다.
+DB/Redis 비밀번호는 서버의 `init`에서 서로 다른 난수로 생성한다. 다른 환경의 회원·동의·세션·북마크·DB 덤프는 복사하지 않는다. API와 migration의 개발 인증 우회, 개발 API, TMDB/OpenAI 키는 비활성화돼 있다. LLM 키는 챗봇 답에만 쓰며, 서버 전용 `.env`의 `CHECKING_LLM_KEY`로 API 컨테이너에만 넣는다(migration에는 넣지 않는다). 기본값은 빈칸이고 빈칸이면 챗봇 답만 실패한다. 기존 환경 파일에도 `CHECKING_LLM_KEY=` 줄을 추가해야 배포 guard를 통과한다. `check`는 키 값 대신 키가 들어 있는지(`set`/`empty`)만 출력한다. 기존 에이전트 코드나 생년월일 정책은 바꾸지 않는다. DB의 기존 nullable `birth_date`와 값은 유지하며 물리 삭제 `d2`는 포함하지 않는다.
 
 상시 제한은 API 512 MiB/0.50 CPU, PostgreSQL 512 MiB/0.35 CPU, Redis 128 MiB/0.15 CPU로 합계 1,152 MiB/1.0 CPU다. PostgreSQL은 shared buffers 128 MB/최대 연결 30개, Redis는 데이터 48 MB와 `noeviction`을 사용한다. 일회성 migration은 256 MiB/0.25 CPU다. 8 GB/2 CPU 공유 호스트의 소규모 팀 검증을 위한 초기 상한이며 이미지 빌드·OS·기존 서비스 자원은 별도다. 실제 포트 충돌과 여유 자원을 먼저 확인한다.
 
@@ -43,6 +43,39 @@ sudo bash deploy/checking/checking.sh status
 실제 에이전트 산출물을 **검토 전 팀 미리보기**로 공유할 때는 서버의 전용 환경 파일에 `CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED=true`를 명시한다(기본값 `false`). 기존 환경 파일에도 이 키를 추가해야 배포 guard를 통과한다. API와 importer는 Checking 배포 식별자·고정 도메인·전용 DB/계정·컨테이너 endpoint·Secure 쿠키·개발 인증 비활성 조건을 함께 검사한다. 다른 환경에서는 이 플래그를 활성화할 수 없다.
 
 검증한 bundle/PNG만 Checking 실행 컨테이너에 전달한 뒤 `python -m app.seeds.carousel_contents --file <bundle.json> --expected-database me_nu_checking --checking-test-preview`로 dry-run하고, 동일 명령에 `--apply`를 추가해 적재한다. 로컬 사용자·세션·DB 파일이나 API 키는 전달하지 않는다. `--review-record-file`과 함께 사용할 수 없으며 `active / needs_review`, `checking_test_preview` 범위를 기록한다. 기존 QC 보류 결과와 원본 이미지·digest를 유지하고 승인 기록을 만들지 않는다. 카드뉴스 상세에는 AI 생성 안내를 표시한다. 미리보기 및 검토 필요 여부는 API의 `DEV_PREVIEW`와 `REVIEW_REQUIRED`로 확인할 수 있다. 재실행은 동일 콘텐츠를 추가하지 않으며 플래그를 끄면 기존 미리보기 행도 공개 조회에서 제외된다.
+
+## 챗봇 정보사전
+
+챗봇 사실 답(감독·성우·화수·주제가 등)의 근거인 정보사전은 이 스택의 PostgreSQL 안에 별도 DB `menu_dict`로 두고, API만 읽기 전용 계정 `menu_dict_reader`로 읽는다. 서버 전용 `.env`의 `CHECKING_DICT_DATABASE_URL`은 빈칸이거나 `postgresql+psycopg://menu_dict_reader:<64자리 hex>@postgres:5432/menu_dict` 모양이어야 하고, 비밀번호는 DB/Redis 비밀번호와 달라야 한다. 서비스 DB 계정·다른 호스트 주소는 guard가 거부하며 migration에는 넣지 않는다. 기본값은 빈칸이고 빈칸이면 챗봇은 서비스 글만 근거로 답한다. 기존 환경 파일에도 `CHECKING_DICT_DATABASE_URL=` 줄을 추가해야 guard를 통과한다. `check`는 값 대신 `set`/`empty`만 출력한다. 출처는 비상업 기준으로 사용하며, 상업 전환 시 다시 확인한다.
+
+넣는 순서 (비밀번호·덤프 내용은 출력하거나 작업 로그에 남기지 않는다)
+
+1. 서버 디스크 여유를 확인한다. 복원 후 약 0.6 GB가 늘어난다.
+2. 원본 정보사전에서 읽기만 하는 덤프를 만든다: `pg_dump -Fc --no-owner --no-privileges -d menu_dict -f menu_dict.dump`. 검증한 덤프만 서버로 옮긴다.
+3. 읽기 전용 계정 비밀번호를 `openssl rand -hex 32`로 따로 만들고, 계정과 DB를 만든 뒤 복원한다.
+
+```bash
+compose=(docker --context default compose --env-file deploy/checking/.env -p me-nu-checking -f compose.checking.yaml)
+"${compose[@]}" exec -T postgres psql -U me_nu_checking -d me_nu_checking -v ON_ERROR_STOP=1 -v pw="$DICT_READER_PASSWORD" <<'SQL'
+CREATE ROLE menu_dict_reader LOGIN PASSWORD :'pw';
+ALTER ROLE menu_dict_reader SET default_transaction_read_only = on;
+CREATE DATABASE menu_dict;
+REVOKE CONNECT ON DATABASE me_nu_checking FROM PUBLIC;
+SQL
+"${compose[@]}" exec -T postgres pg_restore -U me_nu_checking -d menu_dict --no-owner --no-privileges --exit-on-error < menu_dict.dump
+"${compose[@]}" exec -T postgres psql -U me_nu_checking -d menu_dict -v ON_ERROR_STOP=1 <<'SQL'
+REVOKE ALL ON DATABASE menu_dict FROM PUBLIC;
+GRANT CONNECT ON DATABASE menu_dict TO menu_dict_reader;
+GRANT USAGE ON SCHEMA dict TO menu_dict_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA dict TO menu_dict_reader;
+SQL
+"${compose[@]}" exec -T postgres psql -U me_nu_checking -d menu_dict -v ON_ERROR_STOP=1 < backend/scripts/dictionary_indexes.sql
+```
+
+4. `backend/scripts/dictionary_indexes.sql`은 덤프에 색인이 이미 있어도 그대로 돌린다(있으면 건너뛴다). 색인이 없으면 조회가 5초 제한을 넘는다.
+5. 서버 `.env`에 `CHECKING_DICT_DATABASE_URL`을 넣고 `check` → `up`으로 API를 다시 만든다. 감독·성우·몇 화 질문으로 답 아래 "근거"가 붙는지 확인한다.
+
+끄려면 `CHECKING_DICT_DATABASE_URL=`로 비우고 `check` → `up`한다. `menu_dict`와 계정은 남아도 API가 읽지 않는다.
 
 ## 도메인·TLS·FE·OAuth
 

@@ -4,7 +4,8 @@
 모아 LLM 에 후보로 넘긴다. 어떤 글을 보여 줄지 고르고 소개하는 일은 chat_service 가 LLM 에 맡긴다.
 
 조건 (서로 다른 조건은 모두 맞아야 하고, 같은 조건 안에서는 하나만 맞아도 된다)
-- 작품: 우리 작품 목록(entity)의 이름 · 별칭이 질문에 있을 때. 세 글자 이상 낱말은 이름 일부로도 찾는다.
+- 작품: 우리 작품 목록(entity)의 이름 · 별칭이 질문에 있을 때. 세 글자 이상 낱말은 이름 일부로도 찾는다
+  ('그래도' · '어떻게' 같은 흔한 낱말은 빼고).
   맞는 이름이 하나도 없으면 한 글자만 다른 네 글자 이상 한글 이름으로 고쳐 읽는다 (사카모테 데이즈 → 사카모토 데이즈)
 - 장르 · 소재: 온보딩 칩(preference_tag)의 한국어 이름과 몇 가지 다른 말 (로코 → 로맨스 + 코미디).
   칩이 둘 이상이면 모두 가진 작품의 글을 먼저 찾고, 없으면 하나라도 가진 작품의 글
@@ -12,7 +13,9 @@
 - 내 기록: 최근 30일 동안 본 글 · 좋아요 누른 글 · 저장한 글 (기록 최신순)
 - 비슷한 글: 기준 작품(질문 속 작품 → 보고 있는 글의 작품 → 최근 본 글의 작품)과 같은 작품의 글,
   그리고 장르 · 소재 칩이 2개 이상 겹치는 작품의 글 (많이 겹치는 작품 먼저)
-줄 세우기는 홈 검색과 같다: 오늘(없으면 어제) 추천 순서, 그다음 최신순.
+모으는 순서: 오늘(없으면 어제) 추천에 든 글 → 제목에 조건 낱말(장르 · 소재 · 작품 이름)이 든 글 → 나머지.
+같은 순서 안에서는 글 종류를 번갈아 최신 글부터 모은다 (최신 글만 모으면 마지막에 넣은 묶음의 글 종류만 몰린다).
+줄 세우기는 홈 검색과 같다: 오늘 추천 순서, 그다음 위에서 모은 순서.
 '그만볼래요' 한 글과 보고 있는 글은 빼고, "더 보여줘" 처럼 조건 없이 이어 물으면 이미 보여 준 글도 뺀다.
 딱 맞는 글이 없으면 글 종류 조건만 빼고 한 번 더 찾는다 (LLM 이 "행사 글은 없고 대신 …" 이라고 말할 수 있게).
 그래도 물은 작품의 글이 없으면 장르 · 소재 칩이 겹치는 작품의 글을 대신 넘긴다 ("나루토 글은 아직 없어 …").
@@ -23,7 +26,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -39,7 +42,7 @@ KST = timezone(timedelta(hours=9))
 MAX_CANDIDATES = 10  # LLM 에 넘기는 후보 글 수 (LLM 은 이 중 최대 5개를 고른다)
 MAX_MINE = 20  # 내 기록에서 찾을 때는 제목 · 요약만 보고 골라야 해서 후보를 더 넘긴다
 MAX_SAME_WORK = 4  # 비슷한 글: 같은 작품 글은 이만큼만, 나머지는 비슷한 작품 글
-POOL = 200  # 조건에 맞는 최신 글을 이만큼 모은 뒤 추천 순서로 다시 줄 세운다
+POOL = 200  # 조건에 맞는 글을 이만큼 모은 뒤 추천 순서로 다시 줄 세운다 (모으는 순서는 _search)
 MY_RECORDS = 50  # 좋아요 · 저장 기록에서 볼 최신 글 수
 SIMILAR_WORKS = 20
 MIN_SHARED_TAGS = 2  # 비슷한 작품: 기준 작품과 겹쳐야 하는 장르 · 소재 칩 수
@@ -99,6 +102,12 @@ _RESERVED = frozenset(
     | {dictionary.name_key(word) for word in TAG_WORDS}
     | {"카드뉴스", "콘텐츠", "컨텐츠", "게시물", "포스트", "관련", "장르", "추천", "비슷한"}
 )
+# 이름 일부로는 보지 않는 흔한 낱말 (이름 전체를 쓰면 그대로 찾는다: "그래도 세계는 아름다워").
+# 흔한 질문 낱말 약 150개를 작품 이름과 맞춰 봤을 때 작품 1~3개에 잘못 맞은 것 + OTT 이름 (2026-11-17)
+_NOT_NAME_PARTS = frozenset(dictionary.name_key(word) for word in (
+    "그래도", "그리고", "그래서", "어떻게", "마지막", "사이트", "목소리", "레전드",
+    "디즈니", "넷플릭스", "라프텔", "티빙", "왓챠", "유튜브", "웨이브", "쿠팡플레이",
+))
 
 
 def _pattern(word: str) -> str:
@@ -257,7 +266,7 @@ def _match_works(
         if key in reserved:
             continue
         ids = index.keys.get(key)
-        if ids is None and len(key) >= MIN_NAME_PART_LENGTH:
+        if ids is None and len(key) >= MIN_NAME_PART_LENGTH and key not in _NOT_NAME_PARTS:
             # 이름 일부 ("프리렌" → "장송의 프리렌"): 한 단어짜리만, 너무 많은 작품에 맞으면 흔한 낱말로 본다
             places = [(start, end) for start, end in places if end - start == 1]
             if places:
@@ -368,13 +377,37 @@ def _tagged(tag_ids: list[int], *, every: bool) -> object:
     return _linked_to(works)
 
 
-async def _search(db: AsyncSession, topic_id: int, filters: list, exclude: set[int]) -> list[int]:
-    """조건에 맞는 공개 글 번호 (최신순, 최대 POOL 개)."""
+async def _search(db: AsyncSession, topic_id: int, filters: list, exclude: set[int], *,
+                  ranked: list[int] | tuple[int, ...] = (), words: tuple[str, ...] = ()) -> list[int]:
+    """조건에 맞는 공개 글 번호 (최대 POOL 개).
+
+    오늘 추천에 든 글(ranked) → 제목에 조건 낱말(words)이 든 글 → 나머지 순서로 모은다. 최신 글만 모으면
+    추천에 든 글과 딱 맞는 모음 글이 POOL 밖으로 밀리고, 마지막에 넣은 묶음의 글 종류만 몰린다.
+    같은 순서 안에서는 글 종류를 번갈아 최신 글부터 모은다.
+    """
+    newest = (Content.published_at.desc().nulls_last(), Content.content_id.desc())
+    tiers = []
+    if ranked:
+        tiers.append(Content.content_id.in_(list(ranked)))
+    if words:
+        tiers.append(or_(*(Content.title.contains(word, autoescape=True) for word in words)))
+    tier = case(*((condition, number) for number, condition in enumerate(tiers)), else_=len(tiers)) if tiers else None
+    turn = func.row_number().over(
+        partition_by=[tier, Content.content_type] if tier is not None else [Content.content_type], order_by=newest)
     statement = select(Content.content_id).where(*recommendation_repo._visible(topic_id), *filters)
     if exclude:
         statement = statement.where(Content.content_id.not_in(sorted(exclude)))
-    statement = statement.order_by(Content.published_at.desc().nulls_last(), Content.content_id.desc()).limit(POOL)
+    order = [tier, turn, *newest] if tier is not None else [turn, *newest]
+    statement = statement.order_by(*order).limit(POOL)
     return list((await db.scalars(statement)).all())
+
+
+def _title_words(ask: _Ask, index: _WorkIndex) -> tuple[str, ...]:
+    """제목에 있으면 먼저 모을 낱말: 장르 · 소재 칩 이름과 그 다른 말, 물은 작품 이름 ("고어 애니 모음")."""
+    names = {tag.display_name for tag in ask.tags}
+    words = [*names, *(word for word, tags in TAG_WORDS.items() if set(tags) <= names)]
+    words += [index.names[entity_id] for entity_id in ask.works if entity_id in index.names]
+    return tuple(dict.fromkeys(word for word in words if word))
 
 
 async def _rank_positions(db: AsyncSession, *, tap_id: int, topic_id: int) -> dict[int, int]:
@@ -496,7 +529,10 @@ async def _collect(db: AsyncSession, ask: _Ask, index: _WorkIndex, *, user_id: i
     def ordered(ids: list[int]) -> list[int]:
         if mine_ids is not None:
             return sorted(ids, key=lambda content_id: mine_order.get(content_id, len(mine_order)))
-        return sorted(ids, key=lambda content_id: rank.get(content_id, len(rank)))  # 같으면 최신순 그대로
+        return sorted(ids, key=lambda content_id: rank.get(content_id, len(rank)))  # 같으면 모은 순서 그대로
+
+    async def search(extra: list, skip: set[int], words: tuple[str, ...] = ()) -> list[int]:
+        return ordered(await _search(db, topic_id, extra, skip, ranked=list(rank), words=words))
 
     tag_ids = [tag.tag_id for tag in ask.tags]
     tries = [(True, True)]  # (칩을 모두 가진 작품만, 글 종류 조건)
@@ -512,16 +548,16 @@ async def _collect(db: AsyncSession, ask: _Ask, index: _WorkIndex, *, user_id: i
         if with_types and ask.types:
             extra.append(Content.content_type.in_(ask.types))
         if base:
-            ids = await _similar_ids(db, topic_id, base, extra, exclude, ordered, found)
+            ids = await _similar_ids(db, base, extra, exclude, search, found)
         else:
-            ids = ordered(await _search(db, topic_id, extra, exclude))
+            ids = await search(extra, exclude, _title_words(ask, index))
         if ids:
             found.relaxed = bool(ask.types) and not with_types
             break
     if not ids and work_filter is not None and not ask.mine:
         # 물은 작품의 글이 없다: 장르 · 소재 칩이 겹치는 작품의 글을 대신 넘긴다 ("나루토 글은 아직 없어 …")
-        ids = await _substitute_ids(db, topic_id, list(ask.works), [f for f in filters if f is not work_filter],
-                                    ask, tag_ids, exclude, ordered, found)
+        ids = await _substitute_ids(db, list(ask.works), [f for f in filters if f is not work_filter],
+                                    ask, tag_ids, exclude, search, found)
 
     chosen = ids[: MAX_MINE if ask.mine else MAX_CANDIDATES]
     rows = await recommendation_repo.contents_by_id(db, chosen, topic_id)
@@ -532,12 +568,12 @@ async def _collect(db: AsyncSession, ask: _Ask, index: _WorkIndex, *, user_id: i
     return found
 
 
-async def _similar_ids(db: AsyncSession, topic_id: int, base: list[int], extra: list, exclude: set[int],
-                       ordered, found: Found) -> list[int]:
+async def _similar_ids(db: AsyncSession, base: list[int], extra: list, exclude: set[int],
+                       search, found: Found) -> list[int]:
     """같은 작품 글 (추천 순서로 MAX_SAME_WORK 개) + 비슷한 작품 글 (많이 겹치는 작품 먼저)."""
-    same = ordered(await _search(db, topic_id, [*extra, _linked_to(base)], exclude))[:MAX_SAME_WORK]
+    same = (await search([*extra, _linked_to(base)], exclude))[:MAX_SAME_WORK]
     works = await _similar_works(db, base)
-    others = ordered(await _search(db, topic_id, [*extra, _linked_to(works)], exclude | set(same))) if works else []
+    others = await search([*extra, _linked_to(works)], exclude | set(same)) if works else []
     others = await _by_closeness(db, others, works)
     found.labels = {content_id: "같은 작품" for content_id in same} | {content_id: "비슷한 작품" for content_id in others}
     return same + others
@@ -552,8 +588,8 @@ async def _by_closeness(db: AsyncSession, ids: list[int], works: list[int]) -> l
     return sorted(ids, key=lambda content_id: closeness.get(main.get(content_id), len(closeness)))
 
 
-async def _substitute_ids(db: AsyncSession, topic_id: int, asked: list[int], filters: list, ask: _Ask,
-                          tag_ids: list[int], exclude: set[int], ordered, found: Found) -> list[int]:
+async def _substitute_ids(db: AsyncSession, asked: list[int], filters: list, ask: _Ask,
+                          tag_ids: list[int], exclude: set[int], search, found: Found) -> list[int]:
     """물은 작품 대신 칩이 겹치는 작품의 글. 글 종류 조건은 먼저 지키고, 없으면 빼고 한 번 더."""
     works = await _similar_works(db, asked)
     if not works:
@@ -564,7 +600,7 @@ async def _substitute_ids(db: AsyncSession, topic_id: int, asked: list[int], fil
             extra.append(_tagged(tag_ids, every=False))
         if with_types and ask.types:
             extra.append(Content.content_type.in_(ask.types))
-        ids = await _by_closeness(db, ordered(await _search(db, topic_id, extra, exclude)), works)
+        ids = await _by_closeness(db, await search(extra, exclude), works)
         if ids:
             found.substituted = True
             found.relaxed = bool(ask.types) and not with_types
