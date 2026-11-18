@@ -52,7 +52,7 @@ function invalid(): never { throw new ApiError("콘텐츠 응답을 확인하지
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function integer(value: unknown, min: number): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= min; }
 function timestamp(value: unknown): value is string { return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)); }
-function contentVersion(value: unknown): value is string {
+export function contentVersion(value: unknown): value is string {
   if (typeof value !== "string") return false;
   // Match the DB/Python microsecond range without parsing or normalizing via Date.
   const parts = /^(\d{4})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.\d{1,6})?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);

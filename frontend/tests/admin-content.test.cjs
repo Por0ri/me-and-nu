@@ -67,6 +67,164 @@ test('review confirmation exposes an honest disconnected state and disabled exec
   assert.match(html, /확인 단계 · 미저장/); assert.doesNotMatch(html, /승인 완료|저장 성공/);
 });
 
+const reviewId = '6f1c2b8e-3d4a-4f5b-9c6d-7e8f9a0b1c2d';
+const reviewFields = ['requestId', 'action', 'rationale', 'expectedStatus', 'expectedJudgmentStatus', 'expectedUpdatedAt'];
+const approved = (patch = {}) => ({ contentId: 2, draftId: 3, action: 'approve', status: 'active', judgmentStatus: 'confirmed',
+  draftStatus: 'published', publishedAt: '2026-11-18T01:02:03.123456Z', updatedAt: '2026-11-18T01:02:03.123456Z', auditLogId: 41, replayed: false, ...patch });
+const rejected = (patch = {}) => ({ ...approved(), action: 'reject', status: 'hidden', judgmentStatus: 'failed', draftStatus: 'discarded', publishedAt: null, ...patch });
+function reviewRuntime(reply = () => approved()) {
+  let issued = 0;
+  const env = runtime((url, init) => url.pathname === '/api/v1/auth/session'
+    ? { authenticated: true, sessionState: 'active', user: { id: 7, accountType: 'user' }, onboardingCompleted: true, csrfToken: `csrf-${++issued}` }
+    : reply(url, init));
+  return { ...env, review: env.load('lib/admin-content-review.ts'), posts: () => env.calls.filter(call => call.init.method === 'POST') };
+}
+
+test('review request forwards the detail version verbatim with only the server DTO fields', () => {
+  const { review } = reviewRuntime();
+  for (const updatedAt of ['2026-11-13T09:12:34.123456+09:00', '2026-11-13T00:12:34Z', '2026-11-13T00:12:34.1Z', '2026-11-12T20:42:34.123400-03:30']) {
+    for (const status of ['active', 'pending_review']) {
+      const request = review.prepareReviewRequest({ ...detailOf(), status, updatedAt }, 'reject', '  출처 불일치\n확인 😀  ', reviewId);
+      assert.deepEqual(plain(request), { requestId: reviewId, action: 'reject', rationale: '출처 불일치\n확인 😀',
+        expectedStatus: status, expectedJudgmentStatus: 'needs_review', expectedUpdatedAt: updatedAt });
+      assert.deepEqual(Object.keys(request), reviewFields);
+    }
+  }
+});
+
+test('review request refuses ineligible state, unknown version, bad rationale, action or requestId', () => {
+  const { review } = reviewRuntime();
+  const cases = [
+    [{ ...detailOf(), status: 'hidden' }, 'approve', '사유', reviewId], [{ ...detailOf(), judgmentStatus: 'confirmed' }, 'approve', '사유', reviewId],
+    [{ ...detailOf(), updatedAt: '2026-11-13T00:12:34' }, 'approve', '사유', reviewId], [{ ...detailOf(), updatedAt: undefined }, 'approve', '사유', reviewId],
+    [detailOf(), 'approve', '  ', reviewId], [detailOf(), 'approve', 'a\x00b', reviewId], [detailOf(), 'hide', '사유', reviewId],
+    [detailOf(), 'approve', '사유', 'not-a-uuid'], [detailOf(), 'approve', '사유', ''],
+  ];
+  for (const args of cases) assert.throws(() => review.prepareReviewRequest(...args), String(args[1]));
+});
+
+test('review submit sends nothing for a request that bypassed preparation', async () => {
+  const env = reviewRuntime();
+  const request = env.review.prepareReviewRequest(detailOf(), 'approve', '사유', reviewId);
+  for (const [contentId, patch] of [[0, {}], [2, { action: 'hide' }], [2, { requestId: 'x' }], [2, { expectedUpdatedAt: '2026-11-13' }]]) {
+    await assert.rejects(env.review.submitAdminContentReview(contentId, { ...request, ...patch }));
+  }
+  assert.equal(env.calls.length, 0);
+});
+
+test('review submit sends one credentialed POST with session CSRF and the exact request body', async () => {
+  for (const [action, result] of [['approve', approved()], ['approve', approved({ replayed: true })],
+    ['reject', rejected()], ['reject', rejected({ publishedAt: '2026-11-01T00:00:00Z' })]]) {
+    const env = reviewRuntime(() => result), signal = new AbortController().signal;
+    const request = env.review.prepareReviewRequest(detailOf(), action, '출처 확인', reviewId);
+    assert.deepEqual(plain(await env.review.submitAdminContentReview(2, request, signal)), result);
+    const [post] = env.posts();
+    assert.equal(env.calls.length, 2); assert.equal(env.posts().length, 1);
+    assert.equal(new URL(post.url).pathname, '/api/v1/admin/contents/2/review');
+    assert.equal(post.init.credentials, 'include'); assert.equal(post.init.cache, 'no-store'); assert.equal(post.init.signal, signal);
+    assert.equal(post.init.headers.get('X-CSRF-Token'), 'csrf-1');
+    assert.equal(post.init.headers.get('Content-Type'), 'application/json');
+    assert.equal(post.init.body, JSON.stringify(plain(request)));
+    assert.deepEqual(Object.keys(JSON.parse(post.init.body)), reviewFields);
+  }
+});
+
+test('a 200 that does not prove the audited transition is never a success and is retried as the same request', async () => {
+  for (const response of [null, [], approved({ contentId: 3 }), approved({ action: 'reject' }), approved({ status: 'hidden' }),
+    approved({ judgmentStatus: 'failed' }), approved({ draftStatus: 'discarded' }), approved({ publishedAt: null }),
+    approved({ updatedAt: '2026-11-18T01:02:03' }), approved({ updatedAt: undefined }), approved({ auditLogId: 0 }),
+    approved({ auditLogId: undefined }), approved({ draftId: 0 }), approved({ replayed: 'false' }),
+    new Response(JSON.stringify(approved()), { status: 201 })]) {
+    const env = reviewRuntime(() => response);
+    const request = env.review.prepareReviewRequest(detailOf(), 'approve', '출처 확인', reviewId);
+    await assert.rejects(env.review.submitAdminContentReview(2, request), error => {
+      const failure = env.review.reviewFailure(error);
+      assert.equal(failure.status, 'retry'); assert.equal(failure.retrySameRequest, true); return true;
+    });
+  }
+  const env = reviewRuntime(() => rejected({ publishedAt: 'bad' }));
+  await assert.rejects(env.review.submitAdminContentReview(2, env.review.prepareReviewRequest(detailOf(), 'reject', '사유', reviewId)),
+    error => error.code === 'INVALID_ADMIN_REVIEW_RESPONSE');
+});
+
+test('review failures map every BE code without exposing server messages', async () => {
+  for (const [status, code, expected, retrySameRequest, reload] of [
+    [401, 'AUTH_REQUIRED', 'login-required', false, true], [403, 'CSRF_INVALID', 'retry', true, false],
+    [403, 'ADMIN_REQUIRED', 'forbidden', false, true], [403, 'ADMIN_WRITE_REQUIRED', 'forbidden', false, true],
+    [404, 'CONTENT_NOT_FOUND', 'not-found', false, true], [404, 'NOT_FOUND', 'unavailable', false, false],
+    [409, 'REVIEW_STATE_CONFLICT', 'conflict', false, true], [409, 'REVIEW_REQUEST_CONFLICT', 'conflict', false, true],
+    [422, 'VALIDATION_ERROR', 'invalid', false, false], [503, 'ADMIN_REVIEW_UNAVAILABLE', 'retry', true, false],
+    [503, 'ADMIN_PERMISSION_UNAVAILABLE', 'retry', true, false], [503, 'ADMIN_AUTH_UNAVAILABLE', 'retry', true, false],
+    [500, 'INTERNAL_ERROR', 'retry', true, false]]) {
+    const env = reviewRuntime(() => new Response(JSON.stringify({ code, message: 'internal secret' }), { status }));
+    await assert.rejects(env.review.submitAdminContentReview(2, env.review.prepareReviewRequest(detailOf(), 'approve', '사유', reviewId)), error => {
+      assert.deepEqual({ ...plain(env.review.reviewFailure(error)), message: undefined },
+        { status: expected, retrySameRequest, reload, message: undefined }, code);
+      assert.doesNotMatch(env.review.reviewFailure(error).message, /secret/); return true;
+    });
+  }
+  const offline = reviewRuntime(() => { throw new TypeError('Failed to fetch'); });
+  await assert.rejects(offline.review.submitAdminContentReview(2, offline.review.prepareReviewRequest(detailOf(), 'approve', '사유', reviewId)),
+    error => offline.review.reviewFailure(error).retrySameRequest === true);
+});
+
+test('retrying keeps the same requestId and body and refreshes a rejected CSRF token', async () => {
+  const replies = [new Response(JSON.stringify({ code: 'CSRF_INVALID' }), { status: 403 }),
+    new Response(JSON.stringify({ code: 'ADMIN_REVIEW_UNAVAILABLE' }), { status: 503 }), approved({ replayed: true })];
+  const env = reviewRuntime(() => replies.shift());
+  const request = env.review.prepareReviewRequest(detailOf(), 'approve', '출처 확인', reviewId);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await assert.rejects(env.review.submitAdminContentReview(2, request), error => env.review.reviewFailure(error).retrySameRequest);
+  }
+  assert.equal((await env.review.submitAdminContentReview(2, request)).replayed, true);
+  const posts = env.posts();
+  assert.equal(posts.length, 3);
+  assert.ok(posts.every(call => call.init.body === posts[0].init.body));
+  assert.equal(JSON.parse(posts[0].init.body).requestId, reviewId);
+  assert.deepEqual(posts.map(call => call.init.headers.get('X-CSRF-Token')), ['csrf-1', 'csrf-2', 'csrf-2']);
+});
+
+test('unknown outcomes never claim a failed or unsaved review and resend the identical request', async () => {
+  const error = (status, code) => () => new Response(JSON.stringify({ code, message: '검수 저장에 실패했습니다.' }), { status });
+  const unknown = [error(503, 'ADMIN_REVIEW_UNAVAILABLE'), error(503, 'ADMIN_PERMISSION_UNAVAILABLE'), error(503, 'ADMIN_AUTH_UNAVAILABLE'),
+    error(500, 'INTERNAL_ERROR'), error(502, 'BAD_GATEWAY'), error(504, 'GATEWAY_TIMEOUT'), error(408, 'TIMEOUT'), error(429, 'RATE_LIMITED'),
+    () => { throw new TypeError('Failed to fetch'); }, () => approved({ auditLogId: 0 }), () => new Response(JSON.stringify(approved()), { status: 201 })];
+  for (const [index, first] of unknown.entries()) {
+    const replies = [first, () => approved({ replayed: true })];
+    const env = reviewRuntime(() => replies.shift()());
+    const request = env.review.prepareReviewRequest(detailOf(), 'approve', '출처 확인', reviewId);
+    await assert.rejects(env.review.submitAdminContentReview(2, request), failure => {
+      const result = env.review.reviewFailure(failure);
+      assert.deepEqual(plain(result), { status: 'retry', retrySameRequest: true, reload: false,
+        message: '처리 결과를 확인하지 못했습니다. 같은 요청으로 다시 확인해 주세요.' }, String(index));
+      assert.doesNotMatch(result.message, /실패|완료하지 못|저장되지|저장하지 못|미저장|반영되지|취소/);
+      return true;
+    });
+    assert.equal((await env.review.submitAdminContentReview(2, request)).replayed, true);
+    const posts = env.posts();
+    assert.equal(posts.length, 2); assert.equal(posts[1].init.body, posts[0].init.body);
+    assert.equal(JSON.parse(posts[1].init.body).requestId, reviewId);
+  }
+  // A response lost to an abort after the request left is also an unknown outcome.
+  let release; const pending = new Promise(resolve => release = resolve);
+  const env = reviewRuntime(() => pending), controller = new AbortController();
+  const sent = env.review.submitAdminContentReview(2, env.review.prepareReviewRequest(detailOf(), 'approve', '사유', reviewId), controller.signal);
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(env.posts().length, 1);
+  controller.abort(); release(approved());
+  await assert.rejects(sent, failure => {
+    const result = env.review.reviewFailure(failure);
+    assert.equal(result.status, 'retry'); assert.equal(result.retrySameRequest, true);
+    assert.doesNotMatch(result.message, /실패|저장되지|미저장/); return true;
+  });
+});
+
+test('no admin screen sends a review write before BE registers the route', () => {
+  const files = ['components/admin', 'app/admin'].flatMap(dir => fs.readdirSync(path.join(root, dir), { recursive: true })
+    .filter(file => /\.tsx?$/.test(file)).map(file => path.join(root, dir, file)));
+  assert.ok(files.some(file => file.endsWith('content-review-panel.tsx')));
+  for (const file of files) assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /submitAdminContentReview/, file);
+});
+
 test('no implicit queue filter; URL preserves independent states and page size', () => {
   const { api } = runtime();
   assert.deepEqual(plain(api.parseAdminQuery(new URLSearchParams())), { mode: 'all', q: '', judgmentStatus: '', status: '', page: 1, pageSize: 20 });
