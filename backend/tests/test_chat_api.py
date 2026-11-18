@@ -363,6 +363,24 @@ async def test_chat_answer_needs_no_evidence(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_answer_returns_db_connection_before_waiting_for_llm(monkeypatch):
+    """실서비스 API 는 DB 연결이 2개뿐이라, LLM 을 기다리기 전에 읽기 트랜잭션을 끝내 연결을 돌려준다."""
+    reply = {"kind": "chat", "answer": "그 장면은 다시 봐도 좋아.", "used": [], "usedFacts": [], "evidence": None}
+    db, job, _, ask = _answer_setup(monkeypatch, facts=[], reply=reply)
+    commits_when_llm_called = []
+
+    async def answer_after_commit(*args, **kwargs):
+        commits_when_llm_called.append(db.commit.await_count)
+        return reply
+
+    ask.side_effect = answer_after_commit
+    await chat_service._fill_answer(db, job)
+    assert commits_when_llm_called == [1]  # LLM 을 부를 때는 이미 커밋해 연결을 돌려준 뒤다
+    assert db.commit.await_count == 2  # 연결 돌려주기 1번 + 답 저장 1번
+    assert job.message_body == "그 장면은 다시 봐도 좋아."
+
+
+@pytest.mark.asyncio
 async def test_out_of_scope_is_blocked_without_sources(monkeypatch):
     facts = [_fact("a", "1", ("AniList API", "https://anilist.co/anime/1"))]
     reply = {"kind": "out_of_scope", "answer": "애니 이야기라면 도와드릴게요.", "used": [1], "usedFacts": [1],

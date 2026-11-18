@@ -128,6 +128,8 @@ services:
       LLM_KEY: ${CHECKING_LLM_KEY:-}
       # Chatbot fact lookups only: read-only menu_dict on this stack's PostgreSQL. Empty keeps the dictionary off.
       DICT_DATABASE_URL: ${CHECKING_DICT_DATABASE_URL:-}
+      # All users' chatbot questions per day, counted together with the main API (same database).
+      CHAT_DAILY_TOTAL_LIMIT: ${CHECKING_CHAT_DAILY_TOTAL_LIMIT:?Set the shared chatbot daily question limit}
     restart: unless-stopped
     mem_limit: 512m
     cpus: "0.50"
