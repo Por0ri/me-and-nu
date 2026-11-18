@@ -43,7 +43,8 @@ except ModuleNotFoundError as exc:
 KST = timezone(timedelta(hours=9))
 TOPIC = "anime"
 TOP_N = 100                               # 유저마다 하루 순위 개수 (EXP-30)
-VERSION = "v1-usertest"                   # recommendation_round.algorithm_version. 알고리즘을 바꾸면 새 이름
+VERSION = "v1.1-beta"                     # recommendation_round.algorithm_version. 알고리즘을 바꾸면 새 이름
+                                          # (v1-usertest → v1.1-beta 11/18: 여러 작품 글 · 곁들임 · 다른 작품 자리 · 칩 맞춤 · 이유)
 LOCK = (20261029, 1)                      # 쓰기 잠금: 명령이 두 개 돌아도 한쪽씩 씀
 CAROUSEL_METHOD = "carousel_import_v1"    # 백엔드 carousel_repository 와 같은 값
 CHIPS = REPO / "model" / "catalog" / "chips.csv"
@@ -119,18 +120,25 @@ def load_users(cur, topic_id, chips):
 def load_posts(cur, topic_id, today, preview=None):
     """유형이 있는 글 → (글 목록, content_id → 글 번호). v1 은 유형으로 점수를 매겨서 유형 없는 글은 뺌 (피드에선 추천 뒤 최신순).
     지금 피드에 못 보이는 글도 넣음: 예전에 반응한 글의 작품 · 유형 취향은 반영해야 해서. 대신 노출 끝을 어제로 둬서 순위엔 안 나옴.
-    preview: (미리보기 범위, DB 이름) — 그 범위의 검토 전 미리보기 캐러셀도 보이는 글로 침 (main 의 --preview)"""
+    preview: (미리보기 범위, DB 이름) — 그 범위의 검토 전 미리보기 캐러셀도 보이는 글로 침 (main 의 --preview)
+    글마다 연결 작품 전부 (works · names, 연결 순서) 와 RAG 글 번호에서 읽은 글 종류 (kind) · 소재 키 (theme) · 슬러그 (slug),
+    기준 작품 자리 (anchor, service.anchor_of) 를 같이 담음. menu_work_id = 기준 작품 (기준이 없는 모음은 None)"""
     scope, database = preview or (None, None)
     cur.execute(f"""SELECT c.content_id, c.content_type, c.title, COALESCE(c.published_at, c.created_at), c.feed_valid_until,
-        {VISIBLE},
-        (SELECT x.external_id FROM content_entity_link l
-           JOIN entity_external_id x ON x.entity_id = l.entity_id AND x.provider = 'menu_work'
-          WHERE l.content_id = c.content_id ORDER BY l.sort_order LIMIT 1)
-        FROM content c WHERE c.topic_id = %(topic)s AND c.content_type = ANY(%(types)s) ORDER BY c.content_id""",
+        {VISIBLE}, w.ids, w.names,
+        (SELECT r.input_payload ->> 'request_id' FROM draft d JOIN agent_run r ON r.agent_run_id = d.agent_run_id
+          WHERE d.draft_id = c.source_draft_id)
+        FROM content c
+        LEFT JOIN LATERAL (
+            SELECT array_agg(x.external_id ORDER BY l.sort_order) AS ids, array_agg(e.name ORDER BY l.sort_order) AS names
+              FROM content_entity_link l JOIN entity e ON e.entity_id = l.entity_id
+              JOIN entity_external_id x ON x.entity_id = l.entity_id AND x.provider = 'menu_work'
+             WHERE l.content_id = c.content_id) w ON true
+        WHERE c.topic_id = %(topic)s AND c.content_type = ANY(%(types)s) ORDER BY c.content_id""",
                 {"carousel": CAROUSEL_METHOD, "topic": topic_id, "types": list(v1.TYPES),
                  "preview_scope": scope, "preview_database": database})
     posts = []
-    for cid, ctype, title, published, valid_until, visible, work in cur.fetchall():
+    for cid, ctype, title, published, valid_until, visible, ids, names, request_id in cur.fetchall():
         pub = published.astimezone(KST).date()
         if not visible:
             until = today - timedelta(days=1)
@@ -138,8 +146,13 @@ def load_posts(cur, topic_id, today, preview=None):
             until = valid_until.astimezone(KST).date()
         else:
             until = service.exposure_end(ctype, pub)[0]
+        linked = [(int(x), n or "") for x, n in zip(ids or (), names or ()) if x and x.isdigit()]
+        works, work_names = [w for w, _ in linked], [n for _, n in linked]
+        kind, theme, slug = service.post_kind(request_id)
+        anchor = service.anchor_of(works, work_names, title, kind)
         posts.append({"id": cid, "type": ctype, "title": title, "published": pub, "until": until,
-                      "menu_work_id": int(work) if work and work.isdigit() else None})
+                      "menu_work_id": works[anchor] if anchor is not None else None,
+                      "works": works, "names": work_names, "anchor": anchor, "kind": kind, "theme": theme, "slug": slug})
     return posts, {p["id"]: i for i, p in enumerate(posts)}
 
 
@@ -206,8 +219,8 @@ def load_visits(cur, taps, index):
                   for g in sorted(gs.values(), key=lambda g: g["at"])] for tap, gs in groups.items()}
 
 
-def recommend(user, visits, ctx, feed, posts, day, t, cfg, catalog_ids):
-    """유저 한 명 → [(글 번호, 점수, 이유), ...] 순위대로 (preview_feed.py 와 같은 계산 + 기록 반영)"""
+def recommend(user, visits, ctx, feed, posts, day, t, cfg, catalog_ids, chips=None):
+    """유저 한 명 → [(글 번호, 점수, 이유), ...] 순위대로. chips = load_chip_features 결과 (이유 문구의 칩 화면 이름)"""
     ob = service.onboarding_user(ctx, user["works"], user["genres"], user["themes"], t)
     state = v1.UserState(ob["history"], ob["genres"], ob["themes"], service.user_types(user["answers"]), t,
                          len(catalog_ids), len(posts))
@@ -216,12 +229,15 @@ def recommend(user, visits, ctx, feed, posts, day, t, cfg, catalog_ids):
     service.work_affinity(state, ctx, cfg)
     if cfg.w_genre:
         service.genre_affinity(state, ctx)
-    # 점수는 모든 글에 매기고, 보여 줄 순서 규칙 (고른 작품 먼저 · 같은 작품은 한 바퀴에 하나씩)을 적용한 뒤 TOP_N 개
-    order = service.arrange(v1.rank_feed(state, feed, day, cfg, k=len(posts)).tolist(), feed, user["works"], ctx, seen=state.seen)
+    # 점수는 모든 글에 매기고, 보여 줄 순서 규칙 (service.compose: 고른 작품 먼저 · 곁들임 · 다른 작품 자리 · 팬 추천 거르기 ·
+    # 같은 소재 하루 하나)을 적용한 TOP_N 개
+    labels = service.chip_labels(user, chips or {})
+    slugs = {service.chip_slug(n) for n in user["genres"] + user["themes"]}
+    order = v1.rank_feed(state, feed, day, cfg, k=len(posts)).tolist()
     out = []
-    for i in order[:TOP_N]:
+    for i, slot in service.compose(order, feed, posts, user["works"], slugs, ctx, seen=state.seen, top_n=TOP_N):
         parts = service.score_parts(state, feed, i, day, cfg)
-        out.append((i, sum(parts), service.reason(parts, posts[i]["menu_work_id"], user["works"], posts[i]["type"], ctx)))
+        out.append((i, sum(parts), service.explain(parts, posts[i], slot, user["works"], state, ctx, labels)))
     return out
 
 
@@ -276,7 +292,7 @@ def run_once(url, world, today, *, apply, replace, new_only, show, preview=None)
             print("Unmapped preferences (original DB choices retained; no guessed model feature): "
                   + json.dumps(diagnostics, ensure_ascii=False))
         feed = service.make_feed(posts, ctx)
-        results = {tap: recommend(users[tap], visits[tap], ctx, feed, posts, day, t, cfg, catalog_ids) for tap in targets}
+        results = {tap: recommend(users[tap], visits[tap], ctx, feed, posts, day, t, cfg, catalog_ids, chips) for tap in targets}
         live = int(((feed["day"] <= day) & (feed["until"] >= day)).sum())
         print(f"[{datetime.now(KST):%m-%d %H:%M}] {today} · 유저 {len(targets)}명 계산 (전체 {len(users)}) · "
               f"글 {len(posts)}개 중 오늘 노출 {live}개")

@@ -73,6 +73,8 @@ class UserState:
     n_feed: int
     work_aff: np.ndarray = None     # 카탈로그 작품별 v0.5 취향 (0~1)
     genre_sim: np.ndarray = None    # 카탈로그 작품별 장르 · 소재 유사도 (0~1). w_genre 를 쓸 때 서비스가 채움
+    chip_names: list = None         # 작품 표에서 찾은 고른 칩 (AniList 이름). 서비스 work_affinity 가 채움
+    chip_w: np.ndarray = None       # 카탈로그 작품 × 고른 칩 무게 (장르 0/1, 소재 0~1). 서비스 work_affinity 가 채움
     dirty: bool = True              # 작품 입력이 바뀌어 v0.5 를 다시 돌려야 함
     work_ev: np.ndarray = field(init=False)   # 카탈로그 작품별 반응 점수 합
     type_ev: np.ndarray = field(init=False)   # 유형별 반응 점수 합
@@ -116,14 +118,34 @@ def type_pref(state, cfg):
     return prior + state.type_ev / (state.type_n + cfg.type_shrink)
 
 
+def work_parts(state, feed, idx, cfg):
+    """글 idx 의 작품 몫 (rank_feed 와 service.score_parts 가 같이 씀).
+    작품 하나의 몫 = w_work × (작품 취향 + 반응) + w_genre × 장르 · 소재 유사도. 글의 작품 몫 = 기준 작품 (feed["pos"]) 몫.
+    글 표에 rel_pos · rel_w (글에 같이 연결된 작품 자리 · 무게, 빈칸 -1)가 있으면 무게 × 그 작품 몫까지 보고 가장 큰 값
+    (11/16 결정: 합이면 작품 많은 모음 글이 피드를 덮음). 작품이 하나도 없는 글은 0.
+    시뮬레이터 글 표에는 rel_pos 가 없어서 예전 계산과 같음"""
+    def one(p):
+        q = np.maximum(p, 0)
+        s = cfg.w_work * (state.work_aff[q] + cfg.work_feedback * np.tanh(state.work_ev[q]))
+        if cfg.w_genre and state.genre_sim is not None:
+            s = s + cfg.w_genre * state.genre_sim[q]
+        return s
+    pos = feed["pos"][idx]
+    s = np.where(pos >= 0, one(pos), 0.0)
+    rel = feed.get("rel_pos")
+    if rel is not None and rel.shape[1]:
+        rp = rel[idx]
+        r = np.where(rp >= 0, feed["rel_w"][idx] * one(rp), -np.inf).max(axis=1)
+        s = np.where(pos >= 0, np.maximum(s, r), np.where(np.isfinite(r), r, 0.0))
+    return s
+
+
 def rank_feed(state, feed, day, cfg, k=50):
     """오늘(day) 보여줄 글 번호 k개를 점수 순으로. 노출 기간이 지난 글 · 그만볼래요 한 글은 뺀다.
     본 글: reread_days 가 없으면 아는 범위에서 연 글을 계속 빼고, 있으면 끝까지 본 지 그 날 수가 안 된 글만 뺀다"""
     live = np.flatnonzero((feed["day"] <= day) & (feed["until"] >= day))
-    pos, typ = feed["pos"][live], feed["type"][live]
-    s = np.where(pos >= 0, cfg.w_work * (state.work_aff[pos] + cfg.work_feedback * np.tanh(state.work_ev[pos])), 0.0)
-    if cfg.w_genre and state.genre_sim is not None:
-        s = s + np.where(pos >= 0, cfg.w_genre * state.genre_sim[pos], 0.0)
+    typ = feed["type"][live]
+    s = work_parts(state, feed, live, cfg)
     s = s + cfg.w_type * type_pref(state, cfg)[typ]
     s = s + cfg.w_fresh * np.exp(-(day - feed["day"][live]) / TAU[typ])
     shown = state.seen if "impression" in cfg.logs else state.served   # 노출 기록이 없으면 보낸 목록으로 짐작

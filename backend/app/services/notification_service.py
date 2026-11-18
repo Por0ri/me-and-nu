@@ -8,6 +8,7 @@
   매일 아침 한 번 도는데 기간을 이틀로 둔 건, 하루 실패하거나 하루 한도에 밀린 글도 다음 날 잡기 위해서다. 이미 보낸 글은 다시 안 보낸다.
   하루 1개, 최신 글 먼저. 알림을 끈 회원, 이미 열어 본 글, '그만 볼래요' 글은 뺀다.
 - 추천 알림: 오늘 추천의 10순위부터 내려가며 하루 1개. 위 순위는 홈에서 바로 보이니 그 아래에서 고른다.
+  고른 작품(Q1)의 글은 새 글 알림이 맡으니, 추천 알림은 고르지 않은 작품의 글에서만 고른다.
   노출 · 열람 · 카드 넘김 · '그만 볼래요' · 전에 알림이 간 글은 뺀다.
 - 알림함에는 새 글 · 추천을 종류별로 최신 3개만 보여 준다. 밀려난 알림은 지우지 않는다
   (같은 글을 다시 안 보내는 기준이고, A/B 집계와 알림 효과 확인에도 쓴다).
@@ -366,7 +367,8 @@ async def _new_post_candidates(db: AsyncSession, since: datetime, until: datetim
 
 
 async def _recommended_candidates(db: AsyncSession, today: date) -> list[RecommendedPost]:
-    """오늘 추천에서 알림으로 보낼 수 있는 글. 홈과 같이 탭마다 가장 나중에 계산한 추천만 본다."""
+    """오늘 추천에서 알림으로 보낼 수 있는 글. 홈과 같이 탭마다 가장 나중에 계산한 추천만 본다.
+    대표 작품이 그 회원이 고른 작품인 글은 뺀다 (새 글 알림과 역할을 나눈다)."""
     rounds = (
         select(
             RecommendationRound.tap_id,
@@ -396,6 +398,7 @@ async def _recommended_candidates(db: AsyncSession, today: date) -> list[Recomme
             RecommendationItem.rank >= RECOMMENDED_FROM_RANK,
             public_content_condition(),
             exists().where(ContentSource.content_id == Content.content_id),
+            ~exists().where(TapEntity.tap_id == Tap.tap_id, TapEntity.entity_id == ContentEntityLink.entity_id),
             ~_acted_on(SEEN_EVENTS),
             ~_disliked(),
             ~_already_notified(),
