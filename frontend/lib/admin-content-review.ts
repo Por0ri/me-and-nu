@@ -23,8 +23,8 @@ export type AdminContentReviewResult = {
 export type ReviewFailure = {
   status: "login-required" | "forbidden" | "not-found" | "conflict" | "invalid" | "unavailable" | "retry";
   message: string;
-  // Resend the identical request object (same requestId and payload). Nothing was
-  // written, or a commit is unconfirmed and the server will replay it.
+  // Resend the identical request object (same requestId and payload). The outcome may be
+  // unknown: the server replays an already committed action or commits it only once.
   retrySameRequest: boolean;
   // Re-read the detail first; any later attempt needs a new request and requestId.
   reload: boolean;
@@ -96,7 +96,8 @@ export async function submitAdminContentReview(
 export function reviewFailure(error: unknown): ReviewFailure {
   const failure = (status: ReviewFailure["status"], message: string, retrySameRequest = false, reload = false): ReviewFailure =>
     ({ status, message, retrySameRequest, reload });
-  const retry = failure("retry", "처리 결과를 확인하지 못했습니다. 같은 요청으로 다시 시도해 주세요.", true);
+  // Commit state unknown: never claim the review failed or was not saved.
+  const retry = failure("retry", "처리 결과를 확인하지 못했습니다. 같은 요청으로 다시 확인해 주세요.", true);
   if (!(error instanceof ApiError)) return retry; // Network loss or abort: the commit may have happened.
   if (error.code === "INVALID_ADMIN_REVIEW_RESPONSE" || error.code === "INVALID_RESPONSE") return retry;
   if (error.status === 401) return failure("login-required", "로그인이 필요합니다. 다시 로그인한 뒤 콘텐츠를 다시 조회해 주세요.", false, true);
@@ -109,8 +110,8 @@ export function reviewFailure(error: unknown): ReviewFailure {
   if (error.status === 409) return error.code === "REVIEW_REQUEST_CONFLICT"
     ? failure("conflict", "같은 요청 ID로 다른 조치가 요청되었습니다. 콘텐츠를 다시 조회한 뒤 새로 요청해 주세요.", false, true)
     : failure("conflict", "콘텐츠 상태가 변경되었습니다. 다시 조회한 뒤 확인해 주세요.", false, true);
-  if (error.status >= 500 || error.status === 408 || error.status === 429) {
-    return failure("retry", "검수 저장을 완료하지 못했습니다. 같은 요청으로 다시 시도해 주세요.", true);
-  }
+  // A 503 can follow a successful COMMIT whose acknowledgement was lost, and a proxy
+  // may answer 5xx/408/429 for the API, so these are unknown outcomes as well.
+  if (error.status >= 500 || error.status === 408 || error.status === 429) return retry;
   return failure("invalid", "검수 요청 내용을 확인해 주세요.");
 }

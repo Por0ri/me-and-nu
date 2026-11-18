@@ -184,6 +184,40 @@ test('retrying keeps the same requestId and body and refreshes a rejected CSRF t
   assert.deepEqual(posts.map(call => call.init.headers.get('X-CSRF-Token')), ['csrf-1', 'csrf-2', 'csrf-2']);
 });
 
+test('unknown outcomes never claim a failed or unsaved review and resend the identical request', async () => {
+  const error = (status, code) => () => new Response(JSON.stringify({ code, message: '검수 저장에 실패했습니다.' }), { status });
+  const unknown = [error(503, 'ADMIN_REVIEW_UNAVAILABLE'), error(503, 'ADMIN_PERMISSION_UNAVAILABLE'), error(503, 'ADMIN_AUTH_UNAVAILABLE'),
+    error(500, 'INTERNAL_ERROR'), error(502, 'BAD_GATEWAY'), error(504, 'GATEWAY_TIMEOUT'), error(408, 'TIMEOUT'), error(429, 'RATE_LIMITED'),
+    () => { throw new TypeError('Failed to fetch'); }, () => approved({ auditLogId: 0 }), () => new Response(JSON.stringify(approved()), { status: 201 })];
+  for (const [index, first] of unknown.entries()) {
+    const replies = [first, () => approved({ replayed: true })];
+    const env = reviewRuntime(() => replies.shift()());
+    const request = env.review.prepareReviewRequest(detailOf(), 'approve', '출처 확인', reviewId);
+    await assert.rejects(env.review.submitAdminContentReview(2, request), failure => {
+      const result = env.review.reviewFailure(failure);
+      assert.deepEqual(plain(result), { status: 'retry', retrySameRequest: true, reload: false,
+        message: '처리 결과를 확인하지 못했습니다. 같은 요청으로 다시 확인해 주세요.' }, String(index));
+      assert.doesNotMatch(result.message, /실패|완료하지 못|저장되지|저장하지 못|미저장|반영되지|취소/);
+      return true;
+    });
+    assert.equal((await env.review.submitAdminContentReview(2, request)).replayed, true);
+    const posts = env.posts();
+    assert.equal(posts.length, 2); assert.equal(posts[1].init.body, posts[0].init.body);
+    assert.equal(JSON.parse(posts[1].init.body).requestId, reviewId);
+  }
+  // A response lost to an abort after the request left is also an unknown outcome.
+  let release; const pending = new Promise(resolve => release = resolve);
+  const env = reviewRuntime(() => pending), controller = new AbortController();
+  const sent = env.review.submitAdminContentReview(2, env.review.prepareReviewRequest(detailOf(), 'approve', '사유', reviewId), controller.signal);
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(env.posts().length, 1);
+  controller.abort(); release(approved());
+  await assert.rejects(sent, failure => {
+    const result = env.review.reviewFailure(failure);
+    assert.equal(result.status, 'retry'); assert.equal(result.retrySameRequest, true);
+    assert.doesNotMatch(result.message, /실패|저장되지|미저장/); return true;
+  });
+});
+
 test('no admin screen sends a review write before BE registers the route', () => {
   const files = ['components/admin', 'app/admin'].flatMap(dir => fs.readdirSync(path.join(root, dir), { recursive: true })
     .filter(file => /\.tsx?$/.test(file)).map(file => path.join(root, dir, file)));
