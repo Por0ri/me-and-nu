@@ -77,6 +77,8 @@ SQL
 
 끄려면 `CHECKING_DICT_DATABASE_URL=`로 비우고 `check` → `up`한다. `menu_dict`와 계정은 남아도 API가 읽지 않는다.
 
+모든 사용자를 합친 하루 챗봇 질문 상한은 `CHECKING_CHAT_DAILY_TOTAL_LIMIT`(1~999999 정수, 0 = 무제한은 받지 않음)로 정한다. 같은 DB에서 세므로 메인 API와 합쳐 세고, 메인의 `MAIN_CHAT_DAILY_TOTAL_LIMIT`와 늘 같은 값으로 둔다. 바꿀 때는 숫자만 고치고 `check` → `up`한다(이미지는 다시 만들지 않는다). `check` 출력에 지금 숫자가 나온다.
+
 ## 도메인·TLS·FE·OAuth
 
 FE 호스팅에서 `Checking` 브랜치에만 `checking.me-nu.kr`을 연결하고 `NEXT_PUBLIC_API_BASE_URL=https://api.checking.me-nu.kr`로 새 빌드를 만든다. 기존 Main/Test/Labs 도메인과 환경변수는 유지한다. DNS에서 API 도메인은 백엔드 호스트로 연결하고 기존 Caddy 사이트를 유지한 채 다음 블록을 추가한다.

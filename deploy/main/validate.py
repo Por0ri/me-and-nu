@@ -43,8 +43,13 @@ CHOICES = ("MAIN_IMAGE_TAG", "MAIN_DATA_STRATEGY", "MAIN_TARGET_DATABASE", "MAIN
 GENERATION_LIMITS = ("MAX_GENERATION_ATTEMPTS_PER_DAY", "GENERATION_DAILY_BUDGET_USD", "GENERATION_ENDS_AT")
 RUNTIME_KEYS = ("MAIN_POSTGRES_PASSWORD", "MAIN_REDIS_PASSWORD", "MAIN_FORWARDED_ALLOW_IPS",
     "MAIN_KAKAO_OAUTH_ENABLED", "MAIN_KAKAO_CLIENT_ID", "MAIN_KAKAO_CLIENT_SECRET",
-    "MAIN_NAVER_OAUTH_ENABLED", "MAIN_NAVER_CLIENT_ID", "MAIN_NAVER_CLIENT_SECRET")
+    "MAIN_NAVER_OAUTH_ENABLED", "MAIN_NAVER_CLIENT_ID", "MAIN_NAVER_CLIENT_SECRET",
+    "MAIN_LLM_KEY", "MAIN_DICT_DATABASE_URL", "MAIN_CHAT_DAILY_TOTAL_LIMIT")
 KEYS = set(FIXED) | set(ATTESTATIONS) | set(CHOICES) | set(GENERATION_LIMITS) | set(RUNTIME_KEYS)
+# Chatbot dictionary: the read-only menu_dict database inside the shared Checking PostgreSQL (same as Checking).
+DICT_URL = re.compile(r"postgresql\+psycopg://menu_dict_reader:([0-9a-f]{64})@postgres:5432/menu_dict")
+# All users' chatbot questions per day: an explicit 1-999999 so a typo can never mean "unlimited" (0).
+DAILY_LIMIT = re.compile(r"[1-9][0-9]{0,5}")
 
 
 class GuardError(ValueError):
@@ -93,6 +98,17 @@ def validate(values: dict[str, str]) -> dict:
             raise GuardError(f"{key} must reuse a valid existing Checking credential")
     if values["MAIN_POSTGRES_PASSWORD"] and values["MAIN_POSTGRES_PASSWORD"] == values["MAIN_REDIS_PASSWORD"]:
         raise GuardError("Existing PostgreSQL and Redis credentials must be distinct")
+    if re.search(r"\s", values["MAIN_LLM_KEY"]):
+        raise GuardError("MAIN_LLM_KEY must be empty or a single token")
+    if dictionary := values["MAIN_DICT_DATABASE_URL"]:
+        match = DICT_URL.fullmatch(dictionary)
+        stores = {values["MAIN_POSTGRES_PASSWORD"], values["MAIN_REDIS_PASSWORD"]} - {""}
+        if not match or len(set(match[1])) < 8 or match[1] in stores:
+            raise GuardError("MAIN_DICT_DATABASE_URL must be empty or the read-only menu_dict_reader on the shared "
+                             "Checking PostgreSQL with its own random 64-character hex password")
+    if not DAILY_LIMIT.fullmatch(values["MAIN_CHAT_DAILY_TOTAL_LIMIT"]):
+        raise GuardError("MAIN_CHAT_DAILY_TOTAL_LIMIT must be a whole number from 1 to 999999 "
+                         "(all users' chatbot questions per day, shared with Checking)")
     try:
         address = ip_address(values["MAIN_FORWARDED_ALLOW_IPS"])
         if address.is_unspecified:
@@ -141,6 +157,10 @@ def validate(values: dict[str, str]) -> dict:
             + [key for key in ATTESTATIONS if values[key] != "true"] + runtime_pending,
         "generation_decisions_pending": [key for key in GENERATION_LIMITS if not values[key]],
         "daily_scheduler_implemented": False,
+        # Chatbot settings are optional; report only whether they are set, never their values.
+        "chatbot_llm_key": "set" if values["MAIN_LLM_KEY"] else "empty",
+        "chatbot_dictionary": "set" if values["MAIN_DICT_DATABASE_URL"] else "empty",
+        "chatbot_daily_total_limit": int(values["MAIN_CHAT_DAILY_TOTAL_LIMIT"]),
     }
 
 
@@ -177,12 +197,15 @@ def validate_config(config: dict, values: dict[str, str]) -> None:
         "REDIS_SOCKET_TIMEOUT_SECONDS": "0.5", "REDIS_MAX_CONNECTIONS": "10",
         "SESSION_EXPIRE_MINUTES": "30", "FORWARDED_ALLOW_IPS": values["MAIN_FORWARDED_ALLOW_IPS"],
         "OAUTH_STATE_TTL_SECONDS": "600", "EVENT_DATA_SOURCE": "local_demo",
-        "TMDB_KEY": "", "LLM_KEY": "", "OPENAI_API_KEY": "", "DICT_DATABASE_URL": "",
+        "TMDB_KEY": "", "OPENAI_API_KEY": "",
+        # Only the chatbot key and dictionary come from the server file; empty keeps the chatbot off.
+        "LLM_KEY": values["MAIN_LLM_KEY"], "DICT_DATABASE_URL": values["MAIN_DICT_DATABASE_URL"],
+        "CHAT_DAILY_TOTAL_LIMIT": values["MAIN_CHAT_DAILY_TOTAL_LIMIT"],
     })
     for provider in ("KAKAO", "NAVER"):
         for suffix in ("OAUTH_ENABLED", "CLIENT_ID", "CLIENT_SECRET"):
             environment[f"{provider}_{suffix}"] = values[f"MAIN_{provider}_{suffix}"]
-    require(api.get("environment") == environment, "Main API environment does not match the reviewed data/auth/disabled-key plan")
+    require(api.get("environment") == environment, "Main API environment does not match the reviewed data/auth/chatbot-key plan")
 
 
 def check_compose(path: Path, values: dict[str, str]) -> None:

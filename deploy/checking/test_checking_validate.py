@@ -36,6 +36,10 @@ def values():
     {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "a1b2c3d4e5f60789" * 4 + "@db.example.com:5432/menu_dict"},
     {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "0123456789abcdef" * 4 + "@postgres:5432/menu_dict"},
     {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "a" * 64 + "@postgres:5432/menu_dict"},
+    # The shared daily question limit is an explicit 1-999999; 0 would mean unlimited.
+    {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "0"}, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": ""},
+    {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "-100"}, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "1000000"},
+    {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "5,000"}, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "0100"},
 ])
 def test_unsafe_values_rejected(change):
     with pytest.raises(guard.GuardError):
@@ -127,6 +131,21 @@ def test_dictionary_reaches_only_the_api_from_the_checking_file(rendered):
         guard.validate_values(configured, {"CHECKING_DICT_DATABASE_URL": ""})
 
 
+def test_daily_total_limit_reaches_only_the_api_from_the_checking_file(rendered):
+    assert values()["CHECKING_CHAT_DAILY_TOTAL_LIMIT"] == "100"
+    assert rendered["services"]["api"]["environment"]["CHAT_DAILY_TOTAL_LIMIT"] == "100"
+    assert "CHAT_DAILY_TOTAL_LIMIT" not in rendered["services"]["migrate"]["environment"]
+    configured = values() | {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "5000"}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["CHAT_DAILY_TOTAL_LIMIT"] == "5000"
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="CHAT_DAILY_TOTAL_LIMIT"):
+        guard.validate_config(config, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_CHAT_DAILY_TOTAL_LIMIT"):
+        guard.validate_values(configured, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "100"})
+
+
 @pytest.mark.parametrize("change", [
     "project", "volume", "external_volume", "network", "public_data", "extra_service", "api_origin",
     "database", "cookie", "redis_prefix", "port", "public_port", "udp", "db_port", "memory", "cpu",
@@ -199,6 +218,7 @@ def test_initialize_is_exclusive_and_never_prints_secret_values(tmp_path, monkey
     parsed = guard.read_environment(guard.ENV_FILE)
     assert parsed["CHECKING_KAKAO_OAUTH_ENABLED"] == parsed["CHECKING_NAVER_OAUTH_ENABLED"] == "false"
     assert parsed["CHECKING_LLM_KEY"] == parsed["CHECKING_DICT_DATABASE_URL"] == ""
+    assert parsed["CHECKING_CHAT_DAILY_TOTAL_LIMIT"] == "100"
     output = capsys.readouterr().out
     assert parsed["CHECKING_POSTGRES_PASSWORD"] not in output
     assert parsed["CHECKING_REDIS_PASSWORD"] not in output
