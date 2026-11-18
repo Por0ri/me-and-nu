@@ -517,6 +517,10 @@ async def _fill_answer(db: AsyncSession, job: ChatMessage) -> None:
     # 사전 사실이나 찾은 글이 있으면 최근 글을 자료로 따로 넣지 않는다 (관계없는 글을 섞지 않는다)
     materials = await _pick_materials(db, session, topic.topic_id, question, allow_recent=not facts and found is None)
     prompt = _prompt(materials, session.anchor_content_id, facts, history, question, found)
+    # LLM 답을 기다리는 동안(평균 4초, 최대 25초) DB 연결을 쥐고 있지 않게 읽기 트랜잭션을 끝낸다.
+    # 실서비스 API 는 DB 연결이 2개뿐이라 쥐고 있으면 다른 화면이 DB 를 기다린다.
+    # 여기까지는 읽기만 했고, 세션이 expire_on_commit=False 라 읽어 둔 값은 커밋 뒤에도 그대로 쓴다.
+    await db.commit()
     reply = await llm.ask_json(_instructions(), prompt)
     answer = str(reply.get("answer") or "").strip()
     if not answer:

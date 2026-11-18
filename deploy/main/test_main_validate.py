@@ -120,6 +120,73 @@ class MainPreparationTest(unittest.TestCase):
         self.assertFalse(report["generation_authorized"])
         self.assertFalse(report["deployment_performed"])
 
+    def chatbot_values(self):
+        return self.values() | {
+            "MAIN_POSTGRES_PASSWORD": "0123456789abcdef" * 4, "MAIN_REDIS_PASSWORD": "fedcba9876543210" * 4,
+            "MAIN_LLM_KEY": "synthetic-chatbot-key-never-print",
+            "MAIN_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "13579bdf02468ace" * 4 + "@postgres:5432/menu_dict",
+        }
+
+    def test_chatbot_settings_are_optional_and_reported_without_values(self):
+        report = guard.validate(self.values())
+        self.assertEqual((report["chatbot_llm_key"], report["chatbot_dictionary"]), ("empty", "empty"))
+        values = self.chatbot_values()
+        report = guard.validate(values)
+        self.assertEqual((report["chatbot_llm_key"], report["chatbot_dictionary"]), ("set", "set"))
+        self.assertNotIn("MAIN_LLM_KEY", report["release_blockers"])
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "main.env"
+            manifest.write_text("\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(guard.main(["prepare", "--env", str(manifest)]), 0)
+        self.assertNotIn(values["MAIN_LLM_KEY"], output.getvalue())
+        self.assertNotIn("13579bdf02468ace", output.getvalue())
+
+    def test_chatbot_dictionary_must_be_the_read_only_reader_with_its_own_password(self):
+        reader = "postgresql+psycopg://menu_dict_reader:{}@postgres:5432/menu_dict"
+        values = self.chatbot_values()
+        wrong = {
+            "service_account": values["MAIN_DICT_DATABASE_URL"].replace("menu_dict_reader", "me_nu_checking"),
+            "other_host": values["MAIN_DICT_DATABASE_URL"].replace("@postgres:", "@localhost:"),
+            "service_database": values["MAIN_DICT_DATABASE_URL"].replace("/menu_dict", "/me_nu_checking"),
+            "short_password": reader.format("ab" * 16),
+            "uppercase_password": reader.format("13579BDF02468ACE" * 4),
+            "repeated_characters": reader.format("ab" * 32),
+            "database_password": reader.format(values["MAIN_POSTGRES_PASSWORD"]),
+            "redis_password": reader.format(values["MAIN_REDIS_PASSWORD"]),
+        }
+        for name, url in wrong.items():
+            with self.subTest(name=name), self.assertRaises(guard.GuardError):
+                guard.validate(values | {"MAIN_DICT_DATABASE_URL": url})
+        with self.assertRaises(guard.GuardError):
+            guard.validate(values | {"MAIN_LLM_KEY": "two words"})
+
+    def test_compose_passes_chatbot_settings_to_the_api_only_from_the_server_file(self):
+        self.assertIsNotNone(shutil.which("docker"), "Docker Compose CLI is required for offline rendering only")
+        values = self.chatbot_values() | {"MAIN_IMAGE_TAG": "a" * 40}
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / "main.env"
+            env_file.write_text("\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8")
+            environment = {key: value for key, value in os.environ.items()
+                           if key not in guard.KEYS and not key.startswith(("COMPOSE_", "MAIN_"))}
+            rendered = subprocess.run(["docker", "--context", "default", "compose", "--env-file", str(env_file),
+                "-p", "me-nu-main", "-f", str(ROOT / "compose.main.yaml"), "config", "--format", "json"],
+                env=environment, cwd=ROOT, capture_output=True, text=True, timeout=30)
+            self.assertEqual(rendered.returncode, 0, "Offline Compose rendering failed; credential-bearing output suppressed")
+        config = json.loads(rendered.stdout)
+        api_environment = config["services"]["api"]["environment"]
+        self.assertEqual(api_environment["LLM_KEY"], values["MAIN_LLM_KEY"])
+        self.assertEqual(api_environment["DICT_DATABASE_URL"], values["MAIN_DICT_DATABASE_URL"])
+        self.assertEqual((api_environment["OPENAI_API_KEY"], api_environment["TMDB_KEY"]), ("", ""))
+        guard.validate_config(config, values)
+        for name, key, value in (("other_dictionary", "DICT_DATABASE_URL", ""), ("paid_key", "OPENAI_API_KEY", "synthetic"),
+                                 ("other_llm_key", "LLM_KEY", "synthetic-other")):
+            with self.subTest(name=name), self.assertRaises(guard.GuardError):
+                modified = copy.deepcopy(config)
+                modified["services"]["api"]["environment"][key] = value
+                guard.validate_config(modified, values)
+
     def test_real_backend_settings_accept_main_oauth_and_reject_checking_preview(self):
         # Copy unchanged sources so importing module-level Settings cannot read
         # a developer's backend/.env. Nothing imports a DB session or HTTP client.

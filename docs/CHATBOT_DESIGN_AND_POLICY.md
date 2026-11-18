@@ -6,7 +6,7 @@
   - 챗봇 백엔드 · 화면은 11/15 Checking 에 합쳤다 (PR #76).
   - 시험 세트 · Checking 배포 설정(LLM 키 · 정보사전) · 글 찾기 수정 · 비용 막기는 11/18 Checking 에 합쳤다 (PR #82. 실수로 main 에 먼저 들어간 #81 은 되돌리지 않았다, 10장).
   - 11/18 Checking 서버에 LLM 키 · 정보사전을 넣고 `0d8a268` 로 다시 띄웠다. checking.me-nu.kr 챗봇이 답한다 (서원 확인).
-  - 실서비스(me-nu.kr) API 는 LLM 키 · 사전이 빈 값으로 고정돼 있어 챗봇이 답하지 못한다. 화면에는 챗봇이 보여서 물으면 실패한다 (8장 "실서비스 챗봇", 9장 마).
+  - 실서비스(me-nu.kr) API 는 LLM 키 · 사전이 빈 값으로 고정돼 있어 챗봇이 답하지 못한다. 화면에는 챗봇이 보여서 물으면 실패한다. 11/18 켜기로 했다 (코드 `feat/chat-main`, 서버 반영 전. 8장 "실서비스 챗봇", 9장 마).
 - 지시문 · 답 규칙 · 말투는 [CHATBOT_PROMPT_RULES.md](CHATBOT_PROMPT_RULES.md) 에 따로 모았다.
 - 이 문서는 챗봇이 어떻게 답을 만드는지, 무엇을 말해도 되고 무엇은 근거가 있어야 하는지, 아직 정하지 않은 정책이 무엇인지를 한곳에 모은다. 챗봇 동작이나 정책이 바뀌면 이 문서를 같이 고친다.
 - 처음 이어 받는 사람은 1 · 2장 → 9장(남은 일) → 12 · 13장(시험 환경 · 시험 세트) → 지시문 문서 3장 순서로 읽으면 된다.
@@ -174,7 +174,7 @@ LLM 이 질문을 넷 중 하나로 나눈다. 종류를 알아보지 못하면 
 | 찾기 낱말 목록 | 글 종류 · 장르 다른 말 · 찾기 말 · 이름으로 안 보는 흔한 낱말은 코드 안 목록이다 | 시험 질문과 서버에서 나온 실제 질문을 보면서 늘린다. "잔인 · 다크"는 아직 어느 칩에도 없다 (고어 · 심리 · 스릴러 · 호러 중 무엇으로 읽을지 정해야 함) | 지시문 문서 7장 |
 | 하루 질문 수 | 기본값 30 | 확정 (11/17 시험 비용을 보고도 그대로 두기로 함) | |
 | 서버 LLM 키 | 11/18 끝: Checking 서버에 이 PC 와 같은 키 (서원 결정, API 컨테이너에만) | 비용을 따로 보고 싶어지면 챗봇 전용 키로 바꾼다 | 6장 |
-| 실서비스 챗봇 (me-nu.kr) | main API 는 배포 검사(`deploy/main/validate.py`)가 LLM 키 · 사전을 빈 값으로 고정한다 ("검토된 키 끔 계획"). 화면에는 챗봇이 보여서 물으면 "답을 만들지 못했어"가 나온다 (11/18 기준 질문 3번) | 켜려면 9장 마 순서대로 한다. 켜기 전까지 me-nu.kr 에서 챗봇을 숨길지도 정한다 (화면에는 켜고 끄는 설정이 없어서 숨기려면 화면 코드를 고쳐야 한다) | 9장 마 |
+| 실서비스 챗봇 (me-nu.kr) | main API 는 배포 검사(`deploy/main/validate.py`)가 LLM 키 · 사전을 빈 값으로 고정한다 ("검토된 키 끔 계획"). 화면에는 챗봇이 보여서 물으면 "답을 만들지 못했어"가 나온다 (11/18 기준 질문 3번). 11/18 켜기로 했다 (main 담당 허락) | 켜는 코드는 `feat/chat-main` (main 기준 브랜치): 실서비스 배포 설정 · 검사가 서버 파일의 `MAIN_LLM_KEY` · `MAIN_DICT_DATABASE_URL` 을 API 에만 넘긴다. 서버 반영은 9장 마 순서대로 | 9장 마 |
 | 이름 찾기 색인 | 11/13 내 PC 정보사전에 추가 완료. 11/18 서버 사전에도 있다 (덤프에 들어 있어 SQL 은 건너뛰었다) | 사전을 다시 올릴 때도 README 순서대로 SQL 을 같이 돌린다. RAG 쪽 표 정의(schema.sql)에도 넣을지는 RAG 폴더를 커밋할 때 정한다 | 5장 알려진 한계 |
 | 말투 · 캐릭터 | 캐릭터 설정 · 의견의 범위 · 놀림의 세기 · 화면 문구와 답 말투 · 말투 예시 | 지시문 문서 4장 "정할 것"으로 옮겼다 (11/13) | 지시문 문서 |
 | 휴대폰에서 확인 | 시트 · 바 동작은 화면 없는 크롬(휴대폰 크기)으로 확인했다. 실제 휴대폰(PWA)의 뒤로 가기 · 손잡이 끌기 · 키보드 위 시트는 확인 필요 | 11/18 Checking 주소에서 챗봇이 정상 작동하는 것을 확인했다 (서원). 뒤로 가기 · 손잡이 끌기 · 키보드 위 시트는 따로 확인 필요 | |
@@ -236,10 +236,10 @@ LLM 이 질문을 넷 중 하나로 나눈다. 종류를 알아보지 못하면 
 
 | 순서 | 할 일 | 담당 | 메모 |
 |---|---|---|---|
-| 22 | 켤지 · 언제 켤지 정하기 | 서원 · main 담당 | main 배포 검사는 키 · 사전을 일부러 빈 값으로 고정했다. 켜기 전까지 화면에서 챗봇을 숨길지도 정한다 |
-| 23 | 답 만드는 동안 DB 연결 놓기 | 확인 필요 | 지금은 DB 조회 뒤 같은 연결을 쥔 채 LLM 을 기다린다 (평균 4초, 최대 25초). main API 는 DB 연결이 2개(`DATABASE_POOL_SIZE` 2 · overflow 0)라 두 명이 동시에 물으면 다른 화면까지 DB 를 기다린다. LLM 을 부르기 전에 커밋해 연결을 돌려준다 (`expire_on_commit=False` 라 가능). Checking 에도 좋은 변경 |
-| 24 | main 배포 설정 · 검사에 키 · 사전 자리 | main 담당 | `compose.main.yaml` · `deploy/main/validate.py` 에 Checking 처럼 API 에만 키 · 사전 주소를 넘기는 자리를 만든다. 사전 · 키는 이미 서버에 있어 새로 올릴 건 없다 |
-| 25 | main 다시 배포 | main 담당 | main ← Checking 합치기 (모델 커밋도 같이) → main 이미지 다시 만들기 → main API 다시 띄우기. 같은 DB 라 하루 한도(한 사람 30 · 전체 5,000)는 두 주소를 합쳐 센다 |
+| 22 | 켤지 · 언제 켤지 정하기 | 서원 · main 담당 | 11/18 켜기로 정함 (main 담당 허락) |
+| 23 | 답 만드는 동안 DB 연결 놓기 | 서원 | 11/18 코드 (`feat/chat-main`). DB 조회 뒤 같은 연결을 쥔 채 LLM 을 기다렸다 (평균 4초, 최대 25초). main API 는 DB 연결이 2개(`DATABASE_POOL_SIZE` 2 · overflow 0)라 두 명이 동시에 물으면 다른 화면까지 DB 를 기다린다. 이제 LLM 을 부르기 전에 커밋해 연결을 돌려준다 (`expire_on_commit=False` 라 읽은 값은 그대로). Checking 에도 들어간다 |
+| 24 | main 배포 설정 · 검사에 키 · 사전 자리 | 서원 (main 담당 허락) | 11/18 코드 (`feat/chat-main`): `compose.main.yaml` · `deploy/main/validate.py` 가 Checking 처럼 API 에만 키 · 사전 주소를 넘긴다. 두 줄이 서버 파일에 없으면 검사가 막고, 결과에는 켜짐 · 꺼짐만 나온다. 사전 · 키는 이미 서버에 있어 새로 올릴 건 없다 |
+| 25 | main 다시 배포 | 서원 · main 담당 | `feat/chat-main` 을 main 에 합치기 (Checking 에도 같은 브랜치를 합침) → 실서비스 이미지 다시 만들기 → main API 다시 띄우기. 같은 DB 라 하루 한도(한 사람 30 · 전체 5,000)는 두 주소를 합쳐 센다. Checking 의 모델 커밋 · #80 은 정식 Checking → main 합치기 때 들어간다 (10장) |
 
 ## 10. 결정 기록
 
@@ -292,6 +292,8 @@ LLM 이 질문을 넷 중 하나로 나눈다. 종류를 알아보지 못하면 
 | 2026-11-18 | 서버 LLM 키는 이 PC 와 같은 키를 쓴다 | 서원 결정. 크레딧 자동 충전이 꺼져 있고, 하루 상한(30 · 5,000)과 출력 상한으로 비용을 막는다 |
 | 2026-11-18 | 정보사전은 Checking Postgres 안 별도 DB `menu_dict` 로 올리고, 서비스 DB 는 모든 계정 접속을 막았다 | 사전 계정으로 서비스 DB 에 못 닿게. 서버 DB 계정이 관리자 하나뿐이라 다른 접속(실서비스 · Checking · 추천 계산)에 영향이 없었다 |
 | 2026-11-18 | 실수로 main 에 먼저 합쳐진 #81 은 되돌리지 않고, 같은 브랜치를 Checking 으로 다시 합쳤다 (#82) | 합치기를 되돌리면 나중에 Checking 을 main 에 합칠 때 챗봇 변경이 빠진다 |
+| 2026-11-18 | 실서비스(me-nu.kr)에도 챗봇을 켠다 | main 담당 허락 (서원). 사용자가 쓰는 주소다 |
+| 2026-11-18 | 실서비스용 챗봇 변경은 main 기준 브랜치(`feat/chat-main`)로 main 에 바로 합치고, 같은 브랜치를 Checking 에도 합친다 | Checking → main 을 통째로 합치면 아직 확인 전인 화면 변경(#80)이 같이 실서비스에 나간다. 모델 커밋이 main 에 없어도 실서비스 추천 · 알림 · 작품 목록은 같은 DB 와 Checking 쪽 컨테이너로 돌아가서, 늦어지는 건 검색 50개뿐이다 |
 | 2026-11-15 | 화면 다듬기 (서원 확인 뒤): 펼친 바 너비 최대 340px (PC 430px 에서 카드보다 양옆 21px 안쪽, 휴대폰 390px 에서 318px. 양옆 36px → 330px → 340px 로 맞춰 봄), 바 글자 12px 가운데 한 줄 (가장 좁은 375px 휴대폰에서도 한 줄), 답 옆 마스코트 얼굴은 그림자 없이 32px, 보내기는 종이비행기, 고른 글 카드는 제목을 그림 위에 얹고(홈 피드처럼) 마우스로 끌어 넘기기 | 서원 요청 |
 
 ## 11. 코드 위치
@@ -314,6 +316,7 @@ LLM 이 질문을 넷 중 하나로 나눈다. 종류를 알아보지 못하면 
 | [CHATBOT_PROMPT_RULES.md](CHATBOT_PROMPT_RULES.md) | 지시문 전문 · 답 규칙 · 말투 · 찾기 낱말 · 화면 문구 |
 | [chat_eval/cases.yaml](../backend/scripts/chat_eval/cases.yaml) · [chat_eval/run.py](../backend/scripts/chat_eval/run.py) | 시험 질문 세트 · 돌리기 스크립트 (13장) |
 | [compose.checking.yaml](../compose.checking.yaml) · [deploy/checking/validate.py](../deploy/checking/validate.py) · [deploy/checking/README.md](../deploy/checking/README.md) | Checking 서버: API 에만 LLM 키 · 정보사전 주소 넘기기, 서버 파일 검사, 정보사전 올리는 순서 |
+| [compose.main.yaml](../compose.main.yaml) · [deploy/main/validate.py](../deploy/main/validate.py) · [deploy/main/README.md](../deploy/main/README.md) | 실서비스: API 에만 LLM 키 · 정보사전 주소 넘기기 (`MAIN_LLM_KEY` · `MAIN_DICT_DATABASE_URL`), 서버 파일 검사. main 담당 팀원 파일 |
 | [test_chat_finder.py](../backend/tests/test_chat_finder.py) · [test_chat_api.py](../backend/tests/test_chat_api.py) · [test_dictionary.py](../backend/tests/test_dictionary.py) | 코드 시험 (LLM 을 부르지 않는다) |
 
 ## 12. 로컬 시험 환경

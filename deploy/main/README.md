@@ -89,6 +89,25 @@ API는 기존 `me-nu-checking_data` 외부 네트워크에서 `postgres`/`redis`
 유지한다. 실제 연결 수·메모리 여유 확인 전에는 `MAIN_DB_CAPACITY_VERIFIED=false`를
 유지한다. 이 설정만으로 라이브 수용량 확인이 끝난 것은 아니다.
 
+## 챗봇 (LLM 키 · 정보사전)
+
+메인 API는 챗봇에 쓸 값 두 개만 서버의 무시되는 `deploy/main/.env`에서 받는다.
+`MAIN_LLM_KEY` → API의 `LLM_KEY`, `MAIN_DICT_DATABASE_URL` → API의 `DICT_DATABASE_URL`이다.
+비우면 챗봇은 답하지 않는다(사전만 비우면 우리 글로만 답한다). 유료 생성 키
+`OPENAI_API_KEY`와 `TMDB_KEY`는 계속 빈 값이다. 두 줄은 비어 있어도 파일에 있어야 검사를
+통과하고, 검사 결과에는 값 대신 `chatbot_llm_key`/`chatbot_dictionary`의 `set`/`empty`만 나온다.
+
+- 정보사전은 Checking PostgreSQL 안의 읽기 전용 DB `menu_dict`를 같이 쓴다(2026-11-18
+  Checking에 올림, `deploy/checking/README.md` "챗봇 정보사전"). 메인을 위해 다시 올리지 않는다.
+  주소는 Checking 서버 파일의 `CHECKING_DICT_DATABASE_URL`과 같은 값을 서버 안에서 복사하고
+  출력하지 않는다. 검사는 `menu_dict_reader` 계정, `postgres:5432/menu_dict`, 서비스 DB/Redis와
+  다른 64자리 hex 비밀번호만 허용한다. LLM 키도 서버 안에서만 넣고 출력하지 않는다.
+- 하루 질문 한도(한 사람 30번, 모든 사용자 합쳐 5,000번)는 같은 DB에서 세므로 메인과
+  Checking을 합쳐 센다.
+- 메인 서비스 DB 풀은 2개라서 챗봇은 LLM 답을 기다리기 전에 DB 연결을 돌려준다. 사전 조회는
+  서비스 풀과 따로 API마다 최대 4개(기본 2 + overflow 2) 연결을 짧게 쓴다.
+- 끄려면 `MAIN_LLM_KEY=`로 비우고 API 컨테이너를 다시 만든다.
+
 ## 연결 확정 후 실행 순서
 
 1. 확정된 기존 DB 연결을 검증한다. 전체 Git SHA로 API 이미지를 고정하고,
