@@ -15,15 +15,17 @@ KEYS = {
     "CHECKING_IMAGE_TAG", "CHECKING_POSTGRES_PASSWORD", "CHECKING_REDIS_PASSWORD", "CHECKING_FORWARDED_ALLOW_IPS",
     "CHECKING_KAKAO_OAUTH_ENABLED", "CHECKING_KAKAO_CLIENT_ID", "CHECKING_KAKAO_CLIENT_SECRET",
     "CHECKING_NAVER_OAUTH_ENABLED", "CHECKING_NAVER_CLIENT_ID", "CHECKING_NAVER_CLIENT_SECRET",
-    "CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED",
+    "CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED", "CHECKING_LLM_KEY", "CHECKING_DICT_DATABASE_URL",
 }
+# The chatbot dictionary is a separate read-only database inside this stack's PostgreSQL.
+DICT_URL = re.compile(r"postgresql\+psycopg://menu_dict_reader:([0-9a-f]{64})@postgres:5432/menu_dict")
 FIXED_ENV = {
     "MENU_DEPLOYMENT_ENV": "checking", "SESSION_BACKEND": "redis", "REDIS_KEY_PREFIX": "me_nu_checking",
     "SESSION_COOKIE_NAME": "menu_checking_session", "SESSION_COOKIE_SECURE": "true",
     "ENABLE_DEV_API": "false", "ENABLE_DEV_AUTH_BYPASS": "false", "DATABASE_ECHO": "false",
     "FRONTEND_ORIGINS": "https://checking.me-nu.kr,https://api.checking.me-nu.kr",
     "OAUTH_FRONTEND_ORIGIN": "https://checking.me-nu.kr", "OAUTH_PUBLIC_API_ORIGIN": "https://api.checking.me-nu.kr",
-    "LLM_KEY": "", "TMDB_KEY": "", "OPENAI_API_KEY": "",
+    "TMDB_KEY": "", "OPENAI_API_KEY": "",
 }
 
 
@@ -46,6 +48,11 @@ def validate_values(values, environ=None):
     passwords = [values[key] for key in ("CHECKING_POSTGRES_PASSWORD", "CHECKING_REDIS_PASSWORD")]
     if any(not re.fullmatch(r"[0-9a-f]{64}", value) or len(set(value)) < 8 for value in passwords) or passwords[0] == passwords[1]:
         raise GuardError("Generate two different random 64-character hex passwords for the checking stores.")
+    if dictionary := values["CHECKING_DICT_DATABASE_URL"]:
+        match = DICT_URL.fullmatch(dictionary)
+        if not match or len(set(match[1])) < 8 or match[1] in passwords:
+            raise GuardError("CHECKING_DICT_DATABASE_URL must be empty or the read-only menu_dict_reader on the checking "
+                             "PostgreSQL with its own random 64-character hex password.")
     try:
         addresses = values["CHECKING_FORWARDED_ALLOW_IPS"].split(",")
         if not addresses or any(ipaddress.ip_address(value).is_unspecified for value in addresses):
@@ -100,6 +107,10 @@ def validate_config(config, values):
         environment = service.get("environment", {})
         if any(str(environment.get(key)) != value for key, value in FIXED_ENV.items()):
             raise GuardError(f"{name} has an unsafe origin, session, or deployment setting.")
+        if str(environment.get("LLM_KEY")) != (values["CHECKING_LLM_KEY"] if name == "api" else ""):
+            raise GuardError("Only the checking API may receive LLM_KEY, and only from CHECKING_LLM_KEY.")
+        if str(environment.get("DICT_DATABASE_URL")) != (values["CHECKING_DICT_DATABASE_URL"] if name == "api" else ""):
+            raise GuardError("Only the checking API may receive DICT_DATABASE_URL, and only from CHECKING_DICT_DATABASE_URL.")
         if environment.get("DATABASE_URL") != expected_db or environment.get("REDIS_URL") != expected_redis:
             raise GuardError(f"{name} must use the private checking database and Redis.")
         if environment.get("CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED") != values["CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED"]:
@@ -189,6 +200,8 @@ def check(*, build=False):
         raise GuardError("Compose validation failed; raw output is suppressed to protect environment values.")
     validate_config(json.loads(result.stdout), values)
     print("Checking configuration valid: isolated project/volumes/networks, loopback 8002, fixed checking origins, bounded resources.")
+    print(f"Chatbot LLM key for the API: {'set' if values['CHECKING_LLM_KEY'] else 'empty (chatbot answers off)'}.")
+    print(f"Chatbot dictionary for the API: {'set' if values['CHECKING_DICT_DATABASE_URL'] else 'empty (dictionary off)'}.")
 
 
 def initialize(image_tag):
@@ -200,7 +213,7 @@ def initialize(image_tag):
     descriptor = os.open(ENV_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(template)
-    print("Created deploy/checking/.env with separate random store passwords; OAuth remains disabled.")
+    print("Created deploy/checking/.env with separate random store passwords; OAuth, the chatbot LLM key and dictionary remain disabled.")
 
 
 def main():

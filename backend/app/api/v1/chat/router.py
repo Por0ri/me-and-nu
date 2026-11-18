@@ -47,7 +47,8 @@ async def create_chat_session(
     responses={
         **COMMON_ERRORS,
         404: {"model": ErrorResponse, "description": "CHAT_SESSION_NOT_FOUND"},
-        429: {"model": ErrorResponse, "description": "CHAT_DAILY_LIMIT: 오늘(한국 날짜) 질문 가능 횟수를 모두 사용함"},
+        429: {"model": ErrorResponse, "description": "CHAT_DAILY_LIMIT: 오늘(한국 날짜) 질문 가능 횟수를 모두 사용함 · "
+                                                      "CHAT_SERVICE_DAILY_LIMIT: 오늘 모든 사용자를 합친 질문 수가 상한에 닿음"},
     },
 )
 async def post_chat_message(

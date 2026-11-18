@@ -118,6 +118,7 @@ test('an expired session is replaced once', async () => {
 test('limits, failures and slow answers become retryable messages', async () => {
   const cases = [
     [fakeApi([], { sendErrors: [new ApiError('limit', 429, 'CHAT_DAILY_LIMIT')] }).api, '오늘 물어볼 수 있는 질문을 다 썼어. 내일 다시 물어봐.'],
+    [fakeApi([], { sendErrors: [new ApiError('limit', 429, 'CHAT_SERVICE_DAILY_LIMIT')] }).api, '오늘은 챗봇이 쉬는 중이야. 내일 다시 물어봐 줘.'],
     [fakeApi([{ status: 'failed', error: { code: 'GENERATION_FAILED', message: '실패' } }]).api, '답을 만들지 못했어. 다시 물어봐 줘.'],
     [fakeApi(Array.from({ length: 60 }, () => ({ status: 'processing' }))).api, '답이 너무 늦어. 다시 물어봐 줘.'],
     [fakeApi([], { sendErrors: [new TypeError('Failed to fetch')] }).api, '인터넷 연결을 확인하고 다시 물어봐 줘.'],
