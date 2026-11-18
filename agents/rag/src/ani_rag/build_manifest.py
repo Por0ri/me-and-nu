@@ -320,6 +320,12 @@ class Row:
         self.entity, self.field, self.value, self.target, self.source, self.url, self.at, self.fact_id = r
 
 
+# 캐릭터가 아닌 AniList '캐릭터' 항목 (11/18 서원): 36309 'Narrator(ナレーター)' = 여러 작품 내레이터를 한데 묶은 자료 항목
+# (작품 항목 462곳). 글에 넣으면 '나레타' 같은 엉뚱한 이름 · 연도가 나옴 → 이름을 안 돌려줘서 모든 글 종류에서 빠지게 함.
+# 이름이 같은 진짜 캐릭터는 AniList 번호가 달라 영향 없음
+NOT_CHARACTER_ANILIST = {"36309"}
+
+
 class Ctx:
     """DB 에서 읽은 공통 재료"""
 
@@ -357,6 +363,8 @@ class Ctx:
         self.anilist: dict[int, str] = {}
         for source, _kind, ext, e in cur.fetchall():
             (self.kitsu if source == "kitsu" else self.anilist)[e] = ext
+        self.not_character = {e for e, ext in self.anilist.items()
+                              if ext in NOT_CHARACTER_ANILIST and self.ent.get(e, ("",))[0] == "character"}
         # 시즌 · 극장판별 한국어 제목 (작품 목록의 값. 극장판 이름을 쓸 때 필요)
         entry_of = {ext: e for e, ext in self.anilist.items() if self.ent[e][0] == "entry"}
         self.entry_ko: dict[int, str] = {}
@@ -400,6 +408,8 @@ class Ctx:
 
     def char_name(self, entity: int) -> str | None:
         """캐릭터 이름: 확정 한국어가 있으면 그것, 없으면 일본어 발음대로 한글로 (발음 표기는 self.phonetic 에 남김)"""
+        if entity in self.not_character:  # 캐릭터가 아닌 항목 (NOT_CHARACTER_ANILIST) — 이름이 없으면 고르기에서 빠짐
+            return None
         if entity in self.ko:
             return self.ko[entity]
         _, _, native, romaji, _ = self.ent[entity]
