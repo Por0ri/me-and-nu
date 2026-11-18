@@ -24,6 +24,21 @@ PR #71·Migration, viewer/operator/admin 권한 Provider, 운영 Router, 감사 
 | 비로그인·세션 만료 | 401 | 401 | 로그인 필요 |
 | 관리자 아닌 회원 | 403 `ADMIN_REQUIRED` | 403 | 접근 권한 없음 |
 
+## BE 확정 계약 (11/19) 반영 상태
+
+FE Client 코드는 아래 계약과 이미 일치하며 이번에 변경하지 않았다.
+
+- **요청과 성공 코드**: 승인·반려 POST 요청은 6개 필드다. 최초 성공과 replay 모두 HTTP 200이며, FE는 `replayed` 값으로 둘을 구분한다.
+- **버전 문자열**: `expectedUpdatedAt`은 상세 GET 원문을 그대로 보낸다. 마이크로초와 offset 표기를 보존한다.
+- **결과 불명**: 503·5xx·408·429·응답 유실·응답 형식 오류는 같은 `requestId`와 같은 본문으로만 재시도한다. Client는 스스로 반복하지 않는다. 버튼 연결 시 재시도는 사용자 확인으로만, 제한된 횟수로 한다.
+- **replay 범위**: 같은 관리자 권한 부여 건(`admin_account_id`)·같은 콘텐츠·같은 `requestId` 안에서만 유효하다.
+  - 권한을 회수했다가 재부여하면 기존 `requestId`의 replay가 거부될 수 있다(403 또는 409).
+  - FE는 이를 성공이나 실패로 단정하지 않고, 상세 재조회 분류로 처리한다.
+- **409**: 상세를 다시 조회한 뒤 사용자가 다시 확인한다. 자동 재실행은 하지 않는다(`retrySameRequest=false`, `reload=true`).
+- **성공 후 처리**: 200(replay 포함)을 확인하면 상세 GET을 다시 조회한다.
+- **결과 조회 API 없음**: 별도 결과 조회 API는 없다. GET 상태(예: active/confirmed)만으로 특정 요청의 성공을 확정하지 않는다. 다른 관리자의 조치일 수 있기 때문이다. 특정 요청의 성공은 그 요청의 200 응답으로만 확정한다.
+- **제안 필드 미사용**: `review.allowedActions`·`disabledReason`은 BE 제안 필드이며 아직 구현되지 않았다. FE 코드와 테스트는 이 필드를 가정하지 않는다.
+
 ## 격리 시나리오 (자동)
 
 1. viewer는 목록(검수 대기 2건)과 상세를 읽고, 승인·반려는 모두 403이며 콘텐츠·감사가 그대로다.
@@ -91,12 +106,12 @@ PR #71·Migration, viewer/operator/admin 권한 Provider, 운영 Router, 감사 
 ## 막혀 있는 계약 사항
 
 1. **역할별 오류 코드**: viewer의 POST는 `ADMIN_WRITE_REQUIRED`, 회수된 계정은 `ADMIN_REQUIRED`를 유지할지 확정한다. FE는 둘 다 forbidden으로 처리하지만, 코드가 바뀌면 시나리오를 조정해야 한다.
-2. **쓰기 권한 노출**: GET에 쓰기 권한 정보가 없으면 viewer에게도 승인·반려 버튼이 보이고, 누르면 403을 받는다. 버튼 활성화 전에 결정이 필요하다.
+2. **쓰기 권한 노출**: `review.allowedActions`·`disabledReason`이 제안됐지만 아직 구현되지 않았다. 구현 전까지는 viewer에게도 승인·반려 버튼이 보이고, 누르면 403을 받는다. 버튼 활성화 전에 결정이 필요하다.
 3. **검수 가능 여부 노출**: Draft 없음이나 Draft 상태 불일치를 GET에서 알 수 있게 할지 결정한다.
 4. **응답 시각 offset 보장**: `AwareDatetime` 또는 PostgreSQL `timestamptz`로 보장한다.
-5. **재전송 계약**: 같은 `requestId`·같은 본문의 replay를 유지하는지, 회수 후 재전송이 403인지, replay 유효 기간과 감사 보존 기간을 확정한다.
+5. **재전송 계약**: replay 범위와 회수·재부여 후 거부 가능성은 11/19에 확정됐다. replay 유효 기간과 감사 보존 기간은 아직 정해지지 않았다.
 6. **BE 503 메시지**: "검수 저장에 실패했습니다"를 중립 문구로 바꿀지 결정한다.
-7. **경로와 오류 코드 고정**: 운영 경로와 성공 200, 오류 코드 목록을 고정한다.
+7. **경로와 오류 코드 고정**: 최초 성공과 replay의 200은 확정됐다. 운영 경로와 오류 코드 목록 고정이 남아 있다.
 8. **테스트 데이터 준비**: 테스트 계정·콘텐츠를 누가 준비하고 E2E 후 어떻게 초기화할지 정한다.
 
 ## 검증
@@ -106,10 +121,24 @@ PR #71·Migration, viewer/operator/admin 권한 Provider, 운영 Router, 감사 
 | 격리 E2E 리허설 (`admin-review-e2e.test.cjs`) | 7개 통과 |
 | 관리자 FE 단위 테스트 (`admin-content`, `admin-content-input`) | 36개 통과 |
 | FE 전체 `npm test` | 684개 중 681개 통과, 1개 skip, 2개 실패 (아래 설명) |
+| 실패 2건 원인 해소 후 해당 2개 파일 재실행 (`admin-reports`, `admin-notices`) | 16개 통과 |
 | `npm run typecheck`, `npm run build -- --webpack` | 통과 |
 | 관리자 BE 격리 테스트 (BE 무변경, 새 Checking 기준) | 257개 통과 |
 
-FE 전체 테스트의 실패 2개는 이번 변경과 무관하다. `admin-reports`·`admin-notices` 테스트가 `public/admin/previous.svg`의 원본 해시를 검사하는데, 이 Windows worktree에서는 해당 파일이 CRLF로 체크아웃되어 해시가 달라진다(index는 LF이고 `-text` 속성이 없다). 이번 변경은 해당 파일과 테스트를 건드리지 않는다.
+### FE 전체 테스트 실패 2건 (Windows 줄바꿈 체크아웃)
+
+- **결론**: SVG 코드 변경이나 기능 회귀가 아니다. `previous.svg`는 `aca6d4a` 이후 변경된 적이 없다.
+  - 커밋된 원본(LF)의 SHA-256은 `37f6e27f…`로, 두 테스트의 기대값과 같다.
+  - 이 worktree의 파일은 CRLF로 체크아웃되어 `616d8059…`가 된다.
+- **원인**: Git for Windows 시스템 설정(`C:/Program Files/Git/etc/gitconfig`)의 `core.autocrlf=true` 때문이다.
+  - `frontend/public/admin/.gitattributes`는 일부 SVG에만 `-text`를 지정한다. 지정되지 않은 9개(`analytics`, `dashboard`, `logo`, `next`, `notices`, `previous`, `reports`, `search`, `users`)는 CRLF로 체크아웃된다.
+  - `admin-reports`·`admin-notices` 테스트는 작업 폴더의 원본 바이트 해시를 그대로 비교한다. CRLF를 LF로 맞추는 `tests/helpers/source-asset-hash.cjs`는 쓰지 않는다.
+- **이번 조치 (환경만)**: 이 worktree에서 위 9개 파일만 지우고 `git -c core.autocrlf=false checkout`으로 index의 LF 바이트를 다시 받았다.
+  - 저장소 파일, Git 설정, 테스트 기준은 바꾸지 않았다. `git status`도 그대로 깨끗하다.
+  - 다시 실행한 결과 두 파일 16개가 통과했다.
+- **남은 영향**: 같은 Windows 기본 설정의 다른 clone이나 worktree에서는 같은 실패가 재현된다.
+  - 영구 해결은 소스 변경이 필요하므로 하지 않았다. 담당 영역(관리자 신고·알림 UI) 결정 사항이다.
+  - 방법은 두 가지다: (1) 위 9개 SVG에 `-text`를 추가해 기존 `.gitattributes` 정책과 맞춘다. (2) 두 테스트가 기존 `source-asset-hash.cjs` 정책(SVG만 LF 기준 해시)을 쓰게 한다.
 
 ```text
 cd frontend
