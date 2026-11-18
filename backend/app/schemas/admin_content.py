@@ -1,4 +1,4 @@
-"""Proposed admin read contract. No HTTP route exposes this contract yet."""
+"""Server-authorized administrative content reads and effective review actions."""
 
 from datetime import datetime
 from typing import Literal
@@ -42,9 +42,15 @@ class AdminContentListResponse(CamelModel):
     total: int = Field(ge=0)
 
 
+class AdminContentReviewEligibility(CamelModel):
+    allowed_actions: list[Literal["approve", "reject"]] = Field(default_factory=list)
+    disabled_reason: Literal["permission_denied", "deleted", "content_not_reviewable", "draft_not_reviewable", "unavailable"] | None = "unavailable"
+
+
 class AdminContentDetail(AdminContentItem):
     # The DB datetime is the version. Never infer a timezone or substitute a clock.
     updated_at: AwareDatetime = Field(strict=True)
     summary: str | None
     body: str | None
     sources: list[ContentSourceResponse]
+    review: AdminContentReviewEligibility = Field(default_factory=AdminContentReviewEligibility)

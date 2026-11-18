@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
-from app.models import AuthSession, CreatorChannel, UserAccount
+from app.models import AdminAccount, AuthSession, CreatorChannel, UserAccount
 from app.repositories.auth_session_repository import (
     create_auth_session,
     discard_uncommitted_session,
@@ -53,12 +53,23 @@ async def request_withdrawal(
     store: RedisSessionStore | None,
 ) -> datetime:
     """계정을 막고 지금 세션을 끝낸 뒤 삭제 예정 시각을 돌려줍니다."""
+    # Grant/bootstrap transactions take this same lock before inserting history.
+    # Re-read after waiting: authentication may have loaded a stale account.
+    user = await lock_user(db, user.user_id)
+    if user is None or user.account_status != "active":
+        raise ApiError(409, "WITHDRAWAL_STATE_CONFLICT", "계정 상태가 변경되었습니다. 다시 확인해 주세요.")
     # 채널이 있는 계정은 외래 키 때문에 유예가 끝나도 못 지우므로 신청할 때 거절합니다.
     channel = await db.scalar(
         select(CreatorChannel.creator_channel_id).where(CreatorChannel.user_id == user.user_id).limit(1)
     )
     if channel is not None:
         raise ApiError(409, "WITHDRAWAL_BLOCKED", "연결된 크리에이터 채널이 있어 탈퇴할 수 없습니다.")
+    # 회수된 권한도 관리자 이력에 남아 회원 삭제를 막는다.
+    grant = await db.scalar(
+        select(AdminAccount.admin_account_id).where(AdminAccount.user_id == user.user_id).limit(1)
+    )
+    if grant is not None:
+        raise ApiError(409, "WITHDRAWAL_BLOCKED", "관리자 권한 이력이 있어 탈퇴할 수 없습니다.")
     now = utcnow()
     user.account_status = "withdrawn"
     user.withdrawn_at = now

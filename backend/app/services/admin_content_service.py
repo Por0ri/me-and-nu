@@ -1,8 +1,4 @@
-"""Read-only foundation, intentionally not registered with FastAPI.
-
-Authorization is NOT implemented here. A future route must enforce trusted
-server-side admin permission before calling any of these operations.
-"""
+"""Content reads behind the admin router's fresh session and DB-grant checks."""
 
 from sqlalchemy.ext.asyncio import AsyncSession
 

@@ -1,7 +1,7 @@
 """Real SQL against disposable SQLite files. No migrations/service DB access.
 
-PR #71 table contract is represented only in fixture DDL. The allowing provider
-below is test-only; production has no role policy/provider or registered route.
+The allowing provider below is test-only. Actual DB providers and PostgreSQL
+locks are exercised separately in the integration suite.
 """
 
 import asyncio
@@ -390,7 +390,6 @@ def review_api(api, review_db):
     async def isolated_writer():
         with Session(review_db.engine) as db:
             yield WriteSession(db)
-    api.app.include_router(router, prefix="/api/v1")
     api.app.dependency_overrides[get_review_db] = isolated_writer
     api.app.dependency_overrides[get_admin_review_permission_provider] = lambda: review_db.permissions
     api.writer = review_db
@@ -458,7 +457,8 @@ def test_http_permissions_fail_closed(review_api, failure, monkeypatch):
     else: monkeypatch.setattr(review_api.writer.permissions, "lock_grant", AsyncMock(side_effect=RuntimeError("secret")))
     before = snapshot(review_api.writer)
     response = post(review_api, headers={"X-CSRF-Token": csrf_token_for_session(TOKEN), "X-Role": "admin", "X-Admin": "true"})
-    assert response.status_code == (401 if failure in {"anonymous", "revoked_session", "inactive_user"} else 503 if failure == "unavailable" else 403)
+    # The default DB provider cannot verify the intentionally incomplete fixture store.
+    assert response.status_code == (401 if failure in {"anonymous", "revoked_session", "inactive_user"} else 503 if failure in {"unavailable", "default"} else 403)
     assert "secret" not in response.text and snapshot(review_api.writer) == before
 
 
@@ -481,10 +481,10 @@ def test_http_validation_stale_and_missing_content(review_api):
     assert not rows(review_api.writer, "admin_action_log")
 
 
-def test_runtime_app_does_not_expose_review_even_with_allowing_overrides(monkeypatch):
+def test_registered_review_requires_real_auth_even_with_allowing_provider(monkeypatch):
     monkeypatch.setattr(settings, "redis_url", None)
     app = create_app(enable_dev_api=False)
     app.dependency_overrides[get_admin_review_permission_provider] = lambda: TestPermissionProvider()
     with TestClient(app) as client:
-        assert client.post("/api/v1/admin/contents/2/review", json=request_data()).status_code == 404
-        assert not any("/admin/" in path for path in client.get("/openapi.json").json()["paths"])
+        assert client.post("/api/v1/admin/contents/2/review", json=request_data()).status_code == 401
+        assert "post" in client.get("/openapi.json").json()["paths"]["/api/v1/admin/contents/{contentId}/review"]

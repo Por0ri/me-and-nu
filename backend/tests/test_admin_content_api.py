@@ -20,7 +20,7 @@ from app.core.redis import get_redis
 from app.core.security import csrf_token_for_session, hash_token
 from app.db.session import get_db
 from app.main import create_app
-from app.models import AuthSession, ContentSource, SourceSite, UserAccount
+from app.models import AdminAccount, AuthSession, ContentSource, SourceSite, UserAccount
 from app.repositories.auth_session_repository import utcnow
 from app.schemas.admin_content_review import AdminContentReviewRequest
 from app.services import admin_content_service as service
@@ -33,21 +33,25 @@ TOKEN = "isolated-admin-api-test-cookie"
 @pytest.fixture
 def api(monkeypatch):
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    for model in (UserAccount, AuthSession, SourceSite, ContentSource):
+    for model in (UserAccount, AdminAccount, AuthSession, SourceSite, ContentSource):
         model.__table__.create(engine)
     with engine.begin() as connection:
         connection.execute(text("""CREATE TABLE content (
             content_id BIGINT PRIMARY KEY, title TEXT NOT NULL,
             judgment_status TEXT NOT NULL, status TEXT NOT NULL,
             created_at TIMESTAMP NOT NULL, published_at TIMESTAMP, summary TEXT, body TEXT,
-            updated_at TIMESTAMP NOT NULL DEFAULT '2026-11-13 09:12:34.123456+09:00'
+            updated_at TIMESTAMP NOT NULL DEFAULT '2026-11-13 09:12:34.123456+09:00',
+            source_draft_id BIGINT, deleted_at TIMESTAMP
         )"""))
+        connection.execute(text("CREATE TABLE draft (draft_id BIGINT PRIMARY KEY, status TEXT NOT NULL)"))
+        connection.execute(text("INSERT INTO draft VALUES (3, 'checking')"))
         connection.execute(text("""INSERT INTO content
             (content_id, title, judgment_status, status, created_at, published_at, summary, body) VALUES
             (1, '달빛 OST', 'pending', 'active', '2026-11-10 00:00:00', NULL, NULL, '본문'),
             (2, '달빛 소식', 'needs_review', 'pending_review', '2026-11-11 00:00:00', NULL, '요약', '상세 본문'),
             (3, '달빛 100%_특집', 'needs_review', 'active', '2026-11-11 00:00:00', NULL, NULL, '본문')
         """))
+        connection.execute(text("UPDATE content SET source_draft_id=3 WHERE content_id=2"))
     with Session(engine) as db:
         db.add(UserAccount(user_id=7, nickname="격리 테스트", auth_provider="kakao", provider_user_id="fixture",
                            account_status="active", onboarding_completed_at=utcnow()))
@@ -84,8 +88,7 @@ def api(monkeypatch):
 
     monkeypatch.setattr(settings, "redis_url", None)
     app = create_app(enable_dev_api=False)
-    # The only router registration and allowing provider live in isolated tests.
-    app.include_router(router, prefix="/api/v1")
+    # Exercise the registered runtime router with isolated DB/session overrides.
     app.dependency_overrides[get_db] = isolated_db
     app.dependency_overrides[get_session_store] = lambda: None
     permission = AsyncMock(return_value=True)
@@ -247,7 +250,8 @@ def test_detail_sources_and_missing_content_use_existing_service(api):
         {"url": "https://example.org/extra", "title": None, "publisher": None, "role": "material", "citationOrder": None},
     ]
     assert body["updatedAt"] == "2026-11-13T09:12:34.123456+09:00"
-    assert set(body) == {"contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources"}
+    assert set(body) == {"contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources", "review"}
+    assert body["review"] == {"allowedActions": [], "disabledReason": "permission_denied"}
     assert api.client.get(PATHS[0] + "/1").json()["sources"] == []
     missing = api.client.get(PATHS[0] + "/999")
     assert missing.status_code == 404
