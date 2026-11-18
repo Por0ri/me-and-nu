@@ -16,7 +16,10 @@ KEYS = {
     "CHECKING_KAKAO_OAUTH_ENABLED", "CHECKING_KAKAO_CLIENT_ID", "CHECKING_KAKAO_CLIENT_SECRET",
     "CHECKING_NAVER_OAUTH_ENABLED", "CHECKING_NAVER_CLIENT_ID", "CHECKING_NAVER_CLIENT_SECRET",
     "CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED", "CHECKING_LLM_KEY", "CHECKING_DICT_DATABASE_URL",
+    "CHECKING_CHAT_DAILY_TOTAL_LIMIT",
 }
+# All users' chatbot questions per day: an explicit 1-999999 so a typo can never mean "unlimited" (0).
+DAILY_LIMIT = re.compile(r"[1-9][0-9]{0,5}")
 # The chatbot dictionary is a separate read-only database inside this stack's PostgreSQL.
 DICT_URL = re.compile(r"postgresql\+psycopg://menu_dict_reader:([0-9a-f]{64})@postgres:5432/menu_dict")
 FIXED_ENV = {
@@ -53,6 +56,9 @@ def validate_values(values, environ=None):
         if not match or len(set(match[1])) < 8 or match[1] in passwords:
             raise GuardError("CHECKING_DICT_DATABASE_URL must be empty or the read-only menu_dict_reader on the checking "
                              "PostgreSQL with its own random 64-character hex password.")
+    if not DAILY_LIMIT.fullmatch(values["CHECKING_CHAT_DAILY_TOTAL_LIMIT"]):
+        raise GuardError("CHECKING_CHAT_DAILY_TOTAL_LIMIT must be a whole number from 1 to 999999 "
+                         "(all users' chatbot questions per day, shared with the main API).")
     try:
         addresses = values["CHECKING_FORWARDED_ALLOW_IPS"].split(",")
         if not addresses or any(ipaddress.ip_address(value).is_unspecified for value in addresses):
@@ -111,6 +117,8 @@ def validate_config(config, values):
             raise GuardError("Only the checking API may receive LLM_KEY, and only from CHECKING_LLM_KEY.")
         if str(environment.get("DICT_DATABASE_URL")) != (values["CHECKING_DICT_DATABASE_URL"] if name == "api" else ""):
             raise GuardError("Only the checking API may receive DICT_DATABASE_URL, and only from CHECKING_DICT_DATABASE_URL.")
+        if environment.get("CHAT_DAILY_TOTAL_LIMIT") != (values["CHECKING_CHAT_DAILY_TOTAL_LIMIT"] if name == "api" else None):
+            raise GuardError("Only the checking API may receive CHAT_DAILY_TOTAL_LIMIT, and only from CHECKING_CHAT_DAILY_TOTAL_LIMIT.")
         if environment.get("DATABASE_URL") != expected_db or environment.get("REDIS_URL") != expected_redis:
             raise GuardError(f"{name} must use the private checking database and Redis.")
         if environment.get("CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED") != values["CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED"]:
@@ -202,6 +210,7 @@ def check(*, build=False):
     print("Checking configuration valid: isolated project/volumes/networks, loopback 8002, fixed checking origins, bounded resources.")
     print(f"Chatbot LLM key for the API: {'set' if values['CHECKING_LLM_KEY'] else 'empty (chatbot answers off)'}.")
     print(f"Chatbot dictionary for the API: {'set' if values['CHECKING_DICT_DATABASE_URL'] else 'empty (dictionary off)'}.")
+    print(f"Chatbot questions per day for all users: {values['CHECKING_CHAT_DAILY_TOTAL_LIMIT']} (counted together with the main API).")
 
 
 def initialize(image_tag):

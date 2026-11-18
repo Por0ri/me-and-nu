@@ -241,7 +241,7 @@
 | 모델 | `gpt-6-luna` | llm.py `CHAT_MODEL` |
 | LLM 제한 시간 | 25초 | llm.py `ask_json` |
 | 화면이 답을 기다리는 시간 | 40초 (0.8초마다 확인) | chat-service.ts |
-| 하루 질문 수 | 한 사람 30 · 모든 사용자 합쳐 5,000 (한국 날짜 기준) | 설정 `CHAT_DAILY_QUESTION_LIMIT` · `CHAT_DAILY_TOTAL_LIMIT` |
+| 하루 질문 수 | 한 사람 30 · 모든 사용자 합쳐 100 (베타 전, 베타 때 5,000. 한국 날짜 기준, Checking · 실서비스 합산) | 설정 `CHAT_DAILY_QUESTION_LIMIT` · `CHAT_DAILY_TOTAL_LIMIT` (서버 파일 `CHECKING_` · `MAIN_CHAT_DAILY_TOTAL_LIMIT`) |
 | 질문 길이 | 500자 | ai-question.ts · 백엔드 스키마 |
 | 고른 문장 길이 | 500자 | 백엔드 스키마 |
 | 답 출력 상한 | 2,000 토큰 (생각 토큰 포함, 넘으면 답 실패) | llm.py `MAX_OUTPUT_TOKENS` |
