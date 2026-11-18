@@ -41,6 +41,12 @@ MONTHS = {m: i for i, m in enumerate(
     ["January", "February", "March", "April", "May", "June", "July", "August", "September",
      "October", "November", "December"], 1)}
 RANK_OK = "?st wikibase:rank ?rank FILTER(?rank != wikibase:DeprecatedRank)"
+# 위키데이터 캐릭터 한국어 이름 오타 (11/18 확인: 캐릭터 이름을 일본어 발음과 대조). 다시 불러와도 오타가 안 돌아오게 여기서 고침
+KO_TYPO = {
+    "Q42012085": ("히키가야 하지만", "히키가야 하치만"),  # 比企谷八幡
+    "Q2235195": ("카라", "카구라"),  # 神楽 (이누야샤)
+    "Q119439209": ("후지바라시 쿄", "후지바야시 쿄"),  # 藤林杏
+}
 
 # 시즌/극장판 질의 (__VALUES__ 자리에 AniList 번호 1,000개)
 ENTRY_QUERIES = {
@@ -345,9 +351,12 @@ def main() -> None:
             items.append((q, cid))
             item_of.setdefault(cid, q)
             char_seen.add(cid)
-            if b.get("ko"):
-                store.alias(cid, b["ko"], "ko", WD)
-                store.fact(cid, "name_ko", b["ko"], at, ITEM_URL.format(q), WD)
+            ko = b.get("ko")
+            if q in KO_TYPO and ko == KO_TYPO[q][0]:
+                ko = KO_TYPO[q][1]
+            if ko:
+                store.alias(cid, ko, "ko", WD)
+                store.fact(cid, "name_ko", ko, at, ITEM_URL.format(q), WD)
             born = wd_date(b.get("t"), b.get("prec"))
             if born and "day" in born:
                 store.fact(cid, "birthday", {"month": born["month"], "day": born["day"]}, at, ITEM_URL.format(q), WD)

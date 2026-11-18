@@ -2552,6 +2552,41 @@ def studio_logo(qid: str) -> pathlib.Path | None:
     return cache if data else None
 
 
+COLLAGE_FONT_BOLD = r"C:\Windows\Fonts\malgunbd.ttf"  # 11/17 서원이 확정한 시안 글꼴 (맑은 고딕)
+COLLAGE_FONT = r"C:\Windows\Fonts\malgun.ttf"
+
+
+def _collage_label(canvas, spans: list[tuple[int, int, int]], name: str, small: str = "애니 모음") -> bool:
+    """소재 모음 바둑판 (11/17 서원 시안 B): 위 줄과 아래 줄 사이 빈 띠 가운데에 큰 소재 이름(흰색) + 작은
+    '애니 모음'(연보라) + 양옆 가는 선. 바둑판이 두 줄일 때만. 글꼴이 없는 컴퓨터면 글씨 없이 두고 False.
+    서버 글 다시 그리기 스크립트도 이 함수를 그대로 쓴다 (모양이 같도록)"""
+    from PIL import ImageDraw, ImageFont
+
+    rows = {row for row, _, _ in spans}
+    if rows != {0, 1}:
+        return False
+    try:
+        big, sub = ImageFont.truetype(COLLAGE_FONT_BOLD, 104), ImageFont.truetype(COLLAGE_FONT, 46)
+    except OSError:
+        print(f"  경고: 글꼴이 없어 소재 모음 가운데 글씨를 넣지 않음 ({COLLAGE_FONT_BOLD})")
+        return False
+    top_end = max(bottom for row, _, bottom in spans if row == 0)
+    low_start = min(top for row, top, _ in spans if row == 1)
+    cy = (top_end + low_start) // 2
+    width = canvas.width
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    box = big.getbbox(name)
+    h1, gap = box[3] - box[1], 8
+    y1 = cy - (h1 + gap + 50) // 2
+    draw.text((width / 2, y1 + h1 / 2), name, font=big, fill=(255, 255, 255), anchor="mm")
+    draw.text((width / 2, y1 + h1 + gap + 26), small, font=sub, fill=(199, 172, 251), anchor="mm")
+    half = draw.textlength(name, font=big) / 2
+    for sign in (-1, 1):
+        x0 = width / 2 + sign * (half + 40)
+        draw.line((x0, y1 + h1 / 2, x0 + sign * 150, y1 + h1 / 2), fill=(255, 255, 255, 150), width=4)
+    return True
+
+
 def make_collage(deck: Deck) -> None:
     """순위 · 수상작 표지: 받은 포스터를 바둑판으로 한 장에 모은다 (11/11 서원). 카드 비율 327:408 의 4배 크기.
     제작사 글이면 바둑판을 어둡게 깔고 가운데 흰 판에 제작사 로고를 넣는다"""
@@ -2572,6 +2607,7 @@ def make_collage(deck: Deck) -> None:
     rows = -(-len(posters) // cols)
     cell_w, cell_h = width // cols, height // rows
     canvas = Image.new("RGB", (width, height), (17, 17, 21))
+    spans: list[tuple[int, int, int]] = []  # (줄, 그림 위, 그림 아래) — 소재 모음 가운데 글씨 자리 계산용
     for k, img in enumerate(posters):
         with Image.open(img["local_path"]) as source:
             tile = source.convert("RGB")
@@ -2581,7 +2617,11 @@ def make_collage(deck: Deck) -> None:
         row, col = divmod(k, cols)
         in_row = min(cols, len(posters) - row * cols)  # 마지막 줄이 덜 차면 가운데로
         left = (width - in_row * cell_w) // 2 + col * cell_w
-        canvas.paste(tile, (left + (cell_w - tile.width) // 2, row * cell_h + (cell_h - tile.height) // 2))
+        top = row * cell_h + (cell_h - tile.height) // 2
+        canvas.paste(tile, (left + (cell_w - tile.width) // 2, top))
+        spans.append((row, top, top + tile.height))
+    if deck.kind == "overlap" and deck.cover:  # 11/17 서원: 소재 모음은 위 · 아래 줄 사이 빈 띠에 소재 이름
+        _collage_label(canvas, spans, deck.cover[0])
     logo = studio_logo(deck.logo_qid) if deck.logo_qid else None
     if logo:
         canvas = Image.blend(canvas, Image.new("RGB", canvas.size, (10, 10, 14)), 0.6)
@@ -2616,8 +2656,12 @@ def make_collage(deck: Deck) -> None:
 # 그림 안에 글자는 넣지 않는다 (글자는 앱이 카드 아래쪽 66% 지점부터 얹음)
 PLAYER_W, PLAYER_H = 1308, 1632
 # 11/12 밤 서원: 앱에서 글자(카드 66% = 1077px 부터)와 버튼이 겹침 → 막대 · 버튼을 올려 글자와 100px 띄움
-PLAYER_BAR_Y, PLAYER_BTN_Y = 850, 945  # 11/12 밤 서원: 30px 다시 아래로
-PLAYER_ART_TOP, PLAYER_ART_BOTTOM, PLAYER_ART_W = 70, 850 - 55, 1308 - 2 * 110
+# 11/17 서원 시안 C2: 그림 · 버튼 조금 크게(버튼 1.1배), 전체 아래로, 막대 양옆 길게, 막대와 버튼 사이 넓힘.
+# 버튼 아래 끝 977 + 64 = 1041px = 홈 피드에서 글자가 가장 높이 오는 카드(제목 3줄 + 본문 3줄, 약 1043px)보다 위,
+# 상세 화면 글자 칸(66% = 1077px)과 36px. 글이 길다고 자리를 바꾸는 예외는 두지 않음 (서원)
+PLAYER_BAR_Y, PLAYER_BTN_Y = 875, 977  # 11/12 판: 850, 945
+PLAYER_ART_TOP, PLAYER_ART_BOTTOM, PLAYER_ART_W = 75, 827, 1308 - 2 * 100  # 11/12 판: 70, 795, 1308 - 2 * 110
+PLAYER_BAR_SIDE, PLAYER_BTN_SCALE = 140, 1.1  # 막대 양옆 여백 (11/12 판 190) · 버튼 크기 배율
 
 
 def player_card(img, progress: float):
@@ -2651,22 +2695,28 @@ def player_card(img, progress: float):
     bg.alpha_composite(art, (x, y))
     ui = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(ui)
-    left, right, bar = 190, W - 190, PLAYER_BAR_Y
-    d.rounded_rectangle((left, bar - 4, right, bar + 4), 4, fill=(255, 255, 255, 70))
+    k = PLAYER_BTN_SCALE
+    left, right, bar, t = PLAYER_BAR_SIDE, W - PLAYER_BAR_SIDE, PLAYER_BAR_Y, round(4 * k)
+    d.rounded_rectangle((left, bar - t, right, bar + t), t, fill=(255, 255, 255, 70))
     cut = left + int((right - left) * progress)
-    d.rounded_rectangle((left, bar - 4, cut, bar + 4), 4, fill=(255, 255, 255, 200))
-    d.ellipse((cut - 14, bar - 14, cut + 14, bar + 14), fill=(255, 255, 255, 215))
+    d.rounded_rectangle((left, bar - t, cut, bar + t), t, fill=(255, 255, 255, 200))
+    r = 14 * k
+    d.ellipse((cut - r, bar - r, cut + r, bar + r), fill=(255, 255, 255, 215))
     c, cy = W // 2, PLAYER_BTN_Y
-    d.ellipse((c - 58, cy - 58, c + 58, cy + 58), fill=(255, 255, 255, 200))  # 가운데 일시정지 (11/12 밤: 살짝 작게)
-    d.rounded_rectangle((c - 21, cy - 27, c - 7, cy + 27), 4, fill=(15, 15, 22, 220))
-    d.rounded_rectangle((c + 7, cy - 27, c + 21, cy + 27), 4, fill=(15, 15, 22, 220))
+    R = 58 * k
+    d.ellipse((c - R, cy - R, c + R, cy + R), fill=(255, 255, 255, 200))  # 가운데 일시정지
+    d.rounded_rectangle((c - 21 * k, cy - 27 * k, c - 7 * k, cy + 27 * k), 4, fill=(15, 15, 22, 220))
+    d.rounded_rectangle((c + 7 * k, cy - 27 * k, c + 21 * k, cy + 27 * k), 4, fill=(15, 15, 22, 220))
     for sign in (-1, 1):  # 이전 · 다음
-        bx = c + sign * 215
-        d.polygon([(bx - sign * 25, cy - 29), (bx - sign * 25, cy + 29), (bx + sign * 20, cy)], fill=(255, 255, 255, 200))
-        d.rounded_rectangle((bx + sign * 20 - 4, cy - 29, bx + sign * 20 + 5, cy + 29), 3, fill=(255, 255, 255, 200))
+        bx = c + sign * 215 * k
+        d.polygon([(bx - sign * 25 * k, cy - 29 * k), (bx - sign * 25 * k, cy + 29 * k), (bx + sign * 20 * k, cy)],
+                  fill=(255, 255, 255, 200))
+        x0, x1 = bx + sign * 20 * k - 4 * k, bx + sign * 20 * k + 5 * k
+        d.rounded_rectangle((min(x0, x1), cy - 29 * k, max(x0, x1), cy + 29 * k), 3, fill=(255, 255, 255, 200))
     for sign in (-1, 1):  # 양 끝 동그라미
-        bx = c + sign * 395
-        d.ellipse((bx - 12, cy - 12, bx + 12, cy + 12), fill=(255, 255, 255, 140))
+        bx = c + sign * min(395 * k, W / 2 - left - 20)
+        rr = 12 * k
+        d.ellipse((bx - rr, cy - rr, bx + rr, cy + rr), fill=(255, 255, 255, 140))
     return Image.alpha_composite(bg, ui).convert("RGB")
 
 
