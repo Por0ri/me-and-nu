@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     dict_database_url: str | None = Field(default=None, repr=False)
     # 한 사람이 하루(한국 시각)에 보낼 수 있는 챗봇 질문 수. 0 이면 제한 없음
     chat_daily_question_limit: int = Field(default=30, ge=0)
+    # 모든 사용자를 합친 하루 챗봇 질문 수. 계정을 여러 개 쓰는 경우까지 막는 마지막 상한. 0 이면 제한 없음
+    chat_daily_total_limit: int = Field(default=5000, ge=0)
     # 활동 기록(user_event)의 출처. 실서비스 서버만 production으로 둔다
     event_data_source: Literal["production", "local_demo", "automated_test", "imported"] = "local_demo"
 

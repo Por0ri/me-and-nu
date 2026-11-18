@@ -49,7 +49,12 @@ class ChatTimeout extends Error {}
 export function chatErrorMessage(error: unknown): string {
   if (error instanceof ChatTimeout) return "답이 너무 늦어. 다시 물어봐 줘.";
   const status = typeof error === "object" && error !== null && "status" in error ? (error as { status: unknown }).status : undefined;
-  if (status === 429) return "오늘 물어볼 수 있는 질문을 다 썼어. 내일 다시 물어봐.";
+  if (status === 429) {
+    const code = typeof error === "object" && error !== null && "code" in error ? (error as { code: unknown }).code : undefined;
+    // 모든 사용자를 합친 하루 상한에 닿았을 때는 그 사람 탓이 아니라서 문구를 따로 둔다
+    if (code === "CHAT_SERVICE_DAILY_LIMIT") return "오늘은 챗봇이 쉬는 중이야. 내일 다시 물어봐 줘.";
+    return "오늘 물어볼 수 있는 질문을 다 썼어. 내일 다시 물어봐.";
+  }
   if (status === 401) return "로그인이 끝났어. 다시 로그인하고 물어봐 줘.";
   if (status === 403 || status === 404) return "지금 화면에서는 물어볼 수 없어. 홈에서 다시 열어 줘.";
   if (typeof status === "number") return "지금은 답을 가져오지 못했어. 잠시 뒤에 다시 물어봐 줘.";

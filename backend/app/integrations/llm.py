@@ -8,6 +8,9 @@ from app.core.config import settings
 
 CHAT_MODEL = "gpt-6-luna"
 RESPONSES_URL = "https://api.openai.com/v1/responses"
+# 답 하나의 출력(생각 토큰 포함) 상한. 시험 답 86개 중 가장 긴 게 812 토큰.
+# "길게 써 줘" 같은 주입으로 비용이 커지지 않게 막는다. 넘으면 JSON 이 끊겨 답 실패로 끝난다.
+MAX_OUTPUT_TOKENS = 2000
 
 
 class LlmUnavailable(Exception):
@@ -37,6 +40,7 @@ async def ask_json(instructions: str, prompt: str, *, timeout: float = 25.0) -> 
                     # json_object 형식은 입력에도 'json'이라는 단어가 있어야 한다.
                     "input": f"{prompt}\n\n(답은 JSON 하나로만)",
                     "text": {"format": {"type": "json_object"}},
+                    "max_output_tokens": MAX_OUTPUT_TOKENS,
                 },
             )
     except httpx.HTTPError as exc:
