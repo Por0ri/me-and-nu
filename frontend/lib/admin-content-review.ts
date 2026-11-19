@@ -3,9 +3,10 @@ import { contentVersion, type AdminContentDetail, type AdminReviewAction, type R
 
 export type ReviewAction = AdminReviewAction;
 
-// Mirrors app/schemas/admin_content_review.py. The BE route is unregistered and its
-// write provider denies by default. No admin screen may call submitAdminContentReview
-// until BE connects the permission/audit DB and registers the route.
+// Mirrors app/schemas/admin_content_review.py. Since BE PR #89 the route is registered in
+// the v1 router and checks DB grants (viewer reads; operator/admin review). That is code
+// only: the Checking DB migration, real grants and server deploy are verified separately.
+// No admin screen calls submitAdminContentReview until BE approval and live E2E.
 export type AdminContentReviewRequest = {
   requestId: string; action: ReviewAction; rationale: string;
   expectedStatus: "active" | "pending_review"; expectedJudgmentStatus: "needs_review";
