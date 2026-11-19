@@ -137,6 +137,59 @@ test('viewer cannot open review; operator and admin open only what the BE allows
   }
 });
 
+const stubFlow = (state, enabled = true) => ({ contentId: 2, state: () => state, subscribe: () => () => {},
+  writeGate: () => ({ enabled, reason: enabled ? null : 'off' }), setReload() {}, execute: async () => {}, recheck: async () => {}, release() {} });
+const flowRequest = Object.freeze({ requestId: '0b8c7d6e-5f4a-4b3c-8d2e-1f0a9b8c7d6e', action: 'approve', rationale: '출처 확인',
+  expectedStatus: 'active', expectedJudgmentStatus: 'needs_review', expectedUpdatedAt: '2026-11-13T09:12:34.123456+09:00' });
+const flowResult = (patch = {}) => ({ contentId: 2, draftId: 3, action: 'approve', status: 'active', judgmentStatus: 'confirmed', draftStatus: 'published',
+  publishedAt: '2026-11-19T01:00:00.000001Z', updatedAt: '2026-11-19T01:00:00.000001Z', auditLogId: 41, replayed: false, ...patch });
+
+test('production panel stays disconnected: the registry flow uses the code-only gate and no execute is possible', () => {
+  const env = runtime();
+  const html = renderToStaticMarkup(React.createElement(env.load('components/admin/content-review-panel.tsx').ContentReviewPanel, { content: detailOf() }));
+  assert.match(html, /<button[^>]*disabled=""[^>]*>승인 실행 \(미연결\)<\/button>/);
+  assert.match(html, /승인·반려 실행은 아직 연결되지 않았습니다/);
+  assert.equal(env.load('lib/admin-review-flow.ts').reviewFlowFor(2).writeGate().enabled, false);
+  const screen = fs.readFileSync(path.join(root, 'components/admin/content-detail-screen.tsx'), 'utf8');
+  assert.doesNotMatch(screen, /flow=|reviewWriteGate|ACTIVATION/, 'the detail screen never injects a flow or gate');
+});
+
+test('POST UI states: success only after 200, unknown outcomes get a limited same-request recheck, conflicts never re-run', () => {
+  const env = runtime(); const { ContentReviewPanel } = env.load('components/admin/content-review-panel.tsx');
+  const render = (state, enabled = true) => renderToStaticMarkup(React.createElement(ContentReviewPanel, { content: detailOf(), flow: stubFlow(state, enabled) }));
+  const idle = render({ phase: 'idle' });
+  assert.match(idle, /<button[^>]*disabled=""[^>]*>승인 실행<\/button>/, 'enabled gate still needs the confirmed input');
+  assert.match(idle, /HTTP 200으로 확인한 경우에만 완료로 표시/); assert.equal(buttonState(idle, '승인 내용 확인'), 'enabled');
+
+  const submitting = render({ phase: 'submitting', request: flowRequest, recheck: false });
+  assert.equal(buttonState(submitting, '승인 내용 확인'), 'disabled'); assert.equal(buttonState(submitting, '반려 내용 확인'), 'disabled');
+  assert.match(submitting, /data-review-phase="submitting"/); assert.match(submitting, /aria-busy="true"/);
+  assert.match(submitting, /승인 요청을 처리하는 중입니다. 서버 응답을 받기 전에는 완료로 표시하지 않습니다/);
+  assert.ok(submitting.includes(flowRequest.requestId)); assert.doesNotMatch(submitting, /승인 완료|감사 기록 #/);
+
+  const done = render({ phase: 'succeeded', request: flowRequest, result: flowResult() });
+  assert.match(done, /<strong>승인 완료<\/strong> · 감사 기록 #41/);
+  assert.match(done, /처리 결과: 콘텐츠 active · 검수 confirmed · 초안 published/);
+  assert.match(done, /현재 상태는 상세를 다시 조회해 표시합니다/); assert.doesNotMatch(done, /이미 처리된/);
+  assert.match(render({ phase: 'succeeded', request: flowRequest, result: flowResult({ replayed: true }) }), /이미 처리된 같은 요청의 결과를 다시 받았습니다/);
+
+  const uncertain = render({ phase: 'uncertain', request: flowRequest, rechecks: 1, message: '처리 결과를 확인하지 못했습니다. 같은 요청으로 다시 확인해 주세요.' });
+  assert.match(uncertain, /data-review-phase="uncertain"/); assert.ok(uncertain.includes(flowRequest.requestId));
+  assert.equal(buttonState(uncertain, '같은 요청으로 다시 확인 \\(1/3\\)'), 'enabled');
+  assert.equal(buttonState(uncertain, '승인 내용 확인'), 'disabled', 'no new action while unresolved');
+  assert.doesNotMatch(uncertain, /실패|저장되지|저장하지 못|미저장|취소되었|승인 완료/);
+  const exhausted = render({ phase: 'uncertain', request: flowRequest, rechecks: 3, message: '처리 결과를 확인하지 못했습니다. 같은 요청으로 다시 확인해 주세요.' });
+  assert.equal(buttonState(exhausted, '같은 요청으로 다시 확인 \\(3/3\\)'), 'disabled'); assert.match(exhausted, /BE 감사 기록/);
+  const gated = render({ phase: 'uncertain', request: flowRequest, rechecks: 0, message: 'x' }, false);
+  assert.equal(buttonState(gated, '같은 요청으로 다시 확인 \\(0/3\\)'), 'disabled', 'no recheck without an enabled gate');
+
+  const conflict = render({ phase: 'stopped', request: flowRequest, failure: { status: 'conflict', message: '콘텐츠 상태가 변경되었습니다. 다시 조회한 뒤 확인해 주세요.', retrySameRequest: false, reload: true } });
+  assert.match(conflict, /자동으로 다시 실행하지 않습니다/); assert.doesNotMatch(conflict, /같은 요청으로 다시 확인 \(/);
+  const forbidden = render({ phase: 'stopped', request: flowRequest, failure: { status: 'forbidden', message: '콘텐츠 검수 권한이 없습니다.', retrySameRequest: false, reload: true } });
+  assert.match(forbidden, /콘텐츠 검수 권한이 없습니다/); assert.doesNotMatch(forbidden, /자동으로 다시 실행/);
+  assert.match(render({ phase: 'blocked', message: '현재 계정은 조회 전용입니다. 승인·반려 권한이 없습니다.' }), /data-review-phase="blocked"[\s\S]*조회 전용/);
+});
+
 const reviewId = '6f1c2b8e-3d4a-4f5b-9c6d-7e8f9a0b1c2d';
 const reviewFields = ['requestId', 'action', 'rationale', 'expectedStatus', 'expectedJudgmentStatus', 'expectedUpdatedAt'];
 const approved = (patch = {}) => ({ contentId: 2, draftId: 3, action: 'approve', status: 'active', judgmentStatus: 'confirmed',

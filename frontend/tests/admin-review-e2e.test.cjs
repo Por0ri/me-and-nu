@@ -41,7 +41,7 @@ function browser(fixture, actor) {
     return mod.exports;
   }
   const api = load('lib/api.ts'), content = load('lib/admin-content.ts'), review = load('lib/admin-content-review.ts');
-  return { api, content, review, posts, unauthorized: () => unauthorized,
+  return { api, content, review, posts, load, unauthorized: () => unauthorized,
     list: (search = 'mode=review') => content.loadAdminContents(content.parseAdminQuery(new URLSearchParams(search))),
     detail: id => content.loadAdminContent(id),
     request: (detail, action, rationale = ' 출처 확인 완료 ') => review.prepareReviewRequest(detail, action, rationale, crypto.randomUUID()),
@@ -122,8 +122,9 @@ test('a revoked grant refuses the same session at once, including replays; a dow
   await operator.submit(2, request);
   const pending = await operator.detail(3);
   fixture.revoke('operator');
-  for (const read of [operator.list(), operator.detail(3)]) {
-    const { error, read: state } = await rejection(read, operator);
+  // Start each read only when awaited, so no rejection is ever left unhandled meanwhile.
+  for (const read of [() => operator.list(), () => operator.detail(3)]) {
+    const { error, read: state } = await rejection(read(), operator);
     assert.equal(error.code, 'ADMIN_REQUIRED'); assert.equal(state.status, 'forbidden');
   }
   for (const [id, attempt] of [[2, request], [3, operator.request(pending, 'reject')]]) {
@@ -190,4 +191,208 @@ test('a rotated CSRF token is refused, refreshed on the next attempt and the ide
   assert.equal(result.replayed, false); assert.equal(fixture.audit.length, 1);
   assert.deepEqual(operator.posts.map(post => post.csrf), ['csrf-operator-1', 'csrf-operator-2']);
   assert.equal(operator.posts[1].body, operator.posts[0].body);
+}));
+
+// --- POST UI flow (lib/admin-review-flow.ts) over the same loopback fake API -------------
+// The flow is the only UI path to the review POST. These tests enable it with a test-only
+// activation bound to the fixture origin; production uses the code-only gate (off).
+const tick = () => new Promise(resolve => setImmediate(resolve));
+function reviewFlow(session, fixture, contentId, { enabled = true } = {}) {
+  const { createReviewFlow } = session.load('lib/admin-review-flow.ts');
+  const { reviewWriteGate } = session.load('lib/admin-review-write-gate.ts');
+  const activation = { apiOrigin: fixture.origin, approvedBy: 'isolated test', approvedOn: '2026-11-19', reference: 'loopback fixture only' };
+  const flow = createReviewFlow(contentId, { submit: session.review.submitAdminContentReview, newRequestId: () => crypto.randomUUID(),
+    gate: () => reviewWriteGate(fixture.origin, enabled ? activation : null) });
+  const phases = [], reloads = [];
+  flow.subscribe(() => phases.push(flow.state().phase));
+  flow.setReload(() => reloads.push(flow.state().phase));
+  return { flow, phases, reloads };
+}
+const postsTo = fixture => fixture.requests.filter(request => request.method === 'POST');
+const plain = value => JSON.parse(JSON.stringify(value)); // Compare vm-realm objects by value.
+
+test('fake API detail carries review metadata by role and state, like the BE eligibility service', async () => withFixture(async fixture => {
+  assert.deepEqual(plain((await browser(fixture, 'viewer').detail(2)).review), { allowedActions: [], disabledReason: 'permission_denied' });
+  const operator = browser(fixture, 'operator');
+  assert.deepEqual(plain((await operator.detail(2)).review), { allowedActions: ['approve', 'reject'], disabledReason: null });
+  assert.deepEqual(plain((await operator.detail(4)).review), { allowedActions: [], disabledReason: 'content_not_reviewable' });
+  fixture.contents.get(3).draftStatus = 'writing';
+  assert.deepEqual(plain((await browser(fixture, 'admin').detail(3)).review), { allowedActions: [], disabledReason: 'draft_not_reviewable' });
+}));
+
+test('flow: operator approval shows success only after HTTP 200, with audit and result, then re-reads the detail', async () => withFixture(async fixture => {
+  const operator = browser(fixture, 'operator');
+  const { flow, phases, reloads } = reviewFlow(operator, fixture, 2);
+  const detail = await operator.detail(2);
+  const running = flow.execute(detail, 'approve', '  출처와 본문 확인  ');
+  const submitting = flow.state();
+  assert.equal(submitting.phase, 'submitting'); assert.equal(reloads.length, 0);
+  assert.ok(Object.isFrozen(submitting.request)); assert.equal(submitting.request.expectedUpdatedAt, detail.updatedAt);
+  await running;
+  const done = flow.state();
+  assert.deepEqual(phases, ['submitting', 'succeeded']);
+  assert.equal(done.request, submitting.request);
+  assert.deepEqual({ auditLogId: done.result.auditLogId, replayed: done.result.replayed, status: done.result.status,
+    judgmentStatus: done.result.judgmentStatus, draftStatus: done.result.draftStatus }, { auditLogId: 1, replayed: false,
+    status: 'active', judgmentStatus: 'confirmed', draftStatus: 'published' });
+  assert.deepEqual(reloads, ['succeeded']);
+  const sent = JSON.parse(postsTo(fixture)[0].body);
+  assert.deepEqual(sent, { ...submitting.request }); assert.equal(sent.rationale, '출처와 본문 확인');
+  const reread = await operator.detail(2);
+  assert.equal(reread.updatedAt, done.result.updatedAt);
+  assert.deepEqual(plain(reread.review), { allowedActions: [], disabledReason: 'content_not_reviewable' });
+  await flow.execute(reread, 'reject', '다시 반려');
+  assert.equal(flow.state().phase, 'blocked'); assert.equal(postsTo(fixture).length, 1);
+}));
+
+test('flow: a double click sends one request, and no new action starts while one is unresolved', async () => withFixture(async fixture => {
+  const operator = browser(fixture, 'operator');
+  const { flow } = reviewFlow(operator, fixture, 2);
+  const detail = await operator.detail(2);
+  await Promise.all([flow.execute(detail, 'approve', '사유'), flow.execute(detail, 'approve', '사유'), flow.execute(detail, 'reject', '사유')]);
+  assert.equal(postsTo(fixture).length, 1); assert.equal(fixture.audit.length, 1); assert.equal(flow.state().phase, 'succeeded');
+
+  const second = reviewFlow(operator, fixture, 3);
+  fixture.failNext('unavailable-before-commit');
+  await second.flow.execute(await operator.detail(3), 'reject', '사유');
+  assert.equal(second.flow.state().phase, 'uncertain');
+  await second.flow.execute(await operator.detail(3), 'approve', '다른 조치');
+  assert.equal(second.flow.state().phase, 'uncertain'); assert.equal(postsTo(fixture).length, 2);
+}));
+
+test('flow: unknown outcomes never auto-resend; manual rechecks reuse the identical request and are limited', async () => {
+  for (const fault of ['permission-unavailable', 'unavailable-before-commit', 'unavailable-after-commit', 'drop-after-commit', 'bad-audit-response']) {
+    await withFixture(async fixture => {
+      const operator = browser(fixture, 'operator');
+      const { flow, reloads } = reviewFlow(operator, fixture, 2);
+      fixture.failNext(fault);
+      await flow.execute(await operator.detail(2), 'approve', '출처 확인');
+      const uncertain = flow.state();
+      assert.equal(uncertain.phase, 'uncertain', fault); assert.equal(uncertain.rechecks, 0);
+      assert.equal(uncertain.message, '처리 결과를 확인하지 못했습니다. 같은 요청으로 다시 확인해 주세요.');
+      await tick(); await tick();
+      assert.equal(postsTo(fixture).length, 1, `${fault}: no automatic resend`); assert.equal(reloads.length, 0);
+      await flow.recheck();
+      const done = flow.state();
+      assert.equal(done.phase, 'succeeded', fault); assert.equal(done.request, uncertain.request);
+      assert.equal(done.result.replayed, fixture.committingFaults.has(fault), fault); assert.equal(fixture.audit.length, 1);
+      const [first, again] = postsTo(fixture);
+      assert.equal(again.body, first.body); assert.equal(JSON.parse(again.body).requestId, uncertain.request.requestId);
+    });
+  }
+  await withFixture(async fixture => {
+    const operator = browser(fixture, 'operator');
+    const { flow, reloads } = reviewFlow(operator, fixture, 2);
+    for (let index = 0; index < 5; index++) fixture.failNext('unavailable-before-commit');
+    await flow.execute(await operator.detail(2), 'approve', '출처 확인');
+    for (let attempt = 0; attempt < 5; attempt++) await flow.recheck();
+    assert.equal(flow.state().phase, 'uncertain'); assert.equal(flow.state().rechecks, 3);
+    assert.equal(postsTo(fixture).length, 4, 'one request plus three manual rechecks');
+    assert.ok(postsTo(fixture).every(post => post.body === postsTo(fixture)[0].body));
+    flow.release();
+    assert.equal(flow.state().phase, 'idle'); assert.deepEqual(reloads, ['idle']); assert.equal(fixture.audit.length, 0);
+  });
+});
+
+test('flow: 409 stops the request, re-reads state and permission, and never re-runs it', async () => withFixture(async fixture => {
+  const admin = browser(fixture, 'admin'), operator = browser(fixture, 'operator');
+  const stale = await operator.detail(3);
+  await admin.submit(3, admin.request(await admin.detail(3), 'reject'));
+  const { flow, reloads } = reviewFlow(operator, fixture, 3);
+  await flow.execute(stale, 'approve', '출처 확인');
+  const stopped = flow.state();
+  assert.equal(stopped.phase, 'stopped'); assert.equal(stopped.failure.status, 'conflict');
+  assert.deepEqual(reloads, ['stopped']);
+  await tick(); await flow.recheck();
+  assert.equal(postsTo(fixture).length, 2, 'admin reject + one operator attempt, no re-run');
+  const fresh = await operator.detail(3);
+  assert.deepEqual(plain(fresh.review), { allowedActions: [], disabledReason: 'content_not_reviewable' });
+  await flow.execute(fresh, 'approve', '출처 확인');
+  assert.equal(flow.state().phase, 'blocked'); assert.equal(postsTo(fixture).length, 2);
+}));
+
+test('flow: viewer sends nothing; revoked or downgraded grants end in forbidden with a re-read, never success', async () => withFixture(async fixture => {
+  const viewer = browser(fixture, 'viewer');
+  const viewerFlow = reviewFlow(viewer, fixture, 2);
+  await viewerFlow.flow.execute(await viewer.detail(2), 'approve', '사유');
+  assert.equal(viewerFlow.flow.state().phase, 'blocked'); assert.match(viewerFlow.flow.state().message, /조회 전용/);
+  assert.equal(postsTo(fixture).length, 0);
+
+  const operator = browser(fixture, 'operator');
+  const revoked = reviewFlow(operator, fixture, 2);
+  const detail = await operator.detail(2);
+  fixture.revoke('operator');
+  await revoked.flow.execute(detail, 'approve', '사유');
+  assert.equal(revoked.flow.state().phase, 'stopped'); assert.equal(revoked.flow.state().failure.status, 'forbidden');
+  assert.deepEqual(revoked.reloads, ['stopped']);
+
+  const admin = browser(fixture, 'admin');
+  const pending = reviewFlow(admin, fixture, 3);
+  fixture.failNext('unavailable-after-commit');
+  await pending.flow.execute(await admin.detail(3), 'reject', '사유');
+  assert.equal(pending.flow.state().phase, 'uncertain');
+  fixture.setRole('admin', 'viewer');
+  await pending.flow.recheck();
+  assert.equal(pending.flow.state().phase, 'stopped'); assert.equal(pending.flow.state().failure.status, 'forbidden');
+  assert.equal(fixture.audit.length, 1, 'the earlier commit stays; the UI just cannot confirm it');
+}));
+
+test('flow: 401 asks for login with a re-read; an expired CSRF token is rechecked with the identical request', async () => withFixture(async fixture => {
+  const operator = browser(fixture, 'operator');
+  const expired = reviewFlow(operator, fixture, 2);
+  const detail = await operator.detail(2);
+  fixture.expire('operator');
+  await expired.flow.execute(detail, 'approve', '사유');
+  assert.equal(expired.flow.state().failure.status, 'login-required'); assert.deepEqual(expired.reloads, ['stopped']);
+
+  const admin = browser(fixture, 'admin');
+  await admin.api.getSession();
+  const { flow } = reviewFlow(admin, fixture, 3);
+  fixture.rotateCsrf('admin');
+  await flow.execute(await admin.detail(3), 'reject', '사유');
+  assert.equal(flow.state().phase, 'uncertain'); assert.match(flow.state().message, /보안 확인이 만료/);
+  await flow.recheck();
+  assert.equal(flow.state().phase, 'succeeded'); assert.equal(flow.state().result.replayed, false);
+  assert.deepEqual(admin.posts.map(post => post.csrf), ['csrf-admin-1', 'csrf-admin-2']);
+  assert.equal(admin.posts[1].body, admin.posts[0].body);
+}));
+
+test('flow: a request outlives an unmounted panel or closed modal; the result and pending re-read land on reattach', async () => withFixture(async fixture => {
+  const operator = browser(fixture, 'operator');
+  const { flow, reloads } = reviewFlow(operator, fixture, 2);
+  const detail = await operator.detail(2);
+  const running = flow.execute(detail, 'approve', '사유');
+  flow.setReload(null); // The panel unmounted (detail re-read, navigation inside the app).
+  await running;
+  assert.equal(flow.state().phase, 'succeeded'); assert.equal(reloads.length, 0);
+  const later = [];
+  flow.setReload(() => later.push('reload'));
+  assert.deepEqual(later, ['reload']);
+  flow.setReload(() => later.push('again'));
+  assert.deepEqual(later, ['reload']);
+  const { reviewFlowFor } = operator.load('lib/admin-review-flow.ts');
+  assert.equal(reviewFlowFor(2), reviewFlowFor(2), 'remounts reattach to the same registry flow');
+}));
+
+test('production write gate is off in code: no env, query or storage switch, and the registry flow sends nothing', async () => withFixture(async fixture => {
+  const operator = browser(fixture, 'operator');
+  const { reviewWriteGate } = operator.load('lib/admin-review-write-gate.ts');
+  for (const base of [fixture.origin, 'http://localhost:8000', 'https://api.checking.me-nu.kr', 'https://api.me-nu.kr']) {
+    assert.equal(reviewWriteGate(base).enabled, false, base);
+  }
+  const activation = { apiOrigin: 'https://api.checking.me-nu.kr', approvedBy: 'x', approvedOn: '2026-11-19', reference: 'x' };
+  assert.equal(reviewWriteGate('https://api.checking.me-nu.kr/', activation).enabled, true);
+  assert.equal(reviewWriteGate('https://api.me-nu.kr', activation).enabled, false, 'an activation is bound to one API origin');
+  assert.equal(reviewWriteGate('not a url', activation).enabled, false);
+  const source = fs.readFileSync(path.join(root, 'lib/admin-review-write-gate.ts'), 'utf8');
+  assert.match(source, /const ACTIVATION: ReviewWriteActivation \| null = null;/);
+  assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ''), /process\.env|NEXT_PUBLIC|localStorage|sessionStorage|location|searchParams|cookie/);
+
+  const { reviewFlowFor } = operator.load('lib/admin-review-flow.ts');
+  const flow = reviewFlowFor(2);
+  assert.equal(flow.writeGate().enabled, false);
+  await flow.execute(await operator.detail(2), 'approve', '출처 확인');
+  assert.equal(flow.state().phase, 'blocked'); assert.match(flow.state().message, /활성화되지 않았습니다/);
+  await flow.recheck();
+  assert.equal(postsTo(fixture).length, 0); assert.equal(fixture.audit.length, 0);
 }));

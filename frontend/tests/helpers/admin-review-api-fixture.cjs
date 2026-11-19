@@ -62,6 +62,15 @@ function createAdminReviewFixture({ actors = {
     return detail ? { contentId, title, judgmentStatus, status, createdAt, publishedAt, updatedAt, summary, body, sources }
       : { contentId, title, judgmentStatus, status, createdAt, publishedAt };
   };
+  // Mirrors admin_review_eligibility_service.py: permission first, then content and Draft state.
+  const eligibility = (content, grant) => {
+    const deny = disabledReason => ({ allowedActions: [], disabledReason });
+    if (!WRITE_ROLES.has(grant.role)) return deny('permission_denied');
+    if (content.status === 'deleted') return deny('deleted');
+    if (!['active', 'pending_review'].includes(content.status) || content.judgmentStatus !== 'needs_review') return deny('content_not_reviewable');
+    if (!['checking', 'approved'].includes(content.draftStatus)) return deny('draft_not_reviewable');
+    return { allowedActions: ['approve', 'reject'], disabledReason: null };
+  };
 
   async function handle(req, res) {
     const url = new URL(req.url, origin);
@@ -95,7 +104,7 @@ function createAdminReviewFixture({ actors = {
     }
     const contentId = Number((detail ?? review)[1]);
     const content = contents.get(contentId);
-    if (detail) return content ? send(200, view(content, true)) : fail(404, 'CONTENT_NOT_FOUND');
+    if (detail) return content ? send(200, { ...view(content, true), review: eligibility(content, grant) }) : fail(404, 'CONTENT_NOT_FOUND');
 
     // POST review: Origin/CSRF, strict DTO, fresh write grant, content, replay, version/state, commit.
     if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) return fail(403, 'CSRF_INVALID');
