@@ -1,7 +1,7 @@
 import { apiRequest, ApiError } from "@/lib/api";
-import { contentVersion, type AdminContentDetail } from "./admin-content";
+import { contentVersion, type AdminContentDetail, type AdminReviewAction, type ReviewDisabledReason } from "./admin-content";
 
-export type ReviewAction = "approve" | "reject";
+export type ReviewAction = AdminReviewAction;
 
 // Mirrors app/schemas/admin_content_review.py. The BE route is unregistered and its
 // write provider denies by default. No admin screen may call submitAdminContentReview
@@ -40,6 +40,27 @@ const requestIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 // version, a fresh write grant, CSRF and transactional audit persistence.
 export function canPrepareReview(content: Pick<AdminContentDetail, "status" | "judgmentStatus">): boolean {
   return content.judgmentStatus === "needs_review" && ["active", "pending_review"].includes(content.status);
+}
+
+export type ReviewAvailability = { allowedActions: ReviewAction[]; message: string | null };
+const disabledMessages: Record<ReviewDisabledReason, string> = {
+  permission_denied: "현재 계정은 조회 전용입니다. 승인·반려 권한이 없습니다.",
+  deleted: "삭제된 콘텐츠는 검수할 수 없습니다.",
+  content_not_reviewable: "현재 콘텐츠 상태에서는 검수할 수 없습니다.",
+  draft_not_reviewable: "연결된 초안이 없거나 검수할 수 없는 상태입니다.",
+  unavailable: "검수 가능 여부를 확인할 수 없습니다.",
+};
+
+// UI condition only. The detail's server review metadata decides which confirmations open
+// (viewer: none; operator/admin: only what the BE allows). The BE still re-checks the
+// current grant, version and state on every POST, so this never authorizes anything.
+export function reviewAvailability(content: Pick<AdminContentDetail, "status" | "judgmentStatus" | "review">): ReviewAvailability {
+  const review = content.review;
+  if (!review) return { allowedActions: [], message: "검수 가능 여부를 확인하지 못했습니다. 콘텐츠를 다시 조회해 주세요." };
+  if (review.disabledReason !== null) return { allowedActions: [], message: disabledMessages[review.disabledReason] };
+  // Allowed by the server, but the stored state shown here is not reviewable: re-read first.
+  if (!canPrepareReview(content)) return { allowedActions: [], message: "콘텐츠 상태를 다시 확인해야 합니다. 콘텐츠를 다시 조회해 주세요." };
+  return { allowedActions: [...review.allowedActions], message: null };
 }
 
 export function reviewRationaleError(value: string): string | null {

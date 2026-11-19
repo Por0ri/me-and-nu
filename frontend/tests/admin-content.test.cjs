@@ -10,7 +10,8 @@ const root = path.join(__dirname, '..');
 const plain = value => JSON.parse(JSON.stringify(value));
 const item = (id = 2) => ({ contentId: id, title: '달빛 콘텐츠', judgmentStatus: 'needs_review', status: 'active',
   createdAt: '2026-11-12T00:00:00Z', publishedAt: null });
-const detailOf = () => ({ ...item(), updatedAt: '2026-11-13T09:12:34.123456+09:00', summary: null, body: null, sources: [] });
+const allowedReview = () => ({ allowedActions: ['approve', 'reject'], disabledReason: null });
+const detailOf = () => ({ ...item(), updatedAt: '2026-11-13T09:12:34.123456+09:00', summary: null, body: null, sources: [], review: allowedReview() });
 const page = (items = [item()]) => ({ items, page: 1, pageSize: 20, total: items.length });
 function runtime(respond = () => page()) {
   const modules = new Map(), calls = [];
@@ -65,6 +66,75 @@ test('review confirmation exposes an honest disconnected state and disabled exec
   assert.match(html, /<dialog[^>]+aria-labelledby="review-title"/);
   assert.match(html, /disabled=""[^>]*>승인 실행 \(미연결\)/);
   assert.match(html, /확인 단계 · 미저장/); assert.doesNotMatch(html, /승인 완료|저장 성공/);
+});
+
+const reasons = ['permission_denied', 'deleted', 'content_not_reviewable', 'draft_not_reviewable', 'unavailable'];
+const panelOf = (env, content) => renderToStaticMarkup(React.createElement(env.load('components/admin/content-review-panel.tsx').ContentReviewPanel, { content }));
+const buttonState = (html, label) => {
+  const tag = html.match(new RegExp(`<button[^>]*>${label}</button>`))[0];
+  return /disabled=""/.test(tag) ? 'disabled' : 'enabled';
+};
+
+test('detail review metadata accepts only the BE-defined actions and reasons and is kept exactly', async () => {
+  const valid = [allowedReview(), { allowedActions: ['reject', 'approve'], disabledReason: null }, { allowedActions: ['approve'], disabledReason: null },
+    { allowedActions: ['reject'], disabledReason: null }, ...reasons.map(disabledReason => ({ allowedActions: [], disabledReason }))];
+  for (const review of valid) {
+    const detail = { ...detailOf(), review }, env = runtime(() => detail);
+    const parsed = await env.api.loadAdminContent(2);
+    assert.deepEqual(plain(parsed), detail); assert.deepEqual(plain(parsed.review), review);
+    assert.equal(env.calls.length, 1); assert.equal(env.calls[0].init.method ?? 'GET', 'GET');
+  }
+});
+
+test('missing or malformed review metadata keeps the detail readable but disables review', async () => {
+  const malformed = [undefined, null, [], 'approve', {}, { disabledReason: null }, { allowedActions: [] },
+    { allowedActions: null, disabledReason: null }, { allowedActions: 'approve', disabledReason: null },
+    { allowedActions: ['delete'], disabledReason: null }, { allowedActions: ['APPROVE'], disabledReason: null },
+    { allowedActions: ['approve', 'approve'], disabledReason: null }, { allowedActions: [null], disabledReason: null },
+    { allowedActions: [], disabledReason: null }, { allowedActions: ['approve'], disabledReason: 'deleted' },
+    { allowedActions: ['approve', 'reject'], disabledReason: 'permission_denied' }, { allowedActions: [], disabledReason: 'expired' },
+    { allowedActions: [], disabledReason: 1 }, { allowedActions: [], disabledReason: '' }];
+  for (const review of malformed) {
+    const detail = { ...detailOf(), review }, env = runtime(() => detail);
+    const parsed = await env.api.loadAdminContent(2);
+    assert.equal(parsed.review, null, JSON.stringify(review));
+    assert.equal(parsed.updatedAt, detail.updatedAt); assert.equal(parsed.contentId, 2); assert.equal(parsed.status, 'active');
+    const { reviewAvailability } = env.load('lib/admin-content-review.ts');
+    assert.deepEqual(plain(reviewAvailability(parsed)), { allowedActions: [],
+      message: '검수 가능 여부를 확인하지 못했습니다. 콘텐츠를 다시 조회해 주세요.' });
+    const html = panelOf(env, parsed);
+    assert.equal(buttonState(html, '승인 내용 확인'), 'disabled'); assert.equal(buttonState(html, '반려 내용 확인'), 'disabled');
+  }
+  // The metadata never makes an otherwise invalid detail acceptable.
+  const env = runtime(() => ({ ...detailOf(), updatedAt: '2026-11-13T00:12:34' }));
+  await assert.rejects(env.api.loadAdminContent(2), error => error.code === 'INVALID_ADMIN_RESPONSE');
+});
+
+test('viewer cannot open review; operator and admin open only what the BE allows; execution stays disconnected', () => {
+  const env = runtime(); const { reviewAvailability } = env.load('lib/admin-content-review.ts');
+  const cases = [
+    ['viewer', { allowedActions: [], disabledReason: 'permission_denied' }, 'active', 'disabled', 'disabled', /조회 전용/],
+    ['operator', allowedReview(), 'active', 'enabled', 'enabled', null],
+    ['admin', allowedReview(), 'pending_review', 'enabled', 'enabled', null],
+    ['operator, approve only', { allowedActions: ['approve'], disabledReason: null }, 'active', 'enabled', 'disabled', null],
+    ['admin, reject only', { allowedActions: ['reject'], disabledReason: null }, 'active', 'disabled', 'enabled', null],
+    ['deleted', { allowedActions: [], disabledReason: 'deleted' }, 'active', 'disabled', 'disabled', /삭제된 콘텐츠/],
+    ['content state', { allowedActions: [], disabledReason: 'content_not_reviewable' }, 'active', 'disabled', 'disabled', /현재 콘텐츠 상태/],
+    ['draft state', { allowedActions: [], disabledReason: 'draft_not_reviewable' }, 'active', 'disabled', 'disabled', /초안/],
+    ['unjudged', { allowedActions: [], disabledReason: 'unavailable' }, 'active', 'disabled', 'disabled', /확인할 수 없습니다/],
+    // Server allowed, but the shown stored state is not reviewable: re-read instead of trusting either side.
+    ['stale state', allowedReview(), 'hidden', 'disabled', 'disabled', /다시 조회/],
+  ];
+  for (const [name, review, status, approve, reject, message] of cases) {
+    const content = { ...detailOf(), status, review };
+    const availability = reviewAvailability(content);
+    assert.deepEqual(plain(availability.allowedActions), [approve === 'enabled' && 'approve', reject === 'enabled' && 'reject'].filter(Boolean), name);
+    const html = panelOf(env, content);
+    assert.equal(buttonState(html, '승인 내용 확인'), approve, name); assert.equal(buttonState(html, '반려 내용 확인'), reject, name);
+    assert.match(html, /disabled=""[^>]*>승인 실행 \(미연결\)/, name);
+    if (message) { assert.match(availability.message, message, name); assert.ok(html.includes(availability.message), name); }
+    else assert.equal(availability.message, null, name);
+  }
 });
 
 const reviewId = '6f1c2b8e-3d4a-4f5b-9c6d-7e8f9a0b1c2d';

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { AdminContentDetail } from "@/lib/admin-content";
-import { canPrepareReview, reviewRationaleError, type ReviewAction } from "@/lib/admin-content-review";
+import { reviewAvailability, reviewRationaleError, type ReviewAction } from "@/lib/admin-content-review";
 import styles from "./admin.module.css";
 
 export function ContentReviewPanel({ content }: { content: AdminContentDetail }) {
@@ -11,18 +11,20 @@ export function ContentReviewPanel({ content }: { content: AdminContentDetail })
   const [rationale, setRationale] = useState("");
   const [checked, setChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const eligible = canPrepareReview(content);
+  // Server review metadata gates the confirmations; execution itself stays disconnected.
+  const availability = reviewAvailability(content);
+  const allowed = (next: ReviewAction) => availability.allowedActions.includes(next);
   const label = action === "approve" ? "승인" : "반려";
   const clear = () => { setRationale(""); setChecked(false); setError(null); };
-  const open = (next: ReviewAction) => { clear(); setAction(next); dialog.current?.showModal(); };
+  const open = (next: ReviewAction) => { if (!allowed(next)) return; clear(); setAction(next); dialog.current?.showModal(); };
 
   return <section className={styles.reviewPanel} aria-label="콘텐츠 검수 조치">
     <h3>콘텐츠 검수</h3>
     <p className={styles.note}>승인·반려 실행은 아직 연결되지 않았습니다. 조치 내용과 사유만 확인할 수 있으며 저장되지 않습니다.</p>
-    {!eligible && <p role="status">현재 저장된 상태에서는 검수 조치를 준비할 수 없습니다.</p>}
+    {availability.message && <p role="status">{availability.message}</p>}
     <div className={styles.formActions}>
-      <button className={styles.primaryButton} type="button" disabled={!eligible} onClick={() => open("approve")}>승인 내용 확인</button>
-      <button className={styles.secondaryButton} type="button" disabled={!eligible} onClick={() => open("reject")}>반려 내용 확인</button>
+      <button className={styles.primaryButton} type="button" disabled={!allowed("approve")} onClick={() => open("approve")}>승인 내용 확인</button>
+      <button className={styles.secondaryButton} type="button" disabled={!allowed("reject")} onClick={() => open("reject")}>반려 내용 확인</button>
     </div>
     <dialog ref={dialog} className={styles.reviewDialog} aria-labelledby="review-title" aria-describedby="review-effect" onClose={clear}>
       <h2 id="review-title">콘텐츠 {label} 확인</h2>
