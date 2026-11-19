@@ -111,6 +111,7 @@ export function DebateCreate() {
               disabled={!picked && works.length >= DEBATE_RULES.worksMax} onClick={() => toggleWork(work)}>#{work.name}</button>;
           })}
         </div>
+        {shownWorks.length === 0 ? <p className={styles.fieldHelp}>{workText.trim() ? "맞는 작품이 없어요." : "작품 이름을 입력하면 목록에서 찾아요."}</p> : null}
         <p className={styles.fieldHelp}>작품을 고르면 검색에서 작품으로 찾을 수 있어요. 목록에 없는 작품이면 고르지 않고 올려도 돼요.</p>
       </div>
 

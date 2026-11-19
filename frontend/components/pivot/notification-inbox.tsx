@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { findInboxNotification, isPostNotice, noticeHeadline, postNoticeImage, sortInbox, type InboxNotification, type InboxPage, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
+import Link from "next/link";
+import { debateNoticeId, findInboxNotification, isPostNotice, noticeHeadline, postNoticeImage, sortInbox, type InboxNotification, type InboxPage, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
 import { formatRelativeDay } from "@/lib/relative-time";
 import { ProtectedSlideImage } from "./content-carousel";
 import { HomeHeader } from "./home-screen";
@@ -22,7 +23,7 @@ function formatDetailTime(iso: string) {
 }
 
 const TAGS: Record<InboxNotification["type"], string> = {
-  system_notice: "공지", topic_new_post: "NEW", recommended_post: "추천",
+  system_notice: "공지", topic_new_post: "NEW", recommended_post: "추천", debate_opened: "토론",
 };
 
 /** Decorative next to the title, so a missing picture just leaves the tinted box. */
@@ -221,6 +222,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
         </div>
         <p className={styles.body}>{detail.body}</p>
         {isPostNotice(detail) && onOpenContent && <button type="button" className={styles.more} onClick={() => void openContent(detail)}>글 보러 가기</button>}
+        {debateNoticeId(detail) !== null && <Link className={styles.more} href={`/pivot/debate/${debateNoticeId(detail)}`}>토론방 보러 가기</Link>}
         {readState === "pending" && <p role="status">읽음 상태를 저장하고 있어요.</p>}
         {readState === "failed" && <div className={styles.feedback}>
           <p role="alert">읽음 상태를 저장하지 못했어요.</p>

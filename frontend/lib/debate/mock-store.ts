@@ -402,8 +402,8 @@ export async function searchWorks(text: string): Promise<DebateWorkOption[]> {
   return wait(rows.slice(0, 8), 80);
 }
 
-/** 검색 입력창 하나: 작품 후보와 토론 목록을 같이 준다 (설계 D-16) */
-export async function searchDebates(text: string): Promise<DebateSearchResult> {
+/** 검색 입력창 하나: 작품 후보와 토론 목록을 같이 준다 (설계 D-16). 검색 기록 옵션은 가짜 데이터에선 무시한다. */
+export async function searchDebates(text: string, _options: { record?: boolean; pickedEntityId?: number } = {}): Promise<DebateSearchResult> {
   const now = Date.now();
   const needle = text.trim().toLowerCase();
   if (!needle) return wait({ works: [], debates: [] });

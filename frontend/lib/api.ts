@@ -164,8 +164,10 @@ export type ChatJob = {
   error: { code: string; message: string } | null;
 };
 export type NotificationItem = {
-  notificationId: number; type: "system_notice" | "topic_new_post" | "recommended_post"; title: string; body: string;
+  notificationId: number; type: "system_notice" | "topic_new_post" | "recommended_post" | "debate_opened"; title: string; body: string;
   topicId: number | null; contentId: number | null; imageUrl: string | null;
+  /** debate_opened만: 열린 토론방 번호 (토론 기능이 켜진 서버만 보낸다) */
+  debateId?: number | null;
   isRead: boolean; readAt: string | null; createdAt: string;
 };
 export type NotificationsResponse = { items: NotificationItem[]; nextCursor: string | null };

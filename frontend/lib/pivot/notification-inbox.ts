@@ -45,9 +45,15 @@ export function sortInbox<T extends NotificationItem>(items: T[]): T[] {
     || Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.notificationId - a.notificationId);
 }
 
-/** The inbox shows operational notices and post notices that point to a post. */
+/** A debate-opened notice points to the debate room that just opened. */
+export function debateNoticeId(item: NotificationItem): number | null {
+  return item.type === "debate_opened" && positiveId(item.debateId) ? item.debateId : null;
+}
+
+/** The inbox shows operational notices, post notices that point to a post, and debate-opened notices. */
 export function isInboxItem(item: NotificationItem): boolean {
   if (item.type === "system_notice") return true;
+  if (item.type === "debate_opened") return debateNoticeId(item) !== null;
   return isPostNotice(item) && positiveId(item.contentId) && positiveId(item.topicId);
 }
 

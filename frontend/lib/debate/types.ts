@@ -16,6 +16,8 @@ export type DebateSideSummary = { label: string; count: number; percent: number 
 
 export type DebateSummary = {
   debateId: number;
+  /** 분야 번호 (API 응답에만 있음) */
+  topicId?: number;
   title: string;
   description: string | null;
   sideA: DebateSideSummary;

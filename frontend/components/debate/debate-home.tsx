@@ -246,20 +246,29 @@ function SearchSheet({ onClose }: { onClose: () => void }) {
   const debates = picked ? result.debates.filter((debate) => debate.works.some((work) => work.entityId === picked.entityId)) : result.debates;
   return <div className={styles.searchSheet} role="dialog" aria-modal="true" aria-label="토론 검색">
     <div className={styles.searchPanel}>
-      <div className={styles.searchHead}>
+      <form className={styles.searchHead} role="search" onSubmit={(event) => {
+        event.preventDefault();
+        // 엔터로 검색을 확정했을 때만 검색 기록을 남긴다 (자유 태그가 필요한지 판단용).
+        if (text.trim()) void searchDebates(text, { record: true }).catch(() => undefined);
+      }}>
         <label className={styles.searchBox}>
           <SearchIcon size={18} /><span className={styles.srOnly}>검색어</span>
-          <input autoFocus value={text} placeholder="작품이나 캐릭터 이름으로 찾기"
+          <input autoFocus value={text} placeholder="작품이나 캐릭터 이름으로 찾기" enterKeyHint="search"
             onChange={(event) => { setText(event.target.value); setPicked(null); }} />
         </label>
         <button type="button" className={styles.iconButton} aria-label="검색 닫기" onClick={onClose}><CloseIcon size={22} /></button>
-      </div>
+      </form>
       {!text.trim() ? <p className={styles.fieldHelp}>작품 이름을 치면 작품을 골라 걸러볼 수 있고, 캐릭터 이름은 제목과 선택지에서 찾아요.</p> : null}
       {result.works.length > 0 ? <>
         <p className={styles.resultLabel}>작품</p>
         <div className={styles.chips}>
           {result.works.map((work) => <button key={work.entityId} type="button" className={styles.workPick} aria-pressed={picked?.entityId === work.entityId}
-            onClick={() => setPicked(picked?.entityId === work.entityId ? null : work)}>#{work.name}</button>)}
+            onClick={() => {
+              const next = picked?.entityId === work.entityId ? null : work;
+              setPicked(next);
+              // 작품 칩을 고른 것도 검색을 확정한 것으로 보고 기록한다.
+              if (next) void searchDebates(text, { record: true, pickedEntityId: next.entityId }).catch(() => undefined);
+            }}>#{work.name}</button>)}
         </div>
       </> : null}
       {text.trim() ? <p className={styles.resultLabel}>토론 {debates.length}개</p> : null}

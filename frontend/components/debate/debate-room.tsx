@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { cancelVote, chooseSide, getDebate, getVoteTickets, listMessages, sendMessage, subscribeDebate, voteDebate } from "@/lib/debate/client";
+import {
+  DEBATE_CHAT_READY, cancelVote, chooseSide, getDebate, getVoteTickets, listMessages, sendMessage, subscribeDebate, voteDebate,
+} from "@/lib/debate/client";
 import { dateText, leadingText, resultText, roomRemaining, timeText, votingRemaining } from "@/lib/debate/format";
 import { DEBATE_RULES } from "@/lib/debate/rules";
 import type { DebateMessage, DebateSideKey, DebateSummary, VoteTickets } from "@/lib/debate/types";
@@ -27,7 +29,9 @@ export function DebateRoom({ debateId }: { debateId: number }) {
       <div className={styles.stack}><DebateState loading={!error} error={error} onRetry={load} /></div>
     </DebateScreen>;
   }
-  if (debate.status === "open") return <OpenRoom debate={debate} onChange={setDebate} showToast={showToast} toast={toast} />;
+  if (debate.status === "open") {
+    return DEBATE_CHAT_READY ? <OpenRoom debate={debate} onChange={setDebate} showToast={showToast} toast={toast} /> : <PendingRoom debate={debate} />;
+  }
   return <DebateScreen label={debate.title}>
     <DebateHeader title={debate.status === "voting" ? "주제 후보" : "지난 토론방"} back={debate.status === "voting" ? "/pivot/debate?tab=vote" : "/pivot/debate?tab=past"} />
     <div className={styles.stack}>
@@ -184,6 +188,38 @@ function OpenRoom({ debate, onChange, showToast, toast }: {
       <button type="submit" className={styles.sendButton} aria-label="보내기" disabled={!text.trim() || sending}><SendIcon size={20} /></button>
     </form>
     {toast}
+  </DebateScreen>;
+}
+
+/* ───────────── 진행 중 (API 모드, 채팅 연결 전) ───────────── */
+
+/** 3단계(실시간 채팅·진영 API) 전까지 진짜 토론방은 열렸다는 것까지만 보여준다. */
+function PendingRoom({ debate }: { debate: DebateSummary }) {
+  const now = useNow();
+  const percentA = debate.sideA.percent ?? 50;
+  return <DebateScreen label={debate.title}>
+    <DebateHeader title="토론방" back="/pivot/debate" />
+    <div className={styles.stack}>
+      <section className={styles.roomCard}>
+        <Badge>실시간 토론방</Badge>
+        <h2>{debate.title}</h2>
+        {debate.description ? <p className={styles.description}>{debate.description}</p> : null}
+        <WorkChips works={debate.works} />
+        <div className={styles.roomChips}>
+          <span className={styles.roomChip}><ClockIcon size={14} />남은 시간 {roomRemaining(debate.closesAt, now)}</span>
+          <span className={styles.roomChip}><UsersIcon size={14} />진영 투표 {debate.participantCount}명</span>
+        </div>
+      </section>
+      <section className={styles.ratioCard} aria-label="진영 비율">
+        <p className={styles.ratioHead}><strong>{leadingText(debate) ?? "아직 아무도 진영을 고르지 않았어요"}</strong></p>
+        <div className={styles.ratioBar} aria-hidden="true">
+          <span className={styles.ratioA} style={{ width: `${percentA}%` }} />
+          <span className={styles.ratioB} style={{ width: `${100 - percentA}%` }} />
+        </div>
+        <p className={styles.ratioLegend}><span>{debate.sideA.label} {debate.sideA.count}명</span><span>{debate.sideB.label} {debate.sideB.count}명</span></p>
+      </section>
+      <InfoNote><strong>실시간 채팅은 다음 단계에서 연결돼요</strong>지금은 10표를 모아 토론방이 열리는 것까지 진짜 서버로 동작해요. 채팅과 진영 고르기는 3단계(SSE)에서 붙여요.</InfoNote>
+    </div>
   </DebateScreen>;
 }
 
