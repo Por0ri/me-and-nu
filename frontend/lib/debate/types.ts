@@ -68,11 +68,29 @@ export type CreateDebateInput = {
   workIds: number[];
 };
 
-/** 실시간 스트림 이벤트 (설계 3.2의 chat·sides·closed) */
+/** 채팅 한 쪽. nextCursor로 더 이전 채팅을 받는다. */
+export type DebateMessagePage = { items: DebateMessage[]; nextCursor: string | null };
+
+/** 실시간 스트림 이벤트 (설계 3.2). closed·session-expired를 받으면 연결이 끝난다. */
 export type DebateStreamEvent =
-  | { type: "chat"; message: DebateMessage }
+  /** 새 채팅. messageCount는 이 채팅까지 센 방의 채팅 수 (놓친 채팅을 다시 보낼 때는 없음) */
+  | { type: "chat"; message: DebateMessage; messageCount?: number }
   | { type: "sides"; sideA: DebateSideSummary; sideB: DebateSideSummary; participantCount: number }
-  | { type: "closed"; debate: DebateSummary };
+  /** 방이 끝났다. 화면이 토론을 다시 불러와 결과를 보여준다. */
+  | { type: "closed" }
+  /** 연결이 끊긴 동안 놓친 채팅이 너무 많다. 채팅을 새로 불러온다. */
+  | { type: "resync" }
+  /** 로그인 세션이 끝났다. */
+  | { type: "session-expired" };
+
+/** 실시간 연결 상태. stopped는 서버가 연결을 받아 주지 않아(끝난 방·로그인 만료·연결 수 초과) 브라우저가 다시 붙기를 멈춘 상태 */
+export type DebateConnection = "connecting" | "live" | "reconnecting" | "stopped";
+
+export type DebateSubscribeOptions = {
+  /** 화면이 이미 가진 마지막 채팅 번호. 그 뒤의 채팅을 먼저 받는다. */
+  after?: number;
+  onConnection?: (state: DebateConnection) => void;
+};
 
 /** 서버 오류 코드(설계 7장)와 같은 이름을 쓴다. */
 export class DebateError extends Error {

@@ -45,6 +45,10 @@
 .liveDot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: debate-pulse 1.6s ease-in-out infinite; }
 @keyframes debate-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .liveDot::before { animation: none; } }
+/* 실시간 연결 상태: 연결 중·다시 연결 중은 회색, 끊김은 빨간색 */
+.liveDot:is([data-state="connecting"], [data-state="reconnecting"]) { color: var(--debate-faint); }
+.liveDot[data-state="stopped"] { color: var(--debate-danger); }
+.liveDot:not([data-state="live"])::before { animation: none; }
 
 /* 탭 */
 .tabs { position: sticky; top: 56px; z-index: 4; display: grid; grid-auto-columns: 1fr; grid-auto-flow: column; margin: 0 -16px; border-bottom: 1px solid var(--debate-line); background: #fff; }
@@ -160,6 +164,10 @@
 .sideButton[data-side="b"][aria-pressed="true"] { border-color: var(--debate-b); background: var(--debate-b); color: #2e1a52; }
 .sideHelp { color: var(--debate-muted); font-size: 11.5px; line-height: 16px; text-align: center; }
 .messages { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
+.screen .olderButton { align-self: center; height: 32px; padding: 0 14px; border: 1px solid var(--debate-line); border-radius: 999px; background: #fff; color: var(--debate-muted); font-size: 12.5px; font-weight: 600; }
+.connectionNote { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: 12px; background: #f4f4f6; color: var(--debate-muted); font-size: 13px; line-height: 18px; }
+.connectionNote[data-tone="error"] { background: #fdecec; color: var(--debate-danger); }
+.screen .connectionNote button { flex: none; height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: #fff; color: var(--debate-danger); font-size: 12.5px; font-weight: 700; }
 .message { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px; align-items: start; max-width: 88%; }
 /* 내 메시지는 오른쪽(아바타 없이 보라 말풍선), 다른 사람은 왼쪽. 진영은 닉네임 옆 표시로만 보여준다. */
 .message[data-mine] { grid-template-columns: minmax(0, 1fr); align-self: flex-end; }

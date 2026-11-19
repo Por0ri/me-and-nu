@@ -3,12 +3,17 @@
  * client.ts가 데이터 출처를 "api"로 고르면 화면이 이 함수들을 쓴다. 함수 이름과 돌려주는 모양은
  * 가짜 데이터(mock-store.ts)와 같다. 목록 응답의 다음 쪽(nextCursor)은 아직 화면에서 쓰지 않는다.
  */
-import { apiRequest, getMyTopics } from "@/lib/api";
+import { apiBaseUrl, apiRequest, getMyTopics } from "@/lib/api";
 import {
   DebateError,
   type CreateDebateInput,
   type DebateListQuery,
+  type DebateMessage,
+  type DebateMessagePage,
   type DebateSearchResult,
+  type DebateSideKey,
+  type DebateStreamEvent,
+  type DebateSubscribeOptions,
   type DebateSummary,
   type DebateWorkOption,
   type VoteTickets,
@@ -107,4 +112,62 @@ export async function similarDebates(title: string): Promise<DebateSummary[]> {
   const word = title.split(/[\s,?!.·]+/).filter((item) => item.length >= 2).sort((left, right) => right.length - left.length)[0];
   if (!word) return [];
   return (await searchDebates(word)).debates.slice(0, 3);
+}
+
+/* ───────────── 토론방 안 (D-09~12) ───────────── */
+
+/** 진영 고르기·바꾸기. 채팅과는 별개라 언제든 바꿀 수 있다. */
+export function chooseSide(debateId: number, side: DebateSideKey): Promise<DebateSummary> {
+  return apiRequest<DebateSummary>(`/api/v1/debates/${debateId}/side`, { method: "PUT", body: JSON.stringify({ side }) });
+}
+
+/** 최근 채팅을 오래된 순으로. cursor를 주면 그보다 이전 채팅 */
+export function listMessages(debateId: number, cursor?: string): Promise<DebateMessagePage> {
+  const params = new URLSearchParams({ limit: "50" });
+  if (cursor) params.set("cursor", cursor);
+  return apiRequest<DebateMessagePage>(`/api/v1/debates/${debateId}/messages?${params}`);
+}
+
+export function sendMessage(debateId: number, body: string): Promise<DebateMessage> {
+  return apiRequest<DebateMessage>(`/api/v1/debates/${debateId}/messages`, { method: "POST", body: JSON.stringify({ body }) }, 201);
+}
+
+/**
+ * 실시간 스트림(SSE). 브라우저의 EventSource가 연결이 끊기면 알아서 다시 붙고,
+ * 그때 마지막으로 받은 채팅 번호(Last-Event-ID)를 보내서 놓친 채팅을 받는다.
+ * 돌려주는 함수를 부르면 연결을 닫는다.
+ */
+export function subscribeDebate(
+  debateId: number, onEvent: (event: DebateStreamEvent) => void, options: DebateSubscribeOptions = {},
+): () => void {
+  const query = options.after !== undefined ? `?after=${options.after}` : "";
+  const source = new EventSource(`${apiBaseUrl}/api/v1/debates/${debateId}/stream${query}`, { withCredentials: true });
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    source.close();
+  };
+  const read = (event: Event) => JSON.parse((event as MessageEvent<string>).data) as Record<string, unknown>;
+
+  options.onConnection?.("connecting");
+  source.onopen = () => { if (!stopped) options.onConnection?.("live"); };
+  source.onerror = () => {
+    if (stopped) return;
+    // CONNECTING: 잠깐 끊겨서 브라우저가 다시 붙는 중. CLOSED: 서버가 연결을 받아 주지 않아(401·409·429) 멈췄다.
+    options.onConnection?.(source.readyState === EventSource.CLOSED ? "stopped" : "reconnecting");
+  };
+  source.addEventListener("chat", (event) => {
+    const { messageCount, ...message } = read(event);
+    onEvent({ type: "chat", message: message as DebateMessage, messageCount: typeof messageCount === "number" ? messageCount : undefined });
+  });
+  source.addEventListener("sides", (event) => onEvent({ type: "sides", ...(read(event) as Omit<Extract<DebateStreamEvent, { type: "sides" }>, "type">) }));
+  source.addEventListener("resync", () => onEvent({ type: "resync" }));
+  for (const type of ["closed", "session-expired"] as const) {
+    // 서버가 연결을 끝내도 EventSource는 다시 붙으려 하므로 여기서 직접 닫는다.
+    source.addEventListener(type, () => {
+      stop();
+      onEvent({ type });
+    });
+  }
+  return stop;
 }

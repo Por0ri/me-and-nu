@@ -12,11 +12,13 @@ import {
   type CreateDebateInput,
   type DebateListQuery,
   type DebateMessage,
+  type DebateMessagePage,
   type DebateResult,
   type DebateSearchResult,
   type DebateSideKey,
   type DebateStatus,
   type DebateStreamEvent,
+  type DebateSubscribeOptions,
   type DebateSummary,
   type DebateWorkOption,
   type VoteTickets,
@@ -371,8 +373,12 @@ export async function chooseSide(debateId: number, side: DebateSideKey): Promise
   return wait(summary(debate, now), 100);
 }
 
-export async function listMessages(debateId: number): Promise<DebateMessage[]> {
-  return wait(find(debateId).messages.slice(-50).map(message));
+/** 최근 50개를 오래된 순으로. cursor(그 채팅 번호)를 주면 그보다 이전 50개 */
+export async function listMessages(debateId: number, cursor?: string): Promise<DebateMessagePage> {
+  const before = cursor ? Number(cursor) : Infinity;
+  const rows = find(debateId).messages.filter((item) => item.messageId < before);
+  const page = rows.slice(-50);
+  return wait({ items: page.map(message), nextCursor: rows.length > page.length ? String(page[0].messageId) : null });
 }
 
 export async function sendMessage(debateId: number, body: string): Promise<DebateMessage> {
@@ -428,7 +434,9 @@ export async function similarDebates(title: string): Promise<DebateSummary[]> {
  * 실시간 스트림 흉내. 몇 초마다 다른 사람의 채팅이나 진영 변화를 보내고, 방이 끝나면 closed를 보낸다.
  * 실제로는 SSE(GET /debates/{id}/stream)가 같은 이벤트를 보낸다.
  */
-export function subscribeDebate(debateId: number, onEvent: (event: DebateStreamEvent) => void): () => void {
+export function subscribeDebate(
+  debateId: number, onEvent: (event: DebateStreamEvent) => void, options: DebateSubscribeOptions = {},
+): () => void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const pick = <T,>(items: readonly T[]): T => items[Math.floor(Math.random() * items.length)];
@@ -438,7 +446,7 @@ export function subscribeDebate(debateId: number, onEvent: (event: DebateStreamE
     const debate = debates.find((row) => row.debateId === debateId);
     if (!debate) return;
     if (statusOf(debate, now) !== "open") {
-      onEvent({ type: "closed", debate: summary(debate, now) });
+      onEvent({ type: "closed" });
       return;
     }
     if (Math.random() < 0.3) {
@@ -464,12 +472,15 @@ export function subscribeDebate(debateId: number, onEvent: (event: DebateStreamE
       const stored: StoredMessage = { messageId: nextMessageId++, side, nickname: pick(LIVE_NAMES), body, createdAt: now, mine: false };
       debate.messages.push(stored);
       debate.messageCount += 1;
-      onEvent({ type: "chat", message: message(stored) });
+      onEvent({ type: "chat", message: message(stored), messageCount: debate.messageCount });
     }
     timer = setTimeout(tick, 4000 + Math.random() * 5000);
   };
+  options.onConnection?.("connecting");
+  const connected = setTimeout(() => { if (!stopped) options.onConnection?.("live"); }, 300);
   timer = setTimeout(tick, 2500);
   return () => {
+    clearTimeout(connected);
     stopped = true;
     if (timer !== undefined) clearTimeout(timer);
   };

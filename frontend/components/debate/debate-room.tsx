@@ -2,15 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  DEBATE_CHAT_READY, cancelVote, chooseSide, getDebate, getVoteTickets, listMessages, sendMessage, subscribeDebate, voteDebate,
+  cancelVote, chooseSide, getDebate, getVoteTickets, listMessages, sendMessage, subscribeDebate, voteDebate,
 } from "@/lib/debate/client";
-import { dateText, leadingText, resultText, roomRemaining, timeText, votingRemaining } from "@/lib/debate/format";
+import { dateText, leadingText, roomRemaining, timeText, votingRemaining } from "@/lib/debate/format";
 import { DEBATE_RULES } from "@/lib/debate/rules";
-import type { DebateMessage, DebateSideKey, DebateSummary, VoteTickets } from "@/lib/debate/types";
+import type { DebateConnection, DebateMessage, DebateSideKey, DebateSummary, VoteTickets } from "@/lib/debate/types";
 import { DebateHeader, DebateScreen, DebateState, errorText, useToast } from "./debate-chrome";
 import { ChatIcon, CheckIcon, ClockIcon, SendIcon, TrophyIcon, UserIcon, UsersIcon } from "./debate-icons";
 import { Badge, InfoNote, VoteProgress, WorkChips, useNow } from "./debate-parts";
 import styles from "./debate.module.css";
+
+type Update = (change: (current: DebateSummary) => DebateSummary) => void;
 
 /** 토론 하나의 화면. 상태에 따라 투표·실시간 채팅·결과·소각 안내를 보여준다. */
 export function DebateRoom({ debateId }: { debateId: number }) {
@@ -22,6 +24,8 @@ export function DebateRoom({ debateId }: { debateId: number }) {
     getDebate(debateId).then(setDebate, (reason: unknown) => setError(errorText(reason)));
   }, [debateId]);
   useEffect(() => { load(); }, [load]);
+  // 실시간 이벤트가 연달아 와도 서로 덮어쓰지 않게 지금 값을 기준으로 바꾼다.
+  const update = useCallback<Update>((change) => setDebate((current) => (current ? change(current) : current)), []);
 
   if (!debate) {
     return <DebateScreen label="토론방">
@@ -30,7 +34,7 @@ export function DebateRoom({ debateId }: { debateId: number }) {
     </DebateScreen>;
   }
   if (debate.status === "open") {
-    return DEBATE_CHAT_READY ? <OpenRoom debate={debate} onChange={setDebate} showToast={showToast} toast={toast} /> : <PendingRoom debate={debate} />;
+    return <OpenRoom debate={debate} onChange={setDebate} update={update} showToast={showToast} toast={toast} />;
   }
   return <DebateScreen label={debate.title}>
     <DebateHeader title={debate.status === "voting" ? "주제 후보" : "지난 토론방"} back={debate.status === "voting" ? "/pivot/debate?tab=vote" : "/pivot/debate?tab=past"} />
@@ -45,41 +49,111 @@ export function DebateRoom({ debateId }: { debateId: number }) {
 
 /* ───────────── 진행 중: 실시간 채팅 ───────────── */
 
-function OpenRoom({ debate, onChange, showToast, toast }: {
-  debate: DebateSummary; onChange: (debate: DebateSummary) => void; showToast: (message: string) => void; toast: React.ReactNode;
+const CONNECTION_LABEL: Record<DebateConnection, string> = { connecting: "연결 중", live: "실시간", reconnecting: "다시 연결 중", stopped: "연결 끊김" };
+
+function OpenRoom({ debate, onChange, update, showToast, toast }: {
+  debate: DebateSummary; onChange: (debate: DebateSummary) => void; update: Update; showToast: (message: string) => void; toast: React.ReactNode;
 }) {
+  const debateId = debate.debateId;
   const [messages, setMessages] = useState<DebateMessage[] | null>(null);
+  const [olderCursor, setOlderCursor] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [connection, setConnection] = useState<DebateConnection>("connecting");
+  const [streamKey, setStreamKey] = useState(0);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
-  const debateRef = useRef(debate);
-  debateRef.current = debate;
+  // 화면이 가진 가장 최근 채팅 번호. 실시간 연결을 (다시) 열 때 이 뒤의 채팅부터 받는다.
+  const lastIdRef = useRef(0);
   const now = useNow();
+
+  const remember = useCallback((items: DebateMessage[]) => {
+    for (const item of items) lastIdRef.current = Math.max(lastIdRef.current, item.messageId);
+  }, []);
 
   // 같은 메시지가 보낸 응답과 실시간 스트림으로 두 번 와도 번호로 하나만 남기고 번호순으로 둔다.
   const merge = useCallback((incoming: DebateMessage[]) => {
+    remember(incoming);
     setMessages((current) => {
       const byId = new Map((current ?? []).map((item) => [item.messageId, item]));
       for (const item of incoming) byId.set(item.messageId, item);
       return [...byId.values()].sort((left, right) => left.messageId - right.messageId);
     });
-  }, []);
+  }, [remember]);
 
+  /** 최근 채팅으로 목록을 새로 채운다 (처음 들어올 때, 놓친 채팅이 너무 많을 때). 그사이 실시간으로 온 것은 남긴다. */
+  const reload = useCallback(async () => {
+    const page = await listMessages(debateId);
+    remember(page.items);
+    const newest = page.items.at(-1)?.messageId ?? 0;
+    setMessages((current) => [...page.items, ...(current ?? []).filter((item) => item.messageId > newest)]);
+    setOlderCursor(page.nextCursor);
+  }, [debateId, remember]);
+
+  // 1) 최근 채팅을 불러온 뒤 2) 그 마지막 번호부터 실시간 연결을 연다. 그사이 올라온 채팅은 서버가 먼저 보내 준다.
   useEffect(() => {
     let alive = true;
-    listMessages(debate.debateId).then((rows) => { if (alive) merge(rows); }, () => { if (alive) setMessages([]); });
-    const unsubscribe = subscribeDebate(debate.debateId, (event) => {
-      if (event.type === "chat") merge([event.message]);
-      else if (event.type === "sides") onChange({ ...debateRef.current, sideA: event.sideA, sideB: event.sideB, participantCount: event.participantCount });
-      else {
-        onChange(event.debate);
-        showToast("토론방이 끝났어요. 결과만 남고 채팅은 사라져요.");
+    reload().catch(() => {
+      if (!alive) return;
+      setMessages((current) => current ?? []);
+      showToast("채팅을 불러오지 못했어요.");
+    }).finally(() => { if (alive) setLoaded(true); });
+    return () => { alive = false; };
+  }, [reload, showToast]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    let alive = true;
+    // 연결이 끝났을 때 이유를 토론 상태로 확인한다: 끝난 방이면 결과 화면, 로그인이 끝났으면(401)
+    // 공통 처리가 로그인 화면으로 보낸다. 그 밖(동시 연결 수 초과 등)은 다시 연결 버튼을 보여준다.
+    const recheck = (reason: "closed" | "session-expired" | "stopped") => {
+      getDebate(debateId).then((next) => {
+        if (!alive) return;
+        onChange(next);
+        if (next.status !== "open") showToast("토론방이 끝났어요. 결과만 남고 채팅은 사라져요.");
+        else if (reason === "session-expired") setStreamKey((key) => key + 1); // 그새 다시 로그인했다: 새 세션으로 연결
+      }, () => undefined);
+    };
+    const unsubscribe = subscribeDebate(debateId, (event) => {
+      if (!alive) return;
+      if (event.type === "chat") {
+        merge([event.message]);
+        const count = event.messageCount;
+        if (count !== undefined) update((current) => ({ ...current, messageCount: Math.max(current.messageCount, count) }));
+      } else if (event.type === "sides") {
+        update((current) => ({ ...current, sideA: event.sideA, sideB: event.sideB, participantCount: event.participantCount }));
+      } else if (event.type === "resync") {
+        reload().catch(() => showToast("채팅을 다시 불러오지 못했어요."));
+      } else {
+        setConnection("stopped");
+        recheck(event.type);
       }
+    }, {
+      after: lastIdRef.current,
+      onConnection: (state) => {
+        if (!alive) return;
+        setConnection(state);
+        if (state === "stopped") recheck("stopped");
+      },
     });
-    return () => { alive = false; unsubscribe(); };
-  }, [debate.debateId, merge, onChange, showToast]);
+    // 다른 주소로 떠날 때 브라우저가 페이지를 얼려 두면(뒤로 가기 저장소) 연결이 열린 채 남아 연결 수 한도를 차지한다.
+    // 떠날 때 바로 닫고, 뒤로 가기로 돌아오면 다시 연다 (놓친 채팅은 마지막 번호 뒤부터 다시 받는다).
+    const leave = () => {
+      alive = false;
+      unsubscribe();
+    };
+    const back = (event: PageTransitionEvent) => { if (event.persisted) setStreamKey((key) => key + 1); };
+    window.addEventListener("pagehide", leave);
+    window.addEventListener("pageshow", back);
+    return () => {
+      leave();
+      window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pageshow", back);
+    };
+  }, [loaded, streamKey, debateId, merge, reload, update, onChange, showToast]);
 
   // 맨 아래를 보고 있을 때만 새 메시지로 따라 내려간다.
   useEffect(() => {
@@ -93,11 +167,30 @@ function OpenRoom({ debate, onChange, showToast, toast }: {
     if (followRef.current) endRef.current?.scrollIntoView({ block: "end" });
   }, [messages]);
 
+  const reconnect = () => {
+    setConnection("connecting");
+    setStreamKey((key) => key + 1);
+  };
+
+  const loadOlder = async () => {
+    if (!olderCursor || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const page = await listMessages(debateId, olderCursor);
+      merge(page.items);
+      setOlderCursor(page.nextCursor);
+    } catch (reason) {
+      showToast(errorText(reason));
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
   const pickSide = async (side: DebateSideKey) => {
     if (debate.mySide === side || choosing) return;
     setChoosing(true);
     try {
-      const next = await chooseSide(debate.debateId, side);
+      const next = await chooseSide(debateId, side);
       onChange(next);
       showToast(`${side === "a" ? next.sideA.label : next.sideB.label} 편이 됐어요.`);
     } catch (reason) {
@@ -112,7 +205,7 @@ function OpenRoom({ debate, onChange, showToast, toast }: {
     if (!text.trim() || sending) return;
     setSending(true);
     try {
-      const sent = await sendMessage(debate.debateId, text);
+      const sent = await sendMessage(debateId, text);
       followRef.current = true;
       merge([sent]);
       setText("");
@@ -127,8 +220,13 @@ function OpenRoom({ debate, onChange, showToast, toast }: {
   const lead = leadingText(debate);
   const percentA = debate.sideA.percent ?? 50;
   return <DebateScreen composer label={debate.title}>
-    <DebateHeader title="토론방" back="/pivot/debate" extra={<span className={styles.liveDot}>실시간</span>} />
+    <DebateHeader title="토론방" back="/pivot/debate" extra={<span className={styles.liveDot} data-state={connection}>{CONNECTION_LABEL[connection]}</span>} />
     <div className={styles.stack}>
+      {connection === "reconnecting" ? <p className={styles.connectionNote} role="status">연결이 잠깐 끊겼어요. 다시 연결하는 중이에요.</p> : null}
+      {connection === "stopped" ? <p className={styles.connectionNote} data-tone="error" role="status">
+        실시간 연결이 끊겼어요. 이 토론방을 다른 창에서도 열어 두었다면 닫고 다시 연결해 주세요.
+        <button type="button" onClick={reconnect}>다시 연결</button>
+      </p> : null}
       <section className={styles.roomCard}>
         <Badge>실시간 토론방</Badge>
         <h2>{debate.title}</h2>
@@ -165,6 +263,9 @@ function OpenRoom({ debate, onChange, showToast, toast }: {
 
       {messages === null ? <DebateState loading /> : null}
       {messages?.length === 0 ? <p className={styles.state}>아직 채팅이 없어요. 첫 마디를 남겨보세요.</p> : null}
+      {olderCursor ? <button type="button" className={styles.olderButton} disabled={loadingOlder} onClick={() => void loadOlder()}>
+        {loadingOlder ? "불러오는 중이에요" : "이전 채팅 더 보기"}
+      </button> : null}
       <ol className={styles.messages} aria-label="채팅" aria-live="polite">
         {/* 내 메시지는 오른쪽, 다른 사람은 왼쪽. 보낸 순간의 진영은 닉네임 옆 표시로만 보여준다. */}
         {(messages ?? []).map((item) => <li key={item.messageId} className={styles.message} data-mine={item.isMine || undefined}>
@@ -188,38 +289,6 @@ function OpenRoom({ debate, onChange, showToast, toast }: {
       <button type="submit" className={styles.sendButton} aria-label="보내기" disabled={!text.trim() || sending}><SendIcon size={20} /></button>
     </form>
     {toast}
-  </DebateScreen>;
-}
-
-/* ───────────── 진행 중 (API 모드, 채팅 연결 전) ───────────── */
-
-/** 3단계(실시간 채팅·진영 API) 전까지 진짜 토론방은 열렸다는 것까지만 보여준다. */
-function PendingRoom({ debate }: { debate: DebateSummary }) {
-  const now = useNow();
-  const percentA = debate.sideA.percent ?? 50;
-  return <DebateScreen label={debate.title}>
-    <DebateHeader title="토론방" back="/pivot/debate" />
-    <div className={styles.stack}>
-      <section className={styles.roomCard}>
-        <Badge>실시간 토론방</Badge>
-        <h2>{debate.title}</h2>
-        {debate.description ? <p className={styles.description}>{debate.description}</p> : null}
-        <WorkChips works={debate.works} />
-        <div className={styles.roomChips}>
-          <span className={styles.roomChip}><ClockIcon size={14} />남은 시간 {roomRemaining(debate.closesAt, now)}</span>
-          <span className={styles.roomChip}><UsersIcon size={14} />진영 투표 {debate.participantCount}명</span>
-        </div>
-      </section>
-      <section className={styles.ratioCard} aria-label="진영 비율">
-        <p className={styles.ratioHead}><strong>{leadingText(debate) ?? "아직 아무도 진영을 고르지 않았어요"}</strong></p>
-        <div className={styles.ratioBar} aria-hidden="true">
-          <span className={styles.ratioA} style={{ width: `${percentA}%` }} />
-          <span className={styles.ratioB} style={{ width: `${100 - percentA}%` }} />
-        </div>
-        <p className={styles.ratioLegend}><span>{debate.sideA.label} {debate.sideA.count}명</span><span>{debate.sideB.label} {debate.sideB.count}명</span></p>
-      </section>
-      <InfoNote><strong>실시간 채팅은 다음 단계에서 연결돼요</strong>지금은 10표를 모아 토론방이 열리는 것까지 진짜 서버로 동작해요. 채팅과 진영 고르기는 3단계(SSE)에서 붙여요.</InfoNote>
-    </div>
   </DebateScreen>;
 }
 
