@@ -147,6 +147,8 @@ def test_votes_sides_messages_and_works_follow_their_rules(schema_source):
             db.execute(side.insert().values(debate_id=debate_id, user_id=7, side="b"))
 
         db.execute(message.insert().values(debate_id=debate_id, user_id=7, side="a", body="사스케가 이겨!"))
+        # 진영을 고르지 않고도 채팅할 수 있다 (진영 선택과 채팅은 별개).
+        db.execute(message.insert().values(debate_id=debate_id, user_id=9, side=None, body="아직 고민 중이에요"))
         for broken in ({"body": ""}, {"side": "c"}, {"user_id": 42}):
             with pytest.raises(sa.exc.IntegrityError):
                 db.execute(message.insert().values(**{"debate_id": debate_id, "user_id": 7, "side": "a", "body": "a"} | broken))

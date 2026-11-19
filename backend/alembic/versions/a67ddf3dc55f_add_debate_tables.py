@@ -150,7 +150,7 @@ def upgrade() -> None:
         sa.Column("message_id", id_type, autoincrement=True, nullable=False),
         sa.Column("debate_id", sa.BigInteger(), nullable=False),
         sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("side", sa.String(1), nullable=False),
+        sa.Column("side", sa.String(1), nullable=True),
         sa.Column("body", sa.String(300), nullable=False),
         sa.Column("created_at", timestamp, server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("message_id", name="pk_debate_message"),

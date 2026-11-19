@@ -350,7 +350,7 @@ CREATE TABLE debate_message (
 	message_id BIGSERIAL NOT NULL,
 	debate_id BIGINT NOT NULL,
 	user_id BIGINT NOT NULL,
-	side VARCHAR(1) NOT NULL,
+	side VARCHAR(1),
 	body VARCHAR(300) NOT NULL,
 	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
 	CONSTRAINT pk_debate_message PRIMARY KEY (message_id),

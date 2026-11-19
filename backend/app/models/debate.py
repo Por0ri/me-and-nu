@@ -57,6 +57,7 @@ class Debate(Base):
         BigInteger, ForeignKey("user_account.user_id", ondelete="SET NULL")
     )
     title: Mapped[str] = mapped_column(String(TITLE_MAX), nullable=False)
+    # 간단한 설명 (선택). 뺄지 아직 정하지 않았다 (2026-11-19).
     description: Mapped[str | None] = mapped_column(String(DESCRIPTION_MAX))
     # 'A vs B'의 양쪽 이름. 예: 나루토 / 사스케, 된다 / 못 된다
     side_a_label: Mapped[str] = mapped_column(String(SIDE_LABEL_MAX), nullable=False)
@@ -176,7 +177,7 @@ class DebateVoteTicket(Base):
 
 
 class DebateSide(Base):
-    """토론방에서 고른 진영. 언제든 바꿀 수 있고, 방이 끝나는 순간의 인원으로 승패를 정한다."""
+    """토론방에서 고른 진영. 채팅과는 별개이고 언제든 바꿀 수 있다. 방이 끝나는 순간의 인원으로 승패를 정한다."""
 
     __tablename__ = "debate_side"
 
@@ -215,14 +216,16 @@ class DebateMessage(Base):
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("user_account.user_id", ondelete="CASCADE"), nullable=False
     )
-    # 보낸 순간의 진영. 나중에 진영을 바꿔도 이미 보낸 메시지의 진영은 그대로다.
-    side: Mapped[str] = mapped_column(String(1), nullable=False)
+    # 보낸 순간의 진영. 진영을 고르지 않고도 채팅할 수 있어서 비어 있을 수 있다.
+    # 나중에 진영을 바꿔도 이미 보낸 메시지의 진영은 그대로다.
+    side: Mapped[str | None] = mapped_column(String(1))
     body: Mapped[str] = mapped_column(String(MESSAGE_MAX), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
+        # NULL(진영 없음)은 CHECK를 통과한다. 값이 있으면 a·b만 된다.
         CheckConstraint(_one_of("side", DEBATE_SIDES), name="ck_debate_message_side"),
         CheckConstraint("body <> ''", name="ck_debate_message_body"),
         Index("idx_debate_message_debate_message", "debate_id", "message_id"),
