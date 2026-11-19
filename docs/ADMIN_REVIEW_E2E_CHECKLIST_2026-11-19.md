@@ -37,7 +37,7 @@ FE Client 코드는 아래 계약과 이미 일치하며 이번에 변경하지 
 - **409**: 상세를 다시 조회한 뒤 사용자가 다시 확인한다. 자동 재실행은 하지 않는다(`retrySameRequest=false`, `reload=true`).
 - **성공 후 처리**: 200(replay 포함)을 확인하면 상세 GET을 다시 조회한다.
 - **결과 조회 API 없음**: 별도 결과 조회 API는 없다. GET 상태(예: active/confirmed)만으로 특정 요청의 성공을 확정하지 않는다. 다른 관리자의 조치일 수 있기 때문이다. 특정 요청의 성공은 그 요청의 200 응답으로만 확정한다.
-- **제안 필드 미사용**: `review.allowedActions`·`disabledReason`은 BE 제안 필드이며 아직 구현되지 않았다. FE 코드와 테스트는 이 필드를 가정하지 않는다.
+- **review 메타데이터**: `review.allowedActions`·`disabledReason`은 BE #89로 상세 GET에 구현됐다. 이 PR의 FE 코드와 리허설은 이 필드를 사용하지 않는다. FE 확인창 연결은 PR #91에서 한다. 실제 Checking 응답에 포함되는지는 서버 배포 후 확인한다.
 
 ## 격리 시나리오 (자동)
 
@@ -60,7 +60,7 @@ FE Client 코드는 아래 계약과 이미 일치하며 이번에 변경하지 
 ### 0. 사전 조건 (BE)
 
 - [ ] PR #71 Migration이 Checking DB에 적용되고, 실제 읽기·쓰기 Provider가 연결된다.
-- [ ] 읽기 Router와 review Router가 운영 앱에 등록된다.
+- [ ] 읽기 Router와 review Router가 Checking 서버에 배포된다. Router 등록 자체는 #89로 코드에 반영됐다.
 - [ ] 테스트 계정이 준비된다: viewer, operator, admin, 관리자 아닌 회원. 권한은 BE가 부여하며 FE는 부여하지 않는다.
   - Checking은 `ENABLE_DEV_API=false`이므로 계정은 `https://checking.me-nu.kr`에서 실제 로그인한다.
 - [ ] 테스트 콘텐츠가 준비된다: Draft가 checking/approved인 `needs_review` 콘텐츠 3건(승인용, 반려용, 충돌용) + Draft 없는 기존 콘텐츠 1건. E2E가 Checking DB 상태를 바꾸므로 재실행용 초기화 방법도 정한다.
@@ -106,9 +106,9 @@ FE Client 코드는 아래 계약과 이미 일치하며 이번에 변경하지 
 ## 막혀 있는 계약 사항
 
 1. **역할별 오류 코드**: viewer의 POST는 `ADMIN_WRITE_REQUIRED`, 회수된 계정은 `ADMIN_REQUIRED`를 유지할지 확정한다. FE는 둘 다 forbidden으로 처리하지만, 코드가 바뀌면 시나리오를 조정해야 한다.
-2. **쓰기 권한 노출**: `review.allowedActions`·`disabledReason`이 제안됐지만 아직 구현되지 않았다. 구현 전까지는 viewer에게도 승인·반려 버튼이 보이고, 누르면 403을 받는다. 버튼 활성화 전에 결정이 필요하다.
-3. **검수 가능 여부 노출**: Draft 없음이나 Draft 상태 불일치를 GET에서 알 수 있게 할지 결정한다.
-4. **응답 시각 offset 보장**: `AwareDatetime` 또는 PostgreSQL `timestamptz`로 보장한다.
+2. **쓰기 권한 노출**: #89로 상세 GET의 `review.allowedActions`·`disabledReason`이 구현됐다(viewer는 `permission_denied`). FE 확인창 연결은 PR #91이다. 실제 Checking 응답 확인은 서버 배포 후로 남아 있다.
+3. **검수 가능 여부 노출**: #89의 `disabledReason`(`deleted`, `content_not_reviewable`, `draft_not_reviewable`)으로 구현됐다. 실제 Checking 응답 확인은 서버 배포 후로 남아 있다.
+4. **응답 시각 offset 보장**: #89에서 응답 스키마가 `AwareDatetime`으로 바뀌었다. 실제 Checking 응답 확인은 서버 배포 후로 남아 있다.
 5. **재전송 계약**: replay 범위와 회수·재부여 후 거부 가능성은 11/19에 확정됐다. replay 유효 기간과 감사 보존 기간은 아직 정해지지 않았다.
 6. **BE 503 메시지**: "검수 저장에 실패했습니다"를 중립 문구로 바꿀지 결정한다.
 7. **경로와 오류 코드 고정**: 최초 성공과 replay의 200은 확정됐다. 운영 경로와 오류 코드 목록 고정이 남아 있다.
