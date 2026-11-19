@@ -11,12 +11,21 @@ export type AdminContentItem = {
   createdAt: string; publishedAt: string | null;
 };
 export type AdminContentPage = { items: AdminContentItem[]; page: number; pageSize: number; total: number };
+// Mirrors AdminContentReviewEligibility (app/schemas/admin_content.py). A display hint for the
+// current user and content only: every review POST is re-authorized and re-checked by the BE.
+export const reviewActions = ["approve", "reject"] as const;
+export const reviewDisabledReasons = ["permission_denied", "deleted", "content_not_reviewable", "draft_not_reviewable", "unavailable"] as const;
+export type AdminReviewAction = typeof reviewActions[number];
+export type ReviewDisabledReason = typeof reviewDisabledReasons[number];
+export type AdminContentReview = { allowedActions: AdminReviewAction[]; disabledReason: ReviewDisabledReason | null };
 export type AdminContentDetail = AdminContentItem & {
   // DB Content version: forward verbatim as expectedUpdatedAt in a future review request.
   // Date conversion would discard microseconds. This does not version Draft/Source/Carousel.
   updatedAt: string;
   summary: string | null; body: string | null;
   sources: { url: string; title: string | null; publisher: string | null; role: string; citationOrder: number | null }[];
+  // null: the server sent no usable review metadata, so review stays disabled.
+  review: AdminContentReview | null;
 };
 export type AdminFailure = { status: "login-required" | "forbidden" | "unavailable" | "not-found" | "error"; message: string };
 export type AdminReadState<T> = { status: "loading" } | { status: "ready"; data: T } | AdminFailure;
@@ -78,6 +87,18 @@ export async function loadAdminContents(query: AdminContentQuery, signal?: Abort
   return value as AdminContentPage;
 }
 
+// Only BE-defined values. Missing, malformed or self-contradictory metadata is not trusted:
+// it becomes null (review disabled) without failing the read-only detail.
+export function parseContentReview(value: unknown): AdminContentReview | null {
+  if (!record(value) || !Array.isArray(value.allowedActions)) return null;
+  const actions = value.allowedActions, reason = value.disabledReason;
+  if (!actions.every(action => reviewActions.includes(action as AdminReviewAction)) || new Set(actions).size !== actions.length) return null;
+  if (reason !== null && !reviewDisabledReasons.includes(reason as ReviewDisabledReason)) return null;
+  // The BE either allows actions with no reason, or allows none and names the reason.
+  if ((reason === null) !== (actions.length > 0)) return null;
+  return { allowedActions: [...actions] as AdminReviewAction[], disabledReason: reason as ReviewDisabledReason | null };
+}
+
 export async function loadAdminContent(contentId: number, signal?: AbortSignal): Promise<AdminContentDetail> {
   if (!integer(contentId, 1)) invalid();
   const value = await apiRequest<unknown>(`/api/v1/admin/contents/${contentId}`, { signal });
@@ -87,7 +108,7 @@ export async function loadAdminContent(contentId: number, signal?: AbortSignal):
     !detail.sources.every(source => record(source) && typeof source.url === "string" && nullableText(source.title) &&
       nullableText(source.publisher) && typeof source.role === "string" &&
       (source.citationOrder === null || integer(source.citationOrder, 1)))) invalid();
-  return value as AdminContentDetail;
+  return { ...detail, review: parseContentReview(detail.review) } as AdminContentDetail;
 }
 
 export function adminFailure(error: unknown): AdminFailure {
