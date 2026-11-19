@@ -238,7 +238,7 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 
 ## 7. API 초안
 
-모두 `/api/v1` 아래에 있고 로그인·온보딩이 필요하다. 바꾸는 요청에는 `X-CSRF-Token`이 필요하다. 응답 JSON은 camelCase, 오류는 `{code, message}`, 목록은 기존처럼 `cursor`를 쓴다.
+모두 `/api/v1` 아래에 있고 로그인·온보딩이 필요하다. 바꾸는 요청에는 `X-CSRF-Token`이 필요하다. 응답 JSON은 camelCase, 오류는 `{code, message}`, 목록은 기존처럼 `cursor`를 쓴다. 2단계에서 D-01~08, D-13~17을 구현했다(`backend/app/api/v1/debates/router.py`, `backend/app/services/debate_service.py`). 기능 스위치가 켜진 서버에서만 등록된다.
 
 | # | Method | Path | 설명 |
 | --- | --- | --- | --- |
@@ -257,15 +257,17 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 | D-13 | GET | `/users/me/debate-tickets` | 내 투표권 `{balance, max, nextRefillAt}` |
 | D-14 | GET | `/users/me/debates` | 내가 올린 주제(내 주제 관리) |
 | D-15 | GET | `/users/me/debate-votes` | 내가 준 투표 |
-| D-16 | GET | `/debates/search?topicId=&status=&q=` | 검색 입력창 하나: `{works[], debates[]}`. 작품 후보와, 제목·선택지·연결 작품 이름·별칭에 글자가 들어간 토론을 함께 준다 |
-| D-17 | GET | `/debates/works?topicId=&q=` | 주제 올리기 화면의 작품 고르기. 회원용 작품 검색(`/me/taste/works`, 임시)과 같은 서비스를 쓴다 |
+| D-16 | GET | `/debates/search?topicId=&q=&record=&pickedEntityId=` | 검색 입력창 하나: `{works[], debates[]}`. 작품 후보(최대 5개)와, 제목·선택지·연결 작품 이름·별칭에 글자가 들어간 토론(최대 30개)을 함께 준다. `topicId` 필수 |
+| D-17 | GET | `/debates/works?topicId=&q=` | 주제 올리기 화면의 작품 고르기. 회원용 작품 검색(`/me/taste/works`, 임시)과 같은 서비스를 쓴다. 검색어가 비면 빈 목록 |
 
-- `topicId`는 목록에서 선택이다. 주면 그 분야만, 안 주면 전체를 보여준다. 주제 올리기에서는 필수다.
+- 목록 응답은 `{items, nextCursor}`다. 다음 쪽(cursor)은 '투표 중·최신순'과 '지난 토론방'에만 있다. '개설 임박순'은 표 수가 계속 바뀌고 '지금 열린 방'은 수가 적어서 `limit`(최대 50)까지만 준다.
+- `topicId`는 목록에서 선택이다. 주면 그 분야만, 안 주면 전체를 보여준다. 주제 올리기와 검색에서는 필수다.
 - 검색 화면: 글자를 치면 D-16을 부른다. 위에는 작품 칩, 아래에는 토론 목록을 보여준다. 작품 칩을 누르면 `entityId`로 목록을 거른다. 캐릭터 이름은 보통 제목·선택지 이름에 있어 글자 검색으로 찾는다.
-- 검색 기록은 사용자가 검색을 확정했을 때(입력 완료 또는 작품 칩 선택)만 남긴다. 글자를 칠 때마다 남기지 않는다.
+- 검색 기록은 사용자가 검색을 확정했을 때(엔터 또는 작품 칩 선택)만 `record=true`로 남긴다. 글자를 칠 때마다 남기지 않는다.
 - 팀 규칙대로 정식 API 번호(API-xxx)는 계약 승인 뒤에 붙인다. 위 D-번호는 임시다.
-- 투표·취소 응답에는 바뀐 토론 요약과 내 투표권을 함께 돌려준다. 프론트가 다시 조회하지 않아도 된다.
-- 알림함(API-107)의 `type`에 `debate_opened`가 추가되고 항목에 `debateId`가 붙는다(다른 알림은 null).
+- 투표·취소 응답(`{debate, tickets, opened}`)에는 바뀐 토론 요약과 내 투표권을 함께 돌려준다. 그래서 투표 취소(DELETE)는 다른 삭제처럼 204가 아니라 200이다. 주제 삭제는 204다.
+- 알림함(API-107)의 `type`에 `debate_opened`가 추가되고 항목에 `debateId`가 붙는다(다른 알림은 null). 토론 기능이 꺼진 서버는 토론 표를 읽지 않고 이 알림도 보여 주지 않는다.
+- 개설 알림은 활동 중이고 앱 안 알림을 끄지 않은(`notification_setting.in_app_enabled`) 회원에게만 만든다. 본문은 투표자는 '투표한 주제 …', 작성자는 '내가 올린 주제 …'로 시작한다.
 
 주요 오류 코드:
 
@@ -317,7 +319,7 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 기능 하나마다 백엔드를 만들고 바로 화면을 붙여 브라우저로 확인한다.
 
 1. 규칙 설정·모델·migration·기능 스위치 (API 없음) — **완료**
-2. 투표 흐름 API(D-01~08, D-13~17) + 개설 알림 → 투표 화면
+2. 투표 흐름 API(D-01~08, D-13~17) + 개설 알림 → 투표 화면 — **완료**. 테스트 `tests/test_debate_api.py`. 화면은 `NEXT_PUBLIC_DEBATE_DATA_SOURCE=api`면 진짜 API를 쓰고, 열린 토론방은 3단계 전까지 안내만 보여준다
 3. 방 API(D-09~12) + 메모리 허브 + SSE → 토론방 화면
 4. 정리 작업 + 지난 토론방 → 지난 토론방 화면
 5. Checking에서 실시간 확인([3.3](#33-구현-직후-checking에서-확인할-것)), 부하 시험 → README API 표 갱신
@@ -329,7 +331,11 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 카카오 키가 없는 로컬에서는 기존 데모 로그인으로 세션을 만든 뒤 `/pivot`으로 넘어간다. 쿠키가 같은 `localhost`에 저장되어 로그인이 이어진다.
 
 1. 백엔드 `.env`: 토론 migration을 적용한 로컬 DB, `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=false`, `DEBATE_ENABLED=true`. 기존 로컬 DB와 섞이지 않게 별도 DB를 쓴다.
-2. 프론트 `.env.local`: `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`, `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`, `NEXT_PUBLIC_CONSUMER_DATA_MODE=api`, `NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true`.
+2. 프론트 `.env.local`: `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`, `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`, `NEXT_PUBLIC_CONSUMER_DATA_MODE=api`, `NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true`, `NEXT_PUBLIC_DEBATE_DATA_SOURCE=api`(빼면 가짜 데이터 화면).
 3. `http://localhost:3000/consumer/login`에서 로그인 카드를 누르면 새 데모 계정으로 로그인된다. 이어서 열리는 예전 온보딩 화면(`/consumer/onboarding`)은 영화 분야 기준이라 애니 분야만 있는 DB에서는 "온보딩 선택지를 불러오지 못했습니다"가 뜬다. 로그인은 이미 된 상태이므로 무시한다.
 4. 주소창에 `http://localhost:3000/pivot/consent`를 넣으면 온보딩(동의 → 프로필 → 취향)을 거쳐 홈으로 간다. 온보딩을 마친 계정은 자동으로 홈으로 간다.
-5. 다른 사람 역할(투표 10표, 상대 채팅)은 개발용 로그인 API로 계정을 만들어 움직이는 시험 스크립트로 한다(2·3단계에서 추가).
+5. 다른 사람 역할은 시험 스크립트 `backend/scripts/debate_local_actors.py`로 한다. 개발용 가입·로그인으로 시험 계정(`debate-actor-NN@example.com`)을 만들고 온보딩까지 마친 뒤 움직인다. 로컬 주소에서만 실행된다.
+   - `python scripts/debate_local_actors.py seed`: 예시 주제 3개를 올리고 표를 채운다(하나는 9표라 브라우저에서 10번째 표를 넣으면 바로 열린다).
+   - `python scripts/debate_local_actors.py vote --debate <번호> --count 9`: 시험 계정 9명이 그 주제에 투표한다.
+   - `python scripts/debate_local_actors.py topic --title … --side-a … --side-b …`: 시험 계정이 주제를 올린다.
+   - 상대 채팅은 3단계에서 추가한다.

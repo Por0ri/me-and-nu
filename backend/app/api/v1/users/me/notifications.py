@@ -25,7 +25,7 @@ router = APIRouter(prefix="/users/me/notifications", tags=["알림"])
     response_model=NotificationsResponse,
     summary="내 알림 목록 조회 (API-107)",
     description=(
-        "운영공지(system_notice), 새 글 알림(topic_new_post), 추천 알림(recommended_post)을 최신순으로 반환합니다. "
+        "운영공지(system_notice), 새 글 알림(topic_new_post), 추천 알림(recommended_post)을 최신순으로 반환합니다. 토론 기능(DEBATE_ENABLED)이 켜진 서버에서는 토론 개설 알림(debate_opened, debateId 포함)도 반환합니다. "
         "새 글 · 추천 알림에는 topicId · contentId · imageUrl(글 대표 그림)이 있습니다. "
         "첫 조회 시 환영 공지를 생성합니다."
     ),
