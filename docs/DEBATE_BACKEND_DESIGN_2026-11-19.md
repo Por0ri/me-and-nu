@@ -75,40 +75,49 @@ sequenceDiagram
 ### 3.2 스트림 API: `GET /api/v1/debates/{debateId}/stream`
 
 - 로그인·온보딩한 회원이면 누구나 보고 채팅할 수 있다. 진영 선택과 채팅은 별개다. 읽기 전용이라 CSRF는 필요 없고, 다른 사이트는 CORS 때문에 내용을 읽을 수 없다.
-- 처리 순서
+- 처리 순서 (3단계 구현: `backend/app/services/debate_room_service.py`, `debate_hub.py`)
   1. 인증하고 방 상태를 확인한다(진행 중이 아니면 409).
-  2. 허브 구독을 **먼저** 등록한다.
-  3. 놓친 메시지가 있으면 DB에서 최대 100개를 읽어 보낸다. 기준 번호는 자동 재연결의 `Last-Event-ID` 머리글, 또는 프론트가 새로 연결할 때 붙이는 `?after=<마지막 번호>`다. 구독 후 들어온 메시지와 겹치는 번호는 건너뛴다.
+  2. 허브 구독을 **먼저** 등록한다(1인 한도를 넘으면 429).
+  3. 놓친 메시지를 DB에서 읽는다. 기준 번호는 자동 재연결의 `Last-Event-ID` 머리글과 프론트가 붙이는 `?after=<마지막 번호>` 중 큰 값이다. 100개 이하면 하나씩 다시 보내고, 넘으면 `resync` 이벤트로 화면이 채팅을 새로 불러오게 한다.
   4. **DB 연결을 풀에 돌려준다.** 현재 FastAPI(0.141)는 스트리밍 응답이 끝날 때까지 `get_db` 같은 yield 의존성을 닫지 않는다. 실서비스 DB 연결은 2개(여유분 0)라서, 돌려주지 않으면 스트림 2개만 열려도 API 전체가 멈춘다.
-  5. 허브에서 오는 이벤트를 보낸다. 20초마다 빈 신호(`: ping`)를 보내 연결을 유지한다.
+  5. 허브에서 오는 이벤트를 보낸다. 20초마다 빈 신호(`: ping`)를 보내 연결을 유지한다. 화면이 이미 가진 번호(3의 기준 번호까지)와 방금 다시 보낸 번호는 건너뛴다. 번호 크기만으로 거르지 않는 까닭은 거의 동시에 저장된 두 채팅의 방송 순서가 드물게 바뀔 수 있어서다(화면이 번호순으로 정렬한다).
+  6. 응답이 어떻게 끝나든(정상 종료·끊김·응답이 시작되기 전에 떠남) 구독을 푼다(`DebateStreamResponse`). 본문의 정리 코드는 본문이 한 번이라도 돌아야 실행되기 때문이다. 그래도 남은 구독은 15초 뒤 다음 구독 때 치운다.
 - 이벤트 (기본 이벤트 이름 `message`와 헷갈리지 않게 채팅은 `chat`으로 부른다)
 
 | event | id | 내용 |
 | --- | --- | --- |
-| `chat` | 메시지 번호 | `messageId, side, nickname, body, createdAt, isMine`. `side`는 보낸 순간의 진영이고, 고르지 않았으면 null |
-| `sides` | 없음 | `sideA{count, percent}, sideB{count, percent}, participantCount` |
-| `closed` | 없음 | 방 종료와 결과. 보낸 뒤 서버가 스트림을 닫는다 |
-| `session-expired` | 없음 | 로그인 세션 만료. 보낸 뒤 닫는다. 프론트는 다시 로그인을 안내한다 |
+| `chat` | 메시지 번호 | `messageId, side, nickname, body, createdAt, isMine` + 새 채팅이면 `messageCount`(그 채팅까지 센 방의 채팅 수, 다시 보낼 때는 없음). `side`는 보낸 순간의 진영이고, 고르지 않았으면 null |
+| `sides` | 없음 | `sideA{label, count, percent}, sideB{…}, participantCount`. 진영이 실제로 바뀐 경우에만 보낸다 |
+| `resync` | 없음 | 놓친 채팅이 100개를 넘음. 화면은 채팅을 새로 불러온다 |
+| `closed` | 없음 | `{debateId}`. 방 종료. 보낸 뒤 서버가 스트림을 닫는다. 화면은 토론을 다시 불러와 결과를 보여준다 |
+| `session-expired` | 없음 | 로그인 세션 만료. 보낸 뒤 닫는다 |
 
 - 다른 회원의 번호(user id)는 보내지 않는다. `isMine`은 연결마다 서버가 계산한다.
 - 받는 쪽이 느려 대기열(100개)이 차면 그 연결을 끊는다. 브라우저가 다시 연결하면서 놓친 메시지를 받아간다.
 - 1인당 동시 스트림은 3개까지다(탭 여러 개).
 - 처음 연결할 때 `retry: 3000`을 보내 재연결 간격을 3초로 정한다.
+- 방이 끝나기 직전에 받아 둔 채팅이 있으면 그것을 다 보낸 뒤 `closed`를 보낸다.
+- 서버가 스트림을 끝내도 브라우저(EventSource)는 3초 뒤 다시 붙는다. 그래서 화면은 `closed`·`session-expired`를 받으면 직접 연결을 닫는다. 다시 붙더라도 끝난 방은 409, 끝난 세션은 401이라 거기서 멈춘다.
+- 로컬 확인(DB 연결 2개·여유분 0, 실서버): 스트림 6개를 연 채로 보통 요청 20개를 동시에 보내도 0.25초 안에 모두 200. 연결을 끊으면 1초 안에 자리를 돌려준다. `main.py`의 미들웨어를 지나도 스트림이 막힘 없이 흐른다.
 
 ### 3.3 구현 직후 Checking에서 확인할 것
 
-- `main.py`의 `@api.middleware("http")`를 지나도 스트림이 막힘 없이 흐르고 연결 종료가 감지되는지. 문제가 있으면 그 미들웨어를 순수 ASGI 미들웨어로 바꾼다.
-- Caddy는 `text/event-stream` 응답을 버퍼 없이 바로 흘려보낸다. 실제 서버에서 지연 없이 오는지 확인한다.
+- `main.py`의 `@api.middleware("http")`를 지나도 스트림이 흐르고 연결 종료가 감지되는지: 로컬에서는 확인했다(3.2 끝). 실제 서버에서도 같은지 본다.
+- Caddy는 `text/event-stream` 응답을 버퍼 없이 바로 흘려보낸다. 실제 서버에서 지연 없이 오는지 확인한다. 응답에는 `X-Accel-Buffering: no`를 붙였다.
 - 브라우저와 Caddy 사이가 HTTP/2인지. HTTP/1.1이면 도메인당 연결 6개 제한 때문에 탭을 여러 개 열 때 문제가 된다.
-- 배포·재시작 때 열린 스트림 때문에 종료가 30초(`stop_grace_period`)까지 늘어지지 않도록, 앱 종료 시 허브가 모든 스트림을 닫는다.
-- 로그인 세션은 발급 후 30분이면 끝나고 연장되지 않는다. 스트림은 세션 만료 시각에 `session-expired`를 보내고 닫는다. 세션 정책 자체는 이 설계 범위 밖이다.
+- 배포·재시작 때 열린 스트림 때문에 종료가 늘어지지 않게 API 실행 명령에 uvicorn `--timeout-graceful-shutdown`(예: 10초)을 붙인다. uvicorn은 열린 연결이 끝나기를 기다린 **뒤에** 앱 종료 단계(lifespan)를 실행하므로, 앱 종료 단계에서 허브가 스트림을 닫는 방법으로는 해결되지 않는다. 끊긴 브라우저는 3초 뒤 새 서버에 다시 붙으며 놓친 채팅을 받는다.
+- 로그인 세션은 발급 후 30분이면 끝나고 연장되지 않는다. 스트림은 세션 만료 시각에 `session-expired`를 보내고 닫는다. 다른 기기에서 로그아웃해도 이미 열린 스트림은 그 세션 만료 시각까지 이어진다(보내기는 바로 401). 세션 정책 자체는 이 설계 범위 밖이다.
 
-### 3.4 프론트 연결 방법 (참고)
+### 3.4 프론트 연결 방법
 
-- 연결: `new EventSource(url, { withCredentials: true })`로 열고 `chat`, `sides`, `closed`, `session-expired` 이벤트를 듣는다.
-- 첫 화면: 이전 채팅 API로 최근 메시지를 받은 뒤 스트림을 연다. 겹치는 메시지는 `messageId`로 중복을 없애고 번호순으로 정렬한다.
+구현: `frontend/lib/debate/api.ts`(`subscribeDebate`), `frontend/components/debate/debate-room.tsx`(`OpenRoom`).
+
+- 연결: `new EventSource(url, { withCredentials: true })`로 열고 `chat`, `sides`, `resync`, `closed`, `session-expired` 이벤트를 듣는다.
+- 첫 화면: 이전 채팅 API로 최근 50개를 받은 **뒤** `?after=<그 마지막 번호>`를 붙여 스트림을 연다. 그사이 올라온 채팅은 서버가 먼저 보내 준다. 겹치는 메시지는 `messageId`로 중복을 없애고 번호순으로 정렬한다. 더 이전 채팅은 '이전 채팅 더 보기'로 cursor를 따라 받는다.
 - 보내기: 기존 API 호출(CSRF 포함)로 보낸다. 응답으로 받은 내 메시지와 스트림으로 온 같은 메시지는 번호로 중복을 없앤다.
-- 화면을 나갔다 돌아와 새로 연결할 때는 `?after=<마지막 번호>`를 붙인다.
+- 연결 상태를 머리 부분에 보여준다(연결 중·실시간·다시 연결 중·연결 끊김). 잠깐 끊기면 브라우저가 알아서 다시 붙는다. 서버가 받아 주지 않아 멈추면(401·409·429) 토론을 다시 불러와 이유를 확인한다: 끝난 방이면 결과 화면, 로그인이 끝났으면 공통 처리가 로그인 화면으로 보내고, 그 밖(동시 연결 수 초과 등)은 '다시 연결' 버튼을 보여준다.
+- `resync`를 받으면 최근 채팅으로 목록을 새로 채운다(그사이 실시간으로 온 것은 남긴다).
+- 다른 주소로 떠날 때(`pagehide`) 연결을 직접 닫고, 뒤로 가기로 돌아오면(`pageshow`) 마지막 번호부터 다시 연다. 크롬은 떠난 페이지를 얼려 두는 동안(뒤로 가기 저장소) 연결을 열어 두어서, 닫지 않으면 1인 연결 한도를 차지한다(로컬에서 확인).
 - 채팅 본문은 반드시 텍스트로 표시한다(HTML로 넣지 않는다).
 
 ## 4. 상태 흐름
@@ -238,7 +247,7 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 
 ## 7. API 초안
 
-모두 `/api/v1` 아래에 있고 로그인·온보딩이 필요하다. 바꾸는 요청에는 `X-CSRF-Token`이 필요하다. 응답 JSON은 camelCase, 오류는 `{code, message}`, 목록은 기존처럼 `cursor`를 쓴다. 2단계에서 D-01~08, D-13~17을 구현했다(`backend/app/api/v1/debates/router.py`, `backend/app/services/debate_service.py`). 기능 스위치가 켜진 서버에서만 등록된다.
+모두 `/api/v1` 아래에 있고 로그인·온보딩이 필요하다. 바꾸는 요청에는 `X-CSRF-Token`이 필요하다. 응답 JSON은 camelCase, 오류는 `{code, message}`, 목록은 기존처럼 `cursor`를 쓴다. 2단계에서 D-01~08, D-13~17을 구현했다(`backend/app/api/v1/debates/router.py`, `backend/app/services/debate_service.py`). 3단계에서 D-09~12를 구현했다(`debate_room_service.py`, `debate_hub.py`). 기능 스위치가 켜진 서버에서만 등록된다.
 
 | # | Method | Path | 설명 |
 | --- | --- | --- | --- |
@@ -250,10 +259,10 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 | D-06 | DELETE | `/debates/{debateId}` | 내 주제 삭제 |
 | D-07 | PUT | `/debates/{debateId}/vote` | 투표. 이미 했으면 투표권을 쓰지 않고 그대로 200 |
 | D-08 | DELETE | `/debates/{debateId}/vote` | 투표 취소 |
-| D-09 | PUT | `/debates/{debateId}/side` | 진영 고르기·바꾸기 `{side: "a" \| "b"}` |
-| D-10 | GET | `/debates/{debateId}/messages?cursor=` | 이전 채팅. 최근 50개를 오래된 순으로, 더 이전은 cursor로 |
-| D-11 | POST | `/debates/{debateId}/messages` | 채팅 보내기 `{body}` |
-| D-12 | GET | `/debates/{debateId}/stream?after=` | 실시간 스트림(SSE) |
+| D-09 | PUT | `/debates/{debateId}/side` | 진영 고르기·바꾸기 `{side: "a" \| "b"}`. 바뀐 토론 요약을 돌려준다. 같은 진영을 다시 골라도 200 |
+| D-10 | GET | `/debates/{debateId}/messages?cursor=&limit=` | 이전 채팅 `{items, nextCursor}`. 최근 50개(최대 100)를 오래된 순으로, 더 이전은 cursor로. 열린 방에서만 |
+| D-11 | POST | `/debates/{debateId}/messages` | 채팅 보내기 `{body}` (앞뒤 공백을 지운 1~300자) → 201 저장된 메시지 |
+| D-12 | GET | `/debates/{debateId}/stream?after=` | 실시간 스트림(SSE, [3.2](#32-스트림-api-get-apiv1debatesdebateidstream)) |
 | D-13 | GET | `/users/me/debate-tickets` | 내 투표권 `{balance, max, nextRefillAt}` |
 | D-14 | GET | `/users/me/debates` | 내가 올린 주제(내 주제 관리) |
 | D-15 | GET | `/users/me/debate-votes` | 내가 준 투표 |
@@ -319,9 +328,9 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 기능 하나마다 백엔드를 만들고 바로 화면을 붙여 브라우저로 확인한다.
 
 1. 규칙 설정·모델·migration·기능 스위치 (API 없음) — **완료**
-2. 투표 흐름 API(D-01~08, D-13~17) + 개설 알림 → 투표 화면 — **완료**. 테스트 `tests/test_debate_api.py`. 화면은 `NEXT_PUBLIC_DEBATE_DATA_SOURCE=api`면 진짜 API를 쓰고, 열린 토론방은 3단계 전까지 안내만 보여준다
-3. 방 API(D-09~12) + 메모리 허브 + SSE → 토론방 화면
-4. 정리 작업 + 지난 토론방 → 지난 토론방 화면
+2. 투표 흐름 API(D-01~08, D-13~17) + 개설 알림 → 투표 화면 — **완료**. 테스트 `tests/test_debate_api.py`. 화면은 `NEXT_PUBLIC_DEBATE_DATA_SOURCE=api`면 진짜 API를 쓴다(열린 토론방의 채팅은 3단계에서 붙였다)
+3. 방 API(D-09~12) + 메모리 허브 + SSE → 토론방 화면 — **완료**. 테스트 `tests/test_debate_realtime.py`(허브, 스트림 본문, 진영·채팅·속도 제한, 다시 연결과 놓친 채팅, DB 연결 반납)
+4. 정리 작업 + 지난 토론방 → 지난 토론방 화면. 지난 토론방은 끝난 뒤 9일(설정값) 안의 것만 보여주고, 9일이 지나면 정리 작업이 토론 줄을 통째로 지운다(투표·진영 기록도 함께)
 5. Checking에서 실시간 확인([3.3](#33-구현-직후-checking에서-확인할-것)), 부하 시험 → README API 표 갱신
 
 테스트는 기존 일회용 SQLite 흐름(`tests/test_reports.py` 방식)으로 규칙을 확인하고, 동시 투표처럼 잠금이 필요한 확인은 PostgreSQL 전용 테스트로 따로 둔다. 1단계 확인은 `tests/test_debate_db.py`(migration과 모델이 같은 표를 만드는지, 규칙·연쇄 삭제·되돌리기 보호)다.
@@ -338,4 +347,5 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
    - `python scripts/debate_local_actors.py seed`: 예시 주제 3개를 올리고 표를 채운다(하나는 9표라 브라우저에서 10번째 표를 넣으면 바로 열린다).
    - `python scripts/debate_local_actors.py vote --debate <번호> --count 9`: 시험 계정 9명이 그 주제에 투표한다.
    - `python scripts/debate_local_actors.py topic --title … --side-a … --side-b …`: 시험 계정이 주제를 올린다.
-   - 상대 채팅은 3단계에서 추가한다.
+   - `python scripts/debate_local_actors.py chat --debate <번호> --count 4 --messages 20`: 열린 토론방에서 시험 계정 4명이 진영을 고르고 3초마다 채팅한다(가끔 진영도 바꾼다). 브라우저 토론방에 실시간으로 보인다.
+   - `python scripts/debate_local_actors.py listen --debate <번호>`: 시험 계정으로 실시간 스트림을 열어 오는 이벤트를 그대로 찍는다(Ctrl+C로 끝).

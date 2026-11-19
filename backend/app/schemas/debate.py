@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from app.models.debate import DESCRIPTION_MAX, SIDE_LABEL_MAX, TITLE_MAX, WORKS_MAX
+from app.models.debate import DESCRIPTION_MAX, MESSAGE_MAX, SIDE_LABEL_MAX, TITLE_MAX, WORKS_MAX
 from app.schemas.common import CamelModel
 
 CatalogId = Annotated[int, Field(strict=True, gt=0, le=9223372036854775807)]
@@ -100,6 +100,37 @@ class DebateVoteResponse(CamelModel):
     debate: DebateSummary
     tickets: VoteTicketsResponse
     opened: bool = Field(False, description="이번 표로 기준 표 수를 채워 토론방이 열렸는지")
+
+
+class DebateSideRequest(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+
+    side: DebateSideKey
+
+
+class DebateMessageRequest(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=MESSAGE_MAX, description="앞뒤 공백을 지운 1~300자")
+
+    @field_validator("body", mode="before")
+    @classmethod
+    def trim(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class DebateMessageView(CamelModel):
+    message_id: int
+    side: DebateSideKey | None = Field(description="보낸 순간의 진영. 진영을 고르지 않고 보냈으면 null")
+    nickname: str
+    body: str
+    created_at: datetime
+    is_mine: bool
+
+
+class DebateMessagesResponse(CamelModel):
+    items: list[DebateMessageView] = Field(description="오래된 순")
+    next_cursor: str | None = Field(None, description="더 이전 메시지")
 
 
 class DebateSearchWork(CamelModel):

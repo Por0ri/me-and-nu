@@ -13,12 +13,20 @@
 
     # 시험 계정 5번이 주제를 올린다
     python scripts/debate_local_actors.py topic --actor 5 --title "탄지로와 렌고쿠, 누가 더 강할까?" --side-a 탄지로 --side-b 렌고쿠
+
+    # 열린 4번 토론방에서 시험 계정 4명이 진영을 고르고 3초마다 채팅한다 (브라우저에서 실시간으로 보인다)
+    python scripts/debate_local_actors.py chat --debate 4 --count 4 --messages 20
+
+    # 시험 계정 40번으로 4번 토론방의 실시간 스트림(SSE)을 그대로 찍어 본다 (Ctrl+C로 끝)
+    python scripts/debate_local_actors.py listen --debate 4
 """
 
 from __future__ import annotations
 
 import argparse
+import random
 import sys
+import time
 from urllib.parse import urlsplit
 
 import httpx
@@ -32,6 +40,14 @@ SEED_TOPICS = (
     (2, "에렌과 리바이가 싸우면 누가 이길까?", "에렌", "리바이", "진격의 거인", range(3, 8)),
     (3, "고죠 사토루는 정말 최강일까?", "최강이다", "아니다", "주술회전", range(4, 6)),
 )
+CHAT_LINES = {
+    "a": ("저는 {A} 편이에요. 근거가 더 탄탄해요.", "{A} 쪽 말이 계속 더 와닿네요.", "마지막 장면 다시 보면 {A} 쪽이 맞아요.",
+          "{B} 편 말도 일리 있는데 그래도 {A}요."),
+    "b": ("{B} 쪽이 한 수 위라고 봐요.", "솔직히 {B} 편 근거가 더 설득력 있어요.", "{A} 편 얘기 들어봐도 저는 {B}예요.",
+          "원작까지 보면 {B} 쪽이 맞다고 생각해요."),
+    # 진영을 고르지 않고 채팅하는 사람
+    None: ("둘 다 일리가 있어서 아직 못 고르겠어요.", "양쪽 얘기 더 듣고 정할게요.", "{A} 편이랑 {B} 편 다 설득력 있네요."),
+}
 
 
 class ActorError(RuntimeError):
@@ -110,6 +126,14 @@ class Actor:
             raise ActorError(f"{self.nickname} 주제 올리기 실패: {response.status_code} {response.text}")
         return response.json()
 
+    def choose_side(self, debate_id: int, side: str) -> None:
+        response = self.send("PUT", f"/api/v1/debates/{debate_id}/side", json={"side": side})
+        if response.status_code != 200:
+            raise ActorError(f"{self.nickname} 진영 고르기 실패: {response.status_code} {response.text}")
+
+    def say(self, debate_id: int, body: str) -> httpx.Response:
+        return self.send("POST", f"/api/v1/debates/{debate_id}/messages", json={"body": body})
+
     def vote(self, debate_id: int) -> dict:
         response = self.send("PUT", f"/api/v1/debates/{debate_id}/vote")
         if response.status_code != 200:
@@ -168,6 +192,62 @@ def run_seed(base_url: str, topic_id: int) -> None:
             actor.close()
 
 
+def run_chat(base_url: str, topic_id: int, debate_id: int, count: int, start: int, messages: int, interval: float) -> None:
+    actors = _actors(base_url, topic_id, range(start, start + count))
+    try:
+        debate = next(iter(actors.values())).send("GET", f"/api/v1/debates/{debate_id}").json()
+        if debate.get("status") != "open":
+            raise ActorError(f"{debate_id}번은 열린 토론방이 아니에요 (상태: {debate.get('status', debate.get('message'))}).")
+        labels = {"A": debate["sideA"]["label"], "B": debate["sideB"]["label"]}
+        rng = random.Random()
+        sides: dict[int, str | None] = {}
+        for actor in actors.values():
+            side = rng.choice(("a", "a", "b", "b", None))  # 몇 명은 진영 없이 채팅한다
+            if side:
+                actor.choose_side(debate_id, side)
+            sides[actor.index] = side
+            print(f"  - {actor.nickname}: {labels['A' if side == 'a' else 'B'] + ' 편' if side else '진영 없음'}")
+        for _ in range(messages):
+            actor = rng.choice(list(actors.values()))
+            if rng.random() < 0.15:  # 토론 중에 마음이 바뀌기도 한다
+                side = "b" if sides[actor.index] == "a" else "a"
+                actor.choose_side(debate_id, side)
+                sides[actor.index] = side
+                print(f"  - {actor.nickname}: {labels[side.upper()]} 편으로 바꿈")
+            body = rng.choice(CHAT_LINES[sides[actor.index]]).format(**labels)
+            response = actor.say(debate_id, body)
+            if response.status_code == 201:
+                print(f"  - {actor.nickname}: {body}")
+            else:
+                print(f"  - {actor.nickname}: 보내지 못함 ({response.json().get('message', response.text)})")
+                if response.json().get("code") == "DEBATE_NOT_OPEN":
+                    break
+            time.sleep(interval)
+    finally:
+        for actor in actors.values():
+            actor.close()
+
+
+def run_listen(base_url: str, topic_id: int, debate_id: int, actor_index: int, after: int | None) -> None:
+    actor = Actor(base_url, actor_index, topic_id)
+    try:
+        actor.sign_in()
+        params = {"after": after} if after is not None else {}
+        print(f"{actor.nickname}로 {debate_id}번 토론방 스트림을 엽니다. 끝내려면 Ctrl+C")
+        with actor.client.stream("GET", f"/api/v1/debates/{debate_id}/stream", params=params,
+                                 timeout=httpx.Timeout(30, read=None)) as response:
+            if response.status_code != 200:
+                response.read()
+                raise ActorError(f"스트림을 열지 못했어요: {response.status_code} {response.text}")
+            for line in response.iter_lines():
+                if line:
+                    print(line, flush=True)
+    except KeyboardInterrupt:
+        print("스트림을 닫았어요.")
+    finally:
+        actor.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base-url", default="http://localhost:8000", help="API 주소 (로컬만)")
@@ -184,6 +264,16 @@ def main() -> None:
     topic.add_argument("--side-a", required=True)
     topic.add_argument("--side-b", required=True)
     topic.add_argument("--work", help="관련 작품 검색어 (선택)")
+    chat = commands.add_parser("chat", help="시험 계정들이 열린 토론방에서 진영을 고르고 채팅한다")
+    chat.add_argument("--debate", type=int, required=True, help="토론 번호")
+    chat.add_argument("--count", type=int, default=4, help="채팅할 계정 수")
+    chat.add_argument("--start", type=int, default=20, help="몇 번 계정부터 쓸지")
+    chat.add_argument("--messages", type=int, default=20, help="보낼 채팅 수")
+    chat.add_argument("--interval", type=float, default=3.0, help="채팅 사이 간격(초)")
+    listen = commands.add_parser("listen", help="시험 계정 하나로 실시간 스트림(SSE)을 열어 그대로 찍는다")
+    listen.add_argument("--debate", type=int, required=True, help="토론 번호")
+    listen.add_argument("--actor", type=int, default=40, help="계정 번호")
+    listen.add_argument("--after", type=int, help="이 채팅 번호 뒤의 것부터 먼저 받기 (선택)")
     args = parser.parse_args()
     _check_base(args.base_url)
     try:
@@ -191,6 +281,10 @@ def main() -> None:
             run_seed(args.base_url, args.topic_id)
         elif args.command == "vote":
             run_vote(args.base_url, args.topic_id, args.debate, args.count, args.start)
+        elif args.command == "chat":
+            run_chat(args.base_url, args.topic_id, args.debate, args.count, args.start, args.messages, args.interval)
+        elif args.command == "listen":
+            run_listen(args.base_url, args.topic_id, args.debate, args.actor, args.after)
         else:
             actor = Actor(args.base_url, args.actor, args.topic_id)
             try:

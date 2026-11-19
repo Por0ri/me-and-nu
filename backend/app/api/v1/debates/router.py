@@ -6,19 +6,23 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, Header, Path, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_csrf, require_onboarding
+from app.api.deps import AuthContext, get_auth_context, require_csrf, require_onboarding
 from app.db.session import get_db
 from app.models import UserAccount
 from app.schemas.common import COMMON_ERRORS, ErrorResponse
 from app.schemas.debate import (
-    DebateCreateRequest, DebateListResponse, DebateSearchResponse, DebateSummary, DebateVoteResponse, VoteTicketsResponse,
+    DebateCreateRequest, DebateListResponse, DebateMessageRequest, DebateMessagesResponse, DebateMessageView,
+    DebateSearchResponse, DebateSideRequest, DebateSummary, DebateVoteResponse, VoteTicketsResponse,
 )
 from app.schemas.onboarding import OnboardingWorksResponse
+from app.services import debate_room_service as room
 from app.services import debate_service as service
 from app.services import onboarding_catalog_service
+from app.services.debate_hub import hub
 
 router = APIRouter(tags=["토론방"])
 
@@ -33,6 +37,7 @@ def _error(code: str, message: str, description: str) -> dict:
 
 
 NOT_FOUND = {404: _error("DEBATE_NOT_FOUND", "토론을 찾을 수 없습니다.", "없는 토론")}
+NOT_OPEN = {409: _error("DEBATE_NOT_OPEN", "진행 중인 토론방이 아닙니다.", "투표 중이거나 끝난 토론")}
 
 
 @router.post(
@@ -133,6 +138,91 @@ async def vote(debate_id: DebateId, db: Db, user: Member, _: Csrf) -> DebateVote
 )
 async def cancel_vote(debate_id: DebateId, db: Db, user: Member, _: Csrf) -> DebateVoteResponse:
     return await service.cancel_vote(db, user.user_id, debate_id)
+
+
+@router.put(
+    "/debates/{debateId}/side", response_model=DebateSummary, summary="진영 고르기·바꾸기 (D-09)",
+    description="열린 토론방에서 A나 B 진영을 고른다. 채팅과는 별개라 언제든 바꿀 수 있고, 같은 진영을 다시 골라도 그대로 200. "
+                "바뀌면 방에 연결된 사람들에게 sides 이벤트로 새 비율을 보낸다.",
+    responses={**COMMON_ERRORS, **NOT_FOUND, **NOT_OPEN},
+)
+async def choose_side(debate_id: DebateId, payload: DebateSideRequest, db: Db, user: Member, _: Csrf) -> DebateSummary:
+    return await room.choose_side(db, user.user_id, debate_id, payload.side)
+
+
+@router.get(
+    "/debates/{debateId}/messages", response_model=DebateMessagesResponse, summary="채팅 불러오기 (D-10)",
+    description="열린 토론방의 최근 채팅을 오래된 순으로 준다. 더 이전 채팅은 nextCursor로 이어서 받는다. "
+                "끝난 방의 채팅은 남기지 않으므로 409 DEBATE_NOT_OPEN.",
+    responses={**COMMON_ERRORS, **NOT_FOUND, **NOT_OPEN},
+)
+async def list_messages(
+    debate_id: DebateId, db: Db, user: Member,
+    cursor: Annotated[str | None, Query(max_length=500)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> DebateMessagesResponse:
+    return await room.list_messages(db, user.user_id, debate_id, cursor=cursor, limit=limit)
+
+
+@router.post(
+    "/debates/{debateId}/messages", status_code=status.HTTP_201_CREATED, response_model=DebateMessageView, summary="채팅 보내기 (D-11)",
+    description="앞뒤 공백을 지운 1~300자. 진영을 고르지 않았어도 보낼 수 있다(side=null). 한 사람이 한 방에서 10초에 5개까지 보낼 수 있고, "
+                "넘으면 429 DEBATE_MESSAGE_RATE_LIMITED. 저장이 끝나면 방에 연결된 사람들에게 chat 이벤트로 보낸다.",
+    responses={**COMMON_ERRORS, **NOT_FOUND, **NOT_OPEN,
+               429: _error("DEBATE_MESSAGE_RATE_LIMITED", "메시지를 너무 빨리 보내고 있어요. 3초 뒤에 다시 보내 주세요.", "보내기 속도 제한")},
+)
+async def send_message(debate_id: DebateId, payload: DebateMessageRequest, db: Db, user: Member, _: Csrf) -> DebateMessageView:
+    return await room.send_message(db, user.user_id, debate_id, payload.body)
+
+
+class DebateStreamResponse(StreamingResponse):
+    """연결이 어떻게 끝나든(정상 종료·끊김·응답이 시작되기 전에 떠남) 허브 구독을 푸는 SSE 응답.
+
+    본문(stream_events)의 finally는 본문이 한 번이라도 돌기 시작해야 실행된다. 브라우저가 응답을 받기 전에
+    떠나면 본문이 시작되지도 않아서, 응답 자체가 끝날 때 한 번 더 푼다 (두 번 풀어도 괜찮다).
+    """
+
+    def __init__(self, plan: room.StreamPlan) -> None:
+        # 프록시(Caddy·nginx)가 모아 두지 않고 바로 흘려보내게 한다.
+        super().__init__(room.stream_events(plan), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+        self.subscriber = plan.subscriber
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            hub.unsubscribe(self.subscriber)
+
+
+def _resume_point(last_event_id: str | None, after: int | None) -> int | None:
+    """브라우저가 다시 붙을 때 보내는 Last-Event-ID(마지막으로 받은 채팅 번호)와 ?after= 중 큰 값부터 다시 보낸다."""
+    points = [after] if after is not None else []
+    if last_event_id is not None and last_event_id.strip().isdigit():
+        points.append(min(int(last_event_id.strip()), 9223372036854775807))
+    return max(points) if points else None
+
+
+@router.get(
+    "/debates/{debateId}/stream", summary="실시간 스트림 (D-12, SSE)",
+    description="text/event-stream으로 이벤트를 보낸다. chat(id=메시지 번호, 새 채팅) · sides(진영 비율) · closed(방 종료) · "
+                "session-expired(로그인 세션 만료) · resync(놓친 채팅이 너무 많음: 채팅을 다시 불러올 것). 20초마다 빈 신호(: ping)를 보낸다. "
+                "after(처음 연결) 또는 Last-Event-ID(다시 연결)보다 뒤의 채팅을 먼저 보낸다. 한 사람이 동시에 3개까지 열 수 있고 넘으면 429 DEBATE_STREAM_LIMIT.",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}, "description": "이벤트 스트림"}, **COMMON_ERRORS, **NOT_FOUND, **NOT_OPEN,
+               429: _error("DEBATE_STREAM_LIMIT", "동시에 열 수 있는 실시간 연결 수를 넘었습니다. 다른 창을 닫고 다시 시도해 주세요.", "동시 연결 한도")},
+)
+async def stream(
+    debate_id: DebateId, db: Db, user: Member,
+    context: Annotated[AuthContext, Depends(get_auth_context)],
+    after: Annotated[int | None, Query(ge=0, le=9223372036854775807)] = None,
+    last_event_id: Annotated[str | None, Header(alias="Last-Event-ID", max_length=30)] = None,
+) -> StreamingResponse:
+    # prepare_stream이 끝나면 DB 연결을 돌려주고 세션의 객체도 만료된다. 필요한 값은 그 전에 꺼낸다.
+    plan = await room.prepare_stream(
+        db, user.user_id, debate_id,
+        resume_after=_resume_point(last_event_id, after), session_expires_at=context.session.expires_at,
+    )
+    return DebateStreamResponse(plan)
 
 
 @router.get("/users/me/debate-tickets", response_model=VoteTicketsResponse, summary="내 투표권 (D-13)", responses=COMMON_ERRORS)
