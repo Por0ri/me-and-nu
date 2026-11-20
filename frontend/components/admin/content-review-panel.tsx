@@ -34,13 +34,6 @@ export function ContentReviewPanel({ content, onReload, flow: injected }: { cont
   };
 
   useEffect(() => { flow.setReload(onReload ?? null); return () => flow.setReload(null); }, [flow, onReload]);
-  useEffect(() => {
-    if (state.phase !== "submitting") return;
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault(); // Leaving now would hide the result, not cancel it.
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [state.phase]);
-
   return <section className={styles.reviewPanel} aria-label="콘텐츠 검수 조치">
     <h3>콘텐츠 검수</h3>
     <p className={styles.note}>{gate.enabled

@@ -28,7 +28,8 @@ async function verify(browser, width) {
       body: '기존 본문 유지', sources: [{ url: 'https://example.org', title: '원문', publisher: '테스트', role: 'primary', citationOrder: 1 }],
       // BE review metadata for an operator: allowed only while the stored state is reviewable.
       review: judgmentStatus === 'needs_review' && ['active', 'pending_review'].includes(status)
-        ? { allowedActions: ['approve', 'reject'], disabledReason: null } : { allowedActions: [], disabledReason: 'content_not_reviewable' } });
+        ? { allowedActions: ['approve', 'reject'], disabledReason: null, scope: { actorUserId: 7, adminAccountId: 107 } }
+        : { allowedActions: [], disabledReason: 'content_not_reviewable', scope: { actorUserId: 7, adminAccountId: 107 } } });
   });
   const ready = () => page.locator('[data-admin-detail="ready"]').waitFor();
   const dialog = page.getByRole('dialog');

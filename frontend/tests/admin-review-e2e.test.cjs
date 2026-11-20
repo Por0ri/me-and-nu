@@ -12,7 +12,7 @@ const root = path.join(__dirname, '..');
 // admin-content-review) over real HTTP against a loopback fake API. No UI is enabled and
 // no real BE, DB or account is touched.
 function browser(fixture, actor) {
-  const modules = new Map(), posts = [];
+  const modules = new Map(), posts = [], scopes = new Map();
   const window = new EventTarget(); let unauthorized = 0;
   window.addEventListener('api:unauthorized', () => unauthorized++);
   const context = vm.createContext({ AbortController, URL, URLSearchParams, Headers, Response, Event, Intl, window,
@@ -41,11 +41,14 @@ function browser(fixture, actor) {
     return mod.exports;
   }
   const api = load('lib/api.ts'), content = load('lib/admin-content.ts'), review = load('lib/admin-content-review.ts');
-  return { api, content, review, posts, load, unauthorized: () => unauthorized,
+  return { api, content, review, posts, load, window, setActor: value => { actor = value; }, unauthorized: () => unauthorized,
     list: (search = 'mode=review') => content.loadAdminContents(content.parseAdminQuery(new URLSearchParams(search))),
     detail: id => content.loadAdminContent(id),
-    request: (detail, action, rationale = ' 출처 확인 완료 ') => review.prepareReviewRequest(detail, action, rationale, crypto.randomUUID()),
-    submit: (id, request) => review.submitAdminContentReview(id, request) };
+    request: (detail, action, rationale = ' 출처 확인 완료 ') => {
+      const request = review.prepareReviewRequest(detail, action, rationale, crypto.randomUUID());
+      scopes.set(request.requestId, detail.review?.scope); return request;
+    },
+    submit: (id, request) => review.submitAdminContentReview(id, request, scopes.get(request.requestId)) };
 }
 
 async function withFixture(run) {
@@ -68,9 +71,7 @@ test('viewer reads list and detail but every approve or reject is refused withou
   const before = structuredClone(fixture.contents.get(2));
   for (const action of ['approve', 'reject']) {
     const { error, failure } = await rejection(viewer.submit(2, viewer.request(detail, action)), viewer);
-    assert.equal(error.code, 'ADMIN_WRITE_REQUIRED');
-    assert.equal(failure.status, 'forbidden'); assert.equal(failure.retrySameRequest, false); assert.equal(failure.reload, true);
-    assert.doesNotMatch(failure.message, /internal detail/);
+    assert.match(error.message, /검수 요청을 확인/);
   }
   unchanged(fixture, 2, before); assert.equal(fixture.audit.length, 0);
 }));
@@ -138,17 +139,17 @@ test('a revoked grant refuses the same session at once, including replays; a dow
   fixture.setRole('admin', 'viewer');
   assert.equal((await admin.detail(3)).status, 'active');
   const { error, failure } = await rejection(admin.submit(3, admin.request(detail, 'approve')), admin);
-  assert.equal(error.code, 'ADMIN_WRITE_REQUIRED'); assert.equal(failure.status, 'forbidden');
+  assert.equal(error.code, 'REVIEW_SCOPE_CHANGED'); assert.equal(failure.status, 'conflict');
   assert.equal(fixture.audit.length, 1);
 }));
 
 test('anonymous, expired and non-admin sessions get login-required or forbidden for reads and writes', async () => withFixture(async fixture => {
-  const detail = await browser(fixture, 'viewer').detail(2);
+  const detail = await browser(fixture, 'operator').detail(2);
   const anonymous = browser(fixture, null);
   assert.equal((await rejection(anonymous.list(), anonymous)).read.status, 'login-required');
   const write = await rejection(anonymous.submit(2, anonymous.request(detail, 'approve')), anonymous);
   assert.equal(write.error.code, 'AUTH_REQUIRED'); assert.equal(write.failure.status, 'login-required'); assert.equal(write.failure.reload, true);
-  assert.equal(anonymous.unauthorized(), 2);
+  assert.equal(anonymous.unauthorized(), 1);
 
   const operator = browser(fixture, 'operator');
   await operator.detail(2); fixture.expire('operator');
@@ -179,18 +180,14 @@ test('503 and lost responses keep the identical request until the server commits
   }
 });
 
-test('a rotated CSRF token is refused, refreshed on the next attempt and the identical request commits once', async () => withFixture(async fixture => {
+test('normal CSRF rotation is accepted by the fresh preflight without changing request scope', async () => withFixture(async fixture => {
   const operator = browser(fixture, 'operator');
   await operator.api.getSession();
   const request = operator.request(await operator.detail(2), 'approve');
   fixture.rotateCsrf('operator');
-  const refused = await rejection(operator.submit(2, request), operator);
-  assert.equal(refused.error.code, 'CSRF_INVALID'); assert.equal(refused.failure.retrySameRequest, true);
-  assert.equal(fixture.audit.length, 0);
   const result = await operator.submit(2, request);
   assert.equal(result.replayed, false); assert.equal(fixture.audit.length, 1);
-  assert.deepEqual(operator.posts.map(post => post.csrf), ['csrf-operator-1', 'csrf-operator-2']);
-  assert.equal(operator.posts[1].body, operator.posts[0].body);
+  assert.deepEqual(operator.posts.map(post => post.csrf), ['csrf-operator-2']);
 }));
 
 // --- POST UI flow (lib/admin-review-flow.ts) over the same loopback fake API -------------
@@ -212,12 +209,12 @@ const postsTo = fixture => fixture.requests.filter(request => request.method ===
 const plain = value => JSON.parse(JSON.stringify(value)); // Compare vm-realm objects by value.
 
 test('fake API detail carries review metadata by role and state, like the BE eligibility service', async () => withFixture(async fixture => {
-  assert.deepEqual(plain((await browser(fixture, 'viewer').detail(2)).review), { allowedActions: [], disabledReason: 'permission_denied' });
+  assert.deepEqual(plain((await browser(fixture, 'viewer').detail(2)).review), { allowedActions: [], disabledReason: 'permission_denied', scope: null });
   const operator = browser(fixture, 'operator');
-  assert.deepEqual(plain((await operator.detail(2)).review), { allowedActions: ['approve', 'reject'], disabledReason: null });
-  assert.deepEqual(plain((await operator.detail(4)).review), { allowedActions: [], disabledReason: 'content_not_reviewable' });
+  assert.deepEqual(plain((await operator.detail(2)).review), { allowedActions: ['approve', 'reject'], disabledReason: null, scope: { actorUserId: 22, adminAccountId: 122 } });
+  assert.deepEqual(plain((await operator.detail(4)).review), { allowedActions: [], disabledReason: 'content_not_reviewable', scope: { actorUserId: 22, adminAccountId: 122 } });
   fixture.contents.get(3).draftStatus = 'writing';
-  assert.deepEqual(plain((await browser(fixture, 'admin').detail(3)).review), { allowedActions: [], disabledReason: 'draft_not_reviewable' });
+  assert.deepEqual(plain((await browser(fixture, 'admin').detail(3)).review), { allowedActions: [], disabledReason: 'draft_not_reviewable', scope: { actorUserId: 23, adminAccountId: 123 } });
 }));
 
 test('flow: operator approval shows success only after HTTP 200, with audit and result, then re-reads the detail', async () => withFixture(async fixture => {
@@ -240,7 +237,7 @@ test('flow: operator approval shows success only after HTTP 200, with audit and 
   assert.deepEqual(sent, { ...submitting.request }); assert.equal(sent.rationale, '출처와 본문 확인');
   const reread = await operator.detail(2);
   assert.equal(reread.updatedAt, done.result.updatedAt);
-  assert.deepEqual(plain(reread.review), { allowedActions: [], disabledReason: 'content_not_reviewable' });
+  assert.deepEqual(plain(reread.review), { allowedActions: [], disabledReason: 'content_not_reviewable', scope: { actorUserId: 22, adminAccountId: 122 } });
   await flow.execute(reread, 'reject', '다시 반려');
   assert.equal(flow.state().phase, 'blocked'); assert.equal(postsTo(fixture).length, 1);
 }));
@@ -306,7 +303,7 @@ test('flow: 409 stops the request, re-reads state and permission, and never re-r
   await tick(); await flow.recheck();
   assert.equal(postsTo(fixture).length, 2, 'admin reject + one operator attempt, no re-run');
   const fresh = await operator.detail(3);
-  assert.deepEqual(plain(fresh.review), { allowedActions: [], disabledReason: 'content_not_reviewable' });
+  assert.deepEqual(plain(fresh.review), { allowedActions: [], disabledReason: 'content_not_reviewable', scope: { actorUserId: 22, adminAccountId: 122 } });
   await flow.execute(fresh, 'approve', '출처 확인');
   assert.equal(flow.state().phase, 'blocked'); assert.equal(postsTo(fixture).length, 2);
 }));
@@ -333,11 +330,11 @@ test('flow: viewer sends nothing; revoked or downgraded grants end in forbidden 
   assert.equal(pending.flow.state().phase, 'uncertain');
   fixture.setRole('admin', 'viewer');
   await pending.flow.recheck();
-  assert.equal(pending.flow.state().phase, 'stopped'); assert.equal(pending.flow.state().failure.status, 'forbidden');
+  assert.equal(pending.flow.state().phase, 'uncertain'); assert.match(pending.flow.state().message, /관리자 권한이 변경/);
   assert.equal(fixture.audit.length, 1, 'the earlier commit stays; the UI just cannot confirm it');
 }));
 
-test('flow: 401 asks for login with a re-read; an expired CSRF token is rechecked with the identical request', async () => withFixture(async fixture => {
+test('flow: expired session stops a new intent; normal CSRF rotation passes fresh preflight', async () => withFixture(async fixture => {
   const operator = browser(fixture, 'operator');
   const expired = reviewFlow(operator, fixture, 2);
   const detail = await operator.detail(2);
@@ -350,11 +347,8 @@ test('flow: 401 asks for login with a re-read; an expired CSRF token is rechecke
   const { flow } = reviewFlow(admin, fixture, 3);
   fixture.rotateCsrf('admin');
   await flow.execute(await admin.detail(3), 'reject', '사유');
-  assert.equal(flow.state().phase, 'uncertain'); assert.match(flow.state().message, /보안 확인이 만료/);
-  await flow.recheck();
   assert.equal(flow.state().phase, 'succeeded'); assert.equal(flow.state().result.replayed, false);
-  assert.deepEqual(admin.posts.map(post => post.csrf), ['csrf-admin-1', 'csrf-admin-2']);
-  assert.equal(admin.posts[1].body, admin.posts[0].body);
+  assert.deepEqual(admin.posts.map(post => post.csrf), ['csrf-admin-2']);
 }));
 
 test('flow: a request outlives an unmounted panel or closed modal; the result and pending re-read land on reattach', async () => withFixture(async fixture => {
@@ -395,4 +389,54 @@ test('production write gate is off in code: no env, query or storage switch, and
   assert.equal(flow.state().phase, 'blocked'); assert.match(flow.state().message, /활성화되지 않았습니다/);
   await flow.recheck();
   assert.equal(postsTo(fixture).length, 0); assert.equal(fixture.audit.length, 0);
+}));
+
+test('scope: another account cannot recheck the old intent; restoring its original scope can replay', async () => withFixture(async fixture => {
+  const operator = browser(fixture, 'operator');
+  const { flow } = reviewFlow(operator, fixture, 2);
+  fixture.failNext('unavailable-after-commit');
+  const original = await operator.detail(2);
+  await flow.execute(original, 'approve', '사유');
+  const uncertain = flow.state();
+  assert.ok(Object.isFrozen(uncertain.scope));
+  operator.setActor('admin');
+  await flow.recheck();
+  assert.equal(flow.state().phase, 'uncertain'); assert.equal(flow.state().request, uncertain.request);
+  assert.equal(flow.state().scope, uncertain.scope); assert.match(flow.state().message, /계정.*변경/);
+  assert.equal(postsTo(fixture).length, 1); assert.equal(fixture.audit.length, 1);
+  operator.setActor('operator');
+  await flow.recheck();
+  assert.equal(flow.state().phase, 'succeeded'); assert.equal(flow.state().result.replayed, true);
+  assert.equal(postsTo(fixture)[1].headers['x-admin-review-actor'], '22');
+  assert.equal(postsTo(fixture)[1].headers['x-admin-review-grant'], '122');
+  assert.equal(postsTo(fixture)[0].body, postsTo(fixture)[1].body); assert.equal(fixture.audit.length, 1);
+}));
+
+test('scope: same user with a replacement grant cannot commit or replay an earlier request', async () => withFixture(async fixture => {
+  const operator = browser(fixture, 'operator');
+  const { flow } = reviewFlow(operator, fixture, 2);
+  fixture.failNext('unavailable-before-commit');
+  await flow.execute(await operator.detail(2), 'approve', '사유');
+  const request = flow.state().request;
+  fixture.regrant('operator');
+  await flow.recheck();
+  assert.equal(flow.state().phase, 'uncertain'); assert.equal(flow.state().request, request);
+  assert.equal(flow.state().scope.adminAccountId, 122); assert.equal(postsTo(fixture).length, 1);
+  assert.equal(fixture.audit.length, 0);
+}));
+
+test('global unload guard tracks every unresolved flow independently of mounted panels', async () => withFixture(async fixture => {
+  const operator = browser(fixture, 'operator');
+  const first = reviewFlow(operator, fixture, 2).flow, second = reviewFlow(operator, fixture, 3).flow;
+  const guard = () => { const event = new Event('beforeunload', { cancelable: true }); operator.window.dispatchEvent(event); return event.defaultPrevented; };
+  fixture.failNext('unavailable-after-commit'); await first.execute(await operator.detail(2), 'approve', '사유');
+  fixture.failNext('unavailable-before-commit'); await second.execute(await operator.detail(3), 'reject', '사유');
+  const { pendingReviews } = operator.load('lib/admin-review-flow.ts');
+  assert.equal(pendingReviews().length, 2); assert.equal(guard(), true);
+  first.setReload(null); second.setReload(null); assert.equal(guard(), true);
+  first.release(); assert.equal(pendingReviews().length, 1); assert.equal(guard(), true);
+  fixture.expire('operator'); await second.recheck();
+  assert.equal(second.state().phase, 'uncertain'); assert.match(second.state().message, /아직 확인되지/);
+  assert.equal(pendingReviews()[0].state.request.requestId, second.state().request.requestId); assert.equal(guard(), true);
+  second.release(); assert.equal(pendingReviews().length, 0); assert.equal(guard(), false);
 }));

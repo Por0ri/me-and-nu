@@ -17,7 +17,8 @@ export const reviewActions = ["approve", "reject"] as const;
 export const reviewDisabledReasons = ["permission_denied", "deleted", "content_not_reviewable", "draft_not_reviewable", "unavailable"] as const;
 export type AdminReviewAction = typeof reviewActions[number];
 export type ReviewDisabledReason = typeof reviewDisabledReasons[number];
-export type AdminContentReview = { allowedActions: AdminReviewAction[]; disabledReason: ReviewDisabledReason | null };
+export type AdminReviewScope = Readonly<{ actorUserId: number; adminAccountId: number }>;
+export type AdminContentReview = { allowedActions: AdminReviewAction[]; disabledReason: ReviewDisabledReason | null; scope: AdminReviewScope | null };
 export type AdminContentDetail = AdminContentItem & {
   // DB Content version: forward verbatim as expectedUpdatedAt in a future review request.
   // Date conversion would discard microseconds. This does not version Draft/Source/Carousel.
@@ -96,7 +97,18 @@ export function parseContentReview(value: unknown): AdminContentReview | null {
   if (reason !== null && !reviewDisabledReasons.includes(reason as ReviewDisabledReason)) return null;
   // The BE either allows actions with no reason, or allows none and names the reason.
   if ((reason === null) !== (actions.length > 0)) return null;
-  return { allowedActions: [...actions] as AdminReviewAction[], disabledReason: reason as ReviewDisabledReason | null };
+  if (value.scope !== null && !validReviewScope(value.scope)) return null;
+  if (actions.length && !validReviewScope(value.scope)) return null;
+  return { allowedActions: [...actions] as AdminReviewAction[], disabledReason: reason as ReviewDisabledReason | null,
+    scope: value.scope === null ? null : Object.freeze({ actorUserId: value.scope.actorUserId, adminAccountId: value.scope.adminAccountId }) };
+}
+
+export function validReviewScope(value: unknown): value is AdminReviewScope {
+  return record(value) && integer(value.actorUserId, 1) && integer(value.adminAccountId, 1);
+}
+
+export function sameReviewScope(left: AdminReviewScope, right: AdminReviewScope): boolean {
+  return left.actorUserId === right.actorUserId && left.adminAccountId === right.adminAccountId;
 }
 
 export async function loadAdminContent(contentId: number, signal?: AbortSignal): Promise<AdminContentDetail> {

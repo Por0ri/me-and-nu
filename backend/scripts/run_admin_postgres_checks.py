@@ -59,6 +59,7 @@ def main():
     parser.add_argument("--image", default="pgvector/pgvector:pg17")
     parser.add_argument("--cli-smoke-only", action="store_true",
                         help="Run only the real CLI bootstrap/list checks in the disposable DB")
+    parser.add_argument("--test-filter", help="Optional pytest -k selection for a targeted isolated regression")
     args = parser.parse_args()
     backend = Path(__file__).resolve().parents[1]
     name = "menu-admin-test-" + uuid4().hex
@@ -91,7 +92,8 @@ def main():
         print(f"Isolated PostgreSQL {version}; disposable schemas; real migration and AsyncSession checks.", flush=True)
         if args.cli_smoke_only:
             return cli_smoke(backend, env, name)
-        return subprocess.run([sys.executable, "-m", "pytest", "tests/test_admin_postgres_integration.py", "-q", "-p", "no:cacheprovider"],
+        selection = ["-k", args.test_filter] if args.test_filter else []
+        return subprocess.run([sys.executable, "-m", "pytest", "tests/test_admin_postgres_integration.py", "-q", "-p", "no:cacheprovider", *selection],
                               cwd=backend, env=env).returncode
     finally:
         if created:

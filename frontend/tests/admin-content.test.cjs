@@ -10,7 +10,8 @@ const root = path.join(__dirname, '..');
 const plain = value => JSON.parse(JSON.stringify(value));
 const item = (id = 2) => ({ contentId: id, title: '달빛 콘텐츠', judgmentStatus: 'needs_review', status: 'active',
   createdAt: '2026-11-12T00:00:00Z', publishedAt: null });
-const allowedReview = () => ({ allowedActions: ['approve', 'reject'], disabledReason: null });
+const reviewScope = { actorUserId: 7, adminAccountId: 107 };
+const allowedReview = () => ({ allowedActions: ['approve', 'reject'], disabledReason: null, scope: reviewScope });
 const detailOf = () => ({ ...item(), updatedAt: '2026-11-13T09:12:34.123456+09:00', summary: null, body: null, sources: [], review: allowedReview() });
 const page = (items = [item()]) => ({ items, page: 1, pageSize: 20, total: items.length });
 function runtime(respond = () => page()) {
@@ -78,7 +79,8 @@ const buttonState = (html, label) => {
 test('detail review metadata accepts only the BE-defined actions and reasons and is kept exactly', async () => {
   const valid = [allowedReview(), { allowedActions: ['reject', 'approve'], disabledReason: null }, { allowedActions: ['approve'], disabledReason: null },
     { allowedActions: ['reject'], disabledReason: null }, ...reasons.map(disabledReason => ({ allowedActions: [], disabledReason }))];
-  for (const review of valid) {
+  for (const value of valid) {
+    const review = { ...value, scope: value.scope ?? reviewScope };
     const detail = { ...detailOf(), review }, env = runtime(() => detail);
     const parsed = await env.api.loadAdminContent(2);
     assert.deepEqual(plain(parsed), detail); assert.deepEqual(plain(parsed.review), review);
@@ -110,6 +112,19 @@ test('missing or malformed review metadata keeps the detail readable but disable
   await assert.rejects(env.api.loadAdminContent(2), error => error.code === 'INVALID_ADMIN_RESPONSE');
 });
 
+test('missing or malformed actor/grant scope fails closed without hiding readable content', async () => {
+  for (const scope of [undefined, null, {}, [], '22', { actorUserId: 7 }, { actorUserId: '7', adminAccountId: 107 },
+    { actorUserId: 7, adminAccountId: 0 }, { actorUserId: true, adminAccountId: 107 },
+    { actorUserId: 7.5, adminAccountId: 107 }, { actorUserId: 7, adminAccountId: Number.MAX_SAFE_INTEGER + 1 }]) {
+    const env = runtime(() => ({ ...detailOf(), review: { ...allowedReview(), scope } }));
+    const detail = await env.api.loadAdminContent(2);
+    assert.equal(detail.review, null); assert.equal(detail.contentId, 2);
+    assert.deepEqual(plain(env.load('lib/admin-content-review.ts').reviewAvailability(detail).allowedActions), []);
+  }
+  const env = runtime(() => ({ ...detailOf(), review: { allowedActions: [], disabledReason: 'permission_denied', scope: null } }));
+  assert.equal((await env.api.loadAdminContent(2)).review.scope, null);
+});
+
 test('viewer cannot open review; operator and admin open only what the BE allows; execution stays disconnected', () => {
   const env = runtime(); const { reviewAvailability } = env.load('lib/admin-content-review.ts');
   const cases = [
@@ -126,6 +141,7 @@ test('viewer cannot open review; operator and admin open only what the BE allows
     ['stale state', allowedReview(), 'hidden', 'disabled', 'disabled', /다시 조회/],
   ];
   for (const [name, review, status, approve, reject, message] of cases) {
+    review.scope = review.scope ?? reviewScope;
     const content = { ...detailOf(), status, review };
     const availability = reviewAvailability(content);
     assert.deepEqual(plain(availability.allowedActions), [approve === 'enabled' && 'approve', reject === 'enabled' && 'reject'].filter(Boolean), name);
@@ -199,8 +215,9 @@ function reviewRuntime(reply = () => approved()) {
   let issued = 0;
   const env = runtime((url, init) => url.pathname === '/api/v1/auth/session'
     ? { authenticated: true, sessionState: 'active', user: { id: 7, accountType: 'user' }, onboardingCompleted: true, csrfToken: `csrf-${++issued}` }
-    : reply(url, init));
-  return { ...env, review: env.load('lib/admin-content-review.ts'), posts: () => env.calls.filter(call => call.init.method === 'POST') };
+    : url.pathname === '/api/v1/admin/contents/2' && (init.method ?? 'GET') === 'GET' ? detailOf() : reply(url, init));
+  const review = env.load('lib/admin-content-review.ts');
+  return { ...env, review: { ...review, submitAdminContentReview: (id, request, signal) => review.submitAdminContentReview(id, request, reviewScope, signal) }, posts: () => env.calls.filter(call => call.init.method === 'POST') };
 }
 
 test('review request forwards the detail version verbatim with only the server DTO fields', () => {
@@ -242,10 +259,12 @@ test('review submit sends one credentialed POST with session CSRF and the exact 
     const request = env.review.prepareReviewRequest(detailOf(), action, '출처 확인', reviewId);
     assert.deepEqual(plain(await env.review.submitAdminContentReview(2, request, signal)), result);
     const [post] = env.posts();
-    assert.equal(env.calls.length, 2); assert.equal(env.posts().length, 1);
+    assert.equal(env.calls.length, 3); assert.equal(env.posts().length, 1);
     assert.equal(new URL(post.url).pathname, '/api/v1/admin/contents/2/review');
     assert.equal(post.init.credentials, 'include'); assert.equal(post.init.cache, 'no-store'); assert.equal(post.init.signal, signal);
     assert.equal(post.init.headers.get('X-CSRF-Token'), 'csrf-1');
+    assert.equal(post.init.headers.get('X-Admin-Review-Actor'), '7');
+    assert.equal(post.init.headers.get('X-Admin-Review-Grant'), '107');
     assert.equal(post.init.headers.get('Content-Type'), 'application/json');
     assert.equal(post.init.body, JSON.stringify(plain(request)));
     assert.deepEqual(Object.keys(JSON.parse(post.init.body)), reviewFields);
@@ -304,7 +323,7 @@ test('retrying keeps the same requestId and body and refreshes a rejected CSRF t
   assert.equal(posts.length, 3);
   assert.ok(posts.every(call => call.init.body === posts[0].init.body));
   assert.equal(JSON.parse(posts[0].init.body).requestId, reviewId);
-  assert.deepEqual(posts.map(call => call.init.headers.get('X-CSRF-Token')), ['csrf-1', 'csrf-2', 'csrf-2']);
+  assert.deepEqual(posts.map(call => call.init.headers.get('X-CSRF-Token')), ['csrf-1', 'csrf-2', 'csrf-3']);
 });
 
 test('unknown outcomes never claim a failed or unsaved review and resend the identical request', async () => {

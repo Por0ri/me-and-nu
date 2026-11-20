@@ -5,13 +5,21 @@ import re
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, field_validator
+from pydantic import AwareDatetime, ConfigDict, Field, field_validator
 
 from app.schemas.admin_content_input import AdminInputModel, clean_text
 from app.schemas.common import CamelModel
 
 ReviewAction = Literal["approve", "reject"]
 _VERSION = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})")
+
+
+class AdminContentReviewScope(CamelModel):
+    """Expected identity of the original action, never an authorization grant."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    actor_user_id: int = Field(strict=True, gt=0, le=9223372036854775807)
+    admin_account_id: int = Field(strict=True, gt=0, le=9223372036854775807)
 
 
 class AdminContentReviewRequest(AdminInputModel):

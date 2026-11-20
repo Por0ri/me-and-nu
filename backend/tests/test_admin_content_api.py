@@ -251,7 +251,7 @@ def test_detail_sources_and_missing_content_use_existing_service(api):
     ]
     assert body["updatedAt"] == "2026-11-13T09:12:34.123456+09:00"
     assert set(body) == {"contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources", "review"}
-    assert body["review"] == {"allowedActions": [], "disabledReason": "permission_denied"}
+    assert body["review"] == {"allowedActions": [], "disabledReason": "permission_denied", "scope": None}
     assert api.client.get(PATHS[0] + "/1").json()["sources"] == []
     missing = api.client.get(PATHS[0] + "/999")
     assert missing.status_code == 404
