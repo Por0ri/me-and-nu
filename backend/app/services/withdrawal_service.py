@@ -11,8 +11,8 @@
 from datetime import datetime, timedelta, timezone
 import logging
 
-from sqlalchemy import delete, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import BigInteger, column, delete, select, table
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
@@ -29,6 +29,10 @@ from app.repositories.redis_session_store import RedisSessionStore
 logger = logging.getLogger(__name__)
 
 WITHDRAWAL_GRACE_DAYS = 30
+
+# Main shares Checking's grant history but does not own its ORM or migrations.
+# Keep this read contract independent of the administrator API and role policy.
+_admin_history = table("admin_account", column("admin_account_id", BigInteger), column("user_id", BigInteger))
 
 
 def scheduled_delete_at(withdrawn_at: datetime) -> datetime:
@@ -53,12 +57,28 @@ async def request_withdrawal(
     store: RedisSessionStore | None,
 ) -> datetime:
     """계정을 막고 지금 세션을 끝낸 뒤 삭제 예정 시각을 돌려줍니다."""
-    # 채널이 있는 계정은 외래 키 때문에 유예가 끝나도 못 지우므로 신청할 때 거절합니다.
-    channel = await db.scalar(
-        select(CreatorChannel.creator_channel_id).where(CreatorChannel.user_id == user.user_id).limit(1)
-    )
-    if channel is not None:
-        raise ApiError(409, "WITHDRAWAL_BLOCKED", "연결된 크리에이터 채널이 있어 탈퇴할 수 없습니다.")
+    try:
+        # Checking grant/bootstrap also locks the user before inserting a grant.
+        # Re-read after waiting: the authentication dependency may have stale data.
+        user = await lock_user(db, user.user_id)
+        if user is None or user.account_status != "active":
+            raise ApiError(409, "WITHDRAWAL_STATE_CONFLICT", "계정 상태가 변경되었습니다. 다시 확인해 주세요.")
+        # 채널과 회수된 관리자 권한도 삭제를 막는 이력이므로 탈퇴 신청 전에 확인합니다.
+        channel = await db.scalar(
+            select(CreatorChannel.creator_channel_id).where(CreatorChannel.user_id == user.user_id).limit(1)
+        )
+        if channel is not None:
+            raise ApiError(409, "WITHDRAWAL_BLOCKED", "연결된 크리에이터 채널이 있어 탈퇴할 수 없습니다.")
+        grant = await db.scalar(
+            select(_admin_history.c.admin_account_id).where(_admin_history.c.user_id == user.user_id).limit(1)
+        )
+        if grant is not None:
+            raise ApiError(409, "WITHDRAWAL_BLOCKED", "관리자 권한 이력이 있어 탈퇴할 수 없습니다.")
+    except SQLAlchemyError:
+        # Missing table, permission failure or unavailable DB must never mean
+        # "no administrator history". No account/session mutation has occurred.
+        await db.rollback()
+        raise ApiError(503, "WITHDRAWAL_UNAVAILABLE", "탈퇴 가능 여부를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.") from None
     now = utcnow()
     user.account_status = "withdrawn"
     user.withdrawn_at = now

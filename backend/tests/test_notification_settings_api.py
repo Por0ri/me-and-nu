@@ -102,6 +102,10 @@ def api(pg):
     engine, url, migrate, users = pg
     now = datetime.now(timezone.utc)
     tokens = ["notification-fixture-" + uuid4().hex for _ in users]
+    # Main reads shared administrator history but keeps its migration target.
+    with engine.begin() as db:
+        db.execute(text("CREATE TABLE admin_account (admin_account_id BIGINT PRIMARY KEY, "
+                        "user_id BIGINT NOT NULL REFERENCES user_account(user_id))"))
     with Session(engine) as db:
         for index, (user_id, token) in enumerate(zip(users, tokens)):
             db.add(AuthSession(user_id=user_id, session_state="onboarding_pending" if index == 2 else "active",

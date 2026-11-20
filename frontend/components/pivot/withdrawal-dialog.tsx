@@ -31,12 +31,12 @@ export function WithdrawalDialog({ withdraw, onClose }: { withdraw: () => Promis
     try {
       await withdraw();
     } catch (failure) {
-      const code = failure instanceof ApiError ? failure.code : null;
-      if (code === "WITHDRAWAL_BLOCKED") {
-        setError("연결된 크리에이터 채널이 있어 탈퇴할 수 없어요.");
-      } else if (code === "ACCOUNT_REQUEST_IN_PROGRESS") {
+      const apiError = failure instanceof ApiError ? failure : null;
+      if (apiError?.code === "WITHDRAWAL_BLOCKED") {
+        setError(apiError.message.trim() || "현재 이 계정은 탈퇴할 수 없어요.");
+      } else if (apiError?.code === "ACCOUNT_REQUEST_IN_PROGRESS") {
         setError("다른 계정 요청을 처리하고 있어요. 잠시 후 다시 시도해 주세요.");
-      } else if (code === "ACCOUNT_SESSION_CHANGED") {
+      } else if (apiError?.code === "ACCOUNT_SESSION_CHANGED") {
         setError("로그인 상태가 바뀌었어요. 다시 로그인해 주세요.");
       } else {
         setError("탈퇴 신청을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
