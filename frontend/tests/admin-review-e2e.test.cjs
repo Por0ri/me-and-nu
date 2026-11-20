@@ -11,12 +11,12 @@ const root = path.join(__dirname, '..');
 // Isolated rehearsal of the 11/19 E2E: the real FE client (lib/api, admin-content,
 // admin-content-review) over real HTTP against a loopback fake API. No UI is enabled and
 // no real BE, DB or account is touched.
-function browser(fixture, actor) {
+function browser(fixture, actor, { apiBase = fixture.origin } = {}) {
   const modules = new Map(), posts = [], scopes = new Map();
   const window = new EventTarget(); let unauthorized = 0;
   window.addEventListener('api:unauthorized', () => unauthorized++);
-  const context = vm.createContext({ AbortController, URL, URLSearchParams, Headers, Response, Event, Intl, window,
-    process: { env: { NEXT_PUBLIC_API_BASE_URL: fixture.origin } },
+  const context = vm.createContext({ AbortController, URL, URLSearchParams, Headers, Response, Event, Intl, window, crypto,
+    process: { env: { NEXT_PUBLIC_API_BASE_URL: apiBase } },
     fetch: async (url, init = {}) => {
       // Stand in for the browser cookie jar; credentials/cache semantics stay with the client.
       const headers = new Headers(init.headers); const cookie = fixture.cookie(actor);
@@ -24,7 +24,11 @@ function browser(fixture, actor) {
       const { credentials, cache, ...rest } = init;
       assert.equal(credentials, 'include'); assert.equal(cache, 'no-store');
       if ((init.method ?? 'GET') === 'POST') posts.push({ url, body: init.body, csrf: headers.get('x-csrf-token') });
-      return fetch(url, { ...rest, headers });
+      // Exercise the build's real gate with either service origin, but send every
+      // request only to this loopback fixture. Unexpected origins never reach fetch.
+      const requested = new URL(url);
+      assert.equal(requested.origin, new URL(apiBase).origin);
+      return fetch(`${fixture.origin}${requested.pathname}${requested.search}`, { ...rest, headers });
     },
   });
   function load(file) {
@@ -192,7 +196,7 @@ test('normal CSRF rotation is accepted by the fresh preflight without changing r
 
 // --- POST UI flow (lib/admin-review-flow.ts) over the same loopback fake API -------------
 // The flow is the only UI path to the review POST. These tests enable it with a test-only
-// activation bound to the fixture origin; production uses the code-only gate (off).
+// activation bound to the fixture origin; the deployed gate allows Checking only.
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function reviewFlow(session, fixture, contentId, { enabled = true } = {}) {
   const { createReviewFlow } = session.load('lib/admin-review-flow.ts');
@@ -368,27 +372,49 @@ test('flow: a request outlives an unmounted panel or closed modal; the result an
   assert.equal(reviewFlowFor(2), reviewFlowFor(2), 'remounts reattach to the same registry flow');
 }));
 
-test('production write gate is off in code: no env, query or storage switch, and the registry flow sends nothing', async () => withFixture(async fixture => {
+test('code-only gate allows Checking and blocks Main, other origins and explicit disablement', async () => withFixture(async fixture => {
   const operator = browser(fixture, 'operator');
   const { reviewWriteGate } = operator.load('lib/admin-review-write-gate.ts');
-  for (const base of [fixture.origin, 'http://localhost:8000', 'https://api.checking.me-nu.kr', 'https://api.me-nu.kr']) {
+  for (const base of [fixture.origin, 'http://localhost:8000', 'https://api.me-nu.kr', 'https://api.test.me-nu.kr',
+    'https://api.labs.me-nu.kr', 'http://api.checking.me-nu.kr', 'https://api.checking.me-nu.kr:444',
+    'https://api.checking.me-nu.kr.example.org', 'https://api.checking.me-nu.kr@other.example', 'not a url']) {
     assert.equal(reviewWriteGate(base).enabled, false, base);
   }
+  assert.equal(reviewWriteGate('https://api.checking.me-nu.kr').enabled, true);
+  assert.equal(reviewWriteGate('https://api.checking.me-nu.kr/').enabled, true);
+  assert.equal(reviewWriteGate('https://api.checking.me-nu.kr', null).enabled, false);
   const activation = { apiOrigin: 'https://api.checking.me-nu.kr', approvedBy: 'x', approvedOn: '2026-11-19', reference: 'x' };
   assert.equal(reviewWriteGate('https://api.checking.me-nu.kr/', activation).enabled, true);
   assert.equal(reviewWriteGate('https://api.me-nu.kr', activation).enabled, false, 'an activation is bound to one API origin');
   assert.equal(reviewWriteGate('not a url', activation).enabled, false);
   const source = fs.readFileSync(path.join(root, 'lib/admin-review-write-gate.ts'), 'utf8');
-  assert.match(source, /const ACTIVATION: ReviewWriteActivation \| null = null;/);
   assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ''), /process\.env|NEXT_PUBLIC|localStorage|sessionStorage|location|searchParams|cookie/);
 
   const { reviewFlowFor } = operator.load('lib/admin-review-flow.ts');
   const flow = reviewFlowFor(2);
   assert.equal(flow.writeGate().enabled, false);
   await flow.execute(await operator.detail(2), 'approve', '출처 확인');
-  assert.equal(flow.state().phase, 'blocked'); assert.match(flow.state().message, /활성화되지 않았습니다/);
+  assert.equal(flow.state().phase, 'blocked'); assert.match(flow.state().message, /승인되지 않은 API 환경/);
   await flow.recheck();
   assert.equal(postsTo(fixture).length, 0); assert.equal(fixture.audit.length, 0);
+}));
+
+test('Checking registry flow uses the approved default gate; Main registry still sends no POST', async () => withFixture(async fixture => {
+  const main = browser(fixture, 'operator', { apiBase: 'https://api.me-nu.kr' });
+  const mainFlow = main.load('lib/admin-review-flow.ts').reviewFlowFor(2);
+  await mainFlow.execute(await main.detail(2), 'approve', '출처 확인');
+  assert.equal(mainFlow.state().phase, 'blocked');
+  assert.equal(postsTo(fixture).length, 0);
+
+  const checking = browser(fixture, 'operator', { apiBase: 'https://api.checking.me-nu.kr' });
+  const flow = checking.load('lib/admin-review-flow.ts').reviewFlowFor(2);
+  assert.equal(flow.writeGate().enabled, true);
+  await flow.execute(await checking.detail(2), 'approve', '출처 확인');
+  assert.equal(flow.state().phase, 'succeeded');
+  assert.equal(postsTo(fixture).length, 1); assert.equal(fixture.audit.length, 1);
+  assert.equal(checking.posts[0].url, 'https://api.checking.me-nu.kr/api/v1/admin/contents/2/review');
+  assert.equal(postsTo(fixture)[0].headers['x-admin-review-actor'], '22');
+  assert.equal(postsTo(fixture)[0].headers['x-admin-review-grant'], '122');
 }));
 
 test('scope: another account cannot recheck the old intent; restoring its original scope can replay', async () => withFixture(async fixture => {
