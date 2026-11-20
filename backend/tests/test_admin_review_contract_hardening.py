@@ -19,7 +19,7 @@ from test_admin_content_review import (  # noqa: F401
 
 def grant(api, role):
     with api.engine.begin() as db:
-        db.execute(text("INSERT INTO admin_account (user_id, role) VALUES (7, :role)"), {"role": role})
+        return db.scalar(text("INSERT INTO admin_account (user_id, role) VALUES (7, :role) RETURNING admin_account_id"), {"role": role})
 
 
 @pytest.mark.parametrize(("role", "actions"), [
@@ -27,12 +27,13 @@ def grant(api, role):
 ])
 def test_detail_uses_actual_grant_for_actions_and_reads_again_after_revocation(api, role, actions):
     login(api)
-    grant(api, role)
+    grant_id = grant(api, role)
     del api.app.dependency_overrides[get_admin_permission_provider]
     response = api.client.get("/api/v1/admin/contents/2")
     assert response.status_code == 200, response.text
     assert response.json()["review"] == {
         "allowedActions": actions, "disabledReason": None if actions else "permission_denied",
+        "scope": {"actorUserId": 7, "adminAccountId": grant_id} if actions else None,
     }
     with api.engine.begin() as db:
         db.execute(text("UPDATE admin_account SET revoked_at=CURRENT_TIMESTAMP"))
@@ -48,18 +49,19 @@ def test_detail_uses_actual_grant_for_actions_and_reads_again_after_revocation(a
 ])
 def test_detail_does_not_offer_actions_for_ineligible_state(api, sql, reason):
     login(api)
-    grant(api, "operator")
+    grant_id = grant(api, "operator")
     with api.engine.begin() as db:
         db.execute(text(sql))
     response = api.client.get("/api/v1/admin/contents/2")
     assert response.status_code == 200, response.text
-    assert response.json()["review"] == {"allowedActions": [], "disabledReason": reason}
+    assert response.json()["review"] == {"allowedActions": [], "disabledReason": reason,
+        "scope": {"actorUserId": 7, "adminAccountId": grant_id}}
 
 
 def test_unavailable_write_permission_does_not_return_enabled_metadata(api):
     login(api)
     check = AsyncMock(side_effect=RuntimeError("secret store failure"))
-    api.app.dependency_overrides[get_admin_review_permission_provider] = lambda: SimpleNamespace(can_review_content=check)
+    api.app.dependency_overrides[get_admin_review_permission_provider] = lambda: SimpleNamespace(read_grant=check)
     response = api.client.get("/api/v1/admin/contents/2")
     assert response.status_code == 503
     assert response.json()["code"] == "ADMIN_PERMISSION_UNAVAILABLE"

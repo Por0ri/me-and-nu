@@ -29,7 +29,7 @@ from app.main import create_app
 from app.models import Content
 from app.repositories import admin_content_review_repository as repo
 from app.repositories.carousel_repository import public_content_condition
-from app.schemas.admin_content_review import AdminContentReviewRequest
+from app.schemas.admin_content_review import AdminContentReviewRequest, AdminContentReviewScope
 from app.services import admin_content_review_service as service
 from app.services.admin_review_permission_provider import (
     AdminReviewGrant, get_admin_review_permission_provider,
@@ -66,7 +66,7 @@ class TestPermissionProvider:
         self.allowed = True
         self.targets = {2}
 
-    async def lock_grant(self, db, *, user_id, content_id):
+    async def read_grant(self, db, *, user_id, content_id):
         row = (await db.execute(text(
             "SELECT admin_account_id, user_id FROM admin_account "
             "WHERE user_id = 7 AND revoked_at IS NULL"
@@ -74,6 +74,9 @@ class TestPermissionProvider:
         if self.allowed and content_id in self.targets and row and row["user_id"] == user_id:
             return AdminReviewGrant(**row)
         return None
+
+    async def lock_grant(self, db, *, user_id, content_id):
+        return await self.read_grant(db, user_id=user_id, content_id=content_id)
 
 
 @pytest.fixture
@@ -126,7 +129,8 @@ async def review(state, request=None, **kwargs):
     request = request or AdminContentReviewRequest(**request_data())
     with Session(state.engine) as db:
         return await service.review_content(WriteSession(db), 2, request, user_id=7,
-            permissions=kwargs.get("permissions", state.permissions))
+            permissions=kwargs.get("permissions", state.permissions),
+            expected_scope=kwargs.get("expected_scope", AdminContentReviewScope(actor_user_id=7, admin_account_id=11)))
 
 
 def rows(state, table):
@@ -300,11 +304,13 @@ async def test_existing_transaction_and_untrusted_actor_are_rejected(review_db):
         db.execute(text("SELECT 1"))
         with pytest.raises(RuntimeError, match="fresh transaction"):
             await service.review_content(WriteSession(db), 2, AdminContentReviewRequest(**request_data()),
-                user_id=7, permissions=review_db.permissions)
+                user_id=7, permissions=review_db.permissions,
+                expected_scope=AdminContentReviewScope(actor_user_id=7, admin_account_id=11))
     with pytest.raises(ValueError):
         with Session(review_db.engine) as db:
             await service.review_content(WriteSession(db), 2, AdminContentReviewRequest(**request_data()),
-                user_id=True, permissions=review_db.permissions)
+                user_id=True, permissions=review_db.permissions,
+                expected_scope=AdminContentReviewScope(actor_user_id=7, admin_account_id=11))
 
 
 @pytest.mark.asyncio
@@ -332,7 +338,8 @@ async def test_unknown_grant_cannot_leave_content_changed_without_audit(review_d
     before = snapshot(review_db)
     permissions = SimpleNamespace(lock_grant=AsyncMock(return_value=AdminReviewGrant(999, 7)))
     with pytest.raises(ApiError) as error:
-        await review(review_db, permissions=permissions)
+        await review(review_db, permissions=permissions,
+            expected_scope=AdminContentReviewScope(actor_user_id=7, admin_account_id=999))
     assert error.value.status_code == 503 and snapshot(review_db) == before
 
 
@@ -398,7 +405,8 @@ def review_api(api, review_db):
 
 def post(api, **kwargs):
     return api.client.post("/api/v1/admin/contents/2/review", json=kwargs.get("json", request_data()),
-                          headers=kwargs.get("headers", {"X-CSRF-Token": csrf_token_for_session(TOKEN)}))
+        headers={"X-Admin-Review-Actor": "7", "X-Admin-Review-Grant": "11",
+                 **kwargs.get("headers", {"X-CSRF-Token": csrf_token_for_session(TOKEN)})})
 
 
 def test_http_commit_response_and_replay(review_api):
@@ -476,7 +484,7 @@ def test_http_validation_stale_and_missing_content(review_api):
     assert post(review_api, json=request_data(expectedUpdatedAt="2020-01-01T00:00:00Z")).status_code == 409
     review_api.writer.permissions.targets.add(999)
     response = review_api.client.post("/api/v1/admin/contents/999/review", json=request_data(),
-                                     headers={"X-CSRF-Token": csrf_token_for_session(TOKEN)})
+        headers={"X-CSRF-Token": csrf_token_for_session(TOKEN), "X-Admin-Review-Actor": "7", "X-Admin-Review-Grant": "11"})
     assert response.status_code == 404 and response.json()["code"] == "CONTENT_NOT_FOUND"
     assert not rows(review_api.writer, "admin_action_log")
 

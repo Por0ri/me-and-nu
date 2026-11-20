@@ -43,7 +43,7 @@ export function ContentDetailScreen({ contentId }: { contentId: number }) {
         <h3>요약</h3><p className={styles.body}>{state.data.summary || "등록된 요약이 없습니다."}</p>
         <h3>본문</h3><p className={styles.body}>{state.data.body || "등록된 본문이 없습니다."}</p>
         <h3>출처</h3><ContentSources sources={state.data.sources} />
-        <ContentReviewPanel key={state.data.contentId} content={state.data} />
+        <ContentReviewPanel key={state.data.contentId} content={state.data} onReload={retry} />
       </article>}
     </section>
   </>;

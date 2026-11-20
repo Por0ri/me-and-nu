@@ -28,7 +28,7 @@ from app.core.exceptions import ApiError
 from app.db.migration_policy import SERVICE_SCHEMA_REVISION
 from app.models import AdminAccount, AdminActionLog, AgentRun, Content, Draft, Topic, UserAccount
 from app.repositories import admin_content_review_repository as review_repo
-from app.schemas.admin_content_review import AdminContentReviewRequest
+from app.schemas.admin_content_review import AdminContentReviewRequest, AdminContentReviewScope
 from app.services import admin_content_review_service as review_service
 
 
@@ -118,11 +118,12 @@ def request(**changes):
     })
 
 
-async def apply(factory, payload, *, user_id=8, content_id=1):
+async def apply(factory, payload, *, user_id=8, content_id=1, expected_scope=None):
     from app.services.admin_review_permission_provider import DatabaseAdminReviewPermissionProvider
     async with factory() as db:
         return await review_service.review_content(db, content_id, payload, user_id=user_id,
-                                                   permissions=DatabaseAdminReviewPermissionProvider())
+            permissions=DatabaseAdminReviewPermissionProvider(),
+            expected_scope=expected_scope or AdminContentReviewScope(actor_user_id=user_id, admin_account_id=user_id + 100))
 
 
 def counts(state):
@@ -311,7 +312,8 @@ def test_real_postgres_lock_timeout_returns_conflict_and_can_retry(admin_pg):
                     from app.services.admin_review_permission_provider import DatabaseAdminReviewPermissionProvider
                     with pytest.raises(ApiError) as conflict:
                         await review_service.review_content(db, 1, payload, user_id=8,
-                                                           permissions=DatabaseAdminReviewPermissionProvider())
+                            permissions=DatabaseAdminReviewPermissionProvider(),
+                            expected_scope=AdminContentReviewScope(actor_user_id=8, admin_account_id=108))
                     assert (conflict.value.status_code, conflict.value.code) == (409, "REVIEW_STATE_CONFLICT")
                 assert counts(admin_pg) == ("pending_review", "needs_review", "checking", 0)
             assert (await apply(factory, payload)).replayed is False
@@ -338,9 +340,73 @@ def test_revocation_blocks_old_replay_and_new_action(admin_pg):
             assert replacement["adminAccountId"] != 108
             with pytest.raises(ApiError) as old_grant_scope:
                 await apply(factory, payload)
-            assert old_grant_scope.value.code == "REVIEW_STATE_CONFLICT"
+            assert old_grant_scope.value.code == "REVIEW_SCOPE_CHANGED"
     run_async(scenario())
     assert counts(admin_pg) == ("active", "confirmed", "published", 1)
+
+
+def test_runtime_http_pending_review_cannot_cross_regrant_scope(admin_pg, monkeypatch):
+    """No original commit: an unchanged content version must not adopt a new grant."""
+    from httpx import ASGITransport, AsyncClient
+    from app.api.session_store import get_session_store
+    from app.api.v1.admin.review_router import get_review_db
+    from app.core.config import settings
+    from app.core.security import csrf_token_for_session, hash_token
+    from app.db.session import get_db
+    from app.main import create_app
+    from app.models import AuthSession
+    from app.services.admin_grant_service import grant_admin, revoke_admin
+
+    populate(admin_pg)
+    for name, value in {"session_backend": "postgres", "redis_url": None, "enable_dev_auth_bypass": False,
+                        "session_cookie_secure": False, "frontend_origins": "http://localhost:3000"}.items():
+        monkeypatch.setattr(settings, name, value)
+    token = "scope-pending-" + uuid4().hex
+    now = datetime.now(timezone.utc)
+    with Session(admin_pg.engine) as db, db.begin():
+        db.add(AuthSession(user_id=8, session_state="active", session_token_hash=hash_token(token),
+            csrf_token_hash=hash_token(csrf_token_for_session(token)), created_at=now,
+            last_accessed_at=now, expires_at=now + timedelta(hours=1)))
+    with admin_pg.engine.connect() as db:
+        before_content = dict(db.execute(select(Content.__table__)).mappings().one())
+        before_draft = dict(db.execute(select(Draft.__table__)).mappings().one())
+
+    async def scenario():
+        async with sessions(admin_pg) as factory:
+            async def isolated_db():
+                async with factory() as db:
+                    yield db
+            app = create_app(enable_dev_api=False)
+            app.dependency_overrides[get_db] = isolated_db
+            app.dependency_overrides[get_review_db] = isolated_db
+            app.dependency_overrides[get_session_store] = lambda: None
+            headers = {"Cookie": f"{settings.session_cookie_name}={token}", "Origin": "http://localhost:3000",
+                "X-CSRF-Token": csrf_token_for_session(token)}
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://localhost") as client:
+                path = "/api/v1/admin/contents/1"
+                original = (await client.get(path, headers=headers)).json()
+                assert original["review"]["scope"] == {"actorUserId": 8, "adminAccountId": 108}
+                payload = request(expectedUpdatedAt=original["updatedAt"]).model_dump(mode="json", by_alias=True)
+                assert len(payload) == 6
+                async with factory() as db:
+                    await revoke_admin(db, actor_user_id=7, admin_account_id=108, rationale="격리 원 권한 회수")
+                async with factory() as db:
+                    replacement = await grant_admin(db, actor_user_id=7, target_user_id=8,
+                        role="operator", rationale="격리 동일 회원 새 권한")
+                assert replacement["adminAccountId"] != 108
+                fresh = await client.get(path, headers=headers)
+                assert fresh.status_code == 200
+                assert fresh.json()["review"] == {"allowedActions": ["approve", "reject"], "disabledReason": None,
+                    "scope": {"actorUserId": 8, "adminAccountId": replacement["adminAccountId"]}}
+                assert fresh.json()["updatedAt"] == original["updatedAt"]
+                response = await client.post(path + "/review", json=payload, headers={**headers,
+                    "X-Admin-Review-Actor": "8", "X-Admin-Review-Grant": "108"})
+                assert response.status_code == 409 and response.json()["code"] == "REVIEW_SCOPE_CHANGED"
+    run_async(scenario())
+    assert counts(admin_pg) == ("pending_review", "needs_review", "checking", 0)
+    with admin_pg.engine.connect() as db:
+        assert dict(db.execute(select(Content.__table__)).mappings().one()) == before_content
+        assert dict(db.execute(select(Draft.__table__)).mappings().one()) == before_draft
 
 
 def test_review_holds_permission_lock_until_commit_before_revoke(admin_pg, monkeypatch):
@@ -401,7 +467,8 @@ def test_runtime_http_get_review_audit_and_revocation_e2e(admin_pg, monkeypatch,
                         "session_cookie_secure": False, "frontend_origins": "http://localhost:3000"}.items():
         monkeypatch.setattr(settings, name, value)
     now = datetime.now(timezone.utc)
-    tokens = {8: "pg-operator-" + uuid4().hex, 9: "pg-viewer-" + uuid4().hex}
+    tokens = {8: "pg-operator-" + uuid4().hex, 9: "pg-viewer-" + uuid4().hex,
+              10: "pg-other-operator-" + uuid4().hex}
     with Session(admin_pg.engine) as db, db.begin():
         for user_id, token in tokens.items():
             db.add(AuthSession(user_id=user_id, session_state="active", session_token_hash=hash_token(token),
@@ -425,18 +492,25 @@ def test_runtime_http_get_review_audit_and_revocation_e2e(admin_pg, monkeypatch,
                 headers = lambda user_id: {
                     "Cookie": f"{settings.session_cookie_name}={tokens[user_id]}",
                     "Origin": "http://localhost:3000", "X-CSRF-Token": csrf_token_for_session(tokens[user_id]),
+                    "X-Admin-Review-Actor": str(user_id), "X-Admin-Review-Grant": str(user_id + 100),
                 }
                 viewer = await client.get(path, headers=headers(9))
                 assert viewer.status_code == 200, viewer.text
                 assert viewer.json()["review"]["allowedActions"] == []
                 payload = request(action=action).model_dump(mode="json", by_alias=True)
+                assert len(payload) == 6
                 assert (await client.post(path + "/review", json=payload, headers=headers(9))).status_code == 403
                 detail = await client.get(path, headers=headers(8))
                 assert detail.status_code == 200, detail.text
                 body = detail.json()
-                assert body["review"] == {"allowedActions": ["approve", "reject"], "disabledReason": None}
+                assert body["review"] == {"allowedActions": ["approve", "reject"], "disabledReason": None,
+                    "scope": {"actorUserId": 8, "adminAccountId": 108}}
                 assert datetime.fromisoformat(body["updatedAt"].replace("Z", "+00:00")) == STAMP
                 assert ".123456" in body["updatedAt"]
+                switched = await client.post(path + "/review", json=payload,
+                    headers={**headers(10), "X-Admin-Review-Actor": "8", "X-Admin-Review-Grant": "108"})
+                assert switched.status_code == 409 and switched.json()["code"] == "REVIEW_SCOPE_CHANGED"
+                assert counts(admin_pg) == ("pending_review", "needs_review", "checking", 0)
                 # Conflict -> latest detail -> an explicitly new review intent.
                 with admin_pg.engine.begin() as db:
                     db.execute(text("UPDATE content SET updated_at=:stamp"), {"stamp": STAMP + timedelta(microseconds=1)})
@@ -460,6 +534,7 @@ def test_runtime_http_get_review_audit_and_revocation_e2e(admin_pg, monkeypatch,
                 fresh = (await client.get(path, headers=headers(8))).json()
                 assert fresh["status"] == result["status"] and fresh["updatedAt"] == result["updatedAt"]
                 assert fresh["review"]["allowedActions"] == []
+                assert fresh["review"]["scope"] == {"actorUserId": 8, "adminAccountId": 108}
                 async with factory() as db:
                     await revoke_admin(db, actor_user_id=7, admin_account_id=108, rationale="HTTP 검증 후 회수")
                 assert (await client.get(path, headers=headers(8))).status_code == 403

@@ -62,6 +62,16 @@ function createAdminReviewFixture({ actors = {
     return detail ? { contentId, title, judgmentStatus, status, createdAt, publishedAt, updatedAt, summary, body, sources }
       : { contentId, title, judgmentStatus, status, createdAt, publishedAt };
   };
+  // Mirrors admin_review_eligibility_service.py: permission first, then content and Draft state.
+  const eligibility = (content, grant, actorUserId) => {
+    const scope = WRITE_ROLES.has(grant.role) ? { actorUserId, adminAccountId: grant.adminAccountId } : null;
+    const deny = disabledReason => ({ allowedActions: [], disabledReason, scope });
+    if (!WRITE_ROLES.has(grant.role)) return deny('permission_denied');
+    if (content.status === 'deleted') return deny('deleted');
+    if (!['active', 'pending_review'].includes(content.status) || content.judgmentStatus !== 'needs_review') return deny('content_not_reviewable');
+    if (!['checking', 'approved'].includes(content.draftStatus)) return deny('draft_not_reviewable');
+    return { allowedActions: ['approve', 'reject'], disabledReason: null, scope };
+  };
 
   async function handle(req, res) {
     const url = new URL(req.url, origin);
@@ -95,7 +105,7 @@ function createAdminReviewFixture({ actors = {
     }
     const contentId = Number((detail ?? review)[1]);
     const content = contents.get(contentId);
-    if (detail) return content ? send(200, view(content, true)) : fail(404, 'CONTENT_NOT_FOUND');
+    if (detail) return content ? send(200, { ...view(content, true), review: Object.hasOwn(content, 'reviewOverride') ? content.reviewOverride : eligibility(content, grant, session.userId) }) : fail(404, 'CONTENT_NOT_FOUND');
 
     // POST review: Origin/CSRF, strict DTO, fresh write grant, content, replay, version/state, commit.
     if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) return fail(403, 'CSRF_INVALID');
@@ -105,6 +115,9 @@ function createAdminReviewFixture({ actors = {
     const fault = faults.shift();
     if (fault === 'permission-unavailable') return fail(503, 'ADMIN_PERMISSION_UNAVAILABLE');
     if (!WRITE_ROLES.has(grant.role)) return fail(403, 'ADMIN_WRITE_REQUIRED');
+    const actor = req.headers['x-admin-review-actor'], grantId = req.headers['x-admin-review-grant'];
+    if (![actor, grantId].every(value => typeof value === 'string' && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)))) return fail(422, 'VALIDATION_ERROR');
+    if (Number(actor) !== session.userId || Number(grantId) !== grant.adminAccountId) return fail(409, 'REVIEW_SCOPE_CHANGED');
     if (!content) return fail(404, 'CONTENT_NOT_FOUND');
     const print = fingerprint(data);
     const previous = audit.find(row => row.contentId === contentId && row.adminAccountId === grant.adminAccountId &&
@@ -146,6 +159,7 @@ function createAdminReviewFixture({ actors = {
     failNext: kind => faults.push(kind),
     revoke: name => { grants.get(actors[name].userId).revoked = true; },
     setRole: (name, role) => { grants.get(actors[name].userId).role = role; },
+    regrant: name => { const grant = grants.get(actors[name].userId); grant.adminAccountId += 1000; grant.revoked = false; },
     expire: name => sessions.delete(`session-${name}`),
     rotateCsrf: name => { const session = sessions.get(`session-${name}`); session.csrf = `csrf-${name}-${++session.rotation}`; },
   };

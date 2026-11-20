@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import AwareDatetime, Field, field_validator
 
 from app.schemas.common import CamelModel
+from app.schemas.admin_content_review import AdminContentReviewScope
 from app.schemas.feed import ContentSourceResponse
 
 JudgmentStatus = Literal["pending", "confirmed", "needs_review", "failed"]
@@ -45,6 +46,7 @@ class AdminContentListResponse(CamelModel):
 class AdminContentReviewEligibility(CamelModel):
     allowed_actions: list[Literal["approve", "reject"]] = Field(default_factory=list)
     disabled_reason: Literal["permission_denied", "deleted", "content_not_reviewable", "draft_not_reviewable", "unavailable"] | None = "unavailable"
+    scope: AdminContentReviewScope | None = None
 
 
 class AdminContentDetail(AdminContentItem):

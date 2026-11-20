@@ -1,5 +1,5 @@
-import { apiRequest, ApiError } from "@/lib/api";
-import { contentVersion, type AdminContentDetail, type AdminReviewAction, type ReviewDisabledReason } from "./admin-content";
+import { apiRequest, ApiError, getSession } from "@/lib/api";
+import { contentVersion, loadAdminContent, sameReviewScope, validReviewScope, type AdminReviewScope, type AdminContentDetail, type AdminReviewAction, type ReviewDisabledReason } from "./admin-content";
 
 export type ReviewAction = AdminReviewAction;
 
@@ -59,6 +59,7 @@ export function reviewAvailability(content: Pick<AdminContentDetail, "status" | 
   const review = content.review;
   if (!review) return { allowedActions: [], message: "검수 가능 여부를 확인하지 못했습니다. 콘텐츠를 다시 조회해 주세요." };
   if (review.disabledReason !== null) return { allowedActions: [], message: disabledMessages[review.disabledReason] };
+  if (!validReviewScope(review.scope)) return { allowedActions: [], message: "검수 권한을 확인하지 못했습니다. 콘텐츠를 다시 조회해 주세요." };
   // Allowed by the server, but the stored state shown here is not reviewable: re-read first.
   if (!canPrepareReview(content)) return { allowedActions: [], message: "콘텐츠 상태를 다시 확인해야 합니다. 콘텐츠를 다시 조회해 주세요." };
   return { allowedActions: [...review.allowedActions], message: null };
@@ -92,11 +93,26 @@ function integer(value: unknown): value is number { return typeof value === "num
 function invalidResult(): never { throw new ApiError("검수 처리 결과를 확인하지 못했습니다.", 200, "INVALID_ADMIN_REVIEW_RESPONSE"); }
 
 export async function submitAdminContentReview(
-  contentId: number, request: AdminContentReviewRequest, signal?: AbortSignal,
+  contentId: number, request: AdminContentReviewRequest, scope: AdminReviewScope, signal?: AbortSignal,
 ): Promise<AdminContentReviewResult> {
   if (!integer(contentId) || (request.action !== "approve" && request.action !== "reject") ||
-    !requestIdPattern.test(request.requestId) || !contentVersion(request.expectedUpdatedAt)) {
+    !requestIdPattern.test(request.requestId) || !contentVersion(request.expectedUpdatedAt) || !validReviewScope(scope)) {
     throw new Error("검수 요청을 확인해 주세요.");
+  }
+  // Check the current cookie's actor and DB grant before every attempt, including
+  // replays. Never replace the scope captured when the administrator confirmed.
+  const session = await getSession({ fresh: true, signal });
+  if (!session.authenticated || session.sessionState !== "active" || !session.onboardingCompleted ||
+      session.user?.accountType !== "user" || !session.csrfToken) {
+    throw new ApiError("로그인이 필요합니다.", 401, "AUTH_REQUIRED");
+  }
+  if (session.user.id !== scope.actorUserId) {
+    throw new ApiError("검수 요청을 시작한 계정으로 다시 로그인해 주세요.", 409, "REVIEW_SCOPE_CHANGED");
+  }
+  const latest = await loadAdminContent(contentId, signal);
+  if (!validReviewScope(latest.review?.scope) || !sameReviewScope(scope, latest.review.scope) ||
+      ["permission_denied", "unavailable"].includes(latest.review.disabledReason ?? "")) {
+    throw new ApiError("검수 요청을 시작한 계정 또는 권한이 변경되었습니다.", 409, "REVIEW_SCOPE_CHANGED");
   }
   // Exactly the server DTO fields (extra keys are rejected), in their original values.
   const body = JSON.stringify({
@@ -104,7 +120,10 @@ export async function submitAdminContentReview(
     expectedStatus: request.expectedStatus, expectedJudgmentStatus: request.expectedJudgmentStatus,
     expectedUpdatedAt: request.expectedUpdatedAt,
   });
-  const value = await apiRequest<unknown>(`/api/v1/admin/contents/${contentId}/review`, { method: "POST", body, signal }, 200);
+  const value = await apiRequest<unknown>(`/api/v1/admin/contents/${contentId}/review`, { method: "POST", body, signal, headers: {
+    "X-CSRF-Token": session.csrfToken,
+    "X-Admin-Review-Actor": String(scope.actorUserId), "X-Admin-Review-Grant": String(scope.adminAccountId),
+  } }, 200);
   const result = value as Record<string, unknown> | null;
   const expected = transitions[request.action];
   if (!result || typeof result !== "object" || Array.isArray(result) || result.contentId !== contentId || !integer(result.draftId) ||
@@ -122,6 +141,7 @@ export function reviewFailure(error: unknown): ReviewFailure {
   const retry = failure("retry", "처리 결과를 확인하지 못했습니다. 같은 요청으로 다시 확인해 주세요.", true);
   if (!(error instanceof ApiError)) return retry; // Network loss or abort: the commit may have happened.
   if (error.code === "INVALID_ADMIN_REVIEW_RESPONSE" || error.code === "INVALID_RESPONSE") return retry;
+  if (error.code === "REVIEW_SCOPE_CHANGED") return failure("conflict", "검수 요청을 시작한 계정 또는 관리자 권한이 변경되었습니다. 원래 계정과 권한을 확인해 주세요.", false, true);
   if (error.status === 401) return failure("login-required", "로그인이 필요합니다. 다시 로그인한 뒤 콘텐츠를 다시 조회해 주세요.", false, true);
   if (error.status === 403) return error.code === "CSRF_INVALID"
     ? failure("retry", "보안 확인이 만료되었습니다. 같은 요청으로 다시 시도해 주세요.", true)
