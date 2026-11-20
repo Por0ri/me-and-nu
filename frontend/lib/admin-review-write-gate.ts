@@ -1,20 +1,20 @@
 import { apiBaseUrl } from "@/lib/api";
 
-// Admin review POSTs from the UI are OFF in every build and environment.
+// Admin review POSTs are enabled only for the approved Checking API origin.
 //
 // There is deliberately no environment variable, query, storage or header switch: a
-// NEXT_PUBLIC value alone can never enable writes. Activation is a reviewed code change
-// that replaces ACTIVATION below, and only after the BE confirms on the target server:
-//   1. migration 47c1a8d6b302 applied to the target DB,
-//   2. PR #89 deployed to that API server,
-//   3. real viewer/operator/admin grants issued by the BE,
-//   4. dedicated review content that is not live service content (Main and Checking
-//      currently share one DB, so no existing service content may be used),
-//   5. an approved live E2E plan.
-// Even when activated, writes go only to that exact API origin. The BE remains the final
-// authority on permission, version and state for every POST.
+// NEXT_PUBLIC value alone cannot approve a new origin. This activation follows the
+// deployed scope contract, Main withdrawal protection, real admin OAuth/API verification
+// and explicit user approval documented below. Main and other API origins stay disabled.
+// Main and Checking share one DB; live validation uses dedicated synthetic content.
+// The BE remains the final authority on permission, version and state for every POST.
 export type ReviewWriteActivation = { apiOrigin: string; approvedBy: string; approvedOn: string; reference: string };
-const ACTIVATION: ReviewWriteActivation | null = null;
+const ACTIVATION: ReviewWriteActivation | null = {
+  apiOrigin: "https://api.checking.me-nu.kr",
+  approvedBy: "service owner (explicit Checking UI activation approval)",
+  approvedOn: "2026-11-20",
+  reference: "docs/ADMIN_REVIEW_UI_ACTIVATION_2026-11-20.md",
+};
 
 export type ReviewWriteGate = { enabled: boolean; reason: string | null };
 
