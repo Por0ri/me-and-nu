@@ -115,6 +115,10 @@ def postgres_flow(monkeypatch, request):
             if len(table.primary_key.columns) == 1 and isinstance(column.type, Integer):
                 column.type = Integer()
     metadata.create_all(engine)
+    # Shared-DB withdrawal read contract, without importing Checking admin ORM.
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE admin_account (admin_account_id INTEGER PRIMARY KEY, "
+            "user_id BIGINT NOT NULL REFERENCES user_account(user_id), role TEXT NOT NULL, revoked_at TIMESTAMP)")
     legacy_birth_date = getattr(request, "param", False)
     if legacy_birth_date:
         # The new ORM must work during the rollout before the old nullable
