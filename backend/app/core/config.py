@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     chat_daily_total_limit: int = Field(default=100, ge=0)
     # 활동 기록(user_event)의 출처. 실서비스 서버만 production으로 둔다
     event_data_source: Literal["production", "local_demo", "automated_test", "imported"] = "local_demo"
+    # Operator-provided offline evaluation artifact; never a client-selected path.
+    admin_recommendation_evaluation_path: str | None = Field(default=None, repr=False)
 
     @model_validator(mode="after")
     def validate_session_backend(self) -> "Settings":
