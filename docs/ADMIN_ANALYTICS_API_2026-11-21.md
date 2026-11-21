@@ -1,9 +1,9 @@
-# 관리자 대시보드·분석 조회 API
+# 관리자 대시보드·분석 조회 API 및 FE 통합
 
 기준: Checking `6c143d0`, FE [PR #90](https://github.com/Por0ri/me-and-nu/pull/90).
 프론트 작업은 11/18 `b24a426`에 작성되어 11/19 13:47 KST에 Checking으로 병합됐다.
-해당 화면은 통계·추천 평가 API 계약 없이 `—`를 표시한다. 이 변경은 BE 조회 계약과
-평가 결과 생성 경로를 추가한다. FE 연결, 배포, 도메인 분리는 포함하지 않는다.
+기존 화면은 통계·추천 평가 API 계약 없이 `—`를 표시했다. 이 변경은 BE 조회 계약과
+평가 결과 생성 경로를 추가하고 기존 FE에 연결한다. Checking 배포와 도메인 분리는 후속 단계다.
 
 ## 경로와 권한
 
@@ -51,7 +51,7 @@ FE는 반환된 경계를 KST로 표시한다. 추천 성능의 기간은 **평�
 | 화면 | 응답 필드 / 필요한 표시 |
 | --- | --- |
 | 이용 회원 | `usage.activeUsers`: 홈 피드 노출 또는 상세 open이 관측된 고유 회원. 전체 방문자와 다름 |
-| 가입 후 피드 진입률 | `usage.signupFeedObservationRate`: **가입 후 피드 노출 관측률**로 표시. 기간 내 온보딩 완료 회원 중 완료 후 홈 피드 노출이 관측된 비율 |
+| 가입 후 피드 진입률 | `usage.signupFeedObservationRate`: **온보딩 완료 후 피드 노출 관측률**로 표시. 기간 내 온보딩 완료 회원 중 완료 후 홈 피드 노출이 관측된 비율. 기간 내 신규 가입자와는 다른 분모 |
 | 콘텐츠 조회 수 | `usage.contentReadSegments`: **콘텐츠 열람 구간 수**로 표시. open은 가시성 구간마다 생성되므로 페이지뷰가 아님 |
 | 콘텐츠 TOP5 | `topContents`: 같은 open 구간 기준, 동률은 contentId 오름차순 |
 | 가입 전환 퍼널 | `funnel`: 가입 시작(미수집), 계정 생성, 같은 생성 코호트의 온보딩 완료, 같은 코호트의 완료 후 피드 노출. 원래 FE의 가입 완료/취향 완료를 별도 수집한 것처럼 표시하지 않음 |
@@ -130,5 +130,64 @@ python -m pytest tests/test_admin_analytics.py tests/test_admin_analytics_api.py
 python scripts/run_admin_postgres_checks.py --test-file tests/test_admin_analytics_postgres.py
 ```
 
-신규 Migration은 없다. FE 연결 전에 지표 명칭 조정과 null/partial 표시 규칙을 적용하고,
-배포 후 viewer/operator/admin의 실제 세션으로 네 경로를 확인한다. 도메인 분리는 그 이후 판단한다.
+신규 Migration은 없다. FE에는 아래와 같이 지표 명칭과 null/partial 표시 규칙을 적용했다.
+Checking 배포 후 viewer/operator/admin의 실제 세션으로 네 경로를 확인한다. 도메인 분리는 그 이후 판단한다.
+
+## FE 통합 및 브라우저 검증
+
+`/admin/dashboard`는 서비스 이용 지표와 NDCG 요약, 미처리 신고·문의, 열람 구간 순위,
+취향 분포, 기록된 생성 상태를 조회한다. 확인 필요 항목의 분류·페이지 이동을 지원하며,
+처리로 목록이 줄어 페이지가 사라지면 유효한 마지막 페이지를 다시 조회한다.
+NDCG 카드는 평가 모델·완료일·오프라인 평가를 명시하고 선택 기간을 유지해 추천 성능으로 이동한다.
+
+`/admin/analytics`는 분포·퍼널·순위·재방문 관측률을 조회한다.
+`?view=performance`는 모델별 기존/신규 계열 막대 그래프, NDCG/Hit Rate 전환,
+사용자 범위 필터, 표본, 기준 모델과의 차이, 평가 조건을 표시한다.
+NDCG 차이는 절대 점수, Hit Rate 차이는 퍼센트포인트(%p)다.
+기간·사용자 범위는 URL에 보존하고 모바일 상세 표는 내부 가로 스크롤을 제공한다.
+
+공통 클라이언트는 credentialed/no-store GET과 응답 검증을 적용한다.
+세션과 현재 관리자 권한을 재확인하며 로딩·401·403·장애 상태에는 이전 수치를 남기지 않는다.
+조건 변경·화면 이동 때 취소된 요청의 늦은 응답은 적용하지 않는다.
+기기·세션·공지처럼 수집되지 않은 지표와 분모 없는 비율은 `—`로 남기고, 관측된 0은 숫자로 표시한다.
+
+2026-11-21 FE 검증:
+
+- 관리자 Node 회귀 테스트 **108 passed**: 기존 콘텐츠/검수/회원/신고/공지 포함, 신규 통계 클라이언트·화면 24개 포함.
+- TypeScript 검사 및 `next build --webpack` 통과.
+- Edge headless **1728px / 390px** 실제 HTTP 통합 통과: 대시보드 → 추천 성능 → 분석, 기간/집단/지표 변경, 새로고침·뒤로/앞으로, 목록 필터·페이지, 상세 표 키보드 스크롤.
+- viewer/operator/admin=200, 일반 회원=403, 익명=401; 권한 회수 후 수치 제거, SQL 503 후 재시도, 미집계/0 구분, 평가 연결 복구, 지연 응답 무시, 목록 축소 후 페이지 복구 통과.
+- 그래프 수치가 실제 API 응답과 일치. 콘솔 예외·외부 요청·쓰기 요청·화면 전체 가로 넘침 없음. 데스크톱·모바일 캡처 확인.
+- 기존 공지/신고 SVG 해시 검증은 Windows CRLF 체크아웃을 LF 원본으로 정규화하도록 보완. 에셋 바이트의 Git 원본과 매니페스트는 변경하지 않았다.
+
+브라우저 검증은 테스트 전용 메모리 SQLite·합성 계정·합성 평가 파일을 사용한다.
+실제 라우터·쿠키·권한 Provider·SQL 서비스·응답 검증을 거치며 API 응답을 가로채 대체하지 않는다.
+PostgreSQL 동작 근거는 위 별도 BE 검증이다. 테스트용 경로와 합성 데이터는 운영 앱에 등록하지 않는다.
+
+재현 방법(서로 다른 터미널, 저장소 루트 기준):
+
+```powershell
+cd backend
+python tests/serve_admin_analytics_fixture.py --port 8198
+```
+
+```powershell
+cd frontend
+npm ci --ignore-scripts --no-audit --no-fund
+$env:NEXT_PUBLIC_API_BASE_URL='http://127.0.0.1:8198'
+npm run build -- --webpack
+npm run start -- --hostname 127.0.0.1 --port 3220
+```
+
+```powershell
+cd frontend
+# Playwright가 설치된 별도 도구 경로를 지정할 수 있다. 기본 브라우저는 설치된 Edge다.
+$env:PIVOT_PLAYWRIGHT_MODULE='<absolute-path-to-playwright>'
+node tests/admin-analytics-browser-check.cjs http://127.0.0.1:3220 ../.preview-pivot/admin-analytics-integration/results
+node --test tests/admin*.test.cjs
+```
+
+브라우저 결과 JSON과 화면 13장은 `.preview-pivot/admin-analytics-integration/results/`에 생성한다.
+테스트 BE 주소를 서비스 빌드에 사용하지 않는다. Checking에는 실제 BE 주소로 빌드·배포하고,
+오프라인 평가 파일을 별도로 설정해야 추천 점수가 표시된다. 평가 파일이 없으면 FE 연결이 성공해도
+미집계 상태를 표시한다. 이번 단계에서는 Checking 병합·배포 또는 실제 평가 실행을 하지 않았다.
