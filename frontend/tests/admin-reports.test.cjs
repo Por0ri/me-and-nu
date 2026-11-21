@@ -89,12 +89,14 @@ test('production report import graph excludes fixture data, consumer APIs, write
   assert.equal(fs.existsSync(path.join(root, 'public/admin/report-fixture-cover.png')), false);
   assert.equal(model.reportUnavailable.status, 'unavailable');
 });
-test('every Figma asset is non-empty and preserves its original source bytes and root dimensions', () => {
+test('every Figma asset is non-empty and preserves its LF source hash and root dimensions', () => {
   const manifest = require('../public/admin/report-sources.json');
   assert.equal(manifest.assets.length, 13);
   for (const asset of manifest.assets) {
     const bytes = fs.readFileSync(path.join(root, 'public/admin', asset.file));
-    assert.ok(bytes.length); assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), asset.sha256, asset.file);
+    // Canonicalize only SVG text for Git's Windows CRLF checkout; keep binary assets byte-exact.
+    const source = asset.file.endsWith('.svg') ? bytes.toString('utf8').replace(/\r\n/g, '\n') : bytes;
+    assert.ok(bytes.length); assert.equal(crypto.createHash('sha256').update(source).digest('hex'), asset.sha256, asset.file);
     if (asset.file.endsWith('.svg')) {
       const tag = bytes.toString().match(/<svg[^>]+>/)[0];
       assert.equal(Number(tag.match(/width="([^"]+)"/)[1]), asset.width);

@@ -122,6 +122,38 @@
 .today { min-height: 138px; }
 .today .panelHeading { margin-bottom: 10px; }
 .todayDescription { color: #71717a; font-size: 16px; line-height: 24px; margin: 0; }
+.statisticNote { margin-top: 10px; color: #71717a; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.statisticNote details { margin-top: 3px; }
+.statisticNote summary { cursor: pointer; color: #7043b4; width: fit-content; }
+.statisticNote p { margin: 6px 0; }
+.metric .statisticNote { margin-top: 6px; }
+.scope { margin: 0 0 20px; padding: 10px 14px; border-radius: 10px; background: #f4edff; color: #655575; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.scope p { margin: 2px 0; }
+.emptyStatistic { color: #71717a; font-size: 14px; line-height: 1.7; margin: 20px 0; }
+.legendDot { flex: 0 0 10px; height: 10px; border-radius: 50%; }
+.ring > .donut { border: 0; border-radius: 50%; position: relative; }
+.donut > div { position: absolute; inset: 20%; border-radius: 50%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #fff; }
+.donut span { color: #71717a; }
+.rankLabel { overflow-wrap: anywhere; }
+.rankLabel a { color: #43305e; text-decoration: none; }
+.rankLabel a:hover { text-decoration: underline; }
+.rankList li > span:last-child { flex-shrink: 0; }
+.liveFunnel { display: flex; flex-direction: column; gap: 14px; }
+.liveFunnel > div > div:first-child { display: flex; gap: 12px; justify-content: space-between; font-size: 14px; }
+.funnelTrack { height: 14px; margin-top: 5px; background: #f0e8fa; border-radius: 7px; overflow: hidden; }
+.funnelTrack > span { display: block; height: 100%; background: #7043b4; border-radius: inherit; }
+.liveFunnel .statisticNote { margin-top: 3px; }
+.summaryLink { margin-top: auto; padding-top: 12px; color: #7043b4; font-size: 13px; font-weight: 600; }
+.recommendationSummary { margin: 10px 0 0; }
+.recommendationSummary > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.recommendationSummary dt { font-size: 12px; color: #655575; }
+.recommendationSummary dd { margin: 0; font-size: 22px; font-weight: 700; }
+.attentionList { margin: 14px 0 6px; list-style: none; padding: 0; }
+.attentionList li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 0; border-bottom: 1px solid #eee6f7; font-size: 13px; }
+.attentionList li > div { flex: 1; min-width: 150px; display: flex; flex-direction: column; gap: 4px; }
+.attentionList li span, .attentionList time { color: #71717a; }
+.attentionList a { color: #7043b4; }
+.generationCounts { overflow-wrap: anywhere; }
 @media (min-width: 1601px) { .analytics { width: calc(100% + 8px); } }
 @media (max-width: 1600px) {
   .distribution, .device .distribution { gap: 24px; }
