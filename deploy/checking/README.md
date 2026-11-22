@@ -90,20 +90,48 @@ SQL
 - 서버 `.env`의 `CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH`는 빈 값(비활성)이거나
   `/app/admin-evaluation/evaluation.json`만 허용한다. 기존 `.env`에 키가 없으면 빈 값으로
   처리한다. 상속된 환경 변수로 값을 바꾸는 것은 거절한다. Main 환경은 변경하지 않는다.
-- 검토한 exporter로 만든 파일을 서버의 위 디렉터리에 배치한다. 예시·합성 점수나 과거 문서의
+- 검토한 exporter로 만든 완료된 평가 파일을 아래 게시 명령으로 배치한다. 예시·합성 점수나 과거 문서의
   반올림된 점수를 실평가로 게시하지 않는다. 파일 크기(최대 16 MiB), 스키마, 평가 ID·완료 시각,
   데이터·코드 지문, 같은 케이스별 모델 순위를 확인하고 파일 SHA-256을 기록한다.
 - 컨테이너 UID/GID 10001이 읽을 수 있도록 디렉터리 0755, JSON 0644로 둔다. 이 디렉터리에는
   배포할 JSON만 두고 원본 데이터·환경 파일·자격 증명·세션을 넣지 않는다. Git에서는 무시한다.
-- 파일 준비 후 위 환경 키를 정확한 컨테이너 경로로 설정하고 `check` → `up`으로 API를
-  재생성한다. 실제 관리자 세션으로 `recommendation-performance`의 평가 ID·모델·두 집단별
+- 파일이 아직 없어도 위 환경 키를 정확한 컨테이너 경로로 설정하고 `check` → `up`으로 API를
+  재생성할 수 있다. 이때 API는 `unavailable` / `artifact_missing`을 반환하고 화면에는 평가 대기가
+  표시된다. 유효한 파일 게시 후 다음 `recommendation-performance` GET부터 별도 재시작 없이
+  NDCG@10·Hit Rate@10을 집계한다. 열린 화면은 새로고침하거나 다시 조회한다.
+  실제 관리자 세션으로 응답의 평가 ID·모델·두 집단별
   NDCG/Hit Rate/표본을 검증한다. API의 `available`은 오프라인 자료의 유효성을 의미하며
   현재 서비스에 배포된 추천 모델의 온라인 성능을 보증하지 않는다.
 
-파일 갱신은 같은 디렉터리에서 임시 파일을 완전히 쓰고 검증·권한 설정한 뒤 `evaluation.json`으로
-원자 교체한다. 디렉터리 마운트이므로 이후 요청에 새 파일이 보인다. 개별 파일 마운트로 바꾸면
+평가 작업은 `model/eval/admin_performance_export.py`의 artifact 계약에 맞는 JSON을 생성한다.
+모델별 같은 검증 케이스의 정답 순위(`targetRanks`), 표본, 코호트 정의, 평가 시각과 데이터·코드 지문이
+필요하다. 정답이 없는 일반 추천 목록이나 클릭 수만 전달하면 NDCG·Hit Rate를 계산할 수 없다.
+이 게시 도구는 평가를 실행하거나 서비스 행동 데이터를 수집하지 않는다.
+
+완료된 파일을 서버의 별도 수신 경로에 복사한 뒤 Checking 호스트에서 실행한다.
+호스트 Python에 Pydantic이나 모델 패키지를 설치할 필요가 없다.
+
+```bash
+sudo python3 /home/ubuntu/apps/me-nu-checking/deploy/checking/publish_evaluation.py \
+  --input /absolute/path/to/completed-evaluation.json
+```
+
+명령은 고정 Checking checkout과 실제 실행 이미지 SHA, 건강 상태, 읽기 전용 마운트 및 활성 경로를
+확인한다. Docker의 `default` context만 사용하며, 이번 승인된 Checking API rollout helper와 같은
+`/run/lock/me-nu-checking-api-rollout.lock`을 사용한다. 일반 `checking.sh`는 이 잠금을 취득하지 않으므로
+파일 게시와 동시에 직접 배포하지 않는다. 실행 중인 API와 같은 이미지 ID로 네트워크·자격 증명이 없는
+일회성 컨테이너에서 입력을 검증한다. 입력은 최대 16 MiB의 일반 파일이어야 하며 심볼릭 링크는 거절한다.
+검증 실패 시 기존 게시 파일을 유지하고, 입력 내용이나 상세 검증 오류는 로그에 출력하지 않는다.
+
+검증한 파일은 API가 읽을 수 있는 0644 권한으로 같은 파일시스템의 비공개 staging에 완성한 뒤
+고정 `evaluation.json`으로 원자 교체한다. 기존 파일과 SHA-256은 API 마운트 밖의
+`/home/ubuntu/apps/.checking-evaluation-artifacts/backups/`에 0600으로 보존한다. 성공 출력에는
+새 파일 SHA, 이전 SHA와 백업 이름이 포함된다. DB·권한·Main·추천 적재기와 API 컨테이너는 변경하지 않는다.
+
+디렉터리 마운트이므로 이후 요청에 새 파일이 보인다. 개별 파일 마운트로 바꾸면
 원자 교체 전 inode가 계속 보일 수 있다. 이전 검증 파일과 SHA는 API 마운트 밖의 백업에 보존한다.
-자료 롤백은 이전 검증 파일을 같은 절차로 원자 교체하고 평가 ID를 재확인한다. 연결만 끄려면
+자료 롤백은 위 명령의 `--input`에 해당 백업 JSON 절대 경로를 넣어 같은 검증·게시 절차를 거친 뒤
+평가 ID를 재확인한다. 백업을 자동으로 정리하지 않으므로 운영자가 보관 공간을 관리한다. 연결만 끄려면
 환경 키를 빈 값으로 바꿔 `check` → `up`한다. DB downgrade·권한 변경·볼륨 삭제는 하지 않는다.
 
 ## 도메인·TLS·FE·OAuth
