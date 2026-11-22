@@ -33,3 +33,6 @@ agent/out/
 
 # Chatbot eval results (local only)
 backend/scripts/chat_eval/results/
+
+# Server-owned offline evaluation artifacts, mounted read-only into the Checking API.
+/deploy/checking/admin-evaluation/

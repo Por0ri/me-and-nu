@@ -80,11 +80,13 @@ test('production route has no fixture switch, transport, permission bypass or pe
   }
   inspect('app/admin/notices/page.tsx'); assert.ok(seen.has('components/admin/notice-detail-panel.tsx')); assert.equal(model.noticeUnavailable.status, 'unavailable');
 });
-test('all seventeen original Figma SVG assets preserve their source hashes and root dimensions', () => {
+test('all seventeen original Figma SVG assets preserve their LF source hashes and root dimensions', () => {
   const manifest = require('../public/admin/notice-sources.json'); assert.equal(manifest.assets.length, 17);
   for (const asset of manifest.assets) {
     const bytes = fs.readFileSync(path.join(root, 'public/admin', asset.file)); assert.ok(bytes.length);
-    assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), asset.sha256, asset.file);
+    // Git may check text out with CRLF on Windows; manifests hash the committed LF SVG source.
+    const source = bytes.toString('utf8').replace(/\r\n/g, '\n');
+    assert.equal(crypto.createHash('sha256').update(source).digest('hex'), asset.sha256, asset.file);
     const tag = bytes.toString().match(/<svg[^>]+>/)[0];
     assert.equal(Number(tag.match(/width="([^"]+)"/)[1]), asset.width); assert.equal(Number(tag.match(/height="([^"]+)"/)[1]), asset.height);
   }
