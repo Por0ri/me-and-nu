@@ -52,9 +52,54 @@ async function chartMatchesHttp(context, page, audience = 'all', selectedMetric 
   const response = await context.request.get(`${api}/api/v1/admin/analytics/recommendation-performance?period=${selectedPeriod}&audience=${audience}`);
   assert.equal(response.status(), 200); const data = await response.json(); assert.equal(data.availability, 'available');
   const chart = page.locator(`[data-performance-chart="${selectedMetric}"]`); await chart.waitFor();
-  const scores = data.models.flatMap(model => model.scores.map(score => ({ modelId: model.modelId, ...score })));
-  assert.equal(await chart.locator('[data-model-id][data-audience]').count(), scores.length);
-  for (const score of scores) assert.equal(Number(await chart.locator(`[data-model-id="${score.modelId}"][data-audience="${score.audience}"]`).getAttribute('data-value')), score[selectedMetric === 'ndcg' ? 'ndcgAt10' : 'hitRateAt10']);
+  const cohorts = audience === 'all' ? ['existing', 'new'] : [audience], labels = { existing: '기존', new: '신규' };
+  const ndcg = value => value.toFixed(4), hitRate = value => `${(value * 100).toFixed(1)}%`;
+  const delta = value => `${value > 0 ? '+' : ''}${value.toFixed(4)}`;
+  const pp = value => `${value > 0 ? '+' : ''}${(value * 100).toFixed(1)}%p`;
+  const format = selectedMetric === 'ndcg' ? ndcg : hitRate;
+  assert.equal(await chart.locator('[data-model-id][data-audience]').count(), data.models.length * cohorts.length);
+  assert.deepEqual(await chart.locator('[data-model]').evaluateAll(nodes => nodes.map(node => node.dataset.model)), data.models.map(model => model.modelId), 'model order follows the API');
+  for (const model of data.models) {
+    const group = chart.locator(`[data-model="${model.modelId}"]`);
+    assert.equal(await group.locator('strong').first().innerText(), model.label, 'model label follows the API');
+    for (const cohort of cohorts) {
+      const score = model.scores.find(item => item.audience === cohort);
+      const track = group.locator(`[data-model-id="${model.modelId}"][data-audience="${cohort}"]`), bar = track.locator(':scope > span');
+      const value = score?.[selectedMetric === 'ndcg' ? 'ndcgAt10' : 'hitRateAt10'];
+      assert.equal(await track.getAttribute('data-value'), score ? String(value) : null);
+      assert.equal(await track.locator('..').locator('strong').innerText(), score ? format(value) : '—', 'visible graph value');
+      assert.equal(await track.getAttribute('aria-label'), `${model.label} ${labels[cohort]}: ${score ? format(value) : '평가 없음'}`);
+      assert.equal(await bar.count(), score ? 1 : 0, 'missing cohort must not become a fabricated zero bar');
+      if (score) {
+        const geometry = await bar.evaluate(node => ({ percentage: Number.parseFloat(node.style.width), width: node.getBoundingClientRect().width, trackWidth: node.parentElement.getBoundingClientRect().width }));
+        assert.ok(geometry.trackWidth > 0, 'graph track has visible width');
+        assert.ok(Math.abs(geometry.percentage - value * 100) < .0001, `${model.modelId}/${cohort}: CSS percentage follows HTTP score`);
+        assert.ok(Math.abs(geometry.width - geometry.trackWidth * value) <= 1, `${model.modelId}/${cohort}: rendered bar width follows HTTP score`);
+      }
+    }
+  }
+  const reference = data.models.find(model => model.modelId === data.currentModelId);
+  for (const [title, getValue] of [['시리즈 NDCG@10', score => ndcg(score.ndcgAt10)], ['시리즈 Hit Rate@10', score => hitRate(score.hitRateAt10)], ['평가 표본', score => `${score.sampleSize.toLocaleString('ko-KR')}건`]]) {
+    const rows = page.getByRole('region', { name: title, exact: true }).locator('dl > div');
+    assert.equal(await rows.count(), cohorts.length);
+    for (const [index, cohort] of cohorts.entries()) {
+      const score = reference.scores.find(item => item.audience === cohort);
+      assert.equal(await rows.nth(index).locator('dt').innerText(), labels[cohort]);
+      assert.equal(await rows.nth(index).locator('dd').innerText(), score ? getValue(score) : '—', `${title}/${cohort}: summary follows reference model`);
+    }
+  }
+  const table = page.getByRole('region', { name: '추천 성능 상세 수치 표, 가로 스크롤 가능' }), rows = table.locator('tbody tr');
+  assert.equal(await rows.count(), data.models.length * cohorts.length);
+  let rowIndex = 0;
+  for (const model of data.models) for (const cohort of cohorts) {
+    const score = model.scores.find(item => item.audience === cohort);
+    const values = score ? [ndcg(score.ndcgAt10), hitRate(score.hitRateAt10), score.sampleSize.toLocaleString('ko-KR'), delta(score.ndcgDeltaVsBaseline), pp(score.hitRateDeltaVsBaseline)] : Array(5).fill('—');
+    assert.deepEqual((await rows.nth(rowIndex++).locator('th, td').allTextContents()).map(text => text.trim()), [model.label, labels[cohort], ...values], 'detail table follows HTTP values and model order');
+  }
+  const toggle = page.getByRole('group', { name: '비교할 추천 성능 지표' });
+  assert.equal(await toggle.getByRole('button', { name: 'NDCG@10', exact: true }).getAttribute('aria-pressed'), String(selectedMetric === 'ndcg'));
+  assert.equal(await toggle.getByRole('button', { name: 'Hit Rate@10', exact: true }).getAttribute('aria-pressed'), String(selectedMetric === 'hitRate'));
+  assert.equal(await page.getByRole('region', { name: '평가 조건', exact: true }).getByText(data.evaluationId, { exact: true }).count(), 1, 'displayed evaluation ID matches this artifact');
   return data;
 }
 async function happy(browser, width) {
@@ -108,6 +153,60 @@ async function happy(browser, width) {
   } catch (error) { await page.screenshot({ path: path.join(output, `failure-${width}.png`), fullPage: true, timeout: 5000 }).catch(() => {}); throw new Error(`${width}px ${page.url()}: ${error.message}`, { cause: error }); }
   finally { await context.close(); }
 }
+async function evaluationVariants(browser, width) {
+  await fixture(); const s = await session(browser, width), { page, context } = s, checks = [];
+  const refresh = async () => {
+    const pending = waitResponse(page, '/api/v1/admin/analytics/recommendation-performance');
+    await focusRefresh(page); await pending; await performanceReady(page);
+  };
+  try {
+    console.log(`Real HTTP evaluation variants: ${width}px`);
+    await page.goto(`${base}/admin/analytics?view=performance`); await performanceReady(page);
+    const original = await chartMatchesHttp(context, page);
+    await fixture('normal', { evaluation_variant: 'existing_only' }); await refresh();
+    const existing = await chartMatchesHttp(context, page);
+    assert.deepEqual(existing.cohorts.map(cohort => cohort.audience), ['existing']);
+    await page.getByRole('group', { name: '비교할 추천 성능 지표' }).getByRole('button', { name: 'Hit Rate@10', exact: true }).click();
+    await chartMatchesHttp(context, page, 'all', 'hitRate'); await s.shot('performance-existing-only');
+    await page.getByLabel('추천 성능 사용자 범위').selectOption('new'); await page.waitForURL(url => url.searchParams.get('audience') === 'new'); await performanceReady(page);
+    await page.locator('[data-performance-unavailable]').getByText('선택한 사용자 범위의 평가 결과가 없습니다.', { exact: true }).waitFor();
+    assert.equal(await page.locator('[data-performance-chart]').count(), 0, 'unevaluated audience has no fabricated scores');
+    await page.getByLabel('추천 성능 사용자 범위').selectOption('all'); await page.waitForURL(url => !url.searchParams.has('audience')); await performanceReady(page);
+    await chartMatchesHttp(context, page, 'all', 'hitRate');
+    checks.push('one-cohort API displays missing companion values as unknown; unevaluated filter shows no scores');
+
+    await fixture('evaluation_missing'); await refresh(); await page.locator('[data-performance-unavailable]').waitFor();
+    await fixture('normal', { evaluation_variant: 'refreshed' });
+    const pending = waitResponse(page, '/api/v1/admin/analytics/recommendation-performance');
+    await page.getByRole('button', { name: '다시 확인', exact: true }).click(); await pending; await performanceReady(page);
+    const replaced = await chartMatchesHttp(context, page, 'all', 'hitRate');
+    assert.notEqual(replaced.evaluationId, original.evaluationId);
+    assert.notEqual(replaced.currentModelId, original.currentModelId);
+    assert.notDeepEqual(replaced.models.map(model => model.modelId), original.models.map(model => model.modelId));
+    assert.equal(await page.getByRole('region', { name: '평가 조건', exact: true }).getByText(original.evaluationId, { exact: true }).count(), 0, 'previous artifact ID is removed');
+    await page.getByRole('group', { name: '비교할 추천 성능 지표' }).getByRole('button', { name: 'NDCG@10', exact: true }).click();
+    await chartMatchesHttp(context, page); await s.shot('performance-refreshed-artifact');
+    checks.push('artifact replacement and explicit retry update model order, reference model, scores, bars, summaries and table');
+
+    await fixture('normal', { evaluation_variant: 'disjoint_users' }); await refresh();
+    const disjoint = await chartMatchesHttp(context, page);
+    assert.equal(disjoint.conditions.cohortInterpretation, 'disjoint_users');
+    assert.match(await page.locator('main').innerText(), /기존·신규의 집단 기준은 아래 평가 조건을 확인하세요/);
+    assert.doesNotMatch(await page.locator('main').innerText(), /같은 표본에 전체 시청 기록 또는 온보딩 입력/);
+    for (const cohort of disjoint.cohorts) assert.ok((await page.getByRole('region', { name: '평가 조건', exact: true }).innerText()).includes(cohort.definition));
+    checks.push('disjoint actual-user cohort metadata is shown independently of simulated input scenarios');
+
+    await fixture('normal', { evaluation_variant: 'long_labels' }); await refresh();
+    const longLabels = await chartMatchesHttp(context, page);
+    assert.ok(longLabels.models.some(model => model.label.length === 100 && !/\s/.test(model.label)), 'fixture exercises a maximum-length unbroken model label');
+    await s.shot('performance-long-model-labels');
+    checks.push('maximum supported model labels preserve viewport layout and remain readable');
+    s.clean(); results.push({ suite: 'evaluation-variants', width, passed: true, checks, requests: s.requests, responses: s.responses });
+  } catch (error) {
+    await page.screenshot({ path: path.join(output, `failure-evaluation-variants-${width}.png`), fullPage: true, timeout: 5000 }).catch(() => {});
+    throw new Error(`Evaluation variants ${width}px ${page.url()}: ${error.message}`, { cause: error });
+  } finally { await context.close(); await fixture(); }
+}
 async function boundaries(browser) {
   const checks = [];
   for (const role of ['viewer', 'operator', 'admin', 'member', 'anonymous']) {
@@ -150,7 +249,15 @@ async function boundaries(browser) {
   fs.mkdirSync(output, { recursive: true }); control = await request.newContext();
   const ready = await control.get(`${api}/__test__/ready`); assert.equal(ready.status(), 200); assert.deepEqual(await ready.json(), { synthetic: true, database: 'private-in-memory-sqlite', api: 'real-registered-routes' });
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
-  try { for (const width of process.argv[4] ? [Number(process.argv[4])] : [1728, 390]) await happy(browser, width); await boundaries(browser); }
+  const suite = process.env.ADMIN_ANALYTICS_SUITE || 'all';
+  assert.ok(['all', 'variants'].includes(suite), 'ADMIN_ANALYTICS_SUITE must be all or variants');
+  try {
+    for (const width of process.argv[4] ? [Number(process.argv[4])] : [1728, 390]) {
+      if (suite === 'all') await happy(browser, width);
+      await evaluationVariants(browser, width);
+    }
+    if (suite === 'all') await boundaries(browser);
+  }
   finally { await browser.close(); await control.dispose(); fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(results, null, 2)); }
   console.log(JSON.stringify(results.map(({ width, suite, passed, checks }) => ({ width, suite, passed, checks })), null, 2));
 })().catch(error => { console.error(error); process.exitCode = 1; });
