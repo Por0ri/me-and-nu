@@ -55,7 +55,7 @@ def collect_cohort(*, audience, definition, cases, ctx, models, candidates, pick
     }
 
 
-def publish_artifact(artifact, output):
+def publish_artifact(artifact, output, *, mode=0o600):
     """Validate first; replace within the target directory only when complete."""
     backend = Path(__file__).resolve().parents[2] / "backend"
     if str(backend) not in sys.path:
@@ -66,6 +66,8 @@ def publish_artifact(artifact, output):
     payload = validated.model_dump_json(by_alias=True).encode("utf-8")
     if len(payload) > MAX_ARTIFACT_BYTES:
         raise ValueError("evaluation artifact exceeds API size limit")
+    if mode not in (0o600, 0o644):
+        raise ValueError("evaluation artifact mode must be private or API-readable")
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_path = tempfile.mkstemp(prefix=".admin-evaluation-", suffix=".tmp", dir=output.parent)
@@ -74,10 +76,14 @@ def publish_artifact(artifact, output):
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
+        # Set access before replacement: the API must never observe a new file
+        # that it cannot read. Offline exports remain private unless requested.
+        os.chmod(temp_path, mode)
         os.replace(temp_path, output)
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
+    return validated
 
 
 def main():

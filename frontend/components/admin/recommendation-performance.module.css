@@ -31,6 +31,7 @@
 .chart { display: flex; flex-direction: column; gap: 24px; }
 .model { display: flex; flex-direction: column; gap: 8px; }
 .modelName { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 15px; }
+.modelName strong { min-width: 0; overflow-wrap: anywhere; }
 .modelName span { padding: 2px 6px; border-radius: 4px; background: #efe7ff; color: #7043b4; font-size: 11px; }
 .barRow { display: grid; grid-template-columns: 32px minmax(0, 1fr) 64px; align-items: center; gap: 12px; }
 .barRow > span { font-size: 12px; color: #52525b; }

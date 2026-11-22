@@ -8,6 +8,7 @@ Only this test entrypoint installs the loopback control route and synthetic DB.
 
 import argparse
 import asyncio
+import copy
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -49,6 +50,7 @@ class Control(BaseModel):
     mode: Literal["normal", "zero", "db_failure", "evaluation_missing", "shrinking_queue"] = "normal"
     revoked: bool = False
     delay_period: Literal["30d", "none"] = "none"
+    evaluation_variant: Literal["normal", "existing_only", "refreshed", "disjoint_users", "long_labels"] = "normal"
 
 
 def build_fixture(directory: Path):
@@ -143,7 +145,33 @@ def build_fixture(directory: Path):
     evaluation["conditions"]["evaluationData"] = "격리 브라우저 검증용 합성 표본"
     evaluation["cohorts"][0]["definition"] = "같은 합성 표본의 전체 기록 입력 장면"
     evaluation["cohorts"][1]["definition"] = "같은 합성 표본의 온보딩 입력 장면"
-    artifact_path.write_text(json.dumps(evaluation, ensure_ascii=False), encoding="utf-8")
+    def publish_evaluation(variant="normal"):
+        result = copy.deepcopy(evaluation)
+        if variant == "existing_only":
+            result["cohorts"] = result["cohorts"][:1]
+        elif variant == "refreshed":
+            result["evaluationId"] = "synthetic-browser-evaluation-refreshed"
+            result["models"].reverse()
+            result["models"].append({"modelId": "tag", "label": "태그 취향", "version": "rev2"})
+            result["currentModelId"] = "tag"
+            for cohort in result["cohorts"]:
+                for model in cohort["models"]:
+                    model["targetRanks"] = [3, 1, 8]
+                cohort["models"].append({"modelId": "tag", "targetRanks": [1, 1, 2]})
+        elif variant == "disjoint_users":
+            result["conditions"]["cohortInterpretation"] = "disjoint_users"
+            for cohort, digest in zip(result["cohorts"], ["c", "d"]):
+                cohort["definition"] = f"서로 다른 합성 사용자 집단: {cohort['audience']}"
+                cohort["caseSetSha256"] = digest * 64
+        elif variant == "long_labels":
+            for model in result["models"]:
+                model["label"] = (model["modelId"] + "LongModelNameWithoutSpaces" * 4)[:100]
+        # Exercise the same atomic replacement used by the real exporter.
+        pending = artifact_path.with_suffix(".pending")
+        pending.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        pending.replace(artifact_path)
+
+    publish_evaluation()
     settings.admin_recommendation_evaluation_path = str(artifact_path)
     settings.redis_url = None
     settings.event_data_source = "local_demo"
@@ -189,6 +217,7 @@ def build_fixture(directory: Path):
             raise HTTPException(403)
         state.update(mode=payload.mode, delay_period=payload.delay_period)
         reset_data(payload.mode)
+        publish_evaluation(payload.evaluation_variant)
         settings.admin_recommendation_evaluation_path = None if payload.mode == "evaluation_missing" else str(artifact_path)
         with engine.begin() as db:
             db.execute(update(AdminAccount).values(revoked_at=now if payload.revoked else None))
