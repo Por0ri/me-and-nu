@@ -132,6 +132,7 @@ services:
       CHAT_DAILY_TOTAL_LIMIT: ${CHECKING_CHAT_DAILY_TOTAL_LIMIT:?Set the shared chatbot daily question limit}
       # Optional server-owned offline evaluation. Empty keeps recommendation metrics unavailable.
       ADMIN_RECOMMENDATION_EVALUATION_PATH: ${CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH:-}
+      ADMIN_SERVICE_EVALUATION_PATH: ${CHECKING_ADMIN_SERVICE_EVALUATION_PATH:-}
     volumes:
       # Bind the directory so an atomic evaluation.json replacement is visible without recreation.
       - type: bind

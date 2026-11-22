@@ -1,6 +1,6 @@
 import { apiRequest, ApiError } from "@/lib/api";
 import type { ReportPeriod } from "./admin-reports";
-import type { AnalyticsAudience } from "./admin-analytics";
+import type { AnalyticsAudience, EvaluationDataset } from "./admin-analytics";
 
 export type { ReportPeriod, AnalyticsAudience };
 export type Availability = "available" | "partial" | "unavailable";
@@ -35,7 +35,7 @@ export type AttentionResponse = {
   items: { kind: "report" | "inquiry"; recordId: number; status: string; category: string; createdAt: string; contentId: number | null }[];
 };
 export type EvaluationConditions = {
-  evaluationData: string; datasetSha256: string; inputConditions: string; aggregationUnit: "series";
+  evaluationData: string; datasetSha256: string; inputConditions: string; aggregationUnit: "series" | "content";
   commonRules: string; targetPeriod: string; groundTruth: string; candidatePolicy: string; recordSource: string;
   cohortInterpretation: "input_scenarios" | "disjoint_users";
 };
@@ -44,9 +44,18 @@ export type RecommendationScore = {
   ndcgDeltaVsBaseline: number; hitRateDeltaVsBaseline: number;
 };
 export type RecommendationModelScores = { modelId: string; label: string; version: string; scores: RecommendationScore[] };
+export type EvaluationPipelineStatus = {
+  schemaVersion: 1; dataset: "service"; state: "running" | "published" | "waiting" | "unchanged" | "failed";
+  reason: string | null; dataSource: "production" | "local_demo" | "automated_test" | "imported" | null;
+  observationDays: number; minSamples: number; collectedCases: number; matureCases: number; eligibleCases: number;
+  cohortSampleSizes: { existing: number; new: number }; lastEvaluationId: string | null;
+  lastAttemptAt: string; lastSuccessAt: string | null; lastPublishedAt: string | null;
+};
 export type RecommendationPerformance = {
   availability: "available" | "unavailable"; reason: string | null; audience: AnalyticsAudience; period: ReportPeriod;
-  periodStart: string; periodEnd: string; timeBasis: "evaluation_completed_at"; source: "offline_evaluation";
+  periodStart: string; periodEnd: string; timeBasis: "evaluation_completed_at"; source: "offline_evaluation" | "service_feedback";
+  pipeline?: EvaluationPipelineStatus | null;
+  dataSource?: "production" | "local_demo" | null;
   metricUnit: "ratio"; k: 10; groundTruthPerCase: 1;
   evaluationId: string | null; evaluatedAt: string | null; baselineModelId: string | null; currentModelId: string | null;
   conditions: EvaluationConditions | null;
@@ -60,6 +69,7 @@ export type AnalyticsOverviewResponse = {
 export type DashboardResponse = {
   meta: AnalyticsMeta; usage: UsageMetrics; topContents: Ranking; preferenceDistribution: Distribution;
   generation: GenerationSummary; attention: AttentionResponse; todayNotices: Metric; recommendationPerformance: RecommendationPerformance;
+  serviceRecommendationPerformance?: RecommendationPerformance | null;
 };
 
 type RecordValue = Record<string, unknown>;
@@ -137,17 +147,31 @@ function isAttention(v: unknown, query: AttentionQuery): v is AttentionResponse 
 }
 function isConditions(v: unknown): v is EvaluationConditions {
   return record(v) && ["evaluationData", "inputConditions", "commonRules", "targetPeriod", "groundTruth", "candidatePolicy", "recordSource"].every(key => text(v[key])) &&
-    digest(v.datasetSha256) && v.aggregationUnit === "series" && ["input_scenarios", "disjoint_users"].includes(v.cohortInterpretation as string);
+    digest(v.datasetSha256) && ["series", "content"].includes(v.aggregationUnit as string) && ["input_scenarios", "disjoint_users"].includes(v.cohortInterpretation as string);
 }
-function isPerformance(v: unknown, period: ReportPeriod, audience: AnalyticsAudience): v is RecommendationPerformance {
+function isPipeline(v: unknown): v is EvaluationPipelineStatus {
+  return record(v) && v.schemaVersion === 1 && v.dataset === "service" &&
+    ["running", "published", "waiting", "unchanged", "failed"].includes(v.state as string) &&
+    (v.reason === null || (typeof v.reason === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(v.reason))) &&
+    (v.dataSource === null || ["production", "local_demo", "automated_test", "imported"].includes(v.dataSource as string)) &&
+    integer(v.observationDays, 1) && v.observationDays <= 30 && integer(v.minSamples, 1) && v.minSamples <= 100000 &&
+    [v.collectedCases, v.matureCases, v.eligibleCases].every(n => integer(n)) &&
+    record(v.cohortSampleSizes) && integer(v.cohortSampleSizes.existing) && integer(v.cohortSampleSizes.new) &&
+    nullableText(v.lastEvaluationId) && timestamp(v.lastAttemptAt) &&
+    (v.lastSuccessAt === null || timestamp(v.lastSuccessAt)) && (v.lastPublishedAt === null || timestamp(v.lastPublishedAt));
+}
+function isPerformance(v: unknown, period: ReportPeriod, audience: AnalyticsAudience, dataset: EvaluationDataset = "offline"): v is RecommendationPerformance {
   if (!record(v) || v.period !== period || v.audience !== audience || !interval(v.periodStart, v.periodEnd, period) ||
-      v.timeBasis !== "evaluation_completed_at" || v.source !== "offline_evaluation" || v.metricUnit !== "ratio" || v.k !== 10 || v.groundTruthPerCase !== 1 ||
+      v.timeBasis !== "evaluation_completed_at" || v.source !== (dataset === "service" ? "service_feedback" : "offline_evaluation") || v.metricUnit !== "ratio" || v.k !== 10 || v.groundTruthPerCase !== 1 ||
+      (v.pipeline != null && (dataset !== "service" || !isPipeline(v.pipeline))) ||
       !Array.isArray(v.cohorts) || !Array.isArray(v.models)) return false;
   if (v.availability === "unavailable") return performanceReasons.includes(v.reason as string) &&
     [v.evaluationId, v.evaluatedAt, v.baselineModelId, v.currentModelId, v.conditions].every(item => item === null) && !v.models.length && !v.cohorts.length;
   if (v.availability !== "available" || v.reason !== null || !text(v.evaluationId) || !timestamp(v.evaluatedAt) ||
       Date.parse(v.evaluatedAt) < Date.parse(v.periodStart as string) || Date.parse(v.evaluatedAt) >= Date.parse(v.periodEnd as string) ||
-      !isConditions(v.conditions) || !text(v.baselineModelId) || !text(v.currentModelId) ||
+      (dataset === "service" ? !["production", "local_demo"].includes(v.dataSource as string) : v.dataSource != null) ||
+      !isConditions(v.conditions) || v.conditions.aggregationUnit !== (dataset === "service" ? "content" : "series") ||
+      (dataset === "service" && v.conditions.cohortInterpretation !== "disjoint_users") || !text(v.baselineModelId) || !text(v.currentModelId) ||
       !v.cohorts.length || v.cohorts.length > 2 || v.models.length < 2 || v.models.length > 16) return false;
   if (!v.cohorts.every(c => record(c) && ["existing", "new"].includes(c.audience as string) &&
       (audience === "all" || audience === c.audience) && text(c.definition) && digest(c.caseSetSha256) && integer(c.sampleSize, 1)) ||
@@ -173,7 +197,8 @@ export async function loadAdminDashboard(period: ReportPeriod, signal?: AbortSig
   const v = await apiRequest<unknown>(`/api/v1/admin/dashboard?${new URLSearchParams({ period })}`, { signal }, 200);
   if (!record(v) || !isMeta(v.meta, period) || !isUsage(v.usage) || !isRanking(v.topContents) || !isDistribution(v.preferenceDistribution) ||
       !isGeneration(v.generation) || !isAttention(v.attention, { kind: "all", page: 1, pageSize: 5 }) || !isMetric(v.todayNotices) || v.todayNotices.unit !== "count" ||
-      !isPerformance(v.recommendationPerformance, period, "all")) invalid();
+      !isPerformance(v.recommendationPerformance, period, "all") ||
+      (v.serviceRecommendationPerformance != null && !isPerformance(v.serviceRecommendationPerformance, period, "all", "service"))) invalid();
   return v as DashboardResponse;
 }
 
@@ -196,9 +221,11 @@ export async function loadAdminAttention(query: AttentionQuery, signal?: AbortSi
   return v;
 }
 
-export async function loadRecommendationPerformance(query: { period: ReportPeriod; audience: AnalyticsAudience }, signal?: AbortSignal): Promise<RecommendationPerformance> {
-  queryCheck(validPeriod(query.period) && audiences.includes(query.audience));
-  const v = await apiRequest<unknown>(`/api/v1/admin/analytics/recommendation-performance?${new URLSearchParams(query)}`, { signal }, 200);
-  if (!isPerformance(v, query.period, query.audience)) invalid();
+export async function loadRecommendationPerformance(query: { period: ReportPeriod; audience: AnalyticsAudience; dataset?: EvaluationDataset }, signal?: AbortSignal): Promise<RecommendationPerformance> {
+  queryCheck(validPeriod(query.period) && audiences.includes(query.audience) && ["offline", "service"].includes(query.dataset ?? "offline"));
+  const params = new URLSearchParams({ period: query.period, audience: query.audience });
+  if (query.dataset) params.set("dataset", query.dataset);
+  const v = await apiRequest<unknown>(`/api/v1/admin/analytics/recommendation-performance?${params}`, { signal }, 200);
+  if (!isPerformance(v, query.period, query.audience, query.dataset)) invalid();
   return v;
 }

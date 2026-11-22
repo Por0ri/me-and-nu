@@ -43,14 +43,18 @@ function ConnectedDashboard({ period, changePeriod }: { period: ReportPeriod; ch
 
 function RecommendationSummary({ performance, period }: { performance: RecommendationPerformance; period: ReportPeriod }) {
   const current = performance.models.find(model => model.modelId === performance.currentModelId);
-  return <section className={`${styles.metric} ${styles.highlight}`} aria-label="작품 추천 품질" data-statistics={performance.availability}>
-    <h2>작품 추천 품질</h2><p className={styles.metricDescription}>오프라인 평가 · 시리즈 NDCG@10</p>
+  const service = performance.source === "service_feedback";
+  const title = service ? "서비스 추천 품질" : "작품 추천 품질";
+  return <section className={`${styles.metric} ${styles.highlight}`} aria-label={title} data-statistics={performance.availability}>
+    <h2>{title}</h2><p className={styles.metricDescription}>{service ? "이후 긍정 반응 · 콘텐츠 NDCG@10" : "오프라인 평가 · 시리즈 NDCG@10"}</p>
     {current && performance.evaluatedAt && <p className={styles.metricDescription}>{current.label} · {adminDate(performance.evaluatedAt)} (KST)</p>}
+    {service && performance.availability === "available" && <p className={styles.metricDescription}>{performance.dataSource === "local_demo" ? "Checking 시험 데이터" : performance.dataSource === "production" ? "서비스 운영 데이터" : "평가 출처 미확인"}</p>}
     {performance.availability === "available" && current ? <dl className={styles.recommendationSummary}>{["existing", "new"].map(audience => {
       const score = current.scores.find(score => score.audience === audience);
-      return <div key={audience}><dt>{audience === "existing" ? "기존 입력" : "신규 입력"}</dt><dd>{score ? score.ndcgAt10.toFixed(4) : "—"}</dd></div>;
+      return <div key={audience}><dt>{audience === "existing" ? (service ? "기존 사용자" : "기존 입력") : (service ? "신규 사용자" : "신규 입력")}</dt><dd>{score ? score.ndcgAt10.toFixed(4) : "—"}</dd></div>;
     })}</dl> : <p className={styles.emptyStatistic}>평가 결과 준비 중</p>}
-    <Link href={analyticsHref({ view: "performance", period, audience: "all" })} className={styles.summaryLink}>추천 성능 상세 보기 →</Link>
+    {service && performance.pipeline && <p className={styles.metricDescription}>{performance.pipeline.dataSource === "local_demo" ? "Checking 시험 데이터 · " : ""}{performance.pipeline.state === "failed" ? "자동 평가 확인 필요" : `관찰 ${performance.pipeline.observationDays}일 · 집단별 최소 ${performance.pipeline.minSamples}명`}</p>}
+    <Link href={analyticsHref({ view: "performance", period, audience: "all", ...(service ? { dataset: "service" as const } : {}) })} className={styles.summaryLink}>추천 성능 상세 보기 →</Link>
   </section>;
 }
 
@@ -68,7 +72,7 @@ export function DashboardView({ period, changePeriod, state, retry, filter, page
     {state.status !== "ready" || !data || !attention ? <AdminStatus subject="대시보드" state={state as Exclude<AdminReadState<DashboardData>, { status: "ready" }>} retry={retry} /> : page > pageCount ? <AdminStatus subject="대시보드" state={{ status: "loading" }} /> : <>
       <AnalyticsScope meta={data.meta} />
       <div className={styles.dashboardMetrics}><MetricCard title="이용 회원" metric={data.usage.activeUsers} /><MetricCard title="온보딩 완료 후 피드 노출 관측률" metric={data.usage.signupFeedObservationRate} />
-        <MetricCard title="콘텐츠 열람 구간 수" metric={data.usage.contentReadSegments} /><RecommendationSummary performance={data.recommendationPerformance} period={period} /></div>
+        <MetricCard title="콘텐츠 열람 구간 수" metric={data.usage.contentReadSegments} /><RecommendationSummary performance={data.serviceRecommendationPerformance ?? data.recommendationPerformance} period={period} /></div>
       <div className={styles.dashboardGrid}>
         <div className={styles.dashboardColumn}>
           <StatisticsPanel title="지금 확인이 필요한 항목" description="현재 미처리 항목 · 오래된 접수부터 표시" className={styles.attention} availability={attention.availability}>
@@ -87,6 +91,7 @@ export function DashboardView({ period, changePeriod, state, retry, filter, page
           <RankingPanel data={data.topContents} />
         </div>
         <div className={styles.dashboardColumn}>
+          {data.serviceRecommendationPerformance && <RecommendationSummary performance={data.recommendationPerformance} period={period} />}
           <PreferenceDistribution data={data.preferenceDistribution} />
           <StatisticsPanel title="에이전트 콘텐츠 생성" description="최근 24시간 · 기록된 작업 상태" className={styles.generation} availability={data.generation.availability}>
             <p className={styles.generationCounts}>성공 <strong>{data.generation.succeeded}</strong> · 진행 중 <strong>{data.generation.inProgress}</strong> · 실패 <strong>{data.generation.failed}</strong> · 취소 <strong>{data.generation.cancelled}</strong></p>

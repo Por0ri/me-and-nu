@@ -57,6 +57,83 @@ def write_artifact(tmp_path, artifact):
     return str(path)
 
 
+def as_service(artifact):
+    artifact.update(schemaVersion=2, evaluationKind="service", split="prospective", dataSource="local_demo")
+    artifact["conditions"].update(aggregationUnit="content", cohortInterpretation="disjoint_users")
+    return artifact
+
+
+def pipeline_status():
+    return {
+        "schemaVersion": 1, "dataset": "service", "state": "waiting", "reason": "insufficient_samples",
+        "dataSource": "local_demo", "observationDays": 7, "minSamples": 20,
+        "collectedCases": 30, "matureCases": 3, "eligibleCases": 2,
+        "cohortSampleSizes": {"existing": 2, "new": 0}, "lastEvaluationId": None,
+        "lastAttemptAt": NOW.isoformat(), "lastSuccessAt": NOW.isoformat(), "lastPublishedAt": None,
+    }
+
+
+def test_service_content_and_offline_series_cannot_cross_datasets(tmp_path, artifact):
+    path = write_artifact(tmp_path, artifact)
+    assert service.get_recommendation_performance(artifact_path=path, dataset="service", now=NOW).reason == "artifact_invalid"
+    path = write_artifact(tmp_path, as_service(artifact))
+    assert service.get_recommendation_performance(artifact_path=path, now=NOW).reason == "artifact_invalid"
+    result = service.get_recommendation_performance(artifact_path=path, dataset="service", now=NOW)
+    assert result.availability == "available" and result.source == "service_feedback"
+    assert result.conditions.aggregation_unit == "content"
+    assert result.models[0].scores[0].hit_rate_at10 == pytest.approx(2 / 3)
+
+
+@pytest.mark.parametrize("change", [
+    {"aggregationUnit": "series"}, {"cohortInterpretation": "input_scenarios"},
+])
+def test_prospective_contract_rejects_incompatible_units_and_overlapping_scenarios(tmp_path, artifact, change):
+    as_service(artifact)["conditions"].update(change)
+    result = service.get_recommendation_performance(artifact_path=write_artifact(tmp_path, artifact), dataset="service", now=NOW)
+    assert result.reason == "artifact_invalid"
+
+
+def test_pipeline_progress_is_available_before_scores_and_has_no_raw_data(tmp_path):
+    (tmp_path / "pipeline-status.json").write_text(json.dumps(pipeline_status()))
+    path = str(tmp_path / "service-evaluation.json")
+    result = service.get_recommendation_performance(artifact_path=path, dataset="service", now=NOW)
+    assert result.reason == "artifact_missing" and result.models == []
+    assert result.pipeline.eligible_cases == 2
+    assert str(tmp_path) not in result.model_dump_json()
+    assert service.get_recommendation_performance(artifact_path=path, now=NOW).pipeline is None
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda s: s.update(accountId=123), lambda s: s.update(reason="secret /path"),
+    lambda s: s.update(lastAttemptAt="2026-11-22T10:00:00"), lambda s: s.update(collectedCases=True),
+    lambda s: s.update(cohortSampleSizes={"existing": 1}),
+])
+def test_bad_pipeline_status_does_not_hide_last_valid_evaluation(tmp_path, artifact, mutate):
+    status = pipeline_status()
+    mutate(status)
+    (tmp_path / "pipeline-status.json").write_text(json.dumps(status))
+    result = service.get_recommendation_performance(
+        artifact_path=write_artifact(tmp_path, as_service(artifact)), dataset="service", now=NOW,
+    )
+    assert result.pipeline is None and result.availability == "available"
+    assert result.data_source == "local_demo"
+
+
+def test_publisher_dataset_guard_preserves_previous_target(tmp_path, artifact):
+    root = str(Path(__file__).resolve().parents[2])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from model.eval.publish_admin_evaluation import publish_evaluation
+    source = Path(write_artifact(tmp_path, as_service(artifact)))
+    output = tmp_path / "published.json"
+    output.write_bytes(b"previous")
+    with pytest.raises(ValueError, match="dataset"):
+        publish_evaluation(source, output)
+    assert output.read_bytes() == b"previous"
+    publish_evaluation(source, output, dataset="service")
+    assert json.loads(output.read_bytes())["evaluationKind"] == "service"
+
+
 def test_exact_hit_ndcg_and_same_cohort_baseline(tmp_path, artifact):
     result = service.get_recommendation_performance(artifact_path=write_artifact(tmp_path, artifact), now=NOW)
     assert result.availability == "available"

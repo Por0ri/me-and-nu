@@ -13,14 +13,16 @@ ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / "deploy/checking/.env"
 EVALUATION_KEY = "CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH"
 EVALUATION_PATH = "/app/admin-evaluation/evaluation.json"
-OPTIONAL_DEFAULTS = {EVALUATION_KEY: ""}
+SERVICE_EVALUATION_KEY = "CHECKING_ADMIN_SERVICE_EVALUATION_PATH"
+SERVICE_EVALUATION_PATH = "/app/admin-evaluation/service-evaluation.json"
+OPTIONAL_DEFAULTS = {EVALUATION_KEY: "", SERVICE_EVALUATION_KEY: ""}
 KEYS = {
     "CHECKING_IMAGE_TAG", "CHECKING_POSTGRES_PASSWORD", "CHECKING_REDIS_PASSWORD", "CHECKING_FORWARDED_ALLOW_IPS",
     "CHECKING_KAKAO_OAUTH_ENABLED", "CHECKING_KAKAO_CLIENT_ID", "CHECKING_KAKAO_CLIENT_SECRET",
     "CHECKING_NAVER_OAUTH_ENABLED", "CHECKING_NAVER_CLIENT_ID", "CHECKING_NAVER_CLIENT_SECRET",
     "CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED", "CHECKING_LLM_KEY", "CHECKING_DICT_DATABASE_URL",
     "CHECKING_CHAT_DAILY_TOTAL_LIMIT",
-    EVALUATION_KEY,
+    EVALUATION_KEY, SERVICE_EVALUATION_KEY,
 }
 # All users' chatbot questions per day: an explicit 1-999999 so a typo can never mean "unlimited" (0).
 DAILY_LIMIT = re.compile(r"[1-9][0-9]{0,5}")
@@ -68,6 +70,8 @@ def validate_values(values, environ=None):
                          "(all users' chatbot questions per day, shared with the main API).")
     if values[EVALUATION_KEY] not in ("", EVALUATION_PATH):
         raise GuardError("The Checking evaluation path must be empty or /app/admin-evaluation/evaluation.json.")
+    if values[SERVICE_EVALUATION_KEY] not in ("", SERVICE_EVALUATION_PATH):
+        raise GuardError("The Checking service evaluation path must be empty or /app/admin-evaluation/service-evaluation.json.")
     try:
         addresses = values["CHECKING_FORWARDED_ALLOW_IPS"].split(",")
         if not addresses or any(ipaddress.ip_address(value).is_unspecified for value in addresses):
@@ -130,6 +134,8 @@ def validate_config(config, values):
             raise GuardError("Only the checking API may receive CHAT_DAILY_TOTAL_LIMIT, and only from CHECKING_CHAT_DAILY_TOTAL_LIMIT.")
         if environment.get("ADMIN_RECOMMENDATION_EVALUATION_PATH") != (values.get(EVALUATION_KEY, "") if name == "api" else None):
             raise GuardError("Only the checking API may receive ADMIN_RECOMMENDATION_EVALUATION_PATH from the Checking file.")
+        if environment.get("ADMIN_SERVICE_EVALUATION_PATH") != (values.get(SERVICE_EVALUATION_KEY, "") if name == "api" else None):
+            raise GuardError("Only the checking API may receive ADMIN_SERVICE_EVALUATION_PATH from the Checking file.")
         if environment.get("DATABASE_URL") != expected_db or environment.get("REDIS_URL") != expected_redis:
             raise GuardError(f"{name} must use the private checking database and Redis.")
         if environment.get("CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED") != values["CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED"]:

@@ -35,11 +35,30 @@ function fixture() {
     ],
   };
 }
-function render(state, audience = 'all') {
+function render(state, audience = 'all', dataset = 'offline') {
   return renderToStaticMarkup(React.createElement(RecommendationPerformanceView, {
-    query: { view: 'performance', period: '7d', audience }, navigate() {}, retry() {}, state,
+    query: { view: 'performance', period: '7d', audience, dataset }, navigate() {}, retry() {}, state,
   }));
 }
+
+test('prospective collection progress is visible without invented scores', () => {
+  const data = { ...fixture(), availability: 'unavailable', reason: 'artifact_missing', models: [], cohorts: [], conditions: null,
+    pipeline: { state: 'waiting', dataSource: 'local_demo', observationDays: 7, minSamples: 20, collectedCases: 30, matureCases: 3,
+      eligibleCases: 2, cohortSampleSizes: { existing: 2, new: 0 }, lastAttemptAt: '2026-11-21T00:00:00Z' } };
+  const html = render({ status: 'ready', data }, 'all', 'service');
+  assert.match(html, /Checking 시험 데이터/); assert.match(html, /관찰·표본 수집 중/);
+  assert.match(html, /추천 저장 후 7일/); assert.match(html, /각각 20명 이상/);
+  assert.match(html, /href="\/admin\/analytics\?dataset=service"/);
+  assert.doesNotMatch(html, /data-performance-chart|0\.0000|0\.0%/);
+});
+
+test('service scores use content units and disclose saved ranking interpretation', () => {
+  const data = fixture(); data.conditions.cohortInterpretation = 'disjoint_users';
+  const html = render({ status: 'ready', data }, 'all', 'service');
+  assert.match(html, /콘텐츠 NDCG@10/); assert.match(html, /콘텐츠 Hit Rate@10/);
+  assert.match(html, /피드에서 최종 노출된 순위의 클릭률을 측정한 결과는 아닙니다/);
+  assert.doesNotMatch(html, /시리즈 NDCG@10|같은 표본에 전체 시청 기록/);
+});
 
 test('paired chart preserves observed zero and never pools sample sizes', () => {
   const html = render({ status: 'ready', data: fixture() });

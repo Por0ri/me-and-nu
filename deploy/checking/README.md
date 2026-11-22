@@ -81,15 +81,18 @@ SQL
 
 ## 관리자 추천 성능 평가 파일
 
-관리자 추천 성능은 서버에서 따로 생성·검증한 오프라인 평가 JSON을 읽는다. API 요청에서
-모델 평가나 학습을 실행하지 않는다. 새 Migration과 추천 배치·적재기 변경도 필요하지 않다.
+관리자 추천 성능은 별도로 생성·검증한 평가 JSON을 읽는다. 오프라인 작품 평가와 서비스 콘텐츠
+평가는 데이터 단위·정답·평가 기간이 다르므로 파일과 API의 `dataset=offline|service`를 분리한다.
+API 요청에서 모델 평가나 학습을 실행하지 않으며 새 Migration은 필요하지 않다.
 
 - API에만 `deploy/checking/admin-evaluation/`을 `/app/admin-evaluation`로 읽기 전용 마운트한다.
   다른 호스트 경로·쓰기 마운트·마이그레이션 마운트는 배포 guard가 거절한다. 디렉터리가 없으면
   첫 기동 시 빈 디렉터리를 만든다. 평가 자료가 없는 상태에서도 API는 기동할 수 있다.
 - 서버 `.env`의 `CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH`는 빈 값(비활성)이거나
-  `/app/admin-evaluation/evaluation.json`만 허용한다. 기존 `.env`에 키가 없으면 빈 값으로
-  처리한다. 상속된 환경 변수로 값을 바꾸는 것은 거절한다. Main 환경은 변경하지 않는다.
+  `/app/admin-evaluation/evaluation.json`만 허용한다. 서비스 평가용
+  `CHECKING_ADMIN_SERVICE_EVALUATION_PATH`는 빈 값이거나
+  `/app/admin-evaluation/service-evaluation.json`만 허용한다. 기존 `.env`에 키가 없으면
+  각각 빈 값으로 처리한다. 상속된 환경 변수로 값을 바꾸는 것은 거절한다. Main 환경은 변경하지 않는다.
 - 검토한 exporter로 만든 완료된 평가 파일을 아래 게시 명령으로 배치한다. 예시·합성 점수나 과거 문서의
   반올림된 점수를 실평가로 게시하지 않는다. 파일 크기(최대 16 MiB), 스키마, 평가 ID·완료 시각,
   데이터·코드 지문, 같은 케이스별 모델 순위를 확인하고 파일 SHA-256을 기록한다.
@@ -100,39 +103,104 @@ SQL
   표시된다. 유효한 파일 게시 후 다음 `recommendation-performance` GET부터 별도 재시작 없이
   NDCG@10·Hit Rate@10을 집계한다. 열린 화면은 새로고침하거나 다시 조회한다.
   실제 관리자 세션으로 응답의 평가 ID·모델·두 집단별
-  NDCG/Hit Rate/표본을 검증한다. API의 `available`은 오프라인 자료의 유효성을 의미하며
-  현재 서비스에 배포된 추천 모델의 온라인 성능을 보증하지 않는다.
+  NDCG/Hit Rate/표본을 검증한다. API의 `available`은 선택한 평가 자료가 유효하다는 뜻이다.
+  오프라인 작품 점수와 서비스 행동 기반 콘텐츠 점수를 같은 실험 결과로 비교하지 않는다.
 
 평가 작업은 `model/eval/admin_performance_export.py`의 artifact 계약에 맞는 JSON을 생성한다.
 모델별 같은 검증 케이스의 정답 순위(`targetRanks`), 표본, 코호트 정의, 평가 시각과 데이터·코드 지문이
 필요하다. 정답이 없는 일반 추천 목록이나 클릭 수만 전달하면 NDCG·Hit Rate를 계산할 수 없다.
-이 게시 도구는 평가를 실행하거나 서비스 행동 데이터를 수집하지 않는다.
+아래 게시 도구는 검증·게시만 담당한다. 서비스 행동 수집과 평가 실행은 다음 절의 정기 작업이 담당한다.
 
 완료된 파일을 서버의 별도 수신 경로에 복사한 뒤 Checking 호스트에서 실행한다.
 호스트 Python에 Pydantic이나 모델 패키지를 설치할 필요가 없다.
 
 ```bash
 sudo python3 /home/ubuntu/apps/me-nu-checking/deploy/checking/publish_evaluation.py \
-  --input /absolute/path/to/completed-evaluation.json
+  --dataset offline --input /absolute/path/to/completed-evaluation.json
 ```
 
 명령은 고정 Checking checkout과 실제 실행 이미지 SHA, 건강 상태, 읽기 전용 마운트 및 활성 경로를
-확인한다. Docker의 `default` context만 사용하며, 이번 승인된 Checking API rollout helper와 같은
-`/run/lock/me-nu-checking-api-rollout.lock`을 사용한다. 일반 `checking.sh`는 이 잠금을 취득하지 않으므로
-파일 게시와 동시에 직접 배포하지 않는다. 실행 중인 API와 같은 이미지 ID로 네트워크·자격 증명이 없는
+확인한다. Docker의 `default` context만 사용하며 Checking API rollout helper와 같은
+`/run/lock/me-nu-checking-api-rollout.lock`을 사용한다. `checking.sh`의 build/up/migrate/stop도
+이 잠금으로 게시와의 경합을 막는다. 실행 중인 API와 같은 이미지 ID로 네트워크·자격 증명이 없는
 일회성 컨테이너에서 입력을 검증한다. 입력은 최대 16 MiB의 일반 파일이어야 하며 심볼릭 링크는 거절한다.
 검증 실패 시 기존 게시 파일을 유지하고, 입력 내용이나 상세 검증 오류는 로그에 출력하지 않는다.
 
 검증한 파일은 API가 읽을 수 있는 0644 권한으로 같은 파일시스템의 비공개 staging에 완성한 뒤
-고정 `evaluation.json`으로 원자 교체한다. 기존 파일과 SHA-256은 API 마운트 밖의
-`/home/ubuntu/apps/.checking-evaluation-artifacts/backups/`에 0600으로 보존한다. 성공 출력에는
-새 파일 SHA, 이전 SHA와 백업 이름이 포함된다. DB·권한·Main·추천 적재기와 API 컨테이너는 변경하지 않는다.
+선택한 dataset의 고정 파일로 원자 교체한다. `offline`은 v1 `held_out`/`series`, `service`는
+v2 `prospective`/`content` 계약만 받으며 서로의 경로를 덮어쓸 수 없다. 기존 파일과 SHA-256은
+API 마운트 밖의 `/home/ubuntu/apps/.checking-evaluation-artifacts/backups/<dataset>/`에
+0600으로 보존한다. 검증한 내용이 현재 파일과 같으면 교체·추가 백업을 생략한다. 성공 출력에는
+dataset·새 파일 SHA·이전 SHA와 백업 이름이 포함된다. DB·권한·Main·추천 적재기와 API 컨테이너는 변경하지 않는다.
 
 디렉터리 마운트이므로 이후 요청에 새 파일이 보인다. 개별 파일 마운트로 바꾸면
 원자 교체 전 inode가 계속 보일 수 있다. 이전 검증 파일과 SHA는 API 마운트 밖의 백업에 보존한다.
-자료 롤백은 위 명령의 `--input`에 해당 백업 JSON 절대 경로를 넣어 같은 검증·게시 절차를 거친 뒤
+자료 롤백은 위 명령의 `--dataset`을 맞추고 `--input`에 해당 백업 JSON 절대 경로를 넣어 같은 검증·게시 절차를 거친 뒤
 평가 ID를 재확인한다. 백업을 자동으로 정리하지 않으므로 운영자가 보관 공간을 관리한다. 연결만 끄려면
 환경 키를 빈 값으로 바꿔 `check` → `up`한다. DB downgrade·권한 변경·볼륨 삭제는 하지 않는다.
+
+## 서비스 추천 평가 자동 수집·게시
+
+`run_evaluation_pipeline.py`는 Checking에서 매시간 저장된 추천 후보·순위를 먼저 고정하고,
+관측 기간이 지난 케이스를 평가한 뒤 검증된 서비스 파일만 게시한다. 기본 관측 기간은 7일,
+집단별 최소 표본은 20명이다. 따라서 자동화를 켠 직후에는 점수 대신 수집·관측 대기가 정상이다.
+기존/신규 사용자는 예측 수집 시점 가입 기간으로 구분하고 사용자당 하나의 최신 성숙 예측을 쓴다.
+최소 표본을 채운 집단만 결과에 포함하며 다른 집단은 미집계 상태로 남긴다.
+
+정답은 후보를 고정한 **이후** 관측 기간 안에 발생한 첫 서버 검증 긍정 반응
+(`like`, `bookmark`, `preference_positive`) 콘텐츠다. 이후 반응 취소와 무관하게 행동 발생을 평가하며,
+관측된 긍정 반응이 없는 사용자를 임의로 실패나 0점으로 만들지 않는다. 같은 시점의 같은 후보 집합으로
+저장된 추천 순서·최신순·긍정 반응 인기순을 비교한다. 최종 피드 노출을 재현한 실험이나 시청 완료 기반
+작품 평가, 무작위 온라인 A/B 테스트는 아니다. 화면의 평가 조건과 표본을 함께 해석한다.
+
+작업은 실제 API의 `EVENT_DATA_SOURCE`를 읽어 그대로 수집·표시한다. 현재 Checking 기본 출처는
+`local_demo`이며 production 자료로 바꾸어 표시하거나 서로 섞지 않는다. 비공개 수집 상태도 DB·출처·
+관측 정책에 묶이므로 설정을 바꿔 기존 표본을 재사용할 수 없다. 입력 상한(활성 애니메이션 사용자
+2,000명, 이벤트 100,000개, 스냅샷 20,000개)을 넘으면 일부만 평가하지 않고 실패 상태로 중단한다.
+
+Checking 호스트에서 다음 순서로 설치한다. 먼저 새 스키마를 포함한 API를 배포하고
+`CHECKING_ADMIN_SERVICE_EVALUATION_PATH=/app/admin-evaluation/service-evaluation.json`을
+설정해 `check` → `up`한다. 평가 파일이 아직 없어도 된다.
+
+```bash
+sudo python3 /home/ubuntu/apps/me-nu-checking/deploy/checking/evaluation.py dry-run
+sudo python3 /home/ubuntu/apps/me-nu-checking/deploy/checking/evaluation.py enable
+sudo python3 /home/ubuntu/apps/me-nu-checking/deploy/checking/evaluation.py run
+sudo python3 /home/ubuntu/apps/me-nu-checking/deploy/checking/evaluation.py status
+```
+
+`dry-run`은 설치할 고정 systemd unit 두 개를 보여준다. `enable`은 실제 API·읽기 전용 마운트·
+서비스 경로를 확인한 후 `me-nu-checking-evaluation.service`와 `.timer`만 설치한다. 타이머는
+매시간 및 부팅 후 실행되며 누락한 일정은 재시작 후 한 번 처리한다. 수동 실행과 타이머 실행은
+별도 작업 잠금으로 중복을 막고, **게시 시점에만** 배포와 같은 잠금을 잡는다. 수집 중 배포 이미지가
+바뀌면 후보를 보관하고 게시를 다음 실행에서 다시 확인한다.
+
+수집 컨테이너는 현재 API의 불변 이미지 ID를 사용하며 `me-nu-checking_data` 내부 네트워크에서만
+DB를 읽는다. DB 연결 값은 메모리·자식 환경으로 전달하고 명령 인수·journal·공개 상태 파일에 쓰지 않는다.
+수집기는 PostgreSQL repeatable-read/read-only 트랜잭션을 강제한다. 컨테이너는 UID 10001,
+읽기 전용 루트, 모든 capability 제거, 384 MiB/0.25 CPU/64 PID 제한으로 실행한다. 컨테이너 작업은
+10분, systemd 작업은 15분 제한이며 종료 시 그 실행에서 만든 컨테이너만 정리한다.
+
+`/home/ubuntu/apps/.checking-evaluation-pipeline/` 아래의 수집 상태와 게시 대기 파일은 API에
+마운트하지 않는다. 상태 디렉터리는 0700, HMAC 키·SQLite·대기 영수증은 0600이며 수집 상태에는
+HMAC으로 가명화한 사용자/요청 키를 쓴다. 스냅샷은 최대 90일 보관하며, 사용자·모델 버전별 최신 관찰 완료
+예측과 관찰 중인 예측을 남기고 오래된 완료 예측을 정리한다. 탈퇴 사용자·삭제된 탭 자료는 다음 수집 시 제거한다.
+완성된 후보를 먼저 원자 저장한 뒤 평가 입력 지문을 기록한다. 게시 실패·응답 유실·프로세스 재시작 때는
+대기 후보를 우선 재검증·게시하므로 이미 계산한 결과를 잃지 않는다. 실패 시 기존 게시 파일은 유지하고
+다음 시간 실행에서 재시도하며, 동일 입력은 재평가와 중복 게시를 생략한다.
+
+공개 마운트의 `pipeline-status.json`에는 상태(`running`, `waiting`, `unchanged`, `published`,
+`failed`), 안전한 사유 코드, 출처·관측 기간·최소 표본·집단별 수와 마지막 실행/성공/게시 시각만 쓴다.
+관리자 API가 이 집계 상태를 읽으며 사용자 키·DB 주소·원본 반응·상세 오류는 노출하지 않는다.
+`journalctl -u me-nu-checking-evaluation.service`에는 비밀값 없는 결과 요약을 남긴다.
+
+중지할 때는 다음 명령을 쓴다. 타이머만 중지·비활성화하며 진행 중인 작업은 완료될 수 있고
+수집 상태·게시 파일·백업은 보존한다. 이 작업은 모델 재학습이나 기존 추천 생성 배치의 일정을 변경하지 않는다.
+
+```bash
+sudo python3 /home/ubuntu/apps/me-nu-checking/deploy/checking/evaluation.py disable
+python -m unittest discover -s deploy/checking -p 'test_*evaluation*.py' -v
+```
 
 ## 도메인·TLS·FE·OAuth
 

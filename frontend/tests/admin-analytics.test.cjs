@@ -50,6 +50,11 @@ test('analytics query normalizes malformed input and preserves supported filters
     assert.equal(JSON.stringify(parse(href.split('?')[1])), JSON.stringify(query));
   }
   assert.equal(model.analyticsHref(parse('')), '/admin/analytics');
+  const service = parse('view=performance&period=30d&audience=new&dataset=service');
+  assert.equal(service.dataset, 'service');
+  assert.equal(JSON.stringify(parse(model.analyticsHref(service).split('?')[1])), JSON.stringify(service));
+  assert.equal(parse('dataset=offline').dataset, undefined);
+  assert.equal(parse('dataset=../../etc/passwd').dataset, undefined);
 });
 
 test('overview presents measured data, empty results and missing metrics with distinct semantics', () => {
@@ -82,6 +87,20 @@ test('unsupported notice queue is unavailable rather than an empty successful qu
   const html = dashboard({ status: 'ready', data }, 'notice');
   assert.match(html, /예약 공지 연결을 준비/); assert.doesNotMatch(html, /미처리 예약 공지 항목이 없습니다/);
   assert.match(html, /disabled="" aria-label="다음 페이지"/);
+});
+
+test('service dashboard summary stays separate and labels retained trial scores without a pipeline manifest', () => {
+  const data = fixture();
+  data.dashboard.serviceRecommendationPerformance = {
+    ...data.dashboard.recommendationPerformance, source: 'service_feedback', dataSource: 'local_demo', pipeline: null,
+  };
+  const html = dashboard({ status: 'ready', data });
+  assert.ok(html.indexOf('서비스 추천 품질') < html.indexOf('지금 확인이 필요한 항목'));
+  assert.ok(html.includes('작품 추천 품질'));
+  assert.match(html, /Checking 시험 데이터/);
+  assert.match(html, /콘텐츠 NDCG@10/);
+  assert.match(html, /href="\/admin\/analytics\?view=performance&amp;period=30d&amp;dataset=service"/);
+  assert.match(html, /href="\/admin\/analytics\?view=performance&amp;period=30d"/);
 });
 
 test('a shrinking queue does not present an invalid page or a false empty backlog', () => {

@@ -77,6 +77,7 @@ def analytics_api(monkeypatch):
     monkeypatch.setattr(settings, "redis_url", None)
     monkeypatch.setattr(settings, "session_backend", "postgres")
     monkeypatch.setattr(settings, "admin_recommendation_evaluation_path", None)
+    monkeypatch.setattr(settings, "admin_service_evaluation_path", None)
     monkeypatch.setattr(settings, "event_data_source", "local_demo")
     window = service.analytics_window("7d", now=NOW)
     unknown = service.unavailable("Uncollected fixture metric", "not_collected")
@@ -118,6 +119,22 @@ def analytics_api(monkeypatch):
 
 def login(api):
     api.client.cookies.set(settings.session_cookie_name, TOKEN)
+
+
+def test_service_dataset_is_authorized_and_routes_only_to_configured_service_path(analytics_api, monkeypatch, tmp_path):
+    api = analytics_api
+    path = PATHS[-1] + "?dataset=service"
+    assert api.client.get(path).status_code == 401
+    login(api)
+    target = str(tmp_path / "service-evaluation.json")
+    monkeypatch.setattr(settings, "admin_service_evaluation_path", target)
+    response = api.client.get(path)
+    assert response.status_code == 200
+    assert response.json()["source"] == "service_feedback"
+    assert response.json()["reason"] == "artifact_missing"
+    assert api.performance.call_args.kwargs["artifact_path"] == target
+    assert api.performance.call_args.kwargs["dataset"] == "service"
+    assert api.client.get(PATHS[-1] + "?dataset=../../etc/passwd").status_code == 422
 
 
 def assert_no_reads(api):

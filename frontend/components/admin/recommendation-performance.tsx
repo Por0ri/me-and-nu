@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useState } from "react";
-import { analyticsHref, type AnalyticsAudience, type AnalyticsQuery } from "@/lib/admin-analytics";
+import { analyticsHref, type AnalyticsAudience, type AnalyticsQuery, type EvaluationDataset } from "@/lib/admin-analytics";
 import type { AdminReadState } from "@/lib/admin-content";
 import { loadRecommendationPerformance, type RecommendationPerformance as PerformanceData } from "@/lib/admin-statistics-api";
 import { AdminStatus } from "./admin-status";
@@ -38,8 +38,8 @@ const date = (value: string) => new Intl.DateTimeFormat("ko-KR", {
 }).format(new Date(value));
 
 export function RecommendationPerformance({ query, navigate }: Props) {
-  const read = useCallback((signal: AbortSignal) => loadRecommendationPerformance({ period: query.period, audience: query.audience }, signal), [query.period, query.audience]);
-  const { state, retry } = useAdminRead(`performance:${query.period}:${query.audience}`, read);
+  const read = useCallback((signal: AbortSignal) => loadRecommendationPerformance({ period: query.period, audience: query.audience, ...(query.dataset ? { dataset: query.dataset } : {}) }, signal), [query.period, query.audience, query.dataset]);
+  const { state, retry } = useAdminRead(`performance:${query.dataset ?? "offline"}:${query.period}:${query.audience}`, read);
   return <RecommendationPerformanceView query={query} navigate={navigate} state={state} retry={retry} />;
 }
 
@@ -53,11 +53,18 @@ export function RecommendationPerformanceView({ query, navigate, state, retry }:
   const current = data?.models.find(model => model.modelId === data.currentModelId);
   const baseline = data?.models.find(model => model.modelId === data.baselineModelId);
   const simulated = data?.conditions?.cohortInterpretation === "input_scenarios";
+  const service = query.dataset === "service";
+  const unit = service ? "콘텐츠" : "시리즈";
   return <div className={styles.performance} data-analytics-view="performance" data-performance-state={state.status}>
     <Link href={analyticsHref({ ...query, view: "overview" })} className={statistics.viewLink}><img src="/admin/stat-back.svg" alt="" />데이터 분석</Link>
     <div className={`${shared.heading} ${styles.heading}`}>
-      <div><h1>추천 성능</h1><p>작품 추천 · 애니메이션 · 오프라인 평가</p></div>
+      <div><h1>추천 성능</h1><p>{service ? "콘텐츠 추천 · 저장 순위와 이후 긍정 반응 비교" : "작품 추천 · 애니메이션 · 오프라인 평가"}</p></div>
       <div className={styles.filters}>
+        <label className={styles.audience}><span className={shared.srOnly}>추천 성능 평가 데이터</span>
+          <select value={query.dataset ?? "offline"} onChange={event => navigate({ ...query, dataset: event.target.value as EvaluationDataset })}>
+            <option value="offline">외부 시청 이력</option><option value="service">서비스 긍정 반응</option>
+          </select><img src="/admin/sort-down.svg" alt="" />
+        </label>
         <ReportPeriodFilter value={query.period} onChange={period => navigate({ ...query, period })} />
         <label className={styles.audience}><span className={shared.srOnly}>추천 성능 사용자 범위</span>
           <select value={query.audience} onChange={event => navigate({ ...query, audience: event.target.value as AnalyticsAudience })}>
@@ -68,6 +75,7 @@ export function RecommendationPerformanceView({ query, navigate, state, retry }:
     </div>
     {state.status !== "ready" ? <AdminStatus subject="추천 성능" state={state} retry={retry} /> : <>
       <p className={styles.periodNote}>평가 완료 기간 · {date(state.data.periodStart)} ~ {date(state.data.periodEnd)} KST · 종료 시각 제외</p>
+      {service && <PipelineProgress pipeline={state.data.pipeline} />}
       {!data ? <section className={styles.empty} role="status" data-performance-unavailable>
         <h2>평가 수치 미집계</h2><p>{reasonLabels[state.data.reason ?? ""] ?? "평가 결과를 확인할 수 없습니다."}</p>
         <p>—는 0점이 아닌 확인할 수 없는 값입니다.</p>
@@ -75,12 +83,13 @@ export function RecommendationPerformanceView({ query, navigate, state, retry }:
       </section> : <>
         <div className={styles.context}>
           <p><strong>평가 기준 모델 {current?.label}</strong> · {data.evaluatedAt && date(data.evaluatedAt)} KST</p>
-          <p>이 결과는 오프라인 평가이며 현재 서비스에 배포된 모델의 성능을 보증하지 않습니다.</p>
+          {service && <p>평가 결과 출처 · {data.dataSource === "local_demo" ? "Checking 시험 데이터" : data.dataSource === "production" ? "서비스 운영 데이터" : "평가 출처 미확인"}</p>}
+          <p>{service ? "동일한 콘텐츠 후보에서 저장된 추천 순위·최신순·인기순을 비교합니다. 피드에서 최종 노출된 순위의 클릭률을 측정한 결과는 아닙니다." : "이 결과는 오프라인 평가이며 현재 서비스에 배포된 모델의 성능을 보증하지 않습니다."}</p>
           <p>{simulated ? "기존·신규는 같은 표본에 전체 시청 기록 또는 온보딩 입력을 준 비교 장면입니다. 실제 가입 집단으로 해석하거나 두 표본을 합산하지 않습니다." : "기존·신규의 집단 기준은 아래 평가 조건을 확인하세요. 집단별 점수와 표본을 따로 표시합니다."}</p>
         </div>
         <div className={styles.metrics}>
-          <ScoreSummary title="시리즈 NDCG@10" cohorts={shownCohorts} scores={current?.scores ?? []} format={score => ndcg(score.ndcgAt10)} highlight />
-          <ScoreSummary title="시리즈 Hit Rate@10" cohorts={shownCohorts} scores={current?.scores ?? []} format={score => hitRate(score.hitRateAt10)} />
+          <ScoreSummary title={`${unit} NDCG@10`} cohorts={shownCohorts} scores={current?.scores ?? []} format={score => ndcg(score.ndcgAt10)} highlight />
+          <ScoreSummary title={`${unit} Hit Rate@10`} cohorts={shownCohorts} scores={current?.scores ?? []} format={score => hitRate(score.hitRateAt10)} />
           <ScoreSummary title="평가 표본" cohorts={shownCohorts} scores={current?.scores ?? []} format={score => `${integer(score.sampleSize)}건`} />
         </div>
         <div className={styles.grid}>
@@ -129,7 +138,7 @@ export function RecommendationPerformanceView({ query, navigate, state, retry }:
           <StatisticsPanel title="평가 조건" className={styles.conditions} availability="available">
             <dl>{data.conditions && [
               ["평가 데이터", data.conditions.evaluationData], ["입력 조건", data.conditions.inputConditions],
-              ["집계 단위", "시리즈 · 정답 1개 · 상위 10개"], ["공통 규칙", data.conditions.commonRules],
+              ["집계 단위", `${unit} · 정답 1개 · 상위 10개`], ["공통 규칙", data.conditions.commonRules],
               ["정답 기간", data.conditions.targetPeriod], ["정답 기준", data.conditions.groundTruth],
               ["후보·추천 수", data.conditions.candidatePolicy], ["기록 출처", data.conditions.recordSource],
               ["평가 ID", data.evaluationId],
@@ -137,7 +146,7 @@ export function RecommendationPerformanceView({ query, navigate, state, retry }:
             {data.cohorts.map(cohort => <p key={cohort.audience} className={styles.cohortDefinition}><strong>{cohortLabel[cohort.audience]}</strong> · {cohort.definition} · {integer(cohort.sampleSize)}건</p>)}
             <details open className={styles.disclosure}>
               <summary><DisclosureIcon />NDCG@10은 어떻게 읽나요?</summary>
-              <p>정답 시리즈가 추천 상위 10개에서 앞에 나올수록 높은 점수를 줍니다. 정답 1개 기준으로 1위는 1.0, 2위는 약 0.63, 10위는 약 0.29, 10위 밖이면 0입니다.</p>
+              <p>정답 {unit}가 추천 상위 10개에서 앞에 나올수록 높은 점수를 줍니다. 정답 1개 기준으로 1위는 1.0, 2위는 약 0.63, 10위는 약 0.29, 10위 밖이면 0입니다.</p>
               <p>Hit Rate@10은 상위 10개 안에 정답이 포함된 표본의 비율입니다. 두 지표는 각 입력 범위의 전체 표본으로 계산합니다.</p>
             </details>
           </StatisticsPanel>
@@ -145,6 +154,19 @@ export function RecommendationPerformanceView({ query, navigate, state, retry }:
       </>}
     </>}
   </div>;
+}
+
+function PipelineProgress({ pipeline }: { pipeline: PerformanceData["pipeline"] }) {
+  if (!pipeline) return <div className={styles.context}><p>자동 수집 상태가 아직 연결되지 않았습니다.</p></div>;
+  const labels = { running: "평가 확인 중", published: "결과 게시 완료", waiting: "관찰·표본 수집 중", unchanged: "새 평가 결과 대기", failed: "자동 평가 확인 필요" };
+  const source = { production: "서비스 운영 데이터", local_demo: "Checking 시험 데이터", automated_test: "자동 테스트 데이터", imported: "가져온 데이터" };
+  return <section className={styles.context} aria-label="자동 평가 수집 상태" data-pipeline-state={pipeline.state}>
+    <p><strong>{labels[pipeline.state]}</strong> · {pipeline.dataSource ? source[pipeline.dataSource] : "수집 출처 확인 중"}</p>
+    <p>수집 {integer(pipeline.collectedCases)}건 · 관찰 완료 {integer(pipeline.matureCases)}건 · 평가 가능 {integer(pipeline.eligibleCases)}건</p>
+    <p>추천 저장 후 {pipeline.observationDays}일 동안 발생한 첫 긍정 반응으로 평가합니다. 기존·신규 각각 {integer(pipeline.minSamples)}명 이상부터 게시하며, 반응이 없거나 관찰 중인 표본은 0점으로 처리하지 않습니다.</p>
+    <p>기존 {integer(pipeline.cohortSampleSizes.existing)}명 · 신규 {integer(pipeline.cohortSampleSizes.new)}명 · 최근 확인 {date(pipeline.lastAttemptAt)} KST</p>
+    {pipeline.state === "failed" && <p>최근 자동 실행을 완료하지 못했습니다. 이전에 게시된 유효한 결과는 유지됩니다.</p>}
+  </section>;
 }
 
 function ScoreSummary({ title, cohorts, scores, format, highlight = false }: {

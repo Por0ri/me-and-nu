@@ -71,6 +71,32 @@ test('available paired model scores preserve real zero and never pool the scenar
   }
 });
 
+test('service dataset transports separately and rejects offline scores in that response', async () => {
+  const data = performance('7d', 'all', true);
+  const query = { period: '7d', audience: 'all', dataset: 'service' };
+  await assert.rejects(runtime(() => data).api.loadRecommendationPerformance(query), { code: 'INVALID_ADMIN_RESPONSE' });
+  data.source = 'service_feedback'; data.dataSource = 'local_demo'; data.conditions.aggregationUnit = 'content'; data.conditions.cohortInterpretation = 'disjoint_users';
+  const env = runtime(() => data);
+  assert.equal((await env.api.loadRecommendationPerformance(query)).source, 'service_feedback');
+  assert.equal(new URL(env.calls[0].url).searchParams.get('dataset'), 'service');
+  await assert.rejects(env.api.loadRecommendationPerformance({ period: '7d', audience: 'all' }), { code: 'INVALID_ADMIN_RESPONSE' });
+  data.conditions.aggregationUnit = 'series';
+  await assert.rejects(env.api.loadRecommendationPerformance(query), { code: 'INVALID_ADMIN_RESPONSE' });
+});
+
+test('waiting service pipeline has progress but no scores and validates bounded public status', async () => {
+  const data = performance(); data.source = 'service_feedback'; data.reason = 'artifact_missing';
+  data.pipeline = { schemaVersion: 1, dataset: 'service', state: 'waiting', reason: 'insufficient_samples', dataSource: 'local_demo',
+    observationDays: 7, minSamples: 20, collectedCases: 30, matureCases: 3, eligibleCases: 2, cohortSampleSizes: { existing: 2, new: 0 },
+    lastEvaluationId: null, lastAttemptAt: NOW, lastSuccessAt: NOW, lastPublishedAt: null };
+  const query = { period: '7d', audience: 'all', dataset: 'service' };
+  assert.equal((await runtime(() => data).api.loadRecommendationPerformance(query)).pipeline.eligibleCases, 2);
+  for (const mutate of [s => s.observationDays = 0, s => s.collectedCases = -1, s => s.lastAttemptAt = '2026-11-21T00:00:00', s => delete s.cohortSampleSizes.new]) {
+    const broken = clone(data); mutate(broken.pipeline);
+    await assert.rejects(runtime(() => broken).api.loadRecommendationPerformance(query), { code: 'INVALID_ADMIN_RESPONSE' });
+  }
+});
+
 test('measured preference percentages are checked against their common denominator', async () => {
   const value = overview(); value.preferenceDistribution = { availability: 'partial', reason: 'current_answers_not_historical_snapshot', definition: '현재 답변', sampleSize: 3,
     items: [{ key: 'ost', label: 'OST', count: 1, percentage: 33.3333 }, { key: 'other', label: '기타', count: 2, percentage: 66.6667 }] };

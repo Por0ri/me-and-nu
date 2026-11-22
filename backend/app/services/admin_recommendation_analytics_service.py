@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from app.schemas.admin_recommendation_analytics import (
     MAX_ARTIFACT_BYTES, AdminRecommendationPerformanceResponse, Audience, Period,
     RecommendationCohortMetadata, RecommendationEvaluationArtifact,
-    RecommendationModelScores, RecommendationScore,
+    RecommendationModelScores, RecommendationScore, EvaluationDataset, EvaluationPipelineStatus,
 )
 
 PERIOD_DAYS = {"7d": 7, "30d": 30, "3m": 90, "6m": 180}
@@ -42,14 +42,14 @@ def _load_artifact(path: str) -> RecommendationEvaluationArtifact:
 
 def get_recommendation_performance(
     *, artifact_path: str | None, period: Period = "7d", audience: Audience = "all",
-    now: datetime | None = None,
+    now: datetime | None = None, dataset: EvaluationDataset = "offline",
 ) -> AdminRecommendationPerformanceResponse:
     """``all`` returns separate scenarios, not a pooled or traffic-weighted score.
 
     Period filters the completed evaluation timestamp, not online activity or
     the historical label window. Use a threadpool from async HTTP handlers.
     """
-    if period not in PERIOD_DAYS or audience not in {"all", "existing", "new"}:
+    if period not in PERIOD_DAYS or audience not in {"all", "existing", "new"} or dataset not in {"offline", "service"}:
         raise ValueError("invalid recommendation analytics query")
     end = now or datetime.now(timezone.utc)
     if end.tzinfo is None or end.utcoffset() is None:
@@ -58,10 +58,19 @@ def get_recommendation_performance(
     response = AdminRecommendationPerformanceResponse(
         availability="unavailable", audience=audience, period=period,
         period_start=end - timedelta(days=PERIOD_DAYS[period]), period_end=end,
+        source="service_feedback" if dataset == "service" else "offline_evaluation",
     )
     if not artifact_path:
         response.reason = "not_configured"
         return response
+    if dataset == "service":
+        try:
+            with Path(artifact_path).with_name("pipeline-status.json").open("rb") as stream:
+                payload = stream.read(16_385)
+            if len(payload) <= 16_384:
+                response.pipeline = EvaluationPipelineStatus.model_validate(json.loads(payload, object_pairs_hook=_unique_object))
+        except (OSError, ValueError, UnicodeError, RecursionError):
+            pass  # A bad status receipt must not hide a valid last evaluation.
     try:
         artifact = _load_artifact(artifact_path)
     except FileNotFoundError:
@@ -73,6 +82,9 @@ def get_recommendation_performance(
     except (ValueError, ValidationError, UnicodeError, RecursionError):
         response.reason = "artifact_invalid"
         return response
+    if artifact.evaluation_kind != dataset:
+        response.reason = "artifact_invalid"
+        return response
     if not response.period_start <= artifact.evaluated_at < end:
         response.reason = "outside_period"
         return response
@@ -82,6 +94,7 @@ def get_recommendation_performance(
         return response
     response.availability = "available"
     response.evaluation_id = artifact.evaluation_id
+    response.data_source = artifact.data_source
     response.evaluated_at = artifact.evaluated_at
     response.baseline_model_id = artifact.baseline_model_id
     response.current_model_id = artifact.current_model_id

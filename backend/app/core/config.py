@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     event_data_source: Literal["production", "local_demo", "automated_test", "imported"] = "local_demo"
     # Operator-provided offline evaluation artifact; never a client-selected path.
     admin_recommendation_evaluation_path: str | None = Field(default=None, repr=False)
+    admin_service_evaluation_path: str | None = Field(default=None, repr=False)
 
     @model_validator(mode="after")
     def validate_session_backend(self) -> "Settings":

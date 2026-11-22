@@ -69,7 +69,7 @@ class PublishEvaluationTests(unittest.TestCase):
         previous = b'{"previous":true}'
         self.target.write_bytes(previous)
         result = self.publish()
-        backups = self.base / ".checking-evaluation-artifacts/backups"
+        backups = self.base / ".checking-evaluation-artifacts/backups/offline"
         self.assertEqual((backups / (result["backup"] + ".json")).read_bytes(), previous)
         self.assertEqual((backups / (result["backup"] + ".sha256")).read_text().strip(), publisher.digest(previous))
         self.assertEqual(result["previousSha256"], publisher.digest(previous))
@@ -80,14 +80,14 @@ class PublishEvaluationTests(unittest.TestCase):
         with self.assertRaises(publisher.PublishError):
             self.publish(validator=lambda _: (_ for _ in ()).throw(publisher.PublishError("rejected")))
         self.assertEqual(self.target.read_bytes(), b"previous")
-        self.assertEqual(list((self.base / ".checking-evaluation-artifacts/backups").iterdir()), [])
+        self.assertEqual(list((self.base / ".checking-evaluation-artifacts/backups/offline").iterdir()), [])
 
     def test_backup_failure_preserves_previous(self):
         self.target.write_bytes(b"previous")
         write = publisher.write_private
 
         def fail_backup(path, data):
-            if path.parent.name == "backups":
+            if path.parent.name == "offline":
                 raise OSError("disk full")
             return write(path, data)
 
@@ -184,6 +184,41 @@ class PublishEvaluationTests(unittest.TestCase):
         with patch.object(subprocess, "run", return_value=result), self.assertRaises(publisher.PublishError) as error:
             publisher.run(["docker"])
         self.assertNotIn("private", str(error.exception))
+
+    def test_service_dataset_uses_separate_target_and_backup(self):
+        self.target.write_bytes(b"offline previous")
+        service = self.artifacts / "service-evaluation.json"
+        service.write_bytes(b"service previous")
+        with patch.object(publisher, "runtime_identity", return_value=(SHA, IMAGE)) as identity, \
+                patch.object(publisher, "run", side_effect=self.validate):
+            result = publisher.publish(self.incoming, "service")
+        self.assertEqual(self.target.read_bytes(), b"offline previous")
+        self.assertEqual(service.read_bytes(), b'{"canonical":true}')
+        self.assertEqual(result["dataset"], "service")
+        self.assertEqual(self.command[-2:], ["--dataset", "service"])
+        self.assertTrue(all(call.args[1] == "service" for call in identity.call_args_list))
+        backup = self.base / ".checking-evaluation-artifacts/backups/service" / (result["backup"] + ".json")
+        self.assertEqual(backup.read_bytes(), b"service previous")
+
+    def test_identical_valid_artifact_is_not_replaced_or_backed_up(self):
+        self.target.write_bytes(b'{"canonical":true}')
+        result = self.publish()
+        self.assertFalse(result["published"])
+        self.assertTrue(result["unchanged"])
+        self.assertEqual(list((self.base / ".checking-evaluation-artifacts/backups/offline").iterdir()), [])
+
+    def test_invalid_dataset_is_rejected_before_io(self):
+        with patch.object(publisher, "run") as run, self.assertRaises(publisher.PublishError):
+            publisher.publish(self.incoming, "../other")
+        run.assert_not_called()
+
+    def test_service_runtime_checks_service_setting(self):
+        mounts = [{"Type": "bind", "RW": False, "Source": str(self.artifacts), "Destination": "/app/admin-evaluation"}]
+        values = [IMAGE, f"me-nu-backend-checking:{SHA}", "10001:10001", True, "running", "healthy", mounts]
+        replies = [SHA, "", "\n".join(json.dumps(item) for item in values), IMAGE, publisher.DATASETS["service"][2]]
+        with patch.object(publisher, "run", side_effect=replies) as run:
+            self.assertEqual(publisher.runtime_identity(self.artifacts, "service"), (SHA, IMAGE))
+        self.assertIn("ADMIN_SERVICE_EVALUATION_PATH", run.call_args.args[0][-1])
 
 
 if __name__ == "__main__":

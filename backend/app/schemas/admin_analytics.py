@@ -139,6 +139,7 @@ class DashboardResponse(CamelModel):
     today_notices: Metric
     # Defined by the same contract as the performance detail endpoint.
     recommendation_performance: "AdminRecommendationPerformanceResponse"
+    service_recommendation_performance: "AdminRecommendationPerformanceResponse | None" = None
 
 
 from app.schemas.admin_recommendation_analytics import AdminRecommendationPerformanceResponse  # noqa: E402
