@@ -43,6 +43,10 @@ def values():
     {"CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH": "/etc/passwd"},
     {"CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH": "/app/admin-evaluation/../other.json"},
     {"CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH": "https://example.com/evaluation.json"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/etc/passwd"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/app/admin-evaluation/../service-evaluation.json"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "https://example.com/service-evaluation.json"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/app/admin-evaluation/evaluation.json"},
 ])
 def test_unsafe_values_rejected(change):
     with pytest.raises(guard.GuardError):
@@ -149,13 +153,42 @@ def test_daily_total_limit_reaches_only_the_api_from_the_checking_file(rendered)
         guard.validate_values(configured, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "100"})
 
 
-def test_legacy_environment_defaults_evaluation_to_disabled_without_allowing_inherited_override():
+@pytest.mark.parametrize("key,path", [
+    (guard.EVALUATION_KEY, guard.EVALUATION_PATH),
+    (guard.SERVICE_EVALUATION_KEY, guard.SERVICE_EVALUATION_PATH),
+])
+def test_legacy_environment_defaults_evaluation_to_disabled_without_allowing_inherited_override(key, path):
     legacy = values()
-    legacy.pop(guard.EVALUATION_KEY)
-    assert guard.validate_values(legacy)[guard.EVALUATION_KEY] == ""
-    legacy.pop(guard.EVALUATION_KEY)
-    with pytest.raises(guard.GuardError, match="inherited CHECKING_ADMIN_RECOMMENDATION"):
-        guard.validate_values(legacy, {guard.EVALUATION_KEY: guard.EVALUATION_PATH})
+    legacy.pop(key)
+    assert guard.validate_values(legacy)[key] == ""
+    legacy.pop(key)
+    with pytest.raises(guard.GuardError, match="inherited " + key):
+        guard.validate_values(legacy, {key: path})
+
+
+def test_service_evaluation_path_reaches_only_api_and_cannot_reuse_offline_path(rendered):
+    key, path = guard.SERVICE_EVALUATION_KEY, guard.SERVICE_EVALUATION_PATH
+    assert values()[key] == ""
+    assert rendered["services"]["api"]["environment"]["ADMIN_SERVICE_EVALUATION_PATH"] == ""
+    configured = values() | {key: path, guard.EVALUATION_KEY: guard.EVALUATION_PATH}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["ADMIN_SERVICE_EVALUATION_PATH"] == path
+    assert config["services"]["api"]["environment"]["ADMIN_RECOMMENDATION_EVALUATION_PATH"] == guard.EVALUATION_PATH
+    assert "ADMIN_SERVICE_EVALUATION_PATH" not in config["services"]["migrate"]["environment"]
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="ADMIN_SERVICE_EVALUATION_PATH"):
+        guard.validate_config(config, configured | {key: ""})
+    with pytest.raises(guard.GuardError, match="inherited " + key):
+        guard.validate_values(configured, {key: ""})
+
+
+@pytest.mark.parametrize("value", ["", "/app/admin-evaluation/service-evaluation.json"])
+def test_service_evaluation_path_is_forbidden_in_migration_even_when_disabled(rendered, value):
+    config = copy.deepcopy(rendered)
+    config["services"]["migrate"]["environment"]["ADMIN_SERVICE_EVALUATION_PATH"] = value
+    with pytest.raises(guard.GuardError, match="ADMIN_SERVICE_EVALUATION_PATH"):
+        guard.validate_config(config, values())
 
 
 def test_evaluation_path_reaches_only_api_and_directory_mount_is_read_only(rendered):

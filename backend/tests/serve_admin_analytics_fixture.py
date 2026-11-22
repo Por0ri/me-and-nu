@@ -50,7 +50,9 @@ class Control(BaseModel):
     mode: Literal["normal", "zero", "db_failure", "evaluation_missing", "shrinking_queue"] = "normal"
     revoked: bool = False
     delay_period: Literal["30d", "none"] = "none"
+    delay_dataset: Literal["service", "none"] = "none"
     evaluation_variant: Literal["normal", "existing_only", "refreshed", "disjoint_users", "long_labels"] = "normal"
+    service_variant: Literal["waiting", "published", "failed", "manifest_missing"] = "waiting"
 
 
 def build_fixture(directory: Path):
@@ -59,8 +61,10 @@ def build_fixture(directory: Path):
         model.__table__.create(engine)
     meta = aggregate_tables()
     meta.create_all(engine)  # Existing full UserAccount schema is preserved.
-    state = {"mode": "normal", "delay_period": "none"}
+    state = {"mode": "normal", "delay_period": "none", "delay_dataset": "none"}
     artifact_path = directory / "evaluation.json"
+    service_path = directory / "service-evaluation.json"
+    pipeline_path = directory / "pipeline-status.json"
     now = datetime.now(timezone.utc)
 
     def reset_data(mode):
@@ -171,8 +175,59 @@ def build_fixture(directory: Path):
         pending.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
         pending.replace(artifact_path)
 
+    def publish_service_evaluation(variant="waiting"):
+        # The same loopback-only fixture uses a separate content artifact.
+        # No real recommendation state or production publisher is involved.
+        if variant == "waiting":
+            service_path.unlink(missing_ok=True)
+        else:
+            result = copy.deepcopy(evaluation)
+            result.update(schemaVersion=2, evaluationKind="service", dataSource="local_demo", split="prospective",
+                          evaluationId="synthetic-browser-service-evaluation")
+            result["conditions"].update(aggregationUnit="content", cohortInterpretation="disjoint_users",
+                evaluationData="격리 브라우저 검증용 서비스 콘텐츠 합성 표본 · local_demo",
+                inputConditions="합성 추천 후보와 순위를 관측 전에 고정",
+                targetPeriod="합성 예측 고정 후 7일 관측",
+                groundTruth="관측 기간의 첫 서버 긍정 반응 콘텐츠 1개",
+                candidatePolicy="동일한 합성 콘텐츠 후보 집합 · 상위 10개",
+                recordSource="synthetic local_demo canonical reaction fixture")
+            result["currentModelId"] = "stored"
+            for model in result["models"]:
+                if model["modelId"] == "v05":
+                    model.update(modelId="stored", label="저장 추천 순서")
+            for cohort in result["cohorts"]:
+                cohort["definition"] = f"서로 다른 합성 서비스 사용자 집단: {cohort['audience']}"
+                cohort["caseSetSha256"] = ("c" if cohort["audience"] == "existing" else "d") * 64
+                cohort["sampleSize"] = 20
+                for model in cohort["models"]:
+                    if model["modelId"] == "v05":
+                        model.update(modelId="stored", targetRanks=[1, 2, 10])
+                    model["targetRanks"] = (model["targetRanks"] * 7)[:20]
+            pending = service_path.with_suffix(".pending")
+            pending.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+            pending.replace(service_path)
+        if variant == "manifest_missing":
+            pipeline_path.unlink(missing_ok=True)
+            return
+        stamp = datetime.now(timezone.utc).isoformat()
+        manifest = {
+            "schemaVersion": 1, "dataset": "service", "state": "failed" if variant == "failed" else variant,
+            "reason": "collector_failed" if variant == "failed" else "insufficient_samples" if variant == "waiting" else None,
+            "dataSource": "local_demo", "observationDays": 7, "minSamples": 20,
+            "collectedCases": 50, "matureCases": 4 if variant == "waiting" else 45,
+            "eligibleCases": 4 if variant == "waiting" else 40,
+            "cohortSampleSizes": {"existing": 2 if variant == "waiting" else 20, "new": 2 if variant == "waiting" else 20},
+            "lastEvaluationId": None if variant == "waiting" else "synthetic-browser-service-evaluation",
+            "lastAttemptAt": stamp, "lastSuccessAt": stamp, "lastPublishedAt": None if variant == "waiting" else stamp,
+        }
+        pending = pipeline_path.with_suffix(".pending")
+        pending.write_text(json.dumps(manifest), encoding="utf-8")
+        pending.replace(pipeline_path)
+
     publish_evaluation()
+    publish_service_evaluation()
     settings.admin_recommendation_evaluation_path = str(artifact_path)
+    settings.admin_service_evaluation_path = str(service_path)
     settings.redis_url = None
     settings.event_data_source = "local_demo"
     settings.frontend_origins = "http://127.0.0.1:3220,http://localhost:3220"
@@ -206,7 +261,8 @@ def build_fixture(directory: Path):
 
     @app.middleware("http")
     async def delayed_query(request, call_next):
-        if (state["delay_period"] == "30d" and request.query_params.get("period") == "30d"
+        if ((state["delay_period"] == "30d" and request.query_params.get("period") == "30d"
+                or state["delay_dataset"] == "service" and request.query_params.get("dataset") == "service")
                 and request.url.path.startswith("/api/v1/admin/")):
             await asyncio.sleep(2)
         return await call_next(request)
@@ -215,9 +271,10 @@ def build_fixture(directory: Path):
     async def control(request: Request, payload: Control, x_fixture_key: str = Header()):
         if request.client.host not in {"127.0.0.1", "::1"} or x_fixture_key != CONTROL_KEY:
             raise HTTPException(403)
-        state.update(mode=payload.mode, delay_period=payload.delay_period)
+        state.update(mode=payload.mode, delay_period=payload.delay_period, delay_dataset=payload.delay_dataset)
         reset_data(payload.mode)
         publish_evaluation(payload.evaluation_variant)
+        publish_service_evaluation(payload.service_variant)
         settings.admin_recommendation_evaluation_path = None if payload.mode == "evaluation_missing" else str(artifact_path)
         with engine.begin() as db:
             db.execute(update(AdminAccount).values(revoked_at=now if payload.revoked else None))

@@ -48,8 +48,8 @@ const expectMetric = async (page, name, value) => assert.equal(await page.getByR
 async function period(page, label) { await page.getByRole('button', { name: /^조회 기간:/ }).click(); await page.getByRole('menuitemradio', { name: label, exact: true }).click(); }
 const focusRefresh = page => page.evaluate(() => window.dispatchEvent(new Event('focus')));
 const waitResponse = (page, pathname, query = '') => page.waitForResponse(response => { const url = new URL(response.url()); return url.pathname === pathname && (!query || url.search.includes(query)) && response.status() === 200; });
-async function chartMatchesHttp(context, page, audience = 'all', selectedMetric = 'ndcg', selectedPeriod = '7d') {
-  const response = await context.request.get(`${api}/api/v1/admin/analytics/recommendation-performance?period=${selectedPeriod}&audience=${audience}`);
+async function chartMatchesHttp(context, page, audience = 'all', selectedMetric = 'ndcg', selectedPeriod = '7d', dataset = 'offline') {
+  const response = await context.request.get(`${api}/api/v1/admin/analytics/recommendation-performance?period=${selectedPeriod}&audience=${audience}&dataset=${dataset}`);
   assert.equal(response.status(), 200); const data = await response.json(); assert.equal(data.availability, 'available');
   const chart = page.locator(`[data-performance-chart="${selectedMetric}"]`); await chart.waitFor();
   const cohorts = audience === 'all' ? ['existing', 'new'] : [audience], labels = { existing: '기존', new: '신규' };
@@ -79,7 +79,8 @@ async function chartMatchesHttp(context, page, audience = 'all', selectedMetric 
     }
   }
   const reference = data.models.find(model => model.modelId === data.currentModelId);
-  for (const [title, getValue] of [['시리즈 NDCG@10', score => ndcg(score.ndcgAt10)], ['시리즈 Hit Rate@10', score => hitRate(score.hitRateAt10)], ['평가 표본', score => `${score.sampleSize.toLocaleString('ko-KR')}건`]]) {
+  const unit = dataset === 'service' ? '콘텐츠' : '시리즈';
+  for (const [title, getValue] of [[`${unit} NDCG@10`, score => ndcg(score.ndcgAt10)], [`${unit} Hit Rate@10`, score => hitRate(score.hitRateAt10)], ['평가 표본', score => `${score.sampleSize.toLocaleString('ko-KR')}건`]]) {
     const rows = page.getByRole('region', { name: title, exact: true }).locator('dl > div');
     assert.equal(await rows.count(), cohorts.length);
     for (const [index, cohort] of cohorts.entries()) {
@@ -123,7 +124,7 @@ async function happy(browser, width) {
       await dashboardReady(page); assert.equal(data.knownTotal, count); assert.equal(data.page, 1); assert.equal(await button.getAttribute('aria-pressed'), 'true');
       if (kind === 'notice') { assert.equal(data.availability, 'unavailable'); await attention.getByText('—', { exact: true }).first().waitFor(); assert.equal(await attention.getByRole('button', { name: '다음 페이지', exact: true }).isDisabled(), true); }
     }
-    await page.getByRole('link', { name: /^추천 성능 상세 보기/ }).click(); await performanceReady(page);
+    await page.getByRole('region', { name: '작품 추천 품질', exact: true }).getByRole('link', { name: /^추천 성능 상세 보기/ }).click(); await performanceReady(page);
     assert.equal(new URL(page.url()).searchParams.get('view'), 'performance'); const evaluation = await chartMatchesHttp(context, page);
     assert.equal(await page.locator('[data-model-id="v05"][data-audience="new"]').getAttribute('data-value'), '0');
     assert.match(await page.locator('main').innerText(), /실제 가입 집단으로 해석하거나 두 표본을 합산하지 않습니다/); assert.match(await page.locator('main').innerText(), /0\.5436/);
@@ -207,6 +208,87 @@ async function evaluationVariants(browser, width) {
     throw new Error(`Evaluation variants ${width}px ${page.url()}: ${error.message}`, { cause: error });
   } finally { await context.close(); await fixture(); }
 }
+async function serviceEvaluation(browser, width) {
+  await fixture(); const s = await session(browser, width), { page, context } = s;
+  const checks = [];
+  const refresh = async () => {
+    const pending = waitResponse(page, '/api/v1/admin/analytics/recommendation-performance', 'dataset=service');
+    await focusRefresh(page); await pending; await performanceReady(page);
+  };
+  try {
+    console.log(`Real HTTP service evaluation: ${width}px`);
+    await page.goto(`${base}/admin/dashboard`); await dashboardReady(page);
+    const card = page.getByRole('region', { name: '서비스 추천 품질', exact: true });
+    await card.waitFor(); assert.match(await card.innerText(), /평가 결과 준비 중/);
+    const dashboard = await (await context.request.get(`${api}/api/v1/admin/dashboard?period=7d`)).json();
+    assert.equal(dashboard.serviceRecommendationPerformance.source, 'service_feedback');
+    assert.equal(dashboard.recommendationPerformance.source, 'offline_evaluation');
+    await card.getByRole('link', { name: /^추천 성능 상세 보기/ }).click(); await performanceReady(page);
+    assert.equal(new URL(page.url()).searchParams.get('dataset'), 'service');
+    assert.equal(await page.getByLabel('추천 성능 평가 데이터').inputValue(), 'service');
+    await page.locator('[data-pipeline-state="waiting"]').waitFor();
+    assert.equal(await page.locator('[data-performance-chart]').count(), 0);
+    assert.match(await page.locator('main').innerText(), /Checking 시험 데이터/);
+    await s.shot('service-waiting');
+    checks.push('service summary links to its own dataset; waiting status has no fabricated score');
+
+    await fixture('normal', { service_variant: 'published' }); await refresh();
+    const published = await chartMatchesHttp(context, page, 'all', 'ndcg', '7d', 'service');
+    assert.equal(published.dataSource, 'local_demo');
+    assert.equal(published.currentModelId, 'stored');
+    assert.match(await page.locator('main').innerText(), /Checking 시험 데이터/);
+    assert.equal(await page.locator('[data-model="v05"]').count(), 0);
+    await page.getByRole('group', { name: '비교할 추천 성능 지표' }).getByRole('button', { name: 'Hit Rate@10', exact: true }).click();
+    await chartMatchesHttp(context, page, 'all', 'hitRate', '7d', 'service');
+    await s.shot('service-published-hit-rate');
+    checks.push('content NDCG/Hit Rate bars, summaries and table match real service HTTP scores');
+
+    await fixture('normal', { service_variant: 'failed' }); await refresh();
+    await page.locator('[data-pipeline-state="failed"]').waitFor();
+    const retained = await chartMatchesHttp(context, page, 'all', 'hitRate', '7d', 'service');
+    assert.equal(retained.evaluationId, published.evaluationId);
+    assert.match(await page.locator('main').innerText(), /이전에 게시된 유효한 결과는 유지됩니다/);
+    await fixture('normal', { service_variant: 'manifest_missing' }); await refresh();
+    const missingManifest = await chartMatchesHttp(context, page, 'all', 'hitRate', '7d', 'service');
+    assert.equal(missingManifest.pipeline, null);
+    assert.match(await page.locator('main').innerText(), /Checking 시험 데이터/);
+    await page.goto(`${base}/admin/dashboard`); await dashboardReady(page);
+    assert.match(await page.getByRole('region', { name: '서비스 추천 품질', exact: true }).innerText(), /Checking 시험 데이터/);
+    await s.shot('service-dashboard-retained');
+    checks.push('failed/missing manifest preserves valid results and independent trial-data labeling');
+
+    await page.getByRole('region', { name: '서비스 추천 품질', exact: true }).getByRole('link', { name: /^추천 성능 상세 보기/ }).click(); await performanceReady(page);
+    await page.getByLabel('추천 성능 사용자 범위').selectOption('new'); await performanceReady(page);
+    await chartMatchesHttp(context, page, 'new', 'ndcg', '7d', 'service');
+    await page.reload(); await performanceReady(page);
+    assert.equal(await page.getByLabel('추천 성능 평가 데이터').inputValue(), 'service');
+    assert.equal(await page.getByLabel('추천 성능 사용자 범위').inputValue(), 'new');
+    await page.getByLabel('추천 성능 평가 데이터').selectOption('offline'); await performanceReady(page);
+    await chartMatchesHttp(context, page, 'new');
+    assert.equal(new URL(page.url()).searchParams.get('dataset'), null);
+    assert.equal(await page.locator('[data-pipeline-state]').count(), 0);
+    await fixture('normal', { service_variant: 'published', delay_dataset: 'service' });
+    const delayed = page.waitForRequest(req => new URL(req.url()).pathname.endsWith('/recommendation-performance') && new URL(req.url()).searchParams.get('dataset') === 'service');
+    await page.getByLabel('추천 성능 평가 데이터').selectOption('service'); await delayed;
+    await page.getByLabel('추천 성능 평가 데이터').selectOption('offline'); await performanceReady(page);
+    await chartMatchesHttp(context, page, 'new');
+    await page.waitForTimeout(2300); // Ensure the delayed service response cannot replace the offline view.
+    await chartMatchesHttp(context, page, 'new');
+    assert.equal(await page.locator('[data-model="stored"]').count(), 0);
+    checks.push('dataset/filter reload and rapid dataset switches retain their own response and units');
+    s.clean(); results.push({ suite: 'service', width, passed: true, checks, requests: s.requests, responses: s.responses });
+  } catch (error) {
+    await page.screenshot({ path: path.join(output, `failure-service-${width}.png`), fullPage: true, timeout: 5000 }).catch(() => {});
+    throw new Error(`Service ${width}px ${page.url()}: ${error.message}`, { cause: error });
+  } finally { await context.close(); await fixture(); }
+  if (width === 1728) for (const role of ['viewer', 'operator', 'admin', 'member', 'anonymous']) {
+    const roleSession = await session(browser, width, role);
+    try {
+      const response = await roleSession.context.request.get(`${api}/api/v1/admin/analytics/recommendation-performance?dataset=service`);
+      assert.equal(response.status(), role === 'member' ? 403 : role === 'anonymous' ? 401 : 200);
+    } finally { await roleSession.context.close(); }
+  }
+}
 async function boundaries(browser) {
   const checks = [];
   for (const role of ['viewer', 'operator', 'admin', 'member', 'anonymous']) {
@@ -250,11 +332,12 @@ async function boundaries(browser) {
   const ready = await control.get(`${api}/__test__/ready`); assert.equal(ready.status(), 200); assert.deepEqual(await ready.json(), { synthetic: true, database: 'private-in-memory-sqlite', api: 'real-registered-routes' });
   const browser = await chromium.launch({ headless: true, channel: process.env.PIVOT_BROWSER_CHANNEL || 'msedge' });
   const suite = process.env.ADMIN_ANALYTICS_SUITE || 'all';
-  assert.ok(['all', 'variants'].includes(suite), 'ADMIN_ANALYTICS_SUITE must be all or variants');
+  assert.ok(['all', 'variants', 'service'].includes(suite), 'ADMIN_ANALYTICS_SUITE must be all, variants or service');
   try {
     for (const width of process.argv[4] ? [Number(process.argv[4])] : [1728, 390]) {
       if (suite === 'all') await happy(browser, width);
-      await evaluationVariants(browser, width);
+      if (suite !== 'service') await evaluationVariants(browser, width);
+      if (suite !== 'variants') await serviceEvaluation(browser, width);
     }
     if (suite === 'all') await boundaries(browser);
   }

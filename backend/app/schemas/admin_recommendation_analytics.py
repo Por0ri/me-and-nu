@@ -1,4 +1,4 @@
-"""Comparable offline series evaluation; never infer labels from feed clicks."""
+"""Separate offline series and prospective content evaluation contracts."""
 
 from typing import Annotated, Literal
 
@@ -12,6 +12,7 @@ MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 Audience = Literal["all", "existing", "new"]
 Cohort = Literal["existing", "new"]
 Period = Literal["7d", "30d", "3m", "6m"]
+EvaluationDataset = Literal["offline", "service"]
 Identifier = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")]
 Description = Annotated[str, Field(min_length=1, max_length=2000)]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -26,7 +27,7 @@ class EvaluationConditions(StrictArtifactModel):
     evaluation_data: Description
     dataset_sha256: Digest
     input_conditions: Description
-    aggregation_unit: Literal["series"] = "series"
+    aggregation_unit: Literal["series", "content"] = "series"
     common_rules: Description
     target_period: Description
     ground_truth: Description
@@ -66,12 +67,14 @@ class EvaluationCohort(StrictArtifactModel):
 
 
 class RecommendationEvaluationArtifact(StrictArtifactModel):
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
+    evaluation_kind: EvaluationDataset = "offline"
+    data_source: Literal["production", "local_demo"] | None = None
     evaluation_id: Identifier
     evaluated_at: AwareDatetime
     k: Literal[10]
     ground_truth_per_case: Literal[1]
-    split: Literal["held_out"]
+    split: Literal["held_out", "prospective"]
     baseline_model_id: Identifier
     current_model_id: Identifier
     conditions: EvaluationConditions
@@ -87,6 +90,13 @@ class RecommendationEvaluationArtifact(StrictArtifactModel):
 
     @model_validator(mode="after")
     def complete_comparison(self):
+        if self.evaluation_kind == "service":
+            if (self.data_source is None or self.schema_version != 2 or self.split != "prospective"
+                    or self.conditions.aggregation_unit != "content"
+                    or self.conditions.cohort_interpretation != "disjoint_users"):
+                raise ValueError("service evaluation requires prospective content cases and disjoint users")
+        elif self.data_source is not None or self.schema_version != 1 or self.split != "held_out" or self.conditions.aggregation_unit != "series":
+            raise ValueError("offline evaluation requires the version 1 held-out series contract")
         ids = [model.model_id for model in self.models]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate model definition")
@@ -122,6 +132,31 @@ class RecommendationModelScores(EvaluationModel):
     scores: list[RecommendationScore]
 
 
+class EvaluationPipelineStatus(StrictArtifactModel):
+    """Only aggregate job state; no paths, account identifiers or raw errors."""
+    schema_version: Literal[1]
+    dataset: Literal["service"]
+    state: Literal["running", "published", "waiting", "unchanged", "failed"]
+    reason: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")] | None = None
+    data_source: Literal["production", "local_demo", "automated_test", "imported"] | None = None
+    observation_days: int = Field(strict=True, ge=1, le=30)
+    min_samples: int = Field(strict=True, ge=1, le=100_000)
+    collected_cases: int = Field(strict=True, ge=0, le=1_000_000_000)
+    mature_cases: int = Field(strict=True, ge=0, le=1_000_000_000)
+    eligible_cases: int = Field(strict=True, ge=0, le=1_000_000_000)
+    cohort_sample_sizes: dict[Cohort, Annotated[int, Field(strict=True, ge=0, le=100_000)]]
+    last_evaluation_id: Identifier | None = None
+    last_attempt_at: AwareDatetime
+    last_success_at: AwareDatetime | None = None
+    last_published_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def complete_cohort_counts(self):
+        if set(self.cohort_sample_sizes) != {"existing", "new"}:
+            raise ValueError("pipeline status must include both cohort counts")
+        return self
+
+
 class AdminRecommendationPerformanceResponse(CamelModel):
     availability: Literal["available", "unavailable"]
     reason: Literal[
@@ -133,7 +168,8 @@ class AdminRecommendationPerformanceResponse(CamelModel):
     period_start: AwareDatetime
     period_end: AwareDatetime
     time_basis: Literal["evaluation_completed_at"] = "evaluation_completed_at"
-    source: Literal["offline_evaluation"] = "offline_evaluation"
+    source: Literal["offline_evaluation", "service_feedback"] = "offline_evaluation"
+    data_source: Literal["production", "local_demo"] | None = None
     metric_unit: Literal["ratio"] = "ratio"
     k: Literal[10] = 10
     ground_truth_per_case: Literal[1] = 1
@@ -142,8 +178,9 @@ class AdminRecommendationPerformanceResponse(CamelModel):
     baseline_model_id: str | None = None
     current_model_id: str | None = Field(
         default=None,
-        description="Reference combination model in this offline evaluation; does not certify the deployed runtime model or training data.",
+        description="Reference model in the selected evaluation dataset; conditions define the measured ranking and ground truth.",
     )
     conditions: EvaluationConditions | None = None
     cohorts: list[RecommendationCohortMetadata] = Field(default_factory=list)
     models: list[RecommendationModelScores] = Field(default_factory=list)
+    pipeline: EvaluationPipelineStatus | None = None

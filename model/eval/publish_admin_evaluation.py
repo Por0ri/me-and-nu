@@ -30,7 +30,7 @@ def _invalid_constant(value):
     raise ValueError("non-finite JSON constant")
 
 
-def publish_evaluation(source, output):
+def publish_evaluation(source, output, *, dataset="offline"):
     # On an evaluator PC the schema lives in backend/. In the Checking image
     # app.schemas is already available at /app, without importing DB settings.
     backend = Path(__file__).resolve().parents[2] / "backend"
@@ -43,6 +43,8 @@ def publish_evaluation(source, output):
     if len(payload) > MAX_ARTIFACT_BYTES:
         raise ValueError("evaluation artifact exceeds API size limit")
     data = json.loads(payload, object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
+    if not isinstance(data, dict) or dataset not in {"offline", "service"} or data.get("evaluationKind", "offline") != dataset:
+        raise ValueError("evaluation dataset does not match the publication target")
     validated = publish_artifact(data, output, mode=0o644)
     canonical = validated.model_dump_json(by_alias=True).encode("utf-8")
     return {
@@ -59,9 +61,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--dataset", choices=("offline", "service"), default="offline")
     args = parser.parse_args(argv)
     try:
-        receipt = publish_evaluation(args.input, args.output)
+        receipt = publish_evaluation(args.input, args.output, dataset=args.dataset)
     except (OSError, ValueError, RecursionError):
         # ValidationError can include the supplied values. Keep raw ranks and
         # candidate contents out of terminal/deployment logs even on failure.

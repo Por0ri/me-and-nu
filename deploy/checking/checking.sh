@@ -6,6 +6,14 @@ if (( $# > 1 )); then
   printf '%s\n' 'Pass exactly one named checking action; arbitrary Compose arguments are forbidden.' >&2
   exit 2
 fi
+case "${1:-check}" in
+  build|up|migrate|stop)
+    # Share the publication/rollout lock so a timer cannot publish against an
+    # API image or checkout that is changing underneath it.
+    exec 9>/run/lock/me-nu-checking-api-rollout.lock
+    flock -n 9 || { printf '%s\n' 'A Checking rollout or evaluation publication is running.' >&2; exit 2; }
+    ;;
+esac
 if [[ "${1:-check}" == build ]]; then
   python3 deploy/checking/validate.py check-build
 else

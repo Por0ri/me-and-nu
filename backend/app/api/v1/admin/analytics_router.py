@@ -14,7 +14,7 @@ from app.db.session import get_db
 from app.schemas.admin_analytics import (
     AnalyticsOverviewResponse, AttentionResponse, DashboardResponse, Period,
 )
-from app.schemas.admin_recommendation_analytics import AdminRecommendationPerformanceResponse, Audience
+from app.schemas.admin_recommendation_analytics import AdminRecommendationPerformanceResponse, Audience, EvaluationDataset
 from app.schemas.common import COMMON_ERRORS, ErrorResponse
 from app.services import admin_analytics_service as service
 from app.services.admin_recommendation_analytics_service import get_recommendation_performance
@@ -44,10 +44,12 @@ async def overview(db: Database, period: Annotated[Period, Query()] = "7d"):
 @router.get("/analytics/recommendation-performance", response_model=AdminRecommendationPerformanceResponse)
 async def recommendation_performance(
     period: Annotated[Period, Query()] = "7d", audience: Annotated[Audience, Query()] = "all",
+    dataset: Annotated[EvaluationDataset, Query()] = "offline",
 ):
-    """Same held-out series cases per model. Period filters evaluation completion, not traffic."""
+    """Separate offline-series and prospective-content datasets; never combine their scores."""
     return await run_in_threadpool(get_recommendation_performance,
-        artifact_path=settings.admin_recommendation_evaluation_path, period=period, audience=audience)
+        artifact_path=(settings.admin_service_evaluation_path if dataset == "service" else settings.admin_recommendation_evaluation_path),
+        period=period, audience=audience, dataset=dataset)
 
 
 @router.get("/dashboard/attention", response_model=AttentionResponse)
@@ -78,6 +80,8 @@ async def dashboard(db: Database, period: Annotated[Period, Query()] = "7d"):
             today_notices=service.unavailable("오늘의 공지·예약 일정", "notice_workflow_not_implemented"),
             recommendation_performance=await run_in_threadpool(get_recommendation_performance,
                 artifact_path=settings.admin_recommendation_evaluation_path, period=period, audience="all", now=window.end_at),
+            service_recommendation_performance=await run_in_threadpool(get_recommendation_performance,
+                artifact_path=settings.admin_service_evaluation_path, period=period, audience="all", now=window.end_at, dataset="service"),
         )
     except SQLAlchemyError:
         raise unavailable_database() from None
