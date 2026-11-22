@@ -4,6 +4,9 @@ import copy
 import importlib.util
 import json
 import math
+import os
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -193,6 +196,42 @@ def test_publisher_keeps_last_valid_artifact_on_validation_failure(tmp_path, art
     assert not list(tmp_path.glob("*.tmp"))
     validated = RecommendationEvaluationArtifact.model_validate_json(before)
     assert validated.evaluation_id == "paired-held-out-1"
+
+
+def test_offline_publisher_in_clean_process_does_not_load_database_settings(tmp_path, artifact):
+    # The real module must publish on the data owner's PC without backend/.env or
+    # DATABASE_URL. Block runtime imports as well, so an existing local .env cannot
+    # silently make this regression pass by loading service credentials.
+    code = """
+import importlib.abc
+import json
+import sys
+from pathlib import Path
+
+class NoRuntimeSettings(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in {"app.services", "app.core.config"}:
+            raise AssertionError("offline publisher imported runtime settings/services")
+
+sys.meta_path.insert(0, NoRuntimeSettings())
+from model.eval.admin_performance_export import publish_artifact
+publish_artifact(json.load(sys.stdin), sys.argv[1])
+from app.schemas.admin_recommendation_analytics import RecommendationEvaluationArtifact
+result = RecommendationEvaluationArtifact.model_validate_json(Path(sys.argv[1]).read_bytes())
+assert result.evaluation_id == "paired-held-out-1"
+assert "app.core.config" not in sys.modules
+assert "app.services" not in sys.modules
+print("offline publish validated")
+"""
+    env = {key: value for key, value in os.environ.items() if key.upper() not in {"DATABASE_URL", "PYTHONPATH"}}
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path / "offline-evaluation.json")],
+        cwd=Path(__file__).resolve().parents[2], env=env, input=json.dumps(artifact),
+        text=True, capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "offline publish validated"
 
 
 def test_exporter_real_pick_top_filters_and_series_ground_truth():

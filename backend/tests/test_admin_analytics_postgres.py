@@ -6,6 +6,7 @@ Minimal typed tables exercise actual JSONB, timestamptz, union and aggregate SQL
 """
 
 import pytest
+from sqlalchemy import text
 
 import test_admin_analytics as cases
 from test_admin_postgres_integration import admin_pg, run_async, sessions  # noqa: F401
@@ -29,6 +30,43 @@ async def test_postgres_aggregate_contract(admin_pg, scenario):
     meta.create_all(admin_pg.engine)
     with admin_pg.engine.connect() as connection:
         await scenario(cases.ReadSession(connection, meta))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["submit", "resolve"])
+async def test_attention_counts_and_rows_share_snapshot_during_commit(admin_pg, change):
+    """A second connection commits between the old count/page read boundary."""
+    meta = cases.aggregate_tables()
+    meta.create_all(admin_pg.engine)
+    reports = meta.tables["content_report"]
+    record = dict(report_id=1, status="received", reason_code="wrong_info",
+                  created_at=cases.AT, content_id=1, user_id=1, detail="private report")
+    if change == "resolve":
+        with admin_pg.engine.begin() as writer:
+            writer.execute(reports.insert().values(**record))
+
+    class CommitAfterFirstRead(cases.ReadSession):
+        async def execute(self, statement):
+            result = await super().execute(statement)
+            if len(self.statements) == 1:
+                # The record predates the request clock, but the write commits
+                # after its first SELECT. A timestamp cutoff alone is not enough.
+                with admin_pg.engine.begin() as writer:
+                    writer.execute(reports.insert().values(**record) if change == "submit"
+                                   else reports.update().where(reports.c.report_id == 1).values(status="resolved"))
+            return result
+
+    with admin_pg.engine.connect() as reader:
+        assert reader.scalar(text("SHOW transaction_isolation")) == "read committed"
+        db = CommitAfterFirstRead(reader, meta)
+        first = await cases.service.attention(db, now=cases.NOW)
+        before = 0 if change == "submit" else 1
+        assert first.known_total == first.reports == len(first.items) == before
+        assert first.inquiries == 0
+        # The next request sees the committed update under READ COMMITTED.
+        after = await cases.service.attention(db, now=cases.NOW)
+        assert after.known_total == after.reports == len(after.items) == 1 - before
+        assert after.inquiries == 0
 
 
 def test_migrated_schema_with_real_async_session_preserves_zero_and_unknown(admin_pg):

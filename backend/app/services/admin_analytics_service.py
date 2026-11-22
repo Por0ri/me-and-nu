@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, case, func, literal, or_, select, union_all
+from sqlalchemy import and_, case, func, literal, or_, select, true, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -203,15 +203,26 @@ async def attention(db, *, now, kind="all", page=1, page_size=5) -> AttentionRes
     inquiries = select(literal("inquiry").label("kind"), Inquiry.inquiry_id.label("record_id"),
         Inquiry.status, Inquiry.inquiry_type.label("category"), Inquiry.created_at,
         literal(None).label("content_id")).where(Inquiry.status == "received", Inquiry.created_at < now)
-    records = union_all(reports, inquiries).subquery()
-    counts = dict((await db.execute(select(records.c.kind, func.count()).group_by(records.c.kind))).all())
-    report_count, inquiry_count = counts.get("report", 0), counts.get("inquiry", 0)
-    statement = select(records)
+    records = union_all(reports, inquiries).cte("attention_records")
+    counts = select(
+        func.count(case((records.c.kind == "report", 1))).label("reports"),
+        func.count(case((records.c.kind == "inquiry", 1))).label("inquiries"),
+    ).select_from(records).cte("attention_counts")
+    page_rows = select(records)
     if kind != "all":
-        statement = statement.where(records.c.kind == kind)
-    rows = (await db.execute(statement.order_by(records.c.created_at.asc(), records.c.kind.asc(), records.c.record_id.asc())
-                            .offset((page - 1) * page_size).limit(page_size))).mappings().all() if kind != "notice" else []
-    total = report_count + inquiry_count if kind == "all" else counts.get(kind, 0)
+        page_rows = page_rows.where(records.c.kind == kind)
+    page_rows = (page_rows.order_by(records.c.created_at.asc(), records.c.kind.asc(), records.c.record_id.asc())
+                 .offset((page - 1) * page_size).limit(page_size).subquery("attention_page"))
+    # Counts and rows must share one PostgreSQL statement snapshot. Separate
+    # reads can disagree when a submission or resolution commits between them.
+    # The outer join preserves counts when the selected page has no records.
+    statement = select(counts.c.reports, counts.c.inquiries, *page_rows.c).select_from(
+        counts.outerjoin(page_rows, true())
+    ).order_by(page_rows.c.created_at.asc(), page_rows.c.kind.asc(), page_rows.c.record_id.asc())
+    result = (await db.execute(statement)).mappings().all()
+    report_count, inquiry_count = result[0]["reports"], result[0]["inquiries"]
+    rows = [{key: row[key] for key in page_rows.c.keys()} for row in result if row["record_id"] is not None]
+    total = report_count + inquiry_count if kind == "all" else {"report": report_count, "inquiry": inquiry_count}.get(kind, 0)
     return AttentionResponse(generated_at=now,
         availability="unavailable" if kind == "notice" else "partial" if kind == "all" else "available",
         reason="notice_workflow_not_implemented" if kind in ("all", "notice") else None,

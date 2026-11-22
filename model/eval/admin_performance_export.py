@@ -60,8 +60,7 @@ def publish_artifact(artifact, output):
     backend = Path(__file__).resolve().parents[2] / "backend"
     if str(backend) not in sys.path:
         sys.path.insert(0, str(backend))
-    from app.schemas.admin_recommendation_analytics import RecommendationEvaluationArtifact
-    from app.services.admin_recommendation_analytics_service import MAX_ARTIFACT_BYTES
+    from app.schemas.admin_recommendation_analytics import MAX_ARTIFACT_BYTES, RecommendationEvaluationArtifact
 
     validated = RecommendationEvaluationArtifact.model_validate(artifact)
     payload = validated.model_dump_json(by_alias=True).encode("utf-8")

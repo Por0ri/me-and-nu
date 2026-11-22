@@ -79,6 +79,33 @@ SQL
 
 모든 사용자를 합친 하루 챗봇 질문 상한은 `CHECKING_CHAT_DAILY_TOTAL_LIMIT`(1~999999 정수, 0 = 무제한은 받지 않음)로 정한다. 같은 DB에서 세므로 메인 API와 합쳐 세고, 메인의 `MAIN_CHAT_DAILY_TOTAL_LIMIT`와 늘 같은 값으로 둔다. 바꿀 때는 숫자만 고치고 `check` → `up`한다(이미지는 다시 만들지 않는다). `check` 출력에 지금 숫자가 나온다.
 
+## 관리자 추천 성능 평가 파일
+
+관리자 추천 성능은 서버에서 따로 생성·검증한 오프라인 평가 JSON을 읽는다. API 요청에서
+모델 평가나 학습을 실행하지 않는다. 새 Migration과 추천 배치·적재기 변경도 필요하지 않다.
+
+- API에만 `deploy/checking/admin-evaluation/`을 `/app/admin-evaluation`로 읽기 전용 마운트한다.
+  다른 호스트 경로·쓰기 마운트·마이그레이션 마운트는 배포 guard가 거절한다. 디렉터리가 없으면
+  첫 기동 시 빈 디렉터리를 만든다. 평가 자료가 없는 상태에서도 API는 기동할 수 있다.
+- 서버 `.env`의 `CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH`는 빈 값(비활성)이거나
+  `/app/admin-evaluation/evaluation.json`만 허용한다. 기존 `.env`에 키가 없으면 빈 값으로
+  처리한다. 상속된 환경 변수로 값을 바꾸는 것은 거절한다. Main 환경은 변경하지 않는다.
+- 검토한 exporter로 만든 파일을 서버의 위 디렉터리에 배치한다. 예시·합성 점수나 과거 문서의
+  반올림된 점수를 실평가로 게시하지 않는다. 파일 크기(최대 16 MiB), 스키마, 평가 ID·완료 시각,
+  데이터·코드 지문, 같은 케이스별 모델 순위를 확인하고 파일 SHA-256을 기록한다.
+- 컨테이너 UID/GID 10001이 읽을 수 있도록 디렉터리 0755, JSON 0644로 둔다. 이 디렉터리에는
+  배포할 JSON만 두고 원본 데이터·환경 파일·자격 증명·세션을 넣지 않는다. Git에서는 무시한다.
+- 파일 준비 후 위 환경 키를 정확한 컨테이너 경로로 설정하고 `check` → `up`으로 API를
+  재생성한다. 실제 관리자 세션으로 `recommendation-performance`의 평가 ID·모델·두 집단별
+  NDCG/Hit Rate/표본을 검증한다. API의 `available`은 오프라인 자료의 유효성을 의미하며
+  현재 서비스에 배포된 추천 모델의 온라인 성능을 보증하지 않는다.
+
+파일 갱신은 같은 디렉터리에서 임시 파일을 완전히 쓰고 검증·권한 설정한 뒤 `evaluation.json`으로
+원자 교체한다. 디렉터리 마운트이므로 이후 요청에 새 파일이 보인다. 개별 파일 마운트로 바꾸면
+원자 교체 전 inode가 계속 보일 수 있다. 이전 검증 파일과 SHA는 API 마운트 밖의 백업에 보존한다.
+자료 롤백은 이전 검증 파일을 같은 절차로 원자 교체하고 평가 ID를 재확인한다. 연결만 끄려면
+환경 키를 빈 값으로 바꿔 `check` → `up`한다. DB downgrade·권한 변경·볼륨 삭제는 하지 않는다.
+
 ## 도메인·TLS·FE·OAuth
 
 FE 호스팅에서 `Checking` 브랜치에만 `checking.me-nu.kr`을 연결하고 `NEXT_PUBLIC_API_BASE_URL=https://api.checking.me-nu.kr`로 새 빌드를 만든다. 기존 Main/Test/Labs 도메인과 환경변수는 유지한다. DNS에서 API 도메인은 백엔드 호스트로 연결하고 기존 Caddy 사이트를 유지한 채 다음 블록을 추가한다.

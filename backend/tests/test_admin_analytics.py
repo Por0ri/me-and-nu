@@ -256,7 +256,10 @@ async def test_attention_old_unresolved_records_pagination_and_no_private_text(d
     assert filtered.known_total == 1 and filtered.availability == "available"
     missing = await service.attention(db, now=NOW, kind="notice")
     assert missing.availability == "unavailable" and missing.items == []
-    assert (await service.attention(db, now=NOW, page=99)).items == []
+    assert (missing.known_total, missing.reports, missing.inquiries) == (0, 2, 1)
+    empty_page = await service.attention(db, now=NOW, page=99)
+    assert empty_page.items == []
+    assert (empty_page.known_total, empty_page.reports, empty_page.inquiries) == (3, 2, 1)
 
 
 @pytest.mark.asyncio

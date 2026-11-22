@@ -6,6 +6,9 @@ from pydantic import AwareDatetime, ConfigDict, Field, field_validator, model_va
 
 from app.schemas.common import CamelModel
 
+# Shared by the offline publisher and API reader without loading runtime settings.
+MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
+
 Audience = Literal["all", "existing", "new"]
 Cohort = Literal["existing", "new"]
 Period = Literal["7d", "30d", "3m", "6m"]

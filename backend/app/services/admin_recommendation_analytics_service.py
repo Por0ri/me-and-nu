@@ -13,12 +13,11 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.schemas.admin_recommendation_analytics import (
-    AdminRecommendationPerformanceResponse, Audience, Period,
+    MAX_ARTIFACT_BYTES, AdminRecommendationPerformanceResponse, Audience, Period,
     RecommendationCohortMetadata, RecommendationEvaluationArtifact,
     RecommendationModelScores, RecommendationScore,
 )
 
-MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 PERIOD_DAYS = {"7d": 7, "30d": 30, "3m": 90, "6m": 180}
 
 
