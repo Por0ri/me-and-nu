@@ -79,6 +79,7 @@ class DebateSummary(CamelModel):
     participant_count: int = Field(description="진영을 고른 사람 수")
     member_count: int = Field(description="토론방에 참여 중인 사람 수 (방을 나가면 빠진다)")
     joined: bool = Field(description="내가 이 토론방에 참여 중인지")
+    joined_at: datetime | None = Field(description="내가 이 토론방에 참여한 시각. 참여 중이 아니면 null ('참여 중인 방'을 최근에 참여한 순서로 보여 줄 때 쓴다)")
     message_count: int
     result: DebateResult | None = Field(description="종료된 방만: a·b 이긴 쪽, draw 동률, none 참여자 없음")
     my_vote: bool

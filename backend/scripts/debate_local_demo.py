@@ -290,8 +290,9 @@ def run_seed(base_url: str, topic_id: int) -> None:
         print("내가 올린 주제 (9표, 내가 투표하면 토론방이 열린다)…", flush=True)
         work, title, a, b, description, votes = MY_TOPIC
         mine = me.send("GET", "/api/v1/users/me/debates").json()["items"]
-        if any(item["status"] == "voting" for item in mine):
-            print("  - 이미 투표 중인 내 주제가 있어서 건너뜀")
+        # 투표 중이거나 토론 중인 내 주제가 있으면 새 주제를 못 올린다 (서버 규칙, 2026-11-24)
+        if any(item["status"] in ("voting", "open") for item in mine):
+            print("  - 이미 투표 중이거나 토론 중인 내 주제가 있어서 건너뜀")
         else:
             debate = create_topic(me, work, title, a, b, description)
             vote_all(debate["debateId"], pool.voters(votes, set()))

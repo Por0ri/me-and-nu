@@ -26,7 +26,7 @@ from app.schemas.debate import DebateMessageView
 from app.services import debate_hub, debate_service
 from app.services import debate_room_service as room
 from app.services.debate_hub import CLOSE, DebateHub, HubEvent, StreamLimitError, hub
-from test_debate_api import START, DebateSqliteSession, call, create, debate_api  # noqa: F401 (debate_api는 fixture)
+from test_debate_api import START, DebateSqliteSession, call, create, debate_api, same_time  # noqa: F401 (debate_api는 fixture)
 
 
 # ───────────── 방송 허브 ─────────────
@@ -511,7 +511,7 @@ def test_only_members_chat_and_they_see_chat_from_when_they_joined(debate_api, f
     debate_id, _author, (first, second) = open_room(debate_api)
     late = debate_api.member()
     card = call(late, "GET", f"/debates/{debate_id}").json()
-    assert (card["memberCount"], card["joined"]) == (3, False)
+    assert (card["memberCount"], card["joined"], card["joinedAt"]) == (3, False, None)
     # 참여하지 않으면 채팅·진영·실시간 연결을 쓸 수 없다.
     for response in (call(late, "GET", f"/debates/{debate_id}/messages"), say(late, debate_id, "몰래"),
                      side(late, debate_id, "a"), call(late, "GET", f"/debates/{debate_id}/stream")):
@@ -520,6 +520,7 @@ def test_only_members_chat_and_they_see_chat_from_when_they_joined(debate_api, f
     before = say(first, debate_id, "참여 전 채팅").json()["messageId"]
     joined = join(late, debate_id).json()
     assert (joined["memberCount"], joined["joined"]) == (4, True)
+    assert same_time(joined["joinedAt"], START)  # 참여한 시각 ('참여 중인 방'을 최근에 참여한 순서로 보여 준다)
     assert join(late, debate_id).json()["memberCount"] == 4  # 두 번 참여해도 한 번
     assert call(late, "GET", f"/debates/{debate_id}/messages").json()["items"] == []  # 참여 전 채팅은 안 보인다
     after = say(second, debate_id, "참여 후 채팅").json()["messageId"]
@@ -538,6 +539,7 @@ def test_leaving_drops_the_member_and_side_and_rejoining_starts_fresh(debate_api
 
     left = leave(first, debate_id).json()
     assert (left["joined"], left["memberCount"], left["mySide"], left["sideA"]["count"], left["participantCount"]) == (False, 2, None, 0, 0)
+    assert left["joinedAt"] is None
     assert leave(first, debate_id).status_code == 200  # 이미 나갔어도 그대로
     # 나간 사람의 채팅은 다른 사람 화면에 남는다.
     assert [item["messageId"] for item in call(second, "GET", f"/debates/{debate_id}/messages").json()["items"]] == [old]
@@ -547,9 +549,11 @@ def test_leaving_drops_the_member_and_side_and_rejoining_starts_fresh(debate_api
     assert ("sides", None, {"sideA": {"label": "나루토", "count": 0, "percent": None},
                             "sideB": {"label": "사스케", "count": 0, "percent": None}, "participantCount": 0}) in events(response.text)
 
-    # 다시 참여하면 그때부터 새로 시작한다 (나가기 전 채팅은 안 보인다).
+    # 다시 참여하면 그때부터 새로 시작한다 (나가기 전 채팅은 안 보인다). 참여한 시각도 새로 적는다.
+    debate_api.clock.now = START + timedelta(minutes=5)
     rejoined = join(first, debate_id).json()
     assert (rejoined["joined"], rejoined["memberCount"], rejoined["mySide"]) == (True, 3, None)
+    assert same_time(rejoined["joinedAt"], START + timedelta(minutes=5))
     assert call(first, "GET", f"/debates/{debate_id}/messages").json()["items"] == []
 
 

@@ -120,7 +120,7 @@ class Actor:
             "topicId": self.topic_id, "title": title, "sideA": side_a, "sideB": side_b, "workIds": [work] if work else [],
         })
         if response.status_code == 409 and response.json().get("code") == "DEBATE_ACTIVE_LIMIT":
-            print(f"  - {self.nickname}: 이미 투표 중인 주제가 있어서 건너뜀")
+            print(f"  - {self.nickname}: 이미 투표 중이거나 토론 중인 주제가 있어서 건너뜀")
             return None
         if response.status_code != 201:
             raise ActorError(f"{self.nickname} 주제 올리기 실패: {response.status_code} {response.text}")

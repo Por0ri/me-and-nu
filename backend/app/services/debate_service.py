@@ -149,9 +149,10 @@ async def _summaries(db: AsyncSession, user_id: int, debates: list[Debate], now:
     members = dict((await db.execute(
         select(DebateMember.debate_id, func.count()).where(DebateMember.debate_id.in_(ids)).group_by(DebateMember.debate_id)
     )).all())
-    joined = set((await db.execute(
-        select(DebateMember.debate_id).where(DebateMember.user_id == user_id, DebateMember.debate_id.in_(ids))
-    )).scalars().all())
+    # 내가 참여 중인 방과 참여한 시각 ('참여 중인 방'을 최근에 참여한 순서로 보여 줄 때 쓴다)
+    joined = dict((await db.execute(
+        select(DebateMember.debate_id, DebateMember.joined_at).where(DebateMember.user_id == user_id, DebateMember.debate_id.in_(ids))
+    )).all())
     author_ids = {debate.author_user_id for debate in debates if debate.author_user_id is not None}
     authors = dict((await db.execute(
         select(UserAccount.user_id, UserAccount.nickname)
@@ -179,6 +180,7 @@ async def _summaries(db: AsyncSession, user_id: int, debates: list[Debate], now:
             participant_count=debate.side_a_count + debate.side_b_count,
             member_count=members.get(debate.debate_id, 0),
             joined=debate.debate_id in joined,
+            joined_at=_aware(joined.get(debate.debate_id)),
             message_count=debate.message_count,
             result=_result(debate, status),
             my_vote=debate.debate_id in voted,
@@ -256,12 +258,13 @@ async def create_debate(db: AsyncSession, user_id: int, payload: DebateCreateReq
                 {"field": "workIds", "code": "invalid", "message": "작품 목록에 없는 작품이 있습니다."},
             ])
     # 투표권 줄을 그 회원 전용 자물쇠로 써서, 동시에 두 번 올려도 진행 중 주제가 한도를 넘지 않게 한다.
+    # 진행 중 = 투표 중이거나 토론방이 열려 있는 주제. 남용을 막으려고 토론 중(48시간)에도 새 주제를 못 올린다 (2026-11-24 결정).
     await _lock_ticket(db, user_id, now)
     active = await db.scalar(
-        select(func.count()).select_from(Debate).where(Debate.author_user_id == user_id, _voting_now(now))
+        select(func.count()).select_from(Debate).where(Debate.author_user_id == user_id, or_(_voting_now(now), _open_now(now)))
     )
     if (active or 0) >= settings.debate_active_per_user:
-        raise ApiError(409, "DEBATE_ACTIVE_LIMIT", "투표 중인 내 주제가 이미 있습니다. 그 주제가 열리거나 소각되면 새로 올릴 수 있습니다.")
+        raise ApiError(409, "DEBATE_ACTIVE_LIMIT", "투표 중이거나 토론 중인 내 주제가 이미 있습니다. 그 주제가 끝나면 새로 올릴 수 있습니다.")
     debate = Debate(
         topic_id=payload.topic_id,
         author_user_id=user_id,
@@ -394,9 +397,9 @@ async def _open(db: AsyncSession, debate: Debate, now: datetime) -> None:
         notification = Notification(
             user_id=user_id,
             notification_type=DEBATE_OPENED,
-            title="토론방이 열렸어요",
-            body=f"{about} 주제 '{debate.title}'가 {settings.debate_vote_threshold}표를 모아 토론방이 열렸어요. "
-                 f"{hours}시간 동안 토론할 수 있어요."[:500],
+            # 제목은 토론 주제라 알림함에서 어떤 방이 열렸는지 바로 보인다 (2026-11-24 사용자 결정). 주제(60자)는 제목 칸(100자) 안에 든다.
+            title=debate.title,
+            body=f"{about} 주제가 {settings.debate_vote_threshold}표를 모아 토론방이 열렸어요. {hours}시간 동안 토론할 수 있어요.",
             topic_id=debate.topic_id,
             created_at=now,
         )

@@ -193,6 +193,23 @@ def test_create_validates_input_and_keeps_one_voting_topic_per_member(debate_api
     assert create(author, title="두 번째 주제").status_code == 201
 
 
+def test_a_member_cannot_post_a_new_topic_while_their_topic_room_is_open(debate_api):
+    """한 사람이 주제를 하나씩만: 투표 중일 때뿐 아니라 토론방이 열린 48시간 동안에도 새 주제를 못 올린다 (2026-11-24 결정, 남용 방지)."""
+    author = debate_api.member()
+    debate_id = create(author).json()["debateId"]
+    for member in (author, debate_api.member(), debate_api.member()):
+        assert call(member, "PUT", f"/debates/{debate_id}/vote").status_code == 200
+    assert call(author, "GET", f"/debates/{debate_id}").json()["status"] == "open"
+    blocked = create(author, title="두 번째 주제")
+    assert blocked.status_code == 409 and blocked.json()["code"] == "DEBATE_ACTIVE_LIMIT"
+    debate_api.clock.now = START + timedelta(hours=48) - timedelta(seconds=1)
+    assert create(author, title="두 번째 주제").status_code == 409
+    # 48시간이 끝나면(정리 작업이 돌기 전이라도) 다시 올릴 수 있다.
+    debate_api.clock.now = START + timedelta(hours=48)
+    assert call(author, "GET", f"/debates/{debate_id}").json()["status"] == "closed"
+    assert create(author, title="두 번째 주제").status_code == 201
+
+
 def test_side_labels_take_up_to_12_characters(debate_api):
     """진영 버튼이 두 줄 안에 들게 선택지 이름은 12자까지만 받는다. DB 칼럼은 20자 그대로다 (2026-11-24)."""
     member = debate_api.member()
@@ -257,12 +274,15 @@ def test_threshold_vote_opens_the_room_and_notifies_voters_and_author(debate_api
     assert same_time(room["openedAt"], START) and same_time(room["closesAt"], START + timedelta(hours=48))
 
     with Session(debate_api.engine) as session:
-        links = session.execute(select(DebateNotification.user_id, Notification.notification_type, Notification.body)
+        links = session.execute(select(DebateNotification.user_id, Notification.notification_type, Notification.title, Notification.body)
                                 .join(Notification, Notification.notification_id == DebateNotification.notification_id)).all()
     assert {user_id for user_id, *_ in links} == {author.user_id, first.user_id, last.user_id}
-    assert {kind for _, kind, _ in links} == {"debate_opened"}
-    bodies = {user_id: body for user_id, _, body in links}
-    assert bodies[author.user_id].startswith("내가 올린 주제") and bodies[first.user_id].startswith("투표한 주제")
+    assert {kind for _, kind, _, _ in links} == {"debate_opened"}
+    # 제목은 토론 주제, 본문은 누구에게 가는 알림인지 (2026-11-24)
+    assert {title for _, _, title, _ in links} == {"나루토와 사스케, 최종 승자는?"}
+    bodies = {user_id: body for user_id, _, _, body in links}
+    assert bodies[author.user_id] == "내가 올린 주제가 3표를 모아 토론방이 열렸어요. 48시간 동안 토론할 수 있어요."
+    assert bodies[first.user_id].startswith("투표한 주제가 3표를 모아")
 
     inbox = call(first, "GET", "/users/me/notifications").json()["items"]
     item = next(item for item in inbox if item["type"] == "debate_opened")
