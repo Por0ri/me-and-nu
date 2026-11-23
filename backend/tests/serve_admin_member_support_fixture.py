@@ -93,7 +93,7 @@ def seed(engine, mode="normal"):
                     detail=f"문의 상세 {i} - 문의에만 있는 내용", created_at=now - timedelta(hours=i), updated_at=now))
 
 
-def build_fixture(pg):
+def build_fixture(pg, *, frontend_origins="http://127.0.0.1:3221,http://localhost:3221"):
     pg.migrate()
     now = datetime.now(timezone.utc)
     with Session(pg.engine) as db, db.begin():
@@ -109,7 +109,7 @@ def build_fixture(pg):
     seed(pg.engine)
     settings.redis_url = None
     settings.session_backend = "postgres"
-    settings.frontend_origins = "http://127.0.0.1:3221,http://localhost:3221"
+    settings.frontend_origins = frontend_origins
     settings.session_cookie_secure = False
     state = {"mode": "normal", "delay_detail": False}
     async_engine = create_async_engine(pg.url, poolclass=NullPool)

@@ -50,14 +50,14 @@ async function verify(browser, width) {
       const box = node.getBoundingClientRect(); return { tag: node.tagName, x: box.x, y: box.y, width: box.width, height: box.height };
     }));
     if (width === 1728) { assert.equal(geometry[0].width, 264); assert.equal(geometry[1].height, 84); assert.equal(geometry[2].x, 300); assert.equal(geometry[2].y, 210); assert.equal(geometry[3].height, 136); assert.equal(geometry.at(-2).y, 370); }
-    assert.equal(await detail.getByRole('button', { name: '보류', exact: true }).isDisabled(), true);
+    assert.equal(await detail.getByRole('button', { name: '검토 시작', exact: true }).isDisabled(), true);
     await shot('reports-waiting');
     if (width === 390) {
       const table = page.getByRole('region', { name: '신고 및 문의 목록 표, 가로 스크롤 가능' });
       assert.equal(await table.evaluate(node => node.scrollWidth > node.clientWidth), true);
       await table.focus(); await page.keyboard.press('ArrowRight'); await page.waitForFunction(() => document.querySelector('[aria-label="신고 및 문의 목록 표, 가로 스크롤 가능"]').scrollLeft > 0);
     }
-    const before = await detail.innerText(), opener = detail.getByRole('button', { name: '검토 시작 (콘텐츠 읽기 전용)' });
+    const before = await detail.innerText(), opener = detail.getByRole('button', { name: '신고 콘텐츠 보기' });
     await opener.focus(); await page.keyboard.press('Enter');
     const dialog = page.getByRole('dialog', { name: '신고 상세 검토' }); await dialog.waitFor();
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '신고 상세 검토 닫기');
@@ -81,9 +81,9 @@ async function verify(browser, width) {
     await rows.nth(1).getByRole('button').focus(); await page.keyboard.press('Space');
     await page.locator('[data-report-detail="fixture-report-2"]').waitFor(); assert.equal(await detail.locator('[data-report-status]').getAttribute('data-report-status'), 'reviewing');
     await rows.nth(3).getByRole('button').click(); await page.locator('[data-report-detail="fixture-report-4"]').waitFor();
-    assert.match(await detail.innerText(), /서비스 문의/); assert.equal(await detail.getByRole('button').count(), 0); await shot('reports-completed-inquiry');
-    await rows.nth(4).getByRole('button').click(); assert.match(await detail.innerText(), /버그\/오류 신고/);
-    await rows.nth(2).getByRole('button').click(); assert.equal(await detail.getByRole('button', { name: '검토 시작 (콘텐츠 읽기 전용)' }).isDisabled(), true);
+    assert.match(await detail.innerText(), /서비스 문의/); assert.equal(await detail.getByRole('button', { name: '답변 작성', exact: true }).isDisabled(), true); await shot('reports-completed-inquiry');
+    await rows.nth(4).getByRole('button').click(); assert.match(await detail.innerText(), /버그\/오류 문의/);
+    await rows.nth(2).getByRole('button').click(); assert.equal(await detail.getByRole('button', { name: '신고 콘텐츠 보기' }).isDisabled(), true);
     await period.focus(); await page.keyboard.press('ArrowDown'); assert.equal(await page.getByRole('menu').isVisible(), true);
     assert.equal(await page.getByRole('menuitemradio', { name: '최근 7일', exact: true }).evaluate(node => node === document.activeElement), true);
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); assert.equal(await count(), '146');

@@ -11,7 +11,7 @@ from sqlalchemy import String, case, cast, func, literal, or_, select, true, uni
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
-from app.models import Content, ContentReport, ContentSource, Inquiry, SourceSite, UserAccount
+from app.models import Content, ContentReport, ContentSource, Inquiry, InquiryAnswer, SourceSite, UserAccount
 from app.schemas.admin_support import (
     AdminSupportContent, AdminSupportDetail, AdminSupportItem, AdminSupportPage,
     AdminSupportQuery, AdminSupportSource, AdminSupportStatistics,
@@ -137,9 +137,13 @@ async def get_report(db: AsyncSession, report_id: int):
 
 
 async def get_inquiry(db: AsyncSession, inquiry_id: int):
-    row = (await db.execute(select(*_inquiry_columns(), Inquiry.detail.label("message"))
+    row = (await db.execute(select(*_inquiry_columns(), Inquiry.detail.label("message"),
+        InquiryAnswer.body.label("answer"), InquiryAnswer.answered_at)
         .join(UserAccount, UserAccount.user_id == Inquiry.user_id)
+        .outerjoin(InquiryAnswer, InquiryAnswer.inquiry_id == Inquiry.inquiry_id)
         .where(Inquiry.inquiry_id == inquiry_id, *_retained_inquiry()))).mappings().one_or_none()
     if row is None:
         raise ApiError(404, "ADMIN_INQUIRY_NOT_FOUND", "문의 내역을 찾을 수 없습니다.")
-    return AdminSupportDetail(**_item(row).model_dump(), message=row["message"], target=None, content=None)
+    availability = "available" if row["answer"] is not None else "none" if row["raw_status"] == "received" else "unavailable"
+    return AdminSupportDetail(**_item(row).model_dump(), message=row["message"], target=None, content=None,
+        answer=row["answer"], answered_at=row["answered_at"], answer_availability=availability)

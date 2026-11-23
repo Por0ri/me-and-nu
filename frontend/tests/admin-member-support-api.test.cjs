@@ -25,7 +25,7 @@ const members = () => ({ items: [member()], total: 1, page: 1, pageSize: 5 });
 const summary = (type = 'report', id = '1') => ({ id: `${type === 'report' ? 'R' : 'I'}-${id}`, recordId: id, recordType: type, kind: type === 'report' ? 'content' : 'service',
   title: type === 'report' ? '테스트 제목' : null, reasonCode: null, reason: null, status: 'completed', rawStatus: type === 'report' ? 'rejected' : 'answered', receivedAt: now, updatedAt: now });
 const reports = () => ({ items: [summary(), summary('inquiry')], page: 1, pageSize: 5, total: 2, periodStart: '2026-11-16T01:00:00Z', periodEnd: now, statistics: { all: 2, waiting: 0, reviewing: 0, completed: 2 } });
-const detail = type => ({ ...summary(type), message: '<script>literal text</script>', target: type === 'report' ? '콘텐츠 제목' : null, content: null, answer: null, answerAvailability: 'unavailable' });
+const detail = type => ({ ...summary(type), message: '<script>literal text</script>', target: type === 'report' ? '콘텐츠 제목' : null, content: null, answer: null, answeredAt: null, answerAvailability: 'unavailable', actions: { allowedActions: [], disabledReason: 'permission_denied', scope: null } });
 
 test('member list/detail GET uses cookies, no-store, private header and exact string IDs', async () => {
   const env = runtime(url => url.pathname.endsWith('/101') ? memberDetail() : members());

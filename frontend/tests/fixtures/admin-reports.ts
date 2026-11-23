@@ -8,7 +8,7 @@ const content: ReportContent = {
   body: "《사이버펑크: 엣지러너 2》를 둘러싼 리뷰를 읽다 보면, 같은 나이트 시티를 보고도 감상이 꽤 다른 레인으로 달린다는 게 보여. 한 리뷰어는 애니메이션만의 표현이 돋보이고 화면이 내내 멋있다며 연출을 극찬했다. 눈이 먼저 반응하는 작품이라는 말, 팬 마음으로는 고개가 끄덕여지는 감상이지.\n\n반면 시즌 1을 좋아해 후속작을 기다렸던 리뷰어는 장면 전환이 잦고 컷 하나하나의 길이가 짧아, 분위기를 더 천천히 음미하고 싶었다고 했다. 속도감이 매력일 수도 있지만, 그 도시의 공기를 오래 들이마시고 싶은 관객에게는 아쉬움으로 남은 셈이다.\n\n로만을 보는 시선도 엇갈린다. 한 리뷰어에게 그는 주변 인물들이 뒤엉킨 가운데 그나마 제정신인 사람처럼 보였고, 결말도 좋았다고 한다. 다른 리뷰어는 이야기의 큰 줄기는 좋게 보면서도 로만의 행동에 답답함을 느꼈다. 결국 영상의 번쩍임과 인물들의 선택을 어떻게 받아들이느냐에 따라 감상이 갈리는 작품. 호평과 아쉬움이 함께 있다는 사실 자체가, 리뷰를 읽고 내 감상을 더해 보고 싶게 만드는 지점이야.",
   source: { title: "Filmarks Anime Ratings ? アニメ『サイバーパンク: エッジランナーズ2』の感想・レビュー[1808件] | Filmarks", url: "https://filmarks.com/animes/3610/6583" }, aiGenerated: true,
 };
-const first: ReportRecord = { id: "fixture-report-1", number: "R-001", recordId: "1", recordType: "report", title: content.title, reasonCode: "incorrect_info", rawStatus: "received", updatedAt: "2026-11-05T00:42:00Z", answer: null, answerAvailability: "unavailable", kind: "content", reason: "잘못된 정보", status: "waiting", receivedAt: "2026-11-05T00:42:00Z", target: "김하루",
+const first: ReportRecord = { id: "fixture-report-1", number: "R-001", recordId: "1", recordType: "report", title: content.title, reasonCode: "incorrect_info", rawStatus: "received", updatedAt: "2026-11-05T00:42:00Z", answer: null, answeredAt: null, answerAvailability: "unavailable", actions: { allowedActions: [], disabledReason: "permission_denied", scope: null }, kind: "content", reason: "잘못된 정보", status: "waiting", receivedAt: "2026-11-05T00:42:00Z", target: "김하루",
   message: "게시물에 포함된 발매 정보가 실제 내용과 다르게 표시되어 있어요. 사실 확인을 요청합니다.", content };
 export const reportFixtures: ReportRecord[] = [
   first,

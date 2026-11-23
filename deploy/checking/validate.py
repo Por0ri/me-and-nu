@@ -11,6 +11,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / "deploy/checking/.env"
+MIGRATION_REVISION = "83a2f9c7d104"
 EVALUATION_KEY = "CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH"
 EVALUATION_PATH = "/app/admin-evaluation/evaluation.json"
 SERVICE_EVALUATION_KEY = "CHECKING_ADMIN_SERVICE_EVALUATION_PATH"
@@ -157,8 +158,8 @@ def validate_config(config, values):
             raise GuardError("Backend containers must retain process and privilege isolation.")
         if service.get("entrypoint"):
             raise GuardError("Checking backend containers cannot override the reviewed entrypoint.")
-    if services["migrate"].get("command") != ["python", "-m", "alembic", "upgrade", "47c1a8d6b302"]:
-        raise GuardError("Checking migration must target only 47c1a8d6b302; head/heads and DOB removal are forbidden.")
+    if services["migrate"].get("command") != ["python", "-m", "alembic", "upgrade", MIGRATION_REVISION]:
+        raise GuardError(f"Checking migration must target only {MIGRATION_REVISION}; head/heads and DOB removal are forbidden.")
     if services["api"].get("command"):
         raise GuardError("Checking API must retain the reviewed Dockerfile command.")
     dependencies = services["api"].get("depends_on", {})

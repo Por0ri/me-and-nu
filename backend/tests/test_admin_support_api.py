@@ -109,7 +109,8 @@ def test_all_read_roles_receive_actual_safe_summary_and_detail(api, role):
     assert all(isinstance(item["recordId"], str) and "message" not in item for item in page["items"])
     inquiry = api.client.get(PATHS[3]).json()
     assert inquiry["message"] == "PRIVATE_INQUIRY_BODY" and inquiry["answer"] is None
-    assert inquiry["answerAvailability"] == "unavailable"
+    assert inquiry["answerAvailability"] == "none"
+    assert inquiry["actions"]["allowedActions"] == ([] if role == "viewer" else ["answer"])
 
 
 def test_revocation_is_fresh_and_content_permission_cannot_grant_support_read(api):

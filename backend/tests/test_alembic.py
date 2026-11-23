@@ -25,7 +25,10 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["47c1a8d6b302"]
+    assert script.get_heads() == ["83a2f9c7d104"]
+    answer = script.get_revision("83a2f9c7d104")
+    assert answer.down_revision == "47c1a8d6b302"
+    assert answer.dependencies is None
     admin = script.get_revision("47c1a8d6b302")
     assert admin.down_revision == "d7b3e9a1c452"
     assert admin.dependencies is None
