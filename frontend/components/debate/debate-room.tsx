@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
-  cancelSide, chooseSide, getDebate, joinDebate, listMessages, sendMessage, subscribeDebate,
+  cancelSide, chooseSide, getDebate, listMessages, sendMessage, subscribeDebate,
 } from "@/lib/debate/client";
 import { dateText, roomRemaining, timeText } from "@/lib/debate/format";
 import { DEBATE_RULES } from "@/lib/debate/rules";
@@ -27,9 +27,11 @@ function RoomHeader({ title, back }: { title: string; back: string }) {
   </>;
 }
 
-/** 토론 하나의 화면. 상태에 따라 실시간 채팅(참여 전이면 참여 화면)·결과를 보여준다.
+/** 토론 하나의 화면. 상태에 따라 실시간 채팅·결과를 보여준다.
  *  투표 중인 주제는 따로 화면이 없다 (2026-11-23 사용자 결정: 카드에서 바로 투표하고 선택지도 카드에 보인다).
- *  예전 주소로 들어오면 주제 투표 탭으로 보낸다. */
+ *  예전 주소로 들어오면 주제 투표 탭으로 보낸다.
+ *  참여 화면도 없앴다 (2026-11-24 사용자 결정): 참여는 카드의 '토론 참여하기'로 하고(알림 상세에도 카드가 있다),
+ *  참여하지 않은 채 열린 방 주소로 바로 들어오면 실시간 토론방 탭으로 보낸다. */
 export function DebateRoom({ debateId }: { debateId: number }) {
   const router = useRouter();
   const [debate, setDebate] = useState<DebateSummary | null>(null);
@@ -43,19 +45,21 @@ export function DebateRoom({ debateId }: { debateId: number }) {
   // 실시간 이벤트가 연달아 와도 서로 덮어쓰지 않게 지금 값을 기준으로 바꾼다.
   const update = useCallback<Update>((change) => setDebate((current) => (current ? change(current) : current)), []);
   const voting = debate?.status === "voting";
-  useEffect(() => { if (voting) router.replace("/pivot/debate?tab=vote"); }, [voting, router]);
+  const outside = debate?.status === "open" && !debate.joined;
+  useEffect(() => {
+    if (voting) router.replace("/pivot/debate?tab=vote");
+    else if (outside) router.replace("/pivot/debate");
+  }, [voting, outside, router]);
 
-  if (!debate || voting) {
+  if (!debate || voting || outside) {
     return <DebateScreen label="토론방">
       <RoomHeader title="토론방" back="/pivot/debate" />
       <div className={styles.stack}><DebateState loading={!error} error={error} onRetry={load} /></div>
     </DebateScreen>;
   }
   if (debate.status === "open") {
-    // 참여한 사람만 채팅방을 본다. 알림 등으로 주소를 바로 열었으면 먼저 참여 화면을 보여준다.
-    return debate.joined
-      ? <OpenRoom debate={debate} onChange={setDebate} update={update} showToast={showToast} toast={toast} />
-      : <JoinRoom debate={debate} onJoined={setDebate} showToast={showToast} toast={toast} />;
+    // 참여한 사람만 채팅방을 본다 (참여하지 않았으면 위에서 실시간 토론방 탭으로 보냈다).
+    return <OpenRoom debate={debate} onChange={setDebate} update={update} showToast={showToast} toast={toast} />;
   }
   // 끝난 방: 채팅 중에 방이 끝났거나 알림으로 들어온 경우. 기준 표를 못 받은 주제(expired)는 서버가 삭제된 것으로 보고 보내지 않는다.
   return <DebateScreen label={debate.title}>
@@ -101,7 +105,7 @@ function SidePoll({ debate, busy, onPick, onCancel }: {
   const total = <span>총 {debate.participantCount.toLocaleString("ko-KR")}명 투표</span>;
   if (!debate.mySide) {
     return <div className={styles.poll}>
-      <div className={styles.sideChoices} role="group" aria-label="진영 고르기">
+      <div className={styles.sideChoices} role="group" aria-label="투표하기">
         {(["a", "b"] as const).map((side) => <button key={side} type="button" className={styles.sideChoice} disabled={busy} onClick={() => onPick(side)}>
           <CircleCheckIcon size={22} /><span>{side === "a" ? debate.sideA.label : debate.sideB.label}</span>
         </button>)}
@@ -116,33 +120,15 @@ function SidePoll({ debate, busy, onPick, onCancel }: {
   </div>;
 }
 
-/* ───────────── 진행 중, 아직 참여 전: 방 정보와 참여하기 ───────────── */
-
-function JoinRoom({ debate, onJoined, showToast, toast }: {
-  debate: DebateSummary; onJoined: (debate: DebateSummary) => void; showToast: ShowToast; toast: ReactNode;
-}) {
-  const [pending, setPending] = useState(false);
-  const now = useNow();
-  const join = async () => {
-    setPending(true);
-    try {
-      onJoined(await joinDebate(debate.debateId));
-    } catch (reason) {
-      showToast(errorText(reason));
-      setPending(false);
-    }
-  };
-  return <DebateScreen label={debate.title}>
-    <RoomHeader title="토론방" back="/pivot/debate" />
-    <RoomPanel debate={debate} now={now} collapsed={false}>
-      <button type="button" className={`${styles.fillButton} ${styles.joinButton}`} disabled={pending} onClick={() => void join()}>토론 참여하기</button>
-    </RoomPanel>
-    <p className={styles.joinNote}>참여하면 진영을 고르고 채팅할 수 있어요. 참여한 뒤의 채팅부터 보여요.</p>
-    {toast}
-  </DebateScreen>;
-}
-
 /* ───────────── 진행 중: 실시간 채팅 ───────────── */
+
+/** 앞 메시지와 같은 사람이 같은 분 안에 보낸 메시지인지. 이름·진영 표시·시간이 같아서 다시 쓰지 않는다.
+ *  보낸 순간의 진영이 바뀌었으면 새로 보여 준다. (탈퇴한 회원은 모두 '알 수 없음'이라 함께 묶일 수 있다) */
+function sameRun(previous: DebateMessage, next: DebateMessage): boolean {
+  const minute = (message: DebateMessage) => Math.floor(Date.parse(message.createdAt) / 60_000);
+  return previous.isMine === next.isMine && previous.nickname === next.nickname && previous.side === next.side
+    && minute(previous) === minute(next);
+}
 
 /** 도배 막기 창 (2026-11-23 시안): 10초에 5개를 넘게 보내면 서버가 막고(429) 이 창을 띄운다. */
 function RateLimitDialog({ onClose }: { onClose: () => void }) {
@@ -423,18 +409,25 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
       </button> : null}
       <ol className={styles.messages} aria-label="채팅" aria-live="polite">
         {/* 시안: 다른 사람은 왼쪽 흰 말풍선, 내 메시지는 오른쪽 연보라 말풍선. 얼굴 자리는 연보라 동그라미.
-            보낸 순간의 진영은 닉네임 옆 작은 표시로 보여 준다. */}
-        {(messages ?? []).map((item) => <li key={item.messageId} className={styles.message} data-mine={item.isMine || undefined}>
-          <span className={styles.avatar} aria-hidden="true" />
-          <div className={styles.messageBody}>
-            <p className={styles.messageMeta}>
-              <b>{item.nickname}</b>
-              {item.side ? <span className={styles.sideTag} data-side={item.side}>{label(item.side)}</span> : null}
-              <time dateTime={item.createdAt}>{timeText(item.createdAt)}</time>
-            </p>
-            <p className={styles.bubble}>{item.body}</p>
-          </div>
-        </li>)}
+            보낸 순간의 진영은 닉네임 옆 작은 표시로 보여 준다.
+            같은 사람이 같은 분 안에 연달아 보내면 이름·얼굴·시간 없이 말풍선만 바로 아래에 붙인다 (2026-11-24, 카카오톡처럼). */}
+        {(messages ?? []).map((item, index, list) => {
+          const continued = index > 0 && sameRun(list[index - 1], item);
+          return <li key={item.messageId} className={styles.message} data-mine={item.isMine || undefined} data-continued={continued || undefined}>
+            <span className={styles.avatar} aria-hidden="true" />
+            <div className={styles.messageBody}>
+              {continued
+                // 화면 읽기 프로그램은 말풍선마다 누가 보냈는지 읽어 준다.
+                ? <span className={styles.srOnly}>{item.nickname}</span>
+                : <p className={styles.messageMeta}>
+                  <b>{item.nickname}</b>
+                  {item.side ? <span className={styles.sideTag} data-side={item.side}>{label(item.side)}</span> : null}
+                  <time dateTime={item.createdAt}>{timeText(item.createdAt)}</time>
+                </p>}
+              <p className={styles.bubble}>{item.body}</p>
+            </div>
+          </li>;
+        })}
       </ol>
       <div ref={endRef} className={styles.chatEnd} />
     </div>
@@ -461,7 +454,7 @@ function ClosedResult({ debate }: { debate: DebateSummary }) {
       <WorkChips works={debate.works} />
       <div className={styles.roomChips}>
         <span className={styles.roomChip}><ClockIcon size={14} />{dateText(debate.closesAt)} 종료</span>
-        <span className={styles.roomChip}><UsersIcon size={14} />진영 투표 {debate.participantCount}명</span>
+        <span className={styles.roomChip}><UsersIcon size={14} />총 {debate.participantCount}명 투표</span>
         <span className={styles.roomChip}><ChatIcon size={14} />채팅 {debate.messageCount}개</span>
       </div>
     </section>

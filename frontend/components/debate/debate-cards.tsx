@@ -19,7 +19,7 @@ import styles from "./debate.module.css";
 
 /** 카드 윗부분: 작품 칩, 제목, 설명 한 줄(+더보기), 양쪽 선택지.
  *  제목은 눌리지 않는다 (2026-11-23 사용자 결정): 따로 여는 화면 없이 카드의 버튼으로 참여·투표한다.
- *  실시간 방의 참여 화면은 알림 등으로 방 주소를 바로 열 때를 위해서만 남아 있다. */
+ *  참여 화면도 없다 (2026-11-24): 개설 알림의 상세에도 이 카드를 보여 준다 (debate-notice.tsx). */
 export function TopicHead({ debate }: { debate: DebateSummary }) {
   return <>
     <WorkChips works={debate.works} />

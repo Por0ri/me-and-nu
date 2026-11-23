@@ -35,6 +35,8 @@ export type DebateSummary = {
   memberCount: number;
   /** 내가 이 토론방에 참여 중인지. 참여한 사람만 채팅·진영 고르기를 하고, 참여한 뒤의 채팅만 보인다. */
   joined: boolean;
+  /** 내가 이 토론방에 참여한 시각. 참여 중이 아니면 null ('참여 중인 방'을 최근에 참여한 순서로 보여 줄 때 쓴다) */
+  joinedAt: string | null;
   messageCount: number;
   result: DebateResult | null;
   myVote: boolean;

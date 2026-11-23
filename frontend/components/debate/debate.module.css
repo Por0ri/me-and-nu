@@ -35,6 +35,11 @@
   overflow-wrap: anywhere;
 }
 .screen[data-composer] { padding-bottom: 92px; }
+/* 토론 화면 밖(알림 상세)에 토론 카드 하나를 넣을 때: .screen 의 색 이름·버튼 규칙은 그대로 쓰고 화면 틀(폭·높이·여백·바탕)만 끈다.
+   위 8px 은 예전 '토론방 보러 가기' 버튼과 같은 자리 (debate-notice.tsx, 2026-11-24).
+   min-width 0: 알림 상세는 grid 라서, 한 줄로 자르는 카드 설명의 전체 길이만큼 칸이 늘어나 화면 밖으로 넘치지 않게 한다. */
+.screen.embedded { min-width: 0; max-width: none; min-height: 0; margin: 8px 0 0; padding: 0; background: transparent; }
+.noticeGone { color: var(--debate-muted); font-size: 14px; line-height: 20px; }
 /* 기본 여백 지우기. :where로 우선순위를 0으로 둬서 각 부품의 여백 규칙이 항상 이긴다. */
 :where(.screen) :where(p, h1, h2, h3, ul, ol) { margin: 0; }
 :where(.screen) :where(ul, ol) { padding: 0; list-style: none; }
@@ -233,8 +238,6 @@
 .screen .foldButton { flex: none; height: 24px; padding: 0 2px; border: 0; background: transparent; color: var(--debate-primary); font-size: 12px; font-weight: 600; }
 .roomDescription { margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; }
 .roomPanelCard .topicMeta { margin-top: 4px; }
-.screen .joinButton { height: 40px; margin-top: 12px; font-size: 15px; }
-.joinNote { margin-top: 14px; color: var(--debate-muted); font-size: 12px; line-height: 18px; text-align: center; }
 /* 진영 투표: 고르기 전 두 버튼(연보라·보라 테두리, 동그라미 체크), 고른 뒤 비율 막대와 '투표 취소' */
 .poll { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .sideChoices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -258,7 +261,12 @@
 .chatEmpty { padding: 24px 0; color: var(--debate-muted); font-size: 13px; text-align: center; }
 /* 새 메시지로 따라 내려갈 때 떠 있는 입력창에 가리지 않게 */
 .chatEnd { height: 1px; scroll-margin-bottom: 92px; }
-.messages { display: flex; flex-direction: column; gap: 24px; }
+/* 메시지 사이 (2026-11-24, 한 화면에 채팅이 더 많이 보이게): 다른 사람·다른 분이면 14px,
+   같은 사람이 같은 분 안에 연달아 보내면 4px 로 말풍선을 바로 아래에 붙이고 이름·얼굴·시간은 첫 말풍선에만 둔다. */
+.messages { display: flex; flex-direction: column; }
+.message + .message { margin-top: 14px; }
+.message[data-continued] { margin-top: 4px; }
+.message[data-continued] .avatar { height: 0; visibility: hidden; }
 .screen .olderButton { align-self: center; height: 32px; padding: 0 14px; border: 1px solid var(--debate-line); border-radius: 999px; background: #fff; color: var(--debate-muted); font-size: 12.5px; font-weight: 600; }
 .connectionNote { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: 12px; background: #f4f4f6; color: var(--debate-muted); font-size: 13px; line-height: 18px; }
 .connectionNote[data-tone="error"] { background: #fdecec; color: var(--debate-danger); }
@@ -267,13 +275,14 @@
 .message[data-mine] { grid-template-columns: minmax(0, 1fr) 30px; align-self: flex-end; }
 .message[data-mine] .avatar { order: 2; }
 .avatar { width: 30px; height: 30px; border-radius: 50%; background: #ece6fb; }
-.messageBody { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.messageBody { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
 .message[data-mine] .messageBody { align-items: flex-end; }
-.messageMeta { display: flex; align-items: center; gap: 6px; min-height: 20px; color: #71717a; font-size: 11px; line-height: 16px; }
+.messageMeta { display: flex; align-items: center; gap: 6px; min-height: 18px; color: #71717a; font-size: 11px; line-height: 16px; }
 .messageMeta b { color: #27272a; font-size: 13px; font-weight: 700; }
 .sideTag { padding: 1px 6px; border-radius: 999px; background: #efe7ff; color: var(--debate-primary); font-size: 10.5px; font-weight: 600; }
 .sideTag[data-side="b"] { background: #f4f4f5; color: #52525b; }
-.bubble { max-width: 100%; padding: 10px 14px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; color: #27272a; font-size: 14px; line-height: 22px; white-space: pre-wrap; }
+/* 말풍선 (2026-11-24 사용자 결정): 글씨를 닉네임(13px)과 같은 13px 로, 위아래 여백·줄 간격을 줄여 한 줄 말풍선이 44px → 32px */
+.bubble { max-width: 100%; padding: 6px 10px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; color: #27272a; font-size: 13px; line-height: 18px; white-space: pre-wrap; }
 .message[data-mine] .bubble { border-color: #e2d5ff; background: #f5f1fe; }
 /* 입력창: 화면 아래 24px 에 떠 있는 흰 상자(홈 AI 대화 입력창과 같은 모양), 오른쪽 둥근 보내기. 밑은 바탕색으로 흐리게 덮는다 */
 .composer { position: fixed; z-index: 6; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 8px; width: min(calc(100% - 48px), 382px); padding: 4px 4px 4px 14px; transform: translateX(-50%); border-radius: 10px; background: #fff; box-shadow: 0 2px 12px rgb(0 0 0 / 10%); }

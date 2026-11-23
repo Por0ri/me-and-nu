@@ -8,6 +8,7 @@ export const DEBATE_RULES = {
   roomHours: 48,
   ticketMax: 3,
   ticketRefillMinutes: 60,
+  /** 투표 중이거나 토론 중(열린 48시간)인 내 주제는 1개까지. 토론 중에도 새 주제를 못 올린다 (2026-11-24 결정, 남용 방지) */
   activePerUser: 1,
   messageRateCount: 5,
   messageRateWindowSeconds: 10,

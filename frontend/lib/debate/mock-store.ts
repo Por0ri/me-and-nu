@@ -49,8 +49,8 @@ type StoredDebate = {
   mine: boolean;
   myVote: boolean;
   mySide: DebateSideKey | null;
-  /** 내가 참여 중인지, 참여 인원, 내가 참여한 순간의 마지막 채팅 번호 (그 뒤의 채팅만 보인다) */
-  joined: boolean;
+  /** 내가 참여한 시각(참여 중이 아니면 null), 참여 인원, 내가 참여한 순간의 마지막 채팅 번호 (그 뒤의 채팅만 보인다) */
+  joinedAt: number | null;
   memberCount: number;
   historyAfter: number;
   messages: StoredMessage[];
@@ -98,7 +98,7 @@ function stored(partial: Partial<StoredDebate> & Pick<StoredDebate, "debateId" |
     mine: false,
     myVote: false,
     mySide: null,
-    joined: false,
+    joinedAt: null,
     memberCount: 0,
     historyAfter: 0,
     messages: [],
@@ -126,7 +126,7 @@ function seed(): void {
       debateId: 1, title: "나루토와 사스케, 최종 승자는?", sideA: "나루토", sideB: "사스케", workIds: [102], ...opened(17),
       description: "종말의 계곡 마지막 결투 기준으로 이야기해요.", sideACount: 5, sideBCount: 3, createdAt: now - 4 * DAY,
       // 이미 참여 중인 방 (카드에 '방 나가기'·'다시 입장하기'가 보인다)
-      joined: true, memberCount: 128,
+      joinedAt: now - 16 * HOUR, memberCount: 128,
       messages: seedMessages(now, [
         ["a", "닌자왕", "나는 나루토가 이긴다고 봐요. 결국 사스케도 나루토의 신념과 끈질김을 인정했잖아요."],
         ["b", "우치하팬", "그래도 사스케의 재능과 전투 센스는 정말 대단했어요. 마지막까지 예측이 어려워요!"],
@@ -221,7 +221,8 @@ function summary(debate: StoredDebate, now = Date.now()): DebateSummary {
     closesAt: iso(debate.closesAt),
     participantCount: debate.sideACount + debate.sideBCount,
     memberCount: debate.memberCount,
-    joined: debate.joined,
+    joined: debate.joinedAt !== null,
+    joinedAt: iso(debate.joinedAt),
     messageCount: debate.messageCount,
     result: status === "closed" ? resultOf(debate) : null,
     myVote: debate.myVote,
@@ -360,8 +361,9 @@ export async function createDebate(input: CreateDebateInput): Promise<DebateSumm
   if (workIds.length > RULES.worksMax || workIds.some((id) => !WORKS.some((work) => work.entityId === id))) {
     fail("VALIDATION_ERROR", `작품은 목록에서 ${RULES.worksMax}개까지 고를 수 있어요.`);
   }
-  const active = debates.filter((debate) => debate.mine && statusOf(debate, now) === "voting").length;
-  if (active >= RULES.activePerUser) fail("DEBATE_ACTIVE_LIMIT", "투표 중인 내 주제가 이미 있어요. 그 주제가 열리거나 소멸되면 새로 올릴 수 있어요.");
+  // 서버와 같은 규칙: 투표 중이거나 토론 중인 내 주제가 있으면 새로 못 올린다 (2026-11-24)
+  const active = debates.filter((debate) => debate.mine && ["voting", "open"].includes(statusOf(debate, now))).length;
+  if (active >= RULES.activePerUser) fail("DEBATE_ACTIVE_LIMIT", "투표 중이거나 토론 중인 내 주제가 이미 있어요. 그 주제가 끝나면 새로 올릴 수 있어요.");
   const debate = stored({ debateId: nextDebateId++, title, description: description || null, sideA, sideB, workIds, mine: true, createdAt: now }, now);
   debates.push(debate);
   return wait(summary(debate, now), 250);
@@ -389,7 +391,7 @@ function openRoom(debateId: number, now: number): StoredDebate {
 
 function joinedRoom(debateId: number, now: number): StoredDebate {
   const debate = openRoom(debateId, now);
-  if (!debate.joined) fail("DEBATE_NOT_JOINED", "토론에 참여한 사람만 할 수 있어요. 먼저 토론에 참여해 주세요.");
+  if (debate.joinedAt === null) fail("DEBATE_NOT_JOINED", "토론에 참여한 사람만 할 수 있어요. 먼저 토론에 참여해 주세요.");
   return debate;
 }
 
@@ -397,8 +399,8 @@ function joinedRoom(debateId: number, now: number): StoredDebate {
 export async function joinDebate(debateId: number): Promise<DebateSummary> {
   const now = Date.now();
   const debate = openRoom(debateId, now);
-  if (!debate.joined) {
-    debate.joined = true;
+  if (debate.joinedAt === null) {
+    debate.joinedAt = now;
     debate.memberCount += 1;
     debate.historyAfter = debate.messages.at(-1)?.messageId ?? 0;
   }
@@ -409,8 +411,8 @@ export async function joinDebate(debateId: number): Promise<DebateSummary> {
 export async function leaveDebate(debateId: number): Promise<DebateSummary> {
   const now = Date.now();
   const debate = openRoom(debateId, now);
-  if (debate.joined) {
-    debate.joined = false;
+  if (debate.joinedAt !== null) {
+    debate.joinedAt = null;
     debate.memberCount = Math.max(0, debate.memberCount - 1);
   }
   if (debate.mySide === "a") debate.sideACount -= 1;

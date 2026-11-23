@@ -110,6 +110,7 @@ const loadMine = () => listMyDebates();
 
 /** 올린 주제가 없으면 빈 화면. 투표 중이면 안내 띠 + 카드(작성자 대신 '투표 중') + '내 주제 삭제하기'(확인 창),
  *  토론방이 열렸으면 '선정됐어요' 띠 + 카드(작성자 대신 '토론 중', 삭제 없음) (2026-11-23 시안).
+ *  투표 중이거나 토론 중인 내 주제가 있으면 새 주제를 올릴 수 없어서 '주제 올리기' 버튼이 없다 (서버도 막는다, 2026-11-24 결정).
  *  자기 주제에도 투표할 수 있다 (회의 규칙). */
 function MineTab({ showToast }: { showToast: ShowToast }) {
   const [state, retry, update] = useLoad<DebateSummary[]>([], loadMine);
@@ -167,7 +168,8 @@ function MineTab({ showToast }: { showToast: ShowToast }) {
       : opened
         ? <section className={styles.banner} aria-label="주제 등록 안내">
           <h2>내가 올린 주제가 선정됐어요</h2>
-          <p>선정되어 열린 채팅방은 {DEBATE_RULES.roomHours}시간 동안만 유지돼요</p>
+          {/* 토론 중에도 새 주제를 못 올려서(남용 방지) 버튼 대신 언제 올릴 수 있는지 알려 준다 (2026-11-24 결정) */}
+          <p>선정되어 열린 채팅방은 {DEBATE_RULES.roomHours}시간 동안만 유지돼요<br />토론이 끝나면 새 주제를 올릴 수 있어요</p>
         </section>
         : <section className={styles.banner} aria-label="주제 등록 안내">
           <h2>새 주제를 올릴 수 있어요</h2>
@@ -190,10 +192,14 @@ function MineTab({ showToast }: { showToast: ShowToast }) {
 
 /* ───────────── 참여 중인 방 ───────────── */
 
-// 참여 중인 방만 따로 주는 API 는 없어서, 열린 방 목록에서 참여한 방만 고른다.
-const loadJoined = async () => (await listDebates({ status: "open" })).filter((debate) => debate.joined);
+// 참여 중인 방만 따로 주는 API 는 없어서, 열린 방 목록(내 분야, 최대 50개)에서 참여한 방만 고른다 (베타 동안은 이 방식, 2026-11-24 결정).
+// 순서는 최근에 참여한 방부터 (2026-11-24 사용자 결정). 나갔다가 다시 참여하면 그 시각으로 바뀌고, '다시 입장하기'는 순서를 바꾸지 않는다.
+const joinedTime = (debate: DebateSummary) => (debate.joinedAt ? Date.parse(debate.joinedAt) : 0);
+const loadJoined = async () => (await listDebates({ status: "open" }))
+  .filter((debate) => debate.joined)
+  .sort((left, right) => joinedTime(right) - joinedTime(left));
 
-/** 입장한(참여한) 열린 방. 방을 나가면 목록에서 빠진다. */
+/** 입장한(참여한) 열린 방. 최근에 참여한 방부터 보여 주고, 방을 나가면 목록에서 빠진다. */
 function JoinedTab({ showToast }: { showToast: ShowToast }) {
   const [state, retry, update] = useLoad<DebateSummary[]>([], loadJoined);
   const room = useRoomActions((next) => update((rows) => next.joined
@@ -208,7 +214,8 @@ function JoinedTab({ showToast }: { showToast: ShowToast }) {
       rules={[
         <><em>입장한 채팅방</em>은 나가기 전까지 이곳에 표시돼요</>,
         <>채팅방은 개설 후 <em>{DEBATE_RULES.roomHours}시간 동안</em> 이용할 수 있어요</>,
-        <>종료된 채팅방은 <em>지난 채팅방</em>에서 확인할 수 있어요</>,
+        // 시안은 '지난 채팅방'이지만 탭 이름과 같게 '지난 토론방'으로 (2026-11-24 사용자 결정, 디자이너 실수로 봄)
+        <>종료된 채팅방은 <em>지난 토론방</em>에서 확인할 수 있어요</>,
       ]}
       action={{ label: "참여할 토론방 둘러보기", href: "/pivot/debate" }} /> : null}
     {rooms.map((debate) => <LiveCard key={debate.debateId} debate={debate} now={now} busy={room.pending === debate.debateId}
