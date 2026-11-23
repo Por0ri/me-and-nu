@@ -31,6 +31,7 @@ from app.models import (
     ContentReaction,
     ContentSource,
     Entity,
+    Notice,
     Notification,
     NotificationSetting,
     RecommendationItem,
@@ -127,8 +128,9 @@ async def list_notifications(
         await _ensure_welcome_notice(db, user_id)
 
     statement = (
-        select(Notification, Content.image_url)
+        select(Notification, Content.image_url, Notice.body)
         .outerjoin(Content, Content.content_id == Notification.content_id)
+        .outerjoin(Notice, and_(Notice.notice_id == Notification.notice_id, Notice.status == "published"))
         .where(
             Notification.user_id == user_id,
             Notification.notification_type.in_(INBOX_TYPES),
@@ -160,7 +162,10 @@ async def list_notifications(
                 notification_id=n.notification_id,
                 type=n.notification_type,
                 title=n.title,
-                body=n.body,
+                # The stored delivery is a short preview. A published linked
+                # notice supplies its complete immutable body to this owner's
+                # existing inbox detail UI; old standalone notices still work.
+                body=notice_body if notice_body is not None else n.body,
                 topic_id=n.topic_id,
                 content_id=n.content_id,
                 image_url=image_url,
@@ -168,7 +173,7 @@ async def list_notifications(
                 read_at=n.read_at,
                 created_at=n.created_at,
             )
-            for n, image_url in page
+            for n, image_url, notice_body in page
         ],
         next_cursor=next_cursor,
     )

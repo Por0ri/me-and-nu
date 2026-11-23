@@ -23,6 +23,7 @@ from app.models.chat import (
 from app.models.content import Content, ContentSource, Draft
 from app.models.content_slide import ContentSlide
 from app.models.notification import Notification
+from app.models.notice import Notice
 from app.models.oauth_attempt import OAuthAttempt
 from app.models.onboarding_answers import OnboardingAnswersRecord
 from app.models.onboarding_catalog import (
@@ -87,6 +88,7 @@ __all__ = [
     "Topic",
     "TopicCluster",
     "Notification",
+    "Notice",
     "ContentReport",
     "Inquiry",
     "InquiryAnswer",

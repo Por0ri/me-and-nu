@@ -14,7 +14,7 @@ function load(file) {
     const next = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(file), name);
     return load(next + (fs.existsSync(path.join(root, next + '.tsx')) ? '.tsx' : '.ts'));
   };
-  vm.runInNewContext(`(function(module,exports,require){${code}\n})`, { URL, URLSearchParams, Intl })(mod, mod.exports, localRequire);
+  vm.runInNewContext(`(function(module,exports,require){${code}\n})`, { URL, URLSearchParams, Intl, process: { env: {} }, setTimeout, clearTimeout, AbortController })(mod, mod.exports, localRequire);
   return mod.exports;
 }
 const model = load('lib/admin-notices.ts'), fixtures = load('tests/fixtures/admin-notices.ts');
@@ -51,34 +51,34 @@ test('published and scheduled presentation statuses, missing view count and deta
   assert.match(html, /data-notice-status="published"/); assert.match(html, /data-notice-status="scheduled"/); assert.match(html, /<td>—<\/td>/);
   const detail = render('components/admin/notice-detail-panel.tsx', 'NoticeDetailPanel', { notice: fixtures.noticeFixtures[2], onClose() {} });
   assert.match(detail, /공지 내용 연결 준비 중/);
-  assert.match(detail, /disabled="">삭제하기/); assert.match(detail, /disabled="">수정하기/);
+  assert.match(detail, /예약 취소/); assert.match(detail, /disabled="">예약 취소/); assert.doesNotMatch(detail, /삭제하기/);
 });
-test('compose switches between immediate and scheduled display while every write action remains disabled', () => {
+test('compose switches between immediate and scheduled display while unverified permissions keep writes disabled', () => {
   for (const scheduled of [false, true]) {
     const html = render('components/admin/notice-compose-panel.tsx', 'NoticeComposePanel', { initialDraft: { ...model.emptyNoticeDraft, scheduled, date: '2026-11-12', time: '10:00' } });
     assert.match(html, new RegExp(`aria-checked="${scheduled}"`));
     assert.match(html, /disabled="">임시 저장/); assert.match(html, new RegExp(`disabled="">${scheduled ? '예약 하기' : '게시하기'}`));
     assert.equal(html.includes('type="date"'), scheduled); assert.equal(html.includes('type="time"'), scheduled);
-    assert.match(html, /작성 내용은 저장되지 않으며/);
+    assert.match(html, /작성 권한이 확인된 관리자만/);
   }
 });
 test('untrusted notice title and body are escaped text, never executable markup', () => {
   const html = render('components/admin/notice-detail-panel.tsx', 'NoticeDetailPanel', { notice: { ...fixtures.noticeFixtures[0], title: '<script>alert(1)</script>', body: '<img src=x onerror=alert(1)>' }, onClose() {} });
   assert.match(html, /&lt;script&gt;/); assert.match(html, /&lt;img/); assert.doesNotMatch(html, /<script>|<img src="x"/);
 });
-test('production route has no fixture switch, transport, permission bypass or persistent draft storage', () => {
+test('production route excludes fixtures, unsafe HTML and browser draft storage while using the real transport', () => {
   const seen = new Set();
   function inspect(file) {
     file = file.replaceAll('\\', '/'); if (seen.has(file)) return; seen.add(file);
     const source = fs.readFileSync(path.join(root, file), 'utf8');
-    assert.doesNotMatch(source, /tests\/fixtures|fetch\(|apiRequest\(|localStorage|sessionStorage|useSearchParams|NEXT_PUBLIC_.*FIXTURE|dangerouslySetInnerHTML/);
+    assert.doesNotMatch(source, /tests\/fixtures|localStorage|sessionStorage|useSearchParams|NEXT_PUBLIC_.*FIXTURE|dangerouslySetInnerHTML/);
     for (const match of source.matchAll(/import (?!type\b)[^;]*?from ["']([^"']+)["']/g)) {
       const name = match[1]; if ((!name.startsWith('.') && !name.startsWith('@/')) || name.endsWith('.css')) continue;
       const next = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(file), name);
       inspect(next + (fs.existsSync(path.join(root, next + '.tsx')) ? '.tsx' : '.ts'));
     }
   }
-  inspect('app/admin/notices/page.tsx'); assert.ok(seen.has('components/admin/notice-detail-panel.tsx')); assert.equal(model.noticeUnavailable.status, 'unavailable');
+  inspect('app/admin/notices/page.tsx'); assert.ok(seen.has('components/admin/notice-detail-panel.tsx')); assert.ok(seen.has('lib/admin-notice-write.ts')); assert.equal(model.noticeUnavailable.status, 'unavailable');
 });
 test('all seventeen original Figma SVG assets preserve their LF source hashes and root dimensions', () => {
   const manifest = require('../public/admin/notice-sources.json'); assert.equal(manifest.assets.length, 17);

@@ -62,6 +62,7 @@ def main():
     parser.add_argument("--test-filter", help="Optional pytest -k selection for a targeted isolated regression")
     parser.add_argument("--test-file", action="append", choices=[
         "tests/test_admin_postgres_integration.py", "tests/test_admin_analytics_postgres.py",
+        "tests/test_admin_notices_postgres.py", "tests/test_notice_delivery_postgres.py",
     ], help="Repeat to select isolated admin suites (default: admin integration)")
     args = parser.parse_args()
     backend = Path(__file__).resolve().parents[1]
