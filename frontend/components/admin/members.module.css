@@ -43,9 +43,9 @@
 .table input[type="checkbox"] { appearance: none; width: 20px; height: 20px; border: 1px solid #c7acfb; border-radius: 4px; vertical-align: middle; background: #fff; }
 .badge { display: inline-block; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; line-height: 18px; white-space: nowrap; }
 .badge[data-member-status="active"] { color: #0ba37b; background: #d5f2e7; }
-.badge[data-member-status="dormant"] { color: #938ba6; background: #e8e7ed; }
+.badge[data-member-status="warned"] { color: #795016; background: #fff0cc; }
 .badge[data-member-status="withdrawn"] { color: #6332d9; background: #e6e5ff; }
-.badge[data-member-status="restricted"] { color: #f0537b; background: #ffe5ee; }
+.badge[data-member-status="suspended"], .badge[data-member-status="banned"] { color: #f0537b; background: #ffe5ee; }
 .availability { margin: 16px 0 0; color: #71717a; font-size: 12px; line-height: 20px; }
 .unknown { font-size: 14px; color: #71717a; background: #f4f4f5; border-radius: 6px; padding: 8px 12px; }
 .detail { margin: -10px -10px 0; max-width: 1381px; }

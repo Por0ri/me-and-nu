@@ -10,7 +10,7 @@ function load(file) {
   const localRequire = name => {
     if (['react', 'react/jsx-runtime'].includes(name)) return require(name);
     if (name === 'next/link') return { __esModule: true, default: props => React.createElement('a', props) };
-    if (name === '@/lib/api') return { ApiError: class ApiError extends Error {}, apiRequest() { throw new Error('Static view must not fetch'); } };
+    if (name === '@/lib/api' || name === './api') return { ApiError: class ApiError extends Error {}, apiRequest() { throw new Error('Static view must not fetch'); } };
     if (name === '@/lib/admin-statistics-api') return { loadRecommendationPerformance() { throw new Error('Static view must not fetch'); } };
     if (name === './use-admin-read') return {};
     if (name.endsWith('.module.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) };

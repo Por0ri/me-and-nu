@@ -91,3 +91,4 @@
   .drawerHeading p { margin-top: 12px; font-size: 14px; line-height: 22px; }
   .drawerScroll { height: calc(100% - 132px); padding: 0 16px 24px; }
 }
+.rawStatus { display: block; margin-top: 5px; color: #72717d; font-size: 12px; }

@@ -15,7 +15,7 @@ function browser(fixture, actor, { apiBase = fixture.origin } = {}) {
   const modules = new Map(), posts = [], scopes = new Map();
   const window = new EventTarget(); let unauthorized = 0;
   window.addEventListener('api:unauthorized', () => unauthorized++);
-  const context = vm.createContext({ AbortController, URL, URLSearchParams, Headers, Response, Event, Intl, window, crypto,
+  const context = vm.createContext({ AbortController, URL, URLSearchParams, Headers, Response, Event, Intl, setTimeout, clearTimeout, window, crypto,
     process: { env: { NEXT_PUBLIC_API_BASE_URL: apiBase } },
     fetch: async (url, init = {}) => {
       // Stand in for the browser cookie jar; credentials/cache semantics stay with the client.

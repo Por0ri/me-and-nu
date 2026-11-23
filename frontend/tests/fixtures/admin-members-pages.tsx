@@ -32,5 +32,5 @@ export function FixtureMemberDetailPage() {
   const params = useParams<{ memberId: string }>(), search = useSearchParams();
   const member = memberFixtures.find(item => item.id === params.memberId);
   const data = member && search.get("fixture") === "missing" ? { ...member, maskedEmail: "raw-private@example.test", history: null, onboarding: null, notes: null, savedCount: null, likedCount: null } : member;
-  return <><FixtureBanner /><MemberDetailRoute state={data ? fixtureState(search.get("fixture"), data) : { status: "not-found", message: "테스트 회원을 찾을 수 없습니다." }} /></>;
+  return <><FixtureBanner /><MemberDetailRoute memberId={params.memberId} state={data ? fixtureState(search.get("fixture"), data) : { status: "not-found", message: "테스트 회원을 찾을 수 없습니다." }} /></>;
 }

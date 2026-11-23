@@ -14,6 +14,7 @@ function load(file) {
   const mod = { exports: {} }; modules.set(file, mod);
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
   const localRequire = name => {
+    if (name === './api' || name === '@/lib/api') return { apiRequest() { throw new Error('Unexpected transport in render test'); }, ApiError: class extends Error {} };
     if (['react', 'react/jsx-runtime'].includes(name)) return require(name);
     if (name === 'next/link') return { __esModule: true, default: props => React.createElement('a', props) };
     if (name.endsWith('.module.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) };
@@ -70,15 +71,16 @@ test('untrusted report content renders as text without HTML execution', () => {
   const html = detail({ ...fixtures.reportFixtures[0], message: '<img src=x onerror=alert(1)>', target: '<script>alert(1)</script>' });
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/); assert.doesNotMatch(html, /<script>|<img src="x"/);
 });
-test('production report import graph excludes fixture data, consumer APIs, writes and persistence', () => {
+test('production report read components exclude fixture data, writes and persistence', () => {
   const seen = new Set();
   function inspect(file) {
     file = file.replaceAll('\\', '/');
     if (seen.has(file)) return; seen.add(file);
     const source = fs.readFileSync(path.join(root, file), 'utf8');
-    assert.doesNotMatch(source, /tests\/fixtures|fetch\(|apiRequest\(|localStorage|sessionStorage|NEXT_PUBLIC_.*FIXTURE|dangerouslySetInnerHTML/);
+    assert.doesNotMatch(source, /tests\/fixtures|localStorage|sessionStorage|NEXT_PUBLIC_.*FIXTURE|dangerouslySetInnerHTML/);
     for (const match of source.matchAll(/import (?!type\b)[^;]*?from ["']([^"']+)["']/g)) {
       const name = match[1]; if (!name.startsWith('.') && !name.startsWith('@/')) continue;
+      if (name === './api' || name === '@/lib/api') continue;
       if (name.endsWith('.css')) continue;
       const next = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(file), name);
       inspect(next + (fs.existsSync(path.join(root, next + '.tsx')) ? '.tsx' : '.ts'));
