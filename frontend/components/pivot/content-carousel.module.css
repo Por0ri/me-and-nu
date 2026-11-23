@@ -72,7 +72,7 @@
 .track[data-dragging="true"] { scroll-snap-type: none; scroll-behavior: auto; cursor: grabbing; user-select: none; }
 
 /* Detail only: reserve a top control row. The image-relative copy remains a
-   non-scrollable preview; unmeasured/overflowing cover originals stay below. */
+   non-scrollable preview; the article body is rendered below the carousel. */
 .carousel[data-content-carousel="detail"] .overlay { overflow: clip; display: flow-root; }
 .carousel[data-content-carousel="detail"] .legacyCaption { max-height: calc(100% - 76px); overflow: clip; }
 .carousel[data-content-carousel="detail"] .slideButton { align-self: flex-start; top: 0; }
