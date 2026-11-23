@@ -288,6 +288,12 @@ class Controller:
     def used_slots(self):
         return sum(row.get("counts_slot", False) for row in self.state["records"])
 
+    def completion_reason(self):
+        return "new_job_slots_consumed" if self.used_slots() >= self.config["max_new_jobs"] else None
+
+    def record_metadata(self):
+        return {}
+
     def stop(self, reason):
         self.state.update(status="stopped", stop_reason=reason)
         self.save()
@@ -393,7 +399,7 @@ class Controller:
         for record in self.state["records"]:
             if record["state"] not in {"complete", "duplicate"}:
                 self.handle(record)
-        while self.used_slots() < self.config["max_new_jobs"]:
+        while self.completion_reason() is None:
             self.check()
             if self.spent() + money(self.config["next_job_reserve_usd"]) > money(self.config["total_budget_usd"]):
                 self.stop("estimated_budget_reserve_unavailable")
@@ -406,7 +412,7 @@ class Controller:
             self.save()
             for article in articles:
                 self.check()
-                if self.used_slots() >= self.config["max_new_jobs"]:
+                if self.completion_reason() is not None:
                     break
                 if self.spent() + money(self.config["next_job_reserve_usd"]) > money(self.config["total_budget_usd"]):
                     self.stop("estimated_budget_reserve_unavailable")
@@ -421,6 +427,7 @@ class Controller:
                 fields["idempotency_key"] = f"{self.config['run_id']}:{digest[:48]}"
                 record = {"request": fields, "canonical_url": canonical, "state": "reserved",
                           "counts_slot": True, "reserved_at": self.now()}
+                record.update(self.record_metadata())
                 self.state["records"].append(record)
                 self.state["seen"].append(canonical)
                 self.save()
@@ -436,9 +443,9 @@ class Controller:
                         self.stop("foreign_pending_candidate")
                     record.update(state="duplicate", counts_slot=False, existing_job_id=other["job_id"])
                     self.save()
-            if self.used_slots() < self.config["max_new_jobs"]:
+            if self.completion_reason() is None:
                 self.sleep(min(self.config["scan_interval_seconds"], max(0, self.deadline - self.now())))
-        self.state.update(status="complete", stop_reason="new_job_slots_consumed")
+        self.state.update(status="complete", stop_reason=self.completion_reason())
         self.save()
         return self.summary()
 

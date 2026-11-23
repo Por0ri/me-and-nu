@@ -1,0 +1,103 @@
+# Safe base: every command is --help, no provider key, no Internet egress.
+# Reuses existing jobs/artifacts and service data. Never creates/migrates any DB.
+name: menu-daily-generation
+x-log: &log
+  driver: json-file
+  options: {max-size: "5m", max-file: "2"}
+x-runtime: &runtime
+  profiles: [manual]
+  user: "10001:10001"
+  init: true
+  restart: "no"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=128m"]
+  logging: *log
+  pids_limit: 192
+  cpus: "0.5"
+  mem_limit: 512m
+  stop_grace_period: 30s
+x-jobs: &jobs
+  CONTENT_JOB_KIND: anime_generate
+  CONTENT_JOB_DATABASE_URL: "postgresql://menu_jobs:${CONTENT_JOB_DB_PASSWORD:?Use existing jobs credential}@jobs-db:5432/menu_content_jobs"
+  CONTENT_JOB_ARTIFACT_ROOT: /var/lib/menu-jobs
+  CELERY_BROKER_URL: redis://generation-redis:6379/0
+  CELERY_RESULT_BACKEND: redis://generation-redis:6379/1
+  ANIME_AGENT_ROOT: /opt/ani-agent
+  ANIME_AGENT_PYTHON: /opt/ani-venv/bin/python
+  OPENAI_API_KEY: ""
+  LLM_KEY: ""
+  LANGSMITH_TRACING: "false"
+  LANGCHAIN_TRACING_V2: "false"
+x-artifacts: &artifacts
+  type: bind
+  source: /home/ubuntu/me-nu-beta-20261116/artifacts
+  target: /var/lib/menu-jobs
+  bind: {create_host_path: false}
+x-state: &state
+  type: bind
+  source: /home/ubuntu/me-nu-beta-20261116/state
+  target: /runtime/state
+  bind: {create_host_path: false}
+services:
+  generation-worker:
+    <<: *runtime
+    image: me-nu-anime-generation:daily-${DAILY_RELEASE_TAG:?Set reviewed release identifier}
+    command: [python, -m, menu_worker.daily_resume, --help]
+    environment: *jobs
+    networks: [tasks]
+    volumes: [*artifacts]
+    cpus: "1.0"
+    mem_limit: 1536m
+    stop_grace_period: 3780s
+  daily-controller:
+    <<: *runtime
+    image: me-nu-anime-generation:daily-${DAILY_RELEASE_TAG:?Set reviewed release identifier}
+    entrypoint: [python, -B, -m, menu_worker.daily_resume]
+    command: [--help]
+    environment: *jobs
+    networks: [tasks]
+    volumes:
+      - <<: *artifacts
+        read_only: true
+      - *state
+  pending-importer:
+    <<: *runtime
+    image: me-nu-pending-importer:daily-${DAILY_RELEASE_TAG:?Set reviewed release identifier}
+    entrypoint: [python, -B, -m, app.services.pending_content_import]
+    command: [--help]
+    healthcheck: {disable: true}
+    environment:
+      MENU_DEPLOYMENT_ENV: production
+      CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED: "false"
+      DATABASE_URL: "postgresql+psycopg://me_nu_checking:${MAIN_POSTGRES_PASSWORD:?Use existing service credential}@postgres:5432/me_nu_checking"
+      DATABASE_ECHO: "false"
+      OPENAI_API_KEY: ""
+      LLM_KEY: ""
+      LANGSMITH_TRACING: "false"
+      LANGCHAIN_TRACING_V2: "false"
+    networks: [data]
+    volumes:
+      - type: bind
+        source: /home/ubuntu/me-nu-beta-20261116/state/bundles
+        target: /runtime/state/bundles
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /home/ubuntu/me-nu-beta-20261116/state/${DAILY_INBOX_NAME:?Set dedicated day inbox directory name}
+        target: /runtime/inbox
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${DAILY_IMPORT_POLICY_HOST_FILE:?Set reviewed import policy file}
+        target: /runtime/import-policy.json
+        read_only: true
+        bind: {create_host_path: false}
+networks:
+  tasks:
+    external: true
+    name: menu-beta-generation-20261116_tasks
+  data:
+    external: true
+    name: me-nu-checking_data
