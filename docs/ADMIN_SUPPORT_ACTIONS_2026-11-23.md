@@ -153,6 +153,41 @@ FE는 `X-Inquiry-Actor-User-Id`에 화면을 연 회원의 ID를 보내 계정 �
 
 탈퇴 상태 또는 `withdrawn_at`이 있는 회원의 문의는 관리자와 회원 조회에서 제외하고 답변 등록도 거부한다. 실제 문의 삭제 시 `inquiry_answer.inquiry_id`의 `ON DELETE CASCADE`로 답변 본문을 함께 삭제한다. 감사 기록에는 원문·답변이 없어 문의 삭제 후 답변 본문이 감사 테이블에 남지 않는다.
 
+## ERD 변경
+
+구현 기준 전체 DDL은 [current_schema.sql](erd/current_schema.sql)이며, 이번 변경으로 모델 테이블은 47개에서 48개가 된다. 아래는 문의 답변에 필요한 관계만 표시한 부분 ERD다. `inquiry`와 `admin_account`는 기존 테이블이며 관계에 필요한 키만 표시했다.
+
+```mermaid
+erDiagram
+    inquiry ||--o| inquiry_answer : has_published_answer
+    admin_account ||..o{ inquiry_answer : publishes
+
+    inquiry {
+        bigint inquiry_id PK
+    }
+    admin_account {
+        bigint admin_account_id PK
+    }
+    inquiry_answer {
+        bigint inquiry_id PK,FK
+        text body
+        bigint admin_account_id FK
+        timestamptz answered_at
+    }
+```
+
+| 관계·제약 | ERD 표기와 의미 |
+| --- | --- |
+| `inquiry` → `inquiry_answer` | 문의 1건에 답변 0~1건. 답변은 정확히 한 문의에 속하며 `inquiry_id`를 PK 겸 FK로 사용한다. |
+| `admin_account` → `inquiry_answer` | 관리자 권한 부여 기록 1건에 답변 0~N건. 답변의 작성자는 필수 FK이며 현재 활성 관리자만 작성할 수 있다는 조건은 서비스에서 검증한다. |
+| 답변 필드 | 네 컬럼 모두 NOT NULL. `body`는 DB CHECK로 1~5,000자를 제한하며 `answered_at`은 타임존 포함 시각이다. |
+| 문의 삭제 | `inquiry_id` FK는 `ON DELETE CASCADE`. 문의가 실제 삭제될 때 연결된 답변도 삭제한다. |
+| 관리자 권한 회수 | `revoked_at` 갱신으로 기존 권한 행과 답변 작성 이력을 유지한다. 작성자 FK에 삭제 CASCADE는 없으며 참조 중인 관리자 행의 물리 삭제는 기본 `NO ACTION`으로 차단된다. |
+
+신고 처리는 기존 `content_report.status`와 `admin_action_log`를 사용한다. `admin_action_log.admin_account_id`는 실제 FK지만 `target_type`·`target_id`는 여러 대상 종류를 가리키는 **논리 참조**다. 문의·신고·답변 테이블로 향하는 물리 FK를 ERD에 추가하지 않는다. 문의 원문과 답변 본문도 감사 테이블에 복제하지 않는다.
+
+이 ERD는 PR #102의 구현 후보를 설명한다. 외부 ERDCloud 도면 수정이나 Checking DB 적용 완료를 뜻하지 않는다. SQL 산출물은 ORM에서 재생성하며, 기존 DB 변경에는 아래 Migration을 사용한다.
+
 ## Migration과 적용 순서
 
 - 새 서비스 revision: **`83a2f9c7d104`**, 부모 revision: `47c1a8d6b302`.
