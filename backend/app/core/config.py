@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     # 1인 동시 실시간 연결 수 (탭 여러 개·기기 여러 대)와 연결 유지 신호 간격
     debate_stream_per_user: int = Field(default=3, gt=0)
     debate_stream_heartbeat_seconds: int = Field(default=20, gt=0)
+    # 끝난 토론(방 종료·소각)의 결과를 지난 토론방에 보여 주는 날 수. 지나면 목록에서 빠지고 정리 작업이 지운다.
+    debate_result_retention_days: int = Field(default=9, gt=0, le=365)
 
     @model_validator(mode="after")
     def validate_session_backend(self) -> "Settings":

@@ -129,12 +129,13 @@ stateDiagram-v2
     voting --> expired: 7일 동안 10표 미달
     voting --> [*]: 작성자 삭제 (표 0개일 때만)
     open --> closed: 열린 지 48시간
-    closed --> [*]
-    expired --> [*]
+    closed --> [*]: 끝난 지 9일 (정리 작업이 삭제)
+    expired --> [*]: 마감 뒤 9일 (정리 작업이 삭제)
 ```
 
 - 응답에 쓰는 상태는 '저장된 상태 + 지금 시각'으로 계산한다. 예를 들어 저장은 `voting`이어도 투표 마감 시각이 지났으면 `expired`로 본다. 정리 작업이 늦게 돌아도 사용자는 항상 맞는 상태를 본다.
 - 정리 작업([5.3](#53-정리-작업-python--m-appjobsfinalize_debates))이 저장된 상태를 따라잡고 끝난 방의 채팅을 지운다.
+- 끝난 토론(방 종료·소각)은 끝난 뒤 9일(`DEBATE_RESULT_RETENTION_DAYS`) 동안 지난 토론방에 결과를 보여 준다. 끝난 시각은 열렸던 방은 방 종료 시각, 열리지 못한 주제는 투표 마감 시각이다. 9일이 지나면 정리 작업이 돌기 전이라도 목록·검색·내 주제·상세(404)에서 바로 빠진다. 상태처럼 시각으로 계산하는 것이다.
 
 ## 5. 데이터 설계
 
@@ -184,11 +185,18 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 
 ### 5.3 정리 작업: `python -m app.jobs.finalize_debates`
 
-기존 `app/jobs` 명령처럼 기본은 미리보기이고 `--apply`를 붙여야 저장하며 `--expected-database`가 필수다. 서버에서 10분마다 실행한다.
+기존 `app/jobs` 명령처럼 기본은 미리보기이고 `--apply`를 붙여야 저장하며 `--expected-database`가 필수다. 서버에서 10분마다 실행한다. 구현은 `backend/app/services/debate_finalize_service.py`, 명령은 `backend/app/jobs/finalize_debates.py`.
+
+```
+python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
+{"mode": "apply", "retention_days": 9, "expired": 0, "closed": 2, "deleted_messages": 9, "purged_debates": 0}
+```
 
 - 투표 마감이 지난 `voting` → `expired`.
-- 방 종료 시각이 지난 `open` → `closed`, 그 방의 `debate_message` 삭제.
-- 결과에는 개수만 출력한다.
+- 방 종료 시각이 지난 `open` → `closed`. 닫힌 방에 남은 `debate_message`를 모두 지운다. 채팅 수(`message_count`)와 진영 수는 남겨서 결과 화면에 쓴다.
+- 끝난 지 보관 기간(기본 9일)이 지난 토론은 `debate` 줄을 통째로 지운다. 투표·진영·관련 작품·개설 알림 연결(`debate_notification`)은 외래 키(CASCADE)로 함께 지워진다. 알림함의 개설 알림 글(`notification`)은 남고 '토론방 보러 가기' 연결(`debateId`)만 없어진다.
+- 모두 조건을 건 `UPDATE`·`DELETE` 한 번씩이다. API가 같은 토론 줄을 잠그고 있으면(10번째 표, 채팅 저장) 기다렸다가 조건을 다시 확인하므로 마감 순간과 겹쳐도 안전하다. 여러 번 돌아도 결과가 같다.
+- 결과에는 개수만 출력한다. 토론 기능 스위치와 상관없이 그 DB의 토론 표를 정리한다(같은 DB를 쓰는 서버 중 한 곳에서만 예약하면 된다).
 
 ## 6. 규칙과 동시성
 
@@ -210,8 +218,9 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 | 정원 | 없음. 구경은 누구나 할 수 있다. 부하 시험 후 필요하면 상한을 둔다 |
 | 관련 작품 | 작품 목록에서 0~3개. 목록에 없는 작품이어도 주제는 올릴 수 있다. 자유 태그는 1차에서 뺀다 |
 | 실시간 연결 | 1인 동시 3개, 20초마다 연결 유지 신호 |
+| 지난 토론방 결과 보관 | 끝난 뒤 9일. 지나면 목록에서 빠지고 정리 작업이 지운다 |
 
-설정 이름: `DEBATE_ENABLED`, `DEBATE_VOTE_THRESHOLD`, `DEBATE_VOTING_PERIOD_MINUTES`, `DEBATE_ROOM_DURATION_MINUTES`, `DEBATE_VOTE_TICKET_MAX`, `DEBATE_VOTE_TICKET_REFILL_MINUTES`, `DEBATE_ACTIVE_PER_USER`, `DEBATE_MESSAGE_RATE_COUNT`, `DEBATE_MESSAGE_RATE_WINDOW_SECONDS`, `DEBATE_STREAM_PER_USER`, `DEBATE_STREAM_HEARTBEAT_SECONDS`. 글자 수 상한(제목 60, 설명 200, 선택지 20, 채팅 300)은 칼럼 크기와 같아서 설정이 아니라 모델 상수다.
+설정 이름: `DEBATE_ENABLED`, `DEBATE_VOTE_THRESHOLD`, `DEBATE_VOTING_PERIOD_MINUTES`, `DEBATE_ROOM_DURATION_MINUTES`, `DEBATE_VOTE_TICKET_MAX`, `DEBATE_VOTE_TICKET_REFILL_MINUTES`, `DEBATE_ACTIVE_PER_USER`, `DEBATE_MESSAGE_RATE_COUNT`, `DEBATE_MESSAGE_RATE_WINDOW_SECONDS`, `DEBATE_STREAM_PER_USER`, `DEBATE_STREAM_HEARTBEAT_SECONDS`, `DEBATE_RESULT_RETENTION_DAYS`. 글자 수 상한(제목 60, 설명 200, 선택지 20, 채팅 300)은 칼럼 크기와 같아서 설정이 아니라 모델 상수다.
 
 ### 6.2 투표권 계산
 
@@ -316,6 +325,7 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 | 10 | 채팅 삭제 시점 | 방 종료 후 다음 정리 작업(10분 안) |
 | 11 | 실시간 방식 | SSE + 일반 POST. 1차 허브는 서버 메모리, 여러 서버에서 켤 때 `LISTEN/NOTIFY`. Redis는 쓰지 않는다 |
 | 12 | 간단한 설명 칸 | 선택 항목으로 남겨둔다. 뺄지는 디자인 확정 때 정한다 |
+| 13 | 지난 토론방 결과 보관 | 끝난 뒤 9일 보여 주고 삭제(설정값). 보관 기간이 몇 일이든 하루에 끝나는 수와 사라지는 수는 같아진다. 기간이 정하는 것은 '목록에 늘 떠 있는 수(하루 종료 수 × 일수)'와 '놓친 사람이 결과를 볼 수 있는 기간'이고, 일주일에 한두 번 들어오는 사람도 볼 수 있게 7일보다 조금 긴 9일로 정했다 |
 
 남은 질문: 디자인의 '소각된 주제는 다시 투표' 문구의 뜻(1차 범위에서 제외).
 
@@ -330,7 +340,7 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 1. 규칙 설정·모델·migration·기능 스위치 (API 없음) — **완료**
 2. 투표 흐름 API(D-01~08, D-13~17) + 개설 알림 → 투표 화면 — **완료**. 테스트 `tests/test_debate_api.py`. 화면은 `NEXT_PUBLIC_DEBATE_DATA_SOURCE=api`면 진짜 API를 쓴다(열린 토론방의 채팅은 3단계에서 붙였다)
 3. 방 API(D-09~12) + 메모리 허브 + SSE → 토론방 화면 — **완료**. 테스트 `tests/test_debate_realtime.py`(허브, 스트림 본문, 진영·채팅·속도 제한, 다시 연결과 놓친 채팅, DB 연결 반납)
-4. 정리 작업 + 지난 토론방 → 지난 토론방 화면. 지난 토론방은 끝난 뒤 9일(설정값) 안의 것만 보여주고, 9일이 지나면 정리 작업이 토론 줄을 통째로 지운다(투표·진영 기록도 함께)
+4. 정리 작업 + 지난 토론방 → 지난 토론방 화면 — **완료**. 테스트 `tests/test_debate_finalize.py`(상태 저장·채팅 삭제·미리보기·다시 돌리기, 9일 보관과 삭제·연쇄 삭제, 다른 DB 거절). 로컬 PostgreSQL에서 끝난 방 2개를 닫고 채팅 9개를 지운 것을 확인했다
 5. Checking에서 실시간 확인([3.3](#33-구현-직후-checking에서-확인할-것)), 부하 시험 → README API 표 갱신
 
 테스트는 기존 일회용 SQLite 흐름(`tests/test_reports.py` 방식)으로 규칙을 확인하고, 동시 투표처럼 잠금이 필요한 확인은 PostgreSQL 전용 테스트로 따로 둔다. 1단계 확인은 `tests/test_debate_db.py`(migration과 모델이 같은 표를 만드는지, 규칙·연쇄 삭제·되돌리기 보호)다.
@@ -349,3 +359,4 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
    - `python scripts/debate_local_actors.py topic --title … --side-a … --side-b …`: 시험 계정이 주제를 올린다.
    - `python scripts/debate_local_actors.py chat --debate <번호> --count 4 --messages 20`: 열린 토론방에서 시험 계정 4명이 진영을 고르고 3초마다 채팅한다(가끔 진영도 바꾼다). 브라우저 토론방에 실시간으로 보인다.
    - `python scripts/debate_local_actors.py listen --debate <번호>`: 시험 계정으로 실시간 스트림을 열어 오는 이벤트를 그대로 찍는다(Ctrl+C로 끝).
+6. 정리 작업: `python -m app.jobs.finalize_debates --expected-database me_nu_debate`(미리보기) → 확인 뒤 `--apply`. 로컬에는 예약해 두지 않았으므로 필요할 때 직접 돌린다. 돌리지 않아도 화면은 시각으로 계산해서 맞게 보인다.

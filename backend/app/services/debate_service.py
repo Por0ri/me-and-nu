@@ -77,6 +77,25 @@ def _expired_now(now: datetime):
     return or_(Debate.status == "expired", and_(Debate.status == "voting", Debate.voting_ends_at <= now))
 
 
+def ended_at_column():
+    """끝나는(끝난) 시각: 열렸던 방은 방 종료 시각, 열리지 못한 주제는 투표 마감 시각."""
+    return func.coalesce(Debate.closes_at, Debate.voting_ends_at)
+
+
+def keep_after(now: datetime) -> datetime:
+    """이 시각보다 뒤에 끝났어야 보여 준다 (끝난 뒤 보관 기간 9일)."""
+    return now - timedelta(days=settings.debate_result_retention_days)
+
+
+def _kept(now: datetime):
+    """아직 진행 중이거나, 끝난 지 보관 기간이 안 지난 토론. 지난 것은 정리 작업이 돌기 전이라도 바로 숨긴다."""
+    return ended_at_column() > keep_after(now)
+
+
+def _is_kept(debate: Debate, now: datetime) -> bool:
+    return _aware(debate.closes_at or debate.voting_ends_at) > keep_after(now)
+
+
 def _percents(a: int, b: int) -> tuple[int | None, int | None]:
     total = a + b
     if total == 0:
@@ -330,10 +349,12 @@ async def _open(db: AsyncSession, debate: Debate, now: datetime) -> None:
 # ───────────── 조회 ─────────────
 
 async def get_debate(db: AsyncSession, user_id: int, debate_id: int) -> DebateSummary:
+    now = utcnow()
     debate = await db.get(Debate, debate_id)
-    if debate is None:
+    # 보관 기간이 지난 토론은 정리 작업이 지우기 전이라도 없는 것으로 본다.
+    if debate is None or not _is_kept(debate, now):
         raise _not_found()
-    return (await _summaries(db, user_id, [debate], utcnow()))[0]
+    return (await _summaries(db, user_id, [debate], now))[0]
 
 
 def _contains(column, text: str):
@@ -371,7 +392,9 @@ async def list_debates(
     else:
         statement = statement.where(_closed_now(now) if result == "closed" else _expired_now(now) if result == "expired"
                                     else or_(_closed_now(now), _expired_now(now)))
-        keyset = (func.coalesce(Debate.closes_at, Debate.voting_ends_at), Debate.debate_id)
+        # 지난 토론방은 끝난 지 보관 기간(9일) 안의 것만
+        statement = statement.where(_kept(now))
+        keyset = (ended_at_column(), Debate.debate_id)
     if keyset is not None:
         if cursor is not None:
             payload = decode_cursor(cursor, expected=context)
@@ -392,10 +415,12 @@ async def list_debates(
 
 
 async def list_my_debates(db: AsyncSession, user_id: int, limit: int = 20) -> DebateListResponse:
+    now = utcnow()
     rows = (await db.execute(
-        select(Debate).where(Debate.author_user_id == user_id).order_by(Debate.created_at.desc(), Debate.debate_id.desc()).limit(limit)
+        select(Debate).where(Debate.author_user_id == user_id, _kept(now))
+        .order_by(Debate.created_at.desc(), Debate.debate_id.desc()).limit(limit)
     )).scalars().all()
-    return DebateListResponse(items=await _summaries(db, user_id, list(rows), utcnow()))
+    return DebateListResponse(items=await _summaries(db, user_id, list(rows), now))
 
 
 async def list_my_votes(db: AsyncSession, user_id: int, limit: int = 30) -> DebateListResponse:
@@ -425,7 +450,7 @@ async def search(
     linked = exists().where(DebateWork.debate_id == Debate.debate_id, DebateWork.entity_id.in_(work_ids)) if work_ids else None
     text = or_(_contains(Debate.title, query), _contains(Debate.side_a_label, query), _contains(Debate.side_b_label, query))
     rows = list((await db.execute(
-        select(Debate).where(Debate.topic_id == topic_id, or_(text, linked) if linked is not None else text)
+        select(Debate).where(Debate.topic_id == topic_id, _kept(now), or_(text, linked) if linked is not None else text)
         .order_by(Debate.created_at.desc(), Debate.debate_id.desc()).limit(SEARCH_LIMIT)
     )).scalars().all())
     rank = {"open": 0, "voting": 1, "closed": 2, "expired": 3}
