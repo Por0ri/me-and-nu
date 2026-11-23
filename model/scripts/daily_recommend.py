@@ -43,8 +43,9 @@ except ModuleNotFoundError as exc:
 KST = timezone(timedelta(hours=9))
 TOPIC = "anime"
 TOP_N = 100                               # 유저마다 하루 순위 개수 (EXP-30)
-VERSION = "v1.1-beta"                     # recommendation_round.algorithm_version. 알고리즘을 바꾸면 새 이름
-                                          # (v1-usertest → v1.1-beta 11/18: 여러 작품 글 · 곁들임 · 다른 작품 자리 · 칩 맞춤 · 이유)
+VERSION = "v1.2-beta"                     # recommendation_round.algorithm_version. 알고리즘을 바꾸면 새 이름
+                                          # (v1-usertest → v1.1-beta 11/18: 여러 작품 글 · 곁들임 · 다른 작품 자리 · 칩 맞춤 · 이유
+                                          #  → v1.2-beta 11/19: 지나친 글은 하루 쉬고 다시 자리 후보, 오늘 나온 건 안 셈)
 LOCK = (20261029, 1)                      # 쓰기 잠금: 명령이 두 개 돌아도 한쪽씩 씀
 CAROUSEL_METHOD = "carousel_import_v1"    # 백엔드 carousel_repository 와 같은 값
 CHIPS = REPO / "model" / "catalog" / "chips.csv"
@@ -235,7 +236,8 @@ def recommend(user, visits, ctx, feed, posts, day, t, cfg, catalog_ids, chips=No
     slugs = {service.chip_slug(n) for n in user["genres"] + user["themes"]}
     order = v1.rank_feed(state, feed, day, cfg, k=len(posts)).tolist()
     out = []
-    for i, slot in service.compose(order, feed, posts, user["works"], slugs, ctx, seen=state.seen, top_n=TOP_N):
+    ready = service.slot_ready(state, day)                         # 지나친 글은 REST_DAYS 쉬고 다시 자리 후보 (11/19)
+    for i, slot in service.compose(order, feed, posts, user["works"], slugs, ctx, seen=state.seen, top_n=TOP_N, ready=ready):
         parts = service.score_parts(state, feed, i, day, cfg)
         out.append((i, sum(parts), service.explain(parts, posts[i], slot, user["works"], state, ctx, labels)))
     return out

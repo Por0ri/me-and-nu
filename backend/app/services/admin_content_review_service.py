@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
 from app.repositories import admin_content_review_repository as repo
-from app.schemas.admin_content_review import AdminContentReviewRequest, AdminContentReviewResponse
+from app.schemas.admin_content_review import AdminContentReviewRequest, AdminContentReviewResponse, AdminContentReviewScope
+from app.services.admin_permission_provider import valid_id
 from app.services.admin_review_permission_provider import AdminReviewGrant, AdminReviewPermissionProvider
 
 PREVIEW_KEYS = frozenset({"preview", "local_test_preview", "checking_test_preview"})
@@ -40,12 +41,13 @@ def _conflict():
 
 async def review_content(
     db: AsyncSession, content_id: int, request: AdminContentReviewRequest, *,
-    user_id: int, permissions: AdminReviewPermissionProvider,
+    user_id: int, permissions: AdminReviewPermissionProvider, expected_scope: AdminContentReviewScope,
 ) -> AdminContentReviewResponse:
     if type(content_id) is not int or not 0 < content_id <= 9223372036854775807:
         raise ValueError("Invalid content ID")
-    if type(user_id) is not int or user_id <= 0:
+    if not valid_id(user_id):
         raise ValueError("Invalid authenticated actor")
+    expected_scope = AdminContentReviewScope.model_validate(expected_scope)
     request = AdminContentReviewRequest.model_validate(request.model_dump())
     # Never silently commit another operation's transaction or use a savepoint
     # that could return success before the outer transaction actually commits.
@@ -57,9 +59,14 @@ async def review_content(
                 grant = await permissions.lock_grant(db, user_id=user_id, content_id=content_id)
             except Exception:
                 raise ApiError(503, "ADMIN_PERMISSION_UNAVAILABLE", "관리자 쓰기 권한을 확인할 수 없습니다.") from None
-            if (not isinstance(grant, AdminReviewGrant) or type(grant.user_id) is not int or grant.user_id != user_id
-                    or type(grant.admin_account_id) is not int or grant.admin_account_id <= 0):
+            if (not isinstance(grant, AdminReviewGrant) or not valid_id(grant.user_id) or grant.user_id != user_id
+                    or not valid_id(grant.admin_account_id)):
                 raise ApiError(403, "ADMIN_WRITE_REQUIRED", "콘텐츠 검수 쓰기 권한이 필요합니다.")
+            # Bind retries to the original authenticated actor AND grant ID.
+            # Check under the grant lock before reading a replay or touching content.
+            if (expected_scope.actor_user_id != user_id
+                    or expected_scope.admin_account_id != grant.admin_account_id):
+                raise ApiError(409, "REVIEW_SCOPE_CHANGED", "검수 계정 또는 권한이 변경되었습니다. 기존 요청의 처리 결과를 다시 확인해 주세요.")
             content = await repo.lock_content(db, content_id)
             if content is None:
                 raise ApiError(404, "CONTENT_NOT_FOUND", "콘텐츠를 찾을 수 없습니다.")

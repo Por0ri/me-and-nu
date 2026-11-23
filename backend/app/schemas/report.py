@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, StringConstraints, field_validator
+from pydantic import AwareDatetime, ConfigDict, Field, StringConstraints, field_validator
 
 from app.schemas.common import CamelModel
 
@@ -42,3 +42,26 @@ class InquiryCreateRequest(CamelModel):
 class InquiryResponse(CamelModel):
     inquiry_id: int
     status: Literal["received"]
+
+
+class OwnInquiryItem(CamelModel):
+    inquiry_id: str = Field(pattern=r"^[1-9][0-9]{0,18}$")
+    inquiry_type: InquiryType
+    status: Literal["received", "answered", "closed"]
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    preview: str
+    answer_availability: Literal["available", "none", "unavailable"]
+
+
+class OwnInquiryPage(CamelModel):
+    items: list[OwnInquiryItem]
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=50)
+    total: int = Field(ge=0)
+
+
+class OwnInquiryDetail(OwnInquiryItem):
+    detail: str
+    answer: str | None
+    answered_at: AwareDatetime | None

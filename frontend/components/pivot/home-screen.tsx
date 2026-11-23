@@ -365,7 +365,7 @@ export function HomeStatus({ state, onRetry }: { state: Exclude<HomeState, { sta
   </section>;
 }
 
-export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onRestart, onViewDetail, onMy, onSaved, onNotifications, bookmarks, onFirstImageReady, preparing = false }: {
+export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onLoadMore, onRestart, onViewDetail, onMy, onSaved, onNotifications, bookmarks, onFirstImageReady, preparing = false }: {
   state: HomeState;
   demo: boolean;
   query: string;
@@ -375,6 +375,7 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
   searchNotice?: SearchNotice | null;
   onSearchNoticeEnd?: () => void;
   onRetry: () => void;
+  onLoadMore?: () => void;
   onRestart?: () => void;
   onViewDetail?: HomeDetailHandler;
   onMy?: () => void;
@@ -414,6 +415,12 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
         : <SearchEmpty label={result.label} />}
     </section>
       : state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} onFirstImageReady={onFirstImageReady} impressions={!preparing} /> : <HomeStatus state={state} onRetry={onRetry} />}
+    {!result && !search?.open && state.status === "ready" && state.pagination && onLoadMore ? <section className={styles.footer} aria-label="추가 콘텐츠" data-home-pagination="">
+      {state.pagination.status === "error" ? <p role="alert">{state.pagination.message}</p> : null}
+      <button type="button" className={styles.button} onClick={onLoadMore} disabled={state.pagination.status === "loading"} aria-busy={state.pagination.status === "loading"}>
+        {state.pagination.status === "loading" ? "콘텐츠를 불러오고 있어요." : state.pagination.status === "error" ? "다음 콘텐츠 다시 시도" : "더 불러오기"}
+      </button>
+    </section> : null}
     {demo && onRestart ? <footer className={styles.footer}><button type="button" onClick={onRestart} className={styles.button}>처음부터 시연</button></footer> : null}
     <HomeNavigation onMy={onMy} onSaved={onSaved} onNotice={pending} chat={!demo} onViewDetail={onViewDetail} />
     {notice.message && !notice.postId ? <p className={styles.pendingNotice} role="status">{notice.message}</p> : null}

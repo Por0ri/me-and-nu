@@ -4,8 +4,8 @@ import { memberPageSize, type MemberDetail, type MemberQuery } from "../../lib/a
 export const memberFixtures: MemberDetail[] = Array.from({ length: 31 }, (_, index) => ({
   id: `fixture-${index + 1}`, nickname: index < 5 ? "김하루" : `테스트회원${index + 1}`,
   maskedEmail: "haru***@demo.test", provider: index < 5 || index % 2 === 0 ? "kakao" : "naver",
-  domain: "애니메이션", joinedAt: new Date(Date.UTC(2026, 10, 4, 23, 10) - index * 60_000).toISOString(), lastSeenAt: "2026-11-05T00:42:00Z",
-  status: (["active", "withdrawn", "dormant", "active", "restricted"] as const)[index % 5],
+  domain: "애니메이션", joinedAt: new Date(Date.UTC(2026, 10, 4, 23, 10) - index * 60_000).toISOString(), lastLoginAt: "2026-11-05T00:42:00Z",
+  status: (["active", "withdrawn", "warned", "suspended", "banned"] as const)[index % 5],
   history: [
     { changedAt: "2026-11-10T05:32:00Z", before: "하루별", after: "김하루" },
     { changedAt: "2026-11-09T05:32:00Z", before: "하루", after: "하루별" },
@@ -20,5 +20,5 @@ export function selectMemberFixtures(query: MemberQuery, records = memberFixture
   const filtered = records.filter(item => (!query.status || item.status === query.status) && (!query.provider || item.provider === query.provider) &&
     (!query.q || `${item.nickname} ${item.maskedEmail}`.toLocaleLowerCase().includes(query.q.toLocaleLowerCase())))
     .sort((a, b) => (Date.parse(b.joinedAt!) - Date.parse(a.joinedAt!)) * (query.sort === "oldest" ? -1 : 1));
-  return { total: filtered.length, items: filtered.slice((query.page - 1) * memberPageSize, query.page * memberPageSize) };
+  return { total: filtered.length, page: query.page, pageSize: memberPageSize, items: filtered.slice((query.page - 1) * memberPageSize, query.page * memberPageSize) };
 }

@@ -20,7 +20,7 @@ function modulesFor(fixture, { cookie = '', beforeComplete, loseCompleteResponse
   let loseResponse = loseCompleteResponse;
   const browser = new EventTarget();
   browser.location = { origin: 'http://localhost:3180', hostname: 'localhost' };
-  const context = vm.createContext({ URL, URLSearchParams, Headers, Response, AbortController, DOMException, Event, console,
+  const context = vm.createContext({ URL, URLSearchParams, Headers, Response, AbortController, DOMException, Event, console, setTimeout, clearTimeout, queueMicrotask,
     window: browser,
     process: { env: { NEXT_PUBLIC_API_BASE_URL: 'http://localhost:8180', NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API: 'true' } },
     fetch: async (url, init = {}) => {

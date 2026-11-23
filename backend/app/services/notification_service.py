@@ -35,6 +35,7 @@ from app.models import (
     ContentSource,
     DebateNotification,
     Entity,
+    Notice,
     Notification,
     NotificationSetting,
     RecommendationItem,
@@ -138,8 +139,11 @@ async def list_notifications(
 
     # 토론 기능이 꺼진 서버는 토론 표를 읽지 않는다 (그 서버 DB에 토론 migration이 없을 수 있다).
     debate_enabled = settings.debate_enabled
-    statement = select(Notification, Content.image_url, *([DebateNotification.debate_id] if debate_enabled else []))
+    statement = select(
+        Notification, Content.image_url, Notice.body, *([DebateNotification.debate_id] if debate_enabled else [])
+    )
     statement = statement.outerjoin(Content, Content.content_id == Notification.content_id)
+    statement = statement.outerjoin(Notice, and_(Notice.notice_id == Notification.notice_id, Notice.status == "published"))
     if debate_enabled:
         statement = statement.outerjoin(DebateNotification, DebateNotification.notification_id == Notification.notification_id)
     statement = statement.where(
@@ -172,7 +176,10 @@ async def list_notifications(
                 notification_id=n.notification_id,
                 type=n.notification_type,
                 title=n.title,
-                body=n.body,
+                # The stored delivery is a short preview. A published linked
+                # notice supplies its complete immutable body to this owner's
+                # existing inbox detail UI; old standalone notices still work.
+                body=notice_body if notice_body is not None else n.body,
                 topic_id=n.topic_id,
                 content_id=n.content_id,
                 image_url=image_url,
@@ -181,7 +188,7 @@ async def list_notifications(
                 read_at=n.read_at,
                 created_at=n.created_at,
             )
-            for n, image_url, *debate in page
+            for n, image_url, notice_body, *debate in page
         ],
         next_cursor=next_cursor,
     )

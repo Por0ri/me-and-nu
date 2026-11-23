@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     debate_stream_heartbeat_seconds: int = Field(default=20, gt=0)
     # 끝난 토론(방 종료·소각)의 결과를 지난 토론방에 보여 주는 날 수. 지나면 목록에서 빠지고 정리 작업이 지운다.
     debate_result_retention_days: int = Field(default=9, gt=0, le=365)
+    # Operator-provided offline evaluation artifact; never a client-selected path.
+    admin_recommendation_evaluation_path: str | None = Field(default=None, repr=False)
+    admin_service_evaluation_path: str | None = Field(default=None, repr=False)
 
     @model_validator(mode="after")
     def validate_session_backend(self) -> "Settings":

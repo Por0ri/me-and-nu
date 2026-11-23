@@ -1,4 +1,5 @@
 from pathlib import Path
+import runpy
 from types import SimpleNamespace
 
 import pytest
@@ -23,6 +24,14 @@ def test_service_target_does_not_include_deferred_birth_removal():
         command = next(line for line in text.splitlines() if "alembic" in line and "upgrade" in line)
         assert SERVICE_SCHEMA_REVISION in command
         assert "head" not in command
+
+
+def test_checking_guards_accept_the_service_revision_without_loading_app_config():
+    # These scripts also run standalone on the deployment host. A matching
+    # Compose command is insufficient if either independent guard is stale.
+    checking = Path("../deploy/checking")
+    assert runpy.run_path(str(checking / "validate.py"))["MIGRATION_REVISION"] == SERVICE_SCHEMA_REVISION
+    assert runpy.run_path(str(checking / "bootstrap.py"))["REVISION"] == SERVICE_SCHEMA_REVISION
 
 
 @pytest.mark.parametrize("revisions, expected", [

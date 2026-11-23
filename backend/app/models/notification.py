@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, String, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -17,7 +17,9 @@ NOTIFICATION_TYPES = (
 class Notification(Base):
     __tablename__ = "notification"
 
-    notification_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    notification_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("user_account.user_id", ondelete="CASCADE"), nullable=False
     )
@@ -29,12 +31,23 @@ class Notification(Base):
     content_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("content.content_id", ondelete="CASCADE")
     )
+    notice_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("notice.notice_id")
+    )
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "notice_id IS NULL OR notification_type = 'system_notice'",
+            name="ck_notification_notice_type",
+        ),
+        Index(
+            "uq_notification_user_notice", "user_id", "notice_id", unique=True,
+            postgresql_where=notice_id.is_not(None), sqlite_where=notice_id.is_not(None),
+        ),
         CheckConstraint(
             "notification_type IN (" + ", ".join(f"'{t}'" for t in NOTIFICATION_TYPES) + ")",
             name="ck_notification_type",

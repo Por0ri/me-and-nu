@@ -1,5 +1,6 @@
 import { apiBaseUrl, apiRequest, getPolicies, getSession, type Session } from "@/lib/api";
 import { validatePolicies } from "./consent";
+import { RequestTimeoutError, withRequestDeadline } from "../request-deadline";
 
 export type SnsProvider = "kakao" | "naver";
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -70,9 +71,9 @@ export function resolvePivotSessionRoute(session: Session | null, pathname: stri
   const protectedPath = ["/pivot/home", "/pivot/debate"].some((path) => pathname === path || pathname.startsWith(`${path}/`));
   return protectedPath ? "/pivot/login" : null;
 }
-export async function restorePivotSession(): Promise<Session> {
+export async function restorePivotSession(signal?: AbortSignal): Promise<Session> {
   requirePivotApi();
-  return getSession();
+  return getSession({ signal, shared: true });
 }
 export async function loadPivotPolicies(signal?: AbortSignal) {
   requirePivotApi();
@@ -104,12 +105,27 @@ export function validateAuthorizationUrl(value: unknown, provider: SnsProvider, 
 }
 
 /** Use the current browser's anonymous cookie and freshly read CSRF for the OAuth attempt. */
-export async function startSnsLogin(provider: SnsProvider): Promise<void> {
+export async function startSnsLogin(provider: SnsProvider, { signal }: { signal?: AbortSignal } = {}): Promise<void> {
   requirePivotApi();
   if (provider !== "kakao" && provider !== "naver") throw new Error("지원하지 않는 로그인 방법이에요.");
-  await getSession();
-  const result = await apiRequest<{ authorizationUrl: string }>(`/api/v1/auth/login/${provider}`, {
-    method: "POST", body: JSON.stringify({ purpose: "signin" }),
-  });
-  window.location.assign(validateAuthorizationUrl(result.authorizationUrl, provider, apiBaseUrl));
+  let authorizationStarted = false;
+  try {
+    await withRequestDeadline(async requestSignal => {
+      await getSession({ signal: requestSignal, shared: true });
+      requestSignal.throwIfAborted();
+      authorizationStarted = true;
+      const result = await apiRequest<{ authorizationUrl: string }>(`/api/v1/auth/login/${provider}`, {
+        method: "POST", body: JSON.stringify({ purpose: "signin" }), signal: requestSignal,
+      });
+      requestSignal.throwIfAborted();
+      window.location.assign(validateAuthorizationUrl(result.authorizationUrl, provider, apiBaseUrl));
+    }, { signal });
+  } catch (error) {
+    // Aborting does not prove the OAuth preparation POST was rolled back. Never
+    // resend it automatically or allow its late response to navigate the browser.
+    if (error instanceof RequestTimeoutError) throw new Error(authorizationStarted
+      ? "로그인 요청의 완료 여부를 확인하지 못했어요. 다시 로그인해 주세요."
+      : "로그인 상태 확인이 지연되고 있어요. 다시 시도해 주세요.");
+    throw error;
+  }
 }

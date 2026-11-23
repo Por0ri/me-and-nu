@@ -11,12 +11,19 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / "deploy/checking/.env"
+MIGRATION_REVISION = "94d2da693c10"
+EVALUATION_KEY = "CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH"
+EVALUATION_PATH = "/app/admin-evaluation/evaluation.json"
+SERVICE_EVALUATION_KEY = "CHECKING_ADMIN_SERVICE_EVALUATION_PATH"
+SERVICE_EVALUATION_PATH = "/app/admin-evaluation/service-evaluation.json"
+OPTIONAL_DEFAULTS = {EVALUATION_KEY: "", SERVICE_EVALUATION_KEY: ""}
 KEYS = {
     "CHECKING_IMAGE_TAG", "CHECKING_POSTGRES_PASSWORD", "CHECKING_REDIS_PASSWORD", "CHECKING_FORWARDED_ALLOW_IPS",
     "CHECKING_KAKAO_OAUTH_ENABLED", "CHECKING_KAKAO_CLIENT_ID", "CHECKING_KAKAO_CLIENT_SECRET",
     "CHECKING_NAVER_OAUTH_ENABLED", "CHECKING_NAVER_CLIENT_ID", "CHECKING_NAVER_CLIENT_SECRET",
     "CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED", "CHECKING_LLM_KEY", "CHECKING_DICT_DATABASE_URL",
     "CHECKING_CHAT_DAILY_TOTAL_LIMIT",
+    EVALUATION_KEY, SERVICE_EVALUATION_KEY,
 }
 # All users' chatbot questions per day: an explicit 1-999999 so a typo can never mean "unlimited" (0).
 DAILY_LIMIT = re.compile(r"[1-9][0-9]{0,5}")
@@ -37,8 +44,11 @@ class GuardError(ValueError):
 
 
 def validate_values(values, environ=None):
-    if set(values) != KEYS:
+    if set(values) - KEYS or (KEYS - OPTIONAL_DEFAULTS.keys()) - set(values):
         raise GuardError("The checking environment must contain exactly the keys in deploy/checking/.env.example.")
+    # Existing deployments stay disabled without requiring an unrelated environment edit.
+    for key, default in OPTIONAL_DEFAULTS.items():
+        values.setdefault(key, default)
     for key, value in values.items():
         if not isinstance(value, str) or re.search(r"[\s\"'`$#\\]", value):
             raise GuardError(f"Use a single unquoted value for {key}; whitespace and shell substitutions are not supported.")
@@ -59,6 +69,10 @@ def validate_values(values, environ=None):
     if not DAILY_LIMIT.fullmatch(values["CHECKING_CHAT_DAILY_TOTAL_LIMIT"]):
         raise GuardError("CHECKING_CHAT_DAILY_TOTAL_LIMIT must be a whole number from 1 to 999999 "
                          "(all users' chatbot questions per day, shared with the main API).")
+    if values[EVALUATION_KEY] not in ("", EVALUATION_PATH):
+        raise GuardError("The Checking evaluation path must be empty or /app/admin-evaluation/evaluation.json.")
+    if values[SERVICE_EVALUATION_KEY] not in ("", SERVICE_EVALUATION_PATH):
+        raise GuardError("The Checking service evaluation path must be empty or /app/admin-evaluation/service-evaluation.json.")
     try:
         addresses = values["CHECKING_FORWARDED_ALLOW_IPS"].split(",")
         if not addresses or any(ipaddress.ip_address(value).is_unspecified for value in addresses):
@@ -119,6 +133,10 @@ def validate_config(config, values):
             raise GuardError("Only the checking API may receive DICT_DATABASE_URL, and only from CHECKING_DICT_DATABASE_URL.")
         if environment.get("CHAT_DAILY_TOTAL_LIMIT") != (values["CHECKING_CHAT_DAILY_TOTAL_LIMIT"] if name == "api" else None):
             raise GuardError("Only the checking API may receive CHAT_DAILY_TOTAL_LIMIT, and only from CHECKING_CHAT_DAILY_TOTAL_LIMIT.")
+        if environment.get("ADMIN_RECOMMENDATION_EVALUATION_PATH") != (values.get(EVALUATION_KEY, "") if name == "api" else None):
+            raise GuardError("Only the checking API may receive ADMIN_RECOMMENDATION_EVALUATION_PATH from the Checking file.")
+        if environment.get("ADMIN_SERVICE_EVALUATION_PATH") != (values.get(SERVICE_EVALUATION_KEY, "") if name == "api" else None):
+            raise GuardError("Only the checking API may receive ADMIN_SERVICE_EVALUATION_PATH from the Checking file.")
         if environment.get("DATABASE_URL") != expected_db or environment.get("REDIS_URL") != expected_redis:
             raise GuardError(f"{name} must use the private checking database and Redis.")
         if environment.get("CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED") != values["CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED"]:
@@ -140,8 +158,8 @@ def validate_config(config, values):
             raise GuardError("Backend containers must retain process and privilege isolation.")
         if service.get("entrypoint"):
             raise GuardError("Checking backend containers cannot override the reviewed entrypoint.")
-    if services["migrate"].get("command") != ["python", "-m", "alembic", "upgrade", "94d2da693c10"]:
-        raise GuardError("Checking migration must target only 94d2da693c10; head/heads and DOB removal are forbidden.")
+    if services["migrate"].get("command") != ["python", "-m", "alembic", "upgrade", MIGRATION_REVISION]:
+        raise GuardError(f"Checking migration must target only {MIGRATION_REVISION}; head/heads and DOB removal are forbidden.")
     if services["api"].get("command"):
         raise GuardError("Checking API must retain the reviewed Dockerfile command.")
     dependencies = services["api"].get("depends_on", {})
@@ -166,8 +184,20 @@ def validate_config(config, values):
         mounts = services[name].get("volumes", [])
         if len(mounts) != 1 or mounts[0].get("type") != "volume" or mounts[0].get("source") != volume or mounts[0].get("target") != target:
             raise GuardError("Database mounts must use the dedicated checking volumes.")
-    if services["api"].get("volumes") or services["migrate"].get("volumes"):
-        raise GuardError("API and migration containers must not mount host or staging data.")
+    mounts = services["api"].get("volumes", [])
+    expected_source = ROOT / "deploy/checking/admin-evaluation"
+    if len(mounts) != 1:
+        raise GuardError("The Checking API must mount only its fixed read-only evaluation directory.")
+    mount = mounts[0]
+    if (set(mount) - {"type", "source", "target", "read_only", "bind"}
+            or mount.get("type") != "bind" or mount.get("target") != "/app/admin-evaluation"
+            # Compose versions may omit the explicit true default when rendering.
+            or mount.get("read_only") is not True or mount.get("bind") not in ({}, {"create_host_path": True})
+            or not Path(mount.get("source", "")).is_absolute()
+            or Path(mount.get("source", "")).resolve() != expected_source):
+        raise GuardError("The Checking API evaluation mount must use only its fixed source/target and read-only bind; symlink escapes are forbidden.")
+    if services["migrate"].get("volumes"):
+        raise GuardError("Migration containers must not mount host or evaluation data.")
     pg_env = services["postgres"].get("environment", {})
     if pg_env.get("POSTGRES_DB") != "me_nu_checking" or pg_env.get("POSTGRES_USER") != "me_nu_checking" or pg_env.get("POSTGRES_PASSWORD") != values["CHECKING_POSTGRES_PASSWORD"]:
         raise GuardError("PostgreSQL must use the dedicated checking database and account.")
@@ -211,6 +241,7 @@ def check(*, build=False):
     print(f"Chatbot LLM key for the API: {'set' if values['CHECKING_LLM_KEY'] else 'empty (chatbot answers off)'}.")
     print(f"Chatbot dictionary for the API: {'set' if values['CHECKING_DICT_DATABASE_URL'] else 'empty (dictionary off)'}.")
     print(f"Chatbot questions per day for all users: {values['CHECKING_CHAT_DAILY_TOTAL_LIMIT']} (counted together with the main API).")
+    print(f"Admin offline evaluation: {'configured' if values.get(EVALUATION_KEY) else 'disabled'} (read-only API mount).")
 
 
 def initialize(image_tag):

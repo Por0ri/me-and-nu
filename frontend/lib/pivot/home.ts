@@ -44,14 +44,15 @@ export type HomeViewModel = {
   cards: readonly HomeCardModel[];
 };
 
+export type HomePageLoader = (options: { signal: AbortSignal }) => Promise<HomeLoadResult>;
 export type HomeLoadResult =
-  | { status: "ready"; home: HomeViewModel }
+  | { status: "ready"; home: HomeViewModel; nextPage?: HomePageLoader }
   | HomeLoadError
   | { status: "unconfigured"; message: string };
 
 export type HomeLoadError = {
   status: "error";
-  reason: "unauthorized" | "forbidden" | "network" | "invalid-response" | "server";
+  reason: "unauthorized" | "forbidden" | "scope-changed" | "network" | "invalid-response" | "server";
   message: string;
 };
 
@@ -74,7 +75,7 @@ export interface HomeDataSource {
 
 export type HomeState =
   | { status: "loading" }
-  | { status: "ready"; home: HomeViewModel }
+  | { status: "ready"; home: HomeViewModel; pagination?: { status: "idle" | "loading" | "error"; message?: string } }
   | { status: "empty" }
   | { status: "error"; message: string; reason?: HomeLoadError["reason"] }
   | { status: "unconfigured"; message: string };
@@ -83,43 +84,68 @@ export type HomeState =
 export function createHomeRequestController(source: HomeDataSource, publish: (state: HomeState) => void, timeoutMs = 15_000) {
   let generation = 0;
   let active: AbortController | null = null;
+  let appending = false;
+  let state: HomeState = { status: "loading" };
+  let nextPage: HomePageLoader | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  return {
-    async load(): Promise<void> {
-      const request = ++generation;
-      clearTimeout(timer);
-      active?.abort();
-      const controller = new AbortController();
-      active = controller;
-      publish({ status: "loading" });
-      timer = setTimeout(() => {
-        if (request !== generation || controller.signal.aborted) return;
-        controller.abort();
-        publish({ status: "error", reason: "network", message: "콘텐츠 준비가 지연되고 있어요. 다시 시도해 주세요." });
-      }, timeoutMs);
-      try {
-        const result = await source.load({ signal: controller.signal });
-        if (request !== generation || controller.signal.aborted) return;
-        if (result.status !== "ready") {
-          publish(result);
-        } else {
-          // A miswired service source must never present demo fixtures as a live feed.
-          if (result.home.origin !== source.kind) throw new Error("Home source origin mismatch.");
-          publish(result.home.cards.length > 0 ? { status: "ready", home: result.home } : { status: "empty" });
-        }
-      } catch {
-        if (request === generation && !controller.signal.aborted) {
-          publish({ status: "error", message: "콘텐츠를 불러오지 못했어요. 다시 시도해 주세요." });
-        }
-      } finally {
-        if (active === controller) { clearTimeout(timer); active = null; }
+  const update = (next: HomeState) => { state = next; publish(next); };
+  function cancel() {
+    generation++;
+    clearTimeout(timer);
+    active?.abort(); active = null; appending = false;
+  }
+  async function requestPage(load: HomePageLoader, previous?: HomeViewModel): Promise<void> {
+    cancel();
+    const request = generation;
+    const controller = new AbortController();
+    active = controller; appending = !!previous;
+    if (!previous) nextPage = undefined;
+    update(previous ? { status: "ready", home: previous, pagination: { status: "loading" } } : { status: "loading" });
+    function fail(error: HomeLoadError) {
+      // Old-account or old-Topic cards must not survive an ownership failure.
+      if (previous && !["unauthorized", "forbidden", "scope-changed"].includes(error.reason)) {
+        update({ status: "ready", home: previous, pagination: { status: "error", message: error.message } });
+      } else { nextPage = undefined; update(error); }
+    }
+    timer = setTimeout(() => {
+      if (request !== generation || controller.signal.aborted) return;
+      controller.abort(); active = null; appending = false;
+      fail({ status: "error", reason: "network", message: "콘텐츠 준비가 지연되고 있어요. 다시 시도해 주세요." });
+    }, timeoutMs);
+    try {
+      const result = await load({ signal: controller.signal });
+      if (request !== generation || controller.signal.aborted) return;
+      if (result.status === "error") { fail(result); return; }
+      if (result.status !== "ready") { nextPage = undefined; update(result); return; }
+      if (result.home.origin !== source.kind) throw new Error("Home source origin mismatch.");
+      const cards = [...(previous?.cards ?? [])];
+      const ids = new Set(cards.map(card => `${card.topicId}:${card.id}`));
+      for (const card of result.home.cards) {
+        const key = `${card.topicId}:${card.id}`;
+        if (!ids.has(key)) { ids.add(key); cards.push(card); }
       }
+      nextPage = result.nextPage;
+      update(cards.length || nextPage ? { status: "ready", home: { origin: source.kind, cards },
+        ...(nextPage ? { pagination: { status: "idle" as const } } : {}) } : { status: "empty" });
+    } catch {
+      if (request === generation && !controller.signal.aborted) {
+        fail({ status: "error", reason: "network", message: "콘텐츠를 불러오지 못했어요. 다시 시도해 주세요." });
+      }
+    } finally {
+      if (active === controller) { clearTimeout(timer); active = null; appending = false; }
+    }
+  }
+  return {
+    load: () => requestPage(options => source.load(options)),
+    async loadMore() {
+      if (active || !nextPage || state.status !== "ready") return;
+      await requestPage(nextPage, state.home);
     },
-    cancel() {
-      generation++;
-      clearTimeout(timer);
-      active?.abort();
-      active = null;
+    cancelMore() {
+      if (!appending) return;
+      cancel();
+      if (state.status === "ready") update({ ...state, pagination: { status: "idle" } });
     },
+    cancel,
   };
 }

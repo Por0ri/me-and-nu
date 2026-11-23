@@ -2,6 +2,8 @@
 
 AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅 플랫폼입니다.
 
+2026-11-23 관리자 공지 목록·상세·작성·예약 발송의 최신 계약과 적용 순서는 [관리자 공지 API](../docs/ADMIN_NOTICES_API_2026-11-23.md)를 참고하세요. 현재 명시적 서비스 migration target은 `94d2da693c10`이며, 아래 날짜가 붙은 구현 현황은 당시 기록입니다.
+
 관리자 BE 통합의 권한·검수·멱등 재시도·수동 권한 부여·Migration·격리 PostgreSQL 검증은 [2026-11-18 관리자 계약](../docs/ADMIN_BE_INTEGRATION_2026-11-18.md)을 따릅니다. 관리자 콘텐츠 GET/검수 POST는 현재 DB 권한으로 보호되며, 실제 운영 적용과 FE 실행 버튼 연결은 별도 단계입니다.
 
 이 문서의 아래 전체 API 표는 [Notion API V1.1 명세서](https://app.notion.com/p/94604c45a961835bbd1601fc3ab15ac0)의 목표 목록입니다. 현재 구현된 로컬 범위는 다음 절에 따로 표시했습니다. 실제 공개 API 경로에는 끝의 `/`를 붙이지 않습니다. 세부 요청·응답의 기준은 각 Notion API 상세 페이지입니다.
@@ -58,7 +60,7 @@ cd backend
 
 신규 흐름은 `GET /api/v1/onboarding/works?topicId=...&q=...`로 작품을 1~5개 선택하고, `POST /api/v1/onboarding/preference-options`에 `{topicId,entityIds}`를 보내 활성 장르·소재 칩 전체를 받습니다. 선택 작품에 붙은 칩은 `sourceEntityIds`로 출처 작품을 알려 힌트로 씁니다. 칩은 장르와 소재를 각각 1개 이상, 종류별 7개까지 선택하고 기존 여섯 소비 유형 중 하나를 제출합니다. 두 조회는 가입 대기 세션을 사용하며 POST에는 CSRF가 필요합니다.
 
-완료 요청의 새 답변은 `answers:{version:2,favoriteEntityIds:[...],preferenceTagIds:[...],consumptionType:"world"}`입니다. 기존 프로필·정책·Topic 입력과 세션 교체는 유지합니다. 현재 카탈로그를 재검증한 뒤 답변·선택·동의·Tap을 함께 저장합니다. `entity` 등 신규 6개 테이블과 기존 `onboarding_answers` 버전 조건의 도입 revision은 `e3a7b9c2d451`입니다. 현재 서비스 target과 유일한 head는 캐러셀 확장 `f4b8c1d9a620`에 추천 연결 표 4개(`150a601074af`), 신고·문의 표 2개, 복구 대기 세션 상태, 내부 알림 설정, 추천 알림 종류, 검색 기록 표, 관리자 권한·조치 기록 표, 토론방 표, 토론 개설 알림 종류를 더한 `94d2da693c10`이며 [적용 경로](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 따릅니다. 생년월일 삭제 d2 파일은 이 후보에 포함하지 않습니다.
+완료 요청의 새 답변은 `answers:{version:2,favoriteEntityIds:[...],preferenceTagIds:[...],consumptionType:"world"}`입니다. 기존 프로필·정책·Topic 입력과 세션 교체는 유지합니다. 현재 카탈로그를 재검증한 뒤 답변·선택·동의·Tap을 함께 저장합니다. `entity` 등 신규 6개 테이블과 기존 `onboarding_answers` 버전 조건의 도입 revision은 `e3a7b9c2d451`입니다. 현재 서비스 target과 유일한 head는 캐러셀 확장 `f4b8c1d9a620`에 추천 연결 표 4개(`150a601074af`), 신고·문의 표 2개, 복구 대기 세션 상태, 내부 알림 설정, 추천 알림 종류, 검색 기록 표, 관리자 권한·조치 기록 표, 문의 답변 표, 관리자 공지 표, 토론방 표, 토론 개설 알림 종류를 더한 `94d2da693c10`이며 [적용 경로](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md#2-db-변경과-명시적-migration-대상)를 따릅니다. 생년월일 삭제 d2 파일은 이 후보에 포함하지 않습니다.
 
 카탈로그는 검토된 JSON을 `python -m app.seeds.onboarding_catalog --file <JSON> --expected-database <DB명>`으로 먼저 확인합니다. 기본은 dry-run이며 `--apply`만 저장합니다. [실작품 시작 카탈로그](app/seeds/onboarding_catalog_starter.json)는 대표작 30개·장르/소재 38개이며 [출처·선정 기준](../docs/ONBOARDING_CATALOG_SOURCES_2026-10-28.md)을 함께 관리합니다. 별도의 두 가상 작품 예시는 개발용 `--demo`에 한정됩니다. [JSON·API 상세 계약](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)과 [Pivot 연결 검증](../docs/ONBOARDING_FRONTEND_INTEGRATION_2026-10-28.md)을 참고하세요.
 

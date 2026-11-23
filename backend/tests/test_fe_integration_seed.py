@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     AgentRun, Content, ContentSlide, ContentReaction, ContentSource, ContentTag, Draft,
-    Policy, RecommendationRound, SavedItem, Subtopic, Tap, Topic, UserAccount,
+    Policy, RecommendationRound, SavedItem, Subtopic, Tap, Topic, UserAccount, UserEvent,
 )
 from app.seeds import fe_integration as seed
 from app.services import bookmark_service, feed_service, reaction_service
@@ -53,9 +53,12 @@ class AsyncAdapter:
     async def rollback(self):
         self.session.rollback()
 
+    async def delete(self, instance):
+        self.session.delete(instance)
+
 
 MODELS = (Topic, Subtopic, AgentRun, Draft, Content, ContentSlide, ContentSource, ContentTag,
-          UserAccount, Policy, SavedItem, ContentReaction, Tap, RecommendationRound)
+          UserAccount, Policy, SavedItem, ContentReaction, Tap, RecommendationRound, UserEvent)
 
 
 @pytest.fixture

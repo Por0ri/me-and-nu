@@ -22,7 +22,7 @@ from app.db.session import get_db
 from app.main import create_app
 from app.models import (
     AdminAccount, AgentRun, AuthSession, ConsentHistory, Content, CreatorChannel, Debate, DebateMember, DebateMessage,
-    DebateNotification, DebateSearchLog, DebateSide, DebateVote, DebateVoteTicket, DebateWork, Draft, Entity,
+    DebateNotification, DebateSearchLog, DebateSide, DebateVote, DebateVoteTicket, DebateWork, Draft, Entity, Notice,
     Notification, NotificationSetting, OAuthAttempt, OnboardingAnswersRecord, Policy, Subtopic, Tap, TapTopic, Topic,
     TopicCluster, UserAccount,
 )
@@ -30,10 +30,11 @@ from app.services import debate_service
 from test_oauth_postgres_flow import AsyncSqliteSession
 
 START = datetime(2026, 11, 19, 3, 0, tzinfo=timezone.utc)
-# 알림 표가 글(content)을 가리켜서 글 쪽 표(초안·채널·작품 묶음·에이전트 실행)도 만든다.
+# 알림 표가 글(content)과 관리자 공지(notice)를 가리켜서 글 쪽 표(초안·채널·작품 묶음·에이전트 실행)와 공지 표도 만든다.
 MODELS = (
     UserAccount, AdminAccount, AuthSession, OAuthAttempt, Topic, Subtopic, Policy, ConsentHistory, NotificationSetting,
-    Tap, TapTopic, OnboardingAnswersRecord, CreatorChannel, AgentRun, TopicCluster, Draft, Content, Entity, Notification,
+    Tap, TapTopic, OnboardingAnswersRecord, CreatorChannel, AgentRun, TopicCluster, Draft, Content, Entity, Notice,
+    Notification,
     Debate, DebateWork, DebateVote, DebateVoteTicket, DebateSide, DebateMember, DebateMessage, DebateNotification, DebateSearchLog,
 )
 

@@ -30,21 +30,24 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
   const [recent, setRecent] = useState<{ source: HomeDataSource; entries: RecentSearch[] } | null>(null);
   const [searchNotice, setSearchNotice] = useState<SearchNotice | null>(null);
   const searching = useRef<AbortController | null>(null);
+  const feedRequest = useRef<ReturnType<typeof createHomeRequestController> | null>(null);
   useEffect(() => {
     const controller = createHomeRequestController(source, (state) => setRequest({ source, state }));
+    feedRequest.current = controller;
     void controller.load();
-    return () => controller.cancel();
+    return () => { controller.cancel(); if (feedRequest.current === controller) feedRequest.current = null; };
   }, [source, attempt]);
-  useEffect(() => () => searching.current?.abort(), []);
+  useEffect(() => () => searching.current?.abort(), [source]);
   // Recent searches live in this browser only, so read them after mounting.
   useEffect(() => { setRecent({ source, entries: source.recent?.list() ?? [] }); }, [source]);
   // Never flash the previous source's data before the new effect starts.
   const state = request.source === source ? request.state : loading;
-  const [imageReady, setImageReady] = useState<HomeState | null>(null);
-  const firstImageReady = useCallback(() => setImageReady(state), [state]);
-  const needsImage = state.status === "ready" && !!state.home.cards[0]?.slides.length;
+  const firstCard = state.status === "ready" ? state.home.cards[0] : undefined;
+  const [imageReady, setImageReady] = useState<HomeCardModel>();
+  const firstImageReady = useCallback(() => setImageReady(firstCard), [firstCard]);
+  const needsImage = !!firstCard?.slides.length;
   const preparing = source.kind === "service" && !skipEntryLoading &&
-    (state.status === "loading" || (needsImage && imageReady !== state));
+    (state.status === "loading" || (needsImage && imageReady !== firstCard));
   useEffect(() => { if (restoreQuery !== undefined) setQuery(restoreQuery); }, [restoreQuery]);
   useEffect(() => { if (!preparing && (state.status === "ready" || state.status === "empty")) onReady?.(); }, [state.status, preparing, onReady]);
 
@@ -63,6 +66,7 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
   async function run(entry: RecentSearch) {
     const label = entry.label.trim();
     if (!label || !source.search) return;
+    feedRequest.current?.cancelMore();
     searching.current?.abort();
     const controller = new AbortController();
     searching.current = controller;
@@ -96,7 +100,7 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
     result,
     suggestions: suggested?.source === source && suggested.query === typed ? suggested.works : [],
     recent: recent?.source === source ? recent.entries : [],
-    onOpen: () => setOpen(true),
+    onOpen: () => { feedRequest.current?.cancelMore(); setOpen(true); },
     onBack: back,
     onClear: () => { setQuery(""); setOpen(true); },
     onClose: closeSearch,
@@ -110,6 +114,7 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
         onFirstImageReady={source.kind === "service" && !skipEntryLoading ? firstImageReady : undefined}
         onSearch={source.search ? (value) => void run({ label: value }) : undefined} search={search}
         searchNotice={searchNotice} onSearchNoticeEnd={() => setSearchNotice(null)}
+        onLoadMore={() => { if (!open && !result) void feedRequest.current?.loadMore(); }}
         onRetry={() => setAttempt((value) => value + 1)} onRestart={onRestart} onViewDetail={onViewDetail} onMy={onMy} onSaved={onSaved} onNotifications={onNotifications} bookmarks={bookmarks} />
     </div>
     {preparing ? <div className={styles.entryLoading} data-home-entry-loading=""><FeedLoadingScreen /></div> : null}

@@ -331,7 +331,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 ## 8. 기능 스위치와 배포 안전
 
 - 설정 `DEBATE_ENABLED`(기본 `false`). 꺼져 있으면 토론 API를 등록하지 않고(OpenAPI에서도 숨김), 알림함도 토론 테이블을 조회하지 않는다.
-- migration은 `47c1a8d6b302` 다음에 두 개로 나눴다. `a67ddf3dc55f`는 토론방 표 9개(2026-11-23 참여 표 `debate_member` 추가, 배포 전이라 같은 revision에 더함), `94d2da693c10`은 알림 종류 `debate_opened` 허용이다. 알림 종류 변경은 PostgreSQL 전용 문장이라, SQLite에서 올리고 내리는 시험과 섞지 않으려는 것이다.
+- migration은 두 개로 나눴다. 처음엔 `47c1a8d6b302` 다음이었고, 2026-11-24 Checking의 문의 답변(`83a2f9c7d104`)·관리자 공지(`b7d4e2a9c601`) 뒤로 다시 이었다(배포 전). `a67ddf3dc55f`는 토론방 표 9개(2026-11-23 참여 표 `debate_member` 추가, 배포 전이라 같은 revision에 더함), `94d2da693c10`은 알림 종류 `debate_opened` 허용이다. 알림 종류 변경은 PostgreSQL 전용 문장이라, SQLite에서 올리고 내리는 시험과 섞지 않으려는 것이다.
 - 테스트가 'head는 서비스 target 하나'를 요구하므로, 팀의 기존 방식대로 `SERVICE_SCHEMA_REVISION`과 배포 Compose 3종(Checking·deploy·labs)의 `alembic upgrade` 대상, Checking 배포 검사 스크립트를 `94d2da693c10`으로 올렸다. 이 브랜치가 합쳐져 배포되면 빈 토론 표가 생기지만, 기능 스위치가 꺼져 있어 동작은 바뀌지 않는다. main API(`compose.main.yaml`)는 migration을 하지 않고 Checking DB를 함께 쓴다.
 - 어떤 환경에서 기능을 켤 때는 그 환경 DB에 migration이 적용됐는지 먼저 확인한다.
 - 기능이 꺼진 상태에서는 새 테이블이 없어도 기존 기능이 그대로 돌아가야 한다([5.2](#52-기존-테이블-변경은-최소로)).

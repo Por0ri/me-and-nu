@@ -12,8 +12,9 @@ function load(file, dependencies = {}) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   });
   vm.runInNewContext(outputText, {
-    module, exports: module.exports, URL, process: { env: {} },
+    module, exports: module.exports, URL, AbortController, setTimeout, clearTimeout, process: { env: {} },
     require(name) {
+      if (name === '../request-deadline') return load('lib/request-deadline.ts');
       assert.ok(Object.hasOwn(dependencies, name), `Unexpected import: ${name}`);
       return dependencies[name];
     },

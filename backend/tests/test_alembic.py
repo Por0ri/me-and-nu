@@ -30,8 +30,14 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     assert debate_notification.down_revision == "a67ddf3dc55f"
     assert debate_notification.dependencies is None
     debate = script.get_revision("a67ddf3dc55f")
-    assert debate.down_revision == "47c1a8d6b302"
+    assert debate.down_revision == "b7d4e2a9c601"
     assert debate.dependencies is None
+    notices = script.get_revision("b7d4e2a9c601")
+    assert notices.down_revision == "83a2f9c7d104"
+    assert notices.dependencies is None
+    answer = script.get_revision("83a2f9c7d104")
+    assert answer.down_revision == "47c1a8d6b302"
+    assert answer.dependencies is None
     admin = script.get_revision("47c1a8d6b302")
     assert admin.down_revision == "d7b3e9a1c452"
     assert admin.dependencies is None

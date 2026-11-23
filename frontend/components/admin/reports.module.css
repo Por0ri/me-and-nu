@@ -91,3 +91,19 @@
   .drawerHeading p { margin-top: 12px; font-size: 14px; line-height: 22px; }
   .drawerScroll { height: calc(100% - 132px); padding: 0 16px 24px; }
 }
+.rawStatus { display: block; margin-top: 5px; color: #72717d; font-size: 12px; }
+.writePanel { border-top: 1px solid #e7e1f2; padding-top: 20px; }
+.writePanel h3 { margin: 0 0 12px; font-size: 16px; }
+.writeButtons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.writeButtons button { flex: 1; min-width: 88px; min-height: 40px; padding: 8px 12px; }
+.writeDialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; box-sizing: border-box; }
+.writeDialog form { display: grid; gap: 12px; }
+.writeDialog label { font-weight: 600; }
+.writeDialog textarea { box-sizing: border-box; width: 100%; resize: vertical; border: 1px solid #d4d4d8; border-radius: 8px; padding: 12px; font: inherit; line-height: 1.6; }
+.confirmation, .writeStatus { background: #f7f2ff; border: 1px solid #decfff; border-radius: 10px; padding: 12px; margin-top: 12px; overflow-wrap: anywhere; }
+.confirmation p { white-space: pre-wrap; max-height: 240px; overflow-y: auto; }
+.writeStatus p { margin: 8px 0; font-size: 14px; line-height: 1.6; }
+.writeStatus .requestNumber { font-size: 12px; color: #71717a; }
+.pending { max-width: 1381px; border: 1px solid #c7acfb; border-radius: 12px; padding: 16px; margin-bottom: 20px; background: #fff; }
+.pending h2 { font-size: 18px; margin: 0 0 8px; }
+.pending > p { color: #52525b; font-size: 14px; }

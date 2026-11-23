@@ -130,6 +130,17 @@ services:
       DICT_DATABASE_URL: ${CHECKING_DICT_DATABASE_URL:-}
       # All users' chatbot questions per day, counted together with the main API (same database).
       CHAT_DAILY_TOTAL_LIMIT: ${CHECKING_CHAT_DAILY_TOTAL_LIMIT:?Set the shared chatbot daily question limit}
+      # Optional server-owned offline evaluation. Empty keeps recommendation metrics unavailable.
+      ADMIN_RECOMMENDATION_EVALUATION_PATH: ${CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH:-}
+      ADMIN_SERVICE_EVALUATION_PATH: ${CHECKING_ADMIN_SERVICE_EVALUATION_PATH:-}
+    volumes:
+      # Bind the directory so an atomic evaluation.json replacement is visible without recreation.
+      - type: bind
+        source: ./deploy/checking/admin-evaluation
+        target: /app/admin-evaluation
+        read_only: true
+        bind:
+          create_host_path: true
     restart: unless-stopped
     mem_limit: 512m
     cpus: "0.50"

@@ -25,7 +25,7 @@ from app.models import (
 )
 from app.models.notification import NOTIFICATION_TYPES
 
-PARENT = "47c1a8d6b302"
+PARENT = "b7d4e2a9c601"
 TABLES_REVISION = "a67ddf3dc55f"
 NOTIFICATION_REVISION = "94d2da693c10"
 DEBATE_MODELS = (

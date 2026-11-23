@@ -1,8 +1,10 @@
 """토론방 표 추가
 
 Revision ID: a67ddf3dc55f
-Revises: 47c1a8d6b302
+Revises: b7d4e2a9c601
 Create Date: 2026-11-19
+
+2026-11-24 Checking의 문의 답변(83a2f9c7d104)·관리자 공지(b7d4e2a9c601) 뒤로 다시 이었다 (어느 서버에도 배포 전).
 
 새 표만 만든다. 주제가 투표 중 → 진행 중 → 종료·소멸로 가는 debate, 연결 작품, 개설 투표,
 회원별 투표권, 진영 선택, 방 참여(2026-11-23 추가, 배포 전이라 이 revision에 더했다), 방 채팅,
@@ -17,7 +19,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "a67ddf3dc55f"
-down_revision = "47c1a8d6b302"
+down_revision = "b7d4e2a9c601"
 branch_labels = None
 depends_on = None
 

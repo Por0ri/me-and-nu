@@ -4,6 +4,10 @@ from fastapi import APIRouter
 
 from app.api.v1.admin.router import router as admin_contents_router
 from app.api.v1.admin.review_router import router as admin_review_router
+from app.api.v1.admin.analytics_router import router as admin_analytics_router
+from app.api.v1.admin.members_router import router as admin_members_router
+from app.api.v1.admin.support_router import router as admin_support_router
+from app.api.v1.admin.notices_router import router as admin_notices_router
 from app.api.v1.auth.router import router as auth_router
 from app.api.v1.auth.oauth import router as oauth_router
 from app.api.v1.chat.router import router as chat_router
@@ -46,3 +50,7 @@ router.include_router(reports_router)
 router.include_router(inquiries_router)
 router.include_router(admin_contents_router)
 router.include_router(admin_review_router)
+router.include_router(admin_analytics_router)
+router.include_router(admin_members_router)
+router.include_router(admin_support_router)
+router.include_router(admin_notices_router)

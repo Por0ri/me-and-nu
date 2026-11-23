@@ -44,7 +44,7 @@
 43,장송의 프리렌,anilist,,Sousou no Frieren,Frieren: Beyond Journey’s End,葬送のフリーレン,2023,2027,3,491032,154587;182255;209939
 44,불꽃 소방대,manual,,Enen no Shouboutai,Fire Force,炎炎ノ消防隊,2019,2026,4,489547,105310;114236;149118;179062
 45,센과 치히로의 행방불명,wikidata,,Sen to Chihiro no Kamikakushi,Spirited Away,千と千尋の神隠し,2001,2001,1,485909,199
-46,스틸 볼 런,wikidata,,JoJo no Kimyou na Bouken (TV),JoJo's Bizarre Adventure (TV),ジョジョの奇妙な冒険 (TV),1993,2026,12,484635,666;665;3603;14719;20474;20799;21450;102883;131942;146722;190327;210482
+46,죠죠의 기묘한 모험,manual,,JoJo no Kimyou na Bouken (TV),JoJo's Bizarre Adventure (TV),ジョジョの奇妙な冒険 (TV),1993,2026,12,484635,666;665;3603;14719;20474;20799;21450;102883;131942;146722;190327;210482
 47,카우보이 비밥,wikidata,,Cowboy Bebop,Cowboy Bebop,カウボーイビバップ,1998,2001,3,472797,1;4037;5
 48,데스 퍼레이드,wikidata,,Death Parade,Death Parade,デス・パレード,2015,2015,1,471432,20931
 49,전생했더니 슬라임이었던 건에 대하여,manual,,Tensei Shitara Slime Datta Ken,That Time I Got Reincarnated as a Slime,転生したらスライムだった件,2018,2027,12,470243,101280;106509;108511;116741;116742;139498;161802;156822;182205;182206;217331;217330
@@ -106,7 +106,7 @@
 105,"여친, 빌리겠습니다",manual,,"Kanojo, Okarishimasu",Rent-a-Girlfriend,彼女、お借りします,2020,2026,5,311485,113813;124410;154745;179344;199029
 106,고블린 슬레이어,manual,,Goblin Slayer,GOBLIN SLAYER,ゴブリンスレイヤー,2018,2023,3,306492,101165;108623;129188
 107,원령공주,manual,,Mononoke-hime,Princess Mononoke,もののけ姫,1997,1997,1,305618,164
-108,클리나드,wikidata,,CLANNAD,Clannad,ＣＬＡＮＮＡＤ -クラナド-,2007,2009,5,303835,2167;1723;4181;4059;6351
+108,클라나드,manual,,CLANNAD,Clannad,ＣＬＡＮＮＡＤ -クラナド-,2007,2009,5,303835,2167;1723;4181;4059;6351
 109,갓 오브 하이스쿨,anilist,,THE GOD OF HIGH SCHOOL,The God of High School,THE GOD OF HIGH SCHOOL ゴッド・オブ・ハイスクール,2020,2020,1,301951,116006
 110,은혼,wikidata,,Gintama,Gintama,銀魂,2005,2021,16,299454,2951;918;6945;7472;9969;15417;15335;20996;20882;21501;97889;99714;100784;101925;114129;126819
 111,듀라라라!!,manual,,Durarara!!,Durarara!!,デュラララ!!,2010,2016,8,296468,6746;8408;20652;20879;21068;20880;21331;21695
@@ -287,7 +287,7 @@
 286,제로의 사역마,manual,,Zero no Tsukaima,The Familiar of Zero,ゼロの使い魔,2006,2012,5,158074,1195;1840;3712;5764;11319
 287,블루 피리어드,manual,,Blue Period,Blue Period,ブルーピリオド,2021,2021,1,156268,128705
 288,사랑한다고 말해,manual,,Sukitte Ii na yo.,"Say ""I love you"".",好きっていいなよ。,2012,2013,3,156179,14289;17409;16868
-289,어떤 과학의 초전차포,wikidata,,Toaru Kagaku no Railgun,A Certain Scientific Railgun,とある科学の超電磁砲,2009,2020,6,156020,6213;9047;9063;8023;16049;104462
+289,어떤 과학의 초전자포,manual,,Toaru Kagaku no Railgun,A Certain Scientific Railgun,とある科学の超電磁砲,2009,2020,6,156020,6213;9047;9063;8023;16049;104462
 290,좀비 랜드 사가,wikidata,,Zombie Land Saga,ZOMBIE LAND SAGA,ゾンビランドサガ,2018,2025,3,155878,103871;110733;140337
 291,내가 인기 없는 건 아무리 생각해도 너희들 탓이야!,manual,,Watashi ga Motenai no wa Dou Kangaetemo Omaera ga Warui!,"WataMote: No Matter How I Look At It, It's You Guys' Fault I'm Not Popular!",私がモテないのはどう考えてもお前らが悪い!,2013,2014,2,155758,16742;20453
 292,"거미입니다만, 문제라도?",wikidata,,"Kumo desu ga, Nani ka?","So I'm a Spider, So What?",蜘蛛ですが、なにか？,2021,2021,1,155715,103632
@@ -675,7 +675,7 @@
 674,NINJA KAMUI,wikidata,,Ninja Kamui,Ninja Kamui,Ninja Kamui,2024,2024,1,77970,151639
 675,,,입력 필요,"Isshun de Chiryou Shiteita no ni Yakutatazu to Tsuihou Sareta Tensai Chiyushi, Yami Healer Toshite Tanoshiku Ikiru",The Brilliant Healer's New Life in the Shadows,一瞬で治療していたのに役立たずと追放された天才治癒師、闇ヒーラーとして楽しく生きる,2025,2025,1,77889,175872
 676,,,입력 필요,Sekirei,,セキレイ,2008,2010,4,77581,4063;5279;5277;9355
-677,지옥소녀 후타코모리,wikidata,,Jigoku Shoujo,Hell Girl,地獄少女,2005,2008,3,77431,228;1594;3713
+677,지옥소녀,manual,,Jigoku Shoujo,Hell Girl,地獄少女,2005,2008,3,77431,228;1594;3713
 678,요자쿠라 일가의 대작전,kmrb,,Yozakura-san Chi no Daisakusen,Mission: Yozakura Family,夜桜さんちの大作戦,2024,2026,2,77412,158898;182578
 679,,,입력 필요,Berserk,Berserk (2016),ベルセルク,2012,2022,6,77264,10218;12113;12115;21560;97643;155011
 680,,,입력 필요,Campione!: Matsurowanu Kamigami to Kamigoroshi no Maou,Campione!,カンピオーネ！ ～まつろわぬ神々と神殺しの魔王～,2012,2012,1,77204,12293
@@ -866,7 +866,7 @@
 865,조시라쿠,wikipedia,,Joshiraku,Joshiraku,じょしらく,2012,2012,1,60524,12679
 866,언네임드 메모리,manual,확인 필요,Unnamed Memory,Unnamed Memory,Unnamed Memory,2024,2025,2,60522,158709;178550
 867,,,입력 필요,Angel Beats! Tokubetsu-hen,Angel Beats! Specials,エンジェルビーツ 特別篇,2010,2010,1,60513,9062
-868,네기마!?,wikidata,,UQ Holder!: Mahou Sensei Negima! 2,UQ Holder!,UQ Holder! ～魔法先生ネギま!2～,2005,2017,3,60475,157;1546;21855
+868,마법선생 네기마!,manual,,UQ Holder!: Mahou Sensei Negima! 2,UQ Holder!,UQ Holder! ～魔法先生ネギま!2～,2005,2017,3,60475,157;1546;21855
 869,암굴왕,wikidata,,Gankutsuou,Gankutsuou: The Count of Monte Cristo,巌窟王,2004,2004,1,60470,239
 870,리아데일의 대지에서,wikidata,,Leadale no Daichi nite,In the Land of Leadale,リアデイルの大地にて,2022,2022,1,60466,130166
 871,펀치라인,wikidata,,Punch Line,PUNCH LINE,パンチライン,2015,2015,1,60120,20964
@@ -1613,7 +1613,7 @@
 1612,별무리 텔레패스,wikipedia,,Hoshikuzu Telepath,Stardust Telepath,星屑テレパス,2023,2023,1,26257,155419
 1613,,,입력 필요,Tetsuwan Birdy DECODE,Birdy the Mighty: Decode,鉄腕バーディー DECODE,2008,2008,1,26241,3974
 1614,쓰리몬,wikipedia,확인 필요,Mitsudomoe,,みつどもえ,2010,2011,2,26237,7627;9510
-1615,아 여신님 각자의 날개,wikidata,,Aa! Megami-sama! (TV),Oh! My Goddess (TV),ああっ女神さまっ (TV),1993,2006,3,26225,49;50;880
+1615,오! 나의 여신님,manual,,Aa! Megami-sama! (TV),Oh! My Goddess (TV),ああっ女神さまっ (TV),1993,2006,3,26225,49;50;880
 1616,,,입력 필요,ALL OUT!!,All Out!!,ALL OUT!!,2016,2016,1,26150,21349
 1617,봇치 더 록! Re:,manual,확인 필요,Bocchi the Rock! Re:,BOCCHI THE ROCK! Recap Part 1,ぼっち・ざ・ろっく！Re:,2024,2024,2,26136,165253;171099
 1618,공녀 전하의 가정교사,wikidata,,Koujo Denka no Kateikyoushi,Private Tutor to the Duke's Daughter,公女殿下の家庭教師,2025,2025,1,26130,170113
@@ -1701,7 +1701,7 @@
 1700,흑신,wikipedia,확인 필요,Kurokami The Animation,Black God,黒神 The Animation,2009,2009,1,24055,5079
 1701,킹스레이드,wikidata,,King's Raid: Ishi wo Tsugumonotachi,KING's RAID: Successors of the Will,キングスレイド 意志を継ぐものたち,2020,2020,1,24025,118376
 1702,디즈니 트위스티드 원더랜드 더 애니메이션,manual,확인 필요,Disney Twisted-Wonderland: THE ANIMATION - Season 1: EPISODE of HEARTSLABYUL,Disney Twisted-Wonderland: The Animation,ディズニー ツイステッドワンダーランド ザ アニメーション シーズン1「エピソード オブ ハーツラビュル」,2025,2025,1,24010,140291
-1703,〈하루치카〉 시리즈,wikidata,,Haruchika: Haruta to Chika wa Seishun Suru,Haruchika - Haruta & Chika,ハルチカ～ハルタとチカは青春する～,2016,2016,1,23985,21213
+1703,하루치카,manual,,Haruchika: Haruta to Chika wa Seishun Suru,Haruchika - Haruta & Chika,ハルチカ～ハルタとチカは青春する～,2016,2016,1,23985,21213
 1704,울퉁불퉁 마녀 모녀의 사정,wikipedia,,Dekoboko Majo no Oyako Jijou,The Family Circumstances of the Irregular Witch,でこぼこ魔女の親子事情,2023,2023,1,23915,154454
 1705,한밤의 오컬트 공무원,wikipedia,,Mayonaka no Occult Koumuin,Midnight Occult Civil Servants,真夜中のオカルト公務員,2019,2019,1,23907,102939
 1706,,,입력 필요,Teekyuu,Teekyuu,てーきゅう,2012,2013,2,23858,15125;18121

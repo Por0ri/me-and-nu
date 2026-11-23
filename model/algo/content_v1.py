@@ -84,6 +84,8 @@ class UserState:
     opened: np.ndarray = field(init=False)    # 연 글 (열람·읽기 기록이 있을 때만 앎)
     blocked: np.ndarray = field(init=False)   # 그만볼래요 한 글
     full_read_day: np.ndarray = field(init=False)   # 글별 끝까지 본 마지막 날 (reread_days 를 쓸 때만 채움, 없으면 -inf)
+    seen_last: np.ndarray = field(init=False)       # 글별 화면에 나온 마지막 날 (날 번호를 알 때만, 없으면 -inf). service.slot_ready 가 씀
+    seen_prev: np.ndarray = field(init=False)       # 그 전에 화면에 나온 마지막 날 (없으면 -inf)
 
     def __post_init__(self):
         self.work_ev = np.zeros(self.n_catalog, dtype=np.float32)
@@ -94,6 +96,8 @@ class UserState:
         self.opened = np.zeros(self.n_feed, dtype=bool)
         self.blocked = np.zeros(self.n_feed, dtype=bool)
         self.full_read_day = np.full(self.n_feed, -np.inf)
+        self.seen_last = np.full(self.n_feed, -np.inf)
+        self.seen_prev = np.full(self.n_feed, -np.inf)
 
 
 def refresh_work_affinity(state, ctx, cfg):
@@ -195,7 +199,8 @@ def learn(state, events, feed, cfg, catalog_ids, day=None):
     events: (종류, 글 번호, 값) 목록. 종류: impression · open · read(값=본문 읽은 비율) ·
     swipe(값=(넘긴 뒤 장 번호, 전체 장 수)) · like · save · more · less · share.
     swipe 는 read 기록으로 친다: 같은 글에 카드 · 본문이 둘 다 있으면 큰 점수 하나만, 넘긴 글은 보고 지나침 감점 없음.
-    day: 이 접속의 날 번호. reread_days 를 쓸 때 카드 마지막 장 · 본문 READ_FULL 이상을 끝까지 본 날로 기록"""
+    day: 이 접속의 날 번호. reread_days 를 쓸 때 카드 마지막 장 · 본문 READ_FULL 이상을 끝까지 본 날로 기록.
+    노출이 있으면 그 글이 화면에 나온 마지막 두 날 (seen_last · seen_prev) 도 기록"""
     logs, opened_now, shown = cfg.logs, set(), []
     swiped, body, scored = {}, {}, set()
     if "read" in logs:
@@ -209,6 +214,8 @@ def learn(state, events, feed, cfg, catalog_ids, day=None):
             shown.append(c)
             if "impression" in logs:
                 state.seen[c] += 1
+                if day is not None and day > state.seen_last[c]:   # 같은 날 또 나오면 그대로
+                    state.seen_prev[c], state.seen_last[c] = state.seen_last[c], day
         elif kind == "open":
             opened_now.add(c)
             if "open" in logs or "read" in logs:

@@ -141,7 +141,8 @@ class RuntimeGuardTests(unittest.TestCase):
         plan.assert_not_called()
 
     def test_wrong_migration_prevents_seeding(self):
-        for revisions in (["47c1a8d6b302"], ["d2f6a9c4e731"], ["94d2da693c10", "d2f6a9c4e731"]):
+        for revisions in (["47c1a8d6b302"], ["d7b3e9a1c452"], ["b7d4e2a9c601"], ["d2f6a9c4e731"],
+                          ["94d2da693c10", "d2f6a9c4e731"]):
             with self.subTest(revisions=revisions):
                 self.connection.scalar.side_effect = [seed.DATABASE, seed.DATABASE]
                 self.connection.execute.return_value.scalars.return_value.all.return_value = revisions

@@ -19,6 +19,12 @@ class AdminReviewGrant:
 
 
 class AdminReviewPermissionProvider(Protocol):
+    async def read_grant(
+        self, db: AsyncSession, *, user_id: int, content_id: int,
+    ) -> AdminReviewGrant | None:
+        """Read current grant identity for binding an action; POST still locks it."""
+        ...
+
     async def can_review_content(
         self, db: AsyncSession, *, user_id: int, content_id: int,
     ) -> bool:
@@ -39,6 +45,9 @@ class AdminReviewPermissionProvider(Protocol):
 
 
 class DenyAdminReviewPermissionProvider:
+    async def read_grant(self, db: AsyncSession, *, user_id: int, content_id: int):
+        return None
+
     async def can_review_content(self, db: AsyncSession, *, user_id: int, content_id: int):
         return False
 
@@ -47,13 +56,19 @@ class DenyAdminReviewPermissionProvider:
 
 
 class DatabaseAdminReviewPermissionProvider:
+    async def read_grant(
+        self, db: AsyncSession, *, user_id: int, content_id: int,
+    ) -> AdminReviewGrant | None:
+        if not valid_id(user_id) or not valid_id(content_id):
+            return None
+        result = await db.execute(active_grant_query(user_id, REVIEW_CONTENT_ROLES))
+        grant = result.mappings().one_or_none()
+        return AdminReviewGrant(**grant) if grant is not None else None
+
     async def can_review_content(
         self, db: AsyncSession, *, user_id: int, content_id: int,
     ) -> bool:
-        if not valid_id(user_id) or not valid_id(content_id):
-            return False
-        result = await db.execute(active_grant_query(user_id, REVIEW_CONTENT_ROLES))
-        return result.one_or_none() is not None
+        return await self.read_grant(db, user_id=user_id, content_id=content_id) is not None
 
     async def lock_grant(
         self, db: AsyncSession, *, user_id: int, content_id: int,
