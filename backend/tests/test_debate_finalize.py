@@ -55,6 +55,7 @@ def setup_debates(debate_api):
     voters = [debate_api.member() for _ in range(2)]
     for member in (author, *voters):
         assert call(member, "PUT", f"/debates/{room}/vote").status_code == 200
+    assert call(voters[0], "PUT", f"/debates/{room}/membership").status_code == 200  # 참여한 사람만 채팅·진영
     call(voters[0], "PUT", f"/debates/{room}/side", json={"side": "a"})
     for index in range(3):
         assert call(voters[0], "POST", f"/debates/{room}/messages", json={"body": f"채팅 {index}"}).status_code == 201
@@ -80,10 +81,12 @@ def test_finalize_saves_ended_states_and_deletes_chat_of_closed_rooms(debate_api
     assert (detail["status"], detail["messageCount"], detail["result"], detail["participantCount"]) == ("closed", 3, "a", 1)
     assert finalize(debate_api) == {"mode": "apply", "retention_days": 9, **zero}  # 다시 돌려도 같다
 
+    # 7일 안에 기준 표를 못 받은 주제는 지난 토론방에 남기지 않고 바로 지운다 (투표도 함께).
     debate_api.clock.now = TOPIC_ENDS
+    assert call(author, "GET", f"/debates/{topic}").json()["code"] == "DEBATE_NOT_FOUND"  # 지우기 전에도 이미 없는 것으로 본다
+    assert finalize(debate_api, apply=False)["expired"] == 1
     assert finalize(debate_api)["expired"] == 1
-    assert counts(debate_api, topic)["status"] == "expired"
-    assert call(author, "GET", f"/debates/{topic}").json()["status"] == "expired"
+    assert counts(debate_api, topic) == {"status": None, "messages": 0, "votes": 0, "sides": 0, "works": 0, "notice_links": 0}
 
 
 def test_ended_debates_stay_nine_days_then_disappear_and_are_purged(debate_api):
@@ -93,16 +96,16 @@ def test_ended_debates_stay_nine_days_then_disappear_and_are_purged(debate_api):
         return [row["debateId"] for row in call(member, "GET", "/debates", params={"status": "ended", **params}).json()["items"]]
 
     # 끝난 뒤 9일이 되기 직전까지는 지난 토론방·상세·검색·내 주제에 보인다 (정리 작업이 안 돌았어도 시각으로 계산).
+    # 기준 표를 못 받은 주제(topic, 7일째 마감)는 지난 토론방에 없다.
     debate_api.clock.now = ROOM_ENDS + KEEP - timedelta(seconds=1)
-    assert ended(author) == [topic, room]
+    assert ended(author) == [room]
     assert call(author, "GET", f"/debates/{room}").status_code == 200
     assert room in [row["debateId"] for row in call(author, "GET", "/debates/search", params={"topicId": 1, "q": "나루토"}).json()["debates"]]
     assert room in [row["debateId"] for row in call(author, "GET", "/users/me/debates").json()["items"]]
 
     # 9일이 지나면 정리 작업이 지우기 전이라도 바로 숨긴다.
     debate_api.clock.now = ROOM_ENDS + KEEP
-    assert ended(author) == [topic]
-    assert ended(author, result="closed") == []
+    assert ended(author) == []
     assert call(author, "GET", f"/debates/{room}").json()["code"] == "DEBATE_NOT_FOUND"
     assert call(author, "GET", "/debates/search", params={"topicId": 1, "q": "나루토"}).json()["debates"] == []
     assert call(author, "GET", "/users/me/debates").json()["items"] == []
@@ -116,13 +119,7 @@ def test_ended_debates_stay_nine_days_then_disappear_and_are_purged(debate_api):
         assert session.scalar(select(func.count()).select_from(Notification).where(Notification.notification_type == "debate_opened")) == 3
     notice = next(item for item in call(voters[0], "GET", "/users/me/notifications").json()["items"] if item["type"] == "debate_opened")
     assert notice["debateId"] is None  # '토론방 보러 가기' 연결만 없어진다
-
-    # 소각된 주제는 투표 마감(7일) 뒤 9일까지 남는다.
-    debate_api.clock.now = TOPIC_ENDS + KEEP - timedelta(seconds=1)
-    assert ended(author) == [topic] and finalize(debate_api)["purged_debates"] == 0
-    debate_api.clock.now = TOPIC_ENDS + KEEP
-    assert ended(author) == [] and finalize(debate_api)["purged_debates"] == 1
-    assert counts(debate_api, topic)["status"] is None
+    assert counts(debate_api, topic)["status"] is None  # 기준 표를 못 받은 주제는 같은 정리 작업에서 지워졌다
 
 
 @pytest.mark.parametrize("database_url", ["sqlite://", "postgresql+psycopg://user:secret@localhost/other_database"])

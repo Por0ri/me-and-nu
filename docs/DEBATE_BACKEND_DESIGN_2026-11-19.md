@@ -2,7 +2,7 @@
 
 2026-11-19 (Asia/Seoul). 팀 회의에서 정한 대략적 규칙과 디자인 초안을 바탕으로 한 **백엔드 설계**다. 팀 승인·배포를 뜻하지 않는다. 같은 날 담당자와 [9. 결정 기록](#9-결정-기록)의 항목을 확정했고, 모든 규칙 값은 한 곳(설정)에서 바꿀 수 있게 만든다. 예전 첨부 ERD의 `debate_*` 테이블은 다른 기획이었으므로 참고하지 않고 새로 설계했다. 하단 메뉴 등 화면 구성은 디자인 확정 후 별도로 다룬다.
 
-진행 상황: 1단계(규칙 설정·모델·migration·기능 스위치) 완료. migration은 `a67ddf3dc55f`(토론방 표 8개)와 `94d2da693c10`(알림 종류 `debate_opened`)이고 서비스 target을 `94d2da693c10`으로 올렸다. 이 브랜치가 합쳐져 배포되면 서버 DB에 빈 토론 표가 생기며, 기능 스위치가 꺼져 있어 동작은 바뀌지 않는다. 아직 어떤 서버 DB에도 적용하지 않았으므로 배포 전까지는 이 migration 파일을 고쳐 쓴다.
+진행 상황: 1단계(규칙 설정·모델·migration·기능 스위치) 완료. migration은 `a67ddf3dc55f`(토론방 표 9개)와 `94d2da693c10`(알림 종류 `debate_opened`)이고 서비스 target을 `94d2da693c10`으로 올렸다. 이 브랜치가 합쳐져 배포되면 서버 DB에 빈 토론 표가 생기며, 기능 스위치가 꺼져 있어 동작은 바뀌지 않는다. 아직 어떤 서버 DB에도 적용하지 않았으므로 배포 전까지는 이 migration 파일을 고쳐 쓴다.
 
 ## 1. 기능 요약 (회의 기준)
 
@@ -150,12 +150,14 @@ stateDiagram-v2
     voting --> [*]: 작성자 삭제 (표 0개일 때만)
     open --> closed: 열린 지 48시간
     closed --> [*]: 끝난 지 9일 (정리 작업이 삭제)
-    expired --> [*]: 마감 뒤 9일 (정리 작업이 삭제)
+    expired --> [*]: 바로 삭제 (정리 작업)
 ```
 
 - 응답에 쓰는 상태는 '저장된 상태 + 지금 시각'으로 계산한다. 예를 들어 저장은 `voting`이어도 투표 마감 시각이 지났으면 `expired`로 본다. 정리 작업이 늦게 돌아도 사용자는 항상 맞는 상태를 본다.
 - 정리 작업([5.3](#53-정리-작업-python--m-appjobsfinalize_debates))이 저장된 상태를 따라잡고 끝난 방의 채팅을 지운다.
-- 끝난 토론(방 종료·소각)은 끝난 뒤 9일(`DEBATE_RESULT_RETENTION_DAYS`) 동안 지난 토론방에 결과를 보여 준다. 끝난 시각은 열렸던 방은 방 종료 시각, 열리지 못한 주제는 투표 마감 시각이다. 9일이 지나면 정리 작업이 돌기 전이라도 목록·검색·내 주제·상세(404)에서 바로 빠진다. 상태처럼 시각으로 계산하는 것이다.
+- **7일 안에 10표를 못 받은 주제(`expired`)는 바로 삭제된다.** 지난 토론방에 남기지 않는다. 마감 시각이 지나면 정리 작업이 지우기 전이라도 목록·검색·내 주제·상세·투표(404)에서 바로 빠진다.
+- **48시간이 끝난 방(`closed`)만** 끝난 뒤 9일(`DEBATE_RESULT_RETENTION_DAYS`) 동안 지난 토론방에 어느 진영이 이겼는지 보여 준다(채팅은 남기지 않는다). 9일이 지나면 정리 작업이 돌기 전이라도 바로 빠진다. 상태처럼 시각으로 계산하는 것이다.
+- (2026-11-23 바로잡음: 처음에는 소각 주제도 지난 토론방에 9일 남겼는데, 회의 규칙은 '자동 삭제'였다.)
 
 ## 5. 데이터 설계
 
@@ -191,6 +193,8 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 
 **`debate_side`**: 진영 선택. PK `(debate_id, user_id)`, `side`(`a` 또는 `b`), `chosen_at`, `updated_at`.
 
+**`debate_member`**: 토론방 참여(2026-11-23 추가). PK `(debate_id, user_id)`, `history_after_message_id`(참여한 순간 그 방의 마지막 채팅 번호, 없으면 0), `joined_at`. 카카오톡 오픈채팅처럼 이 번호 뒤의 채팅만 보인다. 방을 나가면 줄을 지우고(고른 진영도 함께 지운다), 다시 참여하면 새 번호로 다시 만든다. 카드의 'N명 참여 중'은 이 표의 줄 수다. 인덱스 `(user_id, joined_at)`은 '참여 중인 방' 목록용이다. 아직 배포 전이라 별도 migration 없이 토론방 표 revision(`a67ddf3dc55f`)에 더했다.
+
 **`debate_message`**: 채팅. `message_id` bigserial PK, `debate_id`, `user_id`, `side`(보낸 순간의 진영, 고르지 않았으면 비어 있음), `body` varchar(300), `created_at`. 방이 끝나면 정리 작업이 지운다.
 
 **`debate_notification`**: 알림과 토론의 연결. `notification_id` PK FK → `notification`, `debate_id`, `user_id`, `(debate_id, user_id)` 유일.
@@ -212,9 +216,9 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 {"mode": "apply", "retention_days": 9, "expired": 0, "closed": 2, "deleted_messages": 9, "purged_debates": 0}
 ```
 
-- 투표 마감이 지난 `voting` → `expired`.
+- 투표 마감이 지난 `voting`(7일 안에 10표 미달)은 바로 지운다(`expired`에 개수). 투표도 함께 지워지고 쓴 투표권은 돌려주지 않는다.
 - 방 종료 시각이 지난 `open` → `closed`. 닫힌 방에 남은 `debate_message`를 모두 지운다. 채팅 수(`message_count`)와 진영 수는 남겨서 결과 화면에 쓴다.
-- 끝난 지 보관 기간(기본 9일)이 지난 토론은 `debate` 줄을 통째로 지운다. 투표·진영·관련 작품·개설 알림 연결(`debate_notification`)은 외래 키(CASCADE)로 함께 지워진다. 알림함의 개설 알림 글(`notification`)은 남고 '토론방 보러 가기' 연결(`debateId`)만 없어진다.
+- 끝난 지 보관 기간(기본 9일)이 지난 방은 `debate` 줄을 통째로 지운다. 투표·진영·참여·관련 작품·개설 알림 연결(`debate_notification`)은 외래 키(CASCADE)로 함께 지워진다. 알림함의 개설 알림 글(`notification`)은 남고 '토론방 보러 가기' 연결(`debateId`)만 없어진다.
 - 모두 조건을 건 `UPDATE`·`DELETE` 한 번씩이다. API가 같은 토론 줄을 잠그고 있으면(10번째 표, 채팅 저장) 기다렸다가 조건을 다시 확인하므로 마감 순간과 겹쳐도 안전하다. 여러 번 돌아도 결과가 같다.
 - 결과에는 개수만 출력한다. 토론 기능 스위치와 상관없이 그 DB의 토론 표를 정리한다(같은 DB를 쓰는 서버 중 한 곳에서만 예약하면 된다).
 
@@ -283,20 +287,22 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | D-01 | POST | `/debates` | 주제 올리기 `{topicId, title, description?, sideA, sideB, workIds[]}` (작품 0~3개) |
 | D-02 | GET | `/debates?topicId=&status=voting&sort=recent\|votes&entityId=` | 주제 투표 목록. '곧 열릴 주제'는 `sort=votes`, 작품 칩은 `entityId` |
 | D-03 | GET | `/debates?topicId=&status=open&entityId=` | 지금 열린 토론방 |
-| D-04 | GET | `/debates?topicId=&status=ended&result=closed\|expired&entityId=` | 지난 토론방 |
-| D-05 | GET | `/debates/{debateId}` | 상세: 상태, 비율, 내 투표, 내 진영, 결과 |
+| D-04 | GET | `/debates?topicId=&status=ended&entityId=` | 지난 토론방: 48시간이 끝난 방만, 끝난 뒤 9일까지 |
+| D-05 | GET | `/debates/{debateId}` | 상세: 상태, 비율, 작성자 닉네임, 참여 인원, 내 투표·진영·참여, 결과 |
 | D-06 | DELETE | `/debates/{debateId}` | 내 주제 삭제 |
 | D-07 | PUT | `/debates/{debateId}/vote` | 투표. 이미 했으면 투표권을 쓰지 않고 그대로 200 |
 | D-08 | DELETE | `/debates/{debateId}/vote` | 투표 취소 |
-| D-09 | PUT | `/debates/{debateId}/side` | 진영 고르기·바꾸기 `{side: "a" \| "b"}`. 바뀐 토론 요약을 돌려준다. 같은 진영을 다시 골라도 200 |
-| D-10 | GET | `/debates/{debateId}/messages?cursor=&limit=` | 이전 채팅 `{items, nextCursor}`. 최근 50개(최대 100)를 오래된 순으로, 더 이전은 cursor로. 열린 방에서만 |
-| D-11 | POST | `/debates/{debateId}/messages` | 채팅 보내기 `{body}` (앞뒤 공백을 지운 1~300자) → 201 저장된 메시지 |
-| D-12 | GET | `/debates/{debateId}/stream?after=` | 실시간 스트림(SSE, [3.2](#32-스트림-api-get-apiv1debatesdebateidstream)) |
+| D-09 | PUT | `/debates/{debateId}/side` | 진영 고르기·바꾸기 `{side: "a" \| "b"}`. 바뀐 토론 요약을 돌려준다. 같은 진영을 다시 골라도 200. 참여한 사람만 |
+| D-10 | GET | `/debates/{debateId}/messages?cursor=&limit=` | 이전 채팅 `{items, nextCursor}`. 참여한 뒤의 최근 50개(최대 100)를 오래된 순으로, 더 이전은 cursor로. 열린 방, 참여한 사람만 |
+| D-11 | POST | `/debates/{debateId}/messages` | 채팅 보내기 `{body}` (앞뒤 공백을 지운 1~300자) → 201 저장된 메시지. 참여한 사람만 |
+| D-12 | GET | `/debates/{debateId}/stream?after=` | 실시간 스트림(SSE, [3.2](#32-스트림-api-get-apiv1debatesdebateidstream)). 참여한 사람만, 놓친 채팅도 참여한 뒤의 것만 |
 | D-13 | GET | `/users/me/debate-tickets` | 내 투표권 `{balance, max, nextRefillAt}` |
 | D-14 | GET | `/users/me/debates` | 내가 올린 주제(내 주제 관리) |
 | D-15 | GET | `/users/me/debate-votes` | 내가 준 투표 |
 | D-16 | GET | `/debates/search?topicId=&q=&record=&pickedEntityId=` | 검색 입력창 하나: `{works[], debates[]}`. 작품 후보(최대 5개)와, 제목·선택지·연결 작품 이름·별칭에 글자가 들어간 토론(최대 30개)을 함께 준다. `topicId` 필수 |
 | D-17 | GET | `/debates/works?topicId=&q=` | 주제 올리기 화면의 작품 고르기. 회원용 작품 검색(`/me/taste/works`, 임시)과 같은 서비스를 쓴다. 검색어가 비면 빈 목록 |
+| D-18 | PUT | `/debates/{debateId}/membership` | 토론방 참여. 이미 참여 중이면 그대로 200. 열린 방에서만 |
+| D-19 | DELETE | `/debates/{debateId}/membership` | 토론방 나가기. 참여와 고른 진영을 지우고(진영 비율에서 빠짐) 그 사람의 실시간 연결을 끊는다. 보낸 채팅은 남는다. 참여 중이 아니어도 200. 열린 방에서만 |
 
 - 목록 응답은 `{items, nextCursor}`다. 다음 쪽(cursor)은 '투표 중·최신순'과 '지난 토론방'에만 있다. '개설 임박순'은 표 수가 계속 바뀌고 '지금 열린 방'은 수가 적어서 `limit`(최대 50)까지만 준다.
 - `topicId`는 목록에서 선택이다. 주면 그 분야만, 안 주면 전체를 보여준다. 주제 올리기와 검색에서는 필수다.
@@ -311,7 +317,8 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 
 | 상태 | code | 상황 |
 | --- | --- | --- |
-| 404 | `DEBATE_NOT_FOUND` | 없는 토론 |
+| 404 | `DEBATE_NOT_FOUND` | 없는 토론. 7일 안에 10표를 못 받은 주제, 끝난 지 9일이 지난 방도 여기에 해당 |
+| 403 | `DEBATE_NOT_JOINED` | 토론방에 참여하지 않고 채팅·진영·실시간 연결을 쓰려 함 |
 | 409 | `DEBATE_NOT_VOTING`, `DEBATE_NOT_OPEN` | 투표하거나 채팅할 수 없는 상태 |
 | 409 | `DEBATE_VOTE_TICKETS_EMPTY` | 투표권 없음. 다음 충전 시각을 함께 준다 |
 | 409 | `DEBATE_ACTIVE_LIMIT` | 진행 중인 내 주제가 이미 있음 |
@@ -322,7 +329,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 ## 8. 기능 스위치와 배포 안전
 
 - 설정 `DEBATE_ENABLED`(기본 `false`). 꺼져 있으면 토론 API를 등록하지 않고(OpenAPI에서도 숨김), 알림함도 토론 테이블을 조회하지 않는다.
-- migration은 `47c1a8d6b302` 다음에 두 개로 나눴다. `a67ddf3dc55f`는 토론방 표 8개, `94d2da693c10`은 알림 종류 `debate_opened` 허용이다. 알림 종류 변경은 PostgreSQL 전용 문장이라, SQLite에서 올리고 내리는 시험과 섞지 않으려는 것이다.
+- migration은 `47c1a8d6b302` 다음에 두 개로 나눴다. `a67ddf3dc55f`는 토론방 표 9개(2026-11-23 참여 표 `debate_member` 추가, 배포 전이라 같은 revision에 더함), `94d2da693c10`은 알림 종류 `debate_opened` 허용이다. 알림 종류 변경은 PostgreSQL 전용 문장이라, SQLite에서 올리고 내리는 시험과 섞지 않으려는 것이다.
 - 테스트가 'head는 서비스 target 하나'를 요구하므로, 팀의 기존 방식대로 `SERVICE_SCHEMA_REVISION`과 배포 Compose 3종(Checking·deploy·labs)의 `alembic upgrade` 대상, Checking 배포 검사 스크립트를 `94d2da693c10`으로 올렸다. 이 브랜치가 합쳐져 배포되면 빈 토론 표가 생기지만, 기능 스위치가 꺼져 있어 동작은 바뀌지 않는다. main API(`compose.main.yaml`)는 migration을 하지 않고 Checking DB를 함께 쓴다.
 - 어떤 환경에서 기능을 켤 때는 그 환경 DB에 migration이 적용됐는지 먼저 확인한다.
 - 기능이 꺼진 상태에서는 새 테이블이 없어도 기존 기능이 그대로 돌아가야 한다([5.2](#52-기존-테이블-변경은-최소로)).
@@ -345,7 +352,16 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | 10 | 채팅 삭제 시점 | 방 종료 후 다음 정리 작업(10분 안) |
 | 11 | 실시간 방식 | SSE + 일반 POST. 1차 허브는 서버 메모리, 여러 서버에서 켤 때 `LISTEN/NOTIFY`. Redis는 쓰지 않는다 |
 | 12 | 간단한 설명 칸 | 선택 항목으로 남겨둔다. 뺄지는 디자인 확정 때 정한다 |
-| 13 | 지난 토론방 결과 보관 | 끝난 뒤 9일 보여 주고 삭제(설정값). 보관 기간이 몇 일이든 하루에 끝나는 수와 사라지는 수는 같아진다. 기간이 정하는 것은 '목록에 늘 떠 있는 수(하루 종료 수 × 일수)'와 '놓친 사람이 결과를 볼 수 있는 기간'이고, 일주일에 한두 번 들어오는 사람도 볼 수 있게 7일보다 조금 긴 9일로 정했다 |
+| 13 | 지난 토론방 결과 보관 | 48시간이 끝난 방만 끝난 뒤 9일 보여 주고 삭제(설정값). 7일 안에 10표를 못 받은 주제는 지난 토론방 없이 바로 삭제. 보관 기간이 몇 일이든 하루에 끝나는 수와 사라지는 수는 같아진다. 기간이 정하는 것은 '목록에 늘 떠 있는 수(하루 종료 수 × 일수)'와 '놓친 사람이 결과를 볼 수 있는 기간'이고, 일주일에 한두 번 들어오는 사람도 볼 수 있게 7일보다 조금 긴 9일로 정했다 |
+
+2026-11-23 디자인 반영 때 추가로 정했다.
+
+| # | 질문 | 결정 |
+| --- | --- | --- |
+| 14 | 토론방 참여 | '토론 참여하기'로 참여한 사람만 채팅·진영 고르기를 한다. 카카오톡 오픈채팅처럼 참여한 뒤의 채팅만 보인다. 뒤로 가기로 나갔다 와도 그대로이고, '방 나가기'를 누르면 채팅 기록이 사라진다(다시 참여하면 그때부터) |
+| 15 | 방을 나가면 진영은 | 함께 취소한다. '참여 중 인원'과 진영 수가 어긋나지 않고, 승패도 마감 때 남아 있는 사람 기준이 된다. 나간 사람이 보낸 채팅은 다른 사람 화면에 남는다 |
+| 16 | 카드의 작성자 | 닉네임을 보여 준다(얼굴은 프로필 사진 기능 전까지 마스코트). 탈퇴했거나 지워진 회원은 '알 수 없음'. 채팅 닉네임도 같다 |
+| 17 | 참여 전 주소로 바로 들어오면 | 채팅 없이 방 정보와 '토론 참여하기'만 보여 준다(시안 전 임시, 써 보고 정한다) |
 
 남은 질문: 디자인의 '소각된 주제는 다시 투표' 문구의 뜻(1차 범위에서 제외).
 

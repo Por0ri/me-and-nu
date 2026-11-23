@@ -110,6 +110,14 @@ class DebateHub:
             self._deliver(subscriber, event)
         return len(subscribers)
 
+    def close_user(self, debate_id: int, user_id: int) -> int:
+        """한 방에서 한 사람의 연결만 끝낸다 (방 나가기). 끝낸 연결 수를 돌려준다."""
+        with self._lock:
+            subscribers = [subscriber for subscriber in self._rooms.get(debate_id, ()) if subscriber.user_id == user_id]
+        for subscriber in subscribers:
+            self._deliver(subscriber, CLOSE)
+        return len(subscribers)
+
     def close_all(self) -> None:
         """열린 연결을 모두 끝낸다 (테스트, 서버 정리용)."""
         with self._lock:

@@ -77,11 +77,14 @@ class DebateSummary(CamelModel):
     opened_at: datetime | None
     closes_at: datetime | None
     participant_count: int = Field(description="진영을 고른 사람 수")
+    member_count: int = Field(description="토론방에 참여 중인 사람 수 (방을 나가면 빠진다)")
+    joined: bool = Field(description="내가 이 토론방에 참여 중인지")
     message_count: int
     result: DebateResult | None = Field(description="종료된 방만: a·b 이긴 쪽, draw 동률, none 참여자 없음")
     my_vote: bool
     my_side: DebateSideKey | None
     is_mine: bool
+    author_nickname: str = Field(description="주제를 올린 사람. 탈퇴했거나 지워진 회원이면 '알 수 없음'")
     created_at: datetime
 
 

@@ -126,6 +126,12 @@ class Actor:
             raise ActorError(f"{self.nickname} 주제 올리기 실패: {response.status_code} {response.text}")
         return response.json()
 
+    def join(self, debate_id: int) -> None:
+        """토론방에 참여한다. 참여한 사람만 채팅·진영 고르기·실시간 연결을 할 수 있다."""
+        response = self.send("PUT", f"/api/v1/debates/{debate_id}/membership")
+        if response.status_code != 200:
+            raise ActorError(f"{self.nickname} 토론방 참여 실패: {response.status_code} {response.text}")
+
     def choose_side(self, debate_id: int, side: str) -> None:
         response = self.send("PUT", f"/api/v1/debates/{debate_id}/side", json={"side": side})
         if response.status_code != 200:
@@ -202,6 +208,7 @@ def run_chat(base_url: str, topic_id: int, debate_id: int, count: int, start: in
         rng = random.Random()
         sides: dict[int, str | None] = {}
         for actor in actors.values():
+            actor.join(debate_id)
             side = rng.choice(("a", "a", "b", "b", None))  # 몇 명은 진영 없이 채팅한다
             if side:
                 actor.choose_side(debate_id, side)
@@ -232,6 +239,7 @@ def run_listen(base_url: str, topic_id: int, debate_id: int, actor_index: int, a
     actor = Actor(base_url, actor_index, topic_id)
     try:
         actor.sign_in()
+        actor.join(debate_id)
         params = {"after": after} if after is not None else {}
         print(f"{actor.nickname}로 {debate_id}번 토론방 스트림을 엽니다. 끝내려면 Ctrl+C")
         with actor.client.stream("GET", f"/api/v1/debates/{debate_id}/stream", params=params,

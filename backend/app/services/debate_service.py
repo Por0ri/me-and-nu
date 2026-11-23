@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.models import (
-    Debate, DebateNotification, DebateSearchLog, DebateSide, DebateVote, DebateVoteTicket, DebateWork,
+    Debate, DebateMember, DebateNotification, DebateSearchLog, DebateSide, DebateVote, DebateVoteTicket, DebateWork,
     Entity, Notification, NotificationSetting, UserAccount,
 )
 from app.repositories import onboarding_catalog_repository as catalog_repo
@@ -32,6 +32,8 @@ from app.services.cursor import decode_cursor, encode_cursor
 
 DEBATE_OPENED = "debate_opened"
 ACTIVE_STATUSES = ("active", "warned")
+# 탈퇴했거나(유예 중 포함) 지워진 회원의 닉네임 대신 보여 주는 이름
+UNKNOWN_NICKNAME = "알 수 없음"
 SEARCH_TEXT_MAX = 50
 SEARCH_LIMIT = 30
 
@@ -96,6 +98,16 @@ def _is_kept(debate: Debate, now: datetime) -> bool:
     return _aware(debate.closes_at or debate.voting_ends_at) > keep_after(now)
 
 
+def _shown(now: datetime):
+    """보여 줄 토론: 투표 중·진행 중이거나, 방이 끝난 지 보관 기간 안인 것.
+    7일 안에 기준 표를 못 받은 주제는 바로 삭제되는 규칙이라, 정리 작업이 지우기 전이라도 숨긴다."""
+    return and_(~_expired_now(now), _kept(now))
+
+
+def _is_shown(debate: Debate, now: datetime) -> bool:
+    return effective_status(debate, now) != "expired" and _is_kept(debate, now)
+
+
 def _percents(a: int, b: int) -> tuple[int | None, int | None]:
     total = a + b
     if total == 0:
@@ -115,7 +127,7 @@ def _result(debate: Debate, status: str) -> str | None:
 
 
 async def _summaries(db: AsyncSession, user_id: int, debates: list[Debate], now: datetime) -> list[DebateSummary]:
-    """한 화면 분량을 한 번에 채운다: 작품, 내 표, 내 진영."""
+    """한 화면 분량을 한 번에 채운다: 작품, 작성자 닉네임, 참여 인원, 내 표, 내 진영, 내 참여."""
     if not debates:
         return []
     ids = [debate.debate_id for debate in debates]
@@ -134,6 +146,17 @@ async def _summaries(db: AsyncSession, user_id: int, debates: list[Debate], now:
     sides = dict((await db.execute(
         select(DebateSide.debate_id, DebateSide.side).where(DebateSide.user_id == user_id, DebateSide.debate_id.in_(ids))
     )).all())
+    members = dict((await db.execute(
+        select(DebateMember.debate_id, func.count()).where(DebateMember.debate_id.in_(ids)).group_by(DebateMember.debate_id)
+    )).all())
+    joined = set((await db.execute(
+        select(DebateMember.debate_id).where(DebateMember.user_id == user_id, DebateMember.debate_id.in_(ids))
+    )).scalars().all())
+    author_ids = {debate.author_user_id for debate in debates if debate.author_user_id is not None}
+    authors = dict((await db.execute(
+        select(UserAccount.user_id, UserAccount.nickname)
+        .where(UserAccount.user_id.in_(author_ids), UserAccount.account_status.in_(ACTIVE_STATUSES))
+    )).all()) if author_ids else {}
     threshold = settings.debate_vote_threshold
     result = []
     for debate in debates:
@@ -154,11 +177,15 @@ async def _summaries(db: AsyncSession, user_id: int, debates: list[Debate], now:
             opened_at=_aware(debate.opened_at),
             closes_at=_aware(debate.closes_at),
             participant_count=debate.side_a_count + debate.side_b_count,
+            member_count=members.get(debate.debate_id, 0),
+            joined=debate.debate_id in joined,
             message_count=debate.message_count,
             result=_result(debate, status),
             my_vote=debate.debate_id in voted,
             my_side=sides.get(debate.debate_id),
             is_mine=debate.author_user_id == user_id,
+            # 탈퇴했거나(유예 중 포함) 지워진 작성자는 닉네임을 보여 주지 않는다.
+            author_nickname=authors.get(debate.author_user_id) or UNKNOWN_NICKNAME,
             created_at=_aware(debate.created_at),
         ))
     return result
@@ -273,7 +300,10 @@ async def vote(db: AsyncSession, user_id: int, debate_id: int) -> DebateVoteResp
     now = utcnow()
     ticket = await _lock_ticket(db, user_id, now)
     debate = await _lock_debate(db, debate_id)
-    if effective_status(debate, now) != "voting":
+    status = effective_status(debate, now)
+    if status == "expired":  # 기준 표를 못 받은 주제는 삭제된 것으로 본다
+        raise _not_found()
+    if status != "voting":
         raise ApiError(409, "DEBATE_NOT_VOTING", "투표가 끝났거나 이미 열린 주제입니다.")
     already = await db.scalar(select(DebateVote.debate_id).where(DebateVote.debate_id == debate_id, DebateVote.user_id == user_id))
     opened = False
@@ -299,7 +329,10 @@ async def cancel_vote(db: AsyncSession, user_id: int, debate_id: int) -> DebateV
     now = utcnow()
     ticket = await _lock_ticket(db, user_id, now)
     debate = await _lock_debate(db, debate_id)
-    if effective_status(debate, now) != "voting":
+    status = effective_status(debate, now)
+    if status == "expired":  # 기준 표를 못 받은 주제는 삭제된 것으로 본다
+        raise _not_found()
+    if status != "voting":
         raise ApiError(409, "DEBATE_NOT_VOTING", "이미 열렸거나 끝난 주제라 취소할 수 없습니다.")
     removed = await db.execute(delete(DebateVote).where(DebateVote.debate_id == debate_id, DebateVote.user_id == user_id))
     if removed.rowcount:
@@ -351,8 +384,8 @@ async def _open(db: AsyncSession, debate: Debate, now: datetime) -> None:
 async def get_debate(db: AsyncSession, user_id: int, debate_id: int) -> DebateSummary:
     now = utcnow()
     debate = await db.get(Debate, debate_id)
-    # 보관 기간이 지난 토론은 정리 작업이 지우기 전이라도 없는 것으로 본다.
-    if debate is None or not _is_kept(debate, now):
+    # 기준 표를 못 받은 주제, 끝난 지 보관 기간이 지난 방은 정리 작업이 지우기 전이라도 없는 것으로 본다.
+    if debate is None or not _is_shown(debate, now):
         raise _not_found()
     return (await _summaries(db, user_id, [debate], now))[0]
 
@@ -363,7 +396,7 @@ def _contains(column, text: str):
 
 
 async def list_debates(
-    db: AsyncSession, user_id: int, *, status: str, sort: str, result: str, topic_id: int | None,
+    db: AsyncSession, user_id: int, *, status: str, sort: str, topic_id: int | None,
     entity_id: int | None, q: str | None, cursor: str | None, limit: int,
 ) -> DebateListResponse:
     now = utcnow()
@@ -377,7 +410,7 @@ async def list_debates(
         statement = statement.where(or_(
             _contains(Debate.title, query), _contains(Debate.side_a_label, query), _contains(Debate.side_b_label, query),
         ))
-    context = {"v": 1, "resource": "debates", "status": status, "sort": sort, "result": result,
+    context = {"v": 1, "resource": "debates", "status": status, "sort": sort,
                "topicId": topic_id, "entityId": entity_id, "q": query.lower()}
     keyset = None
     if status == "voting":
@@ -390,10 +423,8 @@ async def list_debates(
     elif status == "open":
         statement = statement.where(_open_now(now)).order_by(Debate.closes_at, Debate.debate_id)
     else:
-        statement = statement.where(_closed_now(now) if result == "closed" else _expired_now(now) if result == "expired"
-                                    else or_(_closed_now(now), _expired_now(now)))
-        # 지난 토론방은 끝난 지 보관 기간(9일) 안의 것만
-        statement = statement.where(_kept(now))
+        # 지난 토론방: 48시간이 끝난 방 중 끝난 지 보관 기간(9일) 안의 것만. 기준 표를 못 받은 주제는 바로 삭제돼 여기 없다.
+        statement = statement.where(_closed_now(now), _kept(now))
         keyset = (ended_at_column(), Debate.debate_id)
     if keyset is not None:
         if cursor is not None:
@@ -417,7 +448,7 @@ async def list_debates(
 async def list_my_debates(db: AsyncSession, user_id: int, limit: int = 20) -> DebateListResponse:
     now = utcnow()
     rows = (await db.execute(
-        select(Debate).where(Debate.author_user_id == user_id, _kept(now))
+        select(Debate).where(Debate.author_user_id == user_id, _shown(now))
         .order_by(Debate.created_at.desc(), Debate.debate_id.desc()).limit(limit)
     )).scalars().all()
     return DebateListResponse(items=await _summaries(db, user_id, list(rows), now))
@@ -450,7 +481,7 @@ async def search(
     linked = exists().where(DebateWork.debate_id == Debate.debate_id, DebateWork.entity_id.in_(work_ids)) if work_ids else None
     text = or_(_contains(Debate.title, query), _contains(Debate.side_a_label, query), _contains(Debate.side_b_label, query))
     rows = list((await db.execute(
-        select(Debate).where(Debate.topic_id == topic_id, _kept(now), or_(text, linked) if linked is not None else text)
+        select(Debate).where(Debate.topic_id == topic_id, _shown(now), or_(text, linked) if linked is not None else text)
         .order_by(Debate.created_at.desc(), Debate.debate_id.desc()).limit(SEARCH_LIMIT)
     )).scalars().all())
     rank = {"open": 0, "voting": 1, "closed": 2, "expired": 3}

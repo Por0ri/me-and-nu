@@ -5,7 +5,8 @@ Revises: 47c1a8d6b302
 Create Date: 2026-11-19
 
 새 표만 만든다. 주제가 투표 중 → 진행 중 → 종료·소멸로 가는 debate, 연결 작품, 개설 투표,
-회원별 투표권, 진영 선택, 방 채팅, 개설 알림과 토론의 연결, 토론 검색 기록이다. 기존 표는 바꾸지
+회원별 투표권, 진영 선택, 방 참여(2026-11-23 추가, 배포 전이라 이 revision에 더했다), 방 채팅,
+개설 알림과 토론의 연결, 토론 검색 기록이다. 기존 표는 바꾸지
 않는다. 알림 종류 규칙은 다음 revision(94d2da693c10)에서 따로 넓힌다.
 토론 데이터가 하나라도 있으면 downgrade를 거부한다. 설계: docs/DEBATE_BACKEND_DESIGN_2026-11-19.md
 """
@@ -25,6 +26,7 @@ TABLES = (
     "debate_search_log",
     "debate_notification",
     "debate_message",
+    "debate_member",
     "debate_side",
     "debate_vote_ticket",
     "debate_vote",
@@ -144,6 +146,19 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["user_account.user_id"], name="fk_debate_side_user_id", ondelete="CASCADE"),
         sa.CheckConstraint("side IN ('a', 'b')", name="ck_debate_side_side"),
     )
+
+    op.create_table(
+        "debate_member",
+        sa.Column("debate_id", sa.BigInteger(), nullable=False),
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("history_after_message_id", sa.BigInteger(), server_default="0", nullable=False),
+        sa.Column("joined_at", timestamp, server_default=sa.func.now(), nullable=False),
+        sa.PrimaryKeyConstraint("debate_id", "user_id", name="pk_debate_member"),
+        sa.ForeignKeyConstraint(["debate_id"], ["debate.debate_id"], name="fk_debate_member_debate_id", ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["user_account.user_id"], name="fk_debate_member_user_id", ondelete="CASCADE"),
+        sa.CheckConstraint("history_after_message_id >= 0", name="ck_debate_member_history"),
+    )
+    op.create_index("idx_debate_member_user_joined", "debate_member", ["user_id", "joined_at"])
 
     op.create_table(
         "debate_message",

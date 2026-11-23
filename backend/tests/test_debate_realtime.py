@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.debates.router import DebateStreamResponse, _resume_point
 from app.core.config import settings
-from app.models import DebateMessage, DebateSide
+from app.models import DebateMessage, DebateSide, UserAccount
 from app.schemas.debate import DebateMessageView
 from app.services import debate_hub, debate_service
 from app.services import debate_room_service as room
@@ -235,13 +235,24 @@ def test_resume_point_prefers_the_newest_id_the_browser_has():
 # ───────────── API ─────────────
 
 def open_room(debate_api):
+    """방을 열고 작성자·투표한 두 사람이 바로 참여한다 (채팅이 없을 때 참여해서 모든 채팅이 보인다)."""
     author = debate_api.member()
     debate_id = create(author).json()["debateId"]
     voters = [debate_api.member() for _ in range(2)]
     for member in (author, *voters):
         assert call(member, "PUT", f"/debates/{debate_id}/vote").status_code == 200
     assert call(author, "GET", f"/debates/{debate_id}").json()["status"] == "open"
+    for member in (author, *voters):
+        assert join(member, debate_id).status_code == 200
     return debate_id, author, voters
+
+
+def join(member, debate_id):
+    return call(member, "PUT", f"/debates/{debate_id}/membership")
+
+
+def leave(member, debate_id):
+    return call(member, "DELETE", f"/debates/{debate_id}/membership")
 
 
 def side(member, debate_id, value):
@@ -454,3 +465,83 @@ def test_prepare_stream_gives_the_db_connection_back_before_waiting(debate_api):
                 hub.unsubscribe(plan.subscriber)
 
     asyncio.run(scenario())
+
+
+def test_chat_of_a_withdrawn_member_stays_but_without_the_nickname(debate_api):
+    debate_id, _author, (first, second) = open_room(debate_api)
+    say(first, debate_id, "탈퇴하기 전에 남긴 채팅")
+    with Session(debate_api.engine) as session:
+        session.get(UserAccount, first.user_id).account_status = "withdrawn"
+        session.commit()
+    items = call(second, "GET", f"/debates/{debate_id}/messages").json()["items"]
+    assert [(item["body"], item["nickname"]) for item in items] == [("탈퇴하기 전에 남긴 채팅", "알 수 없음")]
+
+
+
+# ───────────── 참여·나가기 (D-18·19) ─────────────
+
+def test_only_members_chat_and_they_see_chat_from_when_they_joined(debate_api, fast_stream):
+    debate_id, _author, (first, second) = open_room(debate_api)
+    late = debate_api.member()
+    card = call(late, "GET", f"/debates/{debate_id}").json()
+    assert (card["memberCount"], card["joined"]) == (3, False)
+    # 참여하지 않으면 채팅·진영·실시간 연결을 쓸 수 없다.
+    for response in (call(late, "GET", f"/debates/{debate_id}/messages"), say(late, debate_id, "몰래"),
+                     side(late, debate_id, "a"), call(late, "GET", f"/debates/{debate_id}/stream")):
+        assert response.status_code == 403 and response.json()["code"] == "DEBATE_NOT_JOINED"
+
+    before = say(first, debate_id, "참여 전 채팅").json()["messageId"]
+    joined = join(late, debate_id).json()
+    assert (joined["memberCount"], joined["joined"]) == (4, True)
+    assert join(late, debate_id).json()["memberCount"] == 4  # 두 번 참여해도 한 번
+    assert call(late, "GET", f"/debates/{debate_id}/messages").json()["items"] == []  # 참여 전 채팅은 안 보인다
+    after = say(second, debate_id, "참여 후 채팅").json()["messageId"]
+    assert [item["messageId"] for item in call(late, "GET", f"/debates/{debate_id}/messages").json()["items"]] == [after]
+    # 다시 연결하며 놓친 채팅을 받을 때도 참여 전 것은 빼고 보낸다.
+    response = finish(*open_stream(debate_api, late, debate_id, params={"after": 0}))
+    assert [event_id for kind, event_id, _ in events(response.text) if kind == "chat"] == [str(after)]
+    assert before < after
+
+
+def test_leaving_drops_the_member_and_side_and_rejoining_starts_fresh(debate_api, fast_stream):
+    debate_id, _author, (first, second) = open_room(debate_api)
+    side(first, debate_id, "a")
+    old = say(first, debate_id, "나가기 전 채팅").json()["messageId"]
+    thread, result = open_stream(debate_api, second, debate_id)
+
+    left = leave(first, debate_id).json()
+    assert (left["joined"], left["memberCount"], left["mySide"], left["sideA"]["count"], left["participantCount"]) == (False, 2, None, 0, 0)
+    assert leave(first, debate_id).status_code == 200  # 이미 나갔어도 그대로
+    # 나간 사람의 채팅은 다른 사람 화면에 남는다.
+    assert [item["messageId"] for item in call(second, "GET", f"/debates/{debate_id}/messages").json()["items"]] == [old]
+    assert call(first, "GET", f"/debates/{debate_id}/messages").json()["code"] == "DEBATE_NOT_JOINED"
+    # 진영이 취소되면 방에 있는 사람들에게 새 비율이 간다.
+    response = finish(thread, result)
+    assert ("sides", None, {"sideA": {"label": "나루토", "count": 0, "percent": None},
+                            "sideB": {"label": "사스케", "count": 0, "percent": None}, "participantCount": 0}) in events(response.text)
+
+    # 다시 참여하면 그때부터 새로 시작한다 (나가기 전 채팅은 안 보인다).
+    rejoined = join(first, debate_id).json()
+    assert (rejoined["joined"], rejoined["memberCount"], rejoined["mySide"]) == (True, 3, None)
+    assert call(first, "GET", f"/debates/{debate_id}/messages").json()["items"] == []
+
+
+def test_leaving_ends_the_members_own_live_connection(debate_api, fast_stream):
+    debate_id, _author, (first, _second) = open_room(debate_api)
+    thread, result = open_stream(debate_api, first, debate_id)
+    leave(first, debate_id)
+    thread.join(5)  # 허브가 이 사람의 연결만 끝낸다 (close_all 없이)
+    assert not thread.is_alive() and result["response"].status_code == 200
+    assert hub.count() == 0
+
+
+def test_join_and_leave_only_while_the_room_is_open(debate_api):
+    debate_id, _author, (first, _second) = open_room(debate_api)
+    voting = create(debate_api.member(), title="투표 중인 주제").json()["debateId"]
+    assert join(first, voting).json()["code"] == "DEBATE_NOT_OPEN"
+    assert leave(first, voting).json()["code"] == "DEBATE_NOT_OPEN"
+    assert call(first, "PUT", "/debates/999/membership").json()["code"] == "DEBATE_NOT_FOUND"
+    no_csrf = first.client.put(f"/api/v1/debates/{debate_id}/membership")
+    assert no_csrf.status_code == 403 and no_csrf.json()["code"] == "CSRF_INVALID"
+    debate_api.clock.now = START + timedelta(hours=48)
+    assert leave(first, debate_id).json()["code"] == "DEBATE_NOT_OPEN"  # 끝난 방의 진영(결과)은 바꿀 수 없다

@@ -200,6 +200,31 @@ class DebateSide(Base):
     )
 
 
+class DebateMember(Base):
+    """토론방 참여. 카카오톡 오픈채팅처럼 참여한 순간부터의 채팅만 보인다. 방을 나가면 지워지고(고른 진영도
+    함께 취소), 다시 참여하면 그 순간부터 다시 시작한다. 채팅·진영 고르기·실시간 연결은 참여한 사람만 할 수 있다."""
+
+    __tablename__ = "debate_member"
+
+    debate_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("debate.debate_id", ondelete="CASCADE"), primary_key=True, autoincrement=False
+    )
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("user_account.user_id", ondelete="CASCADE"), primary_key=True, autoincrement=False
+    )
+    # 참여한 순간 그 방의 마지막 채팅 번호. 이 번호보다 뒤의 채팅만 보여 준다 (채팅이 없었으면 0).
+    history_after_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("history_after_message_id >= 0", name="ck_debate_member_history"),
+        # 내가 참여 중인 방 목록
+        Index("idx_debate_member_user_joined", "user_id", "joined_at"),
+    )
+
+
 class DebateMessage(Base):
     """토론방 채팅. 방이 끝나면 정리 작업이 지운다 (채팅 내역은 남기지 않는다).
 

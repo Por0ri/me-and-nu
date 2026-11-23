@@ -20,7 +20,7 @@ from sqlalchemy.dialects import postgresql
 from app.core.config import Settings
 from app.db.base import Base
 from app.models import (
-    Debate, DebateMessage, DebateNotification, DebateSearchLog, DebateSide, DebateVote,
+    Debate, DebateMember, DebateMessage, DebateNotification, DebateSearchLog, DebateSide, DebateVote,
     DebateVoteTicket, DebateWork,
 )
 from app.models.notification import NOTIFICATION_TYPES
@@ -29,7 +29,7 @@ PARENT = "47c1a8d6b302"
 TABLES_REVISION = "a67ddf3dc55f"
 NOTIFICATION_REVISION = "94d2da693c10"
 DEBATE_MODELS = (
-    Debate, DebateWork, DebateVote, DebateVoteTicket, DebateSide, DebateMessage, DebateNotification,
+    Debate, DebateWork, DebateVote, DebateVoteTicket, DebateSide, DebateMember, DebateMessage, DebateNotification,
     DebateSearchLog,
 )
 DEBATE_TABLES = {model.__tablename__ for model in DEBATE_MODELS}
@@ -319,8 +319,8 @@ def test_debate_tables_migration_is_additive_and_guards_downgrade(monkeypatch):
             assert str(sa.schema.CreateIndex(index).compile(dialect=postgresql.dialect())) in upgrade_sql
 
     lock = downgrade_sql.index(
-        "LOCK TABLE debate_search_log, debate_notification, debate_message, debate_side, debate_vote_ticket, "
-        "debate_vote, debate_work, debate IN ACCESS EXCLUSIVE MODE"
+        "LOCK TABLE debate_search_log, debate_notification, debate_message, debate_member, debate_side, "
+        "debate_vote_ticket, debate_vote, debate_work, debate IN ACCESS EXCLUSIVE MODE"
     )
     guard = downgrade_sql.index("RAISE EXCEPTION 'Refusing to discard debate data'")
     first_drop = downgrade_sql.index("DROP TABLE debate_search_log")

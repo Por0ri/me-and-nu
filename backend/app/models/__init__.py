@@ -23,7 +23,7 @@ from app.models.chat import (
 from app.models.content import Content, ContentSource, Draft
 from app.models.content_slide import ContentSlide
 from app.models.debate import (
-    Debate, DebateMessage, DebateNotification, DebateSearchLog, DebateSide, DebateVote,
+    Debate, DebateMember, DebateMessage, DebateNotification, DebateSearchLog, DebateSide, DebateVote,
     DebateVoteTicket, DebateWork,
 )
 from app.models.notification import Notification
@@ -71,6 +71,7 @@ __all__ = [
     "DebateMessage",
     "DebateNotification",
     "DebateSearchLog",
+    "DebateMember",
     "DebateSide",
     "DebateVote",
     "DebateVoteTicket",

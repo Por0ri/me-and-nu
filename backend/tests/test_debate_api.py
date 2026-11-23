@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.main import create_app
 from app.models import (
-    AdminAccount, AgentRun, AuthSession, ConsentHistory, Content, CreatorChannel, Debate, DebateMessage,
+    AdminAccount, AgentRun, AuthSession, ConsentHistory, Content, CreatorChannel, Debate, DebateMember, DebateMessage,
     DebateNotification, DebateSearchLog, DebateSide, DebateVote, DebateVoteTicket, DebateWork, Draft, Entity,
     Notification, NotificationSetting, OAuthAttempt, OnboardingAnswersRecord, Policy, Subtopic, Tap, TapTopic, Topic,
     TopicCluster, UserAccount,
@@ -34,7 +34,7 @@ START = datetime(2026, 11, 19, 3, 0, tzinfo=timezone.utc)
 MODELS = (
     UserAccount, AdminAccount, AuthSession, OAuthAttempt, Topic, Subtopic, Policy, ConsentHistory, NotificationSetting,
     Tap, TapTopic, OnboardingAnswersRecord, CreatorChannel, AgentRun, TopicCluster, Draft, Content, Entity, Notification,
-    Debate, DebateWork, DebateVote, DebateVoteTicket, DebateSide, DebateMessage, DebateNotification, DebateSearchLog,
+    Debate, DebateWork, DebateVote, DebateVoteTicket, DebateSide, DebateMember, DebateMessage, DebateNotification, DebateSearchLog,
 )
 
 
@@ -187,9 +187,9 @@ def test_create_validates_input_and_keeps_one_voting_topic_per_member(debate_api
 
     second = create(author, title="두 번째 주제")
     assert second.status_code == 409 and second.json()["code"] == "DEBATE_ACTIVE_LIMIT"
-    # 첫 주제가 소각되면(7일 지남) 다시 올릴 수 있다.
+    # 7일 안에 기준 표를 못 받은 주제는 삭제되고(정리 작업 전이라도 없는 것으로 본다), 다시 올릴 수 있다.
     debate_api.clock.now = START + timedelta(days=7, seconds=1)
-    assert call(author, "GET", f"/debates/{debate['debateId']}").json()["status"] == "expired"
+    assert call(author, "GET", f"/debates/{debate['debateId']}").json()["code"] == "DEBATE_NOT_FOUND"
     assert create(author, title="두 번째 주제").status_code == 201
 
 
@@ -268,7 +268,7 @@ def test_threshold_vote_opens_the_room_and_notifies_voters_and_author(debate_api
     debate_api.clock.now = START + timedelta(hours=48)
     closed = call(late, "GET", f"/debates/{debate_id}").json()
     assert (closed["status"], closed["result"]) == ("closed", "none")
-    ended = call(late, "GET", "/debates", params={"status": "ended", "result": "closed"}).json()["items"]
+    ended = call(late, "GET", "/debates", params={"status": "ended"}).json()["items"]
     assert [row["debateId"] for row in ended] == [debate_id]
 
 
@@ -331,12 +331,13 @@ def test_lists_search_and_my_activity(debate_api):
     works = call(voter, "GET", "/debates/works", params={"topicId": 1, "q": "원피"}).json()["items"]
     assert [work["entityId"] for work in works] == [101]
 
-    # 7일이 지나면 모두 소각으로 지난 토론방에 보인다.
+    # 7일 안에 기준 표를 못 받으면 삭제된다: 지난 토론방에도, 검색에도 없고 투표하면 찾을 수 없다.
     debate_api.clock.now = START + timedelta(days=8)
-    assert ids(call(voter, "GET", "/debates", params={"status": "ended", "result": "expired"})) == [gojo, luffy, naruto]
-    assert ids(call(voter, "GET", "/debates", params={"status": "ended", "q": "루피"})) == [luffy]
+    assert ids(call(voter, "GET", "/debates", params={"status": "ended"})) == []
+    assert call(voter, "GET", "/debates/search", params={"topicId": 1, "q": "루피"}).json()["debates"] == []
     assert call(voter, "GET", "/users/me/debate-votes").json()["items"] == []
-    assert call(voter, "PUT", f"/debates/{gojo}/vote").json()["code"] == "DEBATE_NOT_VOTING"
+    assert call(voter, "PUT", f"/debates/{gojo}/vote").json()["code"] == "DEBATE_NOT_FOUND"
+    assert call(voter, "DELETE", f"/debates/{gojo}/vote").json()["code"] == "DEBATE_NOT_FOUND"
 
 
 def test_debate_api_requires_an_onboarded_member(debate_api):
@@ -345,3 +346,16 @@ def test_debate_api_requires_an_onboarded_member(debate_api):
     with anonymous:
         assert anonymous.get("/api/v1/debates").json()["code"] == "AUTH_REQUIRED"
     assert call(member, "GET", "/debates/999").json()["code"] == "DEBATE_NOT_FOUND"
+
+
+def test_cards_show_the_author_nickname_and_hide_it_after_the_author_withdraws(debate_api):
+    author = debate_api.member()
+    debate_id = create(author).json()["debateId"]
+    viewer = debate_api.member()
+    assert call(viewer, "GET", f"/debates/{debate_id}").json()["authorNickname"] == "토론회원1"
+    assert [row["authorNickname"] for row in call(viewer, "GET", "/debates", params={"status": "voting"}).json()["items"]] == ["토론회원1"]
+    with Session(debate_api.engine) as session:
+        session.get(UserAccount, author.user_id).account_status = "withdrawn"
+        session.commit()
+    # 탈퇴(유예 중 포함)한 작성자의 닉네임은 보여 주지 않는다.
+    assert call(viewer, "GET", f"/debates/{debate_id}").json()["authorNickname"] == "알 수 없음"

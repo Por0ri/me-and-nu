@@ -1,5 +1,7 @@
 """토론방 안: 진영 고르기, 채팅, 실시간 스트림 (설계 docs/DEBATE_BACKEND_DESIGN_2026-11-19.md 3장, D-09~12).
 
+- 토론방에 참여(D-18)한 사람만 채팅·진영 고르기·실시간 연결을 할 수 있다. 카카오톡 오픈채팅처럼 참여한 순간부터의
+  채팅만 보인다. 방을 나가면(D-19) 참여 기록과 고른 진영이 지워지고, 다시 참여하면 그 순간부터 다시 시작한다.
 - 진영 선택은 채팅과 별개다. 진영을 안 골라도 채팅할 수 있고, 진영은 언제든 바꾼다.
 - 같은 방의 진영·채팅은 토론 줄을 잠그고 저장한다. 그래서 메시지 번호 순서와 커밋 순서가 같다.
 - 커밋이 끝난 뒤에만 허브에 발행한다 (롤백된 메시지가 화면에 나오지 않게).
@@ -18,12 +20,12 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import ApiError
-from app.models import Debate, DebateMessage, DebateSide, UserAccount
+from app.models import Debate, DebateMember, DebateMessage, DebateSide, UserAccount
 from app.schemas.debate import DebateMessagesResponse, DebateMessageView, DebateSummary
 from app.services import debate_service as core
 from app.services.cursor import decode_cursor, encode_cursor
@@ -55,6 +57,17 @@ async def _open_debate(db: AsyncSession, debate_id: int, *, lock: bool) -> Debat
     return debate
 
 
+def _not_joined() -> ApiError:
+    return ApiError(403, "DEBATE_NOT_JOINED", "토론에 참여한 사람만 할 수 있어요. 먼저 토론에 참여해 주세요.")
+
+
+async def _member(db: AsyncSession, debate_id: int, user_id: int) -> DebateMember:
+    member = await db.scalar(select(DebateMember).where(DebateMember.debate_id == debate_id, DebateMember.user_id == user_id))
+    if member is None:
+        raise _not_joined()
+    return member
+
+
 def _sides_payload(debate: Debate) -> dict:
     percent_a, percent_b = core._percents(debate.side_a_count, debate.side_b_count)
     return {
@@ -66,13 +79,15 @@ def _sides_payload(debate: Debate) -> dict:
 
 def _view(message: DebateMessage, nickname: str | None, user_id: int) -> DebateMessageView:
     return DebateMessageView(
-        message_id=message.message_id, side=message.side, nickname=nickname or "알 수 없음", body=message.body,
+        message_id=message.message_id, side=message.side, nickname=nickname or core.UNKNOWN_NICKNAME, body=message.body,
         created_at=core._aware(message.created_at), is_mine=message.user_id == user_id,
     )
 
 
 def _messages_with_nickname():
-    return select(DebateMessage, UserAccount.nickname).join(UserAccount, UserAccount.user_id == DebateMessage.user_id)
+    # 탈퇴한(유예 중 포함) 회원의 채팅은 남기되 닉네임은 '알 수 없음'으로 보여 준다.
+    nickname = case((UserAccount.account_status.in_(core.ACTIVE_STATUSES), UserAccount.nickname), else_=None)
+    return select(DebateMessage, nickname).join(UserAccount, UserAccount.user_id == DebateMessage.user_id)
 
 
 # ───────────── 진영 (D-09) ─────────────
@@ -80,6 +95,7 @@ def _messages_with_nickname():
 async def choose_side(db: AsyncSession, user_id: int, debate_id: int, side: str) -> DebateSummary:
     now = core.utcnow()
     debate = await _open_debate(db, debate_id, lock=True)
+    await _member(db, debate_id, user_id)
     current = (await db.execute(
         select(DebateSide).where(DebateSide.debate_id == debate_id, DebateSide.user_id == user_id)
     )).scalar_one_or_none()
@@ -104,13 +120,59 @@ async def choose_side(db: AsyncSession, user_id: int, debate_id: int, side: str)
     return (await core._summaries(db, user_id, [debate], now))[0]
 
 
+# ───────────── 참여·나가기 (D-18·19) ─────────────
+
+async def join_room(db: AsyncSession, user_id: int, debate_id: int) -> DebateSummary:
+    """토론방에 참여한다. 이미 참여 중이면 그대로 둔다. 참여한 순간 방의 마지막 채팅 번호를 적어 두고 그 뒤의 채팅만 보여 준다.
+    토론 줄을 잠근 채 적으므로(채팅 저장도 같은 줄을 잠근다) 그 사이에 저장된 채팅이 끼어들지 않는다."""
+    now = core.utcnow()
+    debate = await _open_debate(db, debate_id, lock=True)
+    joined = await db.scalar(select(DebateMember.user_id).where(DebateMember.debate_id == debate_id, DebateMember.user_id == user_id))
+    if joined is None:
+        last = await db.scalar(select(func.max(DebateMessage.message_id)).where(DebateMessage.debate_id == debate_id))
+        db.add(DebateMember(debate_id=debate_id, user_id=user_id, history_after_message_id=last or 0, joined_at=now))
+        await db.commit()
+    return (await core._summaries(db, user_id, [debate], now))[0]
+
+
+async def leave_room(db: AsyncSession, user_id: int, debate_id: int) -> DebateSummary:
+    """토론방을 나간다. 참여 기록과 고른 진영을 지운다(진영 비율에서 빠진다). 보낸 채팅은 다른 사람 화면에 그대로 남는다.
+    참여 중이 아니어도 그대로 200. 열려 있는 이 사람의 실시간 연결은 끊는다."""
+    now = core.utcnow()
+    debate = await _open_debate(db, debate_id, lock=True)
+    left = (await db.execute(
+        delete(DebateMember).where(DebateMember.debate_id == debate_id, DebateMember.user_id == user_id)
+        .execution_options(synchronize_session=False)
+    )).rowcount
+    side = await db.scalar(select(DebateSide.side).where(DebateSide.debate_id == debate_id, DebateSide.user_id == user_id))
+    if side is not None:
+        await db.execute(
+            delete(DebateSide).where(DebateSide.debate_id == debate_id, DebateSide.user_id == user_id)
+            .execution_options(synchronize_session=False)
+        )
+        if side == "a":
+            debate.side_a_count -= 1
+        else:
+            debate.side_b_count -= 1
+    if left or side is not None:
+        await db.commit()
+    if side is not None:
+        hub.publish(debate_id, HubEvent(kind="sides", data=_sides_payload(debate)))
+    if left:
+        hub.close_user(debate_id, user_id)
+    return (await core._summaries(db, user_id, [debate], now))[0]
+
+
 # ───────────── 채팅 (D-10·11) ─────────────
 
 async def list_messages(db: AsyncSession, user_id: int, debate_id: int, *, cursor: str | None, limit: int) -> DebateMessagesResponse:
-    """최근 메시지를 오래된 순으로 준다. 더 이전 것은 nextCursor로. 끝난 방의 채팅은 보여 주지 않는다."""
+    """참여한 뒤의 최근 메시지를 오래된 순으로 준다. 더 이전 것은 nextCursor로. 끝난 방의 채팅은 보여 주지 않는다."""
     await _open_debate(db, debate_id, lock=False)
+    member = await _member(db, debate_id, user_id)
     context = {"v": 1, "resource": "debate-messages", "debateId": debate_id}
-    statement = _messages_with_nickname().where(DebateMessage.debate_id == debate_id)
+    statement = _messages_with_nickname().where(
+        DebateMessage.debate_id == debate_id, DebateMessage.message_id > member.history_after_message_id,
+    )
     if cursor is not None:
         before = decode_cursor(cursor, expected=context).get("before")
         if type(before) is not int or before <= 0:
@@ -125,6 +187,7 @@ async def list_messages(db: AsyncSession, user_id: int, debate_id: int, *, curso
 async def send_message(db: AsyncSession, user_id: int, debate_id: int, body: str) -> DebateMessageView:
     now = core.utcnow()
     debate = await _open_debate(db, debate_id, lock=True)
+    await _member(db, debate_id, user_id)
     window = timedelta(seconds=settings.debate_message_rate_window_seconds)
     recent = (await db.execute(
         select(DebateMessage.created_at).where(
@@ -169,6 +232,10 @@ async def prepare_stream(
 ) -> StreamPlan:
     """구독을 먼저 등록하고 놓친 메시지를 읽은 뒤 DB 연결을 돌려준다 (구독 → 다시 읽기 순서라 빈틈이 없다)."""
     debate = await _open_debate(db, debate_id, lock=False)
+    member = await _member(db, debate_id, user_id)
+    if resume_after is not None:
+        # 참여하기 전의 채팅은 다시 보내지 않는다.
+        resume_after = max(resume_after, member.history_after_message_id)
     try:
         subscriber = hub.subscribe(debate_id, user_id, settings.debate_stream_per_user)
     except StreamLimitError as exc:
