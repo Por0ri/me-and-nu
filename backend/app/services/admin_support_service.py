@@ -81,7 +81,7 @@ async def list_support(db: AsyncSession, query: AdminSupportQuery, *, only_inqui
     search = query.q.strip()
     if search:
         display_id = case((records.c.record_type == "report", "R-"), else_="I-") + cast(records.c.record_id, String)
-        kind_name = case({"content": "콘텐츠 신고", "service": "서비스 문의", "bug": "버그/오류 신고"}, value=records.c.kind)
+        kind_name = case({"content": "콘텐츠 신고", "service": "서비스 문의", "bug": "버그/오류 문의"}, value=records.c.kind)
         # SQLAlchemy escapes %, _ and the escape character and still binds the
         # value. Searching a literal '%' must never become a match-all query.
         conditions.append(or_(*(column.icontains(search, autoescape=True)

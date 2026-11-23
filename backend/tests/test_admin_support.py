@@ -118,6 +118,14 @@ async def test_counts_use_period_kind_search_before_status_and_never_list_privat
     assert "detail" not in str(db.statements[-1]) and "user_account.nickname" not in str(db.statements[-1])
     private_search = await service.list_support(db, AdminSupportQuery(q="PRIVATE"), now=NOW)
     assert private_search.total == private_search.statistics.all == 0
+    # Both list endpoints must search the same type labels shown in the UI.
+    # This scenario also runs unchanged against disposable PostgreSQL.
+    for only_inquiries in (False, True):
+        for text, expected_ids in (("문의", {"I-1", "I-2"}), ("버그/오류 문의", {"I-2"})):
+            matched = await service.list_support(db, AdminSupportQuery(q=text),
+                only_inquiries=only_inquiries, now=NOW)
+            assert {row.id for row in matched.items} == expected_ids
+            assert matched.total == matched.statistics.all == matched.statistics.waiting == len(expected_ids)
 
 
 @pytest.mark.asyncio
