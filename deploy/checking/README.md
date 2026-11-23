@@ -38,6 +38,17 @@ sudo bash deploy/checking/checking.sh status
 
 공지 예약 실행은 [관리자 공지 API 계약](../../docs/ADMIN_NOTICES_API_2026-11-23.md)의 별도 적용 순서를 따른다. API 배포만으로 systemd timer가 설치되지는 않는다. Migration과 BE 배포를 확인한 뒤 `publish_scheduled_notices.py` 미리보기와 합성 검증을 거쳐 `systemd/me-nu-checking-notices.service`, `systemd/me-nu-checking-notices.timer`를 설치한다.
 
+## 토론방 (기본 꺼짐)
+
+토론방 API·실시간 채팅·토론 개설 알림은 서버 `.env`의 `CHECKING_DEBATE_ENABLED=true`일 때만 켜진다. 기본값은 `false`이며, 기존 `.env`에 이 키가 없어도 꺼진 채로 guard를 통과한다. 토론 표는 스위치와 관계없이 `up`의 migration(`94d2da693c10`)이 만든다.
+
+- 켜기: `deploy/checking/.env`에 `CHECKING_DEBATE_ENABLED=true`를 넣고 `check` → `up`을 실행한다. 이미지는 그대로이고 API 컨테이너만 새 설정으로 다시 만들어진다.
+- 끄기: `false`로 바꾸고 같은 순서로 실행한다. 토론 API와 토론 알림만 사라지고 나머지 서비스와 저장된 토론 데이터는 그대로다.
+- 문제가 생기면 이전 커밋으로 되돌리지 말고 스위치를 끈다. 이전 코드는 `94d2da693c10`을 몰라 migration이 실패하고, 토론 데이터가 있으면 downgrade도 거부된다.
+- 실시간 허브가 API 메모리에 있으므로 API는 1개 프로세스(Dockerfile `--workers 1`)로 둔다. 같은 DB를 쓰는 main API에서는 켜지 않는다.
+- 개설 기준은 `CHECKING_DEBATE_VOTE_THRESHOLD`(1~100, 기본 10)다. 팀원이 적어 10표를 모으기 어려우면 시험하는 동안만 낮춘다.
+- 정리 작업(`python -m app.jobs.finalize_debates`, 10분마다)은 아직 예약하지 않았다. 돌지 않아도 화면은 시각으로 상태를 계산하지만, 끝난 방의 채팅이 DB에 남는다.
+
 ## 정책·카탈로그·콘텐츠
 
 이 구성은 자동 seed를 실행하지 않는다. 최초 가입에는 검토한 정책과 활성 anime Topic, 온보딩 V2 작품·태그·연결 데이터가 필요하다. 팀이 피드를 보려면 검토된 서비스 콘텐츠도 별도로 적재해야 한다. 기존 카탈로그/캐러셀 importer의 dry-run·충돌 검사·별도 승인 계약을 사용하고 대상 DB가 `me_nu_checking`인지 확인한다. Labs 전용 seed는 대상 guard가 다르므로 실행하지 않는다. 테스트 콘텐츠는 모든 화면에서 테스트 자료임을 명확히 표시하고, 합성 테스트 자료를 실제 에이전트 생성·LLM 검수 결과로 표현하지 않는다.

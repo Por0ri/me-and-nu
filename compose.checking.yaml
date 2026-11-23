@@ -133,6 +133,10 @@ services:
       # Optional server-owned offline evaluation. Empty keeps recommendation metrics unavailable.
       ADMIN_RECOMMENDATION_EVALUATION_PATH: ${CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH:-}
       ADMIN_SERVICE_EVALUATION_PATH: ${CHECKING_ADMIN_SERVICE_EVALUATION_PATH:-}
+      # Debate rooms stay off unless the Checking file opts in. Realtime chat keeps its hub in memory: one API process only.
+      DEBATE_ENABLED: ${CHECKING_DEBATE_ENABLED:-false}
+      # Votes needed to open a debate room; lower it only for small-team Checking tests.
+      DEBATE_VOTE_THRESHOLD: ${CHECKING_DEBATE_VOTE_THRESHOLD:-10}
     volumes:
       # Bind the directory so an atomic evaluation.json replacement is visible without recreation.
       - type: bind

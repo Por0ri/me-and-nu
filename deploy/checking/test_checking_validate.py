@@ -47,6 +47,10 @@ def values():
     {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/app/admin-evaluation/../service-evaluation.json"},
     {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "https://example.com/service-evaluation.json"},
     {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/app/admin-evaluation/evaluation.json"},
+    # Debate rooms need an explicit true/false and a 1-100 vote threshold.
+    {"CHECKING_DEBATE_ENABLED": "yes"}, {"CHECKING_DEBATE_ENABLED": ""}, {"CHECKING_DEBATE_ENABLED": "True"},
+    {"CHECKING_DEBATE_VOTE_THRESHOLD": "0"}, {"CHECKING_DEBATE_VOTE_THRESHOLD": "101"},
+    {"CHECKING_DEBATE_VOTE_THRESHOLD": "03"}, {"CHECKING_DEBATE_VOTE_THRESHOLD": ""},
 ])
 def test_unsafe_values_rejected(change):
     with pytest.raises(guard.GuardError):
@@ -151,6 +155,36 @@ def test_daily_total_limit_reaches_only_the_api_from_the_checking_file(rendered)
         guard.validate_config(config, values())
     with pytest.raises(guard.GuardError, match="inherited CHECKING_CHAT_DAILY_TOTAL_LIMIT"):
         guard.validate_values(configured, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "100"})
+
+
+def test_debate_switch_reaches_only_the_api_and_stays_off_by_default(rendered):
+    assert values()[guard.DEBATE_KEY] == "false" and values()[guard.DEBATE_THRESHOLD_KEY] == "10"
+    assert rendered["services"]["api"]["environment"]["DEBATE_ENABLED"] == "false"
+    assert rendered["services"]["api"]["environment"]["DEBATE_VOTE_THRESHOLD"] == "10"
+    for key in ("DEBATE_ENABLED", "DEBATE_VOTE_THRESHOLD"):
+        assert key not in rendered["services"]["migrate"]["environment"]
+    configured = values() | {guard.DEBATE_KEY: "true", guard.DEBATE_THRESHOLD_KEY: "3"}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["DEBATE_ENABLED"] == "true"
+    assert config["services"]["api"]["environment"]["DEBATE_VOTE_THRESHOLD"] == "3"
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="DEBATE_ENABLED"):
+        guard.validate_config(config, values())
+    leaked = copy.deepcopy(rendered)
+    leaked["services"]["migrate"]["environment"]["DEBATE_ENABLED"] = "false"
+    with pytest.raises(guard.GuardError, match="DEBATE_ENABLED"):
+        guard.validate_config(leaked, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_DEBATE_ENABLED"):
+        guard.validate_values(configured, {guard.DEBATE_KEY: "false"})
+
+
+def test_legacy_environment_without_debate_keys_keeps_debate_off():
+    legacy = values()
+    legacy.pop(guard.DEBATE_KEY)
+    legacy.pop(guard.DEBATE_THRESHOLD_KEY)
+    checked = guard.validate_values(legacy)
+    assert checked[guard.DEBATE_KEY] == "false" and checked[guard.DEBATE_THRESHOLD_KEY] == "10"
 
 
 @pytest.mark.parametrize("key,path", [
