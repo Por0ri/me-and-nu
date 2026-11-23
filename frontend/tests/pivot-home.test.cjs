@@ -377,15 +377,19 @@ test('All five Figma slide assets are local, match provenance hashes, and are us
   assert.equal(used.size, 5);
 });
 
-test('H2-B chrome uses local Figma assets and a single HOME/SAVE/MY default state', async () => {
+test('H2-B chrome uses local Figma assets and a single HOME/SAVE/TALK/MY default state', async () => {
   const { home } = await mockHomeSource.load({ signal: new AbortController().signal });
   const html = render({ status: 'ready', home });
   for (const filename of ['logo.svg', 'mascot.png', 'notification.svg', 'search.svg', 'share.svg', 'like.svg', 'save.svg', 'detail-arrow.svg', 'ai.svg']) {
     assert.ok(html.includes('/pivot/home/chrome/' + filename), filename);
   }
   assert.match(html, /aria-label="주요 메뉴"/);
-  for (const label of ['HOME', 'SAVE', 'MY']) assert.ok(html.includes('>' + label + '</span>'));
-  assert.doesNotMatch(html, />TALK<|role="dialog"|9:41|imgWifi|imgBatteryEnd|aria-pressed=/);
+  // 2026-11-23 하단바: HOME · SAVE · TALK · MY, 지금 메뉴(HOME)만 aria-current
+  const menu = [...html.matchAll(/<span>(HOME|SAVE|TALK|MY)<\/span>/g)].map(match => match[1]);
+  assert.deepEqual(menu, ['HOME', 'SAVE', 'TALK', 'MY']);
+  assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
+  assert.match(html, /aria-current="page"[^>]*><span>HOME</);
+  assert.doesNotMatch(html, /role="dialog"|9:41|imgWifi|imgBatteryEnd|aria-pressed=/);
   assert.equal((html.match(/aria-label="저장" aria-disabled="true"/g) || []).length, 3);
   assert.match(html, /aria-label="AI 콘텐츠 탐색" aria-disabled="true"/);
 });
