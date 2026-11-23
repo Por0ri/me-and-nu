@@ -14,7 +14,7 @@ function modules(fetch = () => { throw new Error('Unexpected network'); }) {
     const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
     }).outputText;
-    vm.runInNewContext(code, { module: mod, exports: mod.exports, AbortController, Headers, Event, URL, fetch, process: { env: {} },
+    vm.runInNewContext(code, { module: mod, exports: mod.exports, AbortController, Headers, Event, URL, fetch, setTimeout, clearTimeout, process: { env: {} },
       require(name) { return load((name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(file), name)) + '.ts'); } });
     return mod.exports;
   }

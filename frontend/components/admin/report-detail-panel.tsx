@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { reportDate, reportKind, reportSourceUrl, reportStatuses, type ReportContent, type ReportRecord, type ReportStatus } from "@/lib/admin-reports";
+import { rawReportStatuses, reportDate, reportKind, reportSourceUrl, reportStatuses, type ReportContent, type ReportRecord, type ReportStatus } from "@/lib/admin-reports";
+import type { AdminReadState } from "@/lib/admin-content";
+import { AdminStatus } from "./admin-status";
 import shared from "./admin.module.css";
 import styles from "./reports.module.css";
 
@@ -34,8 +36,8 @@ function ReportContentDrawer({ content, onClose }: { content: ReportContent; onC
         <div className={styles.cover}>{content.coverUrl && <img src={content.coverUrl} alt="" />}<div className={styles.coverCopy}>
           {content.category && <span>{content.category}</span>}<h3>{content.title}</h3>{content.subtitle && <p>{content.subtitle}</p>}
         </div></div>
-        <div className={styles.contentBody}><p>{content.body}</p>{content.source && <p>출처: {sourceUrl ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer">{content.source.title}</a> : content.source.title}</p>}
-          {content.aiGenerated && <p className={styles.aiNotice}>AI로 생성된 콘텐츠입니다.</p>}</div>
+        <div className={styles.contentBody}><p>{content.body ?? "저장된 본문이 없습니다."}</p>{content.source && <p>출처: {sourceUrl ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer">{content.source.title}</a> : content.source.title}</p>}
+          {content.productionType !== "human" && <p className={styles.aiNotice}>{content.productionType === "hybrid" ? "AI와 사람이 함께 제작한 콘텐츠입니다." : "AI로 생성된 콘텐츠입니다."}</p>}</div>
       </article>
       <div className={`${styles.actions} ${styles.drawerActions}`}><button type="button" className={shared.secondaryButton} disabled>콘텐츠 삭제</button><button type="button" className={shared.primaryButton} disabled>콘텐츠 수정</button></div>
       <p className={styles.availability}>읽기 전용 · 콘텐츠 삭제·수정은 사용할 수 없습니다.</p>
@@ -43,7 +45,7 @@ function ReportContentDrawer({ content, onClose }: { content: ReportContent; onC
   </dialog>;
 }
 
-export function ReportDetailPanel({ report }: { report: ReportRecord | null }) {
+export function ReportDetailPanel({ report, state, retry }: { report: ReportRecord | null; state?: AdminReadState<ReportRecord>; retry?: () => void }) {
   const [open, setOpen] = useState(false);
   return <section className={`${shared.panel} ${styles.detail}`} aria-labelledby="report-detail-title" data-report-detail={report?.id ?? "unavailable"}>
     <div className={styles.detailHeading}><h2 id="report-detail-title">신고 상세 검토</h2><p>선택한 신고에 대한 정보와 처리 내역</p></div>
@@ -51,15 +53,16 @@ export function ReportDetailPanel({ report }: { report: ReportRecord | null }) {
       <div className={styles.identity}><h3>{report.number}</h3><ReportBadge status={report.status} /></div>
       <dl><div><dt>신고 유형</dt><dd>{reportKind(report.kind, true)}</dd></div>
         {report.kind === "content" && <div><dt>신고 사유</dt><dd>{report.reason ?? "—"}</dd></div>}
-        <div><dt>접수일</dt><dd>{reportDate(report.receivedAt, true)}</dd></div><div><dt>신고 대상</dt><dd>{report.target ?? "—"}</dd></div>
+        <div><dt>접수일</dt><dd>{reportDate(report.receivedAt, true)}</dd></div><div><dt>처리 상태</dt><dd>{rawReportStatuses[report.rawStatus]}</dd></div><div><dt>신고 대상</dt><dd>{report.target ?? "—"}</dd></div>
       </dl>
-      <div className={styles.message}><h3>신고 내용</h3><p data-inquiry={report.kind !== "content"}>{report.message}</p></div>
+      <div className={styles.message}><h3>{report.kind === "content" ? "신고 내용" : "문의 내용"}</h3><p data-inquiry={report.kind !== "content"}>{report.message ?? "저장된 내용이 없습니다."}</p></div>
+      {report.kind !== "content" && <p className={styles.availability}>답변 내용은 수집되지 않았습니다. 답변 작성·전송은 사용할 수 없습니다.</p>}
       {report.kind === "content" && report.status !== "completed" && <div className={styles.actions}>
         <button type="button" className={shared.secondaryButton} disabled title="신고 처리 연결 준비 중">보류</button>
         <button type="button" className={shared.primaryButton} disabled={!report.content} aria-haspopup="dialog" aria-controls="report-content" aria-label="검토 시작 (콘텐츠 읽기 전용)" title="콘텐츠 조회만 제공하며 처리 상태는 변경하지 않습니다" onClick={() => setOpen(true)}>검토 시작</button>
       </div>}
       <span className={shared.srOnly} role="status">{report.number} {reportKind(report.kind, true)} {report.status ? reportStatuses[report.status] : "상태 미연결"} 상세</span>
       {open && report.content && <ReportContentDrawer content={report.content} onClose={() => setOpen(false)} />}
-    </> : <p className={styles.detailEmpty}>조회 연결 후 목록에서 신고·문의를 선택하면 상세 내용을 확인할 수 있습니다.</p>}
+    </> : state && state.status !== "ready" ? <AdminStatus subject="신고·문의" state={state} retry={retry} /> : <p className={styles.detailEmpty}>목록에서 신고·문의를 선택하면 상세 내용을 확인할 수 있습니다.</p>}
   </section>;
 }

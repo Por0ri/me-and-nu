@@ -15,7 +15,7 @@ function setup(respond = () => response()) {
   let current = session(), cookieSession = current;
   const browser = new EventTarget(); browser.location = { origin: 'http://localhost:3194' };
   browser.addEventListener('api:unauthorized', () => events.push('401'));
-  const context = vm.createContext({ AbortController, URL, URLSearchParams, Headers, Response, Event, window: browser,
+  const context = vm.createContext({ AbortController, URL, URLSearchParams, Headers, Response, Event, setTimeout, clearTimeout, window: browser,
     process: { env: { NEXT_PUBLIC_API_BASE_URL: 'http://localhost:8194', NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API: 'true' } },
     fetch: async (url, init) => {
       calls.push({ url, init });

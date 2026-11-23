@@ -14,7 +14,7 @@ function load(file) {
   const output = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  vm.runInNewContext(output, { module: mod, exports: mod.exports, URL, URLSearchParams, AbortController,
+  vm.runInNewContext(output, { module: mod, exports: mod.exports, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
     require(name) {
       if (name === '@/lib/api') return { ApiError };
       if (name === './services') return { requirePivotApi() { throw new Error('Origin blocked'); } };
