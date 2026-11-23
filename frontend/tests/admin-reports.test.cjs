@@ -57,12 +57,12 @@ test('unavailable and denied states never imply empty results, sample details or
   }
   assert.match(screen({ state: { status: 'ready', data: { total: 0, items: [] } } }), /조회된 신고·문의가 없습니다/);
 });
-test('waiting/reviewing/completed badges follow explicit presentation status; read-only opening cannot change status', () => {
+test('waiting/reviewing/completed badges preserve raw status and viewer cannot write', () => {
   for (const [index, status] of [[0, 'waiting'], [1, 'reviewing'], [3, 'completed']]) {
     const html = detail(fixtures.reportFixtures[index]);
     assert.match(html, new RegExp(`data-report-status="${status}"`));
-    if (status !== 'completed') { assert.match(html, /검토 시작 \(콘텐츠 읽기 전용\)/); assert.match(html, /disabled="" title="신고 처리 연결 준비 중"/); }
-    else { assert.match(html, /서비스 문의/); assert.doesNotMatch(html, /보류|검토 시작|textarea|답변 전송/); }
+    if (status !== 'completed') { assert.match(html, /신고 콘텐츠 보기/); assert.match(html, /disabled="">검토 시작/); }
+    else { assert.match(html, /서비스 문의/); assert.match(html, /disabled="">답변 작성/); }
   }
   assert.match(detail(fixtures.reportFixtures[2]), /disabled="" aria-haspopup="dialog"/);
   assert.match(detail({ ...fixtures.reportFixtures[0], status: null }), /상태 미연결/);
@@ -71,7 +71,15 @@ test('untrusted report content renders as text without HTML execution', () => {
   const html = detail({ ...fixtures.reportFixtures[0], message: '<img src=x onerror=alert(1)>', target: '<script>alert(1)</script>' });
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/); assert.doesNotMatch(html, /<script>|<img src="x"/);
 });
-test('production report read components exclude fixture data, writes and persistence', () => {
+test('persisted inquiry answers render as plain text with a real timestamp; no email delivery is implied', () => {
+  const html = detail({ ...fixtures.reportFixtures[3], recordType: 'inquiry', rawStatus: 'answered',
+    answer: '<script>unsafe()</script>\n문의 답변', answeredAt: '2026-11-23T01:30:00.123456Z', answerAvailability: 'available',
+    actions: { allowedActions: [], disabledReason: 'terminal_state', scope: { actorUserId: '30', adminAccountId: '7' } } });
+  assert.match(html, /data-inquiry-answer/); assert.match(html, /&lt;script&gt;unsafe\(\)&lt;\/script&gt;/);
+  assert.match(html, /2026.11.23 10:30/); assert.match(html, /disabled="">답변 작성/);
+  assert.doesNotMatch(html, /<script>|이메일로 발송|답변 내용은 수집되지 않았습니다/);
+});
+test('production report components exclude fixture data, unsafe rendering and browser persistence', () => {
   const seen = new Set();
   function inspect(file) {
     file = file.replaceAll('\\', '/');

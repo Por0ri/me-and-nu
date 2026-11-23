@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { INQUIRY_LIMIT, inquiryLength, inquiryTypes, inquiryValidation, type InquiryDraft, type InquiryState } from "@/lib/pivot/inquiry";
 import { HomeHeader, HomeNavigation } from "./home-screen";
 import homeStyles from "./home.module.css";
@@ -27,15 +27,17 @@ function InquiryReceivedDialog({ onClose }: { onClose: () => void }) {
     <h2 id="inquiry-received-title">문의 접수 완료</h2>
     <div className={styles.receivedCopy}>
       <p id="inquiry-received-body">문의가 정상적으로 접수되었어요!</p>
-      <p id="inquiry-received-help">보내주신 문의 내용은 확인 후<br />필요한 조치를 진행할게요.</p>
+      <p id="inquiry-received-help">보내주신 문의 내용은 확인 후<br />답변을 문의 내역에서 알려드릴게요.</p>
     </div>
     <button type="button" autoFocus onClick={onClose}>확인</button>
   </dialog>;
 }
 
-export function InquiryScreen({ state, demo, available, onChange, onSubmit, onMy, onHome, onSaved, onNotifications }: {
+export function InquiryScreen({ state, demo, available, onChange, onSubmit, onMy, onHome, onSaved, onNotifications,
+  tabs, history, historyVisible = false, onReceived }: {
   state: InquiryState; demo: boolean; available: boolean; onChange: (draft: Partial<InquiryDraft>) => void;
   onSubmit: () => void; onMy: () => void; onHome: () => void; onSaved: () => void; onNotifications?: () => void;
+  tabs?: ReactNode; history?: ReactNode; historyVisible?: boolean; onReceived?: () => void;
 }) {
   const screen = useRef<HTMLElement>(null);
   useEffect(() => { screen.current?.querySelector("h1")?.focus({ preventScroll: true }); }, []);
@@ -44,7 +46,8 @@ export function InquiryScreen({ state, demo, available, onChange, onSubmit, onMy
   const length = inquiryLength(state.detail);
   return <main ref={screen} className={`${homeStyles.screen} ${styles.screen}`} data-inquiry-state={state.status} data-inquiry-mode={demo ? "demo" : "service"}>
     <HomeHeader title="문의 및 신고" showMascot={false} onBack={onMy} onNotifications={onNotifications} />
-    <form className={styles.form} onSubmit={event => { event.preventDefault(); onSubmit(); }} aria-busy={busy}>
+    {tabs}
+    {historyVisible ? history : <form className={styles.form} onSubmit={event => { event.preventDefault(); onSubmit(); }} aria-busy={busy}>
       <h2 className={styles.intro}>문의 유형을 선택하고 세부 내용을 작성해주세요</h2>
       <div className={styles.card}>
         <fieldset className={styles.types} disabled={locked || !available}>
@@ -76,8 +79,8 @@ export function InquiryScreen({ state, demo, available, onChange, onSubmit, onMy
       <button className={styles.submit} type="submit" disabled={demo || !available || locked || Boolean(inquiryValidation(state))}>
         {busy ? "접수 중…" : state.status === "error" ? "다시 시도" : "접수하기"}
       </button>
-    </form>
+    </form>}
     <HomeNavigation active="my" onHome={onHome} onMy={onMy} onSaved={onSaved} hideAI />
-    {!demo && available && state.status === "received" ? <InquiryReceivedDialog onClose={onMy} /> : null}
+    {!demo && available && state.status === "received" ? <InquiryReceivedDialog onClose={onReceived ?? onMy} /> : null}
   </main>;
 }

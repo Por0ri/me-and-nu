@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import AwareDatetime, Field
 
 from app.schemas.common import CamelModel
+from app.schemas.admin_support_action import AdminSupportActions
 
 SupportKind = Literal["all", "content", "service", "bug"]
 SupportStatus = Literal["all", "waiting", "reviewing", "completed"]
@@ -75,6 +76,7 @@ class AdminSupportDetail(AdminSupportItem):
     message: str | None
     target: str | None
     content: AdminSupportContent | None
-    # No inquiry-answer persistence exists. An answered status alone is not an answer body.
-    answer: None = None
-    answer_availability: Literal["unavailable"] = "unavailable"
+    answer: str | None = None
+    answered_at: AwareDatetime | None = None
+    answer_availability: Literal["available", "none", "unavailable"] = "unavailable"
+    actions: AdminSupportActions = Field(default_factory=AdminSupportActions)

@@ -27,6 +27,8 @@ def support_tables():
     Table("inquiry", meta, Column("inquiry_id", BigInteger, primary_key=True), Column("user_id", BigInteger),
           Column("inquiry_type", String), Column("detail", Text), Column("status", String),
           Column("created_at", DateTime(timezone=True)), Column("updated_at", DateTime(timezone=True)))
+    Table("inquiry_answer", meta, Column("inquiry_id", BigInteger, primary_key=True),
+          Column("body", Text), Column("admin_account_id", BigInteger), Column("answered_at", DateTime(timezone=True)))
     Table("source_site", meta, Column("source_site_id", BigInteger, primary_key=True), Column("media_name", String))
     Table("content_source", meta, Column("content_source_id", BigInteger, primary_key=True), Column("content_id", BigInteger),
           Column("source_site_id", BigInteger), Column("source_url", String), Column("source_title", String),
@@ -182,7 +184,8 @@ async def test_all_raw_statuses_and_inquiry_answer_unavailability_are_explicit(d
         db.inquiry(number, status=raw)
         detail = await service.get_inquiry(db, number)
         assert detail.status == ("waiting" if raw == "received" else "completed")
-        assert detail.raw_status == raw and detail.answer is None and detail.answer_availability == "unavailable"
+        assert detail.raw_status == raw and detail.answer is None
+        assert detail.answer_availability == ("none" if raw == "received" else "unavailable")
         assert detail.title is None and detail.reason is None and detail.content is None and detail.target is None
         assert detail.message == "PRIVATE_INQUIRY_BODY"
 

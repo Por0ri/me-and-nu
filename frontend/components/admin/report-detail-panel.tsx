@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { rawReportStatuses, reportDate, reportKind, reportSourceUrl, reportStatuses, type ReportContent, type ReportRecord, type ReportStatus } from "@/lib/admin-reports";
 import type { AdminReadState } from "@/lib/admin-content";
 import { AdminStatus } from "./admin-status";
+import { SupportActionPanel } from "./support-action-panel";
 import shared from "./admin.module.css";
 import styles from "./reports.module.css";
 
@@ -56,11 +57,13 @@ export function ReportDetailPanel({ report, state, retry }: { report: ReportReco
         <div><dt>접수일</dt><dd>{reportDate(report.receivedAt, true)}</dd></div><div><dt>처리 상태</dt><dd>{rawReportStatuses[report.rawStatus]}</dd></div><div><dt>신고 대상</dt><dd>{report.target ?? "—"}</dd></div>
       </dl>
       <div className={styles.message}><h3>{report.kind === "content" ? "신고 내용" : "문의 내용"}</h3><p data-inquiry={report.kind !== "content"}>{report.message ?? "저장된 내용이 없습니다."}</p></div>
-      {report.kind !== "content" && <p className={styles.availability}>답변 내용은 수집되지 않았습니다. 답변 작성·전송은 사용할 수 없습니다.</p>}
-      {report.kind === "content" && report.status !== "completed" && <div className={styles.actions}>
-        <button type="button" className={shared.secondaryButton} disabled title="신고 처리 연결 준비 중">보류</button>
-        <button type="button" className={shared.primaryButton} disabled={!report.content} aria-haspopup="dialog" aria-controls="report-content" aria-label="검토 시작 (콘텐츠 읽기 전용)" title="콘텐츠 조회만 제공하며 처리 상태는 변경하지 않습니다" onClick={() => setOpen(true)}>검토 시작</button>
+      {report.kind !== "content" && (report.answerAvailability === "available" ? <div className={styles.message} data-inquiry-answer>
+        <h3>등록된 답변</h3><p>{report.answer}</p><small>답변일: {reportDate(report.answeredAt, true)}</small>
+      </div> : <p className={styles.availability}>{report.answerAvailability === "none" ? "아직 등록된 답변이 없습니다." : "이전 답변 내용은 저장되어 있지 않습니다."}</p>)}
+      {report.kind === "content" && <div className={styles.actions}>
+        <button type="button" className={shared.secondaryButton} disabled={!report.content} aria-haspopup="dialog" aria-controls="report-content" onClick={() => setOpen(true)}>신고 콘텐츠 보기</button>
       </div>}
+      <SupportActionPanel report={report} />
       <span className={shared.srOnly} role="status">{report.number} {reportKind(report.kind, true)} {report.status ? reportStatuses[report.status] : "상태 미연결"} 상세</span>
       {open && report.content && <ReportContentDrawer content={report.content} onClose={() => setOpen(false)} />}
     </> : state && state.status !== "ready" ? <AdminStatus subject="신고·문의" state={state} retry={retry} /> : <p className={styles.detailEmpty}>목록에서 신고·문의를 선택하면 상세 내용을 확인할 수 있습니다.</p>}

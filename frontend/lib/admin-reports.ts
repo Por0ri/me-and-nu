@@ -21,7 +21,11 @@ export type ReportSummary = {
   reasonCode: string | null; reason: string | null; status: ReportStatus | null; rawStatus: string;
   receivedAt: string | null; updatedAt: string;
 };
-export type ReportRecord = ReportSummary & { message: string | null; target: string | null; content: ReportContent | null; answer: null; answerAvailability: "unavailable" };
+export type SupportAction = "start_review" | "resolve" | "reject" | "answer";
+export type SupportScope = { actorUserId: string; adminAccountId: string };
+export type SupportActions = { allowedActions: SupportAction[]; disabledReason: null | "permission_denied" | "terminal_state"; scope: SupportScope | null };
+export type ReportRecord = ReportSummary & { message: string | null; target: string | null; content: ReportContent | null;
+  answer: string | null; answeredAt: string | null; answerAvailability: "available" | "none" | "unavailable"; actions: SupportActions };
 export type ReportPage = { items: ReportSummary[]; total: number; page: number; pageSize: number; periodStart: string; periodEnd: string; statistics: Record<"all" | ReportStatus, number> };
 export type ReportStatistics = Record<"all" | ReportStatus, { count: number; change: number | null }>;
 export const reportUnavailable: AdminFailure = {
@@ -43,6 +47,22 @@ export function reportSourceUrl(value: string): string | null {
 }
 
 export const rawReportStatuses: Record<string, string> = { received: "접수", reviewing: "검토 중", resolved: "해결", rejected: "반려", answered: "답변 완료", closed: "종료" };
+export function validSupportScope(value: unknown): value is SupportScope {
+  return record(value) && decimalId(value.actorUserId) && decimalId(value.adminAccountId);
+}
+export function supportActionsFor(recordType: string, rawStatus: string): SupportAction[] {
+  if (recordType === "inquiry") return rawStatus === "received" ? ["answer"] : [];
+  return rawStatus === "received" ? ["start_review", "resolve", "reject"] : rawStatus === "reviewing" ? ["resolve", "reject"] : [];
+}
+function validSupportActions(value: unknown, recordType: string, rawStatus: string): value is SupportActions {
+  if (!record(value) || !Array.isArray(value.allowedActions) || new Set(value.allowedActions).size !== value.allowedActions.length ||
+    ![null, "permission_denied", "terminal_state"].includes(value.disabledReason as null) ||
+    !(value.scope === null || validSupportScope(value.scope))) return false;
+  const available = supportActionsFor(recordType, rawStatus);
+  if (value.allowedActions.some(action => !available.includes(action as SupportAction))) return false;
+  return value.disabledReason === null ? validSupportScope(value.scope) && value.allowedActions.length > 0
+    : value.allowedActions.length === 0 && (value.disabledReason !== "terminal_state" || available.length === 0);
+}
 const statusGroups: Record<string, ReportStatus> = { received: "waiting", reviewing: "reviewing", resolved: "completed", rejected: "completed", answered: "completed", closed: "completed" };
 function summary(value: unknown): value is Omit<ReportSummary, "number"> & Record<string, unknown> {
   return record(value) && decimalId(value.recordId) && ["report", "inquiry"].includes(String(value.recordType)) &&
@@ -75,7 +95,11 @@ export async function loadAdminReport(item: Pick<ReportSummary, "id" | "recordTy
   if (!decimalId(item.recordId) || !["report", "inquiry"].includes(item.recordType) || item.id !== `${item.recordType === "report" ? "R" : "I"}-${item.recordId}`) invalidAdminResponse();
   const value = await adminReadRequest(`/api/v1/admin/${item.recordType === "report" ? "reports" : "inquiries"}/${item.recordId}`, { signal });
   if (!record(value) || !summary(value) || value.id !== item.id || value.recordType !== item.recordType || !nullableText(value.message) || !nullableText(value.target) ||
-    value.answer !== null || value.answerAvailability !== "unavailable") invalidAdminResponse();
+    !nullableText(value.answer) || !(value.answeredAt === null || timestamp(value.answeredAt)) ||
+    !["available", "none", "unavailable"].includes(String(value.answerAvailability)) ||
+    !validSupportActions(value.actions, value.recordType, value.rawStatus)) invalidAdminResponse();
+  if (value.answerAvailability === "available" ? (value.recordType !== "inquiry" || value.rawStatus !== "answered" ||
+    typeof value.answer !== "string" || !value.answer.trim() || !timestamp(value.answeredAt)) : value.answer !== null || value.answeredAt !== null) invalidAdminResponse();
   const content = value.content;
   if (content !== null && (!record(content) || !decimalId(content.contentId) || typeof content.title !== "string" ||
     ![content.subtitle, content.category, content.coverUrl, content.body].every(nullableText) ||

@@ -297,7 +297,7 @@ def test_config_cannot_cross_environment_or_enable_unsafe_runtime(rendered, chan
     elif change == "entrypoint": api["entrypoint"] = ["sh"]
     elif change == "api_command": api["command"] = ["python", "other.py"]
     elif change == "migration_head": config["services"]["migrate"]["command"][-1] = "heads"
-    elif change == "migration_previous": config["services"]["migrate"]["command"][-1] = "b3e7a5c19d42"
+    elif change == "migration_previous": config["services"]["migrate"]["command"][-1] = "47c1a8d6b302"
     elif change == "migration_dob": config["services"]["migrate"]["command"][-1] = "d2f6a9c4e731"
     elif change == "startup_gate": api["depends_on"]["migrate"]["condition"] = "service_started"
     elif change == "api_mount": api["volumes"] = [{"type": "bind", "source": "/", "target": "/host"}]

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { AdminFailure, AdminReadState } from "@/lib/admin-content";
 import { initialReportQuery, loadAdminReport, loadAdminReports, rawReportStatuses, reportDate, reportKind, reportKinds, reportPageSize, reportPeriods, reportQueryString, type ReportPage, type ReportQuery, type ReportStatistics, type ReportSummary } from "@/lib/admin-reports";
 import { AdminStatus } from "./admin-status";
@@ -8,6 +8,8 @@ import { ReportBadge, ReportDetailPanel } from "./report-detail-panel";
 import { ReportPeriodFilter } from "./report-period-filter";
 import { useAdminRead } from "./use-admin-read";
 import { memberSupportFailure } from "@/lib/admin-read-contract";
+import { subscribeSupportChanges, supportCompletedVersion } from "@/lib/admin-support-flow";
+import { PendingSupportNotice } from "./support-action-panel";
 import shared from "./admin.module.css";
 import styles from "./reports.module.css";
 
@@ -17,14 +19,15 @@ export function ReportsRoute() {
 }
 
 function ConnectedReports({ query, navigate }: { query: ReportQuery; navigate: (query: ReportQuery) => void }) {
+  const revision = useSyncExternalStore(subscribeSupportChanges, supportCompletedVersion, supportCompletedVersion);
   const read = useCallback((signal: AbortSignal) => loadAdminReports(query, signal), [query]);
-  const { state, retry } = useAdminRead(reportQueryString(query), read, memberSupportFailure);
+  const { state, retry } = useAdminRead(`${reportQueryString(query)}:${revision}`, read, memberSupportFailure);
   const [accessFailure, setAccessFailure] = useState<AdminFailure | null>(null);
   const effective = accessFailure ?? state;
   const statistics = effective.status === "ready" ? Object.fromEntries(Object.entries(effective.data.statistics).map(([key, count]) => [key, { count, change: null }])) as ReportStatistics : undefined;
-  return <ReportsScreen query={query} state={effective} navigate={navigate} statistics={statistics}
+  return <>{effective.status === "ready" && <PendingSupportNotice />}<ReportsScreen query={query} state={effective} navigate={navigate} statistics={statistics}
     retry={() => { setAccessFailure(null); retry(); }}
-    renderDetail={item => item ? <ConnectedReportDetail key={item.id} item={item} denied={setAccessFailure} /> : <ReportDetailPanel report={null} />} />;
+    renderDetail={item => item ? <ConnectedReportDetail key={`${item.id}:${revision}`} item={item} denied={setAccessFailure} /> : <ReportDetailPanel report={null} />} /></>;
 }
 
 function ConnectedReportDetail({ item, denied }: { item: ReportSummary; denied: (failure: AdminFailure) => void }) {
@@ -55,7 +58,7 @@ export function ReportsScreen({ query, state, navigate, statistics, renderDetail
   const start = Math.max(1, Math.min(query.page - 2, pages - 4));
   return <div className={styles.screen}>
     <div className={`${shared.heading} ${styles.heading}`}><div><h1>신고 및 문의 관리</h1><ReportPeriodFilter value={query.period} onChange={period => navigate({ ...query, period, page: 1 })} /></div>
-      <p>접수된 콘텐츠 신고를 검토하고 조치 내역을 관리하세요.</p></div>
+      <p>접수된 신고를 처리하고 문의에 답변하세요.</p></div>
     <Statistics data={state.status === "ready" ? statistics : undefined} period={query.period} />
     <div className={styles.workspace}>
       <section className={`${shared.panel} ${shared.contentsPanel} ${styles.list}`} aria-label="신고 및 문의 목록" data-report-list={state.status}>
@@ -84,6 +87,6 @@ export function ReportsScreen({ query, state, navigate, statistics, renderDetail
       </section>
       {renderDetail ? renderDetail(selected) : <ReportDetailPanel report={null} />}
     </div>
-    <p className={styles.availability}>신고·문의 조회 전용 · 완료 상태는 해결·반려·답변 완료·종료를 포함합니다. 신고 처리·삭제·제재·문의 답변·알림 전송은 사용할 수 없습니다.</p>
+    <p className={styles.availability}>완료 상태에는 해결·반려·답변 완료·종료가 포함됩니다. 답변은 문의한 회원의 문의 내역에 표시됩니다.</p>
   </div>;
 }
