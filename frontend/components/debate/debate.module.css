@@ -15,12 +15,20 @@
   --debate-accent: #9c79e6;
   --debate-pill: #efe7ff;
   --debate-card-line: #e6dcf7;
+  /* 홈 부품(머리 부분·검색창·검색 결과)이 쓰는 색 이름. 홈 화면(home.module.css .screen)과 같은 값 */
+  --home-bg: var(--debate-bg);
+  --home-surface: #fff;
+  --home-ink: #27272a;
+  --home-muted: #71717a;
+  --home-line: #e4e4e7;
+  --home-accent: var(--pivot-primary, #7043b4);
   position: relative;
   width: 100%;
   max-width: 430px;
   min-height: 100svh;
   margin-inline: auto;
-  padding: 0 16px 104px;
+  /* 좌우 여백 24px: 홈 화면·시안과 같은 폭 (2026-11-23) */
+  padding: 0 24px 104px;
   background: var(--debate-bg);
   color: var(--debate-ink);
   word-break: keep-all;
@@ -30,26 +38,28 @@
 /* 기본 여백 지우기. :where로 우선순위를 0으로 둬서 각 부품의 여백 규칙이 항상 이긴다. */
 :where(.screen) :where(p, h1, h2, h3, ul, ol) { margin: 0; }
 :where(.screen) :where(ul, ol) { padding: 0; list-style: none; }
+/* 토론 화면이 떠 있는 동안 <html> 에 붙여 브라우저 스크롤바를 숨긴다. 홈처럼 스크롤바가 생겼다 없어지며
+   화면이 좌우로 밀리지 않게 한다 (debate-chrome.tsx DebateScreen). 스크롤은 그대로 된다. */
+.hideScrollbar { scrollbar-width: none; }
+.hideScrollbar::-webkit-scrollbar { display: none; }
 .srOnly { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* 가짜 데이터 안내 띠 */
-.mockBanner { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 -16px; padding: 6px 12px; background: #fff7e0; color: #8a6100; font-size: 11px; line-height: 16px; text-align: center; }
+.mockBanner { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 -24px; padding: 6px 12px; background: #fff7e0; color: #8a6100; font-size: 11px; line-height: 16px; text-align: center; }
 
 /* 머리 부분 */
-.header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: 56px; margin-inline: -16px; padding-inline: 16px; background: var(--debate-bg); }
-/* 첫 화면 머리 부분: 홈과 같은 로고·문구, 오른쪽에 이용 안내·알림 */
-.homeHeader { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; height: 56px; margin-inline: -16px; padding-inline: 16px; background: var(--debate-bg); }
-.brandLine { display: flex; align-items: center; gap: 12px; }
-.brandLine img { display: block; flex: none; max-width: none; }
-.brandLine span { color: var(--debate-muted); font-size: 8px; line-height: 9px; }
+.header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: 56px; margin-inline: -24px; padding-inline: 24px; background: var(--debate-bg); }
+/* 첫 화면·내 활동 머리 부분: 홈 머리 부분(home.module.css .header, 높이 40px)을 감싸 위에 붙여 둔다.
+   홈의 .stickyHeader 와 같은 여백이라 홈과 토론방을 오가도 로고·알림이 같은 자리에 있다. */
+.homeHeader { position: sticky; top: 0; z-index: 5; margin-inline: -24px; padding: env(safe-area-inset-top, 0px) 24px 0; background: var(--debate-bg); }
 .headerTitle { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
 .headerTitle h1 { overflow: hidden; font-size: 17px; font-weight: 700; line-height: 24px; white-space: nowrap; text-overflow: ellipsis; }
 .logo { display: block; flex: none; }
 .divider { flex: none; width: 1px; height: 14px; background: #d4d4d8; }
-.headerActions { display: flex; align-items: center; gap: 4px; }
+/* 이용 안내(ⓘ)와 알림: 24px 아이콘 두 개, 사이 8px (시안). ⓘ 는 알림 그림과 같은 회색 */
+.headerActions { display: flex; align-items: center; gap: 8px; color: #71717a; }
 .iconButton { position: relative; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--debate-ink); }
 .iconButton:active { background: var(--debate-soft); }
-.bellDot { position: absolute; top: 7px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--debate-primary); }
 .back { display: grid; place-items: center; width: 32px; height: 36px; margin-left: -6px; padding: 0; border: 0; background: transparent; color: var(--debate-ink); }
 .liveDot { display: inline-flex; align-items: center; gap: 4px; color: #16a34a; font-size: 11px; font-weight: 600; }
 .liveDot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: debate-pulse 1.6s ease-in-out infinite; }
@@ -60,70 +70,92 @@
 .liveDot[data-state="stopped"] { color: var(--debate-danger); }
 .liveDot:not([data-state="live"])::before { animation: none; }
 
-/* 탭 */
-.tabs { position: sticky; top: 56px; z-index: 4; display: grid; grid-auto-columns: 1fr; grid-auto-flow: column; margin: 0 -16px; border-bottom: 1px solid var(--debate-line); background: var(--debate-bg); }
-.screen .tab { position: relative; height: 44px; padding: 0; border: 0; background: transparent; color: var(--debate-muted); font-size: 15px; }
+/* 탭 (2026-11-23 시안): 글씨 16px, 첫 탭은 왼쪽(24px)·가운데 탭은 가운데·끝 탭은 오른쪽 끝에 맞춘다.
+   고른 탭의 밑줄(#825abd, 2px)은 글자보다 양쪽 6px 길다. 탭 줄 높이 48px. data-spread 면 탭 사이를 똑같이 벌린다. */
+.tabs { position: sticky; top: calc(40px + env(safe-area-inset-top, 0px)); z-index: 4; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 -24px; padding: 0 24px; border-bottom: 1px solid #f3eaf8; background: var(--debate-bg); }
+.tabs[data-spread] { display: flex; justify-content: space-between; }
+.screen .tab { position: relative; justify-self: center; height: 48px; margin-inline: -6px; padding: 0 6px; border: 0; background: transparent; color: var(--debate-muted); font-size: 16px; line-height: 22px; white-space: nowrap; }
+.screen .tab:first-child { justify-self: start; }
+.screen .tab:last-child { justify-self: end; }
 .screen .tab[aria-selected="true"] { color: var(--debate-primary); font-weight: 700; }
-.tab[aria-selected="true"]::after { content: ""; position: absolute; left: 14%; right: 14%; bottom: -1px; height: 2px; border-radius: 2px; background: var(--debate-primary); }
+.tab[aria-selected="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px; background: #825abd; }
 
-/* 탭 아래 검색창 (홈 검색창과 같은 모양, 누르면 검색 화면이 열린다) */
-.screen .searchField { display: flex; align-items: center; gap: 8px; width: 100%; height: 40px; margin-top: 14px; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; box-shadow: 0 1px 5px rgb(206 191 250 / 50%); color: var(--debate-muted); font-size: 14px; text-align: left; cursor: text; }
-.searchField img { flex: none; }
+/* 탭 아래 검색창: 홈 검색 부품(WorkSearchField, 위아래 8px + 36px)을 그대로 쓴다. 카드는 검색창 12px 아래 (시안).
+   검색창을 누르면 뒤가 흐려지고(홈 .searchDim, z 5) 머리 부분·탭·검색 줄은 흐림 위에 남는다. */
+.searchArea { margin-inline: -24px; padding-inline: 24px; }
+.searchArea > [role="search"] { margin-bottom: 4px; }
+.searchArea[data-open] { position: relative; z-index: 6; background: var(--debate-bg); }
+/* 홈처럼 입력 중에는 커서만 보인다 (공통 초점 테두리 규칙보다 구체적으로) */
+.screen .searchArea input:focus-visible { outline: none; }
+.screen[data-search-open] :is(.homeHeader, .tabs) { z-index: 7; }
+.searchArea + .stack { padding-top: 0; }
+/* 검색 결과 (시안): "‘나루토’ 검색 결과 · 검색 결과 닫기" 줄은 홈과 같은 글씨, 간격은 시안대로 검색창 아래에 붙여 둔다 */
+.resultsHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; margin-bottom: 6px; }
+.resultsHead h2 { min-width: 0; color: var(--home-muted); font-size: 14px; font-weight: 500; line-height: 22px; }
+.resultsHead h2 strong { color: var(--home-ink); font-size: 16px; font-weight: 700; }
+.screen .resultsHead button { flex: none; padding: 10px 0; border: 0; background: transparent; color: var(--home-accent); font-size: 14px; font-weight: 600; line-height: 20px; }
+.results .stack { padding-top: 0; }
 
-/* 주제 카드 (실시간 토론방·주제 투표·지난 토론방, 2026-11-23 시안) */
-.topicCard { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--debate-card-line); border-radius: 14px; background: #fff; color: inherit; text-decoration: none; }
-.topicTitle { font-size: 17px; font-weight: 700; line-height: 24px; }
-.topicDescription { display: -webkit-box; overflow: hidden; color: var(--debate-muted); font-size: 13px; line-height: 19px; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.topicMeta { display: flex; align-items: center; gap: 8px; min-height: 26px; color: var(--debate-muted); font-size: 12px; line-height: 17px; }
-.author { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-right: auto; color: var(--debate-ink); font-size: 12px; font-weight: 700; }
+/* 주제 카드 (실시간 토론방·주제 투표·지난 토론방·내 활동, 2026-11-23 시안 값 · 글씨는 시안 문장 폭으로 잼):
+   안쪽 여백 12px, 테두리 #e2d5ff, 모서리 12px. 칩 20px(11px) → 제목 16px → 설명 12px 두 줄 → 작성자 줄 24px(10px) → 버튼 28px(12px) */
+.topicCard { display: flex; flex-direction: column; padding: 12px; border: 1px solid #e2d5ff; border-radius: 12px; background: #fff; color: inherit; text-decoration: none; }
+.topicCard > .chips { margin-bottom: 3px; }
+.topicTitle { color: #27272a; font-size: 16px; font-weight: 700; line-height: 22px; }
+.topicDescription { display: -webkit-box; overflow: hidden; margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.topicMeta { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-top: 4px; color: #52525b; font-size: 10px; line-height: 16px; }
+.topicCard > :is(.fillButton, .softFillButton, .cardButtons) { margin-top: 10px; }
+/* 주제 투표 카드는 표 수·막대가 있어 작성자 줄 위아래가 조금 더 넓다 (시안) */
+.topicMeta:has(.voteMini) { margin-top: 8px; }
+.topicMeta:has(.voteMini) + :is(.fillButton, .softFillButton) { margin-top: 12px; }
+.author { display: inline-flex; align-items: center; gap: 8px; min-width: 0; margin-right: auto; color: #000; font-size: 10px; font-weight: 700; }
 .author img { flex: none; border-radius: 50%; }
 .author b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-/* 카드 버튼: 작품 칩과 같은 알약 모양, 높이 32px (2026-11-23 시안) */
-.screen :is(.fillButton, .softFillButton) { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 32px; padding: 0 12px; border: 0; border-radius: 999px; font-size: 13.5px; font-weight: 700; text-decoration: none; }
+/* 카드 버튼: 알약 모양, 높이 28px, 글씨 12px (2026-11-23 시안) */
+.screen :is(.fillButton, .softFillButton) { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 28px; padding: 0 12px; border: 0; border-radius: 999px; font-size: 12px; font-weight: 700; text-decoration: none; }
 .screen .fillButton { background: var(--debate-accent); color: #fff; }
 .screen .softFillButton { background: var(--debate-pill); color: var(--debate-primary); }
 .fillButton:disabled, .softFillButton:disabled { opacity: .55; }
-/* 참여한 방의 버튼 두 개 (방 나가기 · 다시 입장하기) */
+/* 참여한 방의 버튼 두 개 (방 나가기 · 다시 입장하기). 다시 입장하기는 진한 바탕에 진보라 글씨 (시안 #9c79e6 / #7043b4) */
 .cardButtons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-/* 한 번 더 묻는 창 */
-.confirm { display: flex; flex-direction: column; gap: 10px; width: min(100%, 320px); padding: 22px 18px 18px; border-radius: 16px; background: #fff; text-align: center; box-shadow: 0 16px 40px #0004; }
-.confirm h2 { font-size: 17px; font-weight: 700; line-height: 24px; }
-.confirm p { color: var(--debate-muted); font-size: 13.5px; line-height: 20px; }
-.confirm .cardButtons { margin-top: 8px; }
-.voteMini { display: flex; flex-direction: column; gap: 3px; width: 96px; }
-.voteMini b { color: var(--debate-primary); font-size: 12px; line-height: 15px; }
+.screen .rejoinButton { color: var(--debate-primary); }
+/* 한 번 더 묻는 창 (2026-11-23 시안: 방 나가기). 제목 20px, 본문 16px 두 줄, 버튼 높이 40px */
+.confirm { display: flex; flex-direction: column; width: min(100%, 327px); padding: 22px 20px 20px; border-radius: 16px; background: #fff; text-align: center; box-shadow: 0 16px 40px #0004; }
+.confirm h2 { color: #27272a; font-size: 20px; font-weight: 700; line-height: 26px; }
+.confirm p { margin-top: 10px; color: #52525b; font-size: 16px; line-height: 23px; white-space: pre-line; }
+.confirmButtons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+.screen :is(.confirmCancel, .confirmOk) { height: 40px; padding: 0 12px; border: 0; border-radius: 12px; font-size: 16px; font-weight: 600; }
+.screen .confirmCancel { background: var(--debate-pill); color: #52525b; }
+.screen .confirmOk { background: var(--debate-primary); color: #fff; }
+/* 지난 토론방: 제목을 눌러도 결과 창이 뜬다 (버튼이지만 제목처럼 보이게) */
+.screen .titleButton { display: block; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+/* 지난 토론방 결과 창 (2026-11-23 시안): 칩·닫기, 제목, 설명 전체, 작성자, 진영 비율 막대, 총 N명 투표 */
+.resultDialog { display: flex; flex-direction: column; width: min(100%, 327px); max-height: calc(100svh - 48px); overflow-y: auto; padding: 14px 16px 16px; border-radius: 16px; background: #fff; box-shadow: 0 16px 40px #0004; }
+.screen .dialogClose { display: grid; place-items: center; flex: none; width: 32px; height: 32px; margin: -4px -6px -4px 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #52525b; }
+/* 내가 올린 주제 카드의 '투표 중' 표시 (시안: 오른쪽 끝 연보라 작은 상자) */
+.statusPill { flex: none; display: inline-flex; align-items: center; height: 24px; margin-left: auto; padding: 0 8px; border-radius: 6px; background: #ebe3ff; color: var(--debate-primary); font-size: 12px; font-weight: 700; }
+/* 주제 카드의 표 수: "6/10표" 아래 막대 (시안: 막대 폭 약 120px) */
+.voteMini { display: flex; flex-direction: column; gap: 4px; width: 120px; }
+.voteMini b { color: var(--debate-primary); font-size: 11px; line-height: 15px; }
 .voteMini .progressFill { background: var(--debate-accent); }
 /* 세로로 쌓는 틀 안의 막대는 늘어나지 않게(늘면 높이가 0이 된다) 너비만 채운다. */
 .voteMini .progress, .ticketMain .progress { flex: none; width: 100%; }
 
-.stack { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; }
-.sectionHeading { margin-top: 10px; font-size: 17px; font-weight: 700; line-height: 24px; }
-
-/* 규칙 카드 4개 */
-.ruleGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.ruleCard { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border-radius: 12px; background: var(--debate-soft); color: var(--debate-primary); text-align: center; }
-.ruleCard p { color: var(--debate-ink); font-size: 11.5px; line-height: 15px; }
-
-/* 보라 띠 제목 */
-.sectionBar { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--debate-soft-strong); color: var(--debate-primary); }
-.sectionBar h2 { color: var(--debate-ink); font-size: 16px; font-weight: 700; }
+/* 검색창 아래 목록: 카드 사이 8px (시안) */
+.stack { display: flex; flex-direction: column; gap: 8px; padding-top: 16px; }
 
 /* 카드 공통 */
-.card { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--debate-line); border-radius: 14px; background: #fff; }
 .cardLink { color: inherit; text-decoration: none; }
 .cardTitle { font-size: 16px; font-weight: 700; line-height: 23px; }
-.cardTitleSmall { font-size: 14.5px; font-weight: 700; line-height: 21px; }
 .description { color: var(--debate-muted); font-size: 13px; line-height: 19px; }
 .badge { align-self: flex-start; display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px; border-radius: 999px; background: var(--debate-primary); color: #fff; font-size: 11px; font-weight: 600; line-height: 16px; }
 .badge[data-tone="soft"] { background: var(--debate-soft-strong); color: var(--debate-primary); }
 .badge[data-tone="gray"] { background: #f1f1f4; color: #52525b; }
 .badge[data-tone="danger"] { background: #fdecec; color: var(--debate-danger); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: var(--debate-pill); color: var(--debate-primary); font-size: 12px; font-weight: 600; line-height: 17px; }
-.metaRow { display: flex; align-items: center; gap: 10px; color: var(--debate-muted); font-size: 12.5px; line-height: 18px; }
+/* 작품 칩 (시안: 높이 20px, 글씨 11px, 바탕 #decfff) */
+.chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 12px; border-radius: 999px; background: #decfff; color: var(--debate-primary); font-size: 11px; font-weight: 600; line-height: 16px; }
 .meta { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.metaDivider { width: 1px; height: 12px; background: #e4e4e7; }
-.spacer { flex: 1; }
+.metaDivider { width: 1px; height: 16px; background: #e4e4e7; }
 
 /* 버튼 */
 .screen :is(.softButton, .primaryButton, .ghostButton, .dangerText) {
@@ -135,7 +167,7 @@
 .screen .primaryButton { height: 52px; width: 100%; background: var(--debate-primary); color: #fff; font-size: 16px; }
 .primaryButton:disabled { background: #d9cdee; color: #fff; }
 .screen .ghostButton { height: 44px; border: 1px solid var(--debate-line); background: #fff; color: var(--debate-ink); }
-.screen .dangerText { height: 36px; background: transparent; color: var(--debate-muted); font-weight: 500; text-decoration: underline; }
+.screen .dangerText { align-self: center; height: 36px; background: transparent; color: var(--debate-muted); font-size: 13px; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
 .buttonRow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
 
@@ -143,31 +175,21 @@
 .voteLine { display: flex; align-items: center; gap: 8px; }
 .voteCount { flex: none; color: var(--debate-primary); font-size: 13px; font-weight: 700; }
 .voteCount[data-large] { font-size: 17px; }
-.progress { flex: 1; height: 6px; overflow: hidden; border-radius: 999px; background: #eeeaf5; }
+/* 시안: 막대 바탕은 작품 칩과 같은 연보라, 채운 쪽은 마스코트 보라(#9c79e6) */
+.progress { flex: 1; height: 7px; overflow: hidden; border-radius: 999px; background: #decfff; }
 .progressFill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #8f6ad6, var(--debate-primary)); transition: width .3s ease; }
 
-/* 투표권 카드 */
-.ticketCard { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; background: var(--debate-soft); }
-.ticketTop { display: flex; align-items: center; gap: 14px; }
-.ticketIcon { display: grid; place-items: center; flex: none; width: 52px; height: 52px; border-radius: 50%; background: var(--debate-soft-strong); color: var(--debate-primary); }
-.ticketText { display: flex; flex-direction: column; gap: 3px; padding-left: 14px; border-left: 1px solid #ddd2f1; }
-.ticketText strong { font-size: 18px; font-weight: 700; }
-.ticketText strong em { margin-left: 6px; color: var(--debate-primary); font-style: normal; }
-.ticketText span { color: var(--debate-muted); font-size: 12.5px; }
-.refillChip { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 3px 9px; border-radius: 999px; background: #fff; color: #52525b; font-size: 11.5px; }
-.segments { display: grid; grid-template-columns: repeat(var(--segments, 3), 1fr); gap: 4px; }
-.segment { height: 6px; border-radius: 999px; background: #e3daf3; }
-.segment[data-on] { background: var(--debate-primary); }
-.ticketFoot { display: flex; align-items: center; gap: 6px; padding-top: 10px; border-top: 1px solid #e3daf3; color: #52525b; font-size: 12px; }
-/* 주제 투표 탭의 투표권 카드 (2026-11-23 시안: 오른쪽에 내 활동 버튼) */
-.ticketBox { display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: 14px; background: #f4eefe; }
+/* 주제 투표 탭의 투표권 카드 (2026-11-23 시안: 오른쪽 위에 내 활동 버튼, 막대는 버튼 왼쪽 칸 폭).
+   내 활동 화면에서는 버튼 없이 막대가 카드 폭을 채운다. 카드 아래는 목록보다 8px 더 띄운다. */
+.ticketBox { display: flex; align-items: flex-start; gap: 13px; margin-bottom: 8px; padding: 12px; border-radius: 12px; background: #f4eefe; }
 .ticketMain { display: flex; flex: 1; flex-direction: column; gap: 6px; min-width: 0; }
-.ticketMain strong { font-size: 17px; font-weight: 700; line-height: 24px; }
+.ticketMain strong { color: #27272a; font-size: 17px; font-weight: 700; line-height: 24px; }
 .ticketMain strong em { margin-left: 6px; color: var(--debate-primary); font-style: normal; }
-.ticketRule { color: #52525b; font-size: 12px; line-height: 17px; }
+.ticketRule { color: #3f3f46; font-size: 13px; line-height: 18px; }
 .ticketMain .progressFill { background: var(--debate-accent); }
-.refillLine { display: inline-flex; align-items: center; gap: 4px; color: var(--debate-muted); font-size: 11.5px; line-height: 16px; }
-.screen .activityButton { flex: none; display: grid; place-items: center; height: 40px; padding: 0 16px; border-radius: 10px; background: var(--debate-accent); color: #fff; font-size: 15px; font-weight: 700; text-decoration: none; box-shadow: 0 2px 8px rgb(156 121 230 / 35%); }
+.refillLine { display: inline-flex; align-items: center; gap: 4px; color: var(--debate-muted); font-size: 12px; line-height: 17px; }
+/* 내 활동 버튼: 약 70x32px, 글씨 16px, 모서리 8px (시안). 제목·충전 규칙 두 줄 사이 높이에 둔다 */
+.screen .activityButton { flex: none; display: grid; place-items: center; height: 32px; margin-top: 13px; padding: 0 13px; border-radius: 8px; background: var(--debate-accent); color: #fff; font-size: 16px; font-weight: 700; line-height: 20px; text-decoration: none; box-shadow: 0 3px 8px rgb(156 121 230 / 40%); }
 
 /* 토론방 이용 안내 창 (머리 부분 ⓘ) */
 .modalBackdrop { position: fixed; z-index: 25; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(24 24 27 / 50%); }
@@ -181,124 +203,157 @@
 .guideList p { color: var(--debate-ink); font-size: 13.5px; line-height: 20px; }
 .guideList em { color: var(--debate-primary); font-style: normal; font-weight: 600; }
 
-/* 안내 칩·안내문 */
-.infoRow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.infoChip { display: flex; align-items: center; justify-content: center; gap: 6px; height: 36px; border-radius: 10px; background: var(--debate-soft); color: var(--debate-ink); font-size: 12px; }
-.infoChip svg { color: var(--debate-primary); }
+/* 안내문 */
 .note { display: flex; align-items: flex-start; gap: 8px; padding: 11px 13px; border-radius: 12px; background: var(--debate-soft); color: #3f3f46; font-size: 12.5px; line-height: 19px; }
 .note svg { flex: none; margin-top: 1px; color: var(--debate-primary); }
 .note strong { display: block; color: var(--debate-ink); font-size: 14px; line-height: 21px; }
 
-/* 투표 후보 카드 */
-.voteCard { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px 12px; padding: 12px 14px; border: 1px solid var(--debate-line); border-radius: 14px; background: #fff; }
-.voteCard > :first-child { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.voteFoot { display: flex; align-items: center; gap: 8px; color: var(--debate-muted); font-size: 12px; }
-.closingSoon { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 999px; background: #fdecec; color: var(--debate-danger); font-size: 11px; font-weight: 600; }
-.votedMark { display: inline-flex; align-self: flex-start; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: var(--debate-soft-strong); color: var(--debate-primary); font-size: 11.5px; font-weight: 600; }
 
-/* 지난 토론방 */
-.filterRow { display: flex; gap: 6px; }
-.screen .filter { height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: #f4f4f6; color: #52525b; font-size: 12.5px; }
-.screen .filter[aria-pressed="true"] { background: var(--debate-primary); color: #fff; font-weight: 700; }
-.searchBox { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border-radius: 12px; background: #f4f4f6; color: var(--debate-muted); }
-.screen .searchBox input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--debate-ink); font-size: 14px; }
-.pastItem { display: flex; flex-direction: column; gap: 8px; padding: 13px 14px; border: 1px solid var(--debate-line); border-radius: 14px; background: #fff; color: inherit; text-decoration: none; }
-.pastTop { display: flex; align-items: flex-start; gap: 8px; }
-.pastTop h3 { flex: 1; font-size: 14.5px; font-weight: 700; line-height: 21px; }
-.result { display: inline-flex; align-items: center; gap: 5px; color: var(--debate-primary); font-size: 13px; font-weight: 700; }
-
-/* 토론방 (채팅) */
+/* 주제 후보·지난 토론방 결과 화면 (아직 시안 전, 예전 모양) */
 .roomCard { display: flex; flex-direction: column; gap: 10px; padding: 16px; border: 1px solid var(--debate-line); border-radius: 16px; background: #fff; }
 .roomCard h2 { font-size: 19px; font-weight: 700; line-height: 27px; }
 .roomChips { display: flex; flex-wrap: wrap; gap: 6px; }
 .roomChip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; border: 1px solid var(--debate-line); border-radius: 999px; color: #3f3f46; font-size: 12px; }
-.ratioCard { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid var(--debate-line); border-radius: 16px; background: #fff; }
-.ratioHead { display: flex; align-items: center; gap: 8px; color: var(--debate-muted); font-size: 13px; }
-.ratioHead strong { color: var(--debate-primary); font-size: 14px; }
 .ratioBar { display: flex; height: 10px; overflow: hidden; border-radius: 999px; background: #eeeaf5; }
 .ratioA { background: var(--debate-primary); transition: width .4s ease; }
 .ratioB { background: var(--debate-b); transition: width .4s ease; }
 .ratioLegend { display: flex; justify-content: space-between; color: #52525b; font-size: 12px; }
-.sideButtons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.screen .sideButton { height: 40px; border: 1.5px solid var(--debate-line); border-radius: 10px; background: #fff; color: var(--debate-ink); font-size: 13.5px; font-weight: 700; }
-.sideButton[data-side="a"][aria-pressed="true"] { border-color: var(--debate-primary); background: var(--debate-primary); color: #fff; }
-.sideButton[data-side="b"][aria-pressed="true"] { border-color: var(--debate-b); background: var(--debate-b); color: #2e1a52; }
-.sideHelp { color: var(--debate-muted); font-size: 11.5px; line-height: 16px; text-align: center; }
-.messages { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
+.resultCard { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 16px; border-radius: 16px; background: var(--debate-soft); text-align: center; }
+.resultCard strong { color: var(--debate-primary); font-size: 22px; }
+
+/* 채팅방 (2026-11-23 시안). 위 토론 카드는 머리 부분 아래에 붙어 있고('투표창 접기/펼치기'), 채팅은 그 아래로 흐른다. */
+.roomPanel { position: sticky; top: calc(40px + env(safe-area-inset-top, 0px)); z-index: 4; margin-inline: -24px; padding: 8px 24px 14px; border-bottom: 1px solid #f3eaf8; background: var(--debate-bg); }
+.roomPanelCard { display: flex; flex-direction: column; padding: 12px; border: 1px solid #e2d5ff; border-radius: 12px; background: #fff; }
+.roomTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+.roomTop .chips { min-width: 0; }
+.screen .foldButton { flex: none; height: 24px; padding: 0 2px; border: 0; background: transparent; color: var(--debate-primary); font-size: 12px; font-weight: 600; }
+.roomDescription { margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; }
+.roomPanelCard .topicMeta { margin-top: 4px; }
+.screen .joinButton { height: 40px; margin-top: 12px; font-size: 15px; }
+.joinNote { margin-top: 14px; color: var(--debate-muted); font-size: 12px; line-height: 18px; text-align: center; }
+/* 진영 투표: 고르기 전 두 버튼(연보라·보라 테두리, 동그라미 체크), 고른 뒤 비율 막대와 '투표 취소' */
+.poll { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.sideChoices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.screen .sideChoice { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; height: 40px; padding: 0 8px; border: 1px solid #c9b6f2; border-radius: 8px; background: #f5f1fe; color: #27272a; font-size: 17px; font-weight: 700; }
+.sideChoice svg { flex: none; color: #b39ced; }
+.sideChoice:disabled { opacity: .6; }
+.pollResult { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border: 1px solid var(--debate-primary); border-radius: 8px; background: #f5f1fe; }
+.pollLabels { display: flex; justify-content: space-between; gap: 12px; color: #27272a; font-size: 17px; font-weight: 500; line-height: 24px; }
+.pollLabels b { margin-left: 8px; font-weight: 700; }
+.pollLabels [data-mine] { color: var(--debate-primary); }
+.pollBar { display: block; height: 12px; overflow: hidden; border-radius: 999px; background: #e2d5ff; }
+.pollBar > span { display: block; height: 100%; border-radius: inherit; background: var(--debate-primary); transition: width .3s ease; }
+.pollFoot { display: flex; align-items: center; justify-content: space-between; min-height: 20px; color: var(--debate-muted); font-size: 11px; line-height: 16px; }
+.screen .pollFoot button { padding: 2px 0; border: 0; background: transparent; color: var(--debate-muted); font-size: 11px; }
+/* 채팅: 다른 사람은 왼쪽 흰 말풍선(연회색 테두리), 내 메시지는 오른쪽 연보라 말풍선. 얼굴 자리는 연보라 동그라미 30px */
+.chat { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; }
+.chatEmpty { padding: 24px 0; color: var(--debate-muted); font-size: 13px; text-align: center; }
+/* 새 메시지로 따라 내려갈 때 떠 있는 입력창에 가리지 않게 */
+.chatEnd { height: 1px; scroll-margin-bottom: 92px; }
+.messages { display: flex; flex-direction: column; gap: 24px; }
 .screen .olderButton { align-self: center; height: 32px; padding: 0 14px; border: 1px solid var(--debate-line); border-radius: 999px; background: #fff; color: var(--debate-muted); font-size: 12.5px; font-weight: 600; }
 .connectionNote { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: 12px; background: #f4f4f6; color: var(--debate-muted); font-size: 13px; line-height: 18px; }
 .connectionNote[data-tone="error"] { background: #fdecec; color: var(--debate-danger); }
 .screen .connectionNote button { flex: none; height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: #fff; color: var(--debate-danger); font-size: 12.5px; font-weight: 700; }
-.message { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px; align-items: start; max-width: 88%; }
-/* 내 메시지는 오른쪽(아바타 없이 보라 말풍선), 다른 사람은 왼쪽. 진영은 닉네임 옆 표시로만 보여준다. */
-.message[data-mine] { grid-template-columns: minmax(0, 1fr); align-self: flex-end; }
-.message[data-mine] .avatar { display: none; }
-.avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--debate-soft-strong); color: var(--debate-primary); }
-.messageBody { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 86%; }
+.message[data-mine] { grid-template-columns: minmax(0, 1fr) 30px; align-self: flex-end; }
+.message[data-mine] .avatar { order: 2; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; background: #ece6fb; }
+.messageBody { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
 .message[data-mine] .messageBody { align-items: flex-end; }
-.messageMeta { display: flex; align-items: center; gap: 6px; color: var(--debate-faint); font-size: 11px; }
-.messageMeta b { color: var(--debate-ink); font-size: 12.5px; }
-.sideTag { padding: 1px 6px; border-radius: 999px; background: var(--debate-soft-strong); color: var(--debate-primary); font-size: 10.5px; font-weight: 600; }
-.sideTag[data-side="b"] { background: #efe9fb; color: #7a5cc0; }
-.bubble { padding: 9px 12px; border-radius: 4px 14px 14px 14px; background: #f4f4f6; font-size: 13.5px; line-height: 20px; white-space: pre-wrap; }
-.message[data-mine] .bubble { border-radius: 14px 4px 14px 14px; background: var(--debate-primary); color: #fff; }
-.composer { position: fixed; z-index: 6; bottom: 0; left: 50%; display: flex; align-items: center; gap: 8px; width: min(100%, 430px); padding: 10px 16px max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); border-top: 1px solid var(--debate-line); background: #fff; }
-.screen .composer input { flex: 1; min-width: 0; height: 44px; padding: 0 16px; border: 1px solid var(--debate-line); border-radius: 999px; outline: none; background: #fafafa; font-size: 14px; }
-.composer input:disabled { background: #f4f4f6; }
-.sendButton { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border: 0; border-radius: 12px; background: var(--debate-primary); color: #fff; }
-.sendButton:disabled { background: #d9cdee; }
-.resultCard { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 16px; border-radius: 16px; background: var(--debate-soft); text-align: center; }
-.resultCard strong { color: var(--debate-primary); font-size: 22px; }
+.messageMeta { display: flex; align-items: center; gap: 6px; min-height: 20px; color: #71717a; font-size: 11px; line-height: 16px; }
+.messageMeta b { color: #27272a; font-size: 13px; font-weight: 700; }
+.sideTag { padding: 1px 6px; border-radius: 999px; background: #efe7ff; color: var(--debate-primary); font-size: 10.5px; font-weight: 600; }
+.sideTag[data-side="b"] { background: #f4f4f5; color: #52525b; }
+.bubble { max-width: 100%; padding: 10px 14px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; color: #27272a; font-size: 14px; line-height: 22px; white-space: pre-wrap; }
+.message[data-mine] .bubble { border-color: #e2d5ff; background: #f5f1fe; }
+/* 입력창: 화면 아래 24px 에 떠 있는 흰 상자(홈 AI 대화 입력창과 같은 모양), 오른쪽 둥근 보내기. 밑은 바탕색으로 흐리게 덮는다 */
+.composer { position: fixed; z-index: 6; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 8px; width: min(calc(100% - 48px), 382px); padding: 4px 4px 4px 14px; transform: translateX(-50%); border-radius: 10px; background: #fff; box-shadow: 0 2px 12px rgb(0 0 0 / 10%); }
+.composer:focus-within { box-shadow: 0 2px 12px rgb(0 0 0 / 10%), 0 0 0 2px #c7acfb; }
+.screen .composer input { flex: 1; min-width: 0; height: 32px; padding: 0; border: 0; outline: none; background: transparent; color: #27272a; font-size: 14px; }
+.screen .composer input:focus-visible { outline: none; }
+.composer input::placeholder { color: #a1a1aa; opacity: 1; }
+.screen .sendButton { display: grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: #f4f4f5; color: #27272a; }
+.screen .sendButton:disabled { color: #a1a1aa; }
+.screen[data-composer]::after { content: ""; position: fixed; z-index: 5; left: 0; right: 0; bottom: 0; height: calc(44px + env(safe-area-inset-bottom)); background: linear-gradient(rgb(255 249 253 / 0%), var(--debate-bg) 16px); pointer-events: none; }
+/* 도배 막기 창 (시안): 두 줄 굵은 제목, 회색 설명, 연보라 알약 안내, 꽉 찬 확인 버튼 */
+.rateDialog h2 { display: flex; flex-direction: column; gap: 2px; }
+.rateDialog h2 span { font-size: 18px; line-height: 26px; }
+.confirm .rateRule { display: flex; align-items: center; justify-content: center; gap: 6px; align-self: center; margin-top: 14px; padding: 8px 14px; border-radius: 999px; background: #efe7ff; color: var(--debate-primary); font-size: 14px; font-weight: 600; line-height: 20px; white-space: normal; }
+.screen .rateDialog .confirmOk { width: 100%; height: 44px; margin-top: 18px; }
 
-/* 주제 올리기 */
-.field { display: flex; flex-direction: column; gap: 8px; }
-.label { display: flex; align-items: baseline; gap: 6px; font-size: 15px; font-weight: 700; }
-.label small { color: var(--debate-muted); font-size: 12px; font-weight: 400; }
+/* 주제 올리기 (2026-11-23 시안): 칸마다 굵은 제목(필수는 보라 *), 회색 도움말, 흰 입력칸(테두리 #e4e4e7, 모서리 8px).
+   작품은 목록에서 찾아 여러 개 고르고, 선택지 두 칸은 연보라 '선택지 1·2' 라벨과 지우기 X. 아래 임시 저장·주제 올리기. */
+.createForm { display: flex; flex-direction: column; gap: 28px; padding-top: 12px; }
+.field { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.label { display: flex; align-items: baseline; gap: 4px; padding: 0; color: #27272a; font-size: 18px; font-weight: 700; line-height: 26px; }
+.label small { margin-left: 4px; color: var(--debate-muted); font-size: 13px; font-weight: 400; }
 .required { color: var(--debate-primary); }
-.screen .input, .textarea { width: 100%; border: 1px solid #e4e4e7; border-radius: 10px; outline: none; background: #fff; color: var(--debate-ink); font-size: 14px; }
-.input { height: 46px; padding: 0 14px; }
-.textarea { min-height: 96px; padding: 12px 14px; resize: none; font: inherit; font-size: 14px; line-height: 21px; }
-.input:focus, .textarea:focus { border-color: var(--debate-primary); }
-.counter { align-self: flex-end; color: var(--debate-faint); font-size: 11.5px; }
-.sideInputs { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
-.versus { color: var(--debate-primary); font-size: 13px; font-weight: 800; }
-.fieldHelp { color: var(--debate-muted); font-size: 12px; line-height: 17px; }
+.screen .input, .textarea { width: 100%; border: 1px solid #e4e4e7; border-radius: 8px; outline: none; background: #fff; color: var(--debate-ink); font-size: 14px; }
+.screen .input { height: 42px; padding: 0 14px; }
+.screen .input:disabled { background: #fafafa; }
+.textarea { display: block; min-height: 140px; padding: 12px 14px 30px; resize: none; font: inherit; font-size: 14px; line-height: 21px; }
+.input:focus, .textarea:focus, .choiceInput input:focus { border-color: var(--debate-primary); }
+/* 안내 문구는 시안처럼 12px (입력한 글자는 14px). 입력 중에는 테두리만 보라로 바뀐다 (공통 3px 초점 테두리는 끈다) */
+.screen :is(.input, .textarea, .choiceInput input)::placeholder { color: #a1a1aa; font-size: 12px; opacity: 1; }
+.screen :is(.input, .textarea, .choiceInput input):focus-visible { outline: none; }
+.textareaBox { position: relative; }
+.textareaBox .counter { position: absolute; right: 12px; bottom: 9px; }
+.counter { color: #71717a; font-size: 12px; line-height: 16px; pointer-events: none; }
+.fieldHelp { color: #71717a; font-size: 12px; line-height: 18px; }
 .fieldError { color: var(--debate-danger); font-size: 12.5px; line-height: 18px; }
-.screen .workPick { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 11px; border: 1px solid var(--debate-line); border-radius: 999px; background: #fff; color: #3f3f46; font-size: 12.5px; }
-.screen .workPick[aria-pressed="true"] { border-color: var(--debate-primary); background: var(--debate-soft-strong); color: var(--debate-primary); font-weight: 700; }
-.similar { display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--debate-line); border-radius: 14px; }
-.similarHead { display: flex; align-items: center; gap: 6px; padding: 11px 14px; background: var(--debate-soft); color: var(--debate-primary); font-size: 13.5px; font-weight: 700; }
-.similarItem { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-top: 1px solid var(--debate-line); color: inherit; font-size: 13.5px; text-decoration: none; }
-.submitBar { position: fixed; z-index: 6; bottom: 0; left: 50%; width: min(100%, 430px); padding: 10px 16px max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); background: linear-gradient(transparent, #fff 18px); }
+/* 작품 찾기: 입력하면 아래로 후보 목록, 고른 작품은 칩(빼기 X) */
+.workSearch { position: relative; }
+.workOptions { position: absolute; z-index: 3; top: calc(100% + 4px); left: 0; right: 0; display: flex; flex-direction: column; padding: 4px; border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; box-shadow: 0 6px 18px rgb(0 0 0 / 8%); }
+.screen .workOptions button { display: block; width: 100%; padding: 10px 12px; border: 0; border-radius: 6px; background: transparent; color: #27272a; font-size: 14px; line-height: 20px; text-align: left; }
+.screen .workOptions button:is(:hover, :focus-visible) { background: #f5f1fe; }
+.pickedWorks { display: flex; flex-wrap: wrap; gap: 6px; }
+.pickedWorks li { display: inline-flex; align-items: center; gap: 2px; height: 28px; padding: 0 4px 0 12px; border-radius: 999px; background: #decfff; color: var(--debate-primary); font-size: 13px; font-weight: 600; }
+.screen .pickedWorks button { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--debate-primary); }
+/* 투표 선택지 두 칸 */
+.choiceRow { display: flex; align-items: center; gap: 8px; }
+.choiceTag { flex: none; display: grid; place-items: center; width: 68px; height: 30px; padding: 0; border-radius: 6px; background: #efe7ff; color: var(--debate-primary); font-size: 14px; font-weight: 700; }
+.choiceInput { position: relative; flex: 1; min-width: 0; }
+.screen .choiceInput input { width: 100%; height: 32px; padding: 0 36px 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; outline: none; background: #fff; color: var(--debate-ink); font-size: 14px; }
+.screen .choiceInput button { position: absolute; top: 50%; right: 4px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #52525b; transform: translateY(-50%); }
+/* 아래 버튼: 임시 저장(회색) · 주제 올리기(필수 칸을 다 채우면 보라) */
+.createButtons { display: grid; grid-template-columns: 102px 1fr; gap: 8px; }
+.screen :is(.draftButton, .submitButton) { height: 44px; padding: 0 12px; border: 0; border-radius: 999px; font-size: 16px; font-weight: 600; }
+.screen .draftButton { background: #d4d4d8; color: #52525b; }
+.screen .submitButton { background: var(--debate-primary); color: #fff; }
+.screen .submitButton:disabled { background: #d4d4d8; color: #fff; }
 
-/* 내 활동 */
-.empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 26px 8px 8px; text-align: center; }
-.emptyIcon { display: grid; place-items: center; width: 116px; height: 116px; margin-bottom: 10px; border-radius: 50%; background: var(--debate-soft); color: var(--debate-primary); }
-.empty h2 { font-size: 20px; font-weight: 700; }
-.empty p { color: var(--debate-muted); font-size: 13.5px; }
-.bullets { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; border: 1px solid var(--debate-line); border-radius: 14px; color: #3f3f46; font-size: 13.5px; }
-.bullets li { display: flex; gap: 10px; }
-.bullets li::before { content: ""; flex: none; width: 5px; height: 5px; margin-top: 8px; border-radius: 50%; background: var(--debate-primary); }
-.statusList { display: flex; flex-direction: column; gap: 8px; }
-.statusRow { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--debate-soft); font-size: 14px; }
-.statusRow svg { color: var(--debate-muted); }
-.statusRow b { margin-left: auto; color: var(--debate-primary); }
+/* 안내 띠 (지난 토론방·내가 올린 주제, 2026-11-23 시안): 연보라 바탕, 굵은 제목 한 줄과 회색 설명 */
+.banner { display: flex; flex-direction: column; gap: 4px; padding: 12px 24px; border-radius: 12px; background: #f4eefe; }
+.banner h2 { color: #27272a; font-size: 16px; font-weight: 700; line-height: 22px; }
+.banner p { color: #71717a; font-size: 12px; line-height: 20px; }
+/* 내 활동 빈 화면 (2026-11-23 시안): 큰 제목, 안내 상자 위로 빼꼼 나온 마스코트, 두 줄 안내·규칙 점 목록, 큰 버튼 */
+.emptyState { display: flex; flex-direction: column; align-items: center; padding-top: 28px; text-align: center; }
+.emptyState h2 { color: #3f3f46; font-size: 22px; font-weight: 700; line-height: 32px; }
+.emptyMascot { display: block; width: 168px; height: 101px; margin-top: 36px; margin-bottom: -1px; pointer-events: none; user-select: none; }
+.emptyBox { display: flex; flex-direction: column; width: 100%; padding: 14px 20px 14px; border-radius: 12px; background: #efe7ff; }
+.emptyLead { color: #3f3f46; font-size: 16px; font-weight: 600; line-height: 24px; }
+/* 규칙 목록은 왼쪽 정렬한 덩어리를 상자 가운데에 둔다. 강조 부분은 진보라 굵게 */
+.emptyRules { align-self: center; margin-top: 10px; color: #52525b; font-size: 12px; line-height: 21px; text-align: left; }
+.emptyRules li::before { content: "•"; margin-right: 6px; }
+.emptyRules em { color: var(--debate-primary); font-style: normal; font-weight: 700; }
+.screen .bigButton { display: flex; align-items: center; justify-content: center; width: 100%; height: 52px; margin-top: 56px; border-radius: 999px; background: var(--debate-primary); color: #fff; font-size: 16px; font-weight: 600; text-decoration: none; }
+.stack > .bigButton { margin-top: 16px; }
 .centerNote { display: flex; align-items: center; justify-content: center; gap: 4px; color: var(--debate-muted); font-size: 12px; }
-
-/* 검색 덮개 */
-.searchSheet { position: fixed; z-index: 20; inset: 0; display: flex; justify-content: center; background: rgb(24 24 27 / 40%); }
-.searchPanel { display: flex; flex-direction: column; gap: 12px; width: min(100%, 430px); height: 100%; padding: 12px 16px 24px; overflow-y: auto; background: #fff; }
-.searchHead { display: flex; align-items: center; gap: 8px; }
-.searchHead .searchBox { flex: 1; }
-.resultLabel { color: var(--debate-muted); font-size: 12.5px; font-weight: 600; }
 
 /* 상태 표시 */
 .state { padding: 36px 16px; border-radius: 14px; background: #fafafa; color: var(--debate-muted); font-size: 13.5px; text-align: center; }
 .state button { margin-top: 12px; }
-.toast { position: fixed; z-index: 30; bottom: 96px; left: 50%; max-width: min(92vw, 398px); padding: 11px 16px; transform: translateX(-50%); border-radius: 12px; background: rgb(39 39 42 / 94%); color: #fff; font-size: 13px; line-height: 19px; text-align: center; box-shadow: 0 8px 24px #0003; }
-
-/* 토론방 화면 하단바 (2026-11-23 시안: HOME·SAVE·TALK·MY 글자, 지금 메뉴는 연보라 알약). 홈 하단바와 합칠 때 공용으로 옮긴다. */
-.bottomNav { position: fixed; z-index: 8; bottom: 0; left: 50%; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; width: min(100%, 430px); height: calc(60px + env(safe-area-inset-bottom)); padding: 0 10px env(safe-area-inset-bottom); transform: translateX(-50%); border-top: 1px solid #e4e4e7; background: rgb(250 250 250 / 96%); }
-.navItem { display: grid; place-items: center; color: #3f3f46; text-decoration: none; }
-.navItem span { display: grid; place-items: center; height: 38px; padding: 0 18px; border-radius: 19px; font-size: 16px; line-height: 20px; }
-.navItem[aria-current="page"] span { background: var(--debate-pill); font-weight: 700; }
+/* 잠깐 뜨는 알림 (2026-11-23 시안): 연보라 바탕·진회색 테두리, 완료 알림은 보라 체크와 함께.
+   화면 아래(하단바·입력창이 있으면 그 위)에 떠서 약 3초 보였다가 0.6초 동안 서서히 사라진다. */
+.toast { position: fixed; z-index: 30; left: 50%; bottom: calc(var(--toast-bottom, 24px) + env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: center; gap: 8px; width: min(calc(100vw - 48px), 327px); min-height: 40px; padding: 8px 14px; border: 1px solid #52525b; border-radius: 10px; background: #f5f1fe; color: #27272a; font-size: 14px; font-weight: 500; line-height: 20px; text-align: center; white-space: pre-wrap; box-shadow: 0 4px 14px rgb(0 0 0 / 8%); transform: translateX(-50%); pointer-events: none; animation: debateToast 3.6s ease forwards; }
+.toast svg { flex: none; }
+@keyframes debateToast {
+  0% { opacity: 0; transform: translate(-50%, 6px); }
+  6%, 83% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, 0); }
+}
+@keyframes debateToastStill { 0%, 83% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation-name: debateToastStill; } }
+.screen[data-nav] { --toast-bottom: calc(58px + 12px); }
+.screen[data-composer] { --toast-bottom: 84px; }

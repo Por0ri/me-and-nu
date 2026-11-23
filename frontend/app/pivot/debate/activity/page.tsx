@@ -5,6 +5,6 @@ export const metadata: Metadata = { title: "me;nu 토론 내 활동" };
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ tab?: string | string[]; created?: string | string[] }> }) {
   const { tab, created } = await searchParams;
-  const initialTab: DebateActivityTab = tab === "mine" ? "mine" : "voted";
+  const initialTab: DebateActivityTab = tab === "mine" ? "mine" : tab === "joined" ? "joined" : "voted";
   return <DebateActivity key={initialTab} initialTab={initialTab} created={created === "1"} />;
 }

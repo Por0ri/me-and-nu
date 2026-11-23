@@ -371,8 +371,11 @@ export async function deleteDebate(debateId: number): Promise<void> {
   const now = Date.now();
   const debate = find(debateId);
   if (!debate.mine) fail("DEBATE_NOT_FOUND", "토론을 찾을 수 없어요.");
-  if (statusOf(debate, now) !== "voting" || debate.voteCount > 0) {
-    fail("DEBATE_DELETE_NOT_ALLOWED", "표를 받은 주제는 지울 수 없어요. 다른 사람의 투표권이 걸려 있어요.");
+  // 서버와 같은 규칙: 투표 중이면 표가 있어도 지울 수 있고, 내가 투표했으면 투표권 1개를 돌려받는다.
+  if (statusOf(debate, now) !== "voting") fail("DEBATE_DELETE_NOT_ALLOWED", "토론방으로 열렸거나 끝난 주제는 지울 수 없어요.");
+  if (debate.myVote) {
+    const { balance, anchor } = currentTickets(now);
+    tickets = { balance: Math.min(RULES.ticketMax, balance + 1), refilledAt: anchor };
   }
   debates = debates.filter((row) => row.debateId !== debateId);
   return wait(undefined);
@@ -426,6 +429,16 @@ export async function chooseSide(debateId: number, side: DebateSideKey): Promise
     else debate.sideBCount += 1;
     debate.mySide = side;
   }
+  return wait(summary(debate, now), 100);
+}
+
+/** 고른 진영 취소 (채팅방의 '투표 취소'). 고른 진영이 없어도 그대로 */
+export async function cancelSide(debateId: number): Promise<DebateSummary> {
+  const now = Date.now();
+  const debate = joinedRoom(debateId, now);
+  if (debate.mySide === "a") debate.sideACount -= 1;
+  if (debate.mySide === "b") debate.sideBCount -= 1;
+  debate.mySide = null;
   return wait(summary(debate, now), 100);
 }
 

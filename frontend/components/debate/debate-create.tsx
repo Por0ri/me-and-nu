@@ -1,134 +1,207 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
-import { createDebate, searchWorks, similarDebates } from "@/lib/debate/client";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { usePivotSession } from "@/components/pivot/pivot-session";
+import { createDebate, searchWorks } from "@/lib/debate/client";
 import { DEBATE_RULES } from "@/lib/debate/rules";
-import type { DebateSummary, DebateWorkOption } from "@/lib/debate/types";
-import { DebateHeader, DebateScreen, errorText } from "./debate-chrome";
-import { BoltIcon, CalendarIcon, ChatIcon, ChevronRightIcon, SearchIcon, SparkleIcon } from "./debate-icons";
-import { InfoNote, StatusBadge } from "./debate-parts";
+import type { DebateWorkOption } from "@/lib/debate/types";
+import { DebateHomeHeader, DebateScreen, errorText, useToast } from "./debate-chrome";
+import { CloseIcon } from "./debate-icons";
+import { ConfirmDialog, DebateGuide } from "./debate-parts";
 import styles from "./debate.module.css";
 
-const FORM_ID = "debate-create-form";
+/*
+ * 주제 올리기 (2026-11-23 시안 + 사용자 지시):
+ *  - 애니메이션 이름은 우리 작품 목록에서 검색해 고른다 (여러 개 가능, 최대 3개).
+ *  - 투표 선택지는 캐릭터명이 아닐 수도 있어서 예시만 보여 준다.
+ *  - 필수 칸(작품·제목·선택지 두 개)을 다 채우면 '주제 올리기'가 켜지고, 올리기·임시 저장 모두 확인 창을 거친다.
+ *  - 임시 저장은 이 브라우저에 회원별로 남는다 (다른 기기에서는 보이지 않는다). 다시 들어오면 불러오고, 올리면 지운다.
+ */
+
+type Draft = { works: DebateWorkOption[]; title: string; description: string; sideA: string; sideB: string };
+const DRAFT_PREFIX = "pivot.debate-draft.";
+const WORK_OPTIONS_MAX = 5;
+
+function draftStore(userId: number | null) {
+  const key = userId === null ? null : DRAFT_PREFIX + userId;
+  return {
+    read(): Draft | null {
+      if (!key) return null;
+      try {
+        const value: unknown = JSON.parse(window.localStorage.getItem(key) ?? "null");
+        const draft = value as Draft | null;
+        return draft && typeof draft.title === "string" && Array.isArray(draft.works) ? draft : null;
+      } catch { return null; }
+    },
+    write(draft: Draft): boolean {
+      if (!key) return false;
+      try { window.localStorage.setItem(key, JSON.stringify(draft)); return true; } catch { return false; }
+    },
+    clear() {
+      if (!key) return;
+      try { window.localStorage.removeItem(key); } catch { /* 저장소가 막혀 있으면 지울 것도 없다 */ }
+    },
+  };
+}
 
 export function DebateCreate() {
   const router = useRouter();
+  const { state } = usePivotSession();
+  const session = state.session;
+  const userId = session?.authenticated === true && typeof session.user?.id === "number" ? session.user.id : null;
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [sideA, setSideA] = useState("");
   const [sideB, setSideB] = useState("");
   const [works, setWorks] = useState<DebateWorkOption[]>([]);
   const [workText, setWorkText] = useState("");
-  const [workOptions, setWorkOptions] = useState<DebateWorkOption[]>([]);
-  const [similar, setSimilar] = useState<DebateSummary[]>([]);
+  const [workOptions, setWorkOptions] = useState<{ text: string; rows: DebateWorkOption[] }>({ text: "", rows: [] });
+  const [confirm, setConfirm] = useState<"draft" | "submit" | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [toast, showToast] = useToast();
+  const restored = useRef(false);
+  const ids = useId();
 
+  // 임시 저장한 글이 있으면 처음 한 번 불러온다 (로그인 정보를 읽은 뒤).
   useEffect(() => {
-    let alive = true;
-    const timer = setTimeout(() => { searchWorks(workText).then((rows) => { if (alive) setWorkOptions(rows); }, () => undefined); }, 200);
-    return () => { alive = false; clearTimeout(timer); };
-  }, [workText]);
+    if (restored.current || userId === null) return;
+    restored.current = true;
+    const draft = draftStore(userId).read();
+    if (!draft) return;
+    setWorks(draft.works.slice(0, DEBATE_RULES.worksMax));
+    setTitle(draft.title);
+    setDescription(draft.description);
+    setSideA(draft.sideA);
+    setSideB(draft.sideB);
+    showToast("임시 저장한 내용을 불러왔어요.", "done");
+  }, [userId, showToast]);
+
+  const typed = workText.trim();
   useEffect(() => {
+    if (!typed) return;
     let alive = true;
-    const timer = setTimeout(() => { similarDebates(title).then((rows) => { if (alive) setSimilar(rows); }, () => undefined); }, 350);
+    const timer = setTimeout(() => {
+      searchWorks(typed).then((rows) => { if (alive) setWorkOptions({ text: typed, rows }); }, () => undefined);
+    }, 200);
     return () => { alive = false; clearTimeout(timer); };
-  }, [title]);
+  }, [typed]);
+  const options = typed && workOptions.text === typed
+    ? workOptions.rows.filter((option) => !works.some((work) => work.entityId === option.entityId)).slice(0, WORK_OPTIONS_MAX)
+    : [];
+  const full = works.length >= DEBATE_RULES.worksMax;
+  const addWork = (work: DebateWorkOption) => {
+    setWorks((current) => current.some((item) => item.entityId === work.entityId) || current.length >= DEBATE_RULES.worksMax ? current : [...current, work]);
+    setWorkText("");
+  };
+  const removeWork = (entityId: number) => setWorks((current) => current.filter((work) => work.entityId !== entityId));
 
   const sameSides = sideA.trim() !== "" && sideA.trim().toLowerCase() === sideB.trim().toLowerCase();
-  const ready = title.trim() !== "" && sideA.trim() !== "" && sideB.trim() !== "" && !sameSides && !submitting;
-  const toggleWork = (work: DebateWorkOption) => {
-    setWorks((current) => current.some((item) => item.entityId === work.entityId)
-      ? current.filter((item) => item.entityId !== work.entityId)
-      : current.length >= DEBATE_RULES.worksMax ? current : [...current, work]);
-  };
-  // 고른 작품은 검색 결과에 없어도 계속 보이게 앞에 둔다.
-  const shownWorks = [...works, ...workOptions.filter((option) => !works.some((work) => work.entityId === option.entityId))];
+  const ready = works.length > 0 && title.trim() !== "" && sideA.trim() !== "" && sideB.trim() !== "" && !sameSides && !submitting;
+  const empty = works.length === 0 && !title.trim() && !description.trim() && !sideA.trim() && !sideB.trim();
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  const saveDraft = () => {
+    setConfirm(null);
+    const saved = draftStore(userId).write({ works, title, description, sideA, sideB });
+    showToast(saved ? "임시 저장했어요. 나중에 이어서 작성할 수 있어요." : "이 브라우저에서는 임시 저장을 할 수 없어요.", saved ? "done" : "info");
+  };
+  const submit = async () => {
+    setConfirm(null);
     if (!ready) return;
     setSubmitting(true);
     setError(null);
     try {
       await createDebate({ title, description, sideA, sideB, workIds: works.map((work) => work.entityId) });
+      draftStore(userId).clear();
       router.push("/pivot/debate/activity?tab=mine&created=1");
     } catch (reason) {
       setError(errorText(reason));
       setSubmitting(false);
     }
   };
+  const onSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    if (ready) setConfirm("submit");
+  };
+  const closeConfirm = useCallback(() => setConfirm(null), []);
+  const closeGuide = useCallback(() => setGuideOpen(false), []);
 
-  return <DebateScreen composer label="토론 주제 올리기">
-    <DebateHeader title="토론 주제 올리기" back="/pivot/debate?tab=vote" />
-    <form id={FORM_ID} className={styles.stack} onSubmit={(event) => void submit(event)} noValidate>
-      <InfoNote><strong>1인당 투표 중인 주제 1개만 등록 가능</strong>내 주제가 열리거나 소각되면 다시 등록할 수 있어요.</InfoNote>
-      <div className={styles.infoRow}>
-        <span className={styles.infoChip}><CalendarIcon size={16} />등록 후 {DEBATE_RULES.votingDays}일간 투표</span>
-        <span className={styles.infoChip}><BoltIcon size={16} />10표 미달 시 자동 소각</span>
-      </div>
-
+  return <DebateScreen label="토론 주제 올리기">
+    <DebateHomeHeader title="토론 주제 올리기" onGuide={() => setGuideOpen(true)} back={() => router.push("/pivot/debate/activity?tab=mine")} />
+    <form className={styles.createForm} onSubmit={onSubmit} noValidate>
       <div className={styles.field}>
-        <label className={styles.label} htmlFor="debate-title">주제 제목 <span className={styles.required}>*</span></label>
-        <input id="debate-title" className={styles.input} value={title} maxLength={DEBATE_RULES.titleMax}
-          onChange={(event) => setTitle(event.target.value)} placeholder={`토론 주제를 입력해주세요 (최대 ${DEBATE_RULES.titleMax}자)`} />
-        <span className={styles.counter}>{title.length} / {DEBATE_RULES.titleMax}</span>
-      </div>
-
-      <div className={styles.field}>
-        <label className={styles.label} htmlFor="debate-description">간단한 설명 <small>(선택)</small></label>
-        <textarea id="debate-description" className={styles.textarea} value={description} maxLength={DEBATE_RULES.descriptionMax}
-          onChange={(event) => setDescription(event.target.value)} placeholder={`주제에 대한 간단한 설명을 입력해주세요 (최대 ${DEBATE_RULES.descriptionMax}자)`} />
-        <span className={styles.counter}>{description.length} / {DEBATE_RULES.descriptionMax}</span>
-      </div>
-
-      {/* 시안에 없는 칸: 토론방에서 고를 두 편의 이름 (설계 9장) */}
-      <fieldset className={styles.field} style={{ border: 0, margin: 0, padding: 0 }}>
-        <legend className={styles.label} style={{ marginBottom: 8 }}>양쪽 선택지 <span className={styles.required}>*</span></legend>
-        <div className={styles.sideInputs}>
-          <input className={styles.input} value={sideA} maxLength={DEBATE_RULES.sideLabelMax} onChange={(event) => setSideA(event.target.value)}
-            placeholder="예: 나루토" aria-label="A 선택지" />
-          <span className={styles.versus} aria-hidden="true">vs</span>
-          <input className={styles.input} value={sideB} maxLength={DEBATE_RULES.sideLabelMax} onChange={(event) => setSideB(event.target.value)}
-            placeholder="예: 사스케" aria-label="B 선택지" />
+        <label className={styles.label} htmlFor={`${ids}-work`}>애니메이션 이름 <span className={styles.required} aria-hidden="true">*</span></label>
+        <div className={styles.workSearch}>
+          <input id={`${ids}-work`} className={styles.input} value={workText} onChange={(event) => setWorkText(event.target.value)}
+            placeholder={full ? `작품은 최대 ${DEBATE_RULES.worksMax}개까지 고를 수 있어요` : "관련 애니메이션 이름을 입력해주세요"} disabled={full}
+            autoComplete="off" role="combobox" aria-expanded={options.length > 0} aria-controls={`${ids}-works`} aria-required="true"
+            onKeyDown={(event) => {
+              // 한글 입력을 끝내는 Enter 는 고르기가 아니다. 후보가 있으면 첫 번째를 고른다.
+              if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); if (options[0]) addWork(options[0]); }
+            }} />
+          {options.length > 0 ? <ul id={`${ids}-works`} className={styles.workOptions} role="listbox" aria-label="작품 후보">
+            {options.map((option) => <li key={option.entityId} role="option" aria-selected={false}>
+              <button type="button" onClick={() => addWork(option)}>{option.name}</button>
+            </li>)}
+          </ul> : null}
         </div>
-        {sameSides ? <p className={styles.fieldError}>양쪽 이름이 달라야 해요.</p>
-          : <p className={styles.fieldHelp}>토론방에서 사람들이 고를 두 편이에요. &lsquo;된다 / 못 된다&rsquo;처럼 적어도 돼요.</p>}
+        {works.length > 0 ? <ul className={styles.pickedWorks} aria-label="고른 작품">
+          {works.map((work) => <li key={work.entityId}>{work.name}
+            <button type="button" aria-label={`${work.name} 빼기`} onClick={() => removeWork(work.entityId)}><CloseIcon size={16} /></button>
+          </li>)}
+        </ul> : null}
+        {typed && workOptions.text === typed && options.length === 0 && !full
+          ? <p className={styles.fieldHelp}>목록에 맞는 작품이 없어요. 다른 이름으로 찾아보세요.</p>
+          : <p className={styles.fieldHelp}>우리 작품 목록에서 골라 주세요 · 여러 개 고를 수 있어요 ({works.length}/{DEBATE_RULES.worksMax})</p>}
+      </div>
+
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor={`${ids}-title`}>주제 제목 <span className={styles.required} aria-hidden="true">*</span></label>
+        <p className={styles.fieldHelp} id={`${ids}-title-help`}>주제의 배경, 비교 포인트, 토론하고 싶은 관점을 간단히 적어주세요</p>
+        <input id={`${ids}-title`} className={styles.input} value={title} maxLength={DEBATE_RULES.titleMax} aria-required="true"
+          aria-describedby={`${ids}-title-help ${ids}-title-example`}
+          onChange={(event) => setTitle(event.target.value)} placeholder={`토론 주제를 입력해주세요 (최대 ${DEBATE_RULES.titleMax}자)`} />
+        <p className={styles.fieldHelp} id={`${ids}-title-example`}>ex) 나루토와 사스케, 최종 승자는?</p>
+      </div>
+
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor={`${ids}-description`}>부가 설명 <small>(선택)</small></label>
+        <p className={styles.fieldHelp}>주제에 대한 간단한 설명을 입력해주세요 (최대 {DEBATE_RULES.descriptionMax}자)</p>
+        <div className={styles.textareaBox}>
+          <textarea id={`${ids}-description`} className={styles.textarea} value={description} maxLength={DEBATE_RULES.descriptionMax}
+            onChange={(event) => setDescription(event.target.value)} placeholder={`주제에 대한 간단한 설명을 입력해주세요 (최대 ${DEBATE_RULES.descriptionMax}자)`} />
+          <span className={styles.counter} aria-hidden="true">{description.length} / {DEBATE_RULES.descriptionMax}</span>
+        </div>
+      </div>
+
+      <fieldset className={styles.field}>
+        <legend className={styles.label}>투표 선택지 <span className={styles.required} aria-hidden="true">*</span></legend>
+        {([["a", sideA, setSideA, "예) 나루토"], ["b", sideB, setSideB, "예) 사스케"]] as const).map(([side, value, setValue, example], index) =>
+          <div key={side} className={styles.choiceRow}>
+            <label className={styles.choiceTag} htmlFor={`${ids}-side-${side}`}>선택지 {index + 1}</label>
+            <div className={styles.choiceInput}>
+              <input id={`${ids}-side-${side}`} value={value} maxLength={DEBATE_RULES.sideLabelMax} onChange={(event) => setValue(event.target.value)}
+                placeholder={example} aria-required="true" />
+              {value ? <button type="button" aria-label={`선택지 ${index + 1} 지우기`} onClick={() => setValue("")}><CloseIcon size={18} /></button> : null}
+            </div>
+          </div>)}
+        {sameSides ? <p className={styles.fieldError}>두 선택지는 서로 달라야 해요.</p> : null}
       </fieldset>
 
-      <div className={styles.field}>
-        <p className={styles.label}>관련 작품 <small>(선택, 최대 {DEBATE_RULES.worksMax}개 · {works.length}/{DEBATE_RULES.worksMax})</small></p>
-        <label className={styles.searchBox}>
-          <SearchIcon size={18} /><span className={styles.srOnly}>작품 찾기</span>
-          <input value={workText} onChange={(event) => setWorkText(event.target.value)} placeholder="작품 이름으로 찾기" />
-        </label>
-        <div className={styles.chips}>
-          {shownWorks.map((work) => {
-            const picked = works.some((item) => item.entityId === work.entityId);
-            return <button key={work.entityId} type="button" className={styles.workPick} aria-pressed={picked}
-              disabled={!picked && works.length >= DEBATE_RULES.worksMax} onClick={() => toggleWork(work)}>#{work.name}</button>;
-          })}
-        </div>
-        {shownWorks.length === 0 ? <p className={styles.fieldHelp}>{workText.trim() ? "맞는 작품이 없어요." : "작품 이름을 입력하면 목록에서 찾아요."}</p> : null}
-        <p className={styles.fieldHelp}>작품을 고르면 검색에서 작품으로 찾을 수 있어요. 목록에 없는 작품이면 고르지 않고 올려도 돼요.</p>
-      </div>
-
-      {similar.length > 0 ? <section className={styles.similar} aria-label="비슷한 주제">
-        <p className={styles.similarHead}><SparkleIcon size={16} />비슷한 주제가 이미 있어요</p>
-        {similar.map((debate) => <Link key={debate.debateId} className={styles.similarItem} href={`/pivot/debate/${debate.debateId}`}>
-          <ChatIcon size={18} />
-          <span style={{ flex: 1, minWidth: 0 }}>{debate.title}</span>
-          <StatusBadge status={debate.status} />
-          <ChevronRightIcon size={16} />
-        </Link>)}
-      </section> : null}
-
       {error ? <p className={styles.fieldError} role="alert">{error}</p> : null}
+      <div className={styles.createButtons}>
+        <button type="button" className={styles.draftButton} onClick={() => { if (empty) showToast("아직 작성한 내용이 없어요."); else setConfirm("draft"); }}>임시 저장</button>
+        <button type="submit" className={styles.submitButton} disabled={!ready}>{submitting ? "올리는 중…" : "주제 올리기"}</button>
+      </div>
     </form>
-    <div className={styles.submitBar}>
-      <button type="submit" form={FORM_ID} className={styles.primaryButton} disabled={!ready}>{submitting ? "올리는 중…" : "주제 올리기"}</button>
-    </div>
+    {confirm === "draft" ? <ConfirmDialog title="임시 저장할까요?" body={"지금까지 작성한 내용이 저장돼요.\n나중에 이어서 작성할 수 있어요."}
+      confirmLabel="저장하기" onConfirm={saveDraft} onCancel={closeConfirm} /> : null}
+    {confirm === "submit" ? <ConfirmDialog title="주제를 올릴까요?"
+      body={`주제를 올리면 ${DEBATE_RULES.votingDays}일 동안 투표를 받아요.\n${DEBATE_RULES.voteThreshold}표를 달성하면 채팅방이 열려요.\n등록 후에는 수정할 수 없어요.`}
+      confirmLabel="올리기" onConfirm={() => void submit()} onCancel={closeConfirm} /> : null}
+    {guideOpen ? <DebateGuide onClose={closeGuide} /> : null}
+    {toast}
   </DebateScreen>;
 }

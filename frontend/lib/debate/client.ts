@@ -27,6 +27,7 @@ export const similarDebates = source.similarDebates;
 export const joinDebate = source.joinDebate;
 export const leaveDebate = source.leaveDebate;
 export const chooseSide = source.chooseSide;
+export const cancelSide = source.cancelSide;
 export const listMessages = source.listMessages;
 export const sendMessage = source.sendMessage;
 export const subscribeDebate = source.subscribeDebate;

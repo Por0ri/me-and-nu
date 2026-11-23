@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { refillIn } from "@/lib/debate/format";
 import { DEBATE_RULES as RULES } from "@/lib/debate/rules";
 import type { DebateStatus, DebateSummary, DebateWork, VoteTickets } from "@/lib/debate/types";
-import { ClockIcon, CloseIcon, InfoIcon, TicketIcon } from "./debate-icons";
+import { ClockIcon, CloseIcon, InfoIcon } from "./debate-icons";
 import styles from "./debate.module.css";
 
 /** 프로필 사진이 없는 사람(지금은 모두)의 얼굴: me;nu 마스코트. 프로필 사진 기능이 생기면 사진이 있는 사람만 바꾼다. */
@@ -79,8 +79,9 @@ function refillRule(): string {
   return `${minutes % 60 === 0 ? `${minutes / 60}시간` : `${minutes}분`}마다 1개 충전`;
 }
 
-/** 주제 투표 탭의 투표권 카드 (2026-11-23 시안): 남은 투표권, 충전 규칙·막대, 다음 충전, 오른쪽에 내 활동 */
-export function VoteTicketBox({ tickets }: { tickets: VoteTickets }) {
+/** 투표권 카드 (2026-11-23 시안): 남은 투표권, 충전 규칙·막대, 다음 충전.
+ *  주제 투표 탭에서는 오른쪽에 내 활동 버튼, 내 활동 화면(activity=false)에서는 버튼 없이 막대가 카드 폭을 채운다. */
+export function VoteTicketBox({ tickets, activity = true }: { tickets: VoteTickets; activity?: boolean }) {
   const now = useNow(15_000);
   const next = refillIn(tickets.nextRefillAt, now);
   return <section className={styles.ticketBox} aria-label="내 투표권">
@@ -88,32 +89,15 @@ export function VoteTicketBox({ tickets }: { tickets: VoteTickets }) {
       <strong>내 투표권<em>{tickets.balance}/{tickets.max}</em></strong>
       <span className={styles.ticketRule}>{refillRule()} · 최대 {tickets.max}개</span>
       <ProgressBar value={Math.round((tickets.balance / tickets.max) * 100)} label="남은 투표권" />
-      <span className={styles.refillLine}><ClockIcon size={13} />{next ? `다음 투표권 +1 · ${next}` : "투표권이 가득 찼어요"}</span>
+      <span className={styles.refillLine}><ClockIcon size={16} />{next ? `다음 투표권 +1 · ${next}` : "투표권이 가득 찼어요"}</span>
     </div>
-    <Link className={styles.activityButton} href="/pivot/debate/activity">내 활동</Link>
+    {activity ? <Link className={styles.activityButton} href="/pivot/debate/activity">내 활동</Link> : null}
   </section>;
 }
 
-/** 내 활동 화면의 투표권 카드 */
-export function TicketCard({ tickets }: { tickets: VoteTickets }) {
-  const now = useNow(15_000);
-  const next = refillIn(tickets.nextRefillAt, now);
-  return <section className={styles.ticketCard} aria-label="내 투표권">
-    <div className={styles.ticketTop}>
-      <span className={styles.ticketIcon}><TicketIcon size={26} /></span>
-      <div className={styles.ticketText}>
-        <strong>보유 투표권<em>{tickets.balance}/{tickets.max}</em></strong>
-        <span>{refillRule()} · 최대 {tickets.max}개</span>
-        {next ? <span className={styles.refillChip}><ClockIcon size={13} />다음 투표권 +1 · {next}</span> : null}
-      </div>
-    </div>
-    <p className={styles.ticketFoot}><InfoIcon size={15} />투표 취소 시 1개 즉시 반환 · 최대 {tickets.max}개 초과 반환 불가</p>
-  </section>;
-}
-
-/** 되돌리기 어려운 일(방 나가기 등) 전에 한 번 더 묻는 창. 시안이 나오기 전 임시 모양이다. */
-export function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel }: {
-  title: string; body: string; confirmLabel: string; onConfirm: () => void; onCancel: () => void;
+/** 되돌리기 어려운 일(방 나가기 등) 전에 한 번 더 묻는 창 (2026-11-23 시안: 방 나가기 창). body 의 줄바꿈(\n)은 그대로 보인다. */
+export function ConfirmDialog({ title, body, confirmLabel, cancelLabel = "취소", onConfirm, onCancel }: {
+  title: string; body: string; confirmLabel: string; cancelLabel?: string; onConfirm: () => void; onCancel: () => void;
 }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onCancel(); };
@@ -125,9 +109,9 @@ export function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel }
       aria-describedby="debate-confirm-body" onClick={(event) => event.stopPropagation()}>
       <h2 id="debate-confirm-title">{title}</h2>
       <p id="debate-confirm-body">{body}</p>
-      <div className={styles.cardButtons}>
-        <button type="button" className={styles.softFillButton} onClick={onCancel} autoFocus>취소</button>
-        <button type="button" className={styles.fillButton} onClick={onConfirm}>{confirmLabel}</button>
+      <div className={styles.confirmButtons}>
+        <button type="button" className={styles.confirmCancel} onClick={onCancel} autoFocus>{cancelLabel}</button>
+        <button type="button" className={styles.confirmOk} onClick={onConfirm}>{confirmLabel}</button>
       </div>
     </section>
   </div>;

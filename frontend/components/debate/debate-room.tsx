@@ -1,20 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
-  cancelVote, chooseSide, getDebate, getVoteTickets, joinDebate, listMessages, sendMessage, subscribeDebate, voteDebate,
+  cancelSide, chooseSide, getDebate, getVoteTickets, joinDebate, listMessages, sendMessage, subscribeDebate,
 } from "@/lib/debate/client";
-import { dateText, leadingText, roomRemaining, timeText, votingRemaining } from "@/lib/debate/format";
+import { dateText, roomRemaining, timeText, votingRemaining } from "@/lib/debate/format";
 import { DEBATE_RULES } from "@/lib/debate/rules";
 import type { DebateConnection, DebateMessage, DebateSideKey, DebateSummary, VoteTickets } from "@/lib/debate/types";
-import { DebateHeader, DebateScreen, DebateState, errorText, useToast } from "./debate-chrome";
-import { ChatIcon, CheckIcon, ClockIcon, SendIcon, TrophyIcon, UserIcon, UsersIcon } from "./debate-icons";
-import { Badge, InfoNote, VoteProgress, WorkChips, useNow } from "./debate-parts";
+import { SideResult, useVoteActions } from "./debate-cards";
+import { DebateHomeHeader, DebateScreen, DebateState, errorText, useToast, type ShowToast } from "./debate-chrome";
+import { ChatIcon, CircleCheckIcon, ClockIcon, SendIcon, TrophyIcon, UsersIcon } from "./debate-icons";
+import { AuthorLine, Badge, DebateGuide, InfoNote, VoteProgress, WorkChips, useNow } from "./debate-parts";
 import styles from "./debate.module.css";
 
 type Update = (change: (current: DebateSummary) => DebateSummary) => void;
 
-/** 토론 하나의 화면. 상태에 따라 투표·실시간 채팅·결과·소각 안내를 보여준다. */
+/** 토론방·주제 화면의 머리 부분: 내 활동처럼 둥근 뒤로가기 + 로고, 오른쪽에 이용 안내(ⓘ)와 알림 */
+function RoomHeader({ title, back }: { title: string; back: string }) {
+  const router = useRouter();
+  const [guideOpen, setGuideOpen] = useState(false);
+  const closeGuide = useCallback(() => setGuideOpen(false), []);
+  return <>
+    <DebateHomeHeader title={title} onGuide={() => setGuideOpen(true)} back={() => router.push(back)} />
+    {guideOpen ? <DebateGuide onClose={closeGuide} /> : null}
+  </>;
+}
+
+/** 토론 하나의 화면. 상태에 따라 투표·실시간 채팅·결과를 보여준다. */
 export function DebateRoom({ debateId }: { debateId: number }) {
   const [debate, setDebate] = useState<DebateSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +42,7 @@ export function DebateRoom({ debateId }: { debateId: number }) {
 
   if (!debate) {
     return <DebateScreen label="토론방">
-      <DebateHeader title="토론방" back="/pivot/debate" />
+      <RoomHeader title="토론방" back="/pivot/debate" />
       <div className={styles.stack}><DebateState loading={!error} error={error} onRetry={load} /></div>
     </DebateScreen>;
   }
@@ -40,7 +53,7 @@ export function DebateRoom({ debateId }: { debateId: number }) {
       : <JoinRoom debate={debate} onJoined={setDebate} showToast={showToast} toast={toast} />;
   }
   return <DebateScreen label={debate.title}>
-    <DebateHeader title={debate.status === "voting" ? "주제 후보" : "지난 토론방"} back={debate.status === "voting" ? "/pivot/debate?tab=vote" : "/pivot/debate?tab=past"} />
+    <RoomHeader title={debate.status === "voting" ? "주제 후보" : "지난 토론방"} back={debate.status === "voting" ? "/pivot/debate?tab=vote" : "/pivot/debate?tab=past"} />
     <div className={styles.stack}>
       {/* 기준 표를 못 받은 주제(expired)는 서버가 삭제된 것으로 보고 보내지 않는다. */}
       {debate.status === "voting" ? <VotingDetail debate={debate} onChange={setDebate} showToast={showToast} />
@@ -50,10 +63,59 @@ export function DebateRoom({ debateId }: { debateId: number }) {
   </DebateScreen>;
 }
 
-/* ───────────── 진행 중, 아직 참여 전: 방 정보와 참여하기 (시안 전 임시 모양) ───────────── */
+/** 채팅방 위 토론 카드 (2026-11-23 시안): 작품 칩과 '투표창 접기/펼치기', 제목, 설명, 작성자·참여 인원·남은 시간.
+ *  펼친 동안 아래에 children(진영 투표 등)을 둔다. 머리 부분 아래에 붙어 있고 채팅은 그 아래로 흐른다. */
+function RoomPanel({ debate, now, collapsed, onToggle, children }: {
+  debate: DebateSummary; now: number; collapsed: boolean; onToggle?: () => void; children?: ReactNode;
+}) {
+  return <section className={styles.roomPanel} aria-label="토론 정보">
+    <div className={styles.roomPanelCard}>
+      <div className={styles.roomTop}>
+        <WorkChips works={debate.works} />
+        {onToggle ? <button type="button" className={styles.foldButton} aria-expanded={!collapsed} onClick={onToggle}>
+          {collapsed ? "투표창 펼치기" : "투표창 접기"}
+        </button> : null}
+      </div>
+      <h2 className={styles.topicTitle}>{debate.title}</h2>
+      {!collapsed && debate.description ? <p className={styles.roomDescription}>{debate.description}</p> : null}
+      <div className={styles.topicMeta}>
+        <AuthorLine debate={debate} />
+        <span className={styles.meta}><UsersIcon size={16} />{debate.memberCount}명 참여 중</span>
+        <span className={styles.metaDivider} aria-hidden="true" />
+        <span className={styles.meta}><ClockIcon size={16} />남은 시간 {roomRemaining(debate.closesAt, now)}</span>
+      </div>
+      {!collapsed ? children : null}
+    </div>
+  </section>;
+}
+
+/** 진영 투표 (시안): 고르기 전에는 두 버튼, 고른 뒤에는 지금까지의 비율 막대와 '투표 취소'.
+ *  진영은 채팅과 별개라 언제든 고르고 취소할 수 있다. 총 N명은 진영을 고른 사람 수. */
+function SidePoll({ debate, busy, onPick, onCancel }: {
+  debate: DebateSummary; busy: boolean; onPick: (side: DebateSideKey) => void; onCancel: () => void;
+}) {
+  const total = <span>총 {debate.participantCount.toLocaleString("ko-KR")}명 투표</span>;
+  if (!debate.mySide) {
+    return <div className={styles.poll}>
+      <div className={styles.sideChoices} role="group" aria-label="진영 고르기">
+        {(["a", "b"] as const).map((side) => <button key={side} type="button" className={styles.sideChoice} disabled={busy} onClick={() => onPick(side)}>
+          <CircleCheckIcon size={22} />{side === "a" ? debate.sideA.label : debate.sideB.label}
+        </button>)}
+      </div>
+      <p className={styles.pollFoot}>{total}</p>
+    </div>;
+  }
+  return <div className={styles.poll}>
+    {/* 내가 고른 쪽은 보라 글씨 (시안에 없는 작은 표시) */}
+    <SideResult debate={debate} mine={debate.mySide} />
+    <p className={styles.pollFoot}>{total}<button type="button" disabled={busy} onClick={onCancel}>투표 취소</button></p>
+  </div>;
+}
+
+/* ───────────── 진행 중, 아직 참여 전: 방 정보와 참여하기 ───────────── */
 
 function JoinRoom({ debate, onJoined, showToast, toast }: {
-  debate: DebateSummary; onJoined: (debate: DebateSummary) => void; showToast: (message: string) => void; toast: React.ReactNode;
+  debate: DebateSummary; onJoined: (debate: DebateSummary) => void; showToast: ShowToast; toast: ReactNode;
 }) {
   const [pending, setPending] = useState(false);
   const now = useNow();
@@ -66,44 +128,42 @@ function JoinRoom({ debate, onJoined, showToast, toast }: {
       setPending(false);
     }
   };
-  const lead = leadingText(debate);
-  const percentA = debate.sideA.percent ?? 50;
   return <DebateScreen label={debate.title}>
-    <DebateHeader title="토론방" back="/pivot/debate" />
-    <div className={styles.stack}>
-      <section className={styles.roomCard}>
-        <Badge>실시간 토론방</Badge>
-        <h2>{debate.title}</h2>
-        {debate.description ? <p className={styles.description}>{debate.description}</p> : null}
-        <WorkChips works={debate.works} />
-        <div className={styles.roomChips}>
-          <span className={styles.roomChip}><ClockIcon size={14} />남은 시간 {roomRemaining(debate.closesAt, now)}</span>
-          <span className={styles.roomChip}><UsersIcon size={14} />{debate.memberCount}명 참여 중</span>
-        </div>
-      </section>
-      <section className={styles.ratioCard} aria-label="진영 비율">
-        <p className={styles.ratioHead}>
-          <strong>{lead ?? "아직 아무도 진영을 고르지 않았어요"}</strong>
-          {debate.sideA.percent !== null ? <span>{debate.sideA.percent}% / {debate.sideB.percent}%</span> : null}
-        </p>
-        <div className={styles.ratioBar} aria-hidden="true">
-          <span className={styles.ratioA} style={{ width: `${percentA}%` }} />
-          <span className={styles.ratioB} style={{ width: `${100 - percentA}%` }} />
-        </div>
-        <p className={styles.ratioLegend}><span>{debate.sideA.label} {debate.sideA.count}명</span><span>{debate.sideB.label} {debate.sideB.count}명</span></p>
-      </section>
-      <button type="button" className={styles.fillButton} disabled={pending} onClick={() => void join()}>토론 참여하기</button>
-    </div>
+    <RoomHeader title="토론방" back="/pivot/debate" />
+    <RoomPanel debate={debate} now={now} collapsed={false}>
+      <button type="button" className={`${styles.fillButton} ${styles.joinButton}`} disabled={pending} onClick={() => void join()}>토론 참여하기</button>
+    </RoomPanel>
+    <p className={styles.joinNote}>참여하면 진영을 고르고 채팅할 수 있어요. 참여한 뒤의 채팅부터 보여요.</p>
     {toast}
   </DebateScreen>;
 }
 
 /* ───────────── 진행 중: 실시간 채팅 ───────────── */
 
-const CONNECTION_LABEL: Record<DebateConnection, string> = { connecting: "연결 중", live: "실시간", reconnecting: "다시 연결 중", stopped: "연결 끊김" };
+/** 도배 막기 창 (2026-11-23 시안): 10초에 5개를 넘게 보내면 서버가 막고(429) 이 창을 띄운다. */
+function RateLimitDialog({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return <div className={styles.modalBackdrop} onClick={onClose}>
+    <section className={`${styles.confirm} ${styles.rateDialog}`} role="alertdialog" aria-modal="true" aria-labelledby="debate-rate-title"
+      aria-describedby="debate-rate-body" onClick={(event) => event.stopPropagation()}>
+      <h2 id="debate-rate-title">잠시만요!<span>너무 빠르게 연속으로 메시지를 보냈어요.</span></h2>
+      <p id="debate-rate-body">{"채팅 도배는 다른 사용자의\n대화 참여를 방해할 수 있어요."}</p>
+      <p className={styles.rateRule}><ClockIcon size={18} />{DEBATE_RULES.messageRateWindowSeconds}초에 {DEBATE_RULES.messageRateCount}개 이하로 메시지를 보내주세요.</p>
+      <button type="button" className={styles.confirmOk} onClick={onClose} autoFocus>확인</button>
+    </section>
+  </div>;
+}
+
+function isRateLimited(reason: unknown): boolean {
+  return (reason as { code?: unknown } | null)?.code === "DEBATE_MESSAGE_RATE_LIMITED";
+}
 
 function OpenRoom({ debate, onChange, update, showToast, toast }: {
-  debate: DebateSummary; onChange: (debate: DebateSummary) => void; update: Update; showToast: (message: string) => void; toast: React.ReactNode;
+  debate: DebateSummary; onChange: (debate: DebateSummary) => void; update: Update; showToast: ShowToast; toast: ReactNode;
 }) {
   const debateId = debate.debateId;
   const [messages, setMessages] = useState<DebateMessage[] | null>(null);
@@ -115,6 +175,8 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [choosing, setChoosing] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
   // 화면이 가진 가장 최근 채팅 번호. 실시간 연결을 (다시) 열 때 이 뒤의 채팅부터 받는다.
@@ -214,7 +276,16 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+  // 처음 채팅을 불러왔을 때는 항상 최신 메시지(맨 아래)를 보여 준다. 그 뒤에는 맨 아래를 보고 있을 때만 따라간다.
+  const landed = useRef(false);
   useEffect(() => {
+    if (!messages) return;
+    if (!landed.current) {
+      landed.current = true;
+      followRef.current = true;
+      endRef.current?.scrollIntoView({ block: "end" });
+      return;
+    }
     if (followRef.current) endRef.current?.scrollIntoView({ block: "end" });
   }, [messages]);
 
@@ -241,9 +312,20 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
     if (debate.mySide === side || choosing) return;
     setChoosing(true);
     try {
-      const next = await chooseSide(debateId, side);
-      onChange(next);
-      showToast(`${side === "a" ? next.sideA.label : next.sideB.label} 편이 됐어요.`);
+      onChange(await chooseSide(debateId, side));
+    } catch (reason) {
+      showToast(errorText(reason));
+    } finally {
+      setChoosing(false);
+    }
+  };
+
+  // 시안의 '투표 취소': 고른 진영을 취소하고 다시 두 버튼으로 돌아간다 (서버 D-20).
+  const cancelMySide = async () => {
+    if (!debate.mySide || choosing) return;
+    setChoosing(true);
+    try {
+      onChange(await cancelSide(debateId));
     } catch (reason) {
       showToast(errorText(reason));
     } finally {
@@ -261,115 +343,67 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
       merge([sent]);
       setText("");
     } catch (reason) {
-      showToast(errorText(reason));
+      if (isRateLimited(reason)) setRateLimited(true);
+      else showToast(errorText(reason));
     } finally {
       setSending(false);
     }
   };
+  const closeRateLimit = useCallback(() => setRateLimited(false), []);
 
   const label = (side: DebateSideKey) => (side === "a" ? debate.sideA.label : debate.sideB.label);
-  const lead = leadingText(debate);
-  const percentA = debate.sideA.percent ?? 50;
   return <DebateScreen composer label={debate.title}>
-    <DebateHeader title="토론방" back="/pivot/debate" extra={<span className={styles.liveDot} data-state={connection}>{CONNECTION_LABEL[connection]}</span>} />
-    <div className={styles.stack}>
+    <RoomHeader title={debate.title} back="/pivot/debate" />
+    <RoomPanel debate={debate} now={now} collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)}>
+      <SidePoll debate={debate} busy={choosing} onPick={(side) => void pickSide(side)} onCancel={() => void cancelMySide()} />
+    </RoomPanel>
+    <div className={styles.chat}>
       {connection === "reconnecting" ? <p className={styles.connectionNote} role="status">연결이 잠깐 끊겼어요. 다시 연결하는 중이에요.</p> : null}
       {connection === "stopped" ? <p className={styles.connectionNote} data-tone="error" role="status">
         실시간 연결이 끊겼어요. 이 토론방을 다른 창에서도 열어 두었다면 닫고 다시 연결해 주세요.
         <button type="button" onClick={reconnect}>다시 연결</button>
       </p> : null}
-      <section className={styles.roomCard}>
-        <Badge>실시간 토론방</Badge>
-        <h2>{debate.title}</h2>
-        {debate.description ? <p className={styles.description}>{debate.description}</p> : null}
-        <WorkChips works={debate.works} />
-        <div className={styles.roomChips}>
-          <span className={styles.roomChip}><ClockIcon size={14} />남은 시간 {roomRemaining(debate.closesAt, now)}</span>
-          <span className={styles.roomChip}><UsersIcon size={14} />진영 투표 {debate.participantCount}명</span>
-          <span className={styles.roomChip}><ChatIcon size={14} />채팅 {Math.max(debate.messageCount, messages?.length ?? 0)}</span>
-        </div>
-      </section>
-
-      <section className={styles.ratioCard} aria-label="진영 비율">
-        <p className={styles.ratioHead}>
-          {lead ? <strong>{lead}</strong> : <strong>아직 아무도 진영을 고르지 않았어요</strong>}
-          {debate.sideA.percent !== null ? <span>{debate.sideA.percent}% / {debate.sideB.percent}%</span> : null}
-        </p>
-        <div className={styles.ratioBar} aria-hidden="true">
-          <span className={styles.ratioA} style={{ width: `${percentA}%` }} />
-          <span className={styles.ratioB} style={{ width: `${100 - percentA}%` }} />
-        </div>
-        <p className={styles.ratioLegend}><span>{debate.sideA.label} {debate.sideA.count}명</span><span>{debate.sideB.label} {debate.sideB.count}명</span></p>
-        {/* 시안에 없는 진영 고르기 버튼. 채팅과 별개로 언제든 고르고 바꾼다 (설계 9장) */}
-        <div className={styles.sideButtons} role="group" aria-label="진영 고르기">
-          {(["a", "b"] as const).map((side) => <button key={side} type="button" className={styles.sideButton} data-side={side}
-            aria-pressed={debate.mySide === side} disabled={choosing} onClick={() => void pickSide(side)}>
-            {debate.mySide === side ? <CheckIcon size={15} style={{ verticalAlign: "-2px", marginRight: 4 }} /> : null}{label(side)} 편
-          </button>)}
-        </div>
-        <p className={styles.sideHelp}>진영은 채팅과 별개로 언제든 고르고 바꿀 수 있어요. 방이 끝나는 순간 인원이 많은 쪽이 이겨요.</p>
-      </section>
-
-      <InfoNote>방이 끝나면 채팅은 사라지고 결과만 남아요.</InfoNote>
-
       {messages === null ? <DebateState loading /> : null}
-      {messages?.length === 0 ? <p className={styles.state}>아직 채팅이 없어요. 첫 마디를 남겨보세요.</p> : null}
+      {messages?.length === 0 ? <p className={styles.chatEmpty}>아직 채팅이 없어요. 첫 마디를 남겨보세요.</p> : null}
       {olderCursor ? <button type="button" className={styles.olderButton} disabled={loadingOlder} onClick={() => void loadOlder()}>
         {loadingOlder ? "불러오는 중이에요" : "이전 채팅 더 보기"}
       </button> : null}
       <ol className={styles.messages} aria-label="채팅" aria-live="polite">
-        {/* 내 메시지는 오른쪽, 다른 사람은 왼쪽. 보낸 순간의 진영은 닉네임 옆 표시로만 보여준다. */}
+        {/* 시안: 다른 사람은 왼쪽 흰 말풍선, 내 메시지는 오른쪽 연보라 말풍선. 얼굴 자리는 연보라 동그라미.
+            보낸 순간의 진영은 닉네임 옆 작은 표시로 보여 준다. */}
         {(messages ?? []).map((item) => <li key={item.messageId} className={styles.message} data-mine={item.isMine || undefined}>
-          <span className={styles.avatar} aria-hidden="true"><UserIcon size={18} /></span>
+          <span className={styles.avatar} aria-hidden="true" />
           <div className={styles.messageBody}>
             <p className={styles.messageMeta}>
-              <b>{item.isMine ? "나" : item.nickname}</b>
-              {item.side ? <span className={styles.sideTag} data-side={item.side}>{label(item.side)} 편</span> : null}
+              <b>{item.nickname}</b>
+              {item.side ? <span className={styles.sideTag} data-side={item.side}>{label(item.side)}</span> : null}
               <time dateTime={item.createdAt}>{timeText(item.createdAt)}</time>
             </p>
             <p className={styles.bubble}>{item.body}</p>
           </div>
         </li>)}
       </ol>
-      <div ref={endRef} />
+      <div ref={endRef} className={styles.chatEnd} />
     </div>
 
     <form className={styles.composer} onSubmit={(event) => void submit(event)}>
       <input value={text} onChange={(event) => setText(event.target.value)} maxLength={DEBATE_RULES.messageMax}
-        placeholder="메시지를 입력하세요." aria-label="메시지" />
-      <button type="submit" className={styles.sendButton} aria-label="보내기" disabled={!text.trim() || sending}><SendIcon size={20} /></button>
+        placeholder="메시지를 입력하세요" aria-label="메시지" />
+      <button type="submit" className={styles.sendButton} aria-label="보내기" disabled={!text.trim() || sending}><SendIcon size={18} /></button>
     </form>
+    {rateLimited ? <RateLimitDialog onClose={closeRateLimit} /> : null}
     {toast}
   </DebateScreen>;
 }
 
 /* ───────────── 투표 중 ───────────── */
 
-function VotingDetail({ debate, onChange, showToast }: { debate: DebateSummary; onChange: (debate: DebateSummary) => void; showToast: (message: string) => void }) {
+function VotingDetail({ debate, onChange, showToast }: { debate: DebateSummary; onChange: (debate: DebateSummary) => void; showToast: ShowToast }) {
   const [tickets, setTickets] = useState<VoteTickets | null>(null);
-  const [pending, setPending] = useState(false);
   const now = useNow();
   useEffect(() => { getVoteTickets().then(setTickets, () => setTickets(null)); }, []);
-  const toggle = async () => {
-    setPending(true);
-    try {
-      if (debate.myVote) {
-        const result = await cancelVote(debate.debateId);
-        setTickets(result.tickets);
-        onChange(result.debate);
-        showToast("투표를 취소했어요. 투표권 1개를 돌려받았어요.");
-      } else {
-        const result = await voteDebate(debate.debateId);
-        setTickets(result.tickets);
-        onChange(result.debate);
-        showToast(result.opened ? "10표 달성! 토론방이 열렸어요." : "투표했어요.");
-      }
-    } catch (reason) {
-      showToast(errorText(reason));
-    } finally {
-      setPending(false);
-    }
-  };
+  // 투표·취소는 다른 화면과 같은 동작 (투표권이 가득이면 취소 전에 확인 창)
+  const vote = useVoteActions(({ debate: next, tickets: nextTickets }) => { setTickets(nextTickets); onChange(next); }, showToast);
   return <>
     <section className={styles.roomCard}>
       <Badge>주제 후보</Badge>
@@ -380,11 +414,12 @@ function VotingDetail({ debate, onChange, showToast }: { debate: DebateSummary; 
       <VoteProgress count={debate.voteCount} threshold={debate.voteThreshold} large />
       <div className={styles.roomChips}><span className={styles.roomChip}><ClockIcon size={14} />{votingRemaining(debate.votingEndsAt, now)}</span></div>
     </section>
-    <button type="button" className={styles.primaryButton} disabled={pending} onClick={() => void toggle()}>
+    <button type="button" className={styles.primaryButton} disabled={vote.pending === debate.debateId} onClick={() => vote.toggle(debate)}>
       {debate.myVote ? "투표 취소" : "투표하기"}
     </button>
     {tickets ? <p className={styles.centerNote}>내 투표권 {tickets.balance}/{tickets.max}</p> : null}
     <InfoNote>{debate.voteThreshold}표가 모이는 순간 토론방이 열려요. 마감까지 못 모으면 자동 소각돼요.</InfoNote>
+    {vote.dialog}
   </>;
 }
 

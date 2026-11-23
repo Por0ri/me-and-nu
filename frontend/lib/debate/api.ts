@@ -131,6 +131,11 @@ export function chooseSide(debateId: number, side: DebateSideKey): Promise<Debat
 }
 
 /** 최근 채팅을 오래된 순으로. cursor를 주면 그보다 이전 채팅 */
+/** 고른 진영 취소 (D-20, 채팅방의 '투표 취소'). 고른 진영이 없어도 그대로 200. */
+export function cancelSide(debateId: number): Promise<DebateSummary> {
+  return apiRequest<DebateSummary>(`/api/v1/debates/${debateId}/side`, { method: "DELETE" }, 200);
+}
+
 export function listMessages(debateId: number, cursor?: string): Promise<DebateMessagePage> {
   const params = new URLSearchParams({ limit: "50" });
   if (cursor) params.set("cursor", cursor);

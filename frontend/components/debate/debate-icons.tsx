@@ -34,3 +34,9 @@ export const TrophyIcon = (props: IconProps) => <Icon {...props}><path d="M8 4.5
 export const ListIcon = (props: IconProps) => <Icon {...props}><path d="m4 6.5 1.5 1.5L8 5.5M11 7h9M4 12.5 5.5 14 8 11.5M11 13h9M11 19h9M4.5 19h2" /></Icon>;
 export const SparkleIcon = (props: IconProps) => <Icon {...props}><path d="M12 3.5c.6 4.4 2.1 5.9 6.5 6.5-4.4.6-5.9 2.1-6.5 6.5-.6-4.4-2.1-5.9-6.5-6.5 4.4-.6 5.9-2.1 6.5-6.5zM18.5 15.5c.3 1.9.9 2.5 2.8 2.8-1.9.3-2.5.9-2.8 2.8-.3-1.9-.9-2.5-2.8-2.8 1.9-.3 2.5-.9 2.8-2.8z" /></Icon>;
 export const ChatPlusIcon = (props: IconProps) => <Icon {...props}><path d="M19 12.5c0 3.6-3.1 6.5-7 6.5-1 0-2-.2-2.9-.5L5 20l1.2-3.2C5.4 15.7 5 14.2 5 12.5 5 8.9 8.1 6 12 6s7 2.9 7 6.5z" /><path d="M12 9.8v5.4M9.3 12.5h5.4M17.5 3.5l1-1.5M20 6l1.5-1M19.5 3.8l1.3-.6" /></Icon>;
+/** 보라 동그라미 안 흰 체크 (완료 알림, 2026-11-23 시안). 색이 정해진 아이콘이다. */
+export const CheckCircleIcon = ({ size = 22 }: { size?: number }) => <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <circle cx="12" cy="12" r="11" fill="#7043b4" /><path d="m7.2 12.4 3.2 3.2 6.4-6.6" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+</svg>;
+/** 동그라미 안 체크 (채팅방 진영 고르기 버튼, 2026-11-23 시안) */
+export const CircleCheckIcon = (props: IconProps) => <Icon {...props}><circle cx="12" cy="12" r="9" /><path d="m8.3 12.2 2.5 2.5 4.9-5" /></Icon>;
