@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import dynamic from "next/dynamic";
 import { debateNoticeId, findInboxNotification, isPostNotice, noticeHeadline, postNoticeImage, sortInbox, type InboxNotification, type InboxPage, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
 import { formatRelativeDay } from "@/lib/relative-time";
 import { ProtectedSlideImage } from "./content-carousel";
@@ -21,6 +21,12 @@ function formatDetailTime(iso: string) {
   );
   return `${year}.${month}.${day} (${weekday}) ${hour}:${minute}`;
 }
+
+/** 토론방 개설 알림 상세 아래의 토론방 카드 (2026-11-24). 토론 화면 코드라 그 알림을 열 때만 불러온다. */
+const DebateNoticeCard = dynamic(() => import("@/components/debate/debate-notice").then((module) => module.DebateNoticeCard), {
+  ssr: false,
+  loading: () => <p role="status">토론방을 불러오고 있어요.</p>,
+});
 
 const TAGS: Record<InboxNotification["type"], string> = {
   system_notice: "공지", topic_new_post: "NEW", recommended_post: "추천", debate_opened: "토론",
@@ -176,6 +182,7 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
   const visible = sortInbox(list.page?.items.filter((item) => !unreadOnly || !item.isRead) ?? []);
   const hasUnread = (unreadCount ?? 0) > 0 || list.page?.items.some((item) => !item.isRead);
   const readState = id === null ? undefined : readStates[id];
+  const noticeDebateId = detail ? debateNoticeId(detail) : null;
 
   return <main ref={screen} className={styles.screen} data-demo={source.kind === "demo" || undefined} aria-label={id === null ? "알림함" : "알림 상세"}>
     <HomeHeader title={id === null ? "알림함" : "알림 상세"} onBack={onBack} showMascot={false} showNotification={false} />
@@ -222,7 +229,8 @@ export function NotificationInbox({ source, unreadOnly, id, onFilter, onOpen, on
         </div>
         <p className={styles.body}>{detail.body}</p>
         {isPostNotice(detail) && onOpenContent && <button type="button" className={styles.more} onClick={() => void openContent(detail)}>글 보러 가기</button>}
-        {debateNoticeId(detail) !== null && <Link className={styles.more} href={`/pivot/debate/${debateNoticeId(detail)}`}>토론방 보러 가기</Link>}
+        {/* 버튼 대신 그 토론방 카드를 바로 보여 주고, '토론 참여하기'로 바로 채팅방에 간다 (2026-11-24 사용자 결정) */}
+        {noticeDebateId !== null && <DebateNoticeCard key={noticeDebateId} debateId={noticeDebateId} />}
         {readState === "pending" && <p role="status">읽음 상태를 저장하고 있어요.</p>}
         {readState === "failed" && <div className={styles.feedback}>
           <p role="alert">읽음 상태를 저장하지 못했어요.</p>
