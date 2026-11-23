@@ -63,7 +63,7 @@ function VotedTab({ showToast }: { showToast: (message: string) => void }) {
     }
   };
   return <div className={styles.stack}>
-    {tickets ? <TicketCard tickets={tickets} variant="activity" /> : null}
+    {tickets ? <TicketCard tickets={tickets} /> : null}
     <DebateState loading={debates === null && !error} error={error} onRetry={load} />
     {debates?.length === 0 ? <div className={styles.state}>
       <p>아직 투표한 주제가 없어요.</p>

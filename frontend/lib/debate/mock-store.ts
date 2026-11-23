@@ -49,6 +49,10 @@ type StoredDebate = {
   mine: boolean;
   myVote: boolean;
   mySide: DebateSideKey | null;
+  /** 내가 참여 중인지, 참여 인원, 내가 참여한 순간의 마지막 채팅 번호 (그 뒤의 채팅만 보인다) */
+  joined: boolean;
+  memberCount: number;
+  historyAfter: number;
   messages: StoredMessage[];
 };
 
@@ -94,6 +98,9 @@ function stored(partial: Partial<StoredDebate> & Pick<StoredDebate, "debateId" |
     mine: false,
     myVote: false,
     mySide: null,
+    joined: false,
+    memberCount: 0,
+    historyAfter: 0,
     messages: [],
     ...partial,
   };
@@ -118,6 +125,8 @@ function seed(): void {
     stored({
       debateId: 1, title: "나루토와 사스케, 최종 승자는?", sideA: "나루토", sideB: "사스케", workIds: [102], ...opened(17),
       description: "종말의 계곡 마지막 결투 기준으로 이야기해요.", sideACount: 5, sideBCount: 3, createdAt: now - 4 * DAY,
+      // 이미 참여 중인 방 (카드에 '방 나가기'·'다시 입장하기'가 보인다)
+      joined: true, memberCount: 128,
       messages: seedMessages(now, [
         ["a", "닌자왕", "나는 나루토가 이긴다고 봐요. 결국 사스케도 나루토의 신념과 끈질김을 인정했잖아요."],
         ["b", "우치하팬", "그래도 사스케의 재능과 전투 센스는 정말 대단했어요. 마지막까지 예측이 어려워요!"],
@@ -129,7 +138,7 @@ function seed(): void {
     }, now),
     stored({
       debateId: 2, title: "루피는 해적왕이 될 수 있을까?", sideA: "된다", sideB: "못 된다", workIds: [101], ...opened(4),
-      sideACount: 4, sideBCount: 2, createdAt: now - 3 * DAY,
+      sideACount: 4, sideBCount: 2, createdAt: now - 3 * DAY, memberCount: 126,
       messages: seedMessages(now, [
         ["a", "밀짚모자", "제목부터 원피스잖아요. 된다 편이에요."],
         ["b", "현실주의자", "꿈은 이뤄지지만 해적왕은 다른 의미일 수도 있어요. 못 된다 쪽입니다."],
@@ -142,7 +151,7 @@ function seed(): void {
     stored({ debateId: 6, title: "탄지로와 렌고쿠, 누가 더 강할까?", sideA: "탄지로", sideB: "렌고쿠", workIds: [106], voteCount: 4, votingEndsAt: now + 4 * DAY, createdAt: now - 3 * DAY }, now),
     stored({ debateId: 7, title: "덴지는 히어로일까?", sideA: "히어로다", sideB: "아니다", workIds: [107], voteCount: 2, votingEndsAt: now + 6 * DAY + 5 * HOUR, createdAt: now - 18 * HOUR }, now),
     stored({ debateId: 8, title: "히나타와 카게야마, 더 대단한 쪽은?", sideA: "히나타", sideB: "카게야마", workIds: [108], voteCount: 1, votingEndsAt: now + 6 * DAY + 20 * HOUR, createdAt: now - 4 * HOUR }, now),
-    // 지난 토론방: 종료 3개, 소멸 2개
+    // 지난 토론방: 종료 3개. 소멸 2개는 기준 표를 못 받은 주제라 서버처럼 화면에 보이지 않는다 (바로 삭제 규칙)
     stored({ debateId: 11, title: "원피스, 최종 보물은 무엇일까?", sideA: "실제 보물", sideB: "동료와의 우정", workIds: [101], status: "closed", voteCount: 10, votingEndsAt: now - 6 * DAY, openedAt: now - 5 * DAY, closesAt: now - 3 * DAY, sideACount: 7, sideBCount: 11, messageCount: 214, createdAt: now - 9 * DAY }, now),
     stored({ debateId: 12, title: "카카시와 이타치, 누가 더 강할까?", sideA: "카카시", sideB: "이타치", workIds: [102], status: "closed", voteCount: 10, votingEndsAt: now - 8 * DAY, openedAt: now - 7 * DAY, closesAt: now - 5 * DAY, sideACount: 9, sideBCount: 9, messageCount: 156, createdAt: now - 12 * DAY }, now),
     stored({ debateId: 13, title: "엘과 라이트, 진짜 천재는 누구?", sideA: "엘", sideB: "라이트", workIds: [105], status: "closed", voteCount: 10, votingEndsAt: now - 10 * DAY, openedAt: now - 9 * DAY, closesAt: now - 7 * DAY, sideACount: 12, sideBCount: 8, messageCount: 301, createdAt: now - 15 * DAY }, now),
@@ -211,11 +220,15 @@ function summary(debate: StoredDebate, now = Date.now()): DebateSummary {
     openedAt: iso(debate.openedAt),
     closesAt: iso(debate.closesAt),
     participantCount: debate.sideACount + debate.sideBCount,
+    memberCount: debate.memberCount,
+    joined: debate.joined,
     messageCount: debate.messageCount,
     result: status === "closed" ? resultOf(debate) : null,
     myVote: debate.myVote,
     mySide: debate.mySide,
     isMine: debate.mine,
+    // 가짜 데이터는 작성자를 따로 두지 않아서 번호로 이름을 고른다.
+    authorNickname: debate.mine ? "나" : LIVE_NAMES[debate.debateId % LIVE_NAMES.length],
     createdAt: new Date(debate.createdAt).toISOString(),
   };
 }
@@ -242,9 +255,9 @@ function endedAt(debate: StoredDebate): number {
   return debate.closesAt ?? debate.votingEndsAt;
 }
 
-/** 끝난 지 보관 기간(9일)이 안 지났거나 아직 진행 중인 토론. 서버처럼 지난 것은 없는 것으로 본다. */
+/** 서버처럼 보여 줄 토론만: 기준 표를 못 받은 주제는 삭제된 것으로, 끝난 지 보관 기간(9일)이 지난 방도 없는 것으로 본다. */
 function kept(debate: StoredDebate, now: number): boolean {
-  return endedAt(debate) > now - RULES.resultRetentionDays * DAY;
+  return statusOf(debate, now) !== "expired" && endedAt(debate) > now - RULES.resultRetentionDays * DAY;
 }
 
 function matches(debate: StoredDebate, text: string): boolean {
@@ -265,12 +278,9 @@ export async function listDebates(query: DebateListQuery): Promise<DebateSummary
   } else if (query.status === "open") {
     rows = rows.filter((debate) => statusOf(debate, now) === "open").sort((left, right) => (left.closesAt ?? 0) - (right.closesAt ?? 0));
   } else {
-    const wanted = query.result ?? "all";
-    rows = rows.filter((debate) => {
-      const status = statusOf(debate, now);
-      return (status === "closed" || status === "expired") && (wanted === "all" || wanted === status) && kept(debate, now)
-        && matches(debate, query.q ?? "");
-    }).sort((left, right) => endedAt(right) - endedAt(left));
+    // 지난 토론방: 48시간이 끝난 방만 (기준 표를 못 받은 주제는 바로 삭제돼 없다)
+    rows = rows.filter((debate) => statusOf(debate, now) === "closed" && kept(debate, now) && matches(debate, query.q ?? ""))
+      .sort((left, right) => endedAt(right) - endedAt(left));
   }
   return wait(rows.map((debate) => summary(debate, now)));
 }
@@ -368,10 +378,47 @@ export async function deleteDebate(debateId: number): Promise<void> {
   return wait(undefined);
 }
 
-export async function chooseSide(debateId: number, side: DebateSideKey): Promise<DebateSummary> {
-  const now = Date.now();
+function openRoom(debateId: number, now: number): StoredDebate {
   const debate = find(debateId);
   if (statusOf(debate, now) !== "open") fail("DEBATE_NOT_OPEN", "진행 중인 토론방이 아니에요.");
+  return debate;
+}
+
+function joinedRoom(debateId: number, now: number): StoredDebate {
+  const debate = openRoom(debateId, now);
+  if (!debate.joined) fail("DEBATE_NOT_JOINED", "토론에 참여한 사람만 할 수 있어요. 먼저 토론에 참여해 주세요.");
+  return debate;
+}
+
+/** 토론방 참여: 참여한 순간의 마지막 채팅 번호를 적어 두고 그 뒤의 채팅만 보여준다 (설계 D-18). */
+export async function joinDebate(debateId: number): Promise<DebateSummary> {
+  const now = Date.now();
+  const debate = openRoom(debateId, now);
+  if (!debate.joined) {
+    debate.joined = true;
+    debate.memberCount += 1;
+    debate.historyAfter = debate.messages.at(-1)?.messageId ?? 0;
+  }
+  return wait(summary(debate, now), 120);
+}
+
+/** 토론방 나가기: 참여와 고른 진영을 지운다 (설계 D-19). */
+export async function leaveDebate(debateId: number): Promise<DebateSummary> {
+  const now = Date.now();
+  const debate = openRoom(debateId, now);
+  if (debate.joined) {
+    debate.joined = false;
+    debate.memberCount = Math.max(0, debate.memberCount - 1);
+  }
+  if (debate.mySide === "a") debate.sideACount -= 1;
+  if (debate.mySide === "b") debate.sideBCount -= 1;
+  debate.mySide = null;
+  return wait(summary(debate, now), 120);
+}
+
+export async function chooseSide(debateId: number, side: DebateSideKey): Promise<DebateSummary> {
+  const now = Date.now();
+  const debate = joinedRoom(debateId, now);
   if (debate.mySide !== side) {
     if (debate.mySide === "a") debate.sideACount -= 1;
     if (debate.mySide === "b") debate.sideBCount -= 1;
@@ -385,17 +432,17 @@ export async function chooseSide(debateId: number, side: DebateSideKey): Promise
 /** 최근 50개를 오래된 순으로. cursor(그 채팅 번호)를 주면 그보다 이전 50개 */
 export async function listMessages(debateId: number, cursor?: string): Promise<DebateMessagePage> {
   const before = cursor ? Number(cursor) : Infinity;
-  const rows = find(debateId).messages.filter((item) => item.messageId < before);
+  const debate = joinedRoom(debateId, Date.now());
+  const rows = debate.messages.filter((item) => item.messageId > debate.historyAfter && item.messageId < before);
   const page = rows.slice(-50);
   return wait({ items: page.map(message), nextCursor: rows.length > page.length ? String(page[0].messageId) : null });
 }
 
 export async function sendMessage(debateId: number, body: string): Promise<DebateMessage> {
   const now = Date.now();
-  const debate = find(debateId);
+  const debate = joinedRoom(debateId, now);
   const text = body.trim();
   // 진영 선택과 채팅은 별개라 진영을 고르지 않아도 보낼 수 있다.
-  if (statusOf(debate, now) !== "open") fail("DEBATE_NOT_OPEN", "진행 중인 토론방이 아니에요.");
   if (!text || text.length > RULES.messageMax) fail("VALIDATION_ERROR", `메시지는 1~${RULES.messageMax}자로 보내주세요.`);
   const windowStart = now - RULES.messageRateWindowSeconds * 1000;
   mySends = mySends.filter((time) => time > windowStart);

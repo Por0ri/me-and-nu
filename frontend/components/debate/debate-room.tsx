@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  cancelVote, chooseSide, getDebate, getVoteTickets, listMessages, sendMessage, subscribeDebate, voteDebate,
+  cancelVote, chooseSide, getDebate, getVoteTickets, joinDebate, listMessages, sendMessage, subscribeDebate, voteDebate,
 } from "@/lib/debate/client";
 import { dateText, leadingText, roomRemaining, timeText, votingRemaining } from "@/lib/debate/format";
 import { DEBATE_RULES } from "@/lib/debate/rules";
@@ -34,14 +34,65 @@ export function DebateRoom({ debateId }: { debateId: number }) {
     </DebateScreen>;
   }
   if (debate.status === "open") {
-    return <OpenRoom debate={debate} onChange={setDebate} update={update} showToast={showToast} toast={toast} />;
+    // 참여한 사람만 채팅방을 본다. 알림 등으로 주소를 바로 열었으면 먼저 참여 화면을 보여준다.
+    return debate.joined
+      ? <OpenRoom debate={debate} onChange={setDebate} update={update} showToast={showToast} toast={toast} />
+      : <JoinRoom debate={debate} onJoined={setDebate} showToast={showToast} toast={toast} />;
   }
   return <DebateScreen label={debate.title}>
     <DebateHeader title={debate.status === "voting" ? "주제 후보" : "지난 토론방"} back={debate.status === "voting" ? "/pivot/debate?tab=vote" : "/pivot/debate?tab=past"} />
     <div className={styles.stack}>
+      {/* 기준 표를 못 받은 주제(expired)는 서버가 삭제된 것으로 보고 보내지 않는다. */}
       {debate.status === "voting" ? <VotingDetail debate={debate} onChange={setDebate} showToast={showToast} />
-        : debate.status === "closed" ? <ClosedResult debate={debate} />
-        : <ExpiredDetail debate={debate} />}
+        : <ClosedResult debate={debate} />}
+    </div>
+    {toast}
+  </DebateScreen>;
+}
+
+/* ───────────── 진행 중, 아직 참여 전: 방 정보와 참여하기 (시안 전 임시 모양) ───────────── */
+
+function JoinRoom({ debate, onJoined, showToast, toast }: {
+  debate: DebateSummary; onJoined: (debate: DebateSummary) => void; showToast: (message: string) => void; toast: React.ReactNode;
+}) {
+  const [pending, setPending] = useState(false);
+  const now = useNow();
+  const join = async () => {
+    setPending(true);
+    try {
+      onJoined(await joinDebate(debate.debateId));
+    } catch (reason) {
+      showToast(errorText(reason));
+      setPending(false);
+    }
+  };
+  const lead = leadingText(debate);
+  const percentA = debate.sideA.percent ?? 50;
+  return <DebateScreen label={debate.title}>
+    <DebateHeader title="토론방" back="/pivot/debate" />
+    <div className={styles.stack}>
+      <section className={styles.roomCard}>
+        <Badge>실시간 토론방</Badge>
+        <h2>{debate.title}</h2>
+        {debate.description ? <p className={styles.description}>{debate.description}</p> : null}
+        <WorkChips works={debate.works} />
+        <div className={styles.roomChips}>
+          <span className={styles.roomChip}><ClockIcon size={14} />남은 시간 {roomRemaining(debate.closesAt, now)}</span>
+          <span className={styles.roomChip}><UsersIcon size={14} />{debate.memberCount}명 참여 중</span>
+        </div>
+      </section>
+      <section className={styles.ratioCard} aria-label="진영 비율">
+        <p className={styles.ratioHead}>
+          <strong>{lead ?? "아직 아무도 진영을 고르지 않았어요"}</strong>
+          {debate.sideA.percent !== null ? <span>{debate.sideA.percent}% / {debate.sideB.percent}%</span> : null}
+        </p>
+        <div className={styles.ratioBar} aria-hidden="true">
+          <span className={styles.ratioA} style={{ width: `${percentA}%` }} />
+          <span className={styles.ratioB} style={{ width: `${100 - percentA}%` }} />
+        </div>
+        <p className={styles.ratioLegend}><span>{debate.sideA.label} {debate.sideA.count}명</span><span>{debate.sideB.label} {debate.sideB.count}명</span></p>
+      </section>
+      <button type="button" className={styles.fillButton} disabled={pending} onClick={() => void join()}>토론 참여하기</button>
     </div>
     {toast}
   </DebateScreen>;
@@ -366,18 +417,5 @@ function ClosedResult({ debate }: { debate: DebateSummary }) {
       </p>
     </section>
     <InfoNote>채팅은 방이 끝날 때 사라져서 볼 수 없어요. 결과는 끝난 뒤 {DEBATE_RULES.resultRetentionDays}일 동안 지난 토론방에 남아요.</InfoNote>
-  </>;
-}
-
-function ExpiredDetail({ debate }: { debate: DebateSummary }) {
-  return <>
-    <section className={styles.roomCard}>
-      <Badge tone="gray">자동 소각</Badge>
-      <h2>{debate.title}</h2>
-      <WorkChips works={debate.works} />
-      <VoteProgress count={debate.voteCount} threshold={debate.voteThreshold} large />
-      <div className={styles.roomChips}><span className={styles.roomChip}><ClockIcon size={14} />{dateText(debate.votingEndsAt)} 마감</span></div>
-    </section>
-    <InfoNote>{DEBATE_RULES.votingDays}일 동안 {debate.voteThreshold}표를 못 모아서 소각됐어요. 소각된 주제는 다시 투표할 수 없고, 기록은 {DEBATE_RULES.resultRetentionDays}일 동안 지난 토론방에 남아요.</InfoNote>
   </>;
 }

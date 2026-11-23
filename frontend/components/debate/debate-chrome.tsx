@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+// 새 알림 여부는 pivot 공통 틀(NewNoticeProvider)이 채우고, 홈 머리 부분과 같은 값을 쓴다.
+import { NewNoticeContext } from "@/components/pivot/home-screen";
 import { DEBATE_DATA_SOURCE } from "@/lib/debate/client";
-import { BellIcon, BookmarkIcon, ChatFilledIcon, ChevronLeftIcon, HomeIcon, SearchIcon, UserIcon } from "./debate-icons";
+import { ChevronLeftIcon, InfoIcon } from "./debate-icons";
 import styles from "./debate.module.css";
 
 /** 토론방 화면의 바깥 틀. 하단바·입력창이 있으면 그만큼 아래 여백을 둔다. */
@@ -18,9 +20,30 @@ export function DebateScreen({ children, nav = false, composer = false, label }:
   </main>;
 }
 
-/** 머리 부분. back이 있으면 뒤로가기, brand면 me;nu 로고와 구분선을 함께 보여준다. */
-export function DebateHeader({ title, back, brand = true, onSearch, extra }: {
-  title: string; back?: string | (() => void); brand?: boolean; onSearch?: () => void; extra?: ReactNode;
+/** 토론방 첫 화면 머리 부분 (2026-11-23 시안): 홈과 같은 로고·문구, 오른쪽에 이용 안내(ⓘ)와 알림 */
+export function DebateHomeHeader({ onGuide }: { onGuide: () => void }) {
+  // 홈 머리 부분과 같은 기준으로, 새 알림이 있을 때만 점을 보여준다.
+  const hasNewNotice = useContext(NewNoticeContext);
+  return <header className={styles.homeHeader}>
+    <p className={styles.brandLine}>
+      <img src="/pivot/home/chrome/logo.svg" alt="me;nu" width={103} height={20.5862} />
+      <span>Little discoveries<br />for a more you</span>
+    </p>
+    <h1 className={styles.srOnly}>토론방</h1>
+    <div className={styles.headerActions}>
+      <button type="button" className={styles.iconButton} aria-label="토론방 이용 안내" onClick={onGuide}><InfoIcon size={24} /></button>
+      <Link className={styles.iconButton} href="/pivot/home?view=notifications" aria-label="알림"
+        aria-description={hasNewNotice ? "오늘 온 새 알림이 있어요" : undefined}>
+        <img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} />
+        {hasNewNotice ? <span className={styles.bellDot} aria-hidden="true" /> : null}
+      </Link>
+    </div>
+  </header>;
+}
+
+/** 안쪽 화면(토론방·주제 올리기·내 활동)의 머리 부분. back이 있으면 뒤로가기, brand면 me;nu 로고와 구분선을 함께 보여준다. */
+export function DebateHeader({ title, back, brand = true, extra }: {
+  title: string; back?: string | (() => void); brand?: boolean; extra?: ReactNode;
 }) {
   const router = useRouter();
   const goBack = () => {
@@ -37,10 +60,6 @@ export function DebateHeader({ title, back, brand = true, onSearch, extra }: {
       <h1>{title}</h1>
       {extra}
     </div>
-    {onSearch ? <div className={styles.headerActions}>
-      <button type="button" className={styles.iconButton} aria-label="토론 검색" onClick={onSearch}><SearchIcon size={22} /></button>
-      <Link className={styles.iconButton} href="/pivot/home?view=notifications" aria-label="알림"><BellIcon size={21} /><span className={styles.bellDot} aria-hidden="true" /></Link>
-    </div> : null}
   </header>;
 }
 
@@ -54,19 +73,19 @@ export function DebateTabs<T extends string>({ tabs, value, onChange, label }: {
 }
 
 /**
- * 토론방 화면에서만 쓰는 임시 하단바 (2026-11 시안의 홈·저장·토론방·마이).
- * 공용 하단바 디자인이 확정되면 공용 하단바에 토론방 칸을 넣고 이 부품은 지운다.
+ * 토론방 화면의 하단바 (2026-11-23 시안: HOME·SAVE·TALK·MY). 홈 하단바는 아직 예전 모양이라
+ * 홈 쪽을 바꿀 때 공용 하단바로 합치고 이 부품은 지운다.
  */
 function DebateBottomNav() {
   const items = [
-    { href: "/pivot/home", label: "홈", icon: <HomeIcon size={22} /> },
-    { href: "/pivot/home?view=saved", label: "저장", icon: <BookmarkIcon size={22} /> },
-    { href: "/pivot/debate", label: "토론방", icon: <ChatFilledIcon size={24} />, current: true },
-    { href: "/pivot/home?view=my", label: "마이", icon: <UserIcon size={22} /> },
+    { href: "/pivot/home", label: "HOME" },
+    { href: "/pivot/home?view=saved", label: "SAVE" },
+    { href: "/pivot/debate", label: "TALK", current: true },
+    { href: "/pivot/home?view=my", label: "MY" },
   ];
-  return <nav className={styles.bottomNav} aria-label="하단 메뉴 (토론방 임시)">
+  return <nav className={styles.bottomNav} aria-label="주요 메뉴">
     {items.map((item) => <Link key={item.label} href={item.href} className={styles.navItem} aria-current={item.current ? "page" : undefined}>
-      {item.icon}<span>{item.label}</span>
+      <span>{item.label}</span>
     </Link>)}
   </nav>;
 }

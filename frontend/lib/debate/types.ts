@@ -4,7 +4,7 @@
  * 지금은 가짜 데이터(mock-store.ts)가 채우고, API가 생기면 같은 모양으로 서버가 채운다.
  */
 
-/** voting 투표 중 → open 진행 중 → closed 종료, 또는 voting → expired 소멸 */
+/** voting 투표 중 → open 진행 중 → closed 종료. 7일 안에 기준 표를 못 받은 주제(expired)는 바로 삭제돼 화면에 오지 않는다. */
 export type DebateStatus = "voting" | "open" | "closed" | "expired";
 export type DebateSideKey = "a" | "b";
 /** 종료된 방의 결과. a·b 이긴 쪽, draw 동률, none 참여자 없음 */
@@ -31,11 +31,17 @@ export type DebateSummary = {
   closesAt: string | null;
   /** 진영을 고른 사람 수 */
   participantCount: number;
+  /** 토론방에 참여 중인 사람 수 (방을 나가면 빠진다) */
+  memberCount: number;
+  /** 내가 이 토론방에 참여 중인지. 참여한 사람만 채팅·진영 고르기를 하고, 참여한 뒤의 채팅만 보인다. */
+  joined: boolean;
   messageCount: number;
   result: DebateResult | null;
   myVote: boolean;
   mySide: DebateSideKey | null;
   isMine: boolean;
+  /** 주제를 올린 사람. 탈퇴했거나 지워진 회원이면 "알 수 없음" */
+  authorNickname: string;
   createdAt: string;
 };
 
@@ -58,7 +64,7 @@ export type DebateSearchResult = { works: DebateWorkOption[]; debates: DebateSum
 export type DebateListQuery =
   | { status: "voting"; sort?: "recent" | "votes"; entityId?: number }
   | { status: "open"; entityId?: number }
-  | { status: "ended"; result?: "all" | "closed" | "expired"; entityId?: number; q?: string };
+  | { status: "ended"; entityId?: number; q?: string };
 
 export type CreateDebateInput = {
   title: string;

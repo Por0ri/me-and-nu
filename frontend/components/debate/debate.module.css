@@ -10,13 +10,18 @@
   --debate-faint: #a1a1aa;
   --debate-danger: #e5484d;
   --debate-b: #b9a3e6;
+  /* 2026-11-23 시안: 홈과 같은 연분홍 바탕, 꽉 찬 버튼·막대는 마스코트 보라, 연한 칸은 연보라 */
+  --debate-bg: var(--pivot-bg, #fff9fd);
+  --debate-accent: #9c79e6;
+  --debate-pill: #efe7ff;
+  --debate-card-line: #e6dcf7;
   position: relative;
   width: 100%;
   max-width: 430px;
   min-height: 100svh;
   margin-inline: auto;
   padding: 0 16px 104px;
-  background: #fff;
+  background: var(--debate-bg);
   color: var(--debate-ink);
   word-break: keep-all;
   overflow-wrap: anywhere;
@@ -31,7 +36,12 @@
 .mockBanner { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 -16px; padding: 6px 12px; background: #fff7e0; color: #8a6100; font-size: 11px; line-height: 16px; text-align: center; }
 
 /* 머리 부분 */
-.header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: 56px; margin-inline: -16px; padding-inline: 16px; background: #fff; }
+.header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: 56px; margin-inline: -16px; padding-inline: 16px; background: var(--debate-bg); }
+/* 첫 화면 머리 부분: 홈과 같은 로고·문구, 오른쪽에 이용 안내·알림 */
+.homeHeader { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; height: 56px; margin-inline: -16px; padding-inline: 16px; background: var(--debate-bg); }
+.brandLine { display: flex; align-items: center; gap: 12px; }
+.brandLine img { display: block; flex: none; max-width: none; }
+.brandLine span { color: var(--debate-muted); font-size: 8px; line-height: 9px; }
 .headerTitle { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
 .headerTitle h1 { overflow: hidden; font-size: 17px; font-weight: 700; line-height: 24px; white-space: nowrap; text-overflow: ellipsis; }
 .logo { display: block; flex: none; }
@@ -51,10 +61,40 @@
 .liveDot:not([data-state="live"])::before { animation: none; }
 
 /* 탭 */
-.tabs { position: sticky; top: 56px; z-index: 4; display: grid; grid-auto-columns: 1fr; grid-auto-flow: column; margin: 0 -16px; border-bottom: 1px solid var(--debate-line); background: #fff; }
-.screen .tab { position: relative; height: 44px; padding: 0; border: 0; background: transparent; color: var(--debate-muted); font-size: 14px; }
+.tabs { position: sticky; top: 56px; z-index: 4; display: grid; grid-auto-columns: 1fr; grid-auto-flow: column; margin: 0 -16px; border-bottom: 1px solid var(--debate-line); background: var(--debate-bg); }
+.screen .tab { position: relative; height: 44px; padding: 0; border: 0; background: transparent; color: var(--debate-muted); font-size: 15px; }
 .screen .tab[aria-selected="true"] { color: var(--debate-primary); font-weight: 700; }
-.tab[aria-selected="true"]::after { content: ""; position: absolute; left: 12%; right: 12%; bottom: -1px; height: 2px; border-radius: 2px; background: var(--debate-primary); }
+.tab[aria-selected="true"]::after { content: ""; position: absolute; left: 14%; right: 14%; bottom: -1px; height: 2px; border-radius: 2px; background: var(--debate-primary); }
+
+/* 탭 아래 검색창 (홈 검색창과 같은 모양, 누르면 검색 화면이 열린다) */
+.screen .searchField { display: flex; align-items: center; gap: 8px; width: 100%; height: 40px; margin-top: 14px; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; box-shadow: 0 1px 5px rgb(206 191 250 / 50%); color: var(--debate-muted); font-size: 14px; text-align: left; cursor: text; }
+.searchField img { flex: none; }
+
+/* 주제 카드 (실시간 토론방·주제 투표·지난 토론방, 2026-11-23 시안) */
+.topicCard { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--debate-card-line); border-radius: 14px; background: #fff; color: inherit; text-decoration: none; }
+.topicTitle { font-size: 17px; font-weight: 700; line-height: 24px; }
+.topicDescription { display: -webkit-box; overflow: hidden; color: var(--debate-muted); font-size: 13px; line-height: 19px; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.topicMeta { display: flex; align-items: center; gap: 8px; min-height: 26px; color: var(--debate-muted); font-size: 12px; line-height: 17px; }
+.author { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-right: auto; color: var(--debate-ink); font-size: 12px; font-weight: 700; }
+.author img { flex: none; border-radius: 50%; }
+.author b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* 카드 버튼: 작품 칩과 같은 알약 모양, 높이 32px (2026-11-23 시안) */
+.screen :is(.fillButton, .softFillButton) { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 32px; padding: 0 12px; border: 0; border-radius: 999px; font-size: 13.5px; font-weight: 700; text-decoration: none; }
+.screen .fillButton { background: var(--debate-accent); color: #fff; }
+.screen .softFillButton { background: var(--debate-pill); color: var(--debate-primary); }
+.fillButton:disabled, .softFillButton:disabled { opacity: .55; }
+/* 참여한 방의 버튼 두 개 (방 나가기 · 다시 입장하기) */
+.cardButtons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* 한 번 더 묻는 창 */
+.confirm { display: flex; flex-direction: column; gap: 10px; width: min(100%, 320px); padding: 22px 18px 18px; border-radius: 16px; background: #fff; text-align: center; box-shadow: 0 16px 40px #0004; }
+.confirm h2 { font-size: 17px; font-weight: 700; line-height: 24px; }
+.confirm p { color: var(--debate-muted); font-size: 13.5px; line-height: 20px; }
+.confirm .cardButtons { margin-top: 8px; }
+.voteMini { display: flex; flex-direction: column; gap: 3px; width: 96px; }
+.voteMini b { color: var(--debate-primary); font-size: 12px; line-height: 15px; }
+.voteMini .progressFill { background: var(--debate-accent); }
+/* 세로로 쌓는 틀 안의 막대는 늘어나지 않게(늘면 높이가 0이 된다) 너비만 채운다. */
+.voteMini .progress, .ticketMain .progress { flex: none; width: 100%; }
 
 .stack { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; }
 .sectionHeading { margin-top: 10px; font-size: 17px; font-weight: 700; line-height: 24px; }
@@ -79,7 +119,7 @@
 .badge[data-tone="gray"] { background: #f1f1f4; color: #52525b; }
 .badge[data-tone="danger"] { background: #fdecec; color: var(--debate-danger); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; background: #f4f4f6; color: #52525b; font-size: 11.5px; line-height: 17px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: var(--debate-pill); color: var(--debate-primary); font-size: 12px; font-weight: 600; line-height: 17px; }
 .metaRow { display: flex; align-items: center; gap: 10px; color: var(--debate-muted); font-size: 12.5px; line-height: 18px; }
 .meta { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .metaDivider { width: 1px; height: 12px; background: #e4e4e7; }
@@ -119,6 +159,27 @@
 .segment { height: 6px; border-radius: 999px; background: #e3daf3; }
 .segment[data-on] { background: var(--debate-primary); }
 .ticketFoot { display: flex; align-items: center; gap: 6px; padding-top: 10px; border-top: 1px solid #e3daf3; color: #52525b; font-size: 12px; }
+/* 주제 투표 탭의 투표권 카드 (2026-11-23 시안: 오른쪽에 내 활동 버튼) */
+.ticketBox { display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: 14px; background: #f4eefe; }
+.ticketMain { display: flex; flex: 1; flex-direction: column; gap: 6px; min-width: 0; }
+.ticketMain strong { font-size: 17px; font-weight: 700; line-height: 24px; }
+.ticketMain strong em { margin-left: 6px; color: var(--debate-primary); font-style: normal; }
+.ticketRule { color: #52525b; font-size: 12px; line-height: 17px; }
+.ticketMain .progressFill { background: var(--debate-accent); }
+.refillLine { display: inline-flex; align-items: center; gap: 4px; color: var(--debate-muted); font-size: 11.5px; line-height: 16px; }
+.screen .activityButton { flex: none; display: grid; place-items: center; height: 40px; padding: 0 16px; border-radius: 10px; background: var(--debate-accent); color: #fff; font-size: 15px; font-weight: 700; text-decoration: none; box-shadow: 0 2px 8px rgb(156 121 230 / 35%); }
+
+/* 토론방 이용 안내 창 (머리 부분 ⓘ) */
+.modalBackdrop { position: fixed; z-index: 25; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(24 24 27 / 50%); }
+.guide { width: min(100%, 340px); max-height: calc(100svh - 48px); overflow-y: auto; border-radius: 16px; background: #fff; box-shadow: 0 16px 40px #0004; }
+.guideHead { position: relative; display: flex; align-items: center; justify-content: center; padding: 16px 48px; background: var(--debate-pill); }
+.guideHead h2 { display: flex; align-items: center; gap: 8px; color: var(--debate-primary); font-size: 18px; font-weight: 700; line-height: 24px; }
+.guideHead .iconButton { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); color: #52525b; }
+.guideList { display: flex; flex-direction: column; gap: 8px; padding: 14px; }
+.guideList li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #f8f4ff; }
+.guideNumber { display: grid; place-items: center; flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; background: var(--debate-accent); color: #fff; font-size: 11px; font-weight: 700; }
+.guideList p { color: var(--debate-ink); font-size: 13.5px; line-height: 20px; }
+.guideList em { color: var(--debate-primary); font-style: normal; font-weight: 600; }
 
 /* 안내 칩·안내문 */
 .infoRow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -236,7 +297,8 @@
 .state button { margin-top: 12px; }
 .toast { position: fixed; z-index: 30; bottom: 96px; left: 50%; max-width: min(92vw, 398px); padding: 11px 16px; transform: translateX(-50%); border-radius: 12px; background: rgb(39 39 42 / 94%); color: #fff; font-size: 13px; line-height: 19px; text-align: center; box-shadow: 0 8px 24px #0003; }
 
-/* 토론방 화면 전용 임시 하단바 (공용 하단바 디자인 확정 전까지만) */
-.bottomNav { position: fixed; z-index: 8; bottom: 0; left: 50%; display: grid; grid-template-columns: repeat(4, 1fr); width: min(100%, 430px); padding: 8px 8px max(10px, env(safe-area-inset-bottom)); transform: translateX(-50%); border-top: 1px solid var(--debate-line); background: #fff; }
-.navItem { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 0; color: #52525b; font-size: 11px; text-decoration: none; }
-.navItem[aria-current="page"] { color: var(--debate-primary); font-weight: 700; }
+/* 토론방 화면 하단바 (2026-11-23 시안: HOME·SAVE·TALK·MY 글자, 지금 메뉴는 연보라 알약). 홈 하단바와 합칠 때 공용으로 옮긴다. */
+.bottomNav { position: fixed; z-index: 8; bottom: 0; left: 50%; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; width: min(100%, 430px); height: calc(60px + env(safe-area-inset-bottom)); padding: 0 10px env(safe-area-inset-bottom); transform: translateX(-50%); border-top: 1px solid #e4e4e7; background: rgb(250 250 250 / 96%); }
+.navItem { display: grid; place-items: center; color: #3f3f46; text-decoration: none; }
+.navItem span { display: grid; place-items: center; height: 38px; padding: 0 18px; border-radius: 19px; font-size: 16px; line-height: 20px; }
+.navItem[aria-current="page"] span { background: var(--debate-pill); font-weight: 700; }

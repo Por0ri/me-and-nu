@@ -41,7 +41,6 @@ export async function listDebates(query: DebateListQuery): Promise<DebateSummary
   const params = new URLSearchParams({ status: query.status, limit: "50", topicId: String(await currentTopicId()) });
   if (query.status === "voting" && query.sort) params.set("sort", query.sort);
   if (query.status === "ended") {
-    if (query.result) params.set("result", query.result);
     if (query.q?.trim()) params.set("q", query.q.trim());
   }
   if (query.entityId) params.set("entityId", String(query.entityId));
@@ -115,6 +114,16 @@ export async function similarDebates(title: string): Promise<DebateSummary[]> {
 }
 
 /* ───────────── 토론방 안 (D-09~12) ───────────── */
+
+/** 토론방 참여 (D-18). 이미 참여 중이면 그대로. */
+export function joinDebate(debateId: number): Promise<DebateSummary> {
+  return apiRequest<DebateSummary>(`/api/v1/debates/${debateId}/membership`, { method: "PUT" });
+}
+
+/** 토론방 나가기 (D-19). 참여 기록과 고른 진영이 지워지고, 다시 참여하면 그때부터의 채팅만 보인다. */
+export function leaveDebate(debateId: number): Promise<DebateSummary> {
+  return apiRequest<DebateSummary>(`/api/v1/debates/${debateId}/membership`, { method: "DELETE" }, 200);
+}
 
 /** 진영 고르기·바꾸기. 채팅과는 별개라 언제든 바꿀 수 있다. */
 export function chooseSide(debateId: number, side: DebateSideKey): Promise<DebateSummary> {
