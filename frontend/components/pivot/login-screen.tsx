@@ -13,21 +13,27 @@ export function LoginScreen({ preview = false, onDemoContinue }: { preview?: boo
   const [message, setMessage] = useState("");
   const [pendingProvider, setPendingProvider] = useState<SnsProvider | null>(null);
   const loginPending = useRef(false);
+  const loginRequest = useRef<AbortController | null>(null);
   const checkingSession = !preview && !demo && state.status === "loading";
   useEffect(() => {
     if (!preview && !demo) setMessage(oauthErrorMessage(new URLSearchParams(window.location.search).get("error")));
   }, [preview, demo]);
   useEffect(() => {
     if (preview || demo) return;
-    const restoreLoginControls = (event: PageTransitionEvent) => {
-      if (!event.persisted) return;
+    const reset = () => {
+      loginRequest.current?.abort(); loginRequest.current = null;
       loginPending.current = false;
       setPendingProvider(null);
     };
+    reset();
+    const restoreLoginControls = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      reset();
+    };
     // The provider may be left with Back instead of completing its callback.
     window.addEventListener("pageshow", restoreLoginControls);
-    return () => window.removeEventListener("pageshow", restoreLoginControls);
-  }, [preview, demo]);
+    return () => { loginRequest.current?.abort(); loginRequest.current = null; window.removeEventListener("pageshow", restoreLoginControls); };
+  }, [preview, demo, state.session?.csrfToken, checkingSession]);
   async function login(provider: SnsProvider) {
     if (preview || demo) {
       setMessage(`${provider === "kakao" ? "카카오" : "네이버"} 로그인 UI를 확인했어요. 실제 로그인은 진행되지 않아요.${demo ? " 아래 시연용 버튼으로 계속해 주세요." : ""}`);
@@ -35,10 +41,14 @@ export function LoginScreen({ preview = false, onDemoContinue }: { preview?: boo
     }
     if (checkingSession || loginPending.current) return;
     loginPending.current = true;
+    const controller = new AbortController();
+    loginRequest.current = controller;
     setPendingProvider(provider);
     setMessage("");
-    try { await startSnsLogin(provider); }
+    try { await startSnsLogin(provider, { signal: controller.signal }); }
     catch (error) {
+      if (loginRequest.current !== controller || controller.signal.aborted) return;
+      loginRequest.current = null;
       loginPending.current = false;
       setPendingProvider(null);
       setMessage(error instanceof Error ? error.message : "로그인을 시작할 수 없어요.");

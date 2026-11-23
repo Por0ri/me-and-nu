@@ -41,11 +41,13 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<OnboardingProfile>({ nickname: "" });
   const [onboarding, dispatchOnboarding] = useReducer(onboardingReducer, undefined, initialOnboardingState);
   const epoch = useRef(0);
+  const restoring = useRef<AbortController | null>(null);
   const logoutRequest = useRef<Promise<void> | null>(null);
   const changingAccount = useRef(false);
   const restoredAccount = useRef<{ owner: Session; id: number } | null>(null);
   const endSession = useCallback((message?: string) => {
     epoch.current++;
+    restoring.current?.abort(); restoring.current = null;
     restoredAccount.current = null;
     setDraft(null); setProfile({ nickname: "" }); dispatchOnboarding({ type: "reset" });
     setState({ status: "ready", session: null, message });
@@ -60,6 +62,7 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
   const completeOnboarding = useCallback((session: Session) => {
     if (!isActiveSession(session)) throw new Error("가입 완료 상태를 확인하지 못했어요.");
     epoch.current++;
+    restoring.current?.abort(); restoring.current = null;
     setDraft(null); setProfile({ nickname: "" }); dispatchOnboarding({ type: "reset" });
     // Onboarding already owns its loading screen and warm-up.
     setState({ status: "ready", session, homeEntryPrepared: true });
@@ -154,11 +157,13 @@ function ConnectedPivotSessionProvider({ children }: { children: ReactNode }) {
       setState({ status: "disconnected", session: null });
       return;
     }
-    restorePivotSession().then(
+    const controller = new AbortController();
+    restoring.current = controller;
+    restorePivotSession(controller.signal).then(
       (session) => { if (request === epoch.current) setState({ status: "ready", session }); },
       () => { if (request === epoch.current) setState({ status: "error", session: null, message: "로그인 상태를 확인하지 못했어요. 다시 시도해 주세요." }); },
     );
-    return () => { epoch.current++; };
+    return () => { epoch.current++; controller.abort(); if (restoring.current === controller) restoring.current = null; };
   }, [attempt]);
   useEffect(() => {
     // During a transition the account request handles its own 401. Background

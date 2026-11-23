@@ -1,4 +1,5 @@
 import type { NotificationSettingsSource } from "./notification-settings";
+import { RequestTimeoutError, withRequestDeadline } from "../request-deadline";
 
 // FE display model only. This is not an agreed server DTO or API contract.
 export type MyPageProfile = { origin: "demo" | "service"; nickname: string; maskedEmail: string };
@@ -35,16 +36,17 @@ export function createMyPageRequestController(source: MyPageDataSource, publish:
       const request = new AbortController(); active = request;
       publish({ status: "loading" });
       try {
-        const result = await source.load({ signal: request.signal });
+        const result = await withRequestDeadline(signal => source.load({ signal }), { signal: request.signal });
         if (request.signal.aborted) return;
         // Never substitute a Mock identity for an unavailable/failed Service.
         if (result.status === "ready" && (result.profile.origin !== source.kind
           || !result.profile.nickname.trim() || !result.profile.maskedEmail.trim())) throw new Error("Invalid profile source");
         publish(result);
-      } catch {
-        if (!request.signal.aborted) publish({ status: "error", message: "프로필을 불러오지 못했어요. 다시 시도해주세요." });
-      }
+      } catch (error) {
+        if (!request.signal.aborted) publish({ status: "error", message: error instanceof RequestTimeoutError
+          ? "프로필을 불러오는 시간이 길어지고 있어요. 다시 시도해 주세요." : "프로필을 불러오지 못했어요. 다시 시도해주세요." });
+      } finally { if (active === request) active = undefined; }
     },
-    cancel() { active?.abort(); },
+    cancel() { active?.abort(); active = undefined; },
   };
 }

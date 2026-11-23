@@ -11,8 +11,9 @@ function load(relative, dependencies = {}, extras = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   vm.runInNewContext(code, {
-    module: mod, exports: mod.exports, URL, process: { env: {} },
+    module: mod, exports: mod.exports, URL, AbortController, setTimeout, clearTimeout, process: { env: {} },
     require(name) {
+      if (name === '../request-deadline') return load('/lib/request-deadline.ts');
       if (!(name in dependencies)) throw new Error('Unexpected import: ' + name);
       return dependencies[name];
     }, ...extras,
@@ -302,7 +303,7 @@ for (const [frontend, api] of remotePairs) for (const provider of ['kakao', 'nav
     '@/lib/api': {
       apiBaseUrl:api,
       async getSession() { calls.push('session'); return {csrfToken:'new-current-token'}; },
-      async apiRequest(path, options) { calls.push({path, options}); return {authorizationUrl}; },
+      async apiRequest(path, { signal, ...options }) { assert.equal(signal.aborted, false); calls.push({path, options}); return {authorizationUrl}; },
     }, './consent': c,
   }, {window:{location:{origin:frontend, assign(url){calls.push({navigate:url});}}}});
   await connected.startSnsLogin(provider);

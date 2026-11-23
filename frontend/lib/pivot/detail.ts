@@ -1,4 +1,5 @@
 import type { HomeDetailTarget, HomeSlideModel } from "./home";
+import { RequestTimeoutError, withRequestDeadline } from "../request-deadline";
 import type { ContentImage, PublicationMetadata, PublicSource } from "./carousel-data";
 
 // FE reading model, deliberately independent of any future server DTO.
@@ -44,7 +45,7 @@ export function createDetailRequestController(source: DetailDataSource, publish:
       publish({ status: "loading" });
       try {
         if (!isDetailTarget(target)) { publish({ status: "not-found" }); return; }
-        const result = await source.load(target, { signal: controller.signal });
+        const result = await withRequestDeadline(signal => source.load(target, { signal }), { signal: controller.signal });
         if (request !== generation || controller.signal.aborted) return;
         if (result.status === "ready") {
           const article = result.article;
@@ -55,8 +56,9 @@ export function createDetailRequestController(source: DetailDataSource, publish:
           const hasSourceExcerpt = article.origin === "service" && article.displayMode === "link_excerpt" && !!article.sourceUrl;
           publish(hasText || hasSourceExcerpt ? result : { status: "empty" });
         } else publish(result);
-      } catch {
-        if (request === generation && !controller.signal.aborted) publish({ status: "error", message: "글을 불러오지 못했어요. 다시 시도해 주세요." });
+      } catch (error) {
+        if (request === generation && !controller.signal.aborted) publish({ status: "error", message: error instanceof RequestTimeoutError
+          ? "글을 불러오는 시간이 길어지고 있어요. 다시 시도해 주세요." : "글을 불러오지 못했어요. 다시 시도해 주세요." });
       } finally {
         if (active === controller) active = null;
       }
