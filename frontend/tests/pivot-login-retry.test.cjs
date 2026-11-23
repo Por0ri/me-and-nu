@@ -49,7 +49,7 @@ function loginHarness() {
   const source = fs.readFileSync(path.join(__dirname, '../components/pivot/login-screen.tsx'), 'utf8');
   const code = ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   vm.runInNewContext(code, {
-    module:mod,exports:mod.exports,URLSearchParams,
+    module:mod,exports:mod.exports,URLSearchParams,AbortController,
     require(name) { if (!(name in dependencies)) throw Error('Unexpected login dependency: '+name); return dependencies[name]; },
     window:{location:{search:''},
       addEventListener(name, callback) {if(!listeners.has(name)) listeners.set(name,new Set()); listeners.get(name).add(callback);},

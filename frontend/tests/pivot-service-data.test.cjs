@@ -14,7 +14,7 @@ function load(file) {
   const output = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  vm.runInNewContext(output, { module: mod, exports: mod.exports, URL, URLSearchParams, AbortController,
+  vm.runInNewContext(output, { module: mod, exports: mod.exports, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
     require(name) {
       if (name === '@/lib/api') return { ApiError };
       if (name === './services') return { requirePivotApi() { throw new Error('Origin blocked'); } };
@@ -59,7 +59,12 @@ test('Home follows server cursors without losing records or hardcoding a first p
   const source = createServiceHomeSource({ async getMyTopics() { return topics; }, async getFeed(id, query) {
     queries.push(query.cursor); return { selectedTopicId: id, sections: [{ contents: [feedCard(query.cursor ? 18 : 17)] }], nextCursor: query.cursor ? null : 'page-2' };
   } }, allow);
-  assert.deepEqual(plain((await source.load(options())).home.cards.map(card => card.id)), ['17', '18']);
+  const first = await source.load(options());
+  assert.deepEqual(plain(first.home.cards.map(card => card.id)), ['17']);
+  assert.deepEqual(queries, [undefined]);
+  const second = await first.nextPage(options());
+  assert.deepEqual(plain(second.home.cards.map(card => card.id)), ['18']);
+  assert.equal(second.nextPage, undefined);
   assert.deepEqual(queries, [undefined, 'page-2']);
 });
 

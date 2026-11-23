@@ -16,7 +16,7 @@ function load(file) {
   const output = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
-  vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, structuredClone, URLSearchParams,
+  vm.runInNewContext(output, { module: mod, exports: mod.exports, AbortController, structuredClone, URLSearchParams, setTimeout, clearTimeout,
     require(name) {
       if (name === '@/lib/api') return {};
       if (name === './services') return { requirePivotApi() { throw new Error('Test origin not enabled'); } };
