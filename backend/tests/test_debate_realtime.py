@@ -116,8 +116,24 @@ def stream_clock(monkeypatch):
     clock = SimpleNamespace(now=START)
     monkeypatch.setattr(debate_service, "utcnow", lambda: clock.now)
     monkeypatch.setattr(settings, "debate_stream_heartbeat_seconds", 0.05)
+    monkeypatch.setattr(room, "retry_milliseconds", lambda: 3000)
     yield clock
     assert hub.count() == 0
+
+
+def test_reconnect_delay_is_spread_wider_as_connections_grow(monkeypatch):
+    # 서버가 다시 시작돼도 모두가 같은 순간에 다시 붙지 않게 연결마다 다르게 알려 준다.
+    # 연결이 적으면 1~3초로 짧게, 많으면 1~8초로 넓게 흩는다.
+    def delays(connections):
+        monkeypatch.setattr(hub, "count", lambda debate_id=None: connections)
+        return [room.retry_milliseconds() for _ in range(300)]
+
+    few = delays(10)
+    assert 1000 <= min(few) and max(few) <= 3000 and len(set(few)) > 50
+    many = delays(5000)
+    assert 1000 <= min(many) and max(many) <= 8000 and max(many) > 5000
+    middle = delays(400)  # 연결 1개당 10ms씩 넓어진다: 400개면 1~5초
+    assert max(middle) <= 5000 and max(middle) > 4000
 
 
 def _plan(subscriber, *, replay=(), known_upto=0, closes_in=timedelta(hours=1), session_in=timedelta(hours=1), resync=False):
@@ -138,13 +154,14 @@ def test_stream_sends_missed_chat_first_then_live_events_once(stream_clock):
         hub.publish(5, _chat(13, sender=7))
         hub.publish(5, _chat(12, sender=8))  # 거의 동시에 저장되어 방송 순서가 바뀌어도 빠뜨리지 않는다
         hub.publish(5, HubEvent(kind="sides", data={"participantCount": 1}))
-        frame = await anext(frames)
-        assert '"messageId":13' in frame and '"isMine":true' in frame  # 받는 사람마다 내 메시지인지 계산한다
+        # 쌓여 있던 이벤트는 한 번에 묶여 온다. isMine은 받는 사람마다 계산한다.
         assert await anext(frames) == (
+            'id: 13\nevent: chat\ndata: {"messageId":13,"side":null,"nickname":"회원","body":"채팅 13",'
+            '"createdAt":"2026-11-19T03:00:00Z","isMine":true}\n\n'
             'id: 12\nevent: chat\ndata: {"messageId":12,"side":null,"nickname":"회원","body":"채팅 12",'
             '"createdAt":"2026-11-19T03:00:00Z","isMine":false}\n\n'
+            'event: sides\ndata: {"participantCount":1}\n\n'
         )
-        assert await anext(frames) == 'event: sides\ndata: {"participantCount":1}\n\n'
         hub.close_all()
         assert [frame async for frame in frames] == []
 
@@ -156,7 +173,7 @@ def test_stream_pings_while_quiet_and_says_closed_after_sending_what_is_left(str
         subscriber = hub.subscribe(5, 7, limit=3)
         frames = room.stream_events(_plan(subscriber))
         assert await anext(frames) == "retry: 3000\n\n"
-        assert await anext(frames) == ": ping\n\n"
+        assert await anext(frames) == "retry: 3000\n: ping\n\n"  # 빈 신호에 지금 기준 재연결 간격을 같이 싣는다
         hub.publish(5, _chat(1, sender=8))
         stream_clock.now = START + timedelta(hours=1)
         assert "event: chat" in await anext(frames)  # 끝나기 직전 채팅도 빠짐없이
@@ -192,6 +209,17 @@ def test_stream_response_lets_go_even_when_the_browser_leaves_before_it_starts(s
         assert not subscriber.started and hub.count() == 0
 
     asyncio.run(scenario())
+
+
+def test_each_event_is_rendered_once_per_kind_of_receiver():
+    # 같은 방 연결 수백 개가 같은 글을 나눠 쓴다 (받는 사람마다 JSON을 다시 만들지 않는다).
+    event = _chat(5, sender=7)
+    assert room._render(event, 7) is room._render(event, 7)
+    assert '"isMine":true' in room._render(event, 7) and '"isMine":false' in room._render(event, 8)
+    assert room._render(event, 8) is room._render(event, 9)
+    assert set(event.frames) == {True, False}
+    sides = HubEvent(kind="sides", data={"participantCount": 1})
+    assert room._render(sides, 7) is room._render(sides, 8) == 'event: sides\ndata: {"participantCount":1}\n\n'
 
 
 def test_resume_point_prefers_the_newest_id_the_browser_has():
@@ -314,6 +342,7 @@ def test_message_rate_limit_is_per_member_per_room_and_ends_with_the_room(debate
 @pytest.fixture
 def fast_stream(monkeypatch):
     monkeypatch.setattr(settings, "debate_stream_heartbeat_seconds", 0.05)
+    monkeypatch.setattr(room, "retry_milliseconds", lambda: 3000)
     yield
     hub.close_all()
 

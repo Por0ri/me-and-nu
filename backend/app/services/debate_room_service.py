@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -29,7 +30,16 @@ from app.services.cursor import decode_cursor, encode_cursor
 from app.services.debate_hub import CLOSE, HubEvent, StreamLimitError, Subscriber, hub
 
 REPLAY_LIMIT = 100
-RETRY_MILLISECONDS = 3000
+# 끊겼을 때 브라우저가 다시 붙기까지 기다리는 시간. 1초 + 무작위(흩는 폭)로 연결마다 다르게 정한다.
+# 서버를 다시 시작하면 열려 있던 연결이 한꺼번에 다시 붙는데, 모두 같은 간격이면 DB 연결(2개) 앞에
+# 줄이 막혀 시간 초과(500)가 난다 (부하 시험, 설계 3.5). 흩는 폭은 서버의 연결 수에 맞춰 넓힌다:
+# 연결이 적으면 1~3초(거의 기다리지 않게), 연결 1개당 10ms씩 넓혀 700개 이상이면 1~8초.
+RETRY_BASE_MILLISECONDS = 1000
+RETRY_SPREAD_MIN_MILLISECONDS = 2000
+RETRY_SPREAD_MAX_MILLISECONDS = 7000
+RETRY_SPREAD_PER_CONNECTION_MILLISECONDS = 10
+# 밀렸을 때 한 번에 묶어 보내는 이벤트 수
+BATCH_MAX = 50
 
 
 def _not_open() -> ApiError:
@@ -186,6 +196,12 @@ async def prepare_stream(
     return StreamPlan(subscriber, replay, closes_at, core._aware(session_expires_at), resume_after or 0, resync)
 
 
+def retry_milliseconds() -> int:
+    spread = hub.count() * RETRY_SPREAD_PER_CONNECTION_MILLISECONDS
+    spread = min(RETRY_SPREAD_MAX_MILLISECONDS, max(RETRY_SPREAD_MIN_MILLISECONDS, spread))
+    return RETRY_BASE_MILLISECONDS + random.randint(0, spread)
+
+
 def _frame(event: str, data: dict, event_id: int | None = None) -> str:
     head = f"id: {event_id}\n" if event_id is not None else ""
     return f"{head}event: {event}\ndata: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
@@ -201,7 +217,7 @@ async def stream_events(plan: StreamPlan) -> AsyncIterator[str]:
     subscriber.started = True
     replayed = {message.message_id for message in plan.replay}
     try:
-        yield f"retry: {RETRY_MILLISECONDS}\n\n"
+        yield f"retry: {retry_milliseconds()}\n\n"
         if plan.resync:
             yield _frame("resync", {})
         for message in plan.replay:
@@ -218,21 +234,43 @@ async def stream_events(plan: StreamPlan) -> AsyncIterator[str]:
                     return
                 wait = min(settings.debate_stream_heartbeat_seconds, (min(plan.closes_at, plan.session_expires_at) - now).total_seconds())
                 try:
-                    event = await asyncio.wait_for(subscriber.queue.get(), timeout=max(0.05, wait))
+                    batch = [await asyncio.wait_for(subscriber.queue.get(), timeout=max(0.05, wait))]
                 except asyncio.TimeoutError:
-                    yield ": ping\n\n"
+                    # 빈 신호에 지금 연결 수 기준의 재연결 간격을 같이 실어, 연결이 늘어나면 이미 열린 연결도 넓게 흩는다.
+                    yield f"retry: {retry_milliseconds()}\n: ping\n\n"
                     continue
             else:
-                event = subscriber.queue.get_nowait()
-            if event is CLOSE:
-                return
-            if event.kind == "chat":
+                batch = []
+            # 밀려 있으면 쌓인 이벤트를 한 번에 묶어 보낸다. 보내는 횟수가 줄어서 바쁠 때 따라잡기 쉽다.
+            while len(batch) < BATCH_MAX and not subscriber.queue.empty():
+                batch.append(subscriber.queue.get_nowait())
+            chunks: list[str] = []
+            closing = False
+            for event in batch:
+                if event is CLOSE:
+                    closing = True
+                    break
                 # 화면이 이미 가진 것, 방금 다시 보낸 것과 겹치면 건너뛴다. 번호 크기만으로 거르지 않는 까닭:
                 # 거의 동시에 저장된 두 채팅은 방송 순서가 번호 순서와 드물게 다를 수 있다 (화면은 번호순으로 정렬한다).
-                if event.event_id is not None and (event.event_id <= plan.known_upto or event.event_id in replayed):
+                if event.kind == "chat" and event.event_id is not None and (
+                    event.event_id <= plan.known_upto or event.event_id in replayed
+                ):
                     continue
-                yield _frame("chat", {**event.data, "isMine": event.sender_user_id == subscriber.user_id}, event_id=event.event_id)
-            else:
-                yield _frame(event.kind, event.data)
+                chunks.append(_render(event, subscriber.user_id))
+            if chunks:
+                yield "".join(chunks)
+            if closing:
+                return
     finally:
         hub.unsubscribe(subscriber)
+
+
+def _render(event: HubEvent, user_id: int) -> str:
+    """받는 사람에게 보낼 SSE 글. 같은 방 연결 수백 개가 같은 글을 쓰므로, 이벤트마다 받는 쪽 종류별로
+    (채팅은 보낸 사람·다른 사람 2가지, 그 밖은 1가지) 한 번만 만들어 둔다."""
+    key = event.sender_user_id == user_id if event.kind == "chat" else None
+    frame = event.frames.get(key)
+    if frame is None:
+        data = event.data if key is None else {**event.data, "isMine": key}
+        frame = event.frames[key] = _frame(event.kind, data, event.event_id)
+    return frame

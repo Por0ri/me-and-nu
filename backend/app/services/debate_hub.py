@@ -34,6 +34,8 @@ class HubEvent:
     event_id: int | None = None
     # 받는 사람마다 isMine을 계산하려고 둔다. 밖으로는 보내지 않는다 (다른 회원 번호를 노출하지 않음).
     sender_user_id: int | None = None
+    # 완성된 SSE 글을 받는 쪽 종류(보낸 사람·다른 사람)별로 한 번만 만들어 같은 방 연결들이 나눠 쓴다 (부하 시험 3.5).
+    frames: dict[Any, str] = field(default_factory=dict, compare=False, repr=False)
 
 
 # 허브가 연결을 끝내라고 넣는 신호
