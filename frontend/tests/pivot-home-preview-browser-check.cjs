@@ -1,6 +1,7 @@
 // Local API mocks only. No request to Checking or another remote service is allowed.
-// Start Next with NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8195 and
-// NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true. Uses the existing Agent text snapshot;
+// Build Next with NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8195 and
+// NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true, then start that local build.
+// Uses the existing Agent text snapshot;
 // slide boxes are contract fixtures, NOT evidence that production supplies those layouts.
 // Run from frontend after approval. Screenshots/JSON may only go to the dedicated
 // OS temporary folder pivot-home-preview-v2. No existing profile or cookies are used.
@@ -151,9 +152,16 @@ async function run(browser, viewport) {
     if (url.pathname === '/api/v1/auth/session') return reply({ authenticated: true, sessionState: 'active',
       onboardingCompleted: true, user: { id: 12, accountType: 'user' }, csrfToken: 'local-mvp-csrf' });
     if (url.pathname === '/api/v1/me/topics') return reply({ topics: [{ id: 7, code: 'anime', name: '애니메이션', subtopicIds: [], status: 'active', deletedAt: null }] });
+    if (url.pathname === '/api/v1/users/me') return reply({ userId: 12, nickname: '로컬 검증 회원', email: null, accountType: 'user' });
+    if (url.pathname === '/api/v1/users/me/notification-settings') return reply({ inAppEnabled: true, nightInAppEnabled: false, version: 1 });
+    if (url.pathname === '/api/v1/users/me/notifications') return reply({ items: [], nextCursor: null });
     const publication = item => ({ title: item.title, productionType: 'ai', publishedAt: '2026-11-02T00:00:00Z',
       sourceName: item.original.sourceName, publisher: item.original.sourceName, sourceUrl: item.original.sources[0].url,
       notices: [{ code: 'AI_GENERATED', message: 'AI가 생성한 콘텐츠입니다.' }] });
+    if (/\/users\/me\/(likes|recent-views)$/.test(url.pathname)) return reply({ items: items.slice(0, 1).map(item => ({
+      ...publication(item), contentId: item.id, topicId: 7, summary: item.summary, imageUrl: item.slides[0].imageUrl,
+      subtopicNames: [], likedAt: '2026-11-02T00:00:00Z', viewedAt: '2026-11-02T00:00:00Z',
+    })), nextCursor: null });
     if (url.pathname === '/api/v1/topics/7/feed') return reply({ selectedTopicId: 7, sections: [{ id: 'recommended', type: 'recommended',
       title: '추천 콘텐츠', subtopicId: null, contents: items.map(item => ({ ...publication(item), kind: 'content', id: item.id, topicId: 7,
         summary: item.summary, imageUrl: item.slides[0].imageUrl, slides: item.slides, saved: saved.has(item.id),
@@ -528,6 +536,23 @@ async function run(browser, viewport) {
       await until(() => card.evaluate(el => el === document.activeElement), 'saved focus restored');
       await card.click(); await detail.waitFor(); await detail.getByRole('button', { name: 'SAVE', exact: true }).click(); await savedScreen.waitFor();
     });
+    await check('Home → Detail → MY; activity → Detail → Back/MY preserves navigation and focus', async () => {
+      await page.goto(base + '/pivot/home'); await home.waitFor();
+      await home.locator('[data-home-post="41"] [data-home-detail]').click();
+      const detail = page.locator('[data-detail-state="ready"]'); await detail.waitFor();
+      await detail.getByRole('button', { name: 'MY', exact: true }).click();
+      const my = page.locator('[data-my-state="ready"]'); await my.waitFor();
+      await my.getByRole('button', { name: '내 활동', exact: true }).click();
+      const activity = page.locator('[data-activity-state="ready"]'); await activity.waitFor();
+      const card = activity.locator('[data-activity-content="41"]'); await card.click(); await detail.waitFor();
+      assert.equal(await detail.locator('[data-detail-slide-text]').count(), 0);
+      assert.equal(await detail.locator('[data-detail-track]').count(), 1);
+      await detail.getByRole('button', { name: '뒤로가기', exact: true }).click(); await activity.waitFor();
+      await until(() => card.evaluate(el => el === document.activeElement), 'activity card focus restored');
+      await card.click(); await detail.waitFor();
+      await detail.getByRole('button', { name: 'MY', exact: true }).click(); await my.waitFor();
+      await my.getByRole('button', { name: 'HOME', exact: true }).click(); await home.waitFor();
+    });
     for (const item of items) await check('loading preview: layout-' + (item.id - 41), async () => {
       imageLoading = item.id; imageFailure = null;
       try {
@@ -543,14 +568,17 @@ async function run(browser, viewport) {
     for (const item of items) await check(`image decode failure and retry: layout-${item.id - 41}`, async () => {
       imageFailure = item.id; await page.goto(base + '/pivot/home'); await home.waitFor();
       const card = home.locator(`[data-home-post="${item.id}"]`); await card.scrollIntoViewIfNeeded();
-      const first = card.locator('[data-carousel-slide="1"]'); await first.locator('[data-carousel-image-state="error"]').waitFor();
+      const track = card.locator('[data-home-track]'); await track.focus(); await page.keyboard.press('Home');
+      await until(async () => await indexOf(track) === 0, 'image failure fixture starts on the first slide after navigation restoration');
+      const first = card.locator('[data-carousel-slide="1"]');
+      // The first HOME image can use HomeEntryImage's fallback instead of the protected-image error span.
+      const retry = first.getByRole('button', { name: '이미지 다시 시도', exact: true }); await retry.waitFor();
       await inspectPreview(card, first, 'image-error-' + item.id);
       const cardBox = await card.boundingBox();
       assert.ok(Math.abs(cardBox.height - cardBox.width * 408 / 327) < 1, 'failure keeps card size');
-      const retry = first.getByRole('button', { name: '이미지 다시 시도', exact: true });
       assert.ok(await hit(retry), 'image retry center must not be covered by card copy');
       const overlay = await first.locator('[data-carousel-overlay]').boundingBox();
-      for (const element of [first.locator('[data-carousel-image-state="error"] [role="status"]'), retry]) {
+      for (const element of [first.getByRole('status'), retry]) {
         const r = await element.boundingBox();
         assert.ok(r.x + r.width <= overlay.x || overlay.x + overlay.width <= r.x || r.y + r.height <= overlay.y || overlay.y + overlay.height <= r.y,
           'image error message and retry must not overlap readable copy');
@@ -587,30 +615,55 @@ async function run(browser, viewport) {
       await cover.locator('img[data-carousel-image-state="ready"]').waitFor();
       await capture('detail-recovered');
     });
-    for (const mode of ['full_body', 'link_excerpt']) await check(mode + ': all missing originals, exact deduplication, no empty duplicates', async () => {
+    const assertDetailBody = async (detail, mode) => {
+      assert.equal(await detail.locator('[data-detail-slide-text], [data-detail-slide-page]').count(), 0);
+      assert.equal(await detail.getByRole('region', { name: '슬라이드 추가 원문' }).count(), 0);
+      assert.equal((await detail.textContent()).includes('슬라이드 추가 원문'), false);
+      const body = detail.locator('article > div:last-child');
+      const expected = (mode === 'full_body' ? items[0].body : items[0].summary).split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+      assert.deepEqual(await body.locator(':scope > section:first-child > p').allTextContents(), expected);
+      const publication = detail.locator('[data-detail-publication]');
+      assert.equal(await publication.locator('time').getAttribute('datetime'), '2026-11-02T00:00:00Z');
+      assert.equal(await publication.getByText('AI가 생성한 콘텐츠입니다.', { exact: true }).count(), 1);
+      const links = await publication.locator('a').evaluateAll(nodes => nodes.map(node => ({
+        url: node.getAttribute('href'), title: node.textContent, rel: node.getAttribute('rel'),
+      })));
+      for (const source of items[0].original.sources) {
+        assert.ok(links.some(link => link.url === source.url && link.title === source.name && link.rel === 'noopener noreferrer'));
+      }
+      const feedback = detail.getByRole('region', { name: '이런 글, 더 보고 싶으세요?' });
+      assert.equal(await feedback.getByRole('button').count(), 2);
+      assert.equal(await detail.getByText('원문에서 계속 읽기', { exact: true }).count(), mode === 'link_excerpt' ? 1 : 0);
+      const layout = await body.evaluate(el => {
+        const paragraphs = [...el.querySelectorAll(':scope > section:first-child > p')];
+        const publication = el.querySelector('[data-detail-publication]');
+        const source = publication.querySelector('section');
+        const feedback = el.querySelector('[aria-labelledby="detail-feedback-title"]');
+        const rect = node => node.getBoundingClientRect().toJSON();
+        return { body: rect(el), lastParagraph: rect(paragraphs.at(-1)), publication: rect(publication),
+          sources: rect(source), feedback: rect(feedback), overflow: el.scrollWidth > el.clientWidth,
+          paragraphs: paragraphs.map(node => ({ text: node.textContent, size: getComputedStyle(node).fontSize, line: getComputedStyle(node).lineHeight })),
+          sourceLinks: [...source.querySelectorAll('a')].map(rect) };
+      });
+      geometry.push({ viewport, label: 'detail-body-' + mode, ...layout });
+      assert.equal(layout.overflow, false);
+      assert.ok(layout.lastParagraph.bottom <= layout.publication.top + 1);
+      assert.ok(layout.sources.bottom <= layout.feedback.top + 1);
+      for (const link of layout.sourceLinks) assert.ok(link.left >= layout.body.left && link.right <= layout.body.right + 1);
+      for (const paragraph of layout.paragraphs) { assert.equal(paragraph.size, '16px'); assert.equal(paragraph.line, '24px'); }
+    };
+    for (const mode of ['full_body', 'link_excerpt']) await check(mode + ': no transcript; exact article, sources, publication and feedback layout', async () => {
       detailMode = mode; imageFailure = null; await page.goto(base + '/pivot/home'); await home.waitFor();
       await home.locator('[data-home-post="41"] [data-home-detail]').click();
       const detail = page.locator('[data-detail-state="ready"]'); await detail.waitFor();
-      const extra = detail.locator('[data-detail-slide-text]'); await extra.waitFor();
-      const normalize = text => text.replace(/\s+/gu, ' ').trim();
-      const visibleArticle = mode === 'full_body' ? items[0].body : items[0].summary;
-      const baseKeys = new Set(visibleArticle.split(/\n\s*\n/).map(normalize));
-      const cover = items[0].slides[0];
-      const coverFits = await detail.locator('[data-carousel-slide="1"] figcaption').evaluate(el => {
-        const image = el.parentElement.querySelector('img');
-        return image?.complete && image.naturalWidth > 0 && el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth;
-      });
-      if (coverFits) for (const text of [...cover.titleLines, cover.titleLines.join(' '), ...cover.bodySentences]) baseKeys.add(normalize(text));
-      const paragraphs = await extra.locator('section > p:not(:first-child)').allTextContents();
-      const keys = paragraphs.map(normalize);
-      assert.equal(new Set(keys).size, keys.length, 'later slides never repeat a sentence');
-      for (const key of keys) assert.equal(baseKeys.has(key), false, 'existing article/cover text is not added again');
-      const all = normalize(await detail.innerText());
-      for (const slide of items[0].slides) for (const text of [...slide.titleLines, ...slide.bodySentences]) assert.ok(all.includes(normalize(text)), 'every original remains accessible');
-      assert.equal(await detail.getByText('원문에서 계속 읽기', { exact: true }).count(), mode === 'link_excerpt' ? 1 : 0);
+      await assertDetailBody(detail, mode);
       assert.equal(await detail.locator('[data-detail-track]').count(), 1);
-      await extra.scrollIntoViewIfNeeded(); await capture('detail-' + mode + '-extra');
-      assert.ok(await extra.evaluate(el => !['auto', 'scroll', 'hidden'].includes(getComputedStyle(el).overflowY) && el.scrollHeight <= el.clientHeight + 1));
+      assert.equal(await detail.locator('[data-carousel-slide]').count(), items[0].slides.length);
+      const below = await detail.locator('article > div:last-child').textContent();
+      assert.equal(below.includes('기존 상세 본문에 없는 두 번째 슬라이드의 원문입니다.'), false);
+      assert.ok((await detail.locator('[data-carousel-slide="2"] figcaption').textContent()).includes('기존 상세 본문에 없는 두 번째 슬라이드의 원문입니다.'));
+      await detail.getByRole('region', { name: '콘텐츠 출처' }).scrollIntoViewIfNeeded();
+      await capture('detail-' + mode + '-sources');
       await detail.getByRole('button', { name: '뒤로가기', exact: true }).click(); await home.waitFor();
     });
     detailMode = 'full_body';
@@ -631,19 +684,16 @@ async function run(browser, viewport) {
       const detail = page.locator('[data-detail-state="ready"]'); await detail.waitFor();
       return detail;
     };
-    const assertOriginals = async (detail, slides) => {
-      const below = detail.locator('article > div:last-child');
-      const text = normalize(await below.textContent());
-      for (const slide of slides) for (const original of [...slide.titleLines, ...slide.bodySentences])
-        assert.ok(text.includes(normalize(original)), 'complete originals are readable below, not merely present in clipped DOM');
-      const paragraphs = await detail.locator('[data-detail-slide-text] section > p:not(:first-child)').allTextContents();
-      assert.equal(new Set(paragraphs.map(normalize)).size, paragraphs.length, 'transcript has no duplicate sentences');
-      assert.equal(paragraphs.filter(p => normalize(p) === normalize(firstOriginal)).length, 1);
-      assert.ok(paragraphs.includes(firstOriginal), 'display keeps the first original whitespace unchanged');
-      const sizes = await detail.locator('[data-detail-slide-text] section > p:not(:first-child)').evaluateAll(nodes => nodes.map(el => {
-        const css = getComputedStyle(el); return [css.fontSize, css.lineHeight, css.fontWeight, css.fontFamily];
-      }));
-      for (const [size, line, weight, font] of sizes) { assert.equal(size, '16px'); assert.equal(line, '24px'); assert.equal(weight, '400'); assert.match(font, /PivotPretendard/); }
+    const assertCardContent = async (detail, slides) => {
+      await assertDetailBody(detail, detailMode);
+      const below = normalize(await detail.locator('article > div:last-child').textContent());
+      for (const slide of slides) {
+        const caption = detail.locator('[data-carousel-slide="' + slide.page + '"] figcaption');
+        assert.deepEqual(await caption.locator('h3 span').allTextContents(), slide.titleLines);
+        assert.deepEqual(await caption.locator('div > p').allTextContents(), slide.bodySentences);
+        for (const original of [...slide.titleLines, ...slide.bodySentences])
+          assert.equal(below.includes(normalize(original)), false, 'card-only copy is not appended to the article');
+      }
     };
     const assertDetailGeometry = async (detail, label) => {
       const result = await detail.locator('[data-carousel-slide][aria-hidden="false"] figcaption').evaluate(el => {
@@ -661,11 +711,11 @@ async function run(browser, viewport) {
       assert.ok(Math.abs(result.stage.height - result.stage.width * 408 / 327) < 1);
       assert.ok(result.rect.bottom <= result.stage.bottom + 1 && result.rect.top >= result.stage.top);
     };
-    for (const mode of ['full_body', 'link_excerpt']) await check(`Detail mobile ${mode}: overflow, 1→2→3, all originals and 16/24 transcript`, async () => {
+    for (const mode of ['full_body', 'link_excerpt']) await check(`Detail mobile ${mode}: overflow, 1→2→3, unchanged cards and 16/24 article without transcript`, async () => {
       detailSlides = mobileSlides; detailMode = mode; imageFailure = null;
       const detail = await enterDetail(), track = detail.locator('[data-detail-track]');
       await detail.locator('[data-carousel-slide="1"] img[data-carousel-image-state="ready"]').waitFor();
-      await assertOriginals(detail, mobileSlides);
+      await assertCardContent(detail, mobileSlides);
       for (let index = 0; index < 3; index++) {
         if (index) {
           if (viewport.width < 600) await swipe(page, track, -220, 0, [.8, .4]);
@@ -674,6 +724,14 @@ async function run(browser, viewport) {
         }
         await detail.locator(`[data-carousel-slide="${index + 1}"] img[data-carousel-image-state="ready"]`).waitFor();
         await assertDetailGeometry(detail, `detail-mobile-${mode}-${index + 1}`);
+        if (index === 0) {
+          const caption = detail.locator('[data-carousel-slide="1"] figcaption');
+          assert.ok(await caption.evaluate(el => el.scrollHeight > el.clientHeight), 'long card-only fixture is clipped without the former transcript');
+          const cdp = await context.newCDPSession(page);
+          const { nodes } = await cdp.send('Accessibility.getFullAXTree'); await cdp.detach();
+          const accessibleText = normalize(nodes.filter(node => !node.ignored).map(node => node.name?.value || '').join(' '));
+          assert.ok(accessibleText.includes(normalize(firstOriginal)), 'active card original remains in the browser accessibility tree');
+        }
         await capture(`detail-mobile-${mode}-${index + 1}`);
       }
       await track.focus(); await page.keyboard.press('Home'); await until(async () => await indexOf(track) === 0, 'Detail keyboard reset');
@@ -686,8 +744,9 @@ async function run(browser, viewport) {
         await until(async () => await page.evaluate(() => window.pivotScrollRoot().scrollTop) > before + 20, 'Detail copy gesture scrolls the article');
         assert.equal(await overlay.evaluate(el => el.scrollTop), 0);
       }
-      const transcript = detail.locator('[data-detail-slide-text]'); await transcript.scrollIntoViewIfNeeded();
-      await assertOriginals(detail, mobileSlides); await capture(`detail-mobile-${mode}-originals`);
+      await assertCardContent(detail, mobileSlides);
+      await detail.getByRole('region', { name: '콘텐츠 출처' }).scrollIntoViewIfNeeded();
+      await capture(`detail-mobile-${mode}-sources`);
     });
     await check('Detail mobile: loading, HTTP 404, retry and recovered originals never overlap controls', async () => {
       detailSlides = mobileSlides; detailMode = 'full_body'; imageLoading = 41; imageFailure = null;
@@ -695,32 +754,38 @@ async function run(browser, viewport) {
         const detail = await enterDetail();
         const cover = detail.locator('[data-carousel-slide="1"]');
         await cover.locator('[data-carousel-image-state="loading"]').waitFor();
-        await assertOriginals(detail, mobileSlides); await assertDetailGeometry(detail, 'detail-mobile-loading');
+        await assertCardContent(detail, mobileSlides); await assertDetailGeometry(detail, 'detail-mobile-loading');
         const status = await cover.locator('[role="status"]').boundingBox(), overlay = await cover.locator('figcaption').boundingBox();
         assert.ok(status.y + status.height <= overlay.y); await capture('detail-mobile-loading');
         imageLoading = null; await cover.locator('img[data-carousel-image-state="ready"]').waitFor();
         imageFailure = 41; imageFailureStatus = 404; await page.reload(); await detail.waitFor();
         await cover.locator('[data-carousel-image-state="error"]').waitFor();
-        await assertOriginals(detail, mobileSlides); await assertDetailGeometry(detail, 'detail-mobile-404');
+        await assertCardContent(detail, mobileSlides); await assertDetailGeometry(detail, 'detail-mobile-404');
         const retry = cover.getByRole('button', { name: '이미지 다시 시도', exact: true });
         assert.ok(await hit(retry)); await capture('detail-mobile-404');
         imageFailure = null; await retry.click(); await cover.locator('img[data-carousel-image-state="ready"]').waitFor();
-        await assertOriginals(detail, mobileSlides); await assertDetailGeometry(detail, 'detail-mobile-retry');
+        await assertCardContent(detail, mobileSlides); await assertDetailGeometry(detail, 'detail-mobile-retry');
         await capture('detail-mobile-retry');
       } finally { imageLoading = null; imageFailure = null; imageFailureStatus = 200; }
     });
-    await check('Detail mobile: fitting first copy deduplicates only after measurement and reappears after resize', async () => {
-      const title = '크기 변경 검증', copy = '짧은 원문도 화면 크기에 따라 줄 수가 바뀝니다. 이 문장 전체를 읽을 수 있는 경우에만 아래 원문에서 제외합니다.';
+    await check('Detail resize: fitting and clipped card copy never adds a transcript', async () => {
+      const title = '크기 변경 검증', copy = '짧은 원문도 화면 크기에 따라 줄 수가 바뀝니다. 이 문장은 카드에만 있고 상세 본문에는 추가되지 않습니다.';
       detailSlides = mobileSlides.map((slide, index) => index ? slide : { ...slide, titleLines: [title], bodySentences: [copy],
         layout: { ...slide.layout, textOverlayBox: { x: .06, y: .5, width: .88, height: .45 } } });
-      const detail = await enterDetail(), firstText = detail.locator('[data-detail-slide-page="1"]');
-      await detail.locator('[data-carousel-slide="1"] img[data-carousel-image-state="ready"]').waitFor();
-      await until(async () => await firstText.count() === 0, 'fully fitting first caption avoids transcript duplication');
-      await page.setViewportSize({ width: 240, height: 812 });
-      await firstText.waitFor(); assert.ok((await firstText.textContent()).includes(copy));
-      await page.setViewportSize(viewport);
-      await until(async () => await firstText.count() === 0, 'resize back rechecks fit and removes duplicate');
-      await capture('detail-mobile-fitting');
+      const detail = await enterDetail();
+      try {
+        for (const size of [viewport, { width: 240, height: 812 }, viewport]) {
+          await page.setViewportSize(size);
+          await assertCardContent(detail, detailSlides);
+          const first = detail.locator('[data-carousel-slide="1"]'); await first.scrollIntoViewIfNeeded();
+          await first.locator('img[data-carousel-image-state="ready"]').waitFor();
+          const caption = first.locator('figcaption');
+          geometry.push({ viewport: size, label: 'detail-resize-card-only', ...await caption.evaluate(el => ({
+            scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, overflow: getComputedStyle(el).overflowY,
+          })) });
+        }
+        await capture('detail-resize');
+      } finally { await page.setViewportSize(viewport); }
     });
     detailSlides = null; detailMode = 'full_body';
     await check('fixed AI: the full-height feed scrolls beneath the unchanged Detail dock', async () => {
@@ -748,12 +813,14 @@ async function run(browser, viewport) {
       assert.ok(Math.abs(size.x - (viewport.width / 2 + Math.min(307, viewport.width - 68) / 2 - 48)) < 1, 'AI matches collapsed Detail');
       assert.ok(Math.abs(size.y - (viewport.height - 12 - 48)) < 1, 'AI aligns with the NAV height');
       await capture('fixed-ai-dock');
-      // The existing informational button has aria-disabled=true, so locator.click waits for enabled.
-      // Use real input at the verified hit target; keep the visible notice assertion.
+      // Service HOME now expands its AI prompt; collapse it before checking card actions.
       const point = await ai.boundingBox();
       if (viewport.width < 600) await page.touchscreen.tap(point.x + point.width / 2, point.y + point.height / 2);
       else await page.mouse.click(point.x + point.width / 2, point.y + point.height / 2);
-      await home.getByText('AI 콘텐츠 탐색은 준비 중이에요.', { exact: true }).waitFor();
+      await until(async () => await ai.getAttribute('aria-expanded') === 'true', 'AI prompt expands');
+      await home.getByRole('button', { name: '어떤 콘텐츠를 찾고 계시나요? 무엇이든 물어보세요!', exact: true }).waitFor();
+      await ai.click();
+      await until(async () => await ai.getAttribute('aria-expanded') === 'false', 'AI prompt collapses');
       const like = card.getByRole('button', { name: '좋아요', exact: true }), save = card.getByRole('button', { name: '저장', exact: true });
       const likedBefore = await like.getAttribute('aria-pressed'), savedBefore = await save.getAttribute('aria-pressed');
       await like.click(); await until(async () => await like.getAttribute('aria-pressed') !== likedBefore, 'like still works under the dock');
