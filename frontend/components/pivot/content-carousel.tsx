@@ -97,50 +97,17 @@ function SlideImage({ slide, enabled }: { slide: HomeSlideModel; enabled: boolea
     : <div className={styles.imageState} role="img" data-home-image-state={failed ? "error" : "missing"} aria-label="이미지 준비 중">이미지 준비 중</div>;
 }
 
-function SlideFigure({ slide, enabled, focusable, home = false, onTextVisibilityChange, onFirstImageReady }: {
-  slide: HomeSlideModel; enabled: boolean; focusable: boolean; home?: boolean; onTextVisibilityChange?: (visible: boolean) => void;
+function SlideFigure({ slide, enabled, focusable, home = false, onFirstImageReady }: {
+  slide: HomeSlideModel; enabled: boolean; focusable: boolean; home?: boolean;
   onFirstImageReady?: () => void;
 }) {
-  const figure = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const element = figure.current;
-    if (!element || !onTextVisibilityChange) return;
-    const caption = element.querySelector("figcaption");
-    if (!caption) return;
-    let disposed = false;
-    const measure = () => {
-      if (disposed) return;
-      const image = element.querySelector("img");
-      // Fail open: SSR, pending/error pixels and unmeasured/clipped text must
-      // keep their complete original in Detail's transcript below the card.
-      onTextVisibilityChange(!!image?.complete && image.naturalWidth > 0 &&
-        caption.clientHeight > 0 && caption.clientWidth > 0 &&
-        caption.scrollHeight <= caption.clientHeight && caption.scrollWidth <= caption.clientWidth);
-    };
-    measure();
-    const resize = new ResizeObserver(measure);
-    resize.observe(caption);
-    for (const child of caption.children) resize.observe(child);
-    const mutation = new MutationObserver(measure);
-    mutation.observe(element, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-carousel-image-state"] });
-    element.addEventListener("load", measure, true);
-    element.addEventListener("error", measure, true);
-    document.fonts.addEventListener("loadingdone", measure);
-    void document.fonts.ready.then(measure);
-    return () => {
-      disposed = true; resize.disconnect(); mutation.disconnect();
-      element.removeEventListener("load", measure, true);
-      element.removeEventListener("error", measure, true);
-      document.fonts.removeEventListener("loadingdone", measure);
-    };
-  }, [slide, onTextVisibilityChange]);
   const box = slide.layout?.textOverlayBox;
   const overlay = !!box && !!slide.titleLines;
   const region: CSSProperties | undefined = box && !home ? {
     left: `${box.x * 100}%`, top: `max(56px, ${box.y * 100}%)`, width: `${box.width * 100}%`, height: `${box.height * 100}%`,
     maxHeight: `max(0px, calc(100% - max(56px, ${box.y * 100}%) - 12px))`,
   } : undefined;
-  return <figure ref={figure} className={styles.stage}>
+  return <figure className={styles.stage}>
     <HomeEntryImage onReady={onFirstImageReady}>
       <SlideImage key={slide.image?.src ?? "missing"} slide={slide} enabled={enabled} />
     </HomeEntryImage>
@@ -155,18 +122,16 @@ function SlideFigure({ slide, enabled, focusable, home = false, onTextVisibility
 }
 
 /** Keep Detail's cover/article boundary while reusing the server-sized carousel. */
-export function ContentCover({ slides, title, onSlideChange, onCoverTextVisibilityChange }: {
+export function ContentCover({ slides, title, onSlideChange }: {
   slides: readonly HomeSlideModel[]; title: string; onSlideChange?: (index: number) => void;
-  onCoverTextVisibilityChange?: (visible: boolean) => void;
 }) {
   return slides.length ? <div className={styles.cover} role="group" aria-label={title} data-content-cover="">
-    <ContentCarousel slides={slides} title={title} scope="detail" onSlideChange={onSlideChange} onCoverTextVisibilityChange={onCoverTextVisibilityChange} />
+    <ContentCarousel slides={slides} title={title} scope="detail" onSlideChange={onSlideChange} />
   </div> : null;
 }
 
-export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home", onSlideChange, onCoverTextVisibilityChange, onFirstImageReady }: {
+export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home", onSlideChange, onFirstImageReady }: {
   slides: readonly HomeSlideModel[]; title: string; labelledBy?: string; scope?: "home" | "detail"; onSlideChange?: (index: number) => void;
-  onCoverTextVisibilityChange?: (visible: boolean) => void;
   onFirstImageReady?: () => void;
 }) {
   const id = useId();
@@ -250,8 +215,7 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
           aria-label={`${index + 1} / ${slides.length}`} data-home-slide={scope === "home" ? slide.id : undefined}
           data-content-slide={slide.page ?? index + 1} data-carousel-slide={slide.page ?? index + 1} aria-hidden={current !== index} inert={current !== index}>
           <SlideFigure slide={slide} enabled={Math.abs(current - index) <= 1} focusable={current === index} home={scope === "home"}
-            onFirstImageReady={index === 0 ? onFirstImageReady : undefined}
-            onTextVisibilityChange={scope === "detail" && index === 0 ? onCoverTextVisibilityChange : undefined} />
+            onFirstImageReady={index === 0 ? onFirstImageReady : undefined} />
         </div>)}
     </div>
     <div className={homeStyles.slideControls} role="group" aria-label={`${title} 슬라이드 이동`}>
@@ -265,7 +229,7 @@ export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope
       {slides.map((slide, index) => <button type="button" className={homeStyles.indicator} key={slide.id} aria-label={`${index + 1}번 슬라이드 보기`}
         aria-current={current === index ? "true" : undefined} aria-controls={`${id}-track`} onClick={() => goTo(index)}><span /></button>)}
     </div>
-    <p className={styles.srOnly} id={`${id}-help`}>좌우로 넘기거나 방향키·이전·다음 버튼으로 탐색하세요. {scope === "home" ? "카드는 미리보기예요. 전체 글과 슬라이드 원문은 자세히 보기에서 읽을 수 있어요." : "카드에 다 보이지 않는 원문은 이미지 아래 본문과 슬라이드 추가 원문에서 읽을 수 있어요."}</p>
+    <p className={styles.srOnly} id={`${id}-help`}>좌우로 넘기거나 방향키·이전·다음 버튼으로 탐색하세요. {scope === "home" ? "카드는 미리보기예요. 상세 본문은 자세히 보기에서 읽을 수 있어요." : "상세 본문과 출처는 카드뉴스 아래에서 확인할 수 있어요."}</p>
   </div>;
 }
 
