@@ -27,7 +27,7 @@ function load(relative) {
       if (name === 'react/jsx-runtime') return require(name);
       if (name.endsWith('.module.css')) return { default: new Proxy({}, { get: (_, key) => String(key) }), __esModule: true };
       if (name.startsWith('@/')) return load(name.slice(2) + (name.includes('/components/') ? '.tsx' : '.ts'));
-      if (name.startsWith('./')) {
+      if (name.startsWith('.')) {
         const filename = path.join(path.dirname(relative), name);
         return load(filename + (fs.existsSync(path.join(root, filename + '.tsx')) ? '.tsx' : '.ts'));
       }
