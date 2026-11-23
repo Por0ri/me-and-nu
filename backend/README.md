@@ -2,6 +2,8 @@
 
 AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅 플랫폼입니다.
 
+2026-11-23 관리자 공지 목록·상세·작성·예약 발송의 최신 계약과 적용 순서는 [관리자 공지 API](../docs/ADMIN_NOTICES_API_2026-11-23.md)를 참고하세요. 현재 명시적 서비스 migration target은 `b7d4e2a9c601`이며, 아래 날짜가 붙은 구현 현황은 당시 기록입니다.
+
 관리자 BE 통합의 권한·검수·멱등 재시도·수동 권한 부여·Migration·격리 PostgreSQL 검증은 [2026-11-18 관리자 계약](../docs/ADMIN_BE_INTEGRATION_2026-11-18.md)을 따릅니다. 관리자 콘텐츠 GET/검수 POST는 현재 DB 권한으로 보호되며, 실제 운영 적용과 FE 실행 버튼 연결은 별도 단계입니다.
 
 이 문서의 아래 전체 API 표는 [Notion API V1.1 명세서](https://app.notion.com/p/94604c45a961835bbd1601fc3ab15ac0)의 목표 목록입니다. 현재 구현된 로컬 범위는 다음 절에 따로 표시했습니다. 실제 공개 API 경로에는 끝의 `/`를 붙이지 않습니다. 세부 요청·응답의 기준은 각 Notion API 상세 페이지입니다.
@@ -39,7 +41,7 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 # 저장소 루트에서 docker compose up -d postgres redis를 먼저 실행
 cd backend
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m alembic upgrade 47c1a8d6b302
+.\.venv\Scripts\python.exe -m alembic upgrade b7d4e2a9c601
 .\.venv\Scripts\python.exe -m app.seeds.v1_local
 .\.venv\Scripts\python.exe -m app.seeds.dev_user
 .\.venv\Scripts\python.exe scripts/run_local_api.py

@@ -14,6 +14,7 @@ from app.models import AdminAccount, UserAccount
 READ_CONTENT_ROLES = frozenset({"viewer", "operator", "admin"})
 READ_MEMBER_ROLES = frozenset({"viewer", "operator", "admin"})
 READ_SUPPORT_ROLES = frozenset({"viewer", "operator", "admin"})
+READ_NOTICE_ROLES = frozenset({"viewer", "operator", "admin"})
 REVIEW_CONTENT_ROLES = frozenset({"operator", "admin"})
 
 
@@ -33,6 +34,10 @@ def active_grant_query(user_id: int, roles: frozenset[str]):
 
 
 class AdminPermissionProvider(Protocol):
+    async def can_read_notices(self, db: AsyncSession, *, user_id: int) -> bool:
+        """Allow notice drafts and scheduling metadata only for current admins."""
+        ...
+
     async def can_read_members(self, db: AsyncSession, *, user_id: int) -> bool:
         """Allow masked member reads only, based on the current DB grant."""
         ...
@@ -52,6 +57,9 @@ class AdminPermissionProvider(Protocol):
 
 
 class DenyAdminPermissionProvider:
+    async def can_read_notices(self, db: AsyncSession, *, user_id: int) -> bool:
+        return False
+
     async def can_read_members(self, db: AsyncSession, *, user_id: int) -> bool:
         return False
 
@@ -63,6 +71,13 @@ class DenyAdminPermissionProvider:
 
 
 class DatabaseAdminPermissionProvider:
+    async def can_read_notices(self, db: AsyncSession, *, user_id: int) -> bool:
+        if not valid_id(user_id):
+            return False
+        result = await db.execute(active_grant_query(user_id, READ_NOTICE_ROLES)
+                                  .where(UserAccount.withdrawn_at.is_(None)))
+        return result.one_or_none() is not None
+
     async def _can_read(self, db: AsyncSession, *, user_id: int, roles: frozenset[str]) -> bool:
         if not valid_id(user_id):
             return False

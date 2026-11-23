@@ -21,6 +21,7 @@
 .badge { border: 0; padding: 5px 10px; line-height: 18px; font-weight: 600; }
 .badge[data-notice-status="published"] { background: #d5f2e7; color: #0ba37b; }
 .badge[data-notice-status="scheduled"] { background: #e6e5ff; color: #6332d9; }
+.badge[data-notice-status="draft"] { background: #f0edf5; color: #71717a; }
 .compose { justify-content: flex-start; }
 .field { display: flex; flex-direction: column; gap: 8px; font-size: 16px; line-height: 20px; font-weight: 600; }
 .field input, .field textarea { width: 100%; min-width: 0; border: 1px solid #d4d4d8; border-radius: 12px; padding: 16px; background: #fff; color: #27272a; font-size: 16px; line-height: 22px; font-weight: 400; }

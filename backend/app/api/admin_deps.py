@@ -20,7 +20,7 @@ from app.services.admin_permission_provider import (
 async def _require_capability(
     raw_token: str | None, db: AsyncSession, store: RedisSessionStore | None,
     permissions: AdminPermissionProvider,
-    capability: Literal["can_read_contents", "can_read_members", "can_read_support"],
+    capability: Literal["can_read_contents", "can_read_members", "can_read_support", "can_read_notices"],
 ) -> AuthContext:
     if not raw_token:
         raise ApiError(401, "AUTH_REQUIRED", "로그인이 필요합니다.")
@@ -74,3 +74,12 @@ async def require_admin_support(
     permissions: Annotated[AdminPermissionProvider, Depends(get_admin_permission_provider)],
 ) -> AuthContext:
     return await _require_capability(raw_token, db, store, permissions, "can_read_support")
+
+
+async def require_admin_notices(
+    raw_token: Annotated[str | None, Security(session_cookie_scheme)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    store: Annotated[RedisSessionStore | None, Depends(get_session_store)],
+    permissions: Annotated[AdminPermissionProvider, Depends(get_admin_permission_provider)],
+) -> AuthContext:
+    return await _require_capability(raw_token, db, store, permissions, "can_read_notices")
