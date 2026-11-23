@@ -379,6 +379,9 @@ W_SEEN = 0.1
 # 끝까지 본 글 (카드 마지막 장 · 본문 80% 이상)만 본 날 포함 이 날 수 동안 후보에서 뺌. 덜 본 글은 바로 다시 후보
 # (11/3 사용자 결정. 그 전엔 열기만 해도 계속 뺐음). 백엔드 피드 (feed_service.REREAD_DAYS) 와 같은 값
 REREAD_DAYS = 14
+# 화면에 나왔지만 끝까지 안 본 글이 맨 위 · 곁들임 · 다른 작품 자리에서 쉬는 날 수 (11/19 사용자 결정. 그 전엔 한 번 나오면 영영 뺐음).
+# 오늘 전 이 날 수 안에 나온 글만 쉼 → 월요일에 지나친 글은 화요일 쉬고 수요일부터 다시 자리 후보. 오늘 나온 건 안 셈 (slot_ready)
+REST_DAYS = 1
 
 LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
 
@@ -472,20 +475,33 @@ def _rounds(items, feed):
     return [i for *_, i in sorted(keyed)]
 
 
-def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100):
+def slot_ready(state, day, rest_days=None):
+    """글별로 자리 (맨 위 · 곁들임 · 다른 작품) 후보가 되는지 (11/19 결정). 오늘 전 rest_days 일 안에 화면에 나온 글만 쉼.
+    오늘 나온 건 안 셈 → 하루 중간에 다시 계산해도 (취향 저장) 오늘 지나친 글은 자리를 안 잃음. 한 번도 안 나온 글은 늘 후보.
+    끝까지 본 글 (REREAD_DAYS) · 그만볼래요는 v1.rank_feed 가 이미 순위에서 뺌"""
+    rest_days = REST_DAYS if rest_days is None else rest_days
+    last = np.where(state.seen_last >= day, state.seen_prev, state.seen_last)   # 오늘 기록은 빼고 그 전 마지막 날
+    return last < day - rest_days
+
+
+def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100, ready=None):
     """점수 순 글 번호 → 보여 줄 순서 [(글 번호, 자리), ...] (11/16 · 11/17 결정). 자리 = pinned · side · discover · score
     1. 팬 추천은 기준 작품이 고른 작품 (같은 시리즈 포함) 인 글만 남김
-    2. 맨 위 = 기준 작품이 고른 작품인 글 중 아직 안 본 글 (10/31 arrange 와 같음, 같은 작품은 한 바퀴에 하나씩)
+    2. 맨 위 = 기준 작품이 고른 작품인 글 중 자리 후보인 글 (같은 작품은 한 바퀴에 하나씩)
     3. SIDE_SLOTS 번째 = 곁들임 (하루 최대 2개): 팬 추천이 아닌 여러 작품 글 중 고른 작품이 기준이 아닌 자리에 있거나
-       소재 모음의 소재가 고른 칩인 글. 점수 순, 한 번 본 글은 빼고 서로 다른 소재
-    4. DISCOVER_FROM 부터 DISCOVER_EVERY 마다 = 다른 작품: 기준 작품이 고른 작품이 아닌 안 본 글, 점수 순 (한 바퀴에 하나씩)
+       소재 모음의 소재가 고른 칩인 글. 점수 순, 자리 후보인 글만, 서로 다른 소재
+    4. DISCOVER_FROM 부터 DISCOVER_EVERY 마다 = 다른 작품: 기준 작품이 고른 작품이 아닌 자리 후보 글, 점수 순 (한 바퀴에 하나씩)
     5. 그 자리 글이 없으면 맨 위 → 나머지 점수 순으로 채움. 같은 소재 모음은 하루 하나 (11/17 RAG 요청: 미루지 않고 뺌)
-    chip_slugs: 고른 칩의 소재 슬러그 집합 (chip_slug). seen: 글별 노출 횟수"""
+    chip_slugs: 고른 칩의 소재 슬러그 집합 (chip_slug). ready: 글별 자리 후보 여부 (slot_ready, 11/19).
+    ready 가 없으면 seen (글별 노출 횟수) 이 0 인 글만 후보 (11/18 까지 규칙: 한 번 나오면 영영 자리에서 빠짐)"""
     mine = {_cw_pos(ctx, w) for w in picked} - {-1}
-    unseen = lambda i: seen is None or not seen[i]
+    if ready is not None:
+        free = lambda i: bool(ready[i])
+    else:
+        free = lambda i: seen is None or not seen[i]
     at = lambda i: int(feed["pos"][i])
     order = [i for i in order if posts[i].get("kind") != "like" or at(i) in mine]
-    pinned = [i for i in order if at(i) in mine and unseen(i)]
+    pinned = [i for i in order if at(i) in mine and free(i)]
     pinned_set = set(pinned)
 
     def is_side(i):
@@ -502,7 +518,7 @@ def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100):
         if len(side) == len(SIDE_SLOTS):
             break
         key = posts[i].get("theme")
-        if i in pinned_set or not unseen(i) or not is_side(i) or (key and key in side_themes):
+        if i in pinned_set or not free(i) or not is_side(i) or (key and key in side_themes):
             continue
         side.append(i)
         if key:
@@ -510,7 +526,7 @@ def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100):
     side_set = set(side)
     rest = _rounds([i for i in order if i not in pinned_set and i not in side_set], feed)
     queues = {"pinned": deque(_rounds(pinned, feed)), "side": deque(side),
-              "discover": deque(i for i in rest if unseen(i) and at(i) >= 0 and at(i) not in mine), "score": deque(rest)}
+              "discover": deque(i for i in rest if free(i) and at(i) >= 0 and at(i) not in mine), "score": deque(rest)}
     out, used, themes = [], set(), set()
 
     def take(name):
