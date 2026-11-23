@@ -114,8 +114,8 @@ async def get_debate(debate_id: DebateId, db: Db, user: Member) -> DebateSummary
 
 @router.delete(
     "/debates/{debateId}", status_code=status.HTTP_204_NO_CONTENT, summary="내 주제 삭제 (D-06)",
-    description="작성자만, 투표 중이고 표가 0개일 때만 지울 수 있다. 다른 사람의 투표권이 걸린 주제는 지우지 않는다.",
-    responses={**COMMON_ERRORS, **NOT_FOUND, 409: _error("DEBATE_DELETE_NOT_ALLOWED", "표를 받았거나 투표가 끝난 주제는 지울 수 없습니다.", "지울 수 없는 상태")},
+    description="작성자만, 투표 중일 때(토론방이 열리기 전)만 지울 수 있다. 받은 표도 함께 지우고, 투표한 사람에게 투표권을 1개씩 돌려준다(최대치를 넘지 않음).",
+    responses={**COMMON_ERRORS, **NOT_FOUND, 409: _error("DEBATE_DELETE_NOT_ALLOWED", "토론방으로 열렸거나 끝난 주제는 지울 수 없습니다.", "지울 수 없는 상태")},
 )
 async def delete_debate(debate_id: DebateId, db: Db, user: Member, _: Csrf) -> None:
     await service.delete_debate(db, user.user_id, debate_id)
@@ -149,6 +149,16 @@ async def cancel_vote(debate_id: DebateId, db: Db, user: Member, _: Csrf) -> Deb
 )
 async def choose_side(debate_id: DebateId, payload: DebateSideRequest, db: Db, user: Member, _: Csrf) -> DebateSummary:
     return await room.choose_side(db, user.user_id, debate_id, payload.side)
+
+
+@router.delete(
+    "/debates/{debateId}/side", response_model=DebateSummary, summary="진영 취소 (D-20)",
+    description="고른 진영을 취소한다(채팅방의 '투표 취소'). 고른 진영이 없어도 그대로 200. "
+                "취소되면 방에 연결된 사람들에게 sides 이벤트로 새 비율을 보낸다.",
+    responses={**COMMON_ERRORS, **NOT_FOUND, **NOT_OPEN, **NOT_JOINED},
+)
+async def cancel_side(debate_id: DebateId, db: Db, user: Member, _: Csrf) -> DebateSummary:
+    return await room.cancel_side(db, user.user_id, debate_id)
 
 
 @router.get(

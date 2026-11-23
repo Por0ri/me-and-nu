@@ -289,7 +289,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | D-03 | GET | `/debates?topicId=&status=open&entityId=` | 지금 열린 토론방 |
 | D-04 | GET | `/debates?topicId=&status=ended&entityId=` | 지난 토론방: 48시간이 끝난 방만, 끝난 뒤 9일까지 |
 | D-05 | GET | `/debates/{debateId}` | 상세: 상태, 비율, 작성자 닉네임, 참여 인원, 내 투표·진영·참여, 결과 |
-| D-06 | DELETE | `/debates/{debateId}` | 내 주제 삭제 |
+| D-06 | DELETE | `/debates/{debateId}` | 내 주제 삭제. 작성자만, 투표 중일 때(토론방이 열리기 전)만. 받은 표도 함께 지우고 투표한 사람(작성자 포함)에게 투표권을 1개씩 돌려준다(최대치를 넘지 않음). 열렸거나 끝난 주제는 409 `DEBATE_DELETE_NOT_ALLOWED` (2026-11-23 사용자 지시로 '표 0개일 때만'에서 바꿈) |
 | D-07 | PUT | `/debates/{debateId}/vote` | 투표. 이미 했으면 투표권을 쓰지 않고 그대로 200 |
 | D-08 | DELETE | `/debates/{debateId}/vote` | 투표 취소 |
 | D-09 | PUT | `/debates/{debateId}/side` | 진영 고르기·바꾸기 `{side: "a" \| "b"}`. 바뀐 토론 요약을 돌려준다. 같은 진영을 다시 골라도 200. 참여한 사람만 |
@@ -303,6 +303,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | D-17 | GET | `/debates/works?topicId=&q=` | 주제 올리기 화면의 작품 고르기. 회원용 작품 검색(`/me/taste/works`, 임시)과 같은 서비스를 쓴다. 검색어가 비면 빈 목록 |
 | D-18 | PUT | `/debates/{debateId}/membership` | 토론방 참여. 이미 참여 중이면 그대로 200. 열린 방에서만 |
 | D-19 | DELETE | `/debates/{debateId}/membership` | 토론방 나가기. 참여와 고른 진영을 지우고(진영 비율에서 빠짐) 그 사람의 실시간 연결을 끊는다. 보낸 채팅은 남는다. 참여 중이 아니어도 200. 열린 방에서만 |
+| D-20 | DELETE | `/debates/{debateId}/side` | 진영 취소 (2026-11-23 채팅방 시안의 '투표 취소'). 고른 진영을 지우고 비율에서 뺀 토론 요약을 돌려준다. 고른 진영이 없어도 200. 참여한 사람만, 열린 방에서만. 바뀌면 sides 이벤트 |
 
 - 목록 응답은 `{items, nextCursor}`다. 다음 쪽(cursor)은 '투표 중·최신순'과 '지난 토론방'에만 있다. '개설 임박순'은 표 수가 계속 바뀌고 '지금 열린 방'은 수가 적어서 `limit`(최대 50)까지만 준다.
 - `topicId`는 목록에서 선택이다. 주면 그 분야만, 안 주면 전체를 보여준다. 주제 올리기와 검색에서는 필수다.

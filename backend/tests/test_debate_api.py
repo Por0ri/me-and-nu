@@ -272,17 +272,32 @@ def test_threshold_vote_opens_the_room_and_notifies_voters_and_author(debate_api
     assert [row["debateId"] for row in ended] == [debate_id]
 
 
-def test_only_the_author_can_delete_a_topic_without_votes(debate_api):
-    author, other = debate_api.member(), debate_api.member()
+def test_only_the_author_can_delete_a_voting_topic_and_voters_get_tickets_back(debate_api):
+    """투표 중인 주제는 표가 있어도 작성자가 지울 수 있다 (2026-11-23). 투표한 사람은 투표권을 돌려받는다."""
+    author, other, voter = debate_api.member(), debate_api.member(), debate_api.member()
     debate_id = create(author).json()["debateId"]
     assert call(other, "DELETE", f"/debates/{debate_id}").json()["code"] == "DEBATE_NOT_FOUND"
-    assert call(author, "PUT", f"/debates/{debate_id}/vote").status_code == 200
+    assert call(author, "PUT", f"/debates/{debate_id}/vote").status_code == 200  # 자기 주제에도 투표할 수 있다
+    assert call(voter, "PUT", f"/debates/{debate_id}/vote").json()["tickets"]["balance"] == 2
+    deleted = call(author, "DELETE", f"/debates/{debate_id}")
+    assert deleted.status_code == 204, deleted.text
+    assert call(author, "GET", f"/debates/{debate_id}").json()["code"] == "DEBATE_NOT_FOUND"
+    for member in (author, voter):  # 표를 지우며 투표권 1개씩 돌려준다
+        assert call(member, "GET", "/users/me/debate-tickets").json()["balance"] == 3
+    assert call(voter, "GET", "/users/me/debate-votes").json()["items"] == []
+    with Session(debate_api.engine) as session:
+        assert session.scalar(select(func.count()).select_from(DebateVote).where(DebateVote.debate_id == debate_id)) == 0
+    assert create(author, title="다시 올린 주제").status_code == 201
+
+
+def test_an_opened_topic_cannot_be_deleted(debate_api):
+    author = debate_api.member()
+    debate_id = create(author).json()["debateId"]
+    for member in (author, debate_api.member(), debate_api.member()):
+        assert call(member, "PUT", f"/debates/{debate_id}/vote").status_code == 200
+    assert call(author, "GET", f"/debates/{debate_id}").json()["status"] == "open"
     refused = call(author, "DELETE", f"/debates/{debate_id}")
     assert refused.status_code == 409 and refused.json()["code"] == "DEBATE_DELETE_NOT_ALLOWED"
-    assert call(author, "DELETE", f"/debates/{debate_id}/vote").status_code == 200
-    assert call(author, "DELETE", f"/debates/{debate_id}").status_code == 204
-    assert call(author, "GET", f"/debates/{debate_id}").json()["code"] == "DEBATE_NOT_FOUND"
-    assert create(author, title="다시 올린 주제").status_code == 201
 
 
 def test_lists_search_and_my_activity(debate_api):

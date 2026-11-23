@@ -292,6 +292,33 @@ def test_side_is_separate_from_chat_and_can_change(debate_api):
     assert call(author, "GET", f"/debates/{debate_id}").json()["result"] == "b"
 
 
+def test_side_can_be_cancelled_and_counts_drop(debate_api):
+    """채팅방의 '투표 취소' (D-20): 고른 진영을 지우고 비율에서 뺀다. 고른 진영이 없어도 200."""
+    debate_id, author, (first, second) = open_room(debate_api)
+    assert side(first, debate_id, "a").status_code == 200
+    assert side(second, debate_id, "b").status_code == 200
+    cancelled = call(first, "DELETE", f"/debates/{debate_id}/side")
+    assert cancelled.status_code == 200, cancelled.text
+    body = cancelled.json()
+    assert (body["mySide"], body["participantCount"], body["sideA"], body["sideB"]) == (
+        None, 1, {"label": "나루토", "count": 0, "percent": 0}, {"label": "사스케", "count": 1, "percent": 100},
+    )
+    again = call(first, "DELETE", f"/debates/{debate_id}/side")  # 고른 진영이 없어도 그대로
+    assert again.status_code == 200 and again.json()["participantCount"] == 1
+    with Session(debate_api.engine) as session:
+        rows = session.execute(select(DebateSide.user_id, DebateSide.side).where(DebateSide.debate_id == debate_id)).all()
+    assert [tuple(row) for row in rows] == [(second.user_id, "b")]
+    assert side(first, debate_id, "a").json()["sideA"]["count"] == 1  # 취소한 뒤 다시 고를 수 있다
+
+    no_csrf = first.client.delete(f"/api/v1/debates/{debate_id}/side")
+    assert no_csrf.status_code == 403 and no_csrf.json()["code"] == "CSRF_INVALID"
+    outsider = call(debate_api.member(), "DELETE", f"/debates/{debate_id}/side")
+    assert outsider.status_code == 403 and outsider.json()["code"] == "DEBATE_NOT_JOINED"
+    debate_api.clock.now = START + timedelta(hours=48)
+    closed = call(first, "DELETE", f"/debates/{debate_id}/side")
+    assert closed.status_code == 409 and closed.json()["code"] == "DEBATE_NOT_OPEN"
+
+
 def test_messages_work_without_a_side_and_page_back_from_the_newest(debate_api):
     debate_id, author, (first, second) = open_room(debate_api)
     side(first, debate_id, "a")

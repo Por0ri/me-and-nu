@@ -283,15 +283,35 @@ async def create_debate(db: AsyncSession, user_id: int, payload: DebateCreateReq
 
 
 async def delete_debate(db: AsyncSession, user_id: int, debate_id: int) -> None:
-    now = utcnow()
-    debate = await _lock_debate(db, debate_id)
-    if debate.author_user_id != user_id:
-        raise _not_found()
-    # 표를 받은 주제는 지우지 않는다. 다른 사람의 투표권이 걸려 있다.
-    if effective_status(debate, now) != "voting" or debate.vote_count > 0:
-        raise ApiError(409, "DEBATE_DELETE_NOT_ALLOWED", "표를 받았거나 투표가 끝난 주제는 지울 수 없습니다.")
-    await db.execute(delete(Debate).where(Debate.debate_id == debate_id))
-    await db.commit()
+    """내 주제 지우기 (D-06). 투표 중일 때(10표를 받아 토론방이 열리기 전)만 지울 수 있다. 받은 표가 있어도 된다.
+    표도 함께 지우고, 투표한 사람(작성자 본인 포함)에게는 투표 취소처럼 투표권 1개씩 돌려준다(가득이면 더 늘지 않는다).
+    투표·취소와 같은 순서(투표권 → 주제)로 잠그고, 잠그는 사이 표가 바뀌었으면 처음부터 다시 한다."""
+    for _ in range(3):
+        now = utcnow()
+        voters = sorted((await db.execute(select(DebateVote.user_id).where(DebateVote.debate_id == debate_id))).scalars().all())
+        tickets = [await _lock_ticket(db, voter, now) for voter in voters]
+        debate = await _lock_debate(db, debate_id)
+        if debate.author_user_id != user_id:
+            raise _not_found()
+        status = effective_status(debate, now)
+        if status == "expired":  # 기준 표를 못 받은 주제는 이미 삭제된 것으로 본다
+            raise _not_found()
+        if status != "voting":
+            raise ApiError(409, "DEBATE_DELETE_NOT_ALLOWED", "토론방으로 열렸거나 끝난 주제는 지울 수 없습니다.")
+        current = sorted((await db.execute(select(DebateVote.user_id).where(DebateVote.debate_id == debate_id))).scalars().all())
+        if current != voters:
+            await db.rollback()
+            continue
+        maximum = settings.debate_vote_ticket_max
+        for ticket in tickets:
+            balance, anchor = _ticket_state(ticket, now)
+            ticket.balance = min(maximum, balance + 1)
+            ticket.refilled_at = anchor if ticket.balance < maximum else now
+        await db.execute(delete(DebateVote).where(DebateVote.debate_id == debate_id))
+        await db.execute(delete(Debate).where(Debate.debate_id == debate_id))
+        await db.commit()
+        return
+    raise ApiError(409, "DEBATE_BUSY", "투표가 계속 바뀌고 있어요. 잠시 후 다시 시도해 주세요.")
 
 
 # ───────────── 투표·취소 ─────────────

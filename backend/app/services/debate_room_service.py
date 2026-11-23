@@ -120,6 +120,19 @@ async def choose_side(db: AsyncSession, user_id: int, debate_id: int, side: str)
     return (await core._summaries(db, user_id, [debate], now))[0]
 
 
+async def cancel_side(db: AsyncSession, user_id: int, debate_id: int) -> DebateSummary:
+    """고른 진영을 취소한다 (D-20, 2026-11-23 채팅방 시안의 '투표 취소'). 고른 진영이 없어도 그대로 200.
+    취소되면 방에 연결된 사람들에게 sides 이벤트로 새 비율을 보낸다."""
+    now = core.utcnow()
+    debate = await _open_debate(db, debate_id, lock=True)
+    await _member(db, debate_id, user_id)
+    side = await _drop_side(db, debate, user_id)
+    if side is not None:
+        await db.commit()
+        hub.publish(debate_id, HubEvent(kind="sides", data=_sides_payload(debate)))
+    return (await core._summaries(db, user_id, [debate], now))[0]
+
+
 # ───────────── 참여·나가기 (D-18·19) ─────────────
 
 async def join_room(db: AsyncSession, user_id: int, debate_id: int) -> DebateSummary:
@@ -144,16 +157,7 @@ async def leave_room(db: AsyncSession, user_id: int, debate_id: int) -> DebateSu
         delete(DebateMember).where(DebateMember.debate_id == debate_id, DebateMember.user_id == user_id)
         .execution_options(synchronize_session=False)
     )).rowcount
-    side = await db.scalar(select(DebateSide.side).where(DebateSide.debate_id == debate_id, DebateSide.user_id == user_id))
-    if side is not None:
-        await db.execute(
-            delete(DebateSide).where(DebateSide.debate_id == debate_id, DebateSide.user_id == user_id)
-            .execution_options(synchronize_session=False)
-        )
-        if side == "a":
-            debate.side_a_count -= 1
-        else:
-            debate.side_b_count -= 1
+    side = await _drop_side(db, debate, user_id)
     if left or side is not None:
         await db.commit()
     if side is not None:
@@ -161,6 +165,22 @@ async def leave_room(db: AsyncSession, user_id: int, debate_id: int) -> DebateSu
     if left:
         hub.close_user(debate_id, user_id)
     return (await core._summaries(db, user_id, [debate], now))[0]
+
+
+async def _drop_side(db: AsyncSession, debate: Debate, user_id: int) -> str | None:
+    """이 사람이 고른 진영을 지우고 진영 인원에서 뺀다 (커밋은 부르는 쪽). 지운 진영(a·b), 없었으면 None."""
+    side = await db.scalar(select(DebateSide.side).where(DebateSide.debate_id == debate.debate_id, DebateSide.user_id == user_id))
+    if side is None:
+        return None
+    await db.execute(
+        delete(DebateSide).where(DebateSide.debate_id == debate.debate_id, DebateSide.user_id == user_id)
+        .execution_options(synchronize_session=False)
+    )
+    if side == "a":
+        debate.side_a_count -= 1
+    else:
+        debate.side_b_count -= 1
+    return side
 
 
 # ───────────── 채팅 (D-10·11) ─────────────
