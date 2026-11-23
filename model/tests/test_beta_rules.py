@@ -121,6 +121,16 @@ class ComposeTests(unittest.TestCase):
         self.assertEqual(out[8], "side")
         self.assertEqual(out[7], "score")
 
+    def test_a_resting_post_gives_its_slot_to_the_next_one(self):   # 11/19: 쉬는 글은 자리 대신 점수 순서로
+        ready = np.ones(len(self.posts), dtype=bool)
+        ready[0] = ready[7] = ready[10] = False
+        out = service.compose(self.order, self.feed, self.posts, [101], {"gore"}, CTX, ready=ready)
+        self.assertEqual(out[0], (1, "pinned"))
+        slots = dict(out)
+        self.assertEqual([slots[0], slots[7], slots[10]], ["score", "score", "score"])
+        self.assertEqual(slots[8], "side")
+        self.assertEqual(slots[11], "discover")
+
     def test_at_most_two_side_posts_a_day(self):
         self.posts += [post([102, 101], anchor=0, kind="director", ty="people") for _ in range(3)]
         self.feed = service.make_feed(self.posts, CTX)
