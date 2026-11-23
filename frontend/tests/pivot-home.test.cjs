@@ -70,6 +70,31 @@ function renderSearch(search, query = '') {
   }));
 }
 
+test('pagination keeps cards visible, disables duplicate requests and offers a separate page retry', () => {
+  for (const status of ['idle', 'loading', 'error']) {
+    const html = renderToStaticMarkup(React.createElement(PivotHomeScreen, {
+      state: { ...result('kept-card'), pagination: { status, message: '다음 페이지 오류' } },
+      demo: false, query: '', onQueryChange() {}, onRetry() {}, onLoadMore() {},
+    }));
+    assert.match(html, /data-home-post="kept-card"/);
+    assert.match(html, /data-home-pagination/);
+    if (status === 'loading') assert.match(html, /disabled="" aria-busy="true"/);
+    if (status === 'error') { assert.match(html, /role="alert"/); assert.match(html, /다음 콘텐츠 다시 시도/); }
+  }
+});
+
+test('search filters hide feed pagination without mixing feed cards into search results', () => {
+  for (const search of [{ open: true }, { result: { label: '선택한 작품', cards: [cardFixture('search-card')] } }]) {
+    const html = renderToStaticMarkup(React.createElement(PivotHomeScreen, {
+      state: { ...result('feed-card'), pagination: { status: 'idle' } },
+      demo: false, query: '', onQueryChange() {}, onRetry() {}, onLoadMore() {},
+      search: { open: false, result: null, suggestions: [], recent: [], ...search },
+    }));
+    assert.doesNotMatch(html, /data-home-pagination/);
+    if (search.result) { assert.match(html, /data-home-post="search-card"/); assert.doesNotMatch(html, /data-home-post="feed-card"/); }
+  }
+});
+
 test('A stalled feed aborts, offers retry and ignores a late answer', async () => {
   const pending = deferred(), states = [];
   let calls = 0, signal;

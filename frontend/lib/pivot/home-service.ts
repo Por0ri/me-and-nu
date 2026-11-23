@@ -1,9 +1,9 @@
-import { ApiError, getFeed, getMyTopics, searchFeed, searchWorks, type FeedCard, type Session } from "@/lib/api";
+import { ApiError, getFeed, getMyTopics, searchFeed, searchWorks, type FeedCard, type MyTopicsResponse, type Session } from "@/lib/api";
 import { requirePivotApi } from "./services";
-import type { HomeCardModel, HomeDataSource, HomeLoadError } from "./home";
+import type { HomeCardModel, HomeDataSource, HomeLoadError, HomeLoadResult } from "./home";
 import { createRecentSearchStore } from "./recent-search";
 import { invalidContentResponse, mapCarouselSlides, publicationMetadata } from "./carousel-data";
-import { activeTopicId, isPositiveId, LIST_PAGE_SIZE, MAX_LIST_PAGES, nextPageCursor, optionalImage, requireTitle } from "./service-data";
+import { activeTopicId, isPositiveId, LIST_PAGE_SIZE, optionalImage, requireTitle } from "./service-data";
 
 export function mapFeedCard(card: FeedCard, topicId: number): HomeCardModel {
   if (!card || card.kind !== "content" || !isPositiveId(card.id) || card.topicId !== topicId || typeof card.saved !== "boolean" ||
@@ -29,8 +29,13 @@ function activeUserId(session: Session | null): number | null {
     session.user?.accountType === "user" && isPositiveId(session.user.id) ? session.user.id : null;
 }
 
+function topicInterests(response: MyTopicsResponse, topicId: number) {
+  return [...(response.topics.find(topic => topic.id === topicId)?.subtopicIds ?? [])].sort((a, b) => a - b).join(",");
+}
+
 function loadError(error: unknown): HomeLoadError {
   if (error instanceof ApiError) {
+    if (error.code === "FEED_SCOPE_CHANGED") return { status: "error", reason: "scope-changed", message: "관심사가 변경됐어요. 피드를 다시 불러와 주세요." };
     if (error.status === 401) return { status: "error", reason: "unauthorized", message: "로그인이 만료되었어요. 다시 로그인해 주세요." };
     if (error.status === 403) return { status: "error", reason: "forbidden", message: "이 콘텐츠 피드에 접근할 권한이 없어요. 계정의 활성 관심사를 확인해 주세요." };
     if (error.code === "INVALID_CONTENT_RESPONSE") return { status: "error", reason: "invalid-response", message: "콘텐츠 응답을 확인하지 못했어요. 다시 시도해 주세요." };
@@ -55,44 +60,67 @@ export function createServiceHomeSource(
     recent: createRecentSearchStore(() => readSession ? activeUserId(readSession()) : null),
     async load({ signal }) {
       guard(); signal.throwIfAborted();
-      const initialUser = readSession ? activeUserId(readSession()) : null;
-      const checkSession = () => {
-        signal.throwIfAborted(); guard();
-        if (readSession && (initialUser === null || activeUserId(readSession()) !== initialUser)) {
+      const owner = readSession?.() ?? null;
+      const initialUser = activeUserId(owner);
+      const checkSession = (requestSignal: AbortSignal) => {
+        requestSignal.throwIfAborted(); guard();
+        const current = readSession?.();
+        if (readSession && (initialUser === null || activeUserId(current ?? null) !== initialUser || current?.csrfToken !== owner?.csrfToken)) {
           throw new ApiError("Active session changed.", 401, "AUTH_REQUIRED");
         }
       };
+      const requestError = (error: unknown, requestSignal: AbortSignal) => {
+        requestSignal.throwIfAborted();
+        try { checkSession(requestSignal); } catch (scopeError) { return loadError(scopeError); }
+        return loadError(error);
+      };
       try {
-        checkSession();
+        checkSession(signal);
         const topicResponse = await api.getMyTopics({}, { signal });
-        checkSession();
+        checkSession(signal);
         let topicId: number | null;
         try { topicId = activeTopicId(topicResponse); } catch { invalidContentResponse(); }
-        const cards: HomeCardModel[] = [];
-        if (topicId !== null) {
-          let cursor: string | undefined;
-          const cursors = new Set<string>();
-          const ids = new Set<string>();
-          for (let page = 0; page < MAX_LIST_PAGES; page++) {
-            const response = await api.getFeed(topicId, { limit: LIST_PAGE_SIZE, cursor }, { signal });
-            checkSession();
-            if (!response || response.selectedTopicId !== topicId || !Array.isArray(response.sections)) invalidContentResponse();
+        if (topicId === null) return { status: "ready", home: { origin: "service", cards: [] } };
+        const selectedTopic = topicId;
+        const selectedInterests = topicInterests(topicResponse, selectedTopic);
+        // A continuation owns its Topic, session and cursor history. Failed/cancelled
+        // attempts do not advance it, so retrying never skips an unseen page.
+        async function readPage(cursor: string | undefined, visited: ReadonlySet<string>, requestSignal: AbortSignal): Promise<HomeLoadResult> {
+          try {
+            checkSession(requestSignal);
+            if (cursor !== undefined) {
+              const currentTopics = await api.getMyTopics({}, { signal: requestSignal });
+              checkSession(requestSignal);
+              let currentTopic: number | null;
+              try { currentTopic = activeTopicId(currentTopics); } catch { invalidContentResponse(); }
+              if (currentTopic !== selectedTopic || topicInterests(currentTopics, selectedTopic) !== selectedInterests) {
+                throw new ApiError("Feed interests changed.", 409, "FEED_SCOPE_CHANGED");
+              }
+            }
+            const response = await api.getFeed(selectedTopic, { limit: LIST_PAGE_SIZE, cursor }, { signal: requestSignal });
+            checkSession(requestSignal);
+            if (!response || response.selectedTopicId !== selectedTopic || !Array.isArray(response.sections)) invalidContentResponse();
+            const seen = new Set(visited);
+            if (cursor !== undefined) seen.add(cursor);
+            const next = response.nextCursor;
+            if (next !== null && (typeof next !== "string" || !next.trim() || seen.has(next))) invalidContentResponse();
+            const cards: HomeCardModel[] = [], ids = new Set<string>();
             for (const section of response.sections) {
               if (!section || !Array.isArray(section.contents)) invalidContentResponse();
               for (const item of section.contents) {
-                const card = mapFeedCard(item, topicId);
-                if (ids.has(card.id)) continue;
-                ids.add(card.id); cards.push(card);
+                const card = mapFeedCard(item, selectedTopic);
+                if (!ids.has(card.id)) { ids.add(card.id); cards.push(card); }
               }
             }
-            try { cursor = nextPageCursor(response.nextCursor, cursors, page); } catch { invalidContentResponse(); }
-            if (cursor === undefined) break;
+            return { status: "ready", home: { origin: "service", cards },
+              ...(next === null ? {} : { nextPage: ({ signal: nextSignal }: { signal: AbortSignal }) => readPage(next, seen, nextSignal) }) };
+          } catch (error) {
+            return requestError(error, requestSignal);
           }
         }
-        return { status: "ready", home: { origin: "service", cards } };
+        return await readPage(undefined, new Set(), signal);
       } catch (error) {
-        signal.throwIfAborted();
-        return loadError(error);
+        return requestError(error, signal);
       }
     },
     async search(q, { signal, workId }) {
