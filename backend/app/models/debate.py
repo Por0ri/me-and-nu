@@ -8,7 +8,8 @@
 지난 주제는 끝난 것으로 보인다. 정리 작업은 저장된 status를 따라잡고 끝난 방의 채팅을 지운다.
 
 개설 기준 표 수·기간·투표권 같은 규칙 값은 설정(app.core.config)에 있다. 여기 있는 글자 수 상한은
-칼럼 크기와 같아서 바꾸려면 migration이 필요하다. 설계: docs/DEBATE_BACKEND_DESIGN_2026-11-19.md
+칼럼 크기와 같아서 바꾸려면 migration이 필요하다. 선택지 이름만 입력 상한(SIDE_LABEL_INPUT_MAX)을
+칼럼보다 작게 둔다. 설계: docs/DEBATE_BACKEND_DESIGN_2026-11-19.md
 """
 
 from datetime import datetime
@@ -33,6 +34,9 @@ DEBATE_SIDES = ("a", "b")
 TITLE_MAX = 60
 DESCRIPTION_MAX = 200
 SIDE_LABEL_MAX = 20
+# 선택지 이름은 칼럼보다 짧게 받는다. 진영 버튼 한 줄에 6자쯤 들어가서 12자면 대부분 두 줄 안에 든다.
+# 입력 검사만 줄였으므로 migration은 없다 (2026-11-24 결정).
+SIDE_LABEL_INPUT_MAX = 12
 MESSAGE_MAX = 300
 WORKS_MAX = 3
 SEARCH_TEXT_MAX = 50

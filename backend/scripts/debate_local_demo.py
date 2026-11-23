@@ -8,10 +8,11 @@
     마지막에 내 투표권을 3개로 채운다.
 같은 작품(나루토·원피스·진격의 거인·헌터×헌터)이 여러 탭에 있어서 탭별 검색도 시험할 수 있다.
 
-로컬 서버(localhost)와 로컬 DB(me_nu_debate)에만 쓴다. backend 폴더에서 실행한다.
+내 컴퓨터에서 시험할 때만 쓴다 (배포 서버에는 절대 쓰지 않는다): API 주소와 DB 주소가 모두 내 컴퓨터(localhost)이고
+DB 이름이 me_nu_debate 일 때만 움직이고, 만든 주제가 그 DB 에 실제로 생겼는지도 하나씩 확인한다. backend 폴더에서 실행한다.
 
-    python scripts/debate_local_demo.py seed     # 만들기 (1~2분)
-    python scripts/debate_local_demo.py clean    # 시험 계정 61~140 과 내 계정이 올린 주제를 지우고 내 투표권을 3개로
+    python scripts/debate_local_demo.py seed     # 만들기 (1~2분). 시작할 때 시험 계정 투표권을 가득 채워서 다시 돌려도 된다
+    python scripts/debate_local_demo.py clean    # 시험 계정 61~140 과 내 계정이 올린 주제를 지우고 모두의 투표권을 가득 채운다
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import httpx  # noqa: E402
 import psycopg  # noqa: E402
 
-from debate_local_actors import CHAT_LINES, Actor, ActorError, _check_base  # noqa: E402
+from debate_local_actors import CHAT_LINES, LOOPBACK_HOSTS, Actor, ActorError, _check_base  # noqa: E402
 
 EXPECTED_DATABASE = "me_nu_debate"
 ME_EMAIL = "debate-me@example.com"
@@ -90,11 +91,31 @@ class Me(Actor):
 
 
 def database_url() -> str:
+    from sqlalchemy.engine import make_url
+
     from app.core.config import settings
     from app.seeds.menu_works import validate_target
 
     validate_target(settings.database_url, EXPECTED_DATABASE)
+    if make_url(settings.database_url).host not in LOOPBACK_HOSTS:
+        sys.exit("내 컴퓨터(localhost)의 DB 에서만 쓸 수 있어요. backend/.env 의 DATABASE_URL 을 확인해 주세요.")
     return settings.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+
+def ticket_max() -> int:
+    from app.core.config import settings
+
+    return settings.debate_vote_ticket_max
+
+
+def actor_emails() -> list[str]:
+    return [f"debate-actor-{index:02d}@example.com" for index in range(AUTHOR_FIRST, LAST + 1)]
+
+
+def refill_tickets(emails: list[str]) -> None:
+    """투표권을 가득 채운다 (투표권 줄이 아직 없는 계정은 원래 가득으로 본다)."""
+    sql("UPDATE debate_vote_ticket SET balance = %s, refilled_at = now() "
+        "WHERE user_id IN (SELECT user_id FROM user_account WHERE email = ANY(%s))", (ticket_max(), emails))
 
 
 def sql(statement: str, params: tuple = ()) -> list[tuple]:
@@ -109,7 +130,7 @@ class Pool:
     """투표할 시험 계정들. 한 사람에 투표권이 3개라 고르게 나눠 쓴다."""
 
     def __init__(self, actors: list[Actor]) -> None:
-        self.left = {actor.index: 3 for actor in actors}
+        self.left = {actor.index: ticket_max() for actor in actors}  # seed 시작 때 refill_tickets 로 가득 채운다
         self.actors = {actor.index: actor for actor in actors}
 
     def voters(self, count: int, exclude: set[int]) -> list[Actor]:
@@ -179,7 +200,12 @@ def create_topic(author: Actor, work: str, title: str, side_a: str, side_b: str,
     })
     if response.status_code != 201:
         raise ActorError(f"{author.nickname} 주제 올리기 실패: {response.status_code} {response.text}")
-    return response.json()
+    debate = response.json()
+    # 시각을 당기는 SQL 은 이 스크립트가 직접 DB 에 쓴다. API 서버가 다른 DB 를 보고 있으면 엉뚱한 주제를 바꾸게 되므로 멈춘다.
+    stored = sql("SELECT title FROM debate WHERE debate_id = %s", (debate["debateId"],))
+    if not stored or stored[0][0] != title:
+        raise ActorError(f"API 서버와 이 스크립트가 서로 다른 DB 를 보고 있어요. 서버를 이 backend 폴더의 .env (DB {EXPECTED_DATABASE})로 켰는지 확인해 주세요.")
+    return debate
 
 
 def fill_room(debate_id: int, people: list[Actor], spec, rng: random.Random, chat_count: int) -> None:
@@ -204,6 +230,8 @@ def run_seed(base_url: str, topic_id: int) -> None:
     print("시험 계정 로그인 (처음이면 가입·온보딩까지)…", flush=True)
     actors = sign_in_all(base_url, topic_id, range(AUTHOR_FIRST, LAST + 1))
     authors = [actors[index] for index in range(AUTHOR_FIRST, POOL_FIRST)]
+    # 전에 seed 로 쓴 투표권은 1시간에 1개씩만 돌아오므로, 다시 돌려도 모자라지 않게 시험 계정 투표권을 먼저 가득 채운다.
+    refill_tickets(actor_emails())
     pool = Pool([actors[index] for index in range(POOL_FIRST, LAST + 1)])
     me = Me(base_url, topic_id)
     me.sign_in()
@@ -268,8 +296,8 @@ def run_seed(base_url: str, topic_id: int) -> None:
             debate = create_topic(me, work, title, a, b, description)
             vote_all(debate["debateId"], pool.voters(votes, set()))
             print(f"  {debate['debateId']}번 {title} ({votes}표)")
-        refill_my_tickets()
-        print("내 투표권을 3개로 채웠어요. 끝!")
+        refill_tickets([ME_EMAIL])
+        print(f"내 투표권을 {ticket_max()}개로 채웠어요. 끝!")
     finally:
         me.close()
         for actor in actors.values():
@@ -284,11 +312,6 @@ def finalize() -> dict:
         with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
             return runner.run(task)
     return asyncio.run(task)
-
-
-def refill_my_tickets() -> None:
-    sql("UPDATE debate_vote_ticket SET balance = 3, refilled_at = now() WHERE user_id = (SELECT user_id FROM user_account WHERE email = %s)",
-        (ME_EMAIL,))
 
 
 def run_more_chat(base_url: str, topic_id: int, debate_ids: list[int], messages: int) -> None:
@@ -321,11 +344,12 @@ def run_more_chat(base_url: str, topic_id: int, debate_ids: list[int], messages:
 
 
 def run_clean() -> None:
-    emails = [f"debate-actor-{index:02d}@example.com" for index in range(AUTHOR_FIRST, LAST + 1)] + [ME_EMAIL]
+    emails = actor_emails() + [ME_EMAIL]
     rows = sql("DELETE FROM debate WHERE author_user_id IN (SELECT user_id FROM user_account WHERE email = ANY(%s)) RETURNING debate_id",
                (emails,))
-    refill_my_tickets()
-    print(f"주제 {len(rows)}개를 지우고 내 투표권을 3개로 채웠어요.")
+    # 주제를 SQL 로 바로 지우면 쓴 투표권이 돌아오지 않으므로 시험 계정과 내 계정 모두 가득 채운다.
+    refill_tickets(emails)
+    print(f"주제 {len(rows)}개를 지우고 시험 계정과 내 투표권을 {ticket_max()}개로 채웠어요.")
 
 
 def main() -> None:
@@ -334,7 +358,7 @@ def main() -> None:
     parser.add_argument("--topic-id", type=int, default=1, help="분야 번호 (로컬 애니 분야 기본 1)")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("seed", help="여러 상태의 주제·토론방·채팅을 만든다")
-    commands.add_parser("clean", help="이 스크립트로 만든 주제를 지운다")
+    commands.add_parser("clean", help="이 스크립트로 만든 주제를 지우고 투표권을 가득 채운다")
     more = commands.add_parser("chat", help="열린 방의 지금 참여자(시험 계정)들이 자기 진영대로 채팅을 더 한다")
     more.add_argument("--debate", type=int, action="append", required=True, help="토론 번호 (여러 번 쓸 수 있다)")
     more.add_argument("--messages", type=int, default=12, help="방마다 보낼 채팅 수")

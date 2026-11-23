@@ -3,15 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
-  cancelSide, chooseSide, getDebate, getVoteTickets, joinDebate, listMessages, sendMessage, subscribeDebate,
+  cancelSide, chooseSide, getDebate, joinDebate, listMessages, sendMessage, subscribeDebate,
 } from "@/lib/debate/client";
-import { dateText, roomRemaining, timeText, votingRemaining } from "@/lib/debate/format";
+import { dateText, roomRemaining, timeText } from "@/lib/debate/format";
 import { DEBATE_RULES } from "@/lib/debate/rules";
-import type { DebateConnection, DebateMessage, DebateSideKey, DebateSummary, VoteTickets } from "@/lib/debate/types";
-import { SideResult, useVoteActions } from "./debate-cards";
+import type { DebateConnection, DebateMessage, DebateSideKey, DebateSummary } from "@/lib/debate/types";
+import { SideResult } from "./debate-cards";
 import { DebateHomeHeader, DebateScreen, DebateState, errorText, useToast, type ShowToast } from "./debate-chrome";
 import { ChatIcon, CircleCheckIcon, ClockIcon, SendIcon, TrophyIcon, UsersIcon } from "./debate-icons";
-import { AuthorLine, Badge, DebateGuide, InfoNote, VoteProgress, WorkChips, useNow } from "./debate-parts";
+import { AuthorLine, Badge, DebateGuide, InfoNote, WorkChips, useNow } from "./debate-parts";
 import styles from "./debate.module.css";
 
 type Update = (change: (current: DebateSummary) => DebateSummary) => void;
@@ -27,8 +27,11 @@ function RoomHeader({ title, back }: { title: string; back: string }) {
   </>;
 }
 
-/** 토론 하나의 화면. 상태에 따라 투표·실시간 채팅·결과를 보여준다. */
+/** 토론 하나의 화면. 상태에 따라 실시간 채팅(참여 전이면 참여 화면)·결과를 보여준다.
+ *  투표 중인 주제는 따로 화면이 없다 (2026-11-23 사용자 결정: 카드에서 바로 투표하고 선택지도 카드에 보인다).
+ *  예전 주소로 들어오면 주제 투표 탭으로 보낸다. */
 export function DebateRoom({ debateId }: { debateId: number }) {
+  const router = useRouter();
   const [debate, setDebate] = useState<DebateSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, showToast] = useToast();
@@ -39,8 +42,10 @@ export function DebateRoom({ debateId }: { debateId: number }) {
   useEffect(() => { load(); }, [load]);
   // 실시간 이벤트가 연달아 와도 서로 덮어쓰지 않게 지금 값을 기준으로 바꾼다.
   const update = useCallback<Update>((change) => setDebate((current) => (current ? change(current) : current)), []);
+  const voting = debate?.status === "voting";
+  useEffect(() => { if (voting) router.replace("/pivot/debate?tab=vote"); }, [voting, router]);
 
-  if (!debate) {
+  if (!debate || voting) {
     return <DebateScreen label="토론방">
       <RoomHeader title="토론방" back="/pivot/debate" />
       <div className={styles.stack}><DebateState loading={!error} error={error} onRetry={load} /></div>
@@ -52,12 +57,11 @@ export function DebateRoom({ debateId }: { debateId: number }) {
       ? <OpenRoom debate={debate} onChange={setDebate} update={update} showToast={showToast} toast={toast} />
       : <JoinRoom debate={debate} onJoined={setDebate} showToast={showToast} toast={toast} />;
   }
+  // 끝난 방: 채팅 중에 방이 끝났거나 알림으로 들어온 경우. 기준 표를 못 받은 주제(expired)는 서버가 삭제된 것으로 보고 보내지 않는다.
   return <DebateScreen label={debate.title}>
-    <RoomHeader title={debate.status === "voting" ? "주제 후보" : "지난 토론방"} back={debate.status === "voting" ? "/pivot/debate?tab=vote" : "/pivot/debate?tab=past"} />
+    <RoomHeader title="지난 토론방" back="/pivot/debate?tab=past" />
     <div className={styles.stack}>
-      {/* 기준 표를 못 받은 주제(expired)는 서버가 삭제된 것으로 보고 보내지 않는다. */}
-      {debate.status === "voting" ? <VotingDetail debate={debate} onChange={setDebate} showToast={showToast} />
-        : <ClosedResult debate={debate} />}
+      <ClosedResult debate={debate} />
     </div>
     {toast}
   </DebateScreen>;
@@ -99,7 +103,7 @@ function SidePoll({ debate, busy, onPick, onCancel }: {
     return <div className={styles.poll}>
       <div className={styles.sideChoices} role="group" aria-label="진영 고르기">
         {(["a", "b"] as const).map((side) => <button key={side} type="button" className={styles.sideChoice} disabled={busy} onClick={() => onPick(side)}>
-          <CircleCheckIcon size={22} />{side === "a" ? debate.sideA.label : debate.sideB.label}
+          <CircleCheckIcon size={22} /><span>{side === "a" ? debate.sideA.label : debate.sideB.label}</span>
         </button>)}
       </div>
       <p className={styles.pollFoot}>{total}</p>
@@ -268,6 +272,55 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
     };
   }, [loaded, streamKey, debateId, merge, reload, update, onChange, showToast]);
 
+  // 휴대폰에서 설명이 길면 펼친 토론 카드가 채팅 자리를 거의 다 차지한다 (2026-11-23 사용자 결정, 디자이너와 다시 볼 예정).
+  // 그래서 채팅 입력칸을 누르거나(아래 onFocus) 채팅을 손가락·휠·키보드로 움직이면 카드를 접고,
+  // 위(지난 채팅 쪽)로 올려 맨 위에 닿으면 다시 펼친다 (채팅이 짧아 움직일 데가 없을 때는 위로 올리는 동작만으로 펼친다).
+  // '투표창 접기/펼치기' 버튼도 그대로 된다. 새 메시지를 따라 내려가는 것처럼 화면이 스스로 움직일 때는 바꾸지 않도록 사용자 동작만 본다.
+  // 안내 창(이용 안내·도배 막기 창) 안에서 움직인 것은 채팅이 아니라서 뺀다.
+  useEffect(() => {
+    let lastY: number | null = null;
+    let moved = 0;
+    let upwardAt = -Infinity;  // 마지막으로 위로 올린 때: 그 직후 맨 위에 닿으면 펼친다
+    const atTop = () => window.scrollY <= 0;
+    const down = () => setCollapsed(true);
+    const up = () => { upwardAt = performance.now(); setCollapsed(!atTop()); };
+    const inDialog = (event: Event) => event.target instanceof Element && !!event.target.closest("[role=dialog], [role=alertdialog]");
+    const touchStart = (event: TouchEvent) => { lastY = inDialog(event) ? null : event.touches[0]?.clientY ?? null; moved = 0; };
+    const touchMove = (event: TouchEvent) => {
+      const y = event.touches[0]?.clientY;
+      if (lastY === null || y === undefined) return;
+      const delta = y - lastY;
+      lastY = y;
+      moved += Math.abs(delta);
+      if (moved <= 8 || delta === 0) return;  // 살짝 누른 것은 움직임으로 보지 않는다
+      if (delta < 0) down(); else up();       // 손가락을 위로 = 화면이 아래(새 채팅)로, 아래로 = 위(지난 채팅)로
+    };
+    const wheel = (event: WheelEvent) => {
+      if (event.deltaY === 0 || inDialog(event)) return;
+      if (event.deltaY > 0) down(); else up();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest("input, textarea, select, button, a, [role=dialog], [role=alertdialog]")) return;
+      if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) down();
+      else if (event.key === "Home") setCollapsed(false);
+      else if (["ArrowUp", "PageUp"].includes(event.key)) up();
+    };
+    // 위로 올리던 중에 화면이 맨 위에 닿으면 한 번 더 올리지 않아도 펼친다
+    const scroll = () => { if (atTop() && performance.now() - upwardAt < 700) setCollapsed(false); };
+    window.addEventListener("touchstart", touchStart, { passive: true });
+    window.addEventListener("touchmove", touchMove, { passive: true });
+    window.addEventListener("wheel", wheel, { passive: true });
+    window.addEventListener("keydown", key);
+    window.addEventListener("scroll", scroll, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", touchStart);
+      window.removeEventListener("touchmove", touchMove);
+      window.removeEventListener("wheel", wheel);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("scroll", scroll);
+    };
+  }, []);
+
   // 맨 아래를 보고 있을 때만 새 메시지로 따라 내려간다.
   useEffect(() => {
     const onScroll = () => {
@@ -387,7 +440,7 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
     </div>
 
     <form className={styles.composer} onSubmit={(event) => void submit(event)}>
-      <input value={text} onChange={(event) => setText(event.target.value)} maxLength={DEBATE_RULES.messageMax}
+      <input value={text} onChange={(event) => setText(event.target.value)} onFocus={() => setCollapsed(true)} maxLength={DEBATE_RULES.messageMax}
         placeholder="메시지를 입력하세요" aria-label="메시지" />
       <button type="submit" className={styles.sendButton} aria-label="보내기" disabled={!text.trim() || sending}><SendIcon size={18} /></button>
     </form>
@@ -396,34 +449,7 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
   </DebateScreen>;
 }
 
-/* ───────────── 투표 중 ───────────── */
-
-function VotingDetail({ debate, onChange, showToast }: { debate: DebateSummary; onChange: (debate: DebateSummary) => void; showToast: ShowToast }) {
-  const [tickets, setTickets] = useState<VoteTickets | null>(null);
-  const now = useNow();
-  useEffect(() => { getVoteTickets().then(setTickets, () => setTickets(null)); }, []);
-  // 투표·취소는 다른 화면과 같은 동작 (투표권이 가득이면 취소 전에 확인 창)
-  const vote = useVoteActions(({ debate: next, tickets: nextTickets }) => { setTickets(nextTickets); onChange(next); }, showToast);
-  return <>
-    <section className={styles.roomCard}>
-      <Badge>주제 후보</Badge>
-      <h2>{debate.title}</h2>
-      {debate.description ? <p className={styles.description}>{debate.description}</p> : null}
-      <WorkChips works={debate.works} />
-      <p className={styles.description}>{debate.sideA.label} vs {debate.sideB.label}</p>
-      <VoteProgress count={debate.voteCount} threshold={debate.voteThreshold} large />
-      <div className={styles.roomChips}><span className={styles.roomChip}><ClockIcon size={14} />{votingRemaining(debate.votingEndsAt, now)}</span></div>
-    </section>
-    <button type="button" className={styles.primaryButton} disabled={vote.pending === debate.debateId} onClick={() => vote.toggle(debate)}>
-      {debate.myVote ? "투표 취소" : "투표하기"}
-    </button>
-    {tickets ? <p className={styles.centerNote}>내 투표권 {tickets.balance}/{tickets.max}</p> : null}
-    <InfoNote>{debate.voteThreshold}표가 모이는 순간 토론방이 열려요. 마감까지 못 모으면 자동 소각돼요.</InfoNote>
-    {vote.dialog}
-  </>;
-}
-
-/* ───────────── 종료 · 소각 ───────────── */
+/* ───────────── 종료 ───────────── */
 
 function ClosedResult({ debate }: { debate: DebateSummary }) {
   const percentA = debate.sideA.percent ?? 50;

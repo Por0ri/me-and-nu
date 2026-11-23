@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from app.models.debate import DESCRIPTION_MAX, MESSAGE_MAX, SIDE_LABEL_MAX, TITLE_MAX, WORKS_MAX
+from app.models.debate import DESCRIPTION_MAX, MESSAGE_MAX, SIDE_LABEL_INPUT_MAX, TITLE_MAX, WORKS_MAX
 from app.schemas.common import CamelModel
 
 CatalogId = Annotated[int, Field(strict=True, gt=0, le=9223372036854775807)]
@@ -20,8 +20,8 @@ class DebateCreateRequest(CamelModel):
     topic_id: CatalogId
     title: str = Field(min_length=1, max_length=TITLE_MAX)
     description: str | None = Field(default=None, max_length=DESCRIPTION_MAX)
-    side_a: str = Field(min_length=1, max_length=SIDE_LABEL_MAX, description="A 선택지 이름 (예: 나루토)")
-    side_b: str = Field(min_length=1, max_length=SIDE_LABEL_MAX, description="B 선택지 이름 (예: 사스케)")
+    side_a: str = Field(min_length=1, max_length=SIDE_LABEL_INPUT_MAX, description="A 선택지 이름 (예: 나루토)")
+    side_b: str = Field(min_length=1, max_length=SIDE_LABEL_INPUT_MAX, description="B 선택지 이름 (예: 사스케)")
     work_ids: list[CatalogId] = Field(default_factory=list, max_length=WORKS_MAX, description="관련 작품 0~3개")
 
     @field_validator("title", "side_a", "side_b", mode="before")

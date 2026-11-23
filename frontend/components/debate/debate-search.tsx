@@ -15,7 +15,9 @@ import styles from "./debate.module.css";
 /*
  * 토론방 탭 검색 (2026-11-23 시안). 홈 검색과 같은 부품·방식이다(home-screen.tsx WorkSearchField).
  * 검색창을 누르면 뒤가 흐려지고, 빈 칸이면 최근 검색, 입력 중이면 관련 작품 최대 3개가 뜬다.
- * 작품을 고르거나 Enter 를 누르면 지금 탭의 토론만 결과로 보여 주고, 탭을 바꾸면 같은 검색어로 그 탭을 다시 찾는다.
+ * 작품을 고르거나 Enter 를 누르면 그 탭의 토론만 결과로 보여 준다.
+ * 탭마다 검색이 따로다 (2026-11-23 사용자 결정): 탭마다 이 훅을 하나씩 써서 검색어·결과·최근 검색이 다른 탭으로 넘어가지 않고,
+ * 다른 탭에 갔다 돌아오면 그 탭에서 찾아 둔 결과가 그대로 있다.
  */
 
 export type DebateSearchTab = "live" | "vote" | "past";
@@ -24,7 +26,7 @@ export type DebateSearchTab = "live" | "vote" | "past";
 const TAB_STATUS: Record<DebateSearchTab, DebateStatus> = { live: "open", vote: "voting", past: "closed" };
 const SUGGEST_DELAY_MS = 250;
 const SUGGEST_MAX = 3;
-/** 최근 검색은 이 브라우저에 회원별로, 홈 검색과 따로 3개까지 */
+/** 최근 검색은 이 브라우저에 회원별·탭별로, 홈 검색과도 따로 3개까지 (저장 이름: 앞부분 + 탭 + "." + 회원 번호) */
 const RECENT_PREFIX = "pivot.debate-recent-searches.";
 
 type Found = { entry: RecentSearch; debates: DebateSummary[] | null; error: string | null };
@@ -40,6 +42,8 @@ export type DebateSearch = {
   submit: (value: string) => void;
   /** 결과 카드에서 투표·참여한 뒤 그 자리에서 고친다 */
   update: (change: (rows: DebateSummary[]) => DebateSummary[]) => void;
+  /** 다른 탭으로 갈 때: 열린 검색 패널과 입력 중인 글자만 닫는다 (찾아 둔 결과는 이 탭에 남는다) */
+  leave: () => void;
 };
 
 function listQuery(tab: DebateSearchTab, entityId: number): DebateListQuery {
@@ -54,13 +58,13 @@ export function useDebateSearch(tab: DebateSearchTab): DebateSearch {
   const userId = session?.authenticated === true && typeof session.user?.id === "number" ? session.user.id : null;
   const owner = useRef(userId);
   owner.current = userId;
-  const store = useMemo(() => createRecentSearchStore(() => owner.current, undefined, RECENT_PREFIX), []);
+  const store = useMemo(() => createRecentSearchStore(() => owner.current, undefined, `${RECENT_PREFIX}${tab}.`), [tab]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<RecentSearch[]>([]);
   const [suggested, setSuggested] = useState<{ query: string; works: HomeWorkSuggestion[] } | null>(null);
   const [found, setFound] = useState<Found | null>(null);
-  // 검색을 확정했을 때(작품 고르기·Enter) 한 번만 검색 기록을 남긴다 (자유 태그가 필요한지 판단용). 탭을 바꿔 다시 찾을 때는 남기지 않는다.
+  // 검색을 확정했을 때(작품 고르기·Enter) 한 번만 검색 기록을 남긴다 (자유 태그가 필요한지 판단용). 결과를 다시 불러올 때는 남기지 않는다.
   const record = useRef(false);
 
   // 최근 검색은 브라우저 저장소에 있어서 화면이 뜬 뒤에 읽는다.
@@ -130,7 +134,8 @@ export function useDebateSearch(tab: DebateSearchTab): DebateSearch {
     onRemoveRecent: (item) => setRecent(store.remove(item)),
     onClearRecent: () => setRecent(store.clear()),
   };
-  return { query, setQuery, open, view, found, submit: (value) => run({ label: value }), update };
+  const leave = useCallback(() => { setOpen(false); setQuery(""); }, []);
+  return { query, setQuery, open, view, found, submit: (value) => run({ label: value }), update, leave };
 }
 
 /** 검색 결과 (시안): "‘나루토’ 검색 결과 · 검색 결과 닫기". 주제 투표 탭은 투표권 카드, 지난 토론방 탭은 안내 띠(notice)를
@@ -167,7 +172,7 @@ export function DebateSearchResults({ search, tab, notice, showToast }: {
       {(debates ?? []).map((debate) => tab === "live"
         ? <LiveCard key={debate.debateId} debate={debate} now={now} busy={room.pending === debate.debateId} onEnter={room.enter} onLeave={room.askLeave} />
         : tab === "vote"
-          ? <VoteCard key={debate.debateId} debate={debate} now={now} busy={vote.pending === debate.debateId} onToggle={vote.toggle} />
+          ? <VoteCard key={debate.debateId} debate={debate} now={now} busy={vote.pending !== null} onToggle={vote.toggle} />
           : <PastCard key={debate.debateId} debate={debate} />)}
     </div>}
     {room.dialog}

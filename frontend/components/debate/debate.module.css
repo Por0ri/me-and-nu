@@ -79,6 +79,8 @@
 .screen .tab:last-child { justify-self: end; }
 .screen .tab[aria-selected="true"] { color: var(--debate-primary); font-weight: 700; }
 .tab[aria-selected="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px; background: #825abd; }
+/* 아주 좁은 폰(360px 미만)에서는 '내 활동' 탭 세 개(16px 이면 글자 폭 합이 약 273px)가 서로 붙어서 조금 작게 쓴다 */
+@media (max-width: 359px) { .screen .tabs[data-spread] .tab { font-size: 14px; } }
 
 /* 탭 아래 검색창: 홈 검색 부품(WorkSearchField, 위아래 8px + 36px)을 그대로 쓴다. 카드는 검색창 12px 아래 (시안).
    검색창을 누르면 뒤가 흐려지고(홈 .searchDim, z 5) 머리 부분·탭·검색 줄은 흐림 위에 남는다. */
@@ -97,11 +99,19 @@
 .results .stack { padding-top: 0; }
 
 /* 주제 카드 (실시간 토론방·주제 투표·지난 토론방·내 활동, 2026-11-23 시안 값 · 글씨는 시안 문장 폭으로 잼):
-   안쪽 여백 12px, 테두리 #e2d5ff, 모서리 12px. 칩 20px(11px) → 제목 16px → 설명 12px 두 줄 → 작성자 줄 24px(10px) → 버튼 28px(12px) */
+   안쪽 여백 12px, 테두리 #e2d5ff, 모서리 12px. 칩 20px(11px) → 제목 16px → 설명 12px 한 줄(+더보기) → 양쪽 선택지 → 작성자 줄 24px(10px) → 버튼 28px(12px) */
 .topicCard { display: flex; flex-direction: column; padding: 12px; border: 1px solid #e2d5ff; border-radius: 12px; background: #fff; color: inherit; text-decoration: none; }
 .topicCard > .chips { margin-bottom: 3px; }
 .topicTitle { color: #27272a; font-size: 16px; font-weight: 700; line-height: 22px; }
-.topicDescription { display: -webkit-box; overflow: hidden; margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* 설명은 한 줄만, 넘치면 '…' 뒤에 '더보기'. 펼치면 줄바꿈 그대로 전부 보이고 끝에 '접기' (2026-11-23 사용자 결정) */
+.topicDescription { display: flex; align-items: baseline; gap: 4px; min-width: 0; margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; }
+.topicDescription[data-expanded] { display: block; white-space: pre-line; overflow-wrap: anywhere; }
+.descriptionLine { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.screen .moreButton { flex: none; padding: 0; border: 0; background: transparent; color: #52525b; font-size: 12px; font-weight: 600; line-height: 19px; }
+/* 양쪽 선택지: 연보라 테두리 작은 상자 두 개 사이에 보라 'vs' */
+/* 'A vs B' 줄: 상자 없이 설명과 같은 글씨. 설명 바로 아래에 붙이고, 설명이 없으면 설명 자리(제목 아래 2px)에 온다 */
+.topicSides { color: var(--debate-muted); font-size: 12px; line-height: 19px; overflow-wrap: anywhere; }
+:is(.topicTitle, .titleButton) + .topicSides { margin-top: 2px; }
 .topicMeta { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-top: 4px; color: #52525b; font-size: 10px; line-height: 16px; }
 .topicCard > :is(.fillButton, .softFillButton, .cardButtons) { margin-top: 10px; }
 /* 주제 투표 카드는 표 수·막대가 있어 작성자 줄 위아래가 조금 더 넓다 (시안) */
@@ -115,9 +125,9 @@
 .screen .fillButton { background: var(--debate-accent); color: #fff; }
 .screen .softFillButton { background: var(--debate-pill); color: var(--debate-primary); }
 .fillButton:disabled, .softFillButton:disabled { opacity: .55; }
-/* 참여한 방의 버튼 두 개 (방 나가기 · 다시 입장하기). 다시 입장하기는 진한 바탕에 진보라 글씨 (시안 #9c79e6 / #7043b4) */
+/* 참여한 방의 버튼 두 개 (방 나가기 · 다시 입장하기). 다시 입장하기는 '토론 참여하기'(.fillButton)와 같은 진한 바탕에 흰 글씨
+   (2026-11-23 사용자 결정: 시안의 진보라 글씨 #7043b4 대신, 버튼끼리 맞추고 잘 보이게) */
 .cardButtons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.screen .rejoinButton { color: var(--debate-primary); }
 /* 한 번 더 묻는 창 (2026-11-23 시안: 방 나가기). 제목 20px, 본문 16px 두 줄, 버튼 높이 40px */
 .confirm { display: flex; flex-direction: column; width: min(100%, 327px); padding: 22px 20px 20px; border-radius: 16px; background: #fff; text-align: center; box-shadow: 0 16px 40px #0004; }
 .confirm h2 { color: #27272a; font-size: 20px; font-weight: 700; line-height: 26px; }
@@ -144,7 +154,6 @@
 .stack { display: flex; flex-direction: column; gap: 8px; padding-top: 16px; }
 
 /* 카드 공통 */
-.cardLink { color: inherit; text-decoration: none; }
 .cardTitle { font-size: 16px; font-weight: 700; line-height: 23px; }
 .description { color: var(--debate-muted); font-size: 13px; line-height: 19px; }
 .badge { align-self: flex-start; display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px; border-radius: 999px; background: var(--debate-primary); color: #fff; font-size: 11px; font-weight: 600; line-height: 16px; }
@@ -158,23 +167,18 @@
 .metaDivider { width: 1px; height: 16px; background: #e4e4e7; }
 
 /* 버튼 */
-.screen :is(.softButton, .primaryButton, .ghostButton, .dangerText) {
+.screen :is(.softButton, .ghostButton, .dangerText) {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; border: 0; border-radius: 10px; font-size: 13.5px; font-weight: 700; text-decoration: none; white-space: nowrap;
 }
 .screen .softButton { height: 34px; background: var(--debate-soft-strong); color: var(--debate-primary); }
 .softButton[aria-pressed="true"] { background: var(--debate-primary); color: #fff; }
 .softButton:disabled { opacity: .5; }
-.screen .primaryButton { height: 52px; width: 100%; background: var(--debate-primary); color: #fff; font-size: 16px; }
-.primaryButton:disabled { background: #d9cdee; color: #fff; }
 .screen .ghostButton { height: 44px; border: 1px solid var(--debate-line); background: #fff; color: var(--debate-ink); }
 .screen .dangerText { align-self: center; height: 36px; background: transparent; color: var(--debate-muted); font-size: 13px; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
 .buttonRow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
 
 /* 진행 막대 */
-.voteLine { display: flex; align-items: center; gap: 8px; }
-.voteCount { flex: none; color: var(--debate-primary); font-size: 13px; font-weight: 700; }
-.voteCount[data-large] { font-size: 17px; }
 /* 시안: 막대 바탕은 작품 칩과 같은 연보라, 채운 쪽은 마스코트 보라(#9c79e6) */
 .progress { flex: 1; height: 7px; overflow: hidden; border-radius: 999px; background: #decfff; }
 .progressFill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #8f6ad6, var(--debate-primary)); transition: width .3s ease; }
@@ -234,12 +238,16 @@
 /* 진영 투표: 고르기 전 두 버튼(연보라·보라 테두리, 동그라미 체크), 고른 뒤 비율 막대와 '투표 취소' */
 .poll { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .sideChoices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.screen .sideChoice { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; height: 40px; padding: 0 8px; border: 1px solid #c9b6f2; border-radius: 8px; background: #f5f1fe; color: #27272a; font-size: 17px; font-weight: 700; }
+/* 선택지 이름은 20자까지라 길면 줄을 바꾸고 버튼이 그만큼 커진다 (짧은 이름은 시안 그대로 40px) */
+.screen .sideChoice { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 40px; padding: 8px; border: 1px solid #c9b6f2; border-radius: 8px; background: #f5f1fe; color: #27272a; font-size: 17px; font-weight: 700; line-height: 22px; }
 .sideChoice svg { flex: none; color: #b39ced; }
+.sideChoice span { min-width: 0; overflow-wrap: anywhere; text-align: center; }
 .sideChoice:disabled { opacity: .6; }
 .pollResult { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border: 1px solid var(--debate-primary); border-radius: 8px; background: #f5f1fe; }
 .pollLabels { display: flex; justify-content: space-between; gap: 12px; color: #27272a; font-size: 17px; font-weight: 500; line-height: 24px; }
 .pollLabels b { margin-left: 8px; font-weight: 700; }
+.pollLabels > span { min-width: 0; overflow-wrap: anywhere; }
+.pollLabels > span:last-child { text-align: right; }
 .pollLabels [data-mine] { color: var(--debate-primary); }
 .pollBar { display: block; height: 12px; overflow: hidden; border-radius: 999px; background: #e2d5ff; }
 .pollBar > span { display: block; height: 100%; border-radius: inherit; background: var(--debate-primary); transition: width .3s ease; }
@@ -293,7 +301,7 @@
 .screen .input { height: 42px; padding: 0 14px; }
 .screen .input:disabled { background: #fafafa; }
 .textarea { display: block; min-height: 140px; padding: 12px 14px 30px; resize: none; font: inherit; font-size: 14px; line-height: 21px; }
-.input:focus, .textarea:focus, .choiceInput input:focus { border-color: var(--debate-primary); }
+.input:focus, .textarea:focus { border-color: var(--debate-primary); }
 /* 안내 문구는 시안처럼 12px (입력한 글자는 14px). 입력 중에는 테두리만 보라로 바뀐다 (공통 3px 초점 테두리는 끈다) */
 .screen :is(.input, .textarea, .choiceInput input)::placeholder { color: #a1a1aa; font-size: 12px; opacity: 1; }
 .screen :is(.input, .textarea, .choiceInput input):focus-visible { outline: none; }
@@ -315,6 +323,8 @@
 .choiceTag { flex: none; display: grid; place-items: center; width: 68px; height: 30px; padding: 0; border-radius: 6px; background: #efe7ff; color: var(--debate-primary); font-size: 14px; font-weight: 700; }
 .choiceInput { position: relative; flex: 1; min-width: 0; }
 .screen .choiceInput input { width: 100%; height: 32px; padding: 0 36px 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; outline: none; background: #fff; color: var(--debate-ink); font-size: 14px; }
+/* 다른 칸처럼 입력 중에는 테두리가 보라 (바로 위 규칙과 우선순위가 같아서 그 뒤에 둔다) */
+.screen .choiceInput input:focus { border-color: var(--debate-primary); }
 .screen .choiceInput button { position: absolute; top: 50%; right: 4px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #52525b; transform: translateY(-50%); }
 /* 아래 버튼: 임시 저장(회색) · 주제 올리기(필수 칸을 다 채우면 보라) */
 .createButtons { display: grid; grid-template-columns: 102px 1fr; gap: 8px; }
@@ -339,7 +349,6 @@
 .emptyRules em { color: var(--debate-primary); font-style: normal; font-weight: 700; }
 .screen .bigButton { display: flex; align-items: center; justify-content: center; width: 100%; height: 52px; margin-top: 56px; border-radius: 999px; background: var(--debate-primary); color: #fff; font-size: 16px; font-weight: 600; text-decoration: none; }
 .stack > .bigButton { margin-top: 16px; }
-.centerNote { display: flex; align-items: center; justify-content: center; gap: 4px; color: var(--debate-muted); font-size: 12px; }
 
 /* 상태 표시 */
 .state { padding: 36px 16px; border-radius: 14px; background: #fafafa; color: var(--debate-muted); font-size: 13.5px; text-align: center; }

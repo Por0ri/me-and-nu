@@ -23,8 +23,11 @@ export function DebateHome({ initialTab }: { initialTab: DebateHomeTab }) {
   const [tab, setTab] = useState<DebateHomeTab>(initialTab);
   const [guideOpen, setGuideOpen] = useState(false);
   const [toast, showToast] = useToast();
-  const search = useDebateSearch(tab);
+  // 탭마다 검색이 따로다 (2026-11-23 사용자 결정): 한 탭에서 찾은 검색어·결과·최근 검색이 다른 탭으로 넘어가지 않는다.
+  const searches = { live: useDebateSearch("live"), vote: useDebateSearch("vote"), past: useDebateSearch("past") };
+  const search = searches[tab];
   const select = (next: DebateHomeTab) => {
+    search.leave();
     setTab(next);
     // 주소의 탭만 바꾸고 화면은 다시 불러오지 않는다.
     window.history.replaceState(null, "", next === "live" ? "/pivot/debate" : `/pivot/debate?tab=${next}`);
@@ -95,7 +98,7 @@ function VoteTab({ showToast }: { showToast: ShowToast }) {
     {tickets ? <VoteTicketBox tickets={tickets} /> : null}
     <DebateState loading={state.loading && debates.length === 0} error={state.error} onRetry={retry} />
     {!state.loading && !state.error && debates.length === 0 ? <p className={styles.state}>투표 중인 주제가 없어요. 첫 주제를 올려보세요.</p> : null}
-    {debates.map((debate) => <VoteCard key={debate.debateId} debate={debate} now={now} busy={vote.pending === debate.debateId} onToggle={vote.toggle} />)}
+    {debates.map((debate) => <VoteCard key={debate.debateId} debate={debate} now={now} busy={vote.pending !== null} onToggle={vote.toggle} />)}
     {vote.dialog}
   </div>;
 }

@@ -43,7 +43,7 @@ NOT_JOINED = {403: _error("DEBATE_NOT_JOINED", "토론에 참여한 사람만 �
 
 @router.post(
     "/debates", status_code=status.HTTP_201_CREATED, response_model=DebateSummary, summary="토론 주제 올리기 (D-01)",
-    description="제목(1~60자), 양쪽 선택지(각 1~20자, 서로 달라야 함), 간단한 설명(선택, 200자), 관련 작품(그 분야 작품 목록에서 0~3개)을 받는다. "
+    description="제목(1~60자), 양쪽 선택지(각 1~12자, 서로 달라야 함), 간단한 설명(선택, 200자), 관련 작품(그 분야 작품 목록에서 0~3개)을 받는다. "
                 "올린 순간부터 7일 동안 개설 투표를 받는다. 투표 중인 내 주제가 이미 있으면 409 DEBATE_ACTIVE_LIMIT.",
     responses={**COMMON_ERRORS, 404: _error("TOPIC_NOT_FOUND", "Topic을 찾을 수 없습니다.", "없는 분야"),
                409: _error("DEBATE_ACTIVE_LIMIT", "투표 중인 내 주제가 이미 있습니다.", "진행 중 주제 한도")},
@@ -114,8 +114,10 @@ async def get_debate(debate_id: DebateId, db: Db, user: Member) -> DebateSummary
 
 @router.delete(
     "/debates/{debateId}", status_code=status.HTTP_204_NO_CONTENT, summary="내 주제 삭제 (D-06)",
-    description="작성자만, 투표 중일 때(토론방이 열리기 전)만 지울 수 있다. 받은 표도 함께 지우고, 투표한 사람에게 투표권을 1개씩 돌려준다(최대치를 넘지 않음).",
-    responses={**COMMON_ERRORS, **NOT_FOUND, 409: _error("DEBATE_DELETE_NOT_ALLOWED", "토론방으로 열렸거나 끝난 주제는 지울 수 없습니다.", "지울 수 없는 상태")},
+    description="작성자만, 투표 중일 때(토론방이 열리기 전)만 지울 수 있다. 남의 주제는 상태와 상관없이 404 DEBATE_NOT_FOUND(있는지도 알려 주지 않음). "
+                "받은 표도 함께 지우고, 투표한 사람에게 투표권을 1개씩 돌려준다(최대치를 넘지 않음). "
+                "열렸거나 끝난 주제는 409 DEBATE_DELETE_NOT_ALLOWED, 지우는 사이 표가 계속 바뀌면 409 DEBATE_BUSY(잠시 후 다시 시도).",
+    responses={**COMMON_ERRORS, **NOT_FOUND, 409: _error("DEBATE_DELETE_NOT_ALLOWED", "토론방으로 열렸거나 끝난 주제는 지울 수 없습니다.", "지울 수 없는 상태 · 표가 계속 바뀜(DEBATE_BUSY)")},
 )
 async def delete_debate(debate_id: DebateId, db: Db, user: Member, _: Csrf) -> None:
     await service.delete_debate(db, user.user_id, debate_id)

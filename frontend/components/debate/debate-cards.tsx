@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cancelVote, getVoteTickets, joinDebate, leaveDebate, voteDebate } from "@/lib/debate/client";
 import { roomRemaining, votingRemaining } from "@/lib/debate/format";
 import { DEBATE_RULES } from "@/lib/debate/rules";
@@ -17,13 +17,49 @@ import styles from "./debate.module.css";
  * 실시간(LiveCard) · 주제 투표(VoteCard) · 지난 토론방(PastCard).
  */
 
-/** 카드 윗부분: 작품 칩, 제목(누르면 상세), 설명(있을 때만, 두 줄까지) */
+/** 카드 윗부분: 작품 칩, 제목, 설명 한 줄(+더보기), 양쪽 선택지.
+ *  제목은 눌리지 않는다 (2026-11-23 사용자 결정): 따로 여는 화면 없이 카드의 버튼으로 참여·투표한다.
+ *  실시간 방의 참여 화면은 알림 등으로 방 주소를 바로 열 때를 위해서만 남아 있다. */
 export function TopicHead({ debate }: { debate: DebateSummary }) {
   return <>
     <WorkChips works={debate.works} />
-    <Link className={styles.cardLink} href={`/pivot/debate/${debate.debateId}`}><h3 className={styles.topicTitle}>{debate.title}</h3></Link>
-    {debate.description ? <p className={styles.topicDescription}>{debate.description}</p> : null}
+    <h3 className={styles.topicTitle}>{debate.title}</h3>
+    {debate.description ? <TopicDescription text={debate.description} /> : null}
+    <TopicSides debate={debate} />
   </>;
+}
+
+/** 설명 (2026-11-23 사용자 결정): 카드가 세로로 길어지지 않게 한 줄만 보이고, 넘치면 끝에 '더보기'.
+ *  누르면 그 자리에서 아래로 이어서 전부 보이고(줄바꿈 그대로), '접기'로 다시 한 줄이 된다. */
+function TopicDescription({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflow, setOverflow] = useState(false);
+  const line = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const element = line.current;
+    if (!element || expanded) return;
+    // 화면 폭이 바뀌면 다시 잰다 (넘칠 때만 '더보기')
+    const check = () => setOverflow(element.scrollWidth > element.clientWidth + 1);
+    check();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(check);
+    observer?.observe(element);
+    return () => observer?.disconnect();
+  }, [text, expanded]);
+  if (expanded) {
+    return <p className={styles.topicDescription} data-expanded="">
+      {text} <button type="button" className={styles.moreButton} aria-expanded="true" onClick={() => setExpanded(false)}>접기</button>
+    </p>;
+  }
+  return <p className={styles.topicDescription}>
+    <span ref={line} className={styles.descriptionLine}>{text}</span>
+    {overflow ? <button type="button" className={styles.moreButton} aria-expanded="false" onClick={() => setExpanded(true)}>더보기</button> : null}
+  </p>;
+}
+
+/** 양쪽 선택지 (2026-11-23 사용자 결정): 설명 아래에 'A vs B'. 카드만 보고도 무엇을 두고 겨루는지 알 수 있게.
+ *  카드가 길어지지 않게 상자 없이 설명과 같은 글씨로 쓴다 (2026-11-24 사용자 결정). */
+function TopicSides({ debate }: { debate: DebateSummary }) {
+  return <p className={styles.topicSides}>{debate.sideA.label} vs {debate.sideB.label}</p>;
 }
 
 /** 실시간 토론방 카드: 참여한 방은 '방 나가기'·'다시 입장하기', 아니면 '토론 참여하기' */
@@ -41,11 +77,11 @@ export function LiveCard({ debate, now, busy, onEnter, onLeave, mine = false }: 
       <span className={styles.meta}><ClockIcon size={16} />{mine ? `${roomRemaining(debate.closesAt, now)} 남음` : `남은 시간 ${roomRemaining(debate.closesAt, now)}`}</span>
       {mine ? <span className={styles.statusPill}>토론 중</span> : null}
     </div>
-    {/* 다시 입장하기: 진한 버튼 바탕에 진보라 글씨 (시안) */}
+    {/* 다시 입장하기: '토론 참여하기'와 같은 진한 바탕에 흰 글씨 (2026-11-23 사용자 결정) */}
     {debate.joined
       ? <div className={styles.cardButtons}>
         <button type="button" className={styles.softFillButton} disabled={busy} onClick={() => onLeave(debate)}>방 나가기</button>
-        <Link className={`${styles.fillButton} ${styles.rejoinButton}`} href={`/pivot/debate/${debate.debateId}`}>다시 입장하기</Link>
+        <Link className={styles.fillButton} href={`/pivot/debate/${debate.debateId}`}>다시 입장하기</Link>
       </div>
       : <button type="button" className={styles.fillButton} disabled={busy} onClick={() => onEnter(debate)}>토론 참여하기</button>}
   </article>;
@@ -79,7 +115,8 @@ export function PastCard({ debate }: { debate: DebateSummary }) {
   return <article className={styles.topicCard}>
     <WorkChips works={debate.works} />
     <button type="button" className={styles.titleButton} onClick={() => setOpen(true)}><h3 className={styles.topicTitle}>{debate.title}</h3></button>
-    {debate.description ? <p className={styles.topicDescription}>{debate.description}</p> : null}
+    {debate.description ? <TopicDescription text={debate.description} /> : null}
+    <TopicSides debate={debate} />
     <div className={styles.topicMeta}>
       <AuthorLine debate={debate} />
       <span className={styles.meta}>총 {debate.participantCount.toLocaleString("ko-KR")}명 투표</span>
@@ -172,50 +209,50 @@ export type VoteChange = { debate: DebateSummary; tickets: VoteTickets; opened: 
 
 /** 주제 투표·취소 (주제 투표 탭·내 활동·검색 결과 공용).
  *  투표권이 이미 가득(최대 3개)일 때 취소하면 돌려받지 못하므로 먼저 확인 창을 띄운다 (2026-11-23 시안).
- *  화면은 돌려준 dialog 를 그려야 한다. */
+ *  요청은 한 번에 하나만 보낸다: 여러 카드를 빠르게 누르면 응답 순서가 바뀌어 투표권 숫자가 옛 값으로 덮일 수 있어서,
+ *  하나가 끝나기 전에는 다른 투표·취소를 받지 않는다. 화면은 pending 이 있는 동안 투표 버튼을 모두 잠그고, 돌려준 dialog 를 그려야 한다. */
 export function useVoteActions(onChange: (change: VoteChange) => void, showToast: ShowToast): {
   pending: number | null; toggle: (debate: DebateSummary) => void; dialog: ReactNode;
 } {
   const [pending, setPending] = useState<number | null>(null);
   const [confirming, setConfirming] = useState<{ debate: DebateSummary; before: number } | null>(null);
-  const cancel = async (debate: DebateSummary, before: number | null) => {
-    setPending(debate.debateId);
+  // 버튼 잠금은 다시 그린 뒤에야 걸리므로, 같은 순간에 두 번 눌린 것은 이 표시로 막는다.
+  const working = useRef(false);
+  const run = async (debateId: number, task: () => Promise<void>) => {
+    if (working.current) return;
+    working.current = true;
+    setPending(debateId);
     try {
-      const result = await cancelVote(debate.debateId);
-      onChange({ ...result, opened: false });
-      const refunded = before === null || result.tickets.balance > before;
-      showToast(refunded ? "투표를 취소했어요.  투표권 1개가 반환되었어요" : "투표를 취소했어요.", "done");
+      await task();
     } catch (error) {
       showToast(errorText(error));
     } finally {
+      working.current = false;
       setPending(null);
     }
   };
-  const toggle = async (debate: DebateSummary) => {
+  const cancel = async (debate: DebateSummary, before: number | null) => {
+    const result = await cancelVote(debate.debateId);
+    onChange({ ...result, opened: false });
+    const refunded = before === null || result.tickets.balance > before;
+    showToast(refunded ? "투표를 취소했어요.  투표권 1개가 반환되었어요" : "투표를 취소했어요.", "done");
+  };
+  const toggle = (debate: DebateSummary) => run(debate.debateId, async () => {
     if (debate.myVote) {
       // 투표권은 시간이 지나면 충전되므로 화면의 숫자 대신 지금 값을 다시 읽어 본다. 못 읽으면 묻지 않고 취소한다.
-      setPending(debate.debateId);
       const tickets = await getVoteTickets().catch(() => null);
-      setPending(null);
       if (tickets && tickets.balance >= tickets.max) { setConfirming({ debate, before: tickets.balance }); return; }
       await cancel(debate, tickets?.balance ?? null);
       return;
     }
-    setPending(debate.debateId);
-    try {
-      const result = await voteDebate(debate.debateId);
-      onChange(result);
-      showToast(result.opened ? `${DEBATE_RULES.voteThreshold}표 달성! 토론방이 열렸어요. 투표한 사람들에게 알림이 가요.` : "투표했어요.", "done");
-    } catch (error) {
-      showToast(errorText(error));
-    } finally {
-      setPending(null);
-    }
-  };
+    const result = await voteDebate(debate.debateId);
+    onChange(result);
+    showToast(result.opened ? `${DEBATE_RULES.voteThreshold}표 달성! 토론방이 열렸어요. 투표한 사람들에게 알림이 가요.` : "투표했어요.", "done");
+  });
   const keepVote = useCallback(() => setConfirming(null), []);
   const dialog = confirming ? <ConfirmDialog title="투표를 취소할까요?"
     body={`현재 투표권을 최대 ${DEBATE_RULES.ticketMax}개 보유하고 있어,\n취소해도 투표권은 추가로 반환되지 않아요.`}
     cancelLabel="투표 유지하기" confirmLabel="투표 취소" onCancel={keepVote}
-    onConfirm={() => { const target = confirming; setConfirming(null); void cancel(target.debate, target.before); }} /> : null;
+    onConfirm={() => { const target = confirming; setConfirming(null); void run(target.debate.debateId, () => cancel(target.debate, target.before)); }} /> : null;
   return { pending, toggle: (debate) => void toggle(debate), dialog };
 }

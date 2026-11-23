@@ -31,14 +31,6 @@ export function AuthorLine({ debate }: { debate: Pick<DebateSummary, "authorNick
   </span>;
 }
 
-export function VoteProgress({ count, threshold, large = false }: { count: number; threshold: number; large?: boolean }) {
-  const percent = Math.min(100, Math.round((count / threshold) * 100));
-  return <div className={styles.voteLine}>
-    <span className={styles.voteCount} data-large={large || undefined}>{count}/{threshold}표</span>
-    <ProgressBar value={percent} label="개설까지" />
-  </div>;
-}
-
 function ProgressBar({ value, label }: { value: number; label: string }) {
   return <span className={styles.progress} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}>
     <span className={styles.progressFill} style={{ width: `${value}%`, display: "block" }} />

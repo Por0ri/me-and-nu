@@ -23,6 +23,19 @@ type Draft = { works: DebateWorkOption[]; title: string; description: string; si
 const DRAFT_PREFIX = "pivot.debate-draft.";
 const WORK_OPTIONS_MAX = 5;
 
+/** 저장해 둔 값이 지금 화면이 쓰는 모양과 다르면(예전 모양·손으로 바뀐 값) 불러오지 않는다. 화면이 오류로 멈추지 않게 다섯 칸을 다 본다. */
+function isDraft(value: unknown): value is Draft {
+  if (!value || typeof value !== "object") return false;
+  const draft = value as Record<string, unknown>;
+  return (["title", "description", "sideA", "sideB"] as const).every((field) => typeof draft[field] === "string")
+    && Array.isArray(draft.works)
+    && draft.works.every((work: unknown) => {
+      const row = work as Partial<DebateWorkOption> | null;
+      return !!row && typeof row === "object" && Number.isSafeInteger(row.entityId) && typeof row.name === "string"
+        && Array.isArray(row.aliases) && row.aliases.every((alias) => typeof alias === "string");
+    });
+}
+
 function draftStore(userId: number | null) {
   const key = userId === null ? null : DRAFT_PREFIX + userId;
   return {
@@ -30,8 +43,7 @@ function draftStore(userId: number | null) {
       if (!key) return null;
       try {
         const value: unknown = JSON.parse(window.localStorage.getItem(key) ?? "null");
-        const draft = value as Draft | null;
-        return draft && typeof draft.title === "string" && Array.isArray(draft.works) ? draft : null;
+        return isDraft(value) ? value : null;
       } catch { return null; }
     },
     write(draft: Draft): boolean {
@@ -74,8 +86,10 @@ export function DebateCreate() {
     setWorks(draft.works.slice(0, DEBATE_RULES.worksMax));
     setTitle(draft.title);
     setDescription(draft.description);
-    setSideA(draft.sideA);
-    setSideB(draft.sideB);
+    // 선택지 상한을 20자에서 12자로 줄여서(2026-11-24) 그 전에 저장한 글은 더 길 수 있다. 서버처럼 글자 단위로 자른다.
+    const clip = (text: string) => Array.from(text).slice(0, DEBATE_RULES.sideLabelMax).join("");
+    setSideA(clip(draft.sideA));
+    setSideB(clip(draft.sideB));
     showToast("임시 저장한 내용을 불러왔어요.", "done");
   }, [userId, showToast]);
 
@@ -183,7 +197,7 @@ export function DebateCreate() {
             <label className={styles.choiceTag} htmlFor={`${ids}-side-${side}`}>선택지 {index + 1}</label>
             <div className={styles.choiceInput}>
               <input id={`${ids}-side-${side}`} value={value} maxLength={DEBATE_RULES.sideLabelMax} onChange={(event) => setValue(event.target.value)}
-                placeholder={example} aria-required="true" />
+                placeholder={`${example} (최대 ${DEBATE_RULES.sideLabelMax}자)`} aria-required="true" />
               {value ? <button type="button" aria-label={`선택지 ${index + 1} 지우기`} onClick={() => setValue("")}><CloseIcon size={18} /></button> : null}
             </div>
           </div>)}

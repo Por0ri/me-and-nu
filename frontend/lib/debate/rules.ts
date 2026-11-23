@@ -1,6 +1,6 @@
 /**
  * 토론방 규칙 값. 백엔드 설정(DEBATE_*)의 기본값과 같다.
- * 글자 수 상한은 DB 칼럼 크기와 같다 (backend/app/models/debate.py).
+ * 글자 수 상한은 DB 칼럼 크기와 같다 (backend/app/models/debate.py). 선택지 이름만 칼럼(20자)보다 짧게 받는다 (SIDE_LABEL_INPUT_MAX).
  */
 export const DEBATE_RULES = {
   voteThreshold: 10,
@@ -15,7 +15,8 @@ export const DEBATE_RULES = {
   resultRetentionDays: 9,
   titleMax: 60,
   descriptionMax: 200,
-  sideLabelMax: 20,
+  /** 진영 버튼 한 줄에 6자쯤 들어가서, 12자면 대부분 두 줄 안에 든다 (2026-11-24 결정) */
+  sideLabelMax: 12,
   messageMax: 300,
   worksMax: 3,
 } as const;

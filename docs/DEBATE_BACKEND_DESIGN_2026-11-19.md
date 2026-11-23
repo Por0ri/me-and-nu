@@ -174,7 +174,7 @@ stateDiagram-v2
 | `author_user_id` | bigint FK → `user_account`, NULL 허용 | 탈퇴 회원 삭제 때 NULL로 바꾸고 토론 기록은 남긴다 |
 | `title` | varchar(60) | |
 | `description` | varchar(200), NULL 허용 | |
-| `side_a_label`, `side_b_label` | varchar(20) | 선택지 이름. 예: 나루토 / 사스케, 된다 / 못 된다 |
+| `side_a_label`, `side_b_label` | varchar(20) | 선택지 이름. 예: 나루토 / 사스케, 된다 / 못 된다. 입력은 12자까지 받는다 (6.1 아래 설명) |
 | `status` | varchar(10) | `voting`, `open`, `closed`, `expired` |
 | `vote_count` | int | 개설 투표 수 |
 | `side_a_count`, `side_b_count` | int | 진영별 인원 |
@@ -244,7 +244,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | 실시간 연결 | 1인 동시 3개, 20초마다 연결 유지 신호 |
 | 지난 토론방 결과 보관 | 끝난 뒤 9일. 지나면 목록에서 빠지고 정리 작업이 지운다 |
 
-설정 이름: `DEBATE_ENABLED`, `DEBATE_VOTE_THRESHOLD`, `DEBATE_VOTING_PERIOD_MINUTES`, `DEBATE_ROOM_DURATION_MINUTES`, `DEBATE_VOTE_TICKET_MAX`, `DEBATE_VOTE_TICKET_REFILL_MINUTES`, `DEBATE_ACTIVE_PER_USER`, `DEBATE_MESSAGE_RATE_COUNT`, `DEBATE_MESSAGE_RATE_WINDOW_SECONDS`, `DEBATE_STREAM_PER_USER`, `DEBATE_STREAM_HEARTBEAT_SECONDS`, `DEBATE_RESULT_RETENTION_DAYS`. 글자 수 상한(제목 60, 설명 200, 선택지 20, 채팅 300)은 칼럼 크기와 같아서 설정이 아니라 모델 상수다.
+설정 이름: `DEBATE_ENABLED`, `DEBATE_VOTE_THRESHOLD`, `DEBATE_VOTING_PERIOD_MINUTES`, `DEBATE_ROOM_DURATION_MINUTES`, `DEBATE_VOTE_TICKET_MAX`, `DEBATE_VOTE_TICKET_REFILL_MINUTES`, `DEBATE_ACTIVE_PER_USER`, `DEBATE_MESSAGE_RATE_COUNT`, `DEBATE_MESSAGE_RATE_WINDOW_SECONDS`, `DEBATE_STREAM_PER_USER`, `DEBATE_STREAM_HEARTBEAT_SECONDS`, `DEBATE_RESULT_RETENTION_DAYS`. 글자 수 상한(제목 60, 설명 200, 채팅 300)은 칼럼 크기와 같아서 설정이 아니라 모델 상수다. 선택지 이름만 입력 상한(`SIDE_LABEL_INPUT_MAX`, 12자)을 칼럼(20자)보다 작게 둔다. 진영 버튼 한 줄에 6자쯤 들어가서 12자면 대부분 두 줄 안에 들기 때문이다 (2026-11-24 결정, 입력 검사만 줄여서 migration 없음).
 
 ### 6.2 투표권 계산
 
@@ -289,7 +289,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | D-03 | GET | `/debates?topicId=&status=open&entityId=` | 지금 열린 토론방 |
 | D-04 | GET | `/debates?topicId=&status=ended&entityId=` | 지난 토론방: 48시간이 끝난 방만, 끝난 뒤 9일까지 |
 | D-05 | GET | `/debates/{debateId}` | 상세: 상태, 비율, 작성자 닉네임, 참여 인원, 내 투표·진영·참여, 결과 |
-| D-06 | DELETE | `/debates/{debateId}` | 내 주제 삭제. 작성자만, 투표 중일 때(토론방이 열리기 전)만. 받은 표도 함께 지우고 투표한 사람(작성자 포함)에게 투표권을 1개씩 돌려준다(최대치를 넘지 않음). 열렸거나 끝난 주제는 409 `DEBATE_DELETE_NOT_ALLOWED` (2026-11-23 사용자 지시로 '표 0개일 때만'에서 바꿈) |
+| D-06 | DELETE | `/debates/{debateId}` | 내 주제 삭제. 작성자만, 투표 중일 때(토론방이 열리기 전)만. 받은 표도 함께 지우고 투표한 사람(작성자 포함)에게 투표권을 1개씩 돌려준다(최대치를 넘지 않음). 열렸거나 끝난 주제는 409 `DEBATE_DELETE_NOT_ALLOWED` (2026-11-23 사용자 지시로 '표 0개일 때만'에서 바꿈). 남의 주제는 상태와 상관없이 404 — 잠그기 전에 작성자부터 확인해서 아무 줄도 잠그지 않는다. 지우는 사이 표가 세 번 연달아 바뀌면 409 `DEBATE_BUSY` |
 | D-07 | PUT | `/debates/{debateId}/vote` | 투표. 이미 했으면 투표권을 쓰지 않고 그대로 200 |
 | D-08 | DELETE | `/debates/{debateId}/vote` | 투표 취소 |
 | D-09 | PUT | `/debates/{debateId}/side` | 진영 고르기·바꾸기 `{side: "a" \| "b"}`. 바뀐 토론 요약을 돌려준다. 같은 진영을 다시 골라도 200. 참여한 사람만 |
@@ -375,7 +375,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 기능 하나마다 백엔드를 만들고 바로 화면을 붙여 브라우저로 확인한다.
 
 1. 규칙 설정·모델·migration·기능 스위치 (API 없음) — **완료**
-2. 투표 흐름 API(D-01~08, D-13~17) + 개설 알림 → 투표 화면 — **완료**. 테스트 `tests/test_debate_api.py`. 화면은 `NEXT_PUBLIC_DEBATE_DATA_SOURCE=api`면 진짜 API를 쓴다(열린 토론방의 채팅은 3단계에서 붙였다)
+2. 투표 흐름 API(D-01~08, D-13~17) + 개설 알림 → 투표 화면 — **완료**. 테스트 `tests/test_debate_api.py`. 화면은 진짜 API를 쓴다(가짜 데이터는 개발 서버에서 `NEXT_PUBLIC_DEBATE_DATA_SOURCE=mock` 일 때만, 열린 토론방의 채팅은 3단계에서 붙였다)
 3. 방 API(D-09~12) + 메모리 허브 + SSE → 토론방 화면 — **완료**. 테스트 `tests/test_debate_realtime.py`(허브, 스트림 본문, 진영·채팅·속도 제한, 다시 연결과 놓친 채팅, DB 연결 반납)
 4. 정리 작업 + 지난 토론방 → 지난 토론방 화면 — **완료**. 테스트 `tests/test_debate_finalize.py`(상태 저장·채팅 삭제·미리보기·다시 돌리기, 9일 보관과 삭제·연쇄 삭제, 다른 DB 거절). 로컬 PostgreSQL에서 끝난 방 2개를 닫고 채팅 9개를 지운 것을 확인했다
 5. Checking에서 실시간 확인([3.3](#33-구현-직후-checking에서-확인할-것)), 부하 시험 → README API 표 갱신
@@ -387,7 +387,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 카카오 키가 없는 로컬에서는 기존 데모 로그인으로 세션을 만든 뒤 `/pivot`으로 넘어간다. 쿠키가 같은 `localhost`에 저장되어 로그인이 이어진다.
 
 1. 백엔드 `.env`: 토론 migration을 적용한 로컬 DB, `ENABLE_DEV_API=true`, `ENABLE_DEV_AUTH_BYPASS=false`, `DEBATE_ENABLED=true`. 기존 로컬 DB와 섞이지 않게 별도 DB를 쓴다.
-2. 프론트 `.env.local`: `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`, `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`, `NEXT_PUBLIC_CONSUMER_DATA_MODE=api`, `NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true`, `NEXT_PUBLIC_DEBATE_DATA_SOURCE=api`(빼면 가짜 데이터 화면).
+2. 프론트 `.env.local`: `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`, `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`, `NEXT_PUBLIC_CONSUMER_DATA_MODE=api`, `NEXT_PUBLIC_ENABLE_LOCAL_DEMO_LOGIN=true`, 토론 화면은 기본이 진짜 API 다. 가짜 데이터 화면은 개발 서버(`next dev`)에서 `NEXT_PUBLIC_DEBATE_DATA_SOURCE=mock` 을 직접 켤 때만 나오고, 배포용 빌드는 이 값과 상관없이 항상 진짜 API 를 쓴다(2026-11-23: 회원이 가짜 토론방을 보지 않게).
 3. `http://localhost:3000/consumer/login`에서 로그인 카드를 누르면 새 데모 계정으로 로그인된다. 이어서 열리는 예전 온보딩 화면(`/consumer/onboarding`)은 영화 분야 기준이라 애니 분야만 있는 DB에서는 "온보딩 선택지를 불러오지 못했습니다"가 뜬다. 로그인은 이미 된 상태이므로 무시한다.
 4. 주소창에 `http://localhost:3000/pivot/consent`를 넣으면 온보딩(동의 → 프로필 → 취향)을 거쳐 홈으로 간다. 온보딩을 마친 계정은 자동으로 홈으로 간다.
 5. 다른 사람 역할은 시험 스크립트 `backend/scripts/debate_local_actors.py`로 한다. 개발용 가입·로그인으로 시험 계정(`debate-actor-NN@example.com`)을 만들고 온보딩까지 마친 뒤 움직인다. 로컬 주소에서만 실행된다.

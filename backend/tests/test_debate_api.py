@@ -193,6 +193,18 @@ def test_create_validates_input_and_keeps_one_voting_topic_per_member(debate_api
     assert create(author, title="두 번째 주제").status_code == 201
 
 
+def test_side_labels_take_up_to_12_characters(debate_api):
+    """진영 버튼이 두 줄 안에 들게 선택지 이름은 12자까지만 받는다. DB 칼럼은 20자 그대로다 (2026-11-24)."""
+    member = debate_api.member()
+    too_long = create(member, side_a="가" * 13)
+    assert too_long.status_code == 422 and too_long.json()["code"] == "VALIDATION_ERROR"
+    assert any(item["field"] == "sideA" for item in too_long.json()["fields"]), too_long.json()
+    # 앞뒤 공백과 겹친 공백을 줄인 뒤에 센다.
+    response = create(member, side_a="  " + "가" * 12 + "  ", side_b="우즈마키  나루토의 아들")
+    assert response.status_code == 201, response.json()
+    assert (response.json()["sideA"]["label"], response.json()["sideB"]["label"]) == ("가" * 12, "우즈마키 나루토의 아들")
+
+
 def test_votes_spend_and_refund_tickets_and_refill_every_hour(debate_api):
     authors = [debate_api.member() for _ in range(4)]
     debates = [create(author, title=f"주제 {index}").json()["debateId"] for index, author in enumerate(authors)]
@@ -290,14 +302,30 @@ def test_only_the_author_can_delete_a_voting_topic_and_voters_get_tickets_back(d
     assert create(author, title="다시 올린 주제").status_code == 201
 
 
+def test_others_cannot_delete_a_topic_that_already_has_votes(debate_api):
+    """남의 주제는 표가 있어도, 투표한 사람이어도 지울 수 없고(404) 주제·표·투표권은 그대로다."""
+    author, voter, stranger = debate_api.member(), debate_api.member(), debate_api.member()
+    debate_id = create(author).json()["debateId"]
+    assert call(voter, "PUT", f"/debates/{debate_id}/vote").json()["tickets"]["balance"] == 2
+    for member in (voter, stranger):
+        refused = call(member, "DELETE", f"/debates/{debate_id}")
+        assert refused.status_code == 404 and refused.json()["code"] == "DEBATE_NOT_FOUND"
+    assert call(author, "GET", f"/debates/{debate_id}").json()["voteCount"] == 1
+    assert call(voter, "GET", "/users/me/debate-tickets").json()["balance"] == 2
+    assert [row["debateId"] for row in call(voter, "GET", "/users/me/debate-votes").json()["items"]] == [debate_id]
+
+
 def test_an_opened_topic_cannot_be_deleted(debate_api):
-    author = debate_api.member()
+    author, stranger = debate_api.member(), debate_api.member()
     debate_id = create(author).json()["debateId"]
     for member in (author, debate_api.member(), debate_api.member()):
         assert call(member, "PUT", f"/debates/{debate_id}/vote").status_code == 200
     assert call(author, "GET", f"/debates/{debate_id}").json()["status"] == "open"
     refused = call(author, "DELETE", f"/debates/{debate_id}")
     assert refused.status_code == 409 and refused.json()["code"] == "DEBATE_DELETE_NOT_ALLOWED"
+    # 남에게는 열린 방이어도 '지울 수 없는 상태'가 아니라 그냥 없는 주제로 답한다
+    assert call(stranger, "DELETE", f"/debates/{debate_id}").json()["code"] == "DEBATE_NOT_FOUND"
+    assert call(author, "GET", f"/debates/{debate_id}").json()["status"] == "open"
 
 
 def test_lists_search_and_my_activity(debate_api):
