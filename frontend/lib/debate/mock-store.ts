@@ -242,6 +242,11 @@ function endedAt(debate: StoredDebate): number {
   return debate.closesAt ?? debate.votingEndsAt;
 }
 
+/** 끝난 지 보관 기간(9일)이 안 지났거나 아직 진행 중인 토론. 서버처럼 지난 것은 없는 것으로 본다. */
+function kept(debate: StoredDebate, now: number): boolean {
+  return endedAt(debate) > now - RULES.resultRetentionDays * DAY;
+}
+
 function matches(debate: StoredDebate, text: string): boolean {
   const needle = text.trim().toLowerCase();
   if (!needle) return true;
@@ -263,14 +268,17 @@ export async function listDebates(query: DebateListQuery): Promise<DebateSummary
     const wanted = query.result ?? "all";
     rows = rows.filter((debate) => {
       const status = statusOf(debate, now);
-      return (status === "closed" || status === "expired") && (wanted === "all" || wanted === status) && matches(debate, query.q ?? "");
+      return (status === "closed" || status === "expired") && (wanted === "all" || wanted === status) && kept(debate, now)
+        && matches(debate, query.q ?? "");
     }).sort((left, right) => endedAt(right) - endedAt(left));
   }
   return wait(rows.map((debate) => summary(debate, now)));
 }
 
 export async function getDebate(debateId: number): Promise<DebateSummary> {
-  return wait(summary(find(debateId)));
+  const debate = find(debateId);
+  if (!kept(debate, Date.now())) fail("DEBATE_NOT_FOUND", "토론을 찾을 수 없어요.");
+  return wait(summary(debate));
 }
 
 export async function getVoteTickets(): Promise<VoteTickets> {
@@ -313,7 +321,8 @@ export async function cancelVote(debateId: number): Promise<{ debate: DebateSumm
 
 export async function listMyDebates(): Promise<DebateSummary[]> {
   const now = Date.now();
-  return wait(debates.filter((debate) => debate.mine).sort((left, right) => right.createdAt - left.createdAt).map((debate) => summary(debate, now)));
+  return wait(debates.filter((debate) => debate.mine && kept(debate, now)).sort((left, right) => right.createdAt - left.createdAt)
+    .map((debate) => summary(debate, now)));
 }
 
 /** 내가 투표한 주제. 아직 투표 중인 것을 먼저, 그다음 열린 것 */
@@ -415,7 +424,7 @@ export async function searchDebates(text: string, _options: { record?: boolean; 
   if (!needle) return wait({ works: [], debates: [] });
   const works = WORKS.filter((work) => [work.name, ...work.aliases].some((value) => value.toLowerCase().includes(needle))).slice(0, 5);
   const rank: Record<DebateStatus, number> = { open: 0, voting: 1, closed: 2, expired: 3 };
-  const found = debates.filter((debate) => matches(debate, needle))
+  const found = debates.filter((debate) => kept(debate, now) && matches(debate, needle))
     .sort((left, right) => rank[statusOf(left, now)] - rank[statusOf(right, now)] || right.createdAt - left.createdAt)
     .map((debate) => summary(debate, now));
   return wait({ works, debates: found }, 100);

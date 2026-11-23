@@ -365,7 +365,7 @@ function ClosedResult({ debate }: { debate: DebateSummary }) {
         <span>{debate.sideA.label} {debate.sideA.count}명</span><span>{debate.sideB.label} {debate.sideB.count}명</span>
       </p>
     </section>
-    <InfoNote>채팅은 방이 끝날 때 사라져서 볼 수 없어요.</InfoNote>
+    <InfoNote>채팅은 방이 끝날 때 사라져서 볼 수 없어요. 결과는 끝난 뒤 {DEBATE_RULES.resultRetentionDays}일 동안 지난 토론방에 남아요.</InfoNote>
   </>;
 }
 
@@ -378,6 +378,6 @@ function ExpiredDetail({ debate }: { debate: DebateSummary }) {
       <VoteProgress count={debate.voteCount} threshold={debate.voteThreshold} large />
       <div className={styles.roomChips}><span className={styles.roomChip}><ClockIcon size={14} />{dateText(debate.votingEndsAt)} 마감</span></div>
     </section>
-    <InfoNote>{DEBATE_RULES.votingDays}일 동안 {debate.voteThreshold}표를 못 모아서 소각됐어요. 소각된 주제는 다시 투표할 수 없어요.</InfoNote>
+    <InfoNote>{DEBATE_RULES.votingDays}일 동안 {debate.voteThreshold}표를 못 모아서 소각됐어요. 소각된 주제는 다시 투표할 수 없고, 기록은 {DEBATE_RULES.resultRetentionDays}일 동안 지난 토론방에 남아요.</InfoNote>
   </>;
 }

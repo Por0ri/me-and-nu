@@ -190,7 +190,7 @@ function PastTab() {
   const loader = useCallback(() => listDebates({ status: "ended", result: filter, q: query }), [filter, query]);
   const [state, retry] = useLoad<DebateSummary[]>([], loader);
   return <div className={styles.stack}>
-    <InfoNote>지난 방은 결과만 볼 수 있어요. 채팅은 방이 끝나면 사라지고, 소각된 주제는 다시 투표할 수 없어요.</InfoNote>
+    <InfoNote>지난 방은 끝난 뒤 {DEBATE_RULES.resultRetentionDays}일 동안 결과만 볼 수 있어요. 채팅은 방이 끝나면 사라지고, 소각된 주제는 다시 투표할 수 없어요.</InfoNote>
     <div className={styles.filterRow} role="group" aria-label="지난 토론방 거르기">
       {FILTERS.map((item) => <button key={item.id} type="button" className={styles.filter} aria-pressed={filter === item.id}
         onClick={() => setFilter(item.id)}>{item.label}</button>)}

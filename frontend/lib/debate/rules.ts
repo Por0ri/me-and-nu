@@ -11,6 +11,8 @@ export const DEBATE_RULES = {
   activePerUser: 1,
   messageRateCount: 5,
   messageRateWindowSeconds: 10,
+  /** 끝난 토론의 결과를 지난 토론방에 보여 주는 날 수 (DEBATE_RESULT_RETENTION_DAYS) */
+  resultRetentionDays: 9,
   titleMax: 60,
   descriptionMax: 200,
   sideLabelMax: 20,
