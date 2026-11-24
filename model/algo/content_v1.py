@@ -67,7 +67,7 @@ class UserState:
     history: ar.History             # v0.5 입력 (온보딩 작품. add_liked_works 면 반응으로 좋아한 작품도)
     genres: list                    # 온보딩 장르 칩 (AniList 장르)
     themes: list                    # 온보딩 테마 칩 (AniList 태그)
-    types: list                     # 온보딩에서 고른 유형 (TYPES 코드)
+    types: dict                     # 온보딩에서 고른 유형 → 순위 무게 (TYPES 코드 → 0~1. 1순위 1.0)
     t: int                          # v0.5 기준 시각 (초)
     n_catalog: int
     n_feed: int
@@ -116,9 +116,10 @@ def refresh_work_affinity(state, ctx, cfg):
 
 
 def type_pref(state, cfg):
-    # 유형 취향 = 온보딩에서 고른 유형 + 유형별 반응 평균 (반응이 적으면 0 쪽으로)
+    # 유형 취향 = 온보딩에서 고른 유형 (× 순위 무게) + 유형별 반응 평균 (반응이 적으면 0 쪽으로)
     prior = np.zeros(len(TYPES))
-    prior[[TYPE_INDEX[x] for x in state.types]] = cfg.type_prior
+    for x, w in state.types.items():
+        prior[TYPE_INDEX[x]] = cfg.type_prior * w
     return prior + state.type_ev / (state.type_n + cfg.type_shrink)
 
 

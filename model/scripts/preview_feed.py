@@ -242,7 +242,7 @@ def main():
         for a in ranked:
             srank.setdefault(ctx["work_of"][a], len(srank) + 1)
         rank_of = lambda w: "고른 작품" if w in works else (f"작품 순위 {srank[w]}위" if w in srank else "작품 없음")
-        state = v1.UserState(user["history"], list(u["genres"]), [], list(u["content_types"]), now,
+        state = v1.UserState(user["history"], list(u["genres"]), [], dict.fromkeys(u["content_types"], 1.0), now,
                              len(ctx["cw_rows"]), len(posts))
         service.work_affinity(state, ctx, cfg)
         service.genre_affinity(state, ctx)
