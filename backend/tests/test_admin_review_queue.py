@@ -32,6 +32,7 @@ SETUP = [
         (12, '다른 일반 대기', 'needs_review', 'pending_review', '2026-11-11 00:00:00', NULL),
         (13, '달빛 이전 숨김 미검수', 'needs_review', 'hidden', '2026-11-10 00:00:00', NULL)
     """,
+    "DROP TABLE IF EXISTS draft",
     "CREATE TABLE draft (draft_id BIGINT PRIMARY KEY, title TEXT, judgment_status TEXT)",
     "INSERT INTO draft VALUES (99, '달빛 Draft 단독', 'needs_review')",
 ]
@@ -150,4 +151,4 @@ def test_review_detail_return_uses_identical_query_and_no_visibility_claim(revie
     assert review_api.client.get(path).json() == before
     future = review_api.client.get("/api/v1/admin/contents/10").json()
     assert future["status"] == "active" and future["publishedAt"].startswith("2099")
-    assert set(future) == {"contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources"}
+    assert set(future) == {"contentId", "title", "judgmentStatus", "status", "createdAt", "publishedAt", "updatedAt", "summary", "body", "sources", "review"}

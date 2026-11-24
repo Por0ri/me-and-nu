@@ -57,6 +57,81 @@ CREATE TABLE IF NOT EXISTS rag_document (
     UNIQUE(source_id, canonical_url, content_hash)
 );
 
+-- Persistent pre-read guard for approved source URLs. A lease prevents parallel
+-- collector workers from downloading the same source item at the same time.
+CREATE TABLE IF NOT EXISTS rag_source_read_ledger (
+    claim_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES rag_source(source_id),
+    source_native_id TEXT,
+    canonical_url TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('fetching','complete','failed')),
+    last_success_at TEXT,
+    next_check_at TEXT,
+    lease_expires_at TEXT,
+    content_hash TEXT,
+    document_id TEXT REFERENCES rag_document(document_id),
+    failure_count INTEGER NOT NULL DEFAULT 0 CHECK(failure_count >= 0),
+    last_error_code TEXT,
+    updated_at TEXT NOT NULL,
+    UNIQUE(source_id, canonical_url)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_source_read_native_id
+    ON rag_source_read_ledger(source_id, source_native_id)
+    WHERE source_native_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_source_read_due
+    ON rag_source_read_ledger(source_id, next_check_at, status);
+
+-- Cache untrusted broad-web candidate pages so separate work/type searches can
+-- assess the same URL without downloading it repeatedly. This is not RAG evidence.
+CREATE TABLE IF NOT EXISTS rag_web_candidate_url_ledger (
+    canonical_url TEXT PRIMARY KEY,
+    final_canonical_url TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    last_fetched_at TEXT,
+    next_check_at TEXT,
+    last_content_hash TEXT,
+    last_error_code TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_web_candidate_url_due
+    ON rag_web_candidate_url_ledger(next_check_at, last_seen_at);
+
+-- Recurring broad-web searches remain opt-in; runtime composition does not seed plans.
+CREATE TABLE IF NOT EXISTS rag_web_discovery_plan (
+    plan_id TEXT PRIMARY KEY,
+    request_json TEXT NOT NULL,
+    interval_seconds INTEGER NOT NULL CHECK(interval_seconds BETWEEN 60 AND 31536000),
+    is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0,1)),
+    next_run_at TEXT NOT NULL,
+    lease_expires_at TEXT,
+    last_enqueued_at TEXT,
+    last_error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_web_discovery_plan_due
+    ON rag_web_discovery_plan(is_enabled, next_run_at, lease_expires_at);
+
+CREATE TABLE IF NOT EXISTS rag_web_candidate_page_cache (
+    cache_id TEXT PRIMARY KEY,
+    canonical_url TEXT NOT NULL UNIQUE,
+    final_canonical_url TEXT,
+    status TEXT NOT NULL CHECK(status IN ('fetching','ready','failed')),
+    page_json TEXT,
+    fetched_at TEXT,
+    expires_at TEXT,
+    lease_expires_at TEXT,
+    retry_after TEXT,
+    failure_count INTEGER NOT NULL DEFAULT 0 CHECK(failure_count >= 0),
+    last_error_code TEXT,
+    updated_at TEXT NOT NULL,
+    CHECK((status='ready' AND page_json IS NOT NULL AND fetched_at IS NOT NULL AND expires_at IS NOT NULL)
+       OR status!='ready')
+);
+CREATE INDEX IF NOT EXISTS ix_web_candidate_cache_expiry
+    ON rag_web_candidate_page_cache(status, expires_at, retry_after);
+
 -- One immutable source document can support more than one editorial format.
 -- The primary rag_document.content_type remains the original ingest lane;
 -- additional formats require an evidence-backed planner decision.
@@ -368,6 +443,21 @@ CREATE TABLE IF NOT EXISTS rag_card_image (
     card_id TEXT PRIMARY KEY REFERENCES rag_content_card(card_id) ON DELETE CASCADE,
     asset_id TEXT REFERENCES rag_image_asset(asset_id)
 );
+
+CREATE TABLE IF NOT EXISTS rag_card_image_component (
+    card_id TEXT NOT NULL REFERENCES rag_content_card(card_id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK(position > 0),
+    asset_id TEXT NOT NULL REFERENCES rag_image_asset(asset_id),
+    PRIMARY KEY(card_id, position),
+    UNIQUE(card_id, asset_id)
+);
+
+CREATE VIEW IF NOT EXISTS rag_card_image_source AS
+    SELECT card_id, 0 AS position, asset_id FROM rag_card_image WHERE asset_id IS NOT NULL
+    UNION ALL
+    SELECT card_id, position, asset_id FROM rag_card_image_component;
+
+CREATE INDEX IF NOT EXISTS ix_rag_card_cover ON rag_content_card(card_id) WHERE page_no=1;
 
 CREATE TABLE IF NOT EXISTS rag_queue_job (
     job_id TEXT PRIMARY KEY,

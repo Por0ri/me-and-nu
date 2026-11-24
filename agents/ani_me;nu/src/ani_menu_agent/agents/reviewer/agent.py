@@ -4,7 +4,6 @@ import base64
 import json
 import re
 from time import perf_counter
-from urllib.parse import urlsplit
 
 from langchain_openai import ChatOpenAI
 
@@ -13,7 +12,11 @@ from ani_menu_agent.agents.content_generation.renderer import render_review_prev
 from ani_menu_agent.agents.reviewer.prompt import REVIEWER_PROMPT
 from ani_menu_agent.config import get_settings
 from ani_menu_agent.generation import _infer_copy_mode, estimate_gpt_6_luna_cost
-from ani_menu_agent.image_selection import image_visual_keys
+from ani_menu_agent.goods_publication import (
+    goods_illustration_copy_issues,
+    goods_reference_labels,
+)
+from ani_menu_agent.image_selection import image_visual_keys, mismatched_schedule_art
 from ani_menu_agent.models import (
     CONTENT_TYPE_GUIDANCE,
     ContentPackage,
@@ -21,6 +24,7 @@ from ani_menu_agent.models import (
     QualityIssue,
     UsageRecord,
 )
+from ani_menu_agent.period_copy import bulletin_terms, denied_reported_terms, reported_terms
 from ani_menu_agent.policy import POLICY
 from ani_menu_agent.quality import (
     SCORE_THRESHOLDS,
@@ -46,60 +50,117 @@ def _score_quality(package: ContentPackage, issues: list[QualityIssue], **kwargs
     return score_quality(package, issues, thresholds=SCORE_THRESHOLDS, **kwargs)
 
 
+class MinimalEditorialReview(LanguageReview):
+    internal_note_pages: list[int]
+    detail_is_internal_note: bool
+
+
+def _explicit_writing_note(text: str) -> bool:
+    """Recognize descriptions of our inability to report, not uncertainty about an event."""
+    source_limitation = re.search(
+        r"(?:(?:현재|주어진|제공된|지금\s*있는)\s*자료만으로|자료\s*자체가\s*(?:검증되지\s*않은|미검증)\s*캡처"
+        r"|근거부터\s*더\s*(?:탄탄|보강))", text,
+    )
+    author_comment = re.search(
+        r"(?:소식을?\s*전하기\s*(?:어려|힘들)|(?:전하기엔|받아들이기엔)\s*(?:아직\s*)?근거가\s*부족"
+        r"|확인되면\s*(?:그때\s*)?제대로\s*전할)", text,
+    )
+    return bool(source_limitation and author_comment)
+
+
+def _writing_note_issue(page: int | None) -> dict:
+    location = "상세글" if page is None else f"{page}번 카드"
+    return {
+        "code": "EDITORIAL_NOTE_IN_READER_COPY", "page": page,
+        "owner": "detail_writer" if page is None else "copy_writer",
+        "message": f"{location}의 집필·검증 메모를 패키지 원문에서 확인되는 실제 소식으로 바꿔 주세요. "
+                   "무엇이 언제 일어나는지부터 쓰고, 없는 세부사항은 추정하지 마세요.",
+    }
+
+
+def _reported_term_issues(package: ContentPackage) -> list[QualityIssue]:
+    terms = reported_terms(package)
+    if not terms:
+        return []
+    issues = []
+    compact_bulletin = bool(bulletin_terms(package))
+    sections = [(card.page, ". ".join([card.eyebrow, card.plain_title, *card.body_sentences]))
+                for card in package.cards]
+    for page, text in [*sections, (None, package.detail_body)]:
+        if compact_bulletin:
+            footer_in_copy = re.search(r"(?:AnimeSchedule|애니\s*스케줄)\s*(?:RAW\s*)?(?:RSS|피드)?[가이은는에서 ]*.{0,80}?(?:전했|알렸|알려|따르면)", text, re.I)
+            omitted_details = re.search(r"(?:장면|줄거리|플랫폼|시청\s*경로|회차\s*내용).{0,80}?(?:담겨\s*있지|포함되지|확인할\s*수\s*없|없으니).{0,80}?(?:덧붙이|추측|생략|적지)", text)
+            if footer_in_copy or omitted_details:
+                issues.append(QualityIssue(**_writing_note_issue(page)))
+            if re.search(r"일본어(?:판|\s*음성)?|일본\s*현지(?:판|\s*공개)|일본판", text):
+                issues.append(make_issue(
+                    code="DETAIL_BODY_FACTUAL_SUPPORT" if page is None else "COPY_UNGROUNDED",
+                    page=page, message="이 RSS 항목은 원어판 공개만 알렸습니다. 구체적인 언어는 명시되지 않았습니다.",
+                ))
+        if any(term["term"] == "episode_release" for term in terms):
+            # The RSS item itself is present. This is an editor's discussion of the
+            # missing excerpt/verification, distinct from a distributor's missing date.
+            if (re.search(r"출처\s*발췌문|주어진\s*자료가\s*뒷받침|페이지\s*제목.{0,45}뿐", text)
+                    and re.search(r"(?:공개[가를]?|공개\s*여부.{0,25})\s*검증|검증되지\s*않|"
+                                  r"(?:확인|검증)되면\s*그때|정보가\s*더해질\s*때까지", text)):
+                issues.append(QualityIssue(**_writing_note_issue(page)))
+        denied = denied_reported_terms(text, terms)
+        if denied:
+            location = "상세글" if page is None else f"{page}번 카드"
+            evidence = " / ".join(dict.fromkeys(f"[{term['fact_id']}] {term['excerpt']}" for term in denied))
+            issues.append(make_issue(
+                code="DETAIL_REPORTED_TERMS_DENIED" if page is None else "COPY_REPORTED_TERMS_DENIED",
+                page=page, message=f"{location}에서 미정으로 안내한 조건이 원문에 명시돼 있습니다. "
+                                   f"원문의 발표 조건을 한국어로 소개하고 현재 재고·진행 여부는 추정하지 마세요. {evidence}",
+            ))
+    edition = next((t for t in terms if t["term"] == "episode_edition"), None)
+    if edition and len(sections) >= 2:
+        title_recaps = [page for page, text in sections if "페이지 제목" in text and
+                        re.search(r"\d+(?:\.\d+)?\s*화.{0,20}공개|공개.{0,20}\d+\s*화", text)
+                        and not re.search(r"원어|현지|오리지널|원판", text)]
+        for page in title_recaps[1:]:
+            issues.append(make_issue(
+                code="CARD_REDUNDANT", page=page,
+                message=f"앞 카드와 같은 회차 공개 문구를 반복합니다. RSS가 알린 판본을 설명하세요: {edition['excerpt']}",
+            ))
+    return issues
+
+
 def _review_minimal_editorial(state: ContentState, package: ContentPackage) -> ContentState:
-    """Review copy readability and retain a hard visual relevance gate."""
+    """Review carousel shape and readability only, as requested for the pilot."""
     cards = sorted(package.cards, key=lambda card: card.page)
     failures: list[str] = []
     if not 2 <= len(cards) <= 10:
-        failures.append("Carousel must contain 2 to 10 cards.")
+        failures.append("캐러셀은 2~10장이어야 합니다.")
     if any(not (card.title_lines or card.body_sentences) for card in cards):
-        failures.append("A card has neither a title nor body copy.")
+        failures.append("제목과 본문이 모두 비어 있는 카드가 있습니다.")
     image_ids = [card.image_id for card in cards if card.image_id]
     if len(image_ids) != len(set(image_ids)):
-        failures.append("An image is repeated within the carousel.")
-    images_by_id = {image.id: image for image in package.images}
-    recal_schedule_pages = [
-        card.page
-        for card in cards
-        if package.content_type == "event"
-        and card.image_id in images_by_id
-        and (urlsplit(str(images_by_id[card.image_id].url or "")).hostname or "").lower()
-        in {"recal.kr", "www.recal.kr"}
-    ]
-    if recal_schedule_pages:
-        failures.append(
-            "Event cards use RE:CAL schedule/listing graphics as artwork; replace them with distinct exact-work images."
-        )
-    event_copy = " ".join(
-        [*(line for card in cards for line in card.title_lines),
-         *(sentence for card in cards for sentence in card.body_sentences),
-         package.detail_body]
-    )
-    schedule_copy_failure = False
-    if package.content_type == "event" and (package.event_start or package.event_end):
-        schedule_caveat_pattern = re.compile(
-            r"(?:행사\s*정보|세부\s*(?:정보|내용)|실제\s*일정|일정|날짜|장소|"
-            r"개최(?:\s*(?:정보|일정))?).{0,28}"
-            r"(?:미확인|확인되지|검증되지|미검증|검증\s*전|확정되지)"
-            r"|(?:미확인|확인되지|검증되지|미검증|검증\s*전|확정되지).{0,28}"
-            r"(?:행사|일정|날짜|장소|개최)",
-            re.IGNORECASE,
-        )
-        schedule_copy_failure = bool(schedule_caveat_pattern.search(event_copy))
-        if schedule_copy_failure:
-            failures.append(
-                "Event copy says its schedule is unknown even though structured event dates are supplied; "
-                "rewrite it by stating the supplied dates directly in natural Korean. Keep source-page "
-                "and website narration out of the card and article copy; the source link is shown separately."
-            )
+        failures.append("한 캐러셀 안에서 이미지가 반복됩니다.")
+    issues = [{"code": "CAROUSEL_SHAPE", "owner": "layout_director", "message": item} for item in failures]
+    images = {image.id: image for image in package.images}
+    for card in cards:
+        image = images.get(card.image_id)
+        if image and mismatched_schedule_art(image, package.sources):
+            message = f"{card.page}번 카드의 이미지가 해당 시즌 자료와 일치하지 않습니다. 작품 이미지로 교체하세요."
+            failures.append(message)
+            issues.append({"code": "IMAGE_SOURCE_PAGE_MISMATCH", "owner": "layout_director", "page": card.page, "message": message})
+    for card in cards:
+        if _explicit_writing_note(" ".join([card.eyebrow, *card.title_lines, *card.body_sentences])):
+            issues.append(_writing_note_issue(card.page))
+    if _explicit_writing_note(package.detail_body):
+        issues.append(_writing_note_issue(None))
+
+    issues.extend(issue.model_dump(mode="json") for issue in _reported_term_issues(package))
+    issues.extend(issue.model_dump(mode="json") for issue in goods_illustration_copy_issues(package))
 
     settings = get_settings()
-    if not settings.openai_api_key:
+    if not settings.openai_api_key and not issues:
         report = {
             "mode": "minimal_editorial",
             "decision": "pending_language_review",
             "total": 0,
-            "reason": "Reviewer model API is not configured; copy and image relevance were not evaluated.",
+            "reason": "검수 모델 API 설정이 없어 문장 가독성을 평가하지 못했습니다.",
         }
         AgentRepository().persist_generated_content(
             package, "review_api_required", report,
@@ -117,24 +178,10 @@ def _review_minimal_editorial(state: ContentState, package: ContentPackage) -> C
             "status": "review_api_required",
             "usage_records": state.get("usage_records", []),
         }
-    if failures:
-        report = {
-            "mode": "minimal_editorial",
-            "decision": "revise",
-            "total": 0,
-            "issues": failures,
-        }
-        issues = [
-            {
-                "code": (
-                    "EVENT_SCHEDULE_GRAPHIC_AS_ART"
-                    if "RE:CAL schedule/listing graphics" in item
-                    else "CAROUSEL_SHAPE"
-                ),
-                "message": item,
-            }
-            for item in failures
-        ]
+    if issues:
+        owners = list(dict.fromkeys(issue["owner"] for issue in issues))
+        report = {"mode": "minimal_editorial", "decision": "revise", "total": 0,
+                  "issues": [issue["message"] for issue in issues]}
         AgentRepository().persist_generated_content(
             package, "review_returned", report,
             usage_records=state.get("usage_records", []),
@@ -146,8 +193,8 @@ def _review_minimal_editorial(state: ContentState, package: ContentPackage) -> C
             "qa_report": issues,
             "review_mode": "minimal_editorial",
             "needs_revision": True,
-            "revision_owner": "copy_writer" if schedule_copy_failure else "layout_director",
-            "revision_owners": ["copy_writer"] if schedule_copy_failure else ["layout_director"],
+            "revision_owner": owners[0],
+            "revision_owners": owners,
             "review_failures": int(state.get("review_failures", 0)) + 1,
             "editorial_decision": "revise",
             "status": "review_returned",
@@ -156,22 +203,46 @@ def _review_minimal_editorial(state: ContentState, package: ContentPackage) -> C
 
     model = ChatOpenAI(model=settings.model_name, api_key=settings.openai_api_key)
     structured = model.with_structured_output(
-        LanguageReview, method="function_calling", include_raw=True
+        MinimalEditorialReview, method="function_calling", include_raw=True
     )
-    message_content, attached_pages, missing_image_pages = _review_message_content(
-        package, minimal_editorial=True
+    reference_labels = goods_reference_labels(package)
+    text_payload = {
+        "content_type": package.content_type,
+        "detail_body": package.detail_body,
+        "cards": [
+            {
+                "page": card.page,
+                "role": card.role,
+                **({"image_label": reference_labels[card.page]} if card.page in reference_labels else {}),
+                "eyebrow": card.eyebrow,
+                "title": card.title_lines,
+                "body": card.body_sentences,
+            }
+            for card in cards
+        ],
+    }
+    prompt = (
+        "Review this anime carousel only for Korean readability, natural phrasing, "
+        "clarity, engaging but non-stiff fan voice, and whether consecutive cards flow well. "
+        "Read the detail_body too. Return internal_note_pages and detail_is_internal_note when the main "
+        "point of a reader-facing card or the article is the author's evidence, drafting limitations, "
+        "or a promise to write later in place of the news. A real event story may say the admission price "
+        "has not been announced or advise readers to check the official site for details. "
+        "Uncertainty about a real event and informal jokes are not editorial notes. "
+        "Do not fact-check claims, inspect or require sources, judge copyright or image rights, "
+        "or request research. Do not invent facts. Still flag clear harmful abuse or sexualization "
+        "of minors. Score each card 0-5; scores 2-5 pass, "
+        "and use 0-1 only when wording is hard to understand or unusable. Set safety_respect=5, "
+        "safety_blocker=false unless the supplied copy itself clearly contains harmful abuse. "
+        "If changes are needed, give short, concrete Korean wording guidance in feedback. "
+        "Return every supplied page number and set content_type_fit=5.\n"
+        + ("On cards labelled 작품 포스터 or 작품 일러스트, request a copy revision if the text calls the artwork a "
+           "photo of the actual item or derives its product features from the picture. "
+           "Descriptions grounded in the product article are fine.\n" if reference_labels else "")
+        + json.dumps(text_payload, ensure_ascii=False)
     )
     started = perf_counter()
-    response = structured.invoke(
-        [
-            (
-                "system",
-                "You are a concise Korean carousel copy editor and image relevance reviewer. "
-                "Judge attached artwork itself, not its source metadata.",
-            ),
-            ("human", message_content),
-        ]
-    )
+    response = structured.invoke([("system", "You are a concise Korean carousel copy editor."), ("human", prompt)])
     elapsed = perf_counter() - started
     review = response.get("parsed")
     usage_records = list(state.get("usage_records", []))
@@ -197,14 +268,13 @@ def _review_minimal_editorial(state: ContentState, package: ContentPackage) -> C
             elapsed_seconds=elapsed,
         ).model_dump(mode="json")
     )
-
     expected_pages = {card.page for card in cards}
     reviewed_pages = {card.page for card in review.cards} if review else set()
-    failed_pages: list[int] = []
-    unsafe_pages: list[int] = []
-    visual_issues: list[QualityIssue] = []
-    if review is None or expected_pages != reviewed_pages:
-        failures.append("Copy and image review is missing or has mismatched card numbers.")
+    note_pages = set(review.internal_note_pages) if review else set()
+    failed_pages = []
+    unsafe_pages = []
+    if review is None or expected_pages != reviewed_pages or not note_pages.issubset(expected_pages):
+        failures.append("문장 검수 결과가 없거나 카드 번호가 맞지 않습니다.")
     else:
         for card_review in review.cards:
             if card_review.safety_blocker:
@@ -218,103 +288,60 @@ def _review_minimal_editorial(state: ContentState, package: ContentPackage) -> C
             ) < 2:
                 failed_pages.append(card_review.page)
         if failed_pages:
-            failures.append("Cards need copy revision: " + ", ".join(map(str, failed_pages)))
+            failures.append("읽기 불편하거나 문맥이 끊기는 카드: " + ", ".join(map(str, failed_pages)))
         if unsafe_pages:
-            failures.append("Cards contain a clear safety issue: " + ", ".join(map(str, unsafe_pages)))
-        if missing_image_pages:
-            visual_issues.append(
-                make_issue(
-                    code="IMAGE_VISION_REVIEW_MISSING",
-                    message=(
-                        "A card preview could not be loaded for image review; passing is blocked. Cards: "
-                        + ", ".join(map(str, missing_image_pages))
-                    ),
-                    page=missing_image_pages[0],
-                )
-            )
-        required_visual_fields = {"image_relevance", "image_composition", "visual_feedback"}
-        for card_review in review.cards:
-            absent = required_visual_fields - card_review.model_fields_set
-            if absent:
-                visual_issues.append(
-                    make_issue(
-                        code="IMAGE_VISION_REVIEW_MISSING",
-                        message=(
-                            f"Card {card_review.page} lacks explicit visual review fields: "
-                            f"{', '.join(sorted(absent))}. Passing is blocked."
-                        ),
-                        page=card_review.page,
-                    )
-                )
-        if not visual_issues:
-            visual_issues.extend(_visual_issues(review, package))
-        for card in cards:
-            if card.visual_mode != "source_image" or not card.image_id:
-                visual_issues.append(
-                    make_issue(
-                        code="IMAGE_VISION_REVIEW_MISSING",
-                        message=f"Card {card.page} has no source image to review; passing is blocked.",
-                        page=card.page,
-                    )
-                )
+            failures.append("명백한 유해 표현이 확인된 카드: " + ", ".join(map(str, unsafe_pages)))
+        issues.extend(_writing_note_issue(page) for page in sorted(note_pages))
+        if review.detail_is_internal_note:
+            issues.append(_writing_note_issue(None))
 
-    all_failures = [*failures, *(issue.message for issue in visual_issues)]
-    decision = "revise" if all_failures else "pass_candidate"
+    issues.extend({"code": "COPY_READABILITY", "owner": "copy_writer", "message": message} for message in failures)
+    owners = list(dict.fromkeys(issue["owner"] for issue in issues))
+    decision = "revise" if issues else "pass_candidate"
     score_values = [
         getattr(card, field)
         for card in (review.cards if review else [])
-        for field in (
-            "korean_naturalness",
-            "translation_naturalness",
-            "reader_clarity",
-            "fan_engagement",
-            "card_flow",
-        )
+        for field in ("korean_naturalness", "translation_naturalness", "reader_clarity", "fan_engagement", "card_flow")
     ]
     score = round(sum(score_values) / max(1, len(score_values)) * 20) if score_values else 0
     report = {
         "mode": "minimal_editorial",
         "decision": decision,
         "total": score,
-        "issues": [*failures, *(issue.model_dump(mode="json") for issue in visual_issues)],
+        "issues": [issue["message"] for issue in issues],
         "reviewed_pages": sorted(reviewed_pages),
-        "image_reviewed_pages": sorted(set(attached_pages)),
-        "summary": review.summary if review else "Review result was invalid.",
+        "summary": review.summary if review else "검수 결과 형식 오류",
         "dimensions": {
             "carousel_shape": "pass",
             "copy_readability": score,
-            "image_relevance": "fail" if any(i.code == "IMAGE_VISION_MISMATCH" for i in visual_issues) else "pass",
-            "image_composition": "fail" if any(i.code == "IMAGE_COMPOSITION_REJECTED" for i in visual_issues) else "pass",
             "clear_safety_blockers": "pass" if not unsafe_pages else unsafe_pages,
             "fact_checking": "skipped_by_policy",
             "copyright_review": "skipped_by_policy",
         },
     }
-    status = "review_returned" if all_failures else "review_passed"
+    status = "review_returned" if issues else "review_passed"
     AgentRepository().persist_generated_content(
         package, status, report, usage_records=usage_records
     )
-    qa_report = [
-        {"code": "COPY_READABILITY", "message": item} for item in failures
-    ] + [issue.model_dump(mode="json") for issue in visual_issues]
-    visual_revise = bool(visual_issues)
     return {
         "trace": append_trace(state, "minimal_editorial_review"),
         "quality_report": report,
         "quality_score": score,
-        "qa_report": qa_report,
+        "qa_report": issues,
         "review_mode": "minimal_editorial",
-        "needs_revision": bool(all_failures),
-        "revision_owner": ("layout_director" if visual_revise else "copy_writer") if all_failures else "",
-        "revision_owners": (["layout_director"] if visual_revise else []) + (["copy_writer"] if failures else []),
-        "review_failures": int(state.get("review_failures", 0)) + int(bool(all_failures)),
-        "editorial_decision": "revise" if all_failures else "approved_for_feed",
+        "needs_revision": bool(issues),
+        "revision_owner": owners[0] if owners else "",
+        "revision_owners": owners,
+        "review_failures": int(state.get("review_failures", 0)) + int(bool(issues)),
+        "editorial_decision": "revise" if issues else "approved_for_feed",
         "status": status,
         "usage_records": usage_records,
     }
 
+
 def _review_payload(package: ContentPackage) -> dict:
     images = {image.id: image for image in package.images}
+    reference_labels = goods_reference_labels(package)
     recent_copy = AgentRepository().recent_copy_examples(
         exclude_request_id=package.request_id,
         limit=6,
@@ -338,6 +365,9 @@ def _review_payload(package: ContentPackage) -> dict:
                 "visual_mode": card.visual_mode,
                 "text_overlay_box": card.layout.text_overlay_box.model_dump(mode="json"),
                 "image_explanation": card.image_explanation,
+                **({"image_label": reference_labels[card.page],
+                    "image_use": "Anime artwork gives context. Use the goods article for product features."}
+                   if card.page in reference_labels else {}),
                 "image_metadata": (
                     {
                         "source_description": image.source_description,
@@ -397,52 +427,27 @@ def _review_payload(package: ContentPackage) -> dict:
     }
 
 
-def _review_message_content(
-    package: ContentPackage, *, minimal_editorial: bool = False
-) -> tuple[list[dict], list[int], list[int]]:
+def _review_message_content(package: ContentPackage) -> tuple[list[dict], list[int], list[int]]:
     """Attach temporary text-overlay previews without changing persisted card PNGs."""
     repository = AgentRepository()
-    if minimal_editorial:
-        payload = {
-            "content_type": package.content_type,
-            "event_schedule": {
-                "start_date": package.event_start,
-                "end_date": package.event_end,
-                "venue": package.event_location,
-            } if package.content_type == "event" else None,
-            "cards": [
-                {
-                    "page": card.page,
-                    "role": card.role,
-                    "title": card.title_lines,
-                    "body": card.body_sentences,
-                }
-                for card in sorted(package.cards, key=lambda item: item.page)
-            ],
-        }
-        instructions = (
-            "Evaluate Korean readability and image relevance only. Each attached image follows the "
-            "card with the matching page number in the JSON. Inspect the visible artwork itself: "
-            "if it depicts a different anime, character, event, or unrelated recommendation, give "
-            "image_relevance 0 or 1 and explain why in visual_feedback. Do not infer relevance "
-            "from metadata. Check that the source image is legible and composed well enough for a card. "
-            "Do not fact-check, research sources, or assess copyright. For event copy, compare it "
-            "with the supplied event_schedule: when a start/end date is present, reject generic "
-            "claims that the schedule or event information is unknown. A missing price or entry "
-            "method does not make the listed dates or venue unknown. Ignore the temporary text overlay "
-            "when judging the original image. Return all page numbers and explicit image_relevance, "
-            "image_composition, and visual_feedback fields for every card.\n"
-        )
-    else:
-        payload = _review_payload(package)
-        instructions = (
-            "The attached previews follow the JSON page order. Each preview temporarily overlays "
-            "copy on the text-free stored PNG. Judge image_relevance from the original artwork, "
-            "and check whether it fits the card topic and remains identifiable and well composed. "
-            "Do not mistake the temporary overlay for text in the original image.\n"
-        )
     parts: list[dict] = [
-        {"type": "text", "text": instructions + json.dumps(payload, ensure_ascii=False)}
+        {
+            "type": "text",
+            "text": (
+                "아래 JSON의 page와 같은 순서로 카드 미리보기 이미지가 뒤따른다. "
+                "각 첨부 이미지는 텍스트 없는 저장용 PNG 위에 카피를 임시로 합성한 "
+                "검수용 모형이다. "
+                "실제 저장 PNG에는 글자가 없고, 모형의 글꼴·줄바꿈은 프론트엔드 HTML과 "
+                "다를 수 있다. "
+                "카피와 이미지가 함께 놓였을 때의 균형을 참고하되, 글꼴 차이는 감점하지 마라. "
+                "image_relevance는 검수용 카피를 제외한 원본 그림 자체를 기준으로 평가하라. "
+                "이미지가 카드 주제와 맞는지, "
+                "잘리거나 깨지거나 피사체를 알아볼 수 없을 만큼 작지는 않은지 눈으로 확인하라. "
+                "원본 비율 때문에 생긴 여백은 정상이다. 검수용 카피를 이미지 원본에 포함된 글자로 "
+                "오인하지 말고, JSON 문구와 기존 언어 평가로 언어 품질을 판단하라.\n"
+                + json.dumps(_review_payload(package), ensure_ascii=False)
+            ),
+        }
     ]
     attached_pages: list[int] = []
     missing_pages: list[int] = []
@@ -459,7 +464,8 @@ def _review_message_content(
             binary = render_review_preview(binary, card, package)
             media_type = "image/png"
         except Exception:
-            # Review the original image plate if the temporary overlay cannot be rendered.
+            # The persisted card plate stays text-free; if a preview mock
+            # cannot be rendered, review the original plate as a fallback.
             pass
         encoded = base64.b64encode(binary).decode("ascii")
         parts.append(
@@ -473,6 +479,7 @@ def _review_message_content(
         )
         attached_pages.append(card.page)
     return parts, attached_pages, missing_pages
+
 
 def _visual_issues(review: LanguageReview, package: ContentPackage) -> list[QualityIssue]:
     """Turn pixel-level reviewer findings into repairable, page-scoped image issues."""
@@ -635,6 +642,8 @@ def review_content(state: ContentState) -> ContentState:
     if state.get("minimal_review"):
         return _review_minimal_editorial(state, package)
     issues = run_quality_checks(package)
+    issues.extend(_reported_term_issues(package))
+    issues.extend(goods_illustration_copy_issues(package))
     if state.get("allow_llm", False) and not package.detail_body.strip():
         issues.append(
             make_issue(

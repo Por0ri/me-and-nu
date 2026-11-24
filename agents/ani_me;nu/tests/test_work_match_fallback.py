@@ -117,44 +117,6 @@ def test_existing_parent_mapping_uses_kitsu_title_confirmation(monkeypatch) -> N
     assert calls == [(["Naruto Shippuden"], {"existing_menu_work_id": 7})]
 
 
-def test_source_verified_new_work_uses_registration_temporary_id(monkeypatch) -> None:
-    monkeypatch.setattr(fallback, "load_work_catalog", lambda: [])
-    monkeypatch.setattr(fallback, "load_work_entries", lambda: [])
-    monkeypatch.setattr(fallback, "load_work_external_entries", lambda: [])
-    monkeypatch.setattr(fallback, "load_work_aliases", lambda: [])
-    _install_model(
-        monkeypatch,
-        fallback.WorkIdentityDecision(
-            action="register_new",
-            subject_scope="anime_work",
-            subject_relation="primary_subject",
-            evidence_title="Mysterious Anime",
-            evidence_quote="Mysterious Anime",
-            confidence=0.96,
-            rationale="The source explicitly identifies a distinct new work.",
-        ),
-    )
-    registrations = []
-    monkeypatch.setattr(
-        fallback,
-        "register_new_work_from_source_title",
-        lambda title, source_url, audit: (
-            registrations.append((title, source_url, audit)) or 2_000_123
-        ),
-    )
-
-    audit: dict = {}
-    matches = fallback.resolve_unmatched_work_with_llm(
-        titles=["Mysterious Anime announcement"],
-        source_url="https://example.com/news",
-        audit=audit,
-    )
-
-    assert [item.menu_work_id for item in matches] == [2_000_123]
-    assert registrations[0][:2] == ("Mysterious Anime", "https://example.com/news")
-    assert audit["menu_work_id"] == 2_000_123
-
-
 def test_shortlist_keeps_canonical_title_when_many_entry_titles_exist(monkeypatch) -> None:
     monkeypatch.setattr(fallback, "load_work_catalog", lambda: [_catalog_row(11, "Naruto")])
     monkeypatch.setattr(
@@ -254,7 +216,7 @@ def test_low_confidence_decision_stays_unresolved(monkeypatch) -> None:
                 fallback.CatalogWorkSelection(menu_work_id=7, catalog_title="Naruto")
             ],
             evidence_title="Naruto Shippuden",
-                confidence=0.49,
+            confidence=0.49,
         ),
     )
 
@@ -325,37 +287,247 @@ def test_fallback_ignores_body_identity_from_generic_listing_pages(monkeypatch) 
     assert audit["status"] == "body_context_skipped_listing_page"
 
 
-def test_new_registration_uses_source_title_temporary_id(monkeypatch) -> None:
+@pytest.fixture
+def character_check(monkeypatch):
+    monkeypatch.setattr(fallback, "load_work_catalog", lambda: [
+        _catalog_row(19, "Re:Zero"), _catalog_row(50, "無職転生")
+    ])
+    monkeypatch.setattr(fallback, "load_work_entries", lambda: [])
+    monkeypatch.setattr(fallback, "load_work_aliases", lambda: [])
+    monkeypatch.setattr(fallback, "load_work_external_entries", lambda: [])
+    monkeypatch.setattr(fallback, "register_unmatched_work_from_kitsu", lambda *a, **kw: None)
+    return {
+        "titles": ["ロキシー師匠のフィギュア登場！シルフィと並べて飾ろう"],
+        "source_url": "https://example.org/products/roxy",
+        "body_excerpt": "TVアニメ『無職転生』より、ロキシー師匠がグレイラット家にいる姿を再現したフィギュアが登場。",
+        "character_hints": [WorkMatchEvidence(
+            menu_work_id=19, basis="headline_character", matched_value="シルフィ", confidence=0.92
+        )],
+    }
+
+
+@pytest.mark.parametrize("hint_id", [19, 50])
+def test_original_body_can_correct_or_confirm_character_hint(monkeypatch, character_check, hint_id):
+    character_check["character_hints"][0] = WorkMatchEvidence(
+        menu_work_id=hint_id, basis="headline_character", matched_value="シルフィ", confidence=0.92
+    )
+    _install_model(monkeypatch, fallback.WorkIdentityDecision(
+        action="match_existing", subject_scope="anime_work", subject_relation="primary_subject",
+        catalog_matches=[fallback.CatalogWorkSelection(menu_work_id=50, catalog_title="無職転生")],
+        evidence_title="無職転生", evidence_basis="body_excerpt",
+        evidence_quote=character_check["body_excerpt"], confidence=0.93,
+    ))
+    usage = []
+    audit = {}
+    match, = fallback.resolve_unmatched_work_with_llm(**character_check, usage_records=usage, audit=audit)
+    assert (match.menu_work_id, match.basis, str(match.evidence_url)) == (
+        50, "llm_body_context", character_check["source_url"]
+    )
+    assert audit["status"] == "matched"
+    assert [record["stage"] for record in usage] == ["work_match_fallback"]
+
+
+@pytest.mark.parametrize(("title", "quote", "relation", "scope"), [
+    ("シルフィ", "シルフィを紹介しました。", "primary_subject", "anime_work"),
+    ("無職転生", "記事には存在しない無職転生の引用。", "primary_subject", "anime_work"),
+    ("無職転生", "ここでは無職転生の関連情報にも触れます。", "incidental_mention", "anime_work"),
+    ("無職転生", "ここでは無職転生の関連情報にも触れます。", "primary_subject", "unclear"),
+])
+def test_character_hint_needs_actual_primary_work_evidence(
+    monkeypatch, character_check, title, quote, relation, scope
+):
+    character_check["body_excerpt"] += "シルフィを紹介しました。ここでは無職転生の関連情報にも触れます。"
+    _install_model(monkeypatch, fallback.WorkIdentityDecision(
+        action="match_existing", subject_scope=scope, subject_relation=relation,
+        catalog_matches=[fallback.CatalogWorkSelection(menu_work_id=19, catalog_title="Re:Zero")],
+        evidence_title=title, evidence_basis="body_excerpt", evidence_quote=quote, confidence=0.99,
+    ))
+    audit = {}
+    assert fallback.resolve_unmatched_work_with_llm(**character_check, audit=audit) == []
+    assert audit["status"] == "unconfirmed_character_work"
+
+
+def test_character_hint_never_uses_unsupported_confident_headline_escape(monkeypatch, character_check):
+    character_check["titles"] = ["無職転生 ロキシー師匠のフィギュア登場！シルフィと並べて飾ろう"]
+    _install_model(monkeypatch, fallback.WorkIdentityDecision(
+        action="match_existing", subject_scope="anime_work", subject_relation="primary_subject",
+        catalog_matches=[fallback.CatalogWorkSelection(menu_work_id=19, catalog_title="Re:Zero")],
+        evidence_title="無職転生", evidence_basis="headline_or_about",
+        evidence_quote=character_check["body_excerpt"], confidence=0.99,
+    ))
+    audit = {}
+    assert fallback.resolve_unmatched_work_with_llm(**character_check, audit=audit) == []
+    assert audit["status"] == "catalog_alias_not_confirmed"
+
+
+def test_character_hint_waits_for_article_without_paid_call(monkeypatch, character_check):
+    character_check["body_excerpt"] = None
+    monkeypatch.setattr(fallback, "get_settings", lambda: SimpleNamespace(openai_api_key="test-key"))
+    monkeypatch.setattr(fallback, "ChatOpenAI", lambda **kw: pytest.fail("No article to confirm"))
+    audit = {}
+    assert fallback.resolve_unmatched_work_with_llm(**character_check, audit=audit) == []
+    assert audit["status"] == "character_match_requires_article"
+
+
+def test_grounded_new_title_gets_one_temporary_id_after_kitsu_miss(
+    monkeypatch, tmp_path, request
+) -> None:
+    import csv
+    import zlib
+
+    from ani_menu_agent import work_catalog
+
+    monkeypatch.delenv("ME_NU_WORK_REGISTRY_DIR", raising=False)
+    monkeypatch.delenv("ME_NU_WORK_CATALOG_DIR", raising=False)
+    monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", tmp_path)
+    official = tmp_path / "catalog"
+    official.mkdir()
+    (official / "menu_works.csv").write_text("menu_work_id,title_ko\n", encoding="utf-8")
+    monkeypatch.setattr(work_catalog, "_WORK_LIST_DIRECTORY", official)
+    work_catalog.refresh_work_catalog_caches()
+    request.addfinalizer(work_catalog.refresh_work_catalog_caches)
     monkeypatch.setattr(fallback, "load_work_catalog", lambda: [])
     monkeypatch.setattr(fallback, "load_work_entries", lambda: [])
+    title = "Mysterious New Anime"
+    url = "https://example.org/new-anime"
     _install_model(
         monkeypatch,
         fallback.WorkIdentityDecision(
             action="register_new",
-            evidence_title="Yu-Gi-Oh! GX",
+            evidence_title=title,
+            subject_scope="anime_work",
+            subject_relation="primary_subject",
             confidence=0.97,
-            rationale="A distinct series title absent from the candidate catalog.",
         ),
     )
-    registration_calls: list[tuple[str, str, dict]] = []
+    lookups = []
+
+    def missing(titles, *, source_url, audit):
+        lookups.append((titles, source_url))
+        audit["status"] = "kitsu_match_missing"
+
+    monkeypatch.setattr(fallback, "register_unmatched_work_from_kitsu", missing)
+    expected = 2_000_000 + zlib.crc32(b"mysteriousnewanime") % 1_000_000_000
+    for _ in range(2):
+        audit = {}
+        (match,) = fallback.resolve_unmatched_work_with_llm(
+            titles=[title], source_url=url, audit=audit
+        )
+        assert match.menu_work_id == audit["menu_work_id"] == expected
+        assert str(match.evidence_url) == url
+    assert lookups == [([title], url)] * 2
+    assert not (tmp_path / "menu_work_external_entries.csv").exists()
+    with (official / "agent_works.csv").open(encoding="utf-8-sig", newline="") as stream:
+        (row,) = csv.DictReader(stream)
+    assert (int(row["menu_work_id"]), row["title_english"]) == (expected, title)
+    assert (official / "menu_works.csv").read_text(encoding="utf-8") == "menu_work_id,title_ko\n"
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["kitsu_match_ambiguous", "new_work_logged_pending_review", "kitsu_lookup_unavailable"],
+)
+def test_new_title_never_falls_back_to_crc_when_kitsu_is_inconclusive(monkeypatch, status):
+    title = "Mysterious New Anime"
+    _install_model(
+        monkeypatch,
+        fallback.WorkIdentityDecision(
+            action="register_new",
+            evidence_title=title,
+            subject_scope="anime_work",
+            subject_relation="primary_subject",
+            confidence=0.97,
+        ),
+    )
+    monkeypatch.setattr(fallback, "_candidate_catalog_rows", lambda *args, **kwargs: [])
+    monkeypatch.setattr(fallback, "record_unresolved_source_title", lambda *args: None)
+
+    def inconclusive(_titles, *, source_url, audit):
+        audit["status"] = status
+
+    monkeypatch.setattr(fallback, "register_unmatched_work_from_kitsu", inconclusive)
     monkeypatch.setattr(
         fallback,
         "register_new_work_from_source_title",
-        lambda title, source_url, audit: registration_calls.append((title, source_url, audit))
-        or 2_000_243,
+        lambda *args, **kwargs: pytest.fail("CRC bypass"),
     )
+    audit = {}
+    assert (
+        fallback.resolve_unmatched_work_with_llm(
+            titles=[title], source_url="https://example.org/new", audit=audit
+        )
+        == []
+    )
+    assert audit["status"] == status
 
-    matches = fallback.resolve_unmatched_work_with_llm(
-        titles=["Yu-Gi-Oh! GX"], source_url="https://example.com/announcement"
-    )
 
-    assert len(matches) == 1
-    assert matches[0].menu_work_id == 2_000_243
-    assert matches[0].basis == "llm_source_new_work"
-    assert registration_calls[0][:2] == (
-        "Yu-Gi-Oh! GX",
-        "https://example.com/announcement",
+def test_new_anime_uses_confirmed_kitsu_id_instead_of_title_crc(monkeypatch):
+    title = "Mysterious New Anime"
+    _install_model(
+        monkeypatch,
+        fallback.WorkIdentityDecision(
+            action="register_new",
+            evidence_title=title,
+            subject_scope="anime_work",
+            subject_relation="primary_subject",
+            confidence=0.97,
+        ),
     )
+    monkeypatch.setattr(fallback, "_candidate_catalog_rows", lambda *args, **kwargs: [])
+    evidence = WorkMatchEvidence(
+        menu_work_id=1_050_362,
+        basis="kitsu_catalog_title",
+        matched_value=title,
+        evidence_url="https://kitsu.io/anime/50362",
+        confidence=0.97,
+    )
+    monkeypatch.setattr(
+        fallback, "register_unmatched_work_from_kitsu", lambda *args, **kwargs: evidence
+    )
+    monkeypatch.setattr(
+        fallback, "register_new_work_from_source_title", lambda *args, **kwargs: pytest.fail("CRC")
+    )
+    assert fallback.resolve_unmatched_work_with_llm(
+        titles=[title], source_url="https://example.org/new"
+    ) == [evidence]
+
+
+@pytest.mark.parametrize(
+    ("relation", "url"),
+    [
+        ("unclear", "https://example.org/new"),
+        ("incidental_mention", "https://example.org/new"),
+        ("primary_subject", "file:///unknown"),
+        ("primary_subject", "https://"),
+    ],
+)
+def test_llm_new_work_requires_primary_subject_and_article_url_before_kitsu(
+    monkeypatch, relation, url
+):
+    title = "Mysterious New Anime"
+    _install_model(
+        monkeypatch,
+        fallback.WorkIdentityDecision(
+            action="register_new",
+            evidence_title=title,
+            subject_scope="anime_work",
+            subject_relation=relation,
+            confidence=0.97,
+        ),
+    )
+    monkeypatch.setattr(fallback, "_candidate_catalog_rows", lambda *args, **kwargs: [])
+    monkeypatch.setattr(fallback, "record_unresolved_source_title", lambda *args: None)
+    monkeypatch.setattr(
+        fallback,
+        "register_unmatched_work_from_kitsu",
+        lambda *args, **kwargs: pytest.fail("Kitsu call"),
+    )
+    monkeypatch.setattr(
+        fallback,
+        "register_new_work_from_source_title",
+        lambda *args, **kwargs: pytest.fail("CRC allocation"),
+    )
+    assert fallback.resolve_unmatched_work_with_llm(titles=[title], source_url=url) == []
 
 
 def test_new_registration_does_not_create_id_without_catalog_confirmation(monkeypatch) -> None:

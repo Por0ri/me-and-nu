@@ -15,6 +15,7 @@ import mimetypes
 import os
 import shutil
 import sqlite3
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,9 +24,13 @@ from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from ani_rag.archive_identity import OfficialWorkIdentities, official_works_path
+from ani_rag.kitsu_artwork_identity import collection_artwork_owner, poster_owners
+
 DEFAULT_SOURCE_DB = ROOT.parent / "ani_me;nu" / "data" / "generation_continuous_recovery_20261101.sqlite3"
 DEFAULT_TARGET_DB = ROOT / "data" / "ani_rag_live_20261109.sqlite3"
-DEFAULT_REFERENCE = ROOT / "data" / "reference" / "menu_works.csv"
+DEFAULT_ARCHIVE_REFERENCE = ROOT / "data" / "reference" / "menu_works.csv"
 DEFAULT_ASSET_DIR = ROOT / "data" / "image_assets" / "ani_me_sqlite_import"
 IMAGE_RECORD_QUERY = """SELECT request_id,payload_json,status FROM agent_records
     WHERE agent_type='image' AND record_kind='image_asset'
@@ -42,9 +47,21 @@ def _read_only(path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _catalog_ids(path: Path) -> set[int]:
-    with path.open("r", encoding="utf-8-sig", newline="") as stream:
-        return {int(row["menu_work_id"]) for row in csv.DictReader(stream)}
+def _confirmed_archive_ids(archive_path: Path, official_path: Path) -> set[int]:
+    if archive_path.resolve() == official_path.resolve():
+        raise ValueError("Supply the work snapshot that belonged to the period archive")
+    official = OfficialWorkIdentities(official_path)
+    confirmed = set()
+    unverified = set()
+    with archive_path.open("r", encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            work_id = int(row["menu_work_id"])
+            titles = tuple(row.get(key) or "" for key in ("title_ko", "title_english", "title_native", "title_romaji"))
+            if official.confirms(work_id, titles, row.get("anilist_ids") or ""):
+                confirmed.add(work_id)
+            else:
+                unverified.add(work_id)
+    return confirmed - unverified
 
 
 def _valid_url(value: object) -> bool:
@@ -94,15 +111,16 @@ def _image_alt_text(group: dict[str, Any]) -> str:
     return "; ".join(parts)[:1200] or "Imported work-linked image candidate"
 
 
-def _build_plan(source: sqlite3.Connection, target: sqlite3.Connection, reference: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def _build_plan(source: sqlite3.Connection, target: sqlite3.Connection, reference: Path, official_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    kitsu_owners = poster_owners(official_path.with_name("menu_work_entries.csv"))
     work_ids = {
         int(row[0]) for row in target.execute(
             "SELECT menu_work_id FROM rag_work_link WHERE status='matched' GROUP BY menu_work_id"
         ) if row[0] is not None
     }
-    work_ids.intersection_update(_catalog_ids(reference))
+    work_ids.intersection_update(_confirmed_archive_ids(reference, official_path))
     if not work_ids:
-        raise RuntimeError("No confirmed RAG work IDs were found in the local reference snapshot")
+        raise RuntimeError("No matched work IDs agree with both the archive identity and the current official catalog")
 
     sources_by_request: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in source.execute(
@@ -134,6 +152,11 @@ def _build_plan(source: sqlite3.Connection, target: sqlite3.Connection, referenc
         origin_url = str(origin.get("url") or page_url)
         if not _valid_url(origin_url):
             origin_url = page_url
+        work_id = collection_artwork_owner(source_id, image_url, origin_url, kitsu_owners)
+        if work_id is not None:
+            if work_id not in work_ids:
+                continue
+            linked_ids = {work_id}
         key = (source_id, image_url)
         group = groups.get(key)
         if group is None:
@@ -383,10 +406,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-db", type=Path, default=DEFAULT_SOURCE_DB)
     parser.add_argument("--target-db", type=Path, default=DEFAULT_TARGET_DB)
-    parser.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE)
+    parser.add_argument("--reference", type=Path, help="work snapshot for the specified period archive")
+    parser.add_argument("--work-catalog", type=Path, default=official_works_path(), help="current official menu_works.csv")
     parser.add_argument("--asset-dir", type=Path, default=DEFAULT_ASSET_DIR)
     parser.add_argument("--apply", action="store_true", help="write matching image assets into the temporary ani_rag SQLite database")
     args = parser.parse_args()
+    if args.reference is None and args.source_db.resolve() != DEFAULT_SOURCE_DB.resolve():
+        parser.error("--reference is required for a different period archive")
     if not args.target_db.is_file():
         raise FileNotFoundError(args.target_db)
     source = _read_only(args.source_db)
@@ -394,7 +420,7 @@ def main() -> int:
     created_files: list[Path] = []
     database_committed = False
     try:
-        plan, _existing = _build_plan(source, target, args.reference)
+        plan, _existing = _build_plan(source, target, args.reference or DEFAULT_ARCHIVE_REFERENCE, args.work_catalog)
         target.rollback()
         target.close()
         target = None

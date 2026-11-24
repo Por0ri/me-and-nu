@@ -27,8 +27,10 @@ from ani_menu_agent.work_catalog import (
     load_work_external_entries,
 )
 from ani_menu_agent.work_catalog_registration import (
+    record_unresolved_source_title,
     register_new_work_from_source_title,
     register_unmatched_work_from_kitsu,
+    valid_source_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -162,6 +164,7 @@ def _candidate_catalog_rows(
     body_queries: list[str] | None = None,
     source_url: str | None = None,
     limit: int = 30,
+    include_ids: tuple[int, ...] = (),
 ) -> list[dict]:
     """Retrieve a multilingual shortlist without fuzzy-scoring the full catalog per query."""
     global _CATALOG_ALIAS_INDEX_CACHE
@@ -356,6 +359,11 @@ def _candidate_catalog_rows(
     ranked = sorted(
         grouped.values(), key=lambda item: (-item["score"], item["menu_work_id"])
     )[:limit]
+    ranked_ids = {item["menu_work_id"] for item in ranked}
+    ranked.extend(
+        grouped[work_id] for work_id in include_ids
+        if work_id in grouped and work_id not in ranked_ids
+    )
     candidates = []
     for item in ranked:
         canonical = item["canonical_titles"][:4]
@@ -399,7 +407,10 @@ def _body_evidence_is_grounded(
     body = _normalized_source_quote(body_excerpt)
     title = _normalized_title_evidence(evidence_title)
     quote_title = _normalized_title_evidence(evidence_quote)
-    return len(quote) >= 20 and quote in body and len(title) >= 3 and title in quote_title
+    return (
+        len(quote) >= 20 and quote in body
+        and _is_specific_title_evidence(evidence_title) and title in quote_title
+    )
 
 
 def _is_generic_listing_url(source_url: str | None) -> bool:
@@ -420,15 +431,16 @@ def resolve_unmatched_work_with_llm(
     content_type: str | None = None,
     usage_records: list[dict] | None = None,
     audit: dict | None = None,
+    character_hints: list[WorkMatchEvidence] | None = None,
 ) -> list[WorkMatchEvidence]:
     """Resolve an unmatched title from the source's title/about/opening text.
 
-    This fallback runs only after deterministic title and metadata matching fails.
+    Character-only matches are unconfirmed hints and require article body evidence.
     A short opening excerpt may help identify the article's primary subject, but
     incidental body mentions and outbound-link labels alone are never sufficient.
     Curation lists may link several works only when each selected catalog alias is
     present in the same quoted source passage as an actual listed target. A new
-    source-grounded anime title receives the next catalog ID after duplicate checks.
+    source-grounded anime gets a stable temporary ID after catalog checks.
     """
     settings = get_settings()
     clean_titles = list(
@@ -446,6 +458,10 @@ def resolve_unmatched_work_with_llm(
     ]
     clean_body_excerpt = " ".join(str(body_excerpt or "").split())[:2_000]
     body_chars_available = len(" ".join(str(body_excerpt or "").split()))
+    if character_hints and (not clean_body_excerpt or not valid_source_url(source_url)):
+        if audit is not None:
+            audit.update({"status": "character_match_requires_article"})
+        return []
     if clean_body_excerpt and _is_generic_listing_url(source_url):
         if audit is not None:
             audit.update(
@@ -462,6 +478,7 @@ def resolve_unmatched_work_with_llm(
             _body_context_queries(clean_body_excerpt) if clean_body_excerpt else []
         ),
         source_url=source_url,
+        include_ids=tuple(dict.fromkeys(hint.menu_work_id for hint in character_hints or [])),
     )
     if audit is not None:
         audit["capture_diagnostics"] = {
@@ -484,6 +501,21 @@ def resolve_unmatched_work_with_llm(
         ],
         "existing_catalog_candidates": catalog_candidates,
     }
+    character_instructions = ""
+    if character_hints:
+        payload["unverified_character_hints"] = [
+            {"name": hint.matched_value, "possible_work_id": hint.menu_work_id}
+            for hint in character_hints
+        ]
+        character_instructions = (
+            " The character hints are unverified name matches. A companion, namesake or "
+            "related product may belong to a different anime. Read the original headline "
+            "and body to identify the central work independently. Require a work title "
+            "from the source, and include a verbatim corroborating passage from the body "
+            "even for headline_or_about evidence. A character name alone is insufficient. "
+            "Set subject_scope=anime_work and subject_relation=primary_subject only for "
+            "the actual main subject. Prefer a different work when evidenced, or unresolved."
+        )
     model = ChatOpenAI(
         model=settings.model_name,
         api_key=settings.openai_api_key,
@@ -503,9 +535,10 @@ def resolve_unmatched_work_with_llm(
                     "failed. First use supplied page/headline titles and publisher-declared "
                     "about references. "
                     "If those do not identify the work, you may inspect the opening body excerpt. "
-                    "A verified catalog alias in the supplied headline or publisher about-reference "
-                    "is sufficient title evidence. If the alias appears only in the body, require "
-                    "the quoted sentence to explicitly connect that alias to the work (for example, "
+                    "A verified catalog alias in the supplied headline or publisher "
+                    "about-reference is sufficient title evidence. If the alias appears only in "
+                    "the body, require the quoted sentence to explicitly connect that alias to "
+                    "the work (for example, "
                     "by spelling out the full title nearby or labeling the abbreviation). Use the "
                     "exact source wording as evidence_title. Do not treat a passing mention of a "
                     "work elsewhere in the article as its primary subject. "
@@ -537,20 +570,15 @@ def resolve_unmatched_work_with_llm(
                     "the evidence quote includes the actual itemized targets and every selected "
                     "catalog alias is grounded in that quote. "
                     "Choose register_new only for a distinct anime absent from the candidates. "
-                    "For a confirmed distinct primary anime absent from the catalog, assign the next "
-                    "menu_work_id after exact-title duplicate checks; do not leave it as an ID-only record. "
+                    "Use anime_work and primary_subject for register_new. The code checks the "
+                    "catalog and allocates a temporary ID. Do not propose a new franchise for "
+                    "a season, an alternate spelling, a character, or an uncertain title. "
                     "For match_existing or register_new, set evidence_title to the exact work-name "
                     "phrase appearing in the selected evidence. If evidence_basis is "
                     "headline_or_about, the phrase must occur in a supplied title or publisher "
                     "about-reference. If it is body_excerpt, evidence_title must occur in "
                     "evidence_quote and the quote must be "
                     "copied verbatim from the opening excerpt. Never invent titles or quotes. "
-                    "A distinct work absent from the catalog may be registered when the exact "
-                    "primary work title is explicitly grounded in this original source and "
-                    "the source context identifies an anime. Registration assigns the next "
-                    "canonical menu_work_id; the crawler must persist the source document and "
-                    "ERD work entity before enqueueing generation. Do not register uncertain "
-                    "titles, duplicates, or a season/movie as a separate franchise. "
                     "Classify subject_scope separately: use anime_work when the item is about a "
                     "specific anime work; anime_related_no_single_work when it discusses anime "
                     "or animation broadly, multiple works, or a concert/screening without one "
@@ -559,7 +587,7 @@ def resolve_unmatched_work_with_llm(
                     "use unclear only when the source evidence cannot establish its scope. "
                     "For not_anime_related, choose unresolved and do not force a menu_work_id. "
                     "If uncertain, choose unresolved. Never invent IDs or evidence titles. "
-                    "Confidence must reflect the evidence.",
+                    "Confidence must reflect the evidence." + character_instructions,
                 ),
                 ("human", json.dumps(payload, ensure_ascii=False)),
             ]
@@ -628,6 +656,30 @@ def resolve_unmatched_work_with_llm(
             audit["status"] = "scope_conflicts_with_work_match"
         return []
 
+    if character_hints:
+        quote = _normalized_source_quote(decision.evidence_quote)
+        character_names = {
+            _normalized_title_evidence(hint.matched_value) for hint in character_hints
+        }
+        named_work = _normalized_title_evidence(decision.evidence_title)
+        quote_text = _normalized_title_evidence(decision.evidence_quote)
+        quote_mentions_subject = any(
+            name and name in quote_text and name != quote_text
+            for name in character_names | {named_work}
+        )
+        if named_work in character_names or (
+            decision.action != "unresolved"
+            and (
+                decision.subject_scope != "anime_work"
+                or decision.subject_relation != "primary_subject"
+                or not quote_mentions_subject
+                or quote not in _normalized_source_quote(clean_body_excerpt)
+            )
+        ):
+            if audit is not None:
+                audit["status"] = "unconfirmed_character_work"
+            return []
+
     supplied_title_evidence = {
         *clean_titles,
         *(str(ref.get("name") or "") for ref in about_refs),
@@ -659,7 +711,14 @@ def resolve_unmatched_work_with_llm(
         "register_new": 0.60,
         "unresolved": 0.0,
     }[decision.action]
+    grounded_candidate = bool(
+        evidence_valid and decision.evidence_title.strip() and source_url
+        and decision.subject_scope in {"anime_work", "unclear"}
+        and decision.subject_relation != "incidental_mention"
+    )
     if decision.confidence < minimum_confidence:
+        if grounded_candidate:
+            record_unresolved_source_title(decision.evidence_title, source_url)
         logger.info(
             "Leaving work title unresolved: %s confidence %.2f below %.2f; rationale=%s",
             decision.action,
@@ -692,7 +751,8 @@ def resolve_unmatched_work_with_llm(
                 audit.update(
                     {
                         "status": "multiple_work_match_not_allowed",
-                        "reason": "Multiple IDs require an explicit collaboration or itemized curation evidence.",
+                        "reason": ("Multiple IDs require an explicit collaboration "
+                                   "or itemized curation evidence."),
                     }
                 )
             return []
@@ -708,6 +768,9 @@ def resolve_unmatched_work_with_llm(
                 audit["status"] = "catalog_title_not_in_shortlist"
             return []
         evidence_quote = decision.evidence_quote or decision.evidence_title
+        if character_hints and len(ids) == 1:
+            # A second work mentioned in an otherwise genuine quote cannot validate the ID.
+            evidence_quote = decision.evidence_title
         normalized_quote = _normalized_title_evidence(evidence_quote)
         grounded_aliases_by_id = {
             match.menu_work_id: [
@@ -739,7 +802,8 @@ def resolve_unmatched_work_with_llm(
             )
             if confirmed is None:
                 if (
-                    decision.evidence_basis == "headline_or_about"
+                    not character_hints
+                    and decision.evidence_basis == "headline_or_about"
                     and decision.subject_relation == "primary_subject"
                     and decision.confidence >= 0.90
                 ):
@@ -789,7 +853,7 @@ def resolve_unmatched_work_with_llm(
         )
         if audit is not None:
             audit["status"] = "matched"
-        if len(ids) == 1:
+        if len(ids) == 1 and not character_hints:
             # Kitsu's exact title confirmation lets future runs resolve an AniList
             # season/movie title to the canonical menu_work_id without repeating LLM work.
             # The external ID stays in menu_work_external_entries.csv, never in anilist_id.
@@ -829,18 +893,44 @@ def resolve_unmatched_work_with_llm(
             decision.evidence_title,
             decision.rationale,
         )
+        if not valid_source_url(source_url):
+            if audit is not None:
+                audit["status"] = "invalid_source_url"
+            return []
+        if decision.subject_scope != "anime_work" or decision.subject_relation != "primary_subject":
+            if grounded_candidate:
+                record_unresolved_source_title(decision.evidence_title, source_url)
+            if audit is not None:
+                audit["status"] = "unconfirmed_new_work"
+            return []
         registration_audit: dict = {}
+        confirmed = register_unmatched_work_from_kitsu(
+            [decision.evidence_title], source_url=source_url, audit=registration_audit,
+        )
+        if confirmed is not None:
+            if audit is not None:
+                audit.update(registration_audit)
+            return [confirmed]
+        lookup_status = registration_audit.get("status")
+        if lookup_status in {
+            "new_work_logged_pending_review", "kitsu_match_ambiguous", "kitsu_lookup_unavailable",
+        }:
+            if lookup_status == "kitsu_lookup_unavailable":
+                record_unresolved_source_title(decision.evidence_title, source_url)
+            if audit is not None:
+                audit.update(registration_audit)
+            return []
         menu_work_id = register_new_work_from_source_title(
             decision.evidence_title, source_url or "", audit=registration_audit
         )
         if menu_work_id is None:
             if audit is not None:
-                audit["status"] = "new_work_registration_ambiguous_or_invalid"
+                audit["status"] = registration_audit.get("status", "unresolved_work_id")
             return []
         if audit is not None:
             audit.update(
                 {
-                    "status": registration_audit.get("status", "registered_work_pending_dataset_persist"),
+                    "status": registration_audit.get("status", "registered_temporary_source_title"),
                     "menu_work_id": menu_work_id,
                     "source_url": source_url,
                 }
@@ -858,6 +948,8 @@ def resolve_unmatched_work_with_llm(
                 confidence=decision.confidence,
             )
         ]
+    if grounded_candidate:
+        record_unresolved_source_title(decision.evidence_title, source_url)
     logger.info("LLM left unmatched work title unresolved: %s", decision.rationale)
     if audit is not None:
         audit["status"] = {

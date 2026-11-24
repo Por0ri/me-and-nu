@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from sqlalchemy import Integer, MetaData, create_engine, event, func, insert, select
+from sqlalchemy import JSON, Integer, MetaData, create_engine, event, func, insert, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -25,7 +25,7 @@ from app.core.security import hash_token
 from app.db.session import get_db
 from app.main import create_app
 from app.models import (
-    AuthSession, ConsentHistory, CreatorChannel, NotificationSetting, OnboardingAnswersRecord,
+    AdminAccount, AuthSession, ConsentHistory, CreatorChannel, NotificationSetting, OnboardingAnswersRecord,
     Policy, Subtopic, Tap, TapTopic, Topic, UserAccount,
 )
 from app.models.oauth_attempt import OAuthAttempt
@@ -107,18 +107,15 @@ def postgres_flow(monkeypatch, request):
 
     metadata = MetaData()
     for model in (
-        UserAccount, AuthSession, OAuthAttempt, Topic, Subtopic, Policy,
+        UserAccount, AdminAccount, AuthSession, OAuthAttempt, Topic, Subtopic, Policy,
         ConsentHistory, NotificationSetting, Tap, TapTopic, OnboardingAnswersRecord, CreatorChannel,
     ):
         table = model.__table__.to_metadata(metadata)
         for column in table.primary_key.columns:
             if len(table.primary_key.columns) == 1 and isinstance(column.type, Integer):
                 column.type = Integer()
+    metadata.tables["creator_channel"].c.style_card.type = JSON()
     metadata.create_all(engine)
-    # Shared-DB withdrawal read contract, without importing Checking admin ORM.
-    with engine.begin() as connection:
-        connection.exec_driver_sql("CREATE TABLE admin_account (admin_account_id INTEGER PRIMARY KEY, "
-            "user_id BIGINT NOT NULL REFERENCES user_account(user_id), role TEXT NOT NULL, revoked_at TIMESTAMP)")
     legacy_birth_date = getattr(request, "param", False)
     if legacy_birth_date:
         # The new ORM must work during the rollout before the old nullable

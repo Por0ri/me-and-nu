@@ -17,8 +17,10 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, HttpUrl
 
 from ani_menu_agent.models import CONTENT_TYPE_LABELS
+from ani_menu_agent.source_freshness import publication_timestamp
 from ani_menu_agent.classification import infer_toei_press_type
 from ani_menu_agent.sources.http_policy import pace_host
+from ani_menu_agent.sources.anime_schedule import source_item_key
 from ani_menu_agent.sources.models import Source
 from ani_menu_agent.sources.page_collector import _get_html_with_client
 from ani_menu_agent.sources.registry import load_source_registry
@@ -30,6 +32,7 @@ class DiscoveryItem(BaseModel):
     title: str
     url: HttpUrl
     source_id: str
+    feed_entry_guid: str | None = None
     content_types: list[str] = Field(default_factory=list)
     published_at: str | None = None
     summary: str = ""
@@ -157,6 +160,7 @@ def _listing_card_published_at(anchor) -> str | None:
             parent = parent.parent
     if card is None:
         return None
+
     date_node = card.select_one(
         'time[datetime], time, [itemprop="datePublished"], '
         '[property="article:published_time"], .article_date, '
@@ -170,16 +174,11 @@ def _listing_card_published_at(anchor) -> str | None:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).date().isoformat()
     except ValueError:
-        match = re.search(
-            r"(20\d{2})\s*\u5e74\s*(\d{1,2})\s*\u6708\s*(\d{1,2})\s*\u65e5?"
-            r"|(20\d{2})[./-](\d{1,2})[./-](\d{1,2})",
-            value,
-        )
+        match = re.search(r"(20\d{2})[./年-](\d{1,2})[./月-](\d{1,2})", value)
         if match:
-            parts = match.groups()[:3] if match.group(1) else match.groups()[3:]
             try:
-                return datetime(*(int(part) for part in parts)).date().isoformat()
-            except (TypeError, ValueError):
+                return datetime(*(int(part) for part in match.groups())).date().isoformat()
+            except ValueError:
                 return None
         for date_format in ("%B %d, %Y", "%b %d, %Y"):
             try:
@@ -254,8 +253,7 @@ def _listing_anchor_title(anchor, source: Source) -> str:
 
     if source.id == "src_www_toei_anim_co_jp":
         title = re.sub(
-            r"^\s*20\d{2}(?:\u5e74\d{1,2}\u6708\d{1,2}\u65e5?|[./-]\d{1,2}[./-]\d{1,2})\s*"
-            r"(?:\u30cb\u30e5\u30fc\u30b9|NEWS)?\s*",
+            r"^\s*20\d{2}[./年-]\d{1,2}[./月-]\d{1,2}日?\s*(?:ニュース|NEWS)?\s*",
             "",
             title,
             flags=re.IGNORECASE,
@@ -572,14 +570,17 @@ def parse_anime_schedule(xml: bytes) -> list[DiscoveryItem]:
         title = entry.get("title")
         if not url or not title:
             continue
+        guid = (entry.get("id") or "").strip() or None
+        item_key = source_item_key("anime_schedule_rss", url, guid)
         items.append(
             DiscoveryItem(
-                id=_item_id("anime_schedule_rss", url),
+                id=_item_id("anime_schedule_rss", item_key),
+                feed_entry_guid=guid if item_key != url else None,
                 title=title.strip(),
                 url=url,
                 source_id="anime_schedule_rss",
                 content_types=_source_type_codes("anime_schedule_rss"),
-                published_at=entry.get("published"),
+                published_at=publication_timestamp(entry.get("published")),
                 summary=entry.get("summary", "").strip(),
                 region="global",
             )
@@ -1575,19 +1576,8 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
         }:
             raw_title = " ".join(anchor.get_text(" ", strip=True).split())
             date_match = re.match(
-                r"\s*(?:(20\d{2})\s*\u5e74\s*(\d{1,2})\s*\u6708\s*(\d{1,2})\s*\u65e5?"
-                r"|(20\d{2})[./-](\d{1,2})[./-](\d{1,2}))",
-                raw_title,
+                r"\s*(20\d{2})[./年-](\d{1,2})[./月-](\d{1,2})日?", raw_title
             )
-            if date_match:
-                try:
-                    parts = date_match.groups()[:3] if date_match.group(1) else date_match.groups()[3:]
-                    published_at = datetime(*(int(part) for part in parts)).date().isoformat()
-                except (TypeError, ValueError):
-                    pass
-        if source.id == "eeo_events" and not published_at:
-            # EEO archive URLs encode publication date as /media/YYYY/MM/DD/<id>.
-            date_match = re.fullmatch(r"/media/(20\d{2})/(\d{2})/(\d{2})/\d+", path)
             if date_match:
                 try:
                     published_at = datetime(
@@ -1595,7 +1585,6 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
                     ).date().isoformat()
                 except ValueError:
                     pass
-
         seen.add(normalized_url)
         candidate_types = [item.value for item in source.content_types]
         if source.id == "one_piece_official":
@@ -1622,7 +1611,9 @@ def parse_html_listing(html: str, source: Source, limit: int = 30) -> list[Disco
     # Listings are not always rendered in publication order. Sort the page's
     # candidates before applying its batch limit so a newer item lower in the
     # HTML does not lose to an older item near the top.
-    candidates.sort(key=lambda item: _publication_order(item.published_at))
+    candidates.sort(
+        key=lambda item: _publication_order(item.published_at)
+    )
     return candidates[:limit]
 
 
@@ -1651,12 +1642,40 @@ def rank_candidates(
     items: list[DiscoveryItem],
     region_policy: str = "mixed",
 ) -> list[DiscoveryItem]:
-    """Rank all leads newest-first, regardless of region or source.
+    """Keep each source's newest leads first while preventing source starvation.
 
-    ``region_policy`` remains accepted for compatibility, but is ignored.
+    ``region_policy`` remains accepted for compatibility with existing callers,
+    but regional weighting is intentionally no longer applied.
     """
+
     del region_policy
-    return sorted(items, key=lambda item: _publication_order(item.published_at))
+    by_source: dict[str, list[DiscoveryItem]] = {}
+    for item in items:
+        by_source.setdefault(item.source_id, []).append(item)
+    for source_items in by_source.values():
+        source_items.sort(key=lambda item: _publication_order(item.published_at))
+
+    # A single publisher can expose dozens of fresh articles and otherwise fill
+    # the entire bounded candidate batch. Interleave source queues so listings
+    # without publication dates (such as event calendars) still get examined;
+    # within every source, dated/newer items remain first.
+    source_order = sorted(
+        by_source,
+        key=lambda source_id: (
+            _publication_order(by_source[source_id][0].published_at),
+            source_id,
+        ),
+    )
+    ranked: list[DiscoveryItem] = []
+    while source_order:
+        remaining: list[str] = []
+        for source_id in source_order:
+            source_items = by_source[source_id]
+            ranked.append(source_items.pop(0))
+            if source_items:
+                remaining.append(source_id)
+        source_order = remaining
+    return ranked
 
 
 def collect_candidates(
@@ -1670,18 +1689,12 @@ def collect_candidates(
     source_report: list[dict[str, object]] | None = None,
     birthday_catalog: list[DiscoveryItem] | None = None,
     exhaustive_listing: bool = False,
-    known_candidate_ids_by_source: dict[str, set[str]] | None = None,
+    retain_fetched_candidates: bool = False,
 ) -> tuple[list[DiscoveryItem], list[str]]:
     """활성 출처 중 선택 유형을 지원하는 곳에서 미검증 후보만 수집합니다."""
     errors: list[str] = []
     items: list[DiscoveryItem] = []
     active = _collectable_sources_for_type(content_type, source_ids)
-    known_candidate_ids_by_source = known_candidate_ids_by_source or {}
-    latest_first_sources = {
-        "eeo_events",
-        "daewonmedia_kr",
-        "src_www_toei_anim_co_jp",
-    }
     headers = {"User-Agent": "me-nu-content-agent/0.3 (https://github.com/Por0ri/me-and-nu)"}
     robots_cache = {}
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
@@ -1693,7 +1706,6 @@ def collect_candidates(
             page_candidate_counts: list[int] = []
             duplicate_candidate_count = 0
             listing_stop_reason = "not_applicable"
-            observed_listing_items: list[DiscoveryItem] = []
             try:
                 if rss_source.collection in {"rss", "youtube_rss"}:
                     if rss_source.collection == "youtube_rss" and rss_source.feed_url is None:
@@ -1779,12 +1791,12 @@ def collect_candidates(
                             html, _ = _get_html_with_client(
                                 client, listing_url, rss_source, timeout, robots_cache
                             )
-                            # `limit` is a downstream candidate batch size. During
-                            # exhaustive discovery, inspect the whole listing page so
-                            # that batch sizing does not silently discard its tail.
+                            # The continuous worker stores leads for later turns.
+                            # Parse the fetched page up to its existing safety cap;
+                            # the ordinary per-source limit still stops pagination.
                             page_limit = (
                                 max(limit, MAX_LISTING_CANDIDATES_PER_PAGE)
-                                if exhaustive_listing
+                                if exhaustive_listing or retain_fetched_candidates
                                 else limit
                             )
                             page_items = parse_html_listing(
@@ -1792,36 +1804,17 @@ def collect_candidates(
                             )
                             pages_scanned += 1
                             page_candidate_counts.append(len(page_items))
-                            observed_listing_items.extend(page_items)
                             # Discovery follows the source archive regardless of article age.
                             # Time validity is checked only after source facts are captured.
                             page_new_count = 0
-                            reached_known_candidate = False
-                            known_ids = known_candidate_ids_by_source.get(
-                                rss_source.id, set()
-                            )
                             for item in page_items:
                                 candidate_url = str(item.url)
-                                if (
-                                    rss_source.id in latest_first_sources
-                                    and (item.id in known_ids or candidate_url in known_ids)
-                                ):
-                                    reached_known_candidate = True
-                                    break
                                 if candidate_url in seen_source_urls:
                                     duplicate_candidate_count += 1
                                     continue
                                 seen_source_urls.add(candidate_url)
                                 items.append(item)
                                 page_new_count += 1
-                            if reached_known_candidate:
-                                listing_stop_reason = "known_candidate_overlap"
-                                break
-                            if rss_source.id in latest_first_sources and not known_ids:
-                                # Establish the cursor from the newest page on the
-                                # first pass; later passes stop at its known overlap.
-                                listing_stop_reason = "latest_first_initial_page"
-                                break
                             if page_new_count == 0:
                                 listing_stop_reason = "no_new_candidates"
                                 break
@@ -1983,18 +1976,6 @@ def collect_candidates(
                 if source_report is not None:
                     source_errors = errors[source_error_count:]
                     source_candidate_count = len(items) - source_item_count
-                    source_publication_dates = [
-                        item.published_at
-                        for item in (
-                            [*observed_listing_items, *items[source_item_count:]]
-                        )
-                        if item.published_at
-                    ]
-                    latest_published_at = (
-                        min(source_publication_dates, key=_publication_order)
-                        if source_publication_dates
-                        else None
-                    )
                     source_report.append(
                         {
                             "source_id": rss_source.id,
@@ -2011,7 +1992,6 @@ def collect_candidates(
                             ),
                             "attempted": attempted,
                             "candidate_count": source_candidate_count,
-                            "latest_published_at": latest_published_at,
                             "pages_scanned": pages_scanned,
                             "page_candidate_counts": page_candidate_counts,
                             "duplicate_candidate_count": duplicate_candidate_count,
@@ -2091,6 +2071,6 @@ def collect_candidates(
             if content_type not in inferred_types:
                 continue
             item = item.model_copy(update={"content_types": sorted(inferred_types)})
-        unique.setdefault(str(item.url), item)
+        unique.setdefault(source_item_key(item.source_id, str(item.url), item.feed_entry_guid), item)
     ranked = rank_candidates(list(unique.values()), region_policy=region_policy)
-    return (ranked if exhaustive_listing else ranked[:limit]), errors
+    return (ranked if exhaustive_listing or retain_fetched_candidates else ranked[:limit]), errors

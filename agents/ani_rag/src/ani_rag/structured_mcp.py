@@ -15,6 +15,7 @@ from typing import Mapping, Protocol, Sequence
 from urllib.parse import quote, urlsplit
 
 from ani_rag.interfaces import EvidenceRepository, StoredEvidenceReference, WorkCatalogResolver, WorkIdentity
+from ani_rag.collector import seed_work_is_confirmed
 from ani_rag.models import (
     CollectionMethod,
     EvidenceDocument,
@@ -27,6 +28,7 @@ from ani_rag.profiles import get_content_profile, validate_document_profile
 from ani_rag.image_ingest import ImageAssetRepository, ImageCandidate, ingest_image_candidates
 from ani_rag.entity_linking import EntityCatalogRecord, attach_image_entity_matches
 from ani_rag.settings import EvergreenSourceRegistry, require_source_access, require_source_media_url, require_source_url
+from ani_rag.wikidata_appearance import appearance_owners, character_appearance
 
 
 @dataclass(frozen=True)
@@ -111,12 +113,18 @@ class StructuredCollectionRequest:
     language: str
     property_ids: tuple[str, ...]
     result_limit: int = 10
+    seed_menu_work_id: int | None = None
+    refresh_after_seconds: int = 2_592_000
 
     def __post_init__(self) -> None:
         if not self.query.strip() or not self.language.strip() or not self.property_ids or any(not value.strip() for value in self.property_ids):
             raise ValueError("Structured collection needs query, original language, and explicit properties")
         if not 1 <= self.result_limit <= 100:
             raise ValueError("result_limit must be between 1 and 100")
+        if self.seed_menu_work_id is not None and self.seed_menu_work_id <= 0:
+            raise ValueError("seed_menu_work_id must be a positive integer")
+        if not 3_600 <= self.refresh_after_seconds <= 31_536_000:
+            raise ValueError("refresh_after_seconds must be between one hour and one year")
         if self.evidence_type not in get_content_profile(self.content_type).accepted_evidence_types:
             raise ValueError("Evidence type is not permitted for this content type")
 
@@ -137,6 +145,7 @@ async def collect_structured_items(
     require_source_access(registry, request.source_id, "read", request.content_type)
     if not source.allowed_hosts:
         raise PermissionError(f"Source {source.source_id!r} has no allowed hosts")
+    await repository.register_source(source, only_if_missing=True)
     bindings = dict(source.tool_bindings)
     live_tools = await adapter.list_tools(source.mcp_server)
     names = {bindings["search"], bindings["read"]}
@@ -159,13 +168,26 @@ async def collect_structured_items(
         if hit.mcp_server_alias != source.mcp_server or hit.tool_name != bindings["search"]:
             raise PermissionError("Structured search result attestation does not match configured server/tool")
         require_source_url(source, hit.item_url)
-        statement_result = await adapter.get_statement_values(StatementValuesRequest(
+        claim = await repository.claim_source_read(
             source_id=source.source_id,
-            mcp_server_alias=source.mcp_server,
-            tool_name=bindings["read"],
-            item_id=hit.item_id,
-            property_ids=request.property_ids,
-        ))
+            source_native_id=hit.item_id,
+            source_url=hit.item_url,
+            now=datetime.now(timezone.utc),
+            refresh_after_seconds=request.refresh_after_seconds,
+        )
+        if not claim.acquired:
+            continue
+        try:
+            statement_result = await adapter.get_statement_values(StatementValuesRequest(
+                source_id=source.source_id,
+                mcp_server_alias=source.mcp_server,
+                tool_name=bindings["read"],
+                item_id=hit.item_id,
+                property_ids=request.property_ids,
+            ))
+        except Exception as error:
+            await repository.release_source_read(claim.claim_id, error_code=type(error).__name__)
+            raise
         if (statement_result.source_id != source.source_id
                 or statement_result.mcp_server_alias != source.mcp_server
                 or statement_result.tool_name != bindings["read"]
@@ -176,6 +198,12 @@ async def collect_structured_items(
         if any(item.property_id not in requested_properties for item in statements):
             raise PermissionError("Structured MCP returned a property that was not requested")
         if not statements:
+            empty_hash = hashlib.sha256(f"{source.source_id}\n{hit.item_id}\nempty".encode("utf-8")).hexdigest()
+            await repository.complete_source_read(
+                claim.claim_id, source_native_id=hit.item_id, document_id=None,
+                content_hash=empty_hash, checked_at=datetime.now(timezone.utc),
+                refresh_after_seconds=request.refresh_after_seconds,
+            )
             continue
         payload = {
             "item_id": hit.item_id,
@@ -201,6 +229,7 @@ async def collect_structured_items(
                 titles=(hit.title,), external_ids={source.source_id: hit.item_id},
                 source_text="\n".join((hit.title, hit.description or "", body)),
                 source_url=hit.item_url, source_id=source.source_id,
+                seed_menu_work_ids=(request.seed_menu_work_id,) if request.seed_menu_work_id else (),
             )
         elif identity is not None:
             identity = WorkIdentity(
@@ -208,10 +237,29 @@ async def collect_structured_items(
                 source_text=identity.source_text or "\n".join((hit.title, hit.description or "", body)),
                 source_url=identity.source_url or hit.item_url,
                 source_id=identity.source_id or source.source_id,
+                seed_menu_work_ids=tuple(dict.fromkeys((
+                    *identity.seed_menu_work_ids,
+                    *((request.seed_menu_work_id,) if request.seed_menu_work_id else ()),
+                ))),
             )
+        # These items identify characters. Treat only an explicit anime appearance as
+        # evidence of a work, even when the query or the character names a known title.
+        character_source = source.source_id == "wikidata_character_catalog"
+        appearance_qids = ()
+        cast_evidence_ids = ()
         identity_error = None
         try:
-            resolution = await work_catalog.resolve(identity) if work_catalog and identity else None
+            if character_source:
+                resolution, appearance_qids = character_appearance(payload, appearance_owners())
+                cast_lookup = getattr(repository, "character_cast_match", None)
+                if resolution.status is WorkLinkStatus.UNRESOLVED and callable(cast_lookup):
+                    cast = await cast_lookup(payload)
+                    if cast is not None:
+                        resolution = cast.resolution
+                        appearance_qids = (cast.appearance_qid,)
+                        cast_evidence_ids = cast.evidence_document_ids
+            else:
+                resolution = await work_catalog.resolve(identity) if work_catalog and identity else None
         except Exception as error:
             resolution = None
             identity_error = type(error).__name__
@@ -239,6 +287,10 @@ async def collect_structured_items(
                       "mcp_search_tool": bindings["search"],
                       "mcp_read_tool": bindings["read"],
                       "property_ids": ",".join(request.property_ids),
+                      **({"work_match_appearance_qids": ",".join(appearance_qids)} if appearance_qids else {}),
+                      **({"work_match_evidence_document_ids": ",".join(cast_evidence_ids)} if cast_evidence_ids else {}),
+                      **({"work_match_seed_menu_work_id": str(request.seed_menu_work_id)}
+                         if request.seed_menu_work_id is not None else {}),
                       **({"work_match_method": resolution.matched_on} if resolution and resolution.matched_on else {}),
                       **({"work_identity_error": identity_error} if identity_error else {})},
         )
@@ -289,7 +341,23 @@ async def collect_structured_items(
                         "failed": failures,
                     },
                 })
-        stored.append(await repository.upsert_and_schedule_generation(document, retrieval_query=request.query))
+        seed_match_confirmed = seed_work_is_confirmed(request.seed_menu_work_id, resolution)
+        document = replace(document, metadata={
+            **document.metadata,
+            "seed_match_status": "confirmed" if seed_match_confirmed else "unconfirmed",
+        }) if request.seed_menu_work_id is not None else document
+        stored_reference = await repository.upsert_and_schedule_generation(
+            document, retrieval_query=request.query,
+            # The character reference corpus verifies web candidates. Its expansion
+            # must not create a draft before a web candidate passes the evidence gate.
+            schedule_generation=seed_match_confirmed and not character_source,
+        )
+        await repository.complete_source_read(
+            claim.claim_id, source_native_id=hit.item_id,
+            document_id=stored_reference.canonical_record_id, content_hash=digest,
+            checked_at=document.retrieved_at, refresh_after_seconds=request.refresh_after_seconds,
+        )
+        stored.append(stored_reference)
     return tuple(stored)
 
 

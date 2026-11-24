@@ -40,6 +40,17 @@ def values():
     {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "0"}, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": ""},
     {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "-100"}, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "1000000"},
     {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "5,000"}, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "0100"},
+    {"CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH": "/etc/passwd"},
+    {"CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH": "/app/admin-evaluation/../other.json"},
+    {"CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH": "https://example.com/evaluation.json"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/etc/passwd"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/app/admin-evaluation/../service-evaluation.json"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "https://example.com/service-evaluation.json"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/app/admin-evaluation/evaluation.json"},
+    # Debate rooms need an explicit true/false and a 1-100 vote threshold.
+    {"CHECKING_DEBATE_ENABLED": "yes"}, {"CHECKING_DEBATE_ENABLED": ""}, {"CHECKING_DEBATE_ENABLED": "True"},
+    {"CHECKING_DEBATE_VOTE_THRESHOLD": "0"}, {"CHECKING_DEBATE_VOTE_THRESHOLD": "101"},
+    {"CHECKING_DEBATE_VOTE_THRESHOLD": "03"}, {"CHECKING_DEBATE_VOTE_THRESHOLD": ""},
 ])
 def test_unsafe_values_rejected(change):
     with pytest.raises(guard.GuardError):
@@ -146,6 +157,136 @@ def test_daily_total_limit_reaches_only_the_api_from_the_checking_file(rendered)
         guard.validate_values(configured, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "100"})
 
 
+def test_debate_switch_reaches_only_the_api_and_stays_off_by_default(rendered):
+    assert values()[guard.DEBATE_KEY] == "false" and values()[guard.DEBATE_THRESHOLD_KEY] == "10"
+    assert rendered["services"]["api"]["environment"]["DEBATE_ENABLED"] == "false"
+    assert rendered["services"]["api"]["environment"]["DEBATE_VOTE_THRESHOLD"] == "10"
+    for key in ("DEBATE_ENABLED", "DEBATE_VOTE_THRESHOLD"):
+        assert key not in rendered["services"]["migrate"]["environment"]
+    configured = values() | {guard.DEBATE_KEY: "true", guard.DEBATE_THRESHOLD_KEY: "3"}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["DEBATE_ENABLED"] == "true"
+    assert config["services"]["api"]["environment"]["DEBATE_VOTE_THRESHOLD"] == "3"
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="DEBATE_ENABLED"):
+        guard.validate_config(config, values())
+    leaked = copy.deepcopy(rendered)
+    leaked["services"]["migrate"]["environment"]["DEBATE_ENABLED"] = "false"
+    with pytest.raises(guard.GuardError, match="DEBATE_ENABLED"):
+        guard.validate_config(leaked, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_DEBATE_ENABLED"):
+        guard.validate_values(configured, {guard.DEBATE_KEY: "false"})
+
+
+def test_legacy_environment_without_debate_keys_keeps_debate_off():
+    legacy = values()
+    legacy.pop(guard.DEBATE_KEY)
+    legacy.pop(guard.DEBATE_THRESHOLD_KEY)
+    checked = guard.validate_values(legacy)
+    assert checked[guard.DEBATE_KEY] == "false" and checked[guard.DEBATE_THRESHOLD_KEY] == "10"
+
+
+@pytest.mark.parametrize("key,path", [
+    (guard.EVALUATION_KEY, guard.EVALUATION_PATH),
+    (guard.SERVICE_EVALUATION_KEY, guard.SERVICE_EVALUATION_PATH),
+])
+def test_legacy_environment_defaults_evaluation_to_disabled_without_allowing_inherited_override(key, path):
+    legacy = values()
+    legacy.pop(key)
+    assert guard.validate_values(legacy)[key] == ""
+    legacy.pop(key)
+    with pytest.raises(guard.GuardError, match="inherited " + key):
+        guard.validate_values(legacy, {key: path})
+
+
+def test_service_evaluation_path_reaches_only_api_and_cannot_reuse_offline_path(rendered):
+    key, path = guard.SERVICE_EVALUATION_KEY, guard.SERVICE_EVALUATION_PATH
+    assert values()[key] == ""
+    assert rendered["services"]["api"]["environment"]["ADMIN_SERVICE_EVALUATION_PATH"] == ""
+    configured = values() | {key: path, guard.EVALUATION_KEY: guard.EVALUATION_PATH}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["ADMIN_SERVICE_EVALUATION_PATH"] == path
+    assert config["services"]["api"]["environment"]["ADMIN_RECOMMENDATION_EVALUATION_PATH"] == guard.EVALUATION_PATH
+    assert "ADMIN_SERVICE_EVALUATION_PATH" not in config["services"]["migrate"]["environment"]
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="ADMIN_SERVICE_EVALUATION_PATH"):
+        guard.validate_config(config, configured | {key: ""})
+    with pytest.raises(guard.GuardError, match="inherited " + key):
+        guard.validate_values(configured, {key: ""})
+
+
+@pytest.mark.parametrize("value", ["", "/app/admin-evaluation/service-evaluation.json"])
+def test_service_evaluation_path_is_forbidden_in_migration_even_when_disabled(rendered, value):
+    config = copy.deepcopy(rendered)
+    config["services"]["migrate"]["environment"]["ADMIN_SERVICE_EVALUATION_PATH"] = value
+    with pytest.raises(guard.GuardError, match="ADMIN_SERVICE_EVALUATION_PATH"):
+        guard.validate_config(config, values())
+
+
+def test_evaluation_path_reaches_only_api_and_directory_mount_is_read_only(rendered):
+    assert values()[guard.EVALUATION_KEY] == ""
+    assert rendered["services"]["api"]["environment"]["ADMIN_RECOMMENDATION_EVALUATION_PATH"] == ""
+    configured = values() | {guard.EVALUATION_KEY: guard.EVALUATION_PATH}
+    guard.validate_values(configured)
+    config = render(configured)
+    api, migrate = config["services"]["api"], config["services"]["migrate"]
+    assert api["environment"]["ADMIN_RECOMMENDATION_EVALUATION_PATH"] == guard.EVALUATION_PATH
+    assert "ADMIN_RECOMMENDATION_EVALUATION_PATH" not in migrate["environment"]
+    assert not migrate.get("volumes")
+    assert len(api["volumes"]) == 1
+    mount = api["volumes"][0]
+    assert {key: value for key, value in mount.items() if key != "bind"} == {
+        "type": "bind", "source": str(guard.ROOT / "deploy/checking/admin-evaluation"),
+        "target": "/app/admin-evaluation", "read_only": True}
+    assert mount["bind"] in ({}, {"create_host_path": True})
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="ADMIN_RECOMMENDATION_EVALUATION_PATH"):
+        guard.validate_config(config, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_ADMIN_RECOMMENDATION"):
+        guard.validate_values(configured, {guard.EVALUATION_KEY: ""})
+
+
+@pytest.mark.parametrize("change", ["missing", "extra", "read_write", "wrong_source", "wrong_target", "named_volume",
+                                     "propagation", "create_disabled", "extra_options", "migrate_mount", "migrate_env"])
+def test_evaluation_connection_cannot_expand_host_access_or_reach_migration(rendered, change):
+    config = copy.deepcopy(rendered)
+    api, migrate = config["services"]["api"], config["services"]["migrate"]
+    mount = api["volumes"][0]
+    if change == "missing": api["volumes"] = []
+    elif change == "extra": api["volumes"].append({"type": "bind", "source": "/", "target": "/host", "read_only": True})
+    elif change == "read_write": mount["read_only"] = False
+    elif change == "wrong_source": mount["source"] = str(guard.ROOT / "deploy/checking")
+    elif change == "wrong_target": mount["target"] = "/app"
+    elif change == "named_volume": mount["type"] = "volume"
+    elif change == "propagation": mount["bind"]["propagation"] = "rshared"
+    elif change == "create_disabled": mount["bind"]["create_host_path"] = False
+    elif change == "extra_options": mount["volume"] = {"nocopy": False}
+    elif change == "migrate_mount": migrate["volumes"] = [copy.deepcopy(mount)]
+    elif change == "migrate_env": migrate["environment"]["ADMIN_RECOMMENDATION_EVALUATION_PATH"] = ""
+    with pytest.raises(guard.GuardError):
+        guard.validate_config(config, values())
+
+
+def test_evaluation_directory_symlink_cannot_escape_checkout(rendered, tmp_path, monkeypatch):
+    folder = tmp_path / "deploy/checking"
+    folder.mkdir(parents=True)
+    other = tmp_path / "other"
+    other.mkdir()
+    try:
+        (folder / "admin-evaluation").symlink_to(other, target_is_directory=True)
+    except OSError:
+        pytest.skip("This host does not permit creating directory symlinks")
+    config = copy.deepcopy(rendered)
+    for name in ("api", "migrate"):
+        config["services"][name]["build"]["context"] = str(tmp_path / "backend")
+    config["services"]["api"]["volumes"][0]["source"] = str(folder / "admin-evaluation")
+    monkeypatch.setattr(guard, "ROOT", tmp_path)
+    with pytest.raises(guard.GuardError, match="symlink escapes"):
+        guard.validate_config(config, values())
+
+
 @pytest.mark.parametrize("change", [
     "project", "volume", "external_volume", "network", "public_data", "extra_service", "api_origin",
     "database", "cookie", "redis_prefix", "port", "public_port", "udp", "db_port", "memory", "cpu",
@@ -190,7 +331,7 @@ def test_config_cannot_cross_environment_or_enable_unsafe_runtime(rendered, chan
     elif change == "entrypoint": api["entrypoint"] = ["sh"]
     elif change == "api_command": api["command"] = ["python", "other.py"]
     elif change == "migration_head": config["services"]["migrate"]["command"][-1] = "heads"
-    elif change == "migration_previous": config["services"]["migrate"]["command"][-1] = "b3e7a5c19d42"
+    elif change == "migration_previous": config["services"]["migrate"]["command"][-1] = "47c1a8d6b302"
     elif change == "migration_dob": config["services"]["migrate"]["command"][-1] = "d2f6a9c4e731"
     elif change == "startup_gate": api["depends_on"]["migrate"]["condition"] = "service_started"
     elif change == "api_mount": api["volumes"] = [{"type": "bind", "source": "/", "target": "/host"}]

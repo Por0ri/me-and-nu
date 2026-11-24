@@ -1,8 +1,4 @@
-"""Protected read routes. Do not register in the runtime app until BE approval.
-
-The permission store and operational data scope are still undecided. There is
-no runtime enable flag; only isolated tests include this router at present.
-"""
+"""Administrative reads protected by a real session and current DB grant."""
 
 from typing import Annotated
 
@@ -10,10 +6,13 @@ from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_deps import require_admin
+from app.api.deps import AuthContext
 from app.db.session import get_db
 from app.schemas.admin_content import AdminContentDetail, AdminContentListResponse, AdminContentQuery
 from app.schemas.common import COMMON_ERRORS, ErrorResponse
 from app.services import admin_content_service
+from app.services.admin_review_eligibility_service import get_review_eligibility
+from app.services.admin_review_permission_provider import AdminReviewPermissionProvider, get_admin_review_permission_provider
 
 router = APIRouter(
     prefix="/admin/contents",
@@ -44,5 +43,11 @@ async def list_contents(
 async def get_content(
     content_id: Annotated[int, Path(alias="contentId", gt=0, le=9223372036854775807)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    context: Annotated[AuthContext, Depends(require_admin)],
+    permissions: Annotated[AdminReviewPermissionProvider, Depends(get_admin_review_permission_provider)],
 ) -> AdminContentDetail:
-    return await admin_content_service.get_content(db, content_id)
+    detail = await admin_content_service.get_content(db, content_id)
+    detail.review = await get_review_eligibility(
+        db, user_id=context.user.user_id, content_id=content_id, permissions=permissions,
+    )
+    return detail

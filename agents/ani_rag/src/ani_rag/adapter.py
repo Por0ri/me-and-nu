@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, Sequence
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, unquote, urlsplit, urlunsplit
 
 from ani_rag.models import EvidenceExcerpt
+from ani_rag.models import RagContentType
 
 
 def canonical_source_url(url: str) -> str:
@@ -22,6 +23,19 @@ def canonical_source_url(url: str) -> str:
     return urlunsplit((parsed.scheme.casefold(), netloc, path, parsed.query, ""))
 
 
+def canonical_source_item_url(url: str) -> str:
+    """Build a stable pre-read dedupe key while leaving the original URL untouched."""
+    canonical = canonical_source_url(url)
+    parsed = urlsplit(canonical)
+    path = parsed.path.rstrip("/") or "/"
+    query = [
+        (key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.casefold() not in {"fbclid", "gclid"}
+        and not key.casefold().startswith("utm_")
+    ]
+    return urlunsplit((parsed.scheme, parsed.netloc, path, urlencode(query, doseq=True), ""))
+
+
 @dataclass(frozen=True)
 class SearchRequest:
     """A bounded query scoped to one explicitly configured source."""
@@ -31,13 +45,17 @@ class SearchRequest:
     mcp_server_alias: str
     tool_name: str
     allowed_hosts: frozenset[str]
+    allowed_path_prefixes: tuple[str, ...] = ()
     limit: int = 10
+    content_type: RagContentType | None = None
 
     def __post_init__(self) -> None:
         if not all(value.strip() for value in (self.source_id, self.query, self.mcp_server_alias, self.tool_name)) or not self.allowed_hosts:
             raise ValueError("Search requires source, server alias, exact MCP tool name, and query")
         if not 1 <= self.limit <= 100:
             raise ValueError("Search limit must be between 1 and 100")
+        if any(not prefix.startswith("/") or ".." in prefix.split("/") for prefix in self.allowed_path_prefixes):
+            raise ValueError("Search path prefixes must be safe absolute URL paths")
 
 
 @dataclass(frozen=True)

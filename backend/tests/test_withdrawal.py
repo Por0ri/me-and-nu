@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.api.session_store import get_session_store
 from app.core.config import settings
 from app.core.exceptions import ApiError
-from app.models import AuthSession, ConsentHistory, CreatorChannel, OnboardingAnswersRecord, Tap, UserAccount
+from app.models import AdminAccount, AuthSession, ConsentHistory, CreatorChannel, OnboardingAnswersRecord, Tap, UserAccount
 from app.repositories.auth_session_repository import create_auth_session
 from app.services.withdrawal_service import WITHDRAWAL_GRACE_DAYS, purge_withdrawn_accounts, request_withdrawal
 from test_oauth_postgres_flow import (  # noqa: F401
@@ -149,123 +149,49 @@ def test_withdrawal_is_refused_for_an_account_with_a_creator_channel(onboarding_
 
 
 @pytest.mark.parametrize("role", ["viewer", "operator", "admin"])
-@pytest.mark.parametrize("revoked", [False, True])
-def test_admin_history_blocks_withdrawal_and_preserves_login(onboarding_flow, role, revoked):
+@pytest.mark.parametrize("revoked", [False, True], ids=["active_grant", "revoked_grant"])
+def test_admin_grant_history_blocks_withdrawal_without_ending_session(onboarding_flow, role, revoked):
     flow = onboarding_flow
     csrf, user_id = member(flow)
+    cookie = flow.client.cookies.get(settings.session_cookie_name)
     before = remaining(flow, user_id)
-    token = flow.client.cookies.get(settings.session_cookie_name)
-    with flow.engine.begin() as db:
-        db.execute(text("INSERT INTO admin_account VALUES (101,:user,:role,:revoked)"),
-            {"user": user_id, "role": role, "revoked": datetime.now(timezone.utc) if revoked else None})
+    with Session(flow.engine) as session:
+        grant = AdminAccount(user_id=user_id, role=role, revoked_at=datetime.now(timezone.utc) if revoked else None)
+        session.add(grant)
+        session.commit()
+        grant_id, revoked_at = grant.admin_account_id, grant.revoked_at
+
     response = flow.client.delete("/api/v1/users/me", params=WITHDRAW, headers={"X-CSRF-Token": csrf})
-    assert response.status_code == 409 and response.json()["code"] == "WITHDRAWAL_BLOCKED"
-    assert "관리자 권한 이력" in response.json()["message"]
+    assert response.status_code == 409
+    assert response.json() == {"code": "WITHDRAWAL_BLOCKED", "message": "관리자 권한 이력이 있어 탈퇴할 수 없습니다."}
+    stored = account(flow, user_id)
+    assert stored.account_status == "active" and stored.withdrawn_at is None
     assert "set-cookie" not in response.headers
-    assert flow.client.cookies.get(settings.session_cookie_name) == token
-    assert flow.client.get("/api/v1/users/me").status_code == 200
     assert remaining(flow, user_id) == before
-    stored = account(flow, user_id)
-    assert stored.account_status == "active" and stored.withdrawn_at is None
-    with flow.engine.connect() as db:
-        assert db.scalar(text("SELECT count(*) FROM admin_account")) == 1
+    assert flow.client.cookies.get(settings.session_cookie_name) == cookie
+    assert flow.client.get("/api/v1/auth/session").json()["sessionState"] == "active"
+    with Session(flow.engine) as session:
+        assert session.get(AdminAccount, grant_id).revoked_at == revoked_at
 
 
-def test_other_members_admin_history_does_not_block_normal_withdrawal(onboarding_flow):
-    flow = onboarding_flow
-    csrf, user_id = member(flow)
-    with Session(flow.engine) as db:
-        other = add_member(db, "other-admin")
-        db.execute(text("INSERT INTO admin_account VALUES (101,:user,'admin',NULL)"), {"user": other})
-        db.commit()
-    response = flow.client.delete("/api/v1/users/me", params=WITHDRAW, headers={"X-CSRF-Token": csrf})
-    assert response.status_code == 202
-    assert account(flow, user_id).account_status == "withdrawn"
-    assert account(flow, other).account_status == "active"
-
-
-@pytest.mark.parametrize("failure", ["missing_table", "lookup_error"])
-def test_unavailable_admin_history_fails_closed_without_revoking_login(onboarding_flow, failure):
-    flow = onboarding_flow
-    csrf, user_id = member(flow)
-    token = flow.client.cookies.get(settings.session_cookie_name)
-    if failure == "missing_table":
-        with flow.engine.begin() as db:
-            db.exec_driver_sql("DROP TABLE admin_account")
-    else:
-        @event.listens_for(flow.engine, "before_cursor_execute")
-        def deny_history(_conn, _cursor, statement, _params, _context, _many):
-            if "FROM admin_account" in statement:
-                raise OperationalError("private database details", {}, RuntimeError("private permission failure"))
-    response = flow.client.delete("/api/v1/users/me", params=WITHDRAW, headers={"X-CSRF-Token": csrf})
-    assert response.status_code == 503 and response.json()["code"] == "WITHDRAWAL_UNAVAILABLE"
-    assert "private" not in response.text and "admin_account" not in response.text
-    assert "set-cookie" not in response.headers
-    assert flow.client.cookies.get(settings.session_cookie_name) == token
-    assert flow.client.get("/api/v1/users/me").status_code == 200
-    stored = account(flow, user_id)
-    assert stored.account_status == "active" and stored.withdrawn_at is None
-
-
-def test_withdrawal_reloads_account_status_before_changing_it(onboarding_flow):
+def test_withdrawal_rechecks_account_state_after_authentication(onboarding_flow):
     flow = onboarding_flow
     _, user_id = member(flow)
-
-    async def scenario():
-        with Session(flow.engine, expire_on_commit=False) as session:
-            stale = session.get(UserAccount, user_id)
-            session.execute(update(UserAccount).where(UserAccount.user_id == user_id)
-                .values(account_status="suspended").execution_options(synchronize_session=False))
-            session.commit()
-            assert stale.account_status == "active"
-            auth = SimpleNamespace(revoked_at=None)
-            with pytest.raises(ApiError) as error:
-                await request_withdrawal(AsyncSqliteSession(session, flow.failure), user=stale, session=auth, store=None)
-            assert error.value.code == "WITHDRAWAL_STATE_CONFLICT"
-            assert auth.revoked_at is None
-            assert stale.account_status == "suspended"
-    asyncio.run(scenario())
-
-
-def test_failed_withdrawal_commit_keeps_account_and_current_login(onboarding_flow):
-    flow = onboarding_flow
-    csrf, user_id = member(flow)
-    token = flow.client.cookies.get(settings.session_cookie_name)
-    flow.failure.enabled = True
-    response = flow.client.delete("/api/v1/users/me", params=WITHDRAW, headers={"X-CSRF-Token": csrf})
-    assert response.status_code == 500
-    assert response.json()["code"] == "INTERNAL_ERROR"
-    assert "set-cookie" not in response.headers
-    assert flow.client.cookies.get(settings.session_cookie_name) == token
-    assert flow.client.get("/api/v1/users/me").status_code == 200
-    stored = account(flow, user_id)
-    assert stored.account_status == "active" and stored.withdrawn_at is None
-
-
-@pytest.mark.parametrize("grant", [False, True])
-def test_redis_login_is_preserved_when_admin_history_blocks_or_is_unavailable(redis_auth_environment, grant):
-    environment = redis_auth_environment
-    environment.user.onboarding_completed_at = datetime.now(timezone.utc)
-    environment.database.execute = AsyncMock(return_value=SimpleNamespace(
-        scalar_one_or_none=Mock(return_value=environment.user)))
-    error = OperationalError("private history lookup", {}, RuntimeError("private cause"))
-    environment.database.scalar = AsyncMock(side_effect=[None, 101 if grant else error])
-    csrf, _ = anonymous_session(environment)
-    assert login(environment, csrf).status_code == 200
-    token = environment.client.cookies.get(settings.session_cookie_name)
-    csrf = environment.client.get("/api/v1/auth/session").json()["csrfToken"]
-    before = dict(environment.redis.values)
-    commits_before_withdrawal = environment.database.commit.await_count
-    response = environment.client.delete("/api/v1/users/me", params=WITHDRAW, headers={"X-CSRF-Token": csrf})
-    assert response.status_code == (409 if grant else 503)
-    assert response.json()["code"] == ("WITHDRAWAL_BLOCKED" if grant else "WITHDRAWAL_UNAVAILABLE")
-    assert "private" not in response.text
-    assert "set-cookie" not in response.headers
-    assert environment.client.cookies.get(settings.session_cookie_name) == token
-    assert environment.redis.values == before
-    assert environment.user.account_status == "active" and environment.user.withdrawn_at is None
-    assert environment.database.commit.await_count == commits_before_withdrawal
-    assert environment.client.get("/api/v1/users/me").status_code == 200
+    with Session(flow.engine, expire_on_commit=False) as stale_session:
+        authenticated_user = stale_session.get(UserAccount, user_id)
+        assert authenticated_user.account_status == "active"
+        stale_session.commit()  # Release the fixture's single connection, retain the cached object.
+        with Session(flow.engine) as writer:
+            writer.execute(update(UserAccount).where(UserAccount.user_id == user_id).values(account_status="suspended"))
+            writer.commit()
+        with pytest.raises(ApiError) as error:
+            asyncio.run(request_withdrawal(
+                AsyncSqliteSession(stale_session, flow.failure), user=authenticated_user,
+                session=SimpleNamespace(revoked_at=None), store=None,
+            ))
+        assert error.value.code == "WITHDRAWAL_STATE_CONFLICT"
+    assert account(flow, user_id).account_status == "suspended"
+    assert account(flow, user_id).withdrawn_at is None
 
 
 def test_login_during_the_grace_period_only_gets_a_restoration_session(onboarding_flow):
@@ -405,12 +331,12 @@ def test_purge_reports_an_account_that_a_foreign_key_still_blocks(onboarding_flo
     assert account(flow, blocked) is not None and account(flow, expired) is None
 
 
-def test_redis_withdrawal_ends_this_session_and_other_devices_stop_working(redis_auth_environment):
+def test_redis_withdrawal_ends_this_session_and_other_devices_stop_working(redis_auth_environment, monkeypatch):
     environment = redis_auth_environment
+    # Account locking remains SQL even when the session store is Redis.
+    monkeypatch.setattr("app.services.withdrawal_service.lock_user", AsyncMock(return_value=environment.user))
     environment.user.onboarding_completed_at = datetime.now(timezone.utc)
-    environment.database.scalar = AsyncMock(return_value=None)   # 크리에이터 채널 없음
-    environment.database.execute = AsyncMock(return_value=SimpleNamespace(
-        scalar_one_or_none=Mock(return_value=environment.user)))
+    environment.database.scalar = AsyncMock(return_value=None)   # 크리에이터 채널·관리자 권한 이력 없음
     tokens = []
     for _ in range(2):   # 두 기기에서 로그인
         environment.client.cookies.clear()
@@ -455,3 +381,80 @@ def test_redis_restoration_session_restores_the_account(redis_auth_environment):
     assert len(environment.redis.values) == 1   # 복구 대기 세션은 지우고 일반 세션 하나
     assert not any(isinstance(call.args[0], AuthSession) for call in environment.database.add.call_args_list)
     assert environment.client.get("/api/v1/auth/session").json()["sessionState"] == "active"
+
+
+def test_other_members_admin_history_does_not_block_normal_withdrawal(onboarding_flow):
+    flow = onboarding_flow
+    csrf, user_id = member(flow)
+    with Session(flow.engine) as db:
+        other = add_member(db, "other-admin")
+        db.add(AdminAccount(user_id=other, role="admin"))
+        db.commit()
+    response = flow.client.delete("/api/v1/users/me", params=WITHDRAW, headers={"X-CSRF-Token": csrf})
+    assert response.status_code == 202
+    assert account(flow, user_id).account_status == "withdrawn"
+    assert account(flow, other).account_status == "active"
+
+
+@pytest.mark.parametrize("failure", ["missing_table", "lookup_error"])
+def test_unavailable_admin_history_fails_closed_without_revoking_login(onboarding_flow, failure):
+    flow = onboarding_flow
+    csrf, user_id = member(flow)
+    token = flow.client.cookies.get(settings.session_cookie_name)
+    if failure == "missing_table":
+        with flow.engine.begin() as db:
+            db.exec_driver_sql("ALTER TABLE admin_account RENAME TO unavailable_admin_account")
+    else:
+        @event.listens_for(flow.engine, "before_cursor_execute")
+        def deny_history(_conn, _cursor, statement, _params, _context, _many):
+            if "FROM admin_account" in statement:
+                raise OperationalError("private database details", {}, RuntimeError("private permission failure"))
+    response = flow.client.delete("/api/v1/users/me", params=WITHDRAW, headers={"X-CSRF-Token": csrf})
+    assert response.status_code == 503 and response.json()["code"] == "WITHDRAWAL_UNAVAILABLE"
+    assert "private" not in response.text and "admin_account" not in response.text
+    assert "set-cookie" not in response.headers
+    assert flow.client.cookies.get(settings.session_cookie_name) == token
+    assert flow.client.get("/api/v1/users/me").status_code == 200
+    stored = account(flow, user_id)
+    assert stored.account_status == "active" and stored.withdrawn_at is None
+
+
+def test_failed_withdrawal_commit_keeps_account_and_current_login(onboarding_flow):
+    flow = onboarding_flow
+    csrf, user_id = member(flow)
+    token = flow.client.cookies.get(settings.session_cookie_name)
+    flow.failure.enabled = True
+    response = flow.client.delete("/api/v1/users/me", params=WITHDRAW, headers={"X-CSRF-Token": csrf})
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert "set-cookie" not in response.headers
+    assert flow.client.cookies.get(settings.session_cookie_name) == token
+    assert flow.client.get("/api/v1/users/me").status_code == 200
+    stored = account(flow, user_id)
+    assert stored.account_status == "active" and stored.withdrawn_at is None
+
+
+@pytest.mark.parametrize("grant", [False, True])
+def test_redis_login_is_preserved_when_admin_history_blocks_or_is_unavailable(redis_auth_environment, grant):
+    environment = redis_auth_environment
+    environment.user.onboarding_completed_at = datetime.now(timezone.utc)
+    environment.database.execute = AsyncMock(return_value=SimpleNamespace(
+        scalar_one_or_none=Mock(return_value=environment.user)))
+    error = OperationalError("private history lookup", {}, RuntimeError("private cause"))
+    environment.database.scalar = AsyncMock(side_effect=[None, 101 if grant else error])
+    csrf, _ = anonymous_session(environment)
+    assert login(environment, csrf).status_code == 200
+    token = environment.client.cookies.get(settings.session_cookie_name)
+    csrf = environment.client.get("/api/v1/auth/session").json()["csrfToken"]
+    before = dict(environment.redis.values)
+    commits_before_withdrawal = environment.database.commit.await_count
+    response = environment.client.delete("/api/v1/users/me", params=WITHDRAW, headers={"X-CSRF-Token": csrf})
+    assert response.status_code == (409 if grant else 503)
+    assert response.json()["code"] == ("WITHDRAWAL_BLOCKED" if grant else "WITHDRAWAL_UNAVAILABLE")
+    assert "private" not in response.text
+    assert "set-cookie" not in response.headers
+    assert environment.client.cookies.get(settings.session_cookie_name) == token
+    assert environment.redis.values == before
+    assert environment.user.account_status == "active" and environment.user.withdrawn_at is None
+    assert environment.database.commit.await_count == commits_before_withdrawal
+    assert environment.client.get("/api/v1/users/me").status_code == 200

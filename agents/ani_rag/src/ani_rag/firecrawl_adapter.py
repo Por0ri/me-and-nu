@@ -7,30 +7,44 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Sequence
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from ani_rag.adapter import ReadRequest, ReadResult, SearchHit, SearchRequest
 from ani_rag.mcp_transport import DEFAULT_MCP_CONFIG_PATH, StreamableHTTPMCPClient, load_mcp_endpoints
 from ani_rag.models import EvidenceExcerpt
+from ani_rag.work_registry import title_key
 from ani_rag.image_ingest import WebImageSearchHit, kitsu_image_references
-from ani_rag.web_discovery import WebCandidateHit, WebCandidatePage, _validate_candidate_url
+from ani_rag.web_discovery import (
+    WebCandidateHit, WebCandidatePage, WebSearchPage, _validate_candidate_url,
+)
 
 
 class MCPToolCallError(RuntimeError):
     """Sanitized MCP tool failure suitable for queue diagnostics."""
 
-    def __init__(self, operation: str, result: dict[str, Any]) -> None:
+    def __init__(self, operation: str, result: dict[str, Any], *, requested_url: str = "") -> None:
         status_code = _mcp_error_status(result)
         detail = _safe_mcp_error_detail(result)
         rate_limited = status_code == 429 or bool(re.search(
             r"\b(rate limit(?:ed)?|too many requests|quota exceeded)\b", detail, re.IGNORECASE,
         ))
+        credits_exhausted = bool(re.search(
+            r"\b(?:insufficient|not enough|out of|no remaining|exhausted|depleted)\b.{0,50}\bcredits?\b|"
+            r"\bcredits?\b.{0,50}\b(?:insufficient|exhausted|depleted|used up|limit reached|limit exceeded)\b",
+            detail, re.IGNORECASE,
+        ))
         operator_action_required = status_code in {401, 403} or bool(re.search(
             r"\b(api key|required authorization|authentication required|anonymous keyless access is unavailable)\b",
             detail, re.IGNORECASE,
         ))
-        category = "rate_limited" if rate_limited else (
+        unsupported_target = bool(re.search(
+            r"(?:can't|cannot|unable to) scrape.{0,100}(?:not supported|unsupported)|"
+            r"(?:site|url|domain).{0,50}(?:not supported|unsupported)",
+            detail, re.IGNORECASE,
+        ))
+        category = "credits_exhausted" if credits_exhausted else "rate_limited" if rate_limited else (
             "operator_action_required" if operator_action_required else
+            "unsupported_target" if unsupported_target else
             "server_error" if status_code is not None and status_code >= 500 else
             "tool_error"
         )
@@ -40,7 +54,21 @@ class MCPToolCallError(RuntimeError):
         if detail:
             summary += f" detail={detail}"
         self.rate_limited = rate_limited
+        self.credits_exhausted = credits_exhausted
         self.operator_action_required = operator_action_required
+        self.unsupported_target = unsupported_target
+        # Only Firecrawl's explicit site-wide refusal applies to other URLs.
+        message = _raw_mcp_error_detail(result)
+        self.unsupported_site = bool(
+            operation == "read" and result.get("isError") is True and status_code in {None, 400, 422}
+            and not (operator_action_required or credits_exhausted or rate_limited)
+            and not _error_reports_redirect(result, requested_url)
+            and re.search(r"\bFirecrawl (?:cannot|can['’]t) scrape this (?:web)?site because "
+                          r"it is (?:currently )?not supported\b", message, re.I)
+            and not re.search(r"\b(?:redirect\w*|temporar\w*|timed? out|timeout|unauthorized|"
+                              r"forbidden|authenticat\w*|captcha|log[ -]?in|sign[ -]?in)\b", message, re.I)
+        )
+        self.permanent_failure = credits_exhausted or unsupported_target or operator_action_required
         self.safe_summary = summary[:360]
         super().__init__(self.safe_summary)
 
@@ -50,21 +78,36 @@ class FirecrawlMCPAdapter:
 
     def __init__(self, *, config_path=DEFAULT_MCP_CONFIG_PATH) -> None:
         self.config_path = config_path
-        self._web_discovery_paused = False
+        self._firecrawl_paused_reason: str | None = None
         self._clients: dict[str, StreamableHTTPMCPClient] = {}
 
     async def list_tools(self, mcp_server_alias: str) -> frozenset[str]:
-        return await asyncio.to_thread(self._client(mcp_server_alias).list_tools)
+        self._ensure_firecrawl_active(mcp_server_alias)
+        try:
+            return await asyncio.to_thread(self._client(mcp_server_alias).list_tools)
+        except Exception as error:
+            self._pause_firecrawl_if_needed(mcp_server_alias, error)
+            raise
 
     async def search(self, request: SearchRequest) -> Sequence[SearchHit]:
-        return await asyncio.to_thread(self._search_sync, request)
+        self._ensure_firecrawl_active(request.mcp_server_alias)
+        try:
+            return await asyncio.to_thread(self._search_sync, request)
+        except Exception as error:
+            self._pause_firecrawl_if_needed(request.mcp_server_alias, error)
+            raise
 
     async def read(self, request: ReadRequest) -> ReadResult:
-        return await asyncio.to_thread(self._read_sync, request)
+        self._ensure_firecrawl_active(request.mcp_server_alias)
+        try:
+            return await asyncio.to_thread(self._read_sync, request)
+        except Exception as error:
+            self._pause_firecrawl_if_needed(request.mcp_server_alias, error)
+            raise
 
     async def search_web(self, query: str, *, limit: int) -> Sequence[WebCandidateHit]:
         """Search across web domains for candidate leads; results are not evidence."""
-        self._ensure_web_discovery_active()
+        self._ensure_firecrawl_active("firecrawl")
         if not query.strip() or not 1 <= limit <= 5:
             raise ValueError("Web discovery requires a query and a 1-5 candidate limit")
         live_tools = await self.list_tools("firecrawl")
@@ -73,12 +116,20 @@ class FirecrawlMCPAdapter:
         try:
             return await asyncio.to_thread(self._search_web_sync, query.strip(), limit)
         except Exception as error:
-            self._pause_web_discovery_if_needed(error)
+            self._pause_firecrawl_if_needed("firecrawl", error)
             raise
+
+    async def search_web_page(
+        self, query: str, *, limit: int, cursor: str | None = None,
+    ) -> WebSearchPage:
+        """Firecrawl Search currently exposes no documented continuation input."""
+        if cursor is not None:
+            raise ValueError("Firecrawl search does not expose a verified continuation cursor")
+        return WebSearchPage(tuple(await self.search_web(query, limit=limit)), next_cursor=None)
 
     async def search_images(self, query: str, *, limit: int = 8) -> tuple[WebImageSearchHit, ...]:
         """Search image results only; returned URLs remain untrusted until downloaded and visually checked."""
-        self._ensure_web_discovery_active()
+        self._ensure_firecrawl_active("firecrawl")
         if not query.strip() or not 1 <= limit <= 10:
             raise ValueError("Web image search requires a query and a 1-10 result limit")
         live_tools = await self.list_tools("firecrawl")
@@ -87,7 +138,7 @@ class FirecrawlMCPAdapter:
         try:
             return await asyncio.to_thread(self._search_images_sync, query.strip(), limit)
         except Exception as error:
-            self._pause_web_discovery_if_needed(error)
+            self._pause_firecrawl_if_needed("firecrawl", error)
             raise
 
     def _search_images_sync(self, query: str, limit: int) -> tuple[WebImageSearchHit, ...]:
@@ -204,7 +255,7 @@ class FirecrawlMCPAdapter:
 
     async def read_web_candidate(self, hit: WebCandidateHit) -> WebCandidatePage:
         """Read one result page with the result's exact host as a temporary boundary."""
-        self._ensure_web_discovery_active()
+        self._ensure_firecrawl_active("firecrawl")
         _validate_candidate_url(hit.url)
         live_tools = await self.list_tools("firecrawl")
         if "firecrawl_scrape" not in live_tools:
@@ -217,7 +268,7 @@ class FirecrawlMCPAdapter:
         try:
             result = await self.read(request)
         except Exception as error:
-            self._pause_web_discovery_if_needed(error)
+            self._pause_firecrawl_if_needed("firecrawl", error)
             raise
         if not result.redirects_verified:
             raise PermissionError("Web candidate read did not verify same-host URL handling")
@@ -228,15 +279,19 @@ class FirecrawlMCPAdapter:
             fetched_at=datetime.now(timezone.utc),
         )
 
-    def _ensure_web_discovery_active(self) -> None:
-        if self._web_discovery_paused:
-            raise PermissionError("Broad-web discovery is paused after an MCP rate-limit/auth failure")
+    def _ensure_firecrawl_active(self, alias: str) -> None:
+        if alias == "firecrawl" and self._firecrawl_paused_reason:
+            raise PermissionError(f"Firecrawl MCP calls paused: {self._firecrawl_paused_reason}")
 
-    def _pause_web_discovery_if_needed(self, error: Exception) -> None:
-        if bool(getattr(error, "rate_limited", False)) or bool(
-            getattr(error, "operator_action_required", False)
-        ):
-            self._web_discovery_paused = True
+    def _pause_firecrawl_if_needed(self, alias: str, error: Exception) -> None:
+        if alias != "firecrawl":
+            return
+        if bool(getattr(error, "credits_exhausted", False)):
+            self._firecrawl_paused_reason = "provider credits exhausted; restart after replenishing credits"
+        elif bool(getattr(error, "rate_limited", False)):
+            self._firecrawl_paused_reason = "provider rate limit reached; restart after the limit resets"
+        elif bool(getattr(error, "operator_action_required", False)):
+            self._firecrawl_paused_reason = "provider authentication or permission needs operator action"
 
     def _search_sync(self, request: SearchRequest) -> Sequence[SearchHit]:
         if request.source_id == "kitsu_anime_catalog":
@@ -246,12 +301,20 @@ class FirecrawlMCPAdapter:
         if not request.allowed_hosts:
             raise PermissionError("Search requires at least one exact allowed source host")
         client = self._client(request.mcp_server_alias)
+        provider_limit = request.limit
+        if request.allowed_path_prefixes:
+            # Search is host-scoped by Firecrawl; path scope must be enforced here.
+            # Fetch extra host results so out-of-section pages do not starve the source.
+            provider_limit = min(100, request.limit * 5)
         result = client.call_tool(request.tool_name, {
             "query": request.query,
             "includeDomains": sorted(request.allowed_hosts),
             "sources": ["web"],
-            "limit": request.limit,
-            "objective": "Find relevant pages only on the configured source host for this work-title query; do not follow off-host links.",
+            "limit": provider_limit,
+            "objective": (
+                "Find relevant pages only on the configured source host and allowed path section "
+                "for this work-title query; do not follow off-host links."
+            ),
         })
         if result.get("isError") is True:
             raise MCPToolCallError("search", result)
@@ -271,6 +334,10 @@ class FirecrawlMCPAdapter:
                 continue
             host = _host(url)
             if host not in request.allowed_hosts:
+                continue
+            if request.allowed_path_prefixes and not _path_in_scope(url, request.allowed_path_prefixes):
+                continue
+            if not _ann_page_matches_content_type(request.source_id, url, request.content_type):
                 continue
             title = item.get("title")
             if not isinstance(title, str) or not title.strip():
@@ -292,7 +359,45 @@ class FirecrawlMCPAdapter:
                 break
         return tuple(hits)
 
-    def _search_kitsu_api(self, request: SearchRequest) -> Sequence[SearchHit]:
+    async def lookup_kitsu_title(self, title: str) -> tuple[str, ...]:
+        """Look up an exact work identity with one bounded Kitsu query."""
+        self._ensure_firecrawl_active("firecrawl")
+        request = SearchRequest("kitsu_anime_catalog", title, "firecrawl", "firecrawl_scrape", frozenset({"kitsu.io"}), limit=20)
+        try:
+            payload = await asyncio.to_thread(self._kitsu_title_page, request)
+        except Exception as error:
+            self._pause_firecrawl_if_needed("firecrawl", error)
+            raise
+        rows = payload.get("data")
+        links = payload.get("links", {})
+        meta = payload.get("meta", {})
+        if not isinstance(rows, list) or not isinstance(links, dict) or not isinstance(meta, dict):
+            raise RuntimeError("Invalid Kitsu title lookup")
+        total = meta.get("count")
+        if (payload.get("errors") or links.get("next")
+                or (total is not None and (type(total) is not int or total != len(rows)))
+                or (len(rows) >= request.limit and total is None and "next" not in links)):
+            raise RuntimeError("Incomplete Kitsu title lookup")
+        key = title_key(title)
+        matched = set()
+        for row in rows:
+            if not isinstance(row, dict) or row.get("type") != "anime" or not isinstance(row.get("attributes"), dict):
+                raise RuntimeError("Invalid Kitsu anime result")
+            attributes = row["attributes"]
+            titles = attributes.get("titles")
+            if not isinstance(titles, dict) or not str(attributes.get("canonicalTitle") or "").strip():
+                raise RuntimeError("Kitsu anime result omitted titles")
+            aliases = attributes.get("abbreviatedTitles") or []
+            if not isinstance(aliases, list):
+                raise RuntimeError("Invalid Kitsu alternate titles")
+            if any(isinstance(name, str) and title_key(name) == key for name in (attributes["canonicalTitle"], *titles.values(), *aliases)):
+                source_id = str(row.get("id", ""))
+                if not re.fullmatch(r"[1-9][0-9]*", source_id):
+                    raise RuntimeError("Kitsu anime result omitted its ID")
+                matched.add(source_id)
+        return tuple(sorted(matched))
+
+    def _kitsu_title_page(self, request: SearchRequest) -> dict[str, Any]:
         if request.mcp_server_alias != "firecrawl" or request.tool_name != "firecrawl_scrape":
             raise PermissionError("Kitsu catalog lookup must use the configured Firecrawl scrape tool")
         if request.allowed_hosts != frozenset({"kitsu.io"}):
@@ -301,7 +406,7 @@ class FirecrawlMCPAdapter:
         query = urlencode({
             "filter[text]": request.query,
             "page[limit]": str(page_limit),
-            "fields[anime]": "id,slug,titles,canonicalTitle,showType,startDate,endDate",
+            "fields[anime]": "id,slug,titles,canonicalTitle,abbreviatedTitles,showType,startDate,endDate",
         })
         api_url = f"https://kitsu.io/api/edge/anime?{query}"
         client = self._client(request.mcp_server_alias)
@@ -314,14 +419,20 @@ class FirecrawlMCPAdapter:
         if result.get("isError") is True:
             raise MCPToolCallError("kitsu_api_search", result)
         payload = _extract_payload(result)
-        api_payload = _parse_kitsu_api(payload.get("markdown"))
+        if payload.get("success") is False:
+            raise RuntimeError("Kitsu title lookup reported failure")
+        return _parse_kitsu_api(payload.get("markdown"))
+
+    def _search_kitsu_api(self, request: SearchRequest) -> Sequence[SearchHit]:
+        page_limit = min(request.limit, 20)
+        api_payload = self._kitsu_title_page(request)
         data = api_payload.get("data")
         rows = data if isinstance(data, list) else [data]
         hits: list[SearchHit] = []
         item_query = urlencode({
             "include": "animeCharacters.character",
-            "fields[anime]": "id,slug,titles,canonicalTitle,showType,startDate,endDate,coverImage,synopsis",
-            "fields[animeCharacters]": "role",
+            "fields[anime]": "id,slug,titles,canonicalTitle,showType,startDate,endDate,coverImage,posterImage,synopsis,animeCharacters",
+            "fields[animeCharacters]": "role,character",
             # Names and artwork are not enough to write character introductions.
             "fields[characters]": "name,description,image",
         })
@@ -362,7 +473,7 @@ class FirecrawlMCPAdapter:
             ),
         })
         if result.get("isError") is True:
-            raise MCPToolCallError("read", result)
+            raise MCPToolCallError("read", result, requested_url=request.url)
         payload = _extract_payload(result)
         metadata = payload.get("metadata")
         if not isinstance(metadata, dict):
@@ -502,6 +613,21 @@ def _raw_mcp_error_detail(result: dict[str, Any]) -> str:
     return " ".join(parts)[:2_000]
 
 
+def _error_reports_redirect(result: dict[str, Any], requested_url: str) -> bool:
+    structured = result.get("structuredContent")
+    if not isinstance(structured, dict):
+        return False
+    for metadata in (structured, structured.get("metadata")):
+        if not isinstance(metadata, dict):
+            continue
+        chain = _redirect_chain(metadata)
+        final = metadata.get("finalURL") or metadata.get("finalUrl") or metadata.get("url")
+        if (len(chain) > 1 or metadata.get("redirected") or metadata.get("location")
+                or (isinstance(final, str) and final != requested_url)):
+            return True
+    return False
+
+
 def _safe_mcp_error_detail(result: dict[str, Any]) -> str:
     detail = _raw_mcp_error_detail(result)
     detail = re.sub(r"(?i)\bBearer\s+\S+", "Bearer [redacted]", detail)
@@ -522,6 +648,31 @@ def _host(url: str) -> str:
     if parsed.port is not None and parsed.port not in ({80} if parsed.scheme == "http" else {443}):
         raise ValueError("URL must not use a non-standard port")
     return host
+
+
+def _path_in_scope(url: str, prefixes: tuple[str, ...]) -> bool:
+    """Match the same decoded path rules used by source URL validation."""
+    path = unquote(urlsplit(url).path)
+    if any(part == ".." for part in path.split("/")):
+        return False
+    return any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in prefixes)
+
+
+def _ann_page_matches_content_type(
+    source_id: str, url: str, content_type: object,
+) -> bool:
+    """Keep ANN entity page types aligned with the content lane being collected."""
+    if source_id != "ann_encyclopedia":
+        return True
+    path = urlsplit(url).path
+    allowed = {
+        "character": {"/encyclopedia/anime.php", "/encyclopedia/manga.php", "/encyclopedia/people.php"},
+        "guide": {"/encyclopedia/anime.php", "/encyclopedia/manga.php"},
+        "people": {"/encyclopedia/anime.php", "/encyclopedia/manga.php", "/encyclopedia/people.php", "/encyclopedia/company.php"},
+        "music": {"/encyclopedia/anime.php", "/encyclopedia/manga.php"},
+    }
+    lane = getattr(content_type, "value", content_type)
+    return lane in allowed and path in allowed[lane]
 
 
 def _source_native_id(source_id: str, url: str | None) -> str | None:
@@ -605,7 +756,7 @@ def _parse_kitsu_api(markdown: object) -> dict[str, Any]:
 
 
 def _published_at(metadata: dict[str, Any]) -> datetime | None:
-    value = metadata.get("publishedTime") or metadata.get("publishedAt")
+    value = metadata.get("publishedTime") or metadata.get("publishedAt") or metadata.get("article:published_time")
     if not isinstance(value, str):
         return None
     try:

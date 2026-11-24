@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,11 @@ SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sample_content.json
 
 
 def load_sample() -> dict:
-    return json.loads(SAMPLE.read_text(encoding="utf-8"))
+    payload = json.loads(SAMPLE.read_text(encoding="utf-8"))
+    # Keep the synthetic event fixture active as the calendar advances.
+    for source in payload.get("sources", []):
+        source["published_at"] = date.today().isoformat()
+    return payload
 
 
 def issue_codes(payload: dict) -> set[str]:
@@ -143,14 +148,16 @@ def test_information_deck_rejects_reused_interior_evidence() -> None:
     assert "CARD_FACT_REUSED" in {issue.code for issue in run_quality_checks(package)}
 
 
-def test_old_publication_date_alone_does_not_expire_information() -> None:
+def test_source_age_does_not_end_a_started_event() -> None:
     payload = load_sample()
     payload["sources"][0]["published_at"] = "2025-01-01T09:00:00+09:00"
     payload["facts"][0]["time_sensitive"] = True
+    payload["event_start"] = "2025-01-20"
     package = ContentPackage.model_validate(payload)
-
-    # Lifecycle uses source-backed validity evidence, not the article's age.
     assert "SOURCE_STALE" not in {issue.code for issue in run_quality_checks(package)}
+
+    package.event_end = "2025-01-25"
+    assert "SOURCE_STALE" in {issue.code for issue in run_quality_checks(package)}
 
 
 def test_missing_source_publication_date_does_not_block_content() -> None:
@@ -171,13 +178,13 @@ def test_event_period_dates_from_verified_range_must_be_structured() -> None:
     assert "EVENT_PERIOD_MISSING" in issue_codes(payload)
 
 
-def test_single_day_goods_date_is_validated_for_non_event_content() -> None:
+def test_goods_release_does_not_require_matching_event_dates() -> None:
     payload = load_sample()
     payload["content_type"] = "goods"
     payload["facts"][0]["fact_type"] = "goods_release"
     payload["facts"][0].setdefault("details", {})["source_quote"] = "発売日：2026年10月23日"
 
-    assert "SINGLE_DAY_PERIOD_NOT_MIRRORED" in issue_codes(payload)
+    assert "SINGLE_DAY_PERIOD_NOT_MIRRORED" not in issue_codes(payload)
 
 
 def test_event_start_fact_does_not_force_longer_period_to_become_single_day() -> None:
@@ -244,14 +251,14 @@ def test_yearless_fact_date_uses_the_cited_source_publication_year() -> None:
     assert "UNSUPPORTED_DATE_CLAIM" not in issue_codes(payload)
 
 
-def test_goods_with_verified_release_date_must_persist_structured_period() -> None:
+def test_goods_with_verified_release_date_does_not_require_sale_end_date() -> None:
     payload = load_sample()
     payload["content_type"] = "goods"
     payload["facts"][0]["fact_type"] = "release_date"
     payload["facts"][0].setdefault("details", {})["source_quote"] = "2026年11月14日より発売"
     payload["cards"][1]["fact_ids"] = [payload["facts"][0]["id"]]
 
-    assert "GOODS_RELEASE_PERIOD_MISSING" in issue_codes(payload)
+    assert "GOODS_RELEASE_PERIOD_MISSING" not in issue_codes(payload)
 
 
 def test_event_venue_requires_country_and_domestic_overseas_region() -> None:
@@ -631,7 +638,7 @@ def test_small_official_portrait_uses_immersive_layout_without_cropping() -> Non
     assert layout.image_offset_y == 0.0
 
 
-def test_raw_image_reuse_remains_a_publication_blocker() -> None:
+def test_raw_image_reuse_blocks_publication() -> None:
     payload = load_sample()
     payload["cards"][2]["image_id"] = payload["cards"][1]["image_id"]
     package = ContentPackage.model_validate(payload)
@@ -641,9 +648,8 @@ def test_raw_image_reuse_remains_a_publication_blocker() -> None:
 
     assert reuse_issue.owner == "image_curator"
     assert reuse_issue.severity == "blocker"
-    assert report["decision"] != "pass_candidate"
+    assert report["decision"] == "revise"
     assert "IMAGE_REUSED_RAW" in report["hard_blockers"]
-    # Blockers are reported separately from the revise-only actionable list.
     assert "IMAGE_REUSED_RAW" not in report["actionable_issues"]
     assert score_quality(
         package, issues, language_score=20, safety_score=10,
@@ -1007,10 +1013,10 @@ def test_large_cover_gap_is_rejected() -> None:
     assert "COVER_EMPTY_GAP" in issue_codes(payload)
 
 
-def test_ending_joke_is_not_rejected_for_using_a_familiar_phrase() -> None:
+def test_generic_ending_joke_is_rejected() -> None:
     payload = deepcopy(load_sample())
     payload["cards"][-1]["title_lines"] = ["지갑이 열린다"]
-    assert "ENDING_GENERIC" not in issue_codes(payload)
+    assert "ENDING_GENERIC" in issue_codes(payload)
 
 
 def test_official_image_without_reuse_permission_is_rejected() -> None:

@@ -72,12 +72,18 @@ _register(
     check="both", severity="blocker", owner="copy_writer", on_fail="revise_owner",
 )
 _register(
+    ("FACT_UNVERIFIED",),
+    'Do not publish or quote a fact until its source supports the claim.',
+    check="code", severity="blocker", owner="crawler", on_fail="return_to_crawler",
+)
+_register(
     ("SOURCE_STALE",),
     (
-        'Publication age alone does not make a source expired. For event and goods content, '
-        'use only an explicitly verified validity end date or status.'
+        'Publication age alone does not expire evergreen material. For explicitly time-sensitive '
+        'facts, return an old source when no still-active end date or status is available; '
+        'never treat the publication date itself as the event end date.'
     ),
-    check="both", severity="warning", owner="crawler", on_fail="return_to_crawler",
+    check="both", severity="blocker", owner="crawler", on_fail="return_to_crawler",
 )
 _register(
     ("SOURCE_NO_OFFICIAL",),
@@ -91,6 +97,16 @@ _register(
     ("FACT_DIVERSITY_LOW",),
     "Use the available verified facts without requiring an arbitrary number of separate claims.",
     check="code", severity="warning", owner="detail_writer",
+)
+_register(
+    ("COPY_REPORTED_TERMS_DENIED",),
+    "Do not describe a sale or event condition as unknown when the source explicitly states it.",
+    check="code", severity="blocker", owner="copy_writer",
+)
+_register(
+    ("DETAIL_REPORTED_TERMS_DENIED",),
+    "When describing a sale or event, distinguish its announced terms from present availability.",
+    check="code", severity="blocker", owner="detail_writer",
 )
 _register(
     (
@@ -140,6 +156,11 @@ _register(
 
 # Collection failures return to collection; they are not treated as copy defects.
 _register(
+    ("EPISODE_NOTICE_EVIDENCE_MISSING",),
+    "같은 회차의 RSS 원문에서 공개 알림과 판본 등 독자에게 전할 서로 다른 내용을 수집하세요.",
+    check="code", severity="blocker", owner="crawler", on_fail="return_to_crawler",
+)
+_register(
     ("INVALID_INPUT",),
     "The source record must be valid and complete enough to enter the content pipeline.",
     check="code", severity="blocker", owner="crawler", on_fail="return_to_crawler",
@@ -168,14 +189,22 @@ _register(
 _register(
     (
         "IMAGE_VISION_MISMATCH", "IMAGE_COMPOSITION_REJECTED", "IMAGE_CROP_RISK",
-        "SUBJECT_CLIPPED", "IMAGE_REUSED_RAW",
+        "SUBJECT_CLIPPED",
     ),
     (
         'When the reviewer rates image relevance or composition below the configured '
-        'minimum, detects a materially clipped subject, or finds one image reused across '
-        'multiple cards, replace or repair the image before approval.'
+        'minimum, or detects a materially clipped subject, replace or repair the image '
+        'before approval.'
     ),
     check="both", severity="blocker", owner="image_curator",
+)
+_register(
+    ("IMAGE_REUSED_RAW",),
+    (
+        'Every card in one carousel must use a distinct image. Replace the repeated '
+        'image before the draft can pass review.'
+    ),
+    check="both", severity="blocker", owner="image_curator", on_fail="revise_owner",
 )
 _register(
     (
@@ -207,7 +236,7 @@ _register(
         "TITLE_TOO_LONG", "BODY_TOO_LONG", "AGENT_MONOLOGUE", "RESEARCH_DELEGATED_TO_USER",
         "PROTECTED_PHRASE_LOST", "PROTECTED_PHRASE_SPLIT", "JAPANESE_COPY_UNTRANSLATED",
         "JAPANESE_TERM_MISTRANSLATED", "JAPANESE_TERM_UNPAIRED", "WORK_TITLE_NOT_KOREAN",
-        "CARD_REDUNDANT", "EVENT_SCHEDULE_IN_TITLE",
+        "CARD_REDUNDANT", "ENDING_GENERIC", "EVENT_SCHEDULE_IN_TITLE",
     ),
     (
         'Polish copy for clear, natural Korean and a specific fan-oriented voice while '

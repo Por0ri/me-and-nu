@@ -1,0 +1,12 @@
+[Unit]
+Description=Publish due Main notices every minute
+
+[Timer]
+OnBootSec=1min
+OnCalendar=*-*-* *:*:00
+Persistent=true
+AccuracySec=1s
+Unit=me-nu-main-notices.service
+
+[Install]
+WantedBy=timers.target

@@ -11,12 +11,14 @@ from app.schemas.common import CamelModel
 class NotificationItem(CamelModel):
     notification_id: int
     # topic_new_post · recommended_post 는 topicId · contentId · imageUrl(글 대표 그림)이 있고, 누르면 그 글로 간다.
-    type: Literal["system_notice", "topic_new_post", "recommended_post"]
+    # debate_opened(토론 기능이 켜진 서버만)는 debateId가 있고, 누르면 그 토론방으로 간다.
+    type: Literal["system_notice", "topic_new_post", "recommended_post", "debate_opened"]
     title: str
     body: str
     topic_id: int | None = None
     content_id: int | None = None
     image_url: str | None = None
+    debate_id: int | None = None
     is_read: bool
     read_at: datetime | None = None
     created_at: datetime

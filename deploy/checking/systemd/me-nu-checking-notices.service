@@ -1,0 +1,17 @@
+[Unit]
+Description=Publish due Checking notices and in-app deliveries
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/ubuntu/apps/me-nu-checking
+ExecStart=/usr/bin/python3 /home/ubuntu/apps/me-nu-checking/deploy/checking/publish_scheduled_notices.py --apply
+UMask=0077
+Nice=10
+TimeoutStartSec=5min
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=me-nu-checking-notices

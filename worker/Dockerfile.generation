@@ -19,8 +19,8 @@ RUN apt-get update \
 COPY --from=agent-deps /opt/ani-venv/ /opt/ani-venv/
 COPY --from=agent-deps /opt/ani-agent/ /opt/ani-agent/
 COPY --from=anime-project /config/sources.json /config/source_type_map.json /opt/ani-agent/config/
-COPY --from=anime-works /menu_works.csv /menu_work_entries.csv /catalog/
-COPY --from=anime-project /data/reference/agent_works.csv /data/reference/menu_work_aliases.csv /data/reference/menu_work_external_entries.csv /data/reference/menu_work_franchises.csv /data/reference/menu_work_parent_overrides.csv /opt/ani-agent/data/reference/
+COPY --from=anime-works /menu_works.csv /menu_work_entries.csv /agent_works.csv /discovered_works.csv /catalog/
+COPY --from=anime-project /data/reference/menu_work_aliases.csv /data/reference/menu_work_external_entries.csv /data/reference/menu_work_franchises.csv /data/reference/menu_work_parent_overrides.csv /opt/ani-agent/data/reference/
 COPY --from=anime-project /examples/sample_content.json /opt/ani-agent/examples/
 ENV ANIME_AGENT_ROOT=/opt/ani-agent \
     ANIME_AGENT_PYTHON=/opt/ani-venv/bin/python \

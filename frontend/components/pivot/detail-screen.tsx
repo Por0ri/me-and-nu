@@ -172,8 +172,8 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
       {state.status !== "loading" ? <button type="button" onClick={onBack}>{fromActivity ? "내 활동으로 돌아가기" : fromSaved ? "저장 목록으로 돌아가기" : "Home으로 돌아가기"}</button> : null}
     </section>}
     {/* Keep shared navigation consistent with Home and My Page. */}
-    {/* AI 바는 홈과 같은 부품(chat-dock): 펼치면 메뉴 알약과 같은 높이의 바가 메뉴를 덮는다. */}
-    <div inert={aiExpanded} className={chatStyles.navFade} data-ai-open={aiExpanded || undefined}><HomeNavigation active={fromActivity ? "my" : fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI adjacentAI /></div>
+    {/* AI 바는 홈과 같은 부품(chat-dock)이고 하단바 바로 위에 뜬다. 펼쳐도 하단바는 가리지 않는다. */}
+    <HomeNavigation active={fromActivity ? "my" : fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI />
     <div className={chatStyles.dockLayer}>
       <ChatDock expanded={aiExpanded} onExpandedChange={setAiExpanded} label="AI 질문 안내" offFace="/pivot/detail/ai.svg"
         prompt="이 콘텐츠에서 어떤 점이 궁금하세요?" opensDialog={!!chatPlace}

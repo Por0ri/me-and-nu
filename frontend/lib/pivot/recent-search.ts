@@ -29,20 +29,21 @@ function browserStorage(): Storage | null {
   try { return typeof window === "undefined" ? null : window.localStorage; } catch { return null; }
 }
 
-/** owner: the signed-in member id, or null (then nothing is kept). Storage errors never break search. */
-export function createRecentSearchStore(owner: () => number | null, storage: () => Storage | null = browserStorage): RecentSearchStore {
+/** owner: the signed-in member id, or null (then nothing is kept). Storage errors never break search.
+ *  prefix: storage key prefix, so another search (the debate tabs) keeps its own list apart from Home's. */
+export function createRecentSearchStore(owner: () => number | null, storage: () => Storage | null = browserStorage, prefix = KEY_PREFIX): RecentSearchStore {
   function read(): RecentSearch[] {
     const id = owner();
     if (id === null) return [];
     try {
-      const saved: unknown = JSON.parse(storage()?.getItem(KEY_PREFIX + id) ?? "[]");
+      const saved: unknown = JSON.parse(storage()?.getItem(prefix + id) ?? "[]");
       return Array.isArray(saved) ? saved.filter(validEntry).map(({ label, workId }) => workId === undefined ? { label } : { label, workId }).slice(0, MAX_RECENT_SEARCHES) : [];
     } catch { return []; }
   }
   function write(entries: RecentSearch[]): RecentSearch[] {
     const id = owner();
     if (id === null) return [];
-    try { storage()?.setItem(KEY_PREFIX + id, JSON.stringify(entries)); } catch { /* full or blocked storage: keep this visit's list */ }
+    try { storage()?.setItem(prefix + id, JSON.stringify(entries)); } catch { /* full or blocked storage: keep this visit's list */ }
     return entries;
   }
   return {

@@ -27,8 +27,10 @@ from ani_rag.model_services import (
     StructuredModel,
 )
 from ani_rag.queues import QueueItem, QueueName, QueueStatus
-from ani_rag.retrieval import DatabaseEvidenceRetriever
-from ani_rag.settings import EvergreenSourceRegistry
+from ani_rag.retrieval import (
+    DatabaseEvidenceRetriever, EvidenceRetriever, QueryEmbeddingModel, VectorEvidenceRetriever,
+)
+from ani_rag.settings import EvergreenSourceRegistry, require_source_access, require_source_url
 from ani_rag.storage.sqlite_core import SQLiteRagStore
 from ani_rag.storage.sqlite_workflow import (
     SQLiteDraftRepository,
@@ -74,7 +76,7 @@ class AniRagRuntime:
     images: ImageReader
     drafts: SQLiteDraftRepository
     collection_worker: CollectionWorker
-    structured_collection_worker: StructuredCollectionWorker
+    structured_collection_worker: StructuredCollectionWorker | None
     generation_worker: GenerationWorker
     review_worker: ReviewWorker
     queue_reconciler: GenerationQueueReconciler
@@ -83,14 +85,27 @@ class AniRagRuntime:
     reviewer_agent: IndependentReviewAgent
 
 
+def _kitsu_identity_lookup(registry: EvergreenSourceRegistry, adapter: MCPReadSearchAdapter):
+    try:
+        source = require_source_access(registry, "kitsu_anime_catalog", "search")
+        require_source_url(source, "https://kitsu.io/api/edge/anime")
+    except PermissionError:
+        return None
+    if source.mcp_server != "firecrawl" or dict(source.tool_bindings)["search"] != "firecrawl_scrape":
+        return None
+    return getattr(adapter, "lookup_kitsu_title", None)
+
+
 def compose_crawler_agent(
     connection: sqlite3.Connection,
     *,
     registry: EvergreenSourceRegistry,
     url_mcp: MCPReadSearchAdapter,
     web_discovery_adapter: WebDiscoveryAdapter | None = None,
-    structured_mcp: StructuredMCPAdapter,
+    structured_mcp: StructuredMCPAdapter | None = None,
     work_match_model: StructuredModel,
+    vector_index: sqlite3.Connection | None = None,
+    query_embeddings: QueryEmbeddingModel | None = None,
     work_catalog: WorkCatalogResolver | None = None,
     recurring_plans: tuple[RecurringCollectionPlan, ...] = (),
     image_asset_dir: Path | None = None,
@@ -98,19 +113,21 @@ def compose_crawler_agent(
 ) -> MCPCrawlerAgent:
     """Compose only the crawler role over a caller-owned RAG DB connection."""
     local_catalog = LocalWorkCatalog()
-    store = SQLiteRagStore(connection, menu_work_id_floor=local_catalog.max_work_id)
+    store = SQLiteRagStore(connection)
+    retriever = _evidence_retriever(store, vector_index, query_embeddings)
     resolver = work_catalog or LLMWorkCatalogResolver(
-        local_catalog, work_match_model, database_candidates=store.work_catalog_candidates,
+        local_catalog, work_match_model, kitsu_lookup=_kitsu_identity_lookup(registry, url_mcp),
     )
     images = SQLiteImageReader(store)
     web_discovery_worker = (
-        WebDiscoveryWorker(store, web_discovery_adapter)
+        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry, catalog_titles=local_catalog.titles_for_work_id)
         if web_discovery_adapter is not None else None
     )
     web_candidate_worker = (
         WebCandidateAssessmentWorker(
-            store, web_discovery_adapter, resolver, DatabaseEvidenceRetriever(store),
-            evidence_model=work_match_model,
+            store, web_discovery_adapter, resolver, retriever,
+            evidence_model=work_match_model, page_cache=store, registry=registry, catalog_titles=local_catalog.titles_for_work_id,
+            edition_catalog=local_catalog,
         )
         if web_discovery_adapter is not None else None
     )
@@ -124,9 +141,10 @@ def compose_crawler_agent(
             queues=store, registry=registry, adapter=structured_mcp, evidence=store,
             work_catalog=resolver, image_repository=images, image_asset_dir=image_asset_dir,
             image_entity_catalog=image_entity_catalog,
-        ),
+        ) if structured_mcp is not None else None,
         web_discovery_worker=web_discovery_worker,
         web_candidate_worker=web_candidate_worker,
+        web_discovery_plan_repository=store,
         recurring_plans=recurring_plans,
     )
 
@@ -135,19 +153,23 @@ def compose_content_generation_agent(
     connection: sqlite3.Connection,
     *,
     generation_model: StructuredModel,
+    vector_index: sqlite3.Connection | None = None,
+    query_embeddings: QueryEmbeddingModel | None = None,
     image_search_adapter: ImageSearchAdapter | None = None,
     image_asset_dir: Path | None = None,
 ) -> ContentGenerationAgent:
     """Compose only the database-polling generation role."""
     store = SQLiteRagStore(connection)
+    retriever = _evidence_retriever(store, vector_index, query_embeddings)
     images = _generation_image_reader(
         store, image_search_adapter=image_search_adapter, image_asset_dir=image_asset_dir,
     )
     drafts = SQLiteDraftRepository(store)
     worker = GenerationWorker(
-        queues=store, backlog=store, retriever=DatabaseEvidenceRetriever(store),
+        queues=store, backlog=store, retriever=retriever,
         images=images, drafts=drafts,
         generation=EvidenceBoundGenerationService(generation_model),
+        evidence_model=generation_model,
     )
     return ContentGenerationAgent(worker, GenerationQueueReconciler(store, store))
 
@@ -173,6 +195,8 @@ def compose_generation_review_runtime(
     *,
     generation_model: StructuredModel,
     review_model: StructuredModel,
+    vector_index: sqlite3.Connection | None = None,
+    query_embeddings: QueryEmbeddingModel | None = None,
     image_search_adapter: ImageSearchAdapter | None = None,
     image_asset_dir: Path | None = None,
 ) -> GenerationReviewRuntime:
@@ -185,6 +209,7 @@ def compose_generation_review_runtime(
     """
 
     store = SQLiteRagStore(connection)
+    retriever = _evidence_retriever(store, vector_index, query_embeddings)
     images = _generation_image_reader(
         store, image_search_adapter=image_search_adapter, image_asset_dir=image_asset_dir,
     )
@@ -192,10 +217,11 @@ def compose_generation_review_runtime(
     generation_worker = GenerationWorker(
         queues=store,
         backlog=store,
-        retriever=DatabaseEvidenceRetriever(store),
+        retriever=retriever,
         images=images,
         drafts=drafts,
         generation=EvidenceBoundGenerationService(generation_model),
+        evidence_model=generation_model,
     )
     review_worker = ReviewWorker(
         queues=store,
@@ -220,9 +246,11 @@ def compose_runtime(
     url_mcp: MCPReadSearchAdapter,
     web_discovery_adapter: WebDiscoveryAdapter | None = None,
     image_search_adapter: ImageSearchAdapter | None = None,
-    structured_mcp: StructuredMCPAdapter,
+    structured_mcp: StructuredMCPAdapter | None = None,
     generation_model: StructuredModel,
     review_model: StructuredModel,
+    vector_index: sqlite3.Connection | None = None,
+    query_embeddings: QueryEmbeddingModel | None = None,
     work_catalog: WorkCatalogResolver | None = None,
     work_match_model: StructuredModel | None = None,
     recurring_plans: tuple[RecurringCollectionPlan, ...] = (),
@@ -236,10 +264,11 @@ def compose_runtime(
     """
 
     local_catalog = LocalWorkCatalog()
-    store = SQLiteRagStore(connection, menu_work_id_floor=local_catalog.max_work_id)
+    store = SQLiteRagStore(connection)
+    retriever = _evidence_retriever(store, vector_index, query_embeddings)
     resolver = work_catalog or LLMWorkCatalogResolver(
         local_catalog, work_match_model or generation_model,
-        database_candidates=store.work_catalog_candidates,
+        kitsu_lookup=_kitsu_identity_lookup(registry, url_mcp),
     )
     effective_image_search = image_search_adapter or _image_search_capable(
         web_discovery_adapter, url_mcp,
@@ -259,22 +288,24 @@ def compose_runtime(
         queues=store, registry=registry, adapter=structured_mcp, evidence=store,
         work_catalog=resolver, image_repository=collection_images, image_asset_dir=image_asset_dir,
         image_entity_catalog=image_entity_catalog,
-    )
+    ) if structured_mcp is not None else None
     web_discovery_worker = (
-        WebDiscoveryWorker(store, web_discovery_adapter)
+        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry, catalog_titles=local_catalog.titles_for_work_id)
         if web_discovery_adapter is not None else None
     )
     web_candidate_worker = (
         WebCandidateAssessmentWorker(
-            store, web_discovery_adapter, resolver, DatabaseEvidenceRetriever(store),
-            evidence_model=work_match_model or generation_model,
+            store, web_discovery_adapter, resolver, retriever,
+            evidence_model=work_match_model or generation_model, page_cache=store, registry=registry,
+            catalog_titles=local_catalog.titles_for_work_id, edition_catalog=local_catalog,
         )
         if web_discovery_adapter is not None else None
     )
     generation_worker = GenerationWorker(
-        queues=store, backlog=store, retriever=DatabaseEvidenceRetriever(store),
+        queues=store, backlog=store, retriever=retriever,
         images=images, drafts=drafts,
         generation=EvidenceBoundGenerationService(generation_model),
+        evidence_model=generation_model, registry=registry,
     )
     review_worker = ReviewWorker(
         queues=store, drafts=drafts, history=SQLiteReviewHistoryRepository(store),
@@ -293,6 +324,7 @@ def compose_runtime(
             url_worker=collection_worker, structured_worker=structured_collection_worker,
             web_discovery_worker=web_discovery_worker,
             web_candidate_worker=web_candidate_worker,
+            web_discovery_plan_repository=store,
             recurring_plans=recurring_plans,
         ),
         content_generation_agent=ContentGenerationAgent(
@@ -300,6 +332,31 @@ def compose_runtime(
         ),
         reviewer_agent=IndependentReviewAgent(review_worker),
     )
+
+
+def open_vector_index_readonly(path: Path) -> sqlite3.Connection:
+    """Explicitly open the separate vector sidecar read-only for one worker process."""
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(resolved)
+    connection = sqlite3.connect(
+        f"file:{resolved.as_posix()}?mode=ro", uri=True, timeout=60,
+        check_same_thread=False,
+    )
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only=ON")
+    return connection
+
+
+def _evidence_retriever(
+    store: SQLiteRagStore, vector_index: sqlite3.Connection | None,
+    query_embeddings: QueryEmbeddingModel | None,
+) -> EvidenceRetriever:
+    if (vector_index is None) != (query_embeddings is None):
+        raise ValueError("Vector retrieval requires both a read-only vector index connection and query embedder")
+    if vector_index is not None and query_embeddings is not None:
+        return VectorEvidenceRetriever(store, vector_index, query_embeddings)
+    return DatabaseEvidenceRetriever(store)
 
 
 def _image_search_capable(*candidates: object) -> ImageSearchAdapter | None:
@@ -350,6 +407,7 @@ async def enqueue_url_collection(runtime: AniRagRuntime, request: CollectionRequ
             "query": request.query,
             "language": request.language,
             "result_limit": request.result_limit,
+            "refresh_after_seconds": request.refresh_after_seconds,
             **({"seed_menu_work_id": request.seed_menu_work_id}
                if request.seed_menu_work_id is not None else {}),
         },
@@ -380,5 +438,8 @@ async def enqueue_structured_collection(
             "language": request.language,
             "property_ids": request.property_ids,
             "result_limit": request.result_limit,
+            **({"seed_menu_work_id": request.seed_menu_work_id}
+               if request.seed_menu_work_id is not None else {}),
+            "refresh_after_seconds": request.refresh_after_seconds,
         },
     ))

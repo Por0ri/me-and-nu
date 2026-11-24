@@ -11,7 +11,8 @@ from typing import Mapping, Sequence
 from PIL import Image, ImageOps
 
 from ani_rag.agents.content_generation.prompts import LAYOUT_POLICY
-from ani_rag.content import CardDraft, CardLayout, ImageAsset, NormalizedBox
+from ani_rag.agents.content_generation.renderer import compose_cover_art
+from ani_rag.content import DESIGNED_COVERS, CardDraft, CardLayout, ImageAsset, NormalizedBox
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class ImageCopyMismatchError(ValueError):
 
 LAYOUT_SCHEMA: dict[str, object] = {
     "type": "object", "additionalProperties": False,
-    "properties": {"cards": {"type": "array", "minItems": 3, "maxItems": 10,
+    "properties": {"cards": {"type": "array", "minItems": 2, "maxItems": 10,
         "items": {"type": "object", "additionalProperties": False,
             "properties": {
                 "card_id": {"type": "string"},
@@ -53,18 +54,19 @@ LAYOUT_SCHEMA: dict[str, object] = {
 }
 
 
-def _image_preview(asset: ImageAsset) -> str | None:
-    if not asset.local_path:
-        return None
-    path = Path(asset.local_path)
-    if not path.is_file():
-        return None
-    with Image.open(path) as opened:
-        image = ImageOps.exif_transpose(opened).convert("RGB")
-        image.thumbnail((512, 640), Image.Resampling.LANCZOS)
-        buffer = BytesIO()
-        image.save(buffer, format="JPEG", quality=78, optimize=True)
+def _jpeg_preview(image: Image.Image) -> str:
+    image = image.convert("RGB")
+    image.thumbnail((512, 640), Image.Resampling.LANCZOS)
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=78, optimize=True)
     return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _image_preview(asset: ImageAsset) -> str | None:
+    if not asset.local_path or not Path(asset.local_path).is_file():
+        return None
+    with Image.open(asset.local_path) as opened:
+        return _jpeg_preview(ImageOps.exif_transpose(opened))
 
 
 def _orientation_image_box(asset: ImageAsset) -> NormalizedBox:
@@ -102,9 +104,21 @@ async def direct_card_layouts(
     page_rows: list[dict[str, object]] = []
     for page, card in enumerate(cards, start=1):
         asset = assets.get(card.image_asset_id)
+        if card.layout.template in DESIGNED_COVERS:
+            for source_id in card.source_asset_ids:
+                source = assets.get(source_id)
+                if source is None or source.work_link_status != "matched" or not source.menu_work_ids:
+                    raise ImageCopyMismatchError(
+                        "Cover source has no confirmed work link", card_id=card.card_id,
+                        image_asset_id=source_id, headline=card.headline, body=card.body,
+                    )
         try:
-            preview = _image_preview(asset) if asset else None
-        except (OSError, ValueError) as error:
+            if card.layout.template in DESIGNED_COVERS:
+                with compose_cover_art(card, assets) as cover:
+                    preview = _jpeg_preview(cover)
+            else:
+                preview = _image_preview(asset) if asset else None
+        except (OSError, ValueError):
             preview = None
         if preview is None:
             raise ImageCopyMismatchError(
@@ -132,12 +146,21 @@ async def direct_card_layouts(
                 "entity_id": link.entity_id, "entity_name": link.entity_name,
                 "relation_type": link.relation_type,
             } for link in asset.entity_links],
+            **({"cover_design": card.layout.template, "sources_in_cover": [{
+                "role": assets[source_id].image_role,
+                "subject": assets[source_id].alt_text,
+                "menu_work_ids": list(assets[source_id].menu_work_ids),
+            } for source_id in card.source_asset_ids]} if card.layout.template in DESIGNED_COVERS else {}),
         })
     raw = await vision_call(
         system_prompt=LAYOUT_POLICY,
         user_payload={
             "task": "Choose image framing and emphasis that fills the art area without a visible pasted-on tile.",
             "image_check": (
+                "For a designed cover, inspect the composed image and every pictured subject against the "
+                "supplied cover sources: a cast grid introduces the named cast, a recommendation cover places "
+                "the anchor work in the center and the recommended works behind it, and a beginner guide "
+                "introduces the depicted work. A different subject in a slot is a mismatch. For other pages: "
                 "Treat a readable image from the confirmed work or a related character as a valid broad match, "
                 "even when it shows a different scene, action, age, episode, season, or story moment. Prefer the "
                 "exact named character when convenient, but do not require it. Set image_matches_copy false only "
@@ -179,6 +202,12 @@ async def direct_card_layouts(
         image_match_is_strong = row.get("image_matches_copy") is True
         if not image_match_is_strong:
             reason = str(row.get("image_match_reason") or "uncertain image-to-copy match")[:180]
+            if card.layout.template in DESIGNED_COVERS:
+                raise ImageCopyMismatchError(
+                    f"Cover subject does not match the intended design: {reason}",
+                    card_id=card.card_id, image_asset_id=card.image_asset_id,
+                    headline=card.headline, body=card.body,
+                )
             logger.warning(
                 "image_copy_match_low card_id=%s asset_id=%s reason=%s",
                 card.card_id, card.image_asset_id, reason,
@@ -189,13 +218,14 @@ async def direct_card_layouts(
         background_style = str(row.get("background_style", "blur"))
         if background_style not in {"blur", "palette", "gradient"}:
             raise ValueError("Vision layout returned an unsupported background style")
-        image_box = _orientation_image_box(assets[card.image_asset_id])
+        image_box = (NormalizedBox(0, 0, 1, 1) if card.layout.template in DESIGNED_COVERS
+                     else _orientation_image_box(assets[card.image_asset_id]))
         result.append(CardDraft(
             **{**card.__dict__, "layout": CardLayout(
                 image_box=image_box,
                 text_overlay_box=NormalizedBox(0.06, 0.68, 0.88, 0.28),
                 background_style=background_style,
-                template="image_top_copy_bottom",
+                template=card.layout.template,
                 image_emphasis=emphasis,
             )},
         ))

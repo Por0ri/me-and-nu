@@ -107,6 +107,7 @@ class SourceEvidence(BaseModel):
     discovered_via_source_id: str | None = None
     discovery_url: HttpUrl | None = None
     discovery_title: str | None = None
+    feed_entry_guid: str | None = None
     # A linked page keeps its own URL while retaining the exact parent-link path
     # that led to it. This lets policy validate source lineage without promoting
     # an unregistered destination to an official source.
@@ -390,6 +391,8 @@ class CardSpec(BaseModel):
     image_explanation: str = ""
     image_reuse_mode: str = "unique"
     layout: LayoutSpec
+    # Reader-facing label for the assigned art, populated by the publisher, never the writer.
+    image_label: str = ""
     ending_joke: bool = False
     rendered_image_key: str | None = None
     rendered_width: int | None = Field(default=None, ge=1)

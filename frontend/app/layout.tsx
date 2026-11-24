@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { PendingReviewNotice } from "@/components/admin/pending-review-notice";
 
 export const metadata: Metadata = {
   title: "me;nu 콘텐츠 피드",
@@ -13,7 +14,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body>{children}</body>
+      <body>{children}<PendingReviewNotice /></body>
     </html>
   );
 }

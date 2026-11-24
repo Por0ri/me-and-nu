@@ -95,6 +95,46 @@ def test_character_crawler_requires_a_work_title_without_collecting() -> None:
     assert "--work-title" in run.errors[0]
 
 
+def test_period_scan_persists_valid_item_after_twenty_expired_leads_without_more_fetches(monkeypatch):
+    from ani_menu_agent import discovery
+    from ani_menu_agent.agents.crawlers import base
+
+    source = Source(id="goods_archive", name="Goods", url="https://publisher.example/goods/",
+                    category="goods", content_types=[ContentType.GOODS], role="editorial",
+                    collection="html", status="active", region="JP", discovery_enabled=True)
+    fetched = []
+    saved = {}
+    articles = [
+        f'<article><a href="/article/2026/figure-{i}">限定グッズ 販売期間：2001年1月1日～1月2日 #{i}</a></article>'
+        for i in range(20)
+    ]
+    articles.append('<article><a href="/article/2026/current-figure">限定グッズ 販売期間：2090年1月1日から</a></article>')
+    html = '<main>' + ''.join(articles) + '</main><a rel="next" href="/goods/page/2/">Next</a>'
+
+    def listing(_client, url, *_args):
+        fetched.append(url)
+        assert url == str(source.url)
+        return html, url
+
+    class RecordingRepository:
+        def persist_discovery(self, items, _region):
+            saved.update((item["id"], item) for item in items)
+            return len(items)
+
+    monkeypatch.setattr(base, "load_source_registry", lambda: SimpleNamespace(sources=[source]))
+    monkeypatch.setattr(discovery, "_collectable_sources_for_type", lambda *_args: {source.id: source})
+    monkeypatch.setattr(discovery, "_get_html_with_client", listing)
+    crawler = get_type_crawler("goods")
+    inputs = dict(limit=20, repository=RecordingRepository(), capture_images=False)
+    assert crawler.run(**inputs).persisted_count == 0
+    for _ in range(2):
+        result = crawler.run(**inputs, retain_fetched_candidates=True)
+        assert result.rejected_count == 20
+        assert result.persisted_count == 1
+    assert [item["url"] for item in saved.values()] == ["https://publisher.example/article/2026/current-figure"]
+    assert fetched == [str(source.url)] * 3
+
+
 def test_type_profiles_have_distinct_source_and_image_policies() -> None:
     assert TYPE_CRAWLER_AGENTS["humor"].profile.source_roles == frozenset(
         {"trend", "primary", "editorial", "discovery"}

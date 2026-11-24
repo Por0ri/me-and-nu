@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
+from ani_menu_agent.goods_publication import goods_reference_labels, reader_detail_body
 from ani_menu_agent.models import ContentPackage
+from ani_menu_agent.source_freshness import extract_source_schedule
+from ani_menu_agent.sources.anime_schedule import source_item_digest
 from ani_menu_agent.sources import load_source_registry
 from ani_menu_agent.work_catalog import (
     load_work_aliases,
@@ -82,6 +85,15 @@ CREATE TABLE IF NOT EXISTS raw_document (
     parse_error TEXT,
     purge_at TEXT,
     UNIQUE(source_site_id, external_id)
+);
+
+CREATE TABLE IF NOT EXISTS raw_document_schedule (
+    raw_document_id INTEGER NOT NULL REFERENCES raw_document(raw_document_id) ON DELETE CASCADE,
+    schedule_kind TEXT NOT NULL,
+    starts_at TEXT,
+    ends_at TEXT,
+    CHECK (starts_at IS NOT NULL OR ends_at IS NOT NULL),
+    PRIMARY KEY(raw_document_id, schedule_kind)
 );
 
 CREATE TABLE IF NOT EXISTS entity (
@@ -200,6 +212,11 @@ CREATE TABLE IF NOT EXISTS judgment_log (
     UNIQUE(content_id, stage, attempt_no)
 );
 
+CREATE VIEW IF NOT EXISTS content_schedule AS
+SELECT cs.content_id, ds.raw_document_id, cs.source_url, ds.schedule_kind, ds.starts_at, ds.ends_at
+FROM content_source cs
+JOIN raw_document_schedule ds ON ds.raw_document_id = cs.raw_document_id;
+
 CREATE INDEX IF NOT EXISTS idx_raw_document_fetched ON raw_document(fetched_at);
 CREATE INDEX IF NOT EXISTS idx_content_status_valid ON content(status, valid_until);
 CREATE INDEX IF NOT EXISTS idx_content_source_site ON content_source(source_site_id);
@@ -227,6 +244,57 @@ def _site_url(url: str) -> str:
 
 def _source_registry_by_id() -> dict[str, Any]:
     return {source.id: source for source in load_source_registry().sources}
+
+
+_SCHEDULE_FIELDS = {
+    "event": ("event_start", "event_end"),
+    "sale": ("sale_start", "sale_end"),
+    "reservation": ("reservation_start", "reservation_end"),
+    "release": ("release_date", ""),
+    "premiere": ("premiere_date", ""),
+}
+
+
+def _write_document_schedule(
+    connection, raw_id: int, capture: dict, facts: list[dict], source_id: str, content_type: str
+) -> None:
+    """Replace the schedule for one source without borrowing dates from linked articles."""
+    if content_type not in {"event", "goods", "news"}:
+        return
+    details = capture.get("source_schedule")
+    source_facts = [
+        fact for fact in facts if isinstance(fact, dict) and source_id in (fact.get("source_ids") or [])
+    ]
+    if not isinstance(details, dict):
+        details = next(
+            (fact["details"] for fact in source_facts
+             if fact.get("fact_type") == "source_schedule" and isinstance(fact.get("details"), dict)),
+            None,
+        )
+    if details is None:
+        if not capture and not source_facts:
+            return
+        details = extract_source_schedule({**capture, "facts": source_facts}, content_type)
+    else:
+        details = extract_source_schedule({"source_schedule": details}, content_type)
+    connection.execute("DELETE FROM raw_document_schedule WHERE raw_document_id=?", (raw_id,))
+    for kind, (start_key, end_key) in _SCHEDULE_FIELDS.items():
+        start, end = details.get(start_key), details.get(end_key)
+        if start or end:
+            connection.execute(
+                "INSERT INTO raw_document_schedule (raw_document_id,schedule_kind,starts_at,ends_at) "
+                "VALUES (?,?,?,?)", (raw_id, kind, start, end),
+            )
+
+
+def _erd_day(value: str | None) -> str | None:
+    """The event_detail date columns cannot represent month precision or clock times."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value[:10]).isoformat()
+    except ValueError:
+        return None
 
 
 def _ensure_capture_site(connection, capture: dict[str, Any], registry: dict[str, Any], now: str) -> int:
@@ -284,11 +352,13 @@ def _persist_page_captures(connection, registry: dict[str, Any], now: str) -> in
             site_id = _ensure_capture_site(connection, capture, registry, now)
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
-        raw_text = capture.get("text") or capture.get("main_text")
+        raw_text = (
+            capture.get("source_article_text") or capture.get("text") or capture.get("main_text")
+        )
         content_hash = hashlib.sha256(
             (str(raw_text) if raw_text else _json(capture)).encode("utf-8")
         ).hexdigest()
-        connection.execute(
+        raw_id = connection.execute(
             """INSERT INTO raw_document(
                    source_site_id,external_id,url,title,raw_text,raw_payload,content_hash,
                    published_at,fetched_at,parse_status,purge_at
@@ -299,7 +369,8 @@ def _persist_page_captures(connection, registry: dict[str, Any], now: str) -> in
                    raw_payload=excluded.raw_payload,content_hash=excluded.content_hash,
                    published_at=COALESCE(excluded.published_at,raw_document.published_at),
                    fetched_at=excluded.fetched_at,parse_status='captured',
-                   purge_at=COALESCE(excluded.purge_at,raw_document.purge_at)""",
+                   purge_at=COALESCE(excluded.purge_at,raw_document.purge_at)
+               RETURNING raw_document_id""",
             (
                 site_id,
                 row["record_id"],
@@ -312,6 +383,10 @@ def _persist_page_captures(connection, registry: dict[str, Any], now: str) -> in
                 capture.get("fetched_at") or now,
                 row["expires_at"],
             ),
+        ).fetchone()[0]
+        _write_document_schedule(
+            connection, raw_id, capture, capture.get("facts") or [],
+            capture.get("source_id", ""), capture.get("content_type", ""),
         )
         saved += 1
     return saved
@@ -358,11 +433,21 @@ def _ensure_source_site(connection, source, registry: dict[str, Any], now: str) 
     return int(cursor[0])
 
 
-def _event_detail_id(connection, package: ContentPackage, now: str) -> int | None:
+def _event_detail_id(connection, package: ContentPackage, now: str, schedule: dict | None = None) -> int | None:
     if package.content_type != "event":
         return None
     first_source = package.sources[0] if package.sources else None
     fact_details = [fact.details for fact in package.facts if fact.details]
+    if not isinstance(schedule, dict):
+        schedule = next(
+            (fact.details for fact in package.facts
+             if fact.fact_type == "source_schedule" and first_source and first_source.id in fact.source_ids),
+            None,
+        )
+    if schedule is not None:
+        schedule = extract_source_schedule({"source_schedule": schedule}, "event")
+    starts_on = _erd_day(schedule.get("event_start") if schedule is not None else package.event_start)
+    ends_on = _erd_day(schedule.get("event_end") if schedule is not None else package.event_end)
 
     def fact_value(*keys: str) -> str | None:
         for details in fact_details:
@@ -372,6 +457,10 @@ def _event_detail_id(connection, package: ContentPackage, now: str) -> int | Non
                     return str(value).strip()
         return None
 
+    reservation_opens_at = fact_value("reservation_opens_at", "reservation_start")
+    if schedule is not None:
+        reservation_start = schedule.get("reservation_start") or ""
+        reservation_opens_at = reservation_start if "T" in reservation_start else None
     event_name = fact_value("event_name", "event_title", "product_name") or package.topic
     event_type = next(
         (fact.fact_type for fact in package.facts if "event" in fact.fact_type.lower()),
@@ -381,8 +470,8 @@ def _event_detail_id(connection, package: ContentPackage, now: str) -> int | Non
         "|".join(
             [
                 package.topic,
-                package.event_start or "",
-                package.event_end or "",
+                starts_on or "",
+                ends_on or "",
                 package.event_location or "",
                 str(first_source.url) if first_source else "",
             ]
@@ -410,15 +499,15 @@ def _event_detail_id(connection, package: ContentPackage, now: str) -> int | Non
         (
             event_type,
             event_name,
-            package.event_start,
-            package.event_end,
+            starts_on,
+            ends_on,
             fact_value("operating_hours", "business_hours"),
             package.event_region,
             fact_value("venue_name", "venue") or package.event_location,
             fact_value("address", "venue_address"),
             fact_value("admission_type", "admission"),
             fact_value("price_info", "price", "admission_fee"),
-            fact_value("reservation_opens_at", "reservation_start"),
+            reservation_opens_at,
             fact_value("reservation_url", "ticket_url"),
             fact_value("perks", "benefits"),
             str(first_source.url) if first_source and first_source.is_official else None,
@@ -447,8 +536,8 @@ def _raw_source_payload(connection, request_id: str, source_id: str) -> dict[str
     return {}
 
 
-def _raw_page_capture(connection, url: str) -> dict[str, Any]:
-    page_record_id = f"page:{hashlib.sha1(url.encode('utf-8')).hexdigest()[:16]}"
+def _raw_page_capture(connection, url: str, source_id: str = "", guid: str | None = None) -> dict[str, Any]:
+    page_record_id = f"page:{source_item_digest(source_id, url, guid)[:16]}"
     row = connection.execute(
         "SELECT payload_json FROM agent_records WHERE record_kind='official_page_capture' "
         "AND request_id=? ORDER BY updated_at DESC LIMIT 1",
@@ -464,10 +553,12 @@ def _raw_page_capture(connection, url: str) -> dict[str, Any]:
 
 
 def _ensure_raw_document(
-    connection, package: ContentPackage, source, site_id: int, event_id: int | None, now: str
+    connection, package: ContentPackage, source, site_id: int, event_id: int | None, now: str,
+    capture: dict | None = None,
 ) -> int:
     raw_payload = _raw_source_payload(connection, package.request_id, source.id)
-    capture = _raw_page_capture(connection, str(source.url))
+    if capture is None:
+        capture = _raw_page_capture(connection, str(source.url), source.id, source.feed_entry_guid)
     if not capture and source.linked_from_url:
         parent_capture = _raw_page_capture(connection, str(source.linked_from_url))
         linked_capture = next(
@@ -484,7 +575,7 @@ def _ensure_raw_document(
     extracted_text = next(
         (
             capture.get(key)
-            for key in ("raw_text", "body_text", "text", "content", "body")
+            for key in ("source_article_text", "raw_text", "body_text", "text", "content", "body")
             if isinstance(capture.get(key), str) and capture.get(key).strip()
         ),
         next(
@@ -500,7 +591,7 @@ def _ensure_raw_document(
     hash_material = extracted_text or _json(capture or raw_payload)
     content_hash = hashlib.sha256(hash_material.encode("utf-8")).hexdigest()
     external_id = (
-        f"page:{hashlib.sha1(str(source.url).encode('utf-8')).hexdigest()[:16]}"
+        f"page:{source_item_digest(source.id, str(source.url), source.feed_entry_guid)[:16]}"
         if capture and str(capture.get("url") or "") == str(source.url)
         else f"{package.request_id}:{source.id}"
     )
@@ -531,6 +622,7 @@ def _ensure_raw_document(
             package.purge_at,
         ),
     ).fetchone()
+    _write_document_schedule(connection, row[0], capture, facts, source.id, package.content_type or "")
     return int(row[0])
 
 
@@ -623,13 +715,16 @@ def persist_crawl_dataset(connection, capture: dict[str, Any], package: ContentP
     now = _now()
     registry = _source_registry_by_id()
     site_id = _ensure_capture_site(connection, capture, registry, now)
-    raw_text = capture.get("text") or capture.get("main_text")
+    raw_text = (
+        capture.get("source_article_text") or capture.get("text") or capture.get("main_text")
+    )
     digest = hashlib.sha256(
         (str(raw_text) if raw_text else _json(capture)).encode("utf-8")
     ).hexdigest()
-    event_id = _event_detail_id(connection, package, now) if package else None
-    record_id = f"page:{hashlib.sha1(str(capture['url']).encode('utf-8')).hexdigest()[:16]}"
-    connection.execute(
+    event_id = _event_detail_id(connection, package, now, capture.get("source_schedule")) if package else None
+    digest_key = source_item_digest(capture.get("source_id", ""), str(capture["url"]), capture.get("feed_entry_guid"))
+    record_id = f"page:{digest_key[:16]}"
+    raw_id = connection.execute(
         """INSERT INTO raw_document(
                source_site_id,event_detail_id,external_id,url,title,raw_text,raw_payload,
                content_hash,published_at,fetched_at,parse_status,purge_at
@@ -641,7 +736,8 @@ def persist_crawl_dataset(connection, capture: dict[str, Any], package: ContentP
                raw_payload=excluded.raw_payload,content_hash=excluded.content_hash,
                published_at=COALESCE(excluded.published_at,raw_document.published_at),
                fetched_at=excluded.fetched_at,parse_status='captured',
-               purge_at=COALESCE(excluded.purge_at,raw_document.purge_at)""",
+               purge_at=COALESCE(excluded.purge_at,raw_document.purge_at)
+           RETURNING raw_document_id""",
         (
             site_id,
             event_id,
@@ -655,6 +751,10 @@ def persist_crawl_dataset(connection, capture: dict[str, Any], package: ContentP
             capture.get("fetched_at") or now,
             capture.get("expires_at"),
         ),
+    ).fetchone()[0]
+    _write_document_schedule(
+        connection, raw_id, capture, capture.get("facts") or [],
+        capture.get("source_id", ""), (package.content_type if package else None) or capture.get("content_type", ""),
     )
     work_ids = list(dict.fromkeys(int(value) for value in capture.get("menu_work_ids", []) if str(value).isdigit()))
     works, aliases, entries, external_entries = _work_rows()
@@ -714,12 +814,18 @@ def persist_package(
 ) -> int:
     """Upsert a generated package into ERD tables and return its content_id."""
     now = _now()
-    event_id = _event_detail_id(connection, package, now)
+    primary_capture = None
+    if package.content_type == "event" and package.sources:
+        primary = package.sources[0]
+        primary_capture = _raw_page_capture(connection, str(primary.url), primary.id, primary.feed_entry_guid)
+    event_id = _event_detail_id(connection, package, now, (primary_capture or {}).get("source_schedule"))
     source_registry = _source_registry_by_id()
     source_rows = []
-    for source in package.sources:
+    for index, source in enumerate(package.sources):
         site_id = _ensure_source_site(connection, source, source_registry, now)
-        raw_id = _ensure_raw_document(connection, package, source, site_id, event_id, now)
+        raw_id = _ensure_raw_document(
+            connection, package, source, site_id, event_id, now, primary_capture if index == 0 else None,
+        )
         source_rows.append((source, site_id, raw_id))
 
     existing = connection.execute(
@@ -745,7 +851,7 @@ def persist_package(
         package.content_type,
         event_id,
         _title_from_package(package),
-        package.detail_body,
+        reader_detail_body(package, markdown=False),
         None,
         _json([]),
         _card_image_url(cover, cover_image) if cover else None,
@@ -753,14 +859,13 @@ def persist_package(
         _json(judgment_basis),
         now,
         now,
-        package.feed_valid_until,
     )
     if content_id is None:
         row = connection.execute(
             """INSERT INTO content (
                    content_type, event_detail_id, title, body, summary, keyword, thumbnail_url,
-                   status, ai_judgment_basis, created_at, updated_at, valid_until
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING content_id""",
+                   status, ai_judgment_basis, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING content_id""",
             values,
         ).fetchone()
         content_id = int(row[0])
@@ -771,9 +876,9 @@ def persist_package(
     else:
         connection.execute(
             """UPDATE content SET content_type=?, event_detail_id=?, title=?, body=?, summary=?,
-                   keyword=?, thumbnail_url=?, status=?, ai_judgment_basis=?, updated_at=?, valid_until=?
+                   keyword=?, thumbnail_url=?, status=?, ai_judgment_basis=?, updated_at=?
                WHERE content_id=?""",
-            (*values[:9], values[10], values[11], content_id),
+            (*values[:9], values[10], content_id),
         )
         connection.execute(
             "UPDATE content_request_map SET updated_at=? WHERE request_id=?",
@@ -816,8 +921,12 @@ def persist_package(
         )
 
     connection.execute("DELETE FROM content_card WHERE content_id=?", (content_id,))
+    reference_labels = goods_reference_labels(package)
     for card in package.cards:
         image = image_by_id.get(card.image_id) if card.image_id else None
+        credit = image.attribution_text if image else None
+        if label := reference_labels.get(card.page):
+            credit = f"{label} · {credit}" if credit else label
         connection.execute(
             """INSERT INTO content_card(
                    content_id,page_no,card_role,title,body,card_image_url,source_image_url,
@@ -833,7 +942,7 @@ def persist_package(
                 str(image.url) if image and image.url else None,
                 str(image.source_url) if image else None,
                 image.rights_status.value if image else None,
-                getattr(image, "attribution_text", None) if image else None,
+                credit,
                 now,
             ),
         )
@@ -889,7 +998,9 @@ def persist_package(
     return content_id
 
 
-def set_content_status(connection, request_id: str, status: str, *, adopted: bool | None = None) -> None:
+def set_content_status(
+    connection, request_id: str, status: str, *, adopted: bool | None = None,
+) -> None:
     """Keep the normalized content status aligned with feed/review transitions."""
     row = connection.execute(
         "SELECT content_id FROM content_request_map WHERE request_id=?", (request_id,)
