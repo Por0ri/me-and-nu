@@ -22,6 +22,10 @@ from app.models.chat import (
 )
 from app.models.content import Content, ContentSource, Draft
 from app.models.content_slide import ContentSlide
+from app.models.debate import (
+    Debate, DebateMember, DebateMessage, DebateNotification, DebateSearchLog, DebateSide, DebateVote,
+    DebateVoteTicket, DebateWork,
+)
 from app.models.notification import Notification
 from app.models.notice import Notice
 from app.models.oauth_attempt import OAuthAttempt
@@ -64,6 +68,15 @@ __all__ = [
     "ContentSlide",
     "ContentTag",
     "CreatorChannel",
+    "Debate",
+    "DebateMessage",
+    "DebateNotification",
+    "DebateSearchLog",
+    "DebateMember",
+    "DebateSide",
+    "DebateVote",
+    "DebateVoteTicket",
+    "DebateWork",
     "Draft",
     "JudgmentLog",
     "LongTermMemory",

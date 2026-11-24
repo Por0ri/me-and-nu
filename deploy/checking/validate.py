@@ -11,19 +11,23 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / "deploy/checking/.env"
-MIGRATION_REVISION = "b7d4e2a9c601"
+MIGRATION_REVISION = "94d2da693c10"
 EVALUATION_KEY = "CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH"
 EVALUATION_PATH = "/app/admin-evaluation/evaluation.json"
 SERVICE_EVALUATION_KEY = "CHECKING_ADMIN_SERVICE_EVALUATION_PATH"
 SERVICE_EVALUATION_PATH = "/app/admin-evaluation/service-evaluation.json"
-OPTIONAL_DEFAULTS = {EVALUATION_KEY: "", SERVICE_EVALUATION_KEY: ""}
+# Debate rooms stay off unless the Checking file opts in; the vote threshold only lowers the bar for small-team tests.
+DEBATE_KEY = "CHECKING_DEBATE_ENABLED"
+DEBATE_THRESHOLD_KEY = "CHECKING_DEBATE_VOTE_THRESHOLD"
+DEBATE_THRESHOLD = re.compile(r"[1-9][0-9]?|100")
+OPTIONAL_DEFAULTS = {EVALUATION_KEY: "", SERVICE_EVALUATION_KEY: "", DEBATE_KEY: "false", DEBATE_THRESHOLD_KEY: "10"}
 KEYS = {
     "CHECKING_IMAGE_TAG", "CHECKING_POSTGRES_PASSWORD", "CHECKING_REDIS_PASSWORD", "CHECKING_FORWARDED_ALLOW_IPS",
     "CHECKING_KAKAO_OAUTH_ENABLED", "CHECKING_KAKAO_CLIENT_ID", "CHECKING_KAKAO_CLIENT_SECRET",
     "CHECKING_NAVER_OAUTH_ENABLED", "CHECKING_NAVER_CLIENT_ID", "CHECKING_NAVER_CLIENT_SECRET",
     "CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED", "CHECKING_LLM_KEY", "CHECKING_DICT_DATABASE_URL",
     "CHECKING_CHAT_DAILY_TOTAL_LIMIT",
-    EVALUATION_KEY, SERVICE_EVALUATION_KEY,
+    EVALUATION_KEY, SERVICE_EVALUATION_KEY, DEBATE_KEY, DEBATE_THRESHOLD_KEY,
 }
 # All users' chatbot questions per day: an explicit 1-999999 so a typo can never mean "unlimited" (0).
 DAILY_LIMIT = re.compile(r"[1-9][0-9]{0,5}")
@@ -73,6 +77,10 @@ def validate_values(values, environ=None):
         raise GuardError("The Checking evaluation path must be empty or /app/admin-evaluation/evaluation.json.")
     if values[SERVICE_EVALUATION_KEY] not in ("", SERVICE_EVALUATION_PATH):
         raise GuardError("The Checking service evaluation path must be empty or /app/admin-evaluation/service-evaluation.json.")
+    if values[DEBATE_KEY] not in ("true", "false"):
+        raise GuardError(f"{DEBATE_KEY} must be explicitly true or false.")
+    if not DEBATE_THRESHOLD.fullmatch(values[DEBATE_THRESHOLD_KEY]):
+        raise GuardError(f"{DEBATE_THRESHOLD_KEY} must be a whole number from 1 to 100 (votes needed to open a debate room).")
     try:
         addresses = values["CHECKING_FORWARDED_ALLOW_IPS"].split(",")
         if not addresses or any(ipaddress.ip_address(value).is_unspecified for value in addresses):
@@ -137,6 +145,10 @@ def validate_config(config, values):
             raise GuardError("Only the checking API may receive ADMIN_RECOMMENDATION_EVALUATION_PATH from the Checking file.")
         if environment.get("ADMIN_SERVICE_EVALUATION_PATH") != (values.get(SERVICE_EVALUATION_KEY, "") if name == "api" else None):
             raise GuardError("Only the checking API may receive ADMIN_SERVICE_EVALUATION_PATH from the Checking file.")
+        if environment.get("DEBATE_ENABLED") != (values.get(DEBATE_KEY, "false") if name == "api" else None):
+            raise GuardError("Only the checking API may receive DEBATE_ENABLED, and only from CHECKING_DEBATE_ENABLED.")
+        if environment.get("DEBATE_VOTE_THRESHOLD") != (values.get(DEBATE_THRESHOLD_KEY, "10") if name == "api" else None):
+            raise GuardError("Only the checking API may receive DEBATE_VOTE_THRESHOLD, and only from CHECKING_DEBATE_VOTE_THRESHOLD.")
         if environment.get("DATABASE_URL") != expected_db or environment.get("REDIS_URL") != expected_redis:
             raise GuardError(f"{name} must use the private checking database and Redis.")
         if environment.get("CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED") != values["CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED"]:
@@ -242,6 +254,7 @@ def check(*, build=False):
     print(f"Chatbot dictionary for the API: {'set' if values['CHECKING_DICT_DATABASE_URL'] else 'empty (dictionary off)'}.")
     print(f"Chatbot questions per day for all users: {values['CHECKING_CHAT_DAILY_TOTAL_LIMIT']} (counted together with the main API).")
     print(f"Admin offline evaluation: {'configured' if values.get(EVALUATION_KEY) else 'disabled'} (read-only API mount).")
+    print(f"Debate rooms: {'on' if values[DEBATE_KEY] == 'true' else 'off'} (votes needed to open a room: {values[DEBATE_THRESHOLD_KEY]}).")
 
 
 def initialize(image_tag):

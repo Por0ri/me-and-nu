@@ -78,6 +78,25 @@ class Settings(BaseSettings):
     chat_daily_total_limit: int = Field(default=100, ge=0)
     # 활동 기록(user_event)의 출처. 실서비스 서버만 production으로 둔다
     event_data_source: Literal["production", "local_demo", "automated_test", "imported"] = "local_demo"
+    # 토론방 기능 스위치. 꺼져 있으면 토론 API를 등록하지 않는다 (docs/DEBATE_BACKEND_DESIGN_2026-11-19.md).
+    # 켜기 전에 그 환경 DB에 토론 migration을 먼저 적용한다. 같은 DB를 쓰는 서버 중 한 곳에서만 켠다.
+    debate_enabled: bool = False
+    # 토론방 규칙 값. Checking 시험 때는 줄여서 빠르게 확인할 수 있다 (예: 2표, 방 30분)
+    debate_vote_threshold: int = Field(default=10, gt=0)
+    debate_voting_period_minutes: int = Field(default=7 * 24 * 60, gt=0)
+    debate_room_duration_minutes: int = Field(default=48 * 60, gt=0)
+    debate_vote_ticket_max: int = Field(default=3, gt=0, le=100)
+    debate_vote_ticket_refill_minutes: int = Field(default=60, gt=0)
+    # 한 사람이 동시에 투표 중으로 둘 수 있는 내 주제 수
+    debate_active_per_user: int = Field(default=1, gt=0)
+    # 1인 채팅 속도 제한: window 초 동안 count 개까지
+    debate_message_rate_count: int = Field(default=5, gt=0)
+    debate_message_rate_window_seconds: int = Field(default=10, gt=0)
+    # 1인 동시 실시간 연결 수 (탭 여러 개·기기 여러 대)와 연결 유지 신호 간격
+    debate_stream_per_user: int = Field(default=3, gt=0)
+    debate_stream_heartbeat_seconds: int = Field(default=20, gt=0)
+    # 끝난 토론(방 종료·소각)의 결과를 지난 토론방에 보여 주는 날 수. 지나면 목록에서 빠지고 정리 작업이 지운다.
+    debate_result_retention_days: int = Field(default=9, gt=0, le=365)
     # Operator-provided offline evaluation artifact; never a client-selected path.
     admin_recommendation_evaluation_path: str | None = Field(default=None, repr=False)
     admin_service_evaluation_path: str | None = Field(default=None, repr=False)

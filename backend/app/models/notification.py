@@ -9,6 +9,8 @@ from app.db.base import Base
 
 NOTIFICATION_TYPES = (
     "topic_new_post", "creator_new_post", "system_notice", "follow", "direct_message", "recommended_post",
+    # 내가 투표한(또는 올린) 토론 주제가 열렸을 때. 어느 토론인지는 debate_notification 표에 있다.
+    "debate_opened",
 )
 
 
