@@ -184,7 +184,7 @@ def migration_pg():
     try:
         with owner.begin() as db:
             assert db.scalar(text("SELECT current_database()")) == "main_withdrawal_test"
-            assert db.scalar(text("SELECT inet_server_addr()::text")) == "127.0.0.1"
+            assert db.scalar(text("SELECT host(inet_server_addr())")) == "127.0.0.1"
             # A service schema in public means this is not an empty disposable DB.
             assert db.scalar(text("SELECT to_regclass('public.alembic_version')")) is None
             assert db.scalar(text("SELECT to_regclass('public.user_account')")) is None
