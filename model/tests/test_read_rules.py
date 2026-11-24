@@ -16,7 +16,7 @@ def learn(events, cfg=SERVICE, day=100, state=None):
     if state is None:
         empty = np.zeros(0, dtype=np.int64)
         h = ar.History(empty, empty, np.zeros(0, dtype=np.int8), np.zeros(0, dtype=np.int8), np.zeros(0, dtype=np.int8))
-        state = v1.UserState(h, [], [], [], 0, 4, 4)
+        state = v1.UserState(h, [], [], {}, 0, 4, 4)
         state.work_aff = np.zeros(4, dtype=np.float32)
     v1.learn(state, events, FEED, cfg, np.arange(4), day=day)
     return state

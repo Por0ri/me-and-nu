@@ -17,6 +17,7 @@
 #   python -m model.eval.feed_simulator tune     # v1 비중 고르기 (연습으로 고르고 실전으로 확인)
 #   python -m model.eval.feed_simulator eval     # 유저 테스트 평가 설계 (4-1): 섞어 보여 주기 vs 반으로 나누기, 몇 명 × 며칠이면 차이를 잡나
 #   python -m model.eval.feed_simulator refresh  # 반응을 접속마다 반영 vs 하루 한 번 반영 (서비스 계산 주기, EXP-30)
+#   python -m model.eval.feed_simulator rank     # Q3 답을 좋아하는 순서대로 여러 개 받을 때 순위별 무게 (EXP-39)
 
 import math
 import sys
@@ -28,6 +29,7 @@ import numpy as np
 
 from model.algo import anime_ranker as ar
 from model.algo import content_v1 as v1
+from model.algo import service
 from model.eval import next_anime_test as t
 
 # ## 1. 가정 (모두 바꿔 가며 결론이 유지되는지 확인할 값)
@@ -78,6 +80,8 @@ CURIOSITY = (0.02, 0.12)    # 관심 없어도 눌러 보는 확률 범위
 OPEN_MAX = 0.8              # 관심 1 인 글을 여는 확률 (호기심 클릭 제외)
 READ_K = 6.0                # 읽은 비율 흩어짐 (클수록 관심대로 읽음)
 ONBOARD_WORKS = ((1, .2), (2, .2), (3, .25), (4, .15), (5, .2))   # 온보딩에서 고르는 작품 수
+# 유형 → 화면 Q3 답 번호. 채점 보조 지표 "첫 10개 쏠림" (첫 10개 글 중 가장 많은 답 묶음의 비율)에 씀
+TYPE_GROUP = np.array([service.Q3_ANSWERS.index(service.GROUP_OF[x]) for x in v1.TYPES])   # 서비스와 같은 대응표
 
 
 @dataclass
@@ -176,7 +180,7 @@ def make_user(uid, h, ctx, anime, anilist, rng):
     return SimUser(uid, interest, dislike, np.exp(TYPE_STRENGTH * pref), pref <= -0.5, persona, style_name,
                    STYLE[style_name][1], rng.uniform(*SCROLL), rng.uniform(*CURIOSITY), rng.poisson(activity, N_DAYS),
                    {"history": ob["history"], "genres": ob["genres"], "themes": ob["themes"],
-                    "types": [v1.TYPES[i] for i in chosen], "t": now})
+                    "types": {v1.TYPES[i]: 1.0 for i in chosen}, "t": now})
 
 
 def make_feed(world, seed=SEED, backlog_days=BACKLOG_DAYS, per_day=NEW_PER_DAY):
@@ -247,7 +251,8 @@ def simulate(world, feed, users, cfg, seed=SEED, days=N_DAYS, update="visit"):
     daily = 하루 한 번 (그날은 같은 순서) / daily_filter = 하루 한 번 + 접속 때 이미 연 글 · 그만볼래요 한 글만 뺌 /
     daily_seen = daily_filter + 오늘 이미 보여 준 글은 뒤로"""
     ctx, cat_ids, n_feed = world["ctx"], world["catalog_ids"], len(feed["day"])
-    tot = {k: np.zeros(N_DAYS) for k in ("nrbp", "sessions", "views", "good_opens", "less", "bad_views", "repeats")}
+    tot = {k: np.zeros(N_DAYS) for k in ("nrbp", "sessions", "views", "good_opens", "less", "bad_views", "repeats",
+                                         "top_share", "top_kinds")}
     tot["events"] = Counter()                                        # 기록 종류별 개수 (읽기는 끝까지 읽은 것만)
     for ui, user in enumerate(users):
         rng = np.random.default_rng([seed, ui, 7])
@@ -283,6 +288,8 @@ def simulate(world, feed, users, cfg, seed=SEED, days=N_DAYS, update="visit"):
                             shown = state.seen[order] > seen0[order]
                             order = np.r_[order[~shown], order[shown]]
                         order = order[:FEED_LEN]
+                    if MAX_RUN:                                      # (EXP-39) 같은 유형 묶음 연속 제한
+                        order = limit_runs(order, TYPE_GROUP[feed["type"]], MAX_RUN)
                     v1.mark_served(state, order, cfg)
                 gain = utility(user, feed, order, day, seen, opened)
                 best = utility(user, feed, live, day, seen, opened)     # 정답: 진짜 관심 순으로 놓았을 때
@@ -292,6 +299,9 @@ def simulate(world, feed, users, cfg, seed=SEED, days=N_DAYS, update="visit"):
                 events = browse(user, feed, order, gain, rng, seen, opened)
                 tot["nrbp"][day] += rbp(gain) / ideal if ideal > 0 else 0.0
                 tot["sessions"][day] += 1
+                top = TYPE_GROUP[feed["type"][order[:10]]]
+                tot["top_share"][day] += np.bincount(top).max() / len(top) if len(top) else 0.0
+                tot["top_kinds"][day] += len(set(top.tolist()))
                 tot["views"][day] += sum(e[0] == "impression" for e in events)
                 tot["good_opens"][day] += sum(e[0] == "open" and gmap[e[1]] >= 0.5 for e in events)
                 tot["less"][day] += sum(e[0] == "less" for e in events)
@@ -309,7 +319,8 @@ def summary(tot, days):
     n = tot["sessions"][days].sum()
     return {"정답 대비 RBP": tot["nrbp"][days].sum() / n, "접속당 본 글": tot["views"][days].sum() / n,
             "접속당 좋은 글 열람": tot["good_opens"][days].sum() / n, "100접속당 그만볼래요": 100 * tot["less"][days].sum() / n,
-            "접속당 싫은 글 노출": tot["bad_views"][days].sum() / n, "접속당 다시 본 글": tot["repeats"][days].sum() / n}
+            "접속당 싫은 글 노출": tot["bad_views"][days].sum() / n, "접속당 다시 본 글": tot["repeats"][days].sum() / n,
+            "첫 10개 쏠림": tot["top_share"][days].sum() / n, "첫 10개 유형 수": tot["top_kinds"][days].sum() / n}
 
 
 POOL_SIZES = (10, 20, 30, 50, 80)   # 하루 새 글 수. 시작할 때 10일 치가 쌓여 있음 → 시작 글 100 · 200 · 300 · 500 · 800편
@@ -684,7 +695,107 @@ def eval_test():
         print(f"({time.time() - t0:.0f}초)", flush=True)
 
 
+# ## 6. Q3 답 여러 개 · 순위별 무게 (EXP-39)
+# 화면 Q3 가 답 6개 중 1~6개를 좋아하는 순서대로 받음. 가짜 유저는 답마다 "그 답에 묶인 유형 중 가장 좋아하는 유형의 취향"에
+# 자기 취향을 정확히 모르는 정도(ANSWER_NOISE)를 더한 값 순서로 줄 세움. 몇 개 고르나는 세 상황으로 나눠 봄
+ANSWER_NOISE = 0.3          # 답 순서를 매길 때 흔들림 (같은 페르소나 안 사람마다 차이 TYPE_NOISE 와 같은 크기)
+RANK_W = [("1순위만", (1.0,)),                                             # 예전처럼 답 하나만 반영
+          ("같게", (1.0,) * 6),
+          ("선형", tuple(round((7 - r) / 6, 3) for r in range(1, 7))),     # 1 · 0.83 · 0.67 · 0.5 · 0.33 · 0.17 (보르다 점수)
+          ("역순위", tuple(round(1 / r, 3) for r in range(1, 7)))]          # 1 · 0.5 · 0.33 · 0.25 · 0.2 · 0.17
+PICKS = ("좋아하는 것만", "6개 다", "1~6개 섞임")
+MAX_RUN = None              # (결과 보고 추가) 숫자면 피드에서 같은 유형 묶음 글이 이 개수 넘게 이어지지 않게 다시 놓음
+
+
+def limit_runs(order, groups, max_run):
+    """같은 유형 묶음 (groups[글]) 이 max_run 개 넘게 이어지면, 뒤에서 다른 묶음의 가장 앞 글을 당겨 옴.
+    다른 묶음 글이 없으면 그대로. 그 밖의 순서는 점수 순 그대로"""
+    out, rest = [], list(order)
+    while rest:
+        pick = 0
+        if len(out) >= max_run and len({int(groups[i]) for i in out[-max_run:]}) == 1:
+            last = int(groups[out[-1]])
+            pick = next((k for k, i in enumerate(rest) if int(groups[i]) != last), 0)
+        out.append(rest.pop(pick))
+    return np.array(out, dtype=order.dtype)
+
+
+def answer_picks(user):
+    """가짜 유저의 Q3 답 (좋아하는 순서) — 상황별. 유저마다 정해진 난수라 무게 후보끼리 같은 답을 씀"""
+    rng = np.random.default_rng([SEED, user.uid, 13])
+    pref = np.log(user.type_mult) / TYPE_STRENGTH                     # make_user 의 유형 취향 (페르소나 ±1 + 사람마다 차이)
+    a = np.array([max(pref[v1.TYPE_INDEX[x]] for x in service.ANSWER_TYPES[q]) for q in service.Q3_ANSWERS])
+    a = a + rng.normal(0.0, ANSWER_NOISE, len(a))
+    k, coin, extra = int(rng.integers(1, 7)), rng.random(), int(rng.integers(0, 6))
+    idx = np.argsort(-a, kind="stable")
+    order = [service.Q3_ANSWERS[i] for i in idx]
+    liked = [service.Q3_ANSWERS[i] for i in idx if a[i] > 0.5] or order[:1]   # make_user 처럼 취향 0.5 넘는 것만
+    rest = [q for q in order if q not in liked]
+    if coin < 0.3 and rest:                                           # 가끔 별 관심 없는 답도 하나 (make_user 와 같은 가정)
+        liked = liked + [rest[extra % len(rest)]]
+    return {"좋아하는 것만": liked, "6개 다": order, "1~6개 섞임": order[:k]}
+
+
+def rank_users(users, pick, rank_w):
+    # 상황(pick)대로 고른 답을 순위 무게(rank_w)로 바꿔 유형 출발값에 넣은 유저 복사본 (서비스와 같은 service.user_types)
+    return [replace(u, onboard={**u.onboard, "types": service.user_types(answer_picks(u)[pick], rank_w)}) for u in users]
+
+
+def rank_test(n=N_SIM_USERS, sens=False):
+    # EXP-39: Q3 답을 좋아하는 순서대로 여러 개 받을 때 순위별 무게. EXP-22 · 30 과 같은 조건 (v1 출발값, 기록 = 반응 4종 + 노출
+    # + 열람·읽기, 글 시작 300편 + 하루 30편, 첫 7일). 연습 유저로 고르고 실전 유저 · 가정 바꾸기로 확인
+    # 기준 (미리 정함): 감소형 무게 (선형 · 역순위)는 연습 · 실전, 세 상황, 가정 바꾸기 모두에서 RBP 가 '같게' 이상
+    # (0.001 미만 차이는 같음)이고 싫은 글 노출이 '같게' 보다 늘지 않을 때만 채택. 섞이면 '같게'
+    # (결과 보고 추가) 베타 유저는 하루이틀만 들어올 가능성이 커서 첫 2일도 따로 보고, 같은 유형 묶음 연속 제한 (MAX_RUN 2)
+    # 을 더한 피드도 잼. 첫 10개 유형 수 = 첫 10개 글에 보이는 답 묶음 가짓수 (최대 6)
+    global MAX_RUN
+    t0 = time.time()
+    world = build_world(n)
+    feed = make_feed(world, backlog_days=10, per_day=30)
+    tune, test = world["users"][: n // 2], world["users"][n // 2:]
+    _prime_base_aff(world, world["users"])
+    cfg = v1.Config(logs=BEST_LOGS)
+    print(f"연습 {len(tune):,} · 실전 {len(test):,} · 글 시작 300편 + 하루 30편 · 준비 {time.time() - t0:.0f}초")
+    for pick in PICKS:
+        print(f"'{pick}' 고른 답 수 (연습): {dict(sorted(Counter(len(answer_picks(u)[pick]) for u in tune).items()))}")
+    cols = "RBP\t좋은 글 열람\t다시 본 글\t싫은 글 노출\t첫 10개 쏠림\t첫 10개 유형 수"
+
+    def line(pick, name, users):
+        tot = simulate(world, feed, users, cfg, days=7)
+        part = lambda s: (f"{s['정답 대비 RBP']:.4f}\t{s['접속당 좋은 글 열람']:.2f}\t{s['접속당 다시 본 글']:.1f}\t"
+                          f"{s['접속당 싫은 글 노출']:.2f}\t{s['첫 10개 쏠림']:.0%}\t{s['첫 10개 유형 수']:.1f}")
+        print(f"{pick}\t{name}\t{part(summary(tot, np.arange(2)))}\t|\t{part(summary(tot, np.arange(7)))}\t"
+              f"({time.time() - t0:.0f}초)", flush=True)
+
+    def run(label, users, ref=False, sets=None):
+        print(f"\n[{label}]\n상황\t무게\t[첫 2일] {cols}\t|\t[첫 7일] {cols}")
+        if ref:                                                       # EXP-22 · 30 가정 (답 대신 유형을 직접 최대 3개, 같은 무게)
+            line("(참고) 유형 직접 고름", "같게", users)
+        for pick, (name, w) in sets or [(p, nw) for p in PICKS for nw in RANK_W]:
+            if name == "1순위만" and pick != PICKS[0]:
+                continue                                              # 1순위 답은 세 상황 모두 같음 → 한 번만
+            line("(공통)" if name == "1순위만" else pick, name, rank_users(users, pick, w))
+
+    weak, strong = _sens_users(test, "type_weak"), [replace(u, type_mult=u.type_mult ** 2) for u in test]
+    if not sens:
+        run("연습", tune)
+        run("실전", test, ref=True)
+        run("실전 · 유형 취향 세기 절반", weak)
+        run("실전 · 유형 취향 두 배", strong)
+    linear = dict(RANK_W)["선형"]
+    capped = [(PICKS[0], RANK_W[0])] + [(p, ("선형", linear)) for p in PICKS]
+    # 연속 제한 없는 같은 칸은 위 표 (sens 면 첫 실행 결과)에 있음
+    groups = ({"실전 · 유형 취향 세기 절반": weak, "실전 · 유형 취향 두 배": strong} if sens
+              else {"연습": tune, "실전": test})
+    for MAX_RUN in (2, 1):
+        for label, users in groups.items():
+            run(f"{label} · 같은 유형 묶음 {MAX_RUN + 1}개 연속 금지", users, sets=capped)
+    MAX_RUN = None
+
+
 def main():
+    if sys.argv[1:2] in (["rank"], ["rank_sens"]):           # rank_sens = 연속 제한을 가정 바꾸기로 확인
+        return rank_test(int(sys.argv[2]) if len(sys.argv) > 2 else N_SIM_USERS, sens=sys.argv[1] == "rank_sens")
     if sys.argv[1:2] == ["eval"]:
         return eval_test()
     if sys.argv[1:2] == ["refresh"]:

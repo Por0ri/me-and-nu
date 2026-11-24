@@ -43,12 +43,14 @@ except ModuleNotFoundError as exc:
 KST = timezone(timedelta(hours=9))
 TOPIC = "anime"
 TOP_N = 100                               # 유저마다 하루 순위 개수 (EXP-30)
-VERSION = "v1.2-beta"                     # recommendation_round.algorithm_version. 알고리즘을 바꾸면 새 이름
+VERSION = "v1.3-beta"                     # recommendation_round.algorithm_version. 알고리즘을 바꾸면 새 이름
                                           # (v1-usertest → v1.1-beta 11/18: 여러 작품 글 · 곁들임 · 다른 작품 자리 · 칩 맞춤 · 이유
-                                          #  → v1.2-beta 11/19: 지나친 글은 하루 쉬고 다시 자리 후보, 오늘 나온 건 안 셈)
+                                          #  → v1.2-beta 11/19: 지나친 글은 하루 쉬고 다시 자리 후보, 오늘 나온 건 안 셈
+                                          #  → v1.3-beta 11/24: Q3 유형 여러 개 · 순위 무게, 같은 유형 연속 금지)
 LOCK = (20261029, 1)                      # 쓰기 잠금: 명령이 두 개 돌아도 한쪽씩 씀
 CAROUSEL_METHOD = "carousel_import_v1"    # 백엔드 carousel_repository 와 같은 값
 CHIPS = REPO / "model" / "catalog" / "chips.csv"
+_SAID = {}                                # 한 번만 찍는 안내
 
 # 피드에 보일 수 있는 글 (백엔드 recommendation_repository._visible 과 같은 조건)
 # 캐러셀 검수 = carousel_repository._carousel_review_condition: 미리보기가 아니면 검수 통과 (confirmed),
@@ -98,7 +100,8 @@ def load_users(cur, topic_id, chips):
     cur.execute("""SELECT t.tap_id FROM tap t JOIN user_account u ON u.user_id = t.user_id
         WHERE t.topic_id = %s AND t.deleted_at IS NULL AND u.onboarding_completed_at IS NOT NULL
           AND u.withdrawn_at IS NULL AND u.account_status IN ('active', 'warned') ORDER BY t.tap_id""", (topic_id,))
-    users = {tap: {"works": [], "genres": [], "themes": [], "answers": [], "unknown_chips": 0} for (tap,) in cur.fetchall()}
+    users = {tap: {"works": [], "genres": [], "themes": [], "answers": [], "q2": [], "unknown_chips": 0}
+             for (tap,) in cur.fetchall()}
     taps = list(users)
     if not taps:
         return users
@@ -112,9 +115,22 @@ def load_users(cur, topic_id, chips):
         WHERE tp.tap_id = ANY(%s) ORDER BY tp.tap_id, pt.kind, pt.sort_order""", (taps,))
     for tap, kind, code, label, tag_id in cur.fetchall():
         apply_chip(users[tap], kind, code, label, tag_id, chips)
+    # Q3 순위 = 새 표 tap_consumption_type (11/24~). 표가 없는 DB (마이그레이션 전) 면 consumption_type 하나만
+    ranked = {}
+    cur.execute("SELECT to_regclass('tap_consumption_type') IS NOT NULL")
+    if cur.fetchone()[0]:
+        cur.execute("""SELECT tap_id, rank, consumption_type FROM tap_consumption_type WHERE tap_id = ANY(%s)
+            ORDER BY tap_id, rank""", (taps,))
+        for tap, rank, answer in cur.fetchall():
+            ranked.setdefault(tap, []).append((rank, answer))
+    elif not _SAID.get("no_rank_table"):                       # 켜 두기 모드에서 몇 초마다 찍히지 않게 한 번만
+        _SAID["no_rank_table"] = True
+        print("== tap_consumption_type 표 없음 (DB 마이그레이션 전) → Q3 는 1순위 (consumption_type) 하나만 씀")
     cur.execute("SELECT tap_id, consumption_type, q1_choice, q2_choice FROM onboarding_answers WHERE tap_id = ANY(%s)", (taps,))
-    for tap, *answers in cur.fetchall():
-        users[tap]["answers"] = [a for a in answers if a]
+    # 예전 (v1) 답: q1 = Q3 와 같은 6개 (1순위), q2 = 받고 싶은 소식 (다른 질문 → 무게 1, service.answer_types)
+    for tap, first, q1, q2 in cur.fetchall():
+        users[tap]["answers"] = service.q3_answers(first, ranked.get(tap)) if first else [a for a in (q1,) if a]
+        users[tap]["q2"] = [q2] if q2 else []
     return users
 
 
@@ -223,7 +239,7 @@ def load_visits(cur, taps, index):
 def recommend(user, visits, ctx, feed, posts, day, t, cfg, catalog_ids, chips=None):
     """유저 한 명 → [(글 번호, 점수, 이유), ...] 순위대로. chips = load_chip_features 결과 (이유 문구의 칩 화면 이름)"""
     ob = service.onboarding_user(ctx, user["works"], user["genres"], user["themes"], t)
-    state = v1.UserState(ob["history"], ob["genres"], ob["themes"], service.user_types(user["answers"]), t,
+    state = v1.UserState(ob["history"], ob["genres"], ob["themes"], service.answer_types(user["answers"], user.get("q2", ())), t,
                          len(catalog_ids), len(posts))
     for events in visits:
         v1.learn(state, events, feed, cfg, catalog_ids, day=getattr(events, "day", None))
@@ -301,7 +317,7 @@ def run_once(url, world, today, *, apply, replace, new_only, show, preview=None)
         for tap in targets[:show]:
             u = users[tap]
             print(f"  tap {tap}: 작품 {len(u['works'])} · 장르 {u['genres']} · 소재 {u['themes']} · "
-                  f"유형 {service.user_types(u['answers'])} · 접속 {len(visits[tap])}"
+                  f"유형 답 {u['answers'] + u['q2']} · 접속 {len(visits[tap])}"
                   + (f" · 표에 없는 칩 {u['unknown_chips']}" if u["unknown_chips"] else ""))
             for rank, (i, score, why) in enumerate(results[tap][:5], 1):
                 print(f"    {rank}. [{posts[i]['type']}] {posts[i]['title'][:30]} — {why['text']} ({score:.2f})")

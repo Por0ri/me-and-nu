@@ -414,13 +414,39 @@ REASONS = {
 }
 
 
-def user_types(answers):
-    """온보딩 답 목록 → v1 유형 코드 목록 (순서 유지, 겹치면 하나). 답 하나가 유형 여러 개일 수 있음"""
-    out = []
-    for a in answers:
+Q3_ANSWERS = ("world", "relationships", "ost", "goods", "events", "news")   # 화면 Q3 답 6개 (좋아하는 순서대로 1 ~ 6개)
+# Q3 순위별 무게 (1순위부터) = 선형 (7 − 순위) ÷ 6. 1순위 1 = 예전 답 하나일 때와 같은 점수 (EXP-39, 부록 A #45)
+TYPE_RANK_W = (1.0, 0.833, 0.667, 0.5, 0.333, 0.167)
+GROUP_OF = {t: a for a in Q3_ANSWERS for t in ANSWER_TYPES[a]}   # 글 유형 → Q3 답 묶음 (같은 유형 연속 금지에 씀)
+TYPE_RUN = 1    # 같은 Q3 답 묶음 글은 연속 TYPE_RUN 개까지. 1 = 바로 앞 글과 다른 묶음 먼저 (EXP-39, 부록 A #46)
+
+
+def q3_answers(first, ranked):
+    """Q3 답 (좋아하는 순서). first = onboarding_answers.consumption_type (1순위), ranked = 새 표 tap_consumption_type 의
+    [(rank, 답), ...] (rank 순). rank 1 줄이 first 와 같을 때만 새 표 순서: 같은 DB 를 쓰는 운영 옛 코드는 취향 수정 때
+    first 만 바꿈 → 그러면 [first] 하나. 새 표 · 백엔드 읽기는 다음 백엔드 작업에서 같은 규칙으로 만듦 (지금 백엔드는 first 만)"""
+    if ranked and ranked[0] == (1, first):
+        return [answer for _, answer in ranked]
+    return [first] if first else []
+
+
+def answer_types(answers, extra=()):
+    """회원의 유형 무게 = Q3 답 (좋아하는 순서) 의 순위 무게 + extra (예전 v1 답의 q2 '받고 싶은 소식') 는 무게 1.
+    q2 는 Q3 와 다른 질문이라 순위가 아님 → 예전 (v1) 회원 점수도 그대로"""
+    types = user_types(answers)
+    for t in user_types(extra, (1.0,) * len(extra)):
+        types[t] = 1.0
+    return types
+
+
+def user_types(answers, rank_w=TYPE_RANK_W):
+    """온보딩 답 (좋아하는 순서) → {v1 유형 코드: 순위 무게}. 답 하나가 유형 여러 개일 수 있고, 겹치면 앞 순위 무게.
+    rank_w = 순위별 무게 (시뮬레이터가 후보를 넣어 봄)"""
+    out = {}
+    for a, w in zip(answers, rank_w):
         for t in ANSWER_TYPES.get(a, (a,)):
             if t in v1.TYPE_INDEX and t not in out:
-                out.append(t)
+                out[t] = w
     return out
 
 
@@ -484,7 +510,13 @@ def slot_ready(state, day, rest_days=None):
     return last < day - rest_days
 
 
-def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100, ready=None):
+def _candidate_level(same_group, same_work):
+    """같은 유형 연속 금지 (compose 6번) 에서 후보 등급. 작은 쪽 먼저: 묶음도 작품도 다름 → 같은 묶음 · 다른 작품
+    (같은 작품은 한 바퀴에 하나씩 #30 이 먼저) → 다른 묶음 · 같은 작품 → 둘 다 같음"""
+    return (same_work, same_group)
+
+
+def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100, ready=None, type_run=None):
     """점수 순 글 번호 → 보여 줄 순서 [(글 번호, 자리), ...] (11/16 · 11/17 결정). 자리 = pinned · side · discover · score
     1. 팬 추천은 기준 작품이 고른 작품 (같은 시리즈 포함) 인 글만 남김
     2. 맨 위 = 기준 작품이 고른 작품인 글 중 자리 후보인 글 (같은 작품은 한 바퀴에 하나씩)
@@ -492,8 +524,16 @@ def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100, r
        소재 모음의 소재가 고른 칩인 글. 점수 순, 자리 후보인 글만, 서로 다른 소재
     4. DISCOVER_FROM 부터 DISCOVER_EVERY 마다 = 다른 작품: 기준 작품이 고른 작품이 아닌 자리 후보 글, 점수 순 (한 바퀴에 하나씩)
     5. 그 자리 글이 없으면 맨 위 → 나머지 점수 순으로 채움. 같은 소재 모음은 하루 하나 (11/17 RAG 요청: 미루지 않고 뺌)
+    6. 같은 유형 연속 금지 (EXP-39): 앞 type_run (기본 TYPE_RUN, 0 = 끔) 개 글이 같은 Q3 답 묶음이면 그 자리 후보 중에서
+       _candidate_level 이 가장 낮은 가장 앞 글 (묶음도 작품도 다름 → 같은 묶음 · 다른 작품 → 다른 묶음 · 같은 작품 → 그대로).
+       다른 자리 후보로 넘어가지는 않음. 같은 소재 모음은 6번 없이 정했을 때 남는 글만 남김 → 보이는 소재 모음은 같고 자리만 바뀜
     chip_slugs: 고른 칩의 소재 슬러그 집합 (chip_slug). ready: 글별 자리 후보 여부 (slot_ready, 11/19).
     ready 가 없으면 seen (글별 노출 횟수) 이 0 인 글만 후보 (11/18 까지 규칙: 한 번 나오면 영영 자리에서 빠짐)"""
+    type_run = TYPE_RUN if type_run is None else type_run
+    keep_theme = None                                                 # 소재 → 남길 글 (6번 없이 정한 순서에서 먼저 나온 글)
+    if type_run:
+        base = compose(order, feed, posts, picked, chip_slugs, ctx, seen, top_n, ready, type_run=0)
+        keep_theme = {posts[i]["theme"]: i for i, _ in reversed(base) if posts[i].get("theme")}
     mine = {_cw_pos(ctx, w) for w in picked} - {-1}
     if ready is not None:
         free = lambda i: bool(ready[i])
@@ -528,19 +568,35 @@ def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100, r
     queues = {"pinned": deque(_rounds(pinned, feed)), "side": deque(side),
               "discover": deque(i for i in rest if free(i) and at(i) >= 0 and at(i) not in mine), "score": deque(rest)}
     out, used, themes = [], set(), set()
+    group = lambda i: GROUP_OF.get(posts[i]["type"], posts[i]["type"])
 
     def take(name):
+        # 이 자리 후보 중 가장 앞 글. 단 앞 type_run 개가 같은 묶음이면 (6번) _candidate_level 이 가장 낮은 가장 앞 글
         q = queues[name]
-        while q:
-            i = q.popleft()
+        avoid = None
+        if type_run and len(out) >= type_run:
+            recent = {group(i) for i, _ in out[-type_run:]}
+            avoid = next(iter(recent)) if len(recent) == 1 else None
+        last_work = at(out[-1][0]) if out else -1
+        best = None
+        for k, i in enumerate(q):
             key = posts[i].get("theme")
-            if i in used or (key and key in themes):
+            if i in used or (key and (key in themes or (keep_theme is not None and keep_theme.get(key) != i))):
                 continue
-            used.add(i)
-            if key:
-                themes.add(key)
-            return i
-        return None
+            level = (0, 0) if avoid is None else _candidate_level(group(i) == avoid, 0 <= at(i) == last_work)
+            if best is None or level < best[0]:
+                best = (level, k)
+                if level == (0, 0):
+                    break
+        if best is None:                                              # 남은 글이 모두 이미 나왔거나 같은 소재 모음
+            q.clear()
+            return None
+        i = q[best[1]]
+        del q[best[1]]
+        used.add(i)
+        if posts[i].get("theme"):
+            themes.add(posts[i]["theme"])
+        return i
 
     while len(out) < top_n:
         n = len(out) + 1

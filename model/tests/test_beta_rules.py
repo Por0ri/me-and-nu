@@ -73,7 +73,7 @@ class TasteTests(unittest.TestCase):
                "X": np.array([[1.0, 0.9], [1.0, 0.2], [0.0, 0.0], [1.0, 0.5]])}
         history = ar.History(np.array([0]), np.array([1]), np.array([ar.STATUS["completed"]], dtype=np.int8),
                              np.zeros(1, dtype=np.int8), np.zeros(1, dtype=np.int8))
-        state = v1.UserState(history, ["Horror"], ["Gore"], [], 0, 4, 1)
+        state = v1.UserState(history, ["Horror"], ["Gore"], {}, 0, 4, 1)
 
         def old_rank(state, ctx, cfg):
             state.work_aff = np.array([1.0, 0.0, 0.9, 0.0], dtype=np.float32)   # 예전 v0.5: 인기작 (자리 2) 이 높음
@@ -130,6 +130,51 @@ class ComposeTests(unittest.TestCase):
         self.assertEqual([slots[0], slots[7], slots[10]], ["score", "score", "score"])
         self.assertEqual(slots[8], "side")
         self.assertEqual(slots[11], "discover")
+
+    def test_the_same_type_does_not_come_twice_in_a_row_when_another_waits(self):   # 11/24 EXP-39
+        posts = [post([101], ty=t) for t in ("character", "character", "guide", "character", "music")]
+        out = service.compose([0, 1, 2, 3, 4], service.make_feed(posts, CTX), posts, [101], set(), CTX)
+        self.assertEqual(out, [(0, "pinned"), (2, "pinned"), (1, "pinned"), (4, "pinned"), (3, "pinned")])
+
+    def test_same_type_rule_keeps_picked_works_taking_turns(self):
+        # 101 캐릭터 · 102 캐릭터 · 101 가이드 · 102 노래 → 묶음도 작품도 다른 글 먼저 → 작품이 번갈아 나옴
+        posts = [post([101]), post([102]), post([101], ty="guide"), post([102], ty="music")]
+        out = service.compose([0, 1, 2, 3], service.make_feed(posts, CTX), posts, [101, 102], set(), CTX)
+        self.assertEqual([i for i, _ in out], [0, 3, 2, 1])
+
+    def test_type_rule_keeps_the_same_collections_and_side_posts(self):   # 11/24 독립 검토에서 찾은 경우
+        nowork = lambda ty: {**post([101], ty=ty), "works": [], "anchor": None, "menu_work_id": None}
+        # [A] 맨 위 원피스 고어 모음 3 이 유형 규칙으로 한 칸 밀려도, 다른 작품 자리의 같은 소재 6 에 뺏기지 않음
+        a = [post([101], ty="news"), post([101]), post([101], ty="news"),
+             post([101, 103], anchor=0, kind="overlap", ty="curation", theme="gore", slug="gore"),
+             post([101]), post([102, 101], anchor=0, kind="director", ty="behind"),
+             post([102, 103], anchor=0, kind="overlap", ty="curation", theme="gore", slug="gore"),
+             nowork("review"), nowork("news")]
+        feed = service.make_feed(a, CTX)
+        out = dict(service.compose(list(range(9)), feed, a, [101], set(), CTX))
+        self.assertEqual((out.get(3), 6 in out), ("pinned", False))
+        off = service.compose(list(range(9)), feed, a, [101], set(), CTX, type_run=0)   # 끄면 예전 순서 그대로
+        self.assertEqual([i for i, _ in off], [0, 1, 2, 5, 3, 4, 7, 8])
+        # [B] 곁들임 2개 그대로 (고른 칩 소재 모음 3 이 같은 소재 4 에 뺏기지 않음)
+        b = [nowork("news"), nowork("news"), nowork("news"),
+             post([102, 103], anchor=None, kind="overlap", ty="curation", theme="gore", slug="gore"),
+             post([102, 103], anchor=0, kind="overlap", ty="curation", theme="gore", slug="gore"),
+             post([102, 101], anchor=0, kind="artist", ty="music")] + [nowork("news") for _ in range(4)]
+        out = service.compose(list(range(10)), service.make_feed(b, CTX), b, [101], {"gore"}, CTX)
+        self.assertEqual(sorted(i for i, s in out if s == "side"), [3, 5])
+        self.assertNotIn(4, [i for i, _ in out])
+
+    def test_type_rule_looks_at_the_work_first(self):
+        # 고른 작품 101 · 102: 캐릭터 · 캐릭터 · 캐릭터 · 가이드 · 노래 → 같은 작품이 바로 이어지지 않음 (#30)
+        posts = [post([101]), post([102]), post([101]), post([102], ty="guide"), post([101], ty="music")]
+        out = service.compose(list(range(5)), service.make_feed(posts, CTX), posts, [101, 102], set(), CTX)
+        self.assertEqual([i for i, _ in out], [0, 3, 2, 1, 4])
+
+    def test_the_type_rule_does_not_borrow_from_another_slot(self):
+        # 고른 작품 글이 모두 캐릭터면 맨 위는 캐릭터가 이어져도 그대로 (다른 작품의 노래 글을 앞으로 당기지 않음)
+        posts = [post([101]), post([101]), post([102], ty="music")]
+        out = service.compose([2, 0, 1], service.make_feed(posts, CTX), posts, [101], set(), CTX)
+        self.assertEqual(out, [(0, "pinned"), (1, "pinned"), (2, "score")])
 
     def test_at_most_two_side_posts_a_day(self):
         self.posts += [post([102, 101], anchor=0, kind="director", ty="people") for _ in range(3)]
