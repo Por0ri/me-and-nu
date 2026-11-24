@@ -27,7 +27,7 @@ function load(relative) {
       if (name === 'react/jsx-runtime') return require(name);
       if (name.endsWith('.module.css')) return { default: new Proxy({}, { get: (_, key) => String(key) }), __esModule: true };
       if (name.startsWith('@/')) return load(name.slice(2) + (name.includes('/components/') ? '.tsx' : '.ts'));
-      if (name.startsWith('./')) {
+      if (name.startsWith('.')) {
         const filename = path.join(path.dirname(relative), name);
         return load(filename + (fs.existsSync(path.join(root, filename + '.tsx')) ? '.tsx' : '.ts'));
       }
@@ -69,6 +69,31 @@ function renderSearch(search, query = '') {
       onPick() {}, onRemoveRecent() {}, onClearRecent() {}, ...search },
   }));
 }
+
+test('pagination keeps cards visible, disables duplicate requests and offers a separate page retry', () => {
+  for (const status of ['idle', 'loading', 'error']) {
+    const html = renderToStaticMarkup(React.createElement(PivotHomeScreen, {
+      state: { ...result('kept-card'), pagination: { status, message: '다음 페이지 오류' } },
+      demo: false, query: '', onQueryChange() {}, onRetry() {}, onLoadMore() {},
+    }));
+    assert.match(html, /data-home-post="kept-card"/);
+    assert.match(html, /data-home-pagination/);
+    if (status === 'loading') assert.match(html, /disabled="" aria-busy="true"/);
+    if (status === 'error') { assert.match(html, /role="alert"/); assert.match(html, /다음 콘텐츠 다시 시도/); }
+  }
+});
+
+test('search filters hide feed pagination without mixing feed cards into search results', () => {
+  for (const search of [{ open: true }, { result: { label: '선택한 작품', cards: [cardFixture('search-card')] } }]) {
+    const html = renderToStaticMarkup(React.createElement(PivotHomeScreen, {
+      state: { ...result('feed-card'), pagination: { status: 'idle' } },
+      demo: false, query: '', onQueryChange() {}, onRetry() {}, onLoadMore() {},
+      search: { open: false, result: null, suggestions: [], recent: [], ...search },
+    }));
+    assert.doesNotMatch(html, /data-home-pagination/);
+    if (search.result) { assert.match(html, /data-home-post="search-card"/); assert.doesNotMatch(html, /data-home-post="feed-card"/); }
+  }
+});
 
 test('A stalled feed aborts, offers retry and ignores a late answer', async () => {
   const pending = deferred(), states = [];
@@ -377,15 +402,19 @@ test('All five Figma slide assets are local, match provenance hashes, and are us
   assert.equal(used.size, 5);
 });
 
-test('H2-B chrome uses local Figma assets and a single HOME/SAVE/MY default state', async () => {
+test('H2-B chrome uses local Figma assets and a single HOME/SAVE/TALK/MY default state', async () => {
   const { home } = await mockHomeSource.load({ signal: new AbortController().signal });
   const html = render({ status: 'ready', home });
   for (const filename of ['logo.svg', 'mascot.png', 'notification.svg', 'search.svg', 'share.svg', 'like.svg', 'save.svg', 'detail-arrow.svg', 'ai.svg']) {
     assert.ok(html.includes('/pivot/home/chrome/' + filename), filename);
   }
   assert.match(html, /aria-label="주요 메뉴"/);
-  for (const label of ['HOME', 'SAVE', 'MY']) assert.ok(html.includes('>' + label + '</span>'));
-  assert.doesNotMatch(html, />TALK<|role="dialog"|9:41|imgWifi|imgBatteryEnd|aria-pressed=/);
+  // 2026-11-23 하단바: HOME · SAVE · TALK · MY, 지금 메뉴(HOME)만 aria-current
+  const menu = [...html.matchAll(/<span>(HOME|SAVE|TALK|MY)<\/span>/g)].map(match => match[1]);
+  assert.deepEqual(menu, ['HOME', 'SAVE', 'TALK', 'MY']);
+  assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
+  assert.match(html, /aria-current="page"[^>]*><span>HOME</);
+  assert.doesNotMatch(html, /role="dialog"|9:41|imgWifi|imgBatteryEnd|aria-pressed=/);
   assert.equal((html.match(/aria-label="저장" aria-disabled="true"/g) || []).length, 3);
   assert.match(html, /aria-label="AI 콘텐츠 탐색" aria-disabled="true"/);
 });

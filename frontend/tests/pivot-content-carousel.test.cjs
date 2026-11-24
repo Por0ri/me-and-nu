@@ -51,7 +51,8 @@ test('Home preview renders every page and all source text with accessible contro
   assert.ok(html.indexOf('data-carousel-slide="1"') < html.indexOf('data-carousel-slide="10"'));
   assert.doesNotMatch(html, /style="left:/, 'Home preview uses its readable bottom area, not the constrained image-relative box');
   assert.equal((html.match(/aria-label="카드 미리보기"/g) || []).length, 10);
-  assert.match(html, /전체 글과 슬라이드 원문은 자세히 보기/);
+  assert.match(html, /상세 본문은 자세히 보기/);
+  assert.doesNotMatch(html, /전체 글과 슬라이드 원문|슬라이드 추가 원문/);
   for (const page of pages) for (const sentence of page.bodySentences) assert.ok(html.includes(sentence));
   assert.match(html, /&lt;script&gt;unsafe&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script|https:\/\/api\.example\.test/);
@@ -138,7 +139,8 @@ test('Detail cover reuses ordered carousel pages with protected images and origi
   assert.match(html, /제목 1/); assert.match(html, /본문 1/);
   const region = html.match(/style="left:([^;]+);top:[^;]+;width:([^;]+);height:([^;]+);/);
   assert.ok(region); [6, 88, 36].forEach((value, index) => assert.ok(Math.abs(parseFloat(region[index + 1]) - value) < 0.00001));
-  assert.match(html, /이미지 아래 본문과 슬라이드 추가 원문/);
+  assert.match(html, /상세 본문과 출처는 카드뉴스 아래/);
+  assert.doesNotMatch(html, /슬라이드 추가 원문/);
   assert.doesNotMatch(html, /본문 안에서 위아래로 스크롤/);
   assert.match(html, /data-content-carousel="detail"/);
   assert.equal((html.match(/data-detail-track=/g) || []).length, 1);
@@ -218,128 +220,87 @@ test('Protected Saved thumbnails keep one detail button and do not leak the auth
 });
 
 function detailTextFixture(pages, paragraphs, mode = 'full_body', demo = false) {
-  const { PivotDetailScreen } = loader()('components/pivot/detail-screen.tsx');
+  const load = loader();
+  const { PivotDetailScreen } = load('components/pivot/detail-screen.tsx');
+  const { InteractionProvider } = load(path.join('components', 'pivot', 'interaction-context.tsx'));
   const article = { postId: 'post-10', contentId: '10', topicId: 2, origin: 'service', title: '글 제목',
-    displayMode: mode, slides: pages, sections: [{ paragraphs }], sourceUrl: 'https://example.test/source',
+    displayMode: mode, slides: pages, sections: [{ heading: '상세 본문', paragraphs }], sourceUrl: 'https://example.test/source',
+    sources: [{ url: 'https://example.test/source', title: '공식 출처', publisher: '발행 기관' }],
+    publishedAt: '2026-11-02T00:00:00Z', publisher: '게시 기관',
     productionType: 'ai', notices: [{ code: 'AI_GENERATED', message: 'AI가 생성한 콘텐츠입니다.' }] };
   const before = JSON.stringify(article);
-  const html = renderToStaticMarkup(React.createElement(PivotDetailScreen,
-    { state: { status: 'ready', article }, demo, onBack() {}, onRetry() {} }));
-  assert.equal(JSON.stringify(article), before, 'display filtering never mutates the source');
-  const start = html.indexOf('data-detail-slide-text=');
-  return { html, extra: start < 0 ? '' : html.slice(start, html.indexOf('<footer data-detail-publication=', start)) };
+  const scope = { activity: {}, reactions: { value: () => ({ liked: false, preference: null }), isPending: () => false } };
+  const html = renderToStaticMarkup(React.createElement(InteractionProvider, { scope },
+    React.createElement(PivotDetailScreen, { state: { status: 'ready', article }, demo, onBack() {}, onRetry() {} })));
+  assert.equal(JSON.stringify(article), before, 'rendering never mutates article paragraphs, slides or metadata');
+  assert.doesNotMatch(html, /data-detail-slide-text|data-detail-slide-page|슬라이드 추가 원문|<h[23][^>]*>슬라이드 \d/);
+  const body = html.slice(html.indexOf('<div class="body">'), html.indexOf('</article>'));
+  return { html, body };
 }
 const occurrences = (text, value) => text.split(value).length - 1;
 
-test('Four article paragraphs repeated across ten slides add no forty duplicate paragraphs', () => {
+for (const mode of ['full_body', 'link_excerpt']) test(mode + ': article, publication, sources and feedback follow the carousel without a transcript', () => {
+  const paragraphs = ['  첫\t문단의\n원문입니다.  ', '둘째 문단!', '둘째 문단!'];
+  const pages = slides(10).reverse();
+  pages[0].bodySentences = ['카드에만 있는 문장.'];
+  const { html, body } = detailTextFixture(pages, paragraphs, mode);
+  assert.match(body, /<h2>상세 본문<\/h2>/);
+  assert.ok(body.includes(paragraphs.map(p => '<p>' + p + '</p>').join('')), 'paragraph whitespace, order and repetitions remain exact');
+  assert.doesNotMatch(body, /카드에만 있는 문장|제목 10/);
+  assert.equal(occurrences(html, '카드에만 있는 문장.'), 1, 'card-only text stays in its card');
+  assert.equal((html.match(/data-carousel-slide=/g) || []).length, 10);
+  assert.ok(html.indexOf('data-carousel-slide="1"') < html.indexOf('data-carousel-slide="10"'));
+  assert.ok(html.indexOf('data-content-cover=') < html.indexOf('<div class="body">'));
+  assert.ok(body.indexOf(paragraphs[2]) < body.indexOf('data-detail-publication='));
+  assert.ok(body.indexOf('data-detail-publication=') < body.indexOf('aria-label="콘텐츠 출처"'));
+  assert.ok(body.indexOf('aria-label="콘텐츠 출처"') < body.indexOf('detail-feedback-title'));
+  assert.match(body, /href="https:\/\/example.test\/source" target="_blank" rel="noopener noreferrer"/);
+  assert.match(body, />공식 출처<\/a><span>발행 기관<\/span>/);
+  assert.match(body, /게시 기관/);
+  assert.match(body, /<time dateTime="2026-11-02T00:00:00Z"/);
+  assert.equal(occurrences(body, 'AI가 생성한 콘텐츠입니다.'), 1);
+  assert.match(body, /더 볼래요/); assert.match(body, /그만 볼래요/);
+  assert.equal(body.includes('원문에서 계속 읽기'), mode === 'link_excerpt');
+});
+
+test('Repeated article and slide copy stays unchanged in its original locations only', () => {
   const paragraphs = ['기존 첫 문단.', '기존 둘째 문단.', '기존 셋째 문단.', '기존 넷째 문단.'];
   const pages = slides(10).map(page => ({ ...page, titleLines: ['대표 제목'], bodySentences: [...paragraphs] }));
-  const { html, extra } = detailTextFixture(pages, paragraphs);
-  assert.equal(occurrences(extra, '<h3>대표 제목</h3>'), 1, 'unmeasured cover title remains readable once');
-  for (const paragraph of paragraphs) assert.equal(occurrences(html, paragraph), pages.length + 1, 'one article paragraph plus unchanged carousel originals; no duplicate transcript');
-  const differentTitles = pages.map((page, i) => ({ ...page, titleLines: ['고유 제목 ' + (i + 1)] }));
-  const unique = detailTextFixture(differentTitles, paragraphs).extra;
-  assert.equal((unique.match(/data-detail-slide-page=/g) || []).length, 10);
-  for (const paragraph of paragraphs) assert.equal(occurrences(unique, paragraph), 0);
-});
-
-test('Every missing title and sentence from pages one through ten remains readable in page order', () => {
-  const pages = slides(10).reverse();
-  for (const page of pages) page.bodySentences = Array.from({ length: 4 }, (_, i) => page.page + '번의 새로운 원문 ' + i + '.');
-  pages[0].titleLines = ['긴 제목 '.repeat(80), '<script>original</script>'];
-  pages[0].bodySentences[3] = '마지막 원문 '.repeat(90);
-  const { html, extra } = detailTextFixture(pages, ['독립 상세 본문']);
-  assert.equal((extra.match(/data-detail-slide-page=/g) || []).length, 10);
-  assert.ok(extra.indexOf('data-detail-slide-page="2"') < extra.indexOf('data-detail-slide-page="10"'));
-  assert.ok(html.indexOf('독립 상세 본문') < html.indexOf('data-detail-slide-text='));
-  for (const page of pages) {
-    for (const sentence of page.bodySentences) assert.equal(occurrences(extra, sentence), 1);
+  const { html, body } = detailTextFixture(pages, paragraphs);
+  for (const paragraph of paragraphs) {
+    assert.equal(occurrences(body, paragraph), 1);
+    assert.equal(occurrences(html, paragraph), pages.length + 1);
   }
-  assert.ok(extra.includes(pages[0].titleLines[0]));
-  assert.match(extra, /&lt;script&gt;original&lt;\/script&gt;/);
-  assert.doesNotMatch(extra, /<script|data-carousel-track|data-carousel-overlay/);
+  assert.equal(occurrences(html, '대표 제목'), pages.length);
 });
 
-test('Repeated titles and sentences across later slides are displayed once', () => {
-  const pages = slides();
-  pages[1].titleLines = ['같은 새 제목']; pages[2].titleLines = ['같은 새 제목'];
-  pages[1].bodySentences = ['공통 추가 문장.', '두 번째만의 원문.'];
-  pages[2].bodySentences = ['공통 추가 문장.', '세 번째만의 원문.'];
-  const { extra } = detailTextFixture(pages, ['독립 본문']);
-  for (const text of ['같은 새 제목', '공통 추가 문장.', '두 번째만의 원문.', '세 번째만의 원문.']) assert.equal(occurrences(extra, text), 1);
+test('Long and distinct slide originals remain escaped and unmodified in the carousel only', () => {
+  const pages = slides(10).reverse();
+  pages[0].titleLines = ['긴 제목 '.repeat(80), '<script>original</script>'];
+  pages[0].bodySentences = ['  긴\t원문입니다.\n'.repeat(90), 'Title', 'title', '공연은 금요일입니다!', '공연은 금요일입니다.'];
+  const { html, body } = detailTextFixture(pages, ['독립 상세 본문']);
+  for (const page of pages) for (const sentence of page.bodySentences) {
+    assert.ok(html.includes('<p>' + sentence + '</p>'));
+    assert.equal(body.includes('<p>' + sentence + '</p>'), false);
+  }
+  assert.ok(html.includes(pages[0].titleLines[0]));
+  assert.match(html, /&lt;script&gt;original&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script/);
 });
 
-test('Only whitespace and linebreak differences are normalized; displayed new text is unchanged', () => {
-  const pages = slides();
-  pages[1].titleLines = ['  기존\n제목  ']; pages[2].titleLines = ['새로운', '제목'];
-  pages[1].bodySentences = ['\n기존\t문장입니다.  ', '  새\t원문은\n그대로입니다.  '];
-  pages[2].bodySentences = ['새 원문은 그대로입니다.'];
-  const { extra } = detailTextFixture(pages, ['기존 제목', '기존 문장입니다.', '새로운 제목']);
-  assert.doesNotMatch(extra, /기존|새로운|data-detail-slide-page="3"/);
-  assert.equal(occurrences(extra, '  새\t원문은\n그대로입니다.  '), 1);
+test('Legacy cards keep their existing description without promoting unused structured fields into the article', () => {
+  const pages = slides(); delete pages[0].layout; pages[0].description = '대표 카드 설명';
+  const { html, body } = detailTextFixture(pages, ['독립 본문']);
+  assert.equal(occurrences(html, '대표 카드 설명'), 1);
+  assert.doesNotMatch(html, /제목 1|본문 1/);
+  assert.doesNotMatch(body, /대표 카드 설명/);
 });
 
-test('Partial matches, different facts, punctuation and case are preserved without fuzzy deduplication', () => {
-  const pages = slides(), distinct = ['공연은 토요일입니다.', '공연은 금요일입니다. 입장은 무료입니다.', '금요일입니다.', '공연은 금요일입니다!', 'title'];
-  pages[1].bodySentences = distinct.slice(0, 4); pages[2].bodySentences = distinct.slice(4);
-  const { extra } = detailTextFixture(pages, ['공연은 금요일입니다.', 'Title']);
-  for (const sentence of distinct) assert.equal(occurrences(extra, '<p>' + sentence + '</p>'), 1);
-});
-
-test('Only a confirmed fully visible cover seeds transcript deduplication, including legacy captions', () => {
-  const pages = slides();
-  pages[1].titleLines = [...pages[0].titleLines]; pages[1].bodySentences = [...pages[0].bodySentences];
-  const result = detailTextFixture([...pages].reverse(), ['독립 본문']);
-  assert.match(result.extra, /data-detail-slide-page="1"/);
-  assert.doesNotMatch(result.extra, /data-detail-slide-page="2"/);
-  const { DetailSlideText } = loader()('components/pivot/detail-screen.tsx');
-  const article = { slides: [...pages].reverse(), sections: [{ paragraphs: ['독립 본문'] }] };
-  const transcript = visible => renderToStaticMarkup(React.createElement(DetailSlideText, { article, coverTextVisible: visible }));
-  assert.doesNotMatch(transcript(true), /data-detail-slide-page="1"|data-detail-slide-page="2"/);
-  assert.equal(occurrences(transcript(false), '<p>본문 1</p>'), 1);
-  // A legacy cover renders its description, not otherwise unused structured text.
-  delete pages[0].layout; pages[0].description = '대표 카드 설명';
-  assert.match(transcript(true), /data-detail-slide-page="1"/);
-  assert.equal(occurrences(transcript(true), '제목 1'), 1);
-  assert.equal(occurrences(transcript(true), '본문 1'), 1);
-  assert.doesNotMatch(transcript(true), /대표 카드 설명/);
-  assert.equal(occurrences(transcript(false), '<p>대표 카드 설명</p>'), 1, 'a clipped legacy caption also has a full original');
-  pages[0].layout = pages[1].layout;
-  delete pages[0].bodySentences;
-  assert.equal(occurrences(transcript(true), '<p>대표 카드 설명</p>'), 1, 'an absent structured body still falls back to its original description');
-});
-
-test('Clipped first-slide originals survive without truncation, mutation or fuzzy deduplication', () => {
-  const pages = slides();
-  const original = '  첫 슬라이드에만 있는 긴\t원문입니다.\n'.repeat(25) + '마지막 고유 문장!';
-  pages[0].titleLines = ['첫 슬라이드의 긴 제목 '.repeat(30)];
-  pages[0].bodySentences = [original, 'Title', '공연은 금요일입니다!'];
-  pages[1].bodySentences = [original.replace(/\s+/gu, ' ').trim()];
-  const { extra } = detailTextFixture(pages, ['공연은 금요일입니다.', 'title']);
-  assert.equal(occurrences(extra, '<p>' + original + '</p>'), 1);
-  assert.equal(occurrences(extra, pages[0].titleLines[0]), 1);
-  assert.match(extra, /<p>Title<\/p>/); assert.match(extra, /<p>공연은 금요일입니다!<\/p>/);
-});
-
-test('Absent slides and Demo never produce a new original-text section', () => {
-  assert.equal(detailTextFixture([], ['기존 본문']).extra, '');
-  assert.equal(detailTextFixture(slides(), ['기존 본문'], 'full_body', true).extra, '');
-});
-
-for (const mode of ['full_body', 'link_excerpt']) test(mode + ': visible sections take precedence and existing source/AI/cover remain', () => {
-  const pages = slides(), visible = mode === 'full_body' ? '전체 본문에 있는 내용.' : '발췌에 있는 내용.';
-  pages[1].bodySentences = [visible, '두 번째 슬라이드에만 있는 내용.'];
-  pages[2].bodySentences = ['두 번째 슬라이드에만 있는 내용.', '세 번째 슬라이드에만 있는 내용.'];
-  const { html, extra } = detailTextFixture(pages, [visible], mode);
-  assert.equal(occurrences(html, '<p>' + visible + '</p>'), 2, 'one unchanged slide and one article paragraph');
-  assert.equal(occurrences(extra, visible), 0, 'no repeated paragraph in the transcript');
-  assert.equal(occurrences(extra, '두 번째 슬라이드에만 있는 내용.'), 1);
-  assert.equal(occurrences(extra, '세 번째 슬라이드에만 있는 내용.'), 1);
-  assert.equal((html.match(/data-content-cover=/g) || []).length, 1);
-  assert.equal((html.match(/data-carousel-track=/g) || []).length, 1);
-  assert.equal(occurrences(html, 'AI가 생성한 콘텐츠입니다.'), 1);
-  assert.equal(html.includes('원문에서 계속 읽기'), mode === 'link_excerpt');
-  assert.match(html, /aria-label="뒤로가기"/);
+test('Absent slides and Demo preserve article text and never add a transcript', () => {
+  for (const pages of [undefined, [], slides()]) for (const demo of [false, true]) {
+    const { body } = detailTextFixture(pages, ['기존 본문'], 'full_body', demo);
+    assert.equal(occurrences(body, '<p>기존 본문</p>'), 1);
+  }
 });
 
 test('Consecutive keyboard moves use settled DOM position even before onScroll state rerenders', () => {

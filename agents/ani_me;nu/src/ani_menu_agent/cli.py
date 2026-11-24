@@ -28,6 +28,7 @@ from ani_menu_agent.agents.image.agent import curate_source_images
 from ani_menu_agent.agents.information import research_information
 from ani_menu_agent.classification import infer_strong_content_type, infer_toei_press_type
 from ani_menu_agent.config import get_settings
+from ani_menu_agent.cover_history import CoverHistoryError, validate_cover_history_environment
 from ani_menu_agent.discovery import (
     DiscoveryItem,
     collect_candidates,
@@ -1510,6 +1511,10 @@ def crawl_generate(
     ] = None,
 ) -> None:
     """승인된 원문 수집부터 카드 생성 및 독립 검수까지 실행합니다."""
+    try:
+        validate_cover_history_environment()
+    except CoverHistoryError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     registry = load_source_registry()
     run_started = perf_counter()
     stage_timings: dict[str, float] = {}
@@ -1523,10 +1528,24 @@ def crawl_generate(
             "menu_work_id": expected_work_id,
         }
 
+    work_match_usage_records: list[dict] = []
+    extraction_usage: dict | None = None
+    fact_extraction_started = False
+
     def write_bound_skip(status: str, **details) -> None:
+        # A rejected type can still have incurred link/OCR/fact-extraction cost.
+        # Keep even an incomplete extraction receipt so it cannot look like a
+        # pre-LLM, zero-call skip to the queue's budget controller.
+        records = list(work_match_usage_records)
+        if fact_extraction_started:
+            records.insert(0, extraction_usage if isinstance(extraction_usage, dict) else {})
+        result = {**request_evidence, "status": status, **details, "usage_records": records}
+        _add_usage_summary(result)
+        if any("estimated_cost_usd" not in record for record in records):
+            result["cost_accounting"] = {"complete": False, "reason": "missing_usage_cost"}
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(
-            json.dumps({**request_evidence, "status": status, **details}, ensure_ascii=False, indent=2),
+            json.dumps(result, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
@@ -1536,7 +1555,6 @@ def crawl_generate(
     candidate: dict = {}
     candidate_work_ids: list[int] = []
     work_match_evidence = []
-    work_match_usage_records: list[dict] = []
     work_match_audit: dict = {}
     identity_preflight_capture = None
     if candidate_id:
@@ -1972,6 +1990,8 @@ def crawl_generate(
                 max_cta_detail_pages=1,
                 review_ambiguous_links=not prepare_only and expected_work_id is None,
             )
+        if capture is not identity_preflight_capture:
+            work_match_usage_records.extend(capture.link_review_usage)
         if expected_work_id is not None:
             final = urlparse(str(capture.url))
             if (
@@ -2003,8 +2023,6 @@ def crawl_generate(
                         matched_work_ids=candidate_work_ids, reason="captured_article_work_mismatch",
                     )
                     return
-        if capture is not identity_preflight_capture:
-            work_match_usage_records.extend(capture.link_review_usage)
         if not prepare_only and (expected_work_id is None or candidate_work_ids):
             capture.image_text_evidence, image_ocr_usage = extract_page_image_text(capture, source)
             work_match_usage_records.extend(image_ocr_usage)
@@ -2242,6 +2260,7 @@ def crawl_generate(
             detected_type = None
             console.print("사실 검증 없이 원문 전체를 미검증 자료로 보존합니다.")
         else:
+            fact_extraction_started = True
             package, extraction_usage = extract_page_payload(payload)
             if payload.get("event_scope"):
                 package.topic = str(payload["event_scope"])[:300]
@@ -2255,28 +2274,16 @@ def crawl_generate(
                 return
             supported_types = {item.value for item in source.content_types}
             if detected_type not in supported_types:
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_text(
-                    json.dumps(
-                        {
-                            "status": "content_type_mismatch_skipped",
-                            "candidate_id": candidate_id,
-                            "request_id": package.request_id,
-                            "requested_content_type": requested_content_type,
-                            "evidence_content_type": detected_type,
-                            "supported_source_types": sorted(supported_types),
-                            "topic": package.topic,
-                            "source_urls": [str(item.url) for item in package.sources],
-                            "reason": (
-                                "원문 제목·검증 팩트가 다른 유형을 가리키며, "
-                                "연결된 출처가 그 유형을 "
-                                "지원하지 않아 카피 생성 전에 중단했습니다."
-                            ),
-                        },
-                        ensure_ascii=False,
-                        indent=2,
+                write_bound_skip(
+                    "content_type_mismatch_skipped", candidate_id=candidate_id,
+                    request_id=package.request_id, requested_content_type=requested_content_type,
+                    evidence_content_type=detected_type, supported_source_types=sorted(supported_types),
+                    topic=package.topic, source_urls=[str(item.url) for item in package.sources],
+                    reason=(
+                        "원문 제목·검증 팩트가 다른 유형을 가리키며, "
+                        "연결된 출처가 그 유형을 "
+                        "지원하지 않아 카피 생성 전에 중단했습니다."
                     ),
-                    encoding="utf-8",
                 )
                 console.print(
                     f"원문 유형이 요청과 다릅니다 ({content_type} → {detected_type}). "

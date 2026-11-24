@@ -41,6 +41,23 @@
     {
       "file": "notices.svg",
       "url": "https://www.figma.com/api/mcp/asset/3f28abbf-b539-4a01-9dd8-c24d7d466895.svg"
+    },
+    {
+      "file": "type-ost.svg",
+      "url": "https://www.figma.com/api/mcp/asset/6d983532-a7a5-41ba-9097-3c6c42605fce.svg"
+    },
+    {
+      "file": "type-event.svg",
+      "url": "https://www.figma.com/api/mcp/asset/c2d17850-f49a-4267-8f53-159c9511406f.svg"
+    },
+    {
+      "file": "type-character.svg",
+      "url": "https://www.figma.com/api/mcp/asset/60496d2f-160d-40d9-957b-7fe14ec1aac7.svg"
+    },
+    {
+      "file": "type-other.svg",
+      "url": "https://www.figma.com/api/mcp/asset/d4baa6f4-f70e-49b9-b79a-7d4b7316c73c.svg"
     }
-  ]
+  ],
+  "verifiedAt": "2026-11-16"
 }

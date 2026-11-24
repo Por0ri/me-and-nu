@@ -24,6 +24,7 @@ from app.models import (
     ContentEntityLink,
     EntityExternalId,
     Tap,
+    UserAccount,
 )
 from app.repositories import catalog_repository as catalog_repo
 from app.repositories import content_repository as content_repo
@@ -65,6 +66,7 @@ RELATED_BODY_LIMIT = 1000  # 관련 글은 요약 + 본문 앞부분만
 DICTIONARY_SOURCE = "dictionary"
 MAX_FACT_SOURCES = 5
 DAILY_LIMIT = "CHAT_DAILY_LIMIT"
+SERVICE_DAILY_LIMIT = "CHAT_SERVICE_DAILY_LIMIT"  # 모든 사용자를 합친 하루 상한
 KST = timezone(timedelta(hours=9))  # 하루 질문 수는 한국 날짜로 센다 (한국은 서머타임이 없다)
 
 
@@ -119,22 +121,37 @@ def _day_start(now: datetime) -> datetime:
 
 
 async def _check_daily_limit(db: AsyncSession, user_id: int) -> None:
-    """오늘(한국 날짜) 보낸 질문 수가 한도면 429. 대화를 지워도 보낸 질문은 센다."""
+    """오늘(한국 날짜) 보낸 질문 수가 한도면 429. 대화를 지워도 보낸 질문은 센다.
+
+    한 사람 한도를 먼저 보고, 모든 사용자를 합친 한도를 본다 (계정을 여러 개 쓰는 경우까지 막는 마지막 상한).
+    """
     limit = settings.chat_daily_question_limit
-    if not limit:
+    total_limit = settings.chat_daily_total_limit
+    if not (limit or total_limit):
         return
-    asked = await db.scalar(
+    asked_today = (
         select(func.count())
         .select_from(ChatMessage)
-        .join(ChatSession, ChatSession.chat_session_id == ChatMessage.chat_session_id)
         .where(
-            ChatSession.user_id == user_id,
             ChatMessage.sender_role == "user",
             ChatMessage.written_at >= _day_start(datetime.now(timezone.utc)),
         )
     )
-    if (asked or 0) >= limit:
-        raise ApiError(429, DAILY_LIMIT, f"오늘 질문 가능 횟수({limit}회)를 모두 사용했습니다. 내일 다시 질문해 주세요.")
+    if limit:
+        # 같은 사용자가 질문을 한꺼번에 보내도 하나씩 차례로 센다 (잠금은 질문을 저장하고 커밋할 때 풀린다)
+        await db.execute(select(UserAccount.user_id).where(UserAccount.user_id == user_id).with_for_update())
+        asked = await db.scalar(
+            asked_today
+            .join(ChatSession, ChatSession.chat_session_id == ChatMessage.chat_session_id)
+            .where(ChatSession.user_id == user_id)
+        )
+        if (asked or 0) >= limit:
+            raise ApiError(429, DAILY_LIMIT, f"오늘 질문 가능 횟수({limit}회)를 모두 사용했습니다. 내일 다시 질문해 주세요.")
+    if total_limit:
+        # 여러 사람이 동시에 보내면 몇 개 넘을 수는 있지만 크게 넘지는 않는다
+        total = await db.scalar(asked_today)
+        if (total or 0) >= total_limit:
+            raise ApiError(429, SERVICE_DAILY_LIMIT, "오늘은 챗봇 질문을 더 받을 수 없습니다. 내일 다시 질문해 주세요.")
 
 
 async def post_message(
@@ -500,6 +517,10 @@ async def _fill_answer(db: AsyncSession, job: ChatMessage) -> None:
     # 사전 사실이나 찾은 글이 있으면 최근 글을 자료로 따로 넣지 않는다 (관계없는 글을 섞지 않는다)
     materials = await _pick_materials(db, session, topic.topic_id, question, allow_recent=not facts and found is None)
     prompt = _prompt(materials, session.anchor_content_id, facts, history, question, found)
+    # LLM 답을 기다리는 동안(평균 4초, 최대 25초) DB 연결을 쥐고 있지 않게 읽기 트랜잭션을 끝낸다.
+    # 실서비스 API 는 DB 연결이 2개뿐이라 쥐고 있으면 다른 화면이 DB 를 기다린다.
+    # 여기까지는 읽기만 했고, 세션이 expire_on_commit=False 라 읽어 둔 값은 커밋 뒤에도 그대로 쓴다.
+    await db.commit()
     reply = await llm.ask_json(_instructions(), prompt)
     answer = str(reply.get("answer") or "").strip()
     if not answer:

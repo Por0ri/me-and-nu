@@ -1,4 +1,5 @@
 import { isDetailTarget } from "./detail";
+import { RequestTimeoutError, withRequestDeadline } from "../request-deadline";
 import type { HomeDetailTarget } from "./home";
 import type { ContentImage } from "./carousel-data";
 import { serviceContentId } from "./service-data";
@@ -38,7 +39,7 @@ export function createSavedRequestController(source: SavedDataSource, publish: (
       active?.abort(); const request = new AbortController(); active = request;
       publish({ status: "loading" });
       try {
-        const result = await source.load({ signal: request.signal });
+        const result = await withRequestDeadline(signal => source.load({ signal }), { signal: request.signal });
         if (request.signal.aborted) return;
         if (result.status === "unconfigured") { publish(result); return; }
         const list = result.saved;
@@ -52,10 +53,11 @@ export function createSavedRequestController(source: SavedDataSource, publish: (
           ids.add(identity); return false;
         })) throw new Error("Saved source or identity mismatch");
         publish(list.cards.length ? result : { status: "empty" });
-      } catch {
-        if (!request.signal.aborted) publish({ status: "error", message: "저장 목록을 불러오지 못했어요. 다시 시도해주세요." });
-      }
+      } catch (error) {
+        if (!request.signal.aborted) publish({ status: "error", message: error instanceof RequestTimeoutError
+          ? "저장 목록을 불러오는 시간이 길어지고 있어요. 다시 시도해 주세요." : "저장 목록을 불러오지 못했어요. 다시 시도해주세요." });
+      } finally { if (active === request) active = undefined; }
     },
-    cancel() { active?.abort(); },
+    cancel() { active?.abort(); active = undefined; },
   };
 }

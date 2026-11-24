@@ -30,7 +30,27 @@ def values():
     {"CHECKING_FORWARDED_ALLOW_IPS": "0.0.0.0"}, {"CHECKING_FORWARDED_ALLOW_IPS": "127.0.0.0/8"},
     {"CHECKING_KAKAO_OAUTH_ENABLED": "true"}, {"CHECKING_NAVER_OAUTH_ENABLED": "yes"},
     {"DATABASE_URL": "postgresql://old/labs"}, {"CHECKING_NAVER_CLIENT_ID": "$(command)"},
-    {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "yes"},
+    {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "yes"}, {"CHECKING_LLM_KEY": "synthetic key"},
+    # The dictionary must be the read-only reader on this stack's PostgreSQL, with its own password.
+    {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://me_nu_checking:" + "0123456789abcdef" * 4 + "@postgres:5432/me_nu_checking"},
+    {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "a1b2c3d4e5f60789" * 4 + "@db.example.com:5432/menu_dict"},
+    {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "0123456789abcdef" * 4 + "@postgres:5432/menu_dict"},
+    {"CHECKING_DICT_DATABASE_URL": "postgresql+psycopg://menu_dict_reader:" + "a" * 64 + "@postgres:5432/menu_dict"},
+    # The shared daily question limit is an explicit 1-999999; 0 would mean unlimited.
+    {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "0"}, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": ""},
+    {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "-100"}, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "1000000"},
+    {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "5,000"}, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "0100"},
+    {"CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH": "/etc/passwd"},
+    {"CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH": "/app/admin-evaluation/../other.json"},
+    {"CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH": "https://example.com/evaluation.json"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/etc/passwd"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/app/admin-evaluation/../service-evaluation.json"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "https://example.com/service-evaluation.json"},
+    {"CHECKING_ADMIN_SERVICE_EVALUATION_PATH": "/app/admin-evaluation/evaluation.json"},
+    # Debate rooms need an explicit true/false and a 1-100 vote threshold.
+    {"CHECKING_DEBATE_ENABLED": "yes"}, {"CHECKING_DEBATE_ENABLED": ""}, {"CHECKING_DEBATE_ENABLED": "True"},
+    {"CHECKING_DEBATE_VOTE_THRESHOLD": "0"}, {"CHECKING_DEBATE_VOTE_THRESHOLD": "101"},
+    {"CHECKING_DEBATE_VOTE_THRESHOLD": "03"}, {"CHECKING_DEBATE_VOTE_THRESHOLD": ""},
 ])
 def test_unsafe_values_rejected(change):
     with pytest.raises(guard.GuardError):
@@ -48,19 +68,23 @@ def test_enabled_provider_requires_separate_complete_configuration():
     assert guard.validate_values(configured) is configured
 
 
-@pytest.fixture(scope="module")
-def rendered():
-    if not shutil.which("docker"):
-        pytest.skip("Docker Compose CLI is unavailable; rendering does not require its daemon")
+def render(settings):
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith("CHECKING_") and key not in ("COMPOSE_FILE", "COMPOSE_PROJECT_NAME", "COMPOSE_PROFILES")}
-    environment.update(values())
+    environment.update(settings)
     result = subprocess.run(["docker", "--context", "default", "compose", "--env-file", str(MODULE.with_name(".env.example")),
                              "-p", "me-nu-checking", "-f", str(guard.ROOT / "compose.checking.yaml"),
                              "config", "--format", "json"],
                             capture_output=True, text=True, env=environment, cwd=guard.ROOT, timeout=30)
     assert result.returncode == 0, "Compose rendering failed; raw config is not printed"
     return json.loads(result.stdout)
+
+
+@pytest.fixture(scope="module")
+def rendered():
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose CLI is unavailable; rendering does not require its daemon")
+    return render(values())
 
 
 def test_standalone_compose_is_isolated_and_bounded(rendered):
@@ -85,10 +109,189 @@ def test_checking_preview_requires_matching_explicit_opt_in(rendered):
         guard.validate_values(values(), {"CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "true"})
 
 
+def test_llm_key_reaches_only_the_api_from_the_checking_file(rendered):
+    assert values()["CHECKING_LLM_KEY"] == ""
+    assert rendered["services"]["api"]["environment"]["LLM_KEY"] == ""
+    configured = values() | {"CHECKING_LLM_KEY": "synthetic-llm-key"}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["LLM_KEY"] == "synthetic-llm-key"
+    assert config["services"]["migrate"]["environment"]["LLM_KEY"] == ""
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="LLM_KEY"):
+        guard.validate_config(config, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_LLM_KEY"):
+        guard.validate_values(configured, {"CHECKING_LLM_KEY": "other-key"})
+
+
+DICTIONARY = "postgresql+psycopg://menu_dict_reader:" + "a1b2c3d4e5f60789" * 4 + "@postgres:5432/menu_dict"
+
+
+def test_dictionary_reaches_only_the_api_from_the_checking_file(rendered):
+    assert values()["CHECKING_DICT_DATABASE_URL"] == ""
+    assert rendered["services"]["api"]["environment"]["DICT_DATABASE_URL"] == ""
+    configured = values() | {"CHECKING_DICT_DATABASE_URL": DICTIONARY}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["DICT_DATABASE_URL"] == DICTIONARY
+    assert config["services"]["migrate"]["environment"]["DICT_DATABASE_URL"] == ""
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="DICT_DATABASE_URL"):
+        guard.validate_config(config, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_DICT_DATABASE_URL"):
+        guard.validate_values(configured, {"CHECKING_DICT_DATABASE_URL": ""})
+
+
+def test_daily_total_limit_reaches_only_the_api_from_the_checking_file(rendered):
+    assert values()["CHECKING_CHAT_DAILY_TOTAL_LIMIT"] == "100"
+    assert rendered["services"]["api"]["environment"]["CHAT_DAILY_TOTAL_LIMIT"] == "100"
+    assert "CHAT_DAILY_TOTAL_LIMIT" not in rendered["services"]["migrate"]["environment"]
+    configured = values() | {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "5000"}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["CHAT_DAILY_TOTAL_LIMIT"] == "5000"
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="CHAT_DAILY_TOTAL_LIMIT"):
+        guard.validate_config(config, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_CHAT_DAILY_TOTAL_LIMIT"):
+        guard.validate_values(configured, {"CHECKING_CHAT_DAILY_TOTAL_LIMIT": "100"})
+
+
+def test_debate_switch_reaches_only_the_api_and_stays_off_by_default(rendered):
+    assert values()[guard.DEBATE_KEY] == "false" and values()[guard.DEBATE_THRESHOLD_KEY] == "10"
+    assert rendered["services"]["api"]["environment"]["DEBATE_ENABLED"] == "false"
+    assert rendered["services"]["api"]["environment"]["DEBATE_VOTE_THRESHOLD"] == "10"
+    for key in ("DEBATE_ENABLED", "DEBATE_VOTE_THRESHOLD"):
+        assert key not in rendered["services"]["migrate"]["environment"]
+    configured = values() | {guard.DEBATE_KEY: "true", guard.DEBATE_THRESHOLD_KEY: "3"}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["DEBATE_ENABLED"] == "true"
+    assert config["services"]["api"]["environment"]["DEBATE_VOTE_THRESHOLD"] == "3"
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="DEBATE_ENABLED"):
+        guard.validate_config(config, values())
+    leaked = copy.deepcopy(rendered)
+    leaked["services"]["migrate"]["environment"]["DEBATE_ENABLED"] = "false"
+    with pytest.raises(guard.GuardError, match="DEBATE_ENABLED"):
+        guard.validate_config(leaked, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_DEBATE_ENABLED"):
+        guard.validate_values(configured, {guard.DEBATE_KEY: "false"})
+
+
+def test_legacy_environment_without_debate_keys_keeps_debate_off():
+    legacy = values()
+    legacy.pop(guard.DEBATE_KEY)
+    legacy.pop(guard.DEBATE_THRESHOLD_KEY)
+    checked = guard.validate_values(legacy)
+    assert checked[guard.DEBATE_KEY] == "false" and checked[guard.DEBATE_THRESHOLD_KEY] == "10"
+
+
+@pytest.mark.parametrize("key,path", [
+    (guard.EVALUATION_KEY, guard.EVALUATION_PATH),
+    (guard.SERVICE_EVALUATION_KEY, guard.SERVICE_EVALUATION_PATH),
+])
+def test_legacy_environment_defaults_evaluation_to_disabled_without_allowing_inherited_override(key, path):
+    legacy = values()
+    legacy.pop(key)
+    assert guard.validate_values(legacy)[key] == ""
+    legacy.pop(key)
+    with pytest.raises(guard.GuardError, match="inherited " + key):
+        guard.validate_values(legacy, {key: path})
+
+
+def test_service_evaluation_path_reaches_only_api_and_cannot_reuse_offline_path(rendered):
+    key, path = guard.SERVICE_EVALUATION_KEY, guard.SERVICE_EVALUATION_PATH
+    assert values()[key] == ""
+    assert rendered["services"]["api"]["environment"]["ADMIN_SERVICE_EVALUATION_PATH"] == ""
+    configured = values() | {key: path, guard.EVALUATION_KEY: guard.EVALUATION_PATH}
+    guard.validate_values(configured)
+    config = render(configured)
+    assert config["services"]["api"]["environment"]["ADMIN_SERVICE_EVALUATION_PATH"] == path
+    assert config["services"]["api"]["environment"]["ADMIN_RECOMMENDATION_EVALUATION_PATH"] == guard.EVALUATION_PATH
+    assert "ADMIN_SERVICE_EVALUATION_PATH" not in config["services"]["migrate"]["environment"]
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="ADMIN_SERVICE_EVALUATION_PATH"):
+        guard.validate_config(config, configured | {key: ""})
+    with pytest.raises(guard.GuardError, match="inherited " + key):
+        guard.validate_values(configured, {key: ""})
+
+
+@pytest.mark.parametrize("value", ["", "/app/admin-evaluation/service-evaluation.json"])
+def test_service_evaluation_path_is_forbidden_in_migration_even_when_disabled(rendered, value):
+    config = copy.deepcopy(rendered)
+    config["services"]["migrate"]["environment"]["ADMIN_SERVICE_EVALUATION_PATH"] = value
+    with pytest.raises(guard.GuardError, match="ADMIN_SERVICE_EVALUATION_PATH"):
+        guard.validate_config(config, values())
+
+
+def test_evaluation_path_reaches_only_api_and_directory_mount_is_read_only(rendered):
+    assert values()[guard.EVALUATION_KEY] == ""
+    assert rendered["services"]["api"]["environment"]["ADMIN_RECOMMENDATION_EVALUATION_PATH"] == ""
+    configured = values() | {guard.EVALUATION_KEY: guard.EVALUATION_PATH}
+    guard.validate_values(configured)
+    config = render(configured)
+    api, migrate = config["services"]["api"], config["services"]["migrate"]
+    assert api["environment"]["ADMIN_RECOMMENDATION_EVALUATION_PATH"] == guard.EVALUATION_PATH
+    assert "ADMIN_RECOMMENDATION_EVALUATION_PATH" not in migrate["environment"]
+    assert not migrate.get("volumes")
+    assert len(api["volumes"]) == 1
+    mount = api["volumes"][0]
+    assert {key: value for key, value in mount.items() if key != "bind"} == {
+        "type": "bind", "source": str(guard.ROOT / "deploy/checking/admin-evaluation"),
+        "target": "/app/admin-evaluation", "read_only": True}
+    assert mount["bind"] in ({}, {"create_host_path": True})
+    guard.validate_config(config, configured)
+    with pytest.raises(guard.GuardError, match="ADMIN_RECOMMENDATION_EVALUATION_PATH"):
+        guard.validate_config(config, values())
+    with pytest.raises(guard.GuardError, match="inherited CHECKING_ADMIN_RECOMMENDATION"):
+        guard.validate_values(configured, {guard.EVALUATION_KEY: ""})
+
+
+@pytest.mark.parametrize("change", ["missing", "extra", "read_write", "wrong_source", "wrong_target", "named_volume",
+                                     "propagation", "create_disabled", "extra_options", "migrate_mount", "migrate_env"])
+def test_evaluation_connection_cannot_expand_host_access_or_reach_migration(rendered, change):
+    config = copy.deepcopy(rendered)
+    api, migrate = config["services"]["api"], config["services"]["migrate"]
+    mount = api["volumes"][0]
+    if change == "missing": api["volumes"] = []
+    elif change == "extra": api["volumes"].append({"type": "bind", "source": "/", "target": "/host", "read_only": True})
+    elif change == "read_write": mount["read_only"] = False
+    elif change == "wrong_source": mount["source"] = str(guard.ROOT / "deploy/checking")
+    elif change == "wrong_target": mount["target"] = "/app"
+    elif change == "named_volume": mount["type"] = "volume"
+    elif change == "propagation": mount["bind"]["propagation"] = "rshared"
+    elif change == "create_disabled": mount["bind"]["create_host_path"] = False
+    elif change == "extra_options": mount["volume"] = {"nocopy": False}
+    elif change == "migrate_mount": migrate["volumes"] = [copy.deepcopy(mount)]
+    elif change == "migrate_env": migrate["environment"]["ADMIN_RECOMMENDATION_EVALUATION_PATH"] = ""
+    with pytest.raises(guard.GuardError):
+        guard.validate_config(config, values())
+
+
+def test_evaluation_directory_symlink_cannot_escape_checkout(rendered, tmp_path, monkeypatch):
+    folder = tmp_path / "deploy/checking"
+    folder.mkdir(parents=True)
+    other = tmp_path / "other"
+    other.mkdir()
+    try:
+        (folder / "admin-evaluation").symlink_to(other, target_is_directory=True)
+    except OSError:
+        pytest.skip("This host does not permit creating directory symlinks")
+    config = copy.deepcopy(rendered)
+    for name in ("api", "migrate"):
+        config["services"][name]["build"]["context"] = str(tmp_path / "backend")
+    config["services"]["api"]["volumes"][0]["source"] = str(folder / "admin-evaluation")
+    monkeypatch.setattr(guard, "ROOT", tmp_path)
+    with pytest.raises(guard.GuardError, match="symlink escapes"):
+        guard.validate_config(config, values())
+
+
 @pytest.mark.parametrize("change", [
     "project", "volume", "external_volume", "network", "public_data", "extra_service", "api_origin",
     "database", "cookie", "redis_prefix", "port", "public_port", "udp", "db_port", "memory", "cpu",
-    "zero_memory", "dev_api", "dev_bypass", "llm", "tmdb", "openai", "redis", "pg_buffers", "image",
+    "zero_memory", "dev_api", "dev_bypass", "llm", "migrate_llm", "dictionary", "migrate_dictionary",
+    "tmdb", "openai", "redis", "pg_buffers", "image",
     "build_context", "entrypoint", "api_command", "migration_head", "migration_previous", "migration_dob", "startup_gate",
     "api_mount", "db_mount", "privileged", "host_network", "writeable", "capabilities", "proxy", "oauth",
 ])
@@ -116,6 +319,9 @@ def test_config_cannot_cross_environment_or_enable_unsafe_runtime(rendered, chan
     elif change == "dev_api": env["ENABLE_DEV_API"] = "true"
     elif change == "dev_bypass": env["ENABLE_DEV_AUTH_BYPASS"] = "true"
     elif change == "llm": env["LLM_KEY"] = "synthetic-key"
+    elif change == "migrate_llm": config["services"]["migrate"]["environment"]["LLM_KEY"] = "synthetic-key"
+    elif change == "dictionary": env["DICT_DATABASE_URL"] = DICTIONARY
+    elif change == "migrate_dictionary": config["services"]["migrate"]["environment"]["DICT_DATABASE_URL"] = DICTIONARY
     elif change == "tmdb": env["TMDB_KEY"] = "synthetic-key"
     elif change == "openai": env["OPENAI_API_KEY"] = "synthetic-key"
     elif change == "redis": config["services"]["redis"]["command"][2] = "old-password"
@@ -125,7 +331,7 @@ def test_config_cannot_cross_environment_or_enable_unsafe_runtime(rendered, chan
     elif change == "entrypoint": api["entrypoint"] = ["sh"]
     elif change == "api_command": api["command"] = ["python", "other.py"]
     elif change == "migration_head": config["services"]["migrate"]["command"][-1] = "heads"
-    elif change == "migration_previous": config["services"]["migrate"]["command"][-1] = "b3e7a5c19d42"
+    elif change == "migration_previous": config["services"]["migrate"]["command"][-1] = "47c1a8d6b302"
     elif change == "migration_dob": config["services"]["migrate"]["command"][-1] = "d2f6a9c4e731"
     elif change == "startup_gate": api["depends_on"]["migrate"]["condition"] = "service_started"
     elif change == "api_mount": api["volumes"] = [{"type": "bind", "source": "/", "target": "/host"}]
@@ -152,6 +358,8 @@ def test_initialize_is_exclusive_and_never_prints_secret_values(tmp_path, monkey
     original = guard.ENV_FILE.read_bytes()
     parsed = guard.read_environment(guard.ENV_FILE)
     assert parsed["CHECKING_KAKAO_OAUTH_ENABLED"] == parsed["CHECKING_NAVER_OAUTH_ENABLED"] == "false"
+    assert parsed["CHECKING_LLM_KEY"] == parsed["CHECKING_DICT_DATABASE_URL"] == ""
+    assert parsed["CHECKING_CHAT_DAILY_TOTAL_LIMIT"] == "100"
     output = capsys.readouterr().out
     assert parsed["CHECKING_POSTGRES_PASSWORD"] not in output
     assert parsed["CHECKING_REDIS_PASSWORD"] not in output

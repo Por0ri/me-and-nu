@@ -91,8 +91,21 @@ export function createActivityQueue(owner: number, readSession: () => Session | 
     });
     return sending;
   }
+  /** 앱 안에서 홈을 떠날 때(TALK·프로필 수정 등) 바구니를 닫는다. 페이지는 그대로라 보낼 수 있으므로 버리지 않는다.
+   *  남은 기록(보내던 중인 묶음 포함 — 서버가 clientEventId 로 중복을 거른다)을 주인의 고정 토큰과 keepalive 로 보낸 뒤 stop() 한다.
+   *  stop() 은 로그아웃 때처럼 보내던 일반 요청을 끊지만, 여기서 보낸 요청은 끊지 않는다.
+   *  계정이 바뀐 경우는 넘겨줄 게 아니다: allowed() 가 거짓이라 아무것도 보내지 않고 예전처럼 버린다. */
+  function leave() {
+    const token = verifiedCsrf;
+    let events: ActivityEvent[] = [];
+    try { allow(); if (allowed() && token) events = queue.slice(); } catch { /* API 를 못 쓰는 상태면 보낼 수 없다 */ }
+    stop();
+    for (let index = 0; index < events.length; index += BATCH_SIZE) {
+      void post(events.slice(index, index + BATCH_SIZE), { headers: { "X-CSRF-Token": token! }, keepalive: true }).catch(() => undefined);
+    }
+  }
   return {
-    start() { enabled = true; verifiedCsrf = ownsSession(readSession(), owner) ? readSession()?.csrfToken : undefined; }, stop, flush, authorize,
+    start() { enabled = true; verifiedCsrf = ownsSession(readSession(), owner) ? readSession()?.csrfToken : undefined; }, stop, leave, flush, authorize,
     async drain() {
       while (queue.length && allowed()) {
         const before = queue.length;

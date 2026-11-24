@@ -1,4 +1,5 @@
 import { aiQuestionError } from "@/lib/ai-question";
+import { withRequestDeadline } from "./request-deadline";
 
 /** V1 browser client. The server owns the HttpOnly cookie; only CSRF lives in memory. */
 export type AccountType = "user";
@@ -164,8 +165,10 @@ export type ChatJob = {
   error: { code: string; message: string } | null;
 };
 export type NotificationItem = {
-  notificationId: number; type: "system_notice" | "topic_new_post" | "recommended_post"; title: string; body: string;
+  notificationId: number; type: "system_notice" | "topic_new_post" | "recommended_post" | "debate_opened"; title: string; body: string;
   topicId: number | null; contentId: number | null; imageUrl: string | null;
+  /** debate_opened만: 열린 토론방 번호 (토론 기능이 켜진 서버만 보낸다) */
+  debateId?: number | null;
   isRead: boolean; readAt: string | null; createdAt: string;
 };
 export type NotificationsResponse = { items: NotificationItem[]; nextCursor: string | null };
@@ -203,7 +206,8 @@ export class ApiError extends Error {
 export const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 export const API_UNAUTHORIZED_EVENT = "api:unauthorized";
 let csrfToken: string | null = null;
-let sessionRequest: Promise<Session> | null = null;
+type SharedSessionRequest = { promise: Promise<Session>; controller: AbortController; readers: Set<symbol>; keepAlive: boolean };
+let sessionRequest: SharedSessionRequest | null = null;
 let sessionVersion = 0;
 
 function query(params: Record<string, string | number | boolean | undefined | null>): string {
@@ -250,34 +254,57 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, expect
   return payload as T;
 }
 
-export function getSession({ fresh, signal }: Pick<RequestInit, "signal"> & { fresh?: boolean } = {}): Promise<Session> {
+export function getSession({ fresh, signal, shared }: Pick<RequestInit, "signal"> & { fresh?: boolean; shared?: boolean } = {}): Promise<Session> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
   const version = sessionVersion;
-  const read = () => apiRequest<Session>("/api/v1/auth/session", { signal }).then(session => {
-    signal?.throwIfAborted();
+  const read = (requestSignal = signal) => apiRequest<Session>("/api/v1/auth/session", { signal: requestSignal }).then(session => {
+    requestSignal?.throwIfAborted();
     if (version === sessionVersion) csrfToken = session.csrfToken;
     return session;
   });
   // A dialog-owned preflight must be cancellable without cancelling shared bootstrap reads.
-  if (signal || fresh) return read();
+  if (fresh || (signal && !shared)) return read();
   // Concurrent first reads (including Strict Mode) must share one cookie issuance.
   if (!sessionRequest) {
-    const request = read().finally(() => { if (sessionRequest === request) sessionRequest = null; });
+    const controller = new AbortController();
+    const request: SharedSessionRequest = { controller, readers: new Set(), keepAlive: false,
+      promise: withRequestDeadline(read, { signal: controller.signal }).finally(() => { if (sessionRequest === request) sessionRequest = null; }) };
     sessionRequest = request;
   }
-  return sessionRequest;
+  const request = sessionRequest;
+  if (!signal) { request.keepAlive = true; return request.promise; }
+  return new Promise<Session>((resolve, reject) => {
+    const reader = Symbol(); request.readers.add(reader);
+    const release = () => {
+      signal.removeEventListener("abort", cancel);
+      request.readers.delete(reader);
+      // Strict Mode re-subscribes in the same turn; do not issue two cookies.
+      queueMicrotask(() => {
+        if (sessionRequest === request && !request.keepAlive && !request.readers.size) {
+          sessionRequest = null; request.controller.abort();
+        }
+      });
+    };
+    const cancel = () => { release(); reject(signal.reason); };
+    signal.addEventListener("abort", cancel, { once: true });
+    request.promise.then(
+      session => { release(); if (!signal.aborted) resolve(session); },
+      error => { release(); reject(error); },
+    );
+  });
 }
 export function register(input: RegisterInput): Promise<DevUser> {
   return apiRequest("/api/v1/dev/auth/register", { method: "POST", body: JSON.stringify(input) });
 }
 export async function login(input: LoginInput): Promise<LoginResponse> {
   const result = await apiRequest<LoginResponse>("/api/v1/dev/auth/login", { method: "POST", body: JSON.stringify(input) });
-  csrfToken = null; // Login rotates the HttpOnly session cookie.
+  invalidateSessionToken(); // Login rotates the HttpOnly session cookie.
   await getSession();
   return result;
 }
 export async function logout(): Promise<void> {
   await apiRequest<void>("/api/v1/auth/logout", { method: "POST" });
-  csrfToken = null;
+  invalidateSessionToken();
 }
 export async function requestWithdrawal(csrf: string): Promise<void> {
   await apiRequest("/api/v1/users/me?mode=grace", { method: "DELETE", headers: { "X-CSRF-Token": csrf } }, 202);
@@ -292,6 +319,7 @@ export async function restoreWithdrawal(csrf: string): Promise<WithdrawalRestora
 }
 function invalidateSessionToken() {
   sessionVersion++;
+  sessionRequest?.controller.abort();
   sessionRequest = null;
   csrfToken = null;
 }
@@ -316,7 +344,7 @@ export function getSubtopic(subtopicId: number): Promise<Subtopic> {
 }
 export async function onboard(input: OnboardingInput): Promise<OnboardingResponse> {
   const result = await apiRequest<OnboardingResponse>("/api/v1/onboarding", { method: "POST", body: JSON.stringify(input) });
-  csrfToken = null; // Onboarding rotates the cookie; the next write reloads its CSRF token.
+  invalidateSessionToken(); // Onboarding rotates the cookie; the next write reloads its CSRF token.
   return result;
 }
 export function getProfile(options: { signal?: AbortSignal } = {}): Promise<Profile> {

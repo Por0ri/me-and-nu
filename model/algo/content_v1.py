@@ -67,12 +67,14 @@ class UserState:
     history: ar.History             # v0.5 입력 (온보딩 작품. add_liked_works 면 반응으로 좋아한 작품도)
     genres: list                    # 온보딩 장르 칩 (AniList 장르)
     themes: list                    # 온보딩 테마 칩 (AniList 태그)
-    types: list                     # 온보딩에서 고른 유형 (TYPES 코드)
+    types: dict                     # 온보딩에서 고른 유형 → 순위 무게 (TYPES 코드 → 0~1. 1순위 1.0)
     t: int                          # v0.5 기준 시각 (초)
     n_catalog: int
     n_feed: int
     work_aff: np.ndarray = None     # 카탈로그 작품별 v0.5 취향 (0~1)
     genre_sim: np.ndarray = None    # 카탈로그 작품별 장르 · 소재 유사도 (0~1). w_genre 를 쓸 때 서비스가 채움
+    chip_names: list = None         # 작품 표에서 찾은 고른 칩 (AniList 이름). 서비스 work_affinity 가 채움
+    chip_w: np.ndarray = None       # 카탈로그 작품 × 고른 칩 무게 (장르 0/1, 소재 0~1). 서비스 work_affinity 가 채움
     dirty: bool = True              # 작품 입력이 바뀌어 v0.5 를 다시 돌려야 함
     work_ev: np.ndarray = field(init=False)   # 카탈로그 작품별 반응 점수 합
     type_ev: np.ndarray = field(init=False)   # 유형별 반응 점수 합
@@ -82,6 +84,8 @@ class UserState:
     opened: np.ndarray = field(init=False)    # 연 글 (열람·읽기 기록이 있을 때만 앎)
     blocked: np.ndarray = field(init=False)   # 그만볼래요 한 글
     full_read_day: np.ndarray = field(init=False)   # 글별 끝까지 본 마지막 날 (reread_days 를 쓸 때만 채움, 없으면 -inf)
+    seen_last: np.ndarray = field(init=False)       # 글별 화면에 나온 마지막 날 (날 번호를 알 때만, 없으면 -inf). service.slot_ready 가 씀
+    seen_prev: np.ndarray = field(init=False)       # 그 전에 화면에 나온 마지막 날 (없으면 -inf)
 
     def __post_init__(self):
         self.work_ev = np.zeros(self.n_catalog, dtype=np.float32)
@@ -92,6 +96,8 @@ class UserState:
         self.opened = np.zeros(self.n_feed, dtype=bool)
         self.blocked = np.zeros(self.n_feed, dtype=bool)
         self.full_read_day = np.full(self.n_feed, -np.inf)
+        self.seen_last = np.full(self.n_feed, -np.inf)
+        self.seen_prev = np.full(self.n_feed, -np.inf)
 
 
 def refresh_work_affinity(state, ctx, cfg):
@@ -110,20 +116,41 @@ def refresh_work_affinity(state, ctx, cfg):
 
 
 def type_pref(state, cfg):
-    # 유형 취향 = 온보딩에서 고른 유형 + 유형별 반응 평균 (반응이 적으면 0 쪽으로)
+    # 유형 취향 = 온보딩에서 고른 유형 (× 순위 무게) + 유형별 반응 평균 (반응이 적으면 0 쪽으로)
     prior = np.zeros(len(TYPES))
-    prior[[TYPE_INDEX[x] for x in state.types]] = cfg.type_prior
+    for x, w in state.types.items():
+        prior[TYPE_INDEX[x]] = cfg.type_prior * w
     return prior + state.type_ev / (state.type_n + cfg.type_shrink)
+
+
+def work_parts(state, feed, idx, cfg):
+    """글 idx 의 작품 몫 (rank_feed 와 service.score_parts 가 같이 씀).
+    작품 하나의 몫 = w_work × (작품 취향 + 반응) + w_genre × 장르 · 소재 유사도. 글의 작품 몫 = 기준 작품 (feed["pos"]) 몫.
+    글 표에 rel_pos · rel_w (글에 같이 연결된 작품 자리 · 무게, 빈칸 -1)가 있으면 무게 × 그 작품 몫까지 보고 가장 큰 값
+    (11/16 결정: 합이면 작품 많은 모음 글이 피드를 덮음). 작품이 하나도 없는 글은 0.
+    시뮬레이터 글 표에는 rel_pos 가 없어서 예전 계산과 같음"""
+    def one(p):
+        q = np.maximum(p, 0)
+        s = cfg.w_work * (state.work_aff[q] + cfg.work_feedback * np.tanh(state.work_ev[q]))
+        if cfg.w_genre and state.genre_sim is not None:
+            s = s + cfg.w_genre * state.genre_sim[q]
+        return s
+    pos = feed["pos"][idx]
+    s = np.where(pos >= 0, one(pos), 0.0)
+    rel = feed.get("rel_pos")
+    if rel is not None and rel.shape[1]:
+        rp = rel[idx]
+        r = np.where(rp >= 0, feed["rel_w"][idx] * one(rp), -np.inf).max(axis=1)
+        s = np.where(pos >= 0, np.maximum(s, r), np.where(np.isfinite(r), r, 0.0))
+    return s
 
 
 def rank_feed(state, feed, day, cfg, k=50):
     """오늘(day) 보여줄 글 번호 k개를 점수 순으로. 노출 기간이 지난 글 · 그만볼래요 한 글은 뺀다.
     본 글: reread_days 가 없으면 아는 범위에서 연 글을 계속 빼고, 있으면 끝까지 본 지 그 날 수가 안 된 글만 뺀다"""
     live = np.flatnonzero((feed["day"] <= day) & (feed["until"] >= day))
-    pos, typ = feed["pos"][live], feed["type"][live]
-    s = np.where(pos >= 0, cfg.w_work * (state.work_aff[pos] + cfg.work_feedback * np.tanh(state.work_ev[pos])), 0.0)
-    if cfg.w_genre and state.genre_sim is not None:
-        s = s + np.where(pos >= 0, cfg.w_genre * state.genre_sim[pos], 0.0)
+    typ = feed["type"][live]
+    s = work_parts(state, feed, live, cfg)
     s = s + cfg.w_type * type_pref(state, cfg)[typ]
     s = s + cfg.w_fresh * np.exp(-(day - feed["day"][live]) / TAU[typ])
     shown = state.seen if "impression" in cfg.logs else state.served   # 노출 기록이 없으면 보낸 목록으로 짐작
@@ -173,7 +200,8 @@ def learn(state, events, feed, cfg, catalog_ids, day=None):
     events: (종류, 글 번호, 값) 목록. 종류: impression · open · read(값=본문 읽은 비율) ·
     swipe(값=(넘긴 뒤 장 번호, 전체 장 수)) · like · save · more · less · share.
     swipe 는 read 기록으로 친다: 같은 글에 카드 · 본문이 둘 다 있으면 큰 점수 하나만, 넘긴 글은 보고 지나침 감점 없음.
-    day: 이 접속의 날 번호. reread_days 를 쓸 때 카드 마지막 장 · 본문 READ_FULL 이상을 끝까지 본 날로 기록"""
+    day: 이 접속의 날 번호. reread_days 를 쓸 때 카드 마지막 장 · 본문 READ_FULL 이상을 끝까지 본 날로 기록.
+    노출이 있으면 그 글이 화면에 나온 마지막 두 날 (seen_last · seen_prev) 도 기록"""
     logs, opened_now, shown = cfg.logs, set(), []
     swiped, body, scored = {}, {}, set()
     if "read" in logs:
@@ -187,6 +215,8 @@ def learn(state, events, feed, cfg, catalog_ids, day=None):
             shown.append(c)
             if "impression" in logs:
                 state.seen[c] += 1
+                if day is not None and day > state.seen_last[c]:   # 같은 날 또 나오면 그대로
+                    state.seen_prev[c], state.seen_last[c] = state.seen_last[c], day
         elif kind == "open":
             opened_now.add(c)
             if "open" in logs or "read" in logs:

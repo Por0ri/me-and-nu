@@ -20,6 +20,10 @@ type HomeNotice = { message: string; postId?: string };
 /** Whether an unread notification arrived today; every screen's header bell shows the same dot. */
 export const NewNoticeContext = createContext(false);
 
+/** 다른 pivot 페이지로 옮겨 가기 (TALK → /pivot/debate). app/pivot/layout.tsx 의 PivotNavigateProvider 가 채운다.
+ *  이 파일은 next/navigation 을 불러오지 않는다 (테스트가 이 파일을 그대로 읽는다). 없으면 브라우저가 새로 연다. */
+export const PivotNavigateContext = createContext<((path: string) => void) | null>(null);
+
 export function HomeHeader({ title = "홈", showMascot = true, showNotification = true, onNotice, onBack, onNotifications }: {
   title?: string; showMascot?: boolean; showNotification?: boolean; onNotice?: (message: string) => void; onNotifications?: () => void;
   /** A round back button before the logo (My Page sub-pages such as 프로필 수정, 2026-11 design). */
@@ -43,20 +47,21 @@ export function HomeHeader({ title = "홈", showMascot = true, showNotification 
   </header>;
 }
 
-export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI = false, adjacentAI = !hideAI, compact = false, onNotice, chat = false, onViewDetail }: {
-  onHome?: () => void; onMy?: () => void; onSaved?: () => void; active?: "home" | "my" | "saved"; hideAI?: boolean;
-  /** Reserve the adjacent AI area, including Detail's separately rendered AI. */
-  adjacentAI?: boolean;
-  /** Detail's expanded AI covers an inert, 40px navigation bar. */
-  compact?: boolean;
+/** 화면 아래에 꽉 찬 하단바 HOME · SAVE · TALK · MY (2026-11-23 시안). 지금 화면의 메뉴는 연보라 알약.
+ *  AI 마스코트는 하단바 바로 위 오른쪽에 따로 떠 있어서(chatStyles.dockLayer), 펼쳐도 하단바를 가리지 않고 메뉴도 그대로 눌린다. */
+export function HomeNavigation({ onHome, onSaved, onTalk, onMy, active = "home", hideAI = false, onNotice, chat = false, onViewDetail }: {
+  onHome?: () => void; onSaved?: () => void; onMy?: () => void;
+  /** TALK 을 눌렀을 때. 없으면 토론방(/pivot/debate)으로 옮겨 간다. */
+  onTalk?: () => void;
+  active?: "home" | "saved" | "talk" | "my"; hideAI?: boolean;
   onNotice?: (message: string) => void;
   /** 서비스 홈: AI 버튼이 대화를 연다. 시연 화면은 기존 준비 중 안내를 그대로 둔다. */
   chat?: boolean;
   /** AI 대화 속 글 카드를 누르면 여는 상세 */
   onViewDetail?: HomeDetailHandler;
 } = {}) {
+  const navigate = useContext(PivotNavigateContext);
   const [aiExpanded, setAiExpanded] = useState(false);
-  const aiOpen = chat && !hideAI && aiExpanded;
   const [localNotice, setLocalNotice] = useState({ message: "" });
   const notice = localNotice.message;
   function setNotice(message: string) { setLocalNotice({ message }); }
@@ -66,20 +71,28 @@ export function HomeNavigation({ onHome, onMy, onSaved, active = "home", hideAI 
       setLocalNotice(current => current === localNotice ? { message: "" } : current);
     });
   }, [localNotice, onNotice]);
-  // AI 바가 펼쳐지면 같은 높이(48px)의 바가 메뉴 알약 자리를 덮고, 메뉴는 흐려지며 누를 수 없게 된다.
-  return <div className={chat && !hideAI ? `${styles.bottomBar} ${chatStyles.navFade}` : styles.bottomBar} data-adjacent-ai={adjacentAI || undefined}
-    data-compact={compact || undefined} data-ai-open={aiOpen || undefined}>
-    <nav aria-label="주요 메뉴" className={styles.navigation} inert={aiOpen || undefined}>
-      <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } scrollHomeTo(0); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
-      <button type="button" data-saved-navigation="" aria-current={active === "saved" ? "page" : undefined}
-        aria-disabled={!onSaved && active !== "saved" || undefined} onClick={() => { if (active === "saved") { onSaved?.(); return; } if (onSaved) onSaved(); else (onNotice ?? setNotice)("SAVE 화면은 준비 중이에요. 저장은 수행하지 않아요."); }}><span>SAVE</span></button>
-      <button type="button" data-my-navigation="" aria-current={active === "my" ? "page" : undefined}
-        aria-disabled={!onMy && active !== "my" || undefined} onClick={() => { if (active === "my") { onMy?.(); return; } if (onMy) onMy(); else (onNotice ?? setNotice)("MY 화면은 준비 중이에요."); }}><span>MY</span></button>
-    </nav>
-    {hideAI ? null : chat ? <HomeAIChat expanded={aiExpanded} onExpandedChange={setAiExpanded} onViewDetail={onViewDetail} />
-      : <HomeAIButton onNotice={onNotice ?? setNotice} />}
+  function openTalk() {
+    if (onTalk) { onTalk(); return; }
+    if (active === "talk") return;
+    if (navigate) navigate("/pivot/debate"); else window.location.assign("/pivot/debate");
+  }
+  return <>
+    <div className={styles.bottomBar}>
+      <nav aria-label="주요 메뉴" className={styles.navigation}>
+        <button type="button" aria-current={active === "home" ? "page" : undefined} onClick={() => { if (onHome) { onHome(); return; } scrollHomeTo(0); document.querySelector<HTMLHeadingElement>("main h1")?.focus({ preventScroll: true }); }}><span>HOME</span></button>
+        <button type="button" data-saved-navigation="" aria-current={active === "saved" ? "page" : undefined}
+          aria-disabled={!onSaved && active !== "saved" || undefined} onClick={() => { if (active === "saved") { onSaved?.(); return; } if (onSaved) onSaved(); else (onNotice ?? setNotice)("SAVE 화면은 준비 중이에요. 저장은 수행하지 않아요."); }}><span>SAVE</span></button>
+        <button type="button" data-talk-navigation="" aria-current={active === "talk" ? "page" : undefined} onClick={openTalk}><span>TALK</span></button>
+        <button type="button" data-my-navigation="" aria-current={active === "my" ? "page" : undefined}
+          aria-disabled={!onMy && active !== "my" || undefined} onClick={() => { if (active === "my") { onMy?.(); return; } if (onMy) onMy(); else (onNotice ?? setNotice)("MY 화면은 준비 중이에요."); }}><span>MY</span></button>
+      </nav>
+    </div>
+    {hideAI ? null : <div className={chatStyles.dockLayer}>
+      {chat ? <HomeAIChat expanded={aiExpanded} onExpandedChange={setAiExpanded} onViewDetail={onViewDetail} />
+        : <HomeAIButton onNotice={onNotice ?? setNotice} />}
+    </div>}
     {notice ? <p className={styles.pendingNotice} role="status">{notice}</p> : null}
-  </div>;
+  </>;
 }
 
 export type SearchNotice = { message: string; id: number };
@@ -165,7 +178,8 @@ export function WorkSearchField({ value, onChange, onSubmit, notice, onNoticeEnd
   </div>;
 }
 
-function SearchEmpty({ label }: { label: string }) {
+/** 검색 결과가 없을 때 (홈 · 토론방 검색 공용) */
+export function SearchEmpty({ label }: { label: string }) {
   return <div className={styles.searchEmpty}>
     <img className={styles.searchEmptyMascot} src="/pivot/home/search/empty-mascot@1x.png"
       srcSet="/pivot/home/search/empty-mascot@1x.png 1x, /pivot/home/search/empty-mascot@2x.png 2x, /pivot/home/search/empty-mascot@3x.png 3x"
@@ -351,7 +365,7 @@ export function HomeStatus({ state, onRetry }: { state: Exclude<HomeState, { sta
   </section>;
 }
 
-export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onRestart, onViewDetail, onMy, onSaved, onNotifications, bookmarks, onFirstImageReady, preparing = false }: {
+export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, search, searchNotice, onSearchNoticeEnd, onRetry, onLoadMore, onRestart, onViewDetail, onMy, onSaved, onNotifications, bookmarks, onFirstImageReady, preparing = false }: {
   state: HomeState;
   demo: boolean;
   query: string;
@@ -361,6 +375,7 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
   searchNotice?: SearchNotice | null;
   onSearchNoticeEnd?: () => void;
   onRetry: () => void;
+  onLoadMore?: () => void;
   onRestart?: () => void;
   onViewDetail?: HomeDetailHandler;
   onMy?: () => void;
@@ -400,6 +415,12 @@ export function PivotHomeScreen({ state, demo, query, onQueryChange, onSearch, s
         : <SearchEmpty label={result.label} />}
     </section>
       : state.status === "ready" ? <HomeFeed cards={state.home.cards} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={setNotice} onFirstImageReady={onFirstImageReady} impressions={!preparing} /> : <HomeStatus state={state} onRetry={onRetry} />}
+    {!result && !search?.open && state.status === "ready" && state.pagination && onLoadMore ? <section className={styles.footer} aria-label="추가 콘텐츠" data-home-pagination="">
+      {state.pagination.status === "error" ? <p role="alert">{state.pagination.message}</p> : null}
+      <button type="button" className={styles.button} onClick={onLoadMore} disabled={state.pagination.status === "loading"} aria-busy={state.pagination.status === "loading"}>
+        {state.pagination.status === "loading" ? "콘텐츠를 불러오고 있어요." : state.pagination.status === "error" ? "다음 콘텐츠 다시 시도" : "더 불러오기"}
+      </button>
+    </section> : null}
     {demo && onRestart ? <footer className={styles.footer}><button type="button" onClick={onRestart} className={styles.button}>처음부터 시연</button></footer> : null}
     <HomeNavigation onMy={onMy} onSaved={onSaved} onNotice={pending} chat={!demo} onViewDetail={onViewDetail} />
     {notice.message && !notice.postId ? <p className={styles.pendingNotice} role="status">{notice.message}</p> : null}

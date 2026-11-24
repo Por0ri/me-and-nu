@@ -352,9 +352,11 @@ def test_concurrent_import_is_idempotent_and_changed_content_conflicts(carousel_
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.models import AgentRun, Content, ContentSlide
     from app.seeds.carousel_contents import CarouselImportError, import_bundle, load_bundle
+    from app.db.migration_policy import SERVICE_SCHEMA_REVISION
 
     engine, url, migrate = carousel_pg
-    migrate(TARGET)
+    # Existing imports consult administrator decisions before any review update.
+    migrate(SERVICE_SCHEMA_REVISION)
     with engine.begin() as db:
         db.execute(text("INSERT INTO topic(topic_id,topic_code,topic_name,is_active) VALUES (1,'anime','애니',true)"))
     _, approved = _live_bundle(tmp_path, raw_bundle)

@@ -757,7 +757,7 @@ def assign_distinct_images(
                         "image_id": f"missing-source-image-{card.page}",
                         "visual_mode": "source_image",
                         "image_reuse_mode": "missing_source_image",
-                        "image_explanation": "원문과 맞는 이미지를 찾지 못했어.",
+                        "image_explanation": "조건에 맞는 이미지를 찾지 못해 배정을 보류했어.",
                     }
                 )
             )
@@ -775,11 +775,9 @@ def assign_distinct_images(
             explanation = selected.korean_explanation or "공식 협업 비주얼"
         elif package.content_type in {"event", "goods"} and not selected_source_page_match:
             explanation = (
-                ("동일 작품의 공식 이미지야. 행사 전용 이미지는 아닙니다. "
-                 "작품 비주얼로 내용을 보완해.")
+                "행사 현장 사진이나 행사 전용 이미지 대신 같은 작품의 참고 이미지를 실었어."
                 if package.content_type == "event"
-                else ("동일 작품의 공식 이미지야. 상품 전용 이미지는 아닙니다. "
-                      "작품 비주얼로 내용을 보완해.")
+                else "상품 실물 사진 대신 같은 작품의 참고 이미지를 실었어."
             )
         elif selected.id != card.image_id and selected.korean_explanation:
             explanation = selected.korean_explanation

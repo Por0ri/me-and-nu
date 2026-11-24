@@ -66,12 +66,11 @@
 .sheet .composer input::placeholder { color: #a1a1aa; opacity: 1; }
 .send { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: #f4f4f5; color: #27272a; }
 
-/* 하단 마스코트 · 안내 바 (홈 · 상세 공용, chat-dock.tsx). 놓이는 곳은 하단 바(home.module.css .bottomBar)와 같은
-   자리 · 크기다. 접힌 마스코트는 기존 자리(가운데 307px 칸의 오른쪽 끝), 펼치면 알약이 최대 340px 까지 펼쳐지고
+/* 하단 마스코트 · 안내 바 (홈 · 상세 공용, chat-dock.tsx). 놓이는 곳은 하단바(home.module.css .bottomBar, 58px) 바로 위
+   6px 에 뜬 48px 칸이다 (2026-11-23 시안). 하단바를 가리지 않아서 펼쳐도 메뉴가 그대로 보이고 눌린다.
+   접힌 마스코트는 가운데 307px 칸의 오른쪽 끝, 펼치면 알약이 최대 340px 까지 펼쳐지고
    마스코트는 오른쪽 끝으로 옮겨 간다. 동그라미는 두 상태 모두 48px. */
-.dockLayer { position: fixed; z-index: 7; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); width: min(100%, 430px); height: 48px; transform: translateX(-50%); pointer-events: none; }
-.navFade nav { transition: opacity 180ms ease; }
-.navFade[data-ai-open] nav { opacity: 0; }
+.dockLayer { position: fixed; z-index: 7; left: 50%; bottom: calc(58px + 6px + env(safe-area-inset-bottom)); width: min(100%, 430px); height: 48px; transform: translateX(-50%); pointer-events: none; }
 .dockPill { position: absolute; z-index: 1; top: 0; bottom: 0; left: calc(50% - 100px); right: calc(50% - 100px); border-radius: 24px; background: linear-gradient(90deg, rgb(247 242 255 / 72%), rgb(224 186 251 / 72%)); backdrop-filter: blur(12px); box-shadow: 0 6px 18px #0000001f; opacity: 0; pointer-events: none; transition: left 340ms cubic-bezier(.2, .8, .2, 1), right 340ms cubic-bezier(.2, .8, .2, 1), opacity 160ms ease; }
 /* 펼친 바: 너비 최대 340px, 양옆 여백은 36px 이상 (PC 430px 에서 340px · 휴대폰 390px 에서 318px, 카드보다 안쪽).
    단 접힌 마스코트 자리보다 바깥으로는 가지 않아 마스코트가 왼쪽으로 움직이지 않는다 */
@@ -93,6 +92,6 @@
 @keyframes chatFaceIn { from { opacity: .4; transform: scale(.9); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .sheet, .sheet::backdrop, .dockFace img[data-face="on"] { animation: none; }
-  .sheet, .dockPill, .dockPill .dockPrompt, .dockFace, .navFade nav { transition: none; }
+  .sheet, .dockPill, .dockPill .dockPrompt, .dockFace { transition: none; }
   .typing span { animation: none; opacity: .6; }
 }

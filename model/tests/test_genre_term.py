@@ -11,7 +11,7 @@ FEED = {"pos": np.array([0, 1]), "type": np.array([0, 0]), "day": np.array([10, 
 def state(work_aff, genre_sim):
     empty = np.zeros(0, dtype=np.int64)
     h = ar.History(empty, empty, np.zeros(0, dtype=np.int8), np.zeros(0, dtype=np.int8), np.zeros(0, dtype=np.int8))
-    s = v1.UserState(h, [], [], [], 0, len(work_aff), len(work_aff))
+    s = v1.UserState(h, [], [], {}, 0, len(work_aff), len(work_aff))
     s.work_aff, s.genre_sim = np.array(work_aff, dtype=np.float32), np.array(genre_sim, dtype=np.float32)
     return s
 
@@ -21,6 +21,15 @@ class GenreTermTests(unittest.TestCase):
         st = state([0.5, 0.5], [0.1, 0.9])
         self.assertEqual(v1.rank_feed(st, FEED, 10, v1.Config()).tolist(), [0, 1])
         self.assertEqual(v1.rank_feed(st, FEED, 10, v1.Config(w_genre=service.W_GENRE)).tolist(), [1, 0])
+
+    def test_type_part_follows_the_rank_weight(self):   # 11/24 EXP-39: 유형 출발값 = type_prior × 순위 무게
+        st, cfg = state([0.5, 0.5], [0.0, 0.0]), v1.Config()
+        st.types = {"news": 1.0, "event": 0.5}
+        prior = v1.type_pref(st, cfg)
+        self.assertEqual([prior[v1.TYPE_INDEX[t]] for t in ("news", "event", "guide")], [1.0, 0.5, 0.0])
+        feed = {**FEED, "type": np.array([v1.TYPE_INDEX["event"], v1.TYPE_INDEX["news"]])}
+        self.assertAlmostEqual(service.score_parts(st, feed, 0, 10, cfg)[1], cfg.w_type * 0.5)
+        self.assertEqual(v1.rank_feed(st, feed, 10, cfg).tolist(), [1, 0])     # 1순위 소식 글이 앞
 
     def test_score_parts_add_the_genre_term_to_the_work_part(self):
         st, cfg = state([0.5, 0.4], [0.1, 0.9]), v1.Config(w_genre=0.5)

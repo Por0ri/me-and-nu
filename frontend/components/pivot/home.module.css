@@ -142,41 +142,31 @@
 .detailHelp, .actionNotice { position: absolute; z-index: 2; bottom: 52px; right: 10px; width: min(260px, calc(100vw - 80px)); margin: 0; padding: 12px; border-radius: 8px; box-shadow: 0 2px 12px #0002; background: white; color: var(--home-ink); font-size: 12px; line-height: 19px; }
 .actionNotice { right: 12px; bottom: 60px; pointer-events: none; }
 .noSlides { display: grid; place-items: center; height: 100%; margin: 0; padding: 24px; font-size: 14px; color: var(--home-muted); }
-/* 375x812: 812 - 12 - 48 = y752. Keep the existing max(inset) policy
-   until additive safe-area spacing has been validated on physical devices. */
-.bottomBar { position: fixed; z-index: 6; bottom: max(12px, env(safe-area-inset-bottom)); left: 50%; width: min(100%, 430px); height: 48px; transform: translateX(-50%); pointer-events: none; }
-.navigation { position: absolute; left: 50%; display: flex; align-items: center; justify-content: center; width: 200px; height: 100%; padding-inline: 8px; transform: translateX(-50%); border: .75px solid rgb(239 239 239 / 65%); border-radius: 24px; background: rgb(255 255 255 / 64%); box-shadow: 0 6px 18px #0000001f; backdrop-filter: blur(9px); pointer-events: auto; }
-.navigation button { display: flex; align-items: center; justify-content: center; flex: 1; height: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: #3f3f46; font-weight: 400; }
-.navigation button > span { display: grid; place-items: center; width: 60px; max-width: 100%; height: 24px; border-radius: 12px; font-size: 12px; line-height: 18px; }
+/* 하단바 (2026-11-23 시안, 375px 화면 기준): 화면 아래에 꽉 찬 막대. 높이 58px(위 테두리 1px 포함) + 아이폰 홈 표시줄 자리.
+   위 테두리는 진회색 #a1a1aa(시안의 1px 선이 두 화소 줄에 흐리게 걸쳐 있어 두 줄을 합쳐 잰 색).
+   메뉴 4개는 78px 칸으로 가운데에 모이고, 지금 화면의 메뉴는 막대 위에서 10px 아래의 78x32px 연보라 알약이다.
+   (아래 여백 7px 이 알약을 시안처럼 가운데보다 조금 위에 둔다.) AI 마스코트는 막대 위 칸(chat.module.css .dockLayer)에 따로 뜬다. */
+.bottomBar { position: fixed; z-index: 6; left: 50%; bottom: 0; width: min(100%, 430px); height: calc(58px + env(safe-area-inset-bottom)); padding: 0 8px calc(7px + env(safe-area-inset-bottom)); transform: translateX(-50%); border-top: 1px solid #a1a1aa; background: #f8f8f6; }
+.navigation { display: flex; justify-content: center; height: 100%; }
+.navigation button { display: flex; align-items: center; justify-content: center; flex: 0 1 78px; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent; color: #3f3f46; font-weight: 400; }
+.navigation button > span { display: grid; place-items: center; width: 100%; height: 32px; border-radius: 16px; font-size: 16px; line-height: 20px; }
 .navigation [aria-current="page"] > span { background: #efe7ff; font-weight: 600; }
-/* Match Detail's unchanged 40px AI dock while the shared navigation is inert. */
-.bottomBar[data-compact] { bottom: max(20px, env(safe-area-inset-bottom)); height: 40px; }
-/* Match the right edge of Detail's centered, collapsed 307px / (100vw - 68px)
-   AI dock. The 48px hit target excludes the native 64px SVG's shadow. */
+/* 시연 홈의 AI 버튼: 하단바 위 칸(chat.module.css .dockLayer)에서 상세 AI 와 같은 오른쪽 끝(가운데 307px / (100vw - 68px) 칸의 끝).
+   48px 누르는 자리는 64px 그림의 그림자를 뺀 크기다. */
 .aiButton { position: absolute; top: 0; right: calc((100% - min(307px, calc(100vw - 68px))) / 2); width: 48px; height: 48px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; transition: none; }
 .aiButton img { position: absolute; left: -8px; top: 0; max-width: none; pointer-events: none; }
-/* Informational status only: let clicks, swipes and scrolling reach the content below. */
-.pendingNotice { position: fixed; z-index: 8; left: 50%; bottom: 76px; width: min(327px, calc(100vw - 48px)); margin: 0; padding: 12px; transform: translateX(-50%); border-radius: 8px; background: white; box-shadow: 0 2px 12px #0002; color: var(--home-ink); font-size: 12px; line-height: 19px; pointer-events: none; }
+/* Informational status only: let clicks, swipes and scrolling reach the content below.
+   하단바 바로 위에 뜨고, AI 마스코트가 있는 홈에서는 마스코트 위로 올라간다(--pending-notice-bottom). */
+.pendingNotice { position: fixed; z-index: 8; left: 50%; bottom: calc(var(--pending-notice-bottom, 66px) + env(safe-area-inset-bottom)); width: min(327px, calc(100vw - 48px)); margin: 0; padding: 12px; transform: translateX(-50%); border-radius: 8px; background: white; box-shadow: 0 2px 12px #0002; color: var(--home-ink); font-size: 12px; line-height: 19px; pointer-events: none; }
 @media (max-width: 340px) {
-  .navigation { width: 180px; padding-inline: 6px; }
-  /* Detail's AI needs its 34px inset, 48px target and an 8px gap. */
-  .bottomBar[data-adjacent-ai]:not([data-compact]) .navigation { left: max(90px, min(50%, calc(100% - 34px - 48px - 8px - 90px))); }
-  .bottomBar[data-compact] .navigation { max-width: calc(100% - 68px); }
   .brand { gap: 6px; } .headerMascot { right: 51px; }
 }
-/* Detail's 200px NAV overlaps its AI at 341–363px. Keep the approved HOME-only
-   narrow NAV through 374px, without changing the AI anchor or card width. */
-@media (min-width: 341px) and (max-width: 374px) {
-  .screen[data-home-state] .navigation {
-    width: 180px;
-    padding-inline: 6px;
-    left: max(90px, min(50%, calc(100% - 34px - 48px - 8px - 90px)));
-  }
-}
 /* Let the feed show through the floating dock. Move the former clipped area
-   into end/focus spacing so the last card and focused controls can clear it. */
+   into end/focus spacing so the last card and focused controls can clear it.
+   아래 칸 = 하단바 58px + 마스코트까지 6px + 마스코트 48px. */
 .screen[data-home-state] {
-  --home-dock-space: calc(48px + max(12px, env(safe-area-inset-bottom)) + 8px);
+  --home-dock-space: calc(58px + 6px + 48px + env(safe-area-inset-bottom));
+  --pending-notice-bottom: calc(58px + 6px + 48px + 8px);
   position: fixed;
   inset: 0;
   /* Include desktop gutters in the native scrollport; keep the feed and header

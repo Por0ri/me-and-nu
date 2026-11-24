@@ -1,0 +1,65 @@
+# Prepared API-only candidate. Do not start until deploy/main preflight and live review pass.
+# Reuses Checking data; never creates, migrates, seeds or schedules generation.
+name: me-nu-main
+
+services:
+  api:
+    image: me-nu-backend-main:${MAIN_IMAGE_TAG:?Set the reviewed full Git SHA}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: "0.50"
+    pids_limit: 128
+    ports: ["127.0.0.1:8003:8000"]
+    networks: [data, egress]
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+    environment:
+      MENU_DEPLOYMENT_ENV: production
+      CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED: "false"
+      DATABASE_URL: "postgresql+psycopg://me_nu_checking:${MAIN_POSTGRES_PASSWORD:?Copy the existing Checking credential}@postgres:5432/me_nu_checking"
+      DATABASE_ECHO: "false"
+      DATABASE_POOL_SIZE: "2"
+      DATABASE_MAX_OVERFLOW: "0"
+      SESSION_BACKEND: redis
+      REDIS_URL: "redis://:${MAIN_REDIS_PASSWORD:?Copy the existing Checking credential}@redis:6379/0"
+      REDIS_KEY_PREFIX: me_nu_main
+      REDIS_SOCKET_TIMEOUT_SECONDS: "0.5"
+      REDIS_MAX_CONNECTIONS: "10"
+      FRONTEND_ORIGINS: https://www.me-nu.kr,https://api.me-nu.kr
+      ENABLE_DEV_API: "false"
+      ENABLE_DEV_AUTH_BYPASS: "false"
+      SESSION_COOKIE_NAME: menu_main_session
+      SESSION_EXPIRE_MINUTES: "30"
+      SESSION_COOKIE_SECURE: "true"
+      FORWARDED_ALLOW_IPS: ${MAIN_FORWARDED_ALLOW_IPS:-127.0.0.1}
+      OAUTH_FRONTEND_ORIGIN: https://www.me-nu.kr
+      OAUTH_PUBLIC_API_ORIGIN: https://api.me-nu.kr
+      OAUTH_STATE_TTL_SECONDS: "600"
+      KAKAO_OAUTH_ENABLED: ${MAIN_KAKAO_OAUTH_ENABLED:-false}
+      KAKAO_CLIENT_ID: ${MAIN_KAKAO_CLIENT_ID:-}
+      KAKAO_CLIENT_SECRET: ${MAIN_KAKAO_CLIENT_SECRET:-}
+      NAVER_OAUTH_ENABLED: ${MAIN_NAVER_OAUTH_ENABLED:-false}
+      NAVER_CLIENT_ID: ${MAIN_NAVER_CLIENT_ID:-}
+      NAVER_CLIENT_SECRET: ${MAIN_NAVER_CLIENT_SECRET:-}
+      EVENT_DATA_SOURCE: local_demo
+      TMDB_KEY: ""
+      # Chatbot answers only; an empty MAIN_LLM_KEY keeps them off. Paid generation keys stay empty.
+      LLM_KEY: ${MAIN_LLM_KEY:-}
+      OPENAI_API_KEY: ""
+      # Read-only chatbot dictionary shared with Checking (menu_dict); empty answers from our posts only.
+      DICT_DATABASE_URL: ${MAIN_DICT_DATABASE_URL:-}
+      # All users' chatbot questions per day, counted together with Checking (same database).
+      CHAT_DAILY_TOTAL_LIMIT: ${MAIN_CHAT_DAILY_TOTAL_LIMIT:?Set the shared chatbot daily question limit}
+
+networks:
+  data:
+    external: true
+    name: me-nu-checking_data
+  egress: {}

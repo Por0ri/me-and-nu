@@ -1,4 +1,5 @@
 import { ApiError, type InquiryInput, type InquiryResponse } from "@/lib/api";
+import type { InquiryHistorySource } from "./inquiry-history";
 
 export const INQUIRY_LIMIT = 500;
 export const inquiryTypes = [{ value: "service", label: "서비스 문의" }, { value: "bug", label: "버그/오류 신고" }] as const;
@@ -10,9 +11,10 @@ export type InquiryState = InquiryDraft & {
 export type InquirySource = {
   kind: "service";
   assertCurrent(): void;
+  history?: InquiryHistorySource;
   submit(input: InquiryInput, signal: AbortSignal): Promise<InquiryResponse>;
 };
-export class InquirySessionChanged extends Error {}
+export class InquirySessionChanged extends Error { constructor() { super("Inquiry session changed"); this.name = "InquirySessionChanged"; } }
 // Python's schema counts Unicode code points, not UTF-16 code units.
 export function inquiryLength(detail: string): number { return [...detail.trim()].length; }
 export function inquiryValidation(draft: InquiryDraft): string {
@@ -34,6 +36,7 @@ export function createInquiryController(source: InquirySource | undefined, demo:
   function set(next: InquiryState) { state = next; if (!disposed) publish(state); }
   function unavailable(message: string) { uncertainMessage = ""; set({ ...initialInquiryState(), status: "unavailable", message }); }
   return {
+    resetReceived() { if (!disposed && state.status === "received") set(initialInquiryState()); },
     change(draft: Partial<InquiryDraft>) {
       if (disposed || ["submitting", "received", "unavailable"].includes(state.status)) return;
       set({ ...state, ...draft, status: "editing", message: uncertainMessage });

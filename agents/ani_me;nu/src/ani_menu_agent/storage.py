@@ -23,6 +23,7 @@ from PIL import Image
 
 from ani_menu_agent.agents.content_generation.renderer import OUTPUT_IMAGE_SIZE
 from ani_menu_agent.config import get_settings
+from ani_menu_agent.cover_history import load_cover_history
 from ani_menu_agent.duplicate_detection import duplicate_reason, story_source_key
 from ani_menu_agent.goods_publication import illustrated_product_url, set_goods_image_labels
 from ani_menu_agent.image_selection import image_visual_keys
@@ -1369,6 +1370,12 @@ class AgentRepository:
 
     def prior_cover_image_fingerprints(self, *, exclude_request_id: str) -> list[str]:
         """Return visual identities used on another content's first card only."""
+        # Revalidate the Worker snapshot for every generation/revision. This is
+        # cover-only history; it does not alter whole-content duplicate lookup.
+        fingerprints: set[str] = {
+            key for entry in load_cover_history() if entry.request_id != exclude_request_id
+            for key in entry.visual_keys
+        }
         with self.connect() as connection:
             rows = []
             for table in ("content_drafts", "feed_queue", "rejected_archive"):
@@ -1376,7 +1383,6 @@ class AgentRepository:
                     f"SELECT request_id, package_json FROM {table} WHERE request_id<>?",
                     (exclude_request_id,),
                 ).fetchall())
-        fingerprints: set[str] = set()
         for row in rows:
             try:
                 stored = json.loads(row["package_json"])

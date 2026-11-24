@@ -53,7 +53,7 @@ FIRST_ROUND_POLLS = 12
 FIRST_ROUND_POLL_SECONDS = 0.25
 # Home work search: matched works and cards per query, and works suggested while typing.
 SEARCH_WORKS = 10
-SEARCH_CARDS = 20
+SEARCH_CARDS = 50
 SUGGEST_WORKS = 3
 
 

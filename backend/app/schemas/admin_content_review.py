@@ -1,15 +1,25 @@
-"""Proposed review contract; no runtime route is registered."""
+"""Authenticated administrator review request and committed-result contract."""
 
 from datetime import datetime
+import re
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, field_validator
+from pydantic import AwareDatetime, ConfigDict, Field, field_validator
 
 from app.schemas.admin_content_input import AdminInputModel, clean_text
 from app.schemas.common import CamelModel
 
 ReviewAction = Literal["approve", "reject"]
+_VERSION = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})")
+
+
+class AdminContentReviewScope(CamelModel):
+    """Expected identity of the original action, never an authorization grant."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    actor_user_id: int = Field(strict=True, gt=0, le=9223372036854775807)
+    admin_account_id: int = Field(strict=True, gt=0, le=9223372036854775807)
 
 
 class AdminContentReviewRequest(AdminInputModel):
@@ -33,8 +43,14 @@ class AdminContentReviewRequest(AdminInputModel):
     @field_validator("expected_updated_at", mode="before")
     @classmethod
     def parse_timestamp(cls, value):
-        # Accept ISO JSON strings, not numeric timestamps or coercions.
-        return datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
+        # Do not silently truncate fractional seconds or accept an unknown offset.
+        if isinstance(value, str):
+            if not _VERSION.fullmatch(value) or value.endswith("-00:00"):
+                raise ValueError("Use an ISO timestamp with an offset and at most six fractional digits")
+            if value[-1] != "Z" and (int(value[-5:-3]) > 23 or int(value[-2:]) > 59):
+                raise ValueError("Invalid timezone offset")
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return value
 
 
 class AdminContentReviewResponse(CamelModel):
@@ -44,7 +60,7 @@ class AdminContentReviewResponse(CamelModel):
     status: Literal["active", "hidden"]
     judgment_status: Literal["confirmed", "failed"]
     draft_status: Literal["published", "discarded"]
-    published_at: datetime | None
-    updated_at: datetime
+    published_at: AwareDatetime | None
+    updated_at: AwareDatetime
     audit_log_id: int = Field(gt=0)
     replayed: bool = False

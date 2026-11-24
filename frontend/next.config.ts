@@ -15,6 +15,12 @@ const nextConfig: NextConfig = {
         destination: "/pivot",
         permanent: false,
       },
+      {
+        source: "/",
+        has: [{ type: "host", value: "www\\.me-nu\\.kr" }],
+        destination: "/pivot",
+        permanent: false,
+      },
     ];
   },
 };

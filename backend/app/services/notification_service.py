@@ -1,13 +1,16 @@
 """알림함 (API-107 목록, API-108 미확인 개수, API-109 읽음 처리)과 알림 만들기.
 
 알림함은 운영공지(system_notice), 새 글 알림(topic_new_post), 추천 알림(recommended_post)을 보여 준다.
+토론 기능(DEBATE_ENABLED)이 켜진 서버에서는 토론 개설 알림(debate_opened)도 보여 주고 debateId를 붙인다.
 그 밖의 유형은 저장된 상태로 보존하되 목록, 미확인 개수, 읽음 처리에서는 제외한다.
+토론 개설 알림은 투표 요청 안에서 바로 만든다 (app.services.debate_service).
 
 알림은 서버 명령(app.jobs.create_notifications)으로만 만든다. 만드는 함수는 commit 하지 않고 부른 쪽이 한다.
 - 새 글 알림: 지난 48시간 안에 공개된 글의 대표 작품(연결 순서 1)을 온보딩 Q1에서 고른 회원에게 보낸다.
   매일 아침 한 번 도는데 기간을 이틀로 둔 건, 하루 실패하거나 하루 한도에 밀린 글도 다음 날 잡기 위해서다. 이미 보낸 글은 다시 안 보낸다.
   하루 1개, 최신 글 먼저. 알림을 끈 회원, 이미 열어 본 글, '그만 볼래요' 글은 뺀다.
 - 추천 알림: 오늘 추천의 10순위부터 내려가며 하루 1개. 위 순위는 홈에서 바로 보이니 그 아래에서 고른다.
+  고른 작품(Q1)의 글은 새 글 알림이 맡으니, 추천 알림은 고르지 않은 작품의 글에서만 고른다.
   노출 · 열람 · 카드 넘김 · '그만 볼래요' · 전에 알림이 간 글은 뺀다.
 - 알림함에는 새 글 · 추천을 종류별로 최신 3개만 보여 준다. 밀려난 알림은 지우지 않는다
   (같은 글을 다시 안 보내는 기준이고, A/B 집계와 알림 효과 확인에도 쓴다).
@@ -23,13 +26,16 @@ from sqlalchemy import and_, exists, func, or_, select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.models import (
     Content,
     ContentEntityLink,
     ContentReaction,
     ContentSource,
+    DebateNotification,
     Entity,
+    Notice,
     Notification,
     NotificationSetting,
     RecommendationItem,
@@ -56,6 +62,7 @@ WELCOME_BODY = "me;nu에 오신 걸 환영해요. 서비스 운영에 관한 공
 NOTICE = "system_notice"
 NEW_POST = "topic_new_post"
 RECOMMENDED = "recommended_post"
+DEBATE_OPENED = "debate_opened"
 INBOX_TYPES = (NOTICE, NEW_POST, RECOMMENDED)
 POST_TYPES = (NEW_POST, RECOMMENDED)
 NEW_POST_WINDOW = timedelta(hours=48)
@@ -92,6 +99,11 @@ async def _ensure_welcome_notice(db: AsyncSession, user_id: int) -> None:
     await db.commit()
 
 
+def _inbox_types() -> tuple[str, ...]:
+    """토론 개설 알림(debate_opened)은 토론 기능이 켜진 서버에서만 알림함에 보인다."""
+    return (*INBOX_TYPES, DEBATE_OPENED) if settings.debate_enabled else INBOX_TYPES
+
+
 def _on_display(user_id: int):
     """공지는 전부, 글 알림은 종류별 최신 SHOWN_PER_POST_TYPE 개만 알림함에 보인다."""
     ranked = (
@@ -125,14 +137,19 @@ async def list_notifications(
     else:
         await _ensure_welcome_notice(db, user_id)
 
-    statement = (
-        select(Notification, Content.image_url)
-        .outerjoin(Content, Content.content_id == Notification.content_id)
-        .where(
-            Notification.user_id == user_id,
-            Notification.notification_type.in_(INBOX_TYPES),
-            _on_display(user_id),
-        )
+    # 토론 기능이 꺼진 서버는 토론 표를 읽지 않는다 (그 서버 DB에 토론 migration이 없을 수 있다).
+    debate_enabled = settings.debate_enabled
+    statement = select(
+        Notification, Content.image_url, Notice.body, *([DebateNotification.debate_id] if debate_enabled else [])
+    )
+    statement = statement.outerjoin(Content, Content.content_id == Notification.content_id)
+    statement = statement.outerjoin(Notice, and_(Notice.notice_id == Notification.notice_id, Notice.status == "published"))
+    if debate_enabled:
+        statement = statement.outerjoin(DebateNotification, DebateNotification.notification_id == Notification.notification_id)
+    statement = statement.where(
+        Notification.user_id == user_id,
+        Notification.notification_type.in_(_inbox_types()),
+        _on_display(user_id),
     )
     if unread_only:
         statement = statement.where(Notification.read_at.is_(None))
@@ -159,15 +176,19 @@ async def list_notifications(
                 notification_id=n.notification_id,
                 type=n.notification_type,
                 title=n.title,
-                body=n.body,
+                # The stored delivery is a short preview. A published linked
+                # notice supplies its complete immutable body to this owner's
+                # existing inbox detail UI; old standalone notices still work.
+                body=notice_body if notice_body is not None else n.body,
                 topic_id=n.topic_id,
                 content_id=n.content_id,
                 image_url=image_url,
+                debate_id=debate[0] if debate else None,
                 is_read=n.read_at is not None,
                 read_at=n.read_at,
                 created_at=n.created_at,
             )
-            for n, image_url in page
+            for n, image_url, notice_body, *debate in page
         ],
         next_cursor=next_cursor,
     )
@@ -178,7 +199,7 @@ async def unread_count(db: AsyncSession, user_id: int) -> UnreadCountResponse:
     count = await db.scalar(
         select(func.count()).select_from(Notification).where(
             Notification.user_id == user_id,
-            Notification.notification_type.in_(INBOX_TYPES),
+            Notification.notification_type.in_(_inbox_types()),
             _on_display(user_id),
             Notification.read_at.is_(None),
         )
@@ -191,7 +212,7 @@ async def mark_read(db: AsyncSession, user_id: int, notification_id: int) -> Not
         select(Notification).where(
             Notification.notification_id == notification_id,
             Notification.user_id == user_id,
-            Notification.notification_type.in_(INBOX_TYPES),
+            Notification.notification_type.in_(_inbox_types()),
         )
     )
     if notification is None:
@@ -366,7 +387,8 @@ async def _new_post_candidates(db: AsyncSession, since: datetime, until: datetim
 
 
 async def _recommended_candidates(db: AsyncSession, today: date) -> list[RecommendedPost]:
-    """오늘 추천에서 알림으로 보낼 수 있는 글. 홈과 같이 탭마다 가장 나중에 계산한 추천만 본다."""
+    """오늘 추천에서 알림으로 보낼 수 있는 글. 홈과 같이 탭마다 가장 나중에 계산한 추천만 본다.
+    대표 작품이 그 회원이 고른 작품인 글은 뺀다 (새 글 알림과 역할을 나눈다)."""
     rounds = (
         select(
             RecommendationRound.tap_id,
@@ -396,6 +418,7 @@ async def _recommended_candidates(db: AsyncSession, today: date) -> list[Recomme
             RecommendationItem.rank >= RECOMMENDED_FROM_RANK,
             public_content_condition(),
             exists().where(ContentSource.content_id == Content.content_id),
+            ~exists().where(TapEntity.tap_id == Tap.tap_id, TapEntity.entity_id == ContentEntityLink.entity_id),
             ~_acted_on(SEEN_EVENTS),
             ~_disliked(),
             ~_already_notified(),

@@ -1,4 +1,4 @@
-"""Unrestricted operational reads, for a future server-authorized admin boundary.
+"""Operational reads behind the server-authorized administrator boundary.
 
 Do not wire these into public/consumer routes. The review mode includes only
 needs_review Content rows; the default still reads all stored Content rows.

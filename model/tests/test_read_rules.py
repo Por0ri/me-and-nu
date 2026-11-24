@@ -16,7 +16,7 @@ def learn(events, cfg=SERVICE, day=100, state=None):
     if state is None:
         empty = np.zeros(0, dtype=np.int64)
         h = ar.History(empty, empty, np.zeros(0, dtype=np.int8), np.zeros(0, dtype=np.int8), np.zeros(0, dtype=np.int8))
-        state = v1.UserState(h, [], [], [], 0, 4, 4)
+        state = v1.UserState(h, [], [], {}, 0, 4, 4)
         state.work_aff = np.zeros(4, dtype=np.float32)
     v1.learn(state, events, FEED, cfg, np.arange(4), day=day)
     return state
@@ -98,6 +98,34 @@ class LoadVisitsTests(unittest.TestCase):
         visit = daily.load_visits(Cursor(), [1], {501: 0})[1][0]
         self.assertEqual(visit.day, date(2026, 11, 11).toordinal() - 719163)
         self.assertEqual([e for e in visit if e[0] in ("swipe", "read")], [("swipe", 0, (4, 6)), ("read", 0, 0.9)])
+
+
+class RestTests(unittest.TestCase):
+    """지나친 글은 하루 쉬고 다시 자리 후보, 오늘 나온 건 안 셈 (11/19, EXPERIMENTS 부록 A #44)"""
+
+    def test_learn_keeps_the_last_two_days_a_post_was_shown(self):
+        s = learn([("impression", 0, None)], day=100)
+        learn([("impression", 0, None), ("impression", 1, None)], day=102, state=s)
+        learn([("impression", 0, None)], day=102, state=s)        # 같은 날 또 나와도 그대로
+        self.assertEqual([s.seen_last[0], s.seen_prev[0]], [102, 100])
+        self.assertEqual([s.seen_last[1], s.seen_prev[1]], [102, -np.inf])
+
+    def test_a_post_shown_yesterday_rests_today_and_returns_the_next_day(self):
+        s = learn([("impression", 0, None)], day=100)
+        self.assertEqual(service.slot_ready(s, 101).tolist(), [False, True, True, True])
+        self.assertEqual(service.slot_ready(s, 102).tolist(), [True, True, True, True])
+
+    def test_a_post_shown_only_today_keeps_its_slot(self):      # 하루 중간 다시 계산 (취향 저장)
+        s = learn([("impression", 0, None)], day=100)
+        self.assertTrue(service.slot_ready(s, 100)[0])
+        learn([("impression", 0, None)], day=101, state=s)
+        self.assertFalse(service.slot_ready(s, 101)[0])         # 어제도 나왔으면 오늘 나온 것과 상관없이 쉼
+
+    def test_posts_never_shown_rank_above_returning_ones(self):
+        s = learn([("impression", 0, None)], day=100)
+        order = v1.rank_feed(s, FEED, 102, SERVICE, k=4).tolist()
+        self.assertTrue(service.slot_ready(s, 102)[0])          # 돌아왔지만
+        self.assertEqual(order[-1], 0)                          # 본 날 감점 · 보고 지나침 때문에 안 나온 글 뒤
 
 
 if __name__ == "__main__":

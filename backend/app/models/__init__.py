@@ -1,3 +1,4 @@
+from app.models.admin import AdminAccount, AdminActionLog
 from app.models.agent import (
     AgentRun,
     AgentRunSource,
@@ -21,7 +22,12 @@ from app.models.chat import (
 )
 from app.models.content import Content, ContentSource, Draft
 from app.models.content_slide import ContentSlide
+from app.models.debate import (
+    Debate, DebateMember, DebateMessage, DebateNotification, DebateSearchLog, DebateSide, DebateVote,
+    DebateVoteTicket, DebateWork,
+)
 from app.models.notification import Notification
+from app.models.notice import Notice
 from app.models.oauth_attempt import OAuthAttempt
 from app.models.onboarding_answers import OnboardingAnswersRecord
 from app.models.onboarding_catalog import (
@@ -30,7 +36,7 @@ from app.models.onboarding_catalog import (
 from app.models.recommendation import (
     ContentEntityLink, RecommendationItem, RecommendationRound, SearchLog, UserEvent,
 )
-from app.models.report import ContentReport, Inquiry
+from app.models.report import ContentReport, Inquiry, InquiryAnswer
 from app.models.user import UserAccount
 from app.models.v1 import (
     AuthSession,
@@ -45,6 +51,8 @@ from app.models.v1 import (
 )
 
 __all__ = [
+    "AdminAccount",
+    "AdminActionLog",
     "AgentRun",
     "AgentRunSource",
     "AgentRunStep",
@@ -60,6 +68,15 @@ __all__ = [
     "ContentSlide",
     "ContentTag",
     "CreatorChannel",
+    "Debate",
+    "DebateMessage",
+    "DebateNotification",
+    "DebateSearchLog",
+    "DebateMember",
+    "DebateSide",
+    "DebateVote",
+    "DebateVoteTicket",
+    "DebateWork",
     "Draft",
     "JudgmentLog",
     "LongTermMemory",
@@ -84,8 +101,10 @@ __all__ = [
     "Topic",
     "TopicCluster",
     "Notification",
+    "Notice",
     "ContentReport",
     "Inquiry",
+    "InquiryAnswer",
     "Tap",
     "TapTopic",
     "UserAccount",

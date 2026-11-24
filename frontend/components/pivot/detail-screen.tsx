@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { orderedHomeSlides } from "@/lib/pivot/home";
+import { useEffect, useRef, useState } from "react";
 import type { DetailArticle, DetailState } from "@/lib/pivot/detail";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
 import { dismissActionNotice } from "@/lib/pivot/action-notice";
@@ -23,49 +22,6 @@ function DetailImage({ article }: { article: DetailArticle }) {
     ? <img className={styles.cover} src={article.image.src} alt={article.image.alt} width={327} height={408}
         fetchPriority="high" onError={() => setFailed(true)} />
     : <div className={styles.coverPlaceholder} role="img" aria-label="대표 이미지 준비 중">대표 이미지 준비 중</div>;
-}
-
-/** Compare exact text units only; preserve the original strings for display. */
-export function DetailSlideText({ article, coverTextVisible = false }: { article: DetailArticle; coverTextVisible?: boolean }) {
-  const slides = orderedHomeSlides(article.slides ?? []);
-  const normalize = (text: string) => text.replace(/\s+/gu, " ").trim();
-  const seen = new Set(article.sections.flatMap(section => section.paragraphs).map(normalize));
-  const cover = slides[0];
-  // Only exclude the cover after the browser confirms its entire caption fits.
-  // Merely having an overlay box does not prove the original is readable.
-  if (coverTextVisible && cover?.layout?.textOverlayBox && cover.titleLines) {
-    for (const text of [...cover.titleLines, cover.titleLines.join(" "), ...(cover.bodySentences ?? [])]) seen.add(normalize(text));
-  } else if (coverTextVisible && cover?.description) {
-    seen.add(normalize(cover.description));
-  }
-  const takeNew = (texts: readonly string[]) => texts.filter(text => {
-    const key = normalize(text);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  const additions = slides.flatMap((slide, index) => {
-    // A title may arrive as one line or several lines containing the same text.
-    const titleKey = normalize(slide.titleLines?.join(" ") ?? "");
-    const titleLines = seen.has(titleKey) ? [] : takeNew(slide.titleLines ?? []);
-    if (titleKey) seen.add(titleKey);
-    const bodySentences = takeNew([
-      ...(slide.bodySentences ?? (slide.description ? [slide.description] : [])),
-      ...(!(slide.layout?.textOverlayBox && slide.titleLines) && slide.description ? [slide.description] : []),
-    ]);
-    return titleLines.length || bodySentences.length
-      ? [{ id: slide.id, page: slide.page ?? index + 1, titleLines, bodySentences }] : [];
-  });
-  if (!additions.length) return null;
-  return <section className={styles.slideTranscript} aria-label="슬라이드 추가 원문" data-detail-slide-text="">
-    <h2>슬라이드 추가 원문</h2>
-    {additions.map(slide => <section key={slide.id} className={styles.section}
-      aria-label={slide.page + "번 슬라이드 추가 원문"} data-detail-slide-page={slide.page}>
-      <p className={styles.slideLabel}>슬라이드 {slide.page}</p>
-      {slide.titleLines.length ? <h3>{slide.titleLines.join(" ")}</h3> : null}
-      {slide.bodySentences.map((sentence, index) => <p key={index}>{sentence}</p>)}
-    </section>)}
-  </section>;
 }
 
 export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved, onHome, fromSaved = false, fromActivity = false, bookmarks, reportSource }: {
@@ -96,10 +52,6 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
     if (window.history.state?.pivotReportDialog) window.history.back();
     else setReportOpen(false);
   }
-  const [coverText, setCoverText] = useState<{ article: DetailArticle | null; visible: boolean } | null>(null);
-  const onCoverTextVisibilityChange = useCallback((visible: boolean) => {
-    setCoverText(current => current?.article === readyArticle && current.visible === visible ? current : { article: readyArticle, visible });
-  }, [readyArticle]);
   const interactions = useInteractions();
   const [noticeState, setNoticeState] = useState({ message: "" });
   const notice = noticeState.message;
@@ -182,8 +134,7 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
     <h1 ref={heading} tabIndex={-1} className={homeStyles.srOnly}>{state.status === "ready" ? [state.article.work, state.article.title].filter(Boolean).join(" · ") : "콘텐츠 상세"}</h1>
     {state.status === "ready" ? <article ref={article} aria-label={state.article.title} data-detail-content={state.article.contentId} data-detail-post={state.article.postId}>
       {!demo && state.article.slides?.length ? <ContentCover key={state.article.contentId}
-        slides={state.article.slides} title={state.article.title} onSlideChange={(index) => trackSlide(index, state.article.slides!.length)}
-        onCoverTextVisibilityChange={onCoverTextVisibilityChange} /> : <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />}
+        slides={state.article.slides} title={state.article.title} onSlideChange={(index) => trackSlide(index, state.article.slides!.length)} /> : <DetailImage key={state.article.image?.src ?? "missing"} article={state.article} />}
       <div className={styles.body}>
         {state.article.sections.map((section, index) => <section key={index} className={styles.section}>
           {section.heading ? <h2>{section.heading}</h2> : null}
@@ -192,7 +143,6 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
         {!demo && state.article.displayMode === "link_excerpt" && state.article.sourceUrl ? <p className={styles.sourceLink}>
           <a href={state.article.sourceUrl} target="_blank" rel="noopener noreferrer">원문에서 계속 읽기</a>
         </p> : null}
-        {!demo ? <DetailSlideText article={state.article} coverTextVisible={coverText?.article === state.article && coverText.visible} /> : null}
         {!demo ? <footer data-detail-publication="">
         <ContentMetadata productionType={state.article.productionType} notices={state.article.notices}
           publishedAt={state.article.publishedAt} publisher={state.article.publisher} />
@@ -222,8 +172,8 @@ export function PivotDetailScreen({ state, demo, onBack, onRetry, onMy, onSaved,
       {state.status !== "loading" ? <button type="button" onClick={onBack}>{fromActivity ? "내 활동으로 돌아가기" : fromSaved ? "저장 목록으로 돌아가기" : "Home으로 돌아가기"}</button> : null}
     </section>}
     {/* Keep shared navigation consistent with Home and My Page. */}
-    {/* AI 바는 홈과 같은 부품(chat-dock): 펼치면 메뉴 알약과 같은 높이의 바가 메뉴를 덮는다. */}
-    <div inert={aiExpanded} className={chatStyles.navFade} data-ai-open={aiExpanded || undefined}><HomeNavigation active={fromActivity ? "my" : fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI adjacentAI /></div>
+    {/* AI 바는 홈과 같은 부품(chat-dock)이고 하단바 바로 위에 뜬다. 펼쳐도 하단바는 가리지 않는다. */}
+    <HomeNavigation active={fromActivity ? "my" : fromSaved ? "saved" : "home"} onHome={onHome ?? onBack} onMy={onMy} onSaved={onSaved} hideAI />
     <div className={chatStyles.dockLayer}>
       <ChatDock expanded={aiExpanded} onExpandedChange={setAiExpanded} label="AI 질문 안내" offFace="/pivot/detail/ai.svg"
         prompt="이 콘텐츠에서 어떤 점이 궁금하세요?" opensDialog={!!chatPlace}

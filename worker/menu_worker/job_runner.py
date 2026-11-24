@@ -1,5 +1,6 @@
 """DB claims fence delivery; interrupted generation is never restarted here."""
 import os
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from threading import Event, Thread
 import time
@@ -8,9 +9,15 @@ from menu_worker.job_artifacts import ArtifactError, FakeAgentError, generate_an
 from menu_worker.anime_catalog import AnimeInputError, generation_article_key
 from menu_worker.job_contract import INPUT_FIELDS, JobInputError, job_input_hash, validate_job_request
 from menu_worker.real_generation import RealGenerationError, generate_real, preflight_real, validate_real_artifacts
+from menu_worker.cover_history import build_snapshot, preflight_snapshot
+from menu_worker.job_store import JobStoreError
 
 
 class LostClaim(RuntimeError):
+    pass
+
+
+class HistoryAdmissionUnavailable(RuntimeError):
     pass
 
 
@@ -46,6 +53,25 @@ class Lease:
 
 def run_job(store, root: Path, job_id: str, task_id: str | None = None, *, recover=False,
             expected_kind="fake", retry_failures=False) -> dict:
+    guard = store.generation_history_guard() if expected_kind == "anime_generate" else nullcontext(lambda: None)
+    with ExitStack() as stack:
+        try:
+            history_check = stack.enter_context(guard)
+            busy = history_check is None or (expected_kind == "anime_generate" and
+                                              store.generation_history_busy(exclude_job_id=job_id))
+            if busy:
+                # ACK this receipt only after making it eligible for durable dispatch.
+                if task_id is not None:
+                    store.requeue_delivery(job_id, task_id, expected_kind=expected_kind)
+                return {"job_id": str(job_id), "processed": False, "reason": "generation_history_busy"}
+        except Exception:
+            # Only admission is covered here; no job has been claimed yet.
+            raise HistoryAdmissionUnavailable from None
+        return _run_claimed(store, root, job_id, task_id, recover=recover, expected_kind=expected_kind,
+                            retry_failures=retry_failures, history_check=history_check)
+
+
+def _run_claimed(store, root, job_id, task_id, *, recover, expected_kind, retry_failures, history_check):
     claim = store.claim_recovery if recover else store.claim
     job = claim(job_id, task_id=task_id, lease_seconds=30, expected_kind=expected_kind)
     if job is None:
@@ -53,24 +79,32 @@ def run_job(store, root: Path, job_id: str, task_id: str | None = None, *, recov
     retry_delay = 0
     while True:
         report, next_job = _run_attempt(store, root, job, recover=recover, expected_kind=expected_kind,
-                                        retry_failures=retry_failures, retry_delay=retry_delay)
+                                        retry_failures=retry_failures, retry_delay=retry_delay,
+                                        history_check=history_check)
         if next_job is None:
             return report
         job = next_job
         retry_delay = min(job["attempt_count"] - 1, 2)
 
 
-def _run_attempt(store, root, job, *, recover, expected_kind, retry_failures, retry_delay):
+def _run_attempt(store, root, job, *, recover, expected_kind, retry_failures, retry_delay, history_check):
     job_id = job["job_id"]
     token = job["claim_token"]
     live = expected_kind == "anime_generate"
     generation_started = recover
     next_job = None
     with Lease(store, job) as lease:
+        def pulse():
+            lease.ensure()
+            try:
+                history_check()
+            except Exception:
+                raise LostClaim("Generation history lock was lost") from None
+
         try:
             if retry_delay:
                 time.sleep(retry_delay)
-                lease.ensure()
+                pulse()
             if not recover:
                 if expected_kind in {"anime", "anime_generate"}:
                     fields = {key: job[key] for key in INPUT_FIELDS}
@@ -86,14 +120,24 @@ def _run_attempt(store, root, job, *, recover, expected_kind, retry_failures, re
                         raise JobInputError("Stored input identity mismatch", "input_identity_mismatch")
                 if live:
                     preflight_real()
+                    try:
+                        history = store.cover_history_sources(exclude_job_id=job_id)
+                    except JobStoreError as error:
+                        code = str(error) if str(error) in {"cover_history_invalid", "cover_history_unavailable"} else "cover_history_unavailable"
+                        raise RealGenerationError(code, before_launch=True) from None
+                    snapshot = build_snapshot(root, job, history)
+                    preflight_snapshot(snapshot, job)
+                    job = {**job, "_cover_history_snapshot": snapshot}
+                pulse()
                 if not store.mark_generation_started(job_id, token, expected_kind=expected_kind):
                     raise LostClaim("Job claim was lost")
                 generation_started = True
                 generate = {"anime_generate": generate_real, "anime": generate_anime_probe, "fake": generate_fake}[expected_kind]
-                generate(root, job, pulse=lease.ensure)
-            lease.ensure()
+                generate(root, job, pulse=pulse)
+            pulse()
             validate = validate_real_artifacts if live else validate_artifacts
             evidence = validate(root, job)
+            pulse()
             completed = store.complete(job_id, token, execution_status="succeeded", expected_kind=expected_kind, **evidence)
         except (JobInputError, AnimeInputError) as error:
             completed = store.complete(job_id, token, execution_status="failed",
@@ -132,6 +176,12 @@ def execute_delivery(job_id, task_id, worker_name, *, expected_kind):
         root = Path(os.environ["CONTENT_JOB_ARTIFACT_ROOT"])
         result = run_job(JobStore(), root, job_id, task_id, expected_kind=expected_kind, retry_failures=True)
         return {**result, "worker": worker_name, "worker_kind": expected_kind}
+    except HistoryAdmissionUnavailable:
+        # Admission failed before claim; an ordinary failed task would ACK the
+        # only receipt while last_dispatched_at still keeps it out of dispatch.
+        from celery.exceptions import Reject
+        time.sleep(1)
+        raise Reject("Generation history temporarily unavailable", requeue=True) from None
     except Exception:
         # DB errors can contain credentials. The dispatcher reconciles expired claims.
         raise RuntimeError("Content job stopped; inspect its durable job status") from None

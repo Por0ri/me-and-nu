@@ -77,6 +77,31 @@ test('page exit sends keepalive with the pinned owner token without a cancellabl
  const s=setup({verifySession:async()=>{throw Error('GET should not run on pagehide');}});s.queue.record(target,'open',{surface:'detail',activeMs:1200});await s.queue.flush(true);
  assert.equal(s.calls.length,1);assert.equal(s.calls[0].init.headers['X-CSRF-Token'],'csrf-12');assert.equal(s.calls[0].init.keepalive,true);s.queue.stop();
 });
+// 앱 안에서 홈을 떠날 때(TALK 등): 남은 기록을 버리지 않고 보낸 뒤 닫는다 (2026-11-23)
+test('leaving Home inside the app hands every queued event to keepalive posts that stop() cannot abort',async()=>{
+ const s=setup({verifySession:async()=>{throw Error('GET should not run when leaving');}});
+ for(let i=0;i<30;i++)s.queue.record(target,'impression',{surface:'home_feed',viewMode:'card',visibleMs:1500});
+ s.queue.leave();await new Promise(setImmediate);
+ assert.deepEqual(s.calls.map(call=>call.events.length),[25,5]);
+ assert.ok(s.calls.every(call=>call.init.keepalive===true&&call.init.headers['X-CSRF-Token']==='csrf-12'&&call.init.signal===undefined));
+ assert.equal(new Set(s.calls.flatMap(call=>call.events.map(event=>event.clientEventId))).size,30);
+ assert.equal(s.queue.record(target,'open',{surface:'detail'}),false);assert.equal(s.timers.size,0);
+});
+test('leaving resends a batch that was in flight with the same IDs while the regular request is still aborted',async()=>{
+ let signal;const posted=[];
+ const s=setup({post:(events,init)=>{posted.push({events:JSON.parse(JSON.stringify(events)),init});
+  if(!init.keepalive){signal=init.signal;return new Promise(()=>{});}return Promise.resolve({saved:events.length,duplicated:0,rejected:0});}});
+ s.queue.record(target,'open',{surface:'detail',activeMs:9000});void s.queue.flush();await new Promise(setImmediate);
+ assert.equal(posted.length,1);s.queue.leave();await new Promise(setImmediate);
+ assert.equal(signal.aborted,true);
+ const handoff=posted.filter(call=>call.init.keepalive);
+ assert.equal(handoff.length,1);assert.equal(handoff[0].events[0].clientEventId,posted[0].events[0].clientEventId);
+});
+test('leaving after the account changed sends nothing and keeps the queue closed',async()=>{
+ const s=setup();s.queue.record(target,'open',{surface:'detail'});s.setCurrent(session(13));
+ s.queue.leave();await new Promise(setImmediate);assert.equal(s.calls.length,0);
+ s.setCurrent(session(12));assert.equal(s.queue.record(target,'open',{surface:'detail'}),false);
+});
 test('an updated non-recommended feed card clears old recommendation metadata',()=>{
  const s=setup();s.queue.remember(target);s.queue.remember({...target,recommendationId:undefined,recommendationReason:undefined});assert.equal(s.queue.metadata(target).recommendationId,undefined);s.queue.stop();
 });

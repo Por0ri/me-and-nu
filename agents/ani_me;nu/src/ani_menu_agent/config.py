@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     duplicate_baseline_path: str | None = Field(
         default=None, validation_alias="ANI_MENU_DUPLICATE_BASELINE_PATH"
     )
+    cover_history_file: str | None = Field(default=None, validation_alias="ANI_MENU_COVER_HISTORY_FILE")
+    cover_history_sha256: str | None = Field(default=None, validation_alias="ANI_MENU_COVER_HISTORY_SHA256")
+    cover_history_job_id: str | None = Field(default=None, validation_alias="ANI_MENU_COVER_HISTORY_JOB_ID")
+    cover_history_attempt_id: str | None = Field(default=None, validation_alias="ANI_MENU_COVER_HISTORY_ATTEMPT_ID")
     openai_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("OPENAI_API_KEY", "LLM_KEY"),

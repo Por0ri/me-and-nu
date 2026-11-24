@@ -31,6 +31,7 @@ def seal_ready_attempt(root, job):
         images[page] = image.getvalue()
         (card_dir / f"card_{page:02d}.png").write_bytes(images[page])
         cards.append({"page": page, "rendered_image_key": sha256(images[page]),
+                      "visual_mode": "editorial_graphic",
                       "role": "cover" if page == 1 else "ending", "title_lines": [f"Test page {page}"],
                       "layout": {"image_box": box, "copy_box": box, "text_overlay_box": box}, "fact_ids": ["f1"]})
     source_id = job["source_id"]

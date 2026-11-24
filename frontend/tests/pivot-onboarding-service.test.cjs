@@ -10,8 +10,8 @@ function load(relative, dependencies = {}) {
   const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', relative), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  vm.runInNewContext(code, { module:mod, exports:mod.exports, URL, Date, process:{env:{}},
-    require(name) { if (!(name in dependencies)) throw Error('Unexpected dependency: '+name); return dependencies[name]; },
+  vm.runInNewContext(code, { module:mod, exports:mod.exports, URL, Date, AbortController, setTimeout, clearTimeout, process:{env:{}},
+    require(name) { if (name === '../request-deadline') return load('lib/request-deadline.ts'); if (!(name in dependencies)) throw Error('Unexpected dependency: '+name); return dependencies[name]; },
   });
   return mod.exports;
 }

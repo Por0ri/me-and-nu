@@ -3351,6 +3351,7 @@
 112930,40646,1812,MOVIE,2020,,Yes ka No ka Hanbun ka,"Yes, No, or Maybe?",イエスかノーか半分か,21503
 21741,33023,1813,TV,2016,,Touken Ranbu: Hanamaru,Touken Ranbu - Hanamaru,刀剣乱舞-花丸-,21460
 350,350,1814,TV,1999,꼬마마법사 레미 시리즈,Ojamajo Doremi,Magical DoReMi,おジャ魔女どれみ,21440
+108630,39585,1814,MOVIE,2020,,Majo Minarai wo Sagashite,,魔女見習いをさがして,5736
 149073,51781,1815,ONA,2022,,Boku no Hero Academia 5 (ONA),My Hero Academia Season 5 OVA,僕のヒーローアカデミア 5 (ONA),21435
 178022,59055,1816,TV,2025,"꽃은 피어난다, 수라와 같이","Hana wa Saku, Shura no Gotoku",Flower and Asura,花は咲く、修羅の如く,21434
 173388,57845,1817,TV_SHORT,2024,,Elf-san wa Yaserarenai.,Plus-Sized Elf,エルフさんは痩せられない。,21375
@@ -4171,6 +4172,7 @@
 209032,63667,2541,TV,2026,,Mahou no Shimai LuluttoLilly Part 2,Magical Sisters LuluttoLilly Part 2,魔法の姉妹ルルットリリィ 第2クール,1512
 186313,60947,2542,TV,2025,,Nmeneko,,ンめねこ,430
 193883,61765,2543,TV,2025,,Chibi Godzilla no Gyakushuu 3,Chibi Godzilla Raids Again Season 3,ちびゴジラの逆襲(第3期),266
+170998,57325,2544,TV,2024,,Ramen Aka Neko,Ramen Akaneko,ラーメン赤猫,7021
 185699,60555,2544,TV,2027,,Ramen Aka Neko 2nd Season,,ラーメン赤猫 第2期,1169
 206523,63352,2545,TV,2026,,Onegai AiPri,,おねがいアイプリ,853
 184470,61092,2546,TV,2025,,Himitsu no AiPri: Ring-hen,,ひみつのアイプリ リング編,1119
@@ -4196,4 +4198,91 @@
 209709,63901,2565,TV,2026,,Sirotan,,しろたん,347
 213298,64430,2566,TV,2026,,Yuruyuru Zukan,,ゆるゆる図鑑,191
 205116,63219,2567,TV,2026,,Aware! Meisaku-kun (2026),,あはれ！名作くん (2026),107
+155526,52935,2568,TV_SHORT,2022,,Punirunes,Punirunes,ぷにるんず,424
 216860,63823,2568,TV,2026,,Punirunes Puni 4,,ぷにるんず ぷに４,62
+17249,17249,2569,TV,2013,,Pretty Rhythm: Rainbow Live,,プリティーリズム・レインボーライブ,4589
+103118,38006,2570,TV,2022,,Renmei Kuugun Koukuu Mahou Ongakutai: Luminous Witches,League of Nations Air Force Aviation Magic Band Luminous Witches,連盟空軍航空魔法音楽隊ルミナスウィッチーズ,9467
+146678,51415,2571,TV,2023,,Opus.COLORs,Opus.COLORs,Opus.COLORs（オーパスカラーズ）,3169
+130442,48517,2572,ONA,2021,,Dosukoi Sushi-Zumou,Sushi Sumo,どすこいすしずもう,395
+169778,56553,2573,MOVIE,2024,,Kurayukaba,Kurayukaba,クラユカバ,5412
+162889,54758,2574,TV,2024,,The iDOLM@STER: Shiny Colors,THE iDOLM@STER SHINY COLORS,アイドルマスター シャイニーカラーズ,5653
+176319,58522,2575,MOVIE,2024,,SutoPuri: Hajimari no Monogatari - Strawberry School Festival!!!,Strawberry Prince the Movie,すとぷり はじまりの物語 ～Strawberry School Festival!!!～,1134
+193699,61758,2576,TV,2027,,Akuyaku Reijou no Naka no Hito,,悪役令嬢の中の人,6236
+175868,58357,2577,TV,2024,,Tensui no Sakuna-hime,Sakuna: Of Rice and Ruin,天穂のサクナヒメ,9613
+145001,50999,2578,TV,2022,,Extreme Hearts,Extreme Hearts,Extreme Hearts,6164
+176245,58491,2579,MOVIE,2024,,Ganbatte Ikimasshoi,,がんばっていきまっしょい,3291
+157883,53716,2580,TV,2023,,Hirogaru Sky! Precure,Soaring Sky! Precure,ひろがるスカイ！プリキュア,7566
+1199,1199,2581,TV,1993,,Nintama Rantarou,,忍たま乱太郎,2256
+202386,62933,2582,TV_SHORT,2026,,Shou 3 Ashibe QQ Goma-chan,,小3アシベ QQゴマちゃん,136
+21288,30757,2583,ONA,2015,,Monster Strike,Monster Strike the Animation,モンスターストライク,6632
+157693,53680,2584,ONA,2022,,Pole Princess!!,,ポールプリンセス!!,2928
+202429,62973,2585,MOVIE,2026,,Wareware wa Uchuujin,,我々は宇宙人,3789
+4459,4459,2586,TV_SHORT,1998,,Ojarumaru,Prince Mackaroo,おじゃる丸,692
+141062,50284,2587,TV,2023,,TECHNOROID: OVERMIND,Technoroid OVERMIND,テクノロイド オーバーマインド,6560
+113363,40717,2588,ONA,2021,,KAIJU DECODE,,KAIJU DECODE,966
+188394,61272,2589,ONA,2025,,PetitCure: Precure Fairies,,ぷちきゅあ～Precure Fairies～,977
+198690,60805,2590,MOVIE,2024,,Amedama,Magic Candies,あめだま,118
+218040,65147,2591,TV,2027,,Monster no Niku wo Kutteitara Oui ni Tsuita Ken,,モンスターの肉を食っていたら王位に就いた件,786
+174913,58137,2592,TV,2024,,Kagaku×Bouken Survival!,,科学×冒険サバイバル！,802
+175513,58680,2593,ONA,2024,,Panda Narikiri Taisou,PANDA NARIKIRI TAISOU,パンダなりきりたいそう,74
+169364,54847,2594,TV_SHORT,2023,,Ikimono-san,,いきものさん,267
+171030,57390,2595,TV,2024,,Wonderful Precure!,Wonderful Precure!,わんだふるぷりきゅあ！,5896
+1301,1301,2596,MOVIE,1979,,Ginga Tetsudou 999 (Movie),Galaxy Express 999 (Movie),銀河鉄道999,8237
+159560,54040,2597,TV,2023,,Tousouchuu: The Great Mission,,逃走中 グレートミッション,2488
+142080,50281,2598,TV,2022,,Delicious Party♡Precure,Delicious Party Precure,デリシャスパーティ♡プリキュア,6196
+112748,40610,2599,TV,2020,,Healin' Good♥Precure,Healin' Good Precure,ヒーリングっど♥プリキュア,6884
+112612,40587,2599,MOVIE,2020,,Precure Miracle Leap: Minna to no Fushigi na Ichinichi,,映画プリキュアミラクルリープ みんなとの不思議な1日,1992
+126905,44191,2600,TV,2021,,Tropical-Rouge! Precure,Tropical-Rouge! Precure,トロピカル~ジュ！プリキュア,8027
+116069,41307,2601,MOVIE,2021,,Tokyo 7th Sisters: Bokura wa Aozora ni Naru,,Tokyo 7th シスターズ -僕らは青空になる-,2323
+100790,35656,2602,TV,2018,,Oshiri Tantei,,おしりたんてい,638
+142806,54346,2602,MOVIE,2022,,Oshiri Tantei: SHIRIARTY,,映画おしりたんてい シリアーティ,146
+186198,59784,2602,SPECIAL,2023,,Oshiri Tantei: Cosmic Front,,おしりたんてい コズミックフロント,64
+113654,,2603,ONA,2019,,Bakutsuri Hunters,,爆釣ハンターズ,117
+105857,38578,2604,TV,2019,,Star☆Twinkle Precure,,スター☆トゥインクルプリキュア,7488
+110642,40180,2605,SPECIAL,2019,,Jurassic!,Jurassic!,ジュラしっく！,1263
+4513,4513,2606,MOVIE,1958,,Hakujaden,Panda and the Magic Serpent,白蛇伝,2699
+102927,37117,2607,TV,2018,,Bakutsuri Bar Hunter,,爆釣バーハンター,537
+100661,36593,2608,TV,2018,,HUGtto! Precure,,HUGっと！プリキュア,9436
+626,626,2609,TV,1998,,Mamotte Shugogetten!,,まもって守護月天！,3093
+184756,61120,2610,MOVIE,2025,,KING OF PRISM -Your Endless Call- Minna Kirameke! Prism☆Tours,,KING OF PRISM-Your Endless Call-み～んなきらめけ！プリズム☆ツアーズ,451
+593,593,2611,TV,1999,,Mugen no Ryvius,Infinite Ryvius,無限のリヴァイアス,13511
+157765,53698,2612,TV,2023,,World Dai Star,Stella of the Theater: World Dai Star,ワールドダイスター,8486
+21648,32717,2613,TV,2016,,Aikatsu Stars!,,アイカツスターズ！,7250
+2004,2004,2614,TV,2002,,Hanada Shounen-shi,,花田少年史,5338
+2772,2772,2615,TV,2007,,Jyuushin Enbu: HERO TALES,Hero Tales,獣神演武 - HERO TALES -,5173
+169930,56840,2616,ONA,2024,,T・P Bon,T・P BON,T・Pぼん,4735
+97819,31402,2617,ONA,2016,,Soul Worker: Your Destiny Awaits,Soul Worker: Your Destiny Awaits,ソウルワーカー,1840
+215791,64844,2618,TV,2027,,Maiden Blood,,Maiden Blood,1830
+142274,50418,2619,TV,2022,,Ninjala,Ninjala the Animation,ニンジャラ,1429
+8017,8017,2620,OVA,2010,,Soukou Kihei Votoms: Genei-hen,Armored Trooper Votoms: Genei ~ Phantom Arc,装甲騎兵ボトムズ 幻影篇,1420
+118124,41480,2621,ONA,2018,,Destiny Child,,デスティニーチャイルド,728
+4013,4013,2622,TV,1976,,Paul no Miracle Daisakusen,Paul's Miracle Strategy Plan,ポールのミラクル大作戦,558
+117800,34815,2623,MOVIE,1974,,Ningyohime,The Little Mermaid,にんぎょひめ,244
+15061,15061,2624,TV,2012,,Aikatsu!,,アイカツ!,16048
+20181,,2624,TV,2013,,Aikatsu! 2,,アイカツ! 2,4121
+20640,22819,2624,MOVIE,2014,,Aikatsu! Movie,,劇場版 アイカツ！,3616
+20794,,2624,TV,2014,,Aikatsu! 3,,アイカツ! 3,3407
+21207,30845,2624,MOVIE,2015,,Aikatsu! Music Award: Minna de Shou wo Moraima SHOW!,,アイカツ！ミュージックアワード みんなで賞をもらっちゃいまSHOW！,1781
+21307,,2624,TV,2015,,Aikatsu! 4,Aikatsu! 4,アイカツ! 4,2839
+98332,32806,2624,MOVIE,2016,,Aikatsu!: Nerawareta Mahou no Aikatsu! Card,,アイカツ！～ねらわれた魔法のアイカツ！カード～,2147
+148960,52993,2624,MOVIE,2022,,Aikatsu! 10th STORY: Mirai e no STARWAY,,アイカツ！ 10th STORY ～未来へのSTARWAY～,1263
+155738,53499,2624,MOVIE,2023,,Aikatsu! 10th STORY: Mirai e no STARWAY (2023),,アイカツ！ 10th STORY ～未来へのSTARWAY〜 (2023),1368
+92,92,2625,TV,1996,,Kidou Shin Seiki Gundam X,After War Gundam X,機動新世紀ガンダムX,11521
+155015,53150,2626,ONA,2023,,ONIMUSHA,Onimusha,鬼武者,6715
+1985,1985,2627,TV,1975,,UFO Robo Grendizer,UFO Robo Grendizer,ＵＦＯロボグレンダイザー,4456
+154195,56189,2628,TV,2024,,Grendizer U,,グレンダイザーU,4106
+218025,65145,2629,TV,2027,,Saikon Shounin wo Youkyuu Shimasu,The Remarried Empress,再婚承認を要求します,1694
+6900,6900,2630,TV,2009,,Tamagotchi!,,たまごっち!,921
+15865,15865,2630,TV,2012,,Tamagotchi! Yume Kira Dream,,たまごっち! ゆめキラドリーム,456
+19843,19843,2630,TV,2013,,Tamagotchi! Miracle Friends,,たまごっち！～みらくるフレンズ～,361
+105049,23107,2630,TV,2014,,GO-GO Tamagotchi!,,GO-GO たまごっち！,486
+181642,30232,2630,TV,2015,,Tamagotchi! Tama Tomo Daishuu Go,,たまごっち! たまともだいしゅーGO,94
+219752,65362,2631,TV,2027,,Ore no Shibou Flag ga Todomaru Tokoro wo Shiranai,,俺の死亡フラグが留まるところを知らない,440
+10763,10763,2632,MOVIE,1976,,Robot Taekwon V,Voltar the Invincible,로보트 태권 V,376
+16562,16562,2632,MOVIE,1976,,Robot Taekwon V: Wooju Jakjeon,,로보트 태권V 우주작전,195
+16566,16566,2632,MOVIE,1977,,Robot Taekwon V 3tan! Sujung Teukgongdae,,로보트 태권브이 3 - 수중 특공대,183
+16490,16490,2632,MOVIE,1978,,Robot Taekwon V wa Hwanggeum Nalgae,,로보트 태권V와 황금날개의 대결,186
+16568,16568,2632,MOVIE,1982,,Syupeo Taegwon V,,슈퍼 태권 V,174
+101179,16564,2632,MOVIE,1984,,'84 Taekwon V,84 Taekwon V,'84 태권V,208
+179807,58711,2633,ONA,2024,,Jueshi Zhan Hun,,绝世战魂,302
+213188,64388,2633,ONA,2026,,Jueshi Zhan Hun 2,,绝世战魂 第2季,133
