@@ -3,12 +3,12 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import Integer, MetaData, select
+from sqlalchemy import Integer, MetaData, select, update
 from sqlalchemy.orm import Session
 
 from app.models import OnboardingAnswersRecord, RecommendationRound, Tap, TapEntity, TapPreferenceTag, Topic, UserAccount
 from test_oauth_postgres_flow import onboarding_flow, pending_onboarding, postgres_flow, signup_request  # noqa: F401
-from test_onboarding_v2 import v2_answers, v2_flow  # noqa: F401
+from test_onboarding_v2 import ranking_rows, v2_answers, v2_flow  # noqa: F401
 
 KST = timezone(timedelta(hours=9))
 
@@ -59,6 +59,7 @@ def test_taste_returns_the_onboarding_answers(taste_flow):
     assert body["topicId"] == 1 and [work["entityId"] for work in body["works"]] == [11, 12]
     assert body["works"][0]["name"] == "Hero Academy" and body["works"][0]["selectable"] is True
     assert body["preferenceTagIds"] == [101, 103] and body["consumptionType"] == "world"
+    assert body["consumptionTypes"] == ["world"]
     assert flow.client.get("/api/v1/me/taste?topicId=2").status_code == 404      # no tap in that Topic
 
 
@@ -86,11 +87,12 @@ def test_saving_replaces_the_answers_and_drops_the_recent_rounds(taste_flow):
         session.commit()
 
     response = put_taste(flow, csrf, v2_answers(favoriteEntityIds=[15, 13], preferenceTagIds=[102, 103],
-                                                consumptionType="news"))
+                                                consumptionTypes=["news", "ost"]))
     assert response.status_code == 200, response.text
     assert [work["entityId"] for work in response.json()["works"]] == [13, 15]
     assert response.json()["preferenceTagIds"] == [102, 103] and response.json()["consumptionType"] == "news"
-    assert saved(flow) == ({13, 15}, {102, 103}, "news")
+    assert response.json()["consumptionTypes"] == ["news", "ost"]
+    assert saved(flow) == ({13, 15}, {102, 103}, "news") and ranking_rows(flow) == [(1, "news"), (2, "ost")]
     with Session(flow.engine) as session:
         record = session.scalar(select(OnboardingAnswersRecord))
         assert (record.schema_version, record.q1_choice, record.q2_choice) == (2, None, None)
@@ -109,4 +111,39 @@ def test_an_invalid_save_changes_nothing(taste_flow, changes):
     csrf = signed_up(flow)
     assert put_taste(flow, "invalid", v2_answers(favoriteEntityIds=[13])).status_code == 403
     assert put_taste(flow, csrf, v2_answers(**changes)).status_code == 422
-    assert saved(flow) == ({11, 12}, {101, 103}, "world")
+    assert saved(flow) == ({11, 12}, {101, 103}, "world") and ranking_rows(flow) == [(1, "world")]
+
+
+def test_a_new_ranking_replaces_the_old_one_and_the_older_screen_saves_one(taste_flow):
+    flow = taste_flow
+    csrf = signed_up(flow)
+    assert put_taste(flow, csrf, v2_answers(consumptionTypes=["ost", "news", "world"])).status_code == 200
+    assert ranking_rows(flow) == [(1, "ost"), (2, "news"), (3, "world")]
+    older = {**{k: v for k, v in v2_answers().items() if k != "consumptionTypes"}, "consumptionType": "goods"}
+    response = put_taste(flow, csrf, older)
+    assert response.status_code == 200, response.text
+    assert (response.json()["consumptionType"], response.json()["consumptionTypes"]) == ("goods", ["goods"])
+    assert ranking_rows(flow) == [(1, "goods")]
+
+
+def test_taste_reads_rank_1_alone_after_the_production_code_changed_only_it(taste_flow):
+    # The production main code shares the database and rewrites only onboarding_answers.consumption_type.
+    flow = taste_flow
+    csrf = signed_up(flow)
+    assert put_taste(flow, csrf, v2_answers(consumptionTypes=["ost", "news"])).status_code == 200
+    assert flow.client.get("/api/v1/me/taste?topicId=1").json()["consumptionTypes"] == ["ost", "news"]
+    with Session(flow.engine) as session:
+        session.execute(update(OnboardingAnswersRecord).values(consumption_type="world"))
+        session.commit()
+    body = flow.client.get("/api/v1/me/taste?topicId=1").json()
+    assert (body["consumptionType"], body["consumptionTypes"]) == ("world", ["world"])
+
+
+def test_an_old_v1_member_reads_no_ranking(taste_flow):
+    # v1 answers {q1, q2} are still accepted; they never had a Q3 ranking.
+    flow = taste_flow
+    csrf, _ = pending_onboarding(flow)
+    assert signup_request(flow, csrf, {"q1": "ost", "q2": "events"}).status_code == 201
+    body = flow.client.get("/api/v1/me/taste?topicId=1").json()
+    assert (body["consumptionType"], body["consumptionTypes"]) == (None, [])
+    assert ranking_rows(flow) == []

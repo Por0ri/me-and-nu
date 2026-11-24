@@ -424,7 +424,7 @@ TYPE_RUN = 1    # 같은 Q3 답 묶음 글은 연속 TYPE_RUN 개까지. 1 = 바
 def q3_answers(first, ranked):
     """Q3 답 (좋아하는 순서). first = onboarding_answers.consumption_type (1순위), ranked = 새 표 tap_consumption_type 의
     [(rank, 답), ...] (rank 순). rank 1 줄이 first 와 같을 때만 새 표 순서: 같은 DB 를 쓰는 운영 옛 코드는 취향 수정 때
-    first 만 바꿈 → 그러면 [first] 하나. 새 표 · 백엔드 읽기는 다음 백엔드 작업에서 같은 규칙으로 만듦 (지금 백엔드는 first 만)"""
+    first 만 바꿈 → 그러면 [first] 하나. 백엔드 취향 조회 (onboarding_repository.load_consumption_types) 와 같은 규칙"""
     if ranked and ranked[0] == (1, first):
         return [answer for _, answer in ranked]
     return [first] if first else []

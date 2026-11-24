@@ -24,7 +24,7 @@ router = APIRouter(prefix="/me/taste", tags=["내 취향 수정 (임시)"])
     "",
     response_model=TasteResponse,
     summary="내 온보딩 취향 조회",
-    description="온보딩을 마친 회원의 Q1 작품 · Q2 장르·소재 칩 · Q3 소비 유형을 돌려줍니다. 마이페이지 취향 수정 화면의 처음 값입니다.",
+    description="온보딩을 마친 회원의 Q1 작품 · Q2 장르·소재 칩 · Q3 덕질 방식 순위(consumptionTypes, 앞이 1순위)와 1순위(consumptionType)를 돌려줍니다. 운영 예전 코드로 1순위만 바뀐 회원은 1순위 하나로 나갑니다. 마이페이지 취향 수정 화면의 처음 값입니다.",
     responses={**COMMON_ERRORS, 404: {"description": "Topic 없음"}},
 )
 async def my_taste(
@@ -92,8 +92,8 @@ async def taste_preference_options(
     response_model=TasteResponse,
     summary="내 온보딩 취향 바꾸기",
     description=(
-        "X-CSRF-Token 이 필요합니다. 온보딩 완료와 같은 규칙(작품 1~5개, 장르·소재 각각 1~7개, 소비 유형 1개)으로 검사한 뒤 "
-        "답을 통째로 바꾸고, 이 회원의 오늘·어제 추천을 지워 추천 계산기가 몇 초 안에 새로 만들게 합니다. 행동 기록은 지우지 않습니다."
+        "X-CSRF-Token 이 필요합니다. 온보딩 완료와 같은 규칙(작품 1~5개, 장르·소재 각각 1~7개, 덕질 방식 1~6개 순위 · 예전 consumptionType 1개도 받음)으로 검사한 뒤 "
+        "답을 통째로(Q3 순위 포함) 바꾸고, 이 회원의 오늘·어제 추천을 지워 추천 계산기가 몇 초 안에 새로 만들게 합니다. 행동 기록은 지우지 않습니다."
     ),
     responses={**COMMON_ERRORS, 404: {"description": "Topic 없음"}},
 )

@@ -29,7 +29,7 @@ from app.models.debate import (
 from app.models.notification import Notification
 from app.models.notice import Notice
 from app.models.oauth_attempt import OAuthAttempt
-from app.models.onboarding_answers import OnboardingAnswersRecord
+from app.models.onboarding_answers import OnboardingAnswersRecord, TapConsumptionType
 from app.models.onboarding_catalog import (
     Entity, EntityExternalId, PreferenceTag, EntityTag, TapEntity, TapPreferenceTag,
 )
@@ -83,6 +83,7 @@ __all__ = [
     "NotificationSetting",
     "OAuthAttempt",
     "OnboardingAnswersRecord",
+    "TapConsumptionType",
     "Entity",
     "EntityExternalId",
     "PreferenceTag",

@@ -1,6 +1,6 @@
 """My Page taste edit (temporary): re-pick the onboarding Q1~Q3 answers after signup."""
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 
 from app.schemas.common import CamelModel
 from app.schemas.onboarding import CatalogId, ConsumptionType, OnboardingAnswersV2, OnboardingWork
@@ -10,7 +10,8 @@ class TasteResponse(CamelModel):
     topic_id: int
     works: list[OnboardingWork]
     preference_tag_ids: list[int]
-    consumption_type: ConsumptionType | None
+    consumption_type: ConsumptionType | None = Field(description="Q3 1순위 (예전 화면용). 답이 없으면 null")
+    consumption_types: list[ConsumptionType] = Field(description="Q3 덕질 방식 순위 (앞이 1순위). 답이 없으면 []")
 
 
 class TasteUpdateRequest(CamelModel):

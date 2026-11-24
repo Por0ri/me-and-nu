@@ -19,7 +19,7 @@ from sqlalchemy.schema import CreateTable
 
 from app.models import (
     Entity, EntityExternalId, EntityTag, OnboardingAnswersRecord,
-    PreferenceTag, Tap, TapEntity, TapPreferenceTag,
+    PreferenceTag, Tap, TapConsumptionType, TapEntity, TapPreferenceTag,
 )
 
 
@@ -36,7 +36,7 @@ def relational_db():
         Column("topic_id", BigInteger, nullable=False),
         UniqueConstraint("tap_id", "topic_id"),
     )
-    for model in (*CATALOG_MODELS, OnboardingAnswersRecord):
+    for model in (*CATALOG_MODELS, OnboardingAnswersRecord, TapConsumptionType):
         table = model.__table__.to_metadata(metadata)
         if model is Entity:
             table.c.aliases.type = JSON()
@@ -148,6 +148,21 @@ def test_catalog_restricts_deletion_while_tap_cascades_only_its_preferences(rela
     ).fetchall() == [(22, 1, "news", "events")]
     assert relational_db.execute("SELECT * FROM entity_tag").fetchall() == [(101,1001,1)]
     assert relational_db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_q3_ranking_rows_follow_the_database_rules(relational_db):
+    insert = "INSERT INTO tap_consumption_type(tap_id, rank, consumption_type) VALUES (?, ?, ?)"
+    relational_db.executemany(insert, [(11, 1, "ost"), (11, 2, "news"), (22, 1, "world")])
+    for values in [(11, 1, "world"),        # same rank twice
+                   (11, 3, "ost"),          # same answer twice
+                   (11, 0, "goods"), (11, 7, "goods"),
+                   (11, 3, "releases"),     # an old Q2 code is not a Q3 answer
+                   (33, 1, "ost")]:         # no such tap
+        with pytest.raises(sqlite3.IntegrityError):
+            relational_db.execute(insert, values)
+    relational_db.execute("DELETE FROM tap WHERE tap_id=11")          # a deleted tap takes its ranking along
+    assert relational_db.execute("SELECT tap_id, rank, consumption_type FROM tap_consumption_type").fetchall() == [
+        (22, 1, "world")]
 
 
 def test_external_ids_are_unique_by_provider_and_one_per_entity(relational_db):
