@@ -332,7 +332,7 @@ def test_visual_rejections_survive_reviewer_state_transition(monkeypatch) -> Non
             return StructuredModel()
 
     class RepositoryStub:
-        def persist_generated_content(self, *_args):
+        def persist_generated_content(self, package, status, quality_report, *, usage_records):
             return None
 
         def get_image_bytes(self, _key):
@@ -507,7 +507,7 @@ def test_safety_issue_is_a_non_compensable_reviewer_blocker() -> None:
     }
 
 
-def test_fourth_review_failure_archives_after_one_targeted_extra_repair() -> None:
+def test_third_review_failure_archives_after_two_revision_opportunities() -> None:
     assert route_review({"review_failures": 1, "editorial_decision": "revise"}) == (
         "revision_checkpoint"
     )
@@ -515,7 +515,7 @@ def test_fourth_review_failure_archives_after_one_targeted_extra_repair() -> Non
         "revision_checkpoint"
     )
     assert route_review({"review_failures": 3, "editorial_decision": "revise"}) == (
-        "revision_checkpoint"
+        "archive_rejected"
     )
     assert route_review({"review_failures": 4, "editorial_decision": "revise"}) == (
         "archive_rejected"
@@ -578,7 +578,9 @@ def test_explicit_reviewer_card_removal_reindexes_remaining_cards() -> None:
     payload = json.loads(SAMPLE.read_text(encoding="utf-8"))
     cards = [CopyCard.model_validate(card) for card in payload["cards"]]
 
-    kept = _remove_copy_pages(cards, [2])
+    kept = _remove_copy_pages(
+        cards, [2], minimum_cards=POLICY.minimum_cards_for(payload["content_type"])
+    )
 
     assert [card.page for card in kept] == [1, 2, 3]
     assert [card.role for card in kept] == ["cover", "detail", "ending"]

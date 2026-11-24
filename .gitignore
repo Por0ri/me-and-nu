@@ -30,3 +30,9 @@ Thumbs.db
 *.zip
 # Agent outputs
 agent/out/
+
+# Ephemeral files created while updating the shared work lists
+/catalog/.menu_work_catalog.lock
+/catalog/.agent_works.csv.*.tmp
+/catalog/.discovered_works.csv.*.tmp
+/agents/*/data/reference/.menu_work_catalog.lock

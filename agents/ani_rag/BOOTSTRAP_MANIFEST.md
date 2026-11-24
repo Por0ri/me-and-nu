@@ -20,7 +20,7 @@
 | `agents/ani_me;nu/config/sources.json`, `config/source_type_map.json` | `config/sources.candidates.json` | 메타데이터만 추출 | 7개 RAG 유형에 매핑된 53개 후보 인벤토리 작성 | 검토용 별도 schema이며 `settings.py` 실행 allowlist 아님. 전부 `mcp_server=unknown`, search/read=`unconfirmed`. 원본 설정은 수정하지 않음 |
 | `agents/ani_me;nu/config/sources.json` | `config/sources.evergreen.json` | 참조만 | 기존 Source 설정 형식·출처 상태 조사 | 원본은 수정 중일 수 있고 기간 민감 출처와 혼합되어 있어 복제하지 않음 |
 | `agents/ani_me;nu/config/source_type_map.json` | 해당 없음 | 참조만 | 기존 유형별 endpoint 매핑이 있음을 확인 | evergreen lane 매핑이 아님. `config/source_lane_map.json`은 존재하지 않음 |
-| `catalog/menu_works.csv`, `catalog/menu_work_entries.csv` 및 `agents/ani_me;nu/data/reference/`의 보조 레퍼런스 | 해당 없음 | 정식 목록은 읽기, 보조 매핑도 읽기 | 두 에이전트가 동일한 작품 ID를 사용 | 정식 목록 복사본 없음. 신규 작품은 `agent_works.csv`에 임시 ID로 기록 |
+| `agents/ani_me;nu/data/reference/menu_works.csv`, `menu_work_entries.csv`, `menu_work_external_entries.csv`, `menu_work_aliases.csv`, `menu_work_franchises.csv`, `menu_work_parent_overrides.csv`, `work_characters.csv`, `work_theme_songs.csv`, `discovered_works.csv`, `REFERENCE_FILES.md`, `WORK_MATCH_DATA.md` | 해당 없음 | 참조만 | 작품 ID, 외부 카탈로그 매핑, 별칭과 검증 경계의 정본 위치 확인 | 복사본 없음. 공유 파일은 바뀔 수 있으므로 사용 전 다시 확인. 신규 작품 등록은 별도 정책 결정 전 금지 |
 | `agents/ani_me;nu/src/ani_menu_agent/agents/crawlers/{character,guide,people,music,humor,curation,review}.py` | 해당 없음 | 참조만 | RAG 대상별 도메인 규칙 확인 | 각 파일은 독립 실행 코드가 아니라 공통 base의 프로필 선언. 규칙만 새 모델/정책 경계에 반영하고 코드 복사는 하지 않음 |
 | `agents/ani_me;nu/src/ani_menu_agent/agents/crawlers/{event,goods,news}.py` | 해당 없음 | 참조만 | 기존 기간 중요 유형의 경계 확인 | 이번 RAG 범위에서 이전하지 않음. 기존 역할 매핑과 수집 경로 보존 |
 | `agents/ani_me;nu/src/ani_menu_agent/agents/crawlers/base.py` | `src/ani_rag/adapter.py` | 재구현(일부 경계) | source-scoped search/read protocol 독립 정의 | LangGraph 실행, discovery, 품질 게이트, 이미지 캡처, 저장은 이관하지 않음 |
@@ -53,7 +53,7 @@
 |---|---|---|---|
 | `src/ani_rag/catalog.py`, `interfaces.py`, `models.py` | 독립 구현 | exact match 실패·모호 시 원문과 제한된 카탈로그 후보를 LLM에 전달하는 resolver, 근거 인용이 포함된 신규 작품 후보 계약 추가 | matcher 모델을 주입해야 실제 LLM 식별이 가능. low-confidence/원문 미포함 식별은 unresolved 유지 |
 | `src/ani_rag/collector.py`, `structured_mcp.py` | 독립 구현 | URL형/구조화 응답 제목·본문·외부 ID를 식별 요청에 넣고 결과 상태/방법을 evidence metadata에 보존 | MCP 호출은 하지 않음. 기존 프로젝트 경로와 데이터베이스 접근 없음 |
-| `src/ani_rag/storage/schema.sql`, `storage/sqlite_core.py`, `runtime.py` | RAG 전용 확장 | 작품 정보·근거 문서·generation backlog 저장. 신규 작품 ID는 Kitsu ID 또는 정규화 제목 기반 결정적 임시 ID | 스키마 미적용. RAG `menu_work_id`는 ERD `entity_id`와 별개. authoritative `topic_id`는 NULL 유지 |
+| `src/ani_rag/storage/schema.sql`, `storage/sqlite_core.py`, `runtime.py` | RAG 전용 확장 | 신규 RAG `menu_work_id` 카탈로그와 다음 ID 결정, 작품 정보·근거 문서·generation backlog의 단일 트랜잭션 저장 경로 추가 | 스키마 미적용. RAG `menu_work_id`는 ERD `entity_id`와 별개. authoritative `topic_id`는 NULL 유지 |
 | `src/ani_rag/agents/content_generation/renderer.py`, `model_services.py`, `workers.py`, `quality.py`, `agents/reviewer/prompts.py` | 최소 파일럿 동작 반영 | 이미지 미등록 시 text-only gradient PNG fallback, 생성 단계 검수 제거, reviewer pass/revise/reject 및 캐러셀 가독성 게이트로 범위 축소 | 이미지 수집·권리 확인은 미구현. 저작권·사실성 점수는 현 단계 reviewer 차단 기준에서 제외 |
 | `README.md`, `IMPLEMENTATION_STATUS.md`, `docs/WORK_ID_MATCHING.md` | 문서 갱신 | 매칭/신규 ID 원자 등록 흐름과 검수 범위, 미해결 ERD identity를 기록 | 실행 완료로 표현하지 않음 |
 
@@ -109,7 +109,7 @@ RAG 쪽의 실제 MCP 수집, 근거 저장/DB 계약, 7개 유형별 검수 및
 | `src/ani_menu_agent/sources/models.py`, `sources/registry.py` | `src/ani_rag/settings.py` | RAG 구조로 재구현 | 기존 Source 모델이 `ani_menu_agent.models.ContentType`에 의존하므로 독립 allowlist 로더를 정의 |
 | `src/ani_menu_agent/storage.py` | `src/ani_rag/interfaces.py` | RAG 구조로 재구현(Protocol만) | SQLite/PostgreSQL 초기화, 이미지·렌더·큐와 결합. 새 저장 포트는 연결이나 스키마 없음 |
 | `config/sources.json`, `config/source_type_map.json` | `config/sources.evergreen.json` | 참조만 | 유형 매핑 후보 수: character 17, guide 12, people 20, music 19, humor 23, curation 5, review 3. MCP server 별칭과 tool 지원을 확인하지 못해 source를 복사/등록하지 않음 |
-| `catalog/menu_works.csv`, `catalog/menu_work_entries.csv`, `ani_me;nu/data/reference/agent_works.csv` 및 보조 레퍼런스 | 공유 경로 참조, `interfaces.py` resolver port | 정식 목록은 읽기 전용. 신규 임시 ID는 `agent_works.csv`에 기록 | RAG와 기간형이 같은 작품 ID 정본 및 임시 번호 규칙을 사용. `work_theme_songs.csv`는 reference 전용 및 AI 학습 금지 안내가 있어 별도 확인 전 RAG 본문 근거로 복사/색인하지 않음 |
+| `data/reference/menu_works.csv`, `menu_work_entries.csv`, `menu_work_external_entries.csv`, `menu_work_aliases.csv`, `menu_work_franchises.csv`, `menu_work_parent_overrides.csv`, `work_characters.csv`, `work_theme_songs.csv`, `discovered_works.csv`, `REFERENCE_FILES.md`, `WORK_MATCH_DATA.md` | 공유 경로 참조, `interfaces.py` resolver port | 참조만 | 작품 ID 정본은 공유 카탈로그. 스냅샷 미생성. `work_theme_songs.csv`는 reference 전용 및 AI 학습 금지 안내가 있어 별도 확인 전 RAG 본문 근거로 복사/색인하지 않음 |
 | `src/ani_menu_agent/cli.py`, `source_discovery.py`, 이미지·렌더 모듈, `agents/content_generation/`, `agents/reviewer/` | 해당 없음 | 보류 | 실행/DB/이미지 경로에 결합되거나 공통 downstream이므로 이 작업 범위에서 가져오지 않음 |
 
 `interfaces.py`는 실행 구현이 아닌 `WorkCatalogResolver`와 `EvidenceRepository` Protocol이다. `profiles.py`는 기존 정규식 신호를 복사하지 않고 유형별 근거 종류와 보존 맥락을 재표현한다. `settings.require_source_access`는 등록된 source/tool/content-type/status만 확인하며 MCP 호출은 하지 않는다.
@@ -129,7 +129,7 @@ RAG 쪽의 실제 MCP 수집, 근거 저장/DB 계약, 7개 유형별 검수 및
 
 | 원본 | 대상 | 처리 | 범위/주의 |
 |---|---|---|---|
-| 작품 ID 목록과 매칭 보조 자료 | 저장소 루트 `catalog/` 및 `ani_me;nu/data/reference/` | 정본은 공유 경로에서 읽음 | `ani_rag/data/reference/`에 `menu_works.csv`·`menu_work_entries.csv` 복사본을 새로 만들지 않음. 각 에이전트는 정본 카탈로그를 수정하지 않음. 신규 임시 작품은 `agent_works.csv`에 둠. |
+| 기존 카탈로그의 `menu_works.csv`, `menu_work_entries.csv`, `menu_work_external_entries.csv`, `menu_work_aliases.csv`, `menu_work_franchises.csv`, `menu_work_parent_overrides.csv`, `work_characters.csv`, `work_theme_songs.csv` | `ani_rag/data/reference/` | 독립 스냅샷 복사 | 파일 해시·크기·복사일은 `data/reference/SNAPSHOT_MANIFEST.md`. `discovered_works.csv`는 승인 카탈로그가 아니라 검토 대기열이므로 제외. 원본을 덮어쓰지 않으며, RAG 코드는 로컬 스냅샷만 사용해야 함. 갱신 절차와 책임은 별도 결정 필요. |
 | 기존 `prompts.py`, `agents/content_generation/detail_writer.py`, `agents/reviewer/prompt.py`, `policy.py`, `review_rules.py` | `ani_rag/docs/COPIED_CONTENT_BASELINE.md` | 읽기 전용 텍스트 스냅샷 복사 | 생성 카피·상세글·번역·검수 규칙의 현재 기준 보존. 실행 모듈이 아니며 ani_rag 런타임에서 import하지 않음. 원본 경로와 각 파일 SHA-256 포함. |
 
 이 복사로 ani_rag의 생성·검수 그래프가 구현된 것은 아니다. 기존 생성·검수 실행 코드의 의존성은 `nodes.py`, `storage.py`, 공통 모델/품질/이미지/카탈로그 코드에 걸쳐 있고, `storage.py`는 DB와 렌더 저장을 포함한다. 이를 통째로 복사하지 않았다. 다음 구현은 ani_rag 내부에 콘텐츠 생성·검수 패키지와 필요한 로컬 데이터 계약을 포팅하는 작업이며, 기간 프로젝트 패키지 import, 경로 폴백, DB/로그/워커 사용 없이 설계해야 한다.

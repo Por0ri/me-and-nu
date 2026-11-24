@@ -11,6 +11,7 @@ import re
 import sqlite3
 import sys
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, date, datetime, time, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -22,8 +23,10 @@ from PIL import Image
 
 from ani_menu_agent.agents.content_generation.renderer import OUTPUT_IMAGE_SIZE
 from ani_menu_agent.config import get_settings
-from ani_menu_agent.duplicate_detection import duplicate_reason
+from ani_menu_agent.duplicate_detection import duplicate_reason, story_source_key
+from ani_menu_agent.goods_publication import illustrated_product_url, set_goods_image_labels
 from ani_menu_agent.image_selection import image_visual_keys
+from ani_menu_agent.period_repair import evidence_snapshot
 from ani_menu_agent.markdown_export import render_detail_markdown
 from ani_menu_agent.models import (
     CONTENT_TYPE_LABELS,
@@ -32,6 +35,7 @@ from ani_menu_agent.models import (
     RightsStatus,
     SourceEvidence,
 )
+from ani_menu_agent.sources.anime_schedule import source_item_digest
 from ani_menu_agent.policy import POLICY
 from ani_menu_agent.erd_storage import (
     initialize_erd_schema,
@@ -45,17 +49,24 @@ from ani_menu_agent.pipelines.common.jobs import (
     PipelineLane,
     PipelineStage,
 )
+from ani_menu_agent.source_freshness import goods_sale_deadline
 from ani_menu_agent.source_policy import validate_generation_sources
 from ani_menu_agent.sources import load_source_registry
 from ani_menu_agent.work_catalog import (
+    UnconfirmedPeriodWorkError,
     attach_menu_work_ids,
     refresh_work_catalog_caches,
+    rematch_returned_goods,
     resolve_menu_work_ids,
 )
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+class ExpiredFeedContentError(ValueError):
+    """The source reports the sale has ended before generation or handoff."""
 
 
 def discovery_candidate_fingerprint(candidate: dict[str, Any]) -> str:
@@ -75,6 +86,8 @@ def discovery_candidate_fingerprint(candidate: dict[str, Any]) -> str:
         "community_posts",
     )
     payload = {key: candidate.get(key) for key in identity_fields if key in candidate}
+    if candidate.get("feed_entry_guid"):
+        payload["feed_entry_guid"] = candidate["feed_entry_guid"]
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
@@ -87,6 +100,7 @@ def _card_overlay_json(card) -> str:
             "menu_work_ids": card.menu_work_ids,
             "image_key": card.rendered_image_key,
             "image_id": card.image_id,
+            **({"image_label": card.image_label} if card.image_label else {}),
             "visual_mode": card.visual_mode,
             "layout_template": card.layout.template,
             "image_region": card.layout.image_box.model_dump(mode="json"),
@@ -284,7 +298,7 @@ def _kst_start(day: date) -> datetime:
 
 
 def _expiration(event_end: str | None) -> str | None:
-    """Event records remain stored 30 days after their last feed-visible day."""
+    """Retention deadline for unreferenced raw capture cache entries."""
     end_date = _as_date(event_end)
     if not end_date:
         return None
@@ -296,78 +310,22 @@ def _expiration(event_end: str | None) -> str | None:
 
 
 def prepare_package_lifecycle(
-    package: ContentPackage, now: datetime | None = None
+    package: ContentPackage, now: datetime | None = None, *, require_open_sale: bool = False
 ) -> ContentPackage:
-    """Set stable feed and purge deadlines once, before crawler records are persisted."""
-    moment = now or _utc_now()
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=UTC)
-    local_today = moment.astimezone(KST).date()
-
-    if package.feed_valid_until:
-        raw_valid_until = package.feed_valid_until
-        if len(raw_valid_until) == 10:
-            explicit = _as_date(raw_valid_until)
-            assert explicit is not None
-            valid_until = _kst_start(explicit + timedelta(days=1))
-        else:
-            valid_until = datetime.fromisoformat(raw_valid_until)
-            if valid_until.tzinfo is None:
-                valid_until = valid_until.replace(tzinfo=KST)
-    else:
-        # Extraction may find dates on product, news, guide, or interview pages.
-        # Only an event package's event_end is an event expiry anchor.
-        end_date = _as_date(package.event_end) if package.content_type == "event" else None
-        if not end_date and package.content_type == "event":
-            end_date = next(
-                (
-                    parsed
-                    for fact in package.facts
-                    for key in ("event_end", "deadline", "valid_until")
-                    if (parsed := _as_date(fact.details.get(key)))
-                ),
-                None,
-            )
-        release_date = next(
-            (
-                parsed
-                for fact in package.facts
-                if (parsed := _as_date(fact.details.get("release_date")))
-            ),
-            None,
-        )
-        if end_date:
-            last_visible_day = end_date
-        elif release_date:
-            last_visible_day = release_date + timedelta(days=30)
-        else:
-            last_visible_day = local_today + timedelta(
-                days=POLICY.default_content_validity_days - 1
-            )
-        valid_until = _kst_start(last_visible_day + timedelta(days=1))
-
-    if package.purge_at:
-        purge_at = datetime.fromisoformat(package.purge_at)
-        if purge_at.tzinfo is None:
-            purge_at = purge_at.replace(tzinfo=UTC)
-    elif package.retention_expires_at and not (
-        package.content_type == "event" and package.event_end
-    ):
-        purge_at = datetime.fromisoformat(package.retention_expires_at)
-        if purge_at.tzinfo is None:
-            purge_at = purge_at.replace(tzinfo=UTC)
-    else:
-        purge_at = valid_until + timedelta(days=POLICY.default_event_retention_days)
-    if purge_at <= valid_until:
-        valid_until = purge_at
-    package.feed_valid_until = valid_until.astimezone(UTC).isoformat()
-    package.purge_at = purge_at.astimezone(UTC).isoformat()
+    """Prepare agent output without assigning a service exposure or disposal date."""
+    # A source's sale close can stop new generation or handoff. It never
+    # changes a previously handed-off article's visibility in the service.
+    if require_open_sale and package.content_type == "goods":
+        sale_end = goods_sale_deadline(package.facts)
+        moment = now or _utc_now()
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        if sale_end is not None and sale_end <= moment:
+            raise ExpiredFeedContentError("source_sale_ended")
+    package.feed_valid_until = None
+    package.purge_at = None
+    package.retention_expires_at = None
     return package
-
-
-def _package_expiration(package: ContentPackage) -> str | None:
-    prepare_package_lifecycle(package)
-    return package.purge_at
 
 
 class AgentRepository:
@@ -447,6 +405,7 @@ class AgentRepository:
         payload: dict[str, Any],
         request_id: str | None = None,
         available_at: datetime | None = None,
+        connection=None,
     ) -> PipelineJob:
         """Insert one durable job; repeated enqueue calls return the original job."""
         lane = PipelineLane(lane)
@@ -457,7 +416,7 @@ class AgentRepository:
         now = _utc_now().isoformat()
         job_id = str(uuid.uuid4())
         ready_at = (available_at or _utc_now()).astimezone(UTC).isoformat()
-        with self.connect() as connection:
+        with nullcontext(connection) if connection is not None else self.connect() as connection:
             connection.execute(
                 "INSERT INTO pipeline_jobs (job_id, lane, stage, idempotency_key, "
                 "request_id, status, payload_json, attempts, available_at, created_at, updated_at) "
@@ -491,6 +450,7 @@ class AgentRepository:
         worker_id: str,
         lease_seconds: int = 300,
         lane: PipelineLane | str | None = None,
+        repair_content_type: str | None = None,
     ) -> PipelineJob | None:
         """Atomically claim the oldest available job, reclaiming expired leases."""
         stage = PipelineStage(stage)
@@ -512,6 +472,9 @@ class AgentRepository:
                 else (stage.value, now, now)
             )
             lock_clause = " FOR UPDATE SKIP LOCKED" if self.dialect == "postgresql" else ""
+            if repair_content_type:
+                where_lane += " AND idempotency_key LIKE ? AND " + self._job_type_sql() + "=?"
+                params += ("period-repair:%", repair_content_type)
             row = connection.execute(
                 "SELECT job_id FROM pipeline_jobs WHERE stage=? "
                 "AND ((status IN ('pending', 'retry') AND available_at<=?) "
@@ -531,6 +494,189 @@ class AgentRepository:
             ).fetchone()
         return PipelineJob.from_row(claimed) if claimed is not None else None
 
+    def _job_type_sql(self, column: str = "payload_json") -> str:
+        if self.dialect == "postgresql":
+            return f"({column}::jsonb ->> 'content_type')"
+        return f"json_extract({column}, '$.content_type')"
+
+    @staticmethod
+    def _repair_reason_sql(column: str) -> str:
+        # Both SQLite and PostgreSQL support substr/length. New workers append
+        # a QA explanation after the reason code; older workers saved only the code.
+        return ("(CASE WHEN substr(" + column + ",1,length('needs_crawler_update:'))='needs_crawler_update:' "
+                "THEN 'needs_crawler_update' WHEN substr(" + column + ",1,length('expiry_unresolved_held:'))="
+                "'expiry_unresolved_held:' THEN 'expiry_unresolved_held' ELSE " + column + " END)")
+
+    def schedule_period_repair(self, content_type: str) -> None:
+        """Materialize one return, including cancelled handoffs from older workers."""
+        now = _utc_now().isoformat()
+        # Generation may have reclassified a news lead as an event or product.
+        # Use the effective type of the hold when a crawler runs just one type.
+        effective_type = (
+            "COALESCE((SELECT " + self._job_type_sql("a.payload_json") + " FROM agent_records a "
+            "WHERE a.request_id=j.request_id AND a.record_kind=CASE WHEN " + self._repair_reason_sql("j.last_error") + "='expiry_unresolved_held' "
+            "THEN 'temporal_gate' ELSE 'crawler_return' END ORDER BY a.updated_at DESC LIMIT 1),"
+            + self._job_type_sql("j.payload_json") + ")"
+        )
+        payload = (
+            "jsonb_set(j.payload_json::jsonb, '{content_type}', to_jsonb(CAST(? AS text)))::text"
+            if self.dialect == "postgresql" else "json_set(j.payload_json, '$.content_type', ?)"
+        )
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO pipeline_jobs (job_id,lane,stage,idempotency_key,request_id,status,"
+                "payload_json,attempts,available_at,created_at,updated_at) "
+                "SELECT 'period-repair:' || j.job_id,j.lane,'crawl','period-repair:' || j.job_id,"
+                "j.request_id,'pending'," + payload + ",0,?,?,? FROM pipeline_jobs j "
+                "WHERE j.lane='time_sensitive' AND j.stage IN ('generate','review') "
+                "AND j.status IN ('returned','cancelled') AND " + self._repair_reason_sql("j.last_error")
+                + " IN ('needs_crawler_update','expiry_unresolved_held') "
+                "AND " + effective_type + "=? "
+                "AND NOT EXISTS (SELECT 1 FROM pipeline_jobs r WHERE r.job_id='period-repair:' || j.job_id) "
+                "AND NOT EXISTS (SELECT 1 FROM pipeline_jobs newer WHERE newer.request_id=j.request_id "
+                "AND newer.stage IN ('generate','review') AND newer.created_at>j.created_at) "
+                "AND NOT EXISTS (SELECT 1 FROM feed_queue f WHERE f.request_id=j.request_id) "
+                "ORDER BY j.created_at,j.job_id LIMIT 1 ON CONFLICT DO NOTHING",
+                (content_type, now, now, now, content_type),
+            )
+
+    def period_repair_return(self, job: PipelineJob) -> dict:
+        origin_id = job.idempotency_key.removeprefix("period-repair:")
+        with self.connect() as db:
+            origin = db.execute(
+                "SELECT " + self._repair_reason_sql("last_error") + " AS reason FROM pipeline_jobs "
+                "WHERE job_id=? AND status IN ('returned','cancelled')", (origin_id,)
+            ).fetchone()
+            if origin is None or origin["reason"] not in {"needs_crawler_update", "expiry_unresolved_held"}:
+                return {}
+            temporal = origin["reason"] == "expiry_unresolved_held"
+            kind = "temporal_gate" if temporal else "crawler_return"
+            revision = int(job.payload.get("revision_count", 0))
+            query = "SELECT payload_json FROM agent_records WHERE request_id=? AND record_kind=?"
+            args = (job.request_id, kind)
+            if not temporal:
+                query += " AND record_id=?"
+                args += (f"crawler-return:{job.request_id}:{revision}",)
+            row = db.execute(query + " ORDER BY updated_at DESC LIMIT 1", args).fetchone()
+        if not row:
+            return {}
+        record = json.loads(row["payload_json"])
+        if temporal:
+            record["issues"] = [{"code": "SOURCE_DATE_UNRESOLVED"}]
+        return record
+
+    def release_period_repair(self, job: PipelineJob, worker_id: str) -> None:
+        """A cooperative shutdown preserves the remaining attempts and immediately releases the lease."""
+        now = _utc_now().isoformat()
+        with self.connect() as db:
+            db.execute(
+                "UPDATE pipeline_jobs SET status='retry', attempts=attempts-1, available_at=?, updated_at=?, "
+                "lease_owner=NULL,lease_expires_at=NULL WHERE job_id=? AND status='leased' AND lease_owner=? "
+                "AND lease_expires_at>?",
+                (now, now, job.job_id, worker_id, now),
+            )
+
+    def record_repair_image_exclusions(
+        self, job: PipelineJob, worker_id: str, exclusions: list[dict]
+    ) -> None:
+        """Keep the collector's rights decision even when the request stays on hold."""
+        with self.connect() as db:
+            db.execute(
+                "UPDATE pipeline_jobs SET payload_json=? WHERE job_id=? AND status='leased' "
+                "AND lease_owner=? AND lease_expires_at>?",
+                (
+                    json.dumps({**job.payload, "image_exclusions": exclusions}, ensure_ascii=False),
+                    job.job_id,
+                    worker_id,
+                    _utc_now().isoformat(),
+                ),
+            )
+
+    def publish_period_repair(
+        self,
+        job: PipelineJob,
+        worker_id: str,
+        package: ContentPackage,
+        capture: dict,
+        payload: dict,
+    ) -> bool:
+        """Commit new crawler evidence and its generation handoff together, under the current lease."""
+        origin_id = job.idempotency_key.removeprefix("period-repair:")
+        if job.request_id != package.request_id:
+            raise ValueError("Repair must preserve the original request ID")
+        with self.connect() as db:
+            if self.dialect == "sqlite":
+                db.execute("BEGIN IMMEDIATE")
+            lock = " FOR UPDATE" if self.dialect == "postgresql" else ""
+            claimed = db.execute(
+                "SELECT lease_expires_at FROM pipeline_jobs WHERE job_id=? AND lease_owner=? AND status='leased'"
+                + lock,
+                (job.job_id, worker_id),
+            ).fetchone()
+            now = _utc_now().isoformat()
+            if not claimed or claimed["lease_expires_at"] <= now:
+                return False
+            latest = db.execute(
+                "SELECT job_id,status,last_error FROM pipeline_jobs WHERE request_id=? "
+                "AND stage IN ('generate','review') ORDER BY created_at DESC,job_id DESC LIMIT 1" + lock,
+                (job.request_id,),
+            ).fetchone()
+            approved = db.execute(
+                "SELECT 1 FROM feed_queue WHERE request_id=?",
+                (job.request_id,),
+            ).fetchone()
+            if (
+                latest is None or latest["job_id"] != origin_id or latest["status"] not in {"returned", "cancelled"}
+                or str(latest["last_error"] or "").partition(":")[0] not in {"needs_crawler_update", "expiry_unresolved_held"} or approved
+            ):
+                return False
+            # persist_images replaces staged bytes with committed blob references.
+            # Keep the caller's capture retryable if any later write rolls back.
+            package = package.model_copy(deep=True)
+            if package.content_type == "goods":
+                previous_source = db.execute(
+                    "SELECT payload_json FROM agent_records WHERE agent_type='information' AND record_id=?",
+                    (f"source:{package.request_id}:{package.sources[0].id}",),
+                ).fetchone()
+                old_ids = json.loads(previous_source["payload_json"]).get("menu_work_ids", []) if previous_source else []
+                if old_ids and set(old_ids).isdisjoint(package.menu_work_ids):
+                    # persist_page_capture replaces old pictures; hide old inferred
+                    # claims until persist_information upserts the recollected facts.
+                    db.execute(
+                        "UPDATE agent_records SET status='rejected' WHERE request_id=? "
+                        "AND agent_type='information' AND record_kind='fact'", (package.request_id,),
+                    )
+            self.persist_page_capture(
+                capture,
+                package.sources[0].region,
+                package.event_end,
+                package,
+                connection=db,
+                capture_request_id=package.request_id,
+            )
+            schedule_id = f"{package.request_id}-source-schedule"
+            if not any(fact.id == schedule_id for fact in package.facts):
+                db.execute(
+                    "DELETE FROM agent_records WHERE agent_type='information' AND record_id=?",
+                    (f"fact:{package.request_id}:{schedule_id}",),
+                )
+            self.persist_information(package, connection=db)
+            self.persist_images(package, connection=db)
+            self.enqueue_pipeline_job(
+                lane=job.lane,
+                stage=PipelineStage.GENERATE,
+                idempotency_key=f"{package.request_id}:generate:{job.job_id}",
+                request_id=job.request_id,
+                payload=payload,
+                connection=db,
+            )
+            db.execute(
+                "UPDATE pipeline_jobs SET status='completed',lease_owner=NULL,lease_expires_at=NULL,"
+                "last_error=NULL,updated_at=? WHERE job_id=?",
+                (now, job.job_id),
+            )
+        return True
+
     def finish_pipeline_job(
         self,
         job_id: str,
@@ -539,6 +685,8 @@ class AgentRepository:
         status: PipelineJobStatus | str,
         error: str | None = None,
         retry_after_seconds: int = 0,
+        ignore_lost_lease: bool = False,
+        draft_status: str | None = None,
     ) -> None:
         """Finish a lease or schedule a retry; stale workers cannot overwrite it."""
         status = PipelineJobStatus(status)
@@ -559,7 +707,7 @@ class AgentRepository:
             cursor = connection.execute(
                 "UPDATE pipeline_jobs SET status=?, available_at=?, lease_owner=NULL, "
                 "lease_expires_at=NULL, last_error=?, updated_at=? "
-                "WHERE job_id=? AND status='leased' AND lease_owner=?",
+                "WHERE job_id=? AND status='leased' AND lease_owner=? AND lease_expires_at>?",
                 (
                     status.value,
                     available.isoformat(),
@@ -567,10 +715,17 @@ class AgentRepository:
                     now_dt.isoformat(),
                     job_id,
                     worker_id,
+                    now_dt.isoformat(),
                 ),
             )
-            if cursor.rowcount != 1:
+            if cursor.rowcount != 1 and not ignore_lost_lease:
                 raise RuntimeError("pipeline job lease is missing, expired, or owned by another worker")
+            if cursor.rowcount == 1 and draft_status:
+                job = connection.execute(
+                    "SELECT request_id FROM pipeline_jobs WHERE job_id=?", (job_id,)
+                ).fetchone()
+                if job["request_id"]:
+                    self._set_content_status(connection, job["request_id"], draft_status)
 
     def renew_pipeline_job_lease(
         self, job_id: str, *, worker_id: str, lease_seconds: int = 300
@@ -582,12 +737,13 @@ class AgentRepository:
         with self.connect() as connection:
             cursor = connection.execute(
                 "UPDATE pipeline_jobs SET lease_expires_at=?, updated_at=? "
-                "WHERE job_id=? AND status='leased' AND lease_owner=?",
+                "WHERE job_id=? AND status='leased' AND lease_owner=? AND lease_expires_at>?",
                 (
                     (now_dt + timedelta(seconds=lease_seconds)).isoformat(),
                     now_dt.isoformat(),
                     job_id,
                     worker_id,
+                    now_dt.isoformat(),
                 ),
             )
         return cursor.rowcount == 1
@@ -635,6 +791,8 @@ class AgentRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_claim
                     ON pipeline_jobs(stage, status, available_at, lease_expires_at);
+                CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_request_created
+                    ON pipeline_jobs(request_id, created_at);
                 CREATE TABLE IF NOT EXISTS content_types (
                     type_code TEXT PRIMARY KEY,
                     label_ko TEXT NOT NULL,
@@ -674,8 +832,8 @@ class AgentRepository:
                     content_type TEXT,
                     status TEXT NOT NULL,
                     package_json TEXT NOT NULL,
-                    valid_until TEXT NOT NULL,
-                    purge_at TEXT NOT NULL,
+                    valid_until TEXT,
+                    purge_at TEXT,
                     quality_score INTEGER,
                     quality_report_json TEXT,
                     event_start TEXT,
@@ -771,6 +929,26 @@ class AgentRepository:
                         connection.execute(
                             f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {declaration}"
                         )
+            # Older private worker schemas required TEXT even when a date was
+            # unknown. Keep their rows intact. Store an empty *internal* field
+            # only on legacy engines that cannot relax the constraint in place.
+            self._strict_draft_dates = set()
+            if self.dialect == "sqlite":
+                for field in connection.execute("PRAGMA table_info(content_drafts)").fetchall():
+                    name = field["name"]
+                    if name in {"valid_until", "purge_at"} and field["notnull"]:
+                        if sqlite3.sqlite_version_info >= (3, 53, 0):
+                            connection.execute(f"ALTER TABLE content_drafts ALTER COLUMN {name} DROP NOT NULL")
+                        else:
+                            self._strict_draft_dates.add(name)
+            else:
+                for field in connection.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() AND table_name='content_drafts' "
+                    "AND column_name IN ('valid_until','purge_at') AND is_nullable='NO'"
+                ).fetchall():
+                    name = field["column_name"]
+                    connection.execute(f"ALTER TABLE content_drafts ALTER COLUMN {name} DROP NOT NULL")
             for table in ("content_drafts", "feed_queue"):
                 for row in connection.execute(
                     f"SELECT request_id, package_json FROM {table}"
@@ -912,75 +1090,6 @@ class AgentRepository:
                             f"UPDATE {table} SET content_type=? WHERE request_id=?",
                             (content_type, row["request_id"]),
                         )
-            feed_rows = connection.execute(
-                "SELECT request_id, package_json FROM feed_queue "
-                "WHERE valid_until IS NULL OR purge_at IS NULL"
-            ).fetchall()
-            for row in feed_rows:
-                try:
-                    package = ContentPackage.model_validate_json(row["package_json"])
-                    has_expiry_anchor = bool(package.event_end) or any(
-                        fact.details.get(key)
-                        for fact in package.facts
-                        for key in ("event_end", "deadline", "release_date", "valid_until")
-                    )
-                    if has_expiry_anchor:
-                        prepare_package_lifecycle(package)
-                    else:
-                        package.feed_valid_until = _utc_now().isoformat()
-                        package.purge_at = (
-                            _utc_now() + timedelta(days=POLICY.default_event_retention_days)
-                        ).isoformat()
-                    connection.execute(
-                        "UPDATE feed_queue SET valid_until=?, purge_at=?, package_json=? "
-                        "WHERE request_id=?",
-                        (
-                            package.feed_valid_until,
-                            package.purge_at,
-                            package.model_dump_json(),
-                            row["request_id"],
-                        ),
-                    )
-                except Exception:
-                    connection.execute(
-                        "UPDATE feed_queue SET status='expired', valid_until=?, purge_at=? "
-                        "WHERE request_id=?",
-                        (_utc_now().isoformat(), _utc_now().isoformat(), row["request_id"]),
-                    )
-            rejected_rows = connection.execute(
-                "SELECT request_id, package_json FROM rejected_archive WHERE purge_at IS NULL"
-            ).fetchall()
-            for row in rejected_rows:
-                try:
-                    package = ContentPackage.model_validate_json(row["package_json"])
-                    has_expiry_anchor = bool(package.event_end) or any(
-                        fact.details.get(key)
-                        for fact in package.facts
-                        for key in ("event_end", "deadline", "release_date", "valid_until")
-                    )
-                    if has_expiry_anchor:
-                        prepare_package_lifecycle(package)
-                    else:
-                        package.purge_at = (
-                            _utc_now() + timedelta(days=POLICY.default_event_retention_days)
-                        ).isoformat()
-                    connection.execute(
-                        "UPDATE rejected_archive SET purge_at=? WHERE request_id=?",
-                        (package.purge_at, row["request_id"]),
-                    )
-                except Exception:
-                    connection.execute(
-                        "UPDATE rejected_archive SET purge_at=? WHERE request_id=?",
-                        (
-                            (
-                                _utc_now() + timedelta(days=POLICY.default_event_retention_days)
-                            ).isoformat(),
-                            row["request_id"],
-                        ),
-                    )
-        # Expiry purging is an explicit maintenance operation. Running it during
-        # repository initialization silently removes evidence whenever any CLI
-        # command opens the database, including read/inspection workflows.
 
     def prepare_lifecycle(self, package: ContentPackage) -> ContentPackage:
         return prepare_package_lifecycle(package)
@@ -1021,7 +1130,6 @@ class AgentRepository:
     ) -> None:
         now = _utc_now().isoformat()
         prepare_package_lifecycle(package)
-        expires_at = _package_expiration(package)
         query = """
                 INSERT INTO agent_records (
                     agent_type, record_id, record_kind, request_id, topic, region,
@@ -1051,7 +1159,7 @@ class AgentRepository:
             package.event_start,
             package.event_end,
             package.feed_valid_until,
-            expires_at,
+            None,
             status,
             json.dumps(payload, ensure_ascii=False),
             now,
@@ -1063,7 +1171,7 @@ class AgentRepository:
             with self.connect() as db:
                 db.execute(query, params)
 
-    def persist_information(self, package: ContentPackage) -> int:
+    def persist_information(self, package: ContentPackage, *, connection=None) -> int:
         count = 0
         for source in package.sources:
             source_payload = source.model_dump(mode="json")
@@ -1077,6 +1185,7 @@ class AgentRepository:
                 record_kind="source",
                 package=package,
                 payload=source_payload,
+                connection=connection,
             )
             count += 1
         for fact in package.facts:
@@ -1086,6 +1195,7 @@ class AgentRepository:
                 record_kind="fact",
                 package=package,
                 payload=fact.model_dump(mode="json"),
+                connection=connection,
             )
             count += 1
         return count
@@ -1119,8 +1229,8 @@ class AgentRepository:
             count += 1
         return count
 
-    def persist_images(self, package: ContentPackage) -> int:
-        with self.connect() as connection:
+    def persist_images(self, package: ContentPackage, *, connection=None) -> int:
+        with nullcontext(connection) if connection is not None else self.connect() as connection:
             for index, image in enumerate(package.images):
                 binary_data = image.content_bytes
                 source_path = Path(image.local_path) if image.local_path else None
@@ -1334,9 +1444,39 @@ class AgentRepository:
         package: ContentPackage,
         *,
         retry_same_request: bool = False,
+        exclude_returned_request: bool = False,
     ) -> dict[str, str] | None:
         """Find an existing same-work story before spending tokens on card generation."""
         with self.connect() as connection:
+            source = package.sources[0] if package.sources else None
+            if source and source.id == "anime_schedule_rss" and source.feed_entry_guid:
+                legacy_id = f"crawl-{source_item_digest(source.id, str(source.url))[:14]}"
+                queued = connection.execute(
+                    "SELECT 1 FROM pipeline_jobs WHERE request_id=? AND stage='generate' "
+                    "AND status IN ('pending', 'leased', 'retry', 'completed') LIMIT 1",
+                    (legacy_id,),
+                ).fetchone()
+                if queued:
+                    # An old package can be waiting without a draft. Older collectors
+                    # sometimes preserved the episode headline only in candidate_attempt.
+                    current_key = story_source_key(source.model_dump(mode="json"))
+                    old_rows = connection.execute(
+                        "SELECT record_kind,payload_json FROM agent_records WHERE "
+                        "(record_kind='source' AND request_id=?) OR (record_kind='candidate_attempt' AND topic=?)",
+                        (legacy_id, source.title),
+                    ).fetchall()
+                    for row in old_rows:
+                        old = json.loads(row["payload_json"])
+                        if row["record_kind"] == "candidate_attempt":
+                            if old.get("request_id") != legacy_id:
+                                continue
+                            old = {
+                                "source_id": old.get("source_id"),
+                                "url": old.get("candidate_url"),
+                                "title": old.get("candidate_title"),
+                            }
+                        if story_source_key(old) == current_key:
+                            return {"request_id": legacy_id, "topic": source.title, "reason": "same_source_url"}
             rows = []
             for table in ("content_drafts", "feed_queue"):
                 rows.extend(
@@ -1379,6 +1519,11 @@ class AgentRepository:
         seen: set[str] = set()
         for row in rows:
             request_id = str(row["request_id"])
+            if (exclude_returned_request and request_id == package.request_id and row["status"] in {
+                "needs_crawler_update", "expiry_unresolved_held", "generated_pending_review",
+                "review_returned", "rejected_archived", "held_for_quality_review",
+            }):
+                continue
             if request_id in seen:
                 continue
             seen.add(request_id)
@@ -1416,6 +1561,8 @@ class AgentRepository:
         request_id: str,
         content_kind: str,
         content_type: str | None = None,
+        *,
+        for_crawler_repair: bool = False,
     ) -> ContentPackage:
         """Load generation inputs from crawler-owned records, never from discovery captures."""
         if content_kind not in {"information", "humor"}:
@@ -1489,13 +1636,6 @@ class AgentRepository:
                 source["allowed_asset_hosts"] = sorted(
                     set(source.get("allowed_asset_hosts", [])) | set(configured.allowed_asset_hosts)
                 )
-        valid_until = next(
-            (row["valid_until"] for row in eligible_rows if row["valid_until"]), None
-        )
-        if valid_until and datetime.fromisoformat(valid_until) <= _utc_now():
-            raise ValueError(
-                "이 자료는 피드 노출 유효기간이 끝나 콘텐츠 생성에 사용할 수 없습니다."
-            )
         source_map = {source["id"]: source for source in sources}
         for fact in facts:
             missing = set(fact.get("source_ids", [])) - source_map.keys()
@@ -1575,16 +1715,20 @@ class AgentRepository:
             event_location=event_location,
             event_country=event_country,
             event_region=event_region,
-            feed_valid_until=valid_until,
-            purge_at=meta["expires_at"],
-            retention_expires_at=meta["expires_at"],
             sources=sources,
             facts=facts,
             images=images,
             menu_work_ids=persisted_work_ids,
             work_match_evidence=work_evidence,
         )
-        attach_menu_work_ids(package)
+        if package.content_type == "goods":
+            prepare_package_lifecycle(package, require_open_sale=True)
+        try:
+            attach_menu_work_ids(package, check_period_artwork=True)
+        except UnconfirmedPeriodWorkError:
+            if for_crawler_repair and rematch_returned_goods(package):
+                return package
+            raise
         if not package.menu_work_ids:
             raise ValueError(
                 "대표 작품을 제목에서 menu_work_id로 매칭하지 못했습니다. "
@@ -1602,7 +1746,12 @@ class AgentRepository:
             ).fetchone()
         if row is None:
             raise ValueError(f"No generated draft exists for request_id={request_id!r}.")
-        return ContentPackage.model_validate_json(row["package_json"])
+        package = ContentPackage.model_validate_json(row["package_json"])
+        if package.content_type in {"news", "event", "goods"}:
+            attach_menu_work_ids(package, check_period_artwork=True)
+        if package.content_type == "goods":
+            prepare_package_lifecycle(package, require_open_sale=True)
+        return package
 
     def _supplement_same_work_official_images(
         self,
@@ -1616,6 +1765,11 @@ class AgentRepository:
         citations. Assets must come from an active primary or editorial source,
         match its allowed page/CDN hosts, and resolve to a package work ID.
         """
+        # Event and product cards require imagery of that exact event or item.
+        # A same-franchise catalog image is not a valid substitute.
+        if package.content_type in {"event", "goods"}:
+            return package.images
+
         registry = load_source_registry()
         active_image_sources = {
             source.id: source
@@ -1667,7 +1821,7 @@ class AgentRepository:
         if reference_path:
             try:
                 resolved_reference = Path(reference_path).resolve()
-                current_path = self.path.resolve()
+                current_path = self.path.resolve() if self.path else None
                 if resolved_reference != current_path and resolved_reference.is_file():
                     reference_uri = f"{resolved_reference.as_uri()}?mode=ro"
                     with sqlite3.connect(reference_uri, uri=True) as connection:
@@ -1819,13 +1973,46 @@ class AgentRepository:
             existing_keys.update(keys)
         return result
 
-    def mark_request_status(self, request_id: str, status: str) -> int:
+    def mark_request_status(self, request_id: str, status: str, *, connection=None) -> int:
+        query = "UPDATE agent_records SET status=?, updated_at=? WHERE request_id=?"
+        params = (status, _utc_now().isoformat(), request_id)
+        if connection is not None:
+            return connection.execute(query, params).rowcount
+        with self.connect() as db:
+            return db.execute(query, params).rowcount
+
+    def persist_crawler_return(
+        self, package: ContentPackage, *, issues: list[dict], trace: list[str],
+        revision: int, usage_records: list[dict],
+        review_failures: int = 0,
+    ) -> None:
+        status = "needs_crawler_update"
+        image_exclusions = [
+            exclusion for fact in package.facts if fact.fact_type == "source_page_capture"
+            for exclusion in (fact.details.get("image_exclusions") or [])
+        ]
         with self.connect() as connection:
-            cursor = connection.execute(
-                "UPDATE agent_records SET status=?, updated_at=? WHERE request_id=?",
-                (status, _utc_now().isoformat(), request_id),
+            self.upsert_record(
+                agent_type="crawler",
+                record_id=f"crawler-return:{package.request_id}:{revision}",
+                record_kind="crawler_return",
+                package=package,
+                payload={
+                    "request_id": package.request_id,
+                    "revision": revision,
+                    "review_failures": review_failures,
+                    "issues": issues,
+                    "trace": trace,
+                    "usage_records": usage_records,
+                    "content_type": package.content_type,
+                    **({"image_exclusions": image_exclusions} if image_exclusions else {}),
+                    "evidence_snapshot": evidence_snapshot(package) if package.content_type in {"news", "event", "goods"} else None,
+                },
+                status=status,
+                connection=connection,
             )
-            return cursor.rowcount
+            self.mark_request_status(package.request_id, status, connection=connection)
+            self._set_content_status(connection, package.request_id, status)
 
     def persist_discovery(self, items: list[dict[str, Any]], region_policy: str) -> int:
         count = 0
@@ -2017,13 +2204,13 @@ class AgentRepository:
             "candidate_id": candidate_id,
             "candidate_title": str(candidate.get("title") or ""),
             "candidate_url": str(candidate.get("url") or ""),
+            "feed_entry_guid": candidate.get("feed_entry_guid"),
             "source_id": str(candidate.get("source_id") or ""),
             "content_type": content_type,
             "status": str(outcome.get("status") or "unknown"),
             "attempt_count": int(outcome.get("attempt_count", 1)),
             "retry_count": int(outcome.get("retry_count", 0)),
             "retry_note": str(outcome.get("retry_note") or ""),
-            "expiry_revision": outcome.get("expiry_revision"),
             "request_id": outcome.get("request_id"),
             "output": outcome.get("output"),
             "error": outcome.get("error"),
@@ -2065,7 +2252,6 @@ class AgentRepository:
                             "attempt_count",
                             "retry_count",
                             "retry_note",
-                            "expiry_revision",
                             "output",
                             "error",
                             "terminal_stage",
@@ -2224,10 +2410,8 @@ class AgentRepository:
             raise ValueError("DB 후보 레코드의 ID 또는 원문 URL이 올바르지 않습니다.")
         return payload
 
-    def list_discovery_candidates(
-        self, content_type: str | None = None
-    ) -> list[dict[str, Any]]:
-        """Load unique durable leads, optionally limited to a content type."""
+    def list_discovery_candidates(self, content_type: str) -> list[dict[str, Any]]:
+        """Load unique durable leads for a type so retries need not refetch listings."""
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT payload_json FROM agent_records "
@@ -2245,7 +2429,7 @@ class AgentRepository:
             if (
                 candidate_id
                 and payload.get("url")
-                and (content_type is None or content_type in types)
+                and content_type in types
                 and candidate_id not in candidates
             ):
                 candidates[candidate_id] = payload
@@ -2323,21 +2507,25 @@ class AgentRepository:
         region: str,
         event_end: str | None = None,
         package: ContentPackage | None = None,
+        *,
+        connection=None,
+        capture_request_id: str | None = None,
     ) -> None:
         """공식 페이지에서 가져온 원문 캡처를 미검증 상태로 적재합니다."""
         now = _utc_now().isoformat()
         page_url = str(capture["url"])
         event_start = capture.get("event_start")
         event_end = event_end or capture.get("event_end")
-        record_id = f"page:{hashlib.sha1(page_url.encode('utf-8')).hexdigest()[:16]}"
-        crawl_request_id = f"crawl-{hashlib.sha1(page_url.encode('utf-8')).hexdigest()[:14]}"
+        digest = source_item_digest(capture.get("source_id", ""), page_url, capture.get("feed_entry_guid"))
+        record_id = f"page:{digest[:16]}"
+        crawl_request_id = capture_request_id or f"crawl-{digest[:14]}"
         current_image_ids = {
             str(image.get("id"))
             for image in capture.get("images", [])
             if isinstance(image, dict) and image.get("id")
         }
         title = str(capture.get("title") or page_url)
-        with self.connect() as connection:
+        with nullcontext(connection) if connection is not None else self.connect() as connection:
             # A retry can recapture fewer assets than an earlier run. Remove
             # stale per-request image records before extraction so old related-
             # article images cannot silently re-enter the new package.
@@ -2412,7 +2600,8 @@ class AgentRepository:
         usage_records: list[dict[str, Any]] | None = None,
     ) -> None:
         """Save the latest generated version and its card rows, including drafts under review."""
-        attach_menu_work_ids(package)
+        attach_menu_work_ids(package, check_period_artwork=True)
+        set_goods_image_labels(package)
         package.status = status
         if package.content_type != "event":
             package.event_country = None
@@ -2433,8 +2622,6 @@ class AgentRepository:
                     content_type=excluded.content_type,
                     status=excluded.status,
                     package_json=excluded.package_json,
-                    valid_until=excluded.valid_until,
-                    purge_at=excluded.purge_at,
                     quality_score=excluded.quality_score,
                     quality_report_json=excluded.quality_report_json,
                     event_start=excluded.event_start,
@@ -2451,8 +2638,8 @@ class AgentRepository:
                     package.content_type,
                     status,
                     package.model_dump_json(),
-                    package.feed_valid_until,
-                    package.purge_at,
+                    "" if "valid_until" in self._strict_draft_dates else None,
+                    "" if "purge_at" in self._strict_draft_dates else None,
                     int(quality_report["total"]) if quality_report else None,
                     json.dumps(quality_report, ensure_ascii=False) if quality_report else None,
                     package.event_start,
@@ -2557,35 +2744,44 @@ class AgentRepository:
                 ),
             )
 
+
     def set_content_status(self, request_id: str, status: str) -> None:
         with self.connect() as connection:
-            now = _utc_now().isoformat()
+            self._set_content_status(connection, request_id, status)
+
+    def _set_content_status(self, connection, request_id: str, status: str) -> None:
+        temporal_hold = status in {"stale_candidate_skipped", "expiry_unresolved_held", "work_id_unresolved_skipped"}
+        where = "WHERE request_id=?"
+        if temporal_hold:
+            # Cancel this attempt, but leave an earlier handoff and its ERD
+            # status alone. Only the backend decides when exposure ends.
+            where += (" AND NOT EXISTS (SELECT 1 FROM feed_queue f "
+                      "WHERE f.request_id=content_drafts.request_id AND f.status='ready')")
+        updated = connection.execute(
+            "UPDATE content_drafts SET status=?, updated_at=? " + where,
+            (status, _utc_now().isoformat(), request_id),
+        )
+        if temporal_hold and not updated.rowcount:
+            return
+        if status in {"ready_for_feed", "rejected_archived", "needs_crawler_update"}:
             content_row = connection.execute(
-                "SELECT content_type FROM content_drafts WHERE request_id=?",
-                (request_id,),
+                "SELECT content_type FROM content_drafts WHERE request_id=?", (request_id,)
             ).fetchone()
-            connection.execute(
-                "UPDATE content_drafts SET status=?, updated_at=? WHERE request_id=?",
-                (status, now, request_id),
-            )
             self._update_candidate_attempt_downstream_status(
-                connection,
-                request_id,
-                status,
-                now,
+                connection, request_id, status, _utc_now().isoformat(),
                 content_type=content_row["content_type"] if content_row else None,
             )
-            if self.dialect == "sqlite":
-                set_erd_content_status(connection, request_id, status)
-            # A previously approved revision can remain in the queue when a later
-            # retry of the same request is rejected or returned for new evidence.
-            # Keep that stale revision out of the serving set without deleting it.
-            if status != "ready_for_feed":
-                connection.execute(
-                    "UPDATE feed_queue SET status='held_for_quality_review' "
-                    "WHERE request_id=? AND status='ready'",
-                    (request_id,),
-                )
+        if self.dialect == "sqlite":
+            set_erd_content_status(connection, request_id, status)
+        if temporal_hold:
+            return
+        # Hold an earlier approved revision when new evidence or a repair is needed.
+        if status != "ready_for_feed":
+            connection.execute(
+                "UPDATE feed_queue SET status='held_for_quality_review' "
+                "WHERE request_id=? AND status='ready'",
+                (request_id,),
+            )
 
     def archive_rejected(
         self,
@@ -2631,11 +2827,7 @@ class AgentRepository:
                 (package.request_id,),
             )
             self._update_candidate_attempt_downstream_status(
-                connection,
-                package.request_id,
-                "rejected_archived",
-                now,
-                content_type=package.content_type,
+                connection, package.request_id, "rejected_archived", now, content_type=package.content_type,
             )
             if self.dialect == "sqlite":
                 set_erd_content_status(connection, package.request_id, "rejected_archived", adopted=False)
@@ -2645,11 +2837,12 @@ class AgentRepository:
             raise ValueError("분류되지 않은 콘텐츠는 피드 대기열에 적재할 수 없습니다.")
         if package.content_type not in {item["code"] for item in self.active_content_types()}:
             raise ValueError(f"활성 콘텐츠 유형이 아닙니다: {package.content_type}")
-        attach_menu_work_ids(package)
+        attach_menu_work_ids(package, check_period_artwork=True)
+        set_goods_image_labels(package)
         package.status = "ready_for_feed"
         if package.content_type != "event":
             package.event_country = None
-        prepare_package_lifecycle(package)
+        prepare_package_lifecycle(package, require_open_sale=True)
         with self.connect() as connection:
             connection.execute(
                 """
@@ -2662,7 +2855,6 @@ class AgentRepository:
                     topic=excluded.topic, content_type=excluded.content_type,
                     package_json=excluded.package_json,
                     queued_at=excluded.queued_at, status='ready',
-                    valid_until=excluded.valid_until, purge_at=excluded.purge_at,
                     event_start=excluded.event_start, event_end=excluded.event_end,
                     event_location=excluded.event_location,
                     event_country=excluded.event_country, event_region=excluded.event_region
@@ -2683,21 +2875,17 @@ class AgentRepository:
                 ),
             )
             connection.execute(
-                "UPDATE content_drafts SET status='ready_for_feed', updated_at=? "
+                "UPDATE content_drafts SET status='ready_for_feed', updated_at=?, "
+                "package_json=? "
                 "WHERE request_id=?",
-                (_utc_now().isoformat(), package.request_id),
+                (_utc_now().isoformat(), package.model_dump_json(), package.request_id),
             )
-            downstream_updated_at = _utc_now().isoformat()
             self._update_candidate_attempt_downstream_status(
-                connection,
-                package.request_id,
-                "ready_for_feed",
-                downstream_updated_at,
-                content_type=package.content_type,
+                connection, package.request_id, "ready_for_feed", _utc_now().isoformat(), content_type=package.content_type,
             )
             if self.dialect == "sqlite":
                 set_erd_content_status(
-                    connection, package.request_id, "ready_for_feed", adopted=True
+                    connection, package.request_id, "ready_for_feed", adopted=True,
                 )
             self._replace_work_links(connection, package)
             for card in package.cards:
@@ -2752,14 +2940,12 @@ class AgentRepository:
             )
 
     def active_feed_items(self, now: datetime | None = None) -> list[dict[str, Any]]:
-        cutoff = (now or _utc_now()).astimezone(UTC).isoformat()
+        """Return the reviewed handoff queue; the backend controls feed visibility."""
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT request_id, topic, content_type, package_json, queued_at, status "
                 "FROM feed_queue WHERE status='ready' AND content_type IS NOT NULL "
-                "AND (valid_until IS NULL OR valid_until > ?) "
-                "ORDER BY queued_at DESC",
-                (cutoff,),
+                "ORDER BY queued_at DESC"
             ).fetchall()
         hidden_package_fields = {
             "audience_region",
@@ -2794,6 +2980,8 @@ class AgentRepository:
                 "reader_text": detail_markdown,
                 "markdown": detail_markdown,
             }
+            if product_url := illustrated_product_url(detail_package):
+                package["detail_article"]["product_url"] = product_url
             result.append(dict(row) | {"package": package})
         return result
 
@@ -2801,37 +2989,19 @@ class AgentRepository:
         cutoff = (now or _utc_now()).astimezone(UTC).isoformat()
         expired_assets: list[tuple[str, str, dict[str, Any]]] = []
         with self.connect() as connection:
-            connection.execute(
-                "UPDATE feed_queue SET status='expired' "
-                "WHERE status='ready' AND valid_until IS NOT NULL AND valid_until <= ?",
-                (cutoff,),
+            # Cache cleanup must spare source evidence for drafts and accepted
+            # packages, including articles past their factual event/sale dates.
+            expired_cache = (
+                "expires_at IS NOT NULL AND expires_at <= ? "
+                "AND NOT EXISTS (SELECT 1 FROM feed_queue f WHERE f.request_id=agent_records.request_id) "
+                "AND NOT EXISTS (SELECT 1 FROM content_drafts d WHERE d.request_id=agent_records.request_id) "
+                "AND NOT EXISTS (SELECT 1 FROM rejected_archive r WHERE r.request_id=agent_records.request_id) "
+                "AND NOT EXISTS (SELECT 1 FROM pipeline_jobs j WHERE j.request_id=agent_records.request_id "
+                "AND j.status IN ('pending','retry','leased'))"
             )
-            expired_requests = {
-                row["request_id"]
-                for row in connection.execute(
-                    "SELECT request_id FROM content_drafts WHERE purge_at <= ? "
-                    "UNION SELECT request_id FROM feed_queue WHERE purge_at <= ? "
-                    "UNION SELECT request_id FROM rejected_archive WHERE purge_at <= ?",
-                    (cutoff, cutoff, cutoff),
-                ).fetchall()
-            }
-            cards_removed = 0
-            for request_id in expired_requests:
-                cards_removed += connection.execute(
-                    "DELETE FROM content_cards WHERE request_id=?", (request_id,)
-                ).rowcount
-            drafts_removed = connection.execute(
-                "DELETE FROM content_drafts WHERE purge_at <= ?", (cutoff,)
-            ).rowcount
-            feed_removed = connection.execute(
-                "DELETE FROM feed_queue WHERE purge_at <= ?", (cutoff,)
-            ).rowcount
-            rejected_removed = connection.execute(
-                "DELETE FROM rejected_archive WHERE purge_at <= ?", (cutoff,)
-            ).rowcount
             rows = connection.execute(
                 "SELECT request_id, record_id, payload_json FROM agent_records "
-                "WHERE agent_type='image' AND expires_at IS NOT NULL AND expires_at <= ?",
+                "WHERE agent_type='image' AND " + expired_cache,
                 (cutoff,),
             ).fetchall()
             expired_assets = [
@@ -2839,15 +3009,13 @@ class AgentRepository:
                 for row in rows
             ]
             cursor = connection.execute(
-                "DELETE FROM agent_records WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                "DELETE FROM agent_records WHERE " + expired_cache,
                 (cutoff,),
             )
-            removed = (
-                cursor.rowcount + cards_removed + drafts_removed + feed_removed + rejected_removed
-            )
+            removed = cursor.rowcount
             candidate_keys = {
-                row["sha256"]
-                for row in connection.execute("SELECT sha256 FROM image_blobs").fetchall()
+                payload["storage_key"]
+                for _, _, payload in expired_assets if payload.get("storage_key")
             }
             referenced_keys: set[str] = set()
             image_rows = connection.execute(
@@ -2870,6 +3038,14 @@ class AgentRepository:
                         for card in package_payload.get("cards", [])
                         if card.get("rendered_image_key")
                     )
+            if candidate_keys and self.dialect == "sqlite":
+                for row in connection.execute(
+                    "SELECT card_image_url AS url FROM content_card "
+                    "UNION SELECT source_image_url FROM content_card "
+                    "UNION SELECT thumbnail_url FROM content"
+                ):
+                    if row["url"] and row["url"].startswith("imageblob://"):
+                        referenced_keys.add(row["url"].removeprefix("imageblob://"))
             for storage_key in candidate_keys - referenced_keys:
                 removed += connection.execute(
                     "DELETE FROM image_blobs WHERE sha256=?", (storage_key,)

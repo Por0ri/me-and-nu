@@ -116,6 +116,9 @@ def kitsu_image_references(payload: Mapping[str, object]) -> list[dict[str, str]
         attrs = anime.get("attributes") if isinstance(anime.get("attributes"), dict) else {}
         label = attrs.get("canonicalTitle") if isinstance(attrs.get("canonicalTitle"), str) else native_id
         _append_kitsu_image_references(
+            references, seen, attrs.get("posterImage"), native_id, "poster", str(label),
+        )
+        _append_kitsu_image_references(
             references, seen, attrs.get("coverImage"), native_id, "cover", str(label),
         )
 

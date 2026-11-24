@@ -54,13 +54,15 @@ def collect_kitsu_work_images(
     *,
     max_images: int = MAX_IMAGES,
     preferred_character_names: list[str] | None = None,
+    goods_only: bool = False,
     timeout: float = 20.0,
 ) -> list[ImageAsset]:
     """Return only poster/character art whose Kitsu titles exactly match the work catalog.
 
     Kitsu is used as an image-reference source, not as evidence for article facts.
     Every image keeps the exact API endpoint and catalog provenance for the risk
-    and relevance checks downstream.
+    and relevance checks downstream. For merchandise, only return work artwork
+    and the character identified by the article and the work's own cast list.
     """
     if (
         source.status != "active"
@@ -102,7 +104,7 @@ def collect_kitsu_work_images(
                 if work.get(key)
             ]
             matched: dict[str, Any] | None = None
-            for query in queries:
+            for query in dict.fromkeys(queries):
                 search_params = httpx.QueryParams(
                     {"filter[text]": query, "page[limit]": 10}
                 )
@@ -114,12 +116,22 @@ def collect_kitsu_work_images(
                     )
                 except (httpx.HTTPError, ValueError, KeyError):
                     continue
-                for row in payload.get("data") or []:
-                    if not isinstance(row, dict) or not isinstance(row.get("attributes"), dict):
+                rows = [
+                    row for row in payload.get("data") or []
+                    if isinstance(row, dict) and row.get("id") and isinstance(row.get("attributes"), dict)
+                    and _titles(row["attributes"]) & expected_titles
+                ]
+                if goods_only and rows:
+                    # Remakes can reuse the canonical title. Prefer the matching
+                    # catalog year and skip ambiguous results instead of guessing.
+                    year = str(work.get("first_year") or "")
+                    if year:
+                        dated = [row for row in rows if str(row["attributes"].get("startDate") or "")[:4] == year]
+                        rows = dated or [row for row in rows if not row["attributes"].get("startDate")]
+                    if len({row.get("id") for row in rows}) != 1:
                         continue
-                    if _titles(row["attributes"]) & expected_titles:
-                        matched = row
-                        break
+                if rows:
+                    matched = rows[0]
                 if matched:
                     break
             if not matched:
@@ -165,7 +177,9 @@ def collect_kitsu_work_images(
                 if asset and asset.url:
                     assets.append(asset)
                     seen_urls.add(str(asset.url))
-            if len(assets) >= max_images:
+            if goods_only and not preferred_names:
+                continue
+            if len(assets) >= max_images and not goods_only:
                 break
 
             character_endpoint = (
@@ -198,6 +212,9 @@ def collect_kitsu_work_images(
                 aliases = char_attributes.get("names")
                 if isinstance(aliases, dict):
                     values.extend(aliases.values())
+                other_names = char_attributes.get("otherNames")
+                if isinstance(other_names, list):
+                    values.extend(other_names)
                 return list(
                     dict.fromkeys(
                         str(name).strip()
@@ -219,6 +236,16 @@ def collect_kitsu_work_images(
                     (item.get("attributes") or {}).get("role") != "supporting",
                 )
             )
+            if goods_only:
+                relations = [
+                    item for item in relations
+                    if preferred_names.intersection(_normalized_title(name) for name in related_character_names(item))
+                ]
+                referenced_ids = {
+                    item["relationships"]["character"]["data"]["id"] for item in relations
+                }
+                if len(referenced_ids) != 1:
+                    continue
             # Character-focused packages benefit more from exact-character
             # portraits than from reserving most of the small image budget for
             # episode stills. Keep the reserve for general franchise fallback.
@@ -238,10 +265,7 @@ def collect_kitsu_work_images(
                 allowed_asset_hosts=source.allowed_asset_hosts,
             )
             for relation in relations:
-                if (
-                    len(assets) >= max_images
-                    or character_images_added >= character_image_limit
-                ):
+                if not goods_only and (len(assets) >= max_images or character_images_added >= character_image_limit):
                     break
                 relationship = (relation.get("relationships") or {}).get("character") or {}
                 character_ref = relationship.get("data") or {}
@@ -260,13 +284,15 @@ def collect_kitsu_work_images(
                     work_id,
                     f"Kitsu catalog character art — {character_label} · {selected_title}",
                     "character_art",
-                    names,
+                    list(dict.fromkeys([names[0], *(preferred_character_names or []), *names])) if goods_only else names,
                     0.95,
                 )
                 if asset:
                     assets.append(asset)
                     seen_urls.add(image_url)
                     character_images_added += 1
+            if goods_only:
+                continue
             if len(assets) >= max_images:
                 break
 
@@ -312,7 +338,9 @@ def collect_kitsu_work_images(
                 if asset:
                     assets.append(asset)
                     seen_urls.add(thumbnail)
-    return assets
+    if goods_only:
+        assets.sort(key=lambda asset: asset.asset_kind != "character_art")
+    return assets[:max_images]
 
 
 def _asset(

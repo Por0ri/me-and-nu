@@ -131,6 +131,7 @@ async def _collect_one(
         source_id=ANN_SOURCE_ID, query=f"{query} Anime News Network Encyclopedia",
         mcp_server_alias=source.mcp_server, tool_name=tools["search"],
         allowed_hosts=source.allowed_hosts, limit=5,
+        content_type=RagContentType.GUIDE,
     ))
     searches = 1
     allowed_titles = _work_titles(catalog, work_id)
@@ -166,6 +167,10 @@ async def _collect_one(
             errors.append(f"entry {native_id}: read title or native ID differs from local match")
             continue
         body = result.body or ""
+        identity = catalog.resolve_ann_page(result.title, body, result.url)
+        if identity.confirmed != work_id:
+            errors.append(f"entry {native_id}: the page's own title and edition do not confirm this work")
+            continue
         if len(body) < 100 or any(marker in body.casefold() for marker in ERROR_PAGE_MARKERS):
             errors.append(f"entry {native_id}: page returned an error/empty body")
             continue
@@ -186,7 +191,7 @@ async def _collect_one(
             work_link_status=WorkLinkStatus.MATCHED, menu_work_ids=(work_id,),
             metadata={
                 "mcp_server_alias": source.mcp_server, "mcp_tool": "read",
-                "work_match_method": "exact_local_catalog_title",
+                "work_match_method": identity.method,
                 "work_match_seed_menu_work_id": str(work_id),
             },
         )

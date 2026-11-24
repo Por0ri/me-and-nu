@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Iterator, Mapping
 from urllib.parse import urlsplit
 
+from ani_rag.archive_identity import archive_work_links, official_works_path
 from ani_rag.models import (
     CollectionMethod,
     EvidenceDocument,
@@ -80,6 +81,17 @@ class MenuDictArchiveReader:
             raise ValueError("menu_dict input must be a PostgreSQL custom-format dump")
         self.entities = self._read_entities()
         self.sources = self._read_sources()
+        works = {
+            entity.entity_id: (entity.menu_work_id, entity.names)
+            for entity in self.entities.values() if entity.kind == "work" and entity.menu_work_id is not None
+        }
+        entries = {entity.entity_id: entity.parent_id for entity in self.entities.values()
+                   if entity.kind == "entry" and entity.parent_id is not None}
+        external = ((int(entity_id), str(external_id)) for source_id, kind, external_id, entity_id in self._rows("external_id")
+                    if source_id == "anilist" and kind == "anime")
+        official = official_works_path()
+        direct, confirmed = archive_work_links(works, entries, external, official, official.with_name("menu_work_entries.csv"))
+        self._direct_work_links = {entity_id: match for entity_id, match in direct.items() if match[0] in confirmed}
         self._source_work_links = self._derive_work_links()
 
     def _rows(self, table: str):
@@ -121,23 +133,20 @@ class MenuDictArchiveReader:
         return result
 
     def _derive_work_links(self) -> dict[int, set[int]]:
-        links: dict[int, set[int]] = {}
-        for entity in self.entities.values():
-            if entity.kind == "work" and entity.menu_work_id is not None:
-                links.setdefault(entity.entity_id, set()).add(entity.menu_work_id)
-            elif entity.kind == "entry" and entity.parent_id is not None:
-                parent = self.entities[entity.parent_id]
-                if parent.menu_work_id is not None:
-                    links.setdefault(entity.entity_id, set()).add(parent.menu_work_id)
+        links = {entity_id: {match[0]} for entity_id, match in self._direct_work_links.items()}
         for row in self._rows("fact"):
             _fact_id, entity_id, _field, _value, value_entity_id, _source_id, _url, _fetched = row
             source_entity = self.entities.get(int(entity_id))
             if source_entity is None or source_entity.kind != "entry" or value_entity_id is None:
                 continue
-            parent = self.entities.get(source_entity.parent_id or -1)
-            if parent and parent.menu_work_id is not None:
-                links.setdefault(int(value_entity_id), set()).add(parent.menu_work_id)
+            match = self._direct_work_links.get(source_entity.entity_id)
+            if match is not None:
+                links.setdefault(int(value_entity_id), set()).add(match[0])
         return links
+
+    def derived_work_ids(self, entity_id: int) -> tuple[int, ...]:
+        works = self._source_work_links.get(entity_id, set())
+        return tuple(sorted(works)) if len(works) <= 50 else ()
 
     def iter_documents(self) -> Iterator[EvidenceDocument]:
         """Yield one evidence document per eligible source fact; never schedule generation."""
@@ -165,23 +174,13 @@ class MenuDictArchiveReader:
             value = _decode_json_value(raw_value)
             related = self.entities.get(int(value_entity_id)) if value_entity_id is not None else None
             fact_text = _render_fact(entity, field_name, value, related)
-            if entity.kind == "work" and entity.menu_work_id is not None:
-                # Work-level facts belong to this work only. Relation fan-out is
-                # useful for people/character entities, but must not relabel an
-                # entry's own facts as belonging to every related work.
-                work_ids = (entity.menu_work_id,)
-                work_match_method = "menu_dict_work_identity"
-            elif entity.kind == "entry" and entity.parent_id is not None:
-                parent = self.entities.get(entity.parent_id)
-                work_ids = (parent.menu_work_id,) if parent and parent.menu_work_id is not None else ()
-                work_match_method = "menu_dict_entry_parent"
+            if entity.kind in {"work", "entry"}:
+                match = self._direct_work_links.get(entity.entity_id)
+                work_ids = (match[0],) if match is not None else ()
+                work_match_method = match[1] if match is not None else None
             else:
-                work_ids = tuple(sorted(self._source_work_links.get(entity.entity_id, set())))
+                work_ids = self.derived_work_ids(entity.entity_id)
                 work_match_method = "menu_dict_explicit_entity_relation"
-            # A person or studio linked to many franchises must not be falsely
-            # presented as belonging to a single requested work.
-            if len(work_ids) > 50:
-                work_ids = ()
             link_status = WorkLinkStatus.MATCHED if work_ids else WorkLinkStatus.UNRESOLVED
             fact_key = hashlib.sha256(
                 f"{self.archive_sha256}:{fact_id}:{source_id}".encode("utf-8")

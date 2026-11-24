@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import file_digest
 from io import BytesIO
-
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps, ImageStat
 
-from ani_rag.content import ContentDraft, ImageAsset
+from ani_rag.content import DESIGNED_COVERS, CardDraft, ContentDraft, ImageAsset
 
 LOGICAL_WIDTH = 327
 LOGICAL_HEIGHT = 408
 RENDER_SCALE = 4
 WIDTH = LOGICAL_WIDTH * RENDER_SCALE
 HEIGHT = LOGICAL_HEIGHT * RENDER_SCALE
+_GRID_COLOR = (17, 17, 21, 255)
 
 
 @dataclass(frozen=True)
@@ -31,29 +32,21 @@ class RenderedCard:
 def render_text_free_cards(draft: ContentDraft, assets: dict[str, ImageAsset]) -> tuple[RenderedCard, ...]:
     """Compose artwork only; copy and normalized HTML overlay remain page-specific data."""
     rendered: list[RenderedCard] = []
-    used: set[str] = set()
+    _validate_deck_images(draft, assets)
     for card in draft.cards:
-        asset = assets.get(card.image_asset_id)
-        if card.image_asset_id in used:
-            raise ValueError("A card deck cannot reuse an image asset")
-        used.add(card.image_asset_id)
-        if asset is None or not asset.local_path:
-            raise ValueError(f"Missing local image asset {card.image_asset_id!r}")
-        with Image.open(asset.local_path) as source:
-            foreground = ImageOps.exif_transpose(source).convert("RGBA")
-        background = _source_background(foreground, card.layout.background_style).convert("RGBA")
-        art_box = card.layout.image_box
-        art_area = (int(WIDTH * art_box.width), int(HEIGHT * art_box.height))
-        placement = (
-            int(WIDTH * art_box.x), int(HEIGHT * art_box.y),
-            art_area[0], art_area[1],
-        )
-        is_panorama = foreground.width / max(1, foreground.height) >= 2.4
-        panorama_crop = is_panorama and card.layout.image_emphasis == "dominant"
-        if panorama_crop:
-            _paste_panorama_crop(background, foreground, placement)
+        foreground = _open_art(assets[card.image_asset_id])
+        panorama_crop = False
+        if card.layout.template in DESIGNED_COVERS:
+            background = _cover_from_sources(card, foreground, assets)
         else:
-            _paste_uncropped(background, foreground, placement)
+            background = _source_background(foreground, card.layout.background_style).convert("RGBA")
+            box = card.layout.image_box
+            placement = (int(WIDTH * box.x), int(HEIGHT * box.y), int(WIDTH * box.width), int(HEIGHT * box.height))
+            panorama_crop = foreground.width / foreground.height >= 2.4 and card.layout.image_emphasis == "dominant"
+            if panorama_crop:
+                _paste_panorama_crop(background, foreground, placement)
+            else:
+                _paste_uncropped(background, foreground, placement)
         background = _soften_copy_zone(background, card.layout)
         background = Image.alpha_composite(
             background.convert("RGBA"), _copy_scrim(card.layout)
@@ -86,6 +79,107 @@ def render_text_free_cards(draft: ContentDraft, assets: dict[str, ImageAsset]) -
             )
         )
     return tuple(rendered)
+
+
+def _validate_deck_images(draft: ContentDraft, assets: dict[str, ImageAsset]) -> None:
+    used: set[tuple[str, str]] = set()
+    for index, card in enumerate(draft.cards):
+        if index and card.layout.template in DESIGNED_COVERS:
+            raise ValueError("A cover design can only be applied to the first card")
+        for asset_id in card.source_asset_ids:
+            asset = assets.get(asset_id)
+            if asset is None or not asset.local_path:
+                raise ValueError(f"Missing local image asset {asset_id!r}")
+            keys = asset.source_identity_keys
+            if not asset.content_sha256:
+                with open(asset.local_path, "rb") as image_file:
+                    keys = keys | {("sha256", file_digest(image_file, "sha256").hexdigest())}
+            if keys & used:
+                raise ValueError("A card deck cannot reuse an image asset")
+            used.update(keys)
+
+
+def _open_art(asset: ImageAsset) -> Image.Image:
+    with Image.open(asset.local_path) as source:
+        return ImageOps.exif_transpose(source).convert("RGBA")
+
+
+def compose_cover_art(card: CardDraft, assets: dict[str, ImageAsset]) -> Image.Image:
+    """Give the layout reviewer the same composed artwork as the published plate."""
+    return _cover_from_sources(card, _open_art(assets[card.image_asset_id]), assets)
+
+
+def _cover_from_sources(card: CardDraft, primary: Image.Image, assets: dict[str, ImageAsset]) -> Image.Image:
+    template = card.layout.template
+    copy_top = round(HEIGHT * card.layout.text_overlay_box.y)
+    if template == "beginner_guide":
+        canvas = _source_background(primary, card.layout.background_style).convert("RGBA")
+        poster = _fit_poster(primary, WIDTH - 32, copy_top - 32)
+        poster.putalpha(ImageChops.multiply(poster.getchannel("A"), _feather_mask(poster.size)))
+        canvas.alpha_composite(poster, ((WIDTH - poster.width) // 2, (copy_top - poster.height) // 2))
+        return canvas
+    if template == "cast_intro_grid":
+        return _cast_grid(card, primary, assets, copy_top)
+    if template == "fan_recommendation":
+        return _recommendation_cover(card, primary, assets, copy_top)
+    raise ValueError(f"Unsupported cover design {template}")
+
+
+def _cast_grid(card: CardDraft, primary: Image.Image, assets: dict[str, ImageAsset], copy_top: int) -> Image.Image:
+    count = len(card.source_asset_ids)
+    cols, rows = (2, 2) if count == 4 else (3, 1)
+    gap = 8
+    band_height = HEIGHT if count == 4 else min(round(HEIGHT * 0.66), copy_top)
+    band = Image.new("RGBA", (WIDTH, band_height), _GRID_COLOR)
+    for index, asset_id in enumerate(card.source_asset_ids):
+        portrait = primary if index == 0 else _open_art(assets[asset_id])
+        row, col = divmod(index, cols)
+        left = col * (WIDTH + gap) // cols
+        top = row * (band_height + gap) // rows
+        right = (col + 1) * (WIDTH + gap) // cols - gap
+        bottom = (row + 1) * (band_height + gap) // rows - gap
+        face = ImageOps.fit(
+            portrait, (right - left, bottom - top), Image.Resampling.LANCZOS, centering=(0.5, 0.18),
+        )
+        band.alpha_composite(face, (left, top))
+    if count == 4:
+        return band
+    bleed = band.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(40))
+    canvas = ImageEnhance.Brightness(bleed).enhance(0.55)
+    canvas.paste(band, (0, 0))
+    return canvas
+
+
+def _fit_poster(image: Image.Image, max_width: int, max_height: int) -> Image.Image:
+    scale = min(max_width / image.width, max_height / image.height, 2.0)
+    size = (max(1, round(scale * image.width)), max(1, round(scale * image.height)))
+    return image.resize(size, Image.Resampling.LANCZOS)
+
+
+def _recommendation_cover(card: CardDraft, primary: Image.Image, assets: dict[str, ImageAsset], copy_top: int) -> Image.Image:
+    canvas = Image.new("RGBA", (WIDTH, HEIGHT), _GRID_COLOR)
+    cell_w, cell_h = WIDTH // 2, HEIGHT // 2
+    for index, asset_id in enumerate(card.component_image_asset_ids):
+        tile = _fit_poster(_open_art(assets[asset_id]), cell_w - 16, cell_h - 16)
+        row, col = divmod(index, 2)
+        x = col * cell_w + (cell_w - tile.width) // 2
+        y = row * cell_h + (cell_h - tile.height) // 2
+        canvas.alpha_composite(tile, (x, y))
+    canvas = ImageEnhance.Brightness(canvas).enhance(0.55)
+    border = 12
+    max_height = min(round((cell_h - 16) * 1.18), copy_top - 2 * border - 32)
+    art = _fit_poster(primary, round((cell_w - 16) * 1.18), max_height)
+    framed = Image.new("RGBA", (art.width + 2 * border, art.height + 2 * border), "white")
+    framed.alpha_composite(art, (border, border))
+    left = (WIDTH - framed.width) // 2
+    top = min(round(HEIGHT * 0.42) - framed.height // 2, copy_top - framed.height - 16)
+    shadow = Image.new("RGBA", canvas.size)
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        (left + 10, top + 18, left + framed.width + 10, top + framed.height + 18), radius=18, fill=(0, 0, 0, 170)
+    )
+    canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(22)))
+    canvas.alpha_composite(framed, (left, top))
+    return canvas
 
 
 def _source_background(image: Image.Image, style: str) -> Image.Image:
@@ -234,6 +328,10 @@ def _feather_mask(size: tuple[int, int]) -> Image.Image:
     )
 
 
+class ReviewCopyOverflow(ValueError):
+    """Only a measured overlay overflow is an editorial correction."""
+
+
 def render_review_preview(png: bytes, card) -> bytes:
     """Build a temporary HTML-overlay approximation for visual review only.
 
@@ -243,6 +341,7 @@ def render_review_preview(png: bytes, card) -> bytes:
 
     candidates = (
         Path("C:/Windows/Fonts/malgun.ttf"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
         Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
         Path("/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
     )
@@ -264,7 +363,7 @@ def render_review_preview(png: bytes, card) -> bytes:
     label_font = ImageFont.truetype(str(font_path), 34)
     draw.text((x, y), card.role, font=label_font, fill=(255, 150, 105, 255))
 
-    def wrap(text: str, font: ImageFont.FreeTypeFont) -> list[str]:
+    def wrap(text: str, font: ImageFont.FreeTypeFont, stroke: int) -> list[str]:
         lines: list[str] = []
         # Keep model-requested line breaks as real layout boundaries. Treating a
         # newline as a printable character made the preview's measured line count
@@ -273,7 +372,8 @@ def render_review_preview(png: bytes, card) -> bytes:
             line = ""
             for character in paragraph:
                 candidate = line + character
-                if line and draw.textbbox((0, 0), candidate, font=font)[2] > width:
+                bounds = draw.textbbox((0, 0), candidate, font=font, stroke_width=stroke)
+                if line and bounds[2] - bounds[0] > width:
                     lines.append(line)
                     line = character
                 else:
@@ -282,32 +382,26 @@ def render_review_preview(png: bytes, card) -> bytes:
                 lines.append(line)
         return lines
 
-    title_size = 76
-    title_font = ImageFont.truetype(str(font_path), title_size)
-    title_lines = wrap(card.headline, title_font)
-    while len(title_lines) > 2 and title_size > 44:
-        title_size -= 4
-        title_font = ImageFont.truetype(str(font_path), title_size)
-        title_lines = wrap(card.headline, title_font)
-    body_size = 43
-    body_font = ImageFont.truetype(str(font_path), body_size)
-    body_lines = wrap(card.body, body_font)
-    while len(body_lines) > 3 and body_size > 30:
-        body_size -= 3
-        body_font = ImageFont.truetype(str(font_path), body_size)
-        body_lines = wrap(card.body, body_font)
-    if len(title_lines) > 2 or len(body_lines) > 3:
-        raise ValueError(f"Review preview copy for card {card.card_id!r} does not fit its HTML overlay box")
     title_y = y + 52
+    for step in range(9):
+        title_size = max(44, 76 - 4 * step)
+        body_size = max(30, 43 - 3 * step)
+        title_font = ImageFont.truetype(str(font_path), title_size)
+        body_font = ImageFont.truetype(str(font_path), body_size)
+        title_lines = wrap(card.headline, title_font, 2)
+        body_lines = wrap(card.body, body_font, 1)
+        title_step = int(title_size * 1.18)
+        body_step = int(body_size * 1.30)
+        body_y = title_y + len(title_lines) * title_step + 12
+        if body_y + len(body_lines) * body_step <= y + height:
+            break
+    else:
+        raise ReviewCopyOverflow(f"Card {card.card_id!r} exceeds the overlay at the minimum readable font sizes")
     for index, value in enumerate(title_lines):
-        draw.text((x, title_y + index * int(title_size * 1.18)), value, font=title_font,
+        draw.text((x, title_y + index * title_step), value, font=title_font, anchor="lt",
                   fill=(255, 255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0, 180))
-    body_y = title_y + len(title_lines) * int(title_size * 1.18) + 12
-    body_line_height = int(body_size * 1.30)
-    if body_y + len(body_lines) * body_line_height > y + height:
-        raise ValueError(f"Review preview copy for card {card.card_id!r} exceeds its HTML overlay box")
     for index, value in enumerate(body_lines):
-        draw.text((x, body_y + index * body_line_height), value, font=body_font,
+        draw.text((x, body_y + index * body_step), value, font=body_font, anchor="lt",
                   fill=(231, 229, 229, 255), stroke_width=1, stroke_fill=(0, 0, 0, 150))
     output = BytesIO()
     canvas.convert("RGB").save(output, format="JPEG", quality=84, optimize=True)

@@ -207,12 +207,15 @@ def test_japanese_game_preregistration_announcement_routes_to_news():
     assert _RUNNER.select_candidate_type(candidate, type_codes, _registry()) == "news"
 
 
-def test_dated_old_headline_is_skipped_for_time_sensitive_types():
+def test_old_broadcast_announcement_expires_but_goods_require_a_sale_end():
     candidate = {"title": "2024.08.05 TVer配信決定", "published_at": None}
 
     assert _RUNNER.candidate_publication_date(candidate) == date(2024, 8, 5)
     assert _RUNNER.candidate_is_stale(candidate, "news", today=date(2026, 10, 23))
-    assert _RUNNER.candidate_is_stale(candidate, "goods", today=date(2026, 10, 23))
+    assert not _RUNNER.candidate_is_stale(candidate, "goods", today=date(2026, 10, 23))
+    assert _RUNNER.candidate_is_stale(
+        {**candidate, "sale_end": "2026-10-22"}, "goods", today=date(2026, 10, 23)
+    )
 
 
 def test_fresh_headlines_and_evergreen_types_are_not_skipped():
@@ -228,7 +231,7 @@ def test_published_at_metadata_takes_precedence_over_title_date():
         "published_at": "2026-10-22T15:00:00Z",
     }
 
-    assert _RUNNER.candidate_publication_date(candidate) == date(2026, 10, 22)
+    assert _RUNNER.candidate_publication_date(candidate) == date(2026, 10, 23)  # Midnight KST.
     assert not _RUNNER.candidate_is_stale(candidate, "news", today=date(2026, 10, 23))
 
 

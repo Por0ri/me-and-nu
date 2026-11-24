@@ -2,8 +2,10 @@ import pytest
 
 from ani_menu_agent.image_selection import (
     assign_distinct_images,
+    copy_image_pool,
     cover_usable_editorial_images,
     distinct_editorial_images,
+    image_visual_keys,
 )
 from ani_menu_agent.models import (
     ContentPackage,
@@ -13,6 +15,114 @@ from ani_menu_agent.models import (
     SourceEvidence,
     TermTranslation,
 )
+
+
+def _goods_package_with_art(sizes: dict[str, tuple[int, int]]) -> ContentPackage:
+    source = SourceEvidence(
+        id="official",
+        title="Goods release",
+        publisher="Publisher",
+        url="https://example.com/release/15",
+        is_official=True,
+    )
+    images = [
+        ImageAsset(
+            id=name,
+            url=f"https://example.com/images/{name}.jpg",
+            storage_key=name,
+            width=width,
+            height=height,
+            source_url=source.url,
+            official=True,
+            rights_status=RightsStatus.OFFICIAL_PUBLIC_RISK_ACCEPTED,
+            rights_evidence_url=source.url,
+            rights_checked_at="2026-11-23T00:00:00Z",
+            attribution_text="Publisher",
+            download_status="downloaded",
+        )
+        for name, (width, height) in sizes.items()
+    ]
+    return ContentPackage(
+        request_id="goods-images",
+        topic="Goods release",
+        content_kind="information",
+        content_type="goods",
+        images=images,
+        sources=[source],
+    )
+
+
+def test_copy_preflight_requires_two_images_that_fit_separate_pages() -> None:
+    from ani_menu_agent.nodes import rights_preflight
+
+    package = _goods_package_with_art({"cover-a": (650, 760), "cover-b": (650, 760)})
+    assert len(cover_usable_editorial_images(package.images, package.sources, package)) == 2
+    result = rights_preflight({"package": package.model_dump(mode="json")})
+    assert result["status"] == "needs_crawler_update"
+    assert result["qa_report"][0]["code"] == "SOURCE_IMAGE_POOL_INSUFFICIENT"
+    assert result["qa_report"][0]["page"] == 2
+
+
+def test_copy_preflight_allows_a_used_cover_inside_and_only_requests_feasible_pages() -> None:
+    package = _goods_package_with_art(
+        {
+            "cover-a": (650, 760),
+            "cover-b": (650, 760),
+            "inside": (1500, 1700),
+        }
+    )
+    package.prior_image_fingerprints = list(image_visual_keys(package.images[-1]))
+    usable = copy_image_pool(package, limit=10)
+    assert len(usable) == 2
+    assert usable[0].id in {"cover-a", "cover-b"}
+    assert usable[1].id == "inside"
+
+
+def test_copy_graph_holds_before_layout_when_cover_history_changes(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from ani_menu_agent import generation
+    from ani_menu_agent.graph import build_graph
+    from ani_menu_agent.models import Fact
+
+    package = _goods_package_with_art({"one": (1500, 1700), "two": (1500, 1700)})
+    package.menu_work_ids = [1]
+    package.facts = [Fact(id="f1", statement="Goods release", source_ids=["official"])]
+    assert len(copy_image_pool(package, limit=2)) == 2
+    prior = [key for image in package.images for key in image_visual_keys(image)]
+    monkeypatch.setattr(
+        generation, "get_settings", lambda: SimpleNamespace(openai_api_key="unused")
+    )
+    monkeypatch.setattr(
+        generation,
+        "AgentRepository",
+        lambda: SimpleNamespace(
+            prior_cover_image_fingerprints=lambda **kwargs: prior,
+        ),
+    )
+    monkeypatch.setattr(generation, "ChatOpenAI", lambda **kwargs: pytest.fail("paid call"))
+    monkeypatch.setattr(
+        "ani_menu_agent.nodes.validate_generation_sources", lambda *args: {"official"}
+    )
+    monkeypatch.setattr(
+        "ani_menu_agent.nodes.supported_content_types_for_sources", lambda *args: {"goods"}
+    )
+    monkeypatch.setattr("ani_menu_agent.nodes.attach_menu_work_ids", lambda package: None)
+    result = build_graph().invoke(
+        {
+            "package": package.model_dump(mode="json"),
+            "allow_llm": True,
+        }
+    )
+    assert result["status"] == "needs_crawler_update"
+    assert result["trace"] == [
+        "intake",
+        "rights_preflight",
+        "copy_writer",
+        "crawler_update_required",
+    ]
+    assert result["qa_report"][0]["page"] == 1
+    assert result["usage_records"] == []
 
 
 def test_sparse_copy_prompt_uses_images_that_fit_the_adaptive_cover_layout() -> None:

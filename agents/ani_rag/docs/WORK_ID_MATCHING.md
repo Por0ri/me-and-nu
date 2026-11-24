@@ -1,44 +1,42 @@
-# 작품 ID 확인과 신규 작품 등록
+# 기간형과 RAG형의 작품 ID
 
-`ani_rag`는 작품 ID 확인에 `data/reference/` 로컬 스냅샷만 사용한다. 원본 `ani_me;nu` 경로나 DB에 접속하지 않는다.
+두 에이전트는 저장소 루트의 `catalog/menu_works.csv`에서 정식 작품을, `catalog/menu_work_entries.csv`에서 시즌·극장판과 상위 작품의 연결을 읽는다. 정식 ID는 팀이 관리한다.
 
-## 매칭 순서
+| 원문에서 확인한 작품 | 처리 |
+|---|---|
+| 정식 작품 또는 그 시즌 | 정식 `menu_work_id` 사용 |
+| 이미 등록한 임시 작품 | 기존 임시 ID 재사용. 같은 작품이 정식 목록에 추가되면 이후 연결에는 정식 ID 우선 |
+| 신규 작품이고 Kitsu 번호가 확인됨 | `1_000_000 + int(kitsu_id)`를 임시 ID로 저장 |
+| 신규 작품이고 Kitsu 번호 없이 제목만 확정됨 | 정규화한 제목의 UTF-8 바이트로 `2_000_000 + zlib.crc32(title_bytes) % 1_000_000_000` 계산 |
+| 작품을 특정하기 어렵거나 다른 작품과 번호가 충돌함 | 출처 URL과 후보를 `discovered_works.csv`에 기록하고 생성 보류 |
 
-1. 수집 원문의 제목과 출처가 제공한 외부 ID를 작품 카탈로그의 정확 일치 규칙으로 조회한다. 확인된 별칭만 exact match에 쓴다.
-2. 정확히 하나의 ID가 확인되면 해당 ID를 evidence의 작품 링크로 쓴다.
-3. 미일치 또는 복수 후보이면 `LLMWorkCatalogResolver`가 원문 제목·본문, 원문 URL·출처 ID, 로컬 스냅샷과 RAG 자체 작품 카탈로그의 제한된 후보를 구조화 모델에 전달한다.
-4. 기존 작품 선택은 전달한 후보 ID 중 하나만 허용한다. 새 작품 제안은 높은 확신, 원문에 실제 포함된 작품명, 원문과 정확히 일치하는 근거 인용이 모두 있어야 한다.
-5. 모델 응답이 후보 밖 ID를 고르거나, 작품명/인용을 원문에서 확인할 수 없거나, 확신이 낮으면 미매칭/모호 상태를 유지한다. 식별 모델 호출이 실패해도 이미 읽은 원문은 오류 유형을 metadata에 남기고 저장한다. 자동으로 마지막 번호를 붙이지 않는다.
+제목은 유니코드 NFKC와 casefold를 적용한 뒤 문자와 숫자만 남긴다. 임시 등록 시 제목과 작품 정보를 `agent_works.csv`에 함께 쓰고, 확인된 Kitsu 연결은 `menu_work_external_entries.csv`에 쓴다. 검색에 사용한 작품명은 원문의 주인공을 확정하는 근거가 될 수 없다. RAG형은 작품을 연결한 뒤에도 해당 작품의 저장된 근거와 대조하고 생성·검수를 거친다.
 
-## 로컬 작품 ID를 검색 씨앗으로 쓰기
+## 배포 경로
 
-- `LocalWorkCatalog.work_search_seeds()`는 `menu_works.csv`의 canonical title과 확인된 별칭을 `menu_work_id` 오름차순으로 반환한다. 하위 `menu_work_entries.csv` 16개 행을 16개 검색 job으로 펼치지 않는다.
-- `CollectionRequest.for_work_seed(...)`는 한 작품 ID에 대한 단일 검색 요청을 만들고 `seed_menu_work_id`를 함께 보존한다. 호출자는 씨앗을 한 번에 하나씩 순차 처리하고, 호출 제한이 정해지기 전에는 병렬 대량 검색을 하지 않는다.
-- 씨앗 ID는 검색 맥락이자 LLM 후보이지 자동 연결 명령이 아니다. 원문 항목 제목·본문과 로컬 카탈로그 항목들이 함께 뒷받침할 때만 기존 ID를 선택한다.
-- LLM fallback은 기존 작품 ID와 별도로 원문 항목의 `entry_format`(TV/극장판/OVA 등), `entry_relation`(본편/시즌/속편/스핀오프 등), 출처에 실제 나온 연도, 관계 근거 발췌를 반환한다. 약한 연결은 `unknown`으로 남긴다. 수집기는 이 정보를 ERD `rag_document.metadata_json`으로 전달하고, 원문 문서는 합치지 않는다.
-- ANN URL의 `id` 쿼리 값은 `source_native_id`로 보존하고 `menu_work_id`와 혼동하지 않는다. 예를 들어 ANN 항목 ID 14950과 22277은 서로 다른 원문 자료이며, 둘 다 레퍼런스가 뒷받침할 때 `menu_work_id=1`에 연결될 수 있다.
+- 두 프로세스가 기본으로 사용하는 파일은 루트 `catalog/menu_works.csv`, `catalog/menu_work_entries.csv`, `catalog/agent_works.csv`, `catalog/discovered_works.csv` 네 개다. 정식 작품·시즌 목록은 읽기만 하고 임시 작품과 발견 후보는 같은 잠금 파일을 사용해 갱신한다.
+- 서버에서도 같은 폴더를 마운트한다. 위치가 다르면 두 프로세스의 `ME_NU_WORK_CATALOG_DIR`를 동일하게 설정한다. 기본 구성에서는 잠금 파일 생성과 임시 등록 CSV의 교체를 위해 이 폴더에 쓰기 권한이 필요하다. 기존 서버에만 있는 임시 작품과 발견 후보가 있으면 배포 전에 공유 CSV에 합친다.
+- 정식 목록 전체를 읽기 전용으로 마운트할 때는 두 프로세스에 같은 별도 쓰기 경로를 `ME_NU_WORK_REGISTRY_DIR`로 지정할 수 있다. 외부 ID 연결표는 기본적으로 각 에이전트의 `data/reference/`에 둔다. 별도 레지스트리 경로를 쓰는 배포에서는 그 경로의 기존 외부 ID 연결표도 함께 사용한다.
+- `menu_work_id`는 작품 번호다. ERD의 `entity_id`나 `topic_id`는 각각 해당 사전에서 확인한다.
 
-### 검증 예시: `menu_work_id=1` (2026-11-08)
+## 기존 RAG DB의 작품 연결
 
-로컬 snapshot은 ID 1 아래 `Attack on Titan` TV(2013), `Attack on Titan Season 3` TV(2018), `Attack on Titan Final Season` TV(2020)와 별도 영화/OVA/특별편을 각각 기록한다. ANN의 세 페이지 `Attack on Titan (TV)` (`id=14950`), `Attack on Titan (TV 3/2018)` (`id=19819`), `Attack on Titan The Final Season (TV)` (`id=22277`)은 세 개의 독립 원문 문서로 남기면서, 상위 ID 1에 연결하는 판단이 snapshot 구조와 맞는다. Final Season 페이지를 snapshot의 특정 하위 항목 하나와 정확히 대응시켰다고 주장하지 않는다.
+로컬 워커의 기본 DB는 `data/ani_rag_live_20261111.sqlite3`이다. 2026-11-23에 원본을 백업하고 복사본에서 교정한 다음 이 DB에 반영했다.
 
-원문 URL의 숫자 ANN ID는 `external_id`/`source_native_id`로, 로컬 umbrella work ID는 별도 `menu_work_id`로 보존한다. 현재 adapter 계약은 URL에서 ANN ID를 추출하고, seeded search 요청은 `seed_menu_work_id`를 identity resolver에 전달한다. 매칭 모델은 형식과 관계를 별도 결과로 내며, collector가 `work_entry_format`, `work_entry_relation`, `work_entry_year`, 근거 발췌를 문서 metadata로 보존한다. `unknown` 분류여도 동일 work ID가 고확신으로 확인된 경우 문서 링크를 둘 수 있지만, 근거 없는 신규 ID나 자동 topic/entity ID는 만들지 않는다.
+| 자료 | 잘못된 연결의 원인과 처리 |
+|---|---|
+| 사전의 작품·시즌 근거 | 시즌 358,253건의 부모 엔티티 번호를 작품 번호처럼 쓰고 있었다. 부모의 실제 작품 번호를 조회하고, 공식 목록에서 분리된 시즌은 AniList 시즌 번호로 현재 소속 작품을 확인했다. |
+| 인물·캐릭터·제작사 등의 근거 | 1,111건에서 원본 사전의 출연·제작 관계를 다시 따라가 해당되는 작품들을 복원했다. 같은 사람이 여러 작품에 참여한 경우 복수 연결을 유지한다. |
+| Anime News Network(ANN) | 388개 문서를 재분류했다. 원문 자체의 제목·판본 또는 공식 시즌 번호로 127건을 확정했다. 관련작 언급만으로 작품을 확정할 수 없는 261건은 후보로 남겨 작품별 생성 근거에서 제외했다. |
+| 작품 이미지 | Kitsu 출처와 원본 기록으로 독립 확인이 가능한 이미지 1,185개를 대조했다. 《헌터×헌터》 2011년판(#6) 이미지 8개가 1999년판(#346)에 붙어 있어 교정했다. 이 이미지들을 이미 사용한 카드는 0장이었다. |
 
-이 계약만으로 ANN이 승인되거나 작업이 실행되는 것은 아니다. 현재 원문 MCP 응답에는 리디렉션 검증 정보가 없고, 실제 LLM 모델 연결·저장소·반복 supervisor는 별도 준비가 필요하다.
+### 기존 글과 검색
 
-## 신규 작품의 원자 등록
+- 근거 문서 642,219건과 콘텐츠 초안 169건을 보존했다. 기존 통과 52건 중 16건, 검수 대기 4건 중 1건은 잘못된 작품의 근거를 인용하거나 주장을 확인하는 데 사용해서 자료 보완으로 돌렸다. 게시 대기는 36건이다. 교정 자료가 검색 결과에만 있었고 쓰이지 않은 경우는 기존 판정을 유지했다.
+- 원본 사전에서 작품·시즌·인물 관계를 독립적으로 재구성해 사전 근거 639,790건 전체를 대조했다. 교정 전 작품 연결 불일치는 359,364건, 교정 후에는 0건이다.
+- 《진격의 거인》의 회차 수와 방영 시간, 《귀멸의 칼날》·《주술회전》·《원펀맨》·《데스노트》의 회차 수를 키워드 검색과 기존 벡터로 확인했다. 여섯 근거 모두 정식 작품 번호에서 검색되고 예전의 잘못된 번호에서는 제외됐다. 원문과 벡터 색인은 그대로 사용한다.
+- 출처 등록이 누락된 기존 승인 출처 5개를 복원해 수집 이력 73건과 이미지 165건을 다시 연결했다. 주장 인용 79건은 원문의 발췌 위치와 문자가 일치하는 실제 발췌 ID로 교정했다.
 
-검증된 새 작품 제안은 `EvidenceDocument.new_work_registration`으로 저장 경계에 전달한다. SQLite RAG adapter는 하나의 트랜잭션 안에서 다음을 수행한다.
+### 재현에 쓰는 도구
 
-1. RAG 전용 작품 카탈로그에서 같은 이름·별칭·외부 ID가 이미 등록됐는지 재확인한다.
-2. 새 항목이면 `max(로컬 reference 최대 menu_work_id, RAG 작품 카탈로그 최대 menu_work_id, RAG에 이미 연결된 최대 menu_work_id) + 1`을 지정한다.
-3. 작품명·별칭·외부 ID·원문 URL·정확 근거 인용을 `rag_work_catalog`에 기록한다.
-4. 같은 작품 ID가 연결된 원문·excerpt·work link와 generation backlog를 저장한다.
-
-실패가 발생하면 트랜잭션 전체가 롤백되므로 작품 ID만 남기지 않는다. 이 로직은 코드로 작성돼 있지만 실제 DB 스키마에 적용하거나 실행하지 않았다.
-
-## ERD 경계
-
-새 `rag_work_catalog.menu_work_id`는 현재 작품 매칭에서 쓰는 `menu_work_id`다. ERD의 `entity.entity_id`와 같은 번호라고 간주하지 않는다. `topic_id`는 작품 제목에서 만들거나 추정하지 않으며, 권위 있는 topic/entity 매핑이 공급될 때까지 `rag_work_catalog.topic_id`에 NULL로 둔다. 따라서 이 작업은 신규 작품의 RAG ID와 원문 데이터를 함께 보존하지만, ERD `entity_id`/`topic_id`를 요구하는 downstream projection까지 해결한 것은 아니다.
-
-`compose_runtime()`은 별도 matcher를 넘기지 않으면 생성 모델을 식별 fallback에도 주입한다. crawler만 독립 조립하는 경우 `work_match_model`을 전달해야 LLM fallback이 활성화된다. 이 기능은 MCP 연결이나 모델 호출이 가능하다는 뜻은 아니다.
+`scripts/repair_menu_dict_work_links.py`는 시즌, `scripts/repair_menu_dict_entity_links.py`는 출연·제작 등 관계, `scripts/repair_ann_work_links.py`는 ANN 판본, `scripts/repair_kitsu_poster_work_links.py`는 이미지 연결을 다룬다. 기본 실행은 읽기 전용이다. `scripts/hold_relinked_drafts.py`는 교정 전후 DB를 비교해 잘못된 근거를 실제로 사용한 글을 자료 보완으로 보낸다. 교정 대상과 수치를 확인한 뒤, 네 연결 교정 도구는 DB 복사본에 `--apply`와 새 백업 경로를 지정해 실행한다. 다른 환경에서는 그 환경의 원본 DB로 새로 대조한다.

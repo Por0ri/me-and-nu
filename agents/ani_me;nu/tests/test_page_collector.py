@@ -7,10 +7,85 @@ from ani_menu_agent.sources.page_collector import (
     _image_candidates,
     _is_decorative_image_url,
     _published_date_from_html,
+    _recal_event_dates_from_html,
     _secure_redirect_target,
     _structured_work_references,
     collect_official_page,
 )
+
+
+def test_recal_dates_skip_malformed_event_and_match_page_heading() -> None:
+    html = '''<html><main><h1>진격의 거인 팝업스토어</h1></main>
+    <script type="application/ld+json">{"@graph":[
+      {"@type":"Event","name":"진격의 거인 팝업스토어","startDate":"bad","endDate":"bad"},
+      {"@type":"Event","name":"진격의 거인 팝업스토어",
+        "startDate":"2026-11-12T17:00+09:00","endDate":"2026-11-12T07:59Z"},
+      {"@type":"Event","name":"진격의 거인 팝업스토어",
+        "startDate":"2026-11-12","endDate":"2026-12-03"}
+    ]}</script></html>'''
+    soup = BeautifulSoup(html, "html.parser")
+
+    start, end, evidence = _recal_event_dates_from_html(soup, "recal_kr")
+
+    assert (start, end) == ("2026-11-12", "2026-12-03")
+    assert evidence and "startDate=2026-11-12" in evidence
+
+
+def test_recal_detail_prefers_body_art_over_shared_og_image() -> None:
+    html = '''<html><head>
+    <meta property="og:image" content="/images/shared-placeholder.webp">
+    </head><body><main><article><h1>Anime popup</h1>
+      <img src="/images/event-key-visual.webp" width="1200" height="800" alt="행사 비주얼">
+    </article></main></body></html>'''
+    soup = BeautifulSoup(html, "html.parser")
+
+    urls, _ = _image_candidates(
+        soup, "https://recal.kr/ko/e/offline/anime-popup"
+    )
+
+    assert "https://recal.kr/images/event-key-visual.webp" in urls
+    assert "https://recal.kr/images/shared-placeholder.webp" not in urls
+
+
+def test_recal_event_text_keeps_schedule_and_venue_but_skips_related_events() -> None:
+    html = '''<html><body><main>
+      <section><h1>진격의 거인 팝업스토어</h1></section>
+      <div class="concert-module__LuVtza__grid2">
+        <div class="concert-module__bx">행사 일정 2026 회차 · 22일 11.12 시작 12.03 종료</div>
+        <div class="concert-module__bx">장소 · 메모 AK PLAZA 수원 5F</div>
+        <div class="concert-module__LuVtza__side2">
+          <div class="concert-module__LuVtza__sameBox">같은 달 행사 다른 애니 행사</div>
+        </div>
+      </div>
+    </main></body></html>'''
+    soup = BeautifulSoup(html, "html.parser")
+
+    text = _extract_article_text(
+        html, "https://recal.kr/ko/e/offline/attack-on-titan", soup
+    )
+
+    assert "11.12 시작" in text
+    assert "12.03 종료" in text
+    assert "AK PLAZA 수원 5F" in text
+    assert "다른 애니 행사" not in text
+
+
+def test_recal_keeps_published_start_without_inventing_a_close_from_duration() -> None:
+    html = """<main><h1>필름콘서트 울산</h1>
+      <script type="application/ld+json">{"@type":"Event","name":"필름콘서트 울산",
+         "startDate":"2026-11-28T17:00:00+09:00"}</script>
+      <div style="grid-area:sched"><div><b>공연 일시</b><span>1회</span></div>
+         <button><em>11월 28일 · 1회차</em><strong>17:00</strong></button></div>
+      <div style="grid-area:info"><div><span>러닝타임</span><b>2시간</b></div></div>
+    </main>"""
+    def parse(markup):
+        return _recal_event_dates_from_html(BeautifulSoup(markup, "html.parser"), "recal_music")
+
+    start, end, quote = parse(html)
+    assert (start, end) == ("2026-11-28T17:00:00+09:00", None)
+    assert "startDate=" in quote and "endDate=" not in quote
+    assert parse(html.replace("2시간", "미정"))[:2] == (start, None)
+    assert parse(html.replace('"name":"필름콘서트 울산"', '"name":"다른 공연"')) == (None, None, None)
 
 
 def test_character_index_keeps_structured_facts_from_profile_links() -> None:
@@ -209,6 +284,19 @@ def test_publication_date_does_not_guess_from_event_date_in_article_body() -> No
     assert _published_date_from_html(soup) is None
 
 
+def test_episode_schedule_profile_has_no_article_date_even_with_absolute_airtimes():
+    soup = BeautifulSoup(
+        '<time class="countdown-time" datetime="6d 2h 26m">6d 2h 26m</time>'
+        '<time class="release-time" datetime="2026-11-30T00:00+09:00">Episode 10 Raw</time>'
+        '<p>Season premiere <time datetime="2026-09-28">September 28</time></p>', "html.parser",
+    )
+    assert _published_date_from_html(soup, "https://animeschedule.net/anime/series") is None
+    article = BeautifulSoup(
+        '<time datetime="6d 2h 26m"></time><time datetime="2026-11-23T00:01:00+09:00"></time>', "html.parser",
+    )
+    assert _published_date_from_html(article) == "2026-11-23T00:01:00+09:00"
+
+
 def test_publication_date_reads_exact_date_near_article_headline() -> None:
     soup = BeautifulSoup(
         "<main><p class='generated-class'>2026/09/29</p><h1>Official news</h1>"
@@ -312,6 +400,45 @@ def test_page_capture_can_disable_related_images_for_content_generation(monkeypa
     assert [str(url) for url in capture.image_urls] == [
         "https://anime.example/media/current-story.jpg"
     ]
+
+
+def test_event_capture_keeps_campaign_dates_and_images_with_their_named_sections(
+    monkeypatch, tmp_path
+):
+    from ani_menu_agent.sources import page_collector
+    from ani_menu_agent.storage import AgentRepository
+
+    url = "https://anime.example/news/campaign/"
+    source = Source(
+        id="campaign", name="Campaign", url=url, category="anime", role="primary",
+        collection="html", status="active", region="JP", content_types=["event", "news"],
+    )
+    html = """<title>横浜市との大型タイアップ</title><article>
+        <p>1.【詳細】限定ステッカー</p><p>【配布期間】令和８年12月4日(金)〜12月20日(日)</p>
+        <p><img src="/media/sticker.jpg" alt="ステッカー"></p>
+        <p>2.【詳細】スタンプラリー</p><p>【実施期間】令和８年12月４日(金)〜12月20日(日)</p>
+        <p><img src="/media/stamp.jpg" alt="スタンプ"></p>
+        <p>3.京急電鉄コラボ</p><p>【開催期間】令和８年12月４日(金)〜令和９年２月14日(金)</p>
+        <p><img src="/media/train.jpg" alt="列車"></p></article>"""
+    monkeypatch.setattr(page_collector, "_get_html", lambda *_args: (html, url))
+    capture = collect_official_page(source, url, content_type="event")
+    assert capture.event_scope == "【詳細】限定ステッカー / 【詳細】スタンプラリー"
+    assert (capture.event_start, capture.event_end) == ("2026-12-04", "2026-12-20")
+    assert capture.event_date_evidence in capture.text
+    assert "京急電鉄" in capture.source_article_text
+    assert "京急電鉄" not in capture.text
+    assert {str(u).rsplit("/", 1)[-1] for u in capture.image_urls} == {"sticker.jpg", "stamp.jpg"}
+    repository = AgentRepository(tmp_path / "scoped-event.sqlite3")
+    repository.initialize()
+    repository.persist_page_capture(capture.model_dump(mode="json"), "JP")
+    with repository.connect() as connection:
+        row = connection.execute("SELECT raw_text FROM raw_document").fetchone()
+        assert row["raw_text"] == capture.source_article_text
+
+    unscoped = collect_official_page(source, url, content_type="news", expand_related_pages=False)
+    assert unscoped.event_scope is None
+    assert unscoped.event_end is None
+    assert "京急電鉄" in unscoped.text
 
 
 def test_page_capture_falls_back_to_specific_article_body_when_precision_parser_is_empty(

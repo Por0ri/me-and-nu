@@ -36,6 +36,7 @@ _SKIPPED = re.compile(r"[\s・·•.,'\"!?\-–—_:;/()（）「」『』【】
 _MIN_CHARS = {"latin": 7, "katakana": 4, "hiragana": 3, "han": 3, "hangul": 2, "other": 3}
 _MIN_ARTIST_CHARS = 4
 _MIN_SONG_CHARS = 6
+_JAPANESE_PARTICLE = re.compile(r"(?:から|まで|より|の|が|を|に|は|へ|と|も|で)(?![ぁ-ゟ])")
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,12 @@ def _stands_alone(original: str, start: int, end: int) -> bool:
         return False
     if before and _script(before) == first and first in {"latin", "katakana", "hangul"}:
         return False
+    # Katakana and kanji names can take hiragana particles, but a change of
+    # script alone does not end a name (スライムまん is a product compound).
+    if last in {"katakana", "han", "hiragana"} and after and _script(after) == "hiragana":
+        return _JAPANESE_PARTICLE.match(original, end) is not None
+    if last in {"katakana", "han", "hiragana"} and after and _script(after) in {"han", "katakana"}:
+        return False
     if not after or _script(after) != last:
         return True
     if last == "hangul":
@@ -123,6 +130,27 @@ def _rows(name: str) -> list[dict]:
         return []
     with path.open(encoding="utf-8-sig", newline="") as stream:
         return list(csv.DictReader(stream))
+
+
+@lru_cache(maxsize=1)
+def _character_groups(path: Path, modified_ns: int) -> dict[int, list[set[str]]]:
+    by_work: dict[int, dict[str, set[str]]] = {}
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            work_id, entity, name = (row.get(key, "").strip() for key in ("menu_work_id", "wikidata_id", "name"))
+            if work_id.isdigit() and entity and name:
+                by_work.setdefault(int(work_id), {}).setdefault(entity, set()).add(name)
+    return {work_id: list(groups.values()) for work_id, groups in by_work.items()}
+
+
+def work_character_alias_groups(work_id: int) -> list[set[str]]:
+    """Names of each distinct character or named machine in this exact work."""
+    path = _REFERENCE / "work_characters.csv"
+    try:
+        modified = path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return []
+    return _character_groups(path, modified).get(work_id, [])
 
 
 def _unique(index: dict[str, set[int]], spelling: dict[str, str]) -> dict[str, tuple[int, str]]:
@@ -192,6 +220,19 @@ def _spans(text: str, names: set[str], longest: int) -> list[tuple[int, str, str
                 found.append((start, key, original[begin:end]))
                 taken.update(range(start, start + size))
     return sorted(found)
+
+
+def named_subject_contexts(text: str, names: set[str]) -> list[tuple[str, str]]:
+    """Return the text before/after whole occurrences of these already identified names."""
+    keys = {key for name in names if len(key := normalize(name)) >= 2}
+    if not text or not keys:
+        return []
+    original = unicodedata.normalize("NFKC", text)
+    _, positions = _indexed(original)
+    return [
+        (original[:positions[start]], original[positions[start] + len(span):])
+        for start, _, span in _spans(original, keys, max(map(len, keys)))
+    ]
 
 
 def find_named_works(text: str) -> list[NamedWorkMatch]:

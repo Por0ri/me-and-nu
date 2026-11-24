@@ -3,20 +3,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 import re
 from urllib.parse import urlsplit
 
 from ani_rag.content import ContentDraft, ImageAsset
 from ani_rag.models import EvidenceDocument, EvidenceType, RagContentType, WorkLinkStatus
-from ani_rag.retrieval import EvidenceChunk
+from ani_rag.retrieval import EvidenceChunk, document_chunk_sources
 
-MIN_CARDS = 3
+MIN_CARDS = 2
 MAX_CARDS = 10
 _SOURCE_META_COPY = re.compile(
     r"(?:kitsu|wikidata|위키데이터|자료|원문|출처|검색 결과|데이터베이스|\bdb\b)"
     r".{0,24}(?:확인|기록|표기|포함|수록|검색|나타나)|"
     r"(?:이름|원문 표기).{0,16}(?:확인|기록|되어 있|포함|등장)",
     re.IGNORECASE,
+)
+# Editorial requests addressed to the writer, distinct from a character looking
+# for evidence within the story. The reviewer handles less explicit cases.
+_EDITORIAL_EVIDENCE_COPY = re.compile(
+    r"(?:캐릭터|인물|작품|회차|성우|곡)\s*(?:별\s*|소개(?:에\s*필요한)?\s*)"
+    r"(?:근거|자료)(?:가|를|부터)?\s*(?:더\s*필요|보완해|보태\s*줘|보내\s*줘)"
+    r"|(?:소개|카피|상세글|본문|원고)(?:를|을)?\s*(?:만들|작성할|쓸)\s*수\s*없.{0,45}"
+    r"(?:근거|자료)(?:를|가)?\s*(?:보완|보내|보태|부탁|필요)"
 )
 
 
@@ -27,11 +36,24 @@ class QualityIssue:
     blocking: bool = True
 
 
+def web_gate_document_ids(basis: Mapping[str, object]) -> set[str]:
+    """The actual corroborators selected by the web verifier, excluding search hits."""
+    ids: set[str] = set()
+    for key in ("web_discovery_candidate", "primary_web_source"):
+        record = basis.get(key)
+        if not isinstance(record, Mapping):
+            continue
+        selected = record.get("corroborating_document_ids")
+        if isinstance(selected, (list, tuple)):
+            ids.update(value for value in selected if isinstance(value, str) and value)
+    return ids
+
+
 def validate_carousel_readability(draft: ContentDraft) -> tuple[QualityIssue, ...]:
     """Only flag missing copy; length is a layout concern, not a writing-quality gate."""
     issues: list[QualityIssue] = []
     if not MIN_CARDS <= len(draft.cards) <= MAX_CARDS:
-        issues.append(QualityIssue("CAROUSEL_CARD_COUNT", "Carousel must contain 3 to 10 pages."))
+        issues.append(QualityIssue("CAROUSEL_CARD_COUNT", "Carousel must contain 2 to 10 pages."))
     if draft.cards:
         if draft.cards[0].role != "cover":
             issues.append(QualityIssue("CAROUSEL_COVER_MISSING", "The first page must be the cover."))
@@ -52,14 +74,20 @@ def validate_carousel_readability(draft: ContentDraft) -> tuple[QualityIssue, ..
         [draft.detail_body]
         + [part for card in draft.cards for part in (card.headline, card.body)]
     )
+    if any(_EDITORIAL_EVIDENCE_COPY.search(part) for part in (draft.title, draft.summary or "", reader_copy)):
+        issues.append(QualityIssue(
+            "EDITORIAL_EVIDENCE_REQUEST",
+            f"‘{draft.title}’ 초안이 독자에게 집필 자료를 요청하고 있어. "
+            "소개할 대상과 그 대상에 관한 핵심 주장을 뒷받침하는 원문 구절을 확보해줘.",
+        ))
     if _SOURCE_META_COPY.search(reader_copy):
         issues.append(QualityIssue(
             "SOURCE_METADATA_AS_COPY",
             "Reader-facing copy describes source lookup or metadata instead of the subject; rewrite it as useful content.",
         ))
-    # Length and metadata-copy observations should inform the scorecard, not act as
-    # independent pass/revise gates. The reviewer sees the draft and its previews.
-    return tuple(QualityIssue(issue.code, issue.message, blocking=False) for issue in issues)
+    # Empty copy, malformed carousel structure, and source-workflow text are
+    # deterministic defects. The independent reviewer must not pass them by score.
+    return tuple(issues)
 
 
 def validate_draft(
@@ -68,6 +96,7 @@ def validate_draft(
     images: dict[str, ImageAsset],
     retrieved_chunks: dict[str, EvidenceChunk],
     retrieval_id: str | None = None,
+    web_gate_work_ids: Mapping[str, tuple[int, ...]] | None = None,
 ) -> tuple[QualityIssue, ...]:
     issues: list[QualityIssue] = []
     if retrieval_id is not None and draft.retrieval_id != retrieval_id:
@@ -76,19 +105,57 @@ def validate_draft(
         issues.append(QualityIssue("CAROUSEL_TOO_SHORT", f"At least {MIN_CARDS} cards are required."))
     if len({card.card_id for card in draft.cards}) != len(draft.cards):
         issues.append(QualityIssue("DUPLICATE_CARD_ID", "Card IDs must be unique."))
-    image_ids = [card.image_asset_id for card in draft.cards]
-    if len(set(image_ids)) != len(image_ids):
+    image_ids = [asset_id for card in draft.cards for asset_id in card.source_asset_ids]
+    seen_sources: set[tuple[str, str]] = set()
+    reused = False
+    for image_id in image_ids:
+        asset = images.get(image_id)
+        keys = asset.source_identity_keys if asset else {("asset_id", image_id)}
+        if not seen_sources.isdisjoint(keys):
+            reused = True
+        seen_sources.update(keys)
+    if reused:
         issues.append(QualityIssue("IMAGE_REUSED", "A carousel cannot reuse the same image asset."))
     if not draft.source_footer.strip() or not draft.ai_disclosure.strip():
         issues.append(QualityIssue("SOURCE_OR_AI_FOOTER_MISSING", "Detail output needs source attribution and AI disclosure."))
 
     required_ids = set(draft.evidence_ids)
     all_claims = [claim for card in draft.cards for claim in card.claims] + list(draft.detail_claims)
+    work_ids = set(draft.menu_work_ids)
+    if work_ids:
+        cited_ids = {doc for claim in all_claims for doc in claim.evidence_ids}
+        for doc in sorted(cited_ids):
+            item = evidence.get(doc)
+            # Explicitly work-independent material can supply background. Its
+            # presence cannot establish a work ID (checked separately below).
+            if item and item.work_link_status is WorkLinkStatus.NOT_APPLICABLE:
+                continue
+            if (not item or item.work_link_status is not WorkLinkStatus.MATCHED
+                    or work_ids.isdisjoint(item.menu_work_ids)):
+                observed = sorted(item.menu_work_ids) if item else []
+                state = item.work_link_status.value if item else "missing"
+                issues.append(QualityIssue(
+                    "CITED_WORK_LINK_UNCONFIRMED",
+                    f"Recheck cited document {doc} for works {sorted(work_ids)}. "
+                    f"Current work link is {state}, IDs {observed}.",
+                ))
+        for doc in sorted(web_gate_document_ids(draft.ai_judgment_basis)):
+            linked = (web_gate_work_ids or {}).get(doc)
+            if linked is None:
+                item = evidence.get(doc)
+                linked = item.menu_work_ids if item and item.work_link_status is WorkLinkStatus.MATCHED else ()
+            if work_ids.isdisjoint(linked):
+                issues.append(QualityIssue(
+                    "WEB_EVIDENCE_WORK_LINK_UNCONFIRMED",
+                    f"Recheck web corroborator {doc} for works {sorted(work_ids)}. "
+                    f"Current matched work IDs are {sorted(linked)}.",
+                ))
     for card in draft.cards:
         if not card.claims:
             issues.append(QualityIssue("CARD_CLAIMS_UNSTRUCTURED", f"Card {card.card_id!r} has no claim-to-evidence links."))
     if not draft.detail_claims:
         issues.append(QualityIssue("DETAIL_CLAIMS_UNSTRUCTURED", "Detail article has no claim-to-evidence links."))
+    kitsu_records: dict[str, dict[tuple[str, int | None], str]] = {}
     for chunk_id in draft.retrieved_chunk_ids:
         chunk = retrieved_chunks.get(chunk_id)
         if chunk is None:
@@ -99,7 +166,18 @@ def validate_draft(
             source = evidence.get(chunk.evidence_id)
             source_text = None
             source_locator = None
-            if source and chunk.source_kind == "body":
+            if (source and source.source_id == "kitsu_anime_catalog" and chunk.source_kind == "body"
+                    and chunk.locator.startswith("kitsu:")):
+                # Kitsu profiles and synopses are sliced from one structured record,
+                # while older indexes retain offsets into the raw JSON body.
+                if source.document_id not in kitsu_records:
+                    kitsu_records[source.document_id] = {
+                        (locator, index): text for kind, locator, index, text in document_chunk_sources(source)
+                        if kind == "body"
+                    }
+                source_locator = chunk.locator.rsplit(":", 1)[0]
+                source_text = kitsu_records[source.document_id].get((source_locator, chunk.source_index))
+            elif source and chunk.source_kind == "body":
                 source_text = source.body
                 source_locator = "body"
             elif source and chunk.source_kind == "excerpt" and chunk.source_index is not None and 0 <= chunk.source_index < len(source.excerpts):
@@ -109,9 +187,16 @@ def validate_draft(
                     or chunk.source_id != source.source_id or chunk.source_url != source.source_url
                     or chunk.title != source.title or chunk.language != source.language
                     or chunk.published_at != source.published_at or chunk.menu_work_ids != source.menu_work_ids
+                    or not 0 <= chunk.start_offset < chunk.end_offset <= len(source_text)
                     or chunk.locator != f"{source_locator}:{chunk.start_offset}-{chunk.end_offset}"
                     or source_text[chunk.start_offset:chunk.end_offset].strip() != chunk.text):
                 issues.append(QualityIssue("RETRIEVED_CHUNK_ORIGIN_MISMATCH", f"Chunk {chunk_id!r} does not match its preserved source document."))
+    web = draft.ai_judgment_basis.get("web_discovery_candidate") or {}
+    quote_speakers = {
+        chunk_id: entry.get("speaker") for entry in web.get("verified_claims", ())
+        if isinstance(entry, dict) and entry.get("kind") == "attributed_quote"
+        for chunk_id in entry.get("chunk_ids", ())
+    } if isinstance(web, Mapping) else {}
     for claim in all_claims:
         linked_evidence_ids: set[str] = set()
         for evidence_id in claim.evidence_ids:
@@ -127,6 +212,12 @@ def validate_draft(
                 issues.append(QualityIssue("CLAIM_CHUNK_SOURCE_MISMATCH", f"Chunk {chunk_id!r} does not belong to the claim's cited evidence."))
             else:
                 linked_evidence_ids.add(chunk.evidence_id)
+                if chunk.source_id.startswith("web_discovery:"):
+                    speaker = quote_speakers.get(chunk_id)
+                    if not speaker or not claim.attribution or speaker.casefold() != claim.attribution.strip().casefold():
+                        issues.append(QualityIssue(
+                            "INTERVIEW_SPEAKER_UNCONFIRMED", "Name the verified speaker on claims citing interview remarks.",
+                        ))
         if not set(claim.evidence_ids) <= linked_evidence_ids:
             issues.append(QualityIssue("CLAIM_SOURCE_WITHOUT_CHUNK", "Each cited evidence document needs a linked supporting retrieval chunk."))
     if not all_claims and (draft.title or draft.detail_body):
@@ -170,8 +261,8 @@ def validate_draft(
             issues.append(QualityIssue("IMAGE_WORK_LINK_UNRESOLVED", f"Image asset {image_id!r} has no confirmed work relation."))
         elif draft.menu_work_ids and not set(asset.menu_work_ids).intersection(draft.menu_work_ids):
             issues.append(QualityIssue("IMAGE_WORK_MISMATCH", f"Image asset {image_id!r} is not linked to the draft work."))
-        card = next((item for item in draft.cards if item.image_asset_id == image_id), None)
-        if card and not card.image_credit:
+    for card in draft.cards:
+        if not card.image_credit:
             issues.append(QualityIssue("CARD_IMAGE_CREDIT_MISSING", f"Card {card.card_id!r} needs an image source credit."))
 
     if draft.content_type is RagContentType.REVIEW:

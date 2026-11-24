@@ -21,13 +21,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import time
 from pathlib import Path
 
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-WORK_LIST = ROOT.parents[1] / "catalog"
 REFERENCE = ROOT / "data" / "reference"
 USER_AGENT = "me-nu-content-agent/0.1 (work-match dictionary build; low-rate)"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
@@ -57,7 +57,9 @@ SELECT ?anilist ?entity ?via ?name (LANG(?name) AS ?lang) ?kind WHERE {
 def anilist_index() -> dict[str, int]:
     """AniList anime ID -> menu_work_id from the catalog (every season/entry ID)."""
     index: dict[str, int] = {}
-    with (WORK_LIST / "menu_works.csv").open(encoding="utf-8-sig", newline="") as stream:
+    catalog_dir = Path(os.getenv("ME_NU_WORK_CATALOG_DIR") or ROOT.parents[1] / "catalog")
+    catalog = catalog_dir / "menu_works.csv"
+    with catalog.open(encoding="utf-8-sig", newline="") as stream:
         for row in csv.DictReader(stream):
             for value in (row.get("anilist_ids") or "").split(";"):
                 if value.strip().isdigit():

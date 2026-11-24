@@ -7,6 +7,9 @@ from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from ani_menu_agent.models import ContentPackage, CopyCard, ImageAsset, SourceEvidence
 from ani_menu_agent.policy import POLICY
+from ani_menu_agent.sources import anime_schedule
+from ani_menu_agent.sources.period_images import licensed_product_image, restricted_product_article
+from ani_menu_agent.work_aliases import named_subject_contexts
 
 # Modest sources may still be usable in the existing low-res spotlight layout.
 # Keep a separate cover floor so the broader detail-page pool cannot weaken covers.
@@ -46,7 +49,6 @@ def _normalized_source_url(url: str) -> str:
     path = re.sub(r"_(?:on|off)(?=\.[^.]+$)", "", path, flags=re.IGNORECASE)
     rendition_params = {
         "auto",
-        "bg-color",
         "fit",
         "format",
         "h",
@@ -79,6 +81,187 @@ def _source_page_key(url: str) -> tuple[str, str]:
     return parts.netloc.lower(), path
 
 
+def mismatched_schedule_art(image: ImageAsset, sources: list[SourceEvidence]) -> bool:
+    slug = anime_schedule.profile_slug(str(image.source_url))
+    asset_url = str(image.url or "")
+    if not slug or urlsplit(asset_url).hostname != "img.animeschedule.net":
+        return False
+    # Old captures assigned the work ID to every image on the profile page.
+    if not anime_schedule.is_profile_poster(asset_url, slug):
+        return True
+    profile_slugs = {
+        value for source in sources if (value := anime_schedule.profile_slug(str(source.url)))
+    }
+    return bool(profile_slugs and slug not in profile_slugs)
+
+
+def _excluded_goods_image(image: ImageAsset, package: ContentPackage) -> bool:
+    return any(
+        _source_page_key(str(image.source_url)) == _source_page_key(str(row["page_url"]))
+        or str(image.url) in (row.get("image_urls") or [])
+        for fact in package.facts
+        for row in (fact.details.get("image_exclusions") or [])
+        if isinstance(row, dict) and row.get("page_url")
+    )
+
+
+def _official_goods_art_source(image: ImageAsset, package: ContentPackage) -> SourceEvidence | None:
+    source = image.provenance_source
+    if (
+        package.content_type != "goods"
+        or not image.official
+        or not source
+        or not source.is_official
+        or source.role != "primary"
+        or not package.menu_work_ids
+        or not image.menu_work_ids
+        or not set(image.menu_work_ids).issubset(package.menu_work_ids)
+        or source.url != image.source_url
+        or not image.public_official_source_matches([source])
+    ):
+        return None
+    if _excluded_goods_image(image, package):
+        return None
+    return source
+
+
+_PRODUCT_NOUN = (
+    r"(?:フィギュア|ぬいぐるみ|アクリルスタンド|キーホルダー|グッズ|"
+    r"피규어|인형|아크릴\s*스탠드|키링|굿즈|\b(?:figures?|figurines?|plush(?:ies)?|keychains?|merch)\b)"
+)
+_PRODUCT_AFTER_NAME = re.compile(
+    r"""^[\s'"’”」』】)]*(?:(?:の|が|を|의|가|이|'s|’s)\s*)?"""
+    r"(?:(?:新作|限定|新|신작|한정|new|limited|scale|完成品|1/\d+\s*(?:スケール|scale)?)\s*)*"
+    + _PRODUCT_NOUN,
+    re.I,
+)
+_PRODUCT_BEFORE_NAME = re.compile(_PRODUCT_NOUN + r"""(?:\s+of\s+|\s*['"“‘「『【(]\s*)$""", re.I)
+_GOODS_IN_HEADLINE = re.compile(_PRODUCT_NOUN + r"|オンラインくじ|ROBOT魂", re.I)
+
+
+def goods_subject_names_match(package: ContentPackage, names: set[str]) -> bool:
+    """Use the matched product name or an original headline that names the character's product."""
+    # The official character profile supplies its reviewed aliases.
+    # Generated translations cannot establish which character the product depicts.
+    # Prefer the matched product sheet over a headline that may mention other characters.
+    original_sources = [
+        s
+        for s in package.sources
+        if s.role in {"primary", "editorial"} and s.link_relationship_type != "character"
+    ]
+    source_ids = {s.id for s in original_sources}
+    products = {
+        subject.strip()
+        for fact in package.facts
+        if source_ids.intersection(fact.source_ids)
+        if isinstance(subject := fact.details.get("goods_subject"), str) and subject.strip()
+    }
+    if products:
+        return len(products) == 1 and bool(named_subject_contexts(next(iter(products)), names))
+    if not original_sources:
+        return False
+    # A second character in "Roxy figure – display it with Sylphy" is not the product.
+    headline = original_sources[0].title
+    for before, after in named_subject_contexts(headline, names):
+        if re.search(r"(?:[&×＆]|と|와|과)\s*$", before):
+            continue
+        if _PRODUCT_BEFORE_NAME.search(before) or _PRODUCT_AFTER_NAME.match(after):
+            return True
+        # Some goods headlines name the subject first, then describe the
+        # birthday lottery or the mecha's pose before naming the merchandise.
+        if (not before.strip() or before.rstrip().endswith(("」", "』", ":", "："))) and (
+            re.match(r"(?:の(?:お)?誕生日|のバースデー|(?:의)?\s*생일)", after)
+            or after.startswith("が") and "ROBOT魂" in headline
+        ) and _GOODS_IN_HEADLINE.search(headline):
+            return True
+    return False
+
+
+def _exact_kitsu_goods_art(image: ImageAsset, package: ContentPackage) -> bool:
+    """Require the work-specific Kitsu record and its own image provenance."""
+    source = image.provenance_source
+    if (
+        package.content_type != "goods"
+        or len(set(package.menu_work_ids)) != 1
+        or set(image.menu_work_ids) != set(package.menu_work_ids)
+        or not source
+        or source.id != "kitsu_anime_catalog"
+        or source.role != "reference"
+        or source.url != image.source_url
+        or not image.public_editorial_source_matches([source])
+        or _excluded_goods_image(image, package)
+    ):
+        return False
+    endpoint = urlsplit(str(source.url))
+    endpoint_path = r"/api/edge/anime/([0-9]+)"
+    if image.asset_kind == "character_art":
+        endpoint_path += "/characters"
+    record = re.fullmatch(endpoint_path, endpoint.path.rstrip("/"))
+    if endpoint.scheme != "https" or endpoint.hostname not in {"kitsu.io", "kitsu.app"} or not record:
+        return False
+    # Older stored data can contain a CDN URL for a different anime. Kitsu
+    # embeds the anime record number in its original poster and cover URLs.
+    asset_record = re.search(r"/anime/(?:poster|cover)_images/([0-9]+)/", urlsplit(str(image.url)).path)
+    return not asset_record or asset_record[1] == record[1]
+
+
+def is_goods_character_illustration(image: ImageAsset, package: ContentPackage) -> bool:
+    """Match the product's named subject to art on the exact work's character record."""
+    if (
+        image.asset_kind != "character_art"
+        or not image.depicted_entities
+        or len(set(package.menu_work_ids)) != 1
+    ):
+        return False
+    source = _official_goods_art_source(image, package)
+    official_character = bool(
+        source
+        and source.target_work_match
+        and source.link_relationship_type == "character"
+    )
+    return (official_character or _exact_kitsu_goods_art(image, package)) and goods_subject_names_match(
+        package, set(image.depicted_entities)
+    )
+
+
+def goods_reference_image_label(image: ImageAsset, package: ContentPackage) -> str:
+    """Label artwork that illustrates the work independently of the product photo."""
+    if package.content_type != "goods":
+        return ""
+    if is_goods_character_illustration(image, package):
+        return "작품 일러스트"
+    if image.asset_kind not in {"catalog_poster", "catalog_cover", "official_key_visual"}:
+        return ""
+    if image.asset_kind in {"catalog_poster", "catalog_cover"} and _exact_kitsu_goods_art(image, package):
+        return "작품 포스터"
+    source = _official_goods_art_source(image, package)
+    if (
+        source and source.target_work_match and source.link_relationship_type == "official_site"
+        and len(set(package.menu_work_ids)) == 1
+        and not _CONTEXT_SPECIFIC_IMAGE_DESCRIPTION_RE.search(
+            " ".join((source.title, image.source_description, unquote(urlsplit(str(source.url)).path)))
+        )
+    ):
+        return "작품 포스터"
+    return ""
+
+
+def _official_goods_collaboration(image: ImageAsset, package: ContentPackage) -> bool:
+    if image.asset_kind not in {"official_key_visual", "event_visual"}:
+        return False
+    source = _official_goods_art_source(image, package)
+    return bool(
+        source
+        and source.target_work_match
+        and source.link_relationship_type == "product"
+        and any(
+            s.url in (source.linked_from_url, source.discovery_url)
+            for s in package.sources
+            if s.role in {"primary", "editorial"}
+        )
+    )
+
+
 def image_belongs_to_package_sources(
     image: ImageAsset,
     sources: list[SourceEvidence],
@@ -87,15 +270,10 @@ def image_belongs_to_package_sources(
     card_role: str | None = None,
 ) -> bool:
     """Accept source-page images or provenance-checked official art for the same work."""
-    image_page = _source_page_key(str(image.source_url))
-    image_url_parts = urlsplit(str(image.url or ""))
-    image_host = (image_url_parts.hostname or "").lower()
-    same_source_page = any(_source_page_key(str(source.url)) == image_page for source in sources)
-    if package is not None and package.content_type == "event" and image_host == "recal.kr":
-        # RE:CAL event-page graphics are schedule/listing visuals. Keep them as
-        # source evidence, but use artwork for the matched anime on event cards.
-        # This avoids date/venue tables becoming the carousel's main image.
+    if mismatched_schedule_art(image, sources):
         return False
+    image_page = _source_page_key(str(image.source_url))
+    same_source_page = any(_source_page_key(str(source.url)) == image_page for source in sources)
     if (
         package is not None
         and image.menu_work_ids
@@ -104,6 +282,27 @@ def image_belongs_to_package_sources(
         # Page co-location is not evidence that an explicitly different-work
         # asset belongs to this package (e.g. a multi-franchise article page).
         return False
+    if package is not None and package.content_type == "goods":
+        article_pages = {
+            _source_page_key(str(s.url)) for s in sources
+            if s.role in {"primary", "editorial"} and s.link_relationship_type not in {"character", "official_site"}
+        }
+        same_source_page = image_page in article_pages
+        article_url = restricted_product_article(package)
+        if article_url and licensed_product_image(image, package, article_url):
+            return True
+        if _excluded_goods_image(image, package):
+            return False
+        if (not article_url and not same_source_page and image.asset_kind == "goods_product"
+                and any(licensed_product_image(image, package, str(s.url)) for s in sources
+                        if s.role in {"primary", "editorial"})):
+            return True
+        if goods_reference_image_label(image, package) or _official_goods_collaboration(
+            image, package
+        ):
+            return True
+        if not same_source_page or article_url:
+            return False
     provenance_title = image.provenance_source.title if image.provenance_source else ""
     source_path = unquote(urlsplit(str(image.source_url)).path)
     image_context = " ".join((image.source_description, provenance_title, source_path))
@@ -265,8 +464,12 @@ def distinct_editorial_images(
         if (
             (
                 card_role == "cover"
-                and package is not None
-                and bool(image_visual_keys(image).intersection(package.prior_image_fingerprints))
+                and (
+                    package
+                    and bool(
+                        image_visual_keys(image).intersection(package.prior_image_fingerprints)
+                    )
+                )
             )
             or image.vision_review_rejected
             or image.download_status not in {"downloaded", "available"}
@@ -315,6 +518,41 @@ def cover_usable_editorial_images(
     ]
 
 
+class InsufficientCardImages(ValueError):
+    def __init__(self, page: int, minimum_cards: int):
+        self.page = page
+        super().__init__(
+            f"{page}번 카드에 배정할 수 있는 고유 이미지가 없습니다. "
+            f"표지를 포함해 최소 {minimum_cards}장에 맞는 작품 이미지를 보완하세요."
+        )
+
+
+def _slot(page: int, role: str) -> CopyCard:
+    # Copy affects ranking but not eligibility. No placeholder is ever rendered.
+    return CopyCard(page=page, role=role, title_lines=[""], image_id="")
+
+
+def copy_image_pool(package: ContentPackage, *, limit: int) -> list[ImageAsset]:
+    """Find a feasible deck with the same matching rules used after writing."""
+    count = min(len(package.images), limit)
+    slots = [
+        _slot(page, "cover" if page == 1 else "ending" if page == count else "detail")
+        for page in range(1, count + 1)
+    ]
+    assigned = assign_distinct_images(slots, package)
+    images_by_id = {image.id: image for image in package.images}
+    selected = [
+        images_by_id[card.image_id] for card in assigned
+        if card.image_reuse_mode != "missing_source_image"
+    ]
+    minimum = POLICY.minimum_cards_for(package.content_type)
+    if not assigned or assigned[0].image_reuse_mode == "missing_source_image":
+        raise InsufficientCardImages(1, minimum)
+    if len(selected) < minimum:
+        raise InsufficientCardImages(len(selected) + 1, minimum)
+    return selected
+
+
 def assign_distinct_images(
     cards: list[CopyCard],
     package: ContentPackage,
@@ -331,7 +569,25 @@ def assign_distinct_images(
 
     target_source_pages = {_source_page_key(str(source.url)) for source in package.sources}
 
-    def card_score(card: CopyCard, image: ImageAsset) -> tuple[int, int, int, int, int, int]:
+    goods_priority: dict[str, int] = {}
+    goods_labels: dict[str, str] = {}
+    if package.content_type == "goods":
+        original_pages = {
+            _source_page_key(str(source.url))
+            for source in package.sources if source.role in {"editorial", "primary"}
+        }
+        for image in package.images:
+            if image.asset_kind == "goods_product":
+                goods_priority[image.id] = 4
+            elif _official_goods_collaboration(image, package):
+                goods_priority[image.id] = 3
+            elif label := goods_reference_image_label(image, package):
+                goods_priority[image.id] = 2 if label == "작품 일러스트" else 1
+                goods_labels[image.id] = label
+            elif _source_page_key(str(image.source_url)) in original_pages:
+                goods_priority[image.id] = 3
+
+    def card_score(card: CopyCard, image: ImageAsset) -> tuple[int, ...]:
         fact_ids = set(card.fact_ids)
         target_text = " ".join(
             [
@@ -372,6 +628,7 @@ def assign_distinct_images(
             _source_page_key(str(image.source_url)) in target_source_pages
         )
         return (
+            goods_priority.get(image.id, 0),
             len(fact_ids.intersection(image.related_fact_ids)),
             entity_matches,
             source_page_match,
@@ -407,10 +664,23 @@ def assign_distinct_images(
     choices: dict[int, list[tuple[int, ImageAsset]]] = {}
     for card_index, card in enumerate(cards):
         best_by_visual: dict[int, ImageAsset] = {}
-        for image in distinct_editorial_images(
-            package.images, package.sources, package, card_role=card.role
-        ):
-            if not _fits_card_resolution(image, card):
+        candidates = (
+            cover_usable_editorial_images(package.images, package.sources, package)
+            if card.role == "cover"
+            else distinct_editorial_images(
+                package.images, package.sources, package, card_role=card.role
+            )
+        )
+        for image in candidates:
+            reference_label = goods_labels.get(image.id, "")
+            layout_card = (
+                card.model_copy(update={"image_explanation": reference_label})
+                if reference_label else card
+            )
+            if not _fits_card_resolution(
+                image, layout_card,
+                maximum_upscale=POLICY.max_image_upscale if reference_label else None,
+            ):
                 continue
             index = asset_index.get(id(image))
             if index is None:
@@ -463,6 +733,20 @@ def assign_distinct_images(
     for card_index in card_order:
         place(card_index, set())
 
+    # Give the cover its highest-ranked feasible goods visual. A later detail
+    # card may have displaced it during matching even though both can still fit.
+    if goods_priority:
+        cover = next((index for index, card in enumerate(cards) if card.role == "cover"), None)
+        if cover is not None and choices[cover]:
+            if cover in assignment:
+                old_visual, _ = assignment.pop(cover)
+                del owner_by_visual[old_visual]
+            if not place(cover, set()):
+                visual, image = choices[cover][0]
+                del assignment[owner_by_visual[visual]]
+                owner_by_visual[visual] = cover
+                assignment[cover] = (visual, image)
+
     assigned: list[CopyCard] = []
     for card_index, card in enumerate(cards):
         match = assignment.get(card_index)
@@ -473,7 +757,7 @@ def assign_distinct_images(
                         "image_id": f"missing-source-image-{card.page}",
                         "visual_mode": "source_image",
                         "image_reuse_mode": "missing_source_image",
-                        "image_explanation": "?? ??? ???? ?? ????? ??",
+                        "image_explanation": "원문과 맞는 이미지를 찾지 못했어.",
                     }
                 )
             )
@@ -483,11 +767,19 @@ def assign_distinct_images(
         selected_source_page_match = (
             _source_page_key(str(selected.source_url)) in target_source_pages
         )
-        if package.content_type in {"event", "goods"} and not selected_source_page_match:
+        if label := goods_labels.get(selected.id):
+            explanation = label
+        elif package.content_type == "goods" and selected.asset_kind == "goods_product":
+            explanation = selected.korean_explanation or "상품 이미지"
+        elif _official_goods_collaboration(selected, package):
+            explanation = selected.korean_explanation or "공식 협업 비주얼"
+        elif package.content_type in {"event", "goods"} and not selected_source_page_match:
             explanation = (
-                "?? ??? ?? ????? ?? ????? ?????. ?? ?? ???? ?? ?? ???? ????."
+                ("동일 작품의 공식 이미지야. 행사 전용 이미지는 아닙니다. "
+                 "작품 비주얼로 내용을 보완해.")
                 if package.content_type == "event"
-                else "?? ??? ?? ????? ?? ????? ?????. ?? ?? ??? ????."
+                else ("동일 작품의 공식 이미지야. 상품 전용 이미지는 아닙니다. "
+                      "작품 비주얼로 내용을 보완해.")
             )
         elif selected.id != card.image_id and selected.korean_explanation:
             explanation = selected.korean_explanation

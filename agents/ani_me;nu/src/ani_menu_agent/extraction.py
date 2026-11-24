@@ -15,6 +15,7 @@ from langchain_openai import ChatOpenAI
 from openai import AuthenticationError
 from pydantic import BaseModel, Field, HttpUrl
 
+from ani_menu_agent.source_freshness import event_period_from_text
 from ani_menu_agent.config import get_settings
 from ani_menu_agent.generation import estimate_gpt_6_luna_cost
 from ani_menu_agent.models import (
@@ -25,6 +26,8 @@ from ani_menu_agent.models import (
     SourceEvidence,
     TermTranslation,
 )
+from ani_menu_agent.sources.anime_schedule import source_item_digest
+from ani_menu_agent.sources.period_images import compact_image_exclusions, maker_photo_fields
 from ani_menu_agent.policy import POLICY
 from ani_menu_agent.prompts import TERM_TRANSLATION_POLICY
 from ani_menu_agent.sources import load_source_registry
@@ -185,21 +188,36 @@ def _evidence_backed_facts(
     return facts
 
 
+def _quote_supports_event_end(quote: str, dates: list[str], claimed_end: str) -> bool:
+    if not dates or claimed_end != dates[-1]:
+        return False
+    start, end, _ = event_period_from_text(quote)
+    if start or end:
+        return end == claimed_end
+    # Venue rows often have no event label, only a date range.
+    if re.search(r"発送|配送|販売|予約|배송|판매|예약", quote):
+        return False
+    return bool(re.search(r"終了|終演|閉幕|まで|종료|폐막|까지|하루만|당일만|当日限り", quote)
+                or (len(dates) > 1 and re.search(r"[~〜～–—]|부터|から|\bto\b", quote, re.I)))
+
+
 def _verified_event_dates(
-    extracted: PageFactExtraction, default_year: int | None = None
+    extracted: PageFactExtraction, default_year: int | None = None, *, source_text: str | None = None
 ) -> tuple[str | None, str | None]:
     start_dates = _date_in_quote(extracted.event_start_evidence_quote, default_year)
     event_start = extracted.event_start
-    if event_start and (not start_dates or event_start != start_dates[0]):
+    if event_start and (
+        not start_dates or event_start != start_dates[0]
+        or (source_text is not None and extracted.event_start_evidence_quote not in source_text)
+    ):
         event_start = None
     end_dates = _date_in_quote(extracted.event_end_evidence_quote, default_year)
     event_end = extracted.event_end
-    if event_end and (not end_dates or event_end != end_dates[-1]):
+    if event_end and (
+        not _quote_supports_event_end(extracted.event_end_evidence_quote, end_dates, event_end)
+        or (source_text is not None and extracted.event_end_evidence_quote not in source_text)
+    ):
         event_end = None
-    if event_start and not event_end and start_dates == [event_start]:
-        event_end = event_start
-    elif event_end and not event_start and end_dates == [event_end]:
-        event_start = event_end
     return event_start, event_end
 
 
@@ -301,11 +319,7 @@ def _infer_event_location_from_facts(
     countries: set[str] = set()
     source_folded = source_text.casefold()
     for fact in facts:
-        source_structured_event = (
-            fact.details.get("evidence_kind") == "source_structured_event"
-            and bool(fact.details.get("source_quote"))
-        )
-        if (not fact.verified and not source_structured_event) or fact.fact_type.strip().lower() not in {
+        if not fact.verified or fact.fact_type.strip().lower() not in {
             "event_location",
             "event_venue",
             "venue",
@@ -372,32 +386,7 @@ def _verified_event_dates_from_facts(
         fact_type = fact.fact_type.strip().lower()
         quote = fact.details.get("source_quote")
         quote_text = quote if isinstance(quote, str) else ""
-        if (
-            fact.verified
-            and fact_type
-            in {
-                "release",
-                "product_release",
-                "release_date",
-                "goods_release",
-                "sales_start",
-                "event_date",
-            }
-            and quote_text
-        ):
-            cited_dates = _date_in_quote(quote_text, default_year)
-            release_date = fact.details.get("release_date") or fact.details.get("date")
-            if len(cited_dates) == 1 and (not release_date or release_date == cited_dates[0]):
-                starts.append(cited_dates[0])
-                ends.append(cited_dates[0])
-            continue
-        if not fact.verified or fact.fact_type.strip().lower() not in {
-            "event_schedule",
-            "event_period",
-            "event_venue",
-            "venue",
-            "location",
-        }:
+        if not fact.verified or fact_type not in {"event_date", "event_schedule", "event_period", "event_venue", "venue", "location"}:
             continue
         if not quote_text or any(
             marker.casefold() in quote_text.casefold()
@@ -407,15 +396,19 @@ def _verified_event_dates_from_facts(
         cited_dates = sorted(set(_date_in_quote(quote_text, default_year)))
         start = fact.details.get("start") or fact.details.get("start_date")
         end = fact.details.get("end") or fact.details.get("end_date")
+        source_start, source_end, _ = event_period_from_text(quote_text)
         if isinstance(start, str) and start in cited_dates:
             starts.append(start)
-        elif not isinstance(start, str) and cited_dates:
+        elif source_start:
+            starts.append(source_start)
+        elif len(cited_dates) == 1 and not end and re.search(r"開催日|開始|시작|개최일", quote_text):
             starts.append(cited_dates[0])
-        if isinstance(end, str) and end in cited_dates:
+        if isinstance(end, str) and _quote_supports_event_end(quote_text, cited_dates, end):
             ends.append(end)
-        elif not isinstance(end, str) and cited_dates:
-            ends.append(cited_dates[-1])
-    return min(starts) if starts else None, max(ends) if ends else None
+        elif source_end:
+            ends.append(source_end)
+    return (starts[0] if len(set(starts)) == 1 else None,
+            ends[0] if len(set(ends)) == 1 else None)
 
 
 def _classify_image_asset(
@@ -587,14 +580,12 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
                     "Temporal validity rules: source publication date is metadata, never an expiry date. "
                     "For event facts, use event_start/event_end only for the actual event period, "
                     "not the article date or application deadline. For merchandise, record an "
-                    "explicit sale or preorder end date in fact.details as sale_end, sales_end, "
-                    "preorder_end, or deadline only when the source states it and the evidence quote "
-                    "contains it. Record an explicit availability status as availability_status. "
-                    "Preserve month-only and early/mid/late-month release wording at its source "
-                    "precision, including qualifiers such as planned or around. Never invent a "
-                    "day, release_date, event period, or sale_end from an approximate release period. "
-                    "Never treat a product release date as a sale end date. If the source gives no "
-                    "validity end or status, leave it unknown; do not infer expiration from age.",
+                    "announced sale_start, sale_end, reservation_start, reservation_end, or release_date "
+                    "in fact.details with its original evidence quote. For a first broadcast, use "
+                    "premiere_date. Keep a lone start and leave the end empty. Preserve month-only and "
+                    "early/mid/late-month release wording, stated times, and qualifiers such as planned "
+                    "or around. Never invent a day or sale end from a release window. Record an explicit "
+                    "availability_status only when the source states it. Age alone does not establish expiry.",
                 ),
                 (
                     "system",
@@ -658,7 +649,7 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
         raise ValueError(f"구조화 팩트 추출 실패: {response.get('parsing_error')}")
 
     url = str(payload["url"])
-    request_id = f"crawl-{hashlib.sha1(url.encode('utf-8')).hexdigest()[:14]}"
+    request_id = f"crawl-{source_item_digest(source.id, url, payload.get('feed_entry_guid'))[:14]}"
     linked_sources: list[tuple[str, str]] = []
     linked_evidence: list[SourceEvidence] = []
 
@@ -721,6 +712,8 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
     facts = _evidence_backed_facts(
         extracted, source.id, source_text, request_id, linked_sources
     )
+    if facts and payload.get("image_exclusions"):
+        facts[0].details.update(compact_image_exclusions(payload))
     source_material = "\n".join((payload.get("title", ""), source_text))
     term_glossary = [
         term
@@ -778,7 +771,6 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
     topic = extracted.topic.strip()
     if source.work_title_ko and source.work_title_ko.casefold() not in topic.casefold():
         topic = f"{source.work_title_ko} · {topic}"
-    event_end = extracted.event_end
     published_at = str(payload.get("published_at") or "")
     try:
         source_year = date.fromisoformat(published_at[:10]).year
@@ -792,23 +784,12 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
             ),
             None,
         )
-    event_start, event_end = _verified_event_dates(extracted, source_year)
+    event_start, event_end = _verified_event_dates(extracted, source_year, source_text=source_text)
     fact_start, fact_end = _verified_event_dates_from_facts(facts, source_year)
-    has_single_event_date = any(
-        fact.verified
-        and fact.fact_type.strip().lower() == "event_date"
-        and isinstance(fact.details.get("source_quote"), str)
-        and len(_date_in_quote(fact.details["source_quote"], source_year)) == 1
-        for fact in facts
-    )
-    if has_single_event_date and fact_start and fact_end:
-        # Exact installation/release dates are one-day events. Conditional
-        # weather alternatives in other quotes must not turn them into a
-        # multi-day period.
-        event_start, event_end = fact_start, fact_end
-    else:
-        event_start = event_start or fact_start
-        event_end = event_end or fact_end
+    event_start = event_start or fact_start
+    event_end = event_end or fact_end
+    if payload.get("content_type") in {"goods", "news"}:
+        event_start = event_end = None
     event_location, event_country, event_region = _verified_event_location(extracted, source_text)
     if event_region == "unknown":
         event_location, event_country, event_region = _infer_event_location_from_facts(
@@ -829,6 +810,7 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
         discovered_via_source_id=payload.get("discovered_via_source_id"),
         discovery_url=payload.get("discovery_url"),
         discovery_title=payload.get("discovery_title"),
+        feed_entry_guid=payload.get("feed_entry_guid"),
     )
     images = []
     for image in payload.get("images", []):
@@ -871,7 +853,7 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
                 asset_kind=asset_kind,
                 depicted_entities=depicted_entities,
                 asset_metadata_confidence=confidence,
-            )
+            ).model_copy(update=maker_photo_fields(payload.get("product_photo_permissions", {}), image_url))
         )
     # The official One Piece story index names its artwork by arc slug. Attach
     # that explicit source metadata to the corresponding extracted arc fact so

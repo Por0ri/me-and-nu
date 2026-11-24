@@ -31,6 +31,7 @@ def test_parse_anime_schedule() -> None:
     assert len(items) == 1
     assert items[0].source_id == "anime_schedule_rss"
     assert items[0].title == "Episode 1 is out"
+    assert items[0].published_at == "2026-10-07T10:00:00+00:00"
 
 
 def test_event_and_goods_archive_paths_allow_canonical_article_urls() -> None:
@@ -342,6 +343,10 @@ def test_source_report_distinguishes_successful_empty_from_failed(monkeypatch) -
             "status": "succeeded_empty",
             "attempted": True,
             "candidate_count": 0,
+            "pages_scanned": 0,
+            "page_candidate_counts": [],
+            "duplicate_candidate_count": 0,
+            "pagination_stop_reason": "not_applicable",
             "error": "",
         }
     ]
@@ -532,8 +537,8 @@ def test_active_primary_html_source_can_discover_its_own_article_urls(monkeypatc
         lambda: SourceRegistry(version=1, sources=[source]),
     )
     monkeypatch.setattr(
-        "ani_menu_agent.discovery._get_html",
-        lambda _url, _source, timeout: (
+        "ani_menu_agent.discovery._get_html_with_client",
+        lambda _client, _url, _source, timeout, robots_cache: (
             '<article><a href="/news/season-2">Second season announced today</a></article>',
             "https://official.example/news/",
         ),
@@ -983,7 +988,7 @@ def test_mastodon_fake_http_thread_flow_requires_two_distinct_public_people(
         assert len(candidates[0].community_posts) == 2
 
 
-def test_region_policy_is_configurable() -> None:
+def test_newer_article_ranks_first_under_both_legacy_region_policies() -> None:
     items = [
         DiscoveryItem(
             id="jp",
@@ -991,6 +996,7 @@ def test_region_policy_is_configurable() -> None:
             url="https://example.com/jp",
             source_id="x",
             region="JP",
+            published_at="2026-11-23T10:00:00+09:00",
         ),
         DiscoveryItem(
             id="kr",
@@ -998,10 +1004,11 @@ def test_region_policy_is_configurable() -> None:
             url="https://example.com/kr",
             source_id="x",
             region="KR",
+            published_at="2026-11-24T10:00:00+09:00",
         ),
     ]
     assert rank_candidates(items, "kr_first")[0].id == "kr"
-    assert rank_candidates(items, "jp_first")[0].id == "jp"
+    assert rank_candidates(items, "jp_first")[0].id == "kr"
 
 
 def test_candidate_ranking_round_robins_sources_to_avoid_source_starvation() -> None:
@@ -1027,6 +1034,38 @@ def test_candidate_ranking_round_robins_sources_to_avoid_source_starvation() -> 
     ranked = rank_candidates(items, region_policy="mixed")
 
     assert [item.source_id for item in ranked[:3]] == ["alpha", "beta", "alpha"]
+
+
+def test_candidate_ranking_keeps_newest_per_source_and_includes_undated_calendar() -> None:
+    items = [
+        DiscoveryItem(
+            id="eeo-newest",
+            title="Newest article",
+            url="https://eeo.example/newest",
+            source_id="eeo",
+            region="JP",
+            published_at="2026-11-18T10:00:00+09:00",
+        ),
+        DiscoveryItem(
+            id="eeo-older",
+            title="Older article",
+            url="https://eeo.example/older",
+            source_id="eeo",
+            region="JP",
+            published_at="2026-11-17T10:00:00+09:00",
+        ),
+        DiscoveryItem(
+            id="recal-undated",
+            title="Upcoming event listing",
+            url="https://recal.example/event/1",
+            source_id="recal_kr",
+            region="KR",
+        ),
+    ]
+
+    ranked = rank_candidates(items)
+
+    assert [item.id for item in ranked] == ["eeo-newest", "recal-undated", "eeo-older"]
 
 
 def test_candidate_ranking_interleaves_work_titles_without_a_per_work_quota() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ani_menu_agent.goods_publication import reader_detail_body
 from ani_menu_agent.models import ContentPackage
 
 AI_DISCLOSURE_TEXT = "이 콘텐츠는 원문과 확인된 자료를 바탕으로 AI를 활용해 생성·정리했습니다."
@@ -9,7 +10,7 @@ AI_DISCLOSURE_TEXT = "이 콘텐츠는 원문과 확인된 자료를 바탕으�
 
 def render_detail_markdown(package: ContentPackage) -> str:
     """Build the complete reader-facing detail text with source credits and disclosure."""
-    lines = [package.detail_body.strip(), "", "## 출처", "", "원문", ""]
+    lines = [reader_detail_body(package, markdown=True).strip(), "", "## 출처", "", "원문", ""]
     allowed_source_ids = set(package.detail_source_ids)
     seen_sources: set[str] = set()
     selected_sources = [
