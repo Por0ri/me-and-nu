@@ -1,6 +1,8 @@
 """이미지 원본을 자르지 않고 카드에 맞추는 결정적 레이아웃 엔진."""
 
 from ani_menu_agent.models import CardSpec, CopyCard, ImageAsset, LayoutSpec, NormalizedBox
+from ani_menu_agent.policy import POLICY
+from ani_menu_agent.sources.period_images import anime_hack_news, is_anime_hack_photo
 
 
 def _aspect(image: ImageAsset) -> float:
@@ -68,6 +70,7 @@ def _reserve_html_copy_space(
     cover: bool = False,
     copy_length: int = 0,
     preferred_background_style: str | None = None,
+    work_reference: bool = False,
 ) -> LayoutSpec:
     """Build a full-width vertical composition with a source-matched image bleed."""
     copy_height = 0.34 if copy_length > 160 else 0.28
@@ -104,6 +107,29 @@ def _reserve_html_copy_space(
         copy_box = bottom_copy
         template = "cover_immersive" if cover else "immersive_full_bleed"
 
+    # The sharp foreground must fit the same pixel budget as the renderer and QA.
+    # Fill the surrounding space with a blurred copy of the same picture.
+    article_id = anime_hack_news(str(image.source_url)) if use_landscape_stack else None
+    gallery_photo = article_id and is_anime_hack_photo(str(image.url or ""), article_id)
+    if (
+        (gallery_photo or work_reference)
+        and min(image.width, image.height) >= 360
+        and max(image.width, image.height) >= 640
+    ):
+        scale = POLICY.max_image_upscale / POLICY.image_quality_target_dpr
+        width = image.width * scale / POLICY.logical_card_width
+        height = image.height * scale / POLICY.logical_card_height
+        if width < image_box.width and height < image_box.height:
+            upper_bottom = min(image_box.bottom, copy_box.y)
+            y = (
+                copy_box.y - POLICY.max_cover_vertical_gap + 0.01 - height
+                if cover else image_box.y + (upper_bottom - image_box.y - height) / 2
+            )
+            image_box = NormalizedBox(
+                x=(1 - width) / 2, y=max(image_box.y, y), width=width, height=height,
+            )
+            if work_reference:
+                preferred_background_style = "blur"
     background_style = (
         preferred_background_style
         if preferred_background_style in {"blur", "palette", "gradient"}
@@ -161,6 +187,10 @@ def build_cards(
             cover=copy.page == 1,
             copy_length=copy_length,
             preferred_background_style=direction.get("background_style"),
+            work_reference=(
+                copy.image_explanation in {"작품 포스터", "작품 일러스트"}
+                and image.asset_kind in {"catalog_poster", "catalog_cover", "official_key_visual", "character_art"}
+            ),
         )
         cards.append(CardSpec(**copy.model_dump(), layout=layout))
     return cards

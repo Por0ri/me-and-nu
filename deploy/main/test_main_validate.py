@@ -61,6 +61,19 @@ class MainPreparationTest(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(guard.GuardError):
                 guard.validate(self.values() | {key: value})
 
+    def test_old_manifest_gets_disabled_debate_defaults(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "old-main.env"
+            values = {key: value for key, value in self.values().items() if key not in guard.OPTIONAL_DEFAULTS}
+            path.write_text("\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8")
+            actual = guard.read_manifest(path)
+            self.assertEqual(actual["MAIN_DEBATE_ENABLED"], "false")
+            self.assertEqual(actual["MAIN_DEBATE_VOTE_THRESHOLD"], "10")
+            guard.validate(actual)
+        for key, value in (("MAIN_DEBATE_ENABLED", "yes"), ("MAIN_DEBATE_VOTE_THRESHOLD", "0")):
+            with self.subTest(key=key), self.assertRaises(guard.GuardError):
+                guard.validate(self.values() | {key: value})
+
     def test_separate_attempt_cap_is_not_approved_content_target(self):
         report = guard.validate(self.values() | {"MAX_GENERATION_ATTEMPTS_PER_DAY": "5"})
         self.assertEqual(report["daily_approved_content_target"], 20)
@@ -274,6 +287,10 @@ print(json.dumps({"main_settings": "passed", "llm_calls": 0, "database_connectio
             "preview": lambda c: c["services"]["api"]["environment"].update(CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED="true"),
             "unbounded_pool": lambda c: c["services"]["api"]["environment"].pop("DATABASE_MAX_OVERFLOW"),
             "fresh_network": lambda c: c["networks"]["data"].update(external=False),
+            "write_evaluations": lambda c: c["services"]["api"]["volumes"][0].update(read_only=False),
+            "auto_create_mount": lambda c: c["services"]["api"]["volumes"][0]["bind"].update(create_host_path=True),
+            "other_evaluations": lambda c: c["services"]["api"]["volumes"][0].update(source="/other/artifacts"),
+            "host_pid": lambda c: c["services"]["api"].update(pid="host"),
         }
         for name, mutate in mutations.items():
             with self.subTest(name=name), self.assertRaises(guard.GuardError):

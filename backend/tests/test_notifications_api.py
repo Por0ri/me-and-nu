@@ -51,6 +51,7 @@ def mixed_notification_db(monkeypatch):
     with engine.begin() as connection:
         # List queries only need these Content columns; the full content model is PostgreSQL-only.
         connection.exec_driver_sql("CREATE TABLE content (content_id INTEGER PRIMARY KEY, image_url TEXT)")
+        connection.exec_driver_sql("CREATE TABLE notice (notice_id INTEGER PRIMARY KEY, status TEXT, body TEXT)")
     with Session(engine, expire_on_commit=False) as session:
         now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
         for notification_id, user_id, kind, is_read, minutes in [

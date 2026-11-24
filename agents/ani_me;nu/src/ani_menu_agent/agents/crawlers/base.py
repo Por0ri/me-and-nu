@@ -22,6 +22,8 @@ from ani_menu_agent.models import (
     SourceEvidence,
 )
 from ani_menu_agent.sources.page_collector import collect_official_page
+from ani_menu_agent.sources.period_images import maker_photo_fields
+from ani_menu_agent.sources.anime_schedule import source_item_key
 from ani_menu_agent.sources.registry import load_source_registry
 from ani_menu_agent.source_freshness import expiry_evidence, immediate_news_action_expiry
 from ani_menu_agent.storage import AgentRepository
@@ -47,7 +49,6 @@ class SourceCrawlResult:
     status: str
     attempted: bool
     candidate_count: int = 0
-    latest_published_at: str | None = None
     pages_scanned: int = 0
     page_candidate_counts: list[int] | None = None
     duplicate_candidate_count: int = 0
@@ -77,6 +78,7 @@ class CrawlerState(TypedDict, total=False):
     source_ids: list[str]
     unfiltered_sources: list[str]
     exhaustive_listing: bool
+    retain_fetched_candidates: bool
     source_results: list[dict]
     items: list[dict]
     birthday_catalog: list[dict]
@@ -203,20 +205,6 @@ class TypeCrawlerAgent:
         source_report: list[dict] = []
         birthday_catalog: list[DiscoveryItem] = []
         try:
-            known_candidate_ids_by_source: dict[str, set[str]] = {}
-            for stored in AgentRepository().list_discovery_candidates():
-                source_id = str(stored.get("source_id") or "")
-                if source_id not in {
-                    "eeo_events",
-                    "daewonmedia_kr",
-                    "src_www_toei_anim_co_jp",
-                }:
-                    continue
-                known_candidate_ids_by_source.setdefault(source_id, set()).update(
-                    value
-                    for value in (stored.get("id"), stored.get("url"))
-                    if value
-                )
             items, errors = collect_candidates(
                 limit=state["limit"],
                 timeout=state["timeout"],
@@ -228,7 +216,7 @@ class TypeCrawlerAgent:
                 birthday_catalog=birthday_catalog,
                 source_report=source_report,
                 exhaustive_listing=state.get("exhaustive_listing", True),
-                known_candidate_ids_by_source=known_candidate_ids_by_source,
+                retain_fetched_candidates=state.get("retain_fetched_candidates", False),
             )
         except (httpx.HTTPError, ValueError) as exc:
             return {
@@ -302,7 +290,7 @@ class TypeCrawlerAgent:
                     "summary": re.sub(r"\s+", " ", item.summary).strip()[:2000],
                 }
             )
-            canonical = _canonical_url(str(item.url))
+            canonical = source_item_key(item.source_id, _canonical_url(str(item.url)), item.feed_entry_guid)
             if canonical in seen:
                 continue
             seen.add(canonical)
@@ -327,9 +315,8 @@ class TypeCrawlerAgent:
         repository = state.get("repository") or AgentRepository()
         items = state.get("items", [])
         saved = repository.persist_discovery(items, state["region_policy"])
-        birthday_references_saved = repository.persist_character_birthday_references(
-            state.get("birthday_catalog", [])
-        )
+        birthdays = state.get("birthday_catalog") or []
+        birthday_references_saved = repository.persist_character_birthday_references(birthdays) if birthdays else 0
         capture = self._capture_images(
             state,
             repository,
@@ -423,7 +410,9 @@ class TypeCrawlerAgent:
                                 )
                                 if part
                             )[:240],
-                        )
+                        ).model_copy(update=maker_photo_fields(
+                            getattr(capture, "product_photo_permissions", {}), str(image_url)
+                        ))
                     )
 
                 curated = image_curator(
@@ -491,6 +480,7 @@ class TypeCrawlerAgent:
         capture_images: bool = True,
         unfiltered_sources: set[str] | None = None,
         exhaustive_listing: bool = False,
+        retain_fetched_candidates: bool = False,
     ) -> CrawlerRun:
         if not 1 <= limit <= 200:
             raise ValueError("limit은 1~200 사이여야 합니다.")
@@ -508,6 +498,7 @@ class TypeCrawlerAgent:
                 "capture_images": capture_images,
                 "unfiltered_sources": sorted(unfiltered_sources or set()),
                 "exhaustive_listing": exhaustive_listing,
+                "retain_fetched_candidates": retain_fetched_candidates,
                 "source_results": [],
                 "errors": [],
             }

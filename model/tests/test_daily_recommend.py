@@ -14,6 +14,22 @@ from model.tests.storage_adapter import self_test
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class SeqCursor:
+    """load_users 가 부르는 순서대로 결과를 돌려주는 가짜 커서. fetchone = Q3 순위 표 (tap_consumption_type) 가 있나"""
+
+    def __init__(self, rows, table=True):
+        self.rows, self.table = iter(rows), table
+
+    def execute(self, *_):
+        pass
+
+    def fetchall(self):
+        return next(self.rows)
+
+    def fetchone(self):
+        return (self.table,)
+
+
 class PreferenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -61,22 +77,30 @@ class PreferenceTests(unittest.TestCase):
                 load_chip_features(path)
 
     def test_load_users_retains_unmapped_tag_and_cross_kind_alias(self):
-        class Cursor:
-            def __init__(self):
-                self.rows = iter([[(1,)], [(1, "1")],
-                                  [(1, "theme", "music", "음악", 41), (1, "theme", "family", "가족", 42)],
-                                  [(1, "ost", None, None)]])
-
-            def execute(self, *_):
-                pass
-
-            def fetchall(self):
-                return next(self.rows)
-
-        user = daily.load_users(Cursor(), 1, self.features)[1]
+        rows = [[(1,)], [(1, "1")], [(1, "theme", "music", "음악", 41), (1, "theme", "family", "가족", 42)],
+                [], [(1, "ost", None, None)]]
+        user = daily.load_users(SeqCursor(rows), 1, self.features)[1]
         self.assertEqual(user["works"], [1])
         self.assertEqual(user["genres"], ["Music"])
         self.assertEqual(user["unmapped_chips"][0]["tag_id"], 42)
+        self.assertEqual(user["answers"], ["ost"])
+
+    def test_load_users_reads_q3_ranks_only_when_the_first_matches(self):
+        # tap 1: 새 표 순서 그대로 / tap 2: 운영 옛 코드가 1순위만 바꿈 → 그 하나 / tap 3: 새 표 없음 (예전 회원)
+        # tap 4: 예전 (v1) 답 q1 · q2 (q2 는 따로) / tap 5: rank 1 줄이 없음 → 그 하나
+        rows = [[(1,), (2,), (3,), (4,), (5,)], [], [],
+                [(1, 1, "ost"), (1, 2, "news"), (1, 3, "world"), (2, 1, "goods"), (2, 2, "ost"), (5, 2, "ost")],
+                [(1, "ost", None, None), (2, "world", None, None), (3, "news", None, None), (4, None, "ost", "events"),
+                 (5, "ost", None, None)]]
+        users = daily.load_users(SeqCursor(rows), 1, self.features)
+        self.assertEqual([users[t]["answers"] for t in (1, 2, 3, 4, 5)],
+                         [["ost", "news", "world"], ["world"], ["news"], ["ost"], ["ost"]])
+        self.assertEqual([users[t]["q2"] for t in (1, 4)], [[], ["events"]])
+
+    def test_load_users_without_the_rank_table_keeps_one_answer(self):
+        rows = [[(1,)], [], [], [(1, "ost", None, None)]]           # 마이그레이션 전 DB: 순위 표를 안 읽음
+        with patch("builtins.print"):
+            user = daily.load_users(SeqCursor(rows, table=False), 1, self.features)[1]
         self.assertEqual(user["answers"], ["ost"])
 
     def test_load_visits_counts_one_impression_per_post_per_day(self):

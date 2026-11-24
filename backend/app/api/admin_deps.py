@@ -1,6 +1,6 @@
 """Admin reads require a real session and a fresh server permission decision."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, Security
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,11 +17,10 @@ from app.services.admin_permission_provider import (
 )
 
 
-async def require_admin(
-    raw_token: Annotated[str | None, Security(session_cookie_scheme)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-    store: Annotated[RedisSessionStore | None, Depends(get_session_store)],
-    permissions: Annotated[AdminPermissionProvider, Depends(get_admin_permission_provider)],
+async def _require_capability(
+    raw_token: str | None, db: AsyncSession, store: RedisSessionStore | None,
+    permissions: AdminPermissionProvider,
+    capability: Literal["can_read_contents", "can_read_members", "can_read_support", "can_read_notices"],
 ) -> AuthContext:
     if not raw_token:
         raise ApiError(401, "AUTH_REQUIRED", "로그인이 필요합니다.")
@@ -42,9 +41,45 @@ async def require_admin(
         raise ApiError(401, "AUTH_REQUIRED", "로그인이 필요합니다.")
 
     try:
-        allowed = await permissions.can_read_contents(db, user_id=user.user_id)
+        allowed = await getattr(permissions, capability)(db, user_id=user.user_id)
     except Exception:
         raise ApiError(503, "ADMIN_PERMISSION_UNAVAILABLE", "관리자 권한을 확인할 수 없습니다.") from None
     if allowed is not True:
         raise ApiError(403, "ADMIN_REQUIRED", "관리자 권한이 필요합니다.")
     return AuthContext(session=session, raw_token=raw_token, user=user, session_store=store)
+
+
+async def require_admin(
+    raw_token: Annotated[str | None, Security(session_cookie_scheme)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    store: Annotated[RedisSessionStore | None, Depends(get_session_store)],
+    permissions: Annotated[AdminPermissionProvider, Depends(get_admin_permission_provider)],
+) -> AuthContext:
+    return await _require_capability(raw_token, db, store, permissions, "can_read_contents")
+
+
+async def require_admin_members(
+    raw_token: Annotated[str | None, Security(session_cookie_scheme)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    store: Annotated[RedisSessionStore | None, Depends(get_session_store)],
+    permissions: Annotated[AdminPermissionProvider, Depends(get_admin_permission_provider)],
+) -> AuthContext:
+    return await _require_capability(raw_token, db, store, permissions, "can_read_members")
+
+
+async def require_admin_support(
+    raw_token: Annotated[str | None, Security(session_cookie_scheme)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    store: Annotated[RedisSessionStore | None, Depends(get_session_store)],
+    permissions: Annotated[AdminPermissionProvider, Depends(get_admin_permission_provider)],
+) -> AuthContext:
+    return await _require_capability(raw_token, db, store, permissions, "can_read_support")
+
+
+async def require_admin_notices(
+    raw_token: Annotated[str | None, Security(session_cookie_scheme)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    store: Annotated[RedisSessionStore | None, Depends(get_session_store)],
+    permissions: Annotated[AdminPermissionProvider, Depends(get_admin_permission_provider)],
+) -> AuthContext:
+    return await _require_capability(raw_token, db, store, permissions, "can_read_notices")

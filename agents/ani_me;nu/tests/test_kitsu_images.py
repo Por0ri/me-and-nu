@@ -167,6 +167,19 @@ def test_kitsu_work_images_require_exact_catalog_title_and_keep_provenance(monke
         "Friend",
     }
 
+    # Only the cast member tied to the article may represent a goods subject.
+    goods = kitsu_images.collect_kitsu_work_images(
+        [17], source, goods_only=True, preferred_character_names=["Friend", "친구"], max_images=2
+    )
+    assert [asset.asset_kind for asset in goods] == ["character_art", "catalog_poster"]
+    assert str(goods[0].url).endswith("/characters/2.jpg")
+    assert "친구" in goods[0].depicted_entities
+    for target in ([], ["A different character"], ["Hero", "Friend"]):
+        contextual = kitsu_images.collect_kitsu_work_images(
+            [17], source, goods_only=True, preferred_character_names=target
+        )
+        assert [asset.asset_kind for asset in contextual] == ["catalog_poster", "catalog_cover"]
+
 
 def test_generation_resolves_work_ids_before_kitsu_visual_fallback(monkeypatch) -> None:
     package = ContentPackage(
@@ -204,7 +217,8 @@ def test_generation_resolves_work_ids_before_kitsu_visual_fallback(monkeypatch) 
     )
     requested: list[list[int]] = []
 
-    def collect(work_ids, _source, *, max_images):
+    def collect(work_ids, _source, *, max_images, preferred_character_names):
+        assert not preferred_character_names
         requested.append(work_ids)
         return []
 
@@ -246,7 +260,8 @@ def test_event_can_collect_exact_work_reference_art_without_relabeling_it(monkey
     )
     requests = []
 
-    def collect(work_ids, source, *, max_images):
+    def collect(work_ids, source, *, max_images, preferred_character_names):
+        assert not preferred_character_names
         requests.append((work_ids, source.id, max_images))
         return [reference]
 

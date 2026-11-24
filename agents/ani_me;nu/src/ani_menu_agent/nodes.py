@@ -13,8 +13,10 @@ from ani_menu_agent.agents.content_generation.image_upscaler import (
 from ani_menu_agent.config import get_settings
 from ani_menu_agent.generation import generate_copy_deck
 from ani_menu_agent.image_selection import (
+    InsufficientCardImages,
     _fits_card_resolution,
     assign_distinct_images,
+    copy_image_pool,
 )
 from ani_menu_agent.layout_engine import build_cards, reflow_for_composition
 from ani_menu_agent.models import ContentPackage, CopyCard, QualityIssue
@@ -154,24 +156,6 @@ def _normalize_structural_roles(cards: list[CopyCard]) -> list[CopyCard]:
     ]
 
 
-def _assign_images_and_compact(
-    cards: list[CopyCard], package: ContentPackage
-) -> list[CopyCard]:
-    """Drop unsupported trailing cards when the remaining exact-work art still meets policy."""
-    assigned = assign_distinct_images(cards, package)
-    minimum = POLICY.minimum_cards_for(package.content_type)
-    usable = [
-        card for card in assigned
-        if card.visual_mode == "source_image"
-        and not card.image_id.startswith("missing-source-image-")
-    ]
-    if len(usable) >= minimum and len(usable) < len(assigned):
-        return _normalize_structural_roles(
-            [card.model_copy(update={"page": index}) for index, card in enumerate(usable, 1)]
-        )
-    return assigned
-
-
 def _cover_image_issue(package: ContentPackage) -> QualityIssue | None:
     cover = next((card for card in package.cards if card.role == "cover"), None)
     if cover is None or cover.visual_mode != "source_image" or cover.image_id not in {
@@ -276,53 +260,40 @@ def rights_preflight(state: ContentState) -> ContentState:
                 "qa_report": [issue.model_dump(mode="json")],
                 "status": "needs_crawler_update",
             }
-    from ani_menu_agent.image_selection import (
-        cover_usable_editorial_images,
-        distinct_editorial_images,
-    )
-
-    cover_images = cover_usable_editorial_images(
-        package.images, package.sources, package
-    )
-    if not cover_images:
-        issue = make_issue(
-            code="SOURCE_IMAGE_POOL_INSUFFICIENT",
-            message=(
-                "표지에 쓸 수 있는 출처 확인 이미지가 없습니다. "
-                "원문 또는 동일 작품의 공식 이미지를 수집하세요."
-            ),
-
-        )
-        return {
-            "trace": append_trace(state, "rights_preflight"),
-            "package": package.model_dump(mode="json"),
-            "qa_report": [issue.model_dump(mode="json")],
-            "status": "needs_crawler_update",
-        }
-    eligible_images = distinct_editorial_images(
-        package.images, package.sources, package, card_role="detail"
-    )
-    if len(eligible_images) < minimum_cards:
-        issue = make_issue(
-            code="SOURCE_IMAGE_POOL_INSUFFICIENT",
-            message=(
-                f"Only {len(eligible_images)} distinct relevant images are eligible, but at least "
-                f"{minimum_cards} are needed because every card requires real anime art. "
-                "Collect more same-work images; never fill the gap with geometric placeholders."
-            ),
-
-        )
-        return {
-            "trace": append_trace(state, "rights_preflight"),
-            "package": package.model_dump(mode="json"),
-            "qa_report": [issue.model_dump(mode="json")],
-            "status": "needs_crawler_update",
-        }
+    try:
+        copy_image_pool(package, limit=minimum_cards)
+    except InsufficientCardImages as exc:
+        return _hold_for_card_images(state, "rights_preflight", package, exc)
     return {"trace": append_trace(state, "rights_preflight"), "status": "rights_cleared"}
 
 
 def copy_writer(state: ContentState) -> ContentState:
     package = ContentPackage.model_validate(state["package"])
+    usage_records = list(state.get("usage_records", []))
+    try:
+        return _write_copy(state, package, usage_records)
+    except InsufficientCardImages as exc:
+        # Cover history can change between collection/preflight and a paid revision.
+        result = _hold_for_card_images(state, "copy_writer", package, exc)
+        result["usage_records"] = usage_records
+        return result
+
+
+def _hold_for_card_images(
+    state: ContentState, node: str, package: ContentPackage, error: InsufficientCardImages
+) -> ContentState:
+    issue = make_issue(code="SOURCE_IMAGE_POOL_INSUFFICIENT", message=str(error), page=error.page)
+    return {
+        "trace": append_trace(state, node),
+        "package": package.model_dump(mode="json"),
+        "qa_report": [issue.model_dump(mode="json")],
+        "status": "needs_crawler_update",
+    }
+
+
+def _write_copy(
+    state: ContentState, package: ContentPackage, usage_records: list[dict]
+) -> ContentState:
     requested_content_type = state.get("requested_content_type")
     if requested_content_type == "goods":
         # A mixed shop roundup can contain a giveaway campaign beside products.
@@ -400,7 +371,6 @@ def copy_writer(state: ContentState) -> ContentState:
         # may revise the whole deck. Page-scoped issues stay limited to their cards.
         if copy_issues and all(issue.page is not None for issue in copy_issues):
             revision_pages = sorted(set(page_issues))
-    usage_records = list(state.get("usage_records", []))
     generation_issues = [issue for issue in issues if issue.page not in remove_pages]
     if revising_copy and existing_cards and remove_only:
         generated_cards = [CopyCard.model_validate(card) for card in existing_cards]
@@ -465,34 +435,6 @@ def copy_writer(state: ContentState) -> ContentState:
         generated_cards = revised.deck.cards
         usage_records.append(revised.usage.model_dump(mode="json"))
     generated_cards = _normalize_structural_roles(generated_cards)
-    if requested_content_type == "goods":
-        from ani_menu_agent.extraction import _date_in_quote
-
-        used_fact_ids = {fact_id for card in generated_cards for fact_id in card.fact_ids}
-        release_periods: set[tuple[str, str]] = set()
-        release_types = {
-            "release",
-            "product_release",
-            "release_date",
-            "goods_release",
-            "sales_start",
-        }
-        for fact in package.facts:
-            if not fact.verified or fact.id not in used_fact_ids:
-                continue
-            if fact.fact_type.strip().lower() not in release_types:
-                continue
-            quote = str(fact.details.get("source_quote") or "")
-            dates = sorted(set(_date_in_quote(quote)))
-            if len(dates) == 1:
-                release_periods.add((dates[0], dates[0]))
-            elif len(dates) >= 2:
-                release_periods.add((dates[0], dates[-1]))
-        if len(release_periods) == 1:
-            package.event_start, package.event_end = next(iter(release_periods))
-        else:
-            package.event_start = None
-            package.event_end = None
     if not existing_cards:
         # Catch copy-only defects before layout and image rendering. These issues have
         # enough evidence to repair in the copy writer and do not require recrawling.
@@ -551,26 +493,6 @@ def layout_director(state: ContentState) -> ContentState:
             CopyCard.model_validate(card.model_dump(exclude={"layout"}))
             for card in package.cards
         ]
-        # A visual revision must re-run image eligibility. Rebuilding layouts
-        # alone preserves the old image IDs, including RE:CAL schedule cards.
-        copies = _assign_images_and_compact(copies, package)
-        missing_pages = [
-            card.page for card in copies
-            if card.visual_mode != "source_image"
-            or card.image_id.startswith("missing-source-image-")
-        ]
-        if len(copies) - len(missing_pages) < POLICY.minimum_cards_for(package.content_type):
-            issue = make_issue(
-                code="SOURCE_IMAGE_POOL_INSUFFICIENT",
-                message="There are not enough distinct eligible images for the minimum carousel. Collect more exact-work artwork; do not reuse schedule graphics.",
-                page=missing_pages[0] if missing_pages else None,
-            )
-            return {
-                "trace": append_trace(state, "layout_director"),
-                "package": package.model_dump(mode="json"),
-                "qa_report": [issue.model_dump(mode="json")],
-                "status": "needs_crawler_update",
-            }
         package.cards = build_cards(copies, package.images)
         composition_pages = {
             int(issue["page"])
@@ -641,24 +563,6 @@ def layout_director(state: ContentState) -> ContentState:
                 CopyCard.model_validate(card.model_dump(exclude={"layout"}))
                 for card in package.cards
             ]
-            copies = _assign_images_and_compact(copies, package)
-            missing_pages = [
-                card.page for card in copies
-                if card.visual_mode != "source_image"
-                or card.image_id.startswith("missing-source-image-")
-            ]
-            if len(copies) - len(missing_pages) < POLICY.minimum_cards_for(package.content_type):
-                issue = make_issue(
-                    code="SOURCE_IMAGE_POOL_INSUFFICIENT",
-                    message="There are not enough distinct eligible images for the minimum carousel. Collect more exact-work artwork; do not reuse schedule graphics.",
-                    page=missing_pages[0] if missing_pages else None,
-                )
-                return {
-                    "trace": append_trace(state, "layout_director"),
-                    "package": package.model_dump(mode="json"),
-                    "qa_report": [issue.model_dump(mode="json")],
-                    "status": "needs_crawler_update",
-                }
             package.cards = build_cards(copies, package.images)
             return {
                 "trace": append_trace(state, "layout_director"),
@@ -671,7 +575,7 @@ def layout_director(state: ContentState) -> ContentState:
     copies, upscale_usage, upscale_results = _upscale_selected_assets(
         copies, package, repository
     )
-    copies = _assign_images_and_compact(copies, package)
+    copies = assign_distinct_images(copies, package)
     missing_pages = [
         card.page
         for card in copies
@@ -764,7 +668,7 @@ def repair_visual_assignments(state: ContentState) -> ContentState:
     copies = [
         CopyCard.model_validate(card.model_dump(exclude={"layout"})) for card in package.cards
     ]
-    repaired = _assign_images_and_compact(copies, package)
+    repaired = assign_distinct_images(copies, package)
     missing_pages = [
         card.page
         for card in repaired
@@ -860,32 +764,13 @@ def crawler_update_required(state: ContentState) -> ContentState:
     """Return source/image defects to the crawler queue; generation cannot patch evidence."""
     request_id = state.get("request_id")
     if request_id:
-        repository = AgentRepository()
-        repository.mark_request_status(request_id, "needs_crawler_update")
-        repository.set_content_status(request_id, "needs_crawler_update")
-        package = ContentPackage.model_validate(state["package"])
-        issues = state.get("qa_report", [])
-        normalized_issues = [
-            issue.model_dump(mode="json") if hasattr(issue, "model_dump") else issue
-            for issue in issues
-        ]
-        repository.upsert_record(
-            agent_type="information",
-            record_id=f"crawler-update:{request_id}",
-            record_kind="crawler_update_request",
-            package=package,
-            payload={
-                "status": "needs_crawler_update",
-                "reason_codes": [
-                    issue.get("code")
-                    for issue in normalized_issues
-                    if isinstance(issue, dict) and issue.get("code")
-                ],
-                "issues": normalized_issues,
-                "trace": list(state.get("trace", [])),
-                "return_to": "crawler",
-            },
-            status="needs_crawler_update",
+        AgentRepository().persist_crawler_return(
+            ContentPackage.model_validate(state["package"]),
+            issues=list(state.get("qa_report", [])),
+            trace=list(state.get("trace", [])),
+            revision=int(state.get("revision_count", 0)),
+            usage_records=list(state.get("usage_records", [])),
+            review_failures=int(state.get("review_failures", 0)),
         )
     return {
         "trace": append_trace(state, "crawler_update_required"),

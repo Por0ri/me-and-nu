@@ -15,6 +15,7 @@ from ani_rag.interfaces import EvidenceRepository, StoredEvidenceReference, Work
 from ani_rag.image_ingest import ImageAssetRepository, ImageCandidate, ingest_image_candidates
 from ani_rag.entity_linking import EntityCatalogRecord, attach_image_entity_matches
 from ani_rag.models import (
+    AuthorAttribution,
     CollectionMethod,
     EvidenceDocument,
     EvidenceType,
@@ -22,6 +23,7 @@ from ani_rag.models import (
     WorkLinkStatus,
 )
 from ani_rag.profiles import get_content_profile, validate_document_profile
+from ani_rag.source_evidence import poll_context, review_passages
 from ani_rag.settings import EvergreenSourceRegistry, require_source_access, require_source_media_url, require_source_url
 
 
@@ -35,6 +37,7 @@ class CollectionRequest:
     result_limit: int = 10
     seed_menu_work_id: int | None = None
     generation_query: str | None = None
+    refresh_after_seconds: int = 2_592_000
 
     def __post_init__(self) -> None:
         if not self.query.strip() or not self.language.strip():
@@ -45,6 +48,8 @@ class CollectionRequest:
             raise ValueError("seed_menu_work_id must be a positive integer")
         if self.generation_query is not None and not self.generation_query.strip():
             raise ValueError("generation_query must be non-empty when supplied")
+        if not 3_600 <= self.refresh_after_seconds <= 31_536_000:
+            raise ValueError("refresh_after_seconds must be between one hour and one year")
         if self.evidence_type not in get_content_profile(self.content_type).accepted_evidence_types:
             raise ValueError("Evidence type is not permitted for this content type")
 
@@ -54,6 +59,7 @@ class CollectionRequest:
         language: str, seed: WorkSearchSeed, result_limit: int = 10,
         query_override: str | None = None,
         generation_query: str | None = None,
+        refresh_after_seconds: int = 2_592_000,
     ) -> "CollectionRequest":
         """Build one bounded request; query_override keeps source plans on a stable title."""
         return cls(
@@ -61,6 +67,7 @@ class CollectionRequest:
             query=query_override.strip() if query_override and query_override.strip() else seed.query,
             language=language, result_limit=result_limit,
             seed_menu_work_id=seed.menu_work_id, generation_query=generation_query,
+            refresh_after_seconds=refresh_after_seconds,
         )
 
 
@@ -75,6 +82,17 @@ class CollectionResult:
     images_reused: int = 0
     image_failures: int = 0
     duplicate_documents: int = 0
+    duplicate_urls_skipped: int = 0
+
+
+def seed_work_is_confirmed(seed_menu_work_id: int | None, resolution: object) -> bool:
+    """A work-scoped request only schedules generation for its exact resolved ID."""
+    matched_ids = getattr(resolution, "menu_work_ids", ())
+    return bool(
+        resolution
+        and getattr(resolution, "status", None) is WorkLinkStatus.MATCHED
+        and matched_ids and (seed_menu_work_id is None or seed_menu_work_id in matched_ids)
+    )
 
 
 async def collect_from_source(
@@ -102,6 +120,7 @@ async def collect_from_source(
         raise PermissionError(f"Source {source.source_id!r} has no allowed hosts")
     if not request.language.strip():
         raise ValueError("Original language must be supplied by the source adapter/operator")
+    await repository.register_source(source, only_if_missing=True)
     stage_started = perf_counter()
     live_tools = await adapter.list_tools(source.mcp_server)
     stage_timings_ms["tool_inventory"] = round((perf_counter() - stage_started) * 1000)
@@ -116,7 +135,9 @@ async def collect_from_source(
         mcp_server_alias=source.mcp_server,
         tool_name=bindings["search"],
         allowed_hosts=source.allowed_hosts,
+        allowed_path_prefixes=source.allowed_path_prefixes,
         limit=request.result_limit,
+        content_type=request.content_type,
     ))
     stage_timings_ms["search"] = round((perf_counter() - stage_started) * 1000)
     if len(hits) > request.result_limit:
@@ -126,6 +147,7 @@ async def collect_from_source(
     work_match_ms = 0
     image_ingest_ms = 0
     persistence_ms = 0
+    duplicate_urls_skipped = 0
     for hit in hits:
         entity_linking_summary: dict[str, int] = {}
         if hit.source_id != source.source_id:
@@ -133,15 +155,29 @@ async def collect_from_source(
         if hit.mcp_server_alias != source.mcp_server or hit.tool_name != bindings["search"]:
             raise PermissionError("MCP search result attestation does not match the configured server/tool")
         require_source_url(source, hit.url)
-        stage_started = perf_counter()
-        result = await adapter.read(ReadRequest(
+        claim = await repository.claim_source_read(
             source_id=source.source_id,
-            url=hit.url,
-            mcp_server_alias=source.mcp_server,
-            tool_name=bindings["read"],
-            allowed_hosts=source.allowed_hosts,
-            allowed_path_prefixes=source.allowed_path_prefixes,
-        ))
+            source_native_id=hit.source_native_id,
+            source_url=hit.url,
+            now=datetime.now(timezone.utc),
+            refresh_after_seconds=request.refresh_after_seconds,
+        )
+        if not claim.acquired:
+            duplicate_urls_skipped += 1
+            continue
+        stage_started = perf_counter()
+        try:
+            result = await adapter.read(ReadRequest(
+                source_id=source.source_id,
+                url=hit.url,
+                mcp_server_alias=source.mcp_server,
+                tool_name=bindings["read"],
+                allowed_hosts=source.allowed_hosts,
+                allowed_path_prefixes=source.allowed_path_prefixes,
+            ))
+        except Exception as error:
+            await repository.release_source_read(claim.claim_id, error_code=type(error).__name__)
+            raise
         read_ms += round((perf_counter() - stage_started) * 1000)
         if result.source_id != source.source_id:
             raise PermissionError("MCP read returned a document attributed to another source")
@@ -158,12 +194,28 @@ async def collect_from_source(
         retrieved_at = datetime.now(timezone.utc)
         content = result.body or "\n".join(item.text for item in excerpts)
         digest = hashlib.sha256(f"{source.source_id}\n{canonical_source_url(result.url)}\n{content}".encode("utf-8")).hexdigest()
+        published_at = result.published_at or hit.published_at
+        author = None
+        claims: tuple[str, ...] = ()
+        survey = None
+        if request.evidence_type is EvidenceType.EDITORIAL_REVIEW:
+            passage = review_passages(result)
+            if passage is None or published_at is None:
+                await repository.release_source_read(claim.claim_id, error_code="review_attribution_or_passage_missing")
+                continue
+            author, quotes = passage
+            claims = tuple(quote.text for quote in quotes)
+            excerpts = (*excerpts, *quotes)
+        elif request.evidence_type is EvidenceType.CURATION_RESULT:
+            survey = poll_context(result)
+            if survey is None:
+                await repository.release_source_read(claim.claim_id, error_code="poll_context_missing")
+                continue
         identity = (identities_by_url or {}).get(result.url)
         if identity is None and work_catalog is not None:
             identity = WorkIdentity(
-                titles=tuple(dict.fromkeys(value for value in (result.title, hit.title) if value.strip())),
-                external_ids=({source.source_id: result.source_native_id or hit.source_native_id}
-                              if result.source_native_id or hit.source_native_id else {}),
+                titles=(result.title,) if result.title.strip() else (),
+                external_ids=({source.source_id: result.source_native_id} if result.source_native_id else {}),
                 source_text=content, source_url=result.url, source_id=source.source_id,
                 seed_menu_work_ids=(request.seed_menu_work_id,) if request.seed_menu_work_id else (),
             )
@@ -193,12 +245,16 @@ async def collect_from_source(
             source_url=result.url,
             source_id=source.source_id,
             retrieved_at=retrieved_at,
-            published_at=result.published_at or hit.published_at,
+            published_at=published_at,
             evidence_type=request.evidence_type,
             collection_method=CollectionMethod.MCP_READ,
             language=result.language or request.language,
             source_native_id=result.source_native_id or hit.source_native_id,
             publisher=result.publisher,
+            author_name=author,
+            author_attribution=AuthorAttribution.ATTRIBUTED if author else AuthorAttribution.UNKNOWN,
+            claims=claims,
+            curation_context=survey,
             body=result.body,
             raw_payload=result.raw_payload or {},
             excerpts=excerpts,
@@ -279,9 +335,28 @@ async def collect_from_source(
                         },
                     })
         stage_started = perf_counter()
-        stored.append(await repository.upsert_and_schedule_generation(
-            document, retrieval_query=request.generation_query or request.query,
-        ))
+        seed_match_confirmed = seed_work_is_confirmed(request.seed_menu_work_id, resolution)
+        document = replace(document, metadata={
+            **document.metadata,
+            "seed_match_status": "confirmed" if seed_match_confirmed else "unconfirmed",
+        }) if request.seed_menu_work_id is not None else document
+        stored_reference = await repository.upsert_and_schedule_generation(
+            document,
+            retrieval_query=request.generation_query or request.query,
+            schedule_generation=seed_match_confirmed and (survey is None or (
+                published_at is not None and survey.window_start is not None and survey.window_end is not None
+                and survey.sample_size is not None and bool(survey.aggregation_method)
+            )),
+        )
+        await repository.complete_source_read(
+            claim.claim_id,
+            source_native_id=result.source_native_id or hit.source_native_id,
+            document_id=stored_reference.canonical_record_id,
+            content_hash=digest,
+            checked_at=retrieved_at,
+            refresh_after_seconds=request.refresh_after_seconds,
+        )
+        stored.append(stored_reference)
         persistence_ms += round((perf_counter() - stage_started) * 1000)
     stage_timings_ms.update({
         "read": read_ms,
@@ -298,4 +373,5 @@ async def collect_from_source(
         images_reused=images_reused,
         image_failures=image_failure_count,
         duplicate_documents=sum(item.disposition == "duplicate" for item in stored),
+        duplicate_urls_skipped=duplicate_urls_skipped,
     )

@@ -55,7 +55,7 @@ def test_non_event_event_end_does_not_expire_a_content_package() -> None:
         package, now=datetime(2026, 11, 2, tzinfo=UTC)
     )
 
-    assert datetime.fromisoformat(prepared.feed_valid_until) > datetime(2026, 11, 2, tzinfo=UTC)
+    assert prepared.feed_valid_until is None
 
 
 def test_extraction_keeps_verified_fact_cap_and_accepts_short_quote() -> None:
@@ -123,7 +123,7 @@ def test_goods_release_window_survives_sqlite_reload_without_invented_dates(monk
 
     assert runtime._hold_period_package(
         repository, loaded.model_dump(mode="json"), "goods", loaded.request_id,
-    ) is False
+    ) is None
     assert loaded.event_start is None and loaded.event_end is None
     assert loaded.facts[0].details == package.facts[0].details
     assert "release_date" not in loaded.facts[0].details
@@ -153,7 +153,7 @@ def test_release_window_pipeline_still_holds_past_or_explicitly_expired_goods(
         ))
     assert runtime._hold_period_package(
         repository, package.model_dump(mode="json"), "goods", package.request_id,
-    ) is True
+    ) == expected_status
     with repository.connect() as connection:
         row = connection.execute(
             "SELECT status, payload_json FROM agent_records WHERE record_id=?",
@@ -183,7 +183,6 @@ def test_generation_worker_preserves_period_text_without_promoting_bounds_to_dat
         "evidence": quote,
     }
     monkeypatch.setattr(runtime, "expiry_evidence", lambda *_args: dict(temporal))
-    monkeypatch.setattr(runtime, "datetime", _ReleaseCheckDateTime)
     monkeypatch.setattr(runtime, "intake", lambda _state: {})
     monkeypatch.setattr(runtime, "rights_preflight", lambda _state: {})
     monkeypatch.setattr(runtime, "build_content_generation_agent", lambda: SimpleNamespace(
@@ -205,4 +204,4 @@ def test_generation_worker_preserves_period_text_without_promoting_bounds_to_dat
     }
     assert not fact.verified
     assert saved.event_start is None and saved.event_end is None
-    assert saved.feed_valid_until == "2026-11-18"
+    assert saved.feed_valid_until is None

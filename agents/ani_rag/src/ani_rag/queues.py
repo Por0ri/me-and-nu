@@ -7,6 +7,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Mapping, Protocol
 
+from ani_rag.models import RagContentType
+
 
 class QueueName(StrEnum):
     COLLECTION = "collection"
@@ -22,6 +24,12 @@ class QueueStatus(StrEnum):
     BLOCKED = "blocked"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class WebPipelineBacklog:
+    total_active: int
+    active_revisions: int
 
 
 @dataclass(frozen=True)
@@ -59,10 +67,25 @@ class QueueItem:
 
 
 class QueueRepository(Protocol):
+    async def web_evidence_revision(
+        self, menu_work_id: int, content_type: RagContentType, source_ids: tuple[str, ...],
+    ) -> str | None:
+        """Stable fingerprint of eligible, matched evidence for the requested work and lane."""
+        ...
+
     async def enqueue(self, item: QueueItem) -> QueueItem:
         """Insert idempotently by dedupe_key where provided."""
 
-    async def claim(self, queue: QueueName, *, now: datetime, handler_kind: str | None = None) -> QueueItem | None:
+    async def count_active(self, queue: QueueName, *, handler_kind: str | None = None) -> int:
+        """Count pending, running, and retry-wait items for queue backpressure."""
+
+    async def web_pipeline_backlog(self) -> WebPipelineBacklog:
+        """Count active candidate, generation and review jobs, including their revision subset."""
+
+    async def claim(
+        self, queue: QueueName, *, now: datetime, handler_kind: str | None = None,
+        allow_scheduled_discovery: bool = True,
+    ) -> QueueItem | None:
         """Claim one pending/retryable item without coupling other queue stages."""
 
     async def save(self, item: QueueItem) -> None:

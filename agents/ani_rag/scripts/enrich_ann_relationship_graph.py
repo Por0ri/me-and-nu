@@ -187,6 +187,8 @@ async def _run(args: argparse.Namespace) -> None:
                    JOIN rag_work_link l ON l.document_id=d.document_id
                    WHERE d.source_id=? AND l.menu_work_id=? AND l.status='matched'
                      AND d.url LIKE 'https://www.animenewsnetwork.com/encyclopedia/%'
+                     AND COALESCE(json_extract(d.metadata_json,'$.work_match_method'),'')
+                         NOT IN ('ann_explicit_relationship_graph','ann_relationship_candidate')
                    ORDER BY CASE WHEN json_extract(d.metadata_json,'$.work_match_method')='ann_explicit_relationship_graph' THEN 1 ELSE 0 END,
                             CAST(d.external_id AS INTEGER)""",
                 (ANN_SOURCE_ID, work_id),
@@ -238,32 +240,14 @@ async def _run(args: argparse.Namespace) -> None:
                 other_work_ids = {int(link[0]) for link in other_links if link[0] is not None}
                 if work_id in other_work_ids:
                     pass
-                elif other_work_ids and relation == "related_to":
-                    conflicts.append(f"ANN {ann_id} already linked to work IDs {sorted(other_work_ids)}; relation is generic, left unchanged")
                 elif other_work_ids:
-                    next_link = int(connection.execute(
-                        "SELECT COUNT(*) FROM rag_work_link WHERE document_id=?", (document_id,),
-                    ).fetchone()[0])
-                    connection.execute(
-                        "INSERT INTO rag_work_link(link_id,document_id,menu_work_id,candidate_menu_work_id,status,matched_on) VALUES(?,?,?,?,?,?)",
-                        (f"wl_{document_id}_{next_link}", document_id, work_id, None, "matched", f"ann_explicit_{relation}"),
+                    conflicts.append(
+                        f"ANN {ann_id} already linked to work IDs {sorted(other_work_ids)}; "
+                        f"relationship {relation} is preserved without adding parent work ID {work_id}"
                     )
-                    metadata_row = connection.execute(
-                        "SELECT metadata_json FROM rag_document WHERE document_id=?", (document_id,),
-                    ).fetchone()
-                    metadata = json.loads(metadata_row[0] or "{}") if metadata_row else {}
-                    parent_ids = set(metadata.get("franchise_parent_work_ids", []))
-                    parent_ids.add(work_id)
-                    metadata["franchise_parent_work_ids"] = sorted(parent_ids)
-                    metadata["franchise_relation"] = relation
-                    connection.execute(
-                        "UPDATE rag_document SET metadata_json=? WHERE document_id=?",
-                        (json.dumps(metadata, ensure_ascii=False), document_id),
-                    )
-                    connection.commit()
-                    added += 1
                 elif work_id not in other_work_ids:
                     digest = hashlib.sha256(raw).hexdigest()
+                    is_related_entry = relation != "catalogued_entry"
                     document = EvidenceDocument(
                         document_id=document_id,
                         content_type=RagContentType.GUIDE,
@@ -283,17 +267,25 @@ async def _run(args: argparse.Namespace) -> None:
                             "html_sha256": digest,
                             "entry_kind": path_kind,
                             "parent_ann_id": parent_ann_id,
-                            "franchise_relation": relation,
+                        "franchise_relation": relation,
                         },
                         excerpts=(EvidenceExcerpt(text=body[:2000], locator="page:body"),),
-                        work_link_status=WorkLinkStatus.MATCHED,
-                        menu_work_ids=(work_id,),
+                        # A sequel, adaptation, spin-off, or other linked ANN
+                        # entry is not automatically the same me;nu work. Keep
+                        # the known parent as a candidate until an exact work
+                        # identity is resolved from the catalogue.
+                        work_link_status=(
+                            WorkLinkStatus.AMBIGUOUS if is_related_entry else WorkLinkStatus.MATCHED
+                        ),
+                        menu_work_ids=() if is_related_entry else (work_id,),
+                        candidate_menu_work_ids=(work_id,) if is_related_entry else (),
                         metadata={
-                            "work_match_method": "ann_explicit_relationship_graph",
+                            "work_match_method": "ann_relationship_candidate" if is_related_entry
+                            else "ann_catalogued_entry",
                             "work_entry_kind": _entry_kind(path_kind, title),
                             "franchise_relation": relation,
                             "parent_ann_id": parent_ann_id,
-                            "franchise_parent_work_ids": [work_id],
+                            "relationship_parent_work_id": str(work_id),
                             "ann_id": ann_id,
                         },
                     )

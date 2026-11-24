@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 from urllib.robotparser import RobotFileParser
 
 from ani_menu_agent.agents.common import append_trace
@@ -16,9 +17,34 @@ from ani_menu_agent.vision import detect_alpha_subject_box
 def image_curator(state: ContentState) -> ContentState:
     package = ContentPackage.model_validate(state["package"])
     repository = state.get("repository") or AgentRepository()
+    download_errors = curate_source_images(
+        package, repository, download=state.get("download_images", False)
+    )
+    persisted = repository.persist_images(package)
+    result: ContentState = {
+        "trace": append_trace(state, "image_curator"),
+        "status": "images_curated",
+        "persisted_image_count": persisted,
+        "package": package.model_dump(mode="json"),
+    }
+    if download_errors:
+        result["image_download_errors"] = download_errors
+    return result
+
+
+def curate_source_images(
+    package: ContentPackage,
+    repository: AgentRepository,
+    *,
+    download: bool,
+    stop_requested: Callable[[], bool] = lambda: False,
+) -> list[str]:
+    """Apply the crawler's rights and download checks before committing the capture."""
     download_errors: list[str] = []
     robots_cache: dict[str, RobotFileParser | None] = {}
     for index, image in enumerate(package.images):
+        if stop_requested():
+            raise InterruptedError("Crawler stop requested")
         image_sources = list(package.sources)
         if image.provenance_source and all(
             str(source.url) != str(image.provenance_source.url) for source in image_sources
@@ -96,7 +122,7 @@ def image_curator(state: ContentState) -> ContentState:
                     "download_error": "이용 허가 범위가 확인되지 않아 다운로드하지 않았습니다.",
                 }
             )
-        elif image.url and state.get("download_images", False):
+        elif image.url and download:
             try:
                 image = download_image(package, image, robots_cache=robots_cache)
             except Exception as exc:
@@ -123,13 +149,4 @@ def image_curator(state: ContentState) -> ContentState:
             if path.is_file():
                 image.subject_box = detect_alpha_subject_box(path)
         package.images[index] = image
-    persisted = repository.persist_images(package)
-    result: ContentState = {
-        "trace": append_trace(state, "image_curator"),
-        "status": "images_curated",
-        "persisted_image_count": persisted,
-        "package": package.model_dump(mode="json"),
-    }
-    if download_errors:
-        result["image_download_errors"] = download_errors
-    return result
+    return download_errors

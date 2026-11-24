@@ -23,7 +23,7 @@ class EditorialPolicy:
     max_candidate_retries: int = 1
     default_event_retention_days: int = 30
     default_content_validity_days: int = 90
-    max_review_failures: int = 4
+    max_review_failures: int = 3
     max_title_chars: int = 42
     max_body_chars: int = 60
     # End cards may carry a compact fact recap plus a punchline; 54 was
@@ -56,6 +56,7 @@ class EditorialPolicy:
         ("PROTECTED_PHRASE_SPLIT", 8),
         ("CARD_REDUNDANT", 6),
         ("ENDING_TOO_LONG", 4),
+        ("ENDING_GENERIC", 6),
         ("IMAGE_LOW_RESOLUTION", 16),
         ("IMAGE_REUSED_RAW", 16),
         ("JAPANESE_COPY_UNTRANSLATED", 16),
@@ -87,6 +88,22 @@ class EditorialPolicy:
 
 
 POLICY = EditorialPolicy()
+
+# 작품명만 바꾸면 재사용 가능한 상투 문구는 기본 차단한다.
+GENERIC_HUMOR_TERMS = (
+    "통장이 열린다",
+    "지갑이 열린다",
+    "덕후라면",
+    "과몰입",
+    "작전명:",
+    "결론:",
+    "공식 사이트에서 확인",
+    "공식 사이트에서 일정을 확인",
+    "배포 정보를 확인할 차례",
+    "자세한 내용은 공식",
+    "계속 지켜보자",
+    "확인해 보세요",
+)
 
 AGENT_MONOLOGUE_TERMS = (
     "추측성 내용은 적지",

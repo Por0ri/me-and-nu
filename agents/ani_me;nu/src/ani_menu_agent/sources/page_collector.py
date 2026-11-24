@@ -16,6 +16,8 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, HttpUrl
 
 from ani_menu_agent.models import StructuredWorkReference
+from ani_menu_agent.sources import anime_schedule, period_images
+from ani_menu_agent.source_freshness import event_period_from_text, publication_timestamp, schedule_end_precedes_start
 from ani_menu_agent.sources.http_policy import pace_host
 from ani_menu_agent.sources.models import Source
 
@@ -25,8 +27,12 @@ MAX_IMAGE_URLS = 100
 MAX_RELATED_IMAGE_PAGES = 4
 
 
-def _published_date_from_html(soup: BeautifulSoup) -> str | None:
+def _published_date_from_html(soup: BeautifulSoup, page_url: str = "") -> str | None:
     """Read an explicit publication timestamp from standard article metadata."""
+    if anime_schedule.profile_slug(page_url):
+        # The RSS item points here for artwork. All dates are for the series or
+        # its releases, including countdowns to the next raw/sub/dub episode.
+        return None
     for attrs in (
         {"property": "article:published_time"},
         {"name": "datePublished"},
@@ -36,7 +42,8 @@ def _published_date_from_html(soup: BeautifulSoup) -> str | None:
     ):
         tag = soup.find("meta", attrs=attrs)
         if tag and tag.get("content"):
-            return str(tag["content"]).strip()
+            if timestamp := publication_timestamp(str(tag["content"])):
+                return timestamp
 
     # JSON-LD is common on news pages, including sites that omit Open Graph dates.
     def find_date_published(value: object) -> str | None:
@@ -44,7 +51,8 @@ def _published_date_from_html(soup: BeautifulSoup) -> str | None:
             for key in ("datePublished", "dateCreated"):
                 item = value.get(key)
                 if isinstance(item, str) and item.strip():
-                    return item.strip()
+                    if timestamp := publication_timestamp(item):
+                        return timestamp
             for item in value.values():
                 found = find_date_published(item)
                 if found:
@@ -66,9 +74,9 @@ def _published_date_from_html(soup: BeautifulSoup) -> str | None:
             if found:
                 return found
 
-    time_tag = soup.find("time", attrs={"datetime": True})
-    if time_tag:
-        return str(time_tag["datetime"]).strip()
+    for time_tag in soup.select("time[datetime]"):
+        if timestamp := publication_timestamp(str(time_tag["datetime"])):
+            return timestamp
 
     # Some publisher templates put the original date in a dedicated date class.
     # Restrict matching to date-labelled nodes so event dates in article prose
@@ -137,7 +145,7 @@ def _recal_event_dates_from_html(
             for child in value:
                 yield from walk(child)
 
-    matches: dict[tuple[str, str], str] = {}
+    matches: dict[tuple[str | None, str | None], str] = {}
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
         raw = script.string or script.get_text()
         if not raw:
@@ -145,6 +153,8 @@ def _recal_event_dates_from_html(
         try:
             records = walk(json.loads(raw))
             for record in records:
+                if not isinstance(record, dict):
+                    continue
                 raw_type = record.get("@type")
                 types = raw_type if isinstance(raw_type, list) else [raw_type]
                 if not any(
@@ -156,167 +166,94 @@ def _recal_event_dates_from_html(
                 normalized_name = re.sub(r"[^\w]+", "", name).casefold()
                 if not normalized_name or normalized_name != heading_text:
                     continue
-                start_value = str(record.get("startDate") or "")[:10]
-                end_value = str(record.get("endDate") or "")[:10]
-                start_date = date.fromisoformat(start_value).isoformat()
-                end_date = date.fromisoformat(end_value).isoformat()
-                if end_date < start_date:
+                start_value = str(record.get("startDate") or "")
+                end_value = str(record.get("endDate") or "")
+                if not start_value and not end_value:
                     continue
-                matches[(start_date, end_date)] = name
+                try:
+                    for value in (start_value, end_value):
+                        if value:
+                            datetime.fromisoformat(value)
+                except ValueError:
+                    continue
+                if start_value and end_value and schedule_end_precedes_start(start_value, end_value):
+                    continue
+                labels = [f"{key}={value}" for key, value in (("startDate", start_value), ("endDate", end_value)) if value]
+                matches[(start_value or None, end_value or None)] = f"Schema.org Event '{name}': {', '.join(labels)}"
         except (json.JSONDecodeError, TypeError, ValueError):
             continue
 
     if len(matches) != 1:
         return None, None, None
-    (start_date, end_date), name = next(iter(matches.items()))
-    return (
-        start_date,
-        end_date,
-        f"Schema.org Event '{name}': startDate={start_date}, endDate={end_date}",
+    (start_date, end_date), evidence = next(iter(matches.items()))
+    return start_date, end_date, evidence
+
+
+def _anime_hack_screening_report(
+    soup: BeautifulSoup, title: str, published_at: str | None,
+) -> dict[str, str] | None:
+    """Read the occurrence of a completed screening from this publisher's own lead."""
+    body = soup.select_one(".articleContainer .newsDetailBox")
+    if not body or not published_at:
+        return None
+    paragraphs = [p.get_text("", strip=True) for p in body.find_all("p", recursive=False)]
+    lead = paragraphs[0].split("。", 1)[0] if paragraphs else ""
+    dated = list(re.finditer(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日[にの]", lead))
+    if len(dated) != 1 or re.search(r"昨年|一昨年|前年|かつて|年前|当時|振り返", lead):
+        return None
+    match = dated[0]
+    follow = lead[match.end():]
+    recap = (
+        "一挙上映" in title and "登壇" in title
+        and match[0].endswith("日に")
+        and re.match(r"[^、。]{0,40}(?:シネマズ|映画館|劇場|ホール|会館)[^、。]{0,15}で、", follow)
+        and re.search(r"一挙上映[^。]{0,30}イベントが開催された$", follow)
+    ) or (
+        "特集上映" in title and "語" in title
+        and match[0].endswith("日の")
+        and re.match(r"オールナイト上映[^。]{0,80}に[^。]{0,30}が登壇し、[^。]{0,100}語った$", follow)
     )
-
-
-def _recal_event_location_from_html(
-    soup: BeautifulSoup, source_id: str
-) -> tuple[str | None, str | None]:
-    """Read the venue from the Schema.org event matching the page heading."""
-    if source_id not in {"recal_kr", "recal_music"}:
-        return None, None
-    heading = soup.select_one("main h1, h1")
-    heading_text = (
-        re.sub(r"[^\w]+", "", heading.get_text(" ", strip=True)).casefold()
-        if heading
-        else ""
-    )
-    if not heading_text:
-        return None, None
-
-    def walk(value: object):
-        if isinstance(value, dict):
-            yield value
-            for child in value.values():
-                yield from walk(child)
-        elif isinstance(value, list):
-            for child in value:
-                yield from walk(child)
-
-    matches: set[tuple[str, str, str]] = set()
-    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
-        raw = script.string or script.get_text()
-        if not raw:
-            continue
+    if not recap:
+        return None
+    # Require day and month in the event clause itself. An omitted year can
+    # refer to this month's report, never to an assumed prior season/year.
+    published = date.fromisoformat(published_at[:10])
+    if not match[1] and int(match[2]) != published.month:
+        return None
+    try:
+        occurred = date(int(match[1] or published.year), int(match[2]), int(match[3]))
+    except ValueError:
+        return None
+    if occurred >= published:
+        return None
+    article = title + "\n" + body.get_text("", strip=True)
+    # A report can also announce a repeat or another session. Leave mixed
+    # articles with the normal schedule resolver rather than expiring them.
+    if re.search(
+        r"再上映|追加上映|アンコール上映|巡回上映|再開催|追加公演|上映中|毎週|連日|"
+        r"次回.{0,20}(?:上映|イベント)|(?:再度|再び)[^。]{0,20}上映|"
+        r"(?:上映|イベント|舞台挨拶|登壇|開催)[^。]{0,25}(?:予定|決定|開催する|開催される)|"
+        r"(?:来月|来週|翌週|今後|次は)[^。]{0,24}(?:上映|開催予定)",
+        article,
+    ):
+        return None
+    if "開催中" in article:
+        festival = re.search(r"開催中の(?:第\d+回)?「([^」]+(?:フェスティバル|映画祭))」", lead)
+        if not festival or article.count("開催中") != 1 or not re.search(
+            re.escape(festival[1]) + rf"」(?:（通称[^）]{{1,24}}）)?は、{published.month}月{published.day}日まで[^。]{{0,35}}開催",
+            article,
+        ):
+            return None
+    # Other dated actions after the report can indicate a new session even
+    # when the publisher omits an announcement verb.
+    for other in re.finditer(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日", article):
         try:
-            for record in walk(json.loads(raw)):
-                raw_type = record.get("@type")
-                types = raw_type if isinstance(raw_type, list) else [raw_type]
-                if not any(
-                    str(item).rsplit("/", 1)[-1].casefold() == "event"
-                    for item in types
-                ):
-                    continue
-                name = str(record.get("name") or "")
-                normalized_name = re.sub(r"[^\w]+", "", name).casefold()
-                if not normalized_name or normalized_name != heading_text:
-                    continue
-                location = record.get("location")
-                if isinstance(location, str):
-                    place_name, street, country = location.strip(), "", ""
-                elif isinstance(location, dict):
-                    place_name = str(location.get("name") or "").strip()
-                    address = location.get("address")
-                    if isinstance(address, dict):
-                        street = str(address.get("streetAddress") or "").strip()
-                        country = str(address.get("addressCountry") or "").strip()
-                    else:
-                        street = str(address or "").strip()
-                        country = ""
-                else:
-                    continue
-                if not place_name:
-                    continue
-                location_text = place_name
-                if street:
-                    location_text += f" ({street})"
-                evidence = (
-                    f"Schema.org Event '{name}': location={place_name}; "
-                    f"streetAddress={street}; addressCountry={country}"
-                )
-                matches.add((name, location_text, evidence))
-        except (json.JSONDecodeError, TypeError, ValueError):
-            continue
-
-    if len(matches) != 1:
-        return None, None
-    _, location_text, evidence = next(iter(matches))
-    return location_text, evidence
-
-
-def _structured_product_availability_from_html(
-    soup: BeautifulSoup,
-) -> tuple[str | None, str | None]:
-    """Read current stock/preorder state only from a matching Schema.org Product."""
-    heading = soup.select_one("main h1, h1")
-    heading_text = (
-        re.sub(r"[^\w]+", "", heading.get_text(" ", strip=True)).casefold()
-        if heading
-        else ""
-    )
-    if not heading_text:
-        return None, None
-
-    def walk(value: object):
-        if isinstance(value, dict):
-            yield value
-            for child in value.values():
-                yield from walk(child)
-        elif isinstance(value, list):
-            for child in value:
-                yield from walk(child)
-
-    status_names = {
-        "instock": "in_stock",
-        "limitedavailability": "available",
-        "preorder": "preorder_open",
-        "presale": "preorder_open",
-        "outofstock": "out_of_stock",
-        "soldout": "sold_out",
-        "discontinued": "discontinued",
-    }
-    matches: set[tuple[str, str, str]] = set()
-    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
-        raw = script.string or script.get_text()
-        if not raw:
-            continue
-        try:
-            records = walk(json.loads(raw))
-            for record in records:
-                raw_type = record.get("@type")
-                types = raw_type if isinstance(raw_type, list) else [raw_type]
-                if not any(
-                    str(item).rsplit("/", 1)[-1].casefold() == "product"
-                    for item in types
-                ):
-                    continue
-                name = str(record.get("name") or "")
-                normalized_name = re.sub(r"[^\w]+", "", name).casefold()
-                if not normalized_name or normalized_name != heading_text:
-                    continue
-                for nested in walk(record.get("offers")):
-                    raw_availability = nested.get("availability")
-                    if not isinstance(raw_availability, str):
-                        continue
-                    availability = raw_availability.rsplit("/", 1)[-1].casefold()
-                    status = status_names.get(availability)
-                    if status:
-                        quote = f"Schema.org Product '{name}' availability={availability}"
-                        matches.add((status, availability, quote))
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-    if len(matches) != 1:
-        return None, None
-    status, _, evidence = next(iter(matches))
-    return status, evidence
+            other_day = date(int(other[1] or published.year), int(other[2]), int(other[3]))
+        except ValueError:
+            return None
+        if other_day > published or (not other[1] and other_day.month != published.month):
+            return None
+    return {"occurred_on": occurred.isoformat(), "quote": lead}
 
 
 class PageOutboundLink(BaseModel):
@@ -386,10 +323,9 @@ class SourcePageCapture(BaseModel):
     event_start: str | None = None
     event_end: str | None = None
     event_date_evidence: str | None = None
-    event_location: str | None = None
-    event_location_evidence: str | None = None
-    availability_status: str | None = None
-    availability_evidence: str | None = None
+    event_scope: str | None = None
+    completed_screening: dict[str, str] | None = None
+    source_article_text: str | None = None
     main_text: str = ""
     text: str
     image_urls: list[HttpUrl]
@@ -403,6 +339,9 @@ class SourcePageCapture(BaseModel):
     link_review_usage: list[dict] = Field(default_factory=list)
     linked_page_evidence: list[PageLinkedEvidence] = Field(default_factory=list)
     image_exclusions: list[ImageCollectionExclusion] = Field(default_factory=list)
+    product_photo_permissions: dict[str, period_images.ProductPhotoPermission] = Field(default_factory=dict)
+    goods_subject: str | None = None
+    verified_product_url: HttpUrl | None = None
     image_text_evidence: list[dict] = Field(default_factory=list)
     structured_work_references: list[StructuredWorkReference] = Field(default_factory=list)
     related_image_pages: list[HttpUrl] = Field(default_factory=list)
@@ -767,7 +706,7 @@ def _follow_cta_detail_pages(
                 link_classification_evidence=list(candidate.link_classification_evidence),
                 link_relationship_type="editorial_article",
                     publisher=(urlparse(final_url).hostname or "").lower(),
-                    published_at=_published_date_from_html(soup),
+                    published_at=_published_date_from_html(soup, final_url),
                     text=text[:4_000],
                     image_urls=[HttpUrl(item) for item in image_urls[:MAX_IMAGE_URLS]],
                     image_alt_text={
@@ -889,7 +828,10 @@ def _page_title(soup: BeautifulSoup) -> str:
         tag = soup.find("meta", attrs=selector)
         if tag and tag.get("content"):
             return str(tag["content"]).strip()[:300]
-    return soup.title.get_text(" ", strip=True)[:300] if soup.title else ""
+    for heading in (soup.title, soup.select_one("article h1, main h1")):
+        if heading and (title := heading.get_text(" ", strip=True)):
+            return title[:300]
+    return ""
 
 
 def _daewon_article_metadata(soup: BeautifulSoup) -> tuple[str | None, str | None]:
@@ -1184,6 +1126,18 @@ def _check_robots(client: httpx.Client, url: str, source: Source) -> None:
 
 def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], dict[str, str]]:
     """Extract article visuals, not unrelated navigation or recommendation images."""
+    if article_id := period_images.anime_hack_news(page_url):
+        return period_images.anime_hack_photos(soup, article_id)
+    if slug := anime_schedule.profile_slug(page_url):
+        # Both the profile and the episode RSS link point to this one season.
+        # The rest of the HTML includes sponsored CSS banners and other anime.
+        for selector, attr in (("img#anime-poster", "src"), ("meta[property='og:image']", "content")):
+            node = soup.select_one(selector)
+            if node:
+                url = urljoin(page_url, str(node.get(attr) or ""))
+                if anime_schedule.is_profile_poster(url, slug):
+                    return [url], {url: str(node["alt"])} if node.get("alt") else {}
+        return [], {}
     scores: dict[str, int] = {}
     descriptions: dict[str, str] = {}
     scope = _article_content_scope(soup, page_url)
@@ -1255,6 +1209,28 @@ def _image_candidates(soup: BeautifulSoup, page_url: str) -> tuple[list[str], di
                 absolute_url
             ).path.casefold():
                 continue
+            if (
+                (parsed_page.hostname or "").lower() == "recal.kr"
+                and parsed_page.path.startswith("/ko/e/")
+                and scoped_images
+            ):
+                # RE:CAL may use a shared fallback image as og:image. When the
+                # event detail body has its own images, prefer those instead of
+                # letting the shared social preview become every event's cover.
+                body_image_urls = {
+                    urljoin(
+                        page_url,
+                        str(image.get(attribute) or "").strip(),
+                    )
+                    for image in scoped_images
+                    for attribute in (
+                        "src", "data-src", "data-original", "data-lazy-src",
+                        "data-original-src", "data-image", "data-echo", "data-actualsrc",
+                    )
+                    if image.get(attribute)
+                }
+                if absolute_url not in body_image_urls:
+                    continue
             scores[absolute_url] = max(scores.get(absolute_url, 0), 100)
     for tag in scoped_images:
         if _is_linked_to_another_news_article(tag, page_url):
@@ -1372,17 +1348,9 @@ def _is_linked_to_another_news_article(tag, page_url: str) -> bool:
         return False
     linked_path = linked.path.rstrip("/").lower()
     current_path = current.path.rstrip("/").lower()
-    is_eeo_recommendation = (
-        (current.hostname or "").lower() == "eeo.today"
-        and current_path.startswith("/media/")
-        and bool(re.fullmatch(r"/media/\d{4}/\d{2}/\d{2}/\d+", linked_path))
-    )
     return (
         linked_path != current_path
-        and (
-            "/news/" in linked_path
-            or is_eeo_recommendation
-        )
+        and "/news/" in linked_path
         and not linked_path.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif"))
     )
 
@@ -1413,15 +1381,6 @@ def _article_content_scope(soup: BeautifulSoup, page_url: str | None = None):
             hero_section = headline.find_parent("section") if headline else None
             if hero_section and hero_section.find("img"):
                 return hero_section
-        if (
-            (parsed_page.hostname or "").lower() == "eeo.today"
-            and parsed_page.path.startswith("/media/")
-        ):
-            # EEO article pages have large site-wide sidebars and related-story
-            # rails. The body is explicitly marked; treating the whole document
-            # as the image scope assigns unrelated recommendation art to this story.
-            body = soup.select_one(".article_content")
-            return body if body is not None else soup.new_tag("div")
     for selector in (
         ".news_detail_cont",
         ".entry-content",
@@ -1441,47 +1400,6 @@ def _article_content_scope(soup: BeautifulSoup, page_url: str | None = None):
 def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
     """Extract prose from a known article body when the precision parser returns nothing."""
     parsed_page = urlparse(page_url)
-    if (
-        (parsed_page.hostname or "").lower() == "recal.kr"
-        and parsed_page.path.startswith(("/ko/e/offline/", "/ko/e/music/"))
-    ):
-        # RE:CAL pages are event records, not conventional articles. Trafilatura
-        # keeps the hero summary but drops the schedule panel and sibling venue
-        # entries. Read the visible event detail area directly, stopping before
-        # the site's unrelated same-month recommendation list.
-        main = soup.select_one("main")
-        if main is not None:
-            detail = BeautifulSoup(str(main), "html.parser")
-            for tag in detail.select(
-                "script, style, noscript, iframe, nav, footer, aside, form, button, header"
-            ):
-                tag.decompose()
-            lines = [
-                re.sub(r"\s+", " ", line).strip()
-                for line in detail.get_text(separator="\n", strip=True).splitlines()
-            ]
-            lines = [line for line in lines if line]
-            for index, line in enumerate(lines):
-                if "같은 달 행사" in line:
-                    lines = lines[:index]
-                    break
-            official_links: list[str] = []
-            for anchor in main.select("a[href]"):
-                label = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True)).strip()
-                if not label or not re.search(
-                    r"공식\s*(?:공지|사이트|출처)|주최\s*(?:링크|X|계정)",
-                    label,
-                ):
-                    continue
-                href = urljoin(page_url, str(anchor.get("href") or ""))
-                if href.startswith(("https://", "http://")):
-                    entry = f"공식 출처 링크: {label} — {href}"
-                    if entry not in official_links:
-                        official_links.append(entry)
-            if lines:
-                if official_links:
-                    lines.extend(official_links)
-                return "\n".join(lines)[:24_000]
     if (
         (parsed_page.hostname or "").lower() == "onnada.com"
         and re.fullmatch(r"/character/\d+/?", parsed_page.path, re.IGNORECASE)
@@ -1507,6 +1425,48 @@ def _extract_article_text(html: str, page_url: str, soup: BeautifulSoup) -> str:
                 for line in view_content.get_text(separator="\n", strip=True).splitlines()
             ]
             return "\n".join(line for line in lines if line)
+    if (
+        (parsed_page.hostname or "").lower() == "recal.kr"
+        and parsed_page.path.startswith(("/ko/e/offline/", "/ko/e/music/"))
+    ):
+        # RE:CAL event detail pages render the useful schedule and venue as
+        # cards beside the hero. The hero contains only the title (and image),
+        # while a generic article extractor often returns almost nothing.
+        main = soup.select_one("main, [role='main']")
+        if main is not None:
+            detail_grid = main.find(
+                class_=lambda value: bool(
+                    value
+                    and any(
+                        token.startswith("concert-module__") and "__grid2" in token
+                        for token in (value if isinstance(value, list) else str(value).split())
+                    )
+                )
+            )
+            if detail_grid is not None:
+                body = BeautifulSoup(str(detail_grid), "html.parser")
+                for tag in body.select(
+                    "script, style, noscript, iframe, nav, footer, aside, form, button"
+                ):
+                    tag.decompose()
+                for node in body.find_all(
+                    class_=lambda value: bool(
+                        value
+                        and any(
+                            token.startswith("concert-module__")
+                            and any(marker in token for marker in ("__side", "__same"))
+                            for token in (value if isinstance(value, list) else str(value).split())
+                        )
+                    )
+                ):
+                    node.decompose()
+                lines = [
+                    re.sub(r"\s+", " ", line).strip()
+                    for line in body.get_text(separator="\n", strip=True).splitlines()
+                ]
+                detail_text = "\n".join(line for line in lines if line)
+                if len(detail_text) >= 40:
+                    return detail_text
     extracted = (
         trafilatura.extract(
             html,
@@ -1614,6 +1574,8 @@ def _largest_srcset_candidate(srcset: object) -> tuple[str, int] | None:
 
 def _related_image_page_candidates(soup: BeautifulSoup, page_url: str) -> list[str]:
     """Find a few same-site article/gallery pages; never follow off-domain links."""
+    if anime_schedule.profile_slug(page_url):
+        return []
     current = urlparse(page_url)
     allowed_hosts = {(current.hostname or "").lower().rstrip(".")}
     scored: dict[str, int] = {}
@@ -1649,6 +1611,50 @@ def _related_image_page_candidates(soup: BeautifulSoup, page_url: str) -> list[s
     ]
 
 
+def _campaign_event_section(
+    soup: BeautifulSoup, page_url: str, *, published_at: str | None = None
+) -> tuple[str, BeautifulSoup] | None:
+    """Keep adjacent, independently dated campaign sections sharing one period."""
+    article = _article_content_scope(soup, page_url)
+    heading = re.compile(r"^(\d{1,2})[.．]\s*(?!\d)(\S.*)")
+    first = next(
+        (
+            node
+            for node in article.find_all(["p", "h2", "h3"])
+            if re.match(r"^1[.．]\s*【(?:詳細|追加)】", node.get_text(" ", strip=True))
+        ),
+        None,
+    )
+    if first is None:
+        return None
+    section = [first]
+    accepted, titles = [], []
+    shared_dates = None
+    for sibling in first.find_next_siblings():
+        boundary = heading.match(sibling.get_text(" ", strip=True))
+        if boundary is None:
+            section.append(sibling)
+            continue
+        if int(boundary[1]) != len(titles) + 2:
+            break
+        section_text = "\n".join(node.get_text(" ", strip=True) for node in section)
+        start, end, quote = event_period_from_text(section_text, published_at=published_at)
+        if not quote or not re.search(r"配布期間|実施期間", quote):
+            break
+        if shared_dates and shared_dates != (start, end):
+            break
+        shared_dates = start, end
+        titles.append(heading.match(section[0].get_text(" ", strip=True))[2])
+        accepted.extend(section)
+        section = [sibling]
+    if not accepted:
+        return None
+    fragment = BeautifulSoup(
+        "<article>" + "".join(map(str, accepted)) + "</article>", "html.parser"
+    )
+    return " / ".join(titles), fragment
+
+
 def collect_official_page(
     source: Source,
     url: str,
@@ -1658,6 +1664,7 @@ def collect_official_page(
     allow_discovery_page: bool = False,
     max_cta_detail_pages: int = 3,
     review_ambiguous_links: bool = False,
+    content_type: str | None = None,
 ) -> SourcePageCapture:
     """Read one approved page; discovery pages are link-resolution context only."""
     if (
@@ -1690,25 +1697,42 @@ def collect_official_page(
     if source.id == "aniplus_shop":
         title = _aniplus_exhibition_title(soup, final_url) or title
 
-    published_at = _published_date_from_html(soup)
+    published_at = _published_date_from_html(soup, final_url)
     event_start, event_end, event_date_evidence = _recal_event_dates_from_html(
         soup, source.id
-    )
-    event_location, event_location_evidence = _recal_event_location_from_html(
-        soup, source.id
-    )
-    availability_status, availability_evidence = _structured_product_availability_from_html(
-        soup
     )
     if source.id == "daewonmedia_kr":
         published_at = published_at or daewon_published_at
 
     extracted = _extract_article_text(html, final_url, soup)
+    event_scope = source_article_text = None
+    original_soup = soup
+    if content_type == "event" and source.role == "primary":
+        scoped = _campaign_event_section(soup, final_url, published_at=published_at)
+        if scoped:
+            event_scope, soup = scoped
+            source_article_text = extracted
+            extracted = "\n".join(
+                node.get_text(" ", strip=True) for node in soup.article.find_all(recursive=False)
+            ).strip()
+            event_start, event_end, event_date_evidence = event_period_from_text(extracted, published_at=published_at)
+            expand_related_pages = False
+    if (
+        not event_end and "event" in source.content_types
+        and source.id not in {"recal_kr", "recal_music"}
+    ):
+        event_start, event_end, event_date_evidence = event_period_from_text(extracted, published_at=published_at)
     if source.id == "aniplus_shop" and not extracted.strip():
         # Preserve any short page text; use the title only when extraction is empty.
         extracted = title
     image_exclusions: list[ImageCollectionExclusion] = []
-    page_notice = _redistribution_notice_text(soup)
+    page_notice = _redistribution_notice_text(original_soup)
+    restricted_goods = bool(page_notice and period_images.publisher_goods_article(source.id, final_url))
+    hack_source = source.id == "anime_hack_events"
+    article_gallery_only = hack_source or restricted_goods
+    product_photo_permissions = {}
+    goods_subject = None
+    verified_product_url = None
     if page_notice:
         excluded_urls, _ = _image_candidates(soup, final_url)
         image_exclusions.append(
@@ -1719,15 +1743,34 @@ def collect_official_page(
             )
         )
         image_urls, image_alt_text = [], {}
+    elif hack_source and not period_images.anime_hack_news(final_url):
+        image_urls, image_alt_text = [], {}
     else:
         image_urls, image_alt_text = _image_candidates(soup, final_url)
     seed_image_urls = image_urls
     image_urls = list(seed_image_urls)
     image_source_pages = {candidate: final_url for candidate in image_urls}
     image_source_titles = {candidate: title for candidate in image_urls}
+    if restricted_goods and source.id == "anime_anime_goods":
+        review = period_images.review_product_photos(
+            original_soup, final_url, source, timeout, _get_html, _redistribution_notice_text
+        )
+        if review.excluded_urls or not review.permissions:
+            image_exclusions.append(ImageCollectionExclusion(
+                page_url=review.page_url, reason=review.reason, notice_text=review.notice,
+                image_urls=review.excluded_urls[:MAX_IMAGE_URLS],
+            ))
+        product_photo_permissions = review.permissions
+        goods_subject = review.subject_name or None
+        verified_product_url = review.matched_product_url
+        for candidate, permission in review.permissions.items():
+            image_urls.append(candidate)
+            image_source_pages[candidate] = str(permission.product_url)
+            image_source_titles[candidate] = permission.product_name
+            image_alt_text[candidate] = permission.product_name
     related_candidates = (
         _related_image_page_candidates(soup, final_url)
-        if expand_related_pages and not onnada_profile
+        if expand_related_pages and not (onnada_profile or article_gallery_only)
         else []
     )
     related_pages: list[str] = []
@@ -1763,7 +1806,10 @@ def collect_official_page(
     image_urls.extend(related_image_urls)
 
     link_candidates = _inspect_cta_targets(
-        _static_cta_link_candidates(soup, final_url),
+        # Discovery articles expose outbound URLs for the registry to resolve.
+        # Fetching those targets here would precede the original-source decision.
+        [] if (source.role == "discovery" or event_scope or article_gallery_only)
+        else _static_cta_link_candidates(soup, final_url),
         source,
         timeout,
         context_title=title,
@@ -1815,6 +1861,8 @@ def collect_official_page(
             linked_page_text.append(
                 f"[연결된 상세 원문: {page.title} | {page.url}]\n{page.text}"
             )
+        if anime_schedule.profile_slug(final_url):
+            continue
         for image_url in page.image_urls:
             image_urls.append(str(image_url))
             image_source_pages.setdefault(str(image_url), str(page.url))
@@ -1845,7 +1893,9 @@ def collect_official_page(
             continue
         if _is_decorative_image_url(candidate):
             continue
-        if not any(host == item or host.endswith(f".{item}") for item in allowed):
+        if candidate not in product_photo_permissions and not any(
+            host == item or host.endswith(f".{item}") for item in allowed
+        ):
             continue
         if candidate not in seen:
             seen.add(candidate)
@@ -1863,10 +1913,13 @@ def collect_official_page(
         event_start=event_start,
         event_end=event_end,
         event_date_evidence=event_date_evidence,
-        event_location=event_location,
-        event_location_evidence=event_location_evidence,
-        availability_status=availability_status,
-        availability_evidence=availability_evidence,
+        event_scope=event_scope,
+        completed_screening=(
+            _anime_hack_screening_report(original_soup, title, published_at)
+            if content_type == "event" and hack_source and period_images.anime_hack_news(final_url)
+            else None
+        ),
+        source_article_text=source_article_text,
         main_text=main_text[:2_000],
         text=extracted[:excerpt_limit],
         image_urls=unique_images,
@@ -1888,6 +1941,9 @@ def collect_official_page(
         link_review_usage=link_review_usage,
         linked_page_evidence=linked_pages,
         image_exclusions=image_exclusions,
+        product_photo_permissions=product_photo_permissions,
+        goods_subject=goods_subject,
+        verified_product_url=verified_product_url,
         structured_work_references=_structured_work_references(soup),
         related_image_pages=[HttpUrl(page) for page in related_pages],
         excerpt_truncated=len(extracted) > excerpt_limit,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Protocol
+from typing import Mapping, Protocol
 
 from ani_rag.content import ContentDraft, ImageAsset
 from ani_rag.models import EvidenceDocument
@@ -25,6 +25,20 @@ class ReviewDecision(StrEnum):
 
 
 @dataclass(frozen=True)
+class HeadlineEdit:
+    """A verified literal correction. Page zero refers to the article title."""
+
+    page: int
+    before: str
+    after: str
+
+    def __post_init__(self) -> None:
+        if (type(self.page) is not int or self.page < 0 or not self.before.strip()
+                or not self.after.strip() or self.before == self.after):
+            raise ValueError("A headline edit requires a page and distinct, nonempty titles")
+
+
+@dataclass(frozen=True)
 class ReviewResult:
     draft_id: str
     decision: ReviewDecision
@@ -33,6 +47,9 @@ class ReviewResult:
     evidence_requests: tuple[str, ...] = ()
     reviewer_id: str = ""
     scorecard: dict[str, object] = field(default_factory=dict)
+    headline_edits: tuple[HeadlineEdit, ...] = ()
+    model_name: str | None = None
+    token_usage: dict[str, int] | None = None
 
     def __post_init__(self) -> None:
         if not self.draft_id.strip() or not self.reviewer_id.strip():
@@ -63,6 +80,7 @@ class ReviewInput:
     images: dict[str, ImageAsset]
     retrieved_chunks: dict[str, EvidenceChunk]
     rendered_cards: dict[str, bytes] = field(default_factory=dict)
+    primary_web_source: Mapping[str, object] | None = None
 
 
 class ReviewRoute(StrEnum):

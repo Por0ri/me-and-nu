@@ -23,7 +23,11 @@ export function InteractionProvider({ scope, children }: { scope: InteractionSco
     return () => {
       window.removeEventListener("online", flush); window.removeEventListener("pagehide", leaving);
       document.removeEventListener("visibilitychange", hidden);
-      scope.activity.stop(); scope.reactions.clear();
+      // 앱 안에서 홈을 떠나면(TALK·프로필 수정 등) React 는 이 정리를 아래 노출·읽기 측정 훅의 정리보다 먼저 돌린다.
+      // 그대로 닫으면 지금 보던 카드의 노출·읽던 글의 읽은 시간이 닫힌 바구니로 가서 버려지므로,
+      // 측정을 먼저 마무리시켜(BOUNDARY) 바구니에 넣고, 남은 기록을 보낸 뒤 닫는다(leave). 계정이 바뀐 경우엔 leave 가 버린다.
+      window.dispatchEvent(new Event(ACTIVITY_BOUNDARY_EVENT));
+      scope.activity.leave(); scope.reactions.clear();
     };
   }, [scope]);
   return <InteractionContext.Provider value={scope}>{children}</InteractionContext.Provider>;

@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { API_UNAUTHORIZED_EVENT, ApiError, getSession } from "@/lib/api";
-import { adminFailure, type AdminReadState } from "@/lib/admin-content";
+import { adminFailure, type AdminFailure, type AdminReadState } from "@/lib/admin-content";
+import { withRequestDeadline } from "@/lib/request-deadline";
 
-export function useAdminRead<T>(key: string, read: (signal: AbortSignal) => Promise<T>) {
+export function useAdminRead<T>(key: string, read: (signal: AbortSignal) => Promise<T>, failure: (error: unknown) => AdminFailure = adminFailure) {
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<{ key: string; attempt: number; state: AdminReadState<T> }>();
   useEffect(() => {
@@ -13,14 +14,14 @@ export function useAdminRead<T>(key: string, read: (signal: AbortSignal) => Prom
     publish({ status: "loading" });
     const unauthorized = () => {
       controller.abort();
-      publish(adminFailure(new ApiError("", 401, "AUTH_REQUIRED")));
+      publish(failure(new ApiError("", 401, "AUTH_REQUIRED")));
     };
     // Session authentication only controls UX. It never grants admin permission.
-    getSession({ fresh: true, signal: controller.signal }).then(async session => {
+    withRequestDeadline(signal => getSession({ fresh: true, signal }), { signal: controller.signal }).then(async session => {
       if (!session.authenticated) throw new ApiError("", 401, "AUTH_REQUIRED");
       return read(controller.signal);
     }).then(data => { if (!controller.signal.aborted) publish({ status: "ready", data }); })
-      .catch(error => { if (!controller.signal.aborted) publish(adminFailure(error)); });
+      .catch(error => { if (!controller.signal.aborted) publish(failure(error)); });
     const refresh = () => { controller.abort(); setAttempt(value => value + 1); };
     const visible = () => { if (document.visibilityState === "visible") refresh(); };
     const restored = (event: PageTransitionEvent) => { if (event.persisted) refresh(); };
@@ -35,7 +36,7 @@ export function useAdminRead<T>(key: string, read: (signal: AbortSignal) => Prom
       window.removeEventListener("pageshow", restored);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [key, attempt, read]);
+  }, [key, attempt, read, failure]);
   const state: AdminReadState<T> = result?.key === key && result.attempt === attempt ? result.state : { status: "loading" };
   return { state, retry: () => setAttempt(value => value + 1) };
 }

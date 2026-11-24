@@ -26,8 +26,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ani_rag.catalog import LocalWorkCatalog, normalize_title
-from ani_rag.interfaces import WorkIdentity
+from ani_rag.catalog import LocalWorkCatalog
 from ani_rag.models import (
     CollectionMethod,
     EvidenceDocument,
@@ -118,11 +117,7 @@ def _wikidata_ann_ids(anilist_ids: list[str]) -> dict[str, list[str]]:
 
 
 def _ann_title(page_title: str) -> str:
-    value = re.sub(r"\s+-\s+Anime News Network.*$", "", page_title, flags=re.IGNORECASE)
-    return re.sub(
-        r"\s+\((?:TV(?:\s+Short)?|Movie|OVA|OAV|ONA|Web|Special)\)$",
-        "", value, flags=re.IGNORECASE,
-    ).strip()
+    return re.sub(r"\s+-\s+Anime News Network.*$", "", page_title, flags=re.IGNORECASE).strip()
 
 
 def _read_ann_page(ann_id: str, *, interval: float, last_request: float | None) -> tuple[str, str, str, bytes]:
@@ -199,62 +194,9 @@ def _search_ann_japanese_title(
     return found, final_url
 
 
-def _title_key(value: str) -> str:
-    punctuation = str.maketrans({
-        "’": "'", "‘": "'", "ʼ": "'",
-        "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-",
-    })
-    return normalize_title(value).translate(punctuation)
-
-
-def _match_local_work(page_title: str, body: str, catalog: LocalWorkCatalog, work_id: int) -> str | None:
-    normalized_page_title = _title_key(page_title)
-    # Never use arbitrary page-body mentions as identity evidence. Match a
-    # canonical or alternate title only in its dedicated ANN title field.
-    candidates = [page_title] if normalized_page_title else []
-    lines = [line.strip() for line in body.splitlines()]
-    try:
-        start = lines.index("Alternative title:") + 1
-        end = next(i for i in range(start, len(lines)) if lines[i] in {"Genres:", "Themes:"})
-        for line in lines[start:end]:
-            # ANN labels alternate titles with language tags. Consider only
-            # this dedicated title block, never arbitrary plot or navigation text.
-            candidates.append(re.sub(r"\s+\([^()]+\)$", "", line).strip())
-    except (ValueError, StopIteration):
-        pass
-    exact_entry_match = False
-    for candidate in dict.fromkeys(candidates):
-        resolution = catalog.resolve_sync(WorkIdentity(titles=(candidate,), external_ids={}))
-        if resolution.status.value == "matched" and resolution.menu_work_ids == (work_id,):
-            if "live-action" not in normalized_page_title and "live action" not in normalized_page_title:
-                exact_entry_match = True
-    # A sub-entry can have a different title and medium. ANN's explicit
-    # franchise edges (sequel, side story, spinoff, adaptation, etc.) are valid
-    # identity evidence when the referenced work uniquely resolves locally.
-    relation_names = {
-        "adapted from": "adaptation_of", "adaptation of": "adaptation_of",
-        "sequel of": "sequel_of", "prequel of": "prequel_of",
-        "side story of": "side_story_of", "spinoff of": "spinoff_of",
-        "spin-off of": "spinoff_of", "part of": "part_of",
-        "compilation of": "compilation_of", "related to": "related_to",
-    }
-    for index, line in enumerate(lines):
-        relation = relation_names.get(line.casefold().strip(" []:"))
-        if not relation:
-            continue
-        source_title = next((item.strip(" []") for item in lines[index + 1:index + 5] if item.strip(" []")), "")
-        source_title = re.sub(
-            r"\s+\((?:TV(?:\s+Short)?(?:\s+[^()]*)?|Movie(?:\s+[^()]*)?|OVA|OAV|ONA|Web|Special|manga|light novel|novel|game|book)\)$",
-            "", source_title, flags=re.IGNORECASE,
-        ).strip()
-        if not source_title:
-            continue
-        resolution = catalog.resolve_sync(WorkIdentity(titles=(source_title,), external_ids={}))
-        if resolution.status.value == "matched" and resolution.menu_work_ids == (work_id,):
-            return f"ann_explicit_{relation}_relation_to_local_work"
-    if exact_entry_match:
-        return "ann_canonical_or_alternate_title_unique_exact_local_entry"
-    return None
+def _match_local_work(page_title: str, body: str, catalog: LocalWorkCatalog, work_id: int, url: str) -> str | None:
+    identity = catalog.resolve_ann_page(page_title, body, url)
+    return identity.method if identity.confirmed == work_id else None
 
 
 def _relationship_metadata(match_method: str, page_title: str, body: str) -> tuple[str, str]:
@@ -343,7 +285,7 @@ async def _run(args: argparse.Namespace) -> None:
                     notes.append(f"ANN {ann_id}: {type(error).__name__}")
                     last_failure = str(error)
                     continue
-                match_method = _match_local_work(title, body, catalog, work_id)
+                match_method = _match_local_work(title, body, catalog, work_id, url)
                 if not match_method:
                     notes.append(f"ANN {ann_id}: title mismatch {title!r}")
                     last_failure = f"title mismatch {title!r}"
@@ -407,7 +349,7 @@ async def _run(args: argparse.Namespace) -> None:
                             notes.append(f"ANN {ann_id}: {type(error).__name__}")
                             last_failure = str(error)
                             continue
-                        match_method = _match_local_work(title, body, catalog, work_id)
+                        match_method = _match_local_work(title, body, catalog, work_id, url)
                         if not match_method:
                             notes.append(f"ANN {ann_id}: Japanese-title search result did not match catalog title ({title!r})")
                             last_failure = f"title mismatch {title!r}"

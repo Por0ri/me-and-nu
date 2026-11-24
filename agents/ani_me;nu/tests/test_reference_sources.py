@@ -207,7 +207,7 @@ def test_work_title_discovery_queries_reference_sources_and_merges_results(monke
         lambda: SourceRegistry(version=registry.version, sources=selected),
     )
     monkeypatch.setattr(
-        "ani_menu_agent.discovery._get_html",
+        "ani_menu_agent.discovery._get_html_with_client",
         lambda *_args, **_kwargs: (
             '<main><a href="/encyclopedia/anime.php?id=1825">Naruto (TV)</a></main>',
             "https://www.animenewsnetwork.com/encyclopedia/search/name?only=anime&q=Naruto",

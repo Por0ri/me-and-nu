@@ -2,13 +2,13 @@ import styles from "./admin.module.css";
 
 // Aggregates are not part of the admin read API. An empty ring/track means
 // unavailable, never zero or a percentage calculated from the current page.
-function UnavailableChart({ label }: { label: string }) {
+export function UnavailableChart({ label }: { label: string }) {
   return <div className={styles.emptyChart} aria-label={`${label}: 집계 준비 중`}>
     <div><span>{label}</span><strong>—</strong></div>
   </div>;
 }
 
-function UnavailableShare({ label }: { label: string }) {
+export function UnavailableShare({ label }: { label: string }) {
   return <div className={styles.share}>
     <div><span>{label}</span><span aria-label="집계 준비 중">—</span></div>
     <div className={styles.emptyTrack} aria-hidden="true" />

@@ -24,6 +24,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.core.security import csrf_token_for_session, hash_token
+from app.db.migration_policy import SERVICE_SCHEMA_REVISION
 from app.db.session import get_db
 from app.main import create_app
 from app.models import AuthSession, Notification, NotificationSetting
@@ -102,10 +103,6 @@ def api(pg):
     engine, url, migrate, users = pg
     now = datetime.now(timezone.utc)
     tokens = ["notification-fixture-" + uuid4().hex for _ in users]
-    # Main reads shared administrator history but keeps its migration target.
-    with engine.begin() as db:
-        db.execute(text("CREATE TABLE admin_account (admin_account_id BIGINT PRIMARY KEY, "
-                        "user_id BIGINT NOT NULL REFERENCES user_account(user_id))"))
     with Session(engine) as db:
         for index, (user_id, token) in enumerate(zip(users, tokens)):
             db.add(AuthSession(user_id=user_id, session_state="onboarding_pending" if index == 2 else "active",
@@ -290,7 +287,8 @@ def test_upgrade_and_downgrade_preserve_checking_restoration_sessions(pg):
 
 
 def test_withdrawal_blocks_settings_and_restoration_preserves_preferences(api):
-    client, _, engine, users, _, _ = api
+    client, _, engine, users, _, migrate = api
+    migrate(SERVICE_SCHEMA_REVISION)
     saved = client.patch(PATH, json={"version": 1, "inAppEnabled": False, "nightInAppEnabled": True}).json()
     assert saved == {"inAppEnabled": False, "nightInAppEnabled": True, "version": 2}
     assert client.delete("/api/v1/users/me", params={"mode": "grace"}).status_code == 202

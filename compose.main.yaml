@@ -16,6 +16,13 @@ services:
     pids_limit: 128
     ports: ["127.0.0.1:8003:8000"]
     networks: [data, egress]
+    volumes:
+      - type: bind
+        source: ./deploy/main/admin-evaluation
+        target: /app/admin-evaluation
+        read_only: true
+        bind:
+          create_host_path: false
     stop_grace_period: 30s
     logging:
       driver: json-file
@@ -23,6 +30,11 @@ services:
     environment:
       MENU_DEPLOYMENT_ENV: production
       CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED: "false"
+      # Same opt-in defaults as the backend; promotion does not enable debate.
+      DEBATE_ENABLED: ${MAIN_DEBATE_ENABLED:-false}
+      DEBATE_VOTE_THRESHOLD: ${MAIN_DEBATE_VOTE_THRESHOLD:-10}
+      ADMIN_RECOMMENDATION_EVALUATION_PATH: /app/admin-evaluation/evaluation.json
+      ADMIN_SERVICE_EVALUATION_PATH: /app/admin-evaluation/service-evaluation.json
       DATABASE_URL: "postgresql+psycopg://me_nu_checking:${MAIN_POSTGRES_PASSWORD:?Copy the existing Checking credential}@postgres:5432/me_nu_checking"
       DATABASE_ECHO: "false"
       DATABASE_POOL_SIZE: "2"

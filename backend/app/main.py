@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.router import router as v1_router
+from app.api.v1.debates.router import router as debate_router
 from app.api.dev.auth import router as dev_auth_router
 from app.api.health import router as health_router
 from app.core.config import settings
@@ -10,9 +11,11 @@ from app.core.exceptions import install_exception_handlers
 from app.core.oauth_logging import install_oauth_access_log_filter
 from app.core.redis import redis_lifespan
 
-def create_app(enable_dev_api: bool | None = None) -> FastAPI:
+def create_app(enable_dev_api: bool | None = None, enable_debate: bool | None = None) -> FastAPI:
     install_oauth_access_log_filter()
     dev_api_enabled = settings.enable_dev_api if enable_dev_api is None else enable_dev_api
+    # 토론방은 기능 스위치가 켜진 서버에서만 등록한다 (켜기 전에 그 환경 DB에 토론 migration을 먼저 적용).
+    debate_enabled = settings.debate_enabled if enable_debate is None else enable_debate
     description = "현재 구현된 공개 API를 V1.1 계약에 맞춘 로컬 범위입니다. 미구현 V1.1 API는 등록되지 않습니다."
     if dev_api_enabled and settings.enable_dev_auth_bypass:
         description += " 로컬 Swagger 테스트 모드: 로그인과 CSRF 입력 없이 전용 데모 사용자로 보호 API를 호출할 수 있습니다."
@@ -50,6 +53,8 @@ def create_app(enable_dev_api: bool | None = None) -> FastAPI:
     )
     api.include_router(health_router)
     api.include_router(v1_router, prefix="/api/v1")
+    if debate_enabled:
+        api.include_router(debate_router, prefix="/api/v1")
     if dev_api_enabled:
         api.include_router(dev_auth_router, prefix="/api/v1/dev")
     install_exception_handlers(api)

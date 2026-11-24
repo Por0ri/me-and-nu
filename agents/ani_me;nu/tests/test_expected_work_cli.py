@@ -52,12 +52,11 @@ def test_expected_work_must_already_belong_to_source_before_collection(tmp_path,
 def test_agent_only_work_cannot_be_used_as_service_work(monkeypatch, tmp_path):
     fields = "menu_work_id,title_english\n"
     (tmp_path / "menu_works.csv").write_text(fields + "1,Other title\n", encoding="utf-8")
-    (tmp_path / "agent_works.csv").write_text(fields + "8,ONE PIECE\n", encoding="utf-8")
+    (tmp_path / "agent_works.csv").write_text(fields + "1000008,ONE PIECE\n", encoding="utf-8")
     monkeypatch.setattr(work_catalog, "_WORK_LIST_DIRECTORY", tmp_path)
-    monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", tmp_path)
-    monkeypatch.setattr(work_catalog, "load_work_catalog", work_catalog.load_work_catalog.__wrapped__)
-    assert {row["menu_work_id"] for row in work_catalog.load_work_catalog()} == {1, 8}
-    result, saved = invoke(tmp_path)
+    monkeypatch.setenv("ME_NU_WORK_REGISTRY_DIR", str(tmp_path))
+    assert {row["menu_work_id"] for row in work_catalog.load_work_catalog()} == {1, 1000008}
+    result, saved = invoke(tmp_path, work=1000008)
     assert result.exit_code == 2 and saved is None
     assert "does not match the registered source" in result.output
 
@@ -293,6 +292,6 @@ def test_mid_month_evidence_survives_cli_recheck_and_storage_boundary(monkeypatc
     assert "sale_end" not in fact["details"]
     assert "release_window_start" not in fact["details"]
     assert stored["event_start"] is None and stored["event_end"] is None
-    assert stored["feed_valid_until"] == "2026-11-18"
+    assert stored["feed_valid_until"] is None
     assert payload["temporal_expiry"]["release_precision"] == "mid_month"
     assert source_freshness.expiry_evidence(stored, "goods")["status"] == "active"

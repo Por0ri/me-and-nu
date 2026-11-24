@@ -1,0 +1,219 @@
+﻿<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ANN 작품 ID 수동 매칭</title>
+  <style>
+    :root { color-scheme:dark; --bg:#0b111b; --panel:#131d2b; --panel2:#182538; --line:#33465e; --text:#e9f1fc; --muted:#9eb0c6; --accent:#63b3ff; --good:#5cd6a0; --warn:#ffbd62; --bad:#ff827e; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,"Segoe UI",sans-serif; }
+    header { padding:22px clamp(16px,4vw,48px); border-bottom:1px solid var(--line); background:#101a28; }
+    h1 { margin:0 0 5px; font-size:24px; } h2 { margin:0 0 6px; font-size:20px; } h3 { margin:18px 0 7px; font-size:15px; }
+    .sub,.muted,.work-meta { color:var(--muted); } .work-meta { font-size:12px; }
+    main { display:grid; grid-template-columns:minmax(280px,390px) minmax(0,1fr); gap:18px; padding:20px clamp(12px,3vw,36px); align-items:start; }
+    section { border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+    .list-panel { overflow:hidden; } .toolbar { padding:14px; border-bottom:1px solid var(--line); display:grid; gap:9px; }
+    .toolbar-row { display:flex; align-items:center; justify-content:space-between; gap:8px; } .count { color:var(--muted); font-size:13px; }
+    .items { max-height:calc(100vh - 230px); overflow:auto; padding:8px; }
+    .work-item { padding:11px; border:1px solid transparent; border-radius:9px; cursor:pointer; margin-bottom:5px; }
+    .work-item:hover { background:var(--panel2); } .work-item.active { border-color:var(--accent); background:#16283e; }
+    .work-title { font-weight:700; } .work-note { margin-top:4px; color:#c7d3e1; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .editor { padding:18px; } .empty { padding:40px 20px; text-align:center; color:var(--muted); }
+    label { display:block; margin:0 0 5px; font-weight:650; }
+    input[type="text"],input[type="search"] { width:100%; border:1px solid var(--line); background:#0d1623; color:var(--text); border-radius:8px; padding:10px 11px; font:inherit; }
+    button { border:1px solid #3c5878; background:#1d3450; color:var(--text); border-radius:8px; padding:9px 12px; font:inherit; cursor:pointer; }
+    button:hover { border-color:var(--accent); background:#244366; } button:disabled { opacity:.5; cursor:wait; }
+    .primary { background:#1763a2; border-color:#338dd1; font-weight:700; } .complete { background:#14543e; border-color:#258560; font-weight:700; }
+    .row { display:flex; gap:8px; align-items:end; } .row>div { flex:1; }
+    .results { margin-top:5px; max-height:190px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+    .result { display:block; width:100%; border:0; border-radius:0; border-bottom:1px solid #28394e; text-align:left; background:#101a28; }
+    .result:last-child { border-bottom:0; } .result small { display:block; color:var(--muted); }
+    .selected-work { padding:10px 12px; border:1px solid #28577c; background:#11283c; border-radius:8px; margin-top:8px; }
+    .ann-tabs { display:flex; flex-wrap:wrap; gap:7px; margin:9px 0; } .ann-tab.active { border-color:var(--accent); background:#244366; }
+    .ann-box,.preview { margin-top:12px; padding:14px; border:1px solid var(--line); background:#0d1623; border-radius:10px; }
+    .preview-title { font-size:18px; font-weight:750; } .preview a { color:#8dc8ff; overflow-wrap:anywhere; }
+    .body-preview { max-height:290px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; color:#c9d6e5; font:13px/1.55 ui-monospace,Consolas,monospace; border-top:1px solid var(--line); margin-top:10px; padding-top:10px; }
+    .warning { color:var(--warn); } .ok { color:var(--good); } .error { color:var(--bad); }
+    .check { display:flex; gap:9px; align-items:flex-start; color:#d7e2ef; margin:12px 0; } .check input { margin-top:5px; accent-color:var(--accent); }
+    #message { min-height:24px; margin-top:10px; } .saved-badge { color:var(--good); font-size:12px; }
+    .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+    @media(max-width:850px) { main { grid-template-columns:1fr; } .items { max-height:35vh; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ANN 작품 ID 수동 매칭</h1>
+    <div class="sub">원문을 확인해 작품명을 검색하고 연결하세요. 한 작품에 ANN ID를 여러 개 추가한 뒤, 모두 입력했을 때 ‘매칭 완료’를 누르면 목록에서 완료 처리됩니다.</div>
+  </header>
+  <main>
+    <section class="list-panel">
+      <div class="toolbar">
+        <div class="toolbar-row"><strong>수동 확인 목록</strong><button id="refresh">새로고침</button></div>
+        <input id="filter" type="search" placeholder="작품명 또는 작품 ID로 검색">
+        <div class="toolbar-row"><label class="check"><input id="showCompleted" type="checkbox">완료한 수동 매칭도 보기</label><span id="count" class="count"></span></div>
+      </div>
+      <div id="items" class="items"></div>
+    </section>
+    <section id="editor" class="editor"><div class="empty">왼쪽에서 수동 확인할 작품을 선택하세요.</div></section>
+  </main>
+<script>
+  const $ = id => document.getElementById(id);
+  let workItems=[], selectedItem=null, targetWork=null, annTabs=[], activeTab=0, searchTimer=null;
+  function esc(value) { return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function titles(item) { return [item.title_ko,item.title_english,item.title_romaji,item.title_native].filter(Boolean); }
+  function mainTitle(item) { return item.title_ko||item.title_english||item.title_romaji||`작품 ${item.menu_work_id}`; }
+  function titleList(item) { return item?.titles||titles(item||{}); }
+  function currentTab() { return annTabs[activeTab]; }
+  function setMessage(message,kind='') { const el=$('message'); if(el){el.className=kind;el.textContent=message;} }
+
+  async function refreshList() {
+    $('refresh').disabled=true;
+    try {
+      const include=$('showCompleted').checked?'1':'0';
+      const response=await fetch(`/api/manual-worklist?include_completed=${include}`,{cache:'no-store'});
+      const data=await response.json(); if(!response.ok) throw new Error(data.error||'목록을 불러오지 못했습니다.');
+      workItems=data.items||[]; $('count').textContent=`대기 ${data.open_count} · 완료 ${data.completed_count}`; renderList();
+      if(selectedItem) selectedItem=workItems.find(item=>item.menu_work_id===selectedItem.menu_work_id)||selectedItem;
+    } catch(error) { $('items').innerHTML=`<div class="empty error">${esc(error.message)}</div>`; }
+    finally { $('refresh').disabled=false; }
+  }
+  function renderList() {
+    const q=$('filter').value.trim().toLocaleLowerCase();
+    const filtered=workItems.filter(item=>[item.menu_work_id,...titles(item),item.notes].join(' ').toLocaleLowerCase().includes(q));
+    $('items').innerHTML=filtered.length?filtered.map(item=>`
+      <div class="work-item ${selectedItem?.menu_work_id===item.menu_work_id?'active':''}" data-work-id="${item.menu_work_id}">
+        <div class="work-title">${esc(mainTitle(item))}</div>
+        <div class="work-meta">작품 ID ${item.menu_work_id} · ${esc(item.lookup_status)} · 연결 원문 ${item.ann_documents_ingested}</div>
+        ${item.title_english&&item.title_ko?`<div class="work-meta">${esc(item.title_english)}</div>`:''}
+        <div class="work-note">${esc(item.notes)}</div>
+        ${item.manual_match_ids?.length?`<div class="work-meta">수동 추가한 ANN ID: ${item.manual_match_ids.map(esc).join(', ')}</div>`:''}
+      </div>`).join(''):'<div class="empty">검색 결과가 없습니다.</div>';
+    document.querySelectorAll('.work-item[data-work-id]').forEach(el=>el.addEventListener('click',()=>{
+      selectedItem=workItems.find(item=>item.menu_work_id===Number(el.dataset.workId));
+      targetWork=selectedItem?{menu_work_id:selectedItem.menu_work_id,titles:titles(selectedItem)}:null;
+      annTabs=[newTab()]; activeTab=0; $('filter').value=''; renderList(); renderEditor();
+    }));
+  }
+  function newTab() { return {annId:'',preview:null,confirmed:false,reassignConfirmed:false,saved:false,message:'',kind:''}; }
+  function renderEditor() {
+    if(!selectedItem){$('editor').innerHTML='<div class="empty">왼쪽에서 수동 확인할 작품을 선택하세요.</div>';return;}
+    const savedIds=selectedItem.manual_match_ids||[];
+    $('editor').innerHTML=`
+      <div class="work-meta">수동 확인 대상 · 작품 ID ${selectedItem.menu_work_id}</div>
+      <h2>${esc(mainTitle(selectedItem))}</h2><div class="muted">${esc(titles(selectedItem).join(' · '))}</div>
+      <div class="work-note">확인 사유: ${esc(selectedItem.notes||'수동 확인')}</div>
+      ${savedIds.length?`<div class="selected-work"><strong>이미 추가한 ANN ID</strong><div>${savedIds.map(esc).join(', ')}</div></div>`:''}
+      <h3>1. 연결할 작품을 작품명으로 검색</h3>
+      <label for="catalogSearch">작품 카탈로그 (한국어·영어·로마자·일본어)</label>
+      <input id="catalogSearch" type="search" placeholder="예: 빈란드 사가 / Vinland Saga">
+      <div id="catalogResults" class="results" hidden></div>
+      <div id="selectedWork" class="selected-work"></div>
+      <h3>2. ANN ID 입력 · 원문 확인</h3>
+      <div id="annTabs" class="ann-tabs"></div>
+      <div id="annPanel"></div>
+      <div class="actions"><button id="completeWork" class="complete">매칭 완료</button></div>
+      <div id="message"></div>`;
+    updateSelectedWork(); renderTabs(); renderAnnPanel();
+    $('catalogSearch').addEventListener('input',searchCatalog);
+    $('completeWork').addEventListener('click',completeWork);
+  }
+  function updateSelectedWork() {
+    const titles=titleList(targetWork||selectedItem);
+    $('selectedWork').innerHTML=`<strong>현재 연결 대상 작품 ID ${targetWork?.menu_work_id??selectedItem.menu_work_id}</strong><div>${esc(titles.join(' · '))}</div>`;
+  }
+  function renderTabs() {
+    $('annTabs').innerHTML=annTabs.map((tab,index)=>`<button class="ann-tab ${index===activeTab?'active':''}" data-tab="${index}">ANN ${tab.annId?esc(tab.annId):index+1}${tab.saved?' ✓':''}</button>`).join('')+
+      '<button id="addAnnTab" type="button" class="ann-tab">＋ ANN ID 추가</button>';
+    document.querySelectorAll('.ann-tab[data-tab]').forEach(btn=>btn.addEventListener('click',()=>{activeTab=Number(btn.dataset.tab);renderTabs();renderAnnPanel();}));
+    $('addAnnTab').addEventListener('click',()=>{annTabs.push(newTab());activeTab=annTabs.length-1;renderTabs();renderAnnPanel();});
+  }
+  function renderAnnPanel() {
+    const tab=currentTab(); if(!tab)return;
+    $('annPanel').innerHTML=`<div class="ann-box">
+      <div class="row"><div><label for="annId">ANN ID</label><input id="annId" type="text" inputmode="numeric" placeholder="예: 14950" value="${esc(tab.annId)}" ${tab.saved?'disabled':''}></div><button id="previewButton" ${tab.saved?'disabled':''}>페이지 확인</button></div>
+      ${tab.saved?`<div class="ok">이 ANN ID는 RAG에 저장됐습니다. 다른 ID를 추가하려면 ‘＋ ANN ID 추가’를 누르세요.</div>`:''}
+      <div id="previewArea">${tab.preview?previewMarkup(tab.preview):''}</div>
+      <label class="check"><input id="confirmMatch" type="checkbox" ${tab.confirmed?'checked':''} ${tab.saved?'disabled':''}><span>미리 본 ANN 원문이 현재 선택한 작품과 같은 작품임을 확인했습니다.</span></label>
+      <label id="reassignCheckWrap" class="check" ${requiresReassign(tab)?'':'hidden'}><input id="confirmReassign" type="checkbox" ${tab.reassignConfirmed?'checked':''}><span>기존 작품 연결을 바꾸는 것을 확인했습니다.</span></label>
+      <button id="saveMatch" class="primary" ${canSave(tab)?'':'disabled'}>${tab.saved?'저장됨':'이 ANN ID를 작품에 추가'}</button>
+      <div id="tabMessage" class="${esc(tab.kind)}">${esc(tab.message)}</div>
+    </div>`;
+    if(!tab.saved){
+      $('annId').addEventListener('input',()=>{tab.annId=$('annId').value.trim();tab.preview=null;tab.confirmed=false;tab.reassignConfirmed=false;renderTabs();renderAnnPanel();});
+      $('previewButton').addEventListener('click',previewAnn);
+      $('confirmMatch').addEventListener('change',e=>{tab.confirmed=e.target.checked;$('saveMatch').disabled=!canSave(tab);});
+      if($('confirmReassign')) $('confirmReassign').addEventListener('change',e=>{tab.reassignConfirmed=e.target.checked;$('saveMatch').disabled=!canSave(tab);});
+      $('saveMatch').addEventListener('click',saveAnnMatch);
+    }
+  }
+  function requiresReassign(tab) {
+    const targetId=targetWork?.menu_work_id??selectedItem?.menu_work_id;
+    return (tab.preview?.existing_links||[]).some(x=>(x.menu_work_id!=null&&x.menu_work_id!==targetId)||(x.candidate_menu_work_id!=null&&x.candidate_menu_work_id!==targetId));
+  }
+  function canSave(tab) { return Boolean(tab?.preview&&tab.annId===tab.preview.ann_id&&tab.confirmed&&(!requiresReassign(tab)||tab.reassignConfirmed)&&!tab.saved); }
+  function previewMarkup(data) {
+    return `<div class="preview"><div class="preview-title">${esc(data.title)}</div><a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url)}</a>
+      <div class="work-meta">본문 ${Number(data.body_chars).toLocaleString()}자 · 확인 ${esc(data.fetched_at)}</div>
+      ${data.existing_links?.length?`<div class="warning">이미 연결된 작품: ${data.existing_links.map(x=>`ID ${x.menu_work_id??'미연결'} ${esc(x.titles?.join('/')||'')}`).join(' · ')}</div>`:''}
+      <div class="body-preview">${esc(data.body_preview)}</div></div>`;
+  }
+  async function searchCatalog() {
+    clearTimeout(searchTimer); const q=$('catalogSearch').value.trim(),box=$('catalogResults');
+    if(q.length<2){box.hidden=true;box.innerHTML='';return;}
+    searchTimer=setTimeout(async()=>{
+      try {
+        const response=await fetch(`/api/catalog-search?q=${encodeURIComponent(q)}`,{cache:'no-store'}),data=await response.json();
+        const items=data.items||[];box.hidden=false;
+        box.innerHTML=items.length?items.map(item=>`<button type="button" class="result" data-work-id="${item.menu_work_id}"><strong>작품 ID ${item.menu_work_id}</strong><small>${esc(item.titles.join(' · '))}</small></button>`).join(''):'<div class="work-item muted">검색 결과가 없습니다.</div>';
+        if(data.truncated)box.insertAdjacentHTML('beforeend','<div class="work-item muted">결과가 많습니다. 검색어를 더 입력하세요.</div>');
+        box.querySelectorAll('.result').forEach(button=>button.addEventListener('click',()=>{
+          const found=items.find(x=>x.menu_work_id===Number(button.dataset.workId));targetWork=found;updateSelectedWork();box.hidden=true;
+          annTabs.forEach(tab=>{tab.preview=null;tab.confirmed=false;tab.reassignConfirmed=false;});renderAnnPanel();
+        }));
+      } catch(error){box.hidden=false;box.innerHTML=`<div class="work-item error">${esc(error.message)}</div>`;}
+    },180);
+  }
+  async function previewAnn() {
+    const tab=currentTab();tab.annId=$('annId').value.trim();
+    if(!/^[1-9][0-9]{0,7}$/.test(tab.annId)){tab.message='ANN ID는 1 이상의 숫자로 입력해 주세요.';tab.kind='error';renderAnnPanel();return;}
+    $('previewButton').disabled=true;tab.message='ANN 페이지를 확인하고 있습니다.';tab.kind='muted';renderAnnPanel();
+    try {
+      const response=await fetch('/api/ann-preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ann_id:tab.annId})});
+      const data=await response.json();if(!response.ok)throw new Error(data.error||'ANN 페이지 확인에 실패했습니다.');
+      tab.preview=data;tab.confirmed=false;tab.reassignConfirmed=false;tab.message='원문을 확인했습니다. 작품명과 비교한 뒤 확인란을 체크하세요.';tab.kind='ok';
+    } catch(error){tab.preview=null;tab.message=error.message;tab.kind='error';}
+    renderTabs();renderAnnPanel();
+  }
+  async function saveAnnMatch() {
+    const tab=currentTab();if(!canSave(tab))return;
+    $('saveMatch').disabled=true;tab.message='원문을 RAG에 저장하고 있습니다.';tab.kind='muted';
+    try {
+      const response=await fetch('/api/ann-match',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        origin_work_id:selectedItem.menu_work_id,target_work_id:targetWork?.menu_work_id??selectedItem.menu_work_id,
+        ann_id:tab.annId,confirmed:tab.confirmed,reassign_confirmed:tab.reassignConfirmed
+      })});
+      const data=await response.json();if(data.conflict||!response.ok)throw new Error(data.error||'저장에 실패했습니다.');
+      tab.saved=true;tab.message=`저장 완료 · ANN ${data.ann_id} → 작품 ID ${data.target_work_id}`;tab.kind='ok';
+      await refreshList();
+      if(selectedItem){selectedItem=workItems.find(item=>item.menu_work_id===selectedItem.menu_work_id)||selectedItem;renderList();}
+      renderTabs();renderAnnPanel();
+    } catch(error){tab.message=error.message;tab.kind='error';renderAnnPanel();}
+  }
+  async function completeWork() {
+    if(!selectedItem)return;
+    const savedIds=selectedItem.manual_match_ids||[];
+    if(!savedIds.length&&!Number(selectedItem.ann_documents_ingested||0)){setMessage('ANN ID를 하나 이상 추가한 뒤 완료할 수 있습니다.','error');return;}
+    $('completeWork').disabled=true;
+    try {
+      const response=await fetch('/api/complete-manual-work',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu_work_id:selectedItem.menu_work_id})});
+      const data=await response.json();if(!response.ok)throw new Error(data.error||'완료 처리에 실패했습니다.');
+      const finishedId=selectedItem.menu_work_id;selectedItem=null;targetWork=null;annTabs=[];activeTab=0;
+      $('editor').innerHTML='<div class="empty">매칭을 완료했습니다. 왼쪽에서 다음 작품을 선택하세요.</div>';
+      await refreshList();
+    } catch(error){$('completeWork').disabled=false;setMessage(error.message,'error');}
+  }
+  $('refresh').addEventListener('click',refreshList);$('showCompleted').addEventListener('change',refreshList);$('filter').addEventListener('input',renderList);refreshList();
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import json
 
+from ani_menu_agent import work_catalog
 from ani_menu_agent.models import ContentPackage, SourceEvidence, StructuredWorkReference
 from ani_menu_agent.sources.models import Source, SourceRegistry
 from ani_menu_agent.sources.page_collector import PageOutboundLink
@@ -12,6 +13,50 @@ from ani_menu_agent.work_catalog import (
     resolve_title_work_ids,
     resolve_work_matches,
 )
+
+
+def test_canonical_catalog_precedes_temporary_ids_and_refreshes_worker_indexes(
+    tmp_path, monkeypatch, request
+):
+    catalog = tmp_path / "catalog"
+    reference = tmp_path / "reference"
+    catalog.mkdir()
+    reference.mkdir()
+    columns = "menu_work_id,title_native\n"
+    (catalog / "menu_works.csv").write_text(
+        columns + "2327,Canonical Title\n15,Twin Title\n16,Twin Title\n",
+        encoding="utf-8",
+    )
+    (reference / "menu_works.csv").write_text(columns + "2327,Obsolete Title\n", encoding="utf-8")
+    (catalog / "menu_work_entries.csv").write_text(
+        "menu_work_id,anilist_id,title_native\n2327,321,Official Season\n",
+        encoding="utf-8",
+    )
+    (reference / "menu_work_entries.csv").write_text(
+        "menu_work_id,anilist_id,title_native\n2327,123,Obsolete Season\n",
+        encoding="utf-8",
+    )
+    temporary = catalog / "agent_works.csv"
+    temporary.write_text(
+        columns + "1000100,Canonical Title\n1000101,New Title\n2327,Bad ID\n1000102,Twin Title\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("ME_NU_WORK_REGISTRY_DIR", raising=False)
+    monkeypatch.delenv("ME_NU_WORK_CATALOG_DIR", raising=False)
+    monkeypatch.setattr(work_catalog, "_CATALOG_DIRECTORY", reference)
+    monkeypatch.setattr(work_catalog, "_WORK_LIST_DIRECTORY", catalog)
+    work_catalog.refresh_work_catalog_caches()
+    request.addfinalizer(work_catalog.refresh_work_catalog_caches)
+
+    assert work_catalog.exact_catalog_work_id("Canonical Title") == 2327
+    assert work_catalog.exact_catalog_work_id("New Title") == 1000101
+    assert work_catalog.exact_catalog_work_id("Official Season") == 2327
+    for unknown in ("Bad ID", "Obsolete Title", "Obsolete Season", "Twin Title", "Later Title"):
+        assert work_catalog.exact_catalog_work_id(unknown) is None
+    with temporary.open("a", encoding="utf-8") as stream:
+        stream.write("1000103,Later Title\n")
+    work_catalog.refresh_work_catalog_caches()
+    assert work_catalog.exact_catalog_work_id("Later Title") == 1000103
 
 
 def test_work_ids_resolve_in_representative_first_mention_order() -> None:
@@ -381,7 +426,7 @@ def test_longest_work_title_match_does_not_link_nested_another_title() -> None:
 
     attach_menu_work_ids(package)
 
-    assert package.menu_work_ids == [2161]
+    assert package.menu_work_ids == [2369]
 
 
 def test_semicolon_compound_title_does_not_match_unrelated_suffix_title() -> None:

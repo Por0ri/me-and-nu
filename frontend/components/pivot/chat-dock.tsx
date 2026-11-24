@@ -4,7 +4,7 @@ import styles from "./chat.module.css";
 
 /** 하단 마스코트 → 펼친 안내 바 (홈 · 상세 공용).
  *  누르면 흰 알약이 양옆으로 길게 펼쳐지고, 마스코트 동그라미는 같은 크기 그대로 오른쪽 끝으로 옮겨 가며 얼굴이 생긴다.
- *  알약 높이는 HOME · SAVE · MY 알약과 같은 48px. 놓이는 곳(부모)은 하단 바와 같은 자리 · 크기여야 한다. */
+ *  알약 높이는 48px. 놓이는 곳(부모)은 하단바 바로 위의 48px 칸(chat.module.css .dockLayer)이다. */
 export function ChatDock({ expanded, onExpandedChange, prompt, onOpen, label, offFace, opensDialog = true, home = false }: {
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;

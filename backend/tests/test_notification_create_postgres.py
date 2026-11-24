@@ -238,21 +238,29 @@ def test_recommended_notification_goes_out_daily_and_new_posts_do_not_repeat_it(
     with Session(pg.engine) as db:
         post = dict(db.execute(select(ContentEntityLink.entity_id, ContentEntityLink.content_id)
                                .where(ContentEntityLink.sort_order == 1)).all())
-        fan = add_member(db, "추천팬", [1, 2])
+        fan = add_member(db, "추천팬", [1])
         for day in dates:
             add_round(db, fan, day, {10: post[1], 11: post[2], 12: post[3], 13: post[4]})
+        # 추천 후보가 전부 고른 작품 글이면 추천 알림은 안 간다
+        mine = add_member(db, "전부고름", [1, 2])
+        add_round(db, mine, dates[0], {10: post[1], 11: post[2]})
         db.commit()
 
-    # 추천으로 간 글 1 은 새 글 알림에서 빠지고 글 2 만 새 글로 간다. 추천은 그다음 글 3 으로
+    # 고른 작품 1 의 글은 새 글 알림 몫이라 추천은 글 2 부터
     assert run(pg, "recommended", apply=True, now=days[0])["created"] == 1
-    assert run(pg, "new-posts", apply=True, now=days[0])["created"] == 1
-    assert sent(pg) == {fan.user_id: {post[2]}}
+    assert recommended(pg) == {fan.user_id: {post[2]}}
+    # 마이페이지에서 작품 2 를 더 골라도, 추천으로 이미 간 글 2 는 새 글 알림으로 다시 안 간다
+    with Session(pg.engine) as db:
+        db.add(TapEntity(tap_id=fan.tap_id, entity_id=2, topic_id=1))
+        db.commit()
+    assert run(pg, "new-posts", apply=True, now=days[0])["created"] == 2
+    assert sent(pg) == {fan.user_id: {post[1]}, mine.user_id: {post[1]}}
     assert run(pg, "recommended", apply=True, now=days[1])["created"] == 1
-    assert recommended(pg) == {fan.user_id: {post[1], post[3]}}
+    assert recommended(pg) == {fan.user_id: {post[2], post[3]}}
 
     # 안 읽은 추천이 쌓여 있어도 다음 날 또 보낸다
     assert run(pg, "recommended", apply=True, now=days[2])["created"] == 1
-    assert recommended(pg) == {fan.user_id: {post[1], post[3], post[4]}}
+    assert recommended(pg) == {fan.user_id: {post[2], post[3], post[4]}}
 
 
 def test_inbox_shows_latest_three_of_each_post_kind_and_keeps_the_rest_stored(recommendation_pg):

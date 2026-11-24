@@ -69,3 +69,22 @@ class Inquiry(Base):
         Index("idx_inquiry_user_created_at", "user_id", created_at.desc()),
         Index("idx_inquiry_status_created_at", "status", created_at.desc()),
     )
+
+
+class InquiryAnswer(Base):
+    """One published answer; removed with its inquiry on account withdrawal."""
+
+    __tablename__ = "inquiry_answer"
+
+    inquiry_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("inquiry.inquiry_id", ondelete="CASCADE"), primary_key=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    admin_account_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("admin_account.admin_account_id"), nullable=False
+    )
+    answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("length(body) BETWEEN 1 AND 5000", name="ck_inquiry_answer_body_length"),
+    )

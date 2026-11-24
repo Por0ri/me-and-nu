@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlsplit
 from ani_rag.models import RagContentType
 
 DEFAULT_SOURCE_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "sources.evergreen.json"
+DEFAULT_SNAPSHOT_POLICY_PATH = DEFAULT_SOURCE_CONFIG_PATH.with_name("menu_dict_import_policy.json")
 _SOURCE_ID = re.compile(r"^[a-z0-9_]+$")
 
 
@@ -100,6 +101,7 @@ class EvergreenSourceRegistry:
     version: int
     description: str
     sources: tuple[EvergreenSource, ...]
+    snapshot_sources: tuple[tuple[str, tuple[RagContentType, ...]], ...] = ()
 
     def __post_init__(self) -> None:
         if self.version != 1:
@@ -113,8 +115,23 @@ class EvergreenSourceRegistry:
         """Return explicitly approved sources; this does not run or connect tools."""
         return tuple(source for source in self.sources if source.status is SourceStatus.APPROVED)
 
+    def reference_source_ids(self, content_type: RagContentType) -> tuple[str, ...]:
+        """Eligible stored evidence, independently of where the web search finds a candidate."""
+        # Factual curation has historically also used stored ANN/AniList work guides.
+        def eligible(source_id: str, types: tuple[RagContentType, ...]) -> bool:
+            return content_type in types or (
+                content_type is RagContentType.CURATION and RagContentType.GUIDE in types
+                and source_id in {"ann_encyclopedia", "anilist"}
+            )
 
-def load_source_registry(path: Path = DEFAULT_SOURCE_CONFIG_PATH) -> EvergreenSourceRegistry:
+        live = (s.source_id for s in self.approved_sources if eligible(s.source_id, s.content_types))
+        imported = (key for key, types in self.snapshot_sources if eligible(key, types))
+        return tuple(sorted({*live, *imported}))
+
+
+def load_source_registry(
+    path: Path = DEFAULT_SOURCE_CONFIG_PATH, *, snapshot_policy: Path = DEFAULT_SNAPSHOT_POLICY_PATH,
+) -> EvergreenSourceRegistry:
     """Parse and validate the local JSON allowlist without network or DB access."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or not isinstance(payload.get("sources"), list):
@@ -155,10 +172,15 @@ def load_source_registry(path: Path = DEFAULT_SOURCE_CONFIG_PATH) -> EvergreenSo
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"Invalid evergreen source at index {index}: {error}") from error
 
+    snapshot = json.loads(snapshot_policy.read_text(encoding="utf-8"))
     return EvergreenSourceRegistry(
         version=payload.get("version"),
         description=payload.get("description", ""),
         sources=tuple(sources),
+        snapshot_sources=tuple(
+            (key, tuple(RagContentType(value) for value in config["content_types"]))
+            for key, config in snapshot["import_only_sources"].items()
+        ),
     )
 
 

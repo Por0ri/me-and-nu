@@ -1,5 +1,7 @@
 # Admin P0: 상세 updatedAt 계약
 
+> 이후 통합: [2026-11-18 BE 계약](ADMIN_BE_INTEGRATION_2026-11-18.md). 버전 원문 전달 규칙은 유지되며, Router·실제 Provider·검수 응답 timezone·PostgreSQL 검증은 후속 문서에 갱신했다.
+
 기준: `d46fcdcfe578feb60ea4eaa235c3dd58d93c45d2` (`origin/Checking`, 2026-11-13 fetch).
 브랜치: `codex/admin-p0-content-version-1113`.
 시작 작업 트리는 clean이었고, 기존 #74 브랜치 `3634ce3862d1f165d77242a70d8d4bfeb6803712`는 변경하지 않았다.

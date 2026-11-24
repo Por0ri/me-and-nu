@@ -31,5 +31,14 @@ Thumbs.db
 # Agent outputs
 agent/out/
 
+# Ephemeral files created while updating the shared work lists
+/catalog/.menu_work_catalog.lock
+/catalog/.agent_works.csv.*.tmp
+/catalog/.discovered_works.csv.*.tmp
+/agents/*/data/reference/.menu_work_catalog.lock
+
 # Chatbot eval results (local only)
 backend/scripts/chat_eval/results/
+
+# Server-owned offline evaluation artifacts, mounted read-only into the Checking API.
+/deploy/checking/admin-evaluation/

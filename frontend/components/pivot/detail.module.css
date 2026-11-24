@@ -1,5 +1,6 @@
 /* 범수님 1272:3720 / 1272:4128. The disclosure replaces Figma's OS bar. */
-.screen { position: relative; width: 100%; max-width: 430px; min-height: calc(100svh - 44px); margin-inline: auto; padding: 0 24px max(120px, env(safe-area-inset-bottom)); background: var(--pivot-bg, #fff9fd); color: #27272a; overflow-wrap: anywhere; }
+/* 아래 여백: 하단바 58px + 마스코트까지 6px + AI 마스코트 48px + 24px (2026-11-23 하단바) */
+.screen { position: relative; width: 100%; max-width: 430px; min-height: calc(100svh - 44px); margin-inline: auto; padding: 0 24px calc(136px + env(safe-area-inset-bottom)); background: var(--pivot-bg, #fff9fd); color: #27272a; overflow-wrap: anywhere; }
 .header { position: sticky; top: 0; z-index: 5; display: flex; justify-content: space-between; align-items: center; height: 48px; margin-inline: -8px; background: var(--pivot-bg, #fff9fd); }
 .iconButton { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: transparent; }
 .actions { display: flex; margin-right: 4.5px; }
@@ -37,7 +38,7 @@
 .aiButton img { position: absolute; top: 0; left: -8px; max-width: none; pointer-events: none; }
 .aiPrompt { position: absolute; inset: 0; border-radius: 24px; background: linear-gradient(90deg, rgb(247 242 255 / 60%), rgb(224 186 251 / 60%)); backdrop-filter: blur(12px); box-shadow: 0 8px 24px #0000001f; pointer-events: auto; }
 .aiPrompt button { width: calc(100% - 48px); height: 40px; padding: 8px 0 8px 16px; border: 0; border-radius: 24px; background: transparent; color: #52525b; font-size: 12px; line-height: 18px; text-align: left; }
-.notice { position: fixed; z-index: 8; bottom: 76px; left: 50%; width: min(327px, calc(100vw - 48px)); transform: translateX(-50%); margin: 0; padding: 12px; background: white; border-radius: 8px; box-shadow: 0 2px 12px #0002; font-size: 12px; line-height: 19px; pointer-events: none; }
+.notice { position: fixed; z-index: 8; bottom: calc(120px + env(safe-area-inset-bottom)); left: 50%; width: min(327px, calc(100vw - 48px)); transform: translateX(-50%); margin: 0; padding: 12px; background: white; border-radius: 8px; box-shadow: 0 2px 12px #0002; font-size: 12px; line-height: 19px; pointer-events: none; }
 .sources { margin-top: 28px; padding-top: 20px; border-top: 1px solid #e4e4e7; }
 .sources h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
 .sources ul { margin: 0; padding-left: 18px; }

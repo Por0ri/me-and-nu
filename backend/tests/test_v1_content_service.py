@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -32,7 +32,7 @@ async def test_subtopic_cursor_rejects_empty_and_boolean_position(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cancelling_preference_keeps_like(monkeypatch):
-    db = SimpleNamespace(commit=AsyncMock(), delete=AsyncMock())
+    db = SimpleNamespace(commit=AsyncMock(), delete=AsyncMock(), scalar=AsyncMock(), add=Mock())
     reaction = SimpleNamespace(ox_feedback="O", is_liked=True, liked_at=object())
     monkeypatch.setattr(reaction_service, "require_active_tap", AsyncMock(return_value=SimpleNamespace(tap_id=7)))
     get_reaction = AsyncMock(return_value=reaction)
@@ -49,7 +49,7 @@ async def test_cancelling_preference_keeps_like(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cancelling_like_keeps_preference(monkeypatch):
-    db = SimpleNamespace(commit=AsyncMock(), delete=AsyncMock())
+    db = SimpleNamespace(commit=AsyncMock(), delete=AsyncMock(), scalar=AsyncMock(), add=Mock())
     reaction = SimpleNamespace(ox_feedback="X", is_liked=True, liked_at=object())
     monkeypatch.setattr(reaction_service, "require_active_tap", AsyncMock(return_value=SimpleNamespace(tap_id=7)))
     monkeypatch.setattr(reaction_service.repo, "get_reaction", AsyncMock(return_value=reaction))
@@ -65,7 +65,7 @@ async def test_cancelling_like_keeps_preference(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_bookmark_can_be_removed_after_content_is_hidden(monkeypatch):
-    db = SimpleNamespace(commit=AsyncMock())
+    db = SimpleNamespace(commit=AsyncMock(), scalar=AsyncMock(), add=Mock())
     saved = SimpleNamespace(status="kept")
     monkeypatch.setattr(reaction_service, "require_active_tap", AsyncMock(return_value=SimpleNamespace(tap_id=7)))
     monkeypatch.setattr(reaction_service.repo, "get_saved_item", AsyncMock(return_value=saved))

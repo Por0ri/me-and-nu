@@ -62,7 +62,7 @@
       "source_grade": "reference",
       "copyright_status": "unknown",
       "license_basis": "internal_reference_lookup_only; cite source; no image reuse or verbatim article output",
-      "is_collecting": false,
+      "is_collecting": true,
       "allowed_media_hosts": [
         "cdn.animenewsnetwork.com"
       ]
@@ -79,7 +79,7 @@
         "read"
       ],
       "status": "approved",
-      "usage_notes": "Character identity and work-relationship discovery lead. Search local work titles with search_items; request P674 for character relationships and P18/P154 when collecting available character/work image candidates. Preserve Wikidata item URLs/QIDs and statement references. Convert Commons filenames to Special:FilePath and download only through the separately allowlisted Commons media hosts. Pilot results cited Wikipedia via imported references, so do not treat Wikidata alone as primary factual confirmation. No broad SPARQL crawl or recurring plan; source collection remains disabled until explicitly scheduled.",
+      "usage_notes": "Character identity and work-relationship discovery lead. Search local work titles with search_items; for a character item, request P1441 (present in work), and request P18/P154 only when collecting available character/work image candidates. Preserve Wikidata item URLs/QIDs and statement references. Convert Commons filenames to Special:FilePath and download only through the separately allowlisted Commons media hosts. Pilot results cited Wikipedia via imported references, so do not treat Wikidata alone as primary factual confirmation. No broad SPARQL crawl or recurring plan is configured; only explicitly queued requests run.",
       "allowed_hosts": [
         "www.wikidata.org"
       ],
@@ -93,7 +93,7 @@
       "source_grade": "reference",
       "copyright_status": "unknown",
       "license_basis": "identity_and_relationship_lookup_only; retain item URLs and statement references; verify terms before redistributing records",
-      "is_collecting": false,
+      "is_collecting": true,
       "allowed_media_hosts": [
         "commons.wikimedia.org",
         "upload.wikimedia.org"
@@ -126,7 +126,7 @@
       "source_grade": "reference",
       "copyright_status": "unknown",
       "license_basis": "internal image candidate collection requested; preserve source and work provenance; no rights evaluation gate in this pilot",
-      "is_collecting": false,
+      "is_collecting": true,
       "allowed_media_hosts": [
         "media.kitsu.app"
       ]
@@ -157,7 +157,7 @@
       "source_grade": "primary",
       "copyright_status": "unknown",
       "license_basis": "record source attribution and work/image provenance; no audio or lyrics",
-      "is_collecting": false,
+      "is_collecting": true,
       "allowed_media_hosts": [
         "www.jvcmusic.co.jp"
       ]
@@ -188,7 +188,7 @@
       "source_grade": "community",
       "copyright_status": "unknown",
       "license_basis": "attributed poll result reference; preserve poll window and sampling limitations; no verbatim article text or unreviewed image reuse",
-      "is_collecting": false,
+      "is_collecting": true,
       "allowed_media_hosts": [
         "www.anitrendz.com",
         "firebasestorage.googleapis.com",
@@ -221,7 +221,7 @@
       "source_grade": "editorial_opinion",
       "copyright_status": "unknown",
       "license_basis": "attributed opinion evidence only; preserve author and source URL; no verbatim review prose",
-      "is_collecting": false,
+      "is_collecting": true,
       "allowed_media_hosts": [
         "static.animecorner.me"
       ]
@@ -253,7 +253,7 @@
       "source_grade": "firsthand_interview_statement",
       "copyright_status": "unknown",
       "license_basis": "attributed interview statements and production anecdotes; preserve original source and speaker; no verbatim interview output",
-      "is_collecting": false,
+      "is_collecting": true,
       "allowed_media_hosts": [
         "static.animecorner.me"
       ]

@@ -95,11 +95,13 @@ def test_event_dates_require_matching_verbatim_date_evidence() -> None:
     )
 
 
-def test_single_day_event_date_is_stored_as_both_period_endpoints() -> None:
+def test_announced_event_date_does_not_establish_its_end() -> None:
     extracted = PageFactExtraction(
         topic="하루 행사",
         event_start="2026-10-20",
         event_start_evidence_quote="開催日：2026年10月20日",
+        event_end="2026-10-20",
+        event_end_evidence_quote="開催日：2026年10月20日",
         facts=[
             FactCandidate(
                 statement="10월 20일 하루 개최된다.",
@@ -109,7 +111,8 @@ def test_single_day_event_date_is_stored_as_both_period_endpoints() -> None:
         ],
     )
 
-    assert _verified_event_dates(extracted) == ("2026-10-20", "2026-10-20")
+    assert _verified_event_dates(extracted) == ("2026-10-20", None)
+    assert _verified_event_dates(extracted, source_text="開催日は未定") == (None, None)
 
 
 def test_single_day_event_date_can_use_source_publication_year() -> None:
@@ -128,7 +131,7 @@ def test_single_day_event_date_can_use_source_publication_year() -> None:
 
     assert _verified_event_dates(extracted, default_year=2026) == (
         "2026-10-17",
-        "2026-10-17",
+        None,
     )
     assert _verified_event_dates_from_facts(
         _evidence_backed_facts(
@@ -138,10 +141,10 @@ def test_single_day_event_date_can_use_source_publication_year() -> None:
             "date-context",
         ),
         default_year=2026,
-    ) == ("2026-10-17", "2026-10-17")
+    ) == ("2026-10-17", None)
 
 
-def test_single_day_goods_release_is_stored_as_both_period_endpoints() -> None:
+def test_single_goods_release_is_neither_event_endpoint() -> None:
     fact = Fact(
         id="release",
         statement="상품은 10월 20일 발매된다.",
@@ -151,7 +154,7 @@ def test_single_day_goods_release_is_stored_as_both_period_endpoints() -> None:
         details={"source_quote": "発売日：2026年10月20日"},
     )
 
-    assert _verified_event_dates_from_facts([fact]) == ("2026-10-20", "2026-10-20")
+    assert _verified_event_dates_from_facts([fact]) == (None, None)
 
 
 def test_page_fact_schema_tolerates_long_official_lists() -> None:
@@ -388,7 +391,7 @@ def test_single_installation_date_is_not_extended_by_rain_delay_dates() -> None:
 
     assert _verified_event_dates_from_facts(facts, default_year=2026) == (
         "2026-10-21",
-        "2026-10-21",
+        None,
     )
 
 
@@ -402,7 +405,7 @@ def test_schedule_quote_dates_are_recovered_without_structured_date_fields() -> 
         details={"source_quote": "2026年10月31日(土) 19:00 開催"},
     )
 
-    assert _verified_event_dates_from_facts([fact]) == ("2026-10-31", "2026-10-31")
+    assert _verified_event_dates_from_facts([fact]) == ("2026-10-31", None)
 
 
 def test_quote_backed_los_angeles_venue_is_classified_as_overseas() -> None:

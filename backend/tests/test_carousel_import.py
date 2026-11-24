@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-from app.models import AgentRun, Content, ContentSource, Draft, Topic
+from app.models import AdminAccount, AdminActionLog, AgentRun, Content, ContentSource, Draft, Topic
 from app.models.content_slide import ContentSlide
 from app.seeds import carousel_contents as seed
 from app.core.config import settings
@@ -51,7 +51,7 @@ class AsyncAdapter:
 @pytest.fixture
 def engine():
     metadata = MetaData()
-    for model in MODELS:
+    for model in (*MODELS, AdminAccount, AdminActionLog):
         table = model.__table__.to_metadata(metadata)
         for column in table.columns:
             if isinstance(column.type, BigInteger):

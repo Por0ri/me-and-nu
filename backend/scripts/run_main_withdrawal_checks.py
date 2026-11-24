@@ -16,7 +16,10 @@ from uuid import uuid4
 
 
 def docker(*args):
-    return subprocess.run(["docker", *args], check=True, text=True, capture_output=True).stdout.strip()
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.upper().startswith(("DOCKER_", "COMPOSE_"))}
+    return subprocess.run(["docker", "--context", "default", *args], env=environment,
+                          check=True, text=True, capture_output=True, timeout=120).stdout.strip()
 
 
 def main():
@@ -52,6 +55,8 @@ def main():
         env = {**os.environ, "DATABASE_URL": url, "MAIN_WITHDRAWAL_TEST_URL": url,
             "NOTIFICATION_SETTINGS_TEST_DATABASE_URL": url.replace("/main_withdrawal_test", "/notification_settings_test"),
             "SESSION_BACKEND": "postgres", "REDIS_URL": "", "ENABLE_DEV_AUTH_BYPASS": "false",
+            "DEBATE_ENABLED": "false", "CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED": "false",
+            "OPENAI_API_KEY": "", "LLM_KEY": "", "TMDB_KEY": "", "DICT_DATABASE_URL": "",
             "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
         tests = ["tests/test_withdrawal.py", "tests/test_oauth_postgres_flow.py", "tests/test_reports.py",
             "tests/test_redis_auth_api.py", "tests/test_main_withdrawal_postgres.py", "tests/test_notification_settings_api.py"]

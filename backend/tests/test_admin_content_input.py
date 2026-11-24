@@ -128,12 +128,14 @@ async def test_invalid_id_or_constructed_request_cannot_reach_reads(monkeypatch)
     read.assert_not_awaited()
 
 
-def test_runtime_app_has_no_admin_write_routes_even_with_claimed_admin_headers(monkeypatch):
+def test_runtime_app_has_no_author_input_write_routes_even_with_claimed_admin_headers(monkeypatch):
     monkeypatch.setattr(settings, "redis_url", None)
     app = create_app(enable_dev_api=False)
     with TestClient(app) as client:
         for method in ("POST", "PUT", "PATCH", "DELETE"):
             for path in ("/api/v1/admin/contents", "/api/v1/admin/contents/7"):
                 response = client.request(method, path, json=input_data(), headers={"X-Role": "admin", "X-Admin": "true"})
-                assert response.status_code == 404
-        assert not any(path.startswith("/api/v1/admin") for path in client.get("/openapi.json").json()["paths"])
+                assert response.status_code == 405
+        paths = client.get("/openapi.json").json()["paths"]
+        assert set(paths["/api/v1/admin/contents"]) == {"get"}
+        assert set(paths["/api/v1/admin/contents/{contentId}"]) == {"get"}

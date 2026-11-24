@@ -18,6 +18,28 @@ def test_repeated_source_url_is_blocked_even_with_tracking_query() -> None:
     assert duplicate_reason(package, existing) == "same_source_url"
 
 
+def test_different_rss_episodes_can_share_a_season_page_and_background_source():
+    from ani_menu_agent.duplicate_detection import story_source_key
+
+    payload = json.loads(SAMPLE.read_text(encoding="utf-8"))
+    source = payload["sources"][0]
+    source.update(id="anime_schedule_rss", url="https://animeschedule.net/anime/some-season",
+                  title="Episode 9 of Some Season is out!", feed_entry_guid="Some Season Episode 9")
+    payload["menu_work_ids"] = [667]
+    package = ContentPackage.model_validate(payload)
+    previous = deepcopy(payload)
+    earlier = previous["sources"][0]
+    earlier.update(title="Episode 8 of Some Season is out!", feed_entry_guid="Some Season Episode 8")
+    assert duplicate_reason(package, previous) is None
+    earlier["feed_entry_guid"] = source["feed_entry_guid"]
+    assert duplicate_reason(package, previous) == "same_source_url"
+    earlier.pop("feed_entry_guid")
+    assert duplicate_reason(package, previous) is None
+    earlier["title"] = source["title"]
+    assert story_source_key(earlier) == story_source_key(source)
+    assert duplicate_reason(package, previous) == "same_source_url"
+
+
 def test_publisher_date_filter_does_not_hide_same_article_url() -> None:
     payload = json.loads(SAMPLE.read_text(encoding="utf-8"))
     package = ContentPackage.model_validate(payload)

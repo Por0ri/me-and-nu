@@ -11,12 +11,12 @@
 from datetime import datetime, timedelta, timezone
 import logging
 
-from sqlalchemy import BigInteger, column, delete, select, table
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
-from app.models import AuthSession, CreatorChannel, UserAccount
+from app.models import AdminAccount, AuthSession, CreatorChannel, UserAccount
 from app.repositories.auth_session_repository import (
     create_auth_session,
     discard_uncommitted_session,
@@ -29,10 +29,6 @@ from app.repositories.redis_session_store import RedisSessionStore
 logger = logging.getLogger(__name__)
 
 WITHDRAWAL_GRACE_DAYS = 30
-
-# Main shares Checking's grant history but does not own its ORM or migrations.
-# Keep this read contract independent of the administrator API and role policy.
-_admin_history = table("admin_account", column("admin_account_id", BigInteger), column("user_id", BigInteger))
 
 
 def scheduled_delete_at(withdrawn_at: datetime) -> datetime:
@@ -70,7 +66,7 @@ async def request_withdrawal(
         if channel is not None:
             raise ApiError(409, "WITHDRAWAL_BLOCKED", "연결된 크리에이터 채널이 있어 탈퇴할 수 없습니다.")
         grant = await db.scalar(
-            select(_admin_history.c.admin_account_id).where(_admin_history.c.user_id == user.user_id).limit(1)
+            select(AdminAccount.admin_account_id).where(AdminAccount.user_id == user.user_id).limit(1)
         )
         if grant is not None:
             raise ApiError(409, "WITHDRAWAL_BLOCKED", "관리자 권한 이력이 있어 탈퇴할 수 없습니다.")

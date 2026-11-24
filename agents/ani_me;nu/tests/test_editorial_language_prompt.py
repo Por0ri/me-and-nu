@@ -21,9 +21,9 @@ def test_copy_writer_preserves_meaning_in_puns_and_avoids_ambiguous_compression(
 
 
 def test_detail_writer_distinguishes_attributed_review_opinions_from_facts() -> None:
-    assert "Attribute review judgments to the reviewer" in DETAIL_WRITER_PROMPT
+    assert "Attribute review judgments naturally to the source review" in DETAIL_WRITER_PROMPT
     assert "unsupported praise" in DETAIL_WRITER_PROMPT
-    assert "clear, polished Korean fan-editorial prose" in DETAIL_WRITER_PROMPT
+    assert "write like a deeply invested anime fan telling a friend" in DETAIL_WRITER_PROMPT
 
 
 def test_detail_writer_revision_feedback_accepts_serialized_and_model_issues() -> None:
@@ -50,4 +50,4 @@ def test_reviewer_gives_specific_repairs_and_calibrates_opinion_support() -> Non
     assert (
         "Treat a reviewer's explicitly attributed opinion as a sourced opinion" in REVIEWER_PROMPT
     )
-    assert "not forced slang" in REVIEWER_PROMPT
+    assert "Do not lower a score just because copy is informal" in REVIEWER_PROMPT

@@ -67,7 +67,9 @@ export function resolvePivotSessionRoute(session: Session | null, pathname: stri
   if (isPendingConsumer(session)) {
     return pathname === "/pivot/consent" || pathname === "/pivot/onboarding" ? null : "/pivot/consent";
   }
-  return pathname === "/pivot/home" || pathname.startsWith("/pivot/home/") ? "/pivot/login" : null;
+  // 토론방도 로그인한 회원만 쓴다.
+  const protectedPath = ["/pivot/home", "/pivot/debate"].some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  return protectedPath ? "/pivot/login" : null;
 }
 export async function restorePivotSession(signal?: AbortSignal): Promise<Session> {
   requirePivotApi();
