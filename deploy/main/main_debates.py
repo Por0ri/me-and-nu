@@ -5,12 +5,14 @@ missed the vote threshold, closes ended rooms and deletes their chat, and purges
 rooms past the result retention period. Screens compute these states from
 timestamps, so a late run only delays the stored cleanup. There is no Checking
 counterpart to retire; these fixed actions never stop Checking or alter data
-infrastructure. Run preview before enable.
+infrastructure. Run preview before enable. Failures print only a fixed reason
+code; a timer run that meets a held rollout lock is logged as skipped.
 """
 import argparse
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import tempfile
@@ -112,9 +114,15 @@ def main(argv=None):
             result = dispatch(apply=args.action == "run")
         print(json.dumps(result))
         return 0
-    except (runtime.RuntimeGuardError, OSError, ValueError):
-        print("Main debate action did not complete; command output was withheld.", file=sys.stderr)
-        return 1
+    except (runtime.RuntimeGuardError, OSError, ValueError) as error:
+        # Guard errors carry fixed lowercase codes only; anything else stays withheld.
+        code = error.args[0] if type(error) is runtime.RuntimeGuardError and error.args else "unexpected_error"
+        if not isinstance(code, str) or not re.fullmatch(r"[a-z_]{1,64}", code):
+            code = "runtime_guard_failed"
+        # Another Main job or a rollout holds the lock: the next timer run catches up.
+        skipped = args.action == "run" and code == "operation_in_progress"
+        print(json.dumps({"state": "skipped" if skipped else "failed", "reason": code}), file=sys.stderr)
+        return 0 if skipped else 1
 
 
 if __name__ == "__main__":
