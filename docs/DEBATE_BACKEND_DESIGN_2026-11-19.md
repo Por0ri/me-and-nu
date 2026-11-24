@@ -209,7 +209,7 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 
 ### 5.3 정리 작업: `python -m app.jobs.finalize_debates`
 
-기존 `app/jobs` 명령처럼 기본은 미리보기이고 `--apply`를 붙여야 저장하며 `--expected-database`가 필수다. 서버에서 10분마다 실행한다(main 서버: `deploy/main/main_debates.py`가 설치하는 `me-nu-main-debates.timer`, 매시 5·15…55분 30초). 구현은 `backend/app/services/debate_finalize_service.py`, 명령은 `backend/app/jobs/finalize_debates.py`.
+기존 `app/jobs` 명령처럼 기본은 미리보기이고 `--apply`를 붙여야 저장하며 `--expected-database`가 필수다. 서버에서 10분마다 실행한다(main 서버: `deploy/main/main_debates.py`가 설치하는 `me-nu-main-debates.timer`, 매시 5·15…55분 30초). 공지 작업처럼 접속 5초·잠금 대기 5초·문장 하나 60초·전체 180초 안에 끝나고, 넘으면 한 트랜잭션 전체가 되돌아가 다음 실행이 다시 한다. 구현은 `backend/app/services/debate_finalize_service.py`, 명령은 `backend/app/jobs/finalize_debates.py`.
 
 ```
 python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply

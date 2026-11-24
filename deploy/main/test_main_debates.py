@@ -1,7 +1,9 @@
 """Offline debate finalize timer boundaries: no daemon, systemd, database, or external IO."""
-from contextlib import nullcontext, redirect_stderr, redirect_stdout
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 import io
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +17,14 @@ COUNTS = {"expired": 1, "closed": 2, "deleted_messages": 30, "purged_debates": 0
 
 def calendar(content):
     return [line.split("=", 1)[1] for line in content.splitlines() if line.startswith("OnCalendar=")]
+
+
+def cli(argv, error):
+    """Run main() with dispatch raising `error`; return (exit code, parsed stderr)."""
+    output = io.StringIO()
+    with patch.object(runtime, "require_host"), patch.object(debates, "dispatch", side_effect=error), redirect_stderr(output):
+        code = debates.main(argv)
+    return code, output.getvalue()
 
 
 class MainDebatesTest(unittest.TestCase):
@@ -38,16 +48,25 @@ class MainDebatesTest(unittest.TestCase):
                 self.assertEqual(args[args.index("--expected-database") + 1], "me_nu_checking")
                 self.assertEqual("--apply" in args, apply)
 
-    def test_both_rollout_locks_are_held_while_the_job_runs(self):
+    def test_job_runs_while_both_rollout_locks_are_held(self):
         held = []
 
+        @contextmanager
         def lock(path=runtime.ROLLOUT_LOCK):
             held.append(path)
-            return nullcontext()
+            try:
+                yield
+            finally:
+                held.remove(path)
 
-        with patch.object(runtime, "lock", side_effect=lock), patch.object(runtime, "inspect_main"), patch.object(runtime, "run", return_value=json.dumps({"mode": "dry_run", **COUNTS})):
+        def job(*_args, **_kwargs):
+            self.assertEqual(held, [runtime.ROLLOUT_LOCK, debates.LEGACY_LOCK])
+            return json.dumps({"mode": "dry_run", **COUNTS})
+
+        with patch.object(runtime, "lock", side_effect=lock), patch.object(runtime, "inspect_main"), patch.object(runtime, "run", side_effect=job) as run:
             debates.dispatch()
-        self.assertEqual(held, [runtime.ROLLOUT_LOCK, debates.LEGACY_LOCK])
+        run.assert_called_once()
+        self.assertEqual(held, [])
 
     def test_receipt_keeps_only_bounded_counts(self):
         for value in ({"mode": "apply", **COUNTS, "closed": -1}, {"mode": "apply", **COUNTS, "closed": True},
@@ -63,10 +82,18 @@ class MainDebatesTest(unittest.TestCase):
             self.assertIn(f'report["{key}"]', source)
         self.assertIn('"mode": "apply" if apply else "dry_run"', source)
 
+    def test_backend_job_finishes_before_the_wrapper_gives_up(self):
+        # The wrapper kills only the docker CLI at 240 s; the job inside must roll back on its own first.
+        source = (runtime.ROOT / "backend/app/jobs/finalize_debates.py").read_text(encoding="utf-8")
+        self.assertIn("JOB_TIMEOUT_SECONDS = 180", source)
+        self.assertIn("SET LOCAL lock_timeout", source)
+
     def test_unit_payload_uses_current_checkout_and_main_names(self):
         units = debates.units()
         service = units[debates.SERVICE].decode()
         self.assertIn(str(runtime.ROOT), service)
+        if str(runtime.ROOT) != debates.UNIT_ROOT:
+            self.assertNotIn(debates.UNIT_ROOT, service)
         self.assertIn("main_debates.py run", service)
         self.assertIn("SyslogIdentifier=me-nu-main-debates", service)
         self.assertNotIn("me-nu-checking", service)
@@ -79,10 +106,51 @@ class MainDebatesTest(unittest.TestCase):
         # The notice job starts every minute at second 0 and takes the same rollout lock.
         self.assertEqual(calendar(notices.units()[notices.TIMER].decode()), ["*-*-* *:*:00"])
 
+    def test_enable_verifies_runtime_then_installs_rendered_units_and_starts_timer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+
+            def verified():
+                self.assertEqual(list(directory.iterdir()), [])  # nothing is written before the runtime check
+
+            with patch.object(debates, "UNIT_DIRECTORY", directory), patch.object(runtime, "lock", return_value=nullcontext()), patch.object(runtime, "inspect_main", side_effect=verified) as guard, patch.object(runtime, "run", return_value="") as command:
+                self.assertEqual(debates.enable(), {"timer_enabled": True})
+            guard.assert_called_once_with()
+            self.assertEqual(sorted(path.name for path in directory.iterdir()), sorted((debates.SERVICE, debates.TIMER)))
+            for name, data in debates.units().items():
+                self.assertEqual((directory / name).read_bytes(), data)
+            self.assertEqual([call.args[0] for call in command.call_args_list],
+                             [["/usr/bin/systemctl", "daemon-reload"], ["/usr/bin/systemctl", "enable", "--now", debates.TIMER]])
+
+    def test_enable_writes_nothing_when_the_runtime_check_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(debates, "UNIT_DIRECTORY", directory), patch.object(runtime, "lock", return_value=nullcontext()), patch.object(runtime, "inspect_main", side_effect=runtime.RuntimeGuardError("main_runtime_validation_failed")), patch.object(runtime, "run") as command:
+                with self.assertRaises(runtime.RuntimeGuardError):
+                    debates.enable()
+            self.assertEqual(list(directory.iterdir()), [])
+            command.assert_not_called()
+
     def test_preview_is_the_default_action(self):
         with patch.object(runtime, "require_host"), patch.object(debates, "dispatch", return_value={"mode": "dry_run", **COUNTS}) as dispatch, redirect_stdout(io.StringIO()):
             self.assertEqual(debates.main([]), 0)
         dispatch.assert_called_once_with(apply=False)
+
+    def test_failures_report_a_fixed_reason_and_lock_overlap_skips_only_timer_runs(self):
+        cases = (
+            (["run"], runtime.RuntimeGuardError("operation_in_progress"), 0, {"state": "skipped", "reason": "operation_in_progress"}),
+            (["preview"], runtime.RuntimeGuardError("operation_in_progress"), 1, {"state": "failed", "reason": "operation_in_progress"}),
+            (["run"], runtime.RuntimeGuardError("main_service_schema_not_ready"), 1, {"state": "failed", "reason": "main_service_schema_not_ready"}),
+            (["run"], runtime.RuntimeGuardError(f"Bad {SECRET}"), 1, {"state": "failed", "reason": "runtime_guard_failed"}),
+            (["run"], json.JSONDecodeError(SECRET, SECRET, 0), 1, {"state": "failed", "reason": "unexpected_error"}),
+            (["run"], OSError(SECRET), 1, {"state": "failed", "reason": "unexpected_error"}),
+        )
+        for argv, error, expected_code, expected in cases:
+            with self.subTest(argv=argv, error=error):
+                code, stderr = cli(argv, error)
+                self.assertEqual(code, expected_code)
+                self.assertEqual(json.loads(stderr), expected)
+                self.assertNotIn(SECRET, stderr)
 
     def test_cli_never_echoes_credential_bearing_errors(self):
         output = io.StringIO()

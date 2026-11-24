@@ -126,3 +126,93 @@ def test_ended_debates_stay_nine_days_then_disappear_and_are_purged(debate_api):
 def test_job_refuses_a_database_that_is_not_the_one_named(database_url):
     with pytest.raises(MenuWorksError):
         asyncio.run(run_job(expected_database="me_nu_checking", apply=False, database_url=database_url))
+
+
+TARGET = "postgresql+psycopg://user:secret@localhost/me_nu_checking"
+
+
+class FakeEngine:
+    def __init__(self):
+        self.disposed = False
+
+    async def dispose(self):
+        self.disposed = True
+
+
+class FakeSession:
+    """async with factory() as db, db.begin(): 모양만 흉내 내고 실행한 문장을 적어 둔다."""
+
+    def __init__(self, executed):
+        self.executed = executed
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    def begin(self):
+        return self
+
+    async def execute(self, statement):
+        self.executed.append(str(statement))
+
+
+def fake_database(monkeypatch, work):
+    """정리 작업 명령(run)이 쓰는 DB 연결을 가짜로 바꾼다. 실제 DB 없이 시간 제한 장치만 본다."""
+    import app.jobs.finalize_debates as job
+
+    engine, executed, created = FakeEngine(), [], {}
+
+    def create_engine(url, **options):
+        created.update(url=url, **options)
+        return engine
+
+    monkeypatch.setattr(job, "create_async_engine", create_engine)
+    monkeypatch.setattr(job, "async_sessionmaker", lambda *_args, **_kwargs: (lambda: FakeSession(executed)))
+    monkeypatch.setattr(job, "finalize_debates", work)
+    return job, engine, executed, created
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_job_bounds_connect_lock_and_statement_waits(monkeypatch, apply):
+    async def work(db, *, apply=False):
+        return {"mode": "apply" if apply else "dry_run"}
+
+    job, engine, executed, created = fake_database(monkeypatch, work)
+    report = asyncio.run(job.run(expected_database="me_nu_checking", apply=apply, database_url=TARGET))
+    assert report == {"mode": "apply" if apply else "dry_run"}
+    assert created["connect_args"] == {"connect_timeout": 5} and created["hide_parameters"] is True
+    expected = ["SET LOCAL lock_timeout = '5s'", "SET LOCAL statement_timeout = '60s'"]
+    assert executed == (expected if apply else ["SET TRANSACTION READ ONLY", *expected])  # 미리보기는 읽기 전용이 먼저
+    assert engine.disposed
+
+
+def test_job_gives_up_before_the_server_timer_and_still_disposes_the_engine(monkeypatch):
+    import app.jobs.finalize_debates as job
+
+    assert job.JOB_TIMEOUT_SECONDS < 240  # deploy/main/main_debates.py 가 docker 명령을 240초에 끊는다
+
+    async def stuck(db, *, apply=False):
+        await asyncio.sleep(5)
+
+    _, engine, _, _ = fake_database(monkeypatch, stuck)
+    monkeypatch.setattr(job, "JOB_TIMEOUT_SECONDS", 0.05)
+    with pytest.raises(TimeoutError):
+        asyncio.run(job.run(expected_database="me_nu_checking", apply=True, database_url=TARGET))
+    assert engine.disposed
+
+
+def test_job_command_reports_a_timeout_without_details(monkeypatch, capsys):
+    import app.jobs.finalize_debates as job
+
+    async def timed_out(**_kwargs):
+        raise TimeoutError("secret detail")
+
+    monkeypatch.setattr(job, "run", timed_out)
+    monkeypatch.setattr(job.sys, "argv", ["finalize_debates", "--expected-database", "me_nu_checking", "--apply"])
+    with pytest.raises(SystemExit) as exit_info:
+        job.main()
+    assert exit_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "timed out" in captured.err and "secret" not in captured.err + captured.out
