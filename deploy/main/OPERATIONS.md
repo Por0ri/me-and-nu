@@ -41,6 +41,7 @@ reviewed locally and does not install a unit.
 | `sudo python3 deploy/main/main_notices.py` | `preview` (default), `run`, `status`, `enable`, `disable`, `dry-run` | `run` and `enable` require the old notice timer disabled and inactive, and its service inactive. |
 | `sudo python3 deploy/main/main_evaluation.py` | `dry-run`, `status`, `enable`, `disable`, `run` | Enabling and every collection require the old evaluation timer disabled and inactive, and its service inactive. |
 | `sudo python3 deploy/main/main_publish_evaluation.py` | `--input <absolute-file> --dataset offline\|service` | Validates with the deployed immutable image without network access, then atomically publishes an aggregate artifact. |
+| `sudo python3 deploy/main/main_debates.py` | `preview` (default), `run`, `status`, `enable`, `disable`, `dry-run` | No legacy counterpart. The timer runs `app.jobs.finalize_debates` inside the verified API at minutes 5, 15, …, 55 (second 30, clear of the notice job). It only maintains stored debate rows, so it may stay enabled while debate is off. Run `preview` before `enable`. |
 
 Recommendation image builds use the reviewed full commit and record that commit
 in an image label. Start uses its immutable image ID and the existing read-only

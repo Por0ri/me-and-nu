@@ -24,6 +24,7 @@ TIMERS = (
     "me-nu-checking-evaluation.timer", "me-nu-checking-evaluation.service",
     "me-nu-main-notices.timer", "me-nu-main-notices.service",
     "me-nu-main-evaluation.timer", "me-nu-main-evaluation.service",
+    "me-nu-main-debates.timer", "me-nu-main-debates.service",
 )
 SAFE_ENV = (
     "MENU_DEPLOYMENT_ENV", "SESSION_BACKEND", "SESSION_COOKIE_NAME",
