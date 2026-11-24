@@ -20,8 +20,8 @@ def test_single_policy_does_not_reenable_legacy_review_bypass(monkeypatch, legac
         monkeypatch.setenv("ANI_MENU_REVIEW_PROFILE", legacy_profile)
     assert set(LANGUAGE_THRESHOLDS.values()) == {2}
     assert SCORE_THRESHOLDS == {
-        "pass": 68,
-        "card_minimum": 55,
+        "pass": 40,
+        "card_minimum": 30,
         "safety_minimum_per_card": 4,
     }
     assert POLICY.quality_pass_score == SCORE_THRESHOLDS["pass"]

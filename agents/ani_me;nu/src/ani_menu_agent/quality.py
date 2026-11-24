@@ -14,10 +14,11 @@ from ani_menu_agent.image_selection import (
 from ani_menu_agent.models import ContentKind, ContentPackage, QualityIssue
 from ani_menu_agent.policy import (
     AGENT_MONOLOGUE_TERMS,
+    GENERIC_HUMOR_TERMS,
     POLICY,
 )
 from ani_menu_agent.review_rules import RULES, decision_metadata, make_issue, score_penalty
-from ani_menu_agent.source_freshness import candidate_is_stale
+from ani_menu_agent.source_freshness import KST, candidate_is_stale, expiry_evidence
 
 
 def _issue(
@@ -26,6 +27,47 @@ def _issue(
     page: int | None = None,
 ) -> QualityIssue:
     return make_issue(code=code, message=message, page=page)
+
+
+def _time_sensitive_source_is_stale(package: ContentPackage, source) -> bool:
+    """Use publication age only as a fallback for explicitly time-sensitive facts."""
+    linked_facts = [
+        fact for fact in package.facts
+        if fact.verified and fact.time_sensitive and source.id in fact.source_ids
+    ]
+    if not linked_facts or not source.published_at:
+        return False
+    published_text = str(source.published_at).strip()
+    try:
+        published = datetime.fromisoformat(published_text.replace("Z", "+00:00"))
+        published_date = published.astimezone(KST).date() if published.tzinfo else published.date()
+    except ValueError:
+        try:
+            published_date = date.fromisoformat(published_text[:10])
+        except ValueError:
+            return False
+
+    today = datetime.now(KST).date()
+    if (today - published_date).days <= POLICY.default_event_retention_days:
+        return False
+
+    if package.content_type in {"event", "goods"}:
+        schedule = package.model_dump(mode="json")
+        return expiry_evidence(schedule, package.content_type, today=today)["status"] == "expired"
+    active_end_dates: list[date] = []
+    for fact in linked_facts:
+        for key in (
+            "event_end", "event_end_at", "ends_at", "end_date", "sale_end",
+            "sales_end", "preorder_end", "reservation_end", "availability_end",
+            "campaign_end",
+        ):
+            value = fact.details.get(key)
+            if value:
+                try:
+                    active_end_dates.append(date.fromisoformat(str(value)[:10]))
+                except ValueError:
+                    pass
+    return not any(end_date >= today for end_date in active_end_dates)
 
 def _publication_date_variants(value: str | None) -> tuple[date | None, set[str]]:
     if not value:
@@ -166,6 +208,14 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
         if parsed
     }
     for source in package.sources:
+        if _time_sensitive_source_is_stale(package, source):
+            issues.append(
+                _issue(
+                    "SOURCE_STALE",
+                    f"Time-sensitive facts rely on a source older than "
+                    f"{POLICY.default_event_retention_days} days without an active end date.",
+                )
+            )
         if urlparse(str(source.url)).scheme != "https":
             issues.append(
                 _issue("SOURCE_NOT_HTTPS", f"HTTPS가 아닌 출처: {source.url}")
@@ -210,6 +260,7 @@ def check_sources(package: ContentPackage) -> list[QualityIssue]:
             )
         )
     for fact in package.facts:
+        # Confidence is reviewed independently; missing source links still block publication.
         missing = sorted(set(fact.source_ids) - source_ids)
         if missing:
             issues.append(
@@ -473,15 +524,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
         cited_dates = {
             parsed_date
             for fact_id in card.fact_ids
-            if fact_id in facts_by_id
-            and (
-                facts_by_id[fact_id].verified
-                or (
-                    facts_by_id[fact_id].fact_type.strip().lower() == "event_schedule"
-                    and facts_by_id[fact_id].details.get("evidence_kind")
-                    == "source_structured_event"
-                )
-            )
+            if fact_id in facts_by_id and facts_by_id[fact_id].verified
             for parsed_date in _date_in_quote(
                 str(facts_by_id[fact_id].details.get("source_quote") or ""),
                 default_year=source_year(facts_by_id[fact_id]),
@@ -491,8 +534,8 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
             issues.append(
                 _issue(
                     "UNSUPPORTED_DATE_CLAIM",
-                    "카드 날짜와 연결된 출처 근거가 일치하지 않습니다. 원문에 적힌 날짜와 일치하는 "
-                    "근거를 연결하거나 근거가 없는 날짜를 지우세요.",
+                    "移대뱶???곸뿭???ъ슜???좎쭨瑜?洹쇨굅 fact_id濡?媛由ы궎?꽌?쇰줈 ?쇱튂?섏? "
+                    "?딆뒿?덈떎. ?좎쭨 ?ъ떎瑜??ㅼ떆 ?몄슜?섍굅??湲곗? ?녿뒗 ?좎쭨瑜?젣嫄고븯?몄슂.",
                     card.page,
                 )
             )
@@ -516,11 +559,12 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
         )
     if package.content_type == "event":
         event_facts = [fact for fact in package.facts if fact.verified]
-        has_explicit_period = any(
-            len(_date_in_quote(str(fact.details.get("source_quote") or ""))) >= 2
-            for fact in event_facts
-        )
-        if has_explicit_period and (not package.event_start or not package.event_end):
+        from ani_menu_agent.source_freshness import extract_source_schedule
+
+        dates = extract_source_schedule(package.model_dump(mode="json"), "event")
+        if (dates.get("event_start") and len(dates["event_start"]) >= 10
+                and dates.get("event_end") and len(dates["event_end"]) >= 10
+                and (not package.event_start or not package.event_end)):
             issues.append(
                 _issue(
                     "EVENT_PERIOD_MISSING",
@@ -557,75 +601,10 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
 
                 )
             )
-    if package.content_type in {"event", "goods"}:
-        for fact in package.facts:
-            fact_type = fact.fact_type.strip().lower()
-            if (
-                not fact.verified
-                or fact.id not in used_fact_ids
-                or fact_type
-                not in {
-                    "event_schedule",
-                    "event_period",
-                    "event_date",
-                    "product_release",
-                    "release",
-                    "release_date",
-                    "goods_release",
-                    "sales_start",
-                }
-            ):
-                continue
-            quote = fact.details.get("source_quote")
-            if not isinstance(quote, str):
-                continue
-            cited_dates = _date_in_quote(quote)
-            fact_statement = fact.statement.casefold()
-            quote_folded = quote.casefold()
-            start_or_end_only_markers = (
-                "시작",
-                "부터",
-                "개시",
-                "スタート",
-                "開始",
-                "より",
-                "から",
-                "까지",
-                "まで",
-                "until",
-                "through",
-                "start",
-                "starting",
-                "from",
-            )
-            if (
-                fact_type in {"event_schedule", "event_period"}
-                and len(cited_dates) == 1
-                and any(
-                    marker.casefold() in fact_statement or marker.casefold() in quote_folded
-                    for marker in start_or_end_only_markers
-                )
-            ):
-                # A one-date schedule quote can be only the start or end of a
-                # longer verified period; do not reinterpret it as a one-day event.
-                continue
-            if len(cited_dates) == 1 and (
-                package.event_start != cited_dates[0] or package.event_end != cited_dates[0]
-            ):
-                issues.append(
-                    _issue(
-                        "SINGLE_DAY_PERIOD_NOT_MIRRORED",
-                        "원문이 하루 일정/발매일을 가리키므로 event_start와 event_end에 "
-                        "같은 날짜를 저장하세요.",
-
-                    )
-                )
-                break
     if package.content_type == "goods":
         from ani_menu_agent.extraction import _date_in_quote
 
         release_periods: set[tuple[str, str]] = set()
-        all_verified_release_dates: set[str] = set()
         for fact in package.facts:
             if not fact.verified:
                 continue
@@ -638,7 +617,6 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
             }:
                 continue
             dates = sorted(set(_date_in_quote(str(fact.details.get("source_quote") or ""))))
-            all_verified_release_dates.update(dates)
             if fact.id not in used_fact_ids:
                 continue
             if len(dates) == 1:
@@ -650,17 +628,7 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
                 _issue(
                     "MULTIPLE_GOODS_RELEASE_DATES",
                     "하나의 굿즈 콘텐츠에 서로 다른 발매일이 섞였습니다. "
-                    "같은 발매일의 상품만 남기고 "
-                    "그 날짜를 시작일·종료일에 똑같이 저장하세요.",
-
-                )
-            )
-        if all_verified_release_dates and (not package.event_start or not package.event_end):
-            issues.append(
-                _issue(
-                    "GOODS_RELEASE_PERIOD_MISSING",
-                    "怨듭떇 ?먮Ц???곹뭹 諛쒕ℓ?쇱씠 ?뺤씤?섏뿀?쇰?濡?goods "
-                    "?좎쭨瑜?DB ???ν빐???⑸땲??",
+                    "카드에 소개한 상품과 발매일을 서로 맞춰 주세요.",
 
                 )
             )
@@ -899,6 +867,14 @@ def check_copy(package: ContentPackage) -> list[QualityIssue]:
 
                     )
                 )
+            if any(term in ending_text for term in GENERIC_HUMOR_TERMS):
+                issues.append(
+                    _issue(
+                        "ENDING_GENERIC",
+                        "작품명만 바꿔도 성립하는 상투적 드립입니다.",
+                        ending.page,
+                    )
+                )
     return issues
 
 
@@ -1050,11 +1026,13 @@ def check_detail_body(package: ContentPackage) -> list[QualityIssue]:
     if not package.detail_body:
         return []
     issues: list[QualityIssue] = []
-    if not 180 <= len(package.detail_body.strip()) <= 3000:
+    from ani_menu_agent.period_copy import bulletin_terms
+    minimum = 1 if bulletin_terms(package) else 180
+    if not minimum <= len(package.detail_body.strip()) <= 3000:
         issues.append(
             _issue(
                 "DETAIL_BODY_LENGTH",
-                "자세히 보기 글은 180~3000자 범위여야 합니다.",
+                f"자세히 보기 글은 {minimum}~3000자 범위여야 합니다.",
 
             )
         )
@@ -1125,7 +1103,7 @@ SCORE_THRESHOLDS = {
 }
 
 FACT_BLOCKERS = {
-    "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING",
+    "SOURCE_NOT_HTTPS", "FACT_SOURCE_MISSING", "FACT_UNVERIFIED",
     "CAMPAIGN_DETAILS_MISSING", "COPY_UNGROUNDED", "SOURCE_STALE", "EVENT_ALREADY_ENDED",
     "FACT_DIVERSITY_LOW", "UNSUPPORTED_DATE_CLAIM", "SOURCE_PUBLICATION_DATE_SHOWN",
     "EVENT_PERIOD_MISSING", "GOODS_RELEASE_PERIOD_MISSING",

@@ -1,4 +1,4 @@
-"""Register source-grounded new anime works and map Kitsu title entries."""
+"""Resolve work identities and store source-grounded temporary IDs."""
 
 from __future__ import annotations
 
@@ -157,6 +157,7 @@ def _catalog_search_queries(headline: str) -> list[str]:
 @contextmanager
 def _catalog_lock(catalog_dir: Path) -> Iterator[None]:
     """Serialize ID assignment across concurrent local crawler processes."""
+    catalog_dir.mkdir(parents=True, exist_ok=True)
     lock_path = catalog_dir / ".menu_work_catalog.lock"
     lock_path.touch(exist_ok=True)
     with lock_path.open("r+b") as stream:
@@ -244,7 +245,7 @@ def _record_discovered_work(
     source_url: str | None,
 ) -> None:
     """Store an unconfirmed or not-yet-registerable title for later review."""
-    catalog_dir = work_catalog._CATALOG_DIRECTORY
+    catalog_dir = work_catalog.work_registry_directory()
     discovered_path = catalog_dir / "discovered_works.csv"
     titles = attributes.get("titles") or {}
     if not isinstance(titles, dict):
@@ -270,32 +271,35 @@ def _record_discovered_work(
     }
     with _catalog_lock(catalog_dir):
         rows = _read_csv(discovered_path, _DISCOVERED_FIELDS)
-        existing = next((row for row in rows if row["kitsu_id"] == kitsu_id), None)
-        if existing is None:
-            rows.append(candidate)
+        for row in rows:
+            if row["kitsu_id"] != kitsu_id:
+                continue
+            row["last_seen_at"] = now
+            for key in ("source_title", "source_url"):
+                values = [*row[key].split(" | "), *candidate[key].split(" | ")]
+                row[key] = " | ".join(dict.fromkeys(value for value in values if value))
+            break
         else:
-            existing["last_seen_at"] = now
-            for field in ("source_title", "source_url"):
-                existing[field] = " | ".join(
-                    dict.fromkeys(value for value in (existing[field], candidate[field]) if value)
-                )
+            rows.append(candidate)
         _atomic_write_csv(discovered_path, _DISCOVERED_FIELDS, rows)
 
 
-def _clear_catalog_caches() -> None:
-    for function_name in (
-        "load_work_catalog",
-        "load_work_entries",
-        "load_work_external_entries",
-        "load_work_aliases",
-        "_work_parent_overrides",
-        "load_work_franchises",
-        "_aliases",
-        "_registered_work_titles",
-    ):
-        function = getattr(work_catalog, function_name, None)
-        if function is not None and hasattr(function, "cache_clear"):
-            function.cache_clear()
+def valid_source_url(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = httpx.URL(value)
+        return parsed.scheme in {"http", "https"} and bool(parsed.host)
+    except httpx.InvalidURL:
+        return False
+
+
+def record_unresolved_source_title(title: str, source_url: str) -> None:
+    normalized = _normalize_title(title)
+    if normalized and valid_source_url(source_url):
+        _record_discovered_work(
+            f"title:{normalized}", {"canonicalTitle": title}, [title], source_url,
+        )
 
 
 def _persist_kitsu_work(
@@ -304,38 +308,36 @@ def _persist_kitsu_work(
     matched_title: str,
     *,
     existing_menu_work_id: int | None = None,
+    source_url: str | None = None,
+    audit: dict[str, Any] | None = None,
 ) -> int | None:
-    catalog_dir = work_catalog._CATALOG_DIRECTORY
-    works_path = work_catalog._WORK_LIST_DIRECTORY / "menu_works.csv"
+    catalog_dir = work_catalog.work_registry_directory()
+    works_path = work_catalog.official_work_directory() / "menu_works.csv"
     agent_works_path = catalog_dir / "agent_works.csv"
-    external_path = catalog_dir / "menu_work_external_entries.csv"
+    external_path = work_catalog.work_external_entries_path()
     with _catalog_lock(catalog_dir):
+        if not works_path.is_file():
+            raise FileNotFoundError(f"Missing official work catalog: {works_path}")
         works = _read_csv(works_path, _CATALOG_FIELDS)
         agent_works = _read_csv(agent_works_path, _CATALOG_FIELDS)
         external_entries = _read_csv(external_path, _EXTERNAL_FIELDS)
-        external_match = next(
-            (
-                int(row["menu_work_id"])
-                for row in external_entries
-                if row["source_id"] == "kitsu_anime_catalog"
-                and row["external_id"] == kitsu_id
-            ),
-            None,
-        )
-        if external_match is not None:
-            valid_ids = {
-                int(row["menu_work_id"])
-                for row in (*works, *agent_works)
-                if row.get("menu_work_id", "").isdigit()
-            }
-            if external_match not in valid_ids:
+        created = False
+        official_ids = {int(row["menu_work_id"]) for row in works}
+        valid_work_ids = official_ids | {int(row["menu_work_id"]) for row in agent_works}
+        external_link = next((
+            row for row in external_entries
+            if row["source_id"] == "kitsu_anime_catalog" and row["external_id"] == kitsu_id
+        ), None)
+        linked_id = int(external_link["menu_work_id"]) if external_link else None
+        if linked_id in official_ids:
+            if existing_menu_work_id is not None and existing_menu_work_id != linked_id:
                 return None
-            if existing_menu_work_id is not None and external_match != existing_menu_work_id:
-                return None
-            return external_match
+            if audit is not None:
+                audit["status"] = "mapped_existing_work"
+            return linked_id
 
-        _clear_catalog_caches()
-        existing_ids = set(work_catalog.resolve_title_work_ids(matched_title))
+        work_catalog.refresh_work_catalog_caches()
+        existing_ids = set(work_catalog.resolve_title_work_ids(matched_title, source_url))
         # Recheck the file being written while holding the cross-process lock;
         # another process may have registered the same title since this
         # process last refreshed its in-memory catalog cache.
@@ -351,6 +353,7 @@ def _persist_kitsu_work(
                 "title_native": alias["alias"],
             }
             for alias in work_catalog.load_work_aliases()
+            if work_catalog._alias_scope_matches(alias, source_url)
         )
         exact_file_ids: set[int] = set()
         for row in catalog_rows:
@@ -370,12 +373,17 @@ def _persist_kitsu_work(
             }
             if normalized_titles & catalog_title_keys:
                 exact_file_ids.add(work_catalog._franchise_work_id(row_work_id))
-        existing_ids.update(exact_file_ids)
-        valid_work_ids = {
-            int(row["menu_work_id"])
-            for row in (*works, *agent_works)
-            if row.get("menu_work_id", "").isdigit()
-        }
+        exact_official_ids = exact_file_ids & official_ids
+        if len(exact_official_ids) > 1:
+            return None
+        if linked_id is not None:
+            if not exact_official_ids and linked_id not in valid_work_ids:
+                return None
+            existing_ids = exact_official_ids or {linked_id}
+        else:
+            existing_ids = exact_official_ids or exact_file_ids or existing_ids
+            if existing_ids and not exact_file_ids and existing_menu_work_id is None:
+                return None
         if existing_menu_work_id is not None:
             if existing_menu_work_id not in valid_work_ids:
                 return None
@@ -385,7 +393,9 @@ def _persist_kitsu_work(
         elif len(existing_ids) == 1:
             # Kitsu may return a franchise title already present under a local
             # alias. Reuse its canonical ID instead of creating a duplicate.
-            menu_work_id = existing_ids[0]
+            menu_work_id = next(iter(existing_ids))
+            if menu_work_id not in valid_work_ids:
+                return None
         elif existing_ids:
             # A title that resolves to multiple works is not safe to register.
             return None
@@ -426,10 +436,19 @@ def _persist_kitsu_work(
                 }
             )
             _atomic_write_csv(agent_works_path, _CATALOG_FIELDS, agent_works)
+            created = True
 
-        external_entries.append(_external_row(menu_work_id, kitsu_id, attributes))
-        _atomic_write_csv(external_path, _EXTERNAL_FIELDS, external_entries)
-        _clear_catalog_caches()
+        if external_link is None:
+            external_entries.append(_external_row(menu_work_id, kitsu_id, attributes))
+        elif linked_id != menu_work_id:
+            external_link["menu_work_id"] = str(menu_work_id)
+        if linked_id != menu_work_id:
+            _atomic_write_csv(external_path, _EXTERNAL_FIELDS, external_entries)
+        work_catalog.refresh_work_catalog_caches()
+        if audit is not None:
+            audit["status"] = (
+                "registered_temporary_kitsu_work" if created else "mapped_existing_work"
+            )
         return menu_work_id
 
 
@@ -443,33 +462,31 @@ def register_new_work_from_source_title(
     canonical catalog remains read-only.
     """
     title = " ".join(str(title or "").split()).strip()
-    parsed = httpx.URL(source_url) if source_url else None
     if not title or len(title) > 200 or len(_normalize_title(title)) < 3:
         if audit is not None:
             audit["status"] = "invalid_title"
         return None
-    if not parsed or parsed.scheme not in {"http", "https"} or not parsed.host:
+    if not valid_source_url(source_url):
         if audit is not None:
             audit["status"] = "invalid_source_url"
         return None
 
-    catalog_dir = work_catalog._CATALOG_DIRECTORY
-    works_path = work_catalog._WORK_LIST_DIRECTORY / "menu_works.csv"
+    catalog_dir = work_catalog.work_registry_directory()
+    works_path = work_catalog.official_work_directory() / "menu_works.csv"
     agent_works_path = catalog_dir / "agent_works.csv"
     with _catalog_lock(catalog_dir):
-        _clear_catalog_caches()
+        work_catalog.refresh_work_catalog_caches()
+        if not works_path.is_file():
+            raise FileNotFoundError(f"Missing official work catalog: {works_path}")
         works = _read_csv(works_path, _CATALOG_FIELDS)
         agent_works = _read_csv(agent_works_path, _CATALOG_FIELDS)
         normalized = _normalize_title(title)
         matching_ids: set[int] = set()
         catalog_rows = [*works, *agent_works, *work_catalog.load_work_entries()]
-        alias_path = catalog_dir / "menu_work_aliases.csv"
         catalog_rows.extend(
-            {
-                "menu_work_id": row["menu_work_id"],
-                "title_native": row["alias"],
-            }
-            for row in _read_csv(alias_path, ("menu_work_id", "alias"))
+            {"menu_work_id": row["menu_work_id"], "title_native": row["alias"]}
+            for row in work_catalog.load_work_aliases()
+            if work_catalog._alias_scope_matches(row, source_url)
         )
         catalog_rows.extend(
             {
@@ -494,57 +511,53 @@ def register_new_work_from_source_title(
                 )
             ):
                 matching_ids.add(work_id)
-        if len(matching_ids) == 1:
+        official_ids = {int(row["menu_work_id"]) for row in works}
+        occupied_ids = official_ids | {int(row["menu_work_id"]) for row in agent_works}
+        matching_ids = matching_ids & official_ids or matching_ids
+        if len(matching_ids) == 1 and matching_ids <= occupied_ids:
             existing_id = next(iter(matching_ids))
             if audit is not None:
                 audit.update({"status": "reused_existing_exact_title", "menu_work_id": existing_id})
             return existing_id
-        if matching_ids:
-            if audit is not None:
-                audit.update({"status": "exact_title_maps_to_multiple_ids"})
-            return None
 
         menu_work_id = 2_000_000 + zlib.crc32(normalized.encode("utf-8")) % 1_000_000_000
-        occupied_ids = {
-            int(row["menu_work_id"])
-            for row in (*works, *agent_works)
-            if row.get("menu_work_id", "").isdigit()
-        }
-        if menu_work_id in occupied_ids:
-            _record_discovered_work(
-                f"title:{normalized}",
-                {"canonicalTitle": title},
-                [title],
-                source_url,
+        if matching_ids:
+            held_reason = "exact_title_maps_to_multiple_ids"
+        elif menu_work_id in occupied_ids:
+            held_reason = "temporary_id_collision"
+        else:
+            held_reason = None
+        if held_reason is None:
+            korean = bool(re.search(r"[\uac00-\ud7a3]", title))
+            japanese = bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", title))
+            agent_works.append(
+                {
+                    "menu_work_id": str(menu_work_id),
+                    "title_ko": title if korean else "",
+                    "title_ko_source": source_url if korean else "",
+                    "title_ko_check": "source-grounded; review pending" if korean else "",
+                    "title_romaji": "",
+                    "title_english": title if not korean and not japanese else "",
+                    "title_native": title if japanese else "",
+                    "first_year": "",
+                    "last_year": "",
+                    "n_entries": "0",
+                    "popularity": "0",
+                    "anilist_ids": "",
+                }
             )
+            _atomic_write_csv(agent_works_path, _CATALOG_FIELDS, agent_works)
+            work_catalog.refresh_work_catalog_caches()
             if audit is not None:
-                audit.update({"status": "temporary_id_collision"})
-            return None
-        korean = bool(re.search(r"[\uac00-\ud7a3]", title))
-        japanese = bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", title))
-        agent_works.append(
-            {
-                "menu_work_id": str(menu_work_id),
-                "title_ko": title if korean else "",
-                "title_ko_source": source_url if korean else "",
-                "title_ko_check": "source-grounded; review pending" if korean else "",
-                "title_romaji": "",
-                "title_english": title if not korean and not japanese else "",
-                "title_native": title if japanese else "",
-                "first_year": "",
-                "last_year": "",
-                "n_entries": "0",
-                "popularity": "0",
-                "anilist_ids": "",
-            }
-        )
-        _atomic_write_csv(agent_works_path, _CATALOG_FIELDS, agent_works)
-        _clear_catalog_caches()
-        if audit is not None:
-            audit.update(
-                {"status": "registered_temporary_source_title", "menu_work_id": menu_work_id}
-            )
-        return menu_work_id
+                audit.update(
+                    {"status": "registered_temporary_source_title", "menu_work_id": menu_work_id}
+                )
+            return menu_work_id
+
+    record_unresolved_source_title(title, source_url)
+    if audit is not None:
+        audit["status"] = held_reason
+    return None
 
 
 def register_unmatched_work_from_kitsu(
@@ -594,6 +607,7 @@ def register_unmatched_work_from_kitsu(
         "User-Agent": "me-nu-content-agent/0.3 (anime work catalog registration)",
     }
     exact_matches: dict[str, tuple[str, dict[str, Any]]] = {}
+    lookup_failed = False
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
         queried: set[str] = set()
         for headline in eligible_titles:
@@ -611,12 +625,15 @@ def register_unmatched_work_from_kitsu(
                     response = client.get(endpoint)
                     response.raise_for_status()
                     if len(response.content) > MAX_CATALOG_RESPONSE_BYTES:
+                        lookup_failed = True
                         continue
                     payload = response.json()
                 except (httpx.HTTPError, ValueError):
+                    lookup_failed = True
                     continue
                 rows = payload.get("data") if isinstance(payload, dict) else None
                 if not isinstance(rows, list):
+                    lookup_failed = True
                     continue
                 for kitsu_id, matched_title, attributes in _title_match([headline], rows):
                     exact_matches.setdefault(kitsu_id, (matched_title, attributes))
@@ -641,7 +658,16 @@ def register_unmatched_work_from_kitsu(
 
     if len(exact_matches) != 1:
         if audit is not None:
-            audit["status"] = "kitsu_match_ambiguous_or_missing"
+            if exact_matches:
+                audit["status"] = "kitsu_match_ambiguous"
+            elif lookup_failed:
+                audit["status"] = "kitsu_lookup_unavailable"
+            else:
+                audit["status"] = "kitsu_match_missing"
+        for kitsu_id, (matched_title, attributes) in exact_matches.items():
+            _record_discovered_work(
+                kitsu_id, attributes, [*eligible_titles, matched_title], source_url,
+            )
         return None
     kitsu_id, (matched_title, attributes) = next(iter(exact_matches.items()))
     menu_work_id = _persist_kitsu_work(
@@ -649,6 +675,8 @@ def register_unmatched_work_from_kitsu(
         attributes,
         matched_title,
         existing_menu_work_id=existing_menu_work_id,
+        source_url=source_url,
+        audit=audit,
     )
     if menu_work_id is None:
         _record_discovered_work(
@@ -669,11 +697,6 @@ def register_unmatched_work_from_kitsu(
     if audit is not None:
         audit.update(
             {
-                "status": (
-                    "registered_new_work"
-                    if existing_menu_work_id is None
-                    else "mapped_existing_work"
-                ),
                 "kitsu_id": kitsu_id,
                 "matched_title": matched_title,
                 "menu_work_id": menu_work_id,

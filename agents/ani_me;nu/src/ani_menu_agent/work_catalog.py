@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import csv
+import os
 import re
 import unicodedata
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
+from threading import RLock, local
 from typing import Any
+from urllib.parse import urlsplit
 
 from ani_menu_agent.models import (
     ContentPackage,
@@ -15,10 +18,80 @@ from ani_menu_agent.models import (
     WorkMatchEvidence,
 )
 from ani_menu_agent.sources import load_source_registry
-from ani_menu_agent.work_aliases import find_named_works
+from ani_menu_agent.work_aliases import NamedWorkMatch, find_named_works, normalize as normalize_alias
 
 _CATALOG_DIRECTORY = Path(__file__).resolve().parents[2] / "data" / "reference"
 _WORK_LIST_DIRECTORY = Path(__file__).resolve().parents[4] / "catalog"
+_TEMPORARY_WORK_ID_BASE = 1_000_000
+
+
+class UnconfirmedPeriodWorkError(ValueError):
+    """Previously selected article art is bound to an unconfirmed work."""
+
+
+def official_work_directory() -> Path:
+    return Path(os.environ.get("ME_NU_WORK_CATALOG_DIR") or _WORK_LIST_DIRECTORY).resolve()
+
+
+def work_registry_directory() -> Path:
+    override = os.environ.get("ME_NU_WORK_REGISTRY_DIR")
+    return Path(override).resolve() if override else official_work_directory()
+
+
+def work_external_entries_path() -> Path:
+    registry = work_registry_directory()
+    directory = _CATALOG_DIRECTORY if registry == official_work_directory() else registry
+    return directory / "menu_work_external_entries.csv"
+
+
+_catalog_read_lock = RLock()
+_catalog_read_state = local()
+_catalog_file_signature = None
+
+
+def _catalog_files_signature() -> tuple:
+    official = official_work_directory()
+    registry = work_registry_directory()
+    signature = []
+    for path in (
+        official / "menu_works.csv", official / "menu_work_entries.csv",
+        registry / "agent_works.csv", work_external_entries_path(),
+    ):
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            signature.append((path, None))
+        else:
+            signature.append((path, stat.st_mtime_ns, stat.st_size, stat.st_ino))
+    return tuple(signature)
+
+
+def _catalog_cache(maxsize: int):
+    """Check files once per outer lookup so a running worker sees other writers."""
+    def decorate(loader):
+        cached = lru_cache(maxsize=maxsize)(loader)
+
+        @wraps(loader)
+        def read(*args, **kwargs):
+            global _catalog_file_signature
+            if getattr(_catalog_read_state, "active", False):
+                return cached(*args, **kwargs)
+            with _catalog_read_lock:
+                signature = _catalog_files_signature()
+                if signature != _catalog_file_signature:
+                    refresh_work_catalog_caches()
+                    _catalog_file_signature = signature
+                _catalog_read_state.active = True
+                try:
+                    return cached(*args, **kwargs)
+                finally:
+                    _catalog_read_state.active = False
+
+        read.cache_clear = cached.cache_clear
+        return read
+
+    return decorate
+
 
 _KOREAN_TITLE_PARTICLES = (
     "에서",
@@ -45,33 +118,40 @@ _SEQUEL_SUFFIX = re.compile(
     r"|\s*第?[0-9０-９一二三四五六七八九十]+期)",
     re.IGNORECASE,
 )
-@lru_cache(maxsize=2)
+
+
+@_catalog_cache(maxsize=2)
 def load_work_catalog(*, include_agent_works: bool = True) -> list[dict[str, Any]]:
-    """Load canonical works without collapsing sequel/entry rows into one work."""
-    rows: list[dict[str, Any]] = []
-    paths = [_WORK_LIST_DIRECTORY / "menu_works.csv"]
+    """Load official IDs first, then the agent's temporary ID range."""
+    works: dict[int, dict[str, Any]] = {}
+    paths = [(official_work_directory() / "menu_works.csv", 1)]
     if include_agent_works:
-        paths.append(_CATALOG_DIRECTORY / "agent_works.csv")
-    for path in paths:
+        paths.append((work_registry_directory() / "agent_works.csv", _TEMPORARY_WORK_ID_BASE))
+    for path, minimum_id in paths:
         if not path.is_file():
+            if minimum_id == 1:
+                return []
             continue
         with path.open(encoding="utf-8-sig", newline="") as stream:
-            rows.extend(
-                {
+            for row in csv.DictReader(stream):
+                raw_id = row.get("menu_work_id") or ""
+                if not raw_id.isdigit():
+                    continue
+                work_id = int(raw_id)
+                if work_id < minimum_id or work_id in works:
+                    continue
+                works[work_id] = {
                     **row,
-                    "menu_work_id": int(row["menu_work_id"]),
+                    "menu_work_id": work_id,
                     "popularity": int(row.get("popularity") or 0),
                 }
-                for row in csv.DictReader(stream)
-                if row.get("menu_work_id", "").isdigit()
-            )
-    return rows
+    return list(works.values())
 
 
-@lru_cache(maxsize=1)
+@_catalog_cache(maxsize=1)
 def load_work_entries() -> list[dict[str, Any]]:
     """Load season/movie AniList entries and retain their canonical series ID."""
-    entries_path = _WORK_LIST_DIRECTORY / "menu_work_entries.csv"
+    entries_path = official_work_directory() / "menu_work_entries.csv"
     valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
     if not entries_path.is_file():
         return []
@@ -89,10 +169,10 @@ def load_work_entries() -> list[dict[str, Any]]:
     return entries
 
 
-@lru_cache(maxsize=1)
+@_catalog_cache(maxsize=1)
 def load_work_external_entries() -> list[dict[str, Any]]:
     """Load externally confirmed anime titles mapped to an existing work ID."""
-    path = _CATALOG_DIRECTORY / "menu_work_external_entries.csv"
+    path = work_external_entries_path()
     if not path.is_file():
         return []
     valid_work_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
@@ -113,7 +193,7 @@ def load_work_external_entries() -> list[dict[str, Any]]:
     return entries
 
 
-@lru_cache(maxsize=1)
+@_catalog_cache(maxsize=1)
 def load_work_aliases() -> list[dict[str, Any]]:
     """Load reviewed title variants without modifying canonical work records."""
     path = _CATALOG_DIRECTORY / "menu_work_aliases.csv"
@@ -171,7 +251,7 @@ def _franchise_work_id(work_id: int) -> int:
     return work_id
 
 
-@lru_cache(maxsize=1)
+@_catalog_cache(maxsize=1)
 def load_work_franchises() -> dict[int, str]:
     """Return franchise labels without changing a work's canonical menu_work_id."""
     path = _CATALOG_DIRECTORY / "menu_work_franchises.csv"
@@ -237,7 +317,7 @@ def _alias_scope_matches(alias_row: dict[str, Any], source_url: str | None) -> b
     return str(source_url).casefold().startswith(prefix.casefold())
 
 
-@lru_cache(maxsize=128)
+@_catalog_cache(maxsize=128)
 def _aliases(source_url: str | None = None) -> list[tuple[str, int]]:
     """Index canonical and entry-level titles, excluding cross-series collisions."""
     aliases: dict[str, set[int]] = {}
@@ -267,11 +347,14 @@ def _aliases(source_url: str | None = None) -> list[tuple[str, int]]:
                 if value:
                     aliases.setdefault(value, set()).add(work_id)
     # A title reused by different series is not enough evidence for an entity link.
-    unique_aliases = [
-        (name, next(iter(work_ids)))
-        for name, work_ids in aliases.items()
-        if len(work_ids) == 1
-    ]
+    unique_aliases = []
+    for name, work_ids in aliases.items():
+        # A title can retain its temporary row after it joins the team catalog.
+        # Prefer its official ID, but never break ties between official works.
+        official = {work_id for work_id in work_ids if work_id < _TEMPORARY_WORK_ID_BASE}
+        candidates = official or work_ids
+        if len(candidates) == 1:
+            unique_aliases.append((name, next(iter(candidates))))
     # A publisher page can disambiguate a generic or reused native title (for
     # example, "ワンピース" on the One Piece prize site vs. a separate recap
     # entry). Apply URL-scoped aliases after global collision filtering.
@@ -353,6 +436,7 @@ def refresh_work_catalog_caches() -> None:
         _work_parent_overrides,
         load_work_franchises,
         _aliases,
+        _exact_catalog_titles,
         _registered_work_titles,
     ):
         loader.cache_clear()
@@ -461,21 +545,49 @@ _CURATION_MARKER = re.compile(
 )
 
 
-def _headline_character_work_ids(title: str, *, keep_ambiguous: bool = False) -> list[int]:
-    """Resolve character aliases, normally retaining multiple works only for collaborations."""
+# These are ordinary monster/species names across franchises. The reference
+# file may list just one named character with this spelling.
+_GENERIC_CHARACTER_NAMES = {"スライム", "슬라임"}
+
+
+def _headline_character_matches(title: str, *, keep_ambiguous: bool = False) -> list[NamedWorkMatch]:
+    """Use characters for identity only when the headline hasn't named a different subject."""
     matches = [
         match for match in find_named_works(title or "")
-        if match.kind == "character"
+        if match.kind == "character" and normalize_alias(match.name) not in _GENERIC_CHARACTER_NAMES
     ]
-    ids = list(dict.fromkeys(match.menu_work_id for match in matches))
-    if not keep_ambiguous and len(ids) > 1 and not _COLLABORATION_MARKER.search(title or ""):
-        return ids[:1]
-    return ids
+    named_subjects = {normalize_alias(value) for value in re.findall(r"『([^『』]+)』", title or "")}
+    if named_subjects:
+        # An explicit work, even one absent from the catalog, is stronger
+        # evidence than a different character mentioned in a product's name.
+        character_names = {normalize_alias(match.name) for match in matches}
+        if not named_subjects.issubset(character_names):
+            return []
+        matches = [match for match in matches if normalize_alias(match.name) in named_subjects]
+    by_work = {match.menu_work_id: match for match in matches}
+    ordered = list(by_work.values())
+    return ordered if keep_ambiguous or _COLLABORATION_MARKER.search(title or "") else ordered[:1]
 
 
 def resolve_title_work_ids(title: str, source_url: str | None = None) -> list[int]:
     """Resolve explicit catalog titles in a headline without using body text."""
     return _match_title_work_ids(title, source_url)
+
+
+@_catalog_cache(maxsize=128)
+def _exact_catalog_titles(scope: str | None) -> dict[str, int]:
+    return {_normalize_catalog_title(name): work_id for name, work_id in _aliases(scope)}
+
+
+def exact_catalog_work_id(title: str, source_url: str | None = None) -> int | None:
+    """Return a single catalog match for a whole title previously logged for registration."""
+    scope = max(
+        (row["source_url_prefix"] for row in load_work_aliases()
+         if row.get("source_url_prefix") and _alias_scope_matches(row, source_url)),
+        key=len,
+        default=None,
+    )
+    return _exact_catalog_titles(scope).get(_normalize_catalog_title(title))
 
 
 def resolve_work_matches(
@@ -491,8 +603,7 @@ def resolve_work_matches(
     """Resolve work identity from explicit titles and publisher-declared metadata.
 
     Free-form article prose, summaries, image content, and LLM guesses are never
-    treated as identity evidence. The first available evidence tier wins. A bound
-    request keeps ambiguous matches so the caller can reject multiple works.
+    treated as identity evidence. The first available evidence tier wins.
     """
     def evidence_for(title: str, basis: str, confidence: float, url: str | None = None):
         ids = _match_title_work_ids(title, source_url)
@@ -532,22 +643,17 @@ def resolve_work_matches(
     # excluded until their Japanese-name coverage is reliable.
     for title in titles or []:
         title = str(title or "").strip()
-        character_work_ids = _headline_character_work_ids(title, keep_ambiguous=keep_ambiguous)
-        if not character_work_ids:
+        characters = _headline_character_matches(title, keep_ambiguous=keep_ambiguous)
+        if not characters:
             continue
-        matches_by_id = {
-            match.menu_work_id: match
-            for match in find_named_works(title)
-            if match.kind == "character"
-        }
         return [
             WorkMatchEvidence(
-                menu_work_id=work_id,
+                menu_work_id=match.menu_work_id,
                 basis="headline_character",
-                matched_value=matches_by_id[work_id].name,
+                matched_value=match.name,
                 confidence=0.92,
             )
-            for work_id in character_work_ids
+            for match in characters
         ]
 
     registered_sources = {
@@ -656,13 +762,24 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
     """
     if package.work_match_evidence:
         valid_ids = {int(row["menu_work_id"]) for row in load_work_catalog()}
+        evidence = package.work_match_evidence
+        if package.content_type in {"news", "event", "goods"} and any(
+            item.basis == "headline_character" for item in evidence
+        ):
+            primary = package.sources[0] if package.sources else None
+            title = primary.title if primary else ""
+            direct_ids = _match_title_work_ids(title, str(primary.url)) if primary else []
+            evidence = [
+                item for item in evidence
+                if item.basis != "headline_character" or item.menu_work_id in direct_ids
+            ]
         evidence_ids = list(dict.fromkeys(
-            item.menu_work_id for item in package.work_match_evidence
+            item.menu_work_id for item in evidence
             if item.menu_work_id in valid_ids
         ))
         explicit_title_ids = list(dict.fromkeys(
             item.menu_work_id
-            for item in package.work_match_evidence
+            for item in evidence
             if item.basis in {"article_title", "headline_character"}
             and item.menu_work_id in valid_ids
         ))
@@ -688,8 +805,8 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
     registered_titles = _registered_work_titles()
     ordered: list[int] = []
 
-    def append_title_matches(title: str) -> None:
-        for work_id in _match_title_work_ids(title):
+    def append_title_matches(title: str, source_url: str | None = None) -> None:
+        for work_id in _match_title_work_ids(title, source_url):
             if work_id not in ordered:
                 ordered.append(work_id)
 
@@ -699,7 +816,7 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
     )
     for evidence in primary_first:
         # Match all explicit works in the actual publisher title first.
-        append_title_matches(evidence.title)
+        append_title_matches(evidence.title, str(evidence.url))
     multi_work_title = next(
         (
             evidence.title
@@ -717,12 +834,13 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
     if ordered:
         return ordered[:1]
 
-    # Character names are checked in publisher titles only; body copy,
-    # extracted facts, and song/artist aliases are excluded.
-    for evidence in primary_first:
-        ids = _headline_character_work_ids(evidence.title or "")
-        if ids:
-            return ids
+    # Period crawlers persist article-confirmed identity before handing off to
+    # generation. A downstream reload must not promote a character hint again.
+    if package.content_type not in {"news", "event", "goods"}:
+        for evidence in primary_first:
+            ids = [match.menu_work_id for match in _headline_character_matches(evidence.title or "")]
+            if ids:
+                return ids
 
     # Source registry mapping supplies a reliable representative when neither
     # the title nor a headline character alias identified the work.
@@ -734,6 +852,39 @@ def resolve_menu_work_ids(package: ContentPackage) -> list[int]:
     return []
 
 
-def attach_menu_work_ids(package: ContentPackage) -> ContentPackage:
-    package.menu_work_ids = resolve_menu_work_ids(package)
+def rematch_returned_goods(package: ContentPackage) -> bool:
+    """Recover a crawler return whose old character-only match conflicts with the article title."""
+    if (package.content_type != "goods" or len(package.sources) != 1 or not package.work_match_evidence
+            or any(item.basis != "headline_character" for item in package.work_match_evidence)):
+        return False
+    source = package.sources[0]
+    captured = [
+        fact for fact in package.facts if fact.fact_type == "source_page_capture"
+        and fact.source_ids == [source.id] and fact.details.get("captured_url") == str(source.url)
+    ]
+    direct = resolve_title_work_ids(source.title, str(source.url))
+    if len(captured) != 1 or len(direct) != 1 or direct[0] in package.menu_work_ids:
+        return False
+    package.menu_work_ids = direct
+    package.work_match_evidence = [WorkMatchEvidence(
+        menu_work_id=direct[0], basis="article_title", matched_value=source.title[:500],
+        evidence_url=source.url, confidence=0.99,
+    )]
+    # Recollect product facts and all pictures from the original URL. Assets and
+    # inferred claims associated with the old work must never be retagged.
+    package.facts = captured
+    package.images = []
+    return True
+
+
+def attach_menu_work_ids(package: ContentPackage, *, check_period_artwork: bool = False) -> ContentPackage:
+    resolved = resolve_menu_work_ids(package)
+    if check_period_artwork and package.content_type in {"news", "event", "goods"}:
+        # A stored draft may already contain art chosen for the previous identity.
+        assigned = set(package.menu_work_ids) | {
+            item.menu_work_id for item in package.work_match_evidence if item.basis == "headline_character"
+        }
+        if assigned.difference(resolved):
+            raise UnconfirmedPeriodWorkError("기간 콘텐츠의 기존 작품 ID를 원문에서 확인할 수 없어 이미지와 작품 연결을 다시 확인해야 합니다.")
+    package.menu_work_ids = resolved
     return package

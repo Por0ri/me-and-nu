@@ -12,7 +12,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ani_menu_agent.duplicate_detection import _canonical_url
+from ani_menu_agent.duplicate_detection import story_source_key
 from ani_menu_agent.models import CONTENT_TYPE_LABELS
 from ani_menu_agent.source_freshness import candidate_is_stale, candidate_publication_date
 from ani_menu_agent.sources.registry import load_source_registry
@@ -288,7 +288,7 @@ def used_source_urls(database_paths: list[Path]) -> set[str]:
                         except json.JSONDecodeError:
                             continue
                         for source in package.get("sources", []):
-                            url = _canonical_url(str(source.get("url") or ""))
+                            url = story_source_key(source)
                             if url:
                                 urls.add(url)
             finally:
@@ -659,7 +659,7 @@ def main() -> None:
                     continue
                 attempts = checkpoint.setdefault("attempts", {})
                 record = attempts.get(candidate_id, {})
-                candidate_url = _canonical_url(str(candidate.get("url") or ""))
+                candidate_url = story_source_key(candidate)
                 skip_reason = candidate_url_skip_reason(
                     candidate_url, known_source_urls, attempted_urls_this_cycle
                 )

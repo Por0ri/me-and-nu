@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "enabled": true,
+  "rotation_days": 7,
+  "search_result_limit": 3,
+  "source_result_limit": 5,
+  "candidate_top_k": 8,
+  "candidate_limit": 40,
+  "min_retrieval_score": 0.2,
+  "refresh_after_seconds": 2592000,
+  "content_types": [
+    "character",
+    "guide",
+    "people",
+    "music",
+    "humor",
+    "curation",
+    "review"
+  ],
+  "query_templates": {
+    "character": "{title} anime character profile",
+    "guide": "{title} anime episodes story guide",
+    "people": "{title} anime cast staff creators interview",
+    "music": "{title} anime opening ending soundtrack artist",
+    "humor": "{title} anime production behind the scenes anecdote",
+    "curation": "{title} anime poll ranking recommendation",
+    "review": "{title} anime review criticism"
+  },
+  "reference_sources": {
+    "ann_encyclopedia": {
+      "content_types": ["character", "guide", "people", "music"],
+      "evidence_type": "reference_fact"
+    },
+    "wikidata_character_catalog": {
+      "content_types": ["character"],
+      "evidence_type": "reference_fact",
+      "property_ids": ["P1441"]
+    },
+    "kitsu_anime_catalog": {
+      "content_types": ["character", "guide"],
+      "evidence_type": "reference_fact"
+    },
+    "flyingdog_music": {
+      "content_types": ["music"],
+      "evidence_type": "official_fact"
+    },
+    "anime_trending_polls": {
+      "content_types": ["curation"],
+      "evidence_type": "curation_result"
+    },
+    "anime_corner": {
+      "content_types": ["review"],
+      "evidence_type": "editorial_review"
+    },
+    "anime_corner_interviews": {
+      "content_types": ["people", "humor"],
+      "evidence_types": {
+        "people": "editorial_claim",
+        "humor": "production_behind_scenes"
+      }
+    }
+  }
+}

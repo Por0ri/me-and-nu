@@ -6,17 +6,74 @@ import hashlib
 import json
 import math
 import re
+import sqlite3
+import struct
+import threading
 import uuid
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Protocol, Sequence
 
+from ani_rag.adapter import canonical_source_item_url
+from ani_rag.fact_subject import fact_subjects
 from ani_rag.models import EvidenceDocument, RagContentType, WorkLinkStatus
 from ani_rag.profiles import get_content_profile
 
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 DEFAULT_MIN_RETRIEVAL_SCORE = 0.20
+
+
+_EPISODE_COUNT = re.compile(
+    r"몇\s*(?:부작|화|회)(?!\s*(?:에서?|부터|까지|쯤))|(?:화|회)\s*수(?:[가를는야?\s]|$)|"
+    r"(?:회차|에피소드)\s*(?:수|개수)|총\s*(?:회차|화수)|"
+    r"\b(?:episode[ _]count|number of episodes|how many episodes)\b|\bepisodes\s*[?？]?$|全何話|話数", re.I
+)
+_DURATION = re.compile(
+    r"러닝\s*타임|런닝\s*타임|상영\s*시간|(?:한\s*(?:편|회|화)|회당|편당)\s*(?:몇\s*분|길이|시간)|"
+    r"방영\s*시간(?!\s*(?:대|표))|\b(?:run\s*time|duration(?:_min)?|episode length|how long is (?:an|one) episode)\b|上映時間|所要時間", re.I
+)
+_AIRTIME = re.compile(r"몇\s*시|시간대|시간표|무슨\s*요일|방송\s*편성|몇\s*요일")
+_VOICE_CAST = re.compile(r"성우|목소리\s*(?:연기|담당)|\b(?:voice[ _]actors?|voice cast|voiced by|voices for)\b|声優", re.I)
+_KOREAN_CAST = re.compile(r"한국(?:어|판)?|한국\s*더빙|우리말|\bKorean\b|韓国語", re.I)
+_JAPANESE_CAST = re.compile(r"일본(?:어|판)?|원어|\bJapanese\b|日本語", re.I)
+
+
+def requested_dictionary_fields(request: RetrievalRequest) -> tuple[str, ...]:
+    """Recognize focused, work-scoped fact queries; full web articles use normal relevance."""
+    query = (request.subject_title or request.query).strip()
+    if not request.menu_work_ids or request.seed_evidence_ids or len(query) > 160:
+        return ()
+    fields = []
+    if _EPISODE_COUNT.search(query):
+        fields.append("episodes")
+    if _DURATION.search(query) and not _AIRTIME.search(query):
+        fields.append("duration_min")
+    if _VOICE_CAST.search(query):
+        korean = _KOREAN_CAST.search(query)
+        japanese = _JAPANESE_CAST.search(query)
+        if korean or not japanese:
+            fields.append("voice_actor_ko")
+        if japanese or not korean:
+            fields.extend(("voice_actor", "jp_cast"))
+    return tuple(fields)
+
+
+def _matches_dictionary_field(document: EvidenceDocument, fields: tuple[str, ...]) -> bool:
+    return bool(fields and document.metadata.get("dataset") == "menu_dict"
+                and document.metadata.get("menu_dict_field") in fields)
+
+
+def _canonical_excluded_url(url: str) -> str:
+    try:
+        return canonical_source_item_url(url)
+    except ValueError:
+        return url.strip()
+
+
+def _canonical_excluded_urls(urls: Sequence[str]) -> frozenset[str]:
+    return frozenset(_canonical_excluded_url(url) for url in urls)
 
 
 @dataclass(frozen=True)
@@ -26,9 +83,13 @@ class RetrievalRequest:
     menu_work_ids: tuple[int, ...] = ()
     source_ids: tuple[str, ...] = ()
     seed_evidence_ids: tuple[str, ...] = ()
+    exclude_source_urls: tuple[str, ...] = ()
     top_k: int = 8
     candidate_limit: int = 100
     min_retrieval_score: float = DEFAULT_MIN_RETRIEVAL_SCORE
+    semantic_candidate_scan: bool = False
+    subject_title: str | None = None
+    corroborating_chunks: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.query.strip():
@@ -41,6 +102,8 @@ class RetrievalRequest:
             raise ValueError("Retrieval work IDs must be positive")
         if any(not source_id.strip() for source_id in self.source_ids):
             raise ValueError("Retrieval source IDs must be non-empty")
+        if any(not source_url.strip() for source_url in self.exclude_source_urls):
+            raise ValueError("Excluded source URLs must be non-empty")
 
 
 @dataclass(frozen=True)
@@ -133,10 +196,41 @@ class EvidenceRetriever(Protocol):
         """Retrieve source-of-truth documents plus the exact chunks used for ranking."""
 
 
+class QueryEmbeddingModel(Protocol):
+    async def embed_query(self, text: str) -> Sequence[float]:
+        """Embed one query using the same model and dimensions as the vector sidecar."""
+
+
+class OpenAIQueryEmbeddingModel:
+    """Small adapter for the existing text-embedding-3-small sidecar contract."""
+
+    def __init__(self, client: object) -> None:
+        self.client = client
+
+    async def embed_query(self, text: str) -> Sequence[float]:
+        def call():
+            embeddings = getattr(self.client, "embeddings", None)
+            create = getattr(embeddings, "create", None)
+            if not callable(create):
+                raise TypeError("Embedding client must expose embeddings.create")
+            return create(
+                model="text-embedding-3-small", input=text,
+                dimensions=1024, encoding_format="float",
+            )
+        response = await asyncio.to_thread(call)
+        data = getattr(response, "data", None)
+        if not data or len(data) != 1:
+            raise RuntimeError("Query embedding response must contain exactly one vector")
+        vector = tuple(float(value) for value in data[0].embedding)
+        if len(vector) != 1024 or not all(math.isfinite(value) for value in vector):
+            raise RuntimeError("Query embedding does not match the 1024-dimension sidecar")
+        return vector
+
+
 def chunk_document(document: EvidenceDocument, *, max_chars: int = 1200, overlap: int = 120) -> tuple[EvidenceChunk, ...]:
     if max_chars <= 0 or overlap < 0 or overlap >= max_chars:
         raise ValueError("Chunk size must be positive and overlap smaller than chunk size")
-    sources = _document_sources(document)
+    sources = document_chunk_sources(document)
     chunks: list[EvidenceChunk] = []
     seen: set[str] = set()
     step = max_chars - overlap
@@ -177,7 +271,7 @@ def chunk_document(document: EvidenceDocument, *, max_chars: int = 1200, overlap
     return tuple(chunks)
 
 
-def _document_sources(document: EvidenceDocument) -> list[tuple[str, str, int | None, str]]:
+def document_chunk_sources(document: EvidenceDocument) -> list[tuple[str, str, int | None, str]]:
     """Expose Kitsu character records as independently retrievable evidence chunks.
 
     The stored raw JSON remains the canonical source. Chunking its whole included
@@ -291,7 +385,11 @@ class DatabaseEvidenceRetriever:
     async def retrieve(self, request: RetrievalRequest) -> RetrievedEvidence:
         documents = await self.candidates.fetch_candidates(request)
         unique_documents = {document.document_id: document for document in documents[:request.candidate_limit]}
+        excluded_urls = _canonical_excluded_urls(request.exclude_source_urls)
         accepted_evidence_types = set(get_content_profile(request.content_type).accepted_evidence_types)
+        fields = requested_dictionary_fields(request)
+        subjects = fact_subjects(request.subject_title or request.query, request.menu_work_ids, fields,
+                                 article=bool(request.subject_title))
         allowed: list[EvidenceDocument] = []
         for document in unique_documents.values():
             # A source document's collection lane does not define every format it
@@ -300,27 +398,44 @@ class DatabaseEvidenceRetriever:
             # facts collected through the guide lane can support people/music).
             if document.evidence_type not in accepted_evidence_types:
                 continue
+            if fields and document.metadata.get("dataset") == "menu_dict" and not subjects.accepts(document, fields):
+                continue
+            if fields and document.metadata.get("dataset") != "menu_dict" and not subjects.accepts_external(document):
+                continue
             if request.menu_work_ids and (
                 document.work_link_status is not WorkLinkStatus.MATCHED
                 or not set(document.menu_work_ids).intersection(request.menu_work_ids)
             ):
                 continue
+            if excluded_urls and _canonical_excluded_url(document.source_url) in excluded_urls:
+                continue
             allowed.append(document)
         seed_ids = frozenset(request.seed_evidence_ids)
+        # A translated field name is one lexical match, even if the fact itself is in Japanese.
+        field_overlap = 1 / max(len(_terms(request.query)), 1)
         ranked = [
-            (lexical_score(request.query, chunk, seed_ids=seed_ids), document, chunk)
+            (max(lexical_score(request.query, chunk, seed_ids=seed_ids),
+                 field_overlap if _matches_dictionary_field(document, fields) else 0.0), document, chunk)
             for document in allowed
             for chunk in chunk_document(document)
         ]
         ranked = [row for row in ranked if row[0] > 0]
+        pinned = frozenset(request.corroborating_chunks)
         ranked.sort(key=lambda row: (
-            -row[0], row[1].published_at is None,
+            not (row[2].chunk_id in pinned and row[0] >= request.min_retrieval_score),
+            not _matches_dictionary_field(row[1], fields), -row[0], row[1].published_at is None,
             -(row[1].published_at.timestamp()) if row[1].published_at else 0.0,
             row[1].document_id, row[2].locator,
         ))
         picked_chunks: list[EvidenceChunk] = []
         picked_docs: dict[str, EvidenceDocument] = {}
+        cast_seen = set()
         for score, document, chunk in ranked:
+            cast_key = subjects.cast_key(document)
+            if cast_key is not None:
+                if cast_key in cast_seen:
+                    continue
+                cast_seen.add(cast_key)
             picked_chunks.append(EvidenceChunk(**{**chunk.__dict__, "score": score}))
             picked_docs.setdefault(document.document_id, document)
             if len(picked_chunks) >= request.top_k:
@@ -335,3 +450,150 @@ class DatabaseEvidenceRetriever:
             seed_evidence_ids=request.seed_evidence_ids,
             retrieved_at=datetime.now(timezone.utc),
         )
+
+
+class VectorEvidenceRetriever:
+    """Rank bounded, work/source-filtered DB candidates with stored cosine vectors.
+
+    The vector sidecar proposes supporting chunks; all candidate documents are
+    still hydrated and scoped by the relational repository. Unindexed new docs
+    use the existing lexical retriever until the incremental index catches up.
+    """
+
+    def __init__(
+        self, candidates: EvidenceCandidateRepository, vector_index: sqlite3.Connection,
+        query_embeddings: QueryEmbeddingModel,
+    ) -> None:
+        self.candidates = candidates
+        self.vector_index = vector_index
+        self.query_embeddings = query_embeddings
+        self._lock = threading.RLock()
+
+    async def retrieve(self, request: RetrievalRequest) -> RetrievedEvidence:
+        scoped_request = RetrievalRequest(**{
+            **request.__dict__, "semantic_candidate_scan": True,
+        })
+        documents = await self.candidates.fetch_candidates(scoped_request)
+        accepted_evidence_types = set(get_content_profile(request.content_type).accepted_evidence_types)
+        fields = requested_dictionary_fields(request)
+        subjects = fact_subjects(request.subject_title or request.query, request.menu_work_ids, fields,
+                                 article=bool(request.subject_title))
+        documents = tuple(
+            document for document in documents
+            if document.evidence_type in accepted_evidence_types
+            and (not fields or document.metadata.get("dataset") != "menu_dict" or subjects.accepts(document, fields))
+            and (not fields or document.metadata.get("dataset") == "menu_dict" or subjects.accepts_external(document))
+            and (not request.menu_work_ids or (
+                document.work_link_status is WorkLinkStatus.MATCHED
+                and bool(set(document.menu_work_ids).intersection(request.menu_work_ids))
+            ))
+            and _canonical_excluded_url(document.source_url) not in _canonical_excluded_urls(request.exclude_source_urls)
+        )
+        if not documents:
+            return RetrievedEvidence(
+                retrieval_id=f"ret_{uuid.uuid4().hex}", documents=(), chunks=(),
+                query=request.query, content_type=request.content_type,
+                menu_work_ids=request.menu_work_ids, seed_evidence_ids=request.seed_evidence_ids,
+                retrieved_at=datetime.now(timezone.utc), backend="vector_cosine",
+            )
+        query_vector = tuple(await self.query_embeddings.embed_query(request.query))
+        if len(query_vector) != 1024 or not all(math.isfinite(value) for value in query_vector):
+            raise ValueError("Query vector must contain 1024 finite values")
+        query_norm = math.sqrt(sum(value * value for value in query_vector))
+        if query_norm <= 0:
+            raise ValueError("Query vector cannot be zero")
+        document_map = {item.document_id: item for item in documents}
+        chunk_rows = await asyncio.to_thread(self._fetch_index_chunks, tuple(document_map))
+        if not chunk_rows:
+            return await DatabaseEvidenceRetriever(self.candidates).retrieve(request)
+        ranked: list[tuple[float, EvidenceChunk, EvidenceDocument]] = []
+        pinned = frozenset(request.corroborating_chunks)
+        current_chunks: dict[str, dict[str, EvidenceChunk]] = {}
+        for row in chunk_rows:
+            document = document_map.get(str(row["document_id"]))
+            if document is None:
+                continue
+            if row["chunk_id"] in pinned:
+                # An old vector can survive a source edit until the next index refresh.
+                # Rebuild the cited slice from the current relational source before reusing it.
+                if document.document_id not in current_chunks:
+                    current_chunks[document.document_id] = {
+                        c.chunk_id: c for c in chunk_document(document)
+                    }
+                original = current_chunks[document.document_id].get(row["chunk_id"])
+                if (original is None or original.text != row["chunk_text"]
+                        or original.source_url != row["source_url"] or original.source_id != row["source_id"]):
+                    continue
+            vector = struct.unpack("<1024f", row["vector_f32"])
+            vector_norm = math.sqrt(sum(value * value for value in vector))
+            if vector_norm <= 0:
+                continue
+            similarity = sum(left * right for left, right in zip(query_vector, vector, strict=True)) / (query_norm * vector_norm)
+            score = max(0.0, min(1.0, similarity))
+            ranked.append((score, EvidenceChunk(
+                chunk_id=str(row["chunk_id"]), evidence_id=str(row["document_id"]),
+                content_type=RagContentType(str(row["content_type"])),
+                title=str(row["title"]), text=str(row["chunk_text"]),
+                locator=str(row["locator"]), source_kind=str(row["source_kind"]),
+                source_index=int(row["source_index"]) if row["source_index"] is not None else None,
+                start_offset=int(row["start_offset"]), end_offset=int(row["end_offset"]),
+                source_id=str(row["source_id"]), source_url=str(row["source_url"]),
+                language=str(row["language"]),
+                published_at=datetime.fromisoformat(row["published_at"]) if row["published_at"] else None,
+                menu_work_ids=document.menu_work_ids, score=score,
+            ), document))
+        ranked.sort(key=lambda item: (
+            item[1].chunk_id not in pinned,
+            not _matches_dictionary_field(item[2], fields), -item[0], item[2].published_at is None,
+            -(item[2].published_at.timestamp()) if item[2].published_at else 0.0,
+            item[2].document_id, item[1].locator,
+        ))
+        picked: list[EvidenceChunk] = []
+        picked_docs: dict[str, EvidenceDocument] = {}
+        cast_seen = set()
+        for score, chunk, document in ranked:
+            if score < request.min_retrieval_score:
+                continue
+            cast_key = subjects.cast_key(document)
+            if cast_key is not None:
+                if cast_key in cast_seen:
+                    continue
+                cast_seen.add(cast_key)
+            picked.append(chunk)
+            picked_docs.setdefault(document.document_id, document)
+            if len(picked) >= request.top_k:
+                break
+        if not picked:
+            lexical = await DatabaseEvidenceRetriever(self.candidates).retrieve(request)
+            if lexical.chunks:
+                return lexical
+        return RetrievedEvidence(
+            retrieval_id=f"ret_{uuid.uuid4().hex}", documents=tuple(picked_docs.values()),
+            chunks=tuple(picked), query=request.query, content_type=request.content_type,
+            menu_work_ids=request.menu_work_ids, seed_evidence_ids=request.seed_evidence_ids,
+            retrieved_at=datetime.now(timezone.utc), backend="vector_cosine",
+        )
+
+    def _fetch_index_chunks(self, document_ids: tuple[str, ...]) -> list[sqlite3.Row]:
+        with self._lock:
+            self.vector_index.row_factory = sqlite3.Row
+            query_only = self.vector_index.execute("PRAGMA query_only").fetchone()
+            if query_only is None or int(query_only[0]) != 1:
+                raise PermissionError("Vector sidecar connection must be opened read-only")
+            metadata = dict(self.vector_index.execute("SELECT key,value FROM index_metadata"))
+            if (metadata.get("model") != "text-embedding-3-small"
+                    or metadata.get("dimensions") != "1024"
+                    or metadata.get("completed_at") is None):
+                raise RuntimeError("A completed 1024-dimension vector sidecar is required")
+            rows: list[sqlite3.Row] = []
+            for offset in range(0, len(document_ids), 400):
+                batch = document_ids[offset:offset + 400]
+                marks = ",".join("?" for _ in batch)
+                rows.extend(self.vector_index.execute(
+                    f"""SELECT c.chunk_id,c.document_id,c.content_type,c.title,c.source_url,
+                               c.language,c.source_kind,c.source_index,c.locator,c.start_offset,
+                               c.end_offset,c.chunk_text,c.source_id,c.published_at,v.vector_f32
+                        FROM evidence_chunk c JOIN embedding_vector v ON v.text_hash=c.text_hash
+                        WHERE c.document_id IN ({marks})""", batch,
+                ).fetchall())
+            return rows

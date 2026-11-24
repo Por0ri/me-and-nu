@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 import json
+import hashlib
 import unicodedata
 from urllib.parse import urlsplit
 
@@ -63,7 +64,7 @@ class WorkEntryRelation(StrEnum):
 
 @dataclass(frozen=True)
 class WorkRegistration:
-    """A source-supported new work candidate; storage assigns its ID atomically."""
+    """A source-supported unregistered-work candidate; it never assigns an ID."""
 
     name: str
     aliases: tuple[str, ...] = ()
@@ -163,6 +164,11 @@ class EvidenceDocument:
     parse_status: ParseStatus = ParseStatus.PARSED
     parse_error: str | None = None
     purge_at: datetime | None = None
+
+    @property
+    def content_hash(self) -> str:
+        excerpts = "\n".join(f"{item.locator or ''}\n{item.text}" for item in self.excerpts)
+        return hashlib.sha256(f"{self.body or ''}\n{excerpts}".encode("utf-8")).hexdigest()
 
     def __post_init__(self) -> None:
         if not self.document_id.strip() or not self.source_id.strip():

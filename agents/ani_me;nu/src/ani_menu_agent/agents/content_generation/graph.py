@@ -5,6 +5,9 @@ from langgraph.graph import END, START, StateGraph
 from ani_menu_agent.agents.content_generation.detail_writer import write_detail_body
 from ani_menu_agent.agents.content_generation.render_node import render_cards
 from ani_menu_agent.nodes import copy_writer, layout_director, repair_visual_assignments
+from ani_menu_agent.models import ContentPackage
+from ani_menu_agent.period_copy import episode_evidence_missing
+from ani_menu_agent.review_rules import make_issue
 from ani_menu_agent.state import ContentState
 
 
@@ -23,6 +26,9 @@ def _route_after_visual_repair(state: ContentState) -> str:
 
 
 def _route_generation_entry(state: ContentState) -> str:
+    if state.get("allow_llm") and state.get("package", {}).get("content_type") == "news":
+        if episode_evidence_missing(ContentPackage.model_validate(state["package"])):
+            return "missing_episode_notice"
     owners = _revision_owners(state)
     if state.get("needs_revision") and "copy_writer" in owners:
         return "copy_writer"
@@ -33,6 +39,12 @@ def _route_generation_entry(state: ContentState) -> str:
     if state.get("needs_revision") and "detail_writer" in owners:
         return "detail_writer"
     return "copy_writer"
+
+
+def _missing_episode_notice(state: ContentState) -> ContentState:
+    issue = make_issue(code="EPISODE_NOTICE_EVIDENCE_MISSING")
+    return {"status": "needs_crawler_update", "qa_report": [issue.model_dump(mode="json")],
+            "trace": [*state.get("trace", []), "missing_episode_notice"]}
 
 
 def _revision_owners(state: ContentState) -> set[str]:
@@ -51,17 +63,24 @@ def build_content_generation_agent():
     graph.add_node("visual_repair", repair_visual_assignments)
     graph.add_node("card_renderer", render_cards)
     graph.add_node("detail_writer", write_detail_body)
+    graph.add_node("missing_episode_notice", _missing_episode_notice)
+    graph.add_edge("missing_episode_notice", END)
     graph.add_conditional_edges(
         START,
         _route_generation_entry,
         {
+            "missing_episode_notice": "missing_episode_notice",
             "copy_writer": "copy_writer",
             "layout_director": "layout_director",
             "visual_repair": "visual_repair",
             "detail_writer": "detail_writer",
         },
     )
-    graph.add_edge("copy_writer", "layout_director")
+    graph.add_conditional_edges(
+        "copy_writer",
+        lambda state: END if state.get("status") == "needs_crawler_update" else "layout_director",
+        [END, "layout_director"],
+    )
     graph.add_conditional_edges(
         "layout_director",
         _route_after_layout,

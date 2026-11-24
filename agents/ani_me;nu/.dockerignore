@@ -21,7 +21,6 @@
 !config/source_type_map.json
 !data/
 !data/reference/
-!data/reference/agent_works.csv
 !data/reference/menu_work_aliases.csv
 !data/reference/menu_work_external_entries.csv
 !data/reference/menu_work_franchises.csv

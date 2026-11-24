@@ -7,6 +7,14 @@ from pydantic import BaseModel, Field, HttpUrl, model_validator
 from ani_menu_agent.models import ContentType
 
 
+class CharacterArtProfile(BaseModel):
+    """Names of one character on an official work's character gallery."""
+
+    names: list[str] = Field(min_length=1)
+    # For galleries whose headings are pictures, these are the reviewed nameplates.
+    nameplates: list[str] = Field(default_factory=list)
+
+
 class Source(BaseModel):
     """하나의 정보 출처."""
 
@@ -31,6 +39,7 @@ class Source(BaseModel):
     notes: str = ""
     work_title_ko: str | None = None
     work_title_original: str | None = None
+    character_art_profiles: list[CharacterArtProfile] = Field(default_factory=list)
     allowed_asset_hosts: list[str] = Field(default_factory=list)
     feed_url: HttpUrl | None = None
     min_interval_seconds: float = Field(default=2.0, ge=0.0, le=3600.0)

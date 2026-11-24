@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Mapping, Protocol
 
 from ani_rag.models import (
     EvidenceDocument, WorkEntryFormat, WorkEntryRelation, WorkLinkStatus, WorkRegistration,
 )
+from ani_rag.settings import EvergreenSource
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,7 @@ class WorkIdentity:
 
 @dataclass(frozen=True)
 class WorkResolution:
-    """Resolution result aligned with ani_rag's local menu_work_id snapshot."""
+    """Existing-catalog resolution plus optional unregistered-work evidence."""
 
     status: WorkLinkStatus
     menu_work_ids: tuple[int, ...] = ()
@@ -52,7 +54,7 @@ class WorkResolution:
         elif self.menu_work_ids or self.candidate_menu_work_ids:
             raise ValueError("Unresolved resolutions cannot carry work IDs")
         if self.new_work is not None and self.status is not WorkLinkStatus.UNRESOLVED:
-            raise ValueError("A proposed new work must remain unresolved until storage assigns its ID")
+            raise ValueError("An unregistered work candidate must remain unresolved")
         if any(work_id <= 0 for work_id in (*self.menu_work_ids, *self.candidate_menu_work_ids)):
             raise ValueError("Work IDs must be positive integers")
         if self.entry_year is not None and not 1900 <= self.entry_year <= 2100:
@@ -65,7 +67,7 @@ class WorkCatalogResolver(Protocol):
     """Resolve against the local snapshot, escalating misses to source-bound identification."""
 
     async def resolve(self, identity: WorkIdentity) -> WorkResolution:
-        """Return an existing match, supported new-work candidate, or unresolved result."""
+        """Return an existing match or unresolved result with optional candidate evidence."""
 
 
 @dataclass(frozen=True)
@@ -79,11 +81,44 @@ class StoredEvidenceReference:
             raise ValueError("Evidence disposition must be inserted or duplicate")
 
 
+@dataclass(frozen=True)
+class SourceReadClaim:
+    claim_id: str
+    acquired: bool
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.claim_id.strip():
+            raise ValueError("Source read claim needs an ID")
+        if self.acquired and self.reason is not None:
+            raise ValueError("An acquired source read claim cannot have a skip reason")
+        if not self.acquired and not self.reason:
+            raise ValueError("A skipped source read claim needs a reason")
+
+
 class EvidenceRepository(Protocol):
     """Persistence/outbox port; adapter must commit the document and pending generation row atomically."""
+
+    async def register_source(self, source: EvergreenSource, *, only_if_missing: bool = False) -> None:
+        """Persist the approved source before the first read claim."""
 
     async def upsert_and_schedule_generation(
         self, document: EvidenceDocument, *, retrieval_query: str | None = None,
         schedule_generation: bool = True,
     ) -> StoredEvidenceReference:
         """Upsert canonical evidence and optionally queue generation atomically."""
+
+    async def claim_source_read(
+        self, *, source_id: str, source_native_id: str | None, source_url: str,
+        now: datetime, refresh_after_seconds: int, lease_seconds: int = 900,
+    ) -> SourceReadClaim:
+        """Atomically claim a URL before MCP read, or report duplicate/not-due/in-flight."""
+
+    async def complete_source_read(
+        self, claim_id: str, *, source_native_id: str | None, document_id: str | None,
+        content_hash: str, checked_at: datetime, refresh_after_seconds: int,
+    ) -> None:
+        """Persist successful page identity and the next time it may be re-read."""
+
+    async def release_source_read(self, claim_id: str, *, error_code: str) -> None:
+        """Release a failed read lease without persisting response bodies or secrets."""

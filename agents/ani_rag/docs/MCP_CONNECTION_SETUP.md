@@ -2,6 +2,8 @@
 
 Updated 2026-11-08 after the project transport connected to both public endpoint inventories, made one domain-restricted `firecrawl_search`, and made one bounded `firecrawl_scrape` call for the Frieren official character index. This does not install the separate ChatGPT Firecrawl app or start background workers.
 
+**Current implementation update (2026-11-23):** Wikidata structured search/read parsing is connected to the crawler entry point. Recurring plans are configured in `config/automatic_plans.json`; the crawler registers them when started. `frieren_official` remains a draft and is excluded.
+
 ## Recommended two-server pilot
 
 Use two shared servers for different jobs:
@@ -16,7 +18,7 @@ These aliases are now configured project-locally in `config/mcp_servers.json` an
 - Firecrawl keyless inventory: `firecrawl_scrape`, `firecrawl_search`, `firecrawl_parse`.
 - Wikidata: `search_items`, `search_properties`, `get_statements`, `get_statement_values`, `get_instance_and_subclass_hierarchy`, `execute_sparql`.
 
-The ani_rag contracts use the `search` and `read` operation names, while `tool_bindings` stores exact tool names returned by the live server. `FirecrawlMCPAdapter` supports bounded `firecrawl_search` requests using Firecrawl's `includeDomains` and independently drops results outside exact `allowed_hosts`; reads remain one page at a time. The generic transport can list Wikidata tools, but structured Wikidata calls are not yet implemented. Discover a property with `search_properties` before making a statement-values request; do not assume QIDs/PIDs.
+The ani_rag contracts use the `search` and `read` operation names, while `tool_bindings` stores exact tool names returned by the live server. `FirecrawlMCPAdapter` supports bounded `firecrawl_search` requests using Firecrawl's `includeDomains` and independently drops results outside exact `allowed_hosts`; reads remain one page at a time. `WikidataStructuredMCPAdapter` now calls `search_items` and `get_statement_values`; because the latter accepts one property per call, the adapter requests each explicitly configured property separately and preserves values, ranks, qualifiers, and references. Its result parser is covered by local unit tests. Discover properties with `search_properties` before registering a collection request; do not invent QIDs/PIDs.
 
 ## Example MCP host configuration
 
@@ -67,7 +69,7 @@ After that, start the `ani_rag` process from the same PowerShell window. Close t
 ## What remains before source activation
 
 1. The project-local aliases `firecrawl` and `wikidata` have both returned their live tool inventories through the new transport. The separate ChatGPT Firecrawl app is not installed and is not required by this project client.
-2. The URL adapter supports bounded host-filtered search and one-page reads. Structured Wikidata response parsing remains to be implemented.
+2. The URL adapter supports bounded host-filtered search and one-page reads. `WikidataStructuredMCPAdapter` supports the configured structured search and read tools. The crawler loads recurring plans from `config/automatic_plans.json` at startup; this does not start a worker by itself.
 3. The Frieren read returned an official-site title and Japanese character index on the allowlisted host. Firecrawl did not return a redirect chain; the adapter therefore sets `redirects_verified=false`, and the collector will reject it for storage.
 4. Keep `frieren_official` at `draft` until the configured source read can attest each redirect target and final URL (or a safe, verified URL strategy is implemented), and the resulting evidence passes the project collection contract.
 

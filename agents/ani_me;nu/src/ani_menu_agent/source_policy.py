@@ -68,7 +68,7 @@ def validate_generation_sources(
     source_records = {str(_value(source, "id", "")): source for source in sources}
     for source_id, record in source_records.items():
         configured = registry.get(source_id)
-        if configured is None:
+        if configured is None or configured.category == "official_character_art":
             continue
         source_url = str(_value(record, "url", ""))
         is_federated_trend = (
