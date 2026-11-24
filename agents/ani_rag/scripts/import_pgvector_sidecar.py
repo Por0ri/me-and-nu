@@ -2,6 +2,7 @@
 
 Does not recreate embeddings, start workers, or connect to the service database.
 The DSN is read from one named environment variable and is never printed.
+Both inputs must be frozen, WAL/journal-free backup snapshots in either mode.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ def main() -> int:
     parser.add_argument("--expected-database", required=True)
     parser.add_argument("--batch-size", type=int, default=2000)
     parser.add_argument("--immutable-snapshot", action="store_true",
-                        help="Only for verified frozen handoff files; never use with a live SQLite DB")
+                        help="Use SQLite immutable reads for verified frozen files; both modes reject recovery data and changing inputs")
     args = parser.parse_args()
     database_url = os.environ.get(args.database_url_env)
     if not database_url:

@@ -33,6 +33,58 @@ CHUNK_FIELDS = (
 VECTOR_FIELDS = ("text_hash", "model", "dimensions", "vector_f32", "input_tokens", "created_at")
 
 
+class _ImportInputChanged(ValueError):
+    """The files no longer describe the frozen input bound to this import."""
+
+
+def _assert_no_recovery_data(path: Path) -> None:
+    for suffix in ("-wal", "-journal"):
+        journal = Path(str(path) + suffix)
+        if journal.exists() and journal.stat().st_size:
+            raise _ImportInputChanged(
+                "Frozen snapshot has nonempty WAL/journal recovery data; "
+                "prepare a consistent backup snapshot, do not delete recovery files"
+            )
+
+
+class _ImportInputs:
+    """Bind main-file hashes only to WAL-free, unchanged initial-import inputs.
+
+    Stat checks are cheap enough for every batch. Full hashes are checked again
+    before either success return. In ordinary mode SQLite read transactions also
+    pin the views; immutable mode relies on these checks and the frozen-file
+    contract instead of SQLite locks. No input file is written or checkpointed.
+    """
+
+    def __init__(self, source_path: Path, index_path: Path):
+        self.paths = (source_path, index_path)
+        self.stamps = self._read_stamps()
+        self.hashes = tuple(file_sha256(path) for path in self.paths)
+        self.check()
+
+    def _read_stamps(self):
+        stamps = []
+        try:
+            for path in self.paths:
+                _assert_no_recovery_data(path)
+                stat = path.stat()
+                stamps.append((stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+        except OSError as error:
+            raise _ImportInputChanged("Initial import snapshot is no longer available") from error
+        return tuple(stamps)
+
+    def check(self) -> None:
+        if self._read_stamps() != self.stamps:
+            raise _ImportInputChanged("Initial import snapshot changed during transfer")
+
+    def verify(self) -> None:
+        self.check()
+        hashes = tuple(file_sha256(path) for path in self.paths)
+        self.check()
+        if hashes != self.hashes:
+            raise _ImportInputChanged("Initial import snapshot hash changed during transfer")
+
+
 def connect_postgres(database_url: str, *, expected_database: str, read_only: bool = False):
     """Open an explicitly named RAG-only database without printing its DSN."""
     if not re.fullmatch(r"menu_rag_vector(?:_[a-z0-9]+)*", expected_database):
@@ -66,10 +118,7 @@ def open_sqlite_readonly(path: Path, *, immutable_snapshot: bool = False) -> sql
     """
     path = path.resolve(strict=True)
     if immutable_snapshot:
-        for suffix in ("-wal", "-journal"):
-            journal = Path(str(path) + suffix)
-            if journal.exists() and journal.stat().st_size:
-                raise ValueError("Frozen snapshot has nonempty WAL/journal recovery data")
+        _assert_no_recovery_data(path)
     options = "?mode=ro&immutable=1" if immutable_snapshot else "?mode=ro"
     connection = sqlite3.connect(path.as_uri() + options, uri=True, timeout=60)
     connection.row_factory = sqlite3.Row
@@ -319,6 +368,34 @@ class PostgresVectorStore:
         ).fetchone()
         return {key: int(value) for key, value in row.items()}
 
+    @contextmanager
+    def _watch_import_inputs(self, inputs: _ImportInputs):
+        """Keep changed partial imports unreadable, even if a callback raises."""
+        try:
+            yield
+        except BaseException as error:
+            changed = error if isinstance(error, _ImportInputChanged) else None
+            if changed is None:
+                try:
+                    inputs.check()
+                except _ImportInputChanged as detected:
+                    changed = detected
+            if changed is not None:
+                with self.connection.transaction():
+                    exists = self.connection.execute(
+                        "SELECT to_regclass('rag_vector.index_metadata') AS name"
+                    ).fetchone()["name"]
+                    metadata = _metadata(self.connection) if exists else {}
+                    # Preserve a valid completed destination and any unrelated
+                    # import. Only poison partial rows bound to this input pair.
+                    if (metadata.get("migration_status") == "loading"
+                            and metadata.get("import_source_sha256") == inputs.hashes[0]
+                            and metadata.get("import_index_sha256") == inputs.hashes[1]):
+                        _set_metadata(self.connection, {"migration_status": "input_changed"})
+                if changed is not error:
+                    raise changed from error
+            raise
+
     def _stage_vectors(self, rows: Sequence[Mapping[str, Any]]) -> int:
         if not rows:
             return 0
@@ -372,85 +449,98 @@ class PostgresVectorStore:
     def import_sqlite(self, *, source_path: Path, index_path: Path, batch_size: int = 2000,
                       immutable_snapshot: bool = False,
                       progress: Callable[[Mapping[str, Any]], None] | None = None) -> dict[str, Any]:
-        """Resume an immutable handoff. Original metadata/checkpoints are preserved."""
+        """Resume a frozen, WAL-free handoff, regardless of SQLite open mode."""
         if not 1 <= batch_size <= 10000:
             raise ValueError("batch_size must be between 1 and 10000")
         source_path, index_path = source_path.resolve(strict=True), index_path.resolve(strict=True)
-        source_sha, index_sha = file_sha256(source_path), file_sha256(index_path)
+        inputs = _ImportInputs(source_path, index_path)
+        source_sha, index_sha = inputs.hashes
         with closing(open_sqlite_readonly(source_path, immutable_snapshot=immutable_snapshot)) as source, \
-                closing(open_sqlite_readonly(index_path, immutable_snapshot=immutable_snapshot)) as index:
-            try:
-                metadata = dict(index.execute("SELECT key,value FROM index_metadata").fetchall())
-                _validate_metadata(metadata)
-                # Compare immutable IDs and source links before writing any target rows.
-                _validate_source_links(source, index)
-                high_water = int(source.execute("SELECT COALESCE(MAX(raw_document_id),0) FROM rag_document").fetchone()[0])
-                reference_high_water = int(source.execute("SELECT COALESCE(MAX(raw_document_id),0) FROM rag_document "
-                                                          "WHERE evidence_type='reference_fact'").fetchone()[0])
-                if int(metadata.get("last_source_raw_document_id", "0")) > reference_high_water:
-                    raise ValueError("Index checkpoint exceeds the source snapshot")
-                original_counts = {
-                    "vectors": index.execute("SELECT count(*) FROM embedding_vector").fetchone()[0],
-                    "chunks": index.execute("SELECT count(*) FROM evidence_chunk").fetchone()[0],
-                }
-                with self.locked():
-                    self.initialize()
-                    existing = _metadata(self.connection)
-                    if existing:
-                        if (existing.get("import_source_sha256") != source_sha
-                                or existing.get("import_index_sha256") != index_sha):
-                            raise ValueError("Destination is bound to a different source/index snapshot")
-                        if existing.get("migration_status") == "complete":
-                            return {"status": "already_imported", **self.counts(), "model_calls": 0}
-                        if existing.get("import_cursor_format") != "sqlite_rowid_v1":
-                            raise RuntimeError("Incomplete import uses an unsupported transfer cursor format")
-                    else:
-                        if any(self.counts().values()):
-                            raise ValueError("Refusing to adopt nonempty unbound vector tables")
-                        with self.connection.transaction():
-                            _set_metadata(self.connection, {
-                                **metadata, "adapter_schema_version": "1", "migration_status": "loading",
-                                "import_cursor_format": "sqlite_rowid_v1",
-                                "import_source_sha256": source_sha, "import_index_sha256": index_sha,
-                                "bound_source_path": str(source_path), "source_prefix_through": str(high_water),
-                                "source_prefix_sha256": _source_prefix(source, high_water),
-                                "import_started_at": _now(),
-                            })
-                    for table, fields, save in (
-                        ("embedding_vector", VECTOR_FIELDS, self._stage_vectors),
-                        ("evidence_chunk", CHUNK_FIELDS, self._stage_chunks),
-                    ):
-                        # The SHA-bound snapshot cannot change rowids. Scanning
-                        # them sequentially avoids random blob/page reads through
-                        # the text-hash/chunk-ID secondary indexes on bind mounts.
-                        cursor_key = "import_after_rowid_" + table
-                        saved_cursor = _metadata(self.connection).get(cursor_key)
-                        after = int(saved_cursor) if saved_cursor is not None else None
-                        while True:
-                            where = " WHERE rowid>?" if after is not None else ""
-                            parameters = (after, batch_size) if after is not None else (batch_size,)
-                            rows = index.execute(
-                                f"SELECT rowid AS _import_rowid,{','.join(fields)} FROM {table}"
-                                f"{where} ORDER BY rowid LIMIT ?", parameters,
-                            ).fetchall()
-                            if not rows:
-                                break
-                            after = int(rows[-1]["_import_rowid"])
-                            with self.connection.transaction():
-                                inserted = save(rows)
-                                _set_metadata(self.connection, {cursor_key: str(after)})
-                            if progress:
-                                progress({"phase": table, "inserted": inserted})
-                    actual = self.counts()
-                    if actual != original_counts:
-                        raise ValueError("Imported table counts differ from the supplied sidecar")
+                closing(open_sqlite_readonly(index_path, immutable_snapshot=immutable_snapshot)) as index, \
+                _sqlite_snapshot(source), _sqlite_snapshot(index):
+            # BEGIN is deferred: actually read both files to pin ordinary
+            # SQLite snapshots before validating or transferring any rows.
+            source.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            index.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            inputs.check()
+            metadata = dict(index.execute("SELECT key,value FROM index_metadata").fetchall())
+            _validate_metadata(metadata)
+            # Compare immutable IDs and source links before writing any target rows.
+            _validate_source_links(source, index)
+            high_water = int(source.execute("SELECT COALESCE(MAX(raw_document_id),0) FROM rag_document").fetchone()[0])
+            reference_high_water = int(source.execute("SELECT COALESCE(MAX(raw_document_id),0) FROM rag_document "
+                                                      "WHERE evidence_type='reference_fact'").fetchone()[0])
+            if int(metadata.get("last_source_raw_document_id", "0")) > reference_high_water:
+                raise ValueError("Index checkpoint exceeds the source snapshot")
+            original_counts = {
+                "vectors": index.execute("SELECT count(*) FROM embedding_vector").fetchone()[0],
+                "chunks": index.execute("SELECT count(*) FROM evidence_chunk").fetchone()[0],
+            }
+            with self.locked(), self._watch_import_inputs(inputs):
+                inputs.check()
+                self.initialize()
+                existing = _metadata(self.connection)
+                if existing:
+                    if (existing.get("import_source_sha256") != source_sha
+                            or existing.get("import_index_sha256") != index_sha):
+                        raise ValueError("Destination is bound to a different source/index snapshot")
+                    if existing.get("migration_status") == "complete":
+                        inputs.verify()
+                        return {"status": "already_imported", **self.counts(), "model_calls": 0}
+                    if existing.get("migration_status") != "loading":
+                        raise RuntimeError("Import input changed previously; preserve this destination and use a fresh dedicated database")
+                    if existing.get("import_cursor_format") != "sqlite_rowid_v1":
+                        raise RuntimeError("Incomplete import uses an unsupported transfer cursor format")
+                else:
+                    if any(self.counts().values()):
+                        raise ValueError("Refusing to adopt nonempty unbound vector tables")
                     with self.connection.transaction():
-                        _set_metadata(self.connection, {"migration_status": "complete", "import_completed_at": _now()})
-                    return {"status": "imported", **actual, "model_calls": 0,
-                            "source_sha256": source_sha, "index_sha256": index_sha}
-            finally:
-                source.close()
-                index.close()
+                        _set_metadata(self.connection, {
+                            **metadata, "adapter_schema_version": "1", "migration_status": "loading",
+                            "import_cursor_format": "sqlite_rowid_v1",
+                            "import_source_sha256": source_sha, "import_index_sha256": index_sha,
+                            "bound_source_path": str(source_path), "source_prefix_through": str(high_water),
+                            "source_prefix_sha256": _source_prefix(source, high_water),
+                            "import_started_at": _now(),
+                        })
+                for table, fields, save in (
+                    ("embedding_vector", VECTOR_FIELDS, self._stage_vectors),
+                    ("evidence_chunk", CHUNK_FIELDS, self._stage_chunks),
+                ):
+                    # The SHA-bound snapshot cannot change rowids. Scanning
+                    # them sequentially avoids random blob/page reads through
+                    # the text-hash/chunk-ID secondary indexes on bind mounts.
+                    cursor_key = "import_after_rowid_" + table
+                    saved_cursor = _metadata(self.connection).get(cursor_key)
+                    after = int(saved_cursor) if saved_cursor is not None else None
+                    while True:
+                        inputs.check()
+                        where = " WHERE rowid>?" if after is not None else ""
+                        parameters = (after, batch_size) if after is not None else (batch_size,)
+                        rows = index.execute(
+                            f"SELECT rowid AS _import_rowid,{','.join(fields)} FROM {table}"
+                            f"{where} ORDER BY rowid LIMIT ?", parameters,
+                        ).fetchall()
+                        inputs.check()
+                        if not rows:
+                            break
+                        after = int(rows[-1]["_import_rowid"])
+                        with self.connection.transaction():
+                            inserted = save(rows)
+                            _set_metadata(self.connection, {cursor_key: str(after)})
+                            inputs.check()
+                        if progress:
+                            progress({"phase": table, "inserted": inserted})
+                        inputs.check()
+                actual = self.counts()
+                if actual != original_counts:
+                    raise ValueError("Imported table counts differ from the supplied sidecar")
+                inputs.verify()
+                with self.connection.transaction():
+                    _set_metadata(self.connection, {"migration_status": "complete", "import_completed_at": _now()})
+                    inputs.check()
+                return {"status": "imported", **actual, "model_calls": 0,
+                        "source_sha256": source_sha, "index_sha256": index_sha}
 
     def update_from_source(
         self, source: sqlite3.Connection, *,

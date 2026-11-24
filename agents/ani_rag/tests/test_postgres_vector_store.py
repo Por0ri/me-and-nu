@@ -227,7 +227,7 @@ def test_interrupted_import_resumes_without_duplicates(pg, snapshot):
 def test_mismatched_snapshot_link_rejected_before_target_creation(pg, snapshot, mismatch):
     connection, _, _ = pg
     source, index, _ = snapshot
-    with sqlite3.connect(index) as db:
+    with closing(sqlite3.connect(index)) as db, db:
         if mismatch == "document":
             db.execute("UPDATE evidence_chunk SET document_id='absent-document'")
         elif mismatch == "source":
@@ -338,7 +338,7 @@ def test_pg_cosine_matches_stored_float32_python_reference(pg, snapshot, values)
     connection, _, _ = pg
     source, index, _ = snapshot
     vector = (*values, *([0.0] * 1022))
-    with sqlite3.connect(index) as db:
+    with closing(sqlite3.connect(index)) as db, db:
         db.execute("UPDATE embedding_vector SET vector_f32=?", (struct.pack("<1024f", *vector),))
     store = PostgresVectorStore(connection)
     store.import_sqlite(source_path=source, index_path=index)
