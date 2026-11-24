@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import (
     ConsentHistory, Entity, EntityTag, NotificationSetting, OnboardingAnswersRecord,
-    PreferenceTag, Tap, TapEntity, TapPreferenceTag, TapTopic, Topic, UserAccount,
+    PreferenceTag, Tap, TapConsumptionType, TapEntity, TapPreferenceTag, TapTopic, Topic, UserAccount,
 )
 from app.schemas.onboarding import OnboardingAnswersV2, OnboardingRequest, PreferenceOptionsRequest
 from app.services.cursor import encode_cursor
@@ -24,7 +24,7 @@ from test_oauth_postgres_flow import (
 def v2_answers(**changes):
     return {
         "version": 2, "favoriteEntityIds": [11, 12], "preferenceTagIds": [101, 103],
-        "consumptionType": "world", **changes,
+        "consumptionTypes": ["world"], **changes,
     }
 
 
@@ -45,7 +45,11 @@ def payload(answers):
     ("preferenceTagIds", [101, 101]), ("preferenceTagIds", ["101"]),
     ("preferenceTagIds", [False]), ("preferenceTagIds", [0]),
     ("consumptionType", []), ("consumptionType", "releases"),
-    ("consumptionType", None), ("version", 1), ("version", "2"),
+    ("consumptionType", None), ("consumptionType", "news"),      # rank 1 is world
+    ("consumptionTypes", []), ("consumptionTypes", ["ost", "ost"]), ("consumptionTypes", ["releases"]),
+    ("consumptionTypes", None), ("consumptionTypes", "ost"),
+    ("consumptionTypes", ["world", "relationships", "ost", "goods", "events", "news", "world"]),
+    ("version", 1), ("version", "2"),
     ("version", 2.0), ("version", None),
 ])
 def test_v2_rejects_invalid_values_with_clean_field_locations(field, invalid):
@@ -54,7 +58,7 @@ def test_v2_rejects_invalid_values_with_clean_field_locations(field, invalid):
     assert all(error["loc"][:2] == ("answers", field) for error in caught.value.errors())
 
 
-@pytest.mark.parametrize("field", ["favoriteEntityIds", "preferenceTagIds", "consumptionType"])
+@pytest.mark.parametrize("field", ["favoriteEntityIds", "preferenceTagIds", "consumptionTypes"])
 def test_v2_requires_each_answer(field):
     answers = v2_answers()
     del answers[field]
@@ -101,7 +105,8 @@ def v2_flow(onboarding_flow):
     metadata = MetaData()
     # Existing table copies resolve composite FKs without changing original
     # model metadata. Only new catalogue/selection tables are created here.
-    for model in (UserAccount, Topic, Tap, Entity, PreferenceTag, EntityTag, TapEntity, TapPreferenceTag):
+    for model in (UserAccount, Topic, Tap, Entity, PreferenceTag, EntityTag, TapEntity, TapPreferenceTag,
+                  TapConsumptionType):
         table = model.__table__.to_metadata(metadata)
         for column in table.primary_key.columns:
             if len(table.primary_key.columns) == 1 and isinstance(column.type, Integer):
@@ -271,13 +276,25 @@ def test_search_candidates_and_completion_keep_topic_not_found(v2_flow, topic_id
     assert_no_onboarding_writes(flow)
 
 
-@pytest.mark.parametrize("consumption_type", ["world", "relationships", "ost", "goods", "events", "news"])
-def test_v2_completion_atomically_persists_selections_and_rotates_session(v2_flow, consumption_type):
+def ranking_rows(flow):
+    with Session(flow.engine) as session:
+        return [tuple(row) for row in session.execute(
+            select(TapConsumptionType.rank, TapConsumptionType.consumption_type).order_by(TapConsumptionType.rank))]
+
+
+@pytest.mark.parametrize("ranking", [
+    *([answer] for answer in ("world", "relationships", "ost", "goods", "events", "news")),
+    ["ost", "news", "world"],
+    ["news", "events", "goods", "ost", "relationships", "world"],    # all six, tapped order kept (not sorted)
+])
+def test_v2_completion_atomically_persists_selections_and_rotates_session(v2_flow, ranking):
     flow = v2_flow
+    consumption_type = ranking[0]
     csrf, pending_token = pending_onboarding(flow)
-    response = signup_request(flow, csrf, v2_answers(consumptionType=consumption_type))
+    response = signup_request(flow, csrf, v2_answers(consumptionTypes=ranking))
     assert response.status_code == 201, response.text
-    assert response.json()["answers"] == v2_answers(consumptionType=consumption_type)
+    assert response.json()["answers"] == {**v2_answers(consumptionTypes=ranking), "consumptionType": consumption_type}
+    assert ranking_rows(flow) == list(enumerate(ranking, start=1))
     assert response.json()["activeTopic"]["subtopicIds"] == []
     assert flow.client.cookies.get(settings.session_cookie_name) != pending_token
     assert flow.client.get("/api/v1/auth/session").json()["sessionState"] == "active"
@@ -289,6 +306,28 @@ def test_v2_completion_atomically_persists_selections_and_rotates_session(v2_flo
         assert session.scalar(select(func.count()).select_from(TapTopic)) == 0
         assert session.scalar(select(func.count()).select_from(ConsentHistory)) == 3
     assert signup_request(flow, csrf, v2_answers()).status_code == 409
+
+
+def test_v2_completion_still_takes_one_consumption_type_from_the_older_screen(v2_flow):
+    # The deployed screens send one consumptionType until the ranking screen ships (and on main until its release).
+    flow = v2_flow
+    csrf, _ = pending_onboarding(flow)
+    answers = {**{k: v for k, v in v2_answers().items() if k != "consumptionTypes"}, "consumptionType": "ost"}
+    response = signup_request(flow, csrf, answers)
+    assert response.status_code == 201, response.text
+    assert response.json()["answers"]["consumptionType"] == "ost"       # the older screen checks this value
+    assert response.json()["answers"]["consumptionTypes"] == ["ost"]
+    assert ranking_rows(flow) == [(1, "ost")]
+    with Session(flow.engine) as session:
+        assert session.scalar(select(OnboardingAnswersRecord.consumption_type)) == "ost"
+
+
+def test_v2_ranking_and_its_first_answer_must_agree():
+    agreed = OnboardingAnswersV2.model_validate(v2_answers(consumptionTypes=["ost", "news"], consumptionType="ost"))
+    assert (agreed.consumption_types, agreed.consumption_type) == (["ost", "news"], "ost")
+    with pytest.raises(ValidationError) as caught:
+        OnboardingAnswersV2.model_validate(v2_answers(consumptionTypes=["ost", "news"], consumptionType="news"))
+    assert [error["loc"] for error in caught.value.errors()] == [("consumptionType",)]
 
 
 def add_chips(flow, kind, tag_ids):

@@ -195,7 +195,7 @@ async function checkOnboardingEntry(browser) {
     await page.getByRole('checkbox', { name: '판타지', exact: true }).check();
     await page.getByRole('checkbox', { name: '우정', exact: true }).check();
     await page.getByRole('button', { name: '장르·소재 선택 완료', exact: true }).click();
-    await page.getByRole('radio', { name: '설정과 세계관을 파고든다', exact: true }).check();
+    await page.getByRole('checkbox', { name: '설정•세계관과 해석을 파고든다', exact: true }).check();
     await page.getByRole('button', { name: '선택 완료', exact: true }).click();
     await page.evaluate(() => {
       window.duplicateEntryLoading = false;

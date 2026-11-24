@@ -71,7 +71,7 @@ async def onboarding_preference_options(
     status_code=201,
     response_model=OnboardingResponse,
     summary="회원 온보딩 일괄 완료",
-    description="onboarding_pending 세션과 X-CSRF-Token이 필요합니다. 닉네임·동의·최초 Topic·답변·알림 설정을 하나의 트랜잭션으로 저장하고 세션을 교체합니다. 닉네임은 2~20자 한글·영문·숫자(띄어쓰기·특수문자 제외)이며, 온보딩을 마친 다른 회원이 이미 쓰면 409 NICKNAME_TAKEN입니다. answers.version=2는 favoriteEntityIds 1~5개, preferenceTagIds 장르와 소재 각각 최소 1개(총 최소 2개, 종류별 최대 7개), consumptionType 1개를 받습니다. 현재 카탈로그로 재검증하며 Q2는 같은 Topic의 활성 장르·소재 칩이어야 합니다. 버전 없는 기존 answers:{q1,q2}는 v1로 유지하고 두 형식의 혼합은 거절합니다. 생년월일 정책은 별도 결정 예정이며 이번 변경은 기존 birthDate 거절 계약을 유지합니다. birthDate, profileImageId, subtopicIds는 받지 않고 세부 관심사를 자동 구독하지 않습니다. 완료 후 GET /auth/session을 다시 호출하세요.",
+    description="onboarding_pending 세션과 X-CSRF-Token이 필요합니다. 닉네임·동의·최초 Topic·답변·알림 설정을 하나의 트랜잭션으로 저장하고 세션을 교체합니다. 닉네임은 2~20자 한글·영문·숫자(띄어쓰기·특수문자 제외)이며, 온보딩을 마친 다른 회원이 이미 쓰면 409 NICKNAME_TAKEN입니다. answers.version=2는 favoriteEntityIds 1~5개, preferenceTagIds 장르와 소재 각각 최소 1개(총 최소 2개, 종류별 최대 7개), consumptionTypes 1~6개(누른 순서가 순위, 중복 불가)를 받습니다. 예전 화면의 consumptionType 1개도 받아 그 하나짜리 순위로 저장하고, 둘 다 보내면 consumptionType이 1순위와 같아야 합니다. 응답 answers에는 consumptionTypes(보낸 순서 그대로)와 1순위 consumptionType이 같이 들어갑니다. 현재 카탈로그로 재검증하며 Q2는 같은 Topic의 활성 장르·소재 칩이어야 합니다. 버전 없는 기존 answers:{q1,q2}는 v1로 유지하고 두 형식의 혼합은 거절합니다. 생년월일 정책은 별도 결정 예정이며 이번 변경은 기존 birthDate 거절 계약을 유지합니다. birthDate, profileImageId, subtopicIds는 받지 않고 세부 관심사를 자동 구독하지 않습니다. 완료 후 GET /auth/session을 다시 호출하세요.",
     responses={
         **COMMON_ERRORS,
         201: {"description": "온보딩 완료"},

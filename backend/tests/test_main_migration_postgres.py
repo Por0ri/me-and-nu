@@ -27,12 +27,15 @@ from app.db.migration_policy import SERVICE_SCHEMA_REVISION
 
 
 BASE_REVISION = "b7d4e2a9c601"
-EXPECTED_TARGET = "94d2da693c10"
+EXPECTED_TARGET = "4dba45de1ad1"
 BACKEND = Path(__file__).resolve().parents[1]
 DEBATE_TABLES = {
     "debate", "debate_work", "debate_vote", "debate_vote_ticket", "debate_side",
     "debate_member", "debate_message", "debate_notification", "debate_search_log",
 }
+# 4dba45de1ad1 (onboarding Q3 ranking) adds one more, empty table after the debate tables.
+Q3_RANKING_TABLES = {"tap_consumption_type"}
+NEW_TABLES = DEBATE_TABLES | Q3_RANKING_TABLES
 SEEDED_TABLES = {
     "user_account", "auth_session", "admin_account", "admin_action_log", "topic",
     "content", "content_slide", "tap", "recommendation_round", "recommendation_item",
@@ -226,7 +229,7 @@ def test_main_upgrade_preserves_existing_data_and_enables_debate_notification(mi
     """)
     with pg.engine.begin() as db:
         before_tables = table_names(db, pg.schema) - {"alembic_version"}
-        assert not before_tables & DEBATE_TABLES
+        assert not before_tables & NEW_TABLES
         before = snapshot(db, pg.schema, before_tables)
         assert SEEDED_TABLES <= before_tables
         assert all(before[name][0] for name in SEEDED_TABLES), "Preservation must cover nonempty existing tables"
@@ -239,7 +242,7 @@ def test_main_upgrade_preserves_existing_data_and_enables_debate_notification(mi
         pg.config.attributes["connection"] = db
         command.upgrade(pg.config, SERVICE_SCHEMA_REVISION)
         assert db.scalar(text("SELECT version_num FROM alembic_version")) == SERVICE_SCHEMA_REVISION
-        assert table_names(db, pg.schema) - {"alembic_version"} == before_tables | DEBATE_TABLES
+        assert table_names(db, pg.schema) - {"alembic_version"} == before_tables | NEW_TABLES
         after = snapshot(db, pg.schema, before_tables)
         assert after == before, "Existing table rows or canonical hashes changed during the upgrade"
         assert sequence_snapshot(db, pg.schema, sequences) == sequences
@@ -248,7 +251,7 @@ def test_main_upgrade_preserves_existing_data_and_enables_debate_notification(mi
         )).one()
         assert bytes(image) == SLIDE_BYTES
         assert hashlib.sha256(bytes(image)).hexdigest() == stored_hash
-        for name in sorted(DEBATE_TABLES):
+        for name in sorted(NEW_TABLES):
             assert db.scalar(text("SELECT count(*) FROM " + relation_name(name))) == 0
         db.execute(notification_sql, {"notification_id": 1601, "kind": "debate_opened"})
         assert db.scalar(text("SELECT notification_type FROM notification WHERE notification_id=1601")) == "debate_opened"

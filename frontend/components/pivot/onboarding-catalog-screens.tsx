@@ -6,6 +6,8 @@ import { type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
 import { MAX_PREFERENCE_TAGS_PER_KIND, selectedPreferenceCount, canAdvance, selectionKey, type OnboardingAction, type OnboardingState, type OnboardingWork } from "@/lib/pivot/onboarding";
 import { PivotFrame, PrimaryButton } from "./pivot-ui";
 import { HomeHeader } from "./home-screen";
+import { HintToggle } from "./taste-hints";
+import homeStyles from "./home.module.css";
 import styles from "./onboarding.module.css";
 
 /** Explicit opt-in for MY questions; signup and result screens keep their existing chrome. */
@@ -18,8 +20,8 @@ export function MyQuestionHeader({ onNotifications }: MyQuestionHeaderProps) {
 
 export function QuestionProgress({ step, onBack, busy }: { step: 1 | 2 | 3; onBack: () => void; busy: boolean }) {
   return <nav className={styles.navigation} aria-label="온보딩 화면 탐색">
-    <button type="button" className={styles.back} aria-label="이전 단계" onClick={onBack} disabled={busy}>
-      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+    <button type="button" className={homeStyles.headerBack} aria-label="이전 단계" onClick={onBack} disabled={busy}>
+      <span><img src="/pivot/detail/back.svg" alt="" width={24} height={24} /></span>
     </button>
     <div className={styles.progress} role="progressbar" aria-label="기본 질문 진행 상태" aria-valuemin={0} aria-valuemax={3} aria-valuenow={step}>
       <i style={{ width: `${(step / 3) * 100}%` }} />
@@ -94,12 +96,16 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
   function toggle(work: OnboardingWork) { dispatch({ type: "toggle-work", work }); }
   function search(value: string) { ++request.current; controller.current?.abort(); setQuery(value); }
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
-    {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
-    <QuestionProgress step={1} onBack={onBack} busy={busy} />
-    {copy?.hint}
-    <section className={styles.questionBody} aria-labelledby="question-heading">
-      <h1 id="question-heading" tabIndex={-1}><span>Q1.</span>{copy?.heading ?? "요즘 가장 관심 있는 작품은 무엇인가요?"}</h1>
-      <p className={styles.questionDescription}>{copy?.description ?? "좋아하는 작품을 1개 이상 5개 이하 선택해 주세요"}</p>
+    <QuestionTop>
+      {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
+      <QuestionProgress step={1} onBack={onBack} busy={busy} />
+      <div className={copy ? `${styles.questionBody} ${styles.compactTop}` : styles.questionBody}>
+        <h1 id="question-heading" tabIndex={-1}><span>Q1.</span>{copy?.heading ?? "요즘 가장 관심 있는 작품은 무엇인가요?"}</h1>
+        <p className={styles.questionDescription}>{copy?.description ?? "좋아하는 작품을 1개 이상 5개 이하 선택해 주세요"}</p>
+      </div>
+    </QuestionTop>
+    <section className={styles.questionChoices} aria-labelledby="question-heading">
+      <div className={styles.hintSlot}>{copy?.hint}</div>
       {message && <p className={styles.catalogError} role="alert">{message}</p>}
       {demo && <p className={styles.catalogNotice}>미리보기용 가상 작품이에요.</p>}
       <label className={styles.srOnly} htmlFor="onboarding-work-search">작품 검색</label>
@@ -145,33 +151,23 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
   </PivotFrame>;
 }
 
-/** Spreads chips over `lines` lines of about the same width and keeps the catalogue order within each line, so the
- * 16 genres fit in three lines. Widths are estimated in px from the labels (14px text, 8px padding, 6px gap). */
-export function balancedRows<T extends { label: string }>(tags: T[], lines: number): T[][] {
-  type Item = { tag: T; at: number; width: number };
-  const estimate = (label: string) => [...label].reduce((sum, char) => sum + (/[가-힣ㄱ-ㅣ]/.test(char) ? 11.5 : 8.4), 24);
-  const rows = Array.from({ length: lines }, () => ({ width: 0, items: [] as Item[] }));
-  // Widest first onto the narrowest line ...
-  tags.map((tag, at) => ({ tag, at, width: estimate(tag.label) })).sort((a, b) => b.width - a.width || a.at - b.at)
-    .forEach(item => { const row = rows.reduce((best, next) => next.width < best.width ? next : best); row.width += item.width; row.items.push(item); });
-  // ... then move or swap chips out of the widest line while that narrows it (equal widths can pile up on one line).
-  for (let step = 0; step < 100; step++) {
-    const widest = rows.reduce((best, next) => next.width > best.width ? next : best);
-    let trade: { row: typeof widest; out: Item; back?: Item; change: number; after: number } | null = null;
-    for (const row of rows) {
-      if (row === widest) continue;
-      for (const out of widest.items) for (const back of [undefined, ...row.items]) {
-        const change = out.width - (back?.width ?? 0);
-        const after = Math.max(widest.width - change, row.width + change);
-        if (change > 0 && after < widest.width - 0.01 && (!trade || after < trade.after)) trade = { row, out, back, change, after };
-      }
-    }
-    if (!trade) break;
-    widest.items.splice(widest.items.indexOf(trade.out), 1); trade.row.items.push(trade.out);
-    if (trade.back) { trade.row.items.splice(trade.row.items.indexOf(trade.back), 1); widest.items.push(trade.back); }
-    widest.width -= trade.change; trade.row.width += trade.change;
-  }
-  return rows.filter(row => row.items.length).map(row => row.items.sort((a, b) => a.at - b.at).map(item => item.tag));
+/** Q2 chip order from the 2026-11 design: wrapping naturally it gives 5·5·5·1 genres and 5·5·4·4·1 themes on a
+ * 375px screen. The server sends model/catalog order (most common first); codes the design does not list follow. */
+const DESIGN_CHIP_ORDER: Record<string, readonly string[]> = {
+  genre: ["comedy", "action", "drama", "romance", "sci_fi", "fantasy", "slice_of_life", "adventure", "supernatural", "mecha",
+    "mystery", "psychological", "sports", "horror", "music", "thriller"],
+  theme: ["school", "tragedy", "magic", "coming_of_age", "swordplay", "super_power", "harem", "gore", "isekai", "revenge",
+    "war", "time_manipulation", "crime", "iyashikei", "post_apocalyptic", "survival", "martial_arts", "dungeon", "virtual_world"],
+};
+export function designChipOrder<T extends { kind: string; code: string }>(tags: T[]): T[] {
+  const place = (tag: T) => { const at = DESIGN_CHIP_ORDER[tag.kind]?.indexOf(tag.code) ?? -1; return at < 0 ? Number.MAX_SAFE_INTEGER : at; };
+  return tags.map((tag, at) => ({ tag, at })).sort((a, b) => place(a.tag) - place(b.tag) || a.at - b.at).map(item => item.tag);
+}
+
+/** What stays on screen while Q2/Q3's choices scroll (2026-11 design): the My Page bar, the progress, a hint box
+ * and the question down to its description. */
+export function QuestionTop({ children }: { children: ReactNode }) {
+  return <div className={styles.questionTop} data-question-top="">{children}</div>;
 }
 
 /** The chips of one kind the chosen works carry, most shared first (catalogue order on ties), for the box
@@ -205,28 +201,29 @@ export function TagsQuestion({ state, dispatch, catalog, onBack, onNext, busy, c
   const found = !copy && !loading && !error
     ? (["genre", "theme"] as const).map(kind => [kind, discoveredTags(state.preferenceOptions, kind)] as const).filter(([, tags]) => tags.length > 0) : [];
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
-    {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
-    <QuestionProgress step={2} onBack={onBack} busy={busy} />
-    {copy?.hint}
-    {found.length > 0 && <section className={styles.discovered} aria-labelledby="discovered-heading">
-      <h2 id="discovered-heading">선택한 작품에서 이런 취향을 발견했어요!</h2>
-      <dl>{found.map(([kind, tags]) => <div key={kind}><dt>{kind === "genre" ? "장르" : "소재"}</dt><dd><ul>{tags.map(tag => <li key={tag.tagId}>{tag.label}</li>)}</ul></dd></div>)}</dl>
-    </section>}
-    <section className={styles.questionBody} aria-labelledby="question-heading">
-      <h1 id="question-heading" tabIndex={-1}><span>Q2.</span>{copy?.heading ?? "어떤 장르와 소재를 좋아하나요?"}</h1>
-      <p className={styles.questionDescription}>{copy?.description ?? <>장르·소재 각각 최소 1개, 최대 {MAX_PREFERENCE_TAGS_PER_KIND}개 선택해 주세요<br />위 분석결과를 참고하여 선택해도 좋고,<br />추가로 선택해도 좋아요</>}</p>
+    <QuestionTop>
+      {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
+      <QuestionProgress step={2} onBack={onBack} busy={busy} />
+      <div className={copy ? `${styles.questionBody} ${styles.compactTop}` : styles.questionBody}>
+        <h1 id="question-heading" tabIndex={-1}><span>Q2.</span>{copy?.heading ?? "어떤 장르와 소재를 좋아하나요?"}</h1>
+        <p className={styles.questionDescription}>{copy?.description ?? <>장르·소재 각각 최소 1개, 최대 {MAX_PREFERENCE_TAGS_PER_KIND}개 선택해 주세요<br />아래 분석결과를 참고하여 선택해도 좋고,<br />추가로 선택해도 좋아요</>}</p>
+      </div>
+    </QuestionTop>
+    <section className={styles.questionChoices} aria-labelledby="question-heading">
+      <div className={styles.hintSlot}>{copy?.hint}{found.length > 0 && <HintToggle label="선택한 작품에서 찾은 장르·소재 취향"
+        titles={["선택한 작품에서 선호 취향 알아보기!", "선택한 작품에서 이런 취향을 발견했어요!"]}>
+        <div className={styles.discovered}><dl>{found.map(([kind, tags]) => <div key={kind}><dt>{kind === "genre" ? "장르" : "소재"}</dt><dd><ul>{tags.map(tag => <li key={tag.tagId}>{tag.label}</li>)}</ul></dd></div>)}</dl></div>
+      </HintToggle>}</div>
       {message && <p className={styles.catalogError} role="alert">{message}</p>}
       {loading ? <p className={styles.catalogNotice} role="status">장르·소재를 불러오고 있어요…</p> : error ? <div className={styles.catalogError} role="alert">{error}<button type="button" onClick={() => setAttempt(value => value + 1)}>다시 시도</button></div> : <>
         {(["genre", "theme"] as const).map(kind => {
-          const tags = state.preferenceOptions.filter(tag => tag.kind === kind);
-          // Genres spread over three lines of about the same width (design); themes wrap in catalogue order.
-          const rows = kind === "genre" ? balancedRows(tags, 3) : [tags];
+          const tags = designChipOrder(state.preferenceOptions.filter(tag => tag.kind === kind));
           return <fieldset key={kind} className={styles.tagGroup}>
             <legend>{kind === "genre" ? "장르" : "소재"}</legend>
-            <div className={styles.tagRows}>{rows.map((row, line) => <div key={line} className={styles.tagChips}>{row.map(tag => <label key={tag.tagId} className={`${styles.tagChip} ${state.preferenceTagIds.includes(tag.tagId) ? styles.selected : ""}`}>
+            <div className={styles.tagChips}>{tags.map(tag => <label key={tag.tagId} className={`${styles.tagChip} ${state.preferenceTagIds.includes(tag.tagId) ? styles.selected : ""}`}>
               <input type="checkbox" checked={state.preferenceTagIds.includes(tag.tagId)} onChange={() => dispatch({ type: "toggle-tag", tagId: tag.tagId })} disabled={busy || (!state.preferenceTagIds.includes(tag.tagId) && selectedPreferenceCount(state, kind) >= MAX_PREFERENCE_TAGS_PER_KIND)} />
               <span>{tag.label}</span>
-            </label>)}</div>)}</div>
+            </label>)}</div>
             {!tags.length && <p className={styles.catalogNotice}>{kind === "genre" ? "장르" : "소재"} 목록을 준비 중이에요. 지금은 다음 단계로 진행할 수 없어요.</p>}
           </fieldset>;
         })}

@@ -141,7 +141,6 @@ export function PivotMyPageScreen({ state, demo, notificationScope, notification
     aria-busy={state.status === "loading" && !logoutDialog}>
     <HomeHeader title="마이페이지" showMascot={false} onNotice={setNotice} onNotifications={onNotifications} />
     <div className={styles.content}>
-      <p className={styles.intro}>내 정보와 설정을 관리해보세요</p>
       {profile ? <>
         <section className={`${styles.card} ${styles.profile}`} aria-label={demo ? "시연용 가상 프로필" : "프로필"}>
           <div><p className={styles.nickname}>{profile.nickname}님</p><p className={styles.email}>{profile.maskedEmail}</p></div>

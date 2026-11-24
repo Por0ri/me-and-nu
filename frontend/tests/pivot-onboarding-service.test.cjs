@@ -16,8 +16,11 @@ function load(relative, dependencies = {}) {
   return mod.exports;
 }
 class ApiError extends Error {
-  constructor(message, status, code) { super(message); this.status=status; this.code=code; }
+  constructor(message, status, code, fields) { super(message); this.status=status; this.code=code; this.fields=fields; }
 }
+// What a server from before the Q3 ranking (pydantic extra=forbid) answers to consumptionTypes, as lib/api.ts reads it.
+const rankingRejected = () => new ApiError('입력값을 확인해 주세요.',422,'VALIDATION_ERROR',
+  [{field:'answers.consumptionTypes',code:'VALIDATION_ERROR',message:'Extra inputs are not permitted'}]);
 const apiModule = {ApiError};
 const services = load('lib/pivot/services.ts', {'@/lib/api':apiModule, './consent':{}});
 const service = load('lib/pivot/onboarding-service.ts', {
@@ -26,8 +29,10 @@ const service = load('lib/pivot/onboarding-service.ts', {
 });
 const plain = value => JSON.parse(JSON.stringify(value));
 const profile = {nickname:'  새로운회원  '};
-const selection = {interest:'animation',topicId:83,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionType:'ost'};
-const answers = {version:2,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionType:'ost'};
+const selection = {interest:'animation',topicId:83,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionTypes:['ost','news','world']};
+const answers = {version:2,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionTypes:['ost','news','world'],consumptionType:'ost'};
+// A server from before the Q3 ranking takes and returns rank 1 alone.
+const { consumptionTypes: _ranking, ...rankOne } = answers;
 const consent = {consents:[
   {type:'terms',policyVersion:'terms-2026',agreed:true},
   {type:'privacy',policyVersion:'privacy-2026',agreed:true},
@@ -188,7 +193,10 @@ test('Guard and malformed input failures occur before any session or API calls',
   assert.deepEqual(denied.calls,[]);
   for (const [choice,draft,person] of [
     [selection,consent,{...profile,nickname:''}],
-    [{...selection,consumptionType:'invalid'},consent,profile],
+    [{...selection,consumptionTypes:['invalid']},consent,profile],
+    [{...selection,consumptionTypes:[]},consent,profile],
+    [{...selection,consumptionTypes:['ost','ost']},consent,profile],
+    [{...selection,consumptionTypes:undefined,consumptionType:'ost'},consent,profile],
     [{...selection,favoriteEntityIds:[]},consent,profile],
     [{...selection,favoriteEntityIds:[1,2,3,4,5,6]},consent,profile],
     [{...selection,favoriteEntityIds:[101,101]},consent,profile],
@@ -208,6 +216,8 @@ test('Guard and malformed input failures occur before any session or API calls',
 
 test('Invalid completion payloads and an unconfirmed active session do not fabricate success', async () => {
   for (const result of [{...response,answers:{...answers,consumptionType:'world'}},{...response,answers:{...answers,version:1}},
+    {...response,answers:{...answers,consumptionTypes:['news','ost','world']}},{...response,answers:{...answers,consumptionTypes:['ost','news']}},
+    {...response,answers:{...answers,consumptionTypes:'ost'}},{...response,answers:{...rankOne,consumptionType:'news'}},
     {...response,answers:{...answers,favoriteEntityIds:[101,101]}},{...response,answers:{...answers,preferenceTagIds:[201,999]}},
     {...response,activeTopic:{...response.activeTopic,id:1}},null]) {
     const app = setup({async complete(){return result;}});
@@ -220,6 +230,59 @@ test('Invalid completion payloads and an unconfirmed active session do not fabri
 test('Completion accepts set-equivalent IDs regardless of response order', async () => {
   const app = setup({async complete(){return {...response,answers:{...answers,favoriteEntityIds:[102,101],preferenceTagIds:[301,201]}};}});
   assert.equal((await app.service.submitSelection(selection,consent,profile)).recovered,false);
+});
+
+test('Q3 goes as the ranking in tap order plus rank 1 as consumptionType', async () => {
+  let sent;
+  const app = setup({async complete(input){sent=plain(input.answers); return {...response,answers:input.answers};}});
+  await app.service.submitSelection({...selection,consumptionTypes:['world','ost']},consent,profile);
+  assert.deepEqual(sent,{version:2,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionTypes:['world','ost'],consumptionType:'world'});
+  assert.deepEqual(plain(service.answersV2({...selection,consumptionTypes:['news']})),
+    {version:2,favoriteEntityIds:[101,102],preferenceTagIds:[201,301],consumptionTypes:['news'],consumptionType:'news'});
+});
+
+test('Completion accepts a response from a server before the ranking when its one answer is rank 1', async () => {
+  const app = setup({async complete(){return {...response,answers:rankOne};}});
+  assert.equal((await app.service.submitSelection(selection,consent,profile)).recovered,false);
+  assert.equal(service.sameConsumptionAnswer({consumptionType:'ost'},answers),true);
+  assert.equal(service.sameConsumptionAnswer({consumptionType:'ost',consumptionTypes:null},answers),true);
+  assert.equal(service.sameConsumptionAnswer({consumptionType:'ost',consumptionTypes:['ost','news','world']},answers),true);
+  assert.equal(service.sameConsumptionAnswer({consumptionType:'news'},answers),false);
+  assert.equal(service.sameConsumptionAnswer({consumptionType:'ost',consumptionTypes:['ost','world','news']},answers),false);
+  assert.equal(service.sameConsumptionAnswer({consumptionType:'ost',consumptionTypes:['ost']},rankOne),true,'after the fallback only rank 1 was sent');
+  assert.equal(service.sameConsumptionAnswer(null,answers),false);
+});
+
+test('A server from before the ranking gets the answers once more with rank 1 alone', async () => {
+  const posts = [];
+  const app = setup({async complete(input){posts.push(plain(input.answers)); if (posts.length===1) throw rankingRejected(); return {...response,answers:rankOne};}});
+  const result = await app.service.submitSelection(selection,consent,profile);
+  assert.equal(result.recovered,false);
+  assert.equal(result.session,active);
+  assert.deepEqual(posts,[answers,rankOne]);
+  assert.equal(Object.hasOwn(posts[1],'consumptionTypes'),false);
+});
+
+test('The rank 1 fallback is sent once, and other 422s are never resent', async () => {
+  let posts = 0;
+  const twice = setup({async complete(){posts++; throw rankingRejected();}});
+  await assert.rejects(twice.service.submitSelection(selection,consent,profile), error => error.code==='VALIDATION_ERROR' && error.status===422);
+  assert.equal(posts,2,'one retry, no loop');
+  for (const failure of [
+    new ApiError('nickname',422,'VALIDATION_ERROR',[{field:'nickname',code:'VALIDATION_ERROR',message:'rule'}]),
+    new ApiError('tags',422,'VALIDATION_ERROR',[{field:'answers.preferenceTagIds',code:'VALIDATION_ERROR',message:'kind'}]),
+    new ApiError('no fields',422,'VALIDATION_ERROR'),
+    new ApiError('odd fields',422,'VALIDATION_ERROR',{field:'answers.consumptionTypes'}),
+    new ApiError('nested',422,'VALIDATION_ERROR',[{field:'answers.consumptionTypes.0',code:'VALIDATION_ERROR',message:'literal'}]),
+    new ApiError('consent',422,'REQUIRED_CONSENT_MISSING',[{field:'answers.consumptionTypes',code:'REQUIRED_CONSENT_MISSING',message:'x'}]),
+    new ApiError('conflict',409,'VALIDATION_ERROR',[{field:'answers.consumptionTypes',code:'VALIDATION_ERROR',message:'x'}]),
+    Object.assign(new Error('not an ApiError'),{status:422,code:'VALIDATION_ERROR',fields:[{field:'answers.consumptionTypes'}]}),
+  ]) {
+    let sent = 0;
+    const app = setup({async getSession(){return pending;},async complete(){sent++; throw failure;}});
+    await assert.rejects(app.service.submitSelection(selection,consent,profile), error => error === failure);
+    assert.equal(sent,1,failure.message);
+  }
 });
 
 test('A changed anime Topic invalidates the earlier catalog selection before posting', async () => {

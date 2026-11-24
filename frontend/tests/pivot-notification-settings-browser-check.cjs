@@ -84,7 +84,7 @@ async function verify(browser, width, demo) {
     } else {
       await until(async () => await allow.getAttribute('aria-disabled') === null);
       assert.equal(await allow.getAttribute('aria-checked'), 'true'); assert.equal(await night.getAttribute('aria-checked'), 'false');
-      assert.match(await section.innerText(), /선택적 알림 수신 제어는 준비 중/);
+      assert.doesNotMatch(await section.innerText(), /선택적 알림 수신 제어는 준비 중/, 'design mock has no notice under the switches');
       const writes = () => requests.filter(request => request.method === 'PATCH').length;
       holdPatch = true;
       await allow.click(); await until(() => !!releasePatch);

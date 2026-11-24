@@ -10,7 +10,7 @@ from app.repositories.auth_session_repository import (
     revoke_auth_session,
     utcnow,
 )
-from app.repositories.onboarding_repository import find_active_topic, lock_user
+from app.repositories.onboarding_repository import add_consumption_types, find_active_topic, lock_user
 from app.repositories.policy_repository import add_consent_history, get_current_policies
 from app.schemas.onboarding import (
     NICKNAME_TAKEN,
@@ -92,11 +92,13 @@ async def complete_onboarding(
         db.add(tap)
         await db.flush()
         if isinstance(payload.answers, OnboardingAnswersV2):
+            types = list(payload.answers.consumption_types)   # tapped order = ranking, never sorted
             answers = OnboardingAnswersRecord(
                 tap_id=tap.tap_id, schema_version=2,
-                consumption_type=payload.answers.consumption_type,
+                consumption_type=types[0],   # rank 1: the column the production main code and admin read
                 q1_choice=None, q2_choice=None,
             )
+            add_consumption_types(db, tap.tap_id, types)
             for entity_id in sorted(payload.answers.favorite_entity_ids):
                 db.add(TapEntity(
                     tap_id=tap.tap_id, entity_id=entity_id,
@@ -108,7 +110,7 @@ async def complete_onboarding(
                 version=2,
                 favorite_entity_ids=sorted(payload.answers.favorite_entity_ids),
                 preference_tag_ids=sorted(payload.answers.preference_tag_ids),
-                consumption_type=payload.answers.consumption_type,
+                consumption_types=types,   # consumptionType is filled with rank 1
             )
         else:
             answers = OnboardingAnswersRecord(

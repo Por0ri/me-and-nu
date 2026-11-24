@@ -3,7 +3,8 @@
 .screen > header { height: 44px; }
 .form { margin-top: 12px; }
 .intro { margin: 0 0 12px; font-size: 16px; font-weight: 600; line-height: 24px; }
-.card { display: flex; flex-direction: column; gap: 10px; min-height: 432px; padding: 10px 12px; border-radius: 8px; background: var(--home-surface); box-shadow: 0 0 2px #e0bafb; }
+/* 2026-11 design feedback: a wider, softer glow than the shared 0 0 2px card (measured from the mock). */
+.card { display: flex; flex-direction: column; gap: 10px; min-height: 432px; padding: 10px 12px; border-radius: 8px; background: var(--home-surface); box-shadow: 0 0 4px rgb(224 186 251 / 80%); }
 .types { min-width: 0; margin: 0; padding: 12px; border: 0; border-bottom: 1px solid #d4d4d8; }
 .label { display: flex; align-items: center; gap: 12px; margin: 0 0 4px; font-size: 16px; font-weight: 600; line-height: 24px; }
 .label > span { padding: 2px 8px; border-radius: 999px; background: #efe7ff; color: var(--home-accent); font-size: 11px; font-weight: 500; line-height: 16px; }

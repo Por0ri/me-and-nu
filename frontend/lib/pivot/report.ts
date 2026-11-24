@@ -4,7 +4,7 @@ export const REPORT_LIMIT = 500;
 export const reportReasons = [
   { value: "wrong_info", label: "잘못된 정보" },
   { value: "spoiler", label: "스포일러" },
-  { value: "rights", label: "저작권·권리 침해" },
+  { value: "rights", label: "저작권 • 권리 침해" },
   { value: "inappropriate", label: "불쾌하거나 부적절한 내용" },
   { value: "other", label: "기타" },
 ] as const;

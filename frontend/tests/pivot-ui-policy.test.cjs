@@ -38,7 +38,7 @@ function render(step, mode, answers = {}) {
     state: { ...initialOnboardingState(), step, interest: 'animation', topicId:83,
       favoriteWorks:[{entityId:101,name:'테스트 작품',aliases:[],imageUrl:null,releaseYear:2024,mediaFormat:'TV',selectable:true,unavailableReason:null}],
       preferenceOptions:[{tagId:201,kind:'genre',code:'fantasy',label:'판타지',sourceEntityIds:[101]},{tagId:301,kind:'theme',code:'friendship',label:'우정',sourceEntityIds:[101]}],
-      preferenceTagIds:[201,301],optionsKey:'101',consumptionType:'ost',...answers },
+      preferenceTagIds:[201,301],optionsKey:'101',consumptionTypes:['ost'],...answers },
     dispatch() {}, onExit() {}, mode,
   }));
 }
@@ -76,13 +76,57 @@ for (const mode of ['demo', 'service']) {
   });
   test(mode + ': unanswered Q1/Q2/Q3 block CTA and contain no stale result summary', () => {
     for (const step of ['q1', 'q2','q3']) {
-      const html = render(step, mode, { favoriteWorks:[],preferenceTagIds:[],preferenceOptions:[],optionsKey:null,consumptionType:null });
+      const html = render(step, mode, { favoriteWorks:[],preferenceTagIds:[],preferenceOptions:[],optionsKey:null,consumptionTypes:[] });
       assert.match(html, /<button[^>]*disabled=""[^>]*>(?:선택 완료|다음|장르·소재 선택 완료)<\/button>/);
       assert.doesNotMatch(html, /선택 답변 요약/);
       assert.match(html,/aria-valuemax="3"/);
     }
   });
 }
+test('Q3 is six checkboxes that show the tap order as rank badges and say the rank in their names', () => {
+  const html = render('q3', 'service', { consumptionTypes:['news','world','ost'] });
+  assert.match(html, /<span>Q3\.<\/span>주로 어떤 정보를 찾나요\?/);
+  assert.match(html, /가장 많이 찾는 것 순서대로 선택해 주세요<br\/>1개만 선택해도 되고 6개 다 선택해도 됩니다/);
+  assert.match(html, /<legend class="srOnly">Q3 주로 찾는 정보를 많이 찾는 순서대로 최대 6개 선택<\/legend>/);
+  assert.doesNotMatch(html, /type="radio"/);
+  const attribute = (tag, name) => tag.match(new RegExp(` ${name}="([^"]*)"`))?.[1];
+  const inputs = [...html.matchAll(/<input [^>]*name="consumptionTypes"[^>]*>/g)].map(([tag]) => {
+    assert.equal(attribute(tag, 'type'), 'checkbox');
+    return [attribute(tag, 'value'), attribute(tag, 'aria-label'), attribute(tag, 'checked') !== undefined];
+  });
+  assert.deepEqual(inputs, [
+    ['world', '설정•세계관과 해석을 파고든다, 2순위', true],
+    ['relationships', '캐릭터와 성우 이야기에 빠진다', false],
+    ['ost', '관련 OST를 찾아듣는다, 3순위', true],
+    ['goods', '굿즈를 모으거나 구매 정보를 찾는다', false],
+    ['events', '팝업•전시•이벤트 등을 찾아간다', false],
+    ['news', '새 소식과 재밌는 글을 챙겨본다, 1순위', true],
+  ]);
+  // One badge per chosen card, in card order, hidden from screen readers (the checkbox name says the rank).
+  assert.deepEqual([...html.matchAll(/<span class="rank" aria-hidden="true" data-rank="(\d)">(\d)<\/span>/g)].map(([, rank, text]) => [rank, text]), [['2', '2'], ['3', '3'], ['1', '1']]);
+  assert.equal((html.match(/class="choice q1Card selected"/g) || []).length, 3);
+  assert.match(html, /<button[^>]*>선택 완료<\/button>/);
+  assert.doesNotMatch(html, /<button[^>]*disabled=""[^>]*>선택 완료<\/button>/);
+  assert.match(html, /<span>새 소식과 재밌는<br\/>글을 챙겨본다<\/span>/);
+  const all = render('q3', 'service', { consumptionTypes:['events','goods','ost','relationships','world','news'] });
+  assert.deepEqual([...all.matchAll(/data-rank="(\d)"/g)].map(match => match[1]), ['5', '4', '3', '2', '1', '6']);
+  const none = render('q3', 'service', { consumptionTypes:[] });
+  assert.doesNotMatch(none, /data-rank|순위|checked=""| selected"/);
+  assert.match(none, /<button[^>]*disabled=""[^>]*>선택 완료<\/button>/);
+});
+
+test('The result lists every Q3 answer in rank order without rank numbers', () => {
+  for (const mode of ['demo', 'service']) {
+    const html = render('result', mode, { consumptionTypes:['news','world','ost'] });
+    const row = html.slice(html.indexOf('주로 찾는 정보'), html.indexOf('</ul>', html.indexOf('주로 찾는 정보')));
+    assert.deepEqual([...row.matchAll(/<li class="answerTag">([^<]+)<\/li>/g)].map(match => match[1]), ['새 소식 · 재밌는 글', '설정 · 세계관', '관련 OST'], mode);
+    assert.doesNotMatch(row, /순위|[1-6]/, mode);
+  }
+  // Demo has no submission to wait for: a complete ranking leaves the button on.
+  assert.doesNotMatch(render('result', 'demo', { consumptionTypes:['news','world','ost'] }), /<button[^>]*disabled=""[^>]*aria-describedby="home-feedback"/);
+  assert.match(render('result', 'demo', { consumptionTypes:[] }), /<button[^>]*disabled=""[^>]*aria-describedby="home-feedback"/);
+});
+
 test('Web frame omits simulated OS status indicators even in design preview', () => {
   const html = renderToStaticMarkup(React.createElement(PivotFrame, { chrome: true }, 'Screen'));
   assert.doesNotMatch(html, /9:41|imgWifi|imgOutline|imgIconMobileSignal|imgBatteryEnd/);
@@ -94,17 +138,15 @@ test('Deferred birth-date policy exposes only the nickname input in the new onbo
   assert.doesNotMatch(html,/birthDate|type="date"|만 14세|autoComplete="bday"/);
 });
 
-test('Q2 spreads the 16 genres over three lines and keeps the catalogue order within each line',()=>{
-  const { balancedRows } = load('components/pivot/onboarding-catalog-screens.tsx');
-  const labels=['코미디','액션','드라마','로맨스','SF','판타지','일상','모험','초자연','로봇','미스터리','심리','스포츠','호러','음악','스릴러'];
-  const rows=balancedRows(labels.map((label,at)=>({label,at})),3);
-  assert.equal(rows.length,3);
-  assert.deepEqual(Array.from(rows.flat(),tag=>tag.label).sort(),[...labels].sort());
-  for (const row of rows) {
-    const order=Array.from(row,tag=>tag.at);
-    assert.deepEqual(order,[...order].sort((a,b)=>a-b));
-    assert.ok(row.length>=5&&row.length<=6,`${row.length} chips in one line`);
-  }
+test('Q2 puts genres and themes in the design order and keeps codes it does not list after them in server order',()=>{
+  const { designChipOrder } = load('components/pivot/onboarding-catalog-screens.tsx');
+  // The server sends model/catalog order (most common first); two codes the design does not know come last.
+  const genres=['new_b','comedy','action','drama','romance','fantasy','slice_of_life','adventure','supernatural','sci_fi','mystery','psychological','sports','horror','mecha','music','thriller','new_a'];
+  assert.deepEqual(Array.from(designChipOrder(genres.map(code=>({kind:'genre',code}))),tag=>tag.code),
+    ['comedy','action','drama','romance','sci_fi','fantasy','slice_of_life','adventure','supernatural','mecha','mystery','psychological','sports','horror','music','thriller','new_b','new_a']);
+  const themes=['school','tragedy','magic','coming_of_age','swordplay','harem','super_power','gore'];
+  assert.deepEqual(Array.from(designChipOrder(themes.map(code=>({kind:'theme',code}))),tag=>tag.code),
+    ['school','tragedy','magic','coming_of_age','swordplay','super_power','harem','gore']);
 });
 
 test('Q2 box shows the chips the chosen works carry, most shared first, three per kind',()=>{

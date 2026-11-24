@@ -45,8 +45,9 @@
 :where(.screen) :where(ul, ol) { padding: 0; list-style: none; }
 /* 토론 화면이 떠 있는 동안 <html> 에 붙여 브라우저 스크롤바를 숨긴다. 홈처럼 스크롤바가 생겼다 없어지며
    화면이 좌우로 밀리지 않게 한다 (debate-chrome.tsx DebateScreen). 스크롤은 그대로 된다. */
-.hideScrollbar { scrollbar-width: none; }
-.hideScrollbar::-webkit-scrollbar { display: none; }
+/* Invisible but still taking its room: the other screens keep the scrollbar's room (globals.css scrollbar-gutter),
+   so a removed bar (scrollbar-width: none) moved TALK 7px right on desktop (2026-11-24). */
+.hideScrollbar { scrollbar-color: transparent transparent; }
 .srOnly { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* 가짜 데이터 안내 띠 */
