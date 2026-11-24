@@ -3,6 +3,7 @@ from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_st
 import io
 import json
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -59,12 +60,16 @@ class MainDebatesTest(unittest.TestCase):
             finally:
                 held.remove(path)
 
+        def verified():
+            self.assertEqual(held, [runtime.ROLLOUT_LOCK, debates.LEGACY_LOCK])
+
         def job(*_args, **_kwargs):
             self.assertEqual(held, [runtime.ROLLOUT_LOCK, debates.LEGACY_LOCK])
             return json.dumps({"mode": "dry_run", **COUNTS})
 
-        with patch.object(runtime, "lock", side_effect=lock), patch.object(runtime, "inspect_main"), patch.object(runtime, "run", side_effect=job) as run:
+        with patch.object(runtime, "lock", side_effect=lock), patch.object(runtime, "inspect_main", side_effect=verified) as guard, patch.object(runtime, "run", side_effect=job) as run:
             debates.dispatch()
+        guard.assert_called_once_with()
         run.assert_called_once()
         self.assertEqual(held, [])
 
@@ -83,10 +88,25 @@ class MainDebatesTest(unittest.TestCase):
         self.assertIn('"mode": "apply" if apply else "dry_run"', source)
 
     def test_backend_job_finishes_before_the_wrapper_gives_up(self):
-        # The wrapper kills only the docker CLI at 240 s; the job inside must roll back on its own first.
+        # On timeout the wrapper kills only the docker CLI and releases the locks; the job inside must give up first.
         source = (runtime.ROOT / "backend/app/jobs/finalize_debates.py").read_text(encoding="utf-8")
-        self.assertIn("JOB_TIMEOUT_SECONDS = 180", source)
+        match = re.search(r"^JOB_TIMEOUT_SECONDS = (\d+)$", source, re.M)
+        self.assertIsNotNone(match)
         self.assertIn("SET LOCAL lock_timeout", source)
+        with patch.object(runtime, "lock", return_value=nullcontext()), patch.object(runtime, "inspect_main"), patch.object(runtime, "run", return_value=json.dumps({"mode": "dry_run", **COUNTS})) as command:
+            debates.dispatch()
+        # Room for interpreter start-up and psycopg's cancel and rollback after the job's own deadline.
+        self.assertGreaterEqual(command.call_args.kwargs.get("timeout", 0) - int(match.group(1)), 30)
+
+    def test_systemd_limit_outlasts_preflight_and_wrapper_timeout(self):
+        # TimeoutStartSec counts from service start and kills only the host side (wrapper, docker CLI, locks).
+        service = debates.units()[debates.SERVICE].decode()
+        (limit,) = [line.split("=", 1)[1] for line in service.splitlines() if line.startswith("TimeoutStartSec=")]
+        with patch.object(runtime, "lock", return_value=nullcontext()), patch.object(runtime, "inspect_main"), patch.object(runtime, "run", return_value=json.dumps({"mode": "dry_run", **COUNTS})) as command:
+            debates.dispatch()
+        preflight = 5 * 30 + 20  # inspect_main: git x2 and docker inspect x3 (runtime.run default 30 s), schema probe 20 s
+        self.assertTrue(limit.endswith("min"))
+        self.assertGreaterEqual(int(limit.removesuffix("min")) * 60, preflight + command.call_args.kwargs["timeout"] + 30)
 
     def test_unit_payload_uses_current_checkout_and_main_names(self):
         units = debates.units()

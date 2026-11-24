@@ -209,7 +209,7 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 
 ### 5.3 정리 작업: `python -m app.jobs.finalize_debates`
 
-기존 `app/jobs` 명령처럼 기본은 미리보기이고 `--apply`를 붙여야 저장하며 `--expected-database`가 필수다. 서버에서 10분마다 실행한다(main 서버: `deploy/main/main_debates.py`가 설치하는 `me-nu-main-debates.timer`, 매시 5·15…55분 30초). 공지 작업처럼 접속 5초·잠금 대기 5초·문장 하나 60초·전체 180초 안에 끝나고, 넘으면 한 트랜잭션 전체가 되돌아가 다음 실행이 다시 한다. 구현은 `backend/app/services/debate_finalize_service.py`, 명령은 `backend/app/jobs/finalize_debates.py`.
+기존 `app/jobs` 명령처럼 기본은 미리보기이고 `--apply`를 붙여야 저장하며 `--expected-database`가 필수다. 서버에서 10분마다 실행한다(main 서버: `deploy/main/main_debates.py`가 설치하는 `me-nu-main-debates.timer`, 매시 5·15…55분 30초). 공지 작업과 같은 방식으로 접속 5초·잠금 대기 5초·문장 하나 60초·전체 180초를 넘으면 실패로 끝난다. 한 트랜잭션이라 보통은 아무것도 저장되지 않고, 커밋하는 순간에 끊기면 이미 저장됐을 수 있지만 여러 번 돌아도 결과가 같아 다음 실행이 이어서 한다. 서버 유닛 제한(8분)은 잠금 안 사전 검사와 docker exec 240초를 합친 것보다 길다. 구현은 `backend/app/services/debate_finalize_service.py`, 명령은 `backend/app/jobs/finalize_debates.py`.
 
 ```
 python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
