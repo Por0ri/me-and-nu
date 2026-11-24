@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { ApiError, type Session } from "@/lib/api";
 import { buildSelectionDraft, initialOnboardingState, isStateComplete, type OnboardingState } from "@/lib/pivot/onboarding";
 import { isActiveSession } from "@/lib/pivot/services";
-import { hasTasteChanges, loadMyTaste, loadTasteHints, saveMyTaste, tasteCatalog, tasteEditReducer, tasteEditState, type TasteHints } from "@/lib/pivot/taste-edit";
+import { loadMyTaste,loadTasteHints, saveMyTaste, tasteCatalog, tasteEditReducer, tasteEditState, type TasteHints } from "@/lib/pivot/taste-edit";
 import { usePivotSession } from "./pivot-session";
 import { OnboardingFlow, ResultCriteria, ResultDecorations } from "./onboarding-screens";
 import { warmUpFeed } from "@/lib/pivot/feed-warmup";
@@ -55,7 +55,6 @@ export function TasteEditRoute() {
   const active = isActiveSession(session.session);
   const owner = session.status === "ready" && active ? session.session : null;
   const ready = !!owner && phase === "ready" && baseline?.owner === owner;
-  const dirty = ready && baseline !== null && hasTasteChanges(state, baseline.selection);
   useEffect(() => {
     if (!owner) return;
     setPhase("loading"); setHints(null);
@@ -113,11 +112,7 @@ export function TasteEditRoute() {
   </PivotFrame>;
   if (state.step === "result") return <TasteEditResult state={state} saving={saving} error={error} onSave={() => void save()}
     onEdit={() => { setError(""); dispatch({ type: "edit-again" }); }} />;
+  // 2026-11 design feedback: like signup, the questions start with the progress row (no me;nu logo or bell on top).
   return <OnboardingFlow state={state} dispatch={dispatch} mode="service" catalog={tasteCatalog} copy={tasteQuestionCopy(hints)} onExit={() => router.replace(MY_PAGE)}
-    myHeader={{ onNotifications: () => {
-      if (!dirty || window.confirm("취향 수정은 아직 저장되지 않았어요. 저장하지 않고 알림함으로 이동할까요?")) {
-        router.push("/pivot/home?view=notifications&from=taste");
-      }
-    } }}
     submission={{ submitting: saving, error, onSubmit: () => void save() }} />;
 }

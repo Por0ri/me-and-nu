@@ -2,9 +2,9 @@
 import { Fragment, useEffect, useRef, useState, type Dispatch, type ImgHTMLAttributes } from "react";
 import assetManifest from "@/public/pivot/bc-sources.json";
 import { useDragScroll } from "@/lib/pivot/drag-scroll";
-import { q1Choices, canAdvance, isStateComplete, selectionSummary, type OnboardingAction, type OnboardingState } from "@/lib/pivot/onboarding";
+import { q1Choices, canAdvance, isStateComplete, selectionSummary, MAX_CONSUMPTION_TYPES, type OnboardingAction, type OnboardingState } from "@/lib/pivot/onboarding";
 import { serviceCatalog, demoCatalog, type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
-import { QuestionProgress, WorksQuestion, TagsQuestion, MyQuestionHeader, type MyQuestionHeaderProps, type QuestionCopy } from "./onboarding-catalog-screens";
+import { QuestionProgress, QuestionTop, WorksQuestion, TagsQuestion, MyQuestionHeader, type MyQuestionHeaderProps, type QuestionCopy } from "./onboarding-catalog-screens";
 import { HomeHeader } from "./home-screen";
 import { PivotFrame, PrimaryButton } from "./pivot-ui";
 import { useOnboardingNavigation } from "./use-onboarding-navigation";
@@ -24,7 +24,7 @@ export function InterestScreen({ selected, onToggle, onNext, busy, chrome = fals
 }) {
   const chosen = selected;
   const assetScreen = chosen ? "interest-on" : "interest";
-  const artwork = <span className={styles.interestArtwork}><Asset screen={assetScreen} variable="img" width={115} height={104.11} /></span>;
+  const artwork = <span className={styles.interestArtwork}><Asset screen={assetScreen} variable="img" width={91.5} height={89.2} /></span>;
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
     {manage ? <div className={`${styles.myHeader} ${styles.manageHeader}`} data-my-interest-header="">
       <HomeHeader title="관심분야 관리" showMascot={false} onBack={manage.onBack} onNotifications={manage.onNotifications} />
@@ -55,25 +55,35 @@ export function InterestScreen({ selected, onToggle, onNext, busy, chrome = fals
     {!manage && <div className={styles.actions}><PrimaryButton disabled={!selected || busy} onClick={onNext}>애니메이션 선택하고 시작하기</PrimaryButton></div>}
   </PivotFrame>;
 }
-export function QuestionScreen({ value, onChoose, onBack, onNext, busy, chrome = false, copy, myHeader }: NavigationProps & { value: string | null; onChoose: (value: string) => void; chrome?: boolean; copy?: QuestionCopy; myHeader?: MyQuestionHeaderProps }) {
-  const screen = "q1" + (value ? "-on" : "");
+/** Q3 (2026-11 design): 1~6 answers in the order they are tapped. A chosen card shows its rank in a badge;
+ * taking one out moves the later ranks up. */
+export function QuestionScreen({ values, onToggle, onBack, onNext, busy, chrome = false, copy, myHeader }: NavigationProps & { values: readonly string[]; onToggle: (value: string) => void; chrome?: boolean; copy?: QuestionCopy; myHeader?: MyQuestionHeaderProps }) {
+  const screen = "q1" + (values.length ? "-on" : "");
   return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
-    {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
-    <QuestionProgress step={3} onBack={onBack} busy={busy} />
-    {copy?.hint}
-    <section className={styles.questionBody} aria-labelledby="question-heading">
-      <h1 id="question-heading" tabIndex={-1}><span>Q3.</span>{copy?.heading ?? "어떤 콘텐츠를 주로 보고싶나요?"}</h1>
-      <p className={styles.questionDescription}>{copy?.description ?? "가장 많이 하는 것을 하나만 선택해주세요"}</p>
+    <QuestionTop>
+      {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
+      <QuestionProgress step={3} onBack={onBack} busy={busy} />
+      <div className={copy ? `${styles.questionBody} ${styles.compactTop}` : styles.questionBody}>
+        <h1 id="question-heading" tabIndex={-1}><span>Q3.</span>{copy?.heading ?? "주로 어떤 정보를 찾나요?"}</h1>
+        <p className={styles.questionDescription}>{copy?.description ?? <>가장 많이 찾는 것 순서대로 선택해 주세요<br />1개만 선택해도 되고 {MAX_CONSUMPTION_TYPES}개 다 선택해도 됩니다</>}</p>
+      </div>
+    </QuestionTop>
+    <section className={styles.questionChoices} aria-labelledby="question-heading">
+      <div className={styles.hintSlot}>{copy?.hint}</div>
       <fieldset className={styles.q1Grid}>
-        <legend className={styles.srOnly}>Q3 소비 유형 하나 선택</legend>
-        {q1Choices.map((choice) => <label key={choice.id} className={[styles.choice, styles.q1Card, value === choice.id ? styles.selected : ""].join(" ")}>
-          <input type="radio" name="consumptionType" aria-label={choice.lines.join(" ")} value={choice.id} checked={value === choice.id} onChange={() => onChoose(choice.id)} disabled={busy} />
-          <Asset screen={screen} variable={choice.asset} width={64} height={64} />
-          <span>{choice.lines.map((line, index) => <Fragment key={line}>{index > 0 && <br />}{line}</Fragment>)}</span>
-        </label>)}
+        <legend className={styles.srOnly}>Q3 주로 찾는 정보를 많이 찾는 순서대로 최대 {MAX_CONSUMPTION_TYPES}개 선택</legend>
+        {q1Choices.map((choice) => {
+          const rank = values.indexOf(choice.id) + 1;
+          return <label key={choice.id} className={[styles.choice, styles.q1Card, rank ? styles.selected : ""].join(" ")}>
+            <input type="checkbox" name="consumptionTypes" aria-label={choice.lines.join(" ") + (rank ? `, ${rank}순위` : "")} value={choice.id} checked={rank > 0} onChange={() => onToggle(choice.id)} disabled={busy} />
+            {rank > 0 && <span className={styles.rank} aria-hidden="true" data-rank={rank}>{rank}</span>}
+            <Asset screen={screen} variable={choice.asset} width={70} height={70} />
+            <span>{choice.lines.map((line, index) => <Fragment key={line}>{index > 0 && <br />}{line}</Fragment>)}</span>
+          </label>;
+        })}
       </fieldset>
     </section>
-    <div className={styles.actions}><PrimaryButton disabled={!value || busy} onClick={onNext}>선택 완료</PrimaryButton></div>
+    <div className={styles.actions}><PrimaryButton disabled={!values.length || busy} onClick={onNext}>선택 완료</PrimaryButton></div>
   </PivotFrame>;
 }
 /** The result screens' background shapes (onboarding and the My Page taste edit). */
@@ -92,7 +102,7 @@ export function ResultCriteria({ state, title, label }: { state: OnboardingState
     ["관심 작품", state.favoriteWorks.map(work => work.name)],
     ["선호 장르", chosen.filter(tag => tag.kind === "genre").map(tag => tag.label)],
     ["선호 소재", chosen.filter(tag => tag.kind === "theme").map(tag => tag.label)],
-    ["주로 찾는 정보", summary.consumption ? [summary.consumption] : []],
+    ["주로 찾는 정보", summary.consumption],
   ];
   return <>
     <div className={styles.resultMascot}><Asset screen="result" variable="imgImage28" /></div>
@@ -143,7 +153,7 @@ export function OnboardingFlow({ state, dispatch, onExit, mode, onRestart, onDem
     {state.step === "interest" ? <InterestScreen {...shared} selected={state.interest === "animation"} onToggle={() => dispatch({ type: "toggle-interest" })} />
       : state.step === "q1" ? <WorksQuestion {...catalogProps} copy={copy?.q1} />
       : state.step === "q2" ? <TagsQuestion {...catalogProps} copy={copy?.q2} />
-      : state.step === "q3" ? <QuestionScreen {...shared} value={state.consumptionType} onChoose={(value) => dispatch({ type: "choose-consumption", value })} copy={copy?.q3} />
+      : state.step === "q3" ? <QuestionScreen {...shared} values={state.consumptionTypes} onToggle={(value) => dispatch({ type: "toggle-consumption", value })} copy={copy?.q3} />
       : <ResultScreen state={state} onReselect={navigation.reselect} busy={busy} mode={mode} onRestart={onRestart} onDemoHome={onDemoHome} chrome={chrome} submission={submission} />}
     <span className={styles.srOnly} role="status" aria-live="polite">{navigation.busy ? "다음 화면으로 이동 중" : canAdvance(state) ? "선택 완료. 다음 단계로 이동할 수 있어요." : ""}</span>
   </div>;

@@ -45,8 +45,9 @@ export function NotificationSettingsView({ state, onChange, onRetry }: {
     <div aria-busy={busy || undefined}><SettingsRows values={state.values} disabled={state.status !== "ready"}
       description="my-notification-status" onChange={onChange} /></div>
     <p id="my-notification-status" role={state.status === "error" ? "alert" : "status"}
-      className={state.status === "ready" && !state.saved ? styles.notificationReady : styles.notificationStatus}>{message}</p>
-    <p className={styles.notificationStatus}>선택적 알림 수신 제어는 준비 중이에요. 필수 운영 공지는 계속 확인할 수 있어요.</p>
+      className={state.status === "error" || state.status === "expired" || state.status === "unavailable"
+        // 2026-11 feedback: the mock has no text under the switches, so loading/saving/saved stay for screen readers only.
+        ? styles.notificationStatus : styles.notificationReady}>{message}</p>
     {state.status === "error" ? <button type="button" className={styles.notificationRetry} onClick={onRetry}>설정 다시 불러오기</button> : null}
   </>;
 }

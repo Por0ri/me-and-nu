@@ -13,10 +13,14 @@
 
 html {
   background: var(--background);
+  /* Keep the desktop scrollbar's room so screens with and without a scrollbar sit at the same x. */
+  scrollbar-gutter: stable;
 }
 
 body {
   min-height: 100vh;
+  /* Mobile browsers make 100vh the toolbar-hidden height, so a page that fits still scrolls by the toolbar. */
+  min-height: 100svh;
   margin: 0;
   color: var(--foreground);
   background:

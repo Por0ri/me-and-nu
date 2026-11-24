@@ -49,11 +49,20 @@ async function headingFocused(page) {
  const style = await page.locator('main h1').evaluate(e=>({outline:getComputedStyle(e).outlineStyle,tabindex:e.tabIndex}));
  assert.equal(style.outline,'none'); assert.equal(style.tabindex,-1);
 }
-async function choose(page, name, value) {
- const input = page.locator('input[name='+name+'][value='+value+']');
+// Q3 (2026-11 design): checkboxes ranked in tap order. Taps a card and waits for its checkbox to flip.
+async function tapType(page, value) {
+ const input = page.locator('input[name=consumptionTypes][value='+value+']');
+ const before = await input.isChecked();
  await input.locator('..').tap();
- await page.waitForFunction(({name,value})=>document.querySelector('input[name='+name+']:checked')?.value===value,{name,value});
- assert.equal(await page.locator('input[name='+name+']:checked').count(),1);
+ await page.waitForFunction(({value,before})=>document.querySelector('input[name=consumptionTypes][value='+value+']').checked!==before,{value,before});
+}
+// The chosen answers in rank order, read from the badges; each checkbox name must say the same rank.
+async function ranking(page) {
+ return page.evaluate(()=>[...document.querySelectorAll('input[name=consumptionTypes]:checked')].map(input=>{
+  const rank=Number(input.parentElement.querySelector('[data-rank]')?.textContent);
+  if(!rank||!input.getAttribute('aria-label').endsWith(', '+rank+'순위')) throw new Error('rank missing from the badge or name of '+input.value);
+  return [rank,input.value];
+ }).sort((a,b)=>a[0]-b[0]).map(([,value])=>value));
 }
 async function advance(page) {
  const button = page.getByRole('button',{name:'선택 완료',exact:true});
@@ -81,8 +90,8 @@ async function quickResult(page) {
  assert.equal(await page.getByRole('list',{name:'선택한 작품',exact:true}).locator('li').count(),0);
  await chooseWork(page,'별빛 우체국'); await advanceWorks(page);
  await page.getByRole('checkbox',{name:'우정',exact:true}).check(); await page.getByRole('checkbox',{name:'판타지',exact:true}).check(); await advanceTags(page);
- assert.equal(await page.locator('input[name=consumptionType]:checked').count(),0);
- await choose(page,'consumptionType','world'); await advance(page);
+ assert.equal(await page.locator('input[name=consumptionTypes]:checked').count(),0);
+ await tapType(page,'world'); await advance(page);
  await page.waitForFunction(()=>!document.querySelector('button[aria-describedby="home-feedback"]').disabled);
 }
 
@@ -124,9 +133,11 @@ async function reselectFlow(page,stem) {
  assert.equal(await page.locator('fieldset input[type=checkbox]:checked').count(),0);
  assert.equal(await page.getByRole('button',{name:'장르·소재 선택 완료',exact:true}).isDisabled(),true);
  await page.getByRole('checkbox',{name:'로봇',exact:true}).check();await page.getByRole('checkbox',{name:'모험',exact:true}).check();await advanceTags(page);await headingFocused(page);
- assert.equal(await page.locator('input[name=consumptionType]:checked').count(),0);
+ assert.equal(await page.locator('input[name=consumptionTypes]:checked').count(),0);
  assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
- const input=page.locator('input[name=consumptionType][value=goods]');await input.focus();await page.keyboard.press('Space');
+ const input=page.locator('input[name=consumptionTypes][value=goods]');await input.focus();await page.keyboard.press('Space');
+ assert.equal(await input.isChecked(),true);
+ assert.equal(await input.getAttribute('aria-label'),'굿즈를 모으거나 구매 정보를 찾는다, 1순위');
  assert.equal(await input.locator('..').evaluate(e=>getComputedStyle(e).outlineWidth),'3px');
  await advance(page);await headingFocused(page);
  const summary=await page.getByLabel('선택 답변 요약').innerText();
@@ -178,18 +189,34 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
  await page.getByRole('checkbox',{name:'우정',exact:true}).check();await advanceTags(page);await headingFocused(page);
  assert.equal(await page.getByRole('progressbar').getAttribute('aria-valuenow'),'3');
  assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),true);
- await choose(page,'consumptionType','world');await page.keyboard.press('ArrowRight');
- await page.waitForFunction(()=>document.querySelector('input[name=consumptionType]:checked')?.value==='relationships');
- assert.equal(await page.locator('input[name=consumptionType]:checked').count(),1);
- assert.equal(await page.locator('input[name=consumptionType]:checked').locator('..').evaluate(e=>getComputedStyle(e).outlineWidth),'3px');
+ // Q3 ranks in tap order; taking one out moves the later ranks up.
+ await tapType(page,'world');await tapType(page,'events');await tapType(page,'relationships');
+ assert.deepEqual(await ranking(page),['world','events','relationships']);
+ assert.equal(await page.getByRole('button',{name:'선택 완료',exact:true}).isDisabled(),false);
+ await tapType(page,'events');
+ assert.deepEqual(await ranking(page),['world','relationships']);
+ assert.equal(await page.getByRole('checkbox',{name:'캐릭터와 성우 이야기에 빠진다, 2순위',exact:true}).isChecked(),true);
+ // Keyboard: Tab reaches the next card and Space ranks it last.
+ await page.locator('input[name=consumptionTypes][value=relationships]').focus();await page.keyboard.press('Tab');await page.keyboard.press('Space');
+ assert.deepEqual(await ranking(page),['world','relationships','ost']);
+ assert.equal(await page.locator('input[name=consumptionTypes][value=ost]').locator('..').evaluate(e=>getComputedStyle(e).outlineWidth),'3px');
+ // The badge as measured from the design mock: 27.6px circle, 8.2px / 7.2px in from the card's outer top-right corner.
+ const badge=await page.locator('input[name=consumptionTypes][value=world] ~ [data-rank]').evaluate(e=>{
+  const s=getComputedStyle(e),b=e.getBoundingClientRect(),c=e.parentElement.getBoundingClientRect();
+  return {width:b.width,height:b.height,top:b.top-c.top,right:c.right-b.right,background:s.backgroundColor,color:s.color,size:s.fontSize,weight:s.fontWeight,text:e.textContent};
+ });
+ assert.ok(Math.abs(badge.width-27.6)<.1&&Math.abs(badge.height-27.6)<.1&&Math.abs(badge.top-8.2)<.1&&Math.abs(badge.right-7.2)<.1,JSON.stringify(badge));
+ assert.deepEqual([badge.background,badge.color,badge.size,badge.weight,badge.text],['rgb(199, 172, 251)','rgb(39, 39, 42)','14px','400','1']);
  await snapshot(page,stem+'-q3');
  await page.getByRole('button',{name:'이전 단계'}).click();
  await page.getByRole('checkbox',{name:'모험',exact:true}).waitFor();
  assert.equal(await page.getByRole('checkbox',{name:'모험',exact:true}).isChecked(),true);
  await advanceTags(page);
- assert.equal(await page.locator('input[name=consumptionType]:checked').inputValue(),'relationships');
- await choose(page,'consumptionType','ost');await advance(page);
- assert.match(await page.getByLabel('선택 답변 요약').innerText(),/관련 OST/);
+ assert.deepEqual(await ranking(page),['world','relationships','ost'],'Back keeps the ranking');
+ await tapType(page,'world');await tapType(page,'relationships');
+ assert.deepEqual(await ranking(page),['ost']);
+ await tapType(page,'world');await advance(page);
+ assert.match(await page.getByLabel('선택 답변 요약').innerText(),/관련 OST[\s\S]*설정 · 세계관/);
  assert.match(await page.getByLabel('선택 답변 요약').innerText(),/별빛 우체국/);
  assert.match(await page.getByLabel('선택 답변 요약').innerText(),/구름 정원의 로봇/);
  assert.match(await page.getByLabel('선택 답변 요약').innerText(),/모험/);
@@ -460,7 +487,8 @@ async function questionFlow(page, stem, enterHome = false, releaseFirstImage) {
    assert.equal(await page.getByRole('button',{name:'시작하기',exact:true}).isDisabled(),true);
    await page.getByRole('button',{name:'서비스 설명 및 이용약관 내용 보기'}).click();
    await page.getByRole('dialog').waitFor();
-   assert.match(await page.getByRole('dialog').innerText(),/demo-only/);
+   assert.match(await page.getByRole('dialog').innerText(),/이용약관 및 운영정책[\s\S]*이용약관 전문[\s\S]*버전 v1\.2[\s\S]*운영정책 전문/);
+   assert.doesNotMatch(await page.getByRole('dialog').innerText(),/demo-only/);
    await page.keyboard.press('Escape');
    assert.equal(await page.getByRole('dialog').count(),0);
    await page.getByRole('checkbox',{name:'개인정보 수집 및 이용동의',exact:true}).check();

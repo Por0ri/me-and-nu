@@ -33,12 +33,15 @@ function q2(ids=[101],options=[tag(),tag(301,'theme')]) {
   state=go(state);
   return reduce(state,{type:'set-options',topicId:83,entityIds:ids,options});
 }
-function result(consumptionType='ost') {
+function q3() {
   let state=q2();
   state=reduce(state,{type:'toggle-tag',tagId:201});
   state=reduce(state,{type:'toggle-tag',tagId:301});
-  state=go(state);
-  return go(reduce(state,{type:'choose-consumption',value:consumptionType}));
+  return go(state);
+}
+const toggle=(state,...values)=>values.reduce((next,value)=>reduce(next,{type:'toggle-consumption',value}),state);
+function result(...types) {
+  return go(toggle(q3(),...(types.length?types:['ost'])));
 }
 
 test('Interest selection and all three unanswered questions block progression',()=>{
@@ -73,7 +76,7 @@ test('Q1 accepts one to five works, prevents a sixth and allows removing a selec
 test('Invalid IDs, unavailable works and out-of-stage answers fail closed',()=>{
   const state=q1();
   for(const invalid of [work(0),work('101'),work(1.5),{...work(),selectable:false}]) assert.equal(reduce(state,{type:'toggle-work',work:invalid}),state);
-  assert.equal(reduce(state,{type:'choose-consumption',value:'ost'}),state);
+  assert.equal(reduce(state,{type:'toggle-consumption',value:'ost'}),state);
   assert.equal(reduce(state,{type:'toggle-tag',tagId:201}),state);
   const tags=q2();
   assert.equal(reduce(tags,{type:'toggle-work',work:work(102)}),tags);
@@ -167,13 +170,74 @@ test('Refreshing Q2 blocks advancement and prunes tags no longer in the current 
   assert.equal(m.canAdvance(state),true);
 });
 
-for(const choice of m.q1Choices) test(`Q3 keeps one ${choice.id} choice and produces a V2 draft`,()=>{
-  let state=back(result('world'));
-  state=reduce(state,{type:'choose-consumption',value:choice.id});
+for(const choice of m.q1Choices) test(`Q3 accepts ${choice.id} alone and produces a V2 draft`,()=>{
+  let state=toggle(back(result('world')),'world',choice.id);
   state=go(state);
   assert.equal(state.step,'result');
-  assert.equal(m.selectionSummary(state).consumption,choice.summary);
-  assert.deepEqual(plain(m.buildSelectionDraft(state)),{interest:'animation',topicId:83,favoriteEntityIds:[101],preferenceTagIds:[201,301],consumptionType:choice.id});
+  assert.deepEqual(plain(m.selectionSummary(state).consumption),[choice.summary]);
+  assert.deepEqual(plain(m.buildSelectionDraft(state)),{interest:'animation',topicId:83,favoriteEntityIds:[101],preferenceTagIds:[201,301],consumptionTypes:[choice.id]});
+});
+
+test('Q3 cards and result chips use the 2026-11 words',()=>{
+  assert.deepEqual(plain(m.q1Choices.map(choice=>[choice.id,choice.lines,choice.summary])),[
+    ['world',['설정•세계관과','해석을 파고든다'],'설정 · 세계관'],
+    ['relationships',['캐릭터와 성우','이야기에 빠진다'],'캐릭터 · 성우'],
+    ['ost',['관련 OST를','찾아듣는다'],'관련 OST'],
+    ['goods',['굿즈를 모으거나','구매 정보를 찾는다'],'굿즈 구매 정보'],
+    ['events',['팝업•전시•이벤트','등을 찾아간다'],'팝업 · 전시 · 이벤트'],
+    ['news',['새 소식과 재밌는','글을 챙겨본다'],'새 소식 · 재밌는 글'],
+  ]);
+  assert.equal(m.MAX_CONSUMPTION_TYPES,6);
+});
+
+test('Q3 ranks answers in the order they are tapped and a removed one moves the later ranks up',()=>{
+  const start=q3();
+  assert.deepEqual(plain(start.consumptionTypes),[]);
+  assert.equal(m.canAdvance(start),false,'no answer yet');
+  const three=toggle(start,'goods','world','news');
+  assert.deepEqual(plain(three.consumptionTypes),['goods','world','news']);
+  assert.equal(m.canAdvance(three),true);
+  const removed=toggle(three,'world');
+  assert.deepEqual(plain(removed.consumptionTypes),['goods','news'],'news moves up to rank 2');
+  assert.deepEqual(plain(three.consumptionTypes),['goods','world','news'],'the earlier state keeps its ranking (pure reducer)');
+  assert.notEqual(removed.consumptionTypes,three.consumptionTypes);
+  assert.deepEqual(plain(toggle(removed,'world').consumptionTypes),['goods','news','world'],'tapping it again adds it last');
+  assert.deepEqual(plain(toggle(three,'goods','world','news').consumptionTypes),[]);
+  assert.equal(m.canAdvance(toggle(three,'goods','world','news')),false,'taking every answer out blocks Q3 again');
+  const all=toggle(start,'news','events','goods','ost','relationships','world');
+  assert.deepEqual(plain(all.consumptionTypes),['news','events','goods','ost','relationships','world']);
+  assert.equal(m.canAdvance(all),true,'all six may be chosen');
+  assert.equal(go(all).step,'result');
+  assert.deepEqual(plain(m.selectionSummary(go(all)).consumption),['새 소식 · 재밌는 글','팝업 · 전시 · 이벤트','굿즈 구매 정보','관련 OST','캐릭터 · 성우','설정 · 세계관']);
+});
+
+test('Q3 ignores unknown answers and taps outside Q3, and never ranks more than six',()=>{
+  const start=toggle(q3(),'ost');
+  for(const value of ['releases','',null,'OST']) assert.equal(reduce(start,{type:'toggle-consumption',value}),start,String(value));
+  for(const state of [q1(),q2(),result('ost')]) assert.equal(reduce(state,{type:'toggle-consumption',value:'news'}),state,state.step);
+  assert.deepEqual(plain(toggle(start,'ost').consumptionTypes),[],'tapping a ranked answer takes it out instead of ranking it twice');
+  // A tampered state already holding six ranks cannot take a seventh.
+  const tampered={...start,consumptionTypes:['news','events','goods','ost','relationships','news']};
+  assert.equal(reduce(tampered,{type:'toggle-consumption',value:'world'}),tampered);
+});
+
+test('The V2 draft carries the Q3 ranking in order and completion needs one to six different answers',()=>{
+  const state=result('news','world','ost');
+  assert.deepEqual(plain(m.buildSelectionDraft(state)),{interest:'animation',topicId:83,favoriteEntityIds:[101],preferenceTagIds:[201,301],consumptionTypes:['news','world','ost']});
+  assert.notEqual(m.buildSelectionDraft(state).consumptionTypes,state.consumptionTypes,'the draft holds its own copy');
+  assert.deepEqual(plain(m.selectionSummary(state).consumption),['새 소식 · 재밌는 글','설정 · 세계관','관련 OST']);
+  for(const consumptionTypes of [[],['news','news'],['news','releases'],['news',''],'news',undefined,null,
+    ['news','events','goods','ost','relationships','world','news']]) {
+    const tampered={...state,consumptionTypes};
+    assert.equal(m.isStateComplete(tampered),false,JSON.stringify(consumptionTypes));
+    assert.throws(()=>m.buildSelectionDraft(tampered));
+    assert.equal(m.isSelectionComplete({...m.buildSelectionDraft(state),consumptionTypes}),false,JSON.stringify(consumptionTypes));
+  }
+  assert.equal(m.isConsumptionRanking(['news','events','goods','ost','relationships','world']),true);
+  assert.equal(m.isConsumptionRanking(['ost']),true);
+  assert.equal(m.sameRanking(['news','world'],['news','world']),true);
+  assert.equal(m.sameRanking(['news','world'],['world','news']),false,'a ranking compares in order');
+  assert.equal(m.sameRanking(['news'],['news','world']),false);
 });
 
 test('Repeated stale navigation cannot skip a question',()=>{
@@ -187,15 +251,15 @@ test('Repeated stale navigation cannot skip a question',()=>{
 });
 
 test('Back retains selections, explicit result reselection clears them, stale reselection cannot clear a new answer',()=>{
-  let state=result();
+  let state=result('ost','news');
   for(const step of ['q3','q2','q1','interest']) {
     state=back(state); assert.equal(state.step,step);
     assert.equal(state.favoriteWorks.length,1); assert.equal(state.preferenceTagIds.length,2);
-    assert.equal(state.consumptionType,'ost');
+    assert.deepEqual(plain(state.consumptionTypes),['ost','news']);
   }
   state=reduce(result(),{type:'reselect',from:'result'});
   assert.equal(state.step,'q1'); assert.equal(state.interest,'animation'); assert.equal(state.topicId,83);
-  assert.equal(state.favoriteWorks.length,0); assert.equal(state.preferenceTagIds.length,0); assert.equal(state.consumptionType,null);
+  assert.equal(state.favoriteWorks.length,0); assert.equal(state.preferenceTagIds.length,0); assert.deepEqual(plain(state.consumptionTypes),[]);
   assert.throws(()=>m.buildSelectionDraft(state));
   state=reduce(state,{type:'toggle-work',work:work()});
   assert.equal(reduce(state,{type:'reselect',from:'result'}),state);
@@ -210,5 +274,5 @@ test('A changed Topic resets old catalog selections and session reset clears per
 test('Incomplete or malformed drafts cannot be submitted',()=>{
   assert.throws(()=>m.buildSelectionDraft(m.initialOnboardingState()));
   const draft=m.buildSelectionDraft(result());
-  for(const invalid of [{...draft,favoriteEntityIds:[101,101]},{...draft,preferenceTagIds:[]},{...draft,preferenceTagIds:[201]},{...draft,preferenceTagIds:Array.from({length:15},(_,i)=>i+1)},{...draft,preferenceTagIds:[201,'202']},{...draft,consumptionType:'releases'},{...draft,topicId:0}]) assert.equal(m.isSelectionComplete(invalid),false);
+  for(const invalid of [{...draft,favoriteEntityIds:[101,101]},{...draft,preferenceTagIds:[]},{...draft,preferenceTagIds:[201]},{...draft,preferenceTagIds:Array.from({length:15},(_,i)=>i+1)},{...draft,preferenceTagIds:[201,'202']},{...draft,consumptionTypes:['releases']},{...draft,consumptionTypes:undefined,consumptionType:'ost'},{...draft,topicId:0}]) assert.equal(m.isSelectionComplete(invalid),false);
 });

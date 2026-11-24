@@ -1,7 +1,9 @@
 /* 범수님 1299:4600. Shared 44px Demo disclosure replaces the 45px iOS bar. */
 .screen { --my-shadow: #e0bafb; }
+/* 2026-11 feedback: the shared 100px bottom room left an empty scroll under 로그아웃/회원탈퇴; keep only the
+   fixed bottom bar (58px + safe area) plus 8px. main.screen outranks home.module.css .screen. */
+main.screen { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
 .content { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; }
-.intro { margin: 0; color: #27272a; font-size: 16px; font-weight: 600; line-height: 24px; }
 .card { min-width: 0; border-radius: 8px; background: white; box-shadow: 0 0 4px var(--my-shadow); }
 /* 2026-11 design feedback: the profile card glows like the other cards (.card 4px; it was 2px). */
 .profile { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; }
@@ -10,13 +12,16 @@
 .email { margin: 0; color: #71717a; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .edit { flex: none; display: grid; place-items: center; min-height: 44px; padding: 0; border: 0; background: transparent; }
 .edit > span { display: flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: #efe7ff; font-size: 11px; font-weight: 500; line-height: 16px; }
-.sectionTitle { margin: 0 0 4px; padding: 12px 12px 0; color: #8f8f85; font-size: 11px; font-weight: 500; line-height: 16px; }
+/* 2026-11 design feedback: larger menu type (section 11→14px, rows 12→16px, account rows 12→14px). */
+.sectionTitle { margin: 0 0 4px; padding: 12px 12px 0; color: #8f8f85; font-size: 14px; font-weight: 500; line-height: 20px; }
 .rows { padding-inline: 24px; }
+/* The same feedback mock leaves 10px under the last row of a titled card (the profile card pads 10px too). */
+.sectionTitle + .rows, .sectionTitle + div > .rows { padding-bottom: 10px; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: #252522; text-align: left; }
-.screen .row { font-size: 12px; font-weight: 500; line-height: 18px; }
+.screen .row { font-size: 16px; font-weight: 500; line-height: 24px; }
 .row:not(:last-child) { border-bottom: .6px solid #e4e4e7; }
 .row img, .edit img { flex: none; display: block; max-width: none; }
-.screen .account { color: #a1a1aa; }
+.screen .account { color: #a1a1aa; font-size: 14px; line-height: 20px; }
 .help { margin: 0; color: #71717a; font-size: 11px; line-height: 16px; }
 .notificationSwitch:focus-visible, .notificationRetry:focus-visible { outline: 2px solid #7043b4; outline-offset: 2px; }
 .notificationSwitch[aria-disabled="true"] { cursor: not-allowed; }

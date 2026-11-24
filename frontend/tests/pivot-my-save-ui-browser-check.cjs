@@ -21,7 +21,7 @@ async function verify(browser, width, height) {
   fixture.contents.forEach(item => fixture.state.saved.add(item.id));
   fixture.state.notifications = [{ notificationId: 9, type: 'system_notice', title: 'Mock 새 알림', body: '알림 내용', isRead: false, createdAt: new Date().toISOString(), readAt: null }];
   let savedMode = 'ready', holdSaved, releaseSaved, tasteWrites = 0, step = 'SAVE', expiredTaste = false, expiredTasteReads = 0;
-  let taste = { topicId: 83, works: [fixture.works[0]], preferenceTagIds: [201, 301], consumptionType: 'world' };
+  let taste = { topicId: 83, works: [fixture.works[0]], preferenceTagIds: [201, 301], consumptionType: 'world', consumptionTypes: ['world'] };
   const errors = [], unexpected = [], requests = [];
   page.on('pageerror', e => errors.push(e.message));
   await context.route('**/*', async route => {
@@ -42,8 +42,8 @@ async function verify(browser, width, height) {
       if (request.method() === 'PUT') {
         tasteWrites++; const data = request.postDataJSON();
         assert.deepEqual(data.answers.favoriteEntityIds, [101, 102]); assert.deepEqual(data.answers.preferenceTagIds, [201, 301]);
-        assert.equal(data.answers.consumptionType, 'news');
-        taste = { ...taste, works: fixture.works.slice(0, 2), consumptionType: 'news' };
+        assert.deepEqual(data.answers.consumptionTypes, ['news', 'world']); assert.equal(data.answers.consumptionType, 'news');
+        taste = { ...taste, works: fixture.works.slice(0, 2), consumptionType: 'news', consumptionTypes: ['news', 'world'] };
       }
       return reply(taste);
     }
@@ -141,23 +141,25 @@ async function verify(browser, width, height) {
     step = 'taste questions'; await button(my, '내 피드 취향 조정하기').click(); await page.locator('#question-heading').waitFor();
     const checkQuestion = async step => {
       await page.waitForFunction(step => document.querySelector('[role=progressbar]')?.getAttribute('aria-valuenow') === String(step), step); await page.evaluate(() => scrollTo(0, 0)); await frame(page);
-      const header = page.locator('[data-my-question-header]'); await checkHeader(header); near((await header.boundingBox()).y, 0, 'MY header top');
+      // 2026-11 design feedback: taste questions start with the progress row like signup (no me;nu header or bell).
+      assert.equal(await page.locator('[data-my-question-header], [data-home-header]').count(), 0, 'No MY header on taste questions');
       near((await page.getByRole('navigation', { name: '온보딩 화면 탐색' }).boundingBox()).y, 45, 'Progress row');
       assert.equal(await page.locator('#question-heading').evaluate(el => el === document.activeElement), true);
       await shot(`taste-q${step}`);
-      await page.evaluate(() => scrollTo(0, 1000)); await frame(page); await hitBell(header); near((await header.boundingBox()).y, 0, 'MY sticky header');
+      await page.evaluate(() => scrollTo(0, 1000)); await frame(page);
+      near((await page.getByRole('navigation', { name: '온보딩 화면 탐색' }).boundingBox()).y, 45, 'Sticky progress row');
     };
     await checkQuestion(1); await page.getByRole('searchbox', { name: '작품 검색' }).fill('테스트'); await button(page, '테스트 작품 2').click();
-    page.once('dialog', dialog => dialog.dismiss()); await button(page.locator('[data-my-question-header]'), '알림').click();
     await button(page, '테스트 작품 2 선택 해제').waitFor(); assert.equal(new URL(page.url()).pathname, '/pivot/taste');
     await button(page, '선택한 작품으로 다음').click(); await page.getByRole('checkbox', { name: '판타지', exact: true }).waitFor(); await checkQuestion(2);
     const theme = page.getByRole('checkbox', { name: '우정', exact: true }); await theme.uncheck(); assert.equal(await button(page, '장르·소재 선택 완료').isDisabled(), true); await theme.check();
-    await button(page, '장르·소재 선택 완료').click(); await checkQuestion(3); await button(page, '더보기').click(); assert.equal(await button(page, '접기').getAttribute('aria-expanded'), 'true');
-    await page.getByRole('radio', { name: '새로운 소식을 빠르게 확인한다', exact: true }).check(); await button(page, '선택 완료').click();
+    await button(page, '장르·소재 선택 완료').click(); await checkQuestion(3); await button(page, '펼쳐 보기').click(); assert.equal(await button(page, '접기').getAttribute('aria-expanded'), 'true');
+    const type = value => page.locator(`input[name=consumptionTypes][value=${value}]`);
+    await type('world').uncheck(); await type('news').check(); await type('world').check();   // Q3 ranks in tap order: news 1, world 2
+    assert.equal(await type('news').getAttribute('aria-label'), '새 소식과 재밌는 글을 챙겨본다, 1순위'); await button(page, '선택 완료').click();
     await button(page, '새로운 피드 보러가기').waitFor(); assert.equal(await page.locator('[data-home-header]').count(), 0); await shot('taste-result');
     await button(page, '새로운 피드 보러가기').click(); await page.waitForURL('**/pivot/home'); await home.waitFor(); assert.equal(tasteWrites, 1);
-    await page.goto(base + '/pivot/taste'); await page.locator('#question-heading').waitFor(); await button(page.locator('[data-my-question-header]'), '알림').click();
-    await page.getByRole('main', { name: '알림함', exact: true }).waitFor(); await button(page.getByRole('main', { name: '알림함', exact: true }), '뒤로가기').click(); await page.locator('#question-heading').waitFor();
+    await page.goto(base + '/pivot/taste'); await page.locator('#question-heading').waitFor();
     step = 'session boundary'; fixture.state.userId = 13; taste = { ...taste, works: [fixture.works[2]] };
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
     await button(page, '테스트 작품 3 선택 해제').waitFor(); assert.equal(await button(page, '테스트 작품 1 선택 해제').count(), 0);

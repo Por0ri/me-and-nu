@@ -27,7 +27,7 @@ async function verify(browser, viewport) {
   let logoutFails = false, logoutCalls = 0, tasteWrites = 0, pageErrors = 0, leakedConsole = false;
   const checks = [], blocked = [], calls = [];
   const work = { entityId: 11, name: '검증 작품', aliases: [], imageUrl: null, releaseYear: 2024, mediaFormat: 'TV', selectable: true, unavailableReason: null };
-  let taste = { topicId: 83, works: [work], preferenceTagIds: [101, 103], consumptionType: 'world' };
+  let taste = { topicId: 83, works: [work], preferenceTagIds: [101, 103], consumptionType: 'world', consumptionTypes: ['world'] };
   const session = () => ({ authenticated: userId !== null, sessionState: userId === null ? 'anonymous' : 'active',
     onboardingCompleted: userId !== null, user: userId === null ? null : { id: userId, accountType: 'user' }, csrfToken: 'mock-csrf' });
   page.on('pageerror', () => { pageErrors++; });
@@ -72,8 +72,8 @@ async function verify(browser, viewport) {
       if (method === 'PUT' && url.pathname === '/api/v1/me/taste') {
         const input = request.postDataJSON();
         assert.equal(request.headers()['x-csrf-token'], 'mock-csrf');
-        assert.deepEqual(input, { topicId: 83, answers: { version: 2, favoriteEntityIds: [11], preferenceTagIds: [101, 103], consumptionType: 'news' } });
-        tasteWrites++; taste = { ...taste, consumptionType: input.answers.consumptionType }; return reply(taste);
+        assert.deepEqual(input, { topicId: 83, answers: { version: 2, favoriteEntityIds: [11], preferenceTagIds: [101, 103], consumptionTypes: ['news', 'world'], consumptionType: 'news' } });
+        tasteWrites++; taste = { ...taste, consumptionType: input.answers.consumptionType, consumptionTypes: input.answers.consumptionTypes }; return reply(taste);
       }
       if (method === 'POST' && url.pathname === '/api/v1/auth/logout') {
         logoutCalls++; assert.equal(request.headers()['x-csrf-token'], 'mock-csrf');
@@ -155,8 +155,14 @@ async function verify(browser, viewport) {
     assert.equal(await page.getByRole('checkbox', { name: '장르 검증', exact: true }).isChecked(), true);
     assert.equal(await page.getByRole('checkbox', { name: '소재 검증', exact: true }).isChecked(), true);
     await page.getByRole('button', { name: '장르·소재 선택 완료', exact: true }).click();
-    assert.equal(await page.getByRole('radio', { name: '설정과 세계관을 파고든다', exact: true }).isChecked(), true);
-    await page.getByRole('radio', { name: '새로운 소식을 빠르게 확인한다', exact: true }).check();
+    // Q3 checkboxes ranked in tap order: the saved world (rank 1) goes out, news then world come back as 1 and 2.
+    assert.equal(await page.getByRole('checkbox', { name: '설정•세계관과 해석을 파고든다, 1순위', exact: true }).isChecked(), true);
+    await page.locator('input[name=consumptionTypes][value=world]').uncheck();
+    assert.equal(await page.getByRole('button', { name: '선택 완료', exact: true }).isDisabled(), true);
+    await page.locator('input[name=consumptionTypes][value=news]').check();
+    await page.locator('input[name=consumptionTypes][value=world]').check();
+    assert.equal(await page.getByRole('checkbox', { name: '새 소식과 재밌는 글을 챙겨본다, 1순위', exact: true }).isChecked(), true);
+    assert.equal(await page.getByRole('checkbox', { name: '설정•세계관과 해석을 파고든다, 2순위', exact: true }).isChecked(), true);
     await page.getByRole('button', { name: '선택 완료', exact: true }).click();
     await page.evaluate(() => {
       window.duplicateEntryLoading = false;
