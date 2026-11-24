@@ -32,7 +32,7 @@ AI 에이전트와 추천 알고리즘을 활용하는 초개인화 큐레이팅
 
 **탈퇴 계정 삭제:** 유예(30일)가 끝난 계정은 `python -m app.jobs.purge_withdrawn_users --expected-database <DB 이름> --apply`로 지웁니다. 기본은 미리보기이며 서버에서 하루에 한 번 실행합니다.
 
-**토론 정리 작업:** `python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply`는 마감이 지난 토론 주제를 소각으로, 48시간이 지난 토론방을 종료로 저장하고 그 방의 채팅을 지웁니다. 끝난 지 `DEBATE_RESULT_RETENTION_DAYS`(기본 9일)가 지난 토론은 통째로 지웁니다. 기본은 미리보기이며, 토론 기능을 켠 환경에서 10분마다 실행합니다.
+**토론 정리 작업:** `python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply`는 7일 안에 기준 표를 못 받은 토론 주제를 지우고, 48시간이 지난 토론방을 종료로 저장하고 그 방의 채팅을 지웁니다. 끝난 지 `DEBATE_RESULT_RETENTION_DAYS`(기본 9일)가 지난 토론은 통째로 지웁니다. 기본은 미리보기이며, 토론 기능을 켠 환경에서 10분마다 실행합니다. main 서버에서는 `deploy/main/main_debates.py`가 설치하는 systemd 타이머가 실행합니다([운영 안내](../deploy/main/OPERATIONS.md)).
 
 사용자와 콘텐츠 데이터는 PostgreSQL을 사용합니다. 세션 저장소는 `SESSION_BACKEND=redis`로 Redis를 선택할 수 있으며 미설정 시 기존 PostgreSQL 세션을 사용합니다. 개발용 가입·로그인은 `ENABLE_DEV_API=true`에서만 등록됩니다. `ENABLE_DEV_API=true`와 `ENABLE_DEV_AUTH_BYPASS=true`를 함께 설정하면 로컬 루프백 요청을 준비된 데모 사용자로 처리합니다. 이때 보호 API 테스트에 로그인·세션 쿠키·CSRF 헤더가 필요하지 않습니다. 우회를 `false`로 되돌리면 일반 세션 인증이 적용됩니다. 일반 인증에서는 `GET /auth/session`이 비로그인에도 익명 CSRF 토큰을 발급하며, 변경 요청은 `X-CSRF-Token`을 보냅니다.
 
