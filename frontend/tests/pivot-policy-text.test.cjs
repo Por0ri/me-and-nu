@@ -134,5 +134,6 @@ test('My Page opens the same modals in Service and Demo without loading server p
   }
   const source = fs.readFileSync(path.join(root, 'components/pivot/my-page-policy-dialog.tsx'), 'utf8');
   assert.doesNotMatch(source, /loadPivotPolicies|fetch\(/);
-  assert.match(source, /isLocalPolicyReviewUrl\(window\.location\.href\)\) \{\n\s+return <LocalPolicyReview/);
+  // \s+ also covers a Windows checkout's CRLF line ending.
+  assert.match(source, /isLocalPolicyReviewUrl\(window\.location\.href\)\) \{\s+return <LocalPolicyReview/);
 });

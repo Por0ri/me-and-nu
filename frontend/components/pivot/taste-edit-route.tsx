@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { ApiError, type Session } from "@/lib/api";
 import { buildSelectionDraft, initialOnboardingState, isStateComplete, type OnboardingState } from "@/lib/pivot/onboarding";
 import { isActiveSession } from "@/lib/pivot/services";
-import { loadMyTaste,loadTasteHints, saveMyTaste, tasteCatalog, tasteEditReducer, tasteEditState, type TasteHints } from "@/lib/pivot/taste-edit";
+import { loadMyTaste, loadTasteHints,saveMyTaste, tasteCatalog, tasteEditReducer, tasteEditState, type TasteHints } from "@/lib/pivot/taste-edit";
 import { usePivotSession } from "./pivot-session";
 import { OnboardingFlow, ResultCriteria, ResultDecorations } from "./onboarding-screens";
 import { warmUpFeed } from "@/lib/pivot/feed-warmup";
