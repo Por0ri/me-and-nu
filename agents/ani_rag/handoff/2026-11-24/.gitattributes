@@ -1,0 +1,2 @@
+me-nu-rag.tar.gz.* filter=lfs diff=lfs merge=lfs -text
+SHA256SUMS.txt text eol=lf
