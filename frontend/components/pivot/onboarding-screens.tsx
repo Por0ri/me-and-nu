@@ -4,7 +4,7 @@ import assetManifest from "@/public/pivot/bc-sources.json";
 import { useDragScroll } from "@/lib/pivot/drag-scroll";
 import { q1Choices, canAdvance, isStateComplete, selectionSummary, MAX_CONSUMPTION_TYPES, type OnboardingAction, type OnboardingState } from "@/lib/pivot/onboarding";
 import { serviceCatalog, demoCatalog, type OnboardingCatalog } from "@/lib/pivot/onboarding-catalog";
-import { QuestionProgress, QuestionTop, WorksQuestion, TagsQuestion, MyQuestionHeader, type MyQuestionHeaderProps, type QuestionCopy } from "./onboarding-catalog-screens";
+import { QuestionProgress, QuestionTop, WorksQuestion, TagsQuestion, MyQuestionHeader, questionFrameClass, type MyQuestionHeaderProps, type QuestionCopy } from "./onboarding-catalog-screens";
 import { HomeHeader } from "./home-screen";
 import { PivotFrame, PrimaryButton } from "./pivot-ui";
 import { useOnboardingNavigation } from "./use-onboarding-navigation";
@@ -59,7 +59,7 @@ export function InterestScreen({ selected, onToggle, onNext, busy, chrome = fals
  * taking one out moves the later ranks up. */
 export function QuestionScreen({ values, onToggle, onBack, onNext, busy, chrome = false, copy, myHeader }: NavigationProps & { values: readonly string[]; onToggle: (value: string) => void; chrome?: boolean; copy?: QuestionCopy; myHeader?: MyQuestionHeaderProps }) {
   const screen = "q1" + (values.length ? "-on" : "");
-  return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
+  return <PivotFrame decorated={false} chrome={chrome} className={questionFrameClass(copy)}>
     <QuestionTop>
       {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
       <QuestionProgress step={3} onBack={onBack} busy={busy} />

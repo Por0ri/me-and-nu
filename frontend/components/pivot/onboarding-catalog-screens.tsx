@@ -30,6 +30,10 @@ export function QuestionProgress({ step, onBack, busy }: { step: 1 | 2 | 3; onBa
 }
 /** Another flow's words for a question (My Page taste edit): its heading, description and a box above them. */
 export type QuestionCopy = { heading?: string; description?: ReactNode; hint?: ReactNode };
+/** Only the My Page taste edit passes copy; its Q1~Q3 follow the taste edit mock (onboarding.module.css .tasteEdit). */
+export function questionFrameClass(copy?: QuestionCopy) {
+  return copy ? `${styles.frame} ${styles.tasteEdit}` : styles.frame;
+}
 type Props = { state: OnboardingState; dispatch: Dispatch<OnboardingAction>; catalog: OnboardingCatalog; onBack: () => void; onNext: () => void; busy: boolean; chrome?: boolean; demo: boolean; message?: string; copy?: QuestionCopy; myHeader?: MyQuestionHeaderProps };
 /** Search results show three at a time and 작품 더보기 adds three (2026-11 design feedback: the list was too long).
  * Pages still load 20 at a time; the next page is asked for only when the loaded ones run out. */
@@ -95,7 +99,7 @@ export function WorksQuestion({ state, dispatch, catalog, onBack, onNext, busy, 
   useEffect(() => () => { ++request.current; controller.current?.abort(); }, []);
   function toggle(work: OnboardingWork) { dispatch({ type: "toggle-work", work }); }
   function search(value: string) { ++request.current; controller.current?.abort(); setQuery(value); }
-  return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
+  return <PivotFrame decorated={false} chrome={chrome} className={questionFrameClass(copy)}>
     <QuestionTop>
       {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
       <QuestionProgress step={1} onBack={onBack} busy={busy} />
@@ -200,7 +204,7 @@ export function TagsQuestion({ state, dispatch, catalog, onBack, onNext, busy, c
   // Onboarding only: My Page taste edit brings its own hint box in this place.
   const found = !copy && !loading && !error
     ? (["genre", "theme"] as const).map(kind => [kind, discoveredTags(state.preferenceOptions, kind)] as const).filter(([, tags]) => tags.length > 0) : [];
-  return <PivotFrame decorated={false} chrome={chrome} className={styles.frame}>
+  return <PivotFrame decorated={false} chrome={chrome} className={questionFrameClass(copy)}>
     <QuestionTop>
       {myHeader ? <MyQuestionHeader {...myHeader} /> : null}
       <QuestionProgress step={2} onBack={onBack} busy={busy} />

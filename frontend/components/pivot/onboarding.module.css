@@ -171,6 +171,28 @@
 .tagChip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
 .tagChip span { overflow-wrap: anywhere; }
 .tagChip:has(input:focus-visible), .workChoice:focus-visible { outline: 3px solid #7043b4; outline-offset: 3px; }
+/* My Page taste edit (2026-11-25 mock, 375×812 with the status bar): tighter than signup, which keeps the rules above.
+   A 40px search pill with a 14px #71717a placeholder (typed text stays 16px so iOS does not zoom in), compact chips
+   clipped at the content edge, 24px from the hint to 장르 and 16px from 장르 to 소재, the button 16px under the
+   choices and 22px over the bottom; on Q3 it follows the cards instead of sitting at the bottom.
+   Folded Q1 and Q3 fit one screen: below 763px the top space (the mock's status bar) shrinks to 12px first, then the
+   Q3 cards (132px → 102px) and their pictures (70px → 40px), so Q3 fits down to about 640px. 334px = Q3 without its
+   three cards. */
+.tasteEdit { --taste-card: clamp(102px, (100svh - 334px) / 3, 132px); }
+.tasteEdit .navigation { margin-top: clamp(12px, 100svh - 718px, 45px); }
+.tasteEdit .searchIcon { left: 15px; width: 18px; height: 18px; }
+.tasteEdit .workSearch { height: 40px; border-radius: 20px; padding-left: 46px; }
+.tasteEdit .workSearch::placeholder { color: #71717a; font-size: 14px; }
+.tasteEdit .selectedWorks { margin-inline: 0; padding-inline: 0; }
+.tasteEdit .selectedWorks li { padding-left: 4px; font-weight: 500; }
+.tasteEdit .selectedWorks button { width: 22px; }
+.tasteEdit .hintSlot:not(:empty) ~ .tagGroup:first-of-type { margin-top: 24px; }
+.tasteEdit .tagGroup + .tagGroup { margin-top: 16px; }
+.tasteEdit .tagGroup legend { margin-bottom: 14px; }
+.tasteEdit .q1Card { min-height: var(--taste-card); }
+.tasteEdit .q1Card > img { width: clamp(40px, var(--taste-card) - 62px, 70px); height: clamp(40px, var(--taste-card) - 62px, 70px); }
+.tasteEdit .actions { padding-top: 16px; padding-bottom: max(22px, env(safe-area-inset-bottom)); }
+.tasteEdit:has(.q1Grid) .actions { margin-top: 0; }
 @media (max-width: 350px) {
   .interestCards { grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); }
   .hint { padding-inline: 12px; }
