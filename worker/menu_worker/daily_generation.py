@@ -9,6 +9,7 @@ from uuid import UUID
 
 from menu_worker.bounded_generation import Controller, StopRun, read_json, write_json
 from menu_worker.bounded_resume import digest, require
+from menu_worker.daily_allocation import article_identity, route_key, run_allocated
 
 KST = timezone(timedelta(hours=9))
 MAX_DAILY_ATTEMPTS = 40
@@ -58,7 +59,7 @@ class DailyController(Controller):
                 "day_policy_sha256": digest(self.state["daily_policy"])}
 
     def completion_reason(self):
-        successes = {r["canonical_url"] for r in successful_records(self.state)}
+        successes = {article_identity(r) for r in successful_records(self.state)}
         if len(successes) >= DAILY_SUCCESS_TARGET:
             return "daily_success_target_reached"
         if self.used_slots() >= self.config["max_new_jobs"]:
@@ -92,6 +93,13 @@ class DailyController(Controller):
             "source_id": self.config["source_id"], "canonical_url": record["canonical_url"],
             "content_type": self.config["content_type"], "policy_date": policy["policy_date"],
             "run_id": self.config["run_id"], "day_policy_sha256": digest(policy)}
+        if policy.get("schema_version") == 2:
+            request = record["request"]
+            require(route_key(request) in {route_key(route) for route in policy["routes"]}
+                    and route_key(job) == route_key(request)
+                    and job.get("canonical_url") == record["canonical_url"], "delivery_job_scope_changed")
+            envelope.update(schema_version=2, source_id=request["source_id"],
+                            content_type=request["content_type"], menu_work_id=request["menu_work_id"])
         if destination.exists():
             require(read_json(destination) == envelope, "delivery_envelope_changed")
         else:
@@ -121,6 +129,8 @@ class DailyController(Controller):
         # The envelope is deterministic and the importer is idempotent per job.
         for record in successful_records(self.state):
             self._emit_delivery(record)
+        if self.state["daily_policy"].get("schema_version") == 2:
+            return run_allocated(self)
         return super().run()
 
     def summary(self):
@@ -128,8 +138,12 @@ class DailyController(Controller):
         today = self.state["records"][policy["start_record_index"]:]
         return {**super().summary(), "policy_date": policy["policy_date"], "day_policy_sha256": digest(policy),
                 "daily_attempts": sum(bool(r.get("counts_slot")) for r in today),
-                "daily_successes": len({r["canonical_url"] for r in successful_records(self.state)}),
+                "daily_successes": len({article_identity(r) for r in successful_records(self.state)}),
                 "daily_deliveries": sum(bool(r.get("delivery_envelope_path")) for r in today),
                 "daily_attempt_limit": MAX_DAILY_ATTEMPTS, "daily_success_target": DAILY_SUCCESS_TARGET,
                 "daily_spent_usd": str(self.spent() - Decimal(policy["prior_accounted_usd"])),
-                "daily_budget_usd": policy["daily_budget_usd"], "automatic_service_publication": False}
+                "daily_budget_usd": policy["daily_budget_usd"], "automatic_service_publication": False,
+                "route_allocation": [{**route,
+                    "attempts": sum(bool(row.get("counts_slot")) for row in today if route_key(row["request"]) == route_key(route)),
+                    "successes": sum(1 for row in successful_records(self.state) if route_key(row["request"]) == route_key(route))}
+                    for route in policy.get("routes", [])]}

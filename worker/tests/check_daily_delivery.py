@@ -94,7 +94,7 @@ def seal_synthetic(root, job, *, ready):
         result.update(review_mode="llm", editorial_decision="approved_for_feed",
             quality_report={"decision": "pass_candidate", "hard_blockers": []}, qa_report=[],
             language_review={"offline_protocol_fixture": "not an actual model review"},
-            package={"request_id": request_id, "content_type": "goods", "menu_work_ids": [8], "cards": cards,
+            package={"request_id": request_id, "content_type": job["content_type"], "menu_work_ids": [job["menu_work_id"]], "cards": cards,
                 "detail_body": "격리 환경의 합성 상세 본문입니다. 실제 상품 정보나 모델 생성물이 아닙니다.",
                 "feed_valid_until": "2026-11-26T10:00:00+09:00", "purge_at": "2026-12-24T10:00:00+09:00",
                 "sources": [{"id": job["source_id"], "title": "OFFLINE SYNTHETIC SOURCE",
@@ -122,6 +122,7 @@ def complete_synthetic(store, root, job_id, *, ready, task_id=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--handoff", type=Path, help="Existing empty /handoff mount, preserved for isolated backend tests")
+    parser.add_argument("--registered-routes", action="store_true", help="Exercise three registered works/types with synthetic articles only")
     args = parser.parse_args(argv)
     dsn, broker = guard_environment()  # Before imports that can initialize any client.
     import psycopg
@@ -191,9 +192,28 @@ def main(argv=None):
         old_jobs = {row["job_id"]: store.get(row["job_id"]) for row in rows}
         old_files = {path: sha256(path.read_bytes()) for job_id in old_jobs for path in (root / "jobs" / job_id).rglob("*") if path.is_file()}
         clock = [FIXTURE_NOW.timestamp()]
+        routes = None
+        articles = [candidate(first_number + 10)]
+        if args.registered_routes:
+            from menu_worker.anime_catalog import CATALOG_ROOT
+            from menu_worker.daily_routes import catalog_routes
+            from urllib.parse import urlunsplit
+            sources = {source["id"]: source for source in read_json(CATALOG_ROOT / "sources.json")["sources"]}
+            routes, articles, works = [], [], set()
+            for kind in ("goods", "event", "news"):
+                route = next(row for row in catalog_routes()["routes"] if row["content_type"] == kind and row["menu_work_id"] not in works)
+                works.add(route["menu_work_id"])
+                routes.append(route)
+                parts = urlsplit(sources[route["source_id"]]["url"])
+                directory = parts.path.rstrip("/")
+                if "." in directory.rsplit("/", 1)[-1]:
+                    directory = directory.rsplit("/", 1)[0]
+                url = urlunsplit(("https", parts.netloc, directory + f"/{first_number + 10 + len(articles)}.html", "", ""))
+                articles.append({**route, "source_url": url, "canonical_url": url})
+        expected_new = len(articles)
         plan = build_plan(source=parent, source_sha256=sha256(original), checkpoint=child,
             policy_date="2026-11-24", daily_budget_usd="0.50", deadline=FIXTURE_DEADLINE.isoformat(),
-            delivery_root=inbox, now=clock[0])
+            delivery_root=inbox, now=clock[0], routes=routes)
         require(plan["daily_policy"]["max_attempts"] == 40 and plan["daily_policy"]["success_target"] == 20, "production_policy_changed")
         app = Celery("daily-offline-" + token, broker=broker, backend=broker)
         queue = "daily-offline-" + token
@@ -219,13 +239,17 @@ def main(argv=None):
         context.enter_context(start_worker(app, pool="solo", concurrency=1, queues=(queue,),
             hostname="daily-offline@" + token, perform_ping_check=False, loglevel="ERROR", shutdown_timeout=15))
         publications, scans = [], []
-        article = candidate(first_number + 10)
+        article = articles[0]
 
-        def discover(*_args):
-            scans.append(True)
-            return {"articles": [article, dict(article)] if len(scans) == 1 else [], "discovered": 2 if len(scans) == 1 else 0}
+        def discover(source, kind, _limit):
+            pair = source, kind
+            selected = [row for row in articles if (row["source_id"], row["content_type"]) == pair] if pair not in scans else []
+            scans.append(pair)
+            return {"articles": selected * 2, "discovered": len(selected) * 2}
 
         def publish(job_id):
+            require(all(store.get(previous)["execution_status"] == "succeeded" for previous in publications),
+                    "more_than_one_job_in_flight")
             publications.append(job_id)
             return synthetic.apply_async(kwargs={"job_id": job_id}, queue=queue).id
 
@@ -262,14 +286,15 @@ def main(argv=None):
             except StopRun as error:
                 require(str(error) == "deadline_reached", "unexpected_controller_stop")
             report = controller.summary()
-            require(report["daily_attempts"] == report["daily_successes"] == report["daily_deliveries"] == 1, "daily_handoff_count_mismatch")
+            require(report["daily_attempts"] == report["daily_successes"] == report["daily_deliveries"] == expected_new, "daily_handoff_count_mismatch")
             require(report["status"] == "stopped" and report["stop_reason"] == "deadline_reached", "deadline_not_preserved")
-            require(publications == producer_calls and len(publications) == 1, "duplicate_generation")
+            require(publications == producer_calls and len(publications) == expected_new, "duplicate_generation")
             new_id = publications[0]
+            article = next(row for row in articles if row["source_id"] == store.get(new_id)["source_id"] and row["content_type"] == store.get(new_id)["content_type"])
             new_before = store.get(new_id)
             replay = synthetic.apply_async(kwargs={"job_id": new_id}, queue=queue).get(timeout=20, disable_sync_subtasks=False)
             require(replay == {"job_id": new_id, "processed": False, "reason": "ignored"}, "duplicate_delivery_processed")
-            require(store.get(new_id) == new_before and len(producer_calls) == 1, "duplicate_delivery_changed_history")
+            require(store.get(new_id) == new_before and len(producer_calls) == expected_new, "duplicate_delivery_changed_history")
             try:
                 store.submit({**article, "idempotency_key": prefix + ":duplicate-" + token}, job_kind="anime_generate")
             except JobConflict as error:
@@ -279,20 +304,21 @@ def main(argv=None):
             envelope_before = {path: path.read_bytes() for path in inbox.glob("*.json")}
             controller.run()  # Same stopped day: reverify/reuse the envelope, never publish again.
             require(envelope_before == {path: path.read_bytes() for path in inbox.glob("*.json")}, "envelope_replay_changed")
-            require(len(publications) == len(producer_calls) == 1, "stopped_day_republished")
+            require(len(publications) == len(producer_calls) == expected_new, "stopped_day_republished")
         require(parent.read_bytes() == original, "parent_checkpoint_changed")
         require({job_id: store.get(job_id) for job_id in old_jobs} == old_jobs, "legacy_rows_changed")
         require(all(sha256(path.read_bytes()) == value for path, value in old_files.items()), "legacy_artifacts_changed")
         with store._connect() as connection:
             counts = {table: connection.execute(f"SELECT count(*) AS total FROM public.{table}").fetchone()["total"]
                       for table in ("content_generation_job", "content_generation_attempt", "content_staging_selection")}
-        require(counts == {"content_generation_job": 5, "content_generation_attempt": 5, "content_staging_selection": 1},
+        require(counts == {"content_generation_job": 4 + expected_new, "content_generation_attempt": 4 + expected_new, "content_staging_selection": expected_new},
                 "unexpected_job_attempt_or_selection_count")
-        require(len(list(inbox.glob("*.json"))) == 1, "unexpected_envelope_count")
+        require(len(list(inbox.glob("*.json"))) == expected_new, "unexpected_envelope_count")
         summary = {"status": "passed", "fixture_id": token, "actual_llm_calls": 0, "actual_cost_usd": "0",
             "protocol_usage_is_synthetic": True, "service_db_access": False, "legacy_jobs_preserved": 4,
-            "new_jobs": 1, "producer_calls": 1, "duplicate_candidate": "deduplicated", "duplicate_delivery": "ignored",
-            "envelopes": 1, "cards": 2, "controller": report, "plan_sha256": digest(plan),
+            "new_jobs": expected_new, "producer_calls": expected_new, "duplicate_candidate": "deduplicated", "duplicate_delivery": "ignored",
+            "envelopes": expected_new, "cards": 2 * expected_new, "controller": report, "plan_sha256": digest(plan),
+            "routes": plan["daily_policy"].get("routes", []),
             "fixture_now": FIXTURE_NOW.isoformat(), "bundle_root": str(bundles), "inbox": str(inbox),
             "broker_preflight": broker_preflight, "database_counts": counts}
         write_json(output / "verification-summary.json", summary)

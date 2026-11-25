@@ -482,6 +482,20 @@ def test_source_can_be_crawlable_without_being_a_discovery_root() -> None:
     assert not supports_discovery_adapter(source)
 
 
+def test_daily_work_scope_is_explicit_and_does_not_enable_general_discovery() -> None:
+    from ani_menu_agent.sources import load_source_registry
+
+    sources = {source.id: source for source in load_source_registry().sources}
+    source = sources["frieren_official"]
+    assert not supports_discovery_adapter(source, targeted=True, content_type="goods")
+    assert not supports_discovery_adapter(source, work_scoped=True, content_type="goods")
+    assert supports_discovery_adapter(source, targeted=True, work_scoped=True, content_type="goods")
+    assert not supports_discovery_adapter(source.model_copy(update={"status": "terms_review"}),
+                                          targeted=True, work_scoped=True, content_type="goods")
+    assert not supports_discovery_adapter(sources["one_piece_official"], targeted=True,
+                                          work_scoped=True, content_type="news")
+
+
 def test_targeted_one_piece_goods_uses_registered_detail_and_publisher_category(monkeypatch) -> None:
     from ani_menu_agent.sources import load_source_registry
 

@@ -102,21 +102,43 @@ def _original_article(candidate, outlet, sources, content_type):
     return article
 
 
-def _collect(source_id: str, content_type: str, limit: int) -> dict:
+def _daily_route(source_id, content_type):
+    from menu_worker.daily_routes import catalog_routes
+
+    try:
+        route = next((row for row in catalog_routes()["routes"]
+                      if row["source_id"] == source_id and row["content_type"] == content_type), None)
+    except AnimeInputError:
+        raise DiscoveryError("discovery_catalog_unavailable") from None
+    if route is None:
+        raise DiscoveryError("discovery_source_unavailable")
+    return route
+
+
+def _collect(source_id: str, content_type: str, limit: int, *, work_scoped=False) -> dict:
     import httpx
     from ani_menu_agent.discovery import collect_candidates, supports_discovery_adapter
     from ani_menu_agent.sources import load_source_registry
 
     sources = load_source_registry().sources
     source = next((item for item in sources if item.id == source_id), None)
+    route = _daily_route(source_id, content_type) if work_scoped else None
     if (source is None or source.status != "active"
-            or not supports_discovery_adapter(source, targeted=True, content_type=content_type)):
+            or not supports_discovery_adapter(source, targeted=True, content_type=content_type, work_scoped=work_scoped)):
         raise DiscoveryError("discovery_source_unavailable")
+    if work_scoped:
+        from menu_worker.anime_catalog import _load_source
+        from ani_menu_agent.work_catalog import registered_service_work_ids
+
+        registered, _ = _load_source(source_id, content_type)
+        if (registered_service_work_ids(source.work_title_ko, source.work_title_original) != {route["menu_work_id"]}
+                or canonical_anime_url(str(source.url)) != canonical_anime_url(registered["url"])):
+            raise DiscoveryError("discovery_catalog_unavailable")
     deadline = time.monotonic() + 210
     try:
         with _until(75):
             items, errors = collect_candidates(source_ids={source.id}, content_type=content_type, limit=limit,
-                                               timeout=8.0, exhaustive_listing=False)
+                                               timeout=8.0, exhaustive_listing=False, work_scoped_sources=work_scoped)
     except _DeadlineExceeded:
         raise DiscoveryError("discovery_listing_timeout") from None
     if errors and not items:
@@ -151,10 +173,21 @@ def _collect(source_id: str, content_type: str, limit: int) -> dict:
 
 def discover_articles(source_id: str, content_type: str, limit: int) -> dict:
     """Run one bounded pass with the Agent interpreter and no inherited keys or database URLs."""
+    return _discover_articles(source_id, content_type, limit)
+
+
+def discover_daily_articles(source_id: str, content_type: str, limit: int) -> dict:
+    """Opt in only the explicit, current daily work routes; never changes registry/Beat flags."""
+    return _discover_articles(source_id, content_type, limit, work_scoped=True)
+
+
+def _discover_articles(source_id: str, content_type: str, limit: int, *, work_scoped=False) -> dict:
     if not re.fullmatch(r"[a-z0-9_]{1,100}", source_id) or content_type not in {"news", "event", "goods"}:
         raise DiscoveryError("invalid_discovery_route")
     if type(limit) is not int or not 1 <= limit <= 20:
         raise DiscoveryError("invalid_discovery_limit")
+    if work_scoped:
+        _daily_route(source_id, content_type)
     env = _environment()
     env["PYTHONPATH"] = os.pathsep.join([str(Path(__file__).resolve().parents[1]), env["PYTHONPATH"]])
     if (AGENT_ROOT / ".env").exists():
@@ -162,7 +195,7 @@ def discover_articles(source_id: str, content_type: str, limit: int) -> dict:
     try:
         result = subprocess.run(
             [str(AGENT_PYTHON), "-B", "-s", "-m", "menu_worker.discovery_agent",
-             str(os.getpid()), source_id, content_type, str(limit)],
+             str(os.getpid()), source_id, content_type, str(limit)] + (["--work-scoped"] if work_scoped else []),
             cwd=AGENT_ROOT, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, timeout=240, check=True, encoding="utf-8",
         )
@@ -184,7 +217,8 @@ if __name__ == "__main__":
     if ctypes.CDLL(None).prctl(1, signal.SIGKILL, 0, 0, 0) != 0 or os.getppid() != int(sys.argv[1]):
         sys.exit(1)
     try:
-        result = _collect(sys.argv[2], sys.argv[3], int(sys.argv[4]))
+        result = _collect(sys.argv[2], sys.argv[3], int(sys.argv[4]),
+                          work_scoped=len(sys.argv) == 6 and sys.argv[5] == "--work-scoped")
     except DiscoveryError as exc:
         result = {"error": str(exc)}
     print(json.dumps(result))
