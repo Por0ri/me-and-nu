@@ -290,3 +290,21 @@ test('A changed anime Topic invalidates the earlier catalog selection before pos
   await assert.rejects(app.service.submitSelection({...selection,topicId:999},consent,profile),/관심 분야/);
   assert.deepEqual(app.calls,['session','topics']);
 });
+
+test('A nickname with banned words gets its own message, from the check and from a save the server turned away (2026-11-25)', () => {
+  assert.equal(service.NICKNAME_BANNED_MESSAGE, '사용할 수 없는 단어가 들어 있어요. 다른 닉네임을 써 주세요.');
+  // 서버 (app/schemas/onboarding.py NICKNAME_BANNED) 가 저장을 막을 때의 모양: 422 VALIDATION_ERROR, nickname 칸 문구
+  const banned = new ApiError('입력값을 확인해 주세요.', 422, 'VALIDATION_ERROR',
+    [{ field: 'nickname', code: 'VALIDATION_ERROR', message: 'Value error, 사용할 수 없는 단어가 들어 있어요. 다른 닉네임을 써 주세요.' }]);
+  assert.equal(service.isBannedNicknameError(banned), true);
+  const rule = new ApiError('입력값을 확인해 주세요.', 422, 'VALIDATION_ERROR',
+    [{ field: 'nickname', code: 'VALIDATION_ERROR', message: 'Value error, 닉네임은 2~20자의 한글·영문·숫자만 쓸 수 있습니다.' }]);
+  assert.equal(service.isBannedNicknameError(rule), false);
+  assert.equal(service.isBannedNicknameError(new Error('x')), false);
+  // 닉네임 확인의 reason "banned" 는 칸 아래 빨간 줄과 저장 막기로 이어진다 (온보딩 · 프로필 수정 공용 칸)
+  const field = fs.readFileSync(path.join(__dirname, '..', 'components/pivot/nickname-field.tsx'), 'utf8');
+  assert.match(field, /reason === "banned" \? NICKNAME_BANNED_MESSAGE/);
+  assert.match(field, /ready: valid && \(skip \|\| checked\?\.nickname === typed\) && !reason/);
+  for (const screen of ['components/pivot/onboarding-profile.tsx', 'components/pivot/profile-edit-screen.tsx'])
+    assert.match(fs.readFileSync(path.join(__dirname, '..', screen), 'utf8'), /status\.problem \|\| message/, screen);
+});

@@ -263,6 +263,21 @@ def say(member, debate_id, body):
     return call(member, "POST", f"/debates/{debate_id}/messages", json={"body": body})
 
 
+def test_chat_hides_banned_words_for_everyone(debate_api, fast_stream):
+    """채팅의 욕설 · 선정적인 말은 그 부분만 같은 길이의 '*' 로 가려서 저장하고 보낸다 (2026-11-25 사용자 결정).
+    보낸 사람에게 돌려주는 값, 다른 사람의 실시간 스트림, 나중에 다시 불러온 목록 모두 가린 글이다."""
+    debate_id, author, (first, second) = open_room(debate_api)
+    thread, result = open_stream(debate_api, second, debate_id, params={"after": 0})
+    sent = say(first, debate_id, "아 씨발 진짜 이기네")
+    assert sent.status_code == 201, sent.text
+    assert sent.json()["body"] == "아 ** 진짜 이기네"
+    assert say(first, debate_id, "시발점부터 다시 보자").json()["body"] == "시발점부터 다시 보자"
+    response = finish(thread, result)
+    assert [data["body"] for kind, _, data in events(response.text) if kind == "chat"] == ["아 ** 진짜 이기네", "시발점부터 다시 보자"]
+    listing = call(second, "GET", f"/debates/{debate_id}/messages").json()
+    assert [item["body"] for item in listing["items"]] == ["아 ** 진짜 이기네", "시발점부터 다시 보자"]
+
+
 def test_side_is_separate_from_chat_and_can_change(debate_api):
     debate_id, author, (first, second) = open_room(debate_api)
     chosen = side(first, debate_id, "a")

@@ -13,6 +13,7 @@ from app.repositories.auth_session_repository import (
 from app.repositories.onboarding_repository import add_consumption_types, find_active_topic, lock_user
 from app.repositories.policy_repository import add_consent_history, get_current_policies
 from app.schemas.onboarding import (
+    NICKNAME_BANNED,
     NICKNAME_TAKEN,
     ActiveTopic,
     NicknameCheckResponse,
@@ -44,8 +45,9 @@ async def reject_taken_nickname(db: AsyncSession, nickname: str, *, user_id: int
 
 async def check_nickname(db: AsyncSession, nickname: str, *, user_id: int) -> NicknameCheckResponse:
     value = nickname.strip()
-    if nickname_problem(value):
-        return NicknameCheckResponse(nickname=value, available=False, reason="invalid")
+    if problem := nickname_problem(value):
+        # 욕설 · 선정적인 말은 규칙 위반(invalid)과 나눠서 알려 준다: 화면이 '2~20자' 대신 알맞은 안내를 보여 준다
+        return NicknameCheckResponse(nickname=value, available=False, reason="banned" if problem == NICKNAME_BANNED else "invalid")
     if await nickname_taken(db, value, user_id=user_id):
         return NicknameCheckResponse(nickname=value, available=False, reason="taken")
     return NicknameCheckResponse(nickname=value, available=True)

@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Self
 from pydantic import ConfigDict, Discriminator, Field, Tag, ValidationInfo, field_validator, model_validator
 from pydantic_core import PydanticCustomError, ValidationError
 
+from app.core.profanity import has_banned
 from app.schemas.common import CamelModel
 from app.schemas.policy import ConsentInput
 
@@ -18,13 +19,18 @@ CatalogId = Annotated[int, Field(strict=True, gt=0, le=9223372036854775807)]
 NICKNAME_MIN, NICKNAME_MAX = 2, 20
 NICKNAME_RULE = "닉네임은 2~20자의 한글·영문·숫자만 쓸 수 있습니다."
 NICKNAME_TAKEN = "중복된 닉네임입니다."
+# 욕설 · 선정적인 말이 든 닉네임 (2026-11-25 사용자 결정, app/core/profanity)
+NICKNAME_BANNED = "사용할 수 없는 단어가 들어 있어요. 다른 닉네임을 써 주세요."
 _NICKNAME = re.compile(r"[0-9A-Za-z가-힣ㄱ-ㅣ]+")
 
 
 def nickname_problem(nickname: str) -> str | None:
-    """None when the already trimmed nickname follows the rule, otherwise why not."""
+    """None when the already trimmed nickname follows the rule, otherwise why not.
+    가입 · 프로필 수정 · 닉네임 확인이 모두 이 함수를 써서 같은 규칙이 걸린다."""
     if not NICKNAME_MIN <= len(nickname) <= NICKNAME_MAX or not _NICKNAME.fullmatch(nickname):
         return NICKNAME_RULE
+    if has_banned(nickname):
+        return NICKNAME_BANNED
     return None
 
 
@@ -163,8 +169,9 @@ class OnboardingRequest(CamelModel):
 class NicknameCheckResponse(CamelModel):
     nickname: str = Field(description="앞뒤 공백을 지운 닉네임")
     available: bool
-    reason: Literal["invalid", "taken"] | None = Field(
-        default=None, description="invalid = 2~20자 한글·영문·숫자 규칙 위반, taken = 온보딩을 마친 다른 회원이 사용 중")
+    reason: Literal["invalid", "banned", "taken"] | None = Field(
+        default=None, description="invalid = 2~20자 한글·영문·숫자 규칙 위반, banned = 욕설 · 선정적인 말이 들어 있음, "
+        "taken = 온보딩을 마친 다른 회원이 사용 중")
 
 
 class OnboardingUser(CamelModel):

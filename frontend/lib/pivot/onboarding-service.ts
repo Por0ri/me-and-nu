@@ -32,7 +32,16 @@ export function nicknameRuleBreaks(typed: string): { length: boolean; characters
 }
 
 export const NICKNAME_TAKEN_MESSAGE = "중복된 닉네임입니다";
-export type NicknameCheck = { nickname: string; available: boolean; reason: "invalid" | "taken" | null };
+/** 욕설 · 선정적인 말이 든 닉네임 (2026-11-25, 서버 app/core/profanity 가 reason "banned" 로 알려 준다) */
+export const NICKNAME_BANNED_MESSAGE = "사용할 수 없는 단어가 들어 있어요. 다른 닉네임을 써 주세요.";
+export type NicknameCheck = { nickname: string; available: boolean; reason: "invalid" | "banned" | "taken" | null };
+
+/** 저장할 때 서버가 그 닉네임을 욕설 · 선정적인 말로 막았는지. 닉네임 확인이 실패해서 확인 없이 저장한 드문 경우에도
+ *  같은 안내를 보여 주려고 쓴다 (서버 문구 NICKNAME_BANNED 의 앞부분으로 알아본다). */
+export function isBannedNicknameError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 422
+    && !!error.fields?.some(field => field.field === "nickname" && field.message.includes("사용할 수 없는 단어"));
+}
 
 /** Asks whether another member who finished onboarding already uses the nickname (completion checks again). */
 export async function checkNickname(nickname: string, signal?: AbortSignal, guard: () => void = requirePivotApi): Promise<NicknameCheck> {
