@@ -24,10 +24,13 @@ from app.seeds import carousel_contents as carousel
 
 POLICY_FIELDS = {"schema_version", "purpose", "run_id", "policy_date", "source_id", "content_type",
                  "max_items", "bundle_root", "day_policy_sha256", "target"}
+POLICY_FIELDS_V2 = (POLICY_FIELDS - {"source_id", "content_type"}) | {"routes"}
+ROUTE_FIELDS = {"source_id", "content_type", "menu_work_id"}
 TARGET_FIELDS = {"host", "port", "database", "username", "schema", "environment"}
 ENVELOPE_FIELDS = {"schema_version", "job_id", "generation_attempt_id", "result_sha256", "bundle_path",
                    "bundle_sha256", "source_id", "canonical_url", "content_type", "policy_date", "run_id",
                    "day_policy_sha256"}
+ENVELOPE_FIELDS_V2 = ENVELOPE_FIELDS | {"menu_work_id"}
 RECEIPT = "pending_import_receipt"
 MAX_JSON = 16 * 1024 * 1024
 
@@ -89,14 +92,31 @@ def read_file(path, *, limit=MAX_JSON):
         raise PendingImportError("input_unavailable") from None
 
 
+def _route_identity(route):
+    require(isinstance(route, dict) and set(route) == ROUTE_FIELDS
+            and isinstance(route["source_id"], str) and re.fullmatch(r"[a-z0-9_]{1,100}", route["source_id"])
+            and isinstance(route["content_type"], str) and route["content_type"] in {"news", "event", "goods"}
+            and type(route["menu_work_id"]) is int and 1 <= route["menu_work_id"] <= 2**63 - 1,
+            "invalid_import_route")
+    return route["source_id"], route["content_type"], route["menu_work_id"]
+
+
 def validate_policy(policy, *, reviewed_sha256=None, apply=False, now=None):
-    require(isinstance(policy, dict) and set(policy) == POLICY_FIELDS, "invalid_import_policy")
-    require(type(policy["schema_version"]) is int and policy["schema_version"] == 1
+    require(isinstance(policy, dict), "invalid_import_policy")
+    version = policy.get("schema_version")
+    require(type(version) is int and version in {1, 2}
+            and set(policy) == (POLICY_FIELDS if version == 1 else POLICY_FIELDS_V2)
             and policy["purpose"] == "pending_content_import", "invalid_import_policy")
+    if version == 1:
+        require(isinstance(policy["source_id"], str) and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", policy["source_id"])
+                and policy["content_type"] in {"news", "event", "goods"}, "invalid_import_scope")
+    else:
+        routes = policy["routes"]
+        require(isinstance(routes, list) and 1 <= len(routes) <= 1000, "invalid_import_routes")
+        identities = [_route_identity(route) for route in routes]
+        require(len({identity[:2] for identity in identities}) == len(identities), "duplicate_import_route")
     require(isinstance(policy["run_id"], str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", policy["run_id"])
-            and isinstance(policy["source_id"], str) and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", policy["source_id"])
-            and policy["content_type"] in {"news", "event", "goods"}
-            and type(policy["max_items"]) is int and 1 <= policy["max_items"] <= 40
+            and type(policy["max_items"]) is int and 1 <= policy["max_items"] <= (40 if version == 1 else 20)
             and _hash(policy["day_policy_sha256"]), "invalid_import_scope")
     try:
         date = datetime.strptime(policy["policy_date"], "%Y-%m-%d").date()
@@ -177,12 +197,21 @@ class Delivery:
 
 
 def load_delivery(envelope, policy, *, now=None):
-    require(isinstance(envelope, dict) and set(envelope) == ENVELOPE_FIELDS, "invalid_delivery_envelope")
-    require(type(envelope["schema_version"]) is int and envelope["schema_version"] == 1
+    version = policy["schema_version"]
+    require(type(version) is int and version in {1, 2}, "invalid_import_policy")
+    require(isinstance(envelope, dict)
+            and set(envelope) == (ENVELOPE_FIELDS if version == 1 else ENVELOPE_FIELDS_V2), "invalid_delivery_envelope")
+    require(type(envelope["schema_version"]) is int and envelope["schema_version"] == version
             and _uuid(envelope["job_id"]) and _uuid(envelope["generation_attempt_id"])
             and _hash(envelope["result_sha256"]) and _hash(envelope["bundle_sha256"]), "invalid_delivery_identity")
-    for key in ("source_id", "content_type", "run_id", "policy_date", "day_policy_sha256"):
+    for key in ("run_id", "policy_date", "day_policy_sha256"):
         require(envelope[key] == policy[key], "delivery_outside_reviewed_scope")
+    if version == 1:
+        require(all(envelope[key] == policy[key] for key in ("source_id", "content_type")),
+                "delivery_outside_reviewed_scope")
+    else:
+        identity = _route_identity({key: envelope[key] for key in ROUTE_FIELDS})
+        require(identity in {_route_identity(route) for route in policy["routes"]}, "delivery_outside_reviewed_scope")
     path = envelope["bundle_path"]
     require(isinstance(path, str) and path == f"{envelope['job_id']}/bundle.json"
             and PurePosixPath(path).as_posix() == path, "unsafe_bundle_path")
@@ -223,8 +252,10 @@ def load_delivery(envelope, policy, *, now=None):
                 and _hash(evidence.get("reviewArtifactSha256")) and isinstance(original, dict)
                 and original.get("status") == "rejected_archived" and original.get("outcome") == "rejected"
                 and original.get("resultSha256") == envelope["result_sha256"], "original_rejection_evidence_missing")
-    require(item.package.content_type == policy["content_type"] and item.package.menu_work_ids,
+    require(item.package.content_type == envelope["content_type"] and item.package.menu_work_ids,
             "content_type_or_work_missing")
+    if version == 2:
+        require(item.package.menu_work_ids == [envelope["menu_work_id"]], "delivery_work_mismatch")
     primary = [source for source in item.package.sources if source.role == "primary"]
     require(len(primary) == 1 and primary[0].id == envelope["source_id"]
             and _article(primary[0].url) == _article(envelope["canonical_url"]), "delivery_source_mismatch")

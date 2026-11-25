@@ -193,7 +193,9 @@ def test_external_celery_export_handoff_is_pending_and_idempotent(carousel_pg, t
     assert envelopes
     engine, url, migrate = carousel_pg
     migrate("head")
-    policy = policy_for(root,envelopes[0],target=target_for(url))
+    routes = [dict(zip(("source_id", "content_type", "menu_work_id"), identity)) for identity in sorted({
+        (e["source_id"], e["content_type"], e["menu_work_id"]) for e in envelopes})] if envelopes[0]["schema_version"] == 2 else None
+    policy = policy_for(root,envelopes[0],target=target_for(url),routes=routes)
     now = datetime.fromisoformat(policy["policy_date"]+"T12:00:00+09:00")
     deliveries = pending.load_deliveries(policy,inbox=inbox,now=now)
     work_ids = sorted({work for d in deliveries for work in d.bundle.items[0].package.menu_work_ids})
@@ -224,4 +226,66 @@ def test_external_celery_export_handoff_is_pending_and_idempotent(carousel_pg, t
                   "producer_evidence_preserved":True,"service_database_access":False,"actual_llm_calls":0}
         if os.environ.get("PENDING_IMPORT_TEST_REPORT"):
             Path(os.environ["PENDING_IMPORT_TEST_REPORT"]).write_text(json.dumps(report,indent=2),encoding="utf-8")
+    _run_async(scenario())
+
+
+def test_v2_multiple_routes_preserve_work_links_pending_visibility_and_replay(pending_pg):
+    engine, url, root, inbox, raw, envelope, old_policy, legacy = pending_pg
+    envelope.update(schema_version=2, menu_work_id=8)
+    write_delivery(root, raw, envelope, inbox=inbox)
+    with Session(engine) as db, db.begin():
+        entity = Entity(topic_id=1, name="격리 다른 작품")
+        db.add(entity)
+        db.flush()
+        second_entity_id = entity.entity_id
+        db.add(EntityExternalId(provider="menu_work", external_id="9", entity_id=entity.entity_id))
+    second_raw, second = make_delivery(root, number=2, work_id=9, source_id="frieren_official",
+                                       content_type="news", version=2)
+    write_delivery(root, second_raw, second, inbox=inbox)
+    policy = policy_for(root, envelope, target=old_policy["target"],
+                        routes=[{key:e[key] for key in pending.ROUTE_FIELDS} for e in (envelope, second)])
+    before = snapshot(engine)
+    async def scenario():
+        dry = await execute(url, policy, inbox=inbox)
+        assert dry["created"] == 2 and snapshot(engine) == before
+        first = await execute(url, policy, inbox=inbox, apply=True)
+        after = snapshot(engine)
+        replay = await execute(url, policy, inbox=inbox, apply=True)
+        assert (first["created"], first["links_added"], replay["unchanged"]) == (2, 2, 2)
+        assert snapshot(engine) == after
+        with Session(engine) as db:
+            content_ids = [row["content_id"] for row in first["items"]]
+            assert db.scalar(select(func.count()).select_from(Content).where(
+                Content.content_id.in_(content_ids), public_content_condition())) == 0
+            news = db.scalar(select(Content).where(Content.content_id.in_(content_ids), Content.content_type=="news"))
+            assert db.scalar(select(ContentEntityLink.entity_id).where(
+                ContentEntityLink.content_id==news.content_id)) == second_entity_id
+            assert db.scalar(select(func.count()).select_from(ContentEntityLink).where(ContentEntityLink.content_id==legacy)) == 0
+            receipts = list(db.scalars(select(AgentRun.output_payload)))
+            assert sum(pending.RECEIPT in row for row in receipts) == 2
+        for name in ("recommendation_round", "recommendation_item", "auth_session", "user_account"):
+            assert after[name] == before[name]
+    _run_async(scenario())
+
+
+def test_v2_durable_limit_is_global_across_routes_and_concurrent_imports(pending_pg, tmp_path):
+    engine, url, root, inbox, raw, envelope, old_policy, _ = pending_pg
+    envelope.update(schema_version=2, menu_work_id=8)
+    write_delivery(root, raw, envelope, inbox=inbox)
+    second_raw, second = make_delivery(root, number=2, content_type="news", version=2)
+    second_inbox = tmp_path / "second-route-inbox"
+    write_delivery(root, second_raw, second, inbox=second_inbox)
+    policy = policy_for(root, envelope, target=old_policy["target"], maximum=1,
+                        routes=[{key:e[key] for key in pending.ROUTE_FIELDS} for e in (envelope, second)])
+    async def scenario():
+        results = await asyncio.gather(
+            execute(url, policy, inbox=inbox, apply=True),
+            execute(url, policy, inbox=second_inbox, apply=True), return_exceptions=True)
+        assert sum(isinstance(result, dict) and result["created"]==1 for result in results) == 1
+        errors = [result for result in results if isinstance(result, Exception)]
+        assert len(errors)==1 and isinstance(errors[0], pending.PendingImportError)
+        assert str(errors[0]) == "durable_daily_import_limit_exceeded"
+        with Session(engine) as db:
+            assert db.scalar(select(func.count()).select_from(AgentRun).where(
+                AgentRun.output_payload[pending.RECEIPT]["day_policy_sha256"].as_string()==policy["day_policy_sha256"])) == 1
     _run_async(scenario())
