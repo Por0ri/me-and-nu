@@ -12,7 +12,7 @@
     python scripts/debate_local_actors.py vote --debate 12 --count 9
 
     # 시험 계정 5번이 주제를 올린다
-    python scripts/debate_local_actors.py topic --actor 5 --title "탄지로와 렌고쿠, 누가 더 강할까?" --side-a 탄지로 --side-b 렌고쿠
+    python scripts/debate_local_actors.py topic --actor 5 --title "탄지로와 렌고쿠, 누가 더 강할까?" --side-a 탄지로 --side-b 렌고쿠 --work 귀멸의 칼날
 
     # 열린 4번 토론방에서 시험 계정 4명이 진영을 고르고 3초마다 채팅한다 (브라우저에서 실시간으로 보인다)
     python scripts/debate_local_actors.py chat --debate 4 --count 4 --messages 20
@@ -114,10 +114,13 @@ class Actor:
         items = response.json().get("items", []) if response.status_code == 200 else []
         return items[0]["entityId"] if items else None
 
-    def create(self, title: str, side_a: str, side_b: str, work_query: str | None = None) -> dict | None:
-        work = self.work_id(work_query) if work_query else None
+    def create(self, title: str, side_a: str, side_b: str, work_query: str) -> dict | None:
+        # 관련 작품은 1~2개 필수다 (2026-11-25). 작품 목록에서 못 찾으면 올리지 않는다.
+        work = self.work_id(work_query)
+        if work is None:
+            raise ActorError(f"작품 목록에서 '{work_query}'을(를) 못 찾았어요. 주제에는 관련 작품이 꼭 있어야 해요.")
         response = self.send("POST", "/api/v1/debates", json={
-            "topicId": self.topic_id, "title": title, "sideA": side_a, "sideB": side_b, "workIds": [work] if work else [],
+            "topicId": self.topic_id, "title": title, "sideA": side_a, "sideB": side_b, "workIds": [work],
         })
         if response.status_code == 409 and response.json().get("code") == "DEBATE_ACTIVE_LIMIT":
             print(f"  - {self.nickname}: 이미 투표 중이거나 토론 중인 주제가 있어서 건너뜀")
@@ -271,7 +274,7 @@ def main() -> None:
     topic.add_argument("--title", required=True)
     topic.add_argument("--side-a", required=True)
     topic.add_argument("--side-b", required=True)
-    topic.add_argument("--work", help="관련 작품 검색어 (선택)")
+    topic.add_argument("--work", required=True, help="관련 작품 검색어 (필수, 작품 목록에서 첫 번째 결과를 단다)")
     chat = commands.add_parser("chat", help="시험 계정들이 열린 토론방에서 진영을 고르고 채팅한다")
     chat.add_argument("--debate", type=int, required=True, help="토론 번호")
     chat.add_argument("--count", type=int, default=4, help="채팅할 계정 수")

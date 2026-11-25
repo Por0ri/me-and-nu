@@ -32,13 +32,16 @@ DEBATE_STATUSES = ("voting", "open", "closed", "expired")
 DEBATE_SIDES = ("a", "b")
 
 TITLE_MAX = 60
-DESCRIPTION_MAX = 200
+# 카드가 더보기 없이 설명을 전부 보여 줘서 100자 (2026-11-25 결정). 200자였던 칼럼과 그보다 긴 옛 설명은
+# 7f843b19debf가 줄이고 자른다.
+DESCRIPTION_MAX = 100
 SIDE_LABEL_MAX = 20
-# 선택지 이름은 칼럼보다 짧게 받는다. 진영 버튼 한 줄에 6자쯤 들어가서 12자면 대부분 두 줄 안에 든다.
-# 입력 검사만 줄였으므로 migration은 없다 (2026-11-24 결정).
-SIDE_LABEL_INPUT_MAX = 12
+# 선택지 이름은 칼럼보다 짧게 받는다. 2026-11-25 디자인대로 8자 (2026-11-24에는 12자).
+# 입력 검사만 줄였으므로 migration은 없고, 이미 있는 8자 넘는 이름은 그대로 둔다.
+SIDE_LABEL_INPUT_MAX = 8
 MESSAGE_MAX = 300
-WORKS_MAX = 3
+# 관련 작품은 1~2개 필수 (2026-11-25 디자인, 전에는 0~3개). 이미 있는 0개 · 3개 주제는 그대로 둔다.
+WORKS_MAX = 2
 SEARCH_TEXT_MAX = 50
 
 
@@ -61,7 +64,7 @@ class Debate(Base):
         BigInteger, ForeignKey("user_account.user_id", ondelete="SET NULL")
     )
     title: Mapped[str] = mapped_column(String(TITLE_MAX), nullable=False)
-    # 간단한 설명 (선택). 뺄지 아직 정하지 않았다 (2026-11-19).
+    # 간단한 설명 (선택). 카드에 전부 보인다.
     description: Mapped[str | None] = mapped_column(String(DESCRIPTION_MAX))
     # 'A vs B'의 양쪽 이름. 예: 나루토 / 사스케, 된다 / 못 된다
     side_a_label: Mapped[str] = mapped_column(String(SIDE_LABEL_MAX), nullable=False)

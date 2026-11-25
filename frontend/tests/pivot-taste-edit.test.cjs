@@ -203,7 +203,7 @@ test('Hint boxes start folded under the question and hold the top works, the gen
   assert.match(q1,/<div id="[^"]+" hidden="">/);
   assert.deepEqual(q1.match(/[가-힣]+ \d+%/g),['거인 62%','나루토 20%']);
   const q2=view({hints:shownHints,step:'q2'});
-  assert.match(q2,/최근 본 콘텐츠에서 선호 취향 알아보기!/);
+  assert.match(q2,/최근 본 콘텐츠에서 발견한 취향 알아보기!/);
   assert.ok(q2.indexOf('<dt>장르</dt>')<q2.indexOf('코미디') && q2.indexOf('<dt>소재</dt>')<q2.indexOf('성장'));
   const q3=view({hints:shownHints,step:'q3'});
   assert.match(q3,/최근 내가 많이 본 콘텐츠 유형 알아보기/);
@@ -236,6 +236,8 @@ test('Taste edit questions use the signup words with the folded hint under them;
   const hint=edit.indexOf('최근 내가 많이 본 콘텐츠 유형 알아보기');
   assert.ok(hint>edit.indexOf('1개만 선택해도 되고'));
   assert.match(edit,/class="questionBody compactTop"/);
+  // The taste edit mock's sizes (search box, chips, hint box, button) apply to the edit only, not to signup.
+  assert.match(edit,/class="[^"]*frame tasteEdit"/);
   assert.doesNotMatch(edit,/이전 열람 성향|더 보고싶나요|하나만/);
   // Without enough hints there is no hint line.
   const bare=renderToStaticMarkup(React.createElement(QuestionScreen,{...base,copy:tasteQuestionCopy({...shownHints,enough:false}).q3}));
@@ -246,7 +248,7 @@ test('Taste edit questions use the signup words with the folded hint under them;
   assert.match(onboardingHtml,/<span>Q3\.<\/span>주로 어떤 정보를 찾나요\?/);
   assert.match(onboardingHtml,/가장 많이 찾는 것 순서대로 선택해 주세요<br\/>1개만 선택해도 되고 6개 다 선택해도 됩니다/);
   assert.match(onboardingHtml,/class="questionBody"/);
-  assert.doesNotMatch(onboardingHtml,/많이 본 콘텐츠 유형|compactTop|하나만/);
+  assert.doesNotMatch(onboardingHtml,/많이 본 콘텐츠 유형|compactTop|tasteEdit|하나만/);
 });
 
 test('My Page opens the taste edit from 내 피드 취향 조정하기 inside 내 정보, in the design order',()=>{

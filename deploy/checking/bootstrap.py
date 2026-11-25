@@ -16,7 +16,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 DATABASE = "me_nu_checking"
-REVISION = "4dba45de1ad1"
+REVISION = "7f843b19debf"
 POLICY_VERSION = "checking-20261028-v1"
 POLICIES = (
     {"policy_type": "terms", "title": "[Checking 테스트] 서비스 이용약관", "is_required": True,

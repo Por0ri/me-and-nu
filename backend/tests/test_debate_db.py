@@ -23,11 +23,14 @@ from app.models import (
     Debate, DebateMember, DebateMessage, DebateNotification, DebateSearchLog, DebateSide, DebateVote,
     DebateVoteTicket, DebateWork,
 )
+from app.models.debate import DESCRIPTION_MAX
 from app.models.notification import NOTIFICATION_TYPES
 
 PARENT = "b7d4e2a9c601"
 TABLES_REVISION = "a67ddf3dc55f"
 NOTIFICATION_REVISION = "94d2da693c10"
+# 설명 칼럼을 100자로 줄이는 PostgreSQL 전용 revision (2026-11-25). SQLite 표는 TABLES_REVISION까지만 만든다.
+DESCRIPTION_REVISION = "7f843b19debf"
 DEBATE_MODELS = (
     Debate, DebateWork, DebateVote, DebateVoteTicket, DebateSide, DebateMember, DebateMessage, DebateNotification,
     DebateSearchLog,
@@ -254,6 +257,12 @@ def test_migration_builds_the_same_tables_as_the_models():
         with sa.create_engine("sqlite://").begin() as db:
             _prepare(db, schema_source)
             built[schema_source] = _structure(db)
+    # SQLite에서는 TABLES_REVISION까지만 돌린다. 그 뒤 DESCRIPTION_REVISION이 설명 칼럼만 줄인다
+    # (PostgreSQL 전용이라 아래 SQL 문장 시험과 tests/test_main_migration_postgres.py에서 확인한다).
+    columns = built["migration"]["debate"]["columns"]
+    position = next(index for index, column in enumerate(columns) if column[0] == "description")
+    assert columns[position][1] == "VARCHAR(200)"
+    columns[position] = ("description", f"VARCHAR({DESCRIPTION_MAX})", *columns[position][2:])
     assert built["migration"] == built["model"]
     assert set(built["model"]) == DEBATE_TABLES
     assert built["model"]["debate_work"]["foreign_keys"] == [
@@ -344,6 +353,24 @@ def test_debate_opened_migration_only_widens_the_type_rule_and_guards_downgrade(
     )
     previous = ", ".join(f"'{kind}'" for kind in NOTIFICATION_TYPES if kind != "debate_opened")
     assert f"CHECK (notification_type IN ({previous}))" in downgrade_sql
+
+
+def test_description_migration_cuts_long_descriptions_before_narrowing_the_column(monkeypatch):
+    upgrade_sql, downgrade_sql = _offline_sql(monkeypatch, DESCRIPTION_REVISION)
+    timeout = upgrade_sql.index("SET LOCAL lock_timeout = '5s'")
+    lock = upgrade_sql.index("LOCK TABLE debate IN ACCESS EXCLUSIVE MODE")
+    cut = upgrade_sql.index("UPDATE debate")
+    narrow = upgrade_sql.index(f"ALTER TABLE debate ALTER COLUMN description TYPE VARCHAR({DESCRIPTION_MAX})")
+    assert timeout < lock < cut < narrow
+    # 100자 넘는 설명만 앞 99자(끝 공백 지움) + '…'
+    assert "regexp_replace(left(description, 99), '\\s+$', '') || '…'" in upgrade_sql
+    assert "WHERE char_length(description) > 100" in upgrade_sql
+    # 설명 칼럼 말고는 건드리지 않는다 (선택지 이름 · 작품 수는 코드에서만 줄였다).
+    assert upgrade_sql.count("ALTER TABLE") == 1 and "side_a_label" not in upgrade_sql and "debate_work" not in upgrade_sql
+
+    # 되돌리기는 칼럼만 넓힌다. 잘린 글은 되살릴 수 없어서 데이터는 건드리지 않는다.
+    assert "ALTER TABLE debate ALTER COLUMN description TYPE VARCHAR(200)" in downgrade_sql
+    assert "UPDATE" not in downgrade_sql and "DELETE" not in downgrade_sql
 
 
 def test_debate_feature_is_off_by_default_with_the_meeting_rules():

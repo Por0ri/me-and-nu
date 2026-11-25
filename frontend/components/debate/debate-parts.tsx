@@ -23,11 +23,18 @@ export function WorkChips({ works }: { works: DebateWork[] }) {
   </ul>;
 }
 
-/** 카드의 작성자 줄: 얼굴과 닉네임 */
+/** 카드에 보이는 닉네임 글자 수. 넘으면 앞 10자 뒤에 '…' (2026-11-25 디자인 요청) */
+const NICKNAME_SHOWN = 10;
+
+/** 카드의 작성자 줄: 얼굴과 닉네임. 화면 읽기 프로그램에는 닉네임 전체를 읽어 준다. */
 export function AuthorLine({ debate }: { debate: Pick<DebateSummary, "authorNickname"> }) {
+  const letters = Array.from(debate.authorNickname);
+  const shown = letters.length > NICKNAME_SHOWN ? `${letters.slice(0, NICKNAME_SHOWN).join("")}…` : debate.authorNickname;
   return <span className={styles.author}>
     <img src={DEFAULT_FACE} alt="" width={24} height={24} />
-    <b><span className={styles.srOnly}>올린 사람 </span>{debate.authorNickname}</b>
+    <b title={shown === debate.authorNickname ? undefined : debate.authorNickname}>
+      <span className={styles.srOnly}>올린 사람 {debate.authorNickname}</span><span aria-hidden="true">{shown}</span>
+    </b>
   </span>;
 }
 

@@ -14,7 +14,7 @@ const TYPE_LABELS: Record<string, string> = { world: "설정", relationships: "�
 // [folded title, open title] — 2026-11 feedback mock: a hint starts folded under the question.
 const TITLES: Record<Step, readonly [string, string]> = {
   q1: ["최근 본 콘텐츠에서 선호 작품 알아보기!", "최근 본 콘텐츠에서 선호 작품을 발견했어요!"],
-  q2: ["최근 본 콘텐츠에서 선호 취향 알아보기!", "최근 본 콘텐츠에서 이런 취향을 발견했어요!"],
+  q2: ["최근 본 콘텐츠에서 발견한 취향 알아보기!", "최근 본 콘텐츠에서 이런 취향을 발견했어요!"],
   q3: ["최근 내가 많이 본 콘텐츠 유형 알아보기", "최근 내가 많이 본 콘텐츠 유형이에요!"],
 };
 

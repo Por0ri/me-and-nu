@@ -19,6 +19,9 @@
   color: #252729;
   font-family: PivotPretendard, sans-serif;
 }
+/* The scrollbar room html keeps (globals.css scrollbar-gutter) shows the html background, the old dark
+   theme: paint it like the page so desktop screens have no dark strip on the right (2026-11-25). */
+:global(html):has(.root) { background: #fff9fd; }
 .root button, .root input { font: inherit; }
 .root button, .root a, .root input { -webkit-tap-highlight-color: transparent; }
 .root button { cursor: pointer; }

@@ -22,7 +22,7 @@ class DebateCreateRequest(CamelModel):
     description: str | None = Field(default=None, max_length=DESCRIPTION_MAX)
     side_a: str = Field(min_length=1, max_length=SIDE_LABEL_INPUT_MAX, description="A 선택지 이름 (예: 나루토)")
     side_b: str = Field(min_length=1, max_length=SIDE_LABEL_INPUT_MAX, description="B 선택지 이름 (예: 사스케)")
-    work_ids: list[CatalogId] = Field(default_factory=list, max_length=WORKS_MAX, description="관련 작품 0~3개")
+    work_ids: list[CatalogId] = Field(min_length=1, max_length=WORKS_MAX, description="관련 작품 1~2개 (필수)")
 
     @field_validator("title", "side_a", "side_b", mode="before")
     @classmethod

@@ -20,20 +20,22 @@ from alembic.config import Config
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError, IntegrityError
+from sqlalchemy.exc import ArgumentError, DataError, IntegrityError
 from sqlalchemy.pool import NullPool
 
 from app.db.migration_policy import SERVICE_SCHEMA_REVISION
 
 
 BASE_REVISION = "b7d4e2a9c601"
-EXPECTED_TARGET = "4dba45de1ad1"
+EXPECTED_TARGET = "7f843b19debf"
+Q3_RANKING_REVISION = "4dba45de1ad1"
 BACKEND = Path(__file__).resolve().parents[1]
 DEBATE_TABLES = {
     "debate", "debate_work", "debate_vote", "debate_vote_ticket", "debate_side",
     "debate_member", "debate_message", "debate_notification", "debate_search_log",
 }
 # 4dba45de1ad1 (onboarding Q3 ranking) adds one more, empty table after the debate tables.
+# 7f843b19debf (debate description 100) adds no table; it only narrows debate.description.
 Q3_RANKING_TABLES = {"tap_consumption_type"}
 NEW_TABLES = DEBATE_TABLES | Q3_RANKING_TABLES
 SEEDED_TABLES = {
@@ -260,6 +262,52 @@ def test_main_upgrade_preserves_existing_data_and_enables_debate_notification(mi
             with db.begin_nested():
                 db.execute(notification_sql, {"notification_id": 1602, "kind": "not_an_allowed_notification"})
         assert invalid_rejection.value.orig.diag.constraint_name == "ck_notification_type"
+
+
+def test_debate_description_upgrade_cuts_old_long_descriptions_and_downgrade_only_widens(migration_pg):
+    """2026-11-25: cards show the whole description, so it takes 100 characters. Rows saved under the
+    old 200 rule keep their first 99 characters (trailing whitespace dropped) plus '…'."""
+    pg = migration_pg
+    width = text("SELECT character_maximum_length FROM information_schema.columns "
+                 "WHERE table_schema=:schema AND table_name='debate' AND column_name='description'")
+    rows = text("SELECT debate_id, description FROM debate ORDER BY debate_id")
+    saved = {
+        2001: None,
+        2002: "가" * 100,                        # exactly 100: kept
+        2003: "가" * 101,
+        2004: "나" * 98 + " \n" + "다" * 50,     # whitespace at the cut goes before '…'
+        2005: "줄바꿈\n" + "라" * 196,           # the old 200 maximum
+    }
+    with pg.engine.begin() as db:
+        pg.config.attributes["connection"] = db
+        command.upgrade(pg.config, Q3_RANKING_REVISION)
+        assert db.scalar(width, {"schema": pg.schema}) == 200
+        for debate_id, description in saved.items():
+            db.execute(text("""
+                INSERT INTO debate(debate_id,topic_id,author_user_id,title,description,side_a_label,side_b_label,voting_ends_at)
+                VALUES (:debate_id,501,701,:title,:description,'합성 A','합성 B',:ends)
+            """), {"debate_id": debate_id, "title": f"합성 토론 {debate_id}", "description": description,
+                   "ends": STAMP})
+
+        command.upgrade(pg.config, SERVICE_SCHEMA_REVISION)
+        assert db.scalar(width, {"schema": pg.schema}) == 100
+        cut = dict(db.execute(rows).all())
+        assert cut == {2001: None, 2002: "가" * 100, 2003: "가" * 99 + "…", 2004: "나" * 98 + "…",
+                       2005: "줄바꿈\n" + "라" * 95 + "…"}
+        assert all(value is None or len(value) <= 100 for value in cut.values())
+        # Other columns of the cut rows stay as they were.
+        assert db.execute(text("SELECT DISTINCT side_a_label, side_b_label, status FROM debate")).all() == [("합성 A", "합성 B", "voting")]
+        # The database itself now refuses a 101-character description.
+        with pytest.raises(DataError):
+            with db.begin_nested():
+                db.execute(text("UPDATE debate SET description=:value WHERE debate_id=2001"), {"value": "가" * 101})
+
+        command.downgrade(pg.config, Q3_RANKING_REVISION)
+        assert db.scalar(text("SELECT version_num FROM alembic_version")) == Q3_RANKING_REVISION
+        assert db.scalar(width, {"schema": pg.schema}) == 200
+        assert dict(db.execute(rows).all()) == cut, "Downgrade only widens the column; cut text cannot come back"
+        command.upgrade(pg.config, SERVICE_SCHEMA_REVISION)
+        assert dict(db.execute(rows).all()) == cut, "Running the upgrade again changes nothing"
 
 
 @pytest.mark.parametrize("value", [

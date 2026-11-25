@@ -13,9 +13,10 @@ import styles from "./debate.module.css";
 
 /*
  * 주제 올리기 (2026-11-23 시안 + 사용자 지시):
- *  - 애니메이션 이름은 우리 작품 목록에서 검색해 고른다 (여러 개 가능, 최대 3개).
- *  - 투표 선택지는 캐릭터명이 아닐 수도 있어서 예시만 보여 준다.
- *  - 필수 칸(작품·제목·선택지 두 개)을 다 채우면 '주제 올리기'가 켜지고, 올리기·임시 저장 모두 확인 창을 거친다.
+ *  - 애니메이션 이름은 우리 작품 목록에서 검색해 고른다 (2개까지, 2026-11-25 시안).
+ *  - 설명은 100자, 투표 선택지는 8자까지 (2026-11-25 시안). 선택지 칸에는 '후보'라고만 보여 준다.
+ *  - 하나라도 쓰면 '임시 저장'이, 필수 칸(작품·제목·선택지 두 개)을 다 채우면 '주제 올리기'도 켜진다 (2026-11-25 시안).
+ *    올리기·임시 저장 모두 확인 창을 거친다.
  *  - 임시 저장은 이 브라우저에 회원별로 남는다 (다른 기기에서는 보이지 않는다). 다시 들어오면 불러오고, 올리면 지운다.
  */
 
@@ -83,13 +84,13 @@ export function DebateCreate() {
     restored.current = true;
     const draft = draftStore(userId).read();
     if (!draft) return;
+    // 상한을 줄여서(선택지 20 → 12 → 8자, 설명 200 → 100자, 작품 3 → 2개) 그 전에 저장한 글은 더 길 수 있다. 서버처럼 글자 단위로 자른다.
+    const clip = (text: string, max: number) => Array.from(text).slice(0, max).join("");
     setWorks(draft.works.slice(0, DEBATE_RULES.worksMax));
     setTitle(draft.title);
-    setDescription(draft.description);
-    // 선택지 상한을 20자에서 12자로 줄여서(2026-11-24) 그 전에 저장한 글은 더 길 수 있다. 서버처럼 글자 단위로 자른다.
-    const clip = (text: string) => Array.from(text).slice(0, DEBATE_RULES.sideLabelMax).join("");
-    setSideA(clip(draft.sideA));
-    setSideB(clip(draft.sideB));
+    setDescription(clip(draft.description, DEBATE_RULES.descriptionMax));
+    setSideA(clip(draft.sideA, DEBATE_RULES.sideLabelMax));
+    setSideB(clip(draft.sideB, DEBATE_RULES.sideLabelMax));
     showToast("임시 저장한 내용을 불러왔어요.", "done");
   }, [userId, showToast]);
 
@@ -168,7 +169,7 @@ export function DebateCreate() {
         </ul> : null}
         {typed && workOptions.text === typed && options.length === 0 && !full
           ? <p className={styles.fieldHelp}>목록에 맞는 작품이 없어요. 다른 이름으로 찾아보세요.</p>
-          : <p className={styles.fieldHelp}>우리 작품 목록에서 골라 주세요 · 여러 개 고를 수 있어요 ({works.length}/{DEBATE_RULES.worksMax})</p>}
+          : <p className={styles.fieldHelp}>{DEBATE_RULES.worksMax}개까지 고를 수 있어요 ({works.length}/{DEBATE_RULES.worksMax})</p>}
       </div>
 
       <div className={styles.field}>
@@ -192,12 +193,12 @@ export function DebateCreate() {
 
       <fieldset className={styles.field}>
         <legend className={styles.label}>투표 선택지 <span className={styles.required} aria-hidden="true">*</span></legend>
-        {([["a", sideA, setSideA, "예) 나루토"], ["b", sideB, setSideB, "예) 사스케"]] as const).map(([side, value, setValue, example], index) =>
+        {([["a", sideA, setSideA], ["b", sideB, setSideB]] as const).map(([side, value, setValue], index) =>
           <div key={side} className={styles.choiceRow}>
             <label className={styles.choiceTag} htmlFor={`${ids}-side-${side}`}>선택지 {index + 1}</label>
             <div className={styles.choiceInput}>
               <input id={`${ids}-side-${side}`} value={value} maxLength={DEBATE_RULES.sideLabelMax} onChange={(event) => setValue(event.target.value)}
-                placeholder={`${example} (최대 ${DEBATE_RULES.sideLabelMax}자)`} aria-required="true" />
+                placeholder="후보" aria-required="true" />
               {value ? <button type="button" aria-label={`선택지 ${index + 1} 지우기`} onClick={() => setValue("")}><CloseIcon size={18} /></button> : null}
             </div>
           </div>)}
@@ -206,7 +207,7 @@ export function DebateCreate() {
 
       {error ? <p className={styles.fieldError} role="alert">{error}</p> : null}
       <div className={styles.createButtons}>
-        <button type="button" className={styles.draftButton} onClick={() => { if (empty) showToast("아직 작성한 내용이 없어요."); else setConfirm("draft"); }}>임시 저장</button>
+        <button type="button" className={styles.draftButton} disabled={empty} onClick={() => setConfirm("draft")}>임시 저장</button>
         <button type="submit" className={styles.submitButton} disabled={!ready}>{submitting ? "올리는 중…" : "주제 올리기"}</button>
       </div>
     </form>

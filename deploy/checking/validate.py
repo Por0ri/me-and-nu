@@ -11,7 +11,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / "deploy/checking/.env"
-MIGRATION_REVISION = "4dba45de1ad1"
+MIGRATION_REVISION = "7f843b19debf"
 EVALUATION_KEY = "CHECKING_ADMIN_RECOMMENDATION_EVALUATION_PATH"
 EVALUATION_PATH = "/app/admin-evaluation/evaluation.json"
 SERVICE_EVALUATION_KEY = "CHECKING_ADMIN_SERVICE_EVALUATION_PATH"
