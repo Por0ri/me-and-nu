@@ -374,14 +374,23 @@ def genre_affinity(state, ctx):
 
 # 글 점수의 작품 몫에 더하는 장르 · 소재 유사도 비중. 로컬 시험 계정 4명으로 고른 출발값 (1.0 부터 고른 유형 글이 줄어듦) → 테스트 뒤 다시 정함
 W_GENRE = 0.5
-# 이미 본 글 감점 (v1 출발값 0.3). 보고 안 연 감점이 작품 취향을 빠르게 덮어서 줄임. 같은 날 같은 글 노출은 한 번만 셈 (load_visits)
+# 이미 본 글 감점 (v1 출발값 0.3). 보고 안 연 감점이 작품 취향을 빠르게 덮어서 줄임. 같은 날 같은 글 노출은 한 번만,
+# SEEN_MS 이상 본 노출만 셈 (load_visits)
 W_SEEN = 0.1
 # 끝까지 본 글 (카드 마지막 장 · 본문 80% 이상)만 본 날 포함 이 날 수 동안 후보에서 뺌. 덜 본 글은 바로 다시 후보
 # (11/3 사용자 결정. 그 전엔 열기만 해도 계속 뺐음). 백엔드 피드 (feed_service.REREAD_DAYS) 와 같은 값
 REREAD_DAYS = 14
 # 화면에 나왔지만 끝까지 안 본 글이 맨 위 · 곁들임 · 다른 작품 자리에서 쉬는 날 수 (11/19 사용자 결정. 그 전엔 한 번 나오면 영영 뺐음).
-# 오늘 전 이 날 수 안에 나온 글만 쉼 → 월요일에 지나친 글은 화요일 쉬고 수요일부터 다시 자리 후보. 오늘 나온 건 안 셈 (slot_ready)
+# 오늘 전 이 날 수 안에 나온 글만 쉼 → 월요일에 지나친 글은 화요일 쉬고 수요일부터 다시 자리 후보. 오늘 나온 건 안 셈 (slot_ready).
+# 화면에 나옴 = SEEN_MS 이상 본 노출 (11/25)
 REST_DAYS = 1
+# '봤다' 로 치는 노출 (11/25 사용자 결정, 부록 A #48): 카드가 80% 이상 보인 시간 (focus_ms) 이 이 ms 이상. focus_ms 가 없는 기록
+# (그 전 기록 · 화면이 아직 안 보냄) 은 반 이상 보인 시간 (visible_ms) 으로 같은 기준. 노출 하나씩 봄 (같은 날 합 아님).
+# 못 미친 노출은 load_visits 가 버림 → 본 글 감점 (W_SEEN) · 자리 쉬기 (REST_DAYS) · 보고 지나침 (v1 SIGNAL skip) 에 안 들어감.
+# 단 열었거나 카드를 넘긴 글은 노출 시간과 상관없이 본 글 (확실히 봤음, 같은 접속에 노출을 하나 넣음 · 보고 지나침 아님).
+# 그전엔 반 이상 1초면 남는 노출을 다 '봤다' 로 쳐서 빨리 넘긴 카드까지 다음 날 감점 · 쉬기를 받았음.
+# 백엔드 '오늘 본 카드 맨 뒤로' 는 따로 정한 기준 (반 이상 보인 시간 하루 합 2초, recommendation_repository.SHOWN_VISIBLE_MS)
+SEEN_MS = 3000
 
 LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
 
@@ -516,7 +525,7 @@ def _candidate_level(same_group, same_work):
     return (same_work, same_group)
 
 
-def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100, ready=None, type_run=None):
+def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=300, ready=None, type_run=None):
     """점수 순 글 번호 → 보여 줄 순서 [(글 번호, 자리), ...] (11/16 · 11/17 결정). 자리 = pinned · side · discover · score
     1. 팬 추천은 기준 작품이 고른 작품 (같은 시리즈 포함) 인 글만 남김
     2. 맨 위 = 기준 작품이 고른 작품인 글 중 자리 후보인 글 (같은 작품은 한 바퀴에 하나씩)
@@ -528,7 +537,8 @@ def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100, r
        _candidate_level 이 가장 낮은 가장 앞 글 (묶음도 작품도 다름 → 같은 묶음 · 다른 작품 → 다른 묶음 · 같은 작품 → 그대로).
        다른 자리 후보로 넘어가지는 않음. 같은 소재 모음은 6번 없이 정했을 때 남는 글만 남김 → 보이는 소재 모음은 같고 자리만 바뀜
     chip_slugs: 고른 칩의 소재 슬러그 집합 (chip_slug). ready: 글별 자리 후보 여부 (slot_ready, 11/19).
-    ready 가 없으면 seen (글별 노출 횟수) 이 0 인 글만 후보 (11/18 까지 규칙: 한 번 나오면 영영 자리에서 빠짐)"""
+    ready 가 없으면 seen (글별 노출 횟수) 이 0 인 글만 후보 (11/18 까지 규칙: 한 번 나오면 영영 자리에서 빠짐).
+    top_n: 하루 순위 개수 (daily_recommend.TOP_N 과 같게, 11/25 100 → 300). 후보가 모자라면 짧게 끝남"""
     type_run = TYPE_RUN if type_run is None else type_run
     keep_theme = None                                                 # 소재 → 남길 글 (6번 없이 정한 순서에서 먼저 나온 글)
     if type_run:

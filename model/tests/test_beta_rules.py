@@ -176,6 +176,18 @@ class ComposeTests(unittest.TestCase):
         out = service.compose([2, 0, 1], service.make_feed(posts, CTX), posts, [101], set(), CTX)
         self.assertEqual(out, [(0, "pinned"), (1, "pinned"), (2, "score")])
 
+    def test_300_lets_a_later_theme_collection_move_up(self):   # 11/25 하루 300개 (EXPERIMENTS 부록 A #47)
+        # 연속 금지 없는 순서에서 121번째에 처음 나오는 소재 모음: 100개면 남길 글 (keep_theme) 에 못 들어 하루 순위에 없고,
+        # 300개면 남아서 연속 금지가 2번째로 당김 → 300 으로 늘려 앞 100개가 바뀌는 건 이 경우뿐
+        nowork = lambda ty, **kw: {**post([101], ty=ty, **kw), "works": [], "anchor": None, "menu_work_id": None}
+        posts = [nowork("character") for _ in range(120)] + [nowork("curation", kind="overlap", theme="gore", slug="gore")]
+        feed = service.make_feed(posts, CTX)
+        short = service.compose(list(range(121)), feed, posts, [101], set(), CTX, top_n=100)
+        long = service.compose(list(range(121)), feed, posts, [101], set(), CTX, top_n=300)
+        self.assertNotIn(120, [i for i, _ in short])
+        self.assertEqual(long[1], (120, "score"))
+        self.assertEqual(len(long), 121)                              # 후보가 모자라면 짧게 끝남
+
     def test_at_most_two_side_posts_a_day(self):
         self.posts += [post([102, 101], anchor=0, kind="director", ty="people") for _ in range(3)]
         self.feed = service.make_feed(self.posts, CTX)

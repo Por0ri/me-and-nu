@@ -35,7 +35,7 @@ async def list_topics(
     response_model=FeedResponse,
     tags=["피드"],
     summary="내 Topic의 콘텐츠 피드 조회",
-    description="활성 Topic의 공개 콘텐츠를 오늘(없으면 어제) 추천 순서로 반환하고, 추천이 없으면 최신순을 사용합니다. 추천 카드는 식별자와 사유를 포함합니다. nextCursor는 그대로 전달하며 INVALID_CURSOR이면 첫 페이지부터 다시 조회하세요.",
+    description="활성 Topic의 공개 콘텐츠를 오늘(없으면 어제) 추천 순서로 최대 300개 반환하고, 추천 뒤에 다른 콘텐츠를 잇지 않습니다. 추천이 없거나 보이는 추천 콘텐츠가 없으면 최신 콘텐츠를 글 유형(Q3 묶음)이 번갈아 나오게 섞어 최대 300개 반환합니다. 두 경우 모두 그만볼래요 콘텐츠와 14일 안에 끝까지 본 콘텐츠는 빼고, 오늘 2초 이상 본 카드는 뒤로 보냅니다. 추천 카드는 식별자와 사유를 포함합니다. nextCursor는 그대로 전달하며 INVALID_CURSOR이면 첫 페이지부터 다시 조회하세요.",
     responses={**COMMON_ERRORS, 404: {"model": ErrorResponse, "description": "TOPIC_NOT_FOUND"}},
 )
 async def get_topic_feed(

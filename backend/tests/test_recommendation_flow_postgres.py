@@ -248,7 +248,8 @@ def test_onboarding_batch_feed_activity_reactions_and_logout(recommendation_pg, 
                       "occurredAt": datetime.now(timezone.utc).isoformat()}
         events = {"events": [{**event_base, "clientEventId": str(uuid4()), "eventType": kind, "value": value}
                              for kind, value in (
-                                 ("impression", {"sessionId": "local-flow", "surface": "home_feed", "visibleMs": 1500}),
+                                 # 11/25: 모델은 3초 이상 본 노출만 '봤다' 로 셈 (model/algo/service.py SEEN_MS)
+                                 ("impression", {"sessionId": "local-flow", "surface": "home_feed", "visibleMs": 3500}),
                                  ("open", {"sessionId": "local-flow", "surface": "detail", "activeMs": 2000, "scrollPct": 70}),
                                  ("card_swipe", {"sessionId": "local-flow", "surface": "detail", "cardIndex": 3, "cardCount": 3}),
                              )]}

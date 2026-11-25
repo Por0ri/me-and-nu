@@ -1,13 +1,16 @@
+import inspect
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from model.algo import anime_ranker as ar, service
 from model.algo.preferences import LEGACY_ALIASES, apply_chip, load_chip_features, unmapped_summary
 from model.algo.preflight import check_inputs
 from model.scripts import daily_recommend as daily
+from model.tests.fixtures import build_synthetic_world
 from model.tests.storage_adapter import self_test
 
 
@@ -105,22 +108,110 @@ class PreferenceTests(unittest.TestCase):
 
     def test_load_visits_counts_one_impression_per_post_per_day(self):
         at = datetime(2026, 10, 31, 3, tzinfo=timezone.utc)                # 12:00 in Seoul
-        events = [(1, "impression", 501, {"session_id": "a"}, at),
-                  (1, "impression", 501, {"session_id": "b"}, at + timedelta(hours=2)),   # same day, refreshed
-                  (1, "impression", 501, {"session_id": "c"}, at + timedelta(days=1))]
-
-        class Cursor:
-            def __init__(self):
-                self.rows = iter([events, [], []])
-
-            def execute(self, *_):
-                pass
-
-            def fetchall(self):
-                return next(self.rows)
-
-        visits = daily.load_visits(Cursor(), [1], {501: 0})[1]
+        seen = {"visible_ms": 4000}                                        # 3초 넘게 본 노출 (SeenTimeTests)
+        events = [(1, "impression", 501, {"session_id": "a", **seen}, at),
+                  (1, "impression", 501, {"session_id": "b", **seen}, at + timedelta(hours=2)),   # same day, refreshed
+                  (1, "impression", 501, {"session_id": "c", **seen}, at + timedelta(days=1))]
+        visits = daily.load_visits(EventCursor(events), [1], {501: 0})[1]
         self.assertEqual(sum(kind == "impression" for visit in visits for kind, *_ in visit), 2)
+
+
+class EventCursor:
+    """load_visits 가 읽는 순서 (활동 기록 → 반응 → 저장) 대로 돌려주는 가짜 커서. 반응 · 저장은 없음"""
+
+    def __init__(self, events):
+        self.rows = iter([events, [], []])
+
+    def execute(self, *_):
+        pass
+
+    def fetchall(self):
+        return next(self.rows)
+
+
+class SeenTimeTests(unittest.TestCase):
+    """'봤다' = 카드가 80% 이상 보인 시간 3초 이상인 노출만 (11/25, EXPERIMENTS 부록 A #48)"""
+    AT = datetime(2026, 11, 24, 3, tzinfo=timezone.utc)                  # 한국 11/24 12:00
+
+    def impressions(self, visits):
+        return sorted(c for visit in visits for kind, c, _ in visit if kind == "impression")
+
+    def test_only_impressions_seen_for_three_seconds_reach_the_model(self):
+        values = [{"visible_ms": 2999},                     # 0 반 이상 보인 시간 3초 미만 → 버림
+                  {"visible_ms": 3000},                     # 1 focus_ms 가 없는 기록은 visible_ms 로 → 남김
+                  {"visible_ms": 9000, "focus_ms": 2999},   # 2 focus_ms 가 있으면 그것만 봄 → 버림
+                  {"visible_ms": 5000, "focus_ms": 3000},   # 3 → 남김
+                  {},                                       # 4 시간이 없음 → 버림
+                  {"visible_ms": 4000, "focus_ms": None}]   # 5 focus_ms 빈값 = 없음 → visible_ms 로 남김
+        events = [(1, "impression", 501 + n, {"session_id": "a", **v}, self.AT) for n, v in enumerate(values)]
+        visits = daily.load_visits(EventCursor(events), [1], {501 + n: n for n in range(len(values))})[1]
+        self.assertEqual(self.impressions(visits), [1, 3, 5])
+        self.assertEqual([daily.seen_enough(v) for v in values], [False, True, False, True, False, True])
+
+    def test_opened_or_swiped_posts_count_as_seen_whatever_the_time(self):
+        # 열었거나 카드를 넘긴 글은 확실히 본 글 (11/25 사용자 결정): 짧은 노출 (1.2초) 이어도 본 글로 남고,
+        # 같은 접속에 열기 · 넘기기가 있어서 보고 지나침은 아님
+        events = [(1, "impression", 501, {"session_id": "a", "visible_ms": 1200}, self.AT),
+                  (1, "card_swipe", 501, {"session_id": "a", "card_index": 2, "card_count": 6}, self.AT),
+                  (1, "open", 501, {"session_id": "a", "scroll_pct": 50.0}, self.AT)]
+        visit = daily.load_visits(EventCursor(events), [1], {501: 0})[1][0]
+        self.assertEqual(sorted(visit), [("impression", 0, None), ("open", 0, None), ("read", 0, 0.5), ("swipe", 0, (2, 6))])
+
+    def test_posts_opened_without_an_impression_count_as_seen(self):
+        # 검색 · 저장 · 알림에서 연 글처럼 홈 노출이 없어도 본 글, 하루 한 번만
+        events = [(1, "open", 501, {"session_id": "a", "scroll_pct": 20.0}, self.AT),
+                  (1, "card_swipe", 502, {"session_id": "a", "card_index": 1, "card_count": 4}, self.AT),
+                  (1, "open", 501, {"session_id": "b", "scroll_pct": 40.0}, self.AT + timedelta(hours=1)),
+                  (1, "impression", 501, {"session_id": "b", "visible_ms": 5000}, self.AT + timedelta(hours=1))]
+        visits = daily.load_visits(EventCursor(events), [1], {501: 0, 502: 1})[1]
+        self.assertEqual(self.impressions(visits), [0, 1])
+
+    def test_a_short_impression_does_not_hide_a_long_one_the_same_day(self):
+        # 하루 한 번은 거른 뒤에 셈: 앞 접속 (a) 의 짧은 노출 대신 뒤 접속 (b) 의 긴 노출이 남음.
+        # 짧은 노출만 있던 접속 (c) 은 접속 자체가 안 남음
+        events = [(1, "impression", 501, {"session_id": "a", "visible_ms": 1200}, self.AT),
+                  (1, "card_swipe", 502, {"session_id": "a", "card_index": 2, "card_count": 6}, self.AT),
+                  (1, "impression", 501, {"session_id": "b", "visible_ms": 4000}, self.AT + timedelta(hours=1)),
+                  (1, "impression", 503, {"session_id": "c", "visible_ms": 1500}, self.AT + timedelta(hours=2))]
+        visits = daily.load_visits(EventCursor(events), [1], {501: 0, 502: 1, 503: 2})[1]
+        # 502 는 카드를 넘겨서 본 글 (11/25), 501 의 짧은 노출은 버리고 뒤 접속의 긴 노출이 남음
+        self.assertEqual([list(v) for v in visits], [[("impression", 1, None), ("swipe", 1, (2, 6))], [("impression", 0, None)]])
+
+
+class DayLengthTests(unittest.TestCase):
+    """하루 300개 (11/25, EXPERIMENTS 부록 A #47). 합성 작품 320편 위의 가짜 글"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.world = build_synthetic_world()
+
+    def rank(self, n):
+        ctx, cfg, ids, _ = self.world
+        today = date(2026, 11, 25)
+        types = ("character", "news", "character", "guide", "music", "goods")   # Q3 묶음이 섞이게
+        posts = [{"id": k, "type": types[k % len(types)], "title": f"synthetic-{k}", "published": today - timedelta(days=k % 20),
+                  "until": today + timedelta(days=30), "menu_work_id": k % 200 + 1} for k in range(1, n + 1)]
+        user = {"works": [1, 2], "genres": ["Action"], "themes": ["Isekai"], "answers": ["relationships", "news"]}
+        return daily.recommend(user, [], ctx, service.make_feed(posts, ctx), posts, today.toordinal() - 719163,
+                               ar.to_seconds(datetime(2026, 11, 25)), cfg, ids)
+
+    def test_a_day_holds_300_posts(self):
+        self.assertEqual(daily.TOP_N, 300)
+        self.assertEqual(inspect.signature(service.compose).parameters["top_n"].default, daily.TOP_N)
+        out = self.rank(400)
+        self.assertEqual(len(out), 300)
+        self.assertEqual(len({i for i, *_ in out}), 300)                  # 같은 글 두 번 없음
+
+    def test_fewer_posts_just_end_early(self):                            # 백엔드는 '정확히 300개' 를 가정하면 안 됨
+        self.assertEqual(len(self.rank(120)), 120)
+
+    def test_the_first_100_stay_the_same_without_theme_collections(self):
+        # 300 으로 늘려도 앞 100개는 그대로 (달라지는 건 소재 모음뿐: test_beta_rules 의 test_300_lets_a_later_theme_collection_move_up)
+        long = self.rank(400)
+        with patch.object(daily, "TOP_N", 100):
+            short = self.rank(400)
+        self.assertEqual(len(short), 100)
+        self.assertEqual(long[:100], short)
 
 
 class PreflightTests(unittest.TestCase):
