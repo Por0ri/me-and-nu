@@ -71,26 +71,29 @@ export function DebateRoom({ debateId }: { debateId: number }) {
   </DebateScreen>;
 }
 
-/** 채팅방 위 토론 카드 (2026-11-23 시안): 작품 칩과 '투표창 접기/펼치기', 제목, 설명, 작성자·참여 인원·남은 시간.
- *  펼친 동안 아래에 children(진영 투표 등)을 둔다. 머리 부분 아래에 붙어 있고 채팅은 그 아래로 흐른다. */
-function RoomPanel({ debate, now, collapsed, onToggle, children }: {
+/** 채팅방 위 토론 카드 (2026-11-23 시안): 작품 칩과 '투표창 접기', 제목, 설명, 작성자·참여 인원·남은 시간.
+ *  펼친 동안 아래에 children(진영 투표 등)을 둔다. 머리 부분 아래에 붙어 있고 채팅은 그 아래로 흐른다.
+ *  접으면 (2026-11-25 시안) 제목과 참여 인원·남은 시간 한 줄만 남기고, 그 줄 오른쪽 끝에 '투표창 펼치기'를 둔다. */
+export function RoomPanel({ debate, now, collapsed, onToggle, children }: {
   debate: DebateSummary; now: number; collapsed: boolean; onToggle?: () => void; children?: ReactNode;
 }) {
-  return <section className={styles.roomPanel} aria-label="토론 정보">
+  const fold = onToggle ? <button type="button" className={styles.foldButton} aria-expanded={!collapsed} onClick={onToggle}>
+    {collapsed ? "투표창 펼치기" : "투표창 접기"}
+  </button> : null;
+  return <section className={styles.roomPanel} aria-label="토론 정보" data-collapsed={collapsed || undefined}>
     <div className={styles.roomPanelCard}>
-      <div className={styles.roomTop}>
+      {collapsed ? null : <div className={styles.roomTop}>
         <WorkChips works={debate.works} />
-        {onToggle ? <button type="button" className={styles.foldButton} aria-expanded={!collapsed} onClick={onToggle}>
-          {collapsed ? "투표창 펼치기" : "투표창 접기"}
-        </button> : null}
-      </div>
+        {fold}
+      </div>}
       <h2 className={styles.topicTitle}>{debate.title}</h2>
       {!collapsed && debate.description ? <p className={styles.roomDescription}>{debate.description}</p> : null}
       <div className={styles.topicMeta}>
-        <AuthorLine debate={debate} />
+        {collapsed ? null : <AuthorLine debate={debate} />}
         <span className={styles.meta}><UsersIcon size={16} />{debate.memberCount}명 참여 중</span>
         <span className={styles.metaDivider} aria-hidden="true" />
         <span className={styles.meta}><ClockIcon size={16} />남은 시간 {roomRemaining(debate.closesAt, now)}</span>
+        {collapsed ? fold : null}
       </div>
       {!collapsed ? children : null}
     </div>
@@ -122,12 +125,16 @@ function SidePoll({ debate, busy, onPick, onCancel }: {
 
 /* ───────────── 진행 중: 실시간 채팅 ───────────── */
 
-/** 앞 메시지와 같은 사람이 같은 분 안에 보낸 메시지인지. 이름·진영 표시·시간이 같아서 다시 쓰지 않는다.
- *  보낸 순간의 진영이 바뀌었으면 새로 보여 준다. (탈퇴한 회원은 모두 '알 수 없음'이라 함께 묶일 수 있다) */
+/** 앞 메시지와 같은 사람이 같은 분 안에 보낸 메시지인지. 이름·시간이 같아서 다시 쓰지 않는다.
+ *  (탈퇴한 회원은 모두 '알 수 없음'이라 함께 묶일 수 있다) */
 function sameRun(previous: DebateMessage, next: DebateMessage): boolean {
   const minute = (message: DebateMessage) => Math.floor(Date.parse(message.createdAt) / 60_000);
-  return previous.isMine === next.isMine && previous.nickname === next.nickname && previous.side === next.side
-    && minute(previous) === minute(next);
+  return previous.isMine === next.isMine && previous.nickname === next.nickname && minute(previous) === minute(next);
+}
+
+/** 프로필 사진 기능이 생기기 전까지 얼굴 자리에 닉네임 첫 글자를 보여 준다 (2026-11-25 사용자 결정). */
+export function nicknameInitial(nickname: string): string {
+  return Array.from(nickname.trim())[0] ?? "";
 }
 
 /** 도배 막기 창 (2026-11-23 시안): 10초에 5개를 넘게 보내면 서버가 막고(429) 이 창을 띄운다. */
@@ -422,7 +429,6 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
   };
   const closeRateLimit = useCallback(() => setRateLimited(false), []);
 
-  const label = (side: DebateSideKey) => (side === "a" ? debate.sideA.label : debate.sideB.label);
   return <DebateScreen composer label={debate.title}>
     <RoomHeader title={debate.title} back="/pivot/debate" />
     <RoomPanel debate={debate} now={now} collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)}>
@@ -440,20 +446,19 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
         {loadingOlder ? "불러오는 중이에요" : "이전 채팅 더 보기"}
       </button> : null}
       <ol className={styles.messages} aria-label="채팅" aria-live="polite">
-        {/* 시안: 다른 사람은 왼쪽 흰 말풍선, 내 메시지는 오른쪽 연보라 말풍선. 얼굴 자리는 연보라 동그라미.
-            보낸 순간의 진영은 닉네임 옆 작은 표시로 보여 준다.
+        {/* 시안: 다른 사람은 왼쪽 흰 말풍선, 내 메시지는 오른쪽 연보라 말풍선. 얼굴 자리는 연보라 동그라미에 닉네임 첫 글자.
+            진영 표시는 닉네임 옆에 두지 않는다 (2026-11-25 디자이너 요청).
             같은 사람이 같은 분 안에 연달아 보내면 이름·얼굴·시간 없이 말풍선만 바로 아래에 붙인다 (2026-11-24, 카카오톡처럼). */}
         {(messages ?? []).map((item, index, list) => {
           const continued = index > 0 && sameRun(list[index - 1], item);
           return <li key={item.messageId} className={styles.message} data-mine={item.isMine || undefined} data-continued={continued || undefined}>
-            <span className={styles.avatar} aria-hidden="true" />
+            <span className={styles.avatar} aria-hidden="true">{nicknameInitial(item.nickname)}</span>
             <div className={styles.messageBody}>
               {continued
                 // 화면 읽기 프로그램은 말풍선마다 누가 보냈는지 읽어 준다.
                 ? <span className={styles.srOnly}>{item.nickname}</span>
                 : <p className={styles.messageMeta}>
                   <b>{item.nickname}</b>
-                  {item.side ? <span className={styles.sideTag} data-side={item.side}>{label(item.side)}</span> : null}
                   <time dateTime={item.createdAt}>{timeText(item.createdAt)}</time>
                 </p>}
               <p className={styles.bubble}>{item.body}</p>

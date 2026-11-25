@@ -236,6 +236,14 @@
 .screen .foldButton { flex: none; height: 24px; padding: 0 2px; border: 0; background: transparent; color: var(--debate-primary); font-size: 12px; font-weight: 600; }
 .roomDescription { margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; }
 .roomPanelCard .topicMeta { margin-top: 4px; }
+/* 접은 투표창 (2026-11-25 시안, 375px 에서 시안과 3px 안으로 맞춤): 작품 칩 · 설명 · 작성자 없이 제목과 참여 인원 · 남은 시간 한 줄.
+   아이콘과 글자 사이 6px, 구분선 양옆 4px. '투표창 펼치기'는 그 줄 오른쪽 끝에 11px 로 (글자 끝이 카드 안쪽 끝에서 12px).
+   카드 위 14px · 아래 10px, 카드 밑 구분선까지 16px */
+.roomPanel[data-collapsed] { padding-bottom: 16px; }
+.roomPanel[data-collapsed] .roomPanelCard { padding: 14px 12px 10px; }
+.roomPanel[data-collapsed] .topicMeta { gap: 4px; margin-top: 2px; }
+.roomPanel[data-collapsed] .meta { gap: 6px; }
+.roomPanel[data-collapsed] .foldButton { margin-left: auto; padding: 0 12px; font-size: 11px; }
 /* 진영 투표: 고르기 전 두 버튼(연보라·보라 테두리, 동그라미 체크), 고른 뒤 비율 막대와 '투표 취소' */
 .poll { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .sideChoices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -254,7 +262,7 @@
 .pollBar > span { display: block; height: 100%; border-radius: inherit; background: var(--debate-primary); transition: width .3s ease; }
 .pollFoot { display: flex; align-items: center; justify-content: space-between; min-height: 20px; color: var(--debate-muted); font-size: 11px; line-height: 16px; }
 .screen .pollFoot button { padding: 2px 0; border: 0; background: transparent; color: var(--debate-muted); font-size: 11px; }
-/* 채팅: 다른 사람은 왼쪽 흰 말풍선(연회색 테두리), 내 메시지는 오른쪽 연보라 말풍선. 얼굴 자리는 연보라 동그라미 30px */
+/* 채팅: 다른 사람은 왼쪽 흰 말풍선(연회색 테두리), 내 메시지는 오른쪽 연보라 말풍선. 얼굴 자리는 연보라 동그라미 30px 에 닉네임 첫 글자 */
 .chat { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; }
 .chatEmpty { padding: 24px 0; color: var(--debate-muted); font-size: 13px; text-align: center; }
 /* 새 메시지로 따라 내려갈 때 떠 있는 입력창에 가리지 않게 */
@@ -272,15 +280,15 @@
 .message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 86%; }
 .message[data-mine] { grid-template-columns: minmax(0, 1fr) 30px; align-self: flex-end; }
 .message[data-mine] .avatar { order: 2; }
-.avatar { width: 30px; height: 30px; border-radius: 50%; background: #ece6fb; }
+/* 프로필 사진 기능 전까지 닉네임 첫 글자 (2026-11-25 사용자 결정, 글자색은 닉네임과 같게) */
+.avatar { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 50%; background: #ece6fb; color: #27272a; font-size: 13px; font-weight: 700; line-height: 1; }
 .messageBody { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
 .message[data-mine] .messageBody { align-items: flex-end; }
 .messageMeta { display: flex; align-items: center; gap: 6px; min-height: 18px; color: #71717a; font-size: 11px; line-height: 16px; }
 .messageMeta b { color: #27272a; font-size: 13px; font-weight: 700; }
-.sideTag { padding: 1px 6px; border-radius: 999px; background: #efe7ff; color: var(--debate-primary); font-size: 10.5px; font-weight: 600; }
-.sideTag[data-side="b"] { background: #f4f4f5; color: #52525b; }
-/* 말풍선 (2026-11-24 사용자 결정): 글씨를 닉네임(13px)과 같은 13px 로, 위아래 여백·줄 간격을 줄여 한 줄 말풍선이 44px → 32px */
-.bubble { max-width: 100%; padding: 6px 10px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; color: #27272a; font-size: 13px; line-height: 18px; white-space: pre-wrap; }
+/* 말풍선 (2026-11-24 사용자 결정): 위아래 여백·줄 간격을 줄여 한 줄 말풍선을 낮게.
+   글씨는 2026-11-25 '작다'는 의견으로 13px → 14px (줄 간격 18 → 20px, 한 줄 말풍선 34px) */
+.bubble { max-width: 100%; padding: 6px 10px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; color: #27272a; font-size: 14px; line-height: 20px; white-space: pre-wrap; }
 .message[data-mine] .bubble { border-color: #e2d5ff; background: #f5f1fe; }
 /* 입력창: 화면 아래 24px 에 떠 있는 흰 상자(홈 AI 대화 입력창과 같은 모양), 오른쪽 둥근 보내기. 밑은 바탕색으로 흐리게 덮는다 */
 .composer { position: fixed; z-index: 6; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 8px; width: min(calc(100% - 48px), 382px); padding: 4px 4px 4px 14px; transform: translateX(-50%); border-radius: 10px; background: #fff; box-shadow: 0 2px 12px rgb(0 0 0 / 10%); }

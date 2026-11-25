@@ -57,6 +57,31 @@ test('Card descriptions show in full with their line breaks, with no 더보기 o
   assert.doesNotMatch(html, /더보기|접기/);
 });
 
+test('Folded vote panel keeps only the title and the members · time line, with 투표창 펼치기 at the end of that line (2026-11-25 mock)', () => {
+  const { RoomPanel } = tsxLoader(stubs)('components/debate/debate-room.tsx');
+  const now = Date.parse('2026-11-25T11:00:00Z');
+  const debate = {
+    works: [{ entityId: 1, name: '헌터×헌터' }], title: '히소카와 크로로가 다시 싸우면 누가 이길까?', description: '천공투기장 기준',
+    authorNickname: '넨연구가', memberCount: 128, closesAt: new Date(now + 31 * 3600_000).toISOString(),
+  };
+  const view = (collapsed) => renderToStaticMarkup(React.createElement(RoomPanel, { debate, now, collapsed, onToggle() {} },
+    React.createElement('p', null, '진영 투표')));
+  const folded = view(true);
+  assert.match(folded, /<section [^>]*data-collapsed="true"/);
+  assert.match(folded, /히소카와 크로로가 다시 싸우면 누가 이길까\?/);
+  assert.match(folded, /<div class="topicMeta">.*128명 참여 중.*남은 시간 [^<]*<\/span><button [^>]*aria-expanded="false"[^>]*>투표창 펼치기<\/button><\/div>/s);
+  assert.doesNotMatch(folded, /헌터×헌터|천공투기장|넨연구가|진영 투표|roomTop/);
+  const open = view(false);
+  assert.doesNotMatch(open, /data-collapsed/);
+  assert.match(open, /<div class="roomTop">.*헌터×헌터.*투표창 접기<\/button><\/div>/s);
+  for (const shown of ['천공투기장 기준', '넨연구가', '128명 참여 중', '진영 투표']) assert.ok(open.includes(shown), shown);
+});
+
+test('Chat faces show the first letter of the nickname until profile photos exist', () => {
+  const { nicknameInitial } = tsxLoader(stubs)('components/debate/debate-room.tsx');
+  assert.deepEqual(['넨연구가', '  Zed', '😀웃음', '알 수 없음', ''].map(nicknameInitial), ['넨', 'Z', '😀', '알', '']);
+});
+
 test('Topic form limits follow the 2026-11-25 design: 2 works, a 100-letter description and 8-letter choices', () => {
   const { DEBATE_RULES } = tsxLoader(stubs)('lib/debate/rules.ts');
   assert.deepEqual([DEBATE_RULES.worksMax, DEBATE_RULES.descriptionMax, DEBATE_RULES.sideLabelMax], [2, 100, 8]);
