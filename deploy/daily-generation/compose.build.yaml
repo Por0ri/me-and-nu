@@ -1,0 +1,37 @@
+# Build only. No runtime mounts, keys, DB credentials, schedules or API deployment.
+name: menu-daily-build
+services:
+  worker-base:
+    image: me-nu-worker:daily-${DAILY_RELEASE_TAG:?Set reviewed release identifier}
+    build:
+      context: ../../worker
+      additional_contexts:
+        anime-registry: "../../agents/ani_me;nu/config"
+        anime-works: ../../catalog
+    network_mode: none
+    command: [python, -m, menu_worker.daily_resume, --help]
+    profiles: [build]
+  generation:
+    image: me-nu-anime-generation:daily-${DAILY_RELEASE_TAG:?Set reviewed release identifier}
+    build:
+      context: ../../worker
+      dockerfile: Dockerfile.generation
+      additional_contexts:
+        runtime-base: service:worker-base
+        anime-project: "../../agents/ani_me;nu"
+        anime-works: ../../catalog
+    network_mode: none
+    command: [python, -m, menu_worker.daily_resume, --help]
+    profiles: [build]
+  pending-importer:
+    image: me-nu-pending-importer:daily-${DAILY_RELEASE_TAG:?Set reviewed release identifier}
+    build:
+      context: ../../backend
+    network_mode: none
+    entrypoint: [python, -m, app.services.pending_content_import]
+    command: [--help]
+    # Settings validation needs a DSN even for --help; no connection is opened.
+    environment:
+      DATABASE_URL: postgresql+psycopg://offline@127.0.0.1:1/offline_not_used
+    healthcheck: {disable: true}
+    profiles: [build]

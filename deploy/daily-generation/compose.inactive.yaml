@@ -1,0 +1,46 @@
+# Standalone inactive preparation. Do not combine with runtime/approved overlays.
+# No producer, broker, database, key, host path or existing network is connected.
+name: menu-daily-generation-inactive
+x-inactive: &inactive
+  profiles: [inactive]
+  user: "10001:10001"
+  init: true
+  restart: "no"
+  network_mode: none
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+  healthcheck: {disable: true}
+  pids_limit: 64
+  cpus: "0.5"
+  mem_limit: 512m
+  stop_grace_period: 10s
+  logging:
+    driver: json-file
+    options: {max-size: "5m", max-file: "2"}
+  labels:
+    menu.daily-generation.mode: inactive
+services:
+  generation-worker:
+    <<: *inactive
+    image: ${DAILY_GENERATION_IMAGE_ID:?Set verified sha256 image ID}
+    entrypoint: [python, -B, -m, menu_worker.daily_resume]
+    command: [--help]
+  daily-controller:
+    <<: *inactive
+    image: ${DAILY_GENERATION_IMAGE_ID:?Set verified sha256 image ID}
+    entrypoint: [python, -B, -m, menu_worker.daily_resume]
+    command: [--help]
+  pending-importer:
+    <<: *inactive
+    image: ${DAILY_IMPORTER_IMAGE_ID:?Set verified sha256 image ID}
+    entrypoint: [python, -B, -m, app.services.pending_content_import]
+    command: [--help]
+    environment:
+      # Settings needs a syntactically valid DSN even for --help. With no network
+      # this points nowhere; it is not an operational credential or target.
+      DATABASE_URL: postgresql+psycopg://offline@127.0.0.1:1/offline_not_used
+      MENU_DEPLOYMENT_ENV: production
+      DATABASE_ECHO: "false"
+      CHECKING_CAROUSEL_TEST_PREVIEW_ENABLED: "false"

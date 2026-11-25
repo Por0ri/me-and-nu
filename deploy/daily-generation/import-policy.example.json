@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "purpose": "pending_content_import",
+  "run_id": "beta-open-20261116",
+  "policy_date": "REPLACE_WITH_APPROVED_KST_DATE",
+  "source_id": "one_piece_official",
+  "content_type": "goods",
+  "max_items": 20,
+  "bundle_root": "/runtime/state/bundles",
+  "day_policy_sha256": "REPLACE_WITH_GENERATION_PLAN_DAY_POLICY_SHA256",
+  "target": {
+    "host": "postgres",
+    "port": 5432,
+    "database": "me_nu_checking",
+    "username": "me_nu_checking",
+    "schema": "public",
+    "environment": "production"
+  }
+}
