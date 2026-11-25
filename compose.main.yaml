@@ -48,7 +48,7 @@ services:
       ENABLE_DEV_API: "false"
       ENABLE_DEV_AUTH_BYPASS: "false"
       SESSION_COOKIE_NAME: menu_main_session
-      SESSION_EXPIRE_MINUTES: "30"
+      SESSION_EXPIRE_MINUTES: "43200"  # 30일 (기획서 30일 로그인 유지). 로그인 때 정해지고 쓰는 동안 늘어나지 않음
       SESSION_COOKIE_SECURE: "true"
       FORWARDED_ALLOW_IPS: ${MAIN_FORWARDED_ALLOW_IPS:-127.0.0.1}
       OAUTH_FRONTEND_ORIGIN: https://www.me-nu.kr

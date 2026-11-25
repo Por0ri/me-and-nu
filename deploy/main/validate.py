@@ -203,7 +203,7 @@ def validate_config(config: dict, values: dict[str, str]) -> None:
         "DATABASE_ECHO": "false", "DATABASE_POOL_SIZE": "2", "DATABASE_MAX_OVERFLOW": "0",
         "REDIS_URL": f'redis://:{values["MAIN_REDIS_PASSWORD"]}@redis:6379/0',
         "REDIS_SOCKET_TIMEOUT_SECONDS": "0.5", "REDIS_MAX_CONNECTIONS": "10",
-        "SESSION_EXPIRE_MINUTES": "30", "FORWARDED_ALLOW_IPS": values["MAIN_FORWARDED_ALLOW_IPS"],
+        "SESSION_EXPIRE_MINUTES": "43200", "FORWARDED_ALLOW_IPS": values["MAIN_FORWARDED_ALLOW_IPS"],
         "OAUTH_STATE_TTL_SECONDS": "600", "EVENT_DATA_SOURCE": "local_demo",
         "TMDB_KEY": "", "OPENAI_API_KEY": "",
         # Only the chatbot key and dictionary come from the server file; empty keeps the chatbot off.
