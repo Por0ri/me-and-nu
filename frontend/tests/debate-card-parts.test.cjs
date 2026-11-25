@@ -58,6 +58,8 @@ test('Card descriptions keep their line breaks, with no 더보기 or 접기', ()
   } }));
   assert.ok(html.includes(`<p class="topicDescription">${description}</p>`));
   assert.doesNotMatch(html, /더보기|접기/);
+  // 설명 아래 'A vs B' 줄은 없다 (2026-11-25 사용자 결정): 카드는 설명에서 끝난다
+  assert.ok(html.endsWith(`<p class="topicDescription">${description}</p>`), html);
 });
 
 test('Folded vote panel keeps only the title and the members · time line, with 투표창 펼치기 at the end of that line (2026-11-25 mock)', () => {
@@ -96,6 +98,14 @@ test('Work chips sit in one sideways-scrolling row even with long names, on card
   }
   const form = fs.readFileSync(path.join(__dirname, '..', 'components/debate/debate-create.tsx'), 'utf8');
   assert.match(form, /<ul className=\{`\$\{styles\.pickedWorks\} \$\{styles\.swipe\}`\} aria-label="고른 작품" \{\.\.\.pickedSwipe\}>/);
+  // 고른 작품 칩은 온보딩 작품 칩과 같은 모양 (2026-11-25 시안): 칩 · X 버튼 규칙이 글자 하나까지 같고, X 그림도 같다
+  const onboarding = fs.readFileSync(path.join(__dirname, '..', 'components/pivot/onboarding.module.css'), 'utf8');
+  const onboardingRule = (selector) => onboarding.match(new RegExp(`(?:^|\\n)${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`))[1];
+  assert.equal(rule('.pickedWorks li'), onboardingRule('.selectedWorks li'));
+  assert.equal(rule('.screen .pickedWorks button'), onboardingRule('.selectedWorks button'));
+  const cross = '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="m2.5 2.5 7 7m0-7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>';
+  assert.ok(form.includes(cross), 'topic form X');
+  assert.ok(fs.readFileSync(path.join(__dirname, '..', 'components/pivot/onboarding-catalog-screens.tsx'), 'utf8').includes(cross), 'onboarding X');
 });
 
 test('Chat faces show the first letter of the nickname until profile photos exist', () => {
@@ -165,4 +175,21 @@ test('Once my topic room has ended, 내가 올린 주제 shows the same empty sc
 test('Topic form limits follow the 2026-11-25 design: 2 works, a 100-letter description and 8-letter choices', () => {
   const { DEBATE_RULES } = tsxLoader(stubs)('lib/debate/rules.ts');
   assert.deepEqual([DEBATE_RULES.worksMax, DEBATE_RULES.descriptionMax, DEBATE_RULES.sideLabelMax], [2, 100, 8]);
+});
+
+test('The vote toast follows the 2026-11-25 design and floats above the 내 활동 button', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'components/debate/debate.module.css'), 'utf8');
+  const rule = (selector) => css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.()]/g, '\\$&')} \\{([^}]*)\\}`))[1];
+  // 카드와 같은 폭, 높이 38px, 연보라 바탕 · 보라 테두리 · 모서리 8px, 그림자 없음, 검정 12px 글씨, 체크와 글씨 사이 10px
+  const toast = rule('.toast');
+  for (const part of [/width: min\(calc\(100% - 48px\), 382px\)/, /min-height: 38px/, /border: 1px solid #9c79e6/, /border-radius: 8px/,
+    /background: #efe7ff/, /color: #000;/, /font-size: 12px/, /font-weight: 500/, /gap: 10px/]) assert.match(toast, part);
+  assert.doesNotMatch(toast, /box-shadow/);
+  assert.match(rule('.toast svg'), /margin: -1px/, 'the 22px icon box keeps only its 20px circle in the layout');
+  assert.match(rule('.screen:has(.fabLayer)'), /--toast-bottom: calc\(58px \+ 16px \+ 56px \+ 12px\)/);
+  // 방 나가기만 회색 글씨 (2026-11-25 시안), 주제 투표하기 같은 다른 연보라 버튼은 보라 그대로
+  assert.match(rule('.screen .cardButtons > .softFillButton'), /color: var\(--debate-muted\)/);
+  assert.match(rule('.screen .softFillButton'), /color: var\(--debate-primary\)/);
+  const cards = fs.readFileSync(path.join(__dirname, '..', 'components/debate/debate-cards.tsx'), 'utf8');
+  assert.ok(cards.includes('"투표를 취소했어요.  투표권 1개가 반환되었어요."'), 'the refund sentence ends with a period, as in the design');
 });

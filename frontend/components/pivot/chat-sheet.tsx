@@ -29,9 +29,11 @@ const FACE = "/pivot/chat/face.svg";
 const CLOSE_DRAG = 80; // 손잡이를 이만큼 넘게 끌어내리면 닫는다
 const DRAG_SLOP = 6; // 이보다 적게 움직이면 끈 게 아니라 누른 것
 
+/** 보내기 비행기: 토론방 채팅창의 보내기 아이콘(debate-icons.tsx SendIcon)과 같은 선 그림 (2026-11-25 사용자 요청) */
 function SendIcon() {
-  return <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z" fill="currentColor" />
+  return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z" />
   </svg>;
 }
 
