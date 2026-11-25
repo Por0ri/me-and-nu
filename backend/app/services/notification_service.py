@@ -68,6 +68,8 @@ POST_TYPES = (NEW_POST, RECOMMENDED)
 NEW_POST_WINDOW = timedelta(hours=48)
 DAILY_NEW_POSTS = 1
 RECOMMENDED_FROM_RANK = 10
+# 추천 알림은 지금처럼 100위 안에서만 고른다 (11/25: 피드만 하루 300장으로 늘림, 챗봇 · 검색과 같은 범위)
+RECOMMENDED_TO_RANK = 100
 SHOWN_PER_POST_TYPE = 3
 SEEN_EVENTS = ("impression", "open", "card_swipe")
 ACTIVE_STATUSES = ("active", "warned")
@@ -416,6 +418,7 @@ async def _recommended_candidates(db: AsyncSession, today: date) -> list[Recomme
         .join(Entity, Entity.entity_id == ContentEntityLink.entity_id)
         .where(
             RecommendationItem.rank >= RECOMMENDED_FROM_RANK,
+            RecommendationItem.rank <= RECOMMENDED_TO_RANK,
             public_content_condition(),
             exists().where(ContentSource.content_id == Content.content_id),
             ~exists().where(TapEntity.tap_id == Tap.tap_id, TapEntity.entity_id == ContentEntityLink.entity_id),

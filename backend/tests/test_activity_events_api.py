@@ -115,6 +115,9 @@ def test_activity_requires_login_completed_onboarding_and_csrf(api):
     {"events": [_event(1, clientEventId="not-a-uuid")]},
     {"events": [_event(1, value={"activeMs": -1})]},
     {"events": [_event(1, value={"visibleMs": -5})]},
+    {"events": [_event(1, value={"focusMs": -1})]},
+    {"events": [_event(1, value={"focusMs": 86_400_001})]},
+    {"events": [_event(1, value={"focusMs": "3000"})]},              # strict: no numeric strings
     {"events": [_event(1, value={"dwell": 3})]},                     # unknown measurement
     {"events": [_event(1, debateId=3)]},
     {"events": [_event(1)], "topicId": 1},
@@ -123,6 +126,39 @@ def test_activity_rejects_malformed_batches_before_saving(api, body):
     response = api.client.post("/api/v1/users/me/activity-events", json=body, headers={"X-CSRF-Token": CSRF})
     assert response.status_code == 422
     api.record.assert_not_awaited()
+
+
+def test_activity_accepts_the_time_a_card_was_80_percent_visible(api):
+    # 11/25: 화면이 앞으로 보낼 focusMs (카드가 80% 이상 보인 시간). extra=forbid 라 서버가 먼저 받을 수 있어야 함
+    body = {"events": [_event(1, value={"surface": "home_feed", "visibleMs": 4200, "focusMs": 3100})]}
+    response = api.client.post("/api/v1/users/me/activity-events", json=body, headers={"X-CSRF-Token": CSRF})
+    assert response.status_code == 200
+    _, _, request = api.record.await_args.args
+    assert (request.events[0].value.visible_ms, request.events[0].value.focus_ms) == (4200, 3100)
+
+
+@pytest.mark.asyncio
+async def test_record_events_stores_focus_ms_under_the_key_the_model_reads(monkeypatch):
+    monkeypatch.setattr(activity_service.catalog_repo, "get_active_topic", AsyncMock(return_value=SimpleNamespace(topic_id=1)))
+    monkeypatch.setattr(activity_service.catalog_repo, "get_tap", AsyncMock(return_value=SimpleNamespace(tap_id=11)))
+    monkeypatch.setattr(activity_service.repo, "visible_content_topics", AsyncMock(return_value={501: 1}))
+    monkeypatch.setattr(activity_service.repo, "recommendation_item_owners", AsyncMock(return_value={}))
+    monkeypatch.setattr(activity_service.repo, "mark_impressed", AsyncMock())
+    inserted = []
+
+    async def insert_events(_db, rows):
+        inserted.extend(rows)
+        return len(rows)
+
+    monkeypatch.setattr(activity_service.repo, "insert_events", insert_events)
+    request = ActivityEventsRequest.model_validate({"events": [
+        _event(1, value={"visibleMs": 4200, "focusMs": 3100}),
+        _event(2, value={"visibleMs": 1500}),                       # 지금 화면처럼 focusMs 가 없는 노출
+    ]})
+
+    await activity_service.record_events(SimpleNamespace(commit=AsyncMock()), 7, request, now=NOW)
+    # user_event.event_value 의 키 = 모델 (model/scripts/daily_recommend.py) 이 읽는 focus_ms
+    assert [row["event_value"] for row in inserted] == [{"visible_ms": 4200, "focus_ms": 3100}, {"visible_ms": 1500}]
 
 
 @pytest.mark.asyncio

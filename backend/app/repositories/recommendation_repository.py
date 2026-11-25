@@ -1,4 +1,4 @@
-"""Reads for the recommended home feed: the day's ranked list and visit signals."""
+"""Reads for the home feed: the day's ranked list, the fallback candidates and visit signals."""
 
 from datetime import date, datetime
 
@@ -69,7 +69,14 @@ async def get_round(db: AsyncSession, round_id: int, tap_id: int) -> Recommendat
     )
 
 
-async def ranked_items(db: AsyncSession, round_id: int, topic_id: int) -> list[tuple[int, int, dict | None]]:
+# 추천 순서를 앞에서 몇 위까지 읽나. 챗봇 · 홈 검색은 100위까지 그대로 (11/25 결정: 300위까지 보면 챗봇이 AI 에
+# 넘기는 후보 순서가 바뀜). 피드만 feed_service.FEED_CARDS (300) 를 넘김
+RANKED_LIMIT = 100
+
+
+async def ranked_items(
+    db: AsyncSession, round_id: int, topic_id: int, limit: int = RANKED_LIMIT,
+) -> list[tuple[int, int, dict | None]]:
     """(content_id, recommendation_item_id, recommend_reason) of currently visible contents, by rank."""
     rows = await db.execute(
         select(
@@ -80,7 +87,7 @@ async def ranked_items(db: AsyncSession, round_id: int, topic_id: int) -> list[t
         .join(Content, Content.content_id == RecommendationItem.content_id)
         .where(RecommendationItem.recommendation_round_id == round_id, *_visible(topic_id))
         .order_by(RecommendationItem.rank)
-        .limit(100)
+        .limit(limit)
     )
     return [(content_id, item_id, reason) for content_id, item_id, reason in rows.all()]
 
@@ -95,6 +102,31 @@ async def latest_content_ids(db: AsyncSession, topic_id: int, as_of: datetime, l
         .limit(limit)
     )
     return list(rows.scalars().all())
+
+
+async def latest_typed_contents(
+    db: AsyncSession, topic_id: int, as_of: datetime, per_type: int, *, exclude: set[int],
+) -> list[tuple[int, str | None]]:
+    """비상 목록 후보: 스냅샷 시각까지 공개된 보이는 글의 (content_id, content_type), 최신순. exclude 는 뺌.
+
+    유형마다 새 글 per_type 개까지만 읽음. 묶음 (유형 여러 개) 마다 새 글 per_type 개는 그 유형들의 새 글
+    per_type 개 안에 다 들어 있어서, 묶음을 돌아가며 per_type 장을 고르기엔 이걸로 충분함.
+    """
+    sort_time = func.coalesce(Content.published_at, Content.created_at)
+    turn = func.row_number().over(
+        partition_by=Content.content_type, order_by=(sort_time.desc(), Content.content_id.desc()))
+    statement = select(
+        Content.content_id, Content.content_type, sort_time.label("sort_time"), turn.label("turn"),
+    ).where(*_visible(topic_id), sort_time <= as_of)
+    if exclude:
+        statement = statement.where(Content.content_id.not_in(sorted(exclude)))
+    newest = statement.subquery()
+    rows = await db.execute(
+        select(newest.c.content_id, newest.c.content_type)
+        .where(newest.c.turn <= per_type)
+        .order_by(newest.c.sort_time.desc(), newest.c.content_id.desc())
+    )
+    return [(content_id, kind) for content_id, kind in rows.all()]
 
 
 FULL_READ_SCROLL_PCT = 80   # 본문을 이만큼 이상 내렸으면 끝까지 읽은 글 (모델 content_v1.READ_FULL 0.8 과 같음)
@@ -118,14 +150,30 @@ async def fully_read_content_ids(db: AsyncSession, tap_id: int, since: datetime,
     return set(rows.scalars().all())
 
 
+# 오늘 본 카드 = 그날 노출에서 카드가 반 이상 보인 시간 (visible_ms) 합이 이만큼 이상인 글. 화면은 1초부터 노출을
+# 보내니까, 1초쯤 스쳐 간 카드는 맨 뒤로 안 보냄 (11/25 결정). visible_ms 가 없는 노출은 0 으로 침.
+# 열었거나 카드를 넘긴 글은 시간과 상관없이 본 카드 (11/25 사용자 결정: 확실히 본 글)
+SHOWN_VISIBLE_MS = 2000
+SEEN_ACTIONS = ("open", "card_swipe")
+
+
 async def shown_content_ids(db: AsyncSession, tap_id: int, since: datetime, as_of: datetime) -> set[int]:
+    """Cards seen since `since`: impressions whose visible time adds up to SHOWN_VISIBLE_MS or more,
+    and cards opened or swiped (certainly seen, whatever the time)."""
+    visible = func.sum(UserEvent.event_value["visible_ms"].as_float())
     rows = await db.execute(
-        select(UserEvent.content_id).distinct().where(
+        select(UserEvent.content_id).where(
             UserEvent.tap_id == tap_id, UserEvent.event_type == "impression",
+            UserEvent.received_at >= since, UserEvent.received_at <= as_of,
+        ).group_by(UserEvent.content_id).having(visible >= SHOWN_VISIBLE_MS)
+    )
+    acted = await db.execute(
+        select(UserEvent.content_id).distinct().where(
+            UserEvent.tap_id == tap_id, UserEvent.event_type.in_(SEEN_ACTIONS), UserEvent.content_id.is_not(None),
             UserEvent.received_at >= since, UserEvent.received_at <= as_of,
         )
     )
-    return set(rows.scalars().all())
+    return set(rows.scalars().all()) | set(acted.scalars().all())
 
 
 async def negative_content_ids(db: AsyncSession, user_id: int, tap_id: int) -> set[int]:
