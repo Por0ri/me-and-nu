@@ -247,6 +247,21 @@ def test_topics_take_a_100_character_description_and_one_or_two_works(debate_api
     assert response.json()["works"] == [{"entityId": 100, "name": "나루토"}, {"entityId": 101, "name": "원피스"}]
 
 
+def test_topics_with_banned_words_are_turned_away(debate_api):
+    """제목 · 설명 · 선택지에 욕설 · 선정적인 말이 있으면 올리지 않는다 (2026-11-25 사용자 결정, app/core/profanity)."""
+    member = debate_api.member()
+    for extra, field in (({"title": "씨발 누가 이김?"}, "title"), ({"description": "개새끼들 싸움"}, "description"),
+                         ({"side_a": "야동왕"}, "sideA"), ({"side_b": "섹스"}, "sideB")):
+        response = create(member, **extra)
+        assert response.status_code == 422, response.json()
+        body = response.json()
+        assert (body["code"], body["message"]) == ("DEBATE_BANNED_WORD", "쓸 수 없는 단어가 들어 있어요. 다른 표현으로 바꿔 주세요.")
+        assert [item["field"] for item in body["fields"]] == [field]
+    # 걸리는 글자를 품은 멀쩡한 말은 올라간다
+    response = create(member, title="시발점에서 다시 시작하면?", description="위험한 녀석 vs 졸라맨")
+    assert response.status_code == 201, response.json()
+
+
 def test_votes_spend_and_refund_tickets_and_refill_every_hour(debate_api):
     authors = [debate_api.member() for _ in range(4)]
     debates = [create(author, title=f"주제 {index}").json()["debateId"] for index, author in enumerate(authors)]

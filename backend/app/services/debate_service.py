@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import ApiError
+from app.core.profanity import has_banned
 from app.models import (
     Debate, DebateMember, DebateNotification, DebateSearchLog, DebateSide, DebateVote, DebateVoteTicket, DebateWork,
     Entity, Notification, NotificationSetting, UserAccount,
@@ -36,6 +37,8 @@ ACTIVE_STATUSES = ("active", "warned")
 UNKNOWN_NICKNAME = "알 수 없음"
 SEARCH_TEXT_MAX = 50
 SEARCH_LIMIT = 30
+# 주제의 제목 · 설명 · 선택지에 욕설 · 선정적인 말이 있으면 올리지 않는다 (2026-11-25 사용자 결정, app/core/profanity)
+DEBATE_BANNED_WORD = "쓸 수 없는 단어가 들어 있어요. 다른 표현으로 바꿔 주세요."
 
 
 def utcnow() -> datetime:
@@ -249,6 +252,11 @@ async def get_tickets(db: AsyncSession, user_id: int) -> VoteTicketsResponse:
 
 async def create_debate(db: AsyncSession, user_id: int, payload: DebateCreateRequest) -> DebateSummary:
     now = utcnow()
+    banned = [field for field, text in (("title", payload.title), ("description", payload.description),
+                                        ("sideA", payload.side_a), ("sideB", payload.side_b)) if text and has_banned(text)]
+    if banned:
+        raise ApiError(422, "DEBATE_BANNED_WORD", DEBATE_BANNED_WORD,
+                       [{"field": field, "code": "BANNED_WORD", "message": DEBATE_BANNED_WORD} for field in banned])
     if await find_active_topic(db, payload.topic_id) is None:
         raise ApiError(404, "TOPIC_NOT_FOUND", "Topic을 찾을 수 없습니다.")
     if payload.work_ids:

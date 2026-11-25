@@ -1,7 +1,6 @@
 "use client";
 // My Page 프로필 수정 screen (2026-11 design), apart from loading and saving (profile-edit-route.tsx) so tests can render it.
 import { useState, type FormEvent } from "react";
-import { NICKNAME_TAKEN_MESSAGE } from "@/lib/pivot/onboarding-service";
 import type { EditableProfile } from "@/lib/pivot/profile-edit";
 import { HomeHeader } from "./home-screen";
 import { NicknameField, useNicknameStatus, type NicknameCheckRequest } from "./nickname-field";
@@ -30,7 +29,7 @@ export function ProfileEditScreen({ profile, onBack, onNotifications, onSave, on
         <div className={styles.who}><p className={styles.name}>{profile.nickname}</p><p className={styles.email}>{profile.maskedEmail}</p></div>
         <hr className={styles.divider} />
         <NicknameField id="profile-nickname" value={typed} onChange={(value) => { setTyped(value); onType?.(); }}
-          breaks={status.breaks} error={status.taken ? NICKNAME_TAKEN_MESSAGE : message} />
+          breaks={status.breaks} error={status.problem || message} />
       </div>
       <div className={styles.actions}><PrimaryButton type="submit" disabled={!ready}>{saving ? "저장하고 있어요…" : "저장하기"}</PrimaryButton></div>
     </form>

@@ -3,7 +3,7 @@
 // 2~20 Korean (jamo too), English or digit characters, the broken part of the rule in red, and the duplicate check.
 // Place it inside the onboarding .profileField card, whose rules style the label, input and lines.
 import { useEffect, useState } from "react";
-import { NICKNAME_MAX, nicknameProblem, nicknameRuleBreaks, type NicknameCheck } from "@/lib/pivot/onboarding-service";
+import { NICKNAME_BANNED_MESSAGE, NICKNAME_MAX, NICKNAME_TAKEN_MESSAGE, nicknameProblem, nicknameRuleBreaks, type NicknameCheck } from "@/lib/pivot/onboarding-service";
 import styles from "./onboarding.module.css";
 
 export type NicknameCheckRequest = (nickname: string, signal: AbortSignal) => Promise<NicknameCheck>;
@@ -14,19 +14,26 @@ export type NicknameCheckRequest = (nickname: string, signal: AbortSignal) => Pr
 export function useNicknameStatus(typed: string, check?: NicknameCheckRequest, own?: string) {
   const valid = !nicknameProblem(typed);
   const skip = !check || typed === own;
-  const [checked, setChecked] = useState<{ nickname: string; taken: boolean } | null>(null);
+  const [checked, setChecked] = useState<{ nickname: string; reason: "taken" | "banned" | null } | null>(null);
   useEffect(() => {
     if (!valid || skip) return;
     const abort = new AbortController();
     const timer = setTimeout(() => {
       check!(typed, abort.signal)
-        .then(result => { if (!abort.signal.aborted) setChecked({ nickname: typed, taken: !result.available && result.reason === "taken" }); })
-        .catch(() => { if (!abort.signal.aborted) setChecked({ nickname: typed, taken: false }); });
+        .then(result => {
+          if (abort.signal.aborted) return;
+          const reason = !result.available && (result.reason === "taken" || result.reason === "banned") ? result.reason : null;
+          setChecked({ nickname: typed, reason });
+        })
+        .catch(() => { if (!abort.signal.aborted) setChecked({ nickname: typed, reason: null }); });
     }, 300);
     return () => { clearTimeout(timer); abort.abort(); };
   }, [typed, valid, skip, check]);
-  const taken = !skip && checked?.nickname === typed && checked.taken;
-  return { valid, taken, ready: valid && (skip || checked?.nickname === typed) && !taken, breaks: nicknameRuleBreaks(typed) };
+  const reason = !skip && checked?.nickname === typed ? checked.reason : null;
+  // 막는 까닭의 안내: 다른 회원이 쓰는 닉네임이거나, 욕설 · 선정적인 말이 들어 있을 때 (2026-11-25). 없으면 빈 글
+  const problem = reason === "taken" ? NICKNAME_TAKEN_MESSAGE : reason === "banned" ? NICKNAME_BANNED_MESSAGE : "";
+  return { valid, taken: reason === "taken", banned: reason === "banned", problem,
+    ready: valid && (skip || checked?.nickname === typed) && !reason, breaks: nicknameRuleBreaks(typed) };
 }
 
 /** Label, input with n/20 (no hard cap, so going over shows a red "2~20자" instead of keys silently doing nothing),

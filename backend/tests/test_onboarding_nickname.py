@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import UserAccount
-from app.schemas.onboarding import OnboardingRequest, nickname_problem
+from app.schemas.onboarding import NICKNAME_BANNED, OnboardingRequest, nickname_problem
 from test_oauth_postgres_flow import onboarding_flow, pending_onboarding, postgres_flow, signup_request  # noqa: F401
 
 LEGACY_ANSWERS = {"q1": "world", "q2": "releases"}
@@ -37,6 +37,15 @@ def test_rule_rejects_length_spaces_and_symbols(nickname):
     assert [error["loc"] for error in caught.value.errors()] == [("nickname",)]
 
 
+@pytest.mark.parametrize("nickname", ["씨발왕", "야동배우이타치", "개새끼123"])
+def test_rule_rejects_banned_words(nickname):
+    """욕설 · 선정적인 말이 든 닉네임은 가입 · 프로필 수정 · 닉네임 확인 모두에서 막는다 (2026-11-25 사용자 결정)."""
+    assert nickname_problem(nickname) == NICKNAME_BANNED
+    with pytest.raises(ValidationError) as caught:
+        OnboardingRequest.model_validate(request(nickname))
+    assert NICKNAME_BANNED in caught.value.errors()[0]["msg"]
+
+
 def add_member(flow, nickname, *, onboarded=True):
     with Session(flow.engine) as session:
         session.add(UserAccount(nickname=nickname, auth_provider="kakao", provider_user_id=f"other-{nickname}",
@@ -59,6 +68,9 @@ def test_check_finds_onboarded_members_case_insensitively_and_ignores_pending_on
     assert check(flow, "가입대기") == {"nickname": "가입대기", "available": True, "reason": None}
     assert check(flow, " 미뉴덕후 ") == {"nickname": "미뉴덕후", "available": True, "reason": None}
     assert check(flow, "미뉴!") == {"nickname": "미뉴!", "available": False, "reason": "invalid"}
+    # 욕설 · 선정적인 말은 규칙 위반과 나눠서 알려 준다 (2026-11-25)
+    assert check(flow, "씨발왕") == {"nickname": "씨발왕", "available": False, "reason": "banned"}
+    assert check(flow, "시발점덕후") == {"nickname": "시발점덕후", "available": True, "reason": None}
 
 
 def test_check_needs_a_pending_onboarding_session(onboarding_flow):
@@ -114,6 +126,7 @@ def test_my_page_check_uses_the_onboarding_rule_and_keeps_ones_own_name(onboardi
     assert my_check(flow, "미뉴덕후").json() == {"nickname": "미뉴덕후", "available": True, "reason": None}   # one's own
     assert my_check(flow, "가입대기").json() == {"nickname": "가입대기", "available": True, "reason": None}
     assert my_check(flow, " 미뉴! ").json() == {"nickname": "미뉴!", "available": False, "reason": "invalid"}
+    assert my_check(flow, "야동배우이타치").json() == {"nickname": "야동배우이타치", "available": False, "reason": "banned"}
 
 
 def test_my_page_check_needs_an_onboarded_session(onboarding_flow):
