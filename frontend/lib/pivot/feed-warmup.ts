@@ -1,5 +1,6 @@
 import { getFeed, type FeedResponse } from "@/lib/api";
 import { DEMO_LOADING_DURATION_MS } from "./transitions";
+import { HOME_FEED_PAGE_SIZE } from "./home-feed";
 
 /** At least one full turn of the loading artwork, and the longest the feed is held back. */
 export const FEED_LOADING_LIMITS = { min: DEMO_LOADING_DURATION_MS, max: 10_000 };
@@ -13,8 +14,8 @@ export type FeedWarmUpDeps = {
 };
 
 const browserDeps: FeedWarmUpDeps = {
-  // The same first request as the feed screen (lib/consumer-api/home.ts), so the answer is ready when it asks.
-  load: topicId => getFeed(topicId, { limit: 100 }),
+  // Prepare the same page size and first pictures as HOME's initial request.
+  load: topicId => getFeed(topicId, { limit: HOME_FEED_PAGE_SIZE }),
   preload: url => new Promise(resolve => { const image = new Image(); image.onload = image.onerror = () => resolve(); image.src = url; }),
   wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
   now: () => Date.now(),
