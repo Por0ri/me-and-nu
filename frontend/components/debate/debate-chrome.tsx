@@ -47,7 +47,8 @@ export function DebateHomeHeader({ onGuide, back, title = "토론방" }: { onGui
       <h1 className={homeStyles.srOnly}>{title}</h1>
       <div className={styles.headerActions}>
         <button type="button" className={homeStyles.notification} aria-label="토론방 이용 안내" onClick={onGuide}><InfoIcon size={24} /></button>
-        <Link className={homeStyles.notification} href="/pivot/home?view=notifications" aria-label="알림"
+        {/* from=debate: 알림함에서 뒤로가기를 누르면 HOME 이 아니라 들어오기 전 토론방 화면으로 돌아간다 */}
+        <Link className={homeStyles.notification} href="/pivot/home?view=notifications&from=debate" aria-label="알림"
           aria-description={hasNewNotice ? "오늘 온 새 알림이 있어요" : undefined}>
           <img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} />
           {hasNewNotice ? <span className={homeStyles.notificationDot} aria-hidden="true" /> : null}
