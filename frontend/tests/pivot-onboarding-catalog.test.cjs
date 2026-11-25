@@ -191,3 +191,9 @@ test('Catalog accepts the PR 14 response with all 16 genres and 19 themes plus a
   assert.equal(result.themes.length,19);
   assert.equal(result.maxSelectionsPerKind,7);
 });
+
+test('작품 더보기 is a text-only light purple button (2026-11-25 design) that keeps a 44px tap height', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'components/pivot/onboarding.module.css'), 'utf8');
+  const rule = css.match(/\n\.moreWorks \{([^}]*)\}/)[1];
+  for (const part of [/border: 0/, /background: transparent/, /color: #9c79e6/, /font-size: 16px/, /font-weight: 600/, /min-height: 44px/]) assert.match(rule, part);
+});

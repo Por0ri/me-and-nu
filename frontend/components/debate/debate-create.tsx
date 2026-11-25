@@ -166,8 +166,11 @@ export function DebateCreate() {
           </ul> : null}
         </div>
         {works.length > 0 ? <ul className={`${styles.pickedWorks} ${styles.swipe}`} aria-label="고른 작품" {...pickedSwipe}>
-          {works.map((work) => <li key={work.entityId}>{work.name}
-            <button type="button" aria-label={`${work.name} 빼기`} onClick={() => removeWork(work.entityId)}><CloseIcon size={16} /></button>
+          {/* 온보딩에서 작품 고를 때의 칩과 같은 모양 (2026-11-25 시안): 진한 테두리 · 연보라 바탕 · 굵은 X */}
+          {works.map((work) => <li key={work.entityId}><span>{work.name}</span>
+            <button type="button" aria-label={`${work.name} 빼기`} onClick={() => removeWork(work.entityId)}>
+              <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="m2.5 2.5 7 7m0-7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+            </button>
           </li>)}
         </ul> : null}
         {typed && workOptions.text === typed && options.length === 0 && !full

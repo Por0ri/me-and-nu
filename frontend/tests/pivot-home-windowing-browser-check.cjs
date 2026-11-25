@@ -71,11 +71,25 @@ async function run(browser, width) {
   const context = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 1000 },
     isMobile: width < 600, hasTouch: width < 600, reducedMotion: 'reduce', serviceWorkers: 'block',
     ignoreHTTPSErrors: false, httpCredentials: { username: access.Username, password: access.Password, origin } });
-  const external = [], errors = [], consoleErrors = [], feeds = [], pendingFeeds = [], checks = [], samples = [];
+  const external = [], errors = [], consoleErrors = [], feeds = [], pendingFeeds = [], checks = [], samples = [], debateFixtures = [];
   let step = 'initial';
   await context.route('**/*', route => {
     const request = route.request();
-    if (new URL(request.url()).origin !== origin) { external.push(request.url()); return route.abort('blockedbyclient'); }
+    const url = new URL(request.url());
+    if (url.origin !== origin) { external.push(request.url()); return route.abort('blockedbyclient'); }
+    // The isolated HOME harness has no debate endpoint. Fulfill only the exact
+    // empty live-list contract; the actual Next route and navigation stay real.
+    if (url.pathname === '/api/v1/debates') {
+      const query = [...url.searchParams.entries()].sort(([left], [right]) => left.localeCompare(right));
+      const expectedQuery = [['limit', '50'], ['status', 'open'], ['topicId', '7']];
+      if (request.method() !== 'GET' || JSON.stringify(query) !== JSON.stringify(expectedQuery)) {
+        errors.push(`Unexpected debate fixture request: ${request.method()} ${url.pathname}${url.search}`);
+        return route.abort('blockedbyclient');
+      }
+      debateFixtures.push({ method: request.method(), path: url.pathname, query: Object.fromEntries(query) });
+      return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Cache-Control': 'no-store' },
+        body: JSON.stringify({ items: [], nextCursor: null }) });
+    }
     return route.continue();
   });
   await context.addInitScript(installLifetimeMetrics);
@@ -98,6 +112,8 @@ async function run(browser, width) {
   const slot = id => page.locator(`[data-home-feed-slot="${id}"]`);
   const slotIds = () => slots.evaluateAll(elements => elements.map(element => element.dataset.homeFeedSlot));
   const blur = () => page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+  const feedRequestCount = () => network.filter(request => request.width === width
+    && new URL(request.url).pathname === '/api/v1/topics/7/feed').length;
   async function settleVisible() {
     await page.waitForFunction(() => {
       const root = document.querySelector('[data-home-state]');
@@ -254,6 +270,66 @@ async function run(browser, width) {
     await Promise.all(pendingFeeds); assert.equal(feeds.length, 7, 'navigation retains loaded pages');
     checks.push('hidden HOME opener retained; DETAIL return restores exact scroll/focus; saved state and SAVE/MY navigation');
 
+    step = 'talk-route-return';
+    const rememberedId = expected[80], deepId = expected[100];
+    await blur(); await moveTo(rememberedId);
+    const rememberedTrack = card(rememberedId).locator('[data-home-track]');
+    await rememberedTrack.focus(); await rememberedTrack.press('Home'); await expectSlide(rememberedId, 0);
+    for (let index = 1; index <= 4; index++) { await rememberedTrack.press('ArrowRight'); await expectSlide(rememberedId, index); }
+    await blur(); await moveTo(deepId);
+    const deepTrack = card(deepId).locator('[data-home-track]');
+    await deepTrack.focus(); await deepTrack.press('Home'); await expectSlide(deepId, 0);
+    for (let index = 1; index <= 2; index++) { await deepTrack.press('ArrowRight'); await expectSlide(deepId, index); }
+    await page.waitForFunction(id => !document.querySelector(`[data-home-post="${id}"]`), rememberedId);
+    const beforeTalk = await sample('before-talk-deep');
+    const requestsBeforeTalk = feedRequestCount();
+    const talk = page.locator('main[aria-label="토론방"]');
+    async function enterTalk(from) {
+      await from.getByRole('button', { name: 'TALK', exact: true }).click();
+      await page.waitForURL(url => url.pathname === '/pivot/debate');
+      await talk.getByRole('button', { name: '주제 투표 보러가기', exact: true }).waitFor();
+      await home.waitFor({ state: 'detached' });
+      assert.equal(feedRequestCount(), requestsBeforeTalk, 'leaving HOME does not fetch another feed');
+    }
+    await enterTalk(home);
+    await talk.getByRole('button', { name: 'HOME', exact: true }).click();
+    await page.waitForURL(url => url.pathname === '/pivot/home' && !url.searchParams.has('view'));
+    await home.waitFor({ state: 'visible' });
+    await page.waitForFunction(top => Math.abs(document.querySelector('[data-home-state]').scrollTop - top) < 2
+      && document.activeElement?.matches('[data-talk-navigation]'), beforeTalk.top);
+    await expectSlide(deepId, 2);
+    await sample('talk-to-home-cached-feed');
+    assert.equal(await page.locator('[data-home-entry-loading]').count(), 0, 'TALK return skips first-entry loading');
+    assert.equal(feedRequestCount(), requestsBeforeTalk, 'TALK return reuses all loaded pages');
+    await moveTo(rememberedId); await expectSlide(rememberedId, 4);
+    await sample('talk-restores-previously-unmounted-slide');
+    await moveTo(expected[0]); await expectSlide(expected[0], 2);
+    checks.push('real HOME→TALK→HOME route unmount/remount retains all 123 IDs, deep scroll, TALK focus and multiple offscreen slide indices without another feed request');
+
+    step = 'detail-talk-history-return';
+    await blur(); await moveTo(deepId); await expectSlide(deepId, 2);
+    const deepDetailButton = card(deepId).locator('[data-home-detail]');
+    await deepDetailButton.scrollIntoViewIfNeeded(); await deepDetailButton.focus();
+    const beforeDetailTalk = await sample('before-detail-talk');
+    await deepDetailButton.click(); await detail.waitFor();
+    const detailUrl = page.url();
+    await enterTalk(detail);
+    await page.goBack();
+    await page.waitForURL(detailUrl); await detail.waitFor();
+    assert.deepEqual(await slotIds(), expected, 'history return to DETAIL keeps the complete cached feed');
+    assert.equal(feedRequestCount(), requestsBeforeTalk, 'history return to DETAIL reuses loaded pages');
+    await detail.getByRole('button', { name: '뒤로가기', exact: true }).click();
+    await page.waitForFunction(({ top, id }) => Math.abs(document.querySelector('[data-home-state]').scrollTop - top) < 2
+      && document.activeElement === document.querySelector(`[data-home-post="${id}"] [data-home-detail]`), { top: beforeDetailTalk.top, id: deepId });
+    await expectSlide(deepId, 2); await sample('detail-talk-history-home-return');
+    await blur(); await moveTo(rememberedId); await expectSlide(rememberedId, 4);
+    await sample('detail-talk-retains-offscreen-index');
+    await Promise.all(pendingFeeds);
+    assert.equal(feedRequestCount(), requestsBeforeTalk);
+    assert.equal(feeds.length, 7);
+    assert.ok(debateFixtures.length >= 2, 'both real TALK visits received only the empty synthetic list');
+    checks.push('DETAIL→TALK→browser back→DETAIL→HOME restores the opener focus, exact scroll and cached slide positions with bounded cards and no feed refetch');
+
     step = 'hidden-home-resize';
     const rotatedId = expected[100];
     await blur(); await moveTo(rotatedId);
@@ -311,7 +387,8 @@ async function run(browser, width) {
     assert.deepEqual(external, []); assert.deepEqual(errors, []); assert.deepEqual(consoleErrors, []);
     const imageMetrics = await page.evaluate(() => structuredClone(window.__labImages));
     assert.ok(imageMetrics.native.responseBlob > 0 && imageMetrics.native.objectUrl > 0 && imageMetrics.native.decode > 0);
-    cases.push({ width, status: 'pass', checks, feeds, samples, imageMetrics, external, errors, consoleErrors });
+    await Promise.all(pendingFeeds); assert.equal(feedRequestCount(), 7, 'entire run retains the original seven feed pages');
+    cases.push({ width, status: 'pass', checks, feeds, samples, imageMetrics, debateFixtures, external, errors, consoleErrors });
     console.log(`PASS hosted E ${width}: ${checks.join('; ')}`);
   } catch (error) {
     const diagnostic = await page.evaluate(() => ({ url: location.pathname + location.search,
@@ -319,7 +396,7 @@ async function run(browser, width) {
       mounted: [...document.querySelectorAll('[data-home-post]')].map(element => element.dataset.homePost),
       slots: document.querySelectorAll('[data-home-feed-slot]').length,
       top: document.querySelector('[data-home-state]')?.scrollTop, csp: window.__windowingCsp })).catch(() => null);
-    cases.push({ width, status: 'fail', step, error: redact(error.stack || error.message), checks, samples, feeds, external, errors, consoleErrors, diagnostic });
+    cases.push({ width, status: 'fail', step, error: redact(error.stack || error.message), checks, samples, feeds, debateFixtures, external, errors, consoleErrors, diagnostic });
     await page.screenshot({ path: path.join(output, `failure-E-${width}.png`) }).catch(() => {});
     throw error;
   } finally { await context.close(); }
@@ -344,7 +421,7 @@ async function run(browser, width) {
     fs.writeFileSync(path.join(output, 'verification.json'), JSON.stringify(redact({
       passed: completed && cases.length === widths.length && cases.every(result => result.status === 'pass'),
       origin, variant: 'E', widths, browserVersion, cases,
-      scope: 'Separate ephemeral Windows headless Chrome contexts on trusted public HTTPS. Synthetic isolated E only; exact-origin credentials; external routes blocked; background proxy sink. No user browser, operating API/DB, TLS bypass or iPhone Safari memory measurement.',
+      scope: 'Separate ephemeral Windows headless Chrome contexts on trusted public HTTPS. Synthetic isolated E only; exact-origin credentials; external routes blocked; background proxy sink. TALK uses the actual Next route with only its exact GET live-debate list fulfilled as empty synthetic JSON. No user browser, operating API/DB, TLS bypass or iPhone Safari memory measurement.',
     }), null, 2));
   }
 })().catch(error => { console.error(redact(error.stack || error.message)); process.exitCode = 1; });

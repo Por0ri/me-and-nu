@@ -127,7 +127,7 @@ export function useLoad<T>(initial: T, loader: () => Promise<T>): [Loaded<T>, ()
 export type ToastTone = "done" | "info";
 export type ShowToast = (message: string, tone?: ToastTone) => void;
 
-/** 화면 아래에 잠깐 떴다가 서서히 사라지는 알림 (2026-11-23 시안: 연보라 바탕·진회색 테두리, 완료 알림은 보라 체크).
+/** 화면 아래에 잠깐 떴다가 서서히 사라지는 알림 (2026-11-25 시안: 카드 폭, 연보라 바탕 · 보라 테두리, 완료 알림은 보라 체크 + 검정 12px).
  *  약 3초 보였다가 0.6초 동안 사라지고(.toast 애니메이션), 새 알림이 오면 처음부터 다시 보인다. */
 export function useToast(): [ReactNode, ShowToast] {
   const [toast, setToast] = useState<{ message: string; tone: ToastTone; id: number } | null>(null);

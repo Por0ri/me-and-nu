@@ -65,6 +65,8 @@
 .sheet .composer input:focus { outline: none; }
 .sheet .composer input::placeholder { color: #a1a1aa; opacity: 1; }
 .send { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: #f4f4f5; color: #27272a; }
+/* 보낼 글이 없을 때는 토론방 보내기 버튼처럼 비행기를 회색으로 (debate.module.css .sendButton:disabled) */
+.send:disabled { color: #a1a1aa; }
 
 /* 하단 마스코트 · 안내 바 (홈 · 상세 공용, chat-dock.tsx). 놓이는 곳은 하단바(home.module.css .bottomBar, 58px) 바로 위
    6px 에 뜬 48px 칸이다 (2026-11-23 시안). 하단바를 가리지 않아서 펼쳐도 메뉴가 그대로 보이고 눌린다.

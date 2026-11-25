@@ -79,10 +79,11 @@
    the browser blurs it when it shrinks the 1448px original itself. 11% taller than the file, like the header's
    Figma placement. Its cut edge sits on the card's top. */
 .searchEmptyMascot { display: block; width: 115px; height: 69px; margin-bottom: -1px; }
-.searchEmptyCard { position: relative; width: 100%; padding: 8px; border-radius: 12px; background: #ebe3ff; }
-.searchEmptyBody { padding: 16px 12px; border-radius: 8px; background: #fffaf5; text-align: center; }
+/* 색 (2026-11-25 시안): 테두리 안 크림색 상자 대신 연보라 상자 하나, 제목은 #3f3f46. 크기 · 여백은 그대로 (홈 · 토론방 검색 공용) */
+.searchEmptyCard { position: relative; width: 100%; padding: 8px; border-radius: 12px; background: #efe7ff; }
+.searchEmptyBody { padding: 16px 12px; border-radius: 8px; background: transparent; text-align: center; }
 .searchEmptyBody p { margin: 0; }
-.searchEmptyTitle { color: var(--home-ink); font-size: 17px; font-weight: 700; line-height: 26px; }
+.searchEmptyTitle { color: #3f3f46; font-size: 17px; font-weight: 700; line-height: 26px; }
 .searchEmptyHelp { margin-top: 4px; color: var(--home-muted); font-size: 13px; line-height: 20px; }
 .feed > ul { display: flex; flex-direction: column; gap: 24px; list-style: none; padding: 0; margin: 0; }
 .feed li { min-width: 0; }

@@ -15,6 +15,7 @@ import { HomeAIButton } from "./home-ai-button";
 import { HomeAIChat } from "./home-ai-chat";
 import chatStyles from "./chat.module.css";
 import { useHomeExposure, useInteractions } from "./interaction-context";
+import { LEAVE_HOME_FOR_TALK } from "@/lib/pivot/home-feed-memory";
 
 type HomeNotice = { message: string; postId?: string };
 
@@ -75,6 +76,8 @@ export function HomeNavigation({ onHome, onSaved, onTalk, onMy, active = "home",
   function openTalk() {
     if (onTalk) { onTalk(); return; }
     if (active === "talk") return;
+    // 홈에 TALK 으로 간다고 알려 지금 피드 · 자리를 기억해 두게 한다 (돌아오면 이어서 본다, home-feed-memory.ts)
+    window.dispatchEvent(new Event(LEAVE_HOME_FOR_TALK));
     if (navigate) navigate("/pivot/debate"); else window.location.assign("/pivot/debate");
   }
   return <>

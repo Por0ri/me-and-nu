@@ -2,7 +2,12 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { HomeCardModel } from "@/lib/pivot/home";
+import type { HomeReturnSnapshot } from "@/lib/pivot/detail-navigation";
 import styles from "./home.module.css";
+
+/** Scoped to the feed list: seed unloaded tracks before restoring HOME's scroll. */
+export const RESTORE_HOME_TRACKS = "pivot:restore-home-tracks";
+export type HomeTrackRestore = Pick<HomeReturnSnapshot, "tracks" | "focusContentId">;
 
 const OVERSCAN = 400;
 const INITIAL_CARDS = 3;
@@ -27,6 +32,30 @@ export function WindowedHomeFeed({ cards, renderCard, keepFirstMounted = false }
   const [nearby, setNearby] = useState<ReadonlySet<string>>(new Set(cards.slice(0, INITIAL_CARDS).map(cardKey)));
   const [pinned, setPinned] = useState<string | null>(null);
   const pendingFocus = useRef<{ key: string; from: HTMLElement } | null>(null);
+
+  useLayoutEffect(() => {
+    const element = list.current;
+    if (!element) return;
+    const restore = (event: Event) => {
+      const detail = (event as CustomEvent<HomeTrackRestore>).detail;
+      if (!detail || !Array.isArray(detail.tracks)) return;
+      const saved = new Map(detail.tracks.filter(item => item && typeof item.postId === "string" && Number.isInteger(item.index) && item.index >= 0)
+        .map(item => [item.postId, item.index]));
+      cards.forEach((card, index) => {
+        const value = saved.get(card.id);
+        if (value === undefined) return;
+        const position = Math.max(0, Math.min(value, card.slides.length - 1));
+        positions.current.set(cardKey(card), position);
+        (element.children[index] as HTMLElement).dataset.homeSlideIndex = String(position);
+      });
+      // Returning to DETAIL via TALK can rebuild HOME while it is hidden. Its
+      // opener must exist before the following frame restores keyboard focus.
+      const opener = detail.focusContentId ? cards.find(card => card.detailContentId === detail.focusContentId) : undefined;
+      if (opener) setPinned(cardKey(opener));
+    };
+    element.addEventListener(RESTORE_HOME_TRACKS, restore);
+    return () => element.removeEventListener(RESTORE_HOME_TRACKS, restore);
+  }, [cards]);
 
   useEffect(() => {
     const element = list.current;
@@ -126,11 +155,18 @@ export function WindowedHomeFeed({ cards, renderCard, keepFirstMounted = false }
       const key = cardKey(card);
       const mounted = cards.length <= INITIAL_CARDS || nearby.has(key) || pinned === key || (index === 0 && keepFirstMounted);
       return <li key={key} className={styles.feedSlot} data-home-feed-slot={card.id} data-home-feed-key={key}
+        data-home-slide-index={positions.current.get(key) ?? 0}
         data-home-feed-mounted={mounted ? "true" : "false"} aria-posinset={index + 1} aria-setsize={cards.length}
         onFocusCapture={() => setPinned(key)}
         onClickCapture={event => { if ((event.target as Element).closest("[data-home-detail]")) setPinned(key); }}>
         {mounted ? renderCard({ card, index, initialSlideIndex: positions.current.get(key) ?? 0,
-          onSlideIndexChange: value => { if (Number.isInteger(value) && value >= 0) positions.current.set(key, value); },
+          onSlideIndexChange: value => {
+            if (!Number.isInteger(value) || value < 0) return;
+            positions.current.set(key, value);
+            // A TALK snapshot must include cards which have already unmounted.
+            const slot = list.current?.children[index] as HTMLElement | undefined;
+            if (slot?.dataset.homeFeedKey === key) slot.dataset.homeSlideIndex = String(value);
+          },
         }) : <button type="button" className={styles.feedPlaceholder} data-home-card-activate={card.id}
           aria-label={`${card.title} 카드 보기`} onFocus={event => activate(key, event.currentTarget)}
           onClick={event => activate(key, event.currentTarget)}>
