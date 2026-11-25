@@ -124,16 +124,18 @@
 .profileField .profileRuleBroken { color: #ff0000; }
 .profileBody .fieldError { margin-top: 10px; color: #ff0000; font-size: 15px; line-height: 22px; }
 .fieldError:empty { display: none; }
-/* Q1 (2026-11 design): lilac pill search, outlined chips in one sideways-scrolling row. */
+/* Q1 (2026-11 design): lilac pill search, outlined chips in one sideways-scrolling row.
+   검색칸 · 결과 줄 크기는 2026-11-25 시안을 재서 맞춤 (온보딩 · 마이페이지 취향 수정 같게): 검색칸 높이 41px, 돋보기는 왼쪽 14px,
+   지우기 단추는 오른쪽 끝 가까이, '검색 결과' 14px, 결과 줄 30px · 사이 12px, 동그라미 17px. */
 .searchBox { position: relative; margin-top: 20px; }
-.searchIcon { position: absolute; top: 50%; left: 16px; transform: translateY(-50%); color: #71717a; pointer-events: none; }
-/* 16px keeps iOS from zooming in on focus. */
-.workSearch { box-sizing: border-box; width: 100%; min-width: 0; height: 48px; padding: 0 48px 0 44px; border: 0; border-radius: 24px; background: #f7f2ff; color: #27272a; font: inherit; font-size: 16px; -webkit-appearance: none; appearance: none; }
-.workSearch::placeholder { color: #a1a1aa; }
+.searchIcon { position: absolute; top: 50%; left: 14px; transform: translateY(-50%); color: #71717a; pointer-events: none; }
+/* 입력 글자는 16px 로 둔다: 16px 보다 작으면 아이폰이 누를 때 화면을 확대한다 (시안 글자는 14px, 안내 글자는 14px 로 맞춤). */
+.workSearch { box-sizing: border-box; width: 100%; min-width: 0; height: 41px; padding: 0 48px 0 46px; border: 0; border-radius: 20.5px; background: #f7f2ff; color: #27272a; font: inherit; font-size: 16px; -webkit-appearance: none; appearance: none; }
+.workSearch::placeholder { color: #a1a1aa; font-size: 14px; }
 .workSearch::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 /* The design keeps the pill without a ring while typing. */
 .frame .workSearch:focus-visible { outline: none; }
-.searchClear { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 18px; background: transparent; color: #c4c4cc; }
+.searchClear { position: absolute; top: 50%; right: 2px; transform: translateY(-50%); display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 18px; background: transparent; color: #c4c4cc; }
 .selectedWorks { display: flex; gap: 8px; list-style: none; margin: 14px -24px 0; padding: 0 24px; overflow-x: auto; scrollbar-width: none; }
 .selectedWorks::-webkit-scrollbar { display: none; }
 .selectedWorks:empty { display: none; }
@@ -147,17 +149,21 @@
 .frame .catalogError { margin-top: 14px; padding: 12px; border-radius: 8px; background: #fff2ef; color: #8f3024; font-size: 13px; line-height: 20px; }
 .catalogError button { display: block; border: 1px solid currentColor; border-radius: 6px; min-height: 40px; padding: 6px 14px; margin-top: 8px; background: #fff; color: inherit; }
 /* Q1 results: lilac rows with a circle on the right; a chosen row turns deeper lilac with a check. */
-.frame .resultsLabel { margin-top: 18px; color: #71717a; font-size: 13px; line-height: 20px; }
-.workResults { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 10px; }
-.workChoice { display: flex; align-items: center; gap: 12px; box-sizing: border-box; width: 100%; min-height: 34px; border: 1px solid transparent; border-radius: 8px; background: #f7f2ff; color: #27272a; text-align: left; padding: 6px 12px; font-size: 14px; line-height: 20px; }
+.frame .resultsLabel { margin-top: 20px; color: #71717a; font-size: 14px; line-height: 20px; }
+.workResults { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 12px; }
+.workChoice { display: flex; align-items: center; gap: 12px; box-sizing: border-box; width: 100%; min-height: 30px; border: 1px solid transparent; border-radius: 8px; background: #f7f2ff; color: #27272a; text-align: left; padding: 4px 11px 4px 12px; font-size: 14px; line-height: 20px; }
+/* 전체 화면 규칙 (pivot.module.css .root button { font: inherit }) 이 버튼 글자를 16px · 줄 24px 로 덮어써서, 시안의 14px · 30px 줄이 되게 더 구체적으로 한 번 더 적는다 */
+.frame .workChoice { font-size: 14px; line-height: 20px; }
 .workChoice.selected { background: #decfff; border-color: #c7acfb; }
 .workChoice:disabled { opacity: .55; cursor: default; }
 .workName { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .workName small { display: block; color: #71717a; font-size: 11px; line-height: 16px; }
-.workCheck { display: grid; place-items: center; flex: none; box-sizing: border-box; width: 18px; height: 18px; border: 1px solid #c4c4cc; border-radius: 50%; color: #7043b4; }
+.workCheck { display: grid; place-items: center; flex: none; box-sizing: border-box; width: 17px; height: 17px; border: 1px solid #b9b9c1; border-radius: 50%; color: #7043b4; }
 .workChecked { border-color: #7043b4; }
 /* 작품 더보기 (2026-11-25 시안): 테두리 · 바탕 없이 연보라 굵은 글씨만. 누르기 쉬운 높이(44px)는 그대로 둔다 */
 .moreWorks { display: block; margin: 9px auto 0; min-height: 44px; padding: 8px 24px; border: 0; border-radius: 8px; background: transparent; color: #9c79e6; font-size: 16px; font-weight: 600; line-height: 24px; }
+/* 위 .workChoice 와 같은 까닭 (.root button 의 font: inherit 가 굵기를 지움) */
+.frame .moreWorks { font-size: 16px; font-weight: 600; line-height: 24px; }
 .tagGroup { min-width: 0; border: 0; padding: 0; margin: 24px 0 0; }
 .tagGroup legend { padding: 0; margin-bottom: 12px; color: #27272a; font-size: 16px; font-weight: 600; }
 /* Q2 box "선택한 작품에서 이런 취향을 발견했어요!" (2026-11 design). */
@@ -184,9 +190,8 @@
    Q3 cards (132px → 102px) and their pictures (70px → 40px) shrink, so Q3 fits down to about 640px. 334px = Q3 without its
    three cards. */
 .tasteEdit { --taste-card: clamp(102px, (100svh - 334px) / 3, 132px); }
-.tasteEdit .searchIcon { left: 15px; width: 18px; height: 18px; }
-.tasteEdit .workSearch { height: 40px; border-radius: 20px; padding-left: 46px; }
-.tasteEdit .workSearch::placeholder { color: #71717a; font-size: 14px; }
+/* 검색칸 크기 · 돋보기 자리는 온보딩과 같다 (2026-11-25 시안, 위 .workSearch). 안내 글자 색만 취향 수정 시안대로 */
+.tasteEdit .workSearch::placeholder { color: #71717a; }
 .tasteEdit .selectedWorks { margin-inline: 0; padding-inline: 0; }
 .tasteEdit .selectedWorks li { padding-left: 4px; font-weight: 500; }
 .tasteEdit .selectedWorks button { width: 22px; }
