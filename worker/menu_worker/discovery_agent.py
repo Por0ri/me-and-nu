@@ -138,9 +138,14 @@ def _collect(source_id: str, content_type: str, limit: int, *, work_scoped=False
     try:
         with _until(75):
             items, errors = collect_candidates(source_ids={source.id}, content_type=content_type, limit=limit,
-                                               timeout=8.0, exhaustive_listing=False, work_scoped_sources=work_scoped)
+                                               timeout=8.0, exhaustive_listing=False, work_scoped_sources=work_scoped,
+                                               retain_fetched_candidates=work_scoped)
     except _DeadlineExceeded:
         raise DiscoveryError("discovery_listing_timeout") from None
+    if work_scoped:
+        # Keep the bounded fetched page through the Agent's type filter/ranking.
+        # Apply the route cap before fetching any article, not to the mixed list.
+        items = items[:limit]
     if errors and not items:
         raise DiscoveryError("discovery_listing_failed")
     articles = []
