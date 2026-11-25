@@ -10,7 +10,9 @@ WorkingDirectory=/home/ubuntu/apps/me-nu-main-20261118
 ExecStart=/usr/bin/python3 /home/ubuntu/apps/me-nu-main-20261118/deploy/main/main_debates.py run
 UMask=0077
 Nice=10
-TimeoutStartSec=5min
+# Longer than the locked preflight (~170 s) plus the 240 s docker exec limit, so the
+# wrapper always times out first; shorter than the 10-minute timer interval.
+TimeoutStartSec=8min
 KillMode=control-group
 StandardOutput=journal
 StandardError=journal

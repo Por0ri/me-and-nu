@@ -6,9 +6,11 @@
 기본은 미리보기입니다. 대상 DB 이름을 --expected-database 로 정확히 적어야 하고,
 --apply 를 붙여야 실제로 저장합니다. 결과에는 개수만 찍습니다.
 
-공지 작업처럼 스스로 끝납니다: 접속 5초, 잠금 대기 5초, 문장 하나 60초, 전체 180초를 넘으면 전부 되돌리고
-실패로 끝나며 다음 실행이 다시 합니다. main 서버 타이머(deploy/main/main_debates.py)는 240초 뒤 docker
-명령만 끊고 rollout 잠금을 풀기 때문에, 컨테이너 안 작업이 그보다 먼저 끝나야 잠금 약속이 지켜집니다.
+공지 작업과 같은 방식으로 스스로 끝납니다: 접속 5초, 잠금 대기 5초, 문장 하나 60초, 전체 180초를 넘으면
+실패로 끝납니다. 한 트랜잭션이라 보통은 아무것도 저장되지 않습니다. 커밋하는 순간에 끊기면 이미 저장됐을 수
+있지만, 여러 번 돌아도 결과가 같아서 다음 실행이 이어서 합니다. main 서버 타이머(deploy/main/main_debates.py)는
+240초 뒤 docker 명령만 끊고 rollout 잠금을 풀기 때문에, 컨테이너 안 작업이 그보다 먼저 끝나야 잠금 약속이
+지켜집니다(systemd 제한 8분은 잠금 안 사전 검사와 240초를 합친 것보다 깁니다).
 
     python -m app.jobs.finalize_debates --expected-database me_nu_checking --apply
 """
@@ -67,8 +69,9 @@ def main() -> None:
     except MenuWorksError as exc:
         parser.exit(1, f"Debate finalize stopped: {exc}\n")
     except (ValueError, SQLAlchemyError, TimeoutError):
-        # 한 트랜잭션이라 실패하면(시간 초과 포함) 아무것도 저장되지 않는다. 주소·값은 찍지 않는다.
-        parser.exit(1, "Debate finalize failed or timed out; no changes were committed. The next run retries.\n")
+        # 한 트랜잭션이라 보통은 아무것도 저장되지 않는다. 커밋 순간에 끊기면 저장됐을 수 있지만 다시 돌려도
+        # 결과가 같다. 주소·값은 찍지 않는다.
+        parser.exit(1, "Debate finalize failed or timed out; rerunning is safe and the next run retries.\n")
     print(json.dumps(report, ensure_ascii=False))
 
 
