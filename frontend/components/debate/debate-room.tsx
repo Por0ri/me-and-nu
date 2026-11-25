@@ -171,7 +171,36 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
   const followRef = useRef(true);
   // 화면이 가진 가장 최근 채팅 번호. 실시간 연결을 (다시) 열 때 이 뒤의 채팅부터 받는다.
   const lastIdRef = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
+  // 보내기를 누른 순간 메시지 칸에 포커스가 있었는지 (있었으면 보낸 뒤에도 키보드를 그대로 둔다)
+  const typingRef = useRef(false);
   const now = useNow();
+
+  // 폰에서 메시지 칸을 눌러 올린 키보드는 채팅방 화면을 다시 누를 때까지 그대로 둔다 (2026-11-25).
+  // 아이폰은 입력창 밖을 눌러도 키보드가 저절로 내려가지 않아서, 입력창 밖을 톡 누르면 직접 포커스를 푼다.
+  // 화면을 밀어서 움직이는 것(pointercancel 이나 10px 넘게 움직임)은 누른 것으로 보지 않는다.
+  useEffect(() => {
+    let start: { x: number; y: number } | null = null;
+    const down = (event: PointerEvent) => { start = { x: event.clientX, y: event.clientY }; };
+    const cancel = () => { start = null; };
+    const up = (event: PointerEvent) => {
+      const tapped = start !== null && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 10;
+      start = null;
+      const input = inputRef.current;
+      if (!tapped || !input || document.activeElement !== input) return;
+      if (event.target instanceof Node && composerRef.current?.contains(event.target)) return;
+      input.blur();
+    };
+    window.addEventListener("pointerdown", down, { passive: true });
+    window.addEventListener("pointercancel", cancel, { passive: true });
+    window.addEventListener("pointerup", up, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", down);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("pointerup", up);
+    };
+  }, []);
 
   const remember = useCallback((items: DebateMessage[]) => {
     for (const item of items) lastIdRef.current = Math.max(lastIdRef.current, item.messageId);
@@ -374,6 +403,9 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    // 보내기 버튼을 눌러서 보낸 경우: 누른 동작 안에서 바로 메시지 칸으로 포커스를 돌려 둔다 (아이폰 키보드가 내려가지 않게)
+    if (typingRef.current) inputRef.current?.focus({ preventScroll: true });
+    typingRef.current = false;
     if (!text.trim() || sending) return;
     setSending(true);
     try {
@@ -432,10 +464,13 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
       <div ref={endRef} className={styles.chatEnd} />
     </div>
 
-    <form className={styles.composer} onSubmit={(event) => void submit(event)}>
-      <input value={text} onChange={(event) => setText(event.target.value)} onFocus={() => setCollapsed(true)} maxLength={DEBATE_RULES.messageMax}
-        placeholder="메시지를 입력하세요" aria-label="메시지" />
-      <button type="submit" className={styles.sendButton} aria-label="보내기" disabled={!text.trim() || sending}><SendIcon size={18} /></button>
+    <form ref={composerRef} className={styles.composer} onSubmit={(event) => void submit(event)}>
+      <input ref={inputRef} value={text} onChange={(event) => setText(event.target.value)} onFocus={() => setCollapsed(true)} maxLength={DEBATE_RULES.messageMax}
+        placeholder="메시지를 입력하세요" aria-label="메시지" enterKeyHint="send" />
+      {/* 보내기 버튼은 눌러도 포커스를 가져가지 않는다: 가져가면 메시지 칸에서 포커스가 빠져 폰 키보드가 내려간다 */}
+      <button type="submit" className={styles.sendButton} aria-label="보내기" disabled={!text.trim() || sending}
+        onPointerDown={() => { typingRef.current = document.activeElement === inputRef.current; }}
+        onMouseDown={(event) => event.preventDefault()}><SendIcon size={18} /></button>
     </form>
     {rateLimited ? <RateLimitDialog onClose={closeRateLimit} /> : null}
     {toast}
