@@ -265,7 +265,7 @@ def test_main_upgrade_preserves_existing_data_and_enables_debate_notification(mi
 
 
 def test_debate_description_upgrade_cuts_old_long_descriptions_and_downgrade_only_widens(migration_pg):
-    """2026-11-25: cards show the whole description, so it takes 100 characters. Rows saved under the
+    """2026-11-25: cards dropped their more button, so a description takes 100 characters. Rows saved under the
     old 200 rule keep their first 99 characters (trailing whitespace dropped) plus '…'."""
     pg = migration_pg
     width = text("SELECT character_maximum_length FROM information_schema.columns "

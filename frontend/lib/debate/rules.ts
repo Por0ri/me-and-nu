@@ -15,7 +15,7 @@ export const DEBATE_RULES = {
   /** 끝난 토론의 결과를 지난 토론방에 보여 주는 날 수 (DEBATE_RESULT_RETENTION_DAYS) */
   resultRetentionDays: 9,
   titleMax: 60,
-  /** 카드에 더보기 없이 전부 보여서 100자까지 (2026-11-25 결정) */
+  /** 100자까지 (2026-11-25 결정). 줄바꿈은 막지 않고, 카드에는 3줄까지 보이고 넘으면 '…' (debate.module.css) */
   descriptionMax: 100,
   /** 선택지 이름 8자까지 (2026-11-25 디자인) */
   sideLabelMax: 8,

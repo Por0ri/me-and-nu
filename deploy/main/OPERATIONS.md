@@ -5,6 +5,17 @@ changed a running server. Follow `docs/MAIN_PROMOTION_2026-11-24.md` for the
 coordinated release, schema migration, frontend switch and rollback sequence.
 The Checking branch and its data infrastructure remain in place.
 
+Schema target: run `python -m alembic upgrade <revision>` with the
+`SERVICE_SCHEMA_REVISION` of the candidate image (`backend/app/db/migration_policy.py`,
+now `7f843b19debf`), not a revision copied from an older note such as `94d2da693c10`.
+Upgrading to an ancestor succeeds without changing anything, and the Main timers
+then stop with `main_service_schema_not_ready`. Before `up -d api`, confirm that
+`SELECT version_num FROM alembic_version` returns that value.
+Rolling back past `7f843b19debf` (debate descriptions narrowed to 100 characters):
+first run `python -m alembic downgrade 4dba45de1ad1` in a one-off container of the
+new image (it only widens the column), then start the older API. Older images do not
+know this revision and cannot downgrade it.
+
 ## Preserved data and explicit opt-ins
 
 `compose.main.yaml` still starts only the API, reusing database/user

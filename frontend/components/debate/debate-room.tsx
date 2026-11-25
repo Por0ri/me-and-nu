@@ -11,7 +11,7 @@ import type { DebateConnection, DebateMessage, DebateSideKey, DebateSummary } fr
 import { SideResult } from "./debate-cards";
 import { DebateHomeHeader, DebateScreen, DebateState, errorText, useToast, type ShowToast } from "./debate-chrome";
 import { ChatIcon, CircleCheckIcon, ClockIcon, SendIcon, TrophyIcon, UsersIcon } from "./debate-icons";
-import { AuthorLine, Badge, DebateGuide, InfoNote, WorkChips, useNow } from "./debate-parts";
+import { AuthorLine, Badge, DebateGuide, InfoNote, WorkChips, nicknameInitial, useNow } from "./debate-parts";
 import styles from "./debate.module.css";
 
 type Update = (change: (current: DebateSummary) => DebateSummary) => void;
@@ -130,11 +130,6 @@ function SidePoll({ debate, busy, onPick, onCancel }: {
 function sameRun(previous: DebateMessage, next: DebateMessage): boolean {
   const minute = (message: DebateMessage) => Math.floor(Date.parse(message.createdAt) / 60_000);
   return previous.isMine === next.isMine && previous.nickname === next.nickname && minute(previous) === minute(next);
-}
-
-/** 프로필 사진 기능이 생기기 전까지 얼굴 자리에 닉네임 첫 글자를 보여 준다 (2026-11-25 사용자 결정). */
-export function nicknameInitial(nickname: string): string {
-  return Array.from(nickname.trim())[0] ?? "";
 }
 
 /** 도배 막기 창 (2026-11-23 시안): 10초에 5개를 넘게 보내면 서버가 막고(429) 이 창을 띄운다. */

@@ -6,17 +6,18 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { deleteDebate, getVoteTickets, listDebates, listMyDebates, listMyVotes } from "@/lib/debate/client";
 import { DEBATE_RULES } from "@/lib/debate/rules";
 import type { DebateSummary, VoteTickets } from "@/lib/debate/types";
-import { LiveCard, PastCard, VoteCard, useRoomActions, useVoteActions } from "./debate-cards";
+import { LiveCard, VoteCard, useRoomActions, useVoteActions } from "./debate-cards";
 import { DebateHomeHeader, DebateScreen, DebateState, DebateTabs, errorText, useLoad, useToast, type ShowToast } from "./debate-chrome";
 import { ConfirmDialog, DebateGuide, VoteTicketBox, useNow } from "./debate-parts";
 import styles from "./debate.module.css";
 
-/* 내 활동 (2026-11-23 시안 3장): 내가 투표한 주제 · 내가 올린 주제 · 참여 중인 방. 하단바 없이 머리 부분에 뒤로가기. */
+/* 내 활동 (2026-11-23 시안 3장): 내가 올린 주제 · 내가 투표한 주제 · 참여 중인 방. 하단바 없이 머리 부분에 뒤로가기.
+   내가 올린 주제가 가장 중요해서 첫 탭이고, 탭을 정하지 않고 들어오면 이 탭이 열린다 (2026-11-25 사용자 요청). */
 
 export type DebateActivityTab = "voted" | "mine" | "joined";
 const TABS = [
-  { id: "voted", label: "내가 투표한 주제" },
   { id: "mine", label: "내가 올린 주제" },
+  { id: "voted", label: "내가 투표한 주제" },
   { id: "joined", label: "참여 중인 방" },
 ] as const;
 
@@ -86,7 +87,7 @@ function VotedTab({ showToast }: { showToast: ShowToast }) {
   const now = useNow();
   const { tickets, debates } = state.data;
   return <div className={styles.stack}>
-    {tickets ? <VoteTicketBox tickets={tickets} activity={false} /> : null}
+    {tickets ? <VoteTicketBox tickets={tickets} /> : null}
     <DebateState loading={state.loading && debates.length === 0} error={state.error} onRetry={retry} />
     {!state.loading && !state.error && debates.length === 0 ? <ActivityEmpty title="아직 투표한 주제가 없어요!"
       lead={<>마음에 드는 토론 주제에<br />투표하고 토론방을 열어보세요</>}
@@ -108,7 +109,8 @@ function VotedTab({ showToast }: { showToast: ShowToast }) {
 
 const loadMine = () => listMyDebates();
 
-/** 올린 주제가 없으면 빈 화면. 투표 중이면 안내 띠 + 카드(작성자 대신 '투표 중') + '내 주제 삭제하기'(확인 창),
+/** 투표 중이거나 토론 중인 내 주제만 보여 준다. 48시간이 끝난 방은 지난 토론방에만 있다 (2026-11-25 사용자 결정, 서버 D-14도 같은 규칙).
+ *  그런 주제가 없으면 빈 화면. 투표 중이면 안내 띠 + 카드(작성자 대신 '투표 중') + '내 주제 삭제하기'(확인 창),
  *  토론방이 열렸으면 '선정됐어요' 띠 + 카드(작성자 대신 '토론 중', 삭제 없음) (2026-11-23 시안).
  *  투표 중이거나 토론 중인 내 주제가 있으면 새 주제를 올릴 수 없어서 '주제 올리기' 버튼이 없다 (서버도 막는다, 2026-11-24 결정).
  *  자기 주제에도 투표할 수 있다 (회의 규칙). */
@@ -122,7 +124,8 @@ function MineTab({ showToast }: { showToast: ShowToast }) {
   const [removing, setRemoving] = useState(false);
   const keep = useCallback(() => setDeleting(null), []);
   const now = useNow();
-  const debates = state.data;
+  // 서버를 배포하기 전(끝난 방도 주던 때)에도 같은 규칙이 되게 화면에서도 거른다
+  const debates = state.data.filter((debate) => debate.status === "voting" || debate.status === "open");
   if (state.loading && debates.length === 0 || state.error) {
     return <div className={styles.stack}><DebateState loading={state.loading} error={state.error} onRetry={retry} /></div>;
   }
@@ -141,7 +144,6 @@ function MineTab({ showToast }: { showToast: ShowToast }) {
   }
   // 투표 중(10표 전)인 주제는 표가 있어도 지울 수 있고(투표한 사람은 투표권을 돌려받는다), 토론방이 열리면 지울 수 없다 (2026-11-23).
   const active = debates.find((debate) => debate.status === "voting") ?? null;
-  const opened = debates.find((debate) => debate.status === "open") ?? null;
   const remove = async () => {
     if (!deleting) return;
     const target = deleting;
@@ -165,24 +167,17 @@ function MineTab({ showToast }: { showToast: ShowToast }) {
         <h2>현재 등록한 주제가 있어요</h2>
         <p>기존 주제가 종료되기 전까지는 새 주제를 올릴 수 없어요</p>
       </section>
-      : opened
-        ? <section className={styles.banner} aria-label="주제 등록 안내">
-          <h2>내가 올린 주제가 선정됐어요</h2>
-          {/* 토론 중에도 새 주제를 못 올려서(남용 방지) 버튼 대신 언제 올릴 수 있는지 알려 준다 (2026-11-24 결정) */}
-          <p>선정되어 열린 채팅방은 {DEBATE_RULES.roomHours}시간 동안만 유지돼요<br />토론이 끝나면 새 주제를 올릴 수 있어요</p>
-        </section>
-        : <section className={styles.banner} aria-label="주제 등록 안내">
-          <h2>새 주제를 올릴 수 있어요</h2>
-          <p>올린 주제의 토론이 끝났어요. 다음 주제도 올려보세요</p>
-        </section>}
+      : <section className={styles.banner} aria-label="주제 등록 안내">
+        <h2>내가 올린 주제가 선정됐어요</h2>
+        {/* 토론 중에도 새 주제를 못 올려서(남용 방지) 버튼 대신 언제 올릴 수 있는지 알려 준다 (2026-11-24 결정) */}
+        <p>선정되어 열린 채팅방은 {DEBATE_RULES.roomHours}시간 동안만 유지돼요<br />토론이 끝나면 새 주제를 올릴 수 있어요</p>
+      </section>}
     {debates.map((debate) => debate.status === "voting"
       ? <VoteCard key={debate.debateId} debate={debate} now={now} busy={vote.pending !== null} onToggle={vote.toggle} mine />
-      : debate.status === "open"
-        ? <LiveCard key={debate.debateId} debate={debate} now={now} busy={room.pending === debate.debateId} onEnter={room.enter} onLeave={room.askLeave} mine />
-        : <PastCard key={debate.debateId} debate={debate} />)}
+      : <LiveCard key={debate.debateId} debate={debate} now={now} busy={room.pending === debate.debateId} onEnter={room.enter} onLeave={room.askLeave} mine />)}
     {active
       ? <button type="button" className={styles.dangerText} disabled={removing} onClick={() => setDeleting(active)}>내 주제 삭제하기</button>
-      : opened ? null : <Link className={styles.bigButton} href="/pivot/debate/new">주제 올리기</Link>}
+      : null}
     {deleting ? <ConfirmDialog title="내 주제를 삭제할까요?" body={"삭제하면 현재 등록한 주제와\n진행 중인 투표가 함께 삭제돼요."}
       confirmLabel="삭제하기" onConfirm={() => void remove()} onCancel={keep} /> : null}
     {room.dialog}
