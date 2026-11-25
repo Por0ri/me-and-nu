@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { createHomeRequestController, type HomeCardModel, type HomeDataSource, type HomeDetailHandler, type HomeState, type HomeWorkSuggestion } from "@/lib/pivot/home";
+import type { KeptHomeFeed } from "@/lib/pivot/home-feed-memory";
 import type { BookmarkControls } from "@/lib/pivot/bookmark-service";
 import type { RecentSearch } from "@/lib/pivot/recent-search";
 import { PivotHomeScreen, type HomeSearchView, type SearchNotice } from "./home-screen";
@@ -13,13 +14,21 @@ const loading: HomeState = { status: "loading" };
 // Same pause as onboarding Q1 before asking for works while the user types.
 const SUGGEST_DELAY_MS = 250;
 
-export function HomeController({ source, onRestart, onViewDetail, onReady, restoreQuery, onMy, onSaved, onNotifications, bookmarks, skipEntryLoading = false }: {
+export function HomeController({ source, onRestart, onViewDetail, onReady, restoreQuery, onMy, onSaved, onNotifications, bookmarks, skipEntryLoading = false, resume, keeper }: {
   source: HomeDataSource; onRestart?: () => void; onViewDetail?: HomeDetailHandler; onReady?: () => void; restoreQuery?: string;
   onMy?: () => void;
   onSaved?: () => void; onNotifications?: () => void; bookmarks?: BookmarkControls;
   skipEntryLoading?: boolean;
+  /** TALK 에 다녀오기 전에 보던 피드 (home-feed-memory.ts): 처음 한 번은 다시 받지 않고 그대로 펼친다 */
+  resume?: KeptHomeFeed;
+  /** TALK 을 누를 때 지금 피드를 꺼내 갈 수 있게 채워 둔다 */
+  keeper?: MutableRefObject<(() => KeptHomeFeed | null) | null>;
 }) {
-  const [request, setRequest] = useState<{ source: HomeDataSource; state: HomeState }>({ source, state: loading });
+  // 기억해 둔 피드가 있으면 첫 화면부터 그 피드라 로딩 화면이 깜빡이지 않는다
+  const [request, setRequest] = useState<{ source: HomeDataSource; state: HomeState }>(() => ({ source, state: resume
+    ? { status: "ready", home: resume.home, ...(resume.nextPage ? { pagination: { status: "idle" as const } } : {}) }
+    : loading }));
+  const resumeFirst = useRef(resume);
   const [attempt, setAttempt] = useState(0);
   const [query, setQuery] = useState("");
   // Search: focusing the box opens a panel over the dimmed screen (recent searches, or works matching what is
@@ -34,9 +43,16 @@ export function HomeController({ source, onRestart, onViewDetail, onReady, resto
   useEffect(() => {
     const controller = createHomeRequestController(source, (state) => setRequest({ source, state }));
     feedRequest.current = controller;
-    void controller.load();
+    // 처음 한 번만 기억해 둔 피드를 쓴다. '다시 시도'(attempt 1부터)는 새로 받는다.
+    if (attempt === 0 && resumeFirst.current) controller.resume(resumeFirst.current);
+    else void controller.load();
     return () => { controller.cancel(); if (feedRequest.current === controller) feedRequest.current = null; };
   }, [source, attempt]);
+  useEffect(() => {
+    if (!keeper) return;
+    keeper.current = () => feedRequest.current?.resumable() ?? null;
+    return () => { keeper.current = null; };
+  }, [keeper]);
   useEffect(() => () => searching.current?.abort(), [source]);
   // Recent searches live in this browser only, so read them after mounting.
   useEffect(() => { setRecent({ source, entries: source.recent?.list() ?? [] }); }, [source]);
