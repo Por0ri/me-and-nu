@@ -66,7 +66,8 @@ test('Home preview renders every page and all source text with accessible contro
 test('Carousel buttons and keyboard use native horizontal scroll; observation does not correct gestures', () => {
   const hooks = [], writes = []; let cursor = 0, tree;
   const element = { clientWidth: 350, scrollTo(value) { writes.push(value); } };
-  const react = { ...React, useId: () => 'carousel', useRef: () => hooks[cursor++] ??= { current: element },
+  const react = { ...React, useId: () => 'carousel', useLayoutEffect: effect => effect(),
+    useRef(initial) { const index = cursor++; return hooks[index] ??= { current: index === 0 ? element : initial }; },
     useState(initial) { const index = cursor++; hooks[index] ??= { value: initial }; return [hooks[index].value, value => { hooks[index].value = value; }]; },
   };
   const { ContentCarousel } = loader({}, react)('components/pivot/content-carousel.tsx');
@@ -305,7 +306,8 @@ test('Absent slides and Demo preserve article text and never add a transcript', 
 
 test('Consecutive keyboard moves use settled DOM position even before onScroll state rerenders', () => {
   const writes = [], element = { clientWidth: 350, scrollLeft: 0, scrollTo(value) { writes.push(value); } };
-  const react = { ...React, useId: () => 'keys', useRef: () => ({ current: element }), useState: value => [value, () => {}] };
+  let refs = 0;
+  const react = { ...React, useId: () => 'keys', useLayoutEffect: effect => effect(), useRef: initial => ({ current: refs++ === 0 ? element : initial }), useState: value => [value, () => {}] };
   const { ContentCarousel } = loader({}, react)('components/pivot/content-carousel.tsx');
   const tree = ContentCarousel({ slides: slides(), title: '키보드', scope: 'home' });
   const all = node => !node || typeof node !== 'object' ? [] : [node, ...React.Children.toArray(node.props?.children).flatMap(all)];
@@ -345,7 +347,7 @@ function pointerFixture(scope, count = 3) {
     get scrollLeft() { return left; }, set scrollLeft(value) { left = Math.max(0, Math.min(value, (count - 1) * this.clientWidth)); },
     scrollTo(value) { writes.push(value.left); this.scrollLeft = value.left; }, setPointerCapture() { this.captured = true; },
     hasPointerCapture() { return this.captured; }, releasePointerCapture() { this.captured = false; } };
-  const react = { ...React, useId: () => 'drag', useRef: initial => ({ current: refs++ === 0 ? element : initial }), useState: value => [value, () => {}] };
+  const react = { ...React, useId: () => 'drag', useLayoutEffect: effect => effect(), useRef: initial => ({ current: refs++ === 0 ? element : initial }), useState: value => [value, () => {}] };
   const { ContentCarousel } = loader({}, react)('components/pivot/content-carousel.tsx');
   const track = all(ContentCarousel({ slides: slides(count), title: '드래그', scope })).find(node => node.props?.['data-carousel-track'] === '').props;
   const event = (x, y = 50, options = {}) => ({ currentTarget: element, target: { closest: () => null }, pointerId: 1,

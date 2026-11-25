@@ -26,6 +26,7 @@ import { InteractionViewContext, useInteractions } from "./interaction-context";
 import { createDemoNotificationInbox, newPostTarget, type InboxNotification, type NotificationInboxSource } from "@/lib/pivot/notification-inbox";
 import { NotificationInbox } from "./notification-inbox";
 import { NewNoticeContext } from "./home-screen";
+import { RESTORE_HOME_TRACKS, type HomeTrackRestore } from "./windowed-home-feed";
 
 const noSubscribe = () => () => {};
 const noSnapshot = () => 0;
@@ -127,17 +128,27 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
         home.current?.querySelector<HTMLHeadingElement>("h1")?.focus({ preventScroll: true });
         return;
       }
+      // Seed every lightweight slot, including cards which are not mounted yet.
+      home.current?.querySelectorAll<HTMLElement>("[data-home-feed-window]").forEach(list => {
+        list.dispatchEvent(new CustomEvent<HomeTrackRestore>(RESTORE_HOME_TRACKS, {
+          detail: { tracks: snapshot.tracks, focusContentId: snapshot.focusContentId },
+        }));
+      });
       home.current?.querySelectorAll<HTMLElement>("[data-home-post]").forEach((post) => {
         const track = post.querySelector<HTMLElement>("[data-home-track]");
         const saved = snapshot.tracks.find((item) => item.postId === post.dataset.homePost);
         if (track && saved) track.scrollTo({ left: saved.index * track.clientWidth, behavior: "instant" });
       });
       scrollHomeTo(snapshot.scrollY);
-      const button = Array.from(home.current?.querySelectorAll<HTMLButtonElement>("[data-home-detail]") ?? [])
-        .find((item) => item.dataset.homeDetail === snapshot.focusContentId);
-      const navigation = snapshot.focusNavigation ?? "my";
-      (button ?? (snapshot.focusContentId === "" ? home.current?.querySelector<HTMLButtonElement>(`[data-${navigation}-navigation]`) : null)
-        ?? home.current?.querySelector<HTMLHeadingElement>("h1"))?.focus({ preventScroll: true });
+      // The restored opener may need one React commit to mount after TALK.
+      // The existing frame ref also cancels this focus if navigation changes.
+      restoreFrame.current = requestAnimationFrame(() => {
+        const button = Array.from(home.current?.querySelectorAll<HTMLButtonElement>("[data-home-detail]") ?? [])
+          .find((item) => item.dataset.homeDetail === snapshot.focusContentId);
+        const navigation = snapshot.focusNavigation ?? "my";
+        (button ?? (snapshot.focusContentId === "" ? home.current?.querySelector<HTMLButtonElement>(`[data-${navigation}-navigation]`) : null)
+          ?? home.current?.querySelector<HTMLHeadingElement>("h1"))?.focus({ preventScroll: true });
+      });
     });
   }, [detailOpen, myOpen, savedOpen, activityOpen, inquiryOpen, inboxOpen, homeSource.kind]);
   const restoreSaved = useCallback(() => {
@@ -175,9 +186,11 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
       path: window.location.pathname, kind: homeSource.kind, scrollY: homeScrollY(),
       query: home.current?.querySelector<HTMLInputElement>("input[type=search]")?.value ?? "",
       focusContentId, focusNavigation,
-      tracks: Array.from(home.current?.querySelectorAll<HTMLElement>("[data-home-post]") ?? []).map((post) => {
-        const track = post.querySelector<HTMLElement>("[data-home-track]");
-        return { postId: post.dataset.homePost ?? "", index: track?.clientWidth ? Math.round(track.scrollLeft / track.clientWidth) : 0 };
+      tracks: Array.from(home.current?.querySelectorAll<HTMLElement>("[data-home-feed-slot]") ?? []).map((slot) => {
+        const track = slot.querySelector<HTMLElement>("[data-home-track]");
+        const cached = Number(slot.dataset.homeSlideIndex ?? 0);
+        return { postId: slot.dataset.homeFeedSlot ?? "", index: track?.clientWidth ? Math.round(track.scrollLeft / track.clientWidth)
+          : Number.isInteger(cached) && cached >= 0 ? cached : 0 };
       }),
     };
   }

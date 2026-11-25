@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { orderedHomeSlides, type HomeCardModel, type HomeDetailHandler, type HomeSlideModel, type HomeState, type HomeWorkSuggestion } from "@/lib/pivot/home";
 import type { RecentSearch } from "@/lib/pivot/recent-search";
 import { demoBookmarkNotice } from "@/lib/pivot/saved";
@@ -8,6 +8,7 @@ import { dismissActionNotice } from "@/lib/pivot/action-notice";
 import { bookmarkPending, bookmarkValue, type BookmarkControls } from "@/lib/pivot/bookmark-service";
 import { ContentCarousel } from "./content-carousel";
 import { HomeEntryImage } from "./home-entry-image";
+import { WindowedHomeFeed } from "./windowed-home-feed";
 import { scrollHomeTo } from "./home-scroll";
 import styles from "./home.module.css";
 import { HomeAIButton } from "./home-ai-button";
@@ -204,17 +205,22 @@ function HomeSlideImage({ image }: { image: HomeSlideModel["image"] }) {
     : <div className={styles.imagePlaceholder} role="img" data-home-image-state={failed ? "error" : "missing"} aria-label="이미지 준비 중">이미지 준비 중</div>;
 }
 
-export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice, impressions = true, onFirstImageReady }: {
+export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice, impressions = true, onFirstImageReady, initialSlideIndex = 0, onSlideIndexChange }: {
   card: HomeCardModel; demo: boolean; onViewDetail?: HomeDetailHandler; bookmarks?: BookmarkControls;
   notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void; impressions?: boolean;
   onFirstImageReady?: () => void;
+  initialSlideIndex?: number; onSlideIndexChange?: (index: number) => void;
 }) {
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
   const article = useRef<HTMLElement>(null);
   const interactions = useInteractions();
+  // An entry retry stays available on this mount; later window remounts do not
+  // restart the first-slide watchdog after HOME has already become usable.
+  const entryImageReady = useRef(onFirstImageReady).current;
 
-  const [active, setActive] = useState(0);
+  const initial = useRef(Math.max(0, Math.min(initialSlideIndex, card.slides.length - 1))).current;
+  const [active, setActive] = useState(initial);
   const [detailRequested, setDetailRequested] = useState(false);
   const [localNotice, setLocalNotice] = useState({ message: "" });
   const localActionNotice = localNotice.message;
@@ -231,6 +237,9 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
   }
   const slides = orderedHomeSlides(card.slides);
   const serviceCarousel = !demo && slides.some((slide) => !!slide.layout || slide.image?.protected);
+  useLayoutEffect(() => {
+    if (!serviceCarousel && initial > 0) track.current?.scrollTo({ left: initial * track.current.clientWidth, behavior: "instant" });
+  }, [initial, serviceCarousel]);
   const current = Math.max(0, Math.min(active, slides.length - 1));
   const target = { postId: card.id, contentId: card.detailContentId, ...(card.topicId === undefined ? {} : { topicId: card.topicId }), recommendationId: card.recommendationId, recommendationReason: card.recommendationReason };
   const trackSlide = useHomeExposure(article, target, demo, impressions);
@@ -243,6 +252,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
     catch (error) { setActionNotice(error instanceof Error ? error.message : "좋아요를 저장하지 못했어요."); }
   }
   function recordSlide(index: number) {
+    onSlideIndexChange?.(index);
     trackSlide(index, slides.length);
   }
   const canBookmark = !!bookmarks && (demo ? bookmarks.kind === "demo" : bookmarks.kind === "service" && !!card.topicId);
@@ -276,7 +286,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
       {demo ? <p className={styles.exampleLabel}>시연용 콘텐츠</p> : null}
       <h3 id={`${id}-title`}>{card.title}</h3>
     </div>
-    {serviceCarousel ? <ContentCarousel key={card.id} slides={slides} title={card.title} labelledBy={`${id}-title`} scope="home" onSlideChange={recordSlide} onFirstImageReady={onFirstImageReady} /> : slides.length ? <>
+    {serviceCarousel ? <ContentCarousel key={card.id} slides={slides} title={card.title} labelledBy={`${id}-title`} scope="home" initialSlideIndex={initial} onSlideChange={recordSlide} onFirstImageReady={entryImageReady} /> : slides.length ? <>
       <div className={styles.carousel} role="region" aria-roledescription="캐러셀" aria-labelledby={`${id}-title`}>
         <div id={`${id}-track`} ref={track} className={styles.slideTrack} tabIndex={0} data-home-track=""
           aria-label="좌우로 슬라이드 탐색" aria-describedby={`${id}-help`}
@@ -294,7 +304,7 @@ export function HomeCard({ card, demo, onViewDetail, bookmarks, notice, onNotice
           {slides.map((slide, index) => <div key={slide.id} className={styles.slide} role="group"
             aria-roledescription="슬라이드" aria-label={`${index + 1} / ${slides.length}`} data-home-slide={slide.id}>
             <figure>
-              <HomeEntryImage onReady={index === 0 ? onFirstImageReady : undefined}>
+              <HomeEntryImage onReady={index === 0 ? entryImageReady : undefined}>
                 <HomeSlideImage key={slide.image?.src ?? "missing"} image={slide.image} />
               </HomeEntryImage>
               <figcaption className={slide.image ? styles.srOnly : styles.summary}>{slide.description}</figcaption>
@@ -353,9 +363,18 @@ export function HomeFeed({ cards, demo, onViewDetail, bookmarks, notice, onNotic
   notice?: HomeNotice; onNotice?: (notice: HomeNotice) => void; label?: string; impressions?: boolean;
   onFirstImageReady?: () => void;
 }) {
+  const readyFirst = useRef<string | null>(null);
+  const firstKey = cards[0] ? JSON.stringify([cards[0].topicId ?? null, cards[0].id]) : null;
+  const firstImageReady = useCallback(() => {
+    readyFirst.current = firstKey;
+    onFirstImageReady?.();
+  }, [firstKey, onFirstImageReady]);
+  const waitForFirstImage = !!onFirstImageReady && readyFirst.current !== firstKey;
   return <section aria-label={label} className={styles.feed}>
     <h2 className={styles.srOnly}>{label}</h2>
-    <ul>{cards.map((card, index) => <li key={card.id}><HomeCard card={card} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={onNotice} impressions={impressions} onFirstImageReady={index === 0 ? onFirstImageReady : undefined} /></li>)}</ul>
+    <WindowedHomeFeed cards={cards} keepFirstMounted={waitForFirstImage} renderCard={({ card, index, initialSlideIndex, onSlideIndexChange }) =>
+      <HomeCard card={card} demo={demo} onViewDetail={onViewDetail} bookmarks={bookmarks} notice={notice} onNotice={onNotice} impressions={impressions}
+        initialSlideIndex={initialSlideIndex} onSlideIndexChange={onSlideIndexChange} onFirstImageReady={index === 0 && waitForFirstImage ? firstImageReady : undefined} />} />
   </section>;
 }
 
