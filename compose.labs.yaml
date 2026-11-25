@@ -105,7 +105,7 @@ services:
 
   migrate:
     <<: *backend
-    command: [python, -m, alembic, upgrade, 4dba45de1ad1]
+    command: [python, -m, alembic, upgrade, 7f843b19debf]
     restart: "no"
     mem_limit: 256m
     cpus: "0.25"
