@@ -3,7 +3,8 @@ import { requirePivotApi } from "./services";
 import type { HomeCardModel, HomeDataSource, HomeLoadError, HomeLoadResult } from "./home";
 import { createRecentSearchStore } from "./recent-search";
 import { invalidContentResponse, mapCarouselSlides, publicationMetadata } from "./carousel-data";
-import { activeTopicId, isPositiveId, LIST_PAGE_SIZE, optionalImage, requireTitle } from "./service-data";
+import { activeTopicId, isPositiveId, optionalImage, requireTitle } from "./service-data";
+import { HOME_FEED_PAGE_SIZE } from "./home-feed";
 
 export function mapFeedCard(card: FeedCard, topicId: number): HomeCardModel {
   if (!card || card.kind !== "content" || !isPositiveId(card.id) || card.topicId !== topicId || typeof card.saved !== "boolean" ||
@@ -97,7 +98,7 @@ export function createServiceHomeSource(
                 throw new ApiError("Feed interests changed.", 409, "FEED_SCOPE_CHANGED");
               }
             }
-            const response = await api.getFeed(selectedTopic, { limit: LIST_PAGE_SIZE, cursor }, { signal: requestSignal });
+            const response = await api.getFeed(selectedTopic, { limit: HOME_FEED_PAGE_SIZE, cursor }, { signal: requestSignal });
             checkSession(requestSignal);
             if (!response || response.selectedTopicId !== selectedTopic || !Array.isArray(response.sections)) invalidContentResponse();
             const seen = new Set(visited);

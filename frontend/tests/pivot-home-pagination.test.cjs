@@ -43,25 +43,29 @@ function setup(getFeed, { readSession, getMyTopics = async () => topics(42), tim
   return { source, controller, states, latest: () => states.at(-1) };
 }
 
-test('100 x 11 fallback pages display the first page immediately and all 1100 cards on demand', async () => {
+for (const total of [123, 1100]) test(`${total} cards load in pages of 20 without gaps, duplicates or reordering`, async () => {
   const cursors = [];
+  // Deliberately not ID-sorted: the server owns recommendation order.
+  const expected = Array.from({ length: total }, (_, i) => total - i);
   const view = setup(async (_, query) => {
+    assert.equal(query.limit, 20, 'first and every subsequent HOME request use 20');
     cursors.push(query.cursor);
-    const index = query.cursor === undefined ? 0 : Number(query.cursor);
-    return page(Array.from({ length: 100 }, (_, i) => index * 100 + i + 1), index < 10 ? String(index + 1) : null);
+    const offset = query.cursor === undefined ? 0 : Number(query.cursor.replace('after:', ''));
+    const end = Math.min(offset + query.limit, total);
+    return page(expected.slice(offset, end), end < total ? `after:${end}` : null);
   });
   await view.controller.load();
   assert.equal(view.latest().status, 'ready');
-  assert.equal(view.latest().home.cards.length, 100);
+  assert.equal(view.latest().home.cards.length, 20);
   assert.equal(cursors.length, 1, 'initial paint must not wait for later pages');
-  for (let i = 1; i <= 10; i++) {
+  for (let offset = 20; offset < total; offset += 20) {
     await view.controller.loadMore();
-    assert.equal(view.latest().home.cards.length, (i + 1) * 100);
+    assert.deepEqual(Array.from(view.latest().home.cards, c => c.id), expected.slice(0, offset + 20).map(String));
   }
-  assert.equal(new Set(view.latest().home.cards.map(c => c.id)).size, 1100);
+  assert.equal(new Set(view.latest().home.cards.map(c => c.id)).size, total);
   assert.equal(view.latest().pagination, undefined);
   await view.controller.loadMore();
-  assert.deepEqual(cursors, [undefined, ...Array.from({ length: 10 }, (_, i) => String(i + 1))]);
+  assert.deepEqual(cursors, [undefined, ...Array.from({ length: Math.ceil(total / 20) - 1 }, (_, i) => `after:${(i + 1) * 20}`)]);
 });
 
 test('later failures retain the visible cards; retry uses the same cursor and deduplicates cards', async () => {
