@@ -202,6 +202,59 @@ def test_database_session_login_state_rotation_and_logout(postgres_flow, already
     assert flow.client.get("/api/v1/auth/session").json()["authenticated"] is False
 
 
+@pytest.mark.parametrize("provider_email", [None, " MEMBER@EXAMPLE.COM "])
+def test_existing_member_email_reaches_profile_after_login(postgres_flow, provider_email):
+    flow = postgres_flow
+    with Session(flow.engine) as session:
+        user = UserAccount(
+            auth_provider="kakao", provider_user_id="123", email=None,
+            nickname="기존회원", account_status="active",
+            onboarding_completed_at=datetime(2026, 10, 20, tzinfo=timezone.utc),
+        )
+        session.add(user)
+        session.commit()
+        user_id = user.user_id
+    flow.provider.exchange_identity.return_value = OAuthIdentity("kakao", "123", provider_email, "공급자이름")
+
+    response = callback(flow, begin_login(flow))
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3000/pivot/home"
+    profile = flow.client.get("/api/v1/users/me")
+    assert profile.status_code == 200
+    assert profile.headers["cache-control"] == "private, no-store"
+    assert profile.json()["userId"] == user_id
+    assert profile.json()["nickname"] == "기존회원"
+    assert profile.json()["email"] == ("member@example.com" if provider_email else None)
+    with Session(flow.engine) as session:
+        assert session.get(UserAccount, user_id).email == profile.json()["email"]
+        assert session.scalar(select(func.count()).select_from(UserAccount)) == 1
+
+
+def test_failed_login_commit_rolls_back_email_backfill(postgres_flow):
+    flow = postgres_flow
+    with Session(flow.engine) as session:
+        session.add(UserAccount(
+            auth_provider="kakao", provider_user_id="123", email=None,
+            nickname="기존회원", account_status="active",
+            onboarding_completed_at=datetime(2026, 10, 20, tzinfo=timezone.utc),
+        ))
+        session.commit()
+    state = begin_login(flow)
+    old_cookie = flow.client.cookies.get(settings.session_cookie_name)
+    flow.failure.enabled = True
+
+    response = callback(flow, state)
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/pivot/login?error=AUTH_UNAVAILABLE")
+    assert "set-cookie" not in response.headers
+    assert flow.client.cookies.get(settings.session_cookie_name) == old_cookie
+    with Session(flow.engine) as session:
+        user = session.scalar(select(UserAccount))
+        assert user.email is None and user.nickname == "기존회원"
+        assert user.last_login_at is None
+        assert session.scalar(select(func.count()).select_from(AuthSession)) == 1
+
+
 def test_failed_final_commit_rolls_back_account_and_session_but_consumes_state(postgres_flow):
     flow = postgres_flow
     state = begin_login(flow)
