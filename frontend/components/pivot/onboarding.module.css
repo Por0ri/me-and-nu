@@ -38,13 +38,16 @@
 .hint p { color: #71717a; font-size: 12px; line-height: 18px; }
 .actions { margin: auto 24px 0; padding-top: 22px; padding-bottom: max(56px, env(safe-area-inset-bottom)); }
 /* 2026-11 design feedback: the round back button the other screens use (home .headerBack), then a bar that
-   fills the row 7px from the button and the count (mock: bar 59–327px on a 375px screen). */
-.navigation { display: flex; align-items: center; justify-content: space-between; gap: 7px; height: 40px; margin: 45px 24px 0; }
+   fills the row 7px from the button and the count (mock: bar 59–327px on a 375px screen).
+   위 여백 12px (2026-11-25 디자인 피드백): 시안의 45px 는 폰 상태 표시줄 자리라, 진짜 폰에서는 브라우저 주소창 아래에
+   빈칸으로 남았다. 웹 화면(취향 수정이 이미 12px)처럼 온보딩 · 취향 수정 모두 막대 줄을 위로 붙인다. */
+.navigation { display: flex; align-items: center; justify-content: space-between; gap: 7px; height: 40px; margin: 12px 24px 0; }
 .navigation > span { flex: none; font-size: 11px; line-height: 16px; font-weight: 500; color: #71717a; }
 /* One lilac track with a purple fill up to the current step (2026-11 design). */
 .progress { flex: 1; min-width: 0; height: 8px; border-radius: 4px; background: #efe7ff; overflow: hidden; }
 .progress i { display: block; height: 100%; border-radius: 4px; background: #7043b4; }
-.questionBody { margin: 30px 24px 0; }
+/* 질문은 막대 줄 바로 아래 4px (2026-11-25: 온보딩도 마이페이지 취향 수정과 같은 간격) */
+.questionBody { margin: 4px 24px 0; }
 .questionBody h1 { color: #3f3f46; font-size: 24px; line-height: 34px; font-weight: 700; word-break: keep-all; overflow-wrap: anywhere; }
 .questionBody h1 > span { display: block; }
 .frame .questionDescription { color: #71717a; font-size: 14px; line-height: 20px; margin-top: 8px; }
@@ -55,7 +58,8 @@
 .questionChoices > .tagGroup:first-of-type { margin-top: 8px; }
 .questionChoices > .q1Grid { margin-top: 0; }
 /* 2026-11 feedback: hints sit folded under the question (16px under it, 16px over the choices). The taste edit
-   lifts its question to just under the progress row so a question with a folded hint fits one screen. */
+   lifts its question to just under the progress row so a question with a folded hint fits one screen
+   (2026-11-25 부터는 온보딩도 같은 4px 라 .questionBody 와 같다. 취향 수정 표시로 이름만 남겨 둔다). */
 .hintSlot { margin-bottom: 16px; }
 .hintSlot:empty { display: none; }
 .questionBody.compactTop { margin-top: 4px; }
@@ -152,7 +156,8 @@
 .workName small { display: block; color: #71717a; font-size: 11px; line-height: 16px; }
 .workCheck { display: grid; place-items: center; flex: none; box-sizing: border-box; width: 18px; height: 18px; border: 1px solid #c4c4cc; border-radius: 50%; color: #7043b4; }
 .workChecked { border-color: #7043b4; }
-.moreWorks { display: block; margin: 12px auto 0; min-height: 44px; padding: 8px 24px; border: 1px solid #d6c6ef; border-radius: 8px; background: #fff; color: #7043b4; }
+/* 작품 더보기 (2026-11-25 시안): 테두리 · 바탕 없이 연보라 굵은 글씨만. 누르기 쉬운 높이(44px)는 그대로 둔다 */
+.moreWorks { display: block; margin: 9px auto 0; min-height: 44px; padding: 8px 24px; border: 0; border-radius: 8px; background: transparent; color: #9c79e6; font-size: 16px; font-weight: 600; line-height: 24px; }
 .tagGroup { min-width: 0; border: 0; padding: 0; margin: 24px 0 0; }
 .tagGroup legend { padding: 0; margin-bottom: 12px; color: #27272a; font-size: 16px; font-weight: 600; }
 /* Q2 box "선택한 작품에서 이런 취향을 발견했어요!" (2026-11 design). */
@@ -175,11 +180,10 @@
    A 40px search pill with a 14px #71717a placeholder (typed text stays 16px so iOS does not zoom in), compact chips
    clipped at the content edge, 24px from the hint to 장르 and 16px from 장르 to 소재, the button 16px under the
    choices and 22px over the bottom; on Q3 it follows the cards instead of sitting at the bottom.
-   Folded Q1 and Q3 fit one screen: below 763px the top space (the mock's status bar) shrinks to 12px first, then the
-   Q3 cards (132px → 102px) and their pictures (70px → 40px), so Q3 fits down to about 640px. 334px = Q3 without its
+   Folded Q1 and Q3 fit one screen: the top space is 12px on every screen (2026-11-25, .navigation), then the
+   Q3 cards (132px → 102px) and their pictures (70px → 40px) shrink, so Q3 fits down to about 640px. 334px = Q3 without its
    three cards. */
 .tasteEdit { --taste-card: clamp(102px, (100svh - 334px) / 3, 132px); }
-.tasteEdit .navigation { margin-top: clamp(12px, 100svh - 718px, 45px); }
 .tasteEdit .searchIcon { left: 15px; width: 18px; height: 18px; }
 .tasteEdit .workSearch { height: 40px; border-radius: 20px; padding-left: 46px; }
 .tasteEdit .workSearch::placeholder { color: #71717a; font-size: 14px; }
@@ -207,8 +211,6 @@
   .profileBody { margin-top: 24px; }
   .interestBody { margin-top: 20px; }
   .interestBody h1 { font-size: 28px; line-height: 38px; }
-  .navigation { margin-top: 20px; }
-  .questionBody { margin-top: 20px; }
   .questionBody h1 { font-size: 22px; line-height: 32px; }
   .actions { padding-bottom: max(28px, env(safe-area-inset-bottom)); }
   .resultBody { margin-top: 112px; }

@@ -146,6 +146,16 @@ export function createHomeRequestController(source: HomeDataSource, publish: (st
       cancel();
       if (state.status === "ready") update({ ...state, pagination: { status: "idle" } });
     },
+    /** 지금 보이는 피드(불러 둔 카드 + 다음 페이지를 받을 함수). TALK 에 다녀오는 동안 기억해 둔다 (home-feed-memory.ts) */
+    resumable(): { home: HomeViewModel; nextPage?: HomePageLoader } | null {
+      return state.status === "ready" ? { home: state.home, ...(nextPage ? { nextPage } : {}) } : null;
+    },
+    /** 기억해 둔 피드를 다시 받지 않고 그대로 펼친다. 받던 중이던 다음 페이지는 다시 받을 수 있게 둔다 */
+    resume(kept: { home: HomeViewModel; nextPage?: HomePageLoader }) {
+      cancel();
+      nextPage = kept.nextPage;
+      update(kept.nextPage ? { status: "ready", home: kept.home, pagination: { status: "idle" } } : { status: "ready", home: kept.home });
+    },
     cancel,
   };
 }

@@ -17,7 +17,8 @@ import styles from "./debate.module.css";
  * 실시간(LiveCard) · 주제 투표(VoteCard) · 지난 토론방(PastCard).
  */
 
-/** 카드 윗부분: 작품 칩, 제목, 설명(3줄까지), 양쪽 선택지.
+/** 카드 윗부분: 작품 칩, 제목, 설명(3줄까지).
+ *  설명 아래의 'A vs B' 줄은 뺐다 (2026-11-25 사용자 결정): 카드는 설명까지만 보인다.
  *  제목은 눌리지 않는다 (2026-11-23 사용자 결정): 따로 여는 화면 없이 카드의 버튼으로 참여·투표한다.
  *  참여 화면도 없다 (2026-11-24): 개설 알림의 상세에도 이 카드를 보여 준다 (debate-notice.tsx). */
 export function TopicHead({ debate }: { debate: DebateSummary }) {
@@ -25,7 +26,6 @@ export function TopicHead({ debate }: { debate: DebateSummary }) {
     <WorkChips works={debate.works} />
     <h3 className={styles.topicTitle}>{debate.title}</h3>
     {debate.description ? <TopicDescription text={debate.description} /> : null}
-    <TopicSides debate={debate} />
   </>;
 }
 
@@ -33,12 +33,6 @@ export function TopicHead({ debate }: { debate: DebateSummary }) {
  *  설명은 100자까지만 받는다 (DEBATE_RULES.descriptionMax). */
 function TopicDescription({ text }: { text: string }) {
   return <p className={styles.topicDescription}>{text}</p>;
-}
-
-/** 양쪽 선택지 (2026-11-23 사용자 결정): 설명 아래에 'A vs B'. 카드만 보고도 무엇을 두고 겨루는지 알 수 있게.
- *  카드가 길어지지 않게 상자 없이 설명과 같은 글씨로 쓴다 (2026-11-24 사용자 결정). */
-function TopicSides({ debate }: { debate: DebateSummary }) {
-  return <p className={styles.topicSides}>{debate.sideA.label} vs {debate.sideB.label}</p>;
 }
 
 /** 실시간 토론방 카드: 참여한 방은 '방 나가기'·'다시 입장하기', 아니면 '토론 참여하기' */
@@ -95,7 +89,6 @@ export function PastCard({ debate }: { debate: DebateSummary }) {
     <WorkChips works={debate.works} />
     <button type="button" className={styles.titleButton} onClick={() => setOpen(true)}><h3 className={styles.topicTitle}>{debate.title}</h3></button>
     {debate.description ? <TopicDescription text={debate.description} /> : null}
-    <TopicSides debate={debate} />
     <div className={styles.topicMeta}>
       <AuthorLine debate={debate} />
       <span className={styles.meta}>총 {debate.participantCount.toLocaleString("ko-KR")}명 투표</span>
@@ -214,7 +207,7 @@ export function useVoteActions(onChange: (change: VoteChange) => void, showToast
     const result = await cancelVote(debate.debateId);
     onChange({ ...result, opened: false });
     const refunded = before === null || result.tickets.balance > before;
-    showToast(refunded ? "투표를 취소했어요.  투표권 1개가 반환되었어요" : "투표를 취소했어요.", "done");
+    showToast(refunded ? "투표를 취소했어요.  투표권 1개가 반환되었어요." : "투표를 취소했어요.", "done");
   };
   const toggle = (debate: DebateSummary) => run(debate.debateId, async () => {
     if (debate.myVote) {

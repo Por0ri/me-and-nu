@@ -293,3 +293,11 @@ test('Only MY Q1-Q3 opt into the shared logo and live bell; signup and result st
     }
   }
 });
+
+test('Question screens start 12px under the top and the question sits 4px under the progress row, in signup and the taste edit alike (2026-11-25)', () => {
+  // 시안의 45px 는 폰 상태 표시줄 자리라 진짜 폰에서 비어 보였다 → 막대 줄 위 12px, 질문은 막대 줄 아래 4px (온보딩도 취향 수정과 같게)
+  const css = fs.readFileSync(path.join(__dirname, '..', 'components/pivot/onboarding.module.css'), 'utf8');
+  assert.match(css, /\n\.navigation \{[^}]*margin: 12px 24px 0;/);
+  assert.match(css, /\n\.questionBody \{ margin: 4px 24px 0; \}/);
+  assert.doesNotMatch(css, /\.tasteEdit \.navigation|\.navigation \{ margin-top|\.questionBody \{ margin-top/);
+});

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import type { HomeDataSource, HomeDetailTarget } from "@/lib/pivot/home";
 import type { DetailDataSource } from "@/lib/pivot/detail";
 import { detailHref, readHomeReturn, type HomeReturnSnapshot } from "@/lib/pivot/detail-navigation";
+import { forgetHomeFeed, keepHomeFeed, LEAVE_HOME_FOR_TALK, peekHomeFeed, withShownReactions, type KeptHomeFeed } from "@/lib/pivot/home-feed-memory";
 import type { MyPageDataSource } from "@/lib/pivot/my-page";
 import { pendingMyPageSource } from "@/lib/pivot/my-page-service";
 import type { DemoBookmarkControls, SavedDataSource } from "@/lib/pivot/saved";
@@ -29,7 +30,7 @@ import { NewNoticeContext } from "./home-screen";
 const noSubscribe = () => () => {};
 const noSnapshot = () => 0;
 
-export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, activitySource, inquirySource, reportSource, notificationSource, demoBookmarks, onRestart, onLogout, onWithdraw, skipEntryLoading }: {
+export function HomeDetailExperience({ homeSource, detailSource, mySource = pendingMyPageSource, savedSource = pendingSavedSource, activitySource, inquirySource, reportSource, notificationSource, demoBookmarks, onRestart, onLogout, onWithdraw, skipEntryLoading, feedOwner }: {
   homeSource: HomeDataSource; detailSource: DetailDataSource; mySource?: MyPageDataSource; savedSource?: SavedDataSource;
   activitySource?: ActivityDataSource;
   inquirySource?: InquirySource;
@@ -37,6 +38,8 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   notificationSource?: NotificationInboxSource;
   skipEntryLoading?: boolean;
   demoBookmarks?: DemoBookmarkControls; onRestart?: () => void; onLogout?: () => Promise<void>; onWithdraw?: () => Promise<void>;
+  /** 지금 로그인(회원 + 세션). 있으면 TALK 에 다녀오는 동안 피드를 기억해 두고 이어서 보여 준다 (home-feed-memory.ts) */
+  feedOwner?: string;
 }) {
   const params = useSearchParams();
   const interactions = useInteractions();
@@ -73,6 +76,18 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   const parsedTopic = topicParam && /^[1-9]\d*$/.test(topicParam) ? Number(topicParam) : undefined;
   const topicId = Number.isSafeInteger(parsedTopic) ? parsedTopic : undefined;
   const home = useRef<HTMLDivElement>(null);
+  // TALK 에 다녀오기 전에 보던 피드 (같은 로그인 · 1시간 안): 다시 받지 않고 그대로 펼치고 보던 자리로 간다
+  const [talkReturn] = useState(() => feedOwner ? peekHomeFeed(feedOwner) : null);
+  const talkSnapshot = useRef<HomeReturnSnapshot | null>(talkReturn?.snapshot ?? null);
+  const awayAtStart = useRef(detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen || inboxOpen);
+  useEffect(() => {
+    if (!talkReturn) return;
+    forgetHomeFeed();
+    // 상세 · MY 같은 화면이 열린 채로 돌아왔고(뒤로 가기) 그 화면을 열 때 남긴 피드 자리가 있으면 그 자리를 쓴다.
+    // 그 자리에는 그때 누른 카드의 포커스까지 있어서, 화면을 닫으면 처음 그대로 돌아간다.
+    if (awayAtStart.current && readHomeReturn(window.history.state?.pivotDetailHome, window.location.pathname, homeSource.kind)) talkSnapshot.current = null;
+  }, [talkReturn, homeSource.kind]);
+  const feedKeeper = useRef<(() => KeptHomeFeed | null) | null>(null);
   const savedList = useRef<HTMLDivElement>(null);
   const activityList = useRef<HTMLDivElement>(null);
   const activityReturn = useRef<{ scrollY: number; contentId: string } | null>(null);
@@ -100,10 +115,13 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   useSyncExternalStore(bookmarks?.subscribe ?? noSubscribe, bookmarks?.getSnapshot ?? noSnapshot, noSnapshot);
   const restoreHome = useCallback(() => {
     if (detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen || inboxOpen) return;
-    const snapshot = readHomeReturn(window.history.state?.pivotDetailHome, window.location.pathname, homeSource.kind);
+    // TALK 에 다녀왔으면 그때 기억해 둔 자리로 간다 (브라우저 기록에 남은 예전 자리보다 새로워서 먼저 쓴다).
+    // 실제로 되돌린 뒤에 지운다: 이 함수가 두 번 불려도(개발 모드 등) 앞의 예약이 취소되고 뒤의 예약이 같은 자리를 쓴다.
+    const snapshot = talkSnapshot.current ?? readHomeReturn(window.history.state?.pivotDetailHome, window.location.pathname, homeSource.kind);
     if (snapshot) setRestoreQuery(snapshot.query);
     cancelAnimationFrame(restoreFrame.current);
     restoreFrame.current = requestAnimationFrame(() => {
+      if (snapshot && snapshot === talkSnapshot.current) talkSnapshot.current = null;
       if (!snapshot) {
         scrollHomeTo(0);
         home.current?.querySelector<HTMLHeadingElement>("h1")?.focus({ preventScroll: true });
@@ -163,6 +181,26 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
       }),
     };
   }
+  // TALK 을 누르면(HomeNavigation 이 알림) 지금 피드와 보던 자리를 기억해 둔다. 피드를 보고 있었으면 지금 자리를,
+  // 상세 · MY 같은 다른 화면에 있었으면 그 화면을 열 때 남겨 둔 피드 자리를 쓴다. 돌아오면 TALK 버튼에 포커스를 둔다.
+  useEffect(() => {
+    if (!feedOwner) return;
+    const leave = () => {
+      // 카드의 저장 · 좋아요 · 선호는 지금 화면에 보이는 값으로 넣어 둔다 (끝나지 않은 요청이 있으면 기억하지 않는다)
+      const kept = feedKeeper.current?.();
+      const feed = kept ? withShownReactions(kept, { bookmarks: serviceBookmarks, reactions: interactions?.reactions }) : null;
+      if (!feed) return;
+      const away = detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen || inboxOpen;
+      // 다른 화면이 열린 채로 TALK 에서 돌아와 아직 되돌리지 않은 자리가 있으면 그것이 가장 새 자리다
+      const place = away ? talkSnapshot.current ?? readHomeReturn(window.history.state?.pivotDetailHome, window.location.pathname, homeSource.kind) : captureHome("");
+      const snapshot: HomeReturnSnapshot = place ?? { path: window.location.pathname, kind: homeSource.kind, scrollY: 0, query: "", focusContentId: "", tracks: [] };
+      // 검색 결과를 보고 있었으면 그 자리는 검색 결과 목록의 자리라서, 돌아온 피드는 맨 위부터 보여 준다
+      const searched = !!home.current?.querySelector("#home-search-results");
+      keepHomeFeed(feedOwner, { feed, snapshot: { ...snapshot, ...(searched ? { scrollY: 0, tracks: [] } : {}), focusContentId: "", focusNavigation: "talk" } });
+    };
+    window.addEventListener(LEAVE_HOME_FOR_TALK, leave);
+    return () => window.removeEventListener(LEAVE_HOME_FOR_TALK, leave);
+  }, [feedOwner, detailOpen, myOpen, savedOpen, activityOpen, inquiryOpen, inboxOpen, homeSource.kind, interactions, serviceBookmarks]);
   function captureSaved(focusContentId: string): SavedReturnSnapshot {
     return { path: window.location.pathname, kind: homeSource.kind, scrollY: window.scrollY, focusContentId };
   }
@@ -307,7 +345,7 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
   }
   return <NewNoticeContext.Provider value={hasNewNotice}><InteractionViewContext.Provider value={detailOpen ? "detail" : myOpen ? "my" : savedOpen ? "saved" : activityOpen ? "activity" : inquiryOpen ? "inquiry" : inboxOpen ? "notifications" : "home"}>
     <div ref={home} hidden={detailOpen || myOpen || savedOpen || activityOpen || inquiryOpen || inboxOpen}>
-      <HomeController source={homeSource} skipEntryLoading={skipEntryLoading} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} onNotifications={inboxSource ? openInbox : undefined} bookmarks={bookmarks} />
+      <HomeController source={homeSource} skipEntryLoading={skipEntryLoading || !!talkReturn} resume={talkReturn?.feed} keeper={feedKeeper} onRestart={onRestart} onViewDetail={openDetail} onReady={restoreHome} restoreQuery={restoreQuery} onMy={openMy} onSaved={openSaved} onNotifications={inboxSource ? openInbox : undefined} bookmarks={bookmarks} />
     </div>
     {inboxOpen && <NotificationInbox key={String(unreadOnly)} source={inboxSource} unreadOnly={unreadOnly} id={noticeId}
       onFilter={selectInboxFilter} onOpen={openNotice} onOpenContent={openInboxContent} onBack={backFromInbox} />}

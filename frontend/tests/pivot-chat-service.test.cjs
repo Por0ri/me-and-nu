@@ -157,6 +157,11 @@ test('the sheet opens like the design: handle, centred title, examples and input
   assert.ok(HOME_CHAT_COPY.examples.includes('‘나루토’ 관련 카드뉴스 보여줘'));
   assert.ok(!home.includes('AI가 생성한 답변'), 'the AI notice appears only after the first question');
   assert.equal(DETAIL_CHAT_COPY.placeholder, '콘텐츠 내용 중 궁금한 점이 있나요?');
+  // 보내기 비행기는 토론방 채팅창의 보내기 아이콘과 같은 선 그림, 같은 크기 (2026-11-25 사용자 요청)
+  const plane = 'M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z';
+  assert.match(home, new RegExp(`aria-label="보내기"[^>]*><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"[^>]*><path d="${plane}"></path></svg></button>`));
+  assert.ok(fs.readFileSync(path.join(root, 'components/debate/debate-icons.tsx'), 'utf8').includes(`SendIcon = (props: IconProps) => <Icon {...props}><path d="${plane}" /></Icon>`));
+  assert.match(fs.readFileSync(path.join(root, 'components/pivot/chat.module.css'), 'utf8'), /\.send:disabled \{ color: #a1a1aa; \}/);
 });
 
 test('the home dock keeps its AI label; the face and the bar share one 48px circle and appear only when expanded', () => {
