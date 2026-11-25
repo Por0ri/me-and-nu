@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import Integer, MetaData, create_engine, func, select
+from sqlalchemy import Integer, MetaData, create_engine, func, inspect, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
@@ -33,6 +34,9 @@ class MemoryDatabase:
 
     async def flush(self):
         self.session.flush()
+
+    async def refresh(self, user):
+        self.session.refresh(user)
 
     @asynccontextmanager
     async def begin_nested(self):
@@ -90,6 +94,50 @@ async def test_same_provider_identity_reuses_account_without_overwriting_profile
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["kakao", "naver"])
+@pytest.mark.parametrize("stored_email", [None, ""])
+async def test_existing_identity_backfills_only_missing_email(memory_db, provider, stored_email):
+    stamp = datetime(2026, 10, 20, tzinfo=timezone.utc)
+    existing = existing_user(
+        memory_db, auth_provider=provider, email=stored_email, onboarding_completed_at=stamp,
+    )
+    user = await resolve_oauth_user(
+        memory_db, identity(provider=provider, email=" NEW@EXAMPLE.COM ", nickname="공급자 이름"),
+    )
+    assert user is existing
+    assert user.email == "new@example.com"
+    assert user.nickname == "기존 이름" and user.onboarding_completed_at == stamp
+    assert memory_db.session.scalar(select(func.count()).select_from(UserAccount)) == 1
+    memory_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("email", [None, "", "   ", "invalid-email", 123])
+async def test_unusable_email_does_not_block_existing_identity(memory_db, email):
+    existing = existing_user(memory_db, email=None)
+    assert await resolve_oauth_user(memory_db, identity(email=email)) is existing
+    assert existing.email is None and existing.nickname == "기존 이름"
+    memory_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_provider", ["kakao", "naver", "local"])
+async def test_existing_identity_email_conflict_preserves_both_accounts(memory_db, other_provider):
+    existing = existing_user(memory_db, email=None)
+    owner = existing_user(
+        memory_db, auth_provider=other_provider,
+        provider_user_id=None if other_provider == "local" else "other-provider-user",
+        hashed_password="existing-hash" if other_provider == "local" else None,
+        email="NEW@EXAMPLE.COM", nickname="이메일 소유자",
+    )
+    assert await resolve_oauth_user(memory_db, identity()) is existing
+    assert existing.email is None and existing.nickname == "기존 이름"
+    assert owner.email == "NEW@EXAMPLE.COM" and owner.nickname == "이메일 소유자"
+    assert memory_db.session.scalar(select(func.count()).select_from(UserAccount)) == 2
+    memory_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["naver", "local"])
 async def test_other_provider_email_conflict_never_merges_accounts(memory_db, provider):
     existing = existing_user(
@@ -117,10 +165,11 @@ async def test_same_provider_user_number_on_other_provider_is_a_different_accoun
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["warned", "suspended", "banned", "withdrawn"])
 async def test_nonactive_existing_account_is_unavailable(memory_db, status):
-    existing_user(memory_db, account_status=status)
+    existing = existing_user(memory_db, account_status=status, email=None)
     with pytest.raises(ApiError) as error:
         await resolve_oauth_user(memory_db, identity())
     assert error.value.status_code == 403 and error.value.code == "AUTH_ACCOUNT_UNAVAILABLE"
+    assert existing.email is None
     memory_db.commit.assert_not_awaited()
 
 
@@ -229,3 +278,93 @@ async def test_email_insert_race_returns_conflict_and_keeps_outer_transaction_us
     winner.nickname = "트랜잭션 유지"
     memory_db.session.flush()
     racing.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_email_backfill_race_keeps_existing_login_and_outer_transaction_usable(memory_db):
+    existing = existing_user(memory_db, email=None)
+    winner = UserAccount(
+        auth_provider="naver", provider_user_id="other-provider-user", email="NEW@EXAMPLE.COM",
+        nickname="이메일 소유자", account_status="active",
+    )
+    racing = RacingDatabase(memory_db.session, winner)
+    user = await resolve_oauth_user(racing, identity())
+    assert user is existing
+    # A nested rollback expires the modified ORM instance unless explicitly refreshed.
+    assert not inspect(user).expired_attributes
+    assert user.email is None and user.nickname == "기존 이름"
+    assert winner.email == "NEW@EXAMPLE.COM"
+    user.last_login_at = datetime.now(timezone.utc)
+    await racing.flush()
+    assert memory_db.session.scalar(select(func.count()).select_from(UserAccount)) == 2
+    racing.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_identity_insert_race_backfills_the_winners_missing_email(memory_db):
+    winner = UserAccount(
+        auth_provider="kakao", provider_user_id="provider-user-1", email=None,
+        nickname="동시 생성 계정", account_status="active",
+    )
+    racing = RacingDatabase(memory_db.session, winner)
+    assert await resolve_oauth_user(racing, identity()) is winner
+    assert winner.email == "new@example.com" and winner.nickname == "동시 생성 계정"
+    assert memory_db.session.scalar(select(func.count()).select_from(UserAccount)) == 1
+    racing.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code,constraint", [
+    ("23505", "another_unique_index"),
+    ("23514", "uq_user_account_email"),
+])
+async def test_backfill_does_not_hide_unrelated_integrity_errors(memory_db, code, constraint):
+    existing_user(memory_db, email=None)
+    original = Exception("unrelated integrity failure")
+    original.sqlstate = code
+    original.diag = SimpleNamespace(constraint_name=constraint)
+    failure = IntegrityError("UPDATE", {}, original)
+
+    class FailingDatabase(MemoryDatabase):
+        async def flush(self):
+            raise failure
+
+    with pytest.raises(IntegrityError) as caught:
+        await resolve_oauth_user(FailingDatabase(memory_db.session), identity())
+    assert caught.value is failure
+
+
+@pytest.mark.asyncio
+async def test_email_backfill_recovers_psycopg_unique_violation(memory_db):
+    existing = existing_user(memory_db, email=None)
+    original = Exception("email already claimed")
+    original.sqlstate = "23505"
+    original.diag = SimpleNamespace(constraint_name="uq_user_account_email")
+
+    class FailingDatabase(MemoryDatabase):
+        async def flush(self):
+            raise IntegrityError("UPDATE", {}, original)
+
+    assert await resolve_oauth_user(FailingDatabase(memory_db.session), identity()) is existing
+    assert not inspect(existing).expired_attributes
+    assert existing.email is None
+
+
+@pytest.mark.asyncio
+async def test_backfill_does_not_hide_integrity_errors_before_savepoint(memory_db):
+    existing = existing_user(memory_db, email=None)
+    original = Exception("earlier pending write conflicts")
+    original.sqlstate = "23505"
+    original.diag = SimpleNamespace(constraint_name="uq_user_account_email")
+    failure = IntegrityError("INSERT", {}, original)
+
+    class FailingDatabase(MemoryDatabase):
+        @asynccontextmanager
+        async def begin_nested(self):
+            raise failure
+            yield
+
+    with pytest.raises(IntegrityError) as caught:
+        await resolve_oauth_user(FailingDatabase(memory_db.session), identity())
+    assert caught.value is failure
+    assert existing.email is None
