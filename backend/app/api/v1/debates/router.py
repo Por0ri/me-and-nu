@@ -263,7 +263,8 @@ async def my_tickets(db: Db, user: Member) -> VoteTicketsResponse:
     return await service.get_tickets(db, user.user_id)
 
 
-@router.get("/users/me/debates", response_model=DebateListResponse, summary="내가 올린 주제 (D-14)", responses=COMMON_ERRORS)
+@router.get("/users/me/debates", response_model=DebateListResponse, summary="내가 올린 주제 (D-14)", responses=COMMON_ERRORS,
+            description="투표 중이거나 토론 중인 내 주제만 준다. 끝난 토론방은 지난 토론방(D-04)에만 보인다.")
 async def my_debates(db: Db, user: Member) -> DebateListResponse:
     return await service.list_my_debates(db, user.user_id)
 

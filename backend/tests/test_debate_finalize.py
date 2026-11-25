@@ -95,13 +95,22 @@ def test_ended_debates_stay_nine_days_then_disappear_and_are_purged(debate_api):
     def ended(member, **params):
         return [row["debateId"] for row in call(member, "GET", "/debates", params={"status": "ended", **params}).json()["items"]]
 
-    # 끝난 뒤 9일이 되기 직전까지는 지난 토론방·상세·검색·내 주제에 보인다 (정리 작업이 안 돌았어도 시각으로 계산).
+    def mine(member):
+        return [row["debateId"] for row in call(member, "GET", "/users/me/debates").json()["items"]]
+
+    # 내가 올린 주제에는 토론 중인 동안만 보이고, 방이 끝나면 지난 토론방에만 보인다 (2026-11-25 결정).
+    debate_api.clock.now = ROOM_ENDS - timedelta(seconds=1)
+    assert mine(author) == [room]
+    debate_api.clock.now = ROOM_ENDS
+    assert mine(author) == [] and ended(author) == [room]
+
+    # 끝난 뒤 9일이 되기 직전까지는 지난 토론방·상세·검색에 보인다 (정리 작업이 안 돌았어도 시각으로 계산).
     # 기준 표를 못 받은 주제(topic, 7일째 마감)는 지난 토론방에 없다.
     debate_api.clock.now = ROOM_ENDS + KEEP - timedelta(seconds=1)
     assert ended(author) == [room]
     assert call(author, "GET", f"/debates/{room}").status_code == 200
     assert room in [row["debateId"] for row in call(author, "GET", "/debates/search", params={"topicId": 1, "q": "나루토"}).json()["debates"]]
-    assert room in [row["debateId"] for row in call(author, "GET", "/users/me/debates").json()["items"]]
+    assert mine(author) == []
 
     # 9일이 지나면 정리 작업이 지우기 전이라도 바로 숨긴다.
     debate_api.clock.now = ROOM_ENDS + KEEP

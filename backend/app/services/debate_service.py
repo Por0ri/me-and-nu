@@ -476,9 +476,10 @@ async def list_debates(
 
 
 async def list_my_debates(db: AsyncSession, user_id: int, limit: int = 20) -> DebateListResponse:
+    """내가 올린 주제 중 투표 중이거나 토론 중인 것만. 끝난 토론방은 지난 토론방(D-04)에만 보인다 (2026-11-25 결정)."""
     now = utcnow()
     rows = (await db.execute(
-        select(Debate).where(Debate.author_user_id == user_id, _shown(now))
+        select(Debate).where(Debate.author_user_id == user_id, or_(_voting_now(now), _open_now(now)))
         .order_by(Debate.created_at.desc(), Debate.debate_id.desc()).limit(limit)
     )).scalars().all()
     return DebateListResponse(items=await _summaries(db, user_id, list(rows), now))

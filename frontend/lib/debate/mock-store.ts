@@ -332,7 +332,9 @@ export async function cancelVote(debateId: number): Promise<{ debate: DebateSumm
 
 export async function listMyDebates(): Promise<DebateSummary[]> {
   const now = Date.now();
-  return wait(debates.filter((debate) => debate.mine && kept(debate, now)).sort((left, right) => right.createdAt - left.createdAt)
+  // 서버와 같은 규칙: 투표 중이거나 토론 중인 내 주제만 (끝난 방은 지난 토론방에만, 2026-11-25)
+  return wait(debates.filter((debate) => debate.mine && ["voting", "open"].includes(statusOf(debate, now)))
+    .sort((left, right) => right.createdAt - left.createdAt)
     .map((debate) => summary(debate, now)));
 }
 
