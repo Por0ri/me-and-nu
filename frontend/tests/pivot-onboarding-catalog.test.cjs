@@ -197,3 +197,20 @@ test('작품 더보기 is a text-only light purple button (2026-11-25 design) th
   const rule = css.match(/\n\.moreWorks \{([^}]*)\}/)[1];
   for (const part of [/border: 0/, /background: transparent/, /color: #9c79e6/, /font-size: 16px/, /font-weight: 600/, /min-height: 44px/]) assert.match(rule, part);
 });
+
+test('Q1 search box and result rows follow the 2026-11-25 design measurements, in signup and the taste edit alike', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'components/pivot/onboarding.module.css'), 'utf8');
+  const rule = (selector) => css.match(new RegExp('\n' + selector.replace(/[.]/g, '\.') + ' \{([^}]*)\}'))[1];
+  // 검색칸 41px · 돋보기 왼쪽 14px · 지우기 단추 오른쪽 2px. 입력 글자는 아이폰 확대를 막으려고 16px (안내 글자만 14px)
+  for (const part of [/height: 41px/, /border-radius: 20\.5px/, /padding: 0 48px 0 46px/, /font-size: 16px/]) assert.match(rule('.workSearch'), part);
+  assert.match(rule('.workSearch::placeholder'), /font-size: 14px/);
+  assert.match(rule('.searchIcon'), /left: 14px/);
+  assert.match(rule('.searchClear'), /right: 2px/);
+  // '검색 결과' 14px, 결과 줄 30px · 사이 12px, 동그라미 17px
+  for (const part of [/margin-top: 20px/, /font-size: 14px/]) assert.match(rule('.frame .resultsLabel'), part);
+  assert.match(rule('.workResults'), /gap: 12px/);
+  for (const part of [/min-height: 30px/, /padding: 4px 11px 4px 12px/]) assert.match(rule('.workChoice'), part);
+  for (const part of [/width: 17px/, /height: 17px/]) assert.match(rule('.workCheck'), part);
+  // 마이페이지 취향 수정도 같은 크기: 검색칸 크기 · 돋보기 자리를 따로 바꾸지 않는다
+  assert.doesNotMatch(css, /\.tasteEdit \.searchIcon|\.tasteEdit \.workSearch \{/);
+});
