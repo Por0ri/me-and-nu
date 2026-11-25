@@ -65,8 +65,6 @@ export function WindowedHomeFeed({ cards, renderCard, keepFirstMounted = false }
     for (const key of positions.current.keys()) if (!keys.has(key)) positions.current.delete(key);
     setPinned(current => current && keys.has(current) ? current : null);
     let disposed = false;
-    let reconcileOnVisible = false;
-    let measuredAt = -1;
     const visibleRoot = () => !disposed && !element.closest("[hidden]") &&
       !!element.getClientRects().length && (!root || (root.clientWidth > 0 && root.clientHeight > 0));
     const slots = Array.from(element.children) as HTMLLIElement[];
@@ -74,7 +72,7 @@ export function WindowedHomeFeed({ cards, renderCard, keepFirstMounted = false }
     const publish = (next: Set<string>) => setNearby(current =>
       disposed || (current.size === next.size && [...current].every(key => next.has(key))) ? current : next);
     const measure = () => {
-      if (!visibleRoot()) { reconcileOnVisible = true; return; }
+      if (!visibleRoot()) return;
       const bounds = root?.getBoundingClientRect();
       const top = (bounds?.top ?? 0) - OVERSCAN;
       const bottom = (bounds?.bottom ?? window.innerHeight) + OVERSCAN;
@@ -83,31 +81,16 @@ export function WindowedHomeFeed({ cards, renderCard, keepFirstMounted = false }
         const rect = slot.getBoundingClientRect();
         if (rect.bottom >= top && rect.top <= bottom) next.add(slotKeys.get(slot)!);
       }
-      measuredAt = performance.now();
-      reconcileOnVisible = false;
       publish(next);
     };
     // Also handles a restored scroll offset or cards appended below the viewport.
     measure();
-    const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver(entries => {
-      if (!visibleRoot()) { reconcileOnVisible = true; return; }
-      // IO updates its own intersection state even while HOME is hidden. After
-      // rotation/reveal, false-to-false targets need a complete reconciliation.
-      if (reconcileOnVisible) { measure(); return; }
-      const measurement = measuredAt;
-      setNearby(current => {
-        if (disposed || measurement !== measuredAt) return current;
-        const next = new Set([...current].filter(key => keys.has(key)));
-        // Several changes for one target can arrive in a single delivery.
-        for (const entry of entries) {
-          if (entry.time < measurement) continue;
-          const key = slotKeys.get(entry.target);
-          if (!key) continue;
-          if (entry.isIntersecting) next.add(key); else next.delete(key);
-        }
-        return current.size === next.size && [...current].every(key => next.has(key)) ? current : next;
-      });
-    }, { root, rootMargin: `${OVERSCAN}px 0px` });
+    // Reconcile the light slots once per delivery, rather than applying old
+    // enter/leave entries to state. Hidden HOME can be rebuilt at a deep scroll
+    // offset; false-to-false targets never emit a removal for its initial cards.
+    // Read the whole geometry batch before publishing any React update.
+    const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver(measure,
+      { root, rootMargin: `${OVERSCAN}px 0px` });
     slots.forEach(slot => observer?.observe(slot));
     // Observe only ancestor visibility attributes, not the growing card subtree.
     // Reconcile once on reveal even if IO has no new intersecting target to emit.
