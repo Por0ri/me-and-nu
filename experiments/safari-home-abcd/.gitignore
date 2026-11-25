@@ -1,0 +1,11 @@
+.runtime/
+node_modules/
+.next/
+.env*
+*.key
+*.pem
+*.cer
+*.pfx
+*.p12
+*.csr
+*.log

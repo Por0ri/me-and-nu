@@ -1,0 +1,407 @@
+{
+  "kind": "Prior Windows local HTTPS evidence; not a new run and not Safari",
+  "date": "2026-11-25",
+  "fixtureSha256": "2e44fc4c269f7c4e42f121167ccadc2487df4959ebfa74eb399f6aec4e20d301",
+  "cases": [
+    {
+      "variant": "A",
+      "width": 375,
+      "status": "pass",
+      "initial": {
+        "cards": 100,
+        "slides": 1000,
+        "imgElements": 409,
+        "svgElements": 0,
+        "elements": 15767,
+        "imagePreloads": 0,
+        "metrics": {
+          "condition": "A",
+          "disabled": false,
+          "phase": "normal",
+          "native": {
+            "fetchImage": 4,
+            "responseBlob": 4,
+            "blobConstructor": 0,
+            "objectUrl": 4,
+            "decode": 1,
+            "bitmap": 0,
+            "imageConstructor": 0,
+            "imageDecoder": 0
+          },
+          "blocked": {},
+          "imagePreloadNodes": 0
+        }
+      },
+      "initialRequests": {
+        "api": 8,
+        "json": 4,
+        "images": 20
+      },
+      "flowRequests": {
+        "api": 51,
+        "images": 59
+      },
+      "finalDom": {
+        "elements": 19380,
+        "cards": 123,
+        "imgElements": 497
+      },
+      "pageSizes": [
+        100,
+        23
+      ]
+    },
+    {
+      "variant": "B",
+      "width": 375,
+      "status": "pass",
+      "initial": {
+        "cards": 100,
+        "slides": 1000,
+        "imgElements": 0,
+        "svgElements": 0,
+        "elements": 13774,
+        "imagePreloads": 0,
+        "metrics": {
+          "condition": "B",
+          "disabled": true,
+          "phase": "normal",
+          "native": {
+            "fetchImage": 0,
+            "responseBlob": 0,
+            "blobConstructor": 0,
+            "objectUrl": 0,
+            "decode": 0,
+            "bitmap": 0,
+            "imageConstructor": 0,
+            "imageDecoder": 0
+          },
+          "blocked": {},
+          "imagePreloadNodes": 0
+        }
+      },
+      "initialRequests": {
+        "api": 4,
+        "json": 4,
+        "images": 0
+      },
+      "flowRequests": {
+        "api": 15,
+        "images": 0
+      },
+      "finalDom": {
+        "elements": 16923,
+        "cards": 123,
+        "imgElements": 0
+      },
+      "pageSizes": [
+        100,
+        23
+      ]
+    },
+    {
+      "variant": "C",
+      "width": 375,
+      "status": "pass",
+      "initial": {
+        "cards": 1,
+        "slides": 10,
+        "imgElements": 11,
+        "svgElements": 0,
+        "elements": 225,
+        "imagePreloads": 0,
+        "metrics": {
+          "condition": "C",
+          "disabled": false,
+          "phase": "normal",
+          "native": {
+            "fetchImage": 2,
+            "responseBlob": 2,
+            "blobConstructor": 0,
+            "objectUrl": 2,
+            "decode": 1,
+            "bitmap": 0,
+            "imageConstructor": 0,
+            "imageDecoder": 0
+          },
+          "blocked": {},
+          "imagePreloadNodes": 0
+        }
+      },
+      "initialRequests": {
+        "api": 6,
+        "json": 4,
+        "images": 18
+      },
+      "flowRequests": {
+        "api": 30,
+        "images": 40
+      },
+      "finalDom": {
+        "elements": 225,
+        "cards": 1,
+        "imgElements": 9
+      },
+      "pageSizes": [
+        100,
+        23
+      ]
+    },
+    {
+      "variant": "D",
+      "width": 375,
+      "status": "pass",
+      "initial": {
+        "cards": 20,
+        "slides": 200,
+        "imgElements": 89,
+        "svgElements": 0,
+        "elements": 3207,
+        "imagePreloads": 0,
+        "metrics": {
+          "condition": "D",
+          "disabled": false,
+          "phase": "normal",
+          "native": {
+            "fetchImage": 4,
+            "responseBlob": 4,
+            "blobConstructor": 0,
+            "objectUrl": 4,
+            "decode": 1,
+            "bitmap": 0,
+            "imageConstructor": 0,
+            "imageDecoder": 0
+          },
+          "blocked": {},
+          "imagePreloadNodes": 0
+        }
+      },
+      "initialRequests": {
+        "api": 8,
+        "json": 4,
+        "images": 20
+      },
+      "flowRequests": {
+        "api": 91,
+        "images": 89
+      },
+      "finalDom": {
+        "elements": 19380,
+        "cards": 123,
+        "imgElements": 497
+      },
+      "pageSizes": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        3
+      ]
+    },
+    {
+      "variant": "A",
+      "width": 390,
+      "status": "pass",
+      "initial": {
+        "cards": 100,
+        "slides": 1000,
+        "imgElements": 409,
+        "svgElements": 0,
+        "elements": 15767,
+        "imagePreloads": 0,
+        "metrics": {
+          "condition": "A",
+          "disabled": false,
+          "phase": "normal",
+          "native": {
+            "fetchImage": 4,
+            "responseBlob": 4,
+            "blobConstructor": 0,
+            "objectUrl": 4,
+            "decode": 1,
+            "bitmap": 0,
+            "imageConstructor": 0,
+            "imageDecoder": 0
+          },
+          "blocked": {},
+          "imagePreloadNodes": 0
+        }
+      },
+      "initialRequests": {
+        "api": 8,
+        "json": 4,
+        "images": 20
+      },
+      "flowRequests": {
+        "api": 49,
+        "images": 59
+      },
+      "finalDom": {
+        "elements": 19380,
+        "cards": 123,
+        "imgElements": 497
+      },
+      "pageSizes": [
+        100,
+        23
+      ]
+    },
+    {
+      "variant": "B",
+      "width": 390,
+      "status": "pass",
+      "initial": {
+        "cards": 100,
+        "slides": 1000,
+        "imgElements": 0,
+        "svgElements": 0,
+        "elements": 13781,
+        "imagePreloads": 0,
+        "metrics": {
+          "condition": "B",
+          "disabled": true,
+          "phase": "normal",
+          "native": {
+            "fetchImage": 0,
+            "responseBlob": 0,
+            "blobConstructor": 0,
+            "objectUrl": 0,
+            "decode": 0,
+            "bitmap": 0,
+            "imageConstructor": 0,
+            "imageDecoder": 0
+          },
+          "blocked": {},
+          "imagePreloadNodes": 0
+        }
+      },
+      "initialRequests": {
+        "api": 4,
+        "json": 4,
+        "images": 0
+      },
+      "flowRequests": {
+        "api": 15,
+        "images": 0
+      },
+      "finalDom": {
+        "elements": 16930,
+        "cards": 123,
+        "imgElements": 0
+      },
+      "pageSizes": [
+        100,
+        23
+      ]
+    },
+    {
+      "variant": "C",
+      "width": 390,
+      "status": "pass",
+      "initial": {
+        "cards": 1,
+        "slides": 10,
+        "imgElements": 11,
+        "svgElements": 0,
+        "elements": 236,
+        "imagePreloads": 0,
+        "metrics": {
+          "condition": "C",
+          "disabled": false,
+          "phase": "normal",
+          "native": {
+            "fetchImage": 2,
+            "responseBlob": 2,
+            "blobConstructor": 0,
+            "objectUrl": 2,
+            "decode": 1,
+            "bitmap": 0,
+            "imageConstructor": 0,
+            "imageDecoder": 0
+          },
+          "blocked": {},
+          "imagePreloadNodes": 0
+        }
+      },
+      "initialRequests": {
+        "api": 6,
+        "json": 4,
+        "images": 18
+      },
+      "flowRequests": {
+        "api": 30,
+        "images": 40
+      },
+      "finalDom": {
+        "elements": 236,
+        "cards": 1,
+        "imgElements": 9
+      },
+      "pageSizes": [
+        100,
+        23
+      ]
+    },
+    {
+      "variant": "D",
+      "width": 390,
+      "status": "pass",
+      "initial": {
+        "cards": 20,
+        "slides": 200,
+        "imgElements": 89,
+        "svgElements": 0,
+        "elements": 3212,
+        "imagePreloads": 0,
+        "metrics": {
+          "condition": "D",
+          "disabled": false,
+          "phase": "normal",
+          "native": {
+            "fetchImage": 4,
+            "responseBlob": 4,
+            "blobConstructor": 0,
+            "objectUrl": 4,
+            "decode": 1,
+            "bitmap": 0,
+            "imageConstructor": 0,
+            "imageDecoder": 0
+          },
+          "blocked": {},
+          "imagePreloadNodes": 0
+        }
+      },
+      "initialRequests": {
+        "api": 8,
+        "json": 4,
+        "images": 20
+      },
+      "flowRequests": {
+        "api": 91,
+        "images": 89
+      },
+      "finalDom": {
+        "elements": 19385,
+        "cards": 123,
+        "imgElements": 497
+      },
+      "pageSizes": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        3
+      ]
+    }
+  ],
+  "limitations": [
+    "Windows Chrome; no iPhone memory measurements",
+    "Repeated synthetic image bytes across content URLs",
+    "C retains all received data but mounts one HOME card",
+    "B bypasses image readiness and removes icons/SVG as well as content images"
+  ]
+}

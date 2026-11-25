@@ -1,0 +1,99 @@
+{
+  "seed": "20261125",
+  "cards": 123,
+  "availableSlideCounts": [
+    2,
+    5,
+    10
+  ],
+  "contentSha256": "2e44fc4c269f7c4e42f121167ccadc2487df4959ebfa74eb399f6aec4e20d301",
+  "imageReuse": "One deterministic PNG per slide position, shared across cards; unique protected content/page URLs.",
+  "sharedBy": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "images": [
+    {
+      "page": 1,
+      "name": "slide-1.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4347555,
+      "sha256": "b8fdacf7a7261b72f334eea6aeb16f0a165fd0edd0ff5fd4c8cff5fd304000c2"
+    },
+    {
+      "page": 2,
+      "name": "slide-2.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4446002,
+      "sha256": "e47ef25f6661f6189ed455dffc089216f6c5417f7b78a325f1ed62fef0455f68"
+    },
+    {
+      "page": 3,
+      "name": "slide-3.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4487838,
+      "sha256": "a7ca21e02810edbba3ade2ba1d91d52484ef42522fe19a230784d5429b0a95f8"
+    },
+    {
+      "page": 4,
+      "name": "slide-4.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4444493,
+      "sha256": "71cff628b81e1529e81c0704814e70927b92c4986b01d03126643f9728185390"
+    },
+    {
+      "page": 5,
+      "name": "slide-5.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4383557,
+      "sha256": "055af9f17d3f4bf504373acb19227704c963810e5f653eb126ad2636de5ee1e3"
+    },
+    {
+      "page": 6,
+      "name": "slide-6.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4377884,
+      "sha256": "f9680fb53a2f50d1e5a5afb7f9f03783df969151b4a82a405f6d2915dec6f571"
+    },
+    {
+      "page": 7,
+      "name": "slide-7.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4425857,
+      "sha256": "87922f472508b0eb6140488d1dee5bced4e0007ebdcc8e2f43ca5a6e1bc21867"
+    },
+    {
+      "page": 8,
+      "name": "slide-8.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4474785,
+      "sha256": "c4e1e60d8b80a3e243c149f74411c201628d18172da6b3534f6bb99054d655ab"
+    },
+    {
+      "page": 9,
+      "name": "slide-9.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4452216,
+      "sha256": "fcba8a4ed0d17af0626a4c63f54ed033b8a3c3d814ea4e4a2d91e5c963aba317"
+    },
+    {
+      "page": 10,
+      "name": "slide-10.png",
+      "width": 1308,
+      "height": 1632,
+      "bytes": 4356869,
+      "sha256": "1af5abe328bc1fb2f5c31622d196bb433095d2061ecd5a018d5aa1c3cfe16310"
+    }
+  ]
+}
