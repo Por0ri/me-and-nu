@@ -6,7 +6,9 @@
    (rows 10px apart, Q2's label rows 12px), Q2's labels 16px. */
 .hint { margin: 0; text-align: center; }
 .title { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; column-gap: 8px; margin: 0; color: #27272a; font-size: 16px; font-weight: 500; line-height: 24px; letter-spacing: -0.1px; word-break: keep-all; }
-.more { min-height: 32px; margin: -4px 0; padding: 0; border: 0; background: none; color: var(--pivot-primary, #7043b4); font-size: 16px; font-weight: 400; line-height: 24px; cursor: pointer; }
+/* .title .more: pivot.module.css '.root button { font: inherit }' outranks a lone .more, which made the toggle
+   inherit the title's weight (500) instead of the mock's regular 400. */
+.title .more { min-height: 32px; margin: -4px 0; padding: 0; border: 0; background: none; color: var(--pivot-primary, #7043b4); font-size: 16px; font-weight: 400; line-height: 24px; cursor: pointer; }
 .more:focus-visible { outline: 2px solid var(--pivot-primary, #7043b4); outline-offset: 2px; border-radius: 4px; }
 .box { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 7px; margin: 6px 0 0; padding: 8px; border-radius: 8px; background: #efe7ff; list-style: none; }
 .chip { padding: 4px 10px; border-radius: 999px; background: #fafafa; color: var(--pivot-primary, #7043b4); font-size: 14px; line-height: 20px; white-space: nowrap; }
@@ -17,4 +19,4 @@ dl.box { display: grid; gap: 12px; }
 .row dd { margin: 0; }
 .row ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 0; padding: 0; list-style: none; }
 /* 360px phones: at 16px the folded line breaks in two and pushes the taste edit's Q3 past one screen. */
-@media (max-width: 370px) { .title, .more { font-size: 15px; } }
+@media (max-width: 370px) { .title, .title .more { font-size: 15px; } }

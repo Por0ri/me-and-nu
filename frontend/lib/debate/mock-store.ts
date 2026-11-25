@@ -358,8 +358,9 @@ export async function createDebate(input: CreateDebateInput): Promise<DebateSumm
   }
   if (sideA.toLowerCase() === sideB.toLowerCase()) fail("VALIDATION_ERROR", "양쪽 선택지 이름이 달라야 해요.");
   const workIds = [...new Set(input.workIds)];
-  if (workIds.length > RULES.worksMax || workIds.some((id) => !WORKS.some((work) => work.entityId === id))) {
-    fail("VALIDATION_ERROR", `작품은 목록에서 ${RULES.worksMax}개까지 고를 수 있어요.`);
+  // 서버와 같은 규칙: 관련 작품은 1~2개 필수 (2026-11-25)
+  if (workIds.length === 0 || workIds.length > RULES.worksMax || workIds.some((id) => !WORKS.some((work) => work.entityId === id))) {
+    fail("VALIDATION_ERROR", `작품은 목록에서 1~${RULES.worksMax}개 골라 주세요.`);
   }
   // 서버와 같은 규칙: 투표 중이거나 토론 중인 내 주제가 있으면 새로 못 올린다 (2026-11-24)
   const active = debates.filter((debate) => debate.mine && ["voting", "open"].includes(statusOf(debate, now))).length;

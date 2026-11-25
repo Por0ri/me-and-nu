@@ -17,7 +17,7 @@ import styles from "./debate.module.css";
  * 실시간(LiveCard) · 주제 투표(VoteCard) · 지난 토론방(PastCard).
  */
 
-/** 카드 윗부분: 작품 칩, 제목, 설명 전부, 양쪽 선택지.
+/** 카드 윗부분: 작품 칩, 제목, 설명(3줄까지), 양쪽 선택지.
  *  제목은 눌리지 않는다 (2026-11-23 사용자 결정): 따로 여는 화면 없이 카드의 버튼으로 참여·투표한다.
  *  참여 화면도 없다 (2026-11-24): 개설 알림의 상세에도 이 카드를 보여 준다 (debate-notice.tsx). */
 export function TopicHead({ debate }: { debate: DebateSummary }) {
@@ -29,7 +29,8 @@ export function TopicHead({ debate }: { debate: DebateSummary }) {
   </>;
 }
 
-/** 설명 (2026-11-25 사용자 결정): 더보기·접기 없이 줄바꿈 그대로 전부 보인다. 설명은 100자까지만 받는다 (DEBATE_RULES.descriptionMax). */
+/** 설명 (2026-11-25 사용자 결정): 줄바꿈을 살려서 3줄까지만 보이고 넘으면 '…' (debate.module.css), 더보기·접기는 없다.
+ *  설명은 100자까지만 받는다 (DEBATE_RULES.descriptionMax). */
 function TopicDescription({ text }: { text: string }) {
   return <p className={styles.topicDescription}>{text}</p>;
 }

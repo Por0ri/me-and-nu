@@ -46,7 +46,7 @@ test('Cards show a nickname over 10 letters as its first 10 and …, and read th
   assert.doesNotMatch(ten, /…|title=/);
 });
 
-test('Card descriptions show in full with their line breaks, with no 더보기 or 접기', () => {
+test('Card descriptions keep their line breaks, with no 더보기 or 접기', () => {
   const { TopicHead } = tsxLoader(stubs)('components/debate/debate-cards.tsx');
   const description = '두 작품의 주인공인 에렌과 렐르슈를 전략가로서 비교해요.\n누가 더 뛰어난 전략가일까요?';
   const html = renderToStaticMarkup(React.createElement(TopicHead, { debate: {
@@ -80,6 +80,14 @@ test('Folded vote panel keeps only the title and the members · time line, with 
 test('Chat faces show the first letter of the nickname until profile photos exist', () => {
   const { nicknameInitial } = tsxLoader(stubs)('components/debate/debate-room.tsx');
   assert.deepEqual(['넨연구가', '  Zed', '😀웃음', '알 수 없음', ''].map(nicknameInitial), ['넨', 'Z', '😀', '알', '']);
+});
+
+test('Card and room descriptions keep their line breaks but show at most 3 lines, then … (2026-11-25)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'components/debate/debate.module.css'), 'utf8');
+  for (const name of ['topicDescription', 'roomDescription']) {
+    const rule = css.match(new RegExp(`\\.${name} \\{([^}]*)\\}`))[1];
+    for (const part of [/display: -webkit-box/, /-webkit-line-clamp: 3/, /overflow: hidden/, /white-space: pre-line/]) assert.match(rule, part, name);
+  }
 });
 
 test('Topic form limits follow the 2026-11-25 design: 2 works, a 100-letter description and 8-letter choices', () => {

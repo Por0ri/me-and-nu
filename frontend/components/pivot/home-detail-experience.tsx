@@ -254,11 +254,13 @@ export function HomeDetailExperience({ homeSource, detailSource, mySource = pend
     // Back from the post pops this entry and returns to the inbox, which keeps the Home snapshot.
     window.history.pushState({ ...inboxHistory(), pivotDetailBack: true, pivotDetailFromInbox: true }, "", detailHref(window.location.pathname, target));
   }
+  // 다른 화면(프로필 · 취향 · 관심 · 토론방)에서 온 알림함은 그 화면으로 돌아간다.
+  // 단 기록이 이 한 장뿐인 탭(주소를 바로 연 경우)은 돌아갈 곳이 없어서 예전처럼 HOME 으로 간다.
   function backFromInbox() {
     if (noticeId !== null) {
       if (window.history.state?.pivotNoticeBack) window.history.back();
       else window.history.replaceState(inboxHistory(), "", inboxHref(unreadOnly));
-    } else if (window.history.state?.pivotInboxBack || inboxFromOtherRoute) window.history.back();
+    } else if (window.history.state?.pivotInboxBack || (inboxFromOtherRoute && window.history.length > 1)) window.history.back();
     else backToHome();
   }
   function openActivity() {

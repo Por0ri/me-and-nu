@@ -231,8 +231,16 @@ def test_side_labels_take_up_to_8_characters(debate_api):
     assert (response.json()["sideA"]["label"], response.json()["sideB"]["label"]) == ("가" * 8, "우즈마키 나루토")
 
 
+def test_descriptions_keep_every_line_break(debate_api):
+    """설명의 줄바꿈은 막지 않고 그대로 저장한다. 카드에는 3줄까지만 보이고 넘으면 '…'로 줄인다 (2026-11-25, 화면 CSS)."""
+    description = "가" + "\n" * 98 + "나"
+    response = create(debate_api.member(), description=description)
+    assert response.status_code == 201, response.json()
+    assert response.json()["description"] == description
+
+
 def test_topics_take_a_100_character_description_and_one_or_two_works(debate_api):
-    """카드가 설명을 더보기 없이 전부 보여 줘서 설명은 100자, 관련 작품은 1~2개 필수다 (2026-11-25 디자인, 전에는 200자 · 0~3개)."""
+    """카드의 더보기를 없애면서 설명은 100자, 관련 작품은 1~2개 필수다 (2026-11-25 디자인, 전에는 200자 · 0~3개)."""
     response = create(debate_api.member(), description="가" * 100, workIds=[100, 101])
     assert response.status_code == 201, response.json()
     assert response.json()["description"] == "가" * 100

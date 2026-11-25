@@ -12,7 +12,7 @@
     python scripts/debate_local_actors.py vote --debate 12 --count 9
 
     # 시험 계정 5번이 주제를 올린다
-    python scripts/debate_local_actors.py topic --actor 5 --title "탄지로와 렌고쿠, 누가 더 강할까?" --side-a 탄지로 --side-b 렌고쿠 --work 귀멸의 칼날
+    python scripts/debate_local_actors.py topic --actor 5 --title "탄지로와 렌고쿠, 누가 더 강할까?" --side-a 탄지로 --side-b 렌고쿠 --work "귀멸의 칼날"
 
     # 열린 4번 토론방에서 시험 계정 4명이 진영을 고르고 3초마다 채팅한다 (브라우저에서 실시간으로 보인다)
     python scripts/debate_local_actors.py chat --debate 4 --count 4 --messages 20

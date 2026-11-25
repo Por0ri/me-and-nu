@@ -32,7 +32,7 @@ DEBATE_STATUSES = ("voting", "open", "closed", "expired")
 DEBATE_SIDES = ("a", "b")
 
 TITLE_MAX = 60
-# 카드가 더보기 없이 설명을 전부 보여 줘서 100자 (2026-11-25 결정). 200자였던 칼럼과 그보다 긴 옛 설명은
+# 카드의 더보기를 없애면서 100자로 줄였다 (2026-11-25 결정, 카드에는 3줄까지 보이고 넘으면 '…'). 200자였던 칼럼과 그보다 긴 옛 설명은
 # 7f843b19debf가 줄이고 자른다.
 DESCRIPTION_MAX = 100
 SIDE_LABEL_MAX = 20

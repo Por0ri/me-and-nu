@@ -37,7 +37,7 @@
 .screen[data-composer] { padding-bottom: 92px; }
 /* 토론 화면 밖(알림 상세)에 토론 카드 하나를 넣을 때: .screen 의 색 이름·버튼 규칙은 그대로 쓰고 화면 틀(폭·높이·여백·바탕)만 끈다.
    위 8px 은 예전 '토론방 보러 가기' 버튼과 같은 자리 (debate-notice.tsx, 2026-11-24).
-   min-width 0: 알림 상세는 grid 라서, 한 줄로 자르는 카드 설명의 전체 길이만큼 칸이 늘어나 화면 밖으로 넘치지 않게 한다. */
+   min-width 0: 알림 상세는 grid 라서, 카드 안 긴 글(제목 · 설명 · 닉네임)의 한 줄 길이만큼 칸이 늘어나 화면 밖으로 넘치지 않게 한다. */
 .screen.embedded { min-width: 0; max-width: none; min-height: 0; margin: 8px 0 0; padding: 0; background: transparent; }
 .noticeGone { color: var(--debate-muted); font-size: 14px; line-height: 20px; }
 /* 기본 여백 지우기. :where로 우선순위를 0으로 둬서 각 부품의 여백 규칙이 항상 이긴다. */
@@ -105,12 +105,13 @@
 .results .stack { padding-top: 0; }
 
 /* 주제 카드 (실시간 토론방·주제 투표·지난 토론방·내 활동, 2026-11-23 시안 값 · 글씨는 시안 문장 폭으로 잼):
-   안쪽 여백 12px, 테두리 #e2d5ff, 모서리 12px. 칩 20px(11px) → 제목 16px → 설명 12px 전부 → 양쪽 선택지 → 작성자 줄 24px(10px) → 버튼 28px(12px) */
+   안쪽 여백 12px, 테두리 #e2d5ff, 모서리 12px. 칩 20px(11px) → 제목 16px → 설명 12px 3줄까지 → 양쪽 선택지 → 작성자 줄 24px(10px) → 버튼 28px(12px) */
 .topicCard { display: flex; flex-direction: column; padding: 12px; border: 1px solid #e2d5ff; border-radius: 12px; background: #fff; color: inherit; text-decoration: none; }
 .topicCard > .chips { margin-bottom: 3px; }
 .topicTitle { color: #27272a; font-size: 16px; font-weight: 700; line-height: 22px; }
-/* 설명은 줄바꿈 그대로 전부 보인다. 더보기·접기는 없앴다: 설명을 100자까지만 받아서 카드가 너무 길어지지 않는다 (2026-11-25 사용자 결정) */
-.topicDescription { margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; overflow-wrap: anywhere; }
+/* 설명은 줄바꿈을 살려서 3줄까지만 보이고, 넘으면 셋째 줄 끝을 '…'로 줄인다. 더보기 · 접기는 없다 (2026-11-25 사용자 결정).
+   줄바꿈은 막지 않아서 줄바꿈만 많이 넣은 설명도 카드가 3줄보다 길어지지 않는다. */
+.topicDescription { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; overflow-wrap: anywhere; }
 /* 양쪽 선택지: 연보라 테두리 작은 상자 두 개 사이에 보라 'vs' */
 /* 'A vs B' 줄: 상자 없이 설명과 같은 글씨. 설명 바로 아래에 붙이고, 설명이 없으면 설명 자리(제목 아래 2px)에 온다 */
 .topicSides { color: var(--debate-muted); font-size: 12px; line-height: 19px; overflow-wrap: anywhere; }
@@ -234,7 +235,8 @@
 .roomTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
 .roomTop .chips { min-width: 0; }
 .screen .foldButton { flex: none; height: 24px; padding: 0 2px; border: 0; background: transparent; color: var(--debate-primary); font-size: 12px; font-weight: 600; }
-.roomDescription { margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; }
+/* 채팅방 위 토론 카드를 펼쳤을 때의 설명도 같은 규칙 (3줄까지, 넘으면 '…') */
+.roomDescription { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; }
 .roomPanelCard .topicMeta { margin-top: 4px; }
 /* 접은 투표창 (2026-11-25 시안, 375px 에서 시안과 3px 안으로 맞춤): 작품 칩 · 설명 · 작성자 없이 제목과 참여 인원 · 남은 시간 한 줄.
    아이콘과 글자 사이 6px, 구분선 양옆 4px. '투표창 펼치기'는 그 줄 오른쪽 끝에 11px 로 (글자 끝이 카드 안쪽 끝에서 12px).
@@ -247,7 +249,7 @@
 /* 진영 투표: 고르기 전 두 버튼(연보라·보라 테두리, 동그라미 체크), 고른 뒤 비율 막대와 '투표 취소' */
 .poll { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .sideChoices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-/* 선택지 이름은 20자까지라 길면 줄을 바꾸고 버튼이 그만큼 커진다 (짧은 이름은 시안 그대로 40px) */
+/* 선택지 이름은 8자까지 받지만 예전 주제는 12자까지 있어서, 길면 줄을 바꾸고 버튼이 그만큼 커진다 (짧은 이름은 시안 그대로 40px) */
 .screen .sideChoice { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 40px; padding: 8px; border: 1px solid #c9b6f2; border-radius: 8px; background: #f5f1fe; color: #27272a; font-size: 17px; font-weight: 700; line-height: 22px; }
 .sideChoice svg { flex: none; color: #b39ced; }
 .sideChoice span { min-width: 0; overflow-wrap: anywhere; text-align: center; }
@@ -306,7 +308,7 @@
 .screen .rateDialog .confirmOk { width: 100%; height: 44px; margin-top: 18px; }
 
 /* 주제 올리기 (2026-11-23 시안): 칸마다 굵은 제목(필수는 보라 *), 회색 도움말, 흰 입력칸(테두리 #e4e4e7, 모서리 8px).
-   작품은 목록에서 찾아 여러 개 고르고, 선택지 두 칸은 연보라 '선택지 1·2' 라벨과 지우기 X. 아래 임시 저장·주제 올리기. */
+   작품은 목록에서 찾아 1~2개 고르고, 선택지 두 칸은 연보라 '선택지 1·2' 라벨과 지우기 X. 아래 임시 저장·주제 올리기. */
 .createForm { display: flex; flex-direction: column; gap: 28px; padding-top: 12px; }
 .field { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .label { display: flex; align-items: baseline; gap: 4px; padding: 0; color: #27272a; font-size: 18px; font-weight: 700; line-height: 26px; }
@@ -341,7 +343,7 @@
 /* 다른 칸처럼 입력 중에는 테두리가 보라 (바로 위 규칙과 우선순위가 같아서 그 뒤에 둔다) */
 .screen .choiceInput input:focus { border-color: var(--debate-primary); }
 .screen .choiceInput button { position: absolute; top: 50%; right: 4px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #52525b; transform: translateY(-50%); }
-/* 아래 버튼: 임시 저장(회색) · 주제 올리기(필수 칸을 다 채우면 보라) */
+/* 아래 버튼: 임시 저장 · 주제 올리기 (켜지고 꺼지는 색은 바로 아래 2026-11-25 시안 규칙) */
 .createButtons { display: grid; grid-template-columns: 102px 1fr; gap: 8px; }
 .screen :is(.draftButton, .submitButton) { height: 44px; padding: 0 12px; border: 0; border-radius: 999px; font-size: 16px; font-weight: 600; }
 /* 2026-11-25 시안: 아무것도 안 쓰면 둘 다 연보라로 꺼져 있고, 하나라도 쓰면 임시 저장이 진한 연보라로,
