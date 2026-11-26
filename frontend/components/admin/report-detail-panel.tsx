@@ -48,13 +48,14 @@ function ReportContentDrawer({ content, onClose }: { content: ReportContent; onC
 
 export function ReportDetailPanel({ report, state, retry }: { report: ReportRecord | null; state?: AdminReadState<ReportRecord>; retry?: () => void }) {
   const [open, setOpen] = useState(false);
+  const subject = report ? report.recordType === "inquiry" ? "문의" : "신고" : "신고·문의";
   return <section className={`${shared.panel} ${styles.detail}`} aria-labelledby="report-detail-title" data-report-detail={report?.id ?? "unavailable"}>
-    <div className={styles.detailHeading}><h2 id="report-detail-title">신고 상세 검토</h2><p>선택한 신고에 대한 정보와 처리 내역</p></div>
+    <div className={styles.detailHeading}><h2 id="report-detail-title">{subject} 상세 검토</h2><p>선택한 {subject}에 대한 정보와 처리 내역</p></div>
     {report ? <>
       <div className={styles.identity}><h3>{report.number}</h3><ReportBadge status={report.status} /></div>
-      <dl><div><dt>신고 유형</dt><dd>{reportKind(report.kind, true)}</dd></div>
+      <dl><div><dt>{subject} 유형</dt><dd>{reportKind(report.kind, true)}</dd></div>
         {report.kind === "content" && <div><dt>신고 사유</dt><dd>{report.reason ?? "—"}</dd></div>}
-        <div><dt>접수일</dt><dd>{reportDate(report.receivedAt, true)}</dd></div><div><dt>처리 상태</dt><dd>{rawReportStatuses[report.rawStatus]}</dd></div><div><dt>신고 대상</dt><dd>{report.target ?? "—"}</dd></div>
+        <div><dt>접수일</dt><dd>{reportDate(report.receivedAt, true)}</dd></div><div><dt>처리 상태</dt><dd>{rawReportStatuses[report.rawStatus]}</dd></div><div><dt>{subject} 대상</dt><dd>{report.target ?? "—"}</dd></div>
       </dl>
       <div className={styles.message}><h3>{report.kind === "content" ? "신고 내용" : "문의 내용"}</h3><p data-inquiry={report.kind !== "content"}>{report.message ?? "저장된 내용이 없습니다."}</p></div>
       {report.kind !== "content" && (report.answerAvailability === "available" ? <div className={styles.message} data-inquiry-answer>

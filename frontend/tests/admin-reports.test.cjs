@@ -71,6 +71,16 @@ test('untrusted report content renders as text without HTML execution', () => {
   const html = detail({ ...fixtures.reportFixtures[0], message: '<img src=x onerror=alert(1)>', target: '<script>alert(1)</script>' });
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/); assert.doesNotMatch(html, /<script>|<img src="x"/);
 });
+
+test('shared detail labels distinguish inquiries from reports with the same numeric ID', () => {
+  const report = { ...fixtures.reportFixtures[0], id: 'R-41', recordId: '41', recordType: 'report' };
+  const inquiry = { ...report, id: 'I-41', recordType: 'inquiry', kind: 'service', content: null };
+  assert.match(detail(report), /id="report-detail-title">신고 상세 검토/);
+  const html = detail(inquiry);
+  assert.match(html, /id="report-detail-title">문의 상세 검토/);
+  assert.match(html, /<dt>문의 유형<\/dt>/);
+  assert.doesNotMatch(html, /신고 상세 검토|<dt>신고 대상/);
+});
 test('persisted inquiry answers render as plain text with a real timestamp; no email delivery is implied', () => {
   const html = detail({ ...fixtures.reportFixtures[3], recordType: 'inquiry', rawStatus: 'answered',
     answer: '<script>unsafe()</script>\n문의 답변', answeredAt: '2026-11-23T01:30:00.123456Z', answerAvailability: 'available',

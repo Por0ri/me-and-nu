@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { analyticsHref, parseAnalyticsQuery } from "@/lib/admin-analytics";
+import { analyticsHref } from "@/lib/admin-analytics";
+import { attentionDetailHref, dashboardHref, parseDashboardQuery, type DashboardQuery } from "@/lib/admin-attention-navigation";
 import { adminDate, type AdminReadState } from "@/lib/admin-content";
 import { loadAdminAttention, loadAdminDashboard, type AttentionKind, type AttentionResponse, type DashboardResponse, type RecommendationPerformance, type ReportPeriod } from "@/lib/admin-statistics-api";
 import { AdminStatus } from "./admin-status";
@@ -17,12 +18,17 @@ const attentionFilters = { all: "전체", report: "신고", inquiry: "문의", n
 type DashboardData = { dashboard: DashboardResponse; attention: AttentionResponse };
 
 export function DashboardScreen() {
-  const params = useSearchParams(), router = useRouter(), period = parseAnalyticsQuery(params).period;
-  return <ConnectedDashboard key={period} period={period} changePeriod={next => router.replace(`/admin/dashboard${next === "7d" ? "" : `?period=${next}`}`, { scroll: false })} />;
+  const params = useSearchParams(), router = useRouter(), query = parseDashboardQuery(params);
+  const navigate = useCallback((next: DashboardQuery, replace = false) => {
+    const href = dashboardHref(next);
+    if (replace) router.replace(href, { scroll: false });
+    else router.push(href, { scroll: false });
+  }, [router]);
+  return <ConnectedDashboard query={query} navigate={navigate} />;
 }
 
-function ConnectedDashboard({ period, changePeriod }: { period: ReportPeriod; changePeriod: (period: ReportPeriod) => void }) {
-  const [filter, setFilter] = useState<AttentionKind>("all"), [page, setPage] = useState(1);
+function ConnectedDashboard({ query, navigate }: { query: DashboardQuery; navigate: (query: DashboardQuery, replace?: boolean) => void }) {
+  const { period, attention: filter, page } = query;
   const read = useCallback(async (signal: AbortSignal): Promise<DashboardData> => {
     // Keep access state for the whole screen together; a rejected queue request
     // must not leave a previously authorized dashboard visible.
@@ -35,10 +41,11 @@ function ConnectedDashboard({ period, changePeriod }: { period: ReportPeriod; ch
   const { state, retry } = useAdminRead(`dashboard:${period}:${filter}:${page}`, read);
   const lastPage = state.status === "ready" ? Math.max(1, Math.ceil(state.data.attention.knownTotal / state.data.attention.pageSize)) : null;
   useEffect(() => {
-    if (lastPage !== null && page > lastPage) setPage(lastPage);
-  }, [lastPage, page]);
-  return <DashboardView period={period} changePeriod={changePeriod} state={state} retry={retry} filter={filter} page={page}
-    changeFilter={kind => { setFilter(kind); setPage(1); }} changePage={setPage} />;
+    if (lastPage !== null && page > lastPage) navigate({ period, attention: filter, page: lastPage }, true);
+  }, [lastPage, page, period, filter, navigate]);
+  return <DashboardView period={period} changePeriod={next => navigate({ period: next, attention: "all", page: 1 })}
+    state={state} retry={retry} filter={filter} page={page}
+    changeFilter={kind => navigate({ ...query, attention: kind, page: 1 })} changePage={next => navigate({ ...query, page: next })} />;
 }
 
 function RecommendationSummary({ performance, period }: { performance: RecommendationPerformance; period: ReportPeriod }) {
@@ -80,7 +87,10 @@ export function DashboardView({ period, changePeriod, state, retry, filter, page
               <button key={kind} type="button" aria-pressed={filter === kind} onClick={() => changeFilter(kind as AttentionKind)}>{label}<span>{counts?.[kind as AttentionKind]?.toLocaleString("ko-KR") ?? "—"}</span></button>)}</div>
             {attention.availability === "unavailable" ? <div className={styles.pendingList}><p>예약 공지 연결을 준비하고 있어요.</p></div> : attention.items.length === 0 ? <div className={styles.pendingList}><p>미처리 {attentionFilters[filter]} 항목이 없습니다.</p></div> :
               <ol className={styles.attentionList} aria-label="확인 필요 항목 목록">{attention.items.map(item => <li key={`${item.kind}:${item.recordId}`} data-attention-item>
-                <div><strong>{item.kind === "report" ? "신고" : "문의"} #{item.recordId}</strong><span>{categories[item.category] ?? "기타"} · {item.status === "reviewing" ? "검토 중" : "접수"}</span></div>
+                <div><Link href={attentionDetailHref(item, { period, attention: filter, page })} prefetch={false}
+                  aria-label={`${item.kind === "report" ? "신고" : "문의"} #${item.recordId} 상세 보기`}>
+                  <strong>{item.kind === "report" ? "신고" : "문의"} #{item.recordId}</strong></Link>
+                  <span>{categories[item.category] ?? "기타"} · {item.status === "reviewing" ? "검토 중" : "접수"}</span></div>
                 <time dateTime={item.createdAt}>{adminDate(item.createdAt)}</time>
                 {item.contentId && <Link href={`/admin/contents/${item.contentId}`}>콘텐츠 확인</Link>}
               </li>)}</ol>}

@@ -9,7 +9,7 @@ function load(file) {
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
   const localRequire = name => {
     if (['react', 'react/jsx-runtime'].includes(name)) return require(name);
-    if (name === 'next/link') return { __esModule: true, default: props => React.createElement('a', props) };
+    if (name === 'next/link') return { __esModule: true, default: ({ prefetch, ...props }) => React.createElement('a', props) };
     if (name === 'next/navigation' || name === './use-admin-read') return {};
     if (name === '@/lib/api' || name === './api') return { ApiError: class ApiError extends Error {}, apiRequest() { throw new Error('Static view must not fetch'); } };
     if (name === '@/lib/admin-statistics-api') return {};
@@ -87,6 +87,16 @@ test('unsupported notice queue is unavailable rather than an empty successful qu
   const html = dashboard({ status: 'ready', data }, 'notice');
   assert.match(html, /예약 공지 연결을 준비/); assert.doesNotMatch(html, /미처리 예약 공지 항목이 없습니다/);
   assert.match(html, /disabled="" aria-label="다음 페이지"/);
+});
+
+test('attention links distinguish identical report/inquiry IDs and carry dashboard return conditions', () => {
+  const data = fixture();
+  data.attention.items.push({ ...data.attention.items[0], kind: 'inquiry', category: 'service', contentId: null });
+  const html = dashboard({ status: 'ready', data }, 'all', 2);
+  assert.match(html, /href="\/admin\/reports\/report\/1\?period=30d&amp;page=2"/);
+  assert.match(html, /href="\/admin\/reports\/inquiry\/1\?period=30d&amp;page=2"/);
+  assert.match(html, /aria-label="신고 #1 상세 보기"/);
+  assert.match(html, /aria-label="문의 #1 상세 보기"/);
 });
 
 test('service dashboard summary stays separate and labels retained trial scores without a pipeline manifest', () => {
