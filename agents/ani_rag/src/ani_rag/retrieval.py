@@ -14,7 +14,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Protocol, Sequence
+from typing import Mapping, Protocol, Sequence
 
 from ani_rag.adapter import canonical_source_item_url
 from ani_rag.fact_subject import fact_subjects
@@ -199,6 +199,18 @@ class EvidenceRetriever(Protocol):
 class QueryEmbeddingModel(Protocol):
     async def embed_query(self, text: str) -> Sequence[float]:
         """Embed one query using the same model and dimensions as the vector sidecar."""
+
+
+class VectorIndexReader(Protocol):
+    def fetch_chunks(
+        self, document_ids: tuple[str, ...], query_vector: tuple[float, ...],
+    ) -> Sequence[Mapping[str, object]]:
+        """Read indexed chunks for scoped documents with cosine_similarity scores.
+
+        Implementations must preserve chunk/document/source identity and return
+        similarity (higher is closer), not distance. The relational repository
+        remains authoritative for candidate eligibility and work links.
+        """
 
 
 class OpenAIQueryEmbeddingModel:
@@ -461,7 +473,8 @@ class VectorEvidenceRetriever:
     """
 
     def __init__(
-        self, candidates: EvidenceCandidateRepository, vector_index: sqlite3.Connection,
+        self, candidates: EvidenceCandidateRepository,
+        vector_index: sqlite3.Connection | VectorIndexReader,
         query_embeddings: QueryEmbeddingModel,
     ) -> None:
         self.candidates = candidates
@@ -503,7 +516,7 @@ class VectorEvidenceRetriever:
         if query_norm <= 0:
             raise ValueError("Query vector cannot be zero")
         document_map = {item.document_id: item for item in documents}
-        chunk_rows = await asyncio.to_thread(self._fetch_index_chunks, tuple(document_map))
+        chunk_rows = await asyncio.to_thread(self._fetch_index_chunks, tuple(document_map), query_vector)
         if not chunk_rows:
             return await DatabaseEvidenceRetriever(self.candidates).retrieve(request)
         ranked: list[tuple[float, EvidenceChunk, EvidenceDocument]] = []
@@ -524,11 +537,20 @@ class VectorEvidenceRetriever:
                 if (original is None or original.text != row["chunk_text"]
                         or original.source_url != row["source_url"] or original.source_id != row["source_id"]):
                     continue
-            vector = struct.unpack("<1024f", row["vector_f32"])
-            vector_norm = math.sqrt(sum(value * value for value in vector))
-            if vector_norm <= 0:
-                continue
-            similarity = sum(left * right for left, right in zip(query_vector, vector, strict=True)) / (query_norm * vector_norm)
+            if "cosine_similarity" in row.keys():
+                # PostgreSQL's <=> is a distance; the index adapter supplies
+                # 1 - distance, preserving the existing score direction.
+                if row["cosine_similarity"] is None:
+                    continue
+                similarity = float(row["cosine_similarity"])
+                if not math.isfinite(similarity):
+                    raise ValueError("Vector index returned a non-finite cosine similarity")
+            else:
+                vector = struct.unpack("<1024f", row["vector_f32"])
+                vector_norm = math.sqrt(sum(value * value for value in vector))
+                if vector_norm <= 0:
+                    continue
+                similarity = sum(left * right for left, right in zip(query_vector, vector, strict=True)) / (query_norm * vector_norm)
             score = max(0.0, min(1.0, similarity))
             ranked.append((score, EvidenceChunk(
                 chunk_id=str(row["chunk_id"]), evidence_id=str(row["document_id"]),
@@ -574,8 +596,12 @@ class VectorEvidenceRetriever:
             retrieved_at=datetime.now(timezone.utc), backend="vector_cosine",
         )
 
-    def _fetch_index_chunks(self, document_ids: tuple[str, ...]) -> list[sqlite3.Row]:
+    def _fetch_index_chunks(
+        self, document_ids: tuple[str, ...], query_vector: tuple[float, ...],
+    ) -> Sequence[sqlite3.Row | Mapping[str, object]]:
         with self._lock:
+            if not isinstance(self.vector_index, sqlite3.Connection):
+                return self.vector_index.fetch_chunks(document_ids, query_vector)
             self.vector_index.row_factory = sqlite3.Row
             query_only = self.vector_index.execute("PRAGMA query_only").fetchone()
             if query_only is None or int(query_only[0]) != 1:

@@ -91,6 +91,9 @@ def totals(state):
     for row in state["records"]:
         if not row["counts_slot"]:
             continue
+        if row.get("producer") == "ani_rag":
+            require(not row.get("rag_cost_incomplete") and row.get("accounting_method") not in {"unknown", "reserve"}
+                    and row.get("estimated_cost_usd") is not None, "rag_usage_requires_reconciliation")
         if row.get("accounting_method") == "reserve":
             reserved += money(row["reserved_cost_usd"])
         elif row.get("accounting_method") == "unknown":
@@ -149,9 +152,9 @@ def build_plan(*, source, source_sha256, checkpoint, total_budget_usd, additiona
             "provider_hard_cap": False, "generation_enabled": False}
 
 
-def verify_completed_history(store, state, read_result):
+def verify_completed_history(store, state, read_result, *, rag_store=None, rag_read_result=None):
     """Recheck every recorded completion against DB and immutable sealed results."""
-    audit_existing_jobs(store, state)
+    audit_existing_jobs(store, state, rag_store=rag_store)
     reservations = inherited_reservations(state)
     from menu_worker.failure_recovery import validate_recovery_history
     validate_recovery_history(state, store=store, artifact_root=Path(state["config"]["artifact_root"]))
@@ -159,6 +162,10 @@ def verify_completed_history(store, state, read_result):
     verifier.reservations = reservations
     for record in state["records"]:
         if record["state"] != "complete":
+            continue
+        if record.get("producer") == "ani_rag":
+            from menu_worker.rag_daily_runtime import verify_rag_completion
+            verify_rag_completion(record, rag_store, rag_read_result)
             continue
         job = store.get(record["job_id"])
         require(job is not None and job["execution_status"] == record.get("execution_status"), "completed_job_state_changed")

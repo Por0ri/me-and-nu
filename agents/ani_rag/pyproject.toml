@@ -11,6 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 archive-import = ["pgdumplib>=4.0,<5"]
+postgres = ["psycopg[binary]>=3.2,<4"]
 
 [build-system]
 requires = ["hatchling"]

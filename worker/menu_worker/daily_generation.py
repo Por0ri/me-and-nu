@@ -134,15 +134,22 @@ class DailyController(Controller):
         if record.get("outcome") == "ready_for_staging":
             self._emit_delivery(record)
 
-    def run(self):
+    def validate_run_history(self):
         from menu_worker.failure_recovery import validate_recovery_history
         validate_recovery_history(self.state, store=self.store, artifact_root=Path(self.config["artifact_root"]))
         if self.state.get("stop_reason") == "failure_reconciled_paused":
-            return self.summary()
+            return False
         from menu_worker.daily_resume import current_failure_references, validate_failure_resume
         refs = current_failure_references(self.state)
         if refs and self.state.get("status") == "running":
             validate_failure_resume(self.state, refs[-1]["receipt_sha256"], store=self.store, now=self.now())
+        return True
+
+    def run(self):
+        if self.state.get("rag_scope"):
+            raise StopRun("mixed_checkpoint_requires_rag_controller")
+        if not self.validate_run_history():
+            return self.summary()
         # Completion may have been fsynced immediately before an envelope write.
         # The envelope is deterministic and the importer is idempotent per job.
         for record in successful_records(self.state):
