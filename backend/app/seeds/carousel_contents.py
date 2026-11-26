@@ -175,7 +175,7 @@ class BundleItem(StrictModel):
 
 class Bundle(StrictModel):
     schemaVersion: Literal[1]
-    producer: Literal["ani_menu_agent"]
+    producer: Literal["ani_menu_agent", "ani_rag"]
     topicCode: Literal["anime"]
     items: list[BundleItem] = Field(min_length=1, max_length=50)
 
@@ -280,6 +280,12 @@ def load_bundle(path: Path, *, review_record_file: Path | None = None, now: date
         requests = set()
         total_bytes = 0
         for item in document.items:
+            if document.producer == "ani_rag":
+                from app.services.rag_staging import RagStagingError, validate_rag_item
+                try:
+                    validate_rag_item(item.package, [asset.model_dump() for asset in item.assets], item.reviewEvidence)
+                except RagStagingError as exc:
+                    raise CarouselImportError(str(exc)) from None
             package = PackageModel.model_validate(item.package)
             if package.request_id in requests:
                 raise CarouselImportError("Duplicate producer request in bundle.")
@@ -401,6 +407,8 @@ async def import_bundle(db, bundle: PreparedBundle, *, apply: bool = False, now:
     if local_test_preview and checking_test_preview:
         raise CarouselImportError("Choose exactly one test preview scope.")
     preview_scope = "checking_test_preview" if checking_test_preview else "local_test_preview" if local_test_preview else None
+    if bundle.document.producer == "ani_rag" and preview_scope:
+        raise CarouselImportError("RAG content requires separate operator approval; preview publication is unavailable.")
     preview_metadata = {"database": expected_database, "quality_approval": "not_reviewed"}
     if checking_test_preview:
         preview_metadata["environment"] = "checking"

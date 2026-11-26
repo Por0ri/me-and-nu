@@ -1,0 +1,14 @@
+# Optional health-only Worker start. No key, egress, schedule, or paid activation.
+# Use with compose.runtime.yaml; the importer remains --help.
+services:
+  rag-worker:
+    environment:
+      RAG_GENERATION_ENABLED: "false"
+    command: [celery, -A, "menu_worker.rag_app:app", worker, --concurrency=1, --queues=content.rag_generate, "--hostname=rag@prepared", --loglevel=INFO]
+    healthcheck:
+      disable: false
+      test: [CMD, celery, -A, "menu_worker.rag_app:app", inspect, ping, "--destination=rag@prepared", "--timeout=5"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s

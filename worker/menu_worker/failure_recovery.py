@@ -27,6 +27,7 @@ HELD_OPERATION = "reconcile_held_generation_unknown_cost"
 receipt_digest = digest
 TABLES = ("menu_worker_schema", "content_generation_job", "content_generation_attempt",
           "content_generation_review", "content_staging_selection")
+RAG_TABLES = ("content_rag_generation_job", "content_rag_generation_attempt")
 
 
 def _raw_sha(path):
@@ -34,13 +35,22 @@ def _raw_sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _snapshot(connection):
-    from menu_worker.job_store import _plain
+def _schema_tables(connection):
     names = {row["tablename"] for row in connection.execute(
         "SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall()}
-    require(names == set(TABLES), "unexpected_recovery_database_schema")
+    require(names in (set(TABLES), set(TABLES + RAG_TABLES)), "unexpected_recovery_database_schema")
+    versions = connection.execute("SELECT version FROM public.menu_worker_schema").fetchall()
+    require(len(versions) == 1 and versions[0]["version"] in {7, 8}, "unexpected_recovery_database_schema")
+    tables = TABLES if versions[0]["version"] == 7 else TABLES + RAG_TABLES
+    require(names == set(tables), "unexpected_recovery_database_schema")
+    return tables
+
+
+def _snapshot(connection):
+    from menu_worker.job_store import _plain
+    tables = _schema_tables(connection)
     return {table: sorted(_plain(connection.execute("SELECT * FROM public." + table).fetchall()), key=digest)
-            for table in TABLES}
+            for table in tables}
 
 
 @contextmanager
@@ -50,7 +60,10 @@ def _database_view(store, *, lock=False):
         if lock:
             # No row is written. Block all concurrent ledger mutations until the
             # filesystem CAS commits; advisory locks alone do not fence submit().
-            connection.execute("LOCK TABLE " + ",".join("public." + name for name in TABLES)
+            # Pin the installed version before selecting the complete table set.
+            connection.execute("LOCK TABLE public.menu_worker_schema IN SHARE MODE NOWAIT")
+            tables = _schema_tables(connection)
+            connection.execute("LOCK TABLE " + ",".join("public." + name for name in tables)
                                + " IN SHARE MODE NOWAIT")
         else:
             connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
@@ -67,7 +80,8 @@ def _job(snapshot, job_id):
 
 def _idle(snapshot):
     require(not any(row["execution_status"] in {"queued", "running"}
-                    for name in ("content_generation_job", "content_generation_attempt")
+                    for name in ("content_generation_job", "content_generation_attempt", *RAG_TABLES)
+                    if name in snapshot
                     for row in snapshot[name]), "recovery_database_not_idle")
 
 

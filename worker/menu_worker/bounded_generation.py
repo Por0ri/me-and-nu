@@ -178,14 +178,14 @@ def database_lock(store, run_id):
         yield check
 
 
-def audit_existing_jobs(store, state):
+def audit_existing_jobs(store, state, *, rag_store=None):
     """A missing/rewound checkpoint must not reset the cumulative job limit."""
     with store._connect() as connection:
         rows = connection.execute(
             "SELECT job_id,idempotency_key FROM public.content_generation_job WHERE job_kind='anime_generate'"
         ).fetchall()
     owned = {record.get("job_id"): record["request"]["idempotency_key"]
-             for record in state["records"] if record.get("job_id")}
+             for record in state["records"] if record.get("job_id") and record.get("producer") != "ani_rag"}
     prefix = state["config"]["run_id"] + ":"
     if len(rows) > state["config"]["max_new_jobs"]:
         raise StopRun("database_job_cap_already_exceeded")
@@ -194,6 +194,16 @@ def audit_existing_jobs(store, state):
             raise StopRun("database_history_not_owned_by_checkpoint")
     if set(owned) != {str(row["job_id"]) for row in rows}:
         raise StopRun("checkpoint_job_missing_from_database")
+    if rag_store is None:
+        from menu_worker.job_store import JobStore
+        if isinstance(store, JobStore):
+            # Every v8 runtime audit covers both ledgers, including a restored
+            # period-only checkpoint which predates its first RAG admission.
+            from menu_worker.rag_store import RagStore
+            rag_store = RagStore(store._dsn, expected_database=store.expected_database)
+    if rag_store is not None or state.get("rag_scope") or any(row.get("producer") == "ani_rag" for row in state["records"]):
+        from menu_worker.rag_daily_runtime import audit_rag_history
+        audit_rag_history(rag_store, state, period_job_count=len(rows))
 
 
 class Controller:

@@ -91,7 +91,30 @@ def validate_policy_history(state):
         require(sum(bool(r.get("counts_slot")) for r in rows) <= MAX_DAILY_ATTEMPTS, "daily_attempt_limit_exceeded")
         if policy["schema_version"] in {2, 3}:
             require(all({key: row.get("request", {}).get(key) for key in ("source_id", "content_type", "menu_work_id")}
-                        in policy["routes"] for row in rows), "daily_record_outside_scope")
+                        in policy["routes"] for row in rows if row.get("producer") != "ani_rag"), "daily_record_outside_scope")
+            rag_rows = [row for row in rows if row.get("producer") == "ani_rag"]
+            if rag_rows:
+                from menu_worker.rag_daily import validate_scope
+                from menu_worker.rag_contract import RagRequest, validate_admission_receipt
+                scope = validate_scope(state.get("rag_scope"))
+                require(digest(scope) == state.get("rag_scope_sha256"), "rag_daily_scope_changed")
+                for row in rag_rows:
+                    from menu_worker.rag_daily_runtime import record_request
+                    from menu_worker.rag_daily import rag_route
+                    request = record_request(row)
+                    require(all(row["request"].get(key) == value for key, value in rag_route(request).items())
+                            and row["request"].get("idempotency_key") == state["config"]["run_id"] + ":rag:" + request.identity_key,
+                            "daily_rag_identity_changed")
+                    require(any(request.namespace == route["namespace"]
+                                and request.menu_work_id == route["menu_work_id"]
+                                and request.content_type == route["content_type"]
+                                and set(request.allowed_source_ids) <= set(route["allowed_source_ids"])
+                                for route in scope["routes"]), "daily_rag_record_outside_scope")
+                    receipt = validate_admission_receipt(row["rag_admission"], request)
+                    require(receipt["policy_sha256"] == digest({"daily": policy, "rag": scope})
+                            and receipt["policy_date"] == policy["policy_date"]
+                            and row["canonical_url"] == "urn:menu-rag:" + request.identity_key,
+                            "daily_rag_admission_changed")
         successes = {(r.get("request", {}).get("source_id"), r["canonical_url"]) if policy["schema_version"] in {2, 3}
                      else r["canonical_url"] for r in rows if r.get("counts_slot") and r.get("state") == "complete"
                      and r.get("execution_status") == "succeeded" and r.get("outcome") == "ready_for_staging"}
@@ -128,6 +151,11 @@ def source_checkpoint(path, expected_sha256):
         require(row.get("canonical_url") in state["seen"], "source_seen_history_missing")
         if row["counts_slot"]:
             require(row.get("request", {}).get("idempotency_key", "").startswith(config["run_id"] + ":"), "source_job_identity_missing")
+        if row.get("producer") == "ani_rag":
+            from menu_worker.rag_daily_runtime import record_request
+            request = record_request(row)
+            require(row["request"]["idempotency_key"] == config["run_id"] + ":rag:" + request.identity_key,
+                    "source_rag_identity_changed")
     validate_policy_history(state)
     from menu_worker.failure_recovery import validate_recovery_history
     validate_recovery_history(state)
@@ -143,7 +171,8 @@ def source_checkpoint(path, expected_sha256):
 
 
 def build_plan(*, source, source_sha256, checkpoint, policy_date, delivery_root,
-               daily_budget_usd=None, deadline=None, now=None, routes=None):
+               daily_budget_usd=None, deadline=None, now=None, routes=None,
+               rag_scope=None, rag_scope_sha256=None, rag_delivery_root=None, rag_runtime_sha256=None):
     now = time.time() if now is None else now
     source, checkpoint, delivery_root = Path(source), Path(checkpoint), Path(delivery_root)
     require(source.is_absolute() and checkpoint.is_absolute() and source.parent.resolve() == source.parent
@@ -154,6 +183,27 @@ def build_plan(*, source, source_sha256, checkpoint, policy_date, delivery_root,
     parent = source_checkpoint(source, source_sha256)
     start, end = day_bounds(policy_date)
     count_only = daily_budget_usd is None and deadline is None
+    rag_plan = {}
+    require(not parent.get("rag_scope") or rag_scope is not None, "explicit_rag_scope_required_for_rollover")
+    if rag_scope is not None:
+        from menu_worker.rag_daily import validate_scope
+        scope = validate_scope(rag_scope, current_catalog=True)
+        require(count_only, "rag_requires_shared_daily_count_policy")
+        require(digest(scope) == rag_scope_sha256, "rag_scope_not_reviewed")
+        require(parent.get("rag_scope", scope) == scope
+                and parent.get("rag_scope_sha256", rag_scope_sha256) == rag_scope_sha256,
+                "rag_daily_scope_changed")
+        require(re.fullmatch(r"[0-9a-f]{64}", rag_runtime_sha256 or "") is not None,
+                "explicit_reviewed_rag_runtime_required")
+        inbox = Path(rag_delivery_root) if rag_delivery_root is not None else Path()
+        require(inbox.is_absolute() and inbox.resolve() == inbox and inbox.is_dir()
+                and not inbox.is_relative_to(delivery_root) and not delivery_root.is_relative_to(inbox),
+                "separate_rag_delivery_root_required")
+        rag_plan = {"rag_scope": scope, "rag_scope_sha256": rag_scope_sha256,
+                    "rag_delivery_root": str(inbox), "rag_runtime_sha256": rag_runtime_sha256}
+    else:
+        require(rag_scope_sha256 is None and rag_delivery_root is None and rag_runtime_sha256 is None,
+                "rag_options_require_reviewed_scope")
     require(count_only or daily_budget_usd is not None and deadline is not None,
             "legacy_budget_and_deadline_required_together")
     if count_only:
@@ -197,7 +247,7 @@ def build_plan(*, source, source_sha256, checkpoint, policy_date, delivery_root,
     return {"schema_version": 1, "source_checkpoint": str(source), "source_sha256": source_sha256,
         "checkpoint": str(checkpoint), "config": config, "daily_policy": policy,
         "day_policy_sha256": digest(policy), "prior_known_estimated_usd": str(known),
-        "prior_reserved_usd": str(reserved), "generation_enabled": False, "provider_hard_cap": False}
+        "prior_reserved_usd": str(reserved), "generation_enabled": False, "provider_hard_cap": False, **rag_plan}
 
 
 def validate_child(state, parent, plan):
@@ -210,13 +260,15 @@ def validate_child(state, parent, plan):
         inherited = parent.get(key, [])
         require(state.get(key, [])[:len(inherited)] == inherited, "inherited_failure_recovery_audit_changed")
     require(state.get("daily_policies") == [*parent.get("daily_policies", []), plan["daily_policy"]], "daily_policy_history_changed")
+    require(state.get("rag_scope") == plan.get("rag_scope")
+            and state.get("rag_scope_sha256") == plan.get("rag_scope_sha256"), "rag_daily_scope_changed")
     validate_policy_history(state)
     from menu_worker.failure_recovery import validate_recovery_history
     validate_recovery_history(state)
     require(state.get("status") in {"running", "complete", "stopped"}, "invalid_daily_status")
 
 
-def _checked_state(plan, *, store, read_result, now=None):
+def _checked_state(plan, *, store, read_result, now=None, rag_store=None, rag_read_result=None):
     """Validate under both locks without changing checkpoints, claims or jobs."""
     now = time.time() if now is None else now
     source, target = Path(plan["source_checkpoint"]), Path(plan["checkpoint"])
@@ -225,7 +277,8 @@ def _checked_state(plan, *, store, read_result, now=None):
     expected = build_plan(source=source, source_sha256=plan["source_sha256"], checkpoint=target,
         policy_date=policy["policy_date"], daily_budget_usd=policy.get("daily_budget_usd"),
         deadline=None if policy.get("schema_version") == 3 else policy["deadline"],
-        delivery_root=Path(policy["delivery_root"]), now=now, routes=policy.get("routes"))
+        delivery_root=Path(policy["delivery_root"]), now=now, routes=policy.get("routes"),
+        **{key: plan[key] for key in ("rag_scope", "rag_scope_sha256", "rag_delivery_root", "rag_runtime_sha256") if key in plan})
     require(expected == plan, "daily_plan_changed")
     claim = claim_path(source)  # Shared with legacy continuation: never fork that ledger.
     receipt = {"schema_version": 1, "plan_sha256": digest(plan), "checkpoint": str(target), "source_sha256": plan["source_sha256"]}
@@ -243,13 +296,17 @@ def _checked_state(plan, *, store, read_result, now=None):
         state.update(config=copy.deepcopy(plan["config"]), status="running", stop_reason=None,
             daily_plan_sha256=digest(plan), daily_policy=copy.deepcopy(policy),
             daily_policies=[*copy.deepcopy(parent.get("daily_policies", [])), copy.deepcopy(policy)])
-    reservations = verify_completed_history(store, state, read_result)
+        if plan.get("rag_scope"):
+            state.update(rag_scope=copy.deepcopy(plan["rag_scope"]), rag_scope_sha256=plan["rag_scope_sha256"])
+    reservations = verify_completed_history(store, state, read_result,
+        rag_store=rag_store, rag_read_result=rag_read_result)
     return state, reservations, receipt
 
 
-def activate_plan(plan, *, store, read_result, now=None):
+def activate_plan(plan, *, store, read_result, now=None, rag_store=None, rag_read_result=None):
     """Caller holds the source file lock and unchanged run-wide DB lock."""
-    state, reservations, receipt = _checked_state(plan, store=store, read_result=read_result, now=now)
+    state, reservations, receipt = _checked_state(plan, store=store, read_result=read_result, now=now,
+        rag_store=rag_store, rag_read_result=rag_read_result)
     target, claim = Path(plan["checkpoint"]), claim_path(Path(plan["source_checkpoint"]))
     if not target.exists():
         write_json(target, state)
@@ -311,12 +368,13 @@ def resume_failure_recovery(state, reviewed_sha256, *, store, now=None):
     return state
 
 
-def preflight_plan(plan, *, store, read_result, now=None):
+def preflight_plan(plan, *, store, read_result, now=None, rag_store=None, rag_read_result=None):
     """Read-only evidence preflight; callers hold both locks, no activation."""
     now = time.time() if now is None else now
     start, _ = day_bounds(plan["daily_policy"]["policy_date"])
     require(start <= now < timestamp(plan["config"]["deadline"]) - 1500, "daily_window_not_open")
-    state, _, _ = _checked_state(plan, store=store, read_result=read_result, now=now)
+    state, _, _ = _checked_state(plan, store=store, read_result=read_result, now=now,
+        rag_store=rag_store, rag_read_result=rag_read_result)
     require(state["status"] != "stopped", "daily_checkpoint_stopped_requires_reconciliation")
     return {"mode": "preflight", "verified": True, "plan_sha256": digest(plan),
         "historical_jobs_verified": sum(bool(r.get("counts_slot")) for r in state["records"]),
@@ -363,6 +421,11 @@ def main(argv=None):
     parser.add_argument("--delivery-root", type=Path, required=True, help="Existing dedicated envelope directory; no service DB writes")
     parser.add_argument("--registered-routes", action="store_true",
                         help="Plan balanced sequential generation across eligible registered source/work/type routes; does not activate collection")
+    parser.add_argument("--rag-scope", type=Path, help="Explicit reviewed native RAG route scope; omitted means period-only")
+    parser.add_argument("--expected-rag-scope-sha256")
+    parser.add_argument("--rag-delivery-root", type=Path, help="Separate native inbox, never the period consumer inbox")
+    parser.add_argument("--rag-runtime-config", type=Path, help="Reviewed isolated native runtime configuration; used only for preflight/apply")
+    parser.add_argument("--expected-rag-runtime-sha256")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--preflight", action="store_true", help="Verify historical DB/sealed results under locks without publishing or creating a checkpoint")
@@ -372,13 +435,17 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         require(not args.resume_failure_recovery or args.apply, "failure_resume_requires_apply")
+        require(args.rag_scope is not None or args.rag_runtime_config is None, "rag_options_require_reviewed_scope")
         route_report = None
         if args.registered_routes or args.daily_budget_usd is None and args.deadline is None:
             from menu_worker.daily_routes import catalog_routes
             route_report = catalog_routes()
         plan = build_plan(source=args.source_checkpoint, source_sha256=args.source_sha256, checkpoint=args.checkpoint,
             policy_date=args.policy_date, daily_budget_usd=args.daily_budget_usd, deadline=args.deadline, delivery_root=args.delivery_root,
-            routes=route_report["routes"] if route_report is not None else None)
+            routes=route_report["routes"] if route_report is not None else None,
+            rag_scope=read_json(args.rag_scope) if args.rag_scope is not None else None,
+            rag_scope_sha256=args.expected_rag_scope_sha256, rag_delivery_root=args.rag_delivery_root,
+            rag_runtime_sha256=args.expected_rag_runtime_sha256)
         if not args.apply and not args.preflight:
             print(json.dumps({"mode": "plan", "plan": plan, "plan_sha256": digest(plan), "llm_calls": 0, "queue_writes": 0,
                               "service_db_writes": 0, **({"route_catalog": route_report} if route_report is not None else {})}))
@@ -399,23 +466,30 @@ def main(argv=None):
         def validate(fields):
             _, canonical, key = validate_job_request(fields, "anime_generate")
             return canonical, key
-        with local_lock(args.source_checkpoint), database_lock(store, plan["config"]["run_id"]) as check:
+        runtime = None
+        history_kwargs = {}
+        if plan.get("rag_scope"):
+            from menu_worker.rag_daily_runtime import compose_runtime, verify_empty_rag_broker
+            require(args.rag_runtime_config is not None, "explicit_reviewed_rag_runtime_required")
+            runtime = compose_runtime(plan, app=app, runtime_path=args.rag_runtime_config,
+                runtime_sha256=plan["rag_runtime_sha256"], enable=args.apply)
+            history_kwargs = {"rag_store": runtime.store, "rag_read_result": runtime.read_result}
+        with local_lock(args.source_checkpoint), local_lock(args.checkpoint), database_lock(store, plan["config"]["run_id"]) as check:
             if args.preflight:
                 check()
-                report = preflight_plan(plan, store=store, read_result=read_result)
-                report["broker"] = verify_empty_generation_broker(app)
+                report = preflight_plan(plan, store=store, read_result=read_result, **history_kwargs)
+                report["broker"] = verify_empty_rag_broker(app) if runtime else verify_empty_generation_broker(app)
                 print(json.dumps(report))
                 return 0
-            state, reservations, _ = _checked_state(plan, store=store, read_result=read_result)
+            state, reservations, _ = _checked_state(plan, store=store, read_result=read_result, **history_kwargs)
             refs = current_failure_references(state)
             if refs:
                 require(bool(args.resume_failure_recovery), "explicit_failure_resume_required")
             if args.resume_failure_recovery:
-                verify_empty_generation_broker(app)
-                with local_lock(args.checkpoint):
-                    state = resume_failure_recovery(state, args.resume_failure_recovery, store=store)
-                    write_json(args.checkpoint, state)
-            _, reservations = activate_plan(plan, store=store, read_result=read_result)
+                verify_empty_rag_broker(app) if runtime else verify_empty_generation_broker(app)
+                state = resume_failure_recovery(state, args.resume_failure_recovery, store=store)
+                write_json(args.checkpoint, state)
+            _, reservations = activate_plan(plan, store=store, read_result=read_result, **history_kwargs)
             def guard():
                 check()
                 parent = source_checkpoint(args.source_checkpoint, args.source_sha256)
@@ -423,13 +497,20 @@ def main(argv=None):
                 from menu_worker.failure_recovery import validate_recovery_history
                 validate_recovery_history(controller.state, store=store, artifact_root=root)
                 require(read_json(claim_path(args.source_checkpoint))["plan_sha256"] == digest(plan), "successor_claim_changed")
-                audit_existing_jobs(store, controller.state)
-            controller = DailyController(config=plan["config"], checkpoint=args.checkpoint, store=store,
+                audit_existing_jobs(store, controller.state, rag_store=runtime.store if runtime else None)
+            controller_class, mixed_kwargs = DailyController, {}
+            if runtime:
+                from menu_worker.rag_daily import MixedDailyController
+                controller_class = MixedDailyController
+                mixed_kwargs = {"rag_store": runtime.store, "rag_discover": runtime.discover,
+                    "rag_publish": runtime.publish, "rag_read_result": runtime.read_result, "rag_export": runtime.export,
+                    "rag_scope_sha256": plan["rag_scope_sha256"]}
+            controller = controller_class(config=plan["config"], checkpoint=args.checkpoint, store=store,
                 discover=discover_daily_articles if plan["daily_policy"]["schema_version"] in {2, 3} else discover_articles,
                 validate=validate, publish=lambda job_id: publish_with_deadline(job_id,
                     app=app, task=task, queue=queue, deadline=plan["config"]["deadline"], job_timeout_seconds=1500),
                 read_result=read_result, export=lambda job_id, output: export_staging_bundle(root, store, job_id, output),
-                reservations=reservations, lock_check=guard)
+                reservations=reservations, lock_check=guard, **mixed_kwargs)
             try:
                 report = controller.run()
             except Exception as error:

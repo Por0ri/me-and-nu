@@ -2,6 +2,7 @@
 !requirements.txt
 !Dockerfile
 !Dockerfile.generation
+!Dockerfile.rag
 !flowerconfig.py
 !setup_local.py
 !menu_worker/
