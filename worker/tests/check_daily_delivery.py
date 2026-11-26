@@ -123,13 +123,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--handoff", type=Path, help="Existing empty /handoff mount, preserved for isolated backend tests")
     parser.add_argument("--registered-routes", action="store_true", help="Exercise three registered works/types with synthetic articles only")
+    parser.add_argument("--count-only", action="store_true", help="Exercise daily count limits without a budget or operator deadline; implies registered routes")
     args = parser.parse_args(argv)
     dsn, broker = guard_environment()  # Before imports that can initialize any client.
     import psycopg
     from celery import Celery
     from celery.contrib.testing.worker import start_worker
     from menu_worker import real_generation
-    from menu_worker.bounded_generation import StopRun, audit_existing_jobs, database_lock, local_lock, read_json, write_json
+    from menu_worker.bounded_generation import StopRun, audit_existing_jobs, database_lock, local_lock, read_json, timestamp, write_json
     from menu_worker.bounded_resume import claim_path, digest
     from menu_worker.daily_generation import DailyController
     from menu_worker.daily_resume import activate_plan, build_plan, source_checkpoint, validate_child, verify_empty_generation_broker
@@ -194,7 +195,7 @@ def main(argv=None):
         clock = [FIXTURE_NOW.timestamp()]
         routes = None
         articles = [candidate(first_number + 10)]
-        if args.registered_routes:
+        if args.registered_routes or args.count_only:
             from menu_worker.anime_catalog import CATALOG_ROOT
             from menu_worker.daily_routes import catalog_routes
             from urllib.parse import urlunsplit
@@ -211,10 +212,19 @@ def main(argv=None):
                 url = urlunsplit(("https", parts.netloc, directory + f"/{first_number + 10 + len(articles)}.html", "", ""))
                 articles.append({**route, "source_url": url, "canonical_url": url})
         expected_new = len(articles)
+        limits = {} if args.count_only else {"daily_budget_usd": "0.50", "deadline": FIXTURE_DEADLINE.isoformat()}
         plan = build_plan(source=parent, source_sha256=sha256(original), checkpoint=child,
-            policy_date="2026-11-24", daily_budget_usd="0.50", deadline=FIXTURE_DEADLINE.isoformat(),
+            policy_date="2026-11-24", **limits,
             delivery_root=inbox, now=clock[0], routes=routes)
         require(plan["daily_policy"]["max_attempts"] == 40 and plan["daily_policy"]["success_target"] == 20, "production_policy_changed")
+        if args.count_only:
+            require(plan["daily_policy"]["schema_version"] == 3
+                    and plan["daily_policy"]["limit_mode"] == "daily_counts"
+                    and "daily_budget_usd" not in plan["daily_policy"]
+                    and plan["config"]["total_budget_usd"] is None,
+                    "count_only_policy_not_applied")
+            require(timestamp(plan["config"]["deadline"]) == datetime(2026, 11, 25, tzinfo=KST).timestamp(),
+                    "kst_day_boundary_not_derived")
         app = Celery("daily-offline-" + token, broker=broker, backend=broker)
         queue = "daily-offline-" + token
         app.conf.update(task_serializer="json", result_serializer="json", accept_content=["json"],
@@ -258,7 +268,7 @@ def main(argv=None):
         def sleep(seconds):
             require(time.monotonic() < wall_deadline, "offline_worker_completion_timeout")
             if seconds >= 60:
-                clock[0] = FIXTURE_DEADLINE.timestamp()
+                clock[0] = timestamp(plan["config"]["deadline"])
             else:
                 time.sleep(0.05)
                 clock[0] += 0.05
@@ -314,11 +324,17 @@ def main(argv=None):
         require(counts == {"content_generation_job": 4 + expected_new, "content_generation_attempt": 4 + expected_new, "content_staging_selection": expected_new},
                 "unexpected_job_attempt_or_selection_count")
         require(len(list(inbox.glob("*.json"))) == expected_new, "unexpected_envelope_count")
+        if args.count_only:
+            envelopes = [read_json(path) for path in inbox.glob("*.json")]
+            require(len({row["menu_work_id"] for row in envelopes}) == 3
+                    and {row["content_type"] for row in envelopes} == {"goods", "event", "news"}
+                    and all(row["schema_version"] == 2 and row["day_policy_sha256"] == plan["day_policy_sha256"]
+                            for row in envelopes), "count_only_delivery_scope_changed")
         summary = {"status": "passed", "fixture_id": token, "actual_llm_calls": 0, "actual_cost_usd": "0",
             "protocol_usage_is_synthetic": True, "service_db_access": False, "legacy_jobs_preserved": 4,
             "new_jobs": expected_new, "producer_calls": expected_new, "duplicate_candidate": "deduplicated", "duplicate_delivery": "ignored",
             "envelopes": expected_new, "cards": 2 * expected_new, "controller": report, "plan_sha256": digest(plan),
-            "routes": plan["daily_policy"].get("routes", []),
+            "routes": plan["daily_policy"].get("routes", []), "count_only": args.count_only,
             "fixture_now": FIXTURE_NOW.isoformat(), "bundle_root": str(bundles), "inbox": str(inbox),
             "broker_preflight": broker_preflight, "database_counts": counts}
         write_json(output / "verification-summary.json", summary)

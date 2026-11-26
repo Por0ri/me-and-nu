@@ -76,6 +76,65 @@ def render(image_ids):
         )
 
 
+def render_approved(values):
+    """Render only: synthetic credentials/paths never connect or start services."""
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("COMPOSE_", "DAILY_", "ANIME_", "CONTENT_JOB_", "MAIN_POSTGRES_"))}
+    with tempfile.TemporaryDirectory(prefix="daily-approved-render-") as directory:
+        env_path = Path(directory) / "synthetic.env"
+        env_path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
+        return subprocess.run(
+            ["docker", "compose", "--env-file", str(env_path), "--profile", "manual",
+             "-f", str(ROOT / "compose.runtime.yaml"), "-f", str(ROOT / "compose.approved.yaml"),
+             "config", "--format", "json"],
+            cwd=directory, env=environment, capture_output=True, text=True, timeout=30,
+        )
+
+
+class CountPolicyDeploymentTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("docker"):
+            raise unittest.SkipTest("Docker Compose CLI is required; daemon is not used")
+        cls.values = {
+            "DAILY_RELEASE_TAG": "offline-test", "CONTENT_JOB_DB_PASSWORD": "synthetic-not-a-password",
+            "MAIN_POSTGRES_PASSWORD": "synthetic-not-a-password",
+            "ANIME_LLM_KEY_HOST_FILE": "/synthetic/not-a-real-key",
+            "ANIME_COVER_HISTORY_BOOTSTRAP_HOST_FILE": "/synthetic/cover-history.json",
+            "ANIME_COVER_HISTORY_BOOTSTRAP_SHA256": "a" * 64,
+            "DAILY_SOURCE_CHECKPOINT": "/runtime/state/parent.json", "DAILY_SOURCE_SHA256": "b" * 64,
+            "DAILY_CHECKPOINT": "/runtime/state/new-day.json", "DAILY_POLICY_DATE": "2026-11-26",
+            "DAILY_PLAN_SHA256": "c" * 64, "DAILY_INBOX_NAME": "synthetic-inbox",
+            "DAILY_IMPORT_POLICY_HOST_FILE": "/synthetic/import-policy.json",
+            "DAILY_IMPORT_POLICY_SHA256": "d" * 64,
+        }
+
+    def test_approved_overlay_needs_no_budget_or_operator_deadline(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"DAILY_BUDGET_USD": "999", "DAILY_DEADLINE": "old-deadline"}):
+            result = render_approved(self.values)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads(result.stdout)
+        command = config["services"]["daily-controller"]["command"]
+        self.assertNotIn("--daily-budget-usd", command)
+        self.assertNotIn("--deadline", command)
+        self.assertIn("--registered-routes", command)
+        self.assertIn("--expected-plan-sha256", command)
+        self.assertEqual(command[command.index("--policy-date") + 1], "2026-11-26")
+        for service in config["services"].values():
+            self.assertEqual(service["restart"], "no")
+        worker_command = config["services"]["generation-worker"]["command"]
+        self.assertIn("--concurrency=1", worker_command)
+        self.assertNotIn("beat", worker_command)
+
+    def test_date_and_reviewed_history_are_still_required(self):
+        for missing in ("DAILY_POLICY_DATE", "DAILY_SOURCE_SHA256", "DAILY_PLAN_SHA256"):
+            with self.subTest(missing=missing):
+                result = render_approved({key: value for key, value in self.values.items() if key != missing})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(missing, result.stderr)
+
+
 class InactiveDeployTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

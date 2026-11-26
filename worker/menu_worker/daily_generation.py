@@ -54,6 +54,16 @@ def verify_bundle(bundle_root, record, job, result):
 
 
 class DailyController(Controller):
+    def budget_limit(self):
+        policy = self.state["daily_policy"]
+        if policy.get("schema_version") == 3:
+            require(policy.get("limit_mode") == "daily_counts"
+                    and self.config.get("limit_mode") == "daily_counts"
+                    and self.config.get("total_budget_usd") is None,
+                    "invalid_daily_count_limits")
+            return None
+        return super().budget_limit()
+
     def record_metadata(self):
         return {"policy_date": self.state["daily_policy"]["policy_date"],
                 "day_policy_sha256": digest(self.state["daily_policy"])}
@@ -93,7 +103,7 @@ class DailyController(Controller):
             "source_id": self.config["source_id"], "canonical_url": record["canonical_url"],
             "content_type": self.config["content_type"], "policy_date": policy["policy_date"],
             "run_id": self.config["run_id"], "day_policy_sha256": digest(policy)}
-        if policy.get("schema_version") == 2:
+        if policy.get("schema_version") in {2, 3}:
             request = record["request"]
             require(route_key(request) in {route_key(route) for route in policy["routes"]}
                     and route_key(job) == route_key(request)
@@ -129,7 +139,7 @@ class DailyController(Controller):
         # The envelope is deterministic and the importer is idempotent per job.
         for record in successful_records(self.state):
             self._emit_delivery(record)
-        if self.state["daily_policy"].get("schema_version") == 2:
+        if self.state["daily_policy"].get("schema_version") in {2, 3}:
             return run_allocated(self)
         return super().run()
 
@@ -142,7 +152,9 @@ class DailyController(Controller):
                 "daily_deliveries": sum(bool(r.get("delivery_envelope_path")) for r in today),
                 "daily_attempt_limit": MAX_DAILY_ATTEMPTS, "daily_success_target": DAILY_SUCCESS_TARGET,
                 "daily_spent_usd": str(self.spent() - Decimal(policy["prior_accounted_usd"])),
-                "daily_budget_usd": policy["daily_budget_usd"], "automatic_service_publication": False,
+                "daily_budget_usd": policy.get("daily_budget_usd"),
+                "limit_mode": policy.get("limit_mode", "daily_budget_and_counts"),
+                "automatic_service_publication": False,
                 "route_allocation": [{**route,
                     "attempts": sum(bool(row.get("counts_slot")) for row in today if route_key(row["request"]) == route_key(route)),
                     "successes": sum(1 for row in successful_records(self.state) if route_key(row["request"]) == route_key(route))}

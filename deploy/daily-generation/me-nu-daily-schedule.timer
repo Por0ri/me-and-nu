@@ -1,0 +1,13 @@
+[Unit]
+Description=Check the approved me-nu daily schedule every five minutes
+
+[Timer]
+OnCalendar=*-*-* *:0/5:00
+AccuracySec=10s
+Persistent=true
+Unit=me-nu-daily-schedule.service
+
+[Install]
+WantedBy=timers.target
+# Leave disabled until the exact schedule policy and paid activation are approved.
+
