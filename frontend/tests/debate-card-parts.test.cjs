@@ -137,6 +137,26 @@ test('Debate home keeps a floating 내 활동 button on every tab, and the ticke
   assert.match(css, /\.screen \.activityFab \{[^}]*width: 56px; height: 56px; border-radius: 50%;/);
 });
 
+test('Next ticket time never reads past one refill period: a slightly slow phone clock shows 60분 후, not 2시간 후 (2026-11-26)', () => {
+  const { refillIn } = tsxLoader()('lib/debate/format.ts');
+  const at = (ms) => new Date(ms).toISOString();
+  const MIN = 60_000;
+  assert.equal(refillIn(at(60 * MIN + 500), 0), '60분 후');      // 폰 시계가 서버보다 0.5초 늦음 (예전: 2시간 후)
+  assert.equal(refillIn(at(60 * MIN), 0), '60분 후');
+  assert.equal(refillIn(at(17 * MIN + 30_000), 0), '18분 후');
+  assert.equal(refillIn(at(10_000), 0), '1분 후');
+  assert.equal(refillIn(at(-5_000), 0), '1분 후');                // 이미 지났으면 곧 (서버가 다음 조회 때 채움)
+  assert.equal(refillIn(null, 0), null);
+  assert.equal(refillIn(at(90 * MIN), 0, 120), '1시간 30분 후');  // 주기를 늘리면 시간 · 분으로
+  assert.equal(refillIn(at(120 * MIN + 500), 0, 120), '2시간 후');
+});
+
+test('내가 투표한 주제 also lists my own topic once I voted on it (2026-11-26 teammate feedback)', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'components/debate/debate-activity.tsx'), 'utf8');
+  assert.match(source, /debates\.filter\(\(debate\) => debate\.status === "voting"\)/);
+  assert.doesNotMatch(source, /status === "voting" && !debate\.isMine/);
+});
+
 test('My activity opens on 내가 올린 주제, which lists only my voting or open topics (2026-11-25)', () => {
   const activity = fs.readFileSync(path.join(__dirname, '..', 'components/debate/debate-activity.tsx'), 'utf8');
   const tabs = [...activity.match(/const TABS = \[([\s\S]*?)\] as const;/)[1].matchAll(/id: "(\w+)"/g)].map((found) => found[1]);
