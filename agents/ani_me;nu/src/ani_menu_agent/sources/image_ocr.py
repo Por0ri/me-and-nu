@@ -85,37 +85,49 @@ def extract_page_image_text(
                 raise ValueError("OCR 이미지가 8MB 제한을 초과함.")
             prepared = _prepare_image(response.content)
             data_url = "data:image/jpeg;base64," + base64.b64encode(prepared).decode("ascii")
+            messages = [
+                SystemMessage(
+                    content=(
+                        "이미지에 인쇄된 정보를 원문 그대로 전사하는 OCR 작업자다. "
+                        "이미지의 내용을 요약하거나 추론하지 않는다. 한국어·일본어·영어를 "
+                        "보이는 대로 옮기고, 읽히지 않는 구간은 [판독 불확실]로 표시한다. "
+                        "각 글 묶음 앞에 이미지 내 위치([상단], [중앙], [하단], [좌측], "
+                        "[우측] 중 해당 위치)를 붙여라. 장식 문구와 홍보 문구도 구분 없이 "
+                        "전사하되, 그림 설명은 쓰지 않는다."
+                    )
+                ),
+                HumanMessage(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": (
+                                f"출처 페이지: {capture.url}\n"
+                                f"이미지 URL: {image_url}\n"
+                                "이 이미지에 들어 있는 글자만 원문 순서대로 전사해라."
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_url, "detail": "high"},
+                        },
+                    ]
+                ),
+            ]
             started = perf_counter()
-            response_message = model.invoke(
-                [
-                    SystemMessage(
-                        content=(
-                            "이미지에 인쇄된 정보를 원문 그대로 전사하는 OCR 작업자다. "
-                            "이미지의 내용을 요약하거나 추론하지 않는다. 한국어·일본어·영어를 "
-                            "보이는 대로 옮기고, 읽히지 않는 구간은 [판독 불확실]로 표시한다. "
-                            "각 글 묶음 앞에 이미지 내 위치([상단], [중앙], [하단], [좌측], "
-                            "[우측] 중 해당 위치)를 붙여라. 장식 문구와 홍보 문구도 구분 없이 "
-                            "전사하되, 그림 설명은 쓰지 않는다."
-                        )
-                    ),
-                    HumanMessage(
-                        content=[
-                            {
-                                "type": "text",
-                                "text": (
-                                    f"출처 페이지: {capture.url}\n"
-                                    f"이미지 URL: {image_url}\n"
-                                    "이 이미지에 들어 있는 글자만 원문 순서대로 전사해라."
-                                ),
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": data_url, "detail": "high"},
-                            },
-                        ]
-                    ),
-                ]
+            usage_index = len(usage_records)
+            usage_records.append(
+                {
+                    "model": settings.model_name,
+                    "stage": "event_detail_image_ocr",
+                    "invocation_attempted": True,
+                    "usage_complete": False,
+                    "reason": "provider_usage_unavailable",
+                    "source_url": str(capture.url),
+                    "image_url": image_url,
+                    "image_index": image_index,
+                }
             )
+            response_message = model.invoke(messages)
             extracted = str(response_message.content or "").strip()
             record.update(
                 {
@@ -125,34 +137,39 @@ def extract_page_image_text(
                 }
             )
             usage = getattr(response_message, "usage_metadata", None) or {}
-            input_tokens = int(usage.get("input_tokens", 0) or 0)
-            output_tokens = int(usage.get("output_tokens", 0) or 0)
-            input_details = usage.get("input_token_details") or {}
-            cached_tokens = int(input_details.get("cache_read", 0) or 0)
-            cache_write_tokens = int(
-                input_details.get("cache_write", input_details.get("cache_creation", 0)) or 0
-            )
-            if input_tokens or output_tokens:
-                usage_records.append(
-                    {
-                        "model": settings.model_name,
-                        "stage": "event_detail_image_ocr",
-                        "source_url": str(capture.url),
-                        "image_url": image_url,
-                        "image_index": image_index,
-                        "input_tokens": input_tokens,
-                        "cached_input_tokens": cached_tokens,
-                        "cache_write_tokens": cache_write_tokens,
-                        "output_tokens": output_tokens,
-                        "total_tokens": int(
-                            usage.get("total_tokens", input_tokens + output_tokens) or 0
-                        ),
-                        "estimated_cost_usd": estimate_gpt_6_luna_cost(
-                            input_tokens, cached_tokens, cache_write_tokens, output_tokens
-                        ),
-                        "elapsed_seconds": round(perf_counter() - started, 3),
-                    }
+            if (
+                isinstance(usage, dict)
+                and all(
+                    type(usage.get(key)) is int and usage[key] >= 0
+                    for key in ("input_tokens", "output_tokens")
                 )
+                and usage["input_tokens"] + usage["output_tokens"] > 0
+            ):
+                input_tokens = usage["input_tokens"]
+                output_tokens = usage["output_tokens"]
+                input_details = usage.get("input_token_details") or {}
+                cached_tokens = int(input_details.get("cache_read", 0) or 0)
+                cache_write_tokens = int(
+                    input_details.get("cache_write", input_details.get("cache_creation", 0)) or 0
+                )
+                usage_records[usage_index] = {
+                    "model": settings.model_name,
+                    "stage": "event_detail_image_ocr",
+                    "source_url": str(capture.url),
+                    "image_url": image_url,
+                    "image_index": image_index,
+                    "input_tokens": input_tokens,
+                    "cached_input_tokens": cached_tokens,
+                    "cache_write_tokens": cache_write_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": int(
+                        usage.get("total_tokens", input_tokens + output_tokens) or 0
+                    ),
+                    "estimated_cost_usd": estimate_gpt_6_luna_cost(
+                        input_tokens, cached_tokens, cache_write_tokens, output_tokens
+                    ),
+                    "elapsed_seconds": round(perf_counter() - started, 3),
+                }
         except Exception as exc:  # OCR failure must not erase the page/article capture.
             record["note"] = f"OCR 미완료: {type(exc).__name__}: {str(exc)[:240]}"
         records.append(record)
