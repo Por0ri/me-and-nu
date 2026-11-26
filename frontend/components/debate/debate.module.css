@@ -309,6 +309,9 @@
 .screen .sendButton { display: grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: #f4f4f5; color: #27272a; }
 .screen .sendButton:disabled { color: #a1a1aa; }
 .screen[data-composer]::after { content: ""; position: fixed; z-index: 5; left: 0; right: 0; bottom: 0; height: calc(44px + env(safe-area-inset-bottom)); background: linear-gradient(rgb(255 249 253 / 0%), var(--debate-bg) 16px); pointer-events: none; }
+/* 토론방 채팅: 아이폰에서 키보드를 연 채 화면 끝을 넘겨 끌면 튕기면서 입력창이 키보드에서 떨어져 보여서, 이 화면만 튕김을 끈다.
+   (갤럭시는 이 화면에서 당겨서 새로 고침이 꺼짐 — 실시간 채팅이라 필요 없음, 2026-11-26) */
+:global(html):has(.screen[data-composer]), :global(body):has(.screen[data-composer]) { overscroll-behavior-y: none; }
 /* 도배 막기 창 (시안): 두 줄 굵은 제목, 회색 설명, 연보라 알약 안내, 꽉 찬 확인 버튼 */
 .rateDialog h2 { display: flex; flex-direction: column; gap: 2px; }
 .rateDialog h2 span { font-size: 18px; line-height: 26px; }

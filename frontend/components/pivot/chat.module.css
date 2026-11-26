@@ -15,6 +15,18 @@
 }
 .sheet[data-dragging] { transition: none; }
 .sheet::backdrop { background: rgb(0 0 0 / 50%); animation: chatFadeIn 200ms ease; }
+/* 아이폰: 시트를 잡고 끌면 그 끌기가 뒤 피드 · 페이지 전체로 넘어가 같이 움직이고, 키보드가 떠 있으면 화면이 통째로
+   올라갔다 튕긴다. 시트에서 시작한 끌기는 화면을 안 움직이게 하고, 대화 목록은 위아래로만, 입력창은 긴 글을 옆으로만.
+   두 손가락 확대는 남긴다 (pinch-zoom 을 모르는 브라우저는 확대까지 막는 앞 줄을 쓴다, 2026-11-26) */
+.sheet { touch-action: none; overscroll-behavior: contain; }
+.sheet::backdrop { touch-action: none; }
+.log { touch-action: pan-y; }
+.sheet .composer input { touch-action: pan-x; }
+@supports (touch-action: pinch-zoom) {
+  .sheet, .sheet::backdrop { touch-action: pinch-zoom; }
+  .log { touch-action: pan-y pinch-zoom; }
+  .sheet .composer input { touch-action: pan-x pinch-zoom; }
+}
 @keyframes chatSheetIn { from { transform: translate(-50%, 0); } to { transform: translate(-50%, -100%); } }
 @keyframes chatFadeIn { from { opacity: 0; } to { opacity: 1; } }
 .panel { display: flex; flex-direction: column; max-height: min(720px, calc(var(--report-viewport-height, 100dvh) - 40px)); padding-bottom: max(20px, env(safe-area-inset-bottom)); }

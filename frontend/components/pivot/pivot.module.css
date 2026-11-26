@@ -22,6 +22,9 @@
 /* The scrollbar room html keeps (globals.css scrollbar-gutter) shows the html background, the old dark
    theme: paint it like the page so desktop screens have no dark strip on the right (2026-11-25). */
 :global(html):has(.root) { background: #fff9fd; }
+/* 아이폰 사파리는 화면 끝을 넘겨 끌 때 (튕김 · 키보드를 연 채 끌기) 드러나는 바깥을 html 보다 body 바탕색으로 칠한다.
+   body 가 globals.css 의 옛 남색이라 화면이 떨어져 나간 것처럼 보여서, body 도 같은 색으로 (2026-11-26) */
+:global(body):has(.root) { background: #fff9fd; }
 .root button, .root input { font: inherit; }
 .root button, .root a, .root input { -webkit-tap-highlight-color: transparent; }
 .root button { cursor: pointer; }
