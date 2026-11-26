@@ -1,7 +1,7 @@
 """Plan one explicitly approved KST day; never registers a recurring schedule.
 
-The default is a local-only plan. --apply requires its exact reviewed digest.
-Daily budget is additional to all prior recorded cost and reservations. No
+The default is a local-only, count-limited plan. --apply requires its exact
+reviewed digest. Historical cost and reservations remain in the ledger. No
 service DB, operator approval endpoint or LLM is called by this controller.
 """
 from __future__ import annotations
@@ -53,9 +53,9 @@ def validate_policy_history(state):
     previous_date, previous_index = "", 0
     for policy in policies:
         require(isinstance(policy, dict), "invalid_daily_policy_history")
-        require(type(policy.get("schema_version")) is int and policy["schema_version"] in {1, 2},
+        require(type(policy.get("schema_version")) is int and policy["schema_version"] in {1, 2, 3},
                 "invalid_daily_policy_schema")
-        if policy["schema_version"] == 2:
+        if policy["schema_version"] in {2, 3}:
             require(policy.get("allocation") == "balanced_work_type_source_v1"
                     and "source_id" not in policy and "content_type" not in policy,
                     "invalid_daily_policy_scope")
@@ -63,7 +63,13 @@ def validate_policy_history(state):
                     "invalid_daily_routes")
         else:
             require("routes" not in policy and "allocation" not in policy, "invalid_daily_policy_scope")
-        day_bounds(policy["policy_date"])
+        _, end = day_bounds(policy["policy_date"])
+        if policy["schema_version"] == 3:
+            require(policy.get("limit_mode") == "daily_counts" and "daily_budget_usd" not in policy
+                    and policy.get("deadline") == datetime.fromtimestamp(end, KST).isoformat(),
+                    "invalid_daily_count_policy")
+        else:
+            require("limit_mode" not in policy, "invalid_daily_policy_schema")
         index = policy["start_record_index"]
         require(policy["policy_date"] > previous_date and type(index) is int and previous_index <= index <= len(state["records"]),
                 "daily_policy_order_changed")
@@ -81,13 +87,18 @@ def validate_policy_history(state):
         require(all(row.get("policy_date") == policy["policy_date"] and row.get("day_policy_sha256") == digest(policy)
                     for row in rows), "daily_record_policy_changed")
         require(sum(bool(r.get("counts_slot")) for r in rows) <= MAX_DAILY_ATTEMPTS, "daily_attempt_limit_exceeded")
-        if policy["schema_version"] == 2:
+        if policy["schema_version"] in {2, 3}:
             require(all({key: row.get("request", {}).get(key) for key in ("source_id", "content_type", "menu_work_id")}
                         in policy["routes"] for row in rows), "daily_record_outside_scope")
-        successes = {(r.get("request", {}).get("source_id"), r["canonical_url"]) if policy["schema_version"] == 2
+        successes = {(r.get("request", {}).get("source_id"), r["canonical_url"]) if policy["schema_version"] in {2, 3}
                      else r["canonical_url"] for r in rows if r.get("counts_slot") and r.get("state") == "complete"
                      and r.get("execution_status") == "succeeded" and r.get("outcome") == "ready_for_staging"}
         require(len(successes) <= DAILY_SUCCESS_TARGET, "daily_success_limit_exceeded")
+    if policies[-1]["schema_version"] == 3:
+        config = state.get("config", {})
+        require(config.get("limit_mode") == "daily_counts" and "total_budget_usd" in config
+                and config["total_budget_usd"] is None and config.get("deadline") == policies[-1]["deadline"],
+                "daily_count_config_changed")
 
 
 def source_checkpoint(path, expected_sha256):
@@ -127,7 +138,8 @@ def source_checkpoint(path, expected_sha256):
     return state
 
 
-def build_plan(*, source, source_sha256, checkpoint, policy_date, daily_budget_usd, deadline, delivery_root, now=None, routes=None):
+def build_plan(*, source, source_sha256, checkpoint, policy_date, delivery_root,
+               daily_budget_usd=None, deadline=None, now=None, routes=None):
     now = time.time() if now is None else now
     source, checkpoint, delivery_root = Path(source), Path(checkpoint), Path(delivery_root)
     require(source.is_absolute() and checkpoint.is_absolute() and source.parent.resolve() == source.parent
@@ -137,8 +149,17 @@ def build_plan(*, source, source_sha256, checkpoint, policy_date, daily_budget_u
             "existing_delivery_root_required")
     parent = source_checkpoint(source, source_sha256)
     start, end = day_bounds(policy_date)
-    require(isinstance(daily_budget_usd, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]{1,8})?", daily_budget_usd)
-            and money(daily_budget_usd) >= money(parent["config"]["next_job_reserve_usd"]), "explicit_daily_budget_required")
+    count_only = daily_budget_usd is None and deadline is None
+    require(count_only or daily_budget_usd is not None and deadline is not None,
+            "legacy_budget_and_deadline_required_together")
+    if count_only:
+        deadline = datetime.fromtimestamp(end, KST).isoformat()
+        if routes is None:
+            from menu_worker.daily_routes import catalog_routes
+            routes = catalog_routes()["routes"]
+    else:
+        require(isinstance(daily_budget_usd, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]{1,8})?", daily_budget_usd)
+                and money(daily_budget_usd) >= money(parent["config"]["next_job_reserve_usd"]), "explicit_daily_budget_required")
     require(start < timestamp(deadline) <= end, "deadline_outside_policy_day")
     require(checkpoint.exists() or now + parent["config"]["job_timeout_seconds"] < timestamp(deadline), "insufficient_time_for_new_day")
     history = parent.get("daily_policies", [])
@@ -157,7 +178,13 @@ def build_plan(*, source, source_sha256, checkpoint, policy_date, daily_budget_u
         # Actual work scope is the reviewed route list and each record's request.
         del policy["source_id"], policy["content_type"]
     config = copy.deepcopy(parent["config"])
-    config.update(total_budget_usd=str(known + reserved + money(daily_budget_usd)),
+    if count_only:
+        policy.update(schema_version=3, limit_mode="daily_counts")
+        del policy["daily_budget_usd"]
+        config["limit_mode"] = "daily_counts"
+    else:
+        config.pop("limit_mode", None)
+    config.update(total_budget_usd=None if count_only else str(known + reserved + money(daily_budget_usd)),
                   max_new_jobs=slots + MAX_DAILY_ATTEMPTS, deadline=deadline)
     return {"schema_version": 1, "source_checkpoint": str(source), "source_sha256": source_sha256,
         "checkpoint": str(checkpoint), "config": config, "daily_policy": policy,
@@ -183,7 +210,8 @@ def _checked_state(plan, *, store, read_result, now=None):
     policy = plan["daily_policy"]
     parent = source_checkpoint(source, plan["source_sha256"])
     expected = build_plan(source=source, source_sha256=plan["source_sha256"], checkpoint=target,
-        policy_date=policy["policy_date"], daily_budget_usd=policy["daily_budget_usd"], deadline=policy["deadline"],
+        policy_date=policy["policy_date"], daily_budget_usd=policy.get("daily_budget_usd"),
+        deadline=None if policy.get("schema_version") == 3 else policy["deadline"],
         delivery_root=Path(policy["delivery_root"]), now=now, routes=policy.get("routes"))
     require(expected == plan, "daily_plan_changed")
     claim = claim_path(source)  # Shared with legacy continuation: never fork that ledger.
@@ -264,8 +292,8 @@ def main(argv=None):
     parser.add_argument("--source-sha256", required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--policy-date", required=True, help="Explicit approved KST date YYYY-MM-DD")
-    parser.add_argument("--daily-budget-usd", required=True, help="Explicit additional budget for this day, not a provider hard cap")
-    parser.add_argument("--deadline", required=True, help="Approved timezone-qualified deadline within the policy day")
+    parser.add_argument("--daily-budget-usd", help="Legacy plan replay only: use together with --deadline")
+    parser.add_argument("--deadline", help="Legacy plan replay only: use together with --daily-budget-usd; new plans use the KST day boundary")
     parser.add_argument("--delivery-root", type=Path, required=True, help="Existing dedicated envelope directory; no service DB writes")
     parser.add_argument("--registered-routes", action="store_true",
                         help="Plan balanced sequential generation across eligible registered source/work/type routes; does not activate collection")
@@ -276,7 +304,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         route_report = None
-        if args.registered_routes:
+        if args.registered_routes or args.daily_budget_usd is None and args.deadline is None:
             from menu_worker.daily_routes import catalog_routes
             route_report = catalog_routes()
         plan = build_plan(source=args.source_checkpoint, source_sha256=args.source_sha256, checkpoint=args.checkpoint,
@@ -317,7 +345,7 @@ def main(argv=None):
                 require(read_json(claim_path(args.source_checkpoint))["plan_sha256"] == digest(plan), "successor_claim_changed")
                 audit_existing_jobs(store, controller.state)
             controller = DailyController(config=plan["config"], checkpoint=args.checkpoint, store=store,
-                discover=discover_daily_articles if plan["daily_policy"]["schema_version"] == 2 else discover_articles,
+                discover=discover_daily_articles if plan["daily_policy"]["schema_version"] in {2, 3} else discover_articles,
                 validate=validate, publish=lambda job_id: publish_with_deadline(job_id,
                     app=app, task=task, queue=queue, deadline=plan["config"]["deadline"], job_timeout_seconds=1500),
                 read_result=read_result, export=lambda job_id, output: export_staging_bundle(root, store, job_id, output),

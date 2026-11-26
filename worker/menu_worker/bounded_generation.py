@@ -230,6 +230,14 @@ class Controller:
     def spent(self):
         return self.known_spent() + self.reserved_spent()
 
+    def budget_limit(self):
+        """Legacy runs keep their approved cap; daily policies may override it."""
+        return money(self.config["total_budget_usd"])
+
+    def budget_exceeded(self, additional=Decimal(0)):
+        limit = self.budget_limit()
+        return limit is not None and self.spent() + additional > limit
+
     def matching_reservation(self, job, result):
         receipt = self.reservations.get(job["job_id"])
         if receipt is None:
@@ -271,7 +279,7 @@ class Controller:
             raise StopRun("accounting_resume_not_missing_evidence")
         reserved = money(receipt["reserved_usd"])
         existing = money(record.get("reserved_cost_usd", "0"))
-        if self.spent() - existing + reserved > money(self.config["total_budget_usd"]):
+        if self.budget_exceeded(reserved - existing):
             raise StopRun("accounting_reservation_exceeds_budget")
         if self.now() >= self.deadline:
             raise StopRun("deadline_reached")
@@ -351,7 +359,7 @@ class Controller:
             record["estimated_cost_usd"] = str(cost)
         record.update(result_sha256=job["result_sha256"], generation_attempt_id=job["generation_attempt_id"])
         self.save()
-        if self.spent() > money(self.config["total_budget_usd"]):
+        if self.budget_exceeded():
             self.stop("estimated_budget_target_exceeded")
         if job.get("outcome") == "ready_for_staging":
             destination = self.bundles / job_id
@@ -401,7 +409,7 @@ class Controller:
                 self.handle(record)
         while self.completion_reason() is None:
             self.check()
-            if self.spent() + money(self.config["next_job_reserve_usd"]) > money(self.config["total_budget_usd"]):
+            if self.budget_exceeded(money(self.config["next_job_reserve_usd"])):
                 self.stop("estimated_budget_reserve_unavailable")
             scan = self.discover(self.config["source_id"], self.config["content_type"], 20)
             articles = scan.get("articles", [])
@@ -414,7 +422,7 @@ class Controller:
                 self.check()
                 if self.completion_reason() is not None:
                     break
-                if self.spent() + money(self.config["next_job_reserve_usd"]) > money(self.config["total_budget_usd"]):
+                if self.budget_exceeded(money(self.config["next_job_reserve_usd"])):
                     self.stop("estimated_budget_reserve_unavailable")
                 if self.now() + self.config["job_timeout_seconds"] > self.deadline:
                     self.stop("insufficient_time_for_new_job")

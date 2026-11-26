@@ -58,7 +58,7 @@ def seen_articles(state):
 
 def ready_for_new_job(controller):
     controller.check()
-    if controller.spent() + money(controller.config["next_job_reserve_usd"]) > money(controller.config["total_budget_usd"]):
+    if controller.budget_exceeded(money(controller.config["next_job_reserve_usd"])):
         controller.stop("estimated_budget_reserve_unavailable")
     if controller.now() + controller.config["job_timeout_seconds"] > controller.deadline:
         controller.stop("insufficient_time_for_new_job")
