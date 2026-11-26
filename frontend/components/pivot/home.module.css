@@ -60,6 +60,9 @@
    peeking mascot, which reaches 8px into the box's top padding, is never covered. */
 .screen[data-search-open] .search { z-index: 6; background: var(--home-bg); }
 .screen[data-search-open] .header { z-index: 7; background: var(--home-bg); }
+/* 검색 중: 검색창 아래 8px 를 머리 부분 밖으로 옮겨, 분홍 줄 없이 선 바로 아래부터 어둡게 (높이는 그대로) */
+.screen[data-search-open] .stickyHeader { margin-bottom: 8px; }
+.screen[data-search-open] .stickyHeader .search { margin-bottom: 0; }
 .searchDim { position: fixed; z-index: 5; inset: 0; padding: 0; border: 0; background: rgb(0 0 0 / 50%); }
 .searchPanel { position: absolute; z-index: 6; top: 100%; left: 0; right: 0; padding: 4px 24px 8px; border-bottom: 1px solid var(--home-line); background: var(--home-bg); }
 .searchPanel ul { list-style: none; margin: 0; padding: 0; }
