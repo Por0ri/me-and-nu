@@ -135,6 +135,14 @@ class DailyController(Controller):
             self._emit_delivery(record)
 
     def run(self):
+        from menu_worker.failure_recovery import validate_recovery_history
+        validate_recovery_history(self.state, store=self.store, artifact_root=Path(self.config["artifact_root"]))
+        if self.state.get("stop_reason") == "failure_reconciled_paused":
+            return self.summary()
+        from menu_worker.daily_resume import current_failure_references, validate_failure_resume
+        refs = current_failure_references(self.state)
+        if refs and self.state.get("status") == "running":
+            validate_failure_resume(self.state, refs[-1]["receipt_sha256"], store=self.store, now=self.now())
         # Completion may have been fsynced immediately before an envelope write.
         # The envelope is deterministic and the importer is idempotent per job.
         for record in successful_records(self.state):
@@ -146,12 +154,17 @@ class DailyController(Controller):
     def summary(self):
         policy = self.state["daily_policy"]
         today = self.state["records"][policy["start_record_index"]:]
+        unknown = set(self.unknown_cost_jobs())
+        daily_unknown = [row["job_id"] for row in today if row.get("job_id") in unknown]
+        subtotal = str(self.spent() - Decimal(policy["prior_accounted_usd"]))
         return {**super().summary(), "policy_date": policy["policy_date"], "day_policy_sha256": digest(policy),
                 "daily_attempts": sum(bool(r.get("counts_slot")) for r in today),
                 "daily_successes": len({article_identity(r) for r in successful_records(self.state)}),
                 "daily_deliveries": sum(bool(r.get("delivery_envelope_path")) for r in today),
                 "daily_attempt_limit": MAX_DAILY_ATTEMPTS, "daily_success_target": DAILY_SUCCESS_TARGET,
-                "daily_spent_usd": str(self.spent() - Decimal(policy["prior_accounted_usd"])),
+                "daily_spent_usd": None if daily_unknown else subtotal,
+                "daily_known_and_reserved_subtotal_usd": subtotal,
+                "daily_unknown_cost_jobs": daily_unknown,
                 "daily_budget_usd": policy.get("daily_budget_usd"),
                 "limit_mode": policy.get("limit_mode", "daily_budget_and_counts"),
                 "automatic_service_publication": False,

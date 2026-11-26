@@ -136,6 +136,60 @@ def test_policy_digest_date_target_and_limit_are_explicit(delivery_fixture):
             pending.validate_target(unsafe, policy, "test")
 
 
+def test_expired_policy_reconciliation_requires_exact_prior_date_and_reviewed_apply(delivery_fixture):
+    _, _, _, policy = delivery_fixture
+    original = deepcopy(policy)
+    now = datetime.fromisoformat(policy["policy_date"] + "T12:00:00+09:00") + timedelta(days=1)
+    sha = pending.fingerprint(policy)
+    with pytest.raises(pending.PendingImportError, match="policy_date_inactive"):
+        pending.validate_policy(policy, reviewed_sha256=sha, apply=True, now=now)
+    assert pending.validate_policy(policy, reviewed_sha256=sha, apply=True, now=now,
+        reconcile_policy_date=policy["policy_date"]) == sha
+    for kwargs in (
+        {"apply": False, "reviewed_sha256": sha, "now": now},
+        {"apply": True, "reviewed_sha256": sha, "now": now - timedelta(days=1)},
+        {"apply": True, "reviewed_sha256": sha, "now": now - timedelta(days=2)},
+    ):
+        with pytest.raises(pending.PendingImportError, match="invalid_expired_policy_reconciliation"):
+            pending.validate_policy(policy, reconcile_policy_date=policy["policy_date"], **kwargs)
+    with pytest.raises(pending.PendingImportError, match="invalid_expired_policy_reconciliation"):
+        pending.validate_policy(policy, reviewed_sha256=sha, apply=True, now=now, reconcile_policy_date="2000-01-01")
+    with pytest.raises(pending.PendingImportError, match="reviewed_policy_digest_required"):
+        pending.validate_policy(policy, apply=True, now=now, reconcile_policy_date=policy["policy_date"])
+    assert policy == original
+
+
+@pytest.mark.parametrize("mode", [[], ["--apply"], ["--once"], ["--watch", "--apply"]])
+def test_expired_cli_requires_explicit_once_apply_before_any_database_call(delivery_fixture, tmp_path, monkeypatch, mode):
+    _, _, _, policy = delivery_fixture
+    for key in ("LLM_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANIME_LLM_KEY_FILE"):
+        monkeypatch.delenv(key, raising=False)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("No database engine may be created")
+    monkeypatch.setattr(pending, "create_async_engine", forbidden)
+    assert pending.main(["--policy", str(tmp_path / "not-read.json"), "--inbox", str(tmp_path),
+        "--reconcile-policy-date", policy["policy_date"], *mode]) == 1
+
+
+def test_expired_cli_propagates_pin_without_rewriting_policy(delivery_fixture, tmp_path, monkeypatch):
+    _, _, _, policy = delivery_fixture
+    policy["policy_date"] = (datetime.now(ZoneInfo("Asia/Seoul")).date() - timedelta(days=1)).isoformat()
+    path = tmp_path / "policy.json"
+    binary = json.dumps(policy).encode()
+    path.write_bytes(binary)
+    for key in ("LLM_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANIME_LLM_KEY_FILE"):
+        monkeypatch.delenv(key, raising=False)
+    calls = []
+    async def run(**kwargs):
+        calls.append(kwargs)
+        return {"created": 0, "unchanged": 0, "publication_enabled": False, "llm_calls": 0}
+    monkeypatch.setattr(pending, "run", run)
+    assert pending.main(["--policy", str(path), "--inbox", str(tmp_path), "--once", "--apply",
+        "--reviewed-policy-sha256", pending.fingerprint(policy), "--reconcile-policy-date", policy["policy_date"]]) == 0
+    assert len(calls) == 1 and calls[0]["reconcile_policy_date"] == policy["policy_date"]
+    assert calls[0]["policy"] == policy and path.read_bytes() == binary
+
+
 def test_duplicate_manifest_and_inbox_filename_are_rejected(delivery_fixture, tmp_path):
     root, raw, envelope, policy = delivery_fixture
     manifest = tmp_path/"manifest.json"

@@ -757,7 +757,7 @@ class JobStorePostgresTests(unittest.TestCase):
                 self.assertEqual((attempt["outcome"], attempt["producer_status"]), (outcome, original))
 
     @contextmanager
-    def substituted_live_child(self, root, *, timeout=False):
+    def substituted_live_child(self, root, *, timeout=False, exit_without_result=False):
         """Keep the real command builder and verifier. Substitute external process I/O."""
         runner = importlib.import_module("menu_worker.job_runner")
         adapter = importlib.import_module("menu_worker.real_generation")
@@ -772,7 +772,7 @@ class JobStorePostgresTests(unittest.TestCase):
             self.assertNotIn("DATABASE_URL", env)
             output = Path(argv[argv.index("--output") + 1])
             self.assertEqual(output, Path(cwd) / "result.json")
-            if not timeout:
+            if not timeout and not exit_without_result:
                 binding = {
                     "source_id": argv[argv.index("--source") + 1],
                     "source_url": argv[argv.index("--url") + 1],
@@ -783,7 +783,8 @@ class JobStorePostgresTests(unittest.TestCase):
                 # any claim about real reviews, generated cards or provider usage.
                 output.write_text(json.dumps({"status": "needs_crawler_update", "expected_work_request": binding,
                                               "qa_report": [{"code": "UNIT_CHILD_NO_PROVIDER"}]}), encoding="utf-8")
-            return Mock(pid=101, returncode=0, poll=Mock(return_value=None if timeout else 0))
+            code = 1 if exit_without_result else 0
+            return Mock(pid=101, stdout=None, returncode=code, poll=Mock(return_value=None if timeout else code))
 
         with (patch.object(runner, "preflight_real"), patch.object(runner, "preflight_snapshot"),
               patch.object(adapter, "KEY_FILE", test_key),
@@ -791,6 +792,44 @@ class JobStorePostgresTests(unittest.TestCase):
               patch.object(adapter, "_stop_group"),
               patch.object(adapter, "TIMEOUT_SECONDS", 0 if timeout else adapter.TIMEOUT_SECONDS)):
             yield spawn
+
+    def test_live_process_exit_preserves_failed_attempt_and_never_regenerates(self):
+        runner = importlib.import_module("menu_worker.job_runner")
+        kind = "anime_generate"
+        request = self.anime_candidate()
+        job_id = self.store.submit(request, job_kind=kind)["job_id"]
+        with TemporaryDirectory(prefix="manual-process-exit-") as temporary:
+            root = Path(temporary).resolve()
+            with self.substituted_live_child(root, exit_without_result=True) as spawn:
+                runner.run_job(self.store, root, job_id, task_id="unit-nonzero", expected_kind=kind,
+                               retry_failures=True)
+                failed = self.store.get(job_id)
+                self.assertEqual((failed["execution_status"], failed["error_code"]),
+                                 ("needs_attention", "agent_process_failed"))
+                self.assertEqual(failed["attempt_count"], 1)
+                self.assertIsNotNone(failed["generation_started_at"])
+                self.assertIsNone(failed["result_sha256"])
+                self.assertIsNone(failed["artifact_path"])
+                directory = root / "jobs" / job_id / "attempts" / failed["generation_attempt_id"]
+                original = {p.name: p.read_bytes() for p in directory.iterdir() if p.is_file()}
+                self.assertEqual(json.loads(original["exit.json"])["returncode"], 1)
+                self.assertNotIn("result.json", original)
+                self.assertNotIn("manifest.json", original)
+                self.assertFalse(self.store.retry_preflight(job_id, expected_kind=kind))
+                replay = runner.run_job(self.store, root, job_id, task_id="unit-redelivery", expected_kind=kind)
+                self.assertFalse(replay["processed"])
+                with self.assertRaises(self.JobConflict):
+                    self.store.submit({**request, "idempotency_key": self.namespace + "-same-article",
+                        "source_url": request["source_url"] + "/#same"}, job_kind=kind)
+                runner.run_job(self.store, root, job_id, task_id="unit-verify-existing", expected_kind=kind,
+                               recover=True)
+                spawn.assert_called_once()
+            final = self.store.get(job_id)
+            self.assertEqual(final["execution_status"], "needs_attention")
+            self.assertEqual(final["generation_attempt_id"], failed["generation_attempt_id"])
+            self.assertEqual(final["attempts"][0], failed["attempts"][0])
+            self.assertEqual([attempt["mode"] for attempt in final["attempts"]], ["generation", "recovery"])
+            self.assertEqual({p.name: p.read_bytes() for p in directory.iterdir() if p.is_file()}, original)
 
     def test_manual_generation_cli_and_worker_with_substituted_child(self):
         cli = importlib.import_module("menu_worker.jobs")

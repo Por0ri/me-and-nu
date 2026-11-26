@@ -18,7 +18,7 @@ import time
 from urllib.parse import urlsplit
 
 from menu_worker.bounded_generation import StopRun, audit_existing_jobs, database_lock, local_lock, money, read_json, timestamp, write_json
-from menu_worker.bounded_resume import claim_path, digest, inherited_reservations, publish_with_deadline, require, totals, verify_completed_history
+from menu_worker.bounded_resume import claim_path, digest, inherited_reservations, publish_with_deadline, require, totals, unknown_cost_references, verify_completed_history
 from menu_worker.daily_generation import DAILY_COMPLETIONS, DAILY_SUCCESS_TARGET, KST, MAX_DAILY_ATTEMPTS, SAFE_DAY_STOPS, DailyController
 
 
@@ -77,6 +77,8 @@ def validate_policy_history(state):
                 "daily_policy_limits_changed")
         prefix = {**state, "records": state["records"][:index]}
         known, reserved = totals(prefix)
+        unknown = unknown_cost_references(prefix)
+        require(policy.get("prior_unknown_costs", []) == unknown, "daily_unknown_cost_baseline_changed")
         require(policy["prior_records_sha256"] == digest(prefix["records"])
                 and policy["prior_slots"] == sum(r["counts_slot"] for r in prefix["records"])
                 and money(policy["prior_accounted_usd"]) == known + reserved, "daily_policy_baseline_changed")
@@ -127,6 +129,8 @@ def source_checkpoint(path, expected_sha256):
         if row["counts_slot"]:
             require(row.get("request", {}).get("idempotency_key", "").startswith(config["run_id"] + ":"), "source_job_identity_missing")
     validate_policy_history(state)
+    from menu_worker.failure_recovery import validate_recovery_history
+    validate_recovery_history(state)
     if state.get("daily_policies"):
         allowed = (state.get("status") == "complete" and state.get("stop_reason") in DAILY_COMPLETIONS
                    or state.get("status") == "stopped" and state.get("stop_reason") in SAFE_DAY_STOPS)
@@ -165,6 +169,8 @@ def build_plan(*, source, source_sha256, checkpoint, policy_date, delivery_root,
     history = parent.get("daily_policies", [])
     require(not history or policy_date > history[-1]["policy_date"], "daily_limit_cannot_be_reset")
     known, reserved = totals(parent)
+    unknown = unknown_cost_references(parent)
+    require(count_only or not unknown, "unknown_cost_in_budget_mode")
     slots = sum(r["counts_slot"] for r in parent["records"])
     policy = {"schema_version": 1, "policy_date": policy_date, "daily_budget_usd": daily_budget_usd,
         "deadline": deadline, "max_attempts": MAX_DAILY_ATTEMPTS, "success_target": DAILY_SUCCESS_TARGET,
@@ -172,6 +178,8 @@ def build_plan(*, source, source_sha256, checkpoint, policy_date, delivery_root,
         "content_type": parent["config"]["content_type"], "start_record_index": len(parent["records"]),
         "prior_records_sha256": digest(parent["records"]), "prior_slots": slots,
         "prior_accounted_usd": str(known + reserved), "delivery_root": str(delivery_root)}
+    if unknown:
+        policy["prior_unknown_costs"] = unknown
     if routes is not None:
         policy.update(schema_version=2, routes=_validated_routes(routes), allocation="balanced_work_type_source_v1")
         # The old source/type stays in config only as the immutable ledger origin.
@@ -198,8 +206,13 @@ def validate_child(state, parent, plan):
     require(state["records"][:len(parent["records"])] == parent["records"]
             and state["seen"][:len(parent["seen"])] == parent["seen"], "inherited_history_changed")
     require(state.get("accounting_resume_audit", []) == parent.get("accounting_resume_audit", []), "inherited_accounting_audit_changed")
+    for key in ("failure_recovery_audit", "failure_recovery_resume_audit"):
+        inherited = parent.get(key, [])
+        require(state.get(key, [])[:len(inherited)] == inherited, "inherited_failure_recovery_audit_changed")
     require(state.get("daily_policies") == [*parent.get("daily_policies", []), plan["daily_policy"]], "daily_policy_history_changed")
     validate_policy_history(state)
+    from menu_worker.failure_recovery import validate_recovery_history
+    validate_recovery_history(state)
     require(state.get("status") in {"running", "complete", "stopped"}, "invalid_daily_status")
 
 
@@ -243,6 +256,59 @@ def activate_plan(plan, *, store, read_result, now=None):
     if not claim.exists():
         write_json(claim, receipt)
     return state, reservations
+
+
+def current_failure_references(state):
+    start = state["daily_policy"]["start_record_index"]
+    return [row["failure_recovery_receipt"] for row in state["records"][start:]
+            if row.get("accounting_method") == "unknown"]
+
+
+def validate_failure_resume(state, reviewed_sha256, *, store, now=None):
+    """Read-only gate for a separate, explicit resume; reconciliation grants none."""
+    from menu_worker.failure_recovery import validate_recovery_history
+    receipts = validate_recovery_history(state, store=store,
+                                         artifact_root=Path(state["config"]["artifact_root"]))
+    validate_policy_history(state)
+    refs = current_failure_references(state)
+    require(refs and refs[-1]["receipt_sha256"] == reviewed_sha256,
+            "explicit_reviewed_failure_receipt_required")
+    receipt = next((item for item in receipts if digest(item) == reviewed_sha256), None)
+    require(receipt is not None, "failure_resume_receipt_missing")
+    paused = state.get("status") == "stopped" and state.get("stop_reason") == "failure_reconciled_paused"
+    audits = state.get("failure_recovery_resume_audit", [])
+    already_authorized = (bool(audits) and audits[-1].get("receipt_sha256") == reviewed_sha256
+                          and audits[-1].get("policy_date") == state["daily_policy"]["policy_date"])
+    terminal = (state.get("status") == "complete" and state.get("stop_reason") in DAILY_COMPLETIONS
+                or state.get("status") == "stopped" and state.get("stop_reason") in SAFE_DAY_STOPS)
+    require(paused or already_authorized and (state.get("status") == "running" or terminal),
+            "failure_resume_not_allowed")
+    if paused:
+        require(all(row.get("state") in {"complete", "duplicate"} for row in state["records"]),
+                "failure_resume_unfinished_record")
+    return receipt
+
+
+def resume_failure_recovery(state, reviewed_sha256, *, store, now=None):
+    """Caller holds file/DB locks; no job, queue, artifact or service writes."""
+    now = time.time() if now is None else now
+    validate_failure_resume(state, reviewed_sha256, store=store, now=now)
+    if state.get("stop_reason") != "failure_reconciled_paused":
+        return state  # Exact explicit retry after the durable transition.
+    start, _ = day_bounds(state["daily_policy"]["policy_date"])
+    require(now >= start, "daily_window_not_open")
+    state.setdefault("failure_recovery_resume_audit", []).append({
+        "receipt_sha256": reviewed_sha256, "policy_date": state["daily_policy"]["policy_date"],
+        "resumed_at": now, "previous_status": state["status"], "previous_stop_reason": state["stop_reason"],
+        "cost_total_complete": False})
+    deadline = timestamp(state["config"]["deadline"])
+    if now >= deadline:
+        state.update(status="stopped", stop_reason="deadline_reached")
+    elif now + state["config"]["job_timeout_seconds"] >= deadline:
+        state.update(status="stopped", stop_reason="insufficient_time_for_new_job")
+    else:
+        state.update(status="running", stop_reason=None)
+    return state
 
 
 def preflight_plan(plan, *, store, read_result, now=None):
@@ -301,8 +367,11 @@ def main(argv=None):
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--preflight", action="store_true", help="Verify historical DB/sealed results under locks without publishing or creating a checkpoint")
     parser.add_argument("--expected-plan-sha256")
+    parser.add_argument("--resume-failure-recovery", metavar="RECEIPT_SHA256",
+                        help="Requires --apply: explicitly resume the latest reconciled failure without regenerating it")
     args = parser.parse_args(argv)
     try:
+        require(not args.resume_failure_recovery or args.apply, "failure_resume_requires_apply")
         route_report = None
         if args.registered_routes or args.daily_budget_usd is None and args.deadline is None:
             from menu_worker.daily_routes import catalog_routes
@@ -337,11 +406,22 @@ def main(argv=None):
                 report["broker"] = verify_empty_generation_broker(app)
                 print(json.dumps(report))
                 return 0
+            state, reservations, _ = _checked_state(plan, store=store, read_result=read_result)
+            refs = current_failure_references(state)
+            if refs:
+                require(bool(args.resume_failure_recovery), "explicit_failure_resume_required")
+            if args.resume_failure_recovery:
+                verify_empty_generation_broker(app)
+                with local_lock(args.checkpoint):
+                    state = resume_failure_recovery(state, args.resume_failure_recovery, store=store)
+                    write_json(args.checkpoint, state)
             _, reservations = activate_plan(plan, store=store, read_result=read_result)
             def guard():
                 check()
                 parent = source_checkpoint(args.source_checkpoint, args.source_sha256)
                 validate_child(controller.state, parent, plan)
+                from menu_worker.failure_recovery import validate_recovery_history
+                validate_recovery_history(controller.state, store=store, artifact_root=root)
                 require(read_json(claim_path(args.source_checkpoint))["plan_sha256"] == digest(plan), "successor_claim_changed")
                 audit_existing_jobs(store, controller.state)
             controller = DailyController(config=plan["config"], checkpoint=args.checkpoint, store=store,

@@ -1,6 +1,6 @@
 """Host supervisor for an explicitly approved, count-limited KST daily schedule.
 
-Without --apply this only reads local policy/state. It never enables a timer.
+The default only reads local policy/state. No mode enables a timer.
 Generation and pending-only import retain their existing application boundaries.
 """
 from __future__ import annotations
@@ -45,6 +45,34 @@ with local_lock(Path(plan['source_checkpoint'])), database_lock(store, plan['con
     state, _, _ = _checked_state(plan, store=store, read_result=lambda job: read_sealed_staging_result(root, job))
     check()
     print(json.dumps({'verified': True, 'generation_enabled': False, 'status': state['status']}))
+"""
+RECOVERY_CHECK = """import json, sys, time
+from datetime import datetime
+from pathlib import Path
+from menu_worker.bounded_generation import local_lock, database_lock
+from menu_worker.bounded_resume import digest, require
+from menu_worker.daily_resume import _checked_state, verify_empty_generation_broker, validate_failure_resume
+from menu_worker.failure_recovery import validate_recovery_history
+from menu_worker.job_store import JobStore
+from menu_worker.jobs import job_route
+from menu_worker.real_generation import read_sealed_staging_result
+plan = json.loads(sys.argv[1])
+require(digest(plan) == sys.argv[2], 'reviewed_resume_digest_changed')
+reference = {'receipt_path': sys.argv[3], 'receipt_sha256': sys.argv[4]}
+store = JobStore()
+root = Path(plan['config']['artifact_root'])
+with local_lock(Path(plan['source_checkpoint'])), database_lock(store, plan['config']['run_id']) as check:
+    state, _, _ = _checked_state(plan, store=store, read_result=lambda job: read_sealed_staging_result(root, job))
+    validate_recovery_history(state, store=store, artifact_root=root)
+    require(state.get('failure_recovery_audit', [])[-1:] == [reference], 'reviewed_failure_recovery_changed')
+    require(any(row.get('failure_recovery_receipt') == reference for row in state['records']), 'recovery_record_missing')
+    if sys.argv[5] == 'resume':
+        validate_failure_resume(state, sys.argv[4], store=store)
+    verify_empty_generation_broker(job_route('anime_generate')[0])
+    check()
+    window_open = time.time() + plan['config']['job_timeout_seconds'] < datetime.fromisoformat(plan['config']['deadline']).timestamp()
+    print(json.dumps({'verified': True, 'generation_enabled': False, 'receipt_sha256': sys.argv[4],
+                      'status': state['status'], 'generation_window_open': window_open}))
 """
 
 
@@ -255,8 +283,16 @@ class Supervisor:
                     "schedule_lineage_changed")
             require(entry.get("checkpoint") == str(PurePosixPath(source).parent / ("daily-" + day + ".json"))
                     and entry.get("directory") == "scheduled/" + day, "schedule_day_paths_changed")
-            require(entry.get("phase") in {"preparing", "prepared", "generating", "importing", "complete", "blocked"},
+            require(entry.get("phase") in {"preparing", "prepared", "generating", "importing", "complete", "blocked", "reconciled_paused"},
                     "invalid_schedule_phase")
+            recoveries = entry.get("failure_recoveries", [])
+            require(isinstance(recoveries, list), "invalid_schedule_recovery_history")
+            for recovery in recoveries:
+                require(isinstance(recovery, dict)
+                        and re.fullmatch(r"[0-9a-f]{64}", recovery.get("receipt_sha256", "")),
+                        "invalid_schedule_recovery_history")
+                relative(recovery.get("receipt", ""))
+            require(entry["phase"] != "reconciled_paused" or recoveries, "missing_schedule_recovery_history")
             require(number == len(journal["days"]) - 1 or entry["phase"] == "complete", "unfinished_schedule_ancestor")
             if entry["phase"] == "complete":
                 require(file_sha(self.host(entry["checkpoint"])) == entry.get("checkpoint_sha256"),
@@ -380,6 +416,55 @@ class Supervisor:
                 self.env_bytes(entry, entry["plan_sha256"], entry["import_policy_sha256"]), "saved_runtime_environment_changed")
         return plan
 
+    def recovery_reference(self, receipt, reviewed_sha256):
+        require(isinstance(reviewed_sha256, str) and re.fullmatch(r"[0-9a-f]{64}", reviewed_sha256),
+                "reviewed_recovery_digest_required")
+        path = checked_path(receipt)
+        require(path.is_relative_to(self.root), "recovery_receipt_outside_state")
+        name = path.relative_to(self.root).as_posix()
+        relative(name)
+        require(digest(read_json(path)) == reviewed_sha256, "reviewed_recovery_digest_changed")
+        return {"receipt": name, "receipt_sha256": reviewed_sha256}
+
+    def audit_recovery(self, entry, reference, *, resume=False):
+        plan = self.artifacts(entry)
+        # This is an application audit, with the same file/DB locks as the
+        # controller. It reads evidence and broker state, never publishes work.
+        require(digest(read_json(self.host(reference["receipt"]))) == reference["receipt_sha256"],
+                "reviewed_recovery_digest_changed")
+        report = self.json_output(self.command("recovery-audit", entry,
+            ["run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "daily-controller", "-c", RECOVERY_CHECK,
+             json.dumps(plan, separators=(",", ":")), entry["plan_sha256"],
+             self.container(reference["receipt"]), reference["receipt_sha256"], "resume" if resume else "reconcile"], timeout=180),
+             "failure_recovery_audit_failed")
+        require(report.get("verified") is True and report.get("generation_enabled") is False
+                and report.get("receipt_sha256") == reference["receipt_sha256"]
+                and type(report.get("generation_window_open")) is bool, "invalid_failure_recovery_audit")
+        return report
+
+    def reconcile(self, journal, entry, reference):
+        require(entry["phase"] in {"blocked", "reconciled_paused"}, "recovery_requires_blocked_day")
+        child = read_json(self.host(entry["checkpoint"]))
+        require(child.get("status") == "stopped" and child.get("stop_reason") == "failure_reconciled_paused",
+                "checkpoint_requires_paused_recovery")
+        recoveries = entry.get("failure_recoveries", [])
+        if entry["phase"] == "reconciled_paused":
+            require(all(recoveries[-1].get(key) == value for key, value in reference.items()),
+                    "scheduled_recovery_changed")
+        else:
+            require(not any(row.get("receipt_sha256") == reference["receipt_sha256"] for row in recoveries),
+                    "failure_recovery_already_recorded")
+        self.audit_recovery(entry, reference)
+        if entry["phase"] != "reconciled_paused":
+            entry.setdefault("failure_recoveries", []).append({**reference, "reconciled_at": self.now().isoformat(),
+                "blocked_reason": entry.get("blocked_reason")})
+            entry["phase"] = "reconciled_paused"
+            self.save(journal)
+        return {"mode": "reconcile", "status": "reconciled_paused", "policy_date": entry["date"],
+                "receipt_sha256": reference["receipt_sha256"], "host_state_writes": True,
+                "job_checkpoint_writes": 0, "queue_writes": 0, "service_db_writes": 0,
+                "generation_enabled": False, "llm_calls": 0, "publication_enabled": False}
+
     def terminal_checkpoint(self, entry, plan):
         child = read_json(self.host(entry["checkpoint"]))
         parent = read_json(self.host(entry["source"]))
@@ -390,6 +475,9 @@ class Supervisor:
                 and child.get("seen", [])[:len(parent["seen"])] == parent["seen"]
                 and child.get("accounting_resume_audit", []) == parent.get("accounting_resume_audit", []),
                 "day_history_changed")
+        for key in ("failure_recovery_audit", "failure_recovery_resume_audit"):
+            inherited = parent.get(key, [])
+            require(child.get(key, [])[:len(inherited)] == inherited, "day_recovery_history_changed")
         require(all(row.get("state") in {"complete", "duplicate"} for row in child["records"]), "day_has_unfinished_work")
         require(child.get("status") == "complete" and child.get("stop_reason") in COMPLETIONS
                 or child.get("status") == "stopped" and child.get("stop_reason") in SAFE_STOPS,
@@ -405,11 +493,26 @@ class Supervisor:
                     "day_completion_count_mismatch")
         return child, attempts, len(successes)
 
-    def execute(self, journal, entry):
+    def execute(self, journal, entry, *, recovery=None):
         plan = self.artifacts(entry)
         child_path = self.host(entry["checkpoint"])
-        if entry["phase"] in {"prepared", "generating"}:
-            if not child_path.exists():
+        recovery_window_open = True
+        if recovery is not None:
+            require(entry["phase"] in {"reconciled_paused", "importing"}, "recovery_requires_paused_schedule")
+            report = self.audit_recovery(entry, recovery, resume=True)
+            recovery_window_open = report["generation_window_open"]
+            child = read_json(child_path)
+            if child.get("status") == "complete" or child.get("status") == "stopped" and child.get("stop_reason") in SAFE_STOPS:
+                self.terminal_checkpoint(entry, plan)
+                entry["phase"] = "importing"
+                self.save(journal)
+            else:
+                require(child.get("status") == "running" or child.get("status") == "stopped"
+                        and child.get("stop_reason") == "failure_reconciled_paused", "day_requires_reconciliation")
+        if entry["phase"] in {"prepared", "generating", "reconciled_paused"}:
+            if recovery is not None:
+                pass  # Full checkpoint/DB/broker audit above precedes Worker startup.
+            elif not child_path.exists():
                 report = self.json_output(self.command("preflight", entry,
                     ["run", "--rm", "--no-deps", "-T", "daily-controller", *self.daily_args(entry),
                      "--expected-plan-sha256", entry["plan_sha256"], "--preflight"]), "day_preflight_failed")
@@ -429,20 +532,27 @@ class Supervisor:
                     entry["phase"] = "importing"
                     self.save(journal)
             if entry["phase"] != "importing":
-                entry["phase"] = "generating"
+                # Recovered runs stay paused in the host journal until terminal.
+                # A process crash therefore needs the same explicit resume again.
+                if recovery is None:
+                    entry["phase"] = "generating"
+                else:
+                    entry["failure_recoveries"][-1].setdefault("resume_requested_at", self.now().isoformat())
                 self.save(journal)
-                require(self.command("worker-start", entry, ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "generation-worker"], timeout=180).returncode == 0,
-                        "generation_worker_start_failed")
+                if recovery_window_open:
+                    require(self.command("worker-start", entry, ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "generation-worker"], timeout=180).returncode == 0,
+                            "generation_worker_start_failed")
                 result = self.command("generate", entry,
                     ["run", "--rm", "--no-deps", "-T", "daily-controller", *self.daily_args(entry),
-                     "--expected-plan-sha256", entry["plan_sha256"], "--apply"])
+                     "--expected-plan-sha256", entry["plan_sha256"], "--apply",
+                     *(["--resume-failure-recovery", recovery["receipt_sha256"]] if recovery else [])])
                 require(result.returncode in {0, 2}, "day_generation_command_failed")
             self.terminal_checkpoint(entry, plan)
             entry["phase"] = "importing"
             self.save(journal)
         require(entry["phase"] == "importing", "invalid_execution_phase")
         _, attempts, successes = self.terminal_checkpoint(entry, plan)
-        require(self.today() == entry["date"], "previous_day_requires_reconciliation")
+        require(self.today() == entry["date"] or recovery is not None, "previous_day_requires_reconciliation")
         self.json_output(self.command("broker-empty", entry,
             ["run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "daily-controller", "-c", BROKER_CHECK], timeout=60),
             "generation_broker_not_empty")
@@ -450,7 +560,8 @@ class Supervisor:
                 "generation_worker_stop_failed")
         report = self.json_output(self.command("import", entry,
             ["run", "--rm", "--no-deps", "-T", "pending-importer", "--policy", "/runtime/import-policy.json",
-             "--reviewed-policy-sha256", entry["import_policy_sha256"], "--inbox", "/runtime/inbox", "--once", "--apply"]),
+             "--reviewed-policy-sha256", entry["import_policy_sha256"], "--inbox", "/runtime/inbox", "--once", "--apply",
+             *(["--reconcile-policy-date", entry["date"]] if recovery is not None and entry["date"] < self.today() else [])]),
             "pending_import_failed")
         require(report.get("publication_enabled") is False and report.get("operator_approvals_created") == 0
                 and report.get("llm_calls") == 0 and report.get("created", 0) + report.get("unchanged", 0) == successes,
@@ -459,9 +570,14 @@ class Supervisor:
                      successes=successes, imported=successes, completed_at=self.now().isoformat())
         self.save(journal)
 
-    def run(self, *, apply=False, preflight=False):
-        require(not (apply and preflight), "choose_preflight_or_apply")
-        if not apply and not preflight:
+    def run(self, *, apply=False, preflight=False, reconcile=False, resume_reconciled=False,
+            recovery_receipt=None, reviewed_recovery_sha256=None):
+        require(sum(map(bool, (apply, preflight, reconcile, resume_reconciled))) <= 1, "choose_one_schedule_mode")
+        recovery_mode = reconcile or resume_reconciled
+        require(recovery_mode or recovery_receipt is None and reviewed_recovery_sha256 is None,
+                "recovery_arguments_require_explicit_mode")
+        reference = self.recovery_reference(recovery_receipt, reviewed_recovery_sha256) if recovery_mode else None
+        if not any((apply, preflight, recovery_mode)):
             return self.status()
         # A competing timer must not temporarily restrict producer traversal
         # before it discovers that another supervisor holds the lock.
@@ -473,9 +589,41 @@ class Supervisor:
             journal = self.load_journal()
             today = self.today()
             last = journal["days"][-1] if journal["days"] else None
+            if recovery_mode:
+                require(last is not None, "recovery_requires_existing_day")
+                require(last["date"] <= today, "schedule_clock_moved_backwards")
+                if reconcile:
+                    return self.reconcile(journal, last, reference)
+                history = last.get("failure_recoveries", [])
+                require(history and all(history[-1].get(key) == value for key, value in reference.items()),
+                        "scheduled_recovery_changed")
+                if last["phase"] == "complete":
+                    return {"mode": "resume-reconciled", "status": "already_complete", "policy_date": last["date"],
+                            "attempts": last["attempts"], "successes": last["successes"], "generation_enabled": False,
+                            "publication_enabled": False}
+                require(last["phase"] in {"reconciled_paused", "importing"}, "recovery_requires_paused_schedule")
+                try:
+                    self.execute(journal, last, recovery=reference)
+                except ScheduleError as error:
+                    # A new failed job needs its own receipt. Keep every earlier
+                    # recovery decision and never convert it into timer approval.
+                    try:
+                        child = read_json(self.host(last["checkpoint"]))
+                        safe = (child.get("status") in {"running", "complete"} or child.get("status") == "stopped"
+                                and child.get("stop_reason") in SAFE_STOPS | {"failure_reconciled_paused"})
+                    except (ScheduleError, OSError):
+                        safe = False
+                    last.update(phase="reconciled_paused" if safe else "blocked", blocked_reason=str(error))
+                    self.save(journal)
+                    raise
+                return {"mode": "resume-reconciled", "status": "complete", "policy_date": last["date"],
+                        "attempts": last["attempts"], "successes": last["successes"], "publication_enabled": False}
             if last:
                 require(last["date"] <= today, "schedule_clock_moved_backwards")
                 require(last["phase"] != "blocked", "schedule_requires_reconciliation")
+                require(last["phase"] != "reconciled_paused"
+                        and (not last.get("failure_recoveries") or last["phase"] == "complete"),
+                        "explicit_failure_resume_required")
                 if last["date"] == today and last["phase"] == "complete":
                     return {"mode": "preflight" if preflight else "apply", "status": "already_complete", "policy_date": today,
                             "attempts": last["attempts"], "successes": last["successes"], "publication_enabled": False,
@@ -527,11 +675,17 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--preflight", action="store_true", help="Prepare immutable host day files and audit jobs/broker; never starts generation or imports")
+    mode.add_argument("--reconcile", action="store_true", help="Audit an applied failure receipt and pause the host journal; no generation or import")
+    mode.add_argument("--resume-reconciled", action="store_true", help="Explicit continuation of a pinned recovery, or pending-only finalization after its day ends")
+    parser.add_argument("--recovery-receipt", type=Path)
+    parser.add_argument("--reviewed-recovery-sha256")
     args = parser.parse_args(argv)
     try:
         supervisor = Supervisor(policy=read_json(args.policy), reviewed_sha256=args.reviewed_policy_sha256,
             state_root=args.state_root, runtime_env=args.runtime_env, release_dir=args.release_dir)
-        print(json.dumps(supervisor.run(apply=args.apply, preflight=args.preflight), ensure_ascii=False))
+        print(json.dumps(supervisor.run(apply=args.apply, preflight=args.preflight, reconcile=args.reconcile,
+            resume_reconciled=args.resume_reconciled, recovery_receipt=args.recovery_receipt,
+            reviewed_recovery_sha256=args.reviewed_recovery_sha256), ensure_ascii=False))
         return 0
     except Exception as error:
         print(json.dumps({"error": str(error) if isinstance(error, ScheduleError) else "schedule_failed_inspect_private_logs",
