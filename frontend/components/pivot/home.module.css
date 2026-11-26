@@ -40,6 +40,11 @@
 .searchInput > img { flex: none; }
 .search input { display: block; width: 100%; min-width: 0; height: 34px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--home-ink); font-size: 14px; line-height: 20px; }
 .search input::placeholder { color: var(--home-muted); opacity: 1; }
+/* 휴대폰: 아이폰은 16px 보다 작은 입력칸을 누르면 화면을 확대해서, 쳐 넣는 글씨만 16px (안내 글씨는 시안 14px 그대로, 토론방 검색도 같은 부품) */
+@media (hover: none) and (pointer: coarse) {
+  .search input { font-size: 16px; }
+  .search input::placeholder { font-size: 14px; }
+}
 /* Search result notice: looks like the search box, floats below it with a small inset,
    stays 4 s, then fades for 2 s without moving the feed. */
 .searchNotice { position: absolute; z-index: 7; top: calc(100% + 18px); left: 12px; right: 12px; margin: 0; padding: 10px 12px; border: 1px solid var(--home-line); border-radius: 8px; background: var(--home-surface); box-shadow: 0 1px 5px rgb(206 191 250 / 50%); color: var(--home-ink); font-size: 13px; line-height: 20px; text-align: center; white-space: pre-line; pointer-events: none; animation: searchNoticeFade 6s ease forwards; }

@@ -352,6 +352,13 @@
 .screen .choiceInput input { width: 100%; height: 32px; padding: 0 36px 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; outline: none; background: #fff; color: var(--debate-ink); font-size: 14px; }
 /* 다른 칸처럼 입력 중에는 테두리가 보라 (바로 위 규칙과 우선순위가 같아서 그 뒤에 둔다) */
 .screen .choiceInput input:focus { border-color: var(--debate-primary); }
+/* 휴대폰: 아이폰은 16px 보다 작은 입력칸을 누르면 화면을 확대해서, 쳐 넣는 글씨만 16px (안내 문구 크기는 그대로).
+   위 입력칸 규칙들보다 뒤에 둬야 이긴다 */
+@media (hover: none) and (pointer: coarse) {
+  .screen :is(.composer input, .input, .choiceInput input) { font-size: 16px; line-height: 20px; }
+  .screen .textarea { font-size: 16px; line-height: 22px; }
+  .composer input::placeholder { font-size: 14px; }
+}
 .screen .choiceInput button { position: absolute; top: 50%; right: 4px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #52525b; transform: translateY(-50%); }
 /* 아래 버튼: 임시 저장 · 주제 올리기 (켜지고 꺼지는 색은 바로 아래 2026-11-25 시안 규칙) */
 .createButtons { display: grid; grid-template-columns: 102px 1fr; gap: 8px; }
