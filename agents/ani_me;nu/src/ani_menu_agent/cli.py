@@ -3,9 +3,11 @@
 import hashlib
 import importlib.metadata
 import json
+import os
 import re
 import signal
 import sys
+import tempfile
 import threading
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
@@ -771,6 +773,56 @@ def _add_usage_summary(result: dict) -> dict:
         ) > POLICY.max_content_llm_cost_usd,
     }
     return result
+
+
+def _write_generation_failure(
+    output: Path,
+    *,
+    request_id: str,
+    request_evidence: dict,
+    usage_records: list,
+    error: Exception,
+) -> None:
+    """Retain known receipts without claiming the failed graph's usage is complete."""
+    result = _add_usage_summary({
+        **request_evidence,
+        "status": "generation_failed",
+        "request_id": request_id,
+        "failure": {
+            "stage": "content_generation",
+            "error_type": type(error).__name__,
+        },
+        "usage_records": [record for record in usage_records if isinstance(record, dict)],
+    })
+    summary = result["usage_summary"]
+    summary.update(complete=False, scope="known_usage_only")
+    result["cost_accounting"] = {
+        "complete": False,
+        "reason": "downstream_usage_unknown",
+        "known_estimated_cost_usd": summary["estimated_cost_usd"],
+        "estimated_total_cost_usd": None,
+    }
+    # Publish only a complete file, and never replace evidence already present for
+    # this attempt. A same-directory hard link gives atomic, exclusive creation.
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".generation-failure-", dir=output.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, output)
+        except FileExistsError:
+            pass
+    finally:
+        os.unlink(temporary)
+        if hasattr(os, "O_DIRECTORY"):
+            directory = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
 
 
 def _print_run_metrics(result: dict) -> None:
@@ -2510,6 +2562,7 @@ def crawl_generate(
         return
 
     console.print("5/5 카드 생성 및 독립 검수 중…")
+    result = None
     try:
         _stored_package, result = _run_generation_from_db(
             package.request_id,
@@ -2518,19 +2571,47 @@ def crawl_generate(
             initial_usage_records=[extraction_usage, *work_match_usage_records],
             repository=repository,
         )
-    except (ValueError, RuntimeError) as exc:
-        raise typer.BadParameter(f"DB 기반 콘텐츠 생성 단계에서 중단: {exc}") from exc
+        stage_timings.update(result.get("stage_timings_seconds", {}))
+        stage_timings["total"] = round(perf_counter() - run_started, 3)
+        result["stage_timings_seconds"] = stage_timings
+        if work_match_audit:
+            result["work_match_audit"] = work_match_audit
+        _add_usage_summary(result)
+        result.update(request_evidence)
 
-    stage_timings.update(result.get("stage_timings_seconds", {}))
-    stage_timings["total"] = round(perf_counter() - run_started, 3)
-    result["stage_timings_seconds"] = stage_timings
-    if work_match_audit:
-        result["work_match_audit"] = work_match_audit
-    _add_usage_summary(result)
-    result.update(request_evidence)
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8"
+        )
+    except Exception as exc:
+        known_usage = [extraction_usage, *work_match_usage_records]
+        returned_usage = result.get("usage_records") if isinstance(result, dict) else None
+        if isinstance(returned_usage, list):
+            unmatched_initial = list(known_usage)
+            for record in returned_usage:
+                if not isinstance(record, dict):
+                    continue
+                try:
+                    json.dumps(_add_usage_summary({"usage_records": [record]}), allow_nan=False)
+                except (TypeError, ValueError, OverflowError):
+                    continue  # One bad receipt must not discard other known costs.
+                if record in unmatched_initial:
+                    unmatched_initial.remove(record)
+                else:
+                    known_usage.append(record)
+        try:
+            _write_generation_failure(
+                output,
+                request_id=package.request_id,
+                request_evidence=request_evidence,
+                usage_records=known_usage,
+                error=exc,
+            )
+        except Exception:
+            # Preserve the original provider/pipeline error even if the attempt
+            # directory cannot accept its partial accounting receipt.
+            console.print("생성 실패 사용량 기록을 저장하지 못했습니다.")
+        raise
     exported = _export_rendered_cards(
         result.get("package", {}), output.parent / "cards" / package.request_id
     )

@@ -1,11 +1,13 @@
 """Count-only daily execution, with synthetic costs/results and no network."""
 from decimal import Decimal
+import hashlib
 import unittest
 from unittest.mock import patch
 
 import test_daily_generation as legacy
 import test_daily_allocation as allocation
 from menu_worker.bounded_generation import StopRun, read_json
+from menu_worker.daily_resume import source_checkpoint
 
 
 class DailyCountRuntimeTests(unittest.TestCase):
@@ -88,6 +90,56 @@ class DailyCountRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(StopRun, "invalid_daily_count_limits"):
             controller.run()
         self.assertEqual(self.f.published, [])
+
+    def test_failed_producer_preserves_prior_results_costs_and_blocks_republication(self):
+        # The third process may have spent money before losing its result. Keep
+        # its slot and identity, and never turn absent usage into a free skip.
+        store = self.f.f.store
+        store.outcomes = ["ready_for_staging", "held", "ready_for_staging"]
+        original_publish = store.publish_pending
+        completed_costs = ("0.00682887", "0.00593476")
+
+        def publish(job_id, publish, expected_kind):
+            result = original_publish(job_id, publish, expected_kind)
+            index = len(self.f.published) - 1
+            if index < 2:
+                store.results[job_id]["usage_records"] = [{"estimated_cost_usd": completed_costs[index]}]
+            else:
+                store.jobs[job_id].update(execution_status="needs_attention", outcome=None,
+                    producer_status=None, error_code="agent_process_failed",
+                    generation_started_at="2026-11-24T01:00:00+00:00")
+                store.results.pop(job_id)
+            return result
+
+        store.publish_pending = publish
+        controller = self.f.controller()
+        with self.assertRaisesRegex(StopRun, "job_needs_attention"):
+            controller.run()
+        snapshot = self.f.f.child.read_bytes()
+        rows = self.f.records()
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([r.get("outcome") for r in rows], ["ready_for_staging", "held", None])
+        self.assertEqual([r["estimated_cost_usd"] for r in rows[:2]], list(completed_costs))
+        self.assertNotIn("estimated_cost_usd", rows[2])
+        self.assertNotIn("reserved_cost_usd", rows[2])
+        self.assertTrue(rows[2]["counts_slot"])
+        self.assertIn(rows[2]["canonical_url"], controller.state["seen"])
+        self.assertEqual(len(list(self.f.f.inbox.iterdir())), 1)
+        self.assertEqual(self.f.f.source.read_bytes(), self.f.f.original)
+        parent = read_json(self.f.f.source)
+        self.assertEqual(controller.state["records"][:4], parent["records"])
+        self.assertEqual(controller.state["accounting_resume_audit"], parent["accounting_resume_audit"])
+
+        restarted = self.f.controller()
+        report = restarted.run()
+        self.assertEqual(report["status"], "stopped")
+        self.assertEqual((report["daily_attempts"], report["daily_successes"]), (3, 1))
+        self.assertIsNone(report["daily_spent_usd"])
+        self.assertEqual(Decimal(report["daily_known_and_reserved_subtotal_usd"]), Decimal("0.01276363"))
+        self.assertEqual(len(self.f.published), 3)
+        self.assertEqual(self.f.f.child.read_bytes(), snapshot)
+        with self.assertRaisesRegex(StopRun, "source_has_unfinished_record"):
+            source_checkpoint(self.f.f.child, hashlib.sha256(snapshot).hexdigest())
 
 
 if __name__ == "__main__":
