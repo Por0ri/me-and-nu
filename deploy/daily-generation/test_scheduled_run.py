@@ -132,7 +132,7 @@ class ScheduleTests(unittest.TestCase):
                 "publication_enabled": False, "operator_approvals_created": 0, "llm_calls": 0}))
         return scheduler.CommandResult(0)
 
-    def reconciled_failure_fixture(self):
+    def reconciled_failure_fixture(self, *, held=False):
         """Model core recovery only; the supervisor must not change this evidence."""
         self.attempts, self.successes = 3, 2
         self.generation_stop = "job_requires_attention"
@@ -143,8 +143,13 @@ class ScheduleTests(unittest.TestCase):
         failed = child["records"][-1]
         failed.update(execution_status="needs_attention", outcome=None, estimated_cost_usd=None,
                       accounting_method="unknown", cost_unknown=True)
+        if held:
+            failed.update(execution_status="succeeded", outcome="held", producer_status="expiry_unresolved_held",
+                          result_sha256="b" * 64, generation_attempt_id="retained-held-attempt")
         receipt = {"purpose": "synthetic_failure_recovery", "unknown_total": True,
                    "checkpoint": "/runtime/state/" + self.entry()["checkpoint"], "original_record": copy.deepcopy(failed)}
+        if held:
+            receipt["operation"] = "reconcile_held_generation_unknown_cost"
         receipt_path = self.state / "failure-receipt.json"
         scheduler.save_json(receipt_path, receipt)
         reference = {"receipt_path": "/runtime/state/failure-receipt.json", "receipt_sha256": scheduler.digest(receipt)}
@@ -153,6 +158,65 @@ class ScheduleTests(unittest.TestCase):
         scheduler.save_json(path, child)
         self.generation_stop = None
         return {"recovery_receipt": receipt_path, "reviewed_recovery_sha256": scheduler.digest(receipt)}, child
+
+    def test_held_reconciliation_does_not_start_worker_or_import_and_requires_explicit_resume(self):
+        recovery, original = self.reconciled_failure_fixture(held=True)
+        before = len(self.calls)
+        report = self.supervisor().run(reconcile=True, **recovery)
+        self.assertEqual(report["status"], "reconciled_paused")
+        self.assertEqual([stage for stage, _ in self.calls[before:]], ["recovery-audit"])
+        self.assertEqual((report["queue_writes"], report["service_db_writes"], report["llm_calls"]), (0, 0, 0))
+        before = len(self.calls)
+        for mode in ({"apply": True}, {"preflight": True}):
+            with self.assertRaisesRegex(scheduler.ScheduleError, "explicit_failure_resume_required"):
+                self.supervisor().run(**mode)
+        self.assertEqual(len(self.calls), before)
+        self.assertEqual(self.import_calls, 0)
+        self.attempts, self.successes = 21, 20
+        report = self.supervisor().run(resume_reconciled=True, **recovery)
+        self.assertEqual((report["attempts"], report["successes"]), (21, 20))
+        child = scheduler.read_json(self.state / self.entry()["checkpoint"])
+        self.assertEqual(child["records"][:len(original["records"])], original["records"])
+        self.assertEqual((child["records"][3]["execution_status"], child["records"][3]["outcome"]), ("succeeded", "held"))
+        before = len(self.calls)
+        self.assertEqual(self.supervisor().run(resume_reconciled=True, **recovery)["status"], "already_complete")
+        self.assertEqual(len(self.calls), before)
+
+    def test_held_recovery_counts_toward_forty_and_crash_retry_does_not_generate_again(self):
+        recovery, original = self.reconciled_failure_fixture(held=True)
+        self.supervisor().run(reconcile=True, **recovery)
+        self.attempts, self.successes = 40, 2
+        self.crash = "after-generate"
+        with self.assertRaises(SimulatedCrash):
+            self.supervisor().run(resume_reconciled=True, **recovery)
+        before = len(self.calls)
+        with self.assertRaisesRegex(scheduler.ScheduleError, "explicit_failure_resume_required"):
+            self.supervisor().run(apply=True)
+        self.assertEqual(len(self.calls), before)
+        report = self.supervisor().run(resume_reconciled=True, **recovery)
+        self.assertEqual((report["attempts"], report["successes"]), (40, 2))
+        self.assertEqual([stage for stage, _ in self.calls[before:]], ["recovery-audit", "broker-empty", "worker-stop", "import"])
+        child = scheduler.read_json(self.state / self.entry()["checkpoint"])
+        self.assertEqual(child["records"][:len(original["records"])], original["records"])
+
+    def test_held_previous_day_finalizes_without_worker_and_preserves_result_on_rollover(self):
+        recovery, original = self.reconciled_failure_fixture(held=True)
+        self.supervisor().run(reconcile=True, **recovery)
+        self.now += timedelta(days=1)
+        before = len(self.calls)
+        report = self.supervisor().run(resume_reconciled=True, **recovery)
+        self.assertEqual((report["policy_date"], report["attempts"], report["successes"]), ("2026-11-26", 3, 2))
+        self.assertNotIn("worker-start", [stage for stage, _ in self.calls[before:]])
+        imported = next(args for stage, args in self.calls[before:] if stage == "import")
+        self.assertEqual(imported[-2:], ["--reconcile-policy-date", "2026-11-26"])
+        self.assertFalse((self.state / "daily-2026-11-27.json").exists())
+        self.attempts, self.successes = 20, 20
+        self.supervisor().run(apply=True)
+        child = scheduler.read_json(self.state / "daily-2026-11-27.json")
+        self.assertEqual(child["records"][:len(original["records"])], original["records"])
+        self.assertEqual(child["failure_recovery_audit"], original["failure_recovery_audit"])
+        self.assertEqual(child["records"][3]["result_sha256"], "b" * 64)
+        self.assertIsNone(child["records"][3]["estimated_cost_usd"])
 
     def test_failure_reconciliation_is_paused_and_preserves_all_work_and_cost_evidence(self):
         recovery, original = self.reconciled_failure_fixture()

@@ -163,8 +163,8 @@ def verify_completed_history(store, state, read_result):
         job = store.get(record["job_id"])
         require(job is not None and job["execution_status"] == record.get("execution_status"), "completed_job_state_changed")
         if record.get("accounting_method") == "unknown":
-            # The immutable recovery evidence was checked above. The original
-            # job remains needs_attention, and is never read as a sealed success.
+            # Core recovery already checked the unchanged failed job or sealed
+            # held result. Unknown cost never promotes either to a feed result.
             continue
         if job["execution_status"] in {"failed", "cancelled"}:
             require(not job.get("generation_started_at") and not job.get("artifact_path")
