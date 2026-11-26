@@ -14,7 +14,7 @@ from menu_worker.bounded_generation import StopRun, read_json, write_json
 from menu_worker.bounded_resume import digest
 from menu_worker.job_artifacts import artifact_directory
 from menu_worker.job_contract import validate_job_request
-from menu_worker.real_generation import _identity, _request
+from menu_worker.real_generation import _identity, _request, validate_real_artifacts
 
 
 class FailureRecoveryTests(unittest.TestCase):
@@ -242,6 +242,247 @@ class FailureRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(StopRun, "unsafe_recovery_artifact"):
             self.plan()
         self.assertEqual(self.checkpoint.read_bytes(), self.original)
+
+
+class HeldRecoveryTests(unittest.TestCase):
+    """Use the real artifact seal without a producer, network, key or mutable DB."""
+
+    get = FailureRecoveryTests.get
+    plan = FailureRecoveryTests.plan
+    apply = FailureRecoveryTests.apply
+    generation_history_guard = FailureRecoveryTests.generation_history_guard
+
+    def setUp(self):
+        FailureRecoveryTests.setUp(self)
+        self.job.update(execution_status="succeeded", outcome="held", producer_status="expiry_unresolved_held")
+        self.attempt.update(execution_status="succeeded", outcome="held", producer_status="expiry_unresolved_held")
+        self.result = {"status": "expiry_unresolved_held", "expected_work_request": _request(self.job),
+                       "reason": "No unambiguous source-backed schedule was found."}
+        write_json(self.directory / "exit.json", {"returncode": 0, "supervisor_stop": None})
+        self.seal_result()
+        self.before.update(stop_reason="missing_cost_evidence")
+        self.before["records"][0].update(execution_status="succeeded", outcome="held",
+                                          producer_status="expiry_unresolved_held")
+        self.checkpoint_before()
+
+    def seal_result(self):
+        # Fixtures alone create seals; the recovery implementation must read them only.
+        (self.directory / "manifest.json").unlink(missing_ok=True)
+        write_json(self.directory / "result.json", self.result)
+        evidence = validate_real_artifacts(self.artifacts, self.job)
+        self.job.update(evidence)
+        self.attempt.update(evidence)
+
+    def checkpoint_before(self):
+        write_json(self.checkpoint, self.before)
+        self.original = self.checkpoint.read_bytes()
+        self.sha = hashlib.sha256(self.original).hexdigest()
+
+    def test_sealed_held_is_recorded_unknown_without_changing_job_or_artifacts(self):
+        snapshot = copy.deepcopy(self.snapshot)
+        files = recovery._inventory(self.artifacts, self.job)
+        paths = sorted(str(path) for path in self.root.rglob("*"))
+        plan = self.plan()
+        self.assertEqual(plan["operation"], recovery.HELD_OPERATION)
+        self.assertEqual(paths, sorted(str(path) for path in self.root.rglob("*")))
+        receipt = self.apply(plan)
+        state = read_json(self.checkpoint)
+        row = state["records"][0]
+        self.assertEqual((state["status"], state["stop_reason"]), ("stopped", recovery.PAUSED_REASON))
+        self.assertEqual((row["state"], row["execution_status"], row["outcome"]), ("complete", "succeeded", "held"))
+        self.assertEqual(row["producer_status"], "expiry_unresolved_held")
+        self.assertEqual(row["result_sha256"], self.job["result_sha256"])
+        self.assertEqual(row["generation_attempt_id"], self.job["generation_attempt_id"])
+        self.assertIs(row["counts_slot"], True)
+        self.assertEqual(row["accounting_method"], "unknown")
+        self.assertIsNone(row["estimated_cost_usd"])
+        self.assertIsNone(row["measured_cost"])
+        self.assertIsNone(receipt["known_partial_estimated_usd"])
+        self.assertTrue(receipt["unknown_total"])
+        self.assertFalse(receipt["generation_enabled"])
+        self.assertFalse(receipt["resume_authorized"])
+        self.assertNotIn("bundle_path", row)
+        self.assertNotIn("delivery_envelope_path", row)
+        self.assertEqual((state["seen"], state["config"]), (self.before["seen"], self.before["config"]))
+        self.assertEqual(self.snapshot, snapshot)
+        self.assertEqual(recovery._inventory(self.artifacts, self.job), files)
+        self.assertEqual(Path(receipt["checkpoint_backup"]).read_bytes(), self.original)
+        self.assertEqual(read_json(Path(receipt["database_backup"])), snapshot)
+        self.assertEqual(recovery.validate_recovery_history(state, store=self), [receipt])
+        after = self.checkpoint.read_bytes()
+        self.assertEqual(self.apply(plan), receipt)
+        self.assertEqual(self.checkpoint.read_bytes(), after)
+
+    def test_incomplete_partial_usage_keeps_real_cost_and_unknown_total(self):
+        self.result.update(usage_records=[{"estimated_cost_usd": "0.004", "input_tokens": 20},
+                                          {"stage": "ocr", "usage_complete": False}],
+                           usage_summary={"llm_calls": 2, "estimated_cost_usd": "0.004", "input_tokens": 20},
+                           cost_accounting={"complete": False})
+        self.seal_result()
+        self.before["stop_reason"] = "incomplete_cost_evidence"
+        self.checkpoint_before()
+        receipt = self.apply()
+        self.assertEqual(receipt["known_partial_estimated_usd"], "0.004")
+        self.assertTrue(receipt["unknown_total"])
+        self.assertIsNone(read_json(self.checkpoint)["records"][0]["estimated_cost_usd"])
+
+    def test_missing_receipt_does_not_discard_other_known_receipts(self):
+        self.result["usage_records"] = [{"stage": "unknown"}, {"estimated_cost_usd": "0.006"}]
+        self.seal_result()
+        self.assertEqual(self.plan()["known_partial_estimated_usd"], "0.006")
+
+    def test_absent_checkpoint_producer_status_is_rejected(self):
+        del self.before["records"][0]["producer_status"]
+        self.checkpoint_before()
+        with self.assertRaisesRegex(StopRun, "recovery_held_record_not_eligible"):
+            self.plan()
+
+    def test_known_zero_and_positive_cost_cannot_be_reconciled(self):
+        for usage in ({"usage_records": [], "usage_summary": {"llm_calls": 0, "estimated_cost_usd": 0}},
+                      {"usage_records": [{"estimated_cost_usd": "0.005"}], "usage_summary": {"llm_calls": 1}}):
+            with self.subTest(usage=usage):
+                self.result = {"status": "expiry_unresolved_held", "expected_work_request": _request(self.job), **usage}
+                self.seal_result()
+                with self.assertRaisesRegex(StopRun, "recovery_held_cost_not_unknown"):
+                    self.plan()
+                self.assertEqual(self.checkpoint.read_bytes(), self.original)
+
+    def test_incomplete_marker_cannot_hide_invalid_cost_or_summary(self):
+        invalid = [
+            {"usage_records": ["not a receipt"]},
+            {"usage_records": "not a list"},
+            {"usage_summary": []},
+            {"usage_records": [{}, {"estimated_cost_usd": "NaN"}]},
+            {"usage_records": [{}, {"estimated_cost_usd": "Infinity"}]},
+            {"usage_records": [{}, {"estimated_cost_usd": "-0.01"}]},
+            {"usage_records": [{"estimated_cost_usd": "0", "input_tokens": 9}]},
+            {"usage_records": [{"estimated_cost_usd": "0.02"}, {}], "usage_summary": {"estimated_cost_usd": "0.01"}},
+            {"usage_records": [{"estimated_cost_usd": "0.02"}, {}], "usage_summary": {"llm_calls": 1}},
+            {"usage_records": [{"estimated_cost_usd": "0.02"}], "usage_summary": {"llm_calls": True}},
+            {"usage_records": [{"estimated_cost_usd": "0.02", "input_tokens": 2}], "usage_summary": {"input_tokens": 3}},
+            {"usage_records": [{}], "usage_summary": {"input_tokens": -1}},
+            {"usage_records": [{"estimated_cost_usd": "0.02", "usage_complete": "false"}]},
+            {"usage_records": [], "usage_summary": {"llm_calls": 0, "total_tokens": 1}},
+            {"usage_records": [{}], "usage_summary": {"complete": True}},
+        ]
+        for usage in invalid:
+            with self.subTest(usage=usage):
+                self.result = {"status": "expiry_unresolved_held", "expected_work_request": _request(self.job),
+                               "cost_accounting": {"complete": False}, **usage}
+                self.seal_result()
+                with self.assertRaises(StopRun):
+                    self.plan()
+                self.assertEqual(self.checkpoint.read_bytes(), self.original)
+
+    def test_only_selected_expiry_hold_is_supported(self):
+        for status in ("content_type_mismatch_skipped", "duplicate_skipped", "work_match_unresolved_held"):
+            with self.subTest(status=status):
+                original = self.job["producer_status"]
+                self.job["producer_status"] = status
+                with self.assertRaisesRegex(StopRun, "recovery_held_job_not_eligible"):
+                    self.plan()
+                self.job["producer_status"] = original
+        self.job["outcome"] = "ready_for_staging"
+        with self.assertRaisesRegex(StopRun, "recovery_job_not_eligible"):
+            self.plan()
+
+    def test_nonzero_ambiguous_or_supervisor_stopped_exit_is_rejected(self):
+        for value in ({"returncode": 1}, {"returncode": None}, {"returncode": False},
+                      {"returncode": "0"}, {"returncode": 0, "supervisor_stop": "timeout"}):
+            write_json(self.directory / "exit.json", value)
+            with self.assertRaisesRegex(StopRun, "recovery_exit_not_confirmed"):
+                self.plan()
+
+    def test_unsealed_or_modified_output_is_never_sealed_by_recovery(self):
+        manifest = self.directory / "manifest.json"
+        original = manifest.read_bytes()
+        manifest.unlink()
+        with self.assertRaisesRegex(StopRun, "recovery_held_artifact_invalid"):
+            self.plan()
+        self.assertFalse(manifest.exists())
+        manifest.write_bytes(original)
+        write_json(self.directory / "result.json", {**self.result, "reason": "changed"})
+        with self.assertRaisesRegex(StopRun, "recovery_held_artifact_invalid"):
+            self.plan()
+
+    def test_wrong_launch_request_or_attempt_ledger_is_rejected(self):
+        write_json(self.directory / "launch.json", {**_identity(self.job), "input_sha256": "0" * 64})
+        with self.assertRaisesRegex(StopRun, "recovery_held_artifact_invalid"):
+            self.plan()
+        write_json(self.directory / "launch.json", _identity(self.job))
+        self.attempt["result_sha256"] = "0" * 64
+        with self.assertRaisesRegex(StopRun, "recovery_held_attempt_not_eligible"):
+            self.plan()
+
+    def test_held_does_not_expand_failed_recovery_stop_states(self):
+        for reason in ("job_needs_attention", "failed_generation_cost_unknown", "deadline_reached"):
+            self.before["stop_reason"] = reason
+            self.checkpoint_before()
+            with self.assertRaisesRegex(StopRun, "recovery_checkpoint_not_stopped"):
+                self.plan()
+
+    def test_legacy_budget_mode_and_partial_checkpoint_outputs_are_rejected(self):
+        for change in ({"counts_slot": False}, {"bundle_path": "already-exported.json"},
+                       {"delivery_envelope_path": "already-delivered.json"}, {"estimated_cost_usd": "0"},
+                       {"result_sha256": "0" * 64}, {"selected_job_id": self.job["job_id"]}):
+            original = copy.deepcopy(self.before)
+            self.before["records"][0].update(change)
+            self.checkpoint_before()
+            with self.assertRaises(StopRun):
+                self.plan()
+            self.before = original
+        self.before["config"]["total_budget_usd"] = "5"
+        self.checkpoint_before()
+        with self.assertRaisesRegex(StopRun, "recovery_requires_count_policy"):
+            self.plan()
+
+    def test_existing_review_or_staging_selection_is_rejected(self):
+        for table, row in (("content_generation_review", {"job_id": self.job["job_id"]}),
+                           ("content_staging_selection", {"selected_job_id": self.job["job_id"]}),
+                           ("content_staging_selection", {"article_job_id": self.job["job_id"]}),
+                           ("content_staging_selection", {"generation_attempt_id": self.job["generation_attempt_id"]})):
+            with self.subTest(table=table, row=row):
+                self.snapshot[table].append(row)
+                with self.assertRaisesRegex(StopRun, "recovery_held_result_already_reviewed"):
+                    self.plan()
+                self.snapshot[table].clear()
+
+    def test_new_review_after_apply_is_not_silently_ignored(self):
+        self.apply()
+        state = read_json(self.checkpoint)
+        self.snapshot["content_generation_review"].append({"job_id": self.job["job_id"]})
+        with self.assertRaisesRegex(StopRun, "recovery_held_result_already_reviewed"):
+            recovery.validate_recovery_history(state, store=self)
+
+    def test_apply_uses_full_snapshot_cas_and_exact_artifact_inventory(self):
+        plan = self.plan()
+        self.snapshot["menu_worker_schema"].append({"version": 7})
+        with self.assertRaisesRegex(StopRun, "recovery_database_changed"):
+            self.apply(plan)
+        self.snapshot["menu_worker_schema"].clear()
+        (self.directory / "agent.sqlite3").write_bytes(b"changed evidence")
+        with self.assertRaisesRegex(StopRun, "recovery_plan_evidence_changed"):
+            self.apply(plan)
+        self.assertEqual(self.checkpoint.read_bytes(), self.original)
+
+    def test_crash_reuses_same_receipt_without_changing_held_history(self):
+        plan = self.plan()
+        with patch.object(recovery, "write_json", side_effect=OSError("synthetic crash")):
+            with self.assertRaises(OSError):
+                self.apply(plan)
+        self.assertEqual(self.checkpoint.read_bytes(), self.original)
+        receipts = list(self.checkpoint.with_name(self.checkpoint.name + ".failure-recovery").glob("*.receipt.json"))
+        self.assertEqual(len(receipts), 1)
+        original = receipts[0].read_bytes()
+        self.apply(plan)
+        self.assertEqual(receipts[0].read_bytes(), original)
+        self.assertEqual(len(read_json(self.checkpoint)["failure_recovery_audit"]), 1)
+
+    def test_operation_discriminator_cannot_relabel_a_held_plan(self):
+        plan = self.plan()
+        plan["operation"] = recovery.FAILED_OPERATION
+        with self.assertRaisesRegex(StopRun, "recovery_plan_evidence_changed"):
+            self.apply(plan)
 
 
 if __name__ == "__main__":
