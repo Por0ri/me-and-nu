@@ -47,8 +47,17 @@ async def apply(url, f):
         database_url=url.render_as_string(hide_password=False))
 
 
-def test_raw_consumer_duplicate_pending_hidden_then_approved_replay_preserves_every_row(rag_pg):
+def use_expiry_mode(f, mode):
+    if mode != "override":
+        f["native"]["draft"]["valid_until"] = f["policy"]["feed_valid_until"] if mode == "native_deadline" else None
+        reseal(f)
+        f["policy"]["feed_valid_until"] = None
+
+
+@pytest.mark.parametrize("expiry_mode", ["override", "native_deadline", "native_none"])
+def test_raw_consumer_duplicate_pending_hidden_then_approved_replay_preserves_every_row(rag_pg, expiry_mode):
     engine, url, f = rag_pg
+    use_expiry_mode(f, expiry_mode)
     before = snapshot(engine)
 
     async def scenario():
@@ -66,6 +75,10 @@ def test_raw_consumer_duplicate_pending_hidden_then_approved_replay_preserves_ev
             run = db.get(AgentRun, draft.agent_run_id)
             assert (content.status, content.judgment_status, draft.status) == ("pending_review", "needs_review", "checking")
             assert content.published_at is None and not content.ai_judgment_basis.get("preview")
+            assert (content.feed_valid_until is None) is (expiry_mode == "native_none")
+            if expiry_mode == "native_none":
+                assert content.ai_judgment_basis["feed_expiry_policy"] == "no_deadline_v1"
+                assert draft.factcheck_result["feed_expiry_policy"] == "no_deadline_v1"
             assert db.scalar(select(func.count()).select_from(Content).where(
                 Content.content_id == content_id, public_content_condition())) == 0
             assert run.output_payload[pending.RECEIPT]["envelope"] == f["raw"]
@@ -113,8 +126,10 @@ def test_concurrent_same_delivery_imports_one_content(rag_pg):
     _run_async(scenario())
 
 
-def test_expired_day_reconciliation_keeps_original_receipt_pending_visibility_and_replay(rag_pg):
+@pytest.mark.parametrize("expiry_mode", ["override", "native_deadline", "native_none"])
+def test_expired_day_reconciliation_keeps_original_receipt_pending_visibility_and_replay(rag_pg, expiry_mode):
     engine, url, f = rag_pg
+    use_expiry_mode(f, expiry_mode)
     before = snapshot(engine)
     original_policy = deepcopy(f["policy"])
     original_envelope = f["path"].read_bytes()

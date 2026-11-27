@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AgentRun, Content, Draft
 from app.seeds import carousel_contents as carousel
-from app.services.rag_staging import RagStagingError, build_rag_bundle, export_rag_bundle
+from app.services.rag_staging import RAG_TYPES, RagStagingError, build_rag_bundle, export_rag_bundle
 from test_carousel_import import AsyncAdapter, engine  # noqa: F401
 from test_carousel_postgres import _run_async
 
@@ -66,10 +66,14 @@ def native_fixture():
         "usage_records": [], "cost_accounting": {"complete": False, "known_estimated_cost_usd": "0", "unknown_calls": 1}}
 
 
-@pytest.fixture
-def rag_reviewed_bundle(tmp_path):
+@pytest.fixture(params=["override", "native_deadline", "native_none"])
+def rag_reviewed_bundle(tmp_path, request):
     original = native_fixture()
     expiry = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    if request.param == "native_deadline":
+        original["draft"]["valid_until"], expiry = expiry, None
+    elif request.param == "native_none":
+        original["draft"]["valid_until"], expiry = None, None
     path = export_rag_bundle(original, tmp_path / "rag-bundle", feed_valid_until=expiry)
     pending = carousel.load_bundle(path)
     item, = pending.items
@@ -102,7 +106,7 @@ def test_native_ids_links_images_and_unknown_cost_preserved(rag_reviewed_bundle)
 
 @pytest.mark.parametrize("case", ["simulated", "offline_review", "held", "review_missing", "blocker", "review_other_draft",
     "review_usage_missing", "wrong_work", "wrong_chunk_source", "missing_evidence", "missing_claim_chunk",
-    "image_wrong_work", "duplicate_card", "wrong_png_sha", "missing_expiry", "source_expired"])
+    "image_wrong_work", "duplicate_card", "wrong_png_sha", "empty_expiry", "source_expired"])
 def test_reject_incomplete_or_changed_native_results(tmp_path, case):
     result = native_fixture()
     expiry = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
@@ -120,11 +124,59 @@ def test_reject_incomplete_or_changed_native_results(tmp_path, case):
     elif case == "image_wrong_work": result["images"]["image-1"]["menu_work_ids"] = [9]
     elif case == "duplicate_card": result["rendered_cards"][1]["card_id"] = "card-1"
     elif case == "wrong_png_sha": result["rendered_cards"][0]["sha256"] = "b" * 64
-    elif case == "missing_expiry": expiry = None
+    elif case == "empty_expiry": expiry = ""
     elif case == "source_expired": result["draft"]["valid_until"] = datetime.now(timezone.utc).isoformat()
     with pytest.raises((RagStagingError, carousel.CarouselImportError)):
         export_rag_bundle(result, tmp_path / "rejected", feed_valid_until=expiry)
     assert not (tmp_path / "rejected").exists()
+
+
+@pytest.mark.parametrize("kind", sorted(RAG_TYPES))
+def test_null_override_preserves_native_none_without_inventing_expiry(tmp_path, kind):
+    result = native_fixture()
+    result["request"]["content_type"] = result["draft"]["content_type"] = kind
+    result["draft"]["valid_until"] = None
+    before = deepcopy(result)
+    path = export_rag_bundle(result, tmp_path / "no-deadline")
+    package = carousel.load_bundle(path).items[0].raw.package
+    assert "feed_valid_until" in package and package["feed_valid_until"] is None
+    assert "feed_expiry_policy" not in package  # Marker belongs to stored visibility metadata only.
+    assert result == before
+
+
+def test_null_override_preserves_finite_native_deadline_and_conversion_identity(tmp_path):
+    result = native_fixture()
+    expiry = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    result["draft"]["valid_until"] = expiry
+    implicit = build_rag_bundle(result)
+    explicit = build_rag_bundle(result, feed_valid_until=expiry)
+    assert implicit == explicit
+    path = export_rag_bundle(result, tmp_path / "native-deadline")
+    assert carousel.load_bundle(path).items[0].raw.package["feed_valid_until"] == expiry
+    earlier = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    assert build_rag_bundle(result, feed_valid_until=earlier)["items"][0]["package"]["feed_valid_until"] == earlier
+    later = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    with pytest.raises(RagStagingError, match="rag_expiry_extends_source"):
+        build_rag_bundle(result, feed_valid_until=later)
+
+
+@pytest.mark.parametrize("value", ["", "null", "2026-11-27", "2026-11-27T12:00:00", "not-a-date", 0, False])
+@pytest.mark.parametrize("origin", ["override", "native"])
+def test_malformed_expiry_is_not_treated_as_no_deadline(value, origin):
+    result = native_fixture()
+    if origin == "native":
+        result["draft"]["valid_until"] = value
+    with pytest.raises(RagStagingError, match="rag_timestamp_required"):
+        build_rag_bundle(result, feed_valid_until=value if origin == "override" else None)
+
+
+def test_expired_native_deadline_is_not_removed_by_null_override(tmp_path):
+    result = native_fixture()
+    # After creation but before import: the producer timestamp is valid but stale.
+    result["draft"]["valid_until"] = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+    with pytest.raises(carousel.CarouselImportError, match="(?i)expir"):
+        export_rag_bundle(result, tmp_path / "expired")
+    assert not (tmp_path / "expired").exists()
 
 
 def test_bypassing_converter_cannot_change_native_binding(tmp_path):
@@ -171,6 +223,13 @@ def test_pending_duplicate_approval_preserves_history(engine, rag_reviewed_bundl
             assert (first["created"], repeat["unchanged"]) == (1, 1)
             content, draft, run = (db.scalars(select(model)).one() for model in (Content, Draft, AgentRun))
             assert (content.status, content.judgment_status, draft.status) == ("pending_review", "needs_review", "checking")
+            stored_expiry = content.feed_valid_until
+            if stored_expiry is not None and stored_expiry.tzinfo is None:
+                stored_expiry = stored_expiry.replace(tzinfo=timezone.utc)  # SQLite strips UTC tzinfo.
+            assert stored_expiry == pending.items[0].expires_at
+            if pending.items[0].package.feed_valid_until is None:
+                assert content.ai_judgment_basis["feed_expiry_policy"] == "no_deadline_v1"
+                assert draft.factcheck_result["feed_expiry_policy"] == "no_deadline_v1"
             native = deepcopy(run.output_payload)
             await carousel.import_bundle(adapter, approved, apply=True)
             await carousel.import_bundle(adapter, pending, apply=True)

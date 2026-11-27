@@ -146,10 +146,15 @@ def _native(result):
 
 def _converted(result, feed_valid_until):
     request, draft, review, evidence, chunks = _native(result)
-    expiry = _time(feed_valid_until)
-    require(expiry > _time(draft["created_at"]), "rag_expiry_invalid")
-    if draft.get("valid_until") is not None:
-        require(expiry <= _time(draft["valid_until"]), "rag_expiry_extends_source")
+    # A null override preserves the producer's own deadline, including None.
+    # Never synthesize a lifetime or discard an explicit native deadline.
+    native_expiry = draft.get("valid_until")
+    effective_expiry = feed_valid_until if feed_valid_until is not None else native_expiry
+    if effective_expiry is not None:
+        expiry = _time(effective_expiry)
+        require(expiry > _time(draft["created_at"]), "rag_expiry_invalid")
+        if native_expiry is not None:
+            require(expiry <= _time(native_expiry), "rag_expiry_extends_source")
     # One service source URL can preserve several native document IDs.
     groups = {}
     for document_id in draft["evidence_ids"]:
@@ -211,7 +216,7 @@ def _converted(result, feed_valid_until):
     # covers original IDs, review evidence, rendered cards and source links.
     package = {"request_id": "rag:" + hashlib.sha256(canonical([result["namespace"], result["work_id"]])).hexdigest(),
         "content_type": request["content_type"], "menu_work_ids": request["menu_work_ids"],
-        "feed_valid_until": feed_valid_until, "sources": list(groups.values()), "facts": list(facts.values()),
+        "feed_valid_until": effective_expiry, "sources": list(groups.values()), "facts": list(facts.values()),
         "cards": cards, "detail_body": "\n\n".join(part for part in (
             draft["detail_body"], draft.get("source_footer"), draft.get("ai_disclosure")) if part), "detail_fact_ids": detail_ids,
         "detail_source_ids": sorted({source for key in detail_ids for source in facts[key]["source_ids"]}),
@@ -223,7 +228,7 @@ def _converted(result, feed_valid_until):
     return {"package": package, "assets": assets, "reviewEvidence": review_evidence}
 
 
-def build_rag_bundle(result, *, feed_valid_until):
+def build_rag_bundle(result, *, feed_valid_until=None):
     """Build a validated RAG bundle document. No filesystem, network or DB access."""
     try:
         item = _converted(result, feed_valid_until)
@@ -247,7 +252,7 @@ def validate_rag_item(package, assets, review_evidence):
         raise RagStagingError("rag_result_invalid") from None
 
 
-def export_rag_bundle(result, output: Path, *, feed_valid_until, now=None):
+def export_rag_bundle(result, output: Path, *, feed_valid_until=None, now=None):
     """Materialize original PNGs locally; no overwrite or service DB operation."""
     from app.seeds import carousel_contents as carousel
 

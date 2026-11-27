@@ -178,8 +178,8 @@ def _live_bundle(tmp_path, raw_bundle):
 
     now = datetime.now(timezone.utc)
     package = raw_bundle["items"][0]["package"]
-    expiry = datetime.fromisoformat(package["feed_valid_until"])
-    if expiry <= now + timedelta(hours=1):
+    expiry = datetime.fromisoformat(package["feed_valid_until"]) if package["feed_valid_until"] is not None else None
+    if expiry is not None and expiry <= now + timedelta(hours=1):
         # Shift all deadlines together so historical bundles remain replayable.
         shift = now + timedelta(days=2) - expiry
         for key in ("feed_valid_until", "purge_at", "retention_expires_at"):
@@ -204,7 +204,8 @@ async def _authenticated_feed_cards(client):
     return [card for section in feed["sections"] for card in section["contents"]]
 
 
-def test_one_piece_duplicate_import_and_approval_in_authenticated_feed(carousel_pg, tmp_path, one_piece_bundle, monkeypatch):
+@pytest.mark.parametrize("no_deadline", [False, True])
+def test_one_piece_duplicate_import_and_approval_in_authenticated_feed(carousel_pg, tmp_path, one_piece_bundle, monkeypatch, no_deadline):
     from httpx import ASGITransport, AsyncClient
     from sqlalchemy import func, select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -245,6 +246,8 @@ def test_one_piece_duplicate_import_and_approval_in_authenticated_feed(carousel_
         db.add(AuthSession(user_id=user_id, session_state="active", session_token_hash=hash_token(token),
                            csrf_token_hash=hash_token(csrf_token_for_session(token)), created_at=now,
                            last_accessed_at=now, expires_at=now + timedelta(hours=1)))
+    if no_deadline:
+        one_piece_bundle["items"][0]["package"].update(feed_valid_until=None, purge_at=None)
     pending, approved = _live_bundle(tmp_path, one_piece_bundle)
 
     async def apply(bundle):
@@ -280,6 +283,8 @@ def test_one_piece_duplicate_import_and_approval_in_authenticated_feed(carousel_
                 stored = (await db.scalars(select(Content))).one()
                 assert (stored.content_id, stored.status, stored.judgment_status, stored.published_at) == (
                     content_id, "pending_review", "needs_review", None)
+                assert (stored.feed_valid_until is None) == no_deadline
+                assert stored.ai_judgment_basis.get("feed_expiry_policy") == ("no_deadline_v1" if no_deadline else None)
             detail_url = f"/api/v1/contents/{content_id}?topicId=1"
             image_url = f"/api/v1/contents/{content_id}/slides/1/image?topicId=1"
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:

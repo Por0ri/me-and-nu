@@ -126,6 +126,50 @@ async def test_public_scope_is_shared_and_filters_before_pagination(carousel_db)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["news", "event", "goods"])
+async def test_explicit_no_deadline_is_visible_once_after_approval_in_all_public_reads(carousel_db, kind):
+    # This old unmarked NULL fixture stays hidden until a valid new-import
+    # marker is present. Production code never backfills historical rows.
+    assert await content_repository.get_public_content(carousel_db.db, 109, 1) is None
+    carousel_db.session.execute(update(Content).where(Content.content_id == 109).values(
+        content_type=kind, ai_judgment_basis={"method": "carousel_import_v1", "feed_expiry_policy": "no_deadline_v1"}))
+    feed = await feed_service.get_feed(carousel_db.db, 1, 1, subtopic_id=None, cursor=None, limit=20)
+    assert sum(card.id == 109 for section in feed.sections for card in section.contents) == 1
+    detail = await feed_service.get_content_detail(carousel_db.db, 1, 1, 109)
+    assert detail.content_type == kind and len(detail.slides) == 3
+    assert await carousel_repository.get_slide_image(carousel_db.db, 109, 1) is not None
+    saved = await bookmark_repository.list_saved_bookmarks(carousel_db.db, 1, topic_id=1, q=None, after=None, limit=20)
+    assert sum(content.content_id == 109 for _, content in saved) == 1
+    # A backend-only admission marker must never leak into the public response.
+    assert "feed_expiry_policy" not in detail.model_dump_json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["unreviewed", "pending", "hidden", "deleted", "future_publication",
+                                  "missing_slide", "missing_source", "expired", "wrong_marker", "boolean_marker"])
+async def test_no_deadline_marker_cannot_bypass_existing_publication_gates(carousel_db, case):
+    changes = {"ai_judgment_basis": {"method": "carousel_import_v1", "feed_expiry_policy": "no_deadline_v1"}}
+    if case == "unreviewed": changes["judgment_status"] = "needs_review"
+    elif case == "pending": changes.update(status="pending_review", judgment_status="needs_review")
+    elif case == "hidden": changes.update(status="hidden", judgment_status="failed")
+    elif case == "deleted": changes["deleted_at"] = datetime.now(timezone.utc)
+    elif case == "future_publication": changes["published_at"] = datetime.now(timezone.utc) + timedelta(days=1)
+    elif case == "missing_slide":
+        carousel_db.session.execute(delete(ContentSlide).where(ContentSlide.content_id == 109, ContentSlide.page == 2))
+    elif case == "missing_source":
+        carousel_db.session.execute(delete(ContentSource).where(ContentSource.content_id == 109))
+    elif case == "expired": changes["feed_valid_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    elif case == "wrong_marker": changes["ai_judgment_basis"]["feed_expiry_policy"] = "no_deadline_v2"
+    elif case == "boolean_marker": changes["ai_judgment_basis"]["feed_expiry_policy"] = True
+    carousel_db.session.execute(update(Content).where(Content.content_id == 109).values(**changes))
+    assert await content_repository.get_public_content(carousel_db.db, 109, 1) is None
+    assert await content_repository.get_visible_content(carousel_db.db, 109) is None
+    assert await carousel_repository.get_slide_image(carousel_db.db, 109, 1) is None
+    saved = await bookmark_repository.list_saved_bookmarks(carousel_db.db, 1, topic_id=1, q=None, after=None, limit=20)
+    assert 109 not in [content.content_id for _, content in saved]
+
+
+@pytest.mark.asyncio
 async def test_feed_detail_keep_order_sources_full_body_and_public_fields_only(carousel_db):
     statements = []
     def capture(_connection, _cursor, statement, _parameters, _context, _many):

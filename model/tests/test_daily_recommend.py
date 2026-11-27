@@ -33,6 +33,27 @@ class SeqCursor:
         return (self.table,)
 
 
+class ExpiryTests(unittest.TestCase):
+    def test_new_unbounded_import_preserves_legacy_fallback_and_explicit_dates(self):
+        today = date(2026, 11, 27)
+        published = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        explicit = datetime(2026, 12, 1, tzinfo=timezone.utc)
+        rows = [
+            (1, "guide", "new import", published, None, True, ["1"], ["work"], None, True),
+            (2, "guide", "legacy", published, None, True, ["1"], ["work"], None, False),
+            (3, "news", "legacy news", published, None, True, ["1"], ["work"], None, False),
+            (4, "guide", "explicit", published, explicit, True, ["1"], ["work"], None, True),
+            (5, "guide", "hidden", published, None, False, ["1"], ["work"], None, True),
+        ]
+        posts, indices = daily.load_posts(SeqCursor([rows]), 1, today)
+        self.assertIsNone(posts[0]["until"])
+        self.assertEqual(posts[1]["until"], date(2025, 4, 1))
+        self.assertEqual(posts[2]["until"], date(2025, 1, 31))
+        self.assertEqual(posts[3]["until"], explicit.astimezone(daily.KST).date())
+        self.assertEqual(posts[4]["until"], today - timedelta(days=1))
+        self.assertEqual(indices, {i: i - 1 for i in range(1, 6)})
+
+
 class PreferenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -198,7 +198,8 @@ def validate_policy(policy):
                     for key in ("scope_sha256", "runtime_sha256")), "invalid_rag_schedule_digest")
         runtime = Path(rag["runtime_config"])
         require(runtime.is_absolute() and runtime.suffix == ".json", "invalid_rag_runtime_path")
-        require(type(rag["feed_valid_days"]) is int and 1 <= rag["feed_valid_days"] <= 365,
+        require(rag["feed_valid_days"] is None
+                or type(rag["feed_valid_days"]) is int and 1 <= rag["feed_valid_days"] <= 365,
                 "explicit_rag_feed_expiry_required")
     require(re.fullmatch(r"[0-9a-f]{40}", policy.get("release_sha", ""))
             and re.fullmatch(r"[0-9a-f]{64}", policy.get("seed_sha256", "")), "invalid_schedule_identity")
@@ -337,6 +338,10 @@ class Supervisor:
         return scope
 
     def rag_expiry(self, entry):
+        # Explicit null delegates expiry to the native Agent result. The key
+        # remains required and hashed, so an old reviewed TTL cannot disappear.
+        if self.rag["feed_valid_days"] is None:
+            return None
         return (datetime.fromisoformat(entry["date"]).replace(tzinfo=KST)
                 + timedelta(days=self.rag["feed_valid_days"] + 1)).isoformat()
 
@@ -500,7 +505,7 @@ class Supervisor:
                 RAG_INBOX_NAME=entry["directory"] + "/rag-inbox",
                 RAG_IMPORT_POLICY_HOST_FILE=str(self.host(entry["directory"] + "/rag-import-policy.json")),
                 RAG_IMPORT_POLICY_SHA256=entry.get("rag_import_policy_sha256", "0" * 64),
-                RAG_FEED_VALID_UNTIL=self.rag_expiry(entry))
+                RAG_FEED_VALID_UNTIL=self.rag_expiry(entry) or "")
         require(all("\n" not in value and "\r" not in value and "'" not in value for value in values.values()),
                 "invalid_derived_environment")
         return self.base_env.rstrip(b"\r\n") + b"\n" + "".join(f"{key}='{value}'\n" for key, value in values.items()).encode()
@@ -810,11 +815,13 @@ class Supervisor:
             "pending_import_failed")
         self.verify_import(report, period_successes, "pending_import_not_drained")
         if self.rag:
+            expiry = self.rag_expiry(entry)
             rag_report = self.json_output(self.command("rag-import", entry,
                 ["run", "--rm", "--no-deps", "-T", "rag-pending-importer",
                  "--policy", "/runtime/rag-import-policy.json", "--reviewed-policy-sha256", entry["rag_import_policy_sha256"],
                  "--inbox", self.container(entry["directory"] + "/rag-inbox"),
-                 "--feed-valid-until", self.rag_expiry(entry), "--database-url-file", "/run/secrets/rag-service-dsn",
+                 *(["--feed-valid-until", expiry] if expiry is not None else []),
+                 "--database-url-file", "/run/secrets/rag-service-dsn",
                  "--deployment-env", self.policy["target"]["environment"], "--apply",
                  *(["--reconcile-policy-date", entry["date"]] if recovery is not None and entry["date"] < self.today() else [])]),
                  "rag_pending_import_failed")

@@ -22,7 +22,7 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
 import psycopg
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
@@ -191,6 +191,56 @@ def test_daily_ranking_leaves_out_a_post_until_its_publication_time(recommendati
     assert closed[target] is False and sum(closed.values()) == 3
     opened, _ = live_after_opening_in(-1)
     assert opened[target] is True and sum(opened.values()) == 4
+
+
+def test_no_deadline_import_uses_the_same_approval_gate_in_feed_and_batch(recommendation_pg):
+    sys.path.insert(0, str(ROOT))
+    from model.scripts import daily_recommend as batch
+    from app.repositories.recommendation_repository import _visible
+
+    pg = recommendation_pg
+    pg.migrate("head")
+    seed_demo(pg.engine)
+    day = datetime.now(batch.KST).date()
+    batch_url = pg.url.set(drivername="postgresql").render_as_string(hide_password=False)
+    with pg.engine.begin() as db:
+        target = db.scalar(text("SELECT min(content_id) FROM content"))
+        db.execute(text("""UPDATE content SET feed_valid_until = NULL,
+            published_at = now() - interval '400 days',
+            ai_judgment_basis = ai_judgment_basis || '{"feed_expiry_policy":"no_deadline_v1"}'::jsonb
+            WHERE content_id = :c"""), {"c": target})
+
+    def check(expected, *, unbounded=False):
+        with pg.engine.connect() as db:
+            feed_visible = target in set(db.scalars(select(Content.content_id).where(*_visible(1))))
+        with psycopg.connect(batch_url) as connection, connection.cursor() as cur:
+            posts, indices = batch.load_posts(cur, 1, day)
+        until = posts[indices[target]]["until"]
+        assert feed_visible is expected
+        assert (until is None or until >= day) is expected
+        assert (until is None) is unbounded
+
+    check(True, unbounded=True)
+    # Every ordinary visibility gate still applies to the no-deadline marker.
+    for update, restore in (
+        ("status='pending_review', judgment_status='needs_review'", "status='active', judgment_status='confirmed'"),
+        ("judgment_status='needs_review'", "judgment_status='confirmed'"),
+        ("status='hidden', judgment_status='failed'", "status='active', judgment_status='confirmed'"),
+        ("deleted_at=now()", "deleted_at=NULL"),
+        ("published_at=now()+interval '1 day'", "published_at=now()-interval '400 days'"),
+        ("feed_valid_until=now()-interval '1 second'", "feed_valid_until=NULL"),
+        ("ai_judgment_basis=ai_judgment_basis-'feed_expiry_policy'",
+         "ai_judgment_basis=ai_judgment_basis || '{\"feed_expiry_policy\":\"no_deadline_v1\"}'::jsonb"),
+    ):
+        with pg.engine.begin() as db:
+            db.execute(text(f"UPDATE content SET {update} WHERE content_id=:c"), {"c": target})
+        check(False)
+        with pg.engine.begin() as db:
+            db.execute(text(f"UPDATE content SET {restore} WHERE content_id=:c"), {"c": target})
+        check(True, unbounded=True)
+    with pg.engine.begin() as db:
+        db.execute(text("UPDATE content SET feed_valid_until=now()+interval '1 day' WHERE content_id=:c"), {"c": target})
+    check(True, unbounded=False)
 
 
 def test_onboarding_batch_feed_activity_reactions_and_logout(recommendation_pg, monkeypatch):

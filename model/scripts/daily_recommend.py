@@ -70,7 +70,8 @@ VISIBLE = """(c.status = 'active' AND c.deleted_at IS NULL
              AND c.ai_judgment_basis -> %(preview_scope)s::text ->> 'quality_approval' = 'not_reviewed'
              AND (%(preview_scope)s::text <> 'checking_test_preview'
                   OR c.ai_judgment_basis -> 'checking_test_preview' ->> 'environment' = 'checking')))
-        AND c.feed_valid_until IS NOT NULL
+        AND (c.feed_valid_until IS NOT NULL
+             OR c.ai_judgment_basis ->> 'feed_expiry_policy' = 'no_deadline_v1')
         AND (SELECT count(*) FROM content_slide sl WHERE sl.content_id = c.content_id) BETWEEN 2 AND 10
         AND (SELECT max(sl.page) FROM content_slide sl WHERE sl.content_id = c.content_id)
             = (SELECT count(*) FROM content_slide sl WHERE sl.content_id = c.content_id))))"""
@@ -147,7 +148,9 @@ def load_posts(cur, topic_id, today, preview=None):
     cur.execute(f"""SELECT c.content_id, c.content_type, c.title, COALESCE(c.published_at, c.created_at), c.feed_valid_until,
         {VISIBLE}, w.ids, w.names,
         (SELECT r.input_payload ->> 'request_id' FROM draft d JOIN agent_run r ON r.agent_run_id = d.agent_run_id
-          WHERE d.draft_id = c.source_draft_id)
+          WHERE d.draft_id = c.source_draft_id),
+        (COALESCE(c.ai_judgment_basis ->> 'method', '') = %(carousel)s
+         AND c.ai_judgment_basis ->> 'feed_expiry_policy' = 'no_deadline_v1')
         FROM content c
         LEFT JOIN LATERAL (
             SELECT array_agg(x.external_id ORDER BY l.sort_order) AS ids, array_agg(e.name ORDER BY l.sort_order) AS names
@@ -158,12 +161,16 @@ def load_posts(cur, topic_id, today, preview=None):
                 {"carousel": CAROUSEL_METHOD, "topic": topic_id, "types": list(v1.TYPES),
                  "preview_scope": scope, "preview_database": database})
     posts = []
-    for cid, ctype, title, published, valid_until, visible, ids, names, request_id in cur.fetchall():
+    for cid, ctype, title, published, valid_until, visible, ids, names, request_id, no_deadline in cur.fetchall():
         pub = published.astimezone(KST).date()
         if not visible:
             until = today - timedelta(days=1)
         elif valid_until is not None:
             until = valid_until.astimezone(KST).date()
+        elif no_deadline:
+            # The importer explicitly accepted this new Agent output without a
+            # service expiry. Preserve NULL; do not invent a 30/90-day deadline.
+            until = None
         else:
             until = service.exposure_end(ctype, pub)[0]
         linked = [(int(x), n or "") for x, n in zip(ids or (), names or ()) if x and x.isdigit()]

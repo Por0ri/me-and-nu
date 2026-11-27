@@ -140,8 +140,12 @@ def test_expired_reconciliation_does_not_bypass_content_expiry_or_daily_limit(pe
 
 
 @pytest.mark.parametrize("decision", ["approved", "rejected"])
-def test_pending_duplicate_terminal_replay_preserves_evidence_and_unrelated_links(pending_pg, tmp_path, decision):
+@pytest.mark.parametrize("no_deadline", [False, True])
+def test_pending_duplicate_terminal_replay_preserves_evidence_and_unrelated_links(pending_pg, tmp_path, decision, no_deadline):
     engine, url, root, inbox, raw, envelope, policy, legacy = pending_pg
+    if no_deadline:
+        raw["items"][0]["package"].update(feed_valid_until=None, purge_at=None)
+        write_delivery(root, raw, envelope, inbox=inbox)
     before = snapshot(engine)
     async def scenario():
         preview = await execute(url, policy, inbox=inbox)
@@ -157,6 +161,8 @@ def test_pending_duplicate_terminal_replay_preserves_evidence_and_unrelated_link
             run = db.get(AgentRun, draft.agent_run_id)
             assert (content.status,content.judgment_status,draft.status) == ("pending_review","needs_review","checking")
             assert content.published_at is None and content.ai_judgment_basis["operator_review"] is None
+            assert (content.feed_valid_until is None) == no_deadline
+            assert content.ai_judgment_basis.get("feed_expiry_policy") == ("no_deadline_v1" if no_deadline else None)
             assert run.output_payload["producer_review_evidence"] == raw["items"][0]["reviewEvidence"]
             assert run.output_payload["producer_review_evidence"]["originalGeneration"]["outcome"] == "rejected"
             assert run.output_payload[pending.RECEIPT]["envelope"] == envelope

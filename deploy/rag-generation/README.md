@@ -95,10 +95,22 @@ RAG 활성 구성은 기존 `/home/ubuntu/.secrets/anime-openai-key.txt`를 Work
 `scheduled/YYYY-MM-DD/rag-inbox`이며 기간형 `inbox`와 다르다. RAG 적재기는
 artifact·inbox·`RAG_IMPORT_POLICY_HOST_FILE`을 읽기 전용으로 받고,
 `RAG_SERVICE_DSN_HOST_FILE`은 `/run/secrets/rag-service-dsn`으로 연결한다.
-명령 기본값은 계속 `--help`이다. 실제 적재 명령에는 별도 정책 SHA·만료 시각·대상과
+명령 기본값은 계속 `--help`이다. 실제 적재 명령에는 별도 정책 SHA·만료 정책·대상과
 DSN 파일·`--apply`가 필요하다. 기사와 동일한 `day_policy_sha256` 및 advisory lock으로
 합산 20건 제한을 유지하며, 신규 콘텐츠는 `pending_review / needs_review / checking`이다.
-`feed_valid_days`는 정책에서 명시해야 하고 이 구성은 임의의 기간을 선택하지 않는다.
+`feed_valid_days` 키는 정책에 반드시 포함한다. `null`은 Agent의 `draft.valid_until`을
+그대로 사용한다는 뜻이며, Agent도 날짜를 지정하지 않았으면 새 콘텐츠의
+`feed_valid_until`도 `null`로 보존한다. 임의로 7일 등의 기간을 넣지 않는다.
+기한 없는 새 콘텐츠에는 적재기가 `feed_expiry_policy=no_deadline_v1`을 저장된 검수
+메타데이터에 부여하고 운영자 승인 후에만 노출한다. 원문 번들·검수·작업 이력은 바꾸지 않는다.
+과거의 모든 `null` 콘텐츠를 일괄 공개하는 설정은 아니다.
+
+기존 정수 `1..365` 정책은 그대로 실행일 한국시간 자정에서 `N+1`일 뒤를 만료 시각으로
+정한다. 이는 선택한 명시적 override이며, Agent의 명시 만료일을 넘으면 적재를 거부한다.
+`null` 정책은 적재 정책에도 `feed_valid_until: null`을 포함하고 CLI의 `--feed-valid-until`을
+생략한다. 유한 날짜 정책에서는 CLI 값이 정책과 정확히 같아야 한다. 빈 문자열·잘못된 날짜·
+시간대 없는 날짜·이미 지난 명시 기한은 거부하며, 만료 정책을 바꾸면 새 정책 SHA 검토가 필요하다.
+기존 정책·원문 파일은 덮어쓰지 않고, 지난 실행일의 적재는 기존의 명시적 날짜 복구 절차를 유지한다.
 
 runtime 준비에 쓰는 모델은 기존 기사 설정과 같은 `gpt-6-luna`다. 2026-11-26에
 확인한 [공식 모델 단가](https://developers.openai.com/api/docs/models/gpt-6-luna)는

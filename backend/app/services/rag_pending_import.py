@@ -1,7 +1,8 @@
 """Consume sealed native RAG deliveries into operator-review waiting content.
 
 The default is a file-only dry-run. Applying requires a reviewed, date-scoped
-target policy and its exact expiry. This consumer never opens a producer DB,
+target policy and its exact expiry override (null preserves native expiry).
+This consumer never opens a producer DB,
 loads credentials for a model, publishes content, or changes the period inbox.
 """
 from dataclasses import dataclass
@@ -77,7 +78,7 @@ def _timestamp(value):
         raise RagPendingImportError("invalid_feed_expiry") from None
 
 
-def validate_policy(policy, *, feed_valid_until, reviewed_sha256=None, apply=False, now=None,
+def validate_policy(policy, *, feed_valid_until=None, reviewed_sha256=None, apply=False, now=None,
                     reconcile_policy_date=None):
     require(isinstance(policy, dict) and set(policy) == POLICY_FIELDS
             and type(policy["schema_version"]) is int and policy["schema_version"] == 1
@@ -91,7 +92,8 @@ def validate_policy(policy, *, feed_valid_until, reviewed_sha256=None, apply=Fal
         raise RagPendingImportError("invalid_policy_date") from None
     _directory(policy["artifact_root"])
     require(feed_valid_until == policy["feed_valid_until"], "reviewed_feed_expiry_required")
-    require(_timestamp(feed_valid_until) > (now or datetime.now(timezone.utc)), "feed_expiry_elapsed")
+    if feed_valid_until is not None:
+        require(_timestamp(feed_valid_until) > (now or datetime.now(timezone.utc)), "feed_expiry_elapsed")
     routes = policy["routes"]
     require(isinstance(routes, list) and 1 <= len(routes) <= 1000, "invalid_rag_import_routes")
     identities = []
@@ -352,7 +354,7 @@ async def import_deliveries(db, policy, deliveries, *, reviewed_sha256, feed_val
     return {**report, "publication_enabled": False, "operator_approvals_created": 0, "llm_calls": 0}
 
 
-async def run(*, policy, feed_valid_until, inbox=None, envelope=None, apply=False, reviewed_sha256=None,
+async def run(*, policy, feed_valid_until=None, inbox=None, envelope=None, apply=False, reviewed_sha256=None,
               database_url=None, deployment_env=None, now=None, reconcile_policy_date=None):
     digest = validate_policy(policy, feed_valid_until=feed_valid_until, reviewed_sha256=reviewed_sha256,
                              apply=apply, now=now, reconcile_policy_date=reconcile_policy_date)
@@ -383,7 +385,7 @@ def main(argv=None):
     import sys
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", type=Path, required=True)
-    parser.add_argument("--feed-valid-until", required=True)
+    parser.add_argument("--feed-valid-until", help="Exact reviewed override; omit only for a policy with feed_valid_until: null (preserves native deadline)")
     parser.add_argument("--reviewed-policy-sha256")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--inbox", type=Path)
