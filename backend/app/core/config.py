@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     # Operator-provided offline evaluation artifact; never a client-selected path.
     admin_recommendation_evaluation_path: str | None = Field(default=None, repr=False)
     admin_service_evaluation_path: str | None = Field(default=None, repr=False)
+    # Optional host-sanitized generation snapshot. Mount its directory read-only;
+    # the API receives no generation DB, broker, Docker or provider credentials.
+    admin_generation_snapshot_path: str | None = Field(default=None, repr=False)
 
     @model_validator(mode="after")
     def validate_session_backend(self) -> "Settings":

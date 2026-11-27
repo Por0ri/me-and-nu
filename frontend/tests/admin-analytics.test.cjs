@@ -72,7 +72,7 @@ test('overview presents measured data, empty results and missing metrics with di
 
 test('dashboard shows supplied counts and separate recommendation scenarios with a filtered detail link', () => {
   const data = fixture(), html = dashboard({ status: 'ready', data });
-  for (const label of ['이용 회원: 4', '온보딩 완료 후 피드 노출 관측률: 100%', '콘텐츠 열람 구간 수: 21', '작품 추천 품질', '에이전트 콘텐츠 생성', '오늘의 알림 및 공지']) assert.ok(html.includes(label), label);
+  for (const label of ['이용 회원: 4', '온보딩 완료 후 피드 노출 관측률: 100%', '콘텐츠 열람 구간 수: 21', '작품 추천 품질', '서비스 DB 적재 이력', '오늘의 알림 및 공지']) assert.ok(html.includes(label), label);
   assert.match(html, /오프라인 평가/);
   assert.match(html, /0\.5436/); assert.match(html, /0\.0000/);
   assert.match(html, /href="\/admin\/analytics\?view=performance&amp;period=30d"/);
