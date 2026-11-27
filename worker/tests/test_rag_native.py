@@ -1,7 +1,7 @@
 """Native callback composition uses isolated snapshots and injected services only."""
 import asyncio
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import asdict, replace
 import hashlib
 import importlib.util
 from pathlib import Path
@@ -45,6 +45,62 @@ class RagNativeTests(unittest.TestCase):
 
     def callbacks(self, config=None):
         return build_native_callbacks(config or self.config, runtime_factory=self.runtime)
+
+    def seed_with_two_excerpts(self):
+        from ani_rag.models import EvidenceExcerpt
+        document = replace(self.fixture.document, document_id="multi-excerpt",
+            source_url="https://example.test/quoted-story", excerpts=(
+                EvidenceExcerpt("길을 떠나는 두 친구.", "opening"),
+                EvidenceExcerpt("여행의 마지막 약속.", "ending")))
+        asyncio.run(self.fixture.store.upsert_and_schedule_generation(document, schedule_generation=False))
+        request = RagRequest.parse({**self.job["request"], "seed_evidence": [
+            {"document_id": document.document_id, "content_sha256": document.content_hash}]})
+        return document, {**self.job, "request": request.as_dict(), "input_sha256": request.input_sha256}
+
+    def test_two_excerpts_pass_preflight_and_export_in_source_order(self):
+        document, job = self.seed_with_two_excerpts()
+        rows = self.fixture.db.execute(
+            "SELECT locator FROM rag_excerpt WHERE document_id=? ORDER BY excerpt_id", (document.document_id,))
+        self.assertEqual([row[0] for row in rows], ["ending", "opening"])
+
+        trace = asyncio.run(self.fixture.retriever.retrieve(self.fixture.request))
+        trace = replace(trace, documents=(document,), seed_evidence_ids=(document.document_id,),
+                        chunks=(replace(self.fixture.chunk, evidence_id=document.document_id,
+                                        source_url=document.source_url),))
+        preflight, run = self.callbacks()
+        self.assertEqual(preflight(job)["provider_calls"], 0)
+        with patch.object(self.fixture.retriever, "retrieve", return_value=trace):
+            result = asyncio.run(run(job, lambda: None))
+        self.assertEqual(result["outcome"], "ready_for_staging", result.get("reason"))
+        exported = result["evidence"][document.document_id]["excerpts"]
+        self.assertEqual([(item["locator"], item["text"]) for item in exported],
+                         [(item.locator, item.text) for item in document.excerpts])
+
+    def assert_preflight_rejects_changed_excerpt(self, mutation):
+        document, job = self.seed_with_two_excerpts()
+        self.fixture.db.execute(mutation + " WHERE document_id=? AND locator='opening'", (document.document_id,))
+        self.fixture.db.commit()
+        with self.assertRaisesRegex(RagContractError, "rag_evidence_content_changed"):
+            self.callbacks()[0](job)
+        self.assertEqual((self.factory_calls, self.fixture.generator.calls), (0, 0))
+
+    def test_changed_excerpt_text_blocks_preflight(self):
+        self.assert_preflight_rejects_changed_excerpt("UPDATE rag_excerpt SET excerpt_text='replaced'")
+
+    def test_missing_excerpt_blocks_preflight(self):
+        self.assert_preflight_rejects_changed_excerpt("DELETE FROM rag_excerpt")
+
+    def test_unknown_excerpt_id_blocks_preflight(self):
+        self.assert_preflight_rejects_changed_excerpt("UPDATE rag_excerpt SET excerpt_id='unknown'")
+
+    def test_reordered_export_is_rejected_after_generation(self):
+        document, job = self.seed_with_two_excerpts()
+        exported = asdict(document)
+        exported["excerpts"] = list(reversed(exported["excerpts"]))
+        response = {"outcome": "ready_for_staging", "evidence": {document.document_id: exported}}
+        with patch("ani_rag.celery_bridge.run_single_request", return_value=response):
+            result = asyncio.run(self.callbacks()[1](job, lambda: None))
+        self.assertEqual((result["outcome"], result["reason"]), ("failed", "rag_result_evidence_content_changed"))
 
     def test_preflight_has_no_db_writes_and_native_output_preserves_seed(self):
         before = hashlib.sha256(Path(self.config.database_path).read_bytes()).hexdigest()

@@ -16,6 +16,8 @@ import struct
 import sys
 import time
 from datetime import datetime, timezone
+from itertools import chain, groupby
+from operator import itemgetter
 from pathlib import Path
 from typing import Iterable
 
@@ -23,6 +25,10 @@ from dotenv import dotenv_values
 from openai import BadRequestError, OpenAI
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from ani_rag.excerpt_citations import chunk_digest
+from ani_rag.storage.excerpt_order import ordered_excerpt_rows
+
 DEFAULT_SOURCE_DB = ROOT / "data" / "ani_rag_live_20261111.sqlite3"
 DEFAULT_INDEX_DB = ROOT / "output" / "ani_rag_evidence_vectors_20261119.sqlite3"
 MODEL = "text-embedding-3-small"
@@ -49,11 +55,7 @@ def _chunk(text: str, *, document_id: str, source_kind: str,
             signature = bytes.fromhex(text_hash)
             if signature not in seen:
                 seen.add(signature)
-                chunk_identity = (
-                    f"{document_id}\n{source_kind}\n{source_index}\n{locator}\n"
-                    f"{actual_start}\n{value}"
-                )
-                chunk_id = hashlib.sha256(chunk_identity.encode("utf-8")).hexdigest()
+                chunk_id = chunk_digest(document_id, source_kind, source_index, locator, actual_start, value)
                 yield {
                     "chunk_id": chunk_id,
                     "document_id": document_id,
@@ -84,36 +86,32 @@ def _iter_evidence_chunks(
         LEFT JOIN rag_source s ON s.source_id=d.source_id
         LEFT JOIN rag_excerpt e ON e.document_id=d.document_id
         WHERE d.evidence_type='reference_fact' AND d.raw_document_id>?{upper_bound}
-        ORDER BY d.raw_document_id, e.excerpt_id
+        ORDER BY d.raw_document_id
     """, bounds)
-    current_id: str | None = None
-    seen: set[bytes] = set()
-    excerpt_index = 0
-    for row in cursor:
-        document_id = str(row["document_id"])
-        if document_id != current_id:
-            current_id = document_id
-            seen = set()
-            excerpt_index = 0
-            body = row["raw_text"]
-            source_id = str(row["source_id"])
-            # Kitsu body is an API envelope; its stored excerpt is the readable
-            # evidence and avoids embedding transport JSON as prose.
-            if body and body.strip() and source_id != "kitsu_anime_catalog":
-                for piece in _chunk(
-                    str(body), document_id=document_id, source_kind="body",
-                    source_index=None, locator="body", seen=seen,
-                ):
-                    yield _with_document_metadata(piece, row)
-        excerpt = row["excerpt_text"]
-        if excerpt and str(excerpt).strip():
-            locator = str(row["excerpt_locator"] or f"excerpt:{excerpt_index}")
+    for document_id, rows in groupby(cursor, key=itemgetter("document_id")):
+        document = next(rows)
+        # Keep only one copy of the potentially large body. Resolve every
+        # excerpt ID before yielding any chunks or advancing this document.
+        excerpts = ordered_excerpt_rows(document_id, (
+            {"excerpt_id": row["excerpt_id"], "text": row["excerpt_text"], "locator": row["excerpt_locator"]}
+            for row in chain((document,), rows) if row["excerpt_id"] is not None
+        ))
+        seen: set[bytes] = set()
+        body = document["raw_text"]
+        # Kitsu's body is an API envelope; its stored excerpt is readable evidence.
+        if body and body.strip() and document["source_id"] != "kitsu_anime_catalog":
             for piece in _chunk(
-                str(excerpt), document_id=document_id, source_kind="excerpt",
+                body, document_id=document_id, source_kind="body",
+                source_index=None, locator="body", seen=seen,
+            ):
+                yield _with_document_metadata(piece, document)
+        for excerpt_index, excerpt in enumerate(excerpts):
+            locator = excerpt["locator"] or f"excerpt:{excerpt_index}"
+            for piece in _chunk(
+                excerpt["text"], document_id=document_id, source_kind="excerpt",
                 source_index=excerpt_index, locator=locator, seen=seen,
             ):
-                yield _with_document_metadata(piece, row)
-            excerpt_index += 1
+                yield _with_document_metadata(piece, document)
 
 
 def _with_document_metadata(piece: dict[str, object], row: sqlite3.Row) -> dict[str, object]:

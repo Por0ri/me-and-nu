@@ -11,7 +11,7 @@ import struct
 import threading
 import uuid
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Iterable, Mapping, Protocol, Sequence
@@ -19,6 +19,7 @@ from typing import Iterable, Mapping, Protocol, Sequence
 from ani_rag.adapter import canonical_article_comparison_url
 from ani_rag.article_credits import ArticleCredit, chunk_credit_matches
 from ani_rag.episode_evidence import EpisodeTarget, episode_reference_matches
+from ani_rag.excerpt_citations import chunk_digest, cited_excerpt_index, legacy_excerpt_order
 from ani_rag.fact_subject import fact_subjects
 from ani_rag.models import EvidenceDocument, RagContentType, WorkLinkStatus
 from ani_rag.profiles import get_content_profile
@@ -280,7 +281,7 @@ def chunk_document(document: EvidenceDocument, *, max_chars: int = 1200, overlap
             if signature in seen:
                 continue
             seen.add(signature)
-            chunk_id = hashlib.sha256(f"{document.document_id}\n{source_kind}\n{source_index}\n{locator}\n{actual_start}\n{value}".encode("utf-8")).hexdigest()
+            chunk_id = chunk_digest(document.document_id, source_kind, source_index, locator, actual_start, value)
             chunks.append(EvidenceChunk(
                 chunk_id=chunk_id,
                 evidence_id=document.document_id,
@@ -301,6 +302,25 @@ def chunk_document(document: EvidenceDocument, *, max_chars: int = 1200, overlap
             if start + max_chars >= len(text):
                 break
     return tuple(chunks)
+
+
+def _pinned_excerpt(chunk: EvidenceChunk, document: EvidenceDocument, original: int,
+                    pinned: frozenset[str]) -> EvidenceChunk:
+    """Keep a previously cited ID when the index now stores the other coordinate."""
+    if not pinned or chunk.chunk_id in pinned:
+        return chunk
+    old_order = legacy_excerpt_order(document.document_id, len(document.excerpts))
+    alternate = old_order.index(original) if chunk.source_index == original else original
+    if alternate == chunk.source_index:
+        return chunk
+    locator = document.excerpts[original].locator or f"excerpt:{alternate}"
+    candidate_id = chunk_digest(document.document_id, "excerpt", alternate, locator, chunk.start_offset, chunk.text)
+    if candidate_id in pinned:
+        located = f"{locator}:{chunk.start_offset}-{chunk.end_offset}"
+        if cited_excerpt_index(document.document_id, document.excerpts, alternate, located,
+                               chunk.start_offset, chunk.end_offset, chunk.text) == original:
+            return replace(chunk, chunk_id=candidate_id, source_index=alternate, locator=located)
+    return chunk
 
 
 def document_chunk_sources(document: EvidenceDocument) -> list[tuple[str, str, int | None, str]]:
@@ -445,14 +465,16 @@ class DatabaseEvidenceRetriever:
         seed_ids = frozenset(request.seed_evidence_ids)
         # A translated field name is one lexical match, even if the fact itself is in Japanese.
         field_overlap = 1 / max(len(_terms(request.query)), 1)
-        ranked = [
-            (max(lexical_score(request.query, chunk, seed_ids=seed_ids),
-                 field_overlap if _matches_dictionary_field(document, fields) else 0.0), document, chunk)
-            for document in allowed
-            for chunk in chunk_document(document)
-        ]
-        ranked = [row for row in ranked if row[0] > 0]
         pinned = frozenset(request.corroborating_chunks)
+        ranked = []
+        for document in allowed:
+            field_score = field_overlap if _matches_dictionary_field(document, fields) else 0.0
+            for chunk in chunk_document(document):
+                if pinned and chunk.source_kind == "excerpt" and chunk.source_index is not None:
+                    chunk = _pinned_excerpt(chunk, document, chunk.source_index, pinned)
+                score = max(lexical_score(request.query, chunk, seed_ids=seed_ids), field_score)
+                if score > 0:
+                    ranked.append((score, document, chunk))
         preferred = _preferred_credit_chunks(request, ((score, chunk) for score, _, chunk in ranked))
         ranked.sort(key=lambda row: (
             not (row[2].chunk_id in pinned and row[0] >= request.min_retrieval_score),
@@ -552,7 +574,7 @@ class VectorEvidenceRetriever:
             document = document_map.get(str(row["document_id"]))
             if document is None:
                 continue
-            if row["chunk_id"] in pinned:
+            if row["chunk_id"] in pinned and row["source_kind"] != "excerpt":
                 # An old vector can survive a source edit until the next index refresh.
                 # Rebuild the cited slice from the current relational source before reusing it.
                 if document.document_id not in current_chunks:
@@ -578,7 +600,7 @@ class VectorEvidenceRetriever:
                     continue
                 similarity = sum(left * right for left, right in zip(query_vector, vector, strict=True)) / (query_norm * vector_norm)
             score = max(0.0, min(1.0, similarity))
-            ranked.append((score, EvidenceChunk(
+            chunk = EvidenceChunk(
                 chunk_id=str(row["chunk_id"]), evidence_id=str(row["document_id"]),
                 content_type=RagContentType(str(row["content_type"])),
                 title=str(row["title"]), text=str(row["chunk_text"]),
@@ -589,7 +611,17 @@ class VectorEvidenceRetriever:
                 language=str(row["language"]),
                 published_at=datetime.fromisoformat(row["published_at"]) if row["published_at"] else None,
                 menu_work_ids=document.menu_work_ids, score=score,
-            ), document))
+            )
+            if chunk.source_kind == "excerpt":
+                original = cited_excerpt_index(document.document_id, document.excerpts, chunk.source_index,
+                                              chunk.locator, chunk.start_offset, chunk.end_offset, chunk.text)
+                base = chunk.locator.rsplit(":", 1)[0]
+                if (original is None or chunk.source_url != document.source_url or chunk.source_id != document.source_id
+                        or chunk.chunk_id != chunk_digest(document.document_id, "excerpt", chunk.source_index,
+                                                          base, chunk.start_offset, chunk.text)):
+                    continue
+                chunk = _pinned_excerpt(chunk, document, original, pinned)
+            ranked.append((score, chunk, document))
         preferred = _preferred_credit_chunks(request, ((score, chunk) for score, chunk, _ in ranked))
         ranked.sort(key=lambda item: (
             item[1].chunk_id not in pinned,
@@ -603,14 +635,19 @@ class VectorEvidenceRetriever:
         picked: list[EvidenceChunk] = []
         picked_docs: dict[str, EvidenceDocument] = {}
         cast_seen = set()
+        seen_passages = set()
         for score, chunk, document in ranked:
             if score < request.min_retrieval_score:
+                continue
+            passage = (document.document_id, chunk.text)
+            if passage in seen_passages:
                 continue
             cast_key = subjects.cast_key(document)
             if cast_key is not None:
                 if cast_key in cast_seen:
                     continue
                 cast_seen.add(cast_key)
+            seen_passages.add(passage)
             picked.append(chunk)
             picked_docs.setdefault(document.document_id, document)
             if len(picked) >= request.top_k:

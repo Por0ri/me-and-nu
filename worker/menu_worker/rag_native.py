@@ -11,7 +11,7 @@ from pathlib import Path
 import sqlite3
 from typing import Mapping
 
-from menu_worker.rag_contract import require, validate_request
+from menu_worker.rag_contract import RagContractError, require, validate_request
 
 
 @dataclass(frozen=True)
@@ -74,10 +74,17 @@ def _document(connection, document_id, request, *, exact_lane):
                 "rag_evidence_type_mismatch")
     from ani_rag.models import RagContentType
     from ani_rag.profiles import get_content_profile
+    from ani_rag.storage.excerpt_order import ExcerptOrderError, ordered_excerpt_rows
     accepted = {item.value for item in get_content_profile(RagContentType(request.content_type)).accepted_evidence_types}
     require(row["evidence_type"] in accepted, "rag_evidence_profile_mismatch")
-    excerpts = [{"locator": item["locator"], "text": item["excerpt_text"]} for item in connection.execute(
-        "SELECT locator,excerpt_text FROM rag_excerpt WHERE document_id=? ORDER BY excerpt_id", (document_id,))]
+    rows = connection.execute(
+        "SELECT excerpt_id,locator,excerpt_text FROM rag_excerpt WHERE document_id=?", (document_id,)
+    ).fetchall()
+    try:
+        ordered = ordered_excerpt_rows(document_id, rows)
+    except ExcerptOrderError as error:
+        raise RagContractError("rag_evidence_content_changed") from error
+    excerpts = [{"locator": item["locator"], "text": item["excerpt_text"]} for item in ordered]
     require(_content_hash(row["raw_text"], excerpts) == row["content_hash"], "rag_evidence_content_changed")
     return row
 
