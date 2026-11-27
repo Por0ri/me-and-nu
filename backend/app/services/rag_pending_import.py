@@ -33,6 +33,9 @@ IDENTITY_FIELDS = ("job_id", "generation_attempt_id", "input_sha256", "admission
 REQUEST_FIELDS = {"namespace", "work_id", "menu_work_id", "content_type", "query", "seed_evidence", "allowed_source_ids"}
 ADMISSION_FIELDS = {"schema_version", "reservation_id", "policy_date", "policy_sha256", "input_sha256",
                     "counts_slot", "attempt_ordinal"}
+REVISION_FIELDS = {"schema_version", "purpose", "policy_date", "day_policy_sha256",
+    "effective_record_index", "prior_records_sha256", "prior_seen_count", "prior_seen_sha256",
+    "prior_daily_attempts", "prior_daily_successes", "max_attempts", "success_target", "approved_at", "reason"}
 ROUTE_FIELDS = {"namespace", "menu_work_id", "content_type", "allowed_source_ids"}
 require = pending.require
 canonical = pending.canonical
@@ -201,7 +204,34 @@ class Delivery:
     bundle: carousel.PreparedBundle
 
 
-def load_delivery(path, policy, *, feed_valid_until, now=None):
+def validate_limit_revision(revision, reviewed_sha256, policy):
+    """Accept only the host-reviewed approval; never rewrite original envelopes."""
+    if revision is None:
+        require(reviewed_sha256 is None, "reviewed_limit_revision_required")
+        return None
+    require(isinstance(revision, dict) and set(revision) == REVISION_FIELDS
+            and type(revision["schema_version"]) is int and revision["schema_version"] == 1
+            and revision["purpose"] == "daily_success_only_revision"
+            and revision["policy_date"] == policy["policy_date"]
+            and revision["day_policy_sha256"] == policy["day_policy_sha256"]
+            and revision["max_attempts"] is None
+            and type(revision["success_target"]) is int and revision["success_target"] == 20
+            and all(type(revision[key]) is int and revision[key] >= 0 for key in
+                    ("effective_record_index", "prior_seen_count", "prior_daily_attempts", "prior_daily_successes"))
+            and revision["prior_daily_successes"] <= revision["prior_daily_attempts"] <= 40
+            and revision["prior_daily_successes"] <= 20
+            and all(pending._hash(revision[key]) for key in ("prior_records_sha256", "prior_seen_sha256"))
+            and isinstance(revision["reason"], str) and 1 <= len(revision["reason"].strip()) <= 500,
+            "invalid_limit_revision")
+    _timestamp(revision["approved_at"])
+    require(pending._hash(reviewed_sha256) and fingerprint(revision) == reviewed_sha256,
+            "reviewed_limit_revision_required")
+    return reviewed_sha256
+
+
+def load_delivery(path, policy, *, feed_valid_until, now=None, limit_revision=None,
+                  reviewed_limit_revision_sha256=None):
+    revision_sha = validate_limit_revision(limit_revision, reviewed_limit_revision_sha256, policy)
     root = _directory(policy["artifact_root"])
     envelope = _read_json(path, limit=128 * 1024)
     require(isinstance(envelope, dict) and set(envelope) == ENVELOPE_FIELDS
@@ -216,9 +246,12 @@ def load_delivery(path, policy, *, feed_valid_until, now=None):
             and envelope["day_policy_sha256"] == policy["day_policy_sha256"]
             and pending._hash(envelope["policy_sha256"]), "rag_delivery_scope_changed")
     daily, scope = envelope["daily_policy"], envelope["rag_scope"]
-    require(isinstance(daily, dict) and daily.get("schema_version") == 3
+    require(isinstance(daily, dict) and type(daily.get("schema_version")) is int
+            and daily["schema_version"] in {3, 4}
             and daily.get("limit_mode") == "daily_counts" and daily.get("policy_date") == policy["policy_date"]
-            and type(daily.get("max_attempts")) is int and daily["max_attempts"] == 40
+            and "max_attempts" in daily
+            and (daily["schema_version"] == 3 and type(daily["max_attempts"]) is int and daily["max_attempts"] == 40
+                 or daily["schema_version"] == 4 and daily["max_attempts"] is None and revision_sha is None)
             and type(daily.get("success_target")) is int and daily["success_target"] == 20
             and fingerprint(daily) == policy["day_policy_sha256"], "rag_daily_policy_binding_changed")
     require(isinstance(scope, dict) and set(scope) == {"schema_version", "purpose", "routes"}
@@ -254,10 +287,17 @@ def load_delivery(path, policy, *, feed_valid_until, now=None):
     route = {key: request[key] for key in ROUTE_FIELDS}
     require(any(_within(route, allowed) for allowed in policy["routes"]), "rag_route_not_reviewed")
     receipt = launch["admission_receipt"]
-    require(isinstance(receipt, dict) and set(receipt) == ADMISSION_FIELDS
-            and type(receipt["schema_version"]) is int and receipt["schema_version"] == 1
+    require(isinstance(receipt, dict) and type(receipt.get("schema_version")) is int
+            and (receipt["schema_version"] == 1 and set(receipt) == ADMISSION_FIELDS
+                 and daily["schema_version"] == 3
+                 and type(receipt["attempt_ordinal"]) is int and 1 <= receipt["attempt_ordinal"] <= 40
+                 or receipt["schema_version"] == 2 and set(receipt) == ADMISSION_FIELDS | {"limit_revision_sha256"}
+                 and type(receipt["attempt_ordinal"]) is int and receipt["attempt_ordinal"] >= 1
+                 and (daily["schema_version"] == 4 and receipt["limit_revision_sha256"] is None
+                      or daily["schema_version"] == 3 and revision_sha is not None
+                      and receipt["limit_revision_sha256"] == revision_sha
+                      and receipt["attempt_ordinal"] > limit_revision["prior_daily_attempts"]))
             and pending._uuid(receipt["reservation_id"]) and receipt["counts_slot"] is True
-            and type(receipt["attempt_ordinal"]) is int and 1 <= receipt["attempt_ordinal"] <= 40
             and receipt["policy_date"] == policy["policy_date"]
             and receipt["policy_sha256"] == envelope["policy_sha256"]
             and receipt["input_sha256"] == identity["input_sha256"]
@@ -273,7 +313,9 @@ def load_delivery(path, policy, *, feed_valid_until, now=None):
     return Delivery(envelope, bundle)
 
 
-def load_deliveries(policy, *, feed_valid_until, inbox=None, envelope=None, now=None):
+def load_deliveries(policy, *, feed_valid_until, inbox=None, envelope=None, now=None,
+                    limit_revision=None, reviewed_limit_revision_sha256=None):
+    validate_limit_revision(limit_revision, reviewed_limit_revision_sha256, policy)
     require((inbox is None) != (envelope is None), "one_rag_delivery_source_required")
     if inbox is not None:
         inbox = _directory(inbox)
@@ -281,7 +323,8 @@ def load_deliveries(policy, *, feed_valid_until, inbox=None, envelope=None, now=
     else:
         paths = [Path(envelope)]
     require(len(paths) <= policy["max_items"], "rag_delivery_count_exceeded")
-    deliveries = [load_delivery(path, policy, feed_valid_until=feed_valid_until, now=now) for path in paths]
+    deliveries = [load_delivery(path, policy, feed_valid_until=feed_valid_until, now=now,
+        limit_revision=limit_revision, reviewed_limit_revision_sha256=reviewed_limit_revision_sha256) for path in paths]
     require(len({d.envelope["job_id"] for d in deliveries}) == len(deliveries)
             and len({d.bundle.items[0].queue_task_id for d in deliveries}) == len(deliveries),
             "duplicate_rag_delivery_identity")
@@ -355,10 +398,12 @@ async def import_deliveries(db, policy, deliveries, *, reviewed_sha256, feed_val
 
 
 async def run(*, policy, feed_valid_until=None, inbox=None, envelope=None, apply=False, reviewed_sha256=None,
-              database_url=None, deployment_env=None, now=None, reconcile_policy_date=None):
+              database_url=None, deployment_env=None, now=None, reconcile_policy_date=None,
+              limit_revision=None, reviewed_limit_revision_sha256=None):
     digest = validate_policy(policy, feed_valid_until=feed_valid_until, reviewed_sha256=reviewed_sha256,
                              apply=apply, now=now, reconcile_policy_date=reconcile_policy_date)
-    deliveries = load_deliveries(policy, feed_valid_until=feed_valid_until, inbox=inbox, envelope=envelope, now=now)
+    deliveries = load_deliveries(policy, feed_valid_until=feed_valid_until, inbox=inbox, envelope=envelope, now=now,
+        limit_revision=limit_revision, reviewed_limit_revision_sha256=reviewed_limit_revision_sha256)
     if not apply:
         return {"mode": "dry_run", "database_accessed": False, "policy_sha256": digest,
                 "validated": len(deliveries), "items": [{"job_id": d.envelope["job_id"],
@@ -387,6 +432,8 @@ def main(argv=None):
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--feed-valid-until", help="Exact reviewed override; omit only for a policy with feed_valid_until: null (preserves native deadline)")
     parser.add_argument("--reviewed-policy-sha256")
+    parser.add_argument("--limit-revision-file", type=Path)
+    parser.add_argument("--reviewed-limit-revision-sha256")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--inbox", type=Path)
     source.add_argument("--envelope", type=Path)
@@ -402,6 +449,8 @@ def main(argv=None):
         # Review the complete target/expiry before even opening a DB secret.
         validate_policy(policy, feed_valid_until=args.feed_valid_until, reviewed_sha256=args.reviewed_policy_sha256,
                         apply=args.apply, reconcile_policy_date=args.reconcile_policy_date)
+        revision = (_read_json(args.limit_revision_file, limit=16384) if args.limit_revision_file else None)
+        validate_limit_revision(revision, args.reviewed_limit_revision_sha256, policy)
         database_url = None
         if args.apply:
             require(args.database_url_file is not None and args.deployment_env, "explicit_database_target_required")
@@ -409,7 +458,8 @@ def main(argv=None):
         report = asyncio.run(run(policy=policy, feed_valid_until=args.feed_valid_until, inbox=args.inbox,
             envelope=args.envelope, apply=args.apply, reviewed_sha256=args.reviewed_policy_sha256,
             database_url=database_url, deployment_env=args.deployment_env,
-            reconcile_policy_date=args.reconcile_policy_date))
+            reconcile_policy_date=args.reconcile_policy_date, limit_revision=revision,
+            reviewed_limit_revision_sha256=args.reviewed_limit_revision_sha256))
         print(json.dumps(report, sort_keys=True, ensure_ascii=False))
         return 0
     except Exception as error:

@@ -55,6 +55,45 @@ def test_live_counts_both_producers_and_incomplete_cost_remain_distinct(tmp_path
     assert "max_attempts" not in json.dumps(wire)
 
 
+def test_uncapped_attempts_above_forty_preserve_twenty_pass_target_and_costs(tmp_path):
+    data = snapshot()
+    data["daily"].update(attempts=61, max_attempts=None, remaining_attempts=None,
+                         passes=20, remaining_passes=0, article_attempts=21, rag_attempts=40)
+    result = read(tmp_path, data)
+    assert result.availability == "available"
+    assert result.daily.attempts == 61 and result.daily.max_attempts is None
+    assert result.daily.remaining_attempts is None
+    assert result.daily.passes == result.daily.success_target == 20
+    assert result.daily.known_estimated_cost_usd == data["daily"]["known_estimated_cost_usd"]
+    assert result.daily.total_estimated_cost_usd is None and result.history.unknown_cost_jobs == 3
+    wire = result.model_dump(mode="json", by_alias=True)
+    assert wire["daily"]["maxAttempts"] is None and wire["daily"]["remainingAttempts"] is None
+
+
+@pytest.mark.parametrize("maximum", [40, None])
+def test_unknown_attempt_count_is_independent_of_known_policy(tmp_path, maximum):
+    data = snapshot()
+    data["daily"].update(attempts=None, max_attempts=maximum, remaining_attempts=None,
+                         article_attempts=None, rag_attempts=None)
+    result = read(tmp_path, data)
+    assert result.availability == "available"
+    assert result.daily.attempts is None and result.daily.remaining_attempts is None
+    assert result.daily.max_attempts == maximum
+
+
+@pytest.mark.parametrize("field,value", [
+    ("remaining_attempts", 0), ("remaining_attempts", 40), ("max_attempts", True),
+    ("max_attempts", "unlimited"), ("max_attempts", 1000000), ("success_target", None),
+    ("passes", 21), ("attempts", -1), ("attempts", True), ("attempts", 61.0),
+])
+def test_uncapped_policy_still_rejects_inconsistent_counts_and_target(tmp_path, field, value):
+    data = snapshot()
+    data["daily"].update(attempts=61, max_attempts=None, remaining_attempts=None,
+                         article_attempts=21, rag_attempts=40)
+    data["daily"][field] = value
+    assert read(tmp_path, data).reason == "snapshot_invalid"
+
+
 @pytest.mark.parametrize("seconds,availability", [(179, "available"), (180, "stale"), (7200, "stale")])
 def test_freshness_boundary_retains_last_observed_values_with_stale_label(tmp_path, seconds, availability):
     result = read(tmp_path, now=NOW + timedelta(seconds=seconds))
@@ -126,7 +165,8 @@ def test_future_timestamp_cannot_appear_fresh(tmp_path):
     assert result.reason == "snapshot_future" and result.daily is None
 
 
-@pytest.mark.parametrize("payload", [b'{"a":1,"a":2}', b'{"a":NaN}', b"\xff", b"[]", b"{" + b" " * MAX_SNAPSHOT_BYTES])
+@pytest.mark.parametrize("payload", [b'{"a":1,"a":2}', b'{"a":NaN}', b"\xff", b"[]", b"{" + b" " * MAX_SNAPSHOT_BYTES],
+                         ids=["duplicate-key", "non-finite", "bad-encoding", "wrong-type", "oversized"])
 def test_invalid_duplicate_nonfinite_oversized_json_is_unavailable(tmp_path, payload):
     target = tmp_path / "snapshot.json"
     target.write_bytes(payload)

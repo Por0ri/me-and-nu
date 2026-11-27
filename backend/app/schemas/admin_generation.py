@@ -29,8 +29,9 @@ class StrictSnapshotModel(CamelModel):
 
 
 class GenerationDaily(StrictSnapshotModel):
-    attempts: Annotated[int, Field(ge=0, le=40)] | None
-    max_attempts: Literal[40]
+    attempts: Count | None
+    # null explicitly means no attempt cap; unknown counts remain independent.
+    max_attempts: Literal[40] | None
     passes: Annotated[int, Field(ge=0, le=20)] | None
     success_target: Literal[20]
     remaining_attempts: Annotated[int, Field(ge=0, le=40)] | None
@@ -45,7 +46,14 @@ class GenerationDaily(StrictSnapshotModel):
     article_attempts: Count | None
     rag_attempts: Count | None
 
-    @field_validator("max_attempts", "success_target", mode="before")
+    @field_validator("max_attempts", mode="before")
+    @classmethod
+    def optional_attempt_limit(cls, value):
+        if value is not None and type(value) is not int:
+            raise ValueError("attempt limit must be an integer or null")
+        return value
+
+    @field_validator("success_target", mode="before")
     @classmethod
     def integer_policy_limits(cls, value):
         if type(value) is not int:
@@ -58,7 +66,9 @@ class GenerationDaily(StrictSnapshotModel):
             (self.attempts, self.remaining_attempts, self.max_attempts),
             (self.passes, self.remaining_passes, self.success_target),
         ):
-            if remaining != (None if count is None else maximum - count):
+            if maximum is not None and count is not None and count > maximum:
+                raise ValueError("count exceeds policy limit")
+            if remaining != (None if count is None or maximum is None else maximum - count):
                 raise ValueError("inconsistent remaining count")
         if self.attempts is not None and self.passes is not None and self.passes > self.attempts:
             raise ValueError("passes exceed attempts")

@@ -187,7 +187,9 @@ def audit_existing_jobs(store, state, *, rag_store=None):
     owned = {record.get("job_id"): record["request"]["idempotency_key"]
              for record in state["records"] if record.get("job_id") and record.get("producer") != "ani_rag"}
     prefix = state["config"]["run_id"] + ":"
-    if len(rows) > state["config"]["max_new_jobs"]:
+    from menu_worker.daily_limits import effective_total_attempt_limit
+    limit = effective_total_attempt_limit(state)
+    if limit is not None and len(rows) > limit:
         raise StopRun("database_job_cap_already_exceeded")
     for row in rows:
         if not row["idempotency_key"].startswith(prefix) or owned.get(str(row["job_id"])) != row["idempotency_key"]:

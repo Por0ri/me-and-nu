@@ -20,6 +20,8 @@ from urllib.parse import urlsplit
 from menu_worker.bounded_generation import StopRun, audit_existing_jobs, database_lock, local_lock, money, read_json, timestamp, write_json
 from menu_worker.bounded_resume import claim_path, digest, inherited_reservations, publish_with_deadline, require, totals, unknown_cost_references, verify_completed_history
 from menu_worker.daily_generation import DAILY_COMPLETIONS, DAILY_SUCCESS_TARGET, KST, MAX_DAILY_ATTEMPTS, SAFE_DAY_STOPS, DailyController
+from menu_worker.daily_limits import (DailyLimitError, effective_total_attempt_limit, policy_attempt_limit,
+    revision_for_record, validate_limit_revisions, validate_rag_limit_admission)
 
 
 def _validated_routes(routes, *, current_catalog=True):
@@ -53,9 +55,9 @@ def validate_policy_history(state):
     previous_date, previous_index = "", 0
     for policy in policies:
         require(isinstance(policy, dict), "invalid_daily_policy_history")
-        require(type(policy.get("schema_version")) is int and policy["schema_version"] in {1, 2, 3},
+        require(type(policy.get("schema_version")) is int and policy["schema_version"] in {1, 2, 3, 4},
                 "invalid_daily_policy_schema")
-        if policy["schema_version"] in {2, 3}:
+        if policy["schema_version"] in {2, 3, 4}:
             require(policy.get("allocation") == "balanced_work_type_source_v1"
                     and "source_id" not in policy and "content_type" not in policy,
                     "invalid_daily_policy_scope")
@@ -64,7 +66,7 @@ def validate_policy_history(state):
         else:
             require("routes" not in policy and "allocation" not in policy, "invalid_daily_policy_scope")
         _, end = day_bounds(policy["policy_date"])
-        if policy["schema_version"] == 3:
+        if policy["schema_version"] in {3, 4}:
             require(policy.get("limit_mode") == "daily_counts" and "daily_budget_usd" not in policy
                     and policy.get("deadline") == datetime.fromtimestamp(end, KST).isoformat(),
                     "invalid_daily_count_policy")
@@ -73,7 +75,9 @@ def validate_policy_history(state):
         index = policy["start_record_index"]
         require(policy["policy_date"] > previous_date and type(index) is int and previous_index <= index <= len(state["records"]),
                 "daily_policy_order_changed")
-        require(policy["max_attempts"] == MAX_DAILY_ATTEMPTS and policy["success_target"] == DAILY_SUCCESS_TARGET,
+        require((policy["max_attempts"] is None if policy["schema_version"] == 4
+                 else type(policy["max_attempts"]) is int and policy["max_attempts"] == MAX_DAILY_ATTEMPTS)
+                and type(policy["success_target"]) is int and policy["success_target"] == DAILY_SUCCESS_TARGET,
                 "daily_policy_limits_changed")
         prefix = {**state, "records": state["records"][:index]}
         known, reserved = totals(prefix)
@@ -83,13 +87,17 @@ def validate_policy_history(state):
                 and policy["prior_slots"] == sum(r["counts_slot"] for r in prefix["records"])
                 and money(policy["prior_accounted_usd"]) == known + reserved, "daily_policy_baseline_changed")
         previous_date, previous_index = policy["policy_date"], index
+    validate_limit_revisions(state)
     for number, policy in enumerate(policies):
         end = policies[number + 1]["start_record_index"] if number + 1 < len(policies) else len(state["records"])
         rows = state["records"][policy["start_record_index"]:end]
         require(all(row.get("policy_date") == policy["policy_date"] and row.get("day_policy_sha256") == digest(policy)
                     for row in rows), "daily_record_policy_changed")
-        require(sum(bool(r.get("counts_slot")) for r in rows) <= MAX_DAILY_ATTEMPTS, "daily_attempt_limit_exceeded")
-        if policy["schema_version"] in {2, 3}:
+        revision = revision_for_record(state, end, policy=policy)
+        limit = policy_attempt_limit(policy)
+        require(limit is None or revision is not None or sum(bool(r.get("counts_slot")) for r in rows) <= limit,
+                "daily_attempt_limit_exceeded")
+        if policy["schema_version"] in {2, 3, 4}:
             require(all({key: row.get("request", {}).get(key) for key in ("source_id", "content_type", "menu_work_id")}
                         in policy["routes"] for row in rows if row.get("producer") != "ani_rag"), "daily_record_outside_scope")
             rag_rows = [row for row in rows if row.get("producer") == "ani_rag"]
@@ -111,18 +119,22 @@ def validate_policy_history(state):
                                 and set(request.allowed_source_ids) <= set(route["allowed_source_ids"])
                                 for route in scope["routes"]), "daily_rag_record_outside_scope")
                     receipt = validate_admission_receipt(row["rag_admission"], request)
+                    validate_rag_limit_admission(state, row, policy, state["records"].index(row))
                     require(receipt["policy_sha256"] == digest({"daily": policy, "rag": scope})
                             and receipt["policy_date"] == policy["policy_date"]
                             and row["canonical_url"] == "urn:menu-rag:" + request.identity_key,
                             "daily_rag_admission_changed")
-        successes = {(r.get("request", {}).get("source_id"), r["canonical_url"]) if policy["schema_version"] in {2, 3}
+        successes = {(r.get("request", {}).get("source_id"), r["canonical_url"]) if policy["schema_version"] in {2, 3, 4}
                      else r["canonical_url"] for r in rows if r.get("counts_slot") and r.get("state") == "complete"
                      and r.get("execution_status") == "succeeded" and r.get("outcome") == "ready_for_staging"}
         require(len(successes) <= DAILY_SUCCESS_TARGET, "daily_success_limit_exceeded")
-    if policies[-1]["schema_version"] == 3:
+    if policies[-1]["schema_version"] in {3, 4}:
         config = state.get("config", {})
         require(config.get("limit_mode") == "daily_counts" and "total_budget_usd" in config
                 and config["total_budget_usd"] is None and config.get("deadline") == policies[-1]["deadline"],
+                "daily_count_config_changed")
+        expected_cap = None if policies[-1]["schema_version"] == 4 else policies[-1]["prior_slots"] + MAX_DAILY_ATTEMPTS
+        require("max_new_jobs" in config and config["max_new_jobs"] == expected_cap,
                 "daily_count_config_changed")
 
 
@@ -136,7 +148,9 @@ def source_checkpoint(path, expected_sha256):
             and config.get("content_type") == "goods", "source_scope_changed")
     require(type(config.get("baseline_count")) is int and config["baseline_count"] == 1
             and money(config.get("baseline_estimated_cost_usd")) == Decimal("0.01178341"), "legacy_baseline_changed")
-    require(type(config.get("max_new_jobs")) is int and config["max_new_jobs"] >= 4
+    cap_valid = (type(config.get("max_new_jobs")) is int and config["max_new_jobs"] >= 4
+        or config.get("max_new_jobs") is None and state.get("daily_policy", {}).get("schema_version") == 4)
+    require(cap_valid
             and config.get("job_timeout_seconds") == 1500 and money(config.get("next_job_reserve_usd")) == Decimal("0.04"),
             "legacy_execution_limits_changed")
     rows = state.get("records")
@@ -144,7 +158,8 @@ def source_checkpoint(path, expected_sha256):
     require(all(isinstance(r, dict) and type(r.get("counts_slot")) is bool and r.get("state") in {"complete", "duplicate"}
                 and ((r["state"] == "complete") == r["counts_slot"]) for r in rows), "source_has_unfinished_record")
     slots = sum(r["counts_slot"] for r in rows)
-    require(slots <= config["max_new_jobs"], "source_slot_count_mismatch")
+    limit = effective_total_attempt_limit(state)
+    require(limit is None or slots <= limit, "source_slot_count_mismatch")
     identities = [r["job_id"] for r in rows if r["counts_slot"]]
     require(len(set(identities)) == len(identities), "source_repeated_job")
     for row in rows:
@@ -172,7 +187,8 @@ def source_checkpoint(path, expected_sha256):
 
 def build_plan(*, source, source_sha256, checkpoint, policy_date, delivery_root,
                daily_budget_usd=None, deadline=None, now=None, routes=None,
-               rag_scope=None, rag_scope_sha256=None, rag_delivery_root=None, rag_runtime_sha256=None):
+               rag_scope=None, rag_scope_sha256=None, rag_delivery_root=None, rag_runtime_sha256=None,
+               success_target_only=False):
     now = time.time() if now is None else now
     source, checkpoint, delivery_root = Path(source), Path(checkpoint), Path(delivery_root)
     require(source.is_absolute() and checkpoint.is_absolute() and source.parent.resolve() == source.parent
@@ -183,6 +199,8 @@ def build_plan(*, source, source_sha256, checkpoint, policy_date, delivery_root,
     parent = source_checkpoint(source, source_sha256)
     start, end = day_bounds(policy_date)
     count_only = daily_budget_usd is None and deadline is None
+    require(type(success_target_only) is bool and (not success_target_only or count_only),
+            "success_only_requires_daily_count_policy")
     rag_plan = {}
     require(not parent.get("rag_scope") or rag_scope is not None, "explicit_rag_scope_required_for_rollover")
     if rag_scope is not None:
@@ -237,13 +255,14 @@ def build_plan(*, source, source_sha256, checkpoint, policy_date, delivery_root,
         del policy["source_id"], policy["content_type"]
     config = copy.deepcopy(parent["config"])
     if count_only:
-        policy.update(schema_version=3, limit_mode="daily_counts")
+        policy.update(schema_version=4 if success_target_only else 3, limit_mode="daily_counts",
+                      max_attempts=None if success_target_only else MAX_DAILY_ATTEMPTS)
         del policy["daily_budget_usd"]
         config["limit_mode"] = "daily_counts"
     else:
         config.pop("limit_mode", None)
     config.update(total_budget_usd=None if count_only else str(known + reserved + money(daily_budget_usd)),
-                  max_new_jobs=slots + MAX_DAILY_ATTEMPTS, deadline=deadline)
+                  max_new_jobs=None if success_target_only else slots + MAX_DAILY_ATTEMPTS, deadline=deadline)
     return {"schema_version": 1, "source_checkpoint": str(source), "source_sha256": source_sha256,
         "checkpoint": str(checkpoint), "config": config, "daily_policy": policy,
         "day_policy_sha256": digest(policy), "prior_known_estimated_usd": str(known),
@@ -259,6 +278,9 @@ def validate_child(state, parent, plan):
     for key in ("failure_recovery_audit", "failure_recovery_resume_audit"):
         inherited = parent.get(key, [])
         require(state.get(key, [])[:len(inherited)] == inherited, "inherited_failure_recovery_audit_changed")
+    inherited = parent.get("daily_limit_revisions", [])
+    require(state.get("daily_limit_revisions", [])[:len(inherited)] == inherited,
+            "inherited_daily_limit_revisions_changed")
     require(state.get("daily_policies") == [*parent.get("daily_policies", []), plan["daily_policy"]], "daily_policy_history_changed")
     require(state.get("rag_scope") == plan.get("rag_scope")
             and state.get("rag_scope_sha256") == plan.get("rag_scope_sha256"), "rag_daily_scope_changed")
@@ -276,7 +298,8 @@ def _checked_state(plan, *, store, read_result, now=None, rag_store=None, rag_re
     parent = source_checkpoint(source, plan["source_sha256"])
     expected = build_plan(source=source, source_sha256=plan["source_sha256"], checkpoint=target,
         policy_date=policy["policy_date"], daily_budget_usd=policy.get("daily_budget_usd"),
-        deadline=None if policy.get("schema_version") == 3 else policy["deadline"],
+        deadline=None if policy.get("schema_version") in {3, 4} else policy["deadline"],
+        success_target_only=policy.get("schema_version") == 4,
         delivery_root=Path(policy["delivery_root"]), now=now, routes=policy.get("routes"),
         **{key: plan[key] for key in ("rag_scope", "rag_scope_sha256", "rag_delivery_root", "rag_runtime_sha256") if key in plan})
     require(expected == plan, "daily_plan_changed")
@@ -421,6 +444,8 @@ def main(argv=None):
     parser.add_argument("--delivery-root", type=Path, required=True, help="Existing dedicated envelope directory; no service DB writes")
     parser.add_argument("--registered-routes", action="store_true",
                         help="Plan balanced sequential generation across eligible registered source/work/type routes; does not activate collection")
+    parser.add_argument("--success-target-only", action="store_true",
+                        help="Explicit schema-4 plan: no attempt cap, stop at 20 passed contents or the KST day boundary")
     parser.add_argument("--rag-scope", type=Path, help="Explicit reviewed native RAG route scope; omitted means period-only")
     parser.add_argument("--expected-rag-scope-sha256")
     parser.add_argument("--rag-delivery-root", type=Path, help="Separate native inbox, never the period consumer inbox")
@@ -442,6 +467,7 @@ def main(argv=None):
             route_report = catalog_routes()
         plan = build_plan(source=args.source_checkpoint, source_sha256=args.source_sha256, checkpoint=args.checkpoint,
             policy_date=args.policy_date, daily_budget_usd=args.daily_budget_usd, deadline=args.deadline, delivery_root=args.delivery_root,
+            success_target_only=args.success_target_only,
             routes=route_report["routes"] if route_report is not None else None,
             rag_scope=read_json(args.rag_scope) if args.rag_scope is not None else None,
             rag_scope_sha256=args.expected_rag_scope_sha256, rag_delivery_root=args.rag_delivery_root,
@@ -506,7 +532,7 @@ def main(argv=None):
                     "rag_publish": runtime.publish, "rag_read_result": runtime.read_result, "rag_export": runtime.export,
                     "rag_scope_sha256": plan["rag_scope_sha256"]}
             controller = controller_class(config=plan["config"], checkpoint=args.checkpoint, store=store,
-                discover=discover_daily_articles if plan["daily_policy"]["schema_version"] in {2, 3} else discover_articles,
+                discover=discover_daily_articles if plan["daily_policy"]["schema_version"] in {2, 3, 4} else discover_articles,
                 validate=validate, publish=lambda job_id: publish_with_deadline(job_id,
                     app=app, task=task, queue=queue, deadline=plan["config"]["deadline"], job_timeout_seconds=1500),
                 read_result=read_result, export=lambda job_id, output: export_staging_bundle(root, store, job_id, output),
@@ -514,7 +540,7 @@ def main(argv=None):
             try:
                 report = controller.run()
             except Exception as error:
-                reason = str(error) if isinstance(error, StopRun) else "daily_error_inspect_checkpoint"
+                reason = str(error) if isinstance(error, (StopRun, DailyLimitError)) else "daily_error_inspect_checkpoint"
                 # A broken DB connection has already released its advisory
                 # lock. Do not persist stale in-memory state in that case.
                 try:
@@ -528,7 +554,7 @@ def main(argv=None):
             print(json.dumps({**report, "plan_sha256": digest(plan), "source_checkpoint_unchanged": True}))
             return 0 if report["status"] == "complete" else 2
     except Exception as error:
-        reason = str(error) if isinstance(error, StopRun) else "daily_error_inspect_checkpoint"
+        reason = str(error) if isinstance(error, (StopRun, DailyLimitError)) else "daily_error_inspect_checkpoint"
         print(json.dumps({"error": reason, "category": type(error).__name__}))
         return 2
 

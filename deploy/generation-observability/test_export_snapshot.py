@@ -26,11 +26,11 @@ def record(*, rag=False, status='succeeded', outcome='ready_for_staging', comple
     return row
 
 
-def state(rows=(), prefix=(), receipts=None):
+def state(rows=(), prefix=(), receipts=None, max_attempts=40):
     receipts = receipts or {}
     prefix_cost = m.costs(prefix, receipts.__getitem__)
-    policy = {'schema_version': 3, 'policy_date': '2026-11-27', 'limit_mode': 'daily_counts',
-        'max_attempts': 40, 'success_target': 20, 'deadline': '2026-11-28T00:00:00+09:00',
+    policy = {'schema_version': 4 if max_attempts is None else 3, 'policy_date': '2026-11-27', 'limit_mode': 'daily_counts',
+        'max_attempts': max_attempts, 'success_target': 20, 'deadline': '2026-11-28T00:00:00+09:00',
         'start_record_index': len(prefix), 'prior_records_sha256': m.digest(list(prefix)),
         'prior_slots': sum(r['counts_slot'] for r in prefix),
         'prior_accounted_usd': str(m.Decimal('0.01') + prefix_cost['known'] + prefix_cost['reserved']),
@@ -51,6 +51,22 @@ def recovered(partial='0.02'):
     path = '/runtime/state/recovery/' + row['job_id'] + '.json'
     row['failure_recovery_receipt'] = {'receipt_path': path, 'receipt_sha256': m.digest(receipt)}
     return row, {path: receipt}
+
+
+def revised_state(rows=(), *, prior_rows=None):
+    """A same-day revision preserves the sealed legacy policy and its prefix."""
+    prior_rows = [record()] if prior_rows is None else prior_rows
+    value = state(prior_rows)
+    value.update(status='stopped', seen=[row['canonical_url'] for row in value['records']])
+    revision = m.daily_limits().build_limit_revision(value,
+        reason='approved daily success-only limit', approved_at=NOW.isoformat())
+    value['daily_limit_revisions'] = [revision]
+    policy = value['daily_policy']
+    for row in rows:
+        value['records'].append(dict(row, policy_date=policy['policy_date'],
+            day_policy_sha256=m.digest(policy), daily_limit_revision_sha256=m.digest(revision)))
+        value['seen'].append(row['canonical_url'])
+    return value
 
 
 class FakeSources:
@@ -120,10 +136,80 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(snapshot['history']['known_estimated_cost_usd'], '0.06')
 
     def test_hard_caps_deadline_and_prefix_binding(self):
-        for value in (state([record() for _ in range(41)]), state([record() for _ in range(21)])):
+        for value in (state([record(status='failed', outcome=None) for _ in range(41)]),
+                state([record() for _ in range(21)]), state([record() for _ in range(21)], max_attempts=None)):
             with self.assertRaises(m.ObservationError): m.account(value, now=NOW, load_receipt={ }.__getitem__)
         value = state([record()]); value['config']['deadline'] = '2026-11-28T01:00:00+09:00'
         with self.assertRaises(m.ObservationError): m.account(value, now=NOW, load_receipt={ }.__getitem__)
+
+    def test_explicit_uncapped_policy_preserves_over_40_attempts_failure_and_cost_history(self):
+        old, receipts = recovered()
+        rows = [record(rag=i % 2 == 0, status='failed', outcome=None, cost='0.002') for i in range(41)]
+        rows += [record(rag=i % 2 == 0, cost='0.003') for i in range(20)]
+        value = state(rows, [old], receipts, max_attempts=None)
+        before = copy.deepcopy(value)
+        day, daily, history, observed = m.account(value, now=NOW, load_receipt=receipts.__getitem__)
+        self.assertEqual((day, daily['attempts'], daily['passes']), ('2026-11-27', 61, 20))
+        self.assertIsNone(daily['max_attempts']); self.assertIsNone(daily['remaining_attempts'])
+        self.assertEqual(daily['remaining_passes'], 0)
+        self.assertEqual(daily['article_attempts'] + daily['rag_attempts'], 61)
+        self.assertEqual(daily['known_estimated_cost_usd'], '0.142')
+        self.assertEqual(daily['total_estimated_cost_usd'], '0.142')
+        self.assertEqual(history['known_estimated_cost_usd'], '0.172')
+        self.assertEqual(history['unknown_cost_jobs'], 1); self.assertIsNone(history['total_estimated_cost_usd'])
+        self.assertEqual(sum(r['execution_status'] == 'failed' for r in observed), 41)
+        self.assertEqual(value, before)
+
+    def test_missing_or_invalid_attempt_limit_is_unavailable_not_uncapped(self):
+        for limit in ('missing', 0, 20, 41, '40', False, 40.0):
+            with self.subTest(limit=limit):
+                value = state(max_attempts=limit)
+                if limit == 'missing': del value['daily_policy']['max_attempts']
+                result = m.collect(factory=lambda: FakeSources(value), now=NOW)
+                self.assertEqual(result['availability'], 'unavailable')
+                self.assertIsNone(result['daily'])
+        bounded = m.collect(factory=lambda: FakeSources(state([record()])), now=NOW)['daily']
+        self.assertEqual((bounded['max_attempts'], bounded['remaining_attempts']), (40, 39))
+        uncapped = m.collect(factory=lambda: FakeSources(state([record()], max_attempts=None)), now=NOW)['daily']
+        self.assertIsNone(uncapped['max_attempts']); self.assertIsNone(uncapped['remaining_attempts'])
+
+    def test_same_day_revision_preserves_old_policy_and_counts_while_removing_cap(self):
+        prior = [record() for _ in range(6)] + [record(status='failed', outcome=None) for _ in range(3)]
+        later = [record(rag=True, status='failed', outcome=None, cost='0.001') for _ in range(32)]
+        value = revised_state(later, prior_rows=prior)
+        before = copy.deepcopy(value)
+        snapshot = m.collect(factory=lambda: FakeSources(value), now=NOW)
+        self.assertEqual(snapshot['availability'], 'available')
+        daily = snapshot['daily']
+        self.assertEqual((daily['attempts'], daily['passes'], daily['remaining_passes']), (41, 6, 14))
+        self.assertIsNone(daily['max_attempts']); self.assertIsNone(daily['remaining_attempts'])
+        self.assertEqual(daily['known_estimated_cost_usd'], '0.482')
+        self.assertEqual(value['daily_policy']['max_attempts'], 40)
+        self.assertEqual(value['daily_policy']['schema_version'], 3)
+        self.assertEqual(value, before)
+
+    def test_revision_tamper_missing_binding_and_unapproved_null_fail_closed(self):
+        original = revised_state([record(rag=True, status='failed', outcome=None)])
+        for field, replacement in (('prior_daily_attempts', 2), ('prior_daily_successes', 0),
+                ('prior_records_sha256', 'f' * 64), ('prior_seen_sha256', 'f' * 64),
+                ('day_policy_sha256', 'f' * 64), ('max_attempts', 40), ('success_target', 21)):
+            value = copy.deepcopy(original); value['daily_limit_revisions'][0][field] = replacement
+            with self.subTest(field=field):
+                self.assertEqual(m.collect(factory=lambda: FakeSources(value), now=NOW)['availability'], 'unavailable')
+        value = copy.deepcopy(original); del value['records'][-1]['daily_limit_revision_sha256']
+        self.assertEqual(m.collect(factory=lambda: FakeSources(value), now=NOW)['availability'], 'unavailable')
+        value = copy.deepcopy(original); value['records'][0]['estimated_cost_usd'] = '0'
+        self.assertEqual(m.collect(factory=lambda: FakeSources(value), now=NOW)['availability'], 'unavailable')
+        value = state(max_attempts=None); value['daily_policy']['schema_version'] = 3
+        self.assertEqual(m.collect(factory=lambda: FakeSources(value), now=NOW)['availability'], 'unavailable')
+
+    def test_schedule_schema_distinguishes_null_from_missing_or_invalid(self):
+        self.assertIsNone(m.schedule_attempt_limit({'schema_version': 3, 'max_attempts': None, 'success_target': 20}))
+        self.assertEqual(m.schedule_attempt_limit({'schema_version': 2, 'max_attempts': 40, 'success_target': 20}), 40)
+        for value in ({'schema_version': 3, 'success_target': 20},
+                {'schema_version': 2, 'max_attempts': None, 'success_target': 20},
+                {'schema_version': 3, 'max_attempts': 40, 'success_target': 20}):
+            with self.assertRaises(m.ObservationError): m.schedule_attempt_limit(value)
 
     def test_snapshot_race_retries_without_controller_locks_or_mutations(self):
         value = state([record()]); inputs = iter([False, False, True])
@@ -144,6 +230,22 @@ class AccountingTests(unittest.TestCase):
             self.assertEqual(json.loads(raw), snapshot)
             self.assertEqual(len(list(Path(root).iterdir())), 1)
 
+    def test_standalone_companion_validator_matches_canonical_without_bytecode_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exporter = Path(m.__file__)
+            (root / 'export_snapshot.py').write_bytes(exporter.read_bytes())
+            canonical = exporter.resolve().parents[2] / 'worker/menu_worker/daily_limits.py'
+            (root / 'daily_limits.py').write_bytes(canonical.read_bytes())
+            spec = importlib.util.spec_from_file_location('standalone_generation_export', root / 'export_snapshot.py')
+            standalone = importlib.util.module_from_spec(spec)
+            exec(compile((root / 'export_snapshot.py').read_bytes(), str(root / 'export_snapshot.py'), 'exec'), standalone.__dict__)
+            value = revised_state([record(status='failed', outcome=None)])
+            self.assertIsNone(standalone.daily_limits().effective_daily_attempt_limit(value))
+            self.assertEqual(standalone.account(value, now=NOW, load_receipt={ }.__getitem__),
+                m.account(value, now=NOW, load_receipt={ }.__getitem__))
+            self.assertEqual({path.name for path in root.iterdir()}, {'export_snapshot.py', 'daily_limits.py'})
+
     def test_sql_scopes_owned_jobs_and_never_counts_attempt_rows(self):
         row = record(rag=True); calls = []
         def runner(args, data=None):
@@ -155,6 +257,24 @@ class AccountingTests(unittest.TestCase):
         self.assertIn('BEGIN READ ONLY', sql); self.assertIn('ROLLBACK', sql)
         self.assertNotIn('content_generation_attempt', sql)
         self.assertEqual((result['rag']['succeeded'], result['rag']['ready_for_staging']), (1, 1))
+
+    def test_read_only_jobs_include_more_than_40_owned_article_and_rag_failures(self):
+        rows = [record(rag=i % 2 == 0, status='failed', outcome=None) for i in range(61)]
+        calls = []
+        def runner(args, data=None):
+            calls.append((args, data))
+            result = {'database': 'menu_content_jobs', 'version': 8, 'article': [], 'rag': []}
+            for row in rows:
+                kind = 'rag' if row.get('producer') == 'ani_rag' else 'article'
+                result[kind].append({key: row[key] for key in ('job_id', 'execution_status', 'outcome')})
+            return json.dumps(result).encode()
+        result = m.Sources(runner=runner).jobs(rows)
+        self.assertEqual((result['article']['failed'], result['rag']['failed']), (30, 31))
+        self.assertEqual(len(calls), 1)
+        sql = calls[0][1].decode()
+        self.assertIn('BEGIN READ ONLY', sql); self.assertIn('ROLLBACK', sql)
+        self.assertTrue(all(row['job_id'] in sql for row in rows))
+        self.assertNotIn('content_generation_attempt', sql)
 
     def test_broker_priorities_are_summed_but_unacked_not_double_counted(self):
         calls = []
@@ -176,7 +296,7 @@ class AccountingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); state_root = root / 'state'; apps = root / 'apps'
             (state_root / 'scheduled').mkdir(parents=True); apps.mkdir()
-            policy = {'max_attempts': 40, 'success_target': 20}
+            policy = {'schema_version': 2, 'max_attempts': 40, 'success_target': 20}
             policy_path = apps / 'policy.json'; policy_path.write_text(json.dumps(policy))
             binding = root / 'schedule.env'
             binding.write_text('DAILY_SCHEDULE_STATE_ROOT=' + shlex.quote(str(state_root)) + '\n'

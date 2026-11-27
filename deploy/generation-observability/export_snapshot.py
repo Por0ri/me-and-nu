@@ -9,6 +9,7 @@ import argparse
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -83,6 +84,29 @@ def integer(value, maximum=MAX_RECORDS):
     return value
 
 
+def daily_limits():
+    """Reuse the sealed stdlib-only Worker validator without importing Worker."""
+    path = Path(__file__).with_name('daily_limits.py')
+    if not path.exists():
+        path = Path(__file__).resolve().parents[2] / 'worker/menu_worker/daily_limits.py'
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= MAX_BYTES)
+    spec = importlib.util.spec_from_file_location('generation_observation_daily_limits', path)
+    require(spec is not None)
+    module = importlib.util.module_from_spec(spec)
+    # Do not write bytecode: the exporter's only write is generation.json.
+    exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+    return module
+
+
+def schedule_attempt_limit(policy):
+    require(isinstance(policy, dict) and 'max_attempts' in policy)
+    value, schema = policy['max_attempts'], policy.get('schema_version')
+    require(type(schema) is int and (schema == 3 and value is None
+        or schema in {1, 2} and type(value) is int and value == 40))
+    require(type(policy.get('success_target')) is int and policy['success_target'] == 20)
+    return value
+
+
 def identity(row):
     request = row.get('request', {})
     url = row.get('canonical_url')
@@ -152,11 +176,14 @@ def account(state, *, now, load_receipt):
     records = state.get('records')
     require(isinstance(records, list) and len(records) <= MAX_RECORDS)
     policy, config = state.get('daily_policy', {}), state.get('config', {})
-    require(state.get('daily_policies', [None])[-1] == policy and policy.get('schema_version') == 3
+    require(state.get('daily_policies', [None])[-1] == policy and policy.get('schema_version') in {3, 4}
         and policy.get('limit_mode') == config.get('limit_mode') == 'daily_counts'
-        and policy.get('max_attempts') == 40 and type(policy['max_attempts']) is int
-        and policy.get('success_target') == 20 and type(policy['success_target']) is int
         and 'daily_budget_usd' not in policy and config.get('total_budget_usd', 'missing') is None)
+    limits = daily_limits()
+    try:
+        max_attempts = limits.effective_daily_attempt_limit(state)
+    except limits.DailyLimitError:
+        raise ObservationError('invalid_daily_limit_source') from None
     day = datetime.strptime(policy['policy_date'], '%Y-%m-%d').date()
     deadline = (datetime.combine(day, datetime.min.time(), KST) + timedelta(days=1)).isoformat()
     require(policy.get('deadline') == config.get('deadline') == deadline)
@@ -179,14 +206,15 @@ def account(state, *, now, load_receipt):
     attempts = sum(row['counts_slot'] for row in today)
     passed = {identity(row) for row in today if row['counts_slot'] and row['state'] == 'complete'
         and row.get('execution_status') == 'succeeded' and row.get('outcome') == 'ready_for_staging'}
-    require(attempts <= 40 and len(passed) <= 20)
+    require((max_attempts is None or attempts <= max_attempts) and len(passed) <= 20)
     rag = sum(row['counts_slot'] and row.get('producer') == 'ani_rag' for row in today)
     known = baseline + lifetime['known']
     history = {'known_estimated_cost_usd': amount(known), 'baseline_estimated_cost_usd': amount(baseline),
         'unknown_cost_jobs': lifetime['unknown'],
         'total_estimated_cost_usd': None if lifetime['unknown'] or lifetime['pending'] else amount(known)}
-    daily = {'attempts': attempts, 'max_attempts': 40, 'passes': len(passed), 'success_target': 20,
-        'remaining_attempts': 40 - attempts, 'remaining_passes': 20 - len(passed),
+    daily = {'attempts': attempts, 'max_attempts': max_attempts, 'passes': len(passed), 'success_target': 20,
+        'remaining_attempts': None if max_attempts is None else max_attempts - attempts,
+        'remaining_passes': 20 - len(passed),
         'pending_records': current['pending'], 'duplicate_records': sum(not row['counts_slot'] for row in today),
         'known_estimated_cost_usd': amount(current['known']),
         'total_estimated_cost_usd': None if current['unknown'] or current['pending'] else amount(current['known']),
@@ -243,8 +271,8 @@ class Sources:
                 bindings[key] = tokens[0]
         require(bindings.get('DAILY_SCHEDULE_STATE_ROOT') == str(self.state))
         policy = parse(self.read(Path(bindings['DAILY_SCHEDULE_POLICY'])))
-        require(digest(policy) == bindings.get('DAILY_SCHEDULE_SHA256')
-            and policy.get('max_attempts') == 40 and policy.get('success_target') == 20)
+        require(digest(policy) == bindings.get('DAILY_SCHEDULE_SHA256'))
+        schedule_attempt_limit(policy)
         journal = parse(self.read(self.state / 'scheduled/journal.json'))
         require(journal.get('policy_sha256') == digest(policy) and journal.get('schema_version') == 1)
         days = journal.get('days')
@@ -267,7 +295,8 @@ class Sources:
             if row.get('counts_slot') and row.get('job_id'):
                 require(str(UUID(row['job_id'])) == row['job_id'])
                 ids['rag' if row.get('producer') == 'ani_rag' else 'article'].append(row['job_id'])
-        require(sum(map(len, ids.values())) <= 40)
+        # Input/resource safety bound, independent of the reviewed daily cap.
+        require(sum(map(len, ids.values())) <= MAX_RECORDS)
         fragments = []
         for kind, table in (('article', 'content_generation_job'), ('rag', 'content_rag_generation_job')):
             where = 'job_id IN (' + ','.join("'%s'::uuid" % item for item in ids[kind]) + ')' if ids[kind] else 'false'

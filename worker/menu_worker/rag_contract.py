@@ -108,10 +108,18 @@ def validate_request(value):
 
 def validate_admission_receipt(value, request):
     request = validate_request(request)
-    require(isinstance(value, Mapping) and set(value) == RECEIPT_FIELDS, "rag_daily_admission_required")
-    require(type(value["schema_version"]) is int and value["schema_version"] == 1
+    require(isinstance(value, Mapping), "rag_daily_admission_required")
+    version = value.get("schema_version")
+    require(type(version) is int and version in {1, 2}
+            and set(value) == (RECEIPT_FIELDS | {"limit_revision_sha256"} if version == 2 else RECEIPT_FIELDS),
+            "rag_daily_admission_required")
+    require(type(value["schema_version"]) is int
             and value["counts_slot"] is True and type(value["attempt_ordinal"]) is int
-            and 1 <= value["attempt_ordinal"] <= 40, "invalid_rag_daily_admission")
+            and value["attempt_ordinal"] >= 1
+            and (version == 2 or value["attempt_ordinal"] <= 40), "invalid_rag_daily_admission")
+    if version == 2:
+        require(value["limit_revision_sha256"] is None or is_hash(value["limit_revision_sha256"]),
+                "invalid_rag_daily_admission")
     try:
         valid_id = isinstance(value["reservation_id"], str) and str(UUID(value["reservation_id"])) == value["reservation_id"]
         valid_day = isinstance(value["policy_date"], str) and date.fromisoformat(value["policy_date"]).isoformat() == value["policy_date"]

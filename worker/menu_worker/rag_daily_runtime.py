@@ -31,7 +31,9 @@ def audit_rag_history(store, state, *, period_job_count):
                                   "FROM public.content_rag_generation_job").fetchall()
     owned = {row["job_id"]: row for row in state["records"]
              if row.get("producer") == "ani_rag" and row.get("job_id")}
-    require(len(rows) + period_job_count <= state["config"]["max_new_jobs"],
+    from menu_worker.daily_limits import effective_total_attempt_limit
+    limit = effective_total_attempt_limit(state)
+    require(limit is None or len(rows) + period_job_count <= limit,
             "database_job_cap_already_exceeded")
     require(set(owned) == {str(row["job_id"]) for row in rows},
             "rag_database_history_not_owned_by_checkpoint")

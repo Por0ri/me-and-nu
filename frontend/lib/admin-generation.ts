@@ -2,7 +2,7 @@ import { ApiError, apiRequest } from "@/lib/api";
 
 export type GenerationAvailability = "available" | "partial" | "stale" | "unavailable";
 export type GenerationDaily = {
-  attempts: number | null; maxAttempts: 40; passes: number | null; successTarget: 20;
+  attempts: number | null; maxAttempts: 40 | null; passes: number | null; successTarget: 20;
   remainingAttempts: number | null; remainingPasses: number | null;
   pendingRecords: number | null; duplicateRecords: number | null;
   knownEstimatedCostUsd: string | null; totalEstimatedCostUsd: string | null; reservedCostUsd: string | null;
@@ -44,10 +44,10 @@ function validDay(value: unknown): value is string {
 }
 function daily(value: unknown): boolean {
   if (value === null) return true;
-  if (!record(value) || value.maxAttempts !== 40 || value.successTarget !== 20) return false;
+  if (!record(value) || (value.maxAttempts !== 40 && value.maxAttempts !== null) || value.successTarget !== 20) return false;
   if (!["attempts", "passes", "remainingAttempts", "remainingPasses", "pendingRecords", "duplicateRecords", "unknownCostJobs", "inflightCostJobs", "articleAttempts", "ragAttempts"].every(key => maybeCount(value[key])) ||
       !["knownEstimatedCostUsd", "totalEstimatedCostUsd", "reservedCostUsd"].every(key => money(value[key]))) return false;
-  return (value.attempts === null ? value.remainingAttempts === null : Number(value.attempts) <= 40 && value.remainingAttempts === 40 - Number(value.attempts)) &&
+  return (value.maxAttempts === null || value.attempts === null ? value.remainingAttempts === null : Number(value.attempts) <= value.maxAttempts && value.remainingAttempts === value.maxAttempts - Number(value.attempts)) &&
     (value.passes === null ? value.remainingPasses === null : Number(value.passes) <= 20 && value.remainingPasses === 20 - Number(value.passes)) &&
     (value.attempts === null || value.passes === null || Number(value.passes) <= Number(value.attempts)) &&
     ([value.attempts, value.articleAttempts, value.ragAttempts].includes(null) || Number(value.articleAttempts) + Number(value.ragAttempts) === value.attempts) &&
