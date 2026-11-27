@@ -15,9 +15,11 @@
 .sourceLink { margin: 20px 0 0; }
 .sourceLink a { color: var(--pivot-primary, #7043b4); text-decoration: underline; }
 .section + .section { margin-top: 20px; }
-.section h2, .section p { margin: 0; font-size: 14px; line-height: 20px; font-weight: 400; }
+/* 본문은 피그마처럼 글자 단위로 줄을 끊고 (word-break: normal, 영어 단어는 안 쪼갬), 문단은 양쪽 정렬로 줄 끝을 맞춘다.
+   문단 마지막 줄은 왼쪽 정렬 그대로 (2026-11-27 디자인 의견) */
+.section h2, .section p { margin: 0; font-size: 14px; line-height: 20px; font-weight: 400; word-break: normal; }
 /* Mobile readability override: only article paragraphs grow. */
-.section p { font-size: 16px; line-height: 24px; }
+.section p { font-size: 16px; line-height: 24px; text-align: justify; }
 .section p + p { margin-top: 12px; }
 /* Figma 1828:12160 separates article paragraphs by one 20px blank line. */
 .body > .section p + p { margin-top: 20px; }
