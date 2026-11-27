@@ -47,11 +47,13 @@ export function ConnectedGeneration({ onAccessFailure }: { onAccessFailure: (fai
   return <GenerationPanel state={state} refresh={retry} />;
 }
 
-function Counter({ label, value, limit, remaining }: { label: string; value: number | null | undefined; limit: number; remaining: number | null | undefined }) {
+function Counter({ label, value, limit, remaining }: { label: string; value: number | null | undefined; limit: number | null | undefined; remaining: number | null | undefined }) {
+  const bounded = typeof limit === "number";
   return <div className={styles.counter}>
-    <h3>{label}</h3><p><strong>{generationCount(value)}</strong><span> / {limit}건</span></p>
-    {value != null && <progress value={Math.min(value, limit)} max={limit} aria-label={`${label} ${value} / ${limit}건`} />}
-    <small>남은 {label === "생성 시도" ? "시도" : "목표"} {remaining == null ? "확인 불가" : `${generationCount(remaining)}건`}</small>
+    <h3>{label}</h3><p><strong>{generationCount(value)}</strong><span>{bounded ? ` / ${limit}건` : value == null ? "" : "건"}</span></p>
+    {value != null && bounded && <progress value={Math.min(value, limit)} max={limit} aria-label={`${label} ${value} / ${limit}건`} />}
+    <small>{limit === null ? "시도 제한 없음" : limit === undefined ? `${label === "생성 시도" ? "시도 제한" : "목표"} 확인 불가` :
+      `남은 ${label === "생성 시도" ? "시도" : "목표"} ${remaining == null ? "확인 불가" : `${generationCount(remaining)}건`}`}</small>
   </div>;
 }
 
@@ -77,8 +79,8 @@ export function GenerationPanel({ state, refresh }: { state: AdminReadState<Gene
       {(data.reason || stale) && <p className={styles.notice} role="status">{stale ? reasonLabels.snapshot_stale : reasonLabels[data.reason ?? ""] ?? "일부 현황을 확인하지 못했습니다."}</p>}
       {runtimeIssue && <p className={styles.notice} role="status">생성 제어·Worker 상태에 오류 또는 연결 누락이 기록되어 있습니다. 아래 실행 상태를 확인해 주세요.</p>}
       <div className={styles.metrics}>
-        <Counter label="생성 시도" value={daily?.attempts} limit={40} remaining={daily?.remainingAttempts} />
-        <Counter label="AI 검수 통과" value={daily?.passes} limit={20} remaining={daily?.remainingPasses} />
+        <Counter label="생성 시도" value={daily?.attempts} limit={daily?.maxAttempts} remaining={daily?.remainingAttempts} />
+        <Counter label="AI 검수 통과" value={daily?.passes} limit={daily?.successTarget} remaining={daily?.remainingPasses} />
         <div className={styles.cost}><h3>오늘 기록된 추정 비용</h3><strong>{generationUsd(daily?.knownEstimatedCostUsd)}</strong><span>USD · 확인된 사용량 소계</span>
           <p>비용 미확정 {countWithUnit(daily?.unknownCostJobs)} · 사용량 집계 대기 {countWithUnit(daily?.inflightCostJobs)}</p>
           <small>최종 청구액이 아닙니다. 미확정·집계 대기 비용이 더해질 수 있습니다.</small>

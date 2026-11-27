@@ -143,6 +143,47 @@ class RagPreflightRecoveryPostgresTests(unittest.TestCase):
         self.assertEqual(self.controller.summary()["daily_attempts"], 1)
         self.verify_history()
 
+    def test_real_forty_zero_failures_allow_ordinal_forty_one_only_after_reviewed_revision(self):
+        from menu_worker.bounded_resume import digest
+        from menu_worker.daily_limits import build_limit_revision, validate_limit_revisions
+        from menu_worker.daily_resume import validate_policy_history
+
+        original_jobs = {}
+        for _ in range(40):
+            record, job = self.fail_before_generation()
+            self.controller.finish_job(record)
+            self.assertEqual(record["rag_admission"]["schema_version"], 1)
+            original_jobs[job["job_id"]] = job
+        self.assertEqual(self.controller.summary()["daily_attempts"], 40)
+        self.assertEqual(self.controller.summary()["daily_successes"], 0)
+        self.controller.state.update(status="stopped", stop_reason="daily_attempt_limit_reached")
+        prefix = deepcopy(self.controller.state["records"])
+        revision = build_limit_revision(self.controller.state,
+            reason="Approved attempt-cap removal; preserve all zero-cost failures",
+            approved_at="2026-11-24T11:00:00+09:00")
+        self.controller.state["daily_limit_revisions"] = [revision]
+        self.controller.state.update(status="running", stop_reason=None)
+        self.controller.save()
+
+        record, job = self.fail_before_generation()
+        self.controller.finish_job(record)
+        self.assertEqual(record["rag_admission"]["schema_version"], 2)
+        self.assertEqual(record["rag_admission"]["attempt_ordinal"], 41)
+        self.assertEqual(record["rag_admission"]["limit_revision_sha256"], digest(revision))
+        self.assertEqual(record["daily_limit_revision_sha256"], digest(revision))
+        self.assertEqual(self.controller.state["records"][:len(prefix)], prefix)
+        self.assertEqual((self.controller.summary()["daily_attempts"],
+                          self.controller.summary()["daily_successes"]), (41, 0))
+        self.assertIsNone(self.controller.summary()["daily_attempt_limit"])
+        self.assertEqual(len(self.published), len(set(self.published)))
+        self.assertEqual(len(self.published), 41)
+        for job_id, original in original_jobs.items():
+            self.assertEqual(self.rag.get(job_id), original)
+        self.assertEqual(self.rag.get(job["job_id"]), job)
+        validate_limit_revisions(self.controller.state)
+        validate_policy_history(self.controller.state)
+        self.verify_history()
+
     def test_reuse_blocks_every_ambiguous_job_or_attempt_field(self):
         record, original = self.fail_before_generation()
         self.controller.finish_job(record)
@@ -397,6 +438,62 @@ class HistoricalRagRecoveryPostgresTests(unittest.TestCase):
             validate_failure_resume(state, digest(receipt), store=self.store, now=self.old.now)
         self.assertEqual(self.snapshot(), self.before_database)
         self.assertEqual(state["status"], "stopped")
+
+    def test_same_day_revision_and_uncapped_rollover_preserve_zero_and_unknown_receipts(self):
+        from menu_worker.bounded_generation import write_json
+        from menu_worker.bounded_resume import digest
+        from menu_worker.daily_limits import build_limit_revision, validate_limit_revisions
+        from menu_worker.daily_resume import (activate_plan, build_plan, preflight_plan,
+                                              resume_failure_recovery, validate_failure_resume)
+        from menu_worker.failure_recovery import validate_recovery_record
+
+        _, receipt, state = self.apply()
+        records = deepcopy(state["records"])
+        audit = deepcopy(state["failure_recovery_audit"])
+        revision = build_limit_revision(state, reason="Approved daily twenty passes without an attempt cap",
+            approved_at="2026-11-17T11:00:00+09:00")
+        state["daily_limit_revisions"] = [revision]
+        validate_limit_revisions(state)
+        self.assertEqual(state["records"], records)
+        self.assertEqual(state["failure_recovery_audit"], audit)
+        validate_recovery_record(state["records"][-1], store=self.store, artifact_root=self.root)
+        self.assertEqual(validate_failure_resume(state, digest(receipt), store=self.store, now=self.old.now), receipt)
+        verify_completed_history(self.store, state, self.old.read_result, rag_store=self.rag,
+            rag_read_result=lambda _: self.fail("Old zero-cost failure cannot generate again"))
+        self.assertEqual(self.snapshot(), self.before_database)
+
+        next_now = self.old.now + 86400
+        resumed = resume_failure_recovery(deepcopy(state), digest(receipt), store=self.store, now=next_now)
+        self.assertEqual((resumed["status"], resumed["stop_reason"]), ("stopped", "deadline_reached"))
+        write_json(self.checkpoint, resumed)
+        inbox = self.root / "uncapped-next-day-inbox"
+        inbox.mkdir()
+        next_plan = build_plan(source=self.checkpoint,
+            source_sha256=hashlib.sha256(self.checkpoint.read_bytes()).hexdigest(),
+            checkpoint=self.root / "uncapped-next-day.json", policy_date="2026-11-18",
+            delivery_root=self.root / "inbox", now=next_now,
+            routes=self.old.plan["daily_policy"]["routes"], rag_scope=state["rag_scope"],
+            rag_scope_sha256=state["rag_scope_sha256"], rag_delivery_root=inbox,
+            rag_runtime_sha256="a" * 64, success_target_only=True)
+        self.assertEqual(next_plan["daily_policy"]["schema_version"], 4)
+        self.assertIsNone(next_plan["daily_policy"]["max_attempts"])
+        self.assertIsNone(next_plan["config"]["max_new_jobs"])
+        self.assertEqual(next_plan["daily_policy"]["success_target"], 20)
+        self.assertEqual([row["job_id"] for row in next_plan["daily_policy"]["prior_unknown_costs"]],
+                         [self.old.failed["job_id"]])
+        options = {"store": self.store, "read_result": self.old.read_result, "rag_store": self.rag,
+            "rag_read_result": lambda _: self.fail("No RAG generation result exists"), "now": next_now}
+        preflight_plan(next_plan, **options)
+        next_state, _ = activate_plan(next_plan, **options)
+        self.assertEqual(next_state["records"], records)
+        self.assertEqual(next_state["failure_recovery_audit"], audit)
+        self.assertEqual(next_state["daily_limit_revisions"], [revision])
+        validate_limit_revisions(next_state)
+        validate_recovery_record(next_state["records"][-1], store=self.store, artifact_root=self.root)
+        verify_completed_history(self.store, next_state, self.old.read_result, rag_store=self.rag,
+            rag_read_result=lambda _: self.fail("Never regenerate old failed work"))
+        self.assertEqual(self.snapshot(), self.before_database)
+        self.assertEqual(self.rag.get(self.job["job_id"]), self.job)
 
     def test_started_or_unknown_cost_job_cannot_be_planned_as_free(self):
         cases = (("generation_started_at", "2026-11-17T01:01:00+00:00"),

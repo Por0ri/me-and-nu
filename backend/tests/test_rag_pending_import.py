@@ -15,7 +15,7 @@ from test_carousel_postgres import _run_async
 from test_rag_staging import native_fixture
 
 
-def seal(root, native, request, daily, scope):
+def seal(root, native, request, daily, scope, *, admission=None):
     """Canonical producer-shaped fixture; never used by a running worker."""
     root.mkdir(exist_ok=True)
     identity = {"job_id": native["job_id"], "generation_attempt_id": native["generation_attempt_id"],
@@ -23,6 +23,7 @@ def seal(root, native, request, daily, scope):
     mixed = rag.fingerprint({"daily": daily, "rag": scope})
     receipt = {"schema_version": 1, "reservation_id": str(uuid4()), "policy_date": daily["policy_date"],
         "policy_sha256": mixed, "input_sha256": identity["input_sha256"], "counts_slot": True, "attempt_ordinal": 1}
+    receipt.update(admission or {})
     identity["admission_sha256"] = rag.fingerprint(receipt)
     native["external_input_sha256"] = identity["input_sha256"]
     directory = root / "rag/jobs" / identity["job_id"] / "attempts" / identity["generation_attempt_id"]
@@ -324,3 +325,104 @@ def test_real_worker_exporter_hands_off_exact_native_contract_to_consumer(tmp_pa
     repeat = export_native_delivery(f["root"], f["inbox"], job, daily_policy=f["daily"], rag_scope=f["scope"])
     assert first == repeat and f["path"].read_bytes() == expected
     assert execute(f)["validated"] == 1
+
+
+def success_only_delivery(f, *, revision=None, ordinal=41):
+    if revision is None:
+        f["daily"].update(schema_version=4, max_attempts=None)
+        f["policy"]["day_policy_sha256"] = rag.fingerprint(f["daily"])
+    f["raw"] = seal(f["root"], f["native"], f["request"], f["daily"], f["scope"], admission={
+        "schema_version": 2, "attempt_ordinal": ordinal,
+        "limit_revision_sha256": rag.fingerprint(revision) if revision is not None else None})
+    f["path"].write_bytes(rag.canonical(f["raw"]))
+
+
+def revision_fixture(f):
+    return {"schema_version": 1, "purpose": "daily_success_only_revision",
+        "policy_date": f["daily"]["policy_date"], "day_policy_sha256": f["policy"]["day_policy_sha256"],
+        "effective_record_index": 32, "prior_records_sha256": "a" * 64,
+        "prior_seen_count": 32, "prior_seen_sha256": "b" * 64,
+        "prior_daily_attempts": 9, "prior_daily_successes": 6, "max_attempts": None,
+        "success_target": 20, "approved_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "Approved daily success target only"}
+
+
+@pytest.mark.parametrize("ordinal", [1, 41, 100])
+def test_success_only_new_day_accepts_v2_without_attempt_cap(tmp_path, monkeypatch, ordinal):
+    f = fixture(tmp_path)
+    success_only_delivery(f, ordinal=ordinal)
+    monkeypatch.setattr(rag, "create_async_engine", lambda *a, **k: pytest.fail("dry-run opened DB"))
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+    report = execute(f)
+    assert report["validated"] == 1 and report["llm_calls"] == 0 and report["publication_enabled"] is False
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+
+
+def test_same_day_revision_preserves_old_delivery_and_accepts_new_v2(tmp_path):
+    f = fixture(tmp_path)
+    revision = revision_fixture(f)
+    approval = {"limit_revision": revision, "reviewed_limit_revision_sha256": rag.fingerprint(revision)}
+    original = f["path"].read_bytes()
+    policy_sha = rag.fingerprint(f["policy"])
+    assert execute(f, **approval)["validated"] == 1
+    assert f["path"].read_bytes() == original
+    success_only_delivery(f, revision=revision)
+    assert execute(f, **approval)["validated"] == 1
+    assert rag.fingerprint(f["policy"]) == policy_sha
+
+
+@pytest.mark.parametrize("case", ["missing", "unreviewed", "changed", "wrong_day", "wrong_policy", "wrong_ordinal", "wrong_receipt"])
+def test_revised_day_requires_exact_host_approval_before_db(tmp_path, monkeypatch, case):
+    f = fixture(tmp_path)
+    revision = revision_fixture(f)
+    success_only_delivery(f, revision=revision, ordinal=9 if case == "wrong_ordinal" else 41)
+    approval = {"limit_revision": deepcopy(revision), "reviewed_limit_revision_sha256": rag.fingerprint(revision)}
+    if case == "missing":
+        approval = {}
+    elif case == "unreviewed":
+        approval.pop("reviewed_limit_revision_sha256")
+    elif case == "changed":
+        approval["limit_revision"]["prior_daily_attempts"] = 8
+    elif case == "wrong_day":
+        approval["limit_revision"]["policy_date"] = "2001-01-01"
+    elif case == "wrong_policy":
+        approval["limit_revision"]["day_policy_sha256"] = "c" * 64
+    elif case == "wrong_receipt":
+        approval["limit_revision"]["reason"] = "Different reviewed approval"
+        approval["reviewed_limit_revision_sha256"] = rag.fingerprint(approval["limit_revision"])
+    monkeypatch.setattr(rag, "create_async_engine", lambda *a, **k: pytest.fail("invalid approval opened DB"))
+    with pytest.raises(rag.RagPendingImportError):
+        execute(f, apply=True, reviewed_sha256=rag.fingerprint(f["policy"]), **approval)
+
+
+def test_legacy_v1_does_not_gain_unbounded_ordinal(tmp_path):
+    f = fixture(tmp_path)
+    raw = seal(f["root"], f["native"], f["request"], f["daily"], f["scope"], admission={"attempt_ordinal": 41})
+    f["path"].write_bytes(rag.canonical(raw))
+    with pytest.raises(rag.RagPendingImportError, match="rag_admission_binding_changed"):
+        execute(f)
+    f["daily"].update(schema_version=4, max_attempts=None)
+    f["policy"]["day_policy_sha256"] = rag.fingerprint(f["daily"])
+    reseal(f)
+    with pytest.raises(rag.RagPendingImportError, match="rag_admission_binding_changed"):
+        execute(f)
+
+
+def test_cli_revision_file_is_reviewed_and_nested_approval_is_not_a_delivery(tmp_path, monkeypatch, capsys):
+    f = fixture(tmp_path)
+    revision = revision_fixture(f)
+    success_only_delivery(f, revision=revision)
+    approval_dir = f["inbox"] / ".approvals"
+    approval_dir.mkdir()
+    revision_file = approval_dir / "daily-limit-revision.json"
+    revision_file.write_bytes(rag.canonical(revision))
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_bytes(rag.canonical(f["policy"]))
+    monkeypatch.setattr(rag, "create_async_engine", lambda *a, **k: pytest.fail("dry-run opened DB"))
+    args = ["--policy", str(policy_file), "--inbox", str(f["inbox"]),
+        "--feed-valid-until", f["policy"]["feed_valid_until"], "--limit-revision-file", str(revision_file),
+        "--reviewed-limit-revision-sha256", rag.fingerprint(revision)]
+    assert rag.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["validated"] == 1
+    assert rag.main(args[:-2]) == 1
+    assert json.loads(capsys.readouterr().err)["error"] == "reviewed_limit_revision_required"

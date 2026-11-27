@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -17,6 +18,21 @@ import re
 import shlex
 import subprocess
 from uuid import uuid4
+
+
+def _daily_limits_module():
+    # Deploy the same stdlib-only validator beside this script; repository
+    # tests load the canonical Worker source without importing its runtime.
+    source = Path(__file__).with_name("daily_limits.py")
+    if not source.is_file():
+        source = Path(__file__).resolve().parents[2] / "worker/menu_worker/daily_limits.py"
+    spec = importlib.util.spec_from_file_location("schedule_daily_limits", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+daily_limits = _daily_limits_module()
 
 KST = timezone(timedelta(hours=9))
 PROJECT = "menu-daily-generation"
@@ -186,9 +202,9 @@ def relative(value):
 def validate_policy(policy):
     require(isinstance(policy, dict) and type(policy.get("schema_version")) is int
             and (policy["schema_version"] == 1 and set(policy) == POLICY_FIELDS
-                 or policy["schema_version"] == 2 and set(policy) == POLICY_FIELDS | {"rag"})
+                 or policy["schema_version"] in {2, 3} and set(policy) == POLICY_FIELDS | {"rag"})
             and policy["purpose"] == "daily_count_schedule", "invalid_schedule_policy")
-    if policy["schema_version"] == 2:
+    if policy["schema_version"] in {2, 3}:
         rag = policy["rag"]
         require(isinstance(rag, dict) and set(rag) == RAG_FIELDS and type(rag["enabled"]) is bool,
                 "invalid_rag_schedule_policy")
@@ -205,7 +221,8 @@ def validate_policy(policy):
             and re.fullmatch(r"[0-9a-f]{64}", policy.get("seed_sha256", "")), "invalid_schedule_identity")
     seed = relative(policy["seed_checkpoint"])
     require(seed.suffix == ".json" and seed.parts[0] != "scheduled", "invalid_schedule_seed")
-    require(type(policy["max_attempts"]) is int and policy["max_attempts"] == 40
+    require((policy["schema_version"] == 3 and policy["max_attempts"] is None
+             or policy["schema_version"] in {1, 2} and type(policy["max_attempts"]) is int and policy["max_attempts"] == 40)
             and type(policy["success_target"]) is int and policy["success_target"] == 20, "schedule_limits_changed")
     require(policy["target"] == TARGET, "schedule_target_changed")
     routes = policy["routes"]
@@ -476,7 +493,7 @@ class Supervisor:
         last = journal["days"][-1] if journal["days"] else None
         return {"mode": "status", "policy_sha256": self.policy_sha, "today": self.today(),
                 "last_date": last["date"] if last else None, "phase": last["phase"] if last else "not_started",
-                "max_attempts": 40, "success_target": 20, "generation_enabled": False,
+                "max_attempts": self.policy["max_attempts"], "success_target": 20, "generation_enabled": False,
                 "llm_calls": 0, "queue_writes": 0, "service_db_writes": 0}
 
     def save(self, journal):
@@ -537,6 +554,13 @@ class Supervisor:
         args = ["--registered-routes", "--source-checkpoint", self.container(entry["source"]),
                 "--source-sha256", entry["source_sha256"], "--checkpoint", self.container(entry["checkpoint"]),
                 "--policy-date", entry["date"], "--delivery-root", self.container(entry["directory"] + "/inbox")]
+        # An already sealed day's plan remains byte-for-byte unchanged. A
+        # same-day revision changes only its effective execution limit.
+        plan_path = self.host(entry["directory"] + "/plan.json")
+        success_only = (read_json(plan_path).get("daily_policy", {}).get("schema_version") == 4
+                        if plan_path.exists() else self.policy["max_attempts"] is None)
+        if success_only:
+            args.append("--success-target-only")
         if self.rag:
             args += ["--rag-scope", self.container(self.rag["scope_file"]),
                 "--expected-rag-scope-sha256", self.rag["scope_sha256"],
@@ -556,10 +580,23 @@ class Supervisor:
     def validate_plan(self, plan, entry):
         policy = plan.get("daily_policy", {})
         config = plan.get("config", {})
-        require(policy.get("schema_version") == 3 and policy.get("limit_mode") == "daily_counts"
-                and policy.get("routes") == self.policy["routes"] and policy.get("max_attempts") == 40
+        uncapped = self.policy["max_attempts"] is None
+        legacy_revision = uncapped and policy.get("schema_version") == 3
+        require((policy.get("schema_version") == (4 if uncapped else 3) or legacy_revision)
+                and policy.get("limit_mode") == "daily_counts"
+                and policy.get("routes") == self.policy["routes"]
+                and "max_attempts" in policy and policy["max_attempts"] == (None if uncapped and not legacy_revision else 40)
                 and policy.get("success_target") == 20 and "daily_budget_usd" not in policy,
                 "generated_plan_outside_schedule")
+        if legacy_revision:
+            child = read_json(self.host(entry["checkpoint"]))
+            require(child.get("daily_policy") == policy and child.get("config") == config
+                    and child.get("daily_plan_sha256") == entry.get("plan_sha256"),
+                    "revised_day_checkpoint_changed")
+            self.attempt_limit(child, entry)
+        elif uncapped:
+            require("max_new_jobs" in config and config["max_new_jobs"] is None,
+                    "generated_plan_limits_changed")
         require(policy.get("policy_date") == entry["date"]
                 and policy.get("delivery_root") == self.container(entry["directory"] + "/inbox")
                 and plan.get("source_checkpoint") == self.container(entry["source"])
@@ -699,12 +736,26 @@ class Supervisor:
         attempts = sum(bool(row.get("counts_slot")) for row in today)
         successes = {(row["request"]["source_id"], row["canonical_url"]) for row in today
             if row.get("counts_slot") and row.get("execution_status") == "succeeded" and row.get("outcome") == "ready_for_staging"}
-        require(attempts <= 40 and len(successes) <= 20, "day_limits_exceeded")
+        limit = self.attempt_limit(child, entry)
+        require((limit is None or attempts <= limit) and len(successes) <= 20, "day_limits_exceeded")
         if child.get("status") == "complete":
             require(child["stop_reason"] == "daily_success_target_reached" and len(successes) == 20
-                    or child["stop_reason"] == "daily_attempt_limit_reached" and attempts == 40,
+                    or child["stop_reason"] == "daily_attempt_limit_reached" and limit is not None and attempts == limit,
                     "day_completion_count_mismatch")
         return child, attempts, len(successes)
+
+    def attempt_limit(self, child, entry):
+        try:
+            limit = daily_limits.effective_daily_attempt_limit(child)
+        except (daily_limits.DailyLimitError, KeyError, TypeError, ValueError):
+            raise ScheduleError("daily_limit_revision_changed") from None
+        require(limit == self.policy["max_attempts"], "day_attempt_policy_changed")
+        if limit is None and child["daily_policy"].get("schema_version") == 3:
+            revisions = [revision for revision in child.get("daily_limit_revisions", [])
+                         if revision.get("policy_date") == entry["date"]]
+            require(len(revisions) == 1 and digest(revisions[0]) == entry.get("daily_limit_revision_sha256"),
+                    "reviewed_daily_limit_revision_required")
+        return limit
 
     def delivery_counts(self, entry, child):
         parent = read_json(self.host(entry["source"]))
@@ -820,6 +871,9 @@ class Supervisor:
                 ["run", "--rm", "--no-deps", "-T", "rag-pending-importer",
                  "--policy", "/runtime/rag-import-policy.json", "--reviewed-policy-sha256", entry["rag_import_policy_sha256"],
                  "--inbox", self.container(entry["directory"] + "/rag-inbox"),
+                 *(["--limit-revision-file", self.container(entry["directory"] + "/rag-inbox/.approvals/daily-limit-revision.json"),
+                    "--reviewed-limit-revision-sha256", entry["daily_limit_revision_sha256"]]
+                   if entry.get("daily_limit_revision_sha256") else []),
                  *(["--feed-valid-until", expiry] if expiry is not None else []),
                  "--database-url-file", "/run/secrets/rag-service-dsn",
                  "--deployment-env", self.policy["target"]["environment"], "--apply",

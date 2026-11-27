@@ -12,6 +12,12 @@ Run the reviewed source once with:
 python3 export_snapshot.py --output-directory /home/ubuntu/me-nu-generation-observability
 ```
 
+The exporter uses the Worker's standard-library-only
+`worker/menu_worker/daily_limits.py` validator. In a standalone release, include
+an exact copy beside `export_snapshot.py` and seal both files in the deployment
+manifest. A repository checkout reads the canonical Worker file directly. No
+Worker package, provider, DB client or bytecode cache is loaded or created.
+
 Provision the output directory as root-owned mode 0755. The exporter replaces
 `generation.json` atomically at mode 0644. Mount **the directory**, read-only,
 into the API; mounting one file would retain the old inode after replacement.
@@ -32,8 +38,16 @@ seconds. A current KST day mismatch keeps history but hides daily/job counters.
 ## Accounting definitions
 
 - Daily attempts are `counts_slot=true` reservations after the current
-  `daily_policy.start_record_index`. Article and RAG share 40; safe retries,
-  dispatch attempts and duplicate deliveries do not create more dashboard slots.
+  `daily_policy.start_record_index`. The reviewed policy explicitly specifies
+  `max_attempts: null` in daily-policy schema 4 for no attempt cap, or `40` in
+  schema 3 for the earlier shared cap. A validated append-only same-day limit
+  revision also removes the cap without replacing the schema-3 policy or its
+  existing records. Prefix, counters, approval and later record bindings use the
+  same validator as the Worker.
+  With no cap, both `max_attempts` and `remaining_attempts` are null while the
+  actual attempt count continues past 40. An absent or invalid policy value is
+  unavailable, never interpreted as unlimited. Safe retries, dispatch attempts
+  and duplicate deliveries do not create more dashboard slots.
   `duplicate` records with `counts_slot=false` do not consume slots.
 - Daily passes match the controller: completed, succeeded,
   `ready_for_staging`, counted records, deduplicated by article source+URL or RAG

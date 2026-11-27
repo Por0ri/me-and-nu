@@ -33,7 +33,7 @@ def _target(state, snapshot, job_id, artifact_root):
     require(state.get("schema_version") == 1 and state.get("status") == "stopped"
             and state.get("stop_reason") == "rag_generation_requires_attention",
             "rag_recovery_checkpoint_not_stopped")
-    require(state.get("daily_policy", {}).get("schema_version") == 3
+    require(state.get("daily_policy", {}).get("schema_version") in {3, 4}
             and state["daily_policy"].get("limit_mode") == "daily_counts"
             and state.get("config", {}).get("limit_mode") == "daily_counts"
             and state["config"].get("total_budget_usd") is None,

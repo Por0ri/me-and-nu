@@ -3,7 +3,7 @@
 This module does not start a worker or activate a schedule. The caller owns the
 same local/database controller locks as the period-only daily entry point. A
 reviewed scope is pinned in the checkpoint, while all previous records remain
-byte-for-byte values. Both producers consume the same 40/20 counters.
+byte-for-byte values. Both producers share the same reviewed daily limits.
 """
 from __future__ import annotations
 
@@ -294,6 +294,10 @@ class MixedDailyController(DailyController):
             "policy_sha256": digest({"daily": self.state["daily_policy"], "rag": self.rag_scope}),
             "input_sha256": request.input_sha256, "counts_slot": True,
             "attempt_ordinal": sum(bool(row.get("counts_slot")) for row in today) + 1}
+        from menu_worker.daily_limits import effective_daily_attempt_limit
+        if effective_daily_attempt_limit(self.state) is None:
+            record["rag_admission"].update(schema_version=2,
+                limit_revision_sha256=record.get("daily_limit_revision_sha256"))
         self.state["records"].append(record)
         self.state["seen"].append(record["canonical_url"])
         self.save()  # Count and request are durable before any queue submission.

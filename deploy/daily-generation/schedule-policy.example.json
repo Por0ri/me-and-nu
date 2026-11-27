@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "purpose": "daily_count_schedule",
   "release_sha": "REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA",
   "seed_checkpoint": "REPLACE_WITH_AUDITED_COMPLETED_CHECKPOINT.json",
@@ -7,8 +7,16 @@
   "routes": [
     {"source_id": "one_piece_official", "content_type": "goods", "menu_work_id": 8}
   ],
-  "max_attempts": 40,
+  "max_attempts": null,
   "success_target": 20,
+  "rag": {
+    "enabled": false,
+    "scope_file": "REPLACE_WITH_REVIEWED_RAG_SCOPE.json",
+    "scope_sha256": "REPLACE_WITH_REVIEWED_RAG_SCOPE_SHA256",
+    "runtime_config": "/absolute/private/rag-runtime.json",
+    "runtime_sha256": "REPLACE_WITH_REVIEWED_RAG_RUNTIME_SHA256",
+    "feed_valid_days": null
+  },
   "target": {
     "host": "postgres",
     "port": 5432,

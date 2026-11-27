@@ -46,6 +46,51 @@ test('unknowns are retained and stale values remain explicitly historical', () =
   assert.match(html, /0\.04703593/); assert.match(html, /비용 미확정 1건/); assert.match(html, /사용량 집계 대기 1건/);
   assert.match(html, /AI 검수 통과는 공개 승인이 아닙니다/); assert.match(html, /확인 불가/);
 });
+test('uncapped attempts above forty render without a denominator while the twenty-pass target stays visible', () => {
+  const env = runtime(), value = generationFixture();
+  Object.assign(value.daily, { attempts: 61, maxAttempts: null, remainingAttempts: null,
+    passes: 20, remainingPasses: 0, articleAttempts: 21, ragAttempts: 40 });
+  const parsed = env.api.parseGenerationSnapshot(value);
+  assert.equal(parsed.daily.attempts, 61); assert.equal(parsed.daily.maxAttempts, null);
+  assert.equal(parsed.daily.remainingAttempts, null); assert.equal(parsed.daily.successTarget, 20);
+  assert.equal(parsed.daily.totalEstimatedCostUsd, null); assert.equal(parsed.history.unknownCostJobs, 3);
+  const html = render({ status: 'ready', data: parsed });
+  assert.match(html, /시도 제한 없음/); assert.match(html, /<strong>61<\/strong><span>건<\/span>/);
+  assert.doesNotMatch(html, /\/ 40건|남은 시도|aria-label="생성 시도/);
+  assert.match(html, /aria-label="AI 검수 통과 20 \/ 20건"/);
+  assert.equal((html.match(/<progress/g) || []).length, 1);
+  assert.match(html, /비용 미확정 1건/); assert.match(html, /사용량 집계 대기 1건/);
+});
+test('unlimited policy, unknown attempt count, and unavailable policy are displayed separately', () => {
+  const env = runtime(), value = generationFixture();
+  Object.assign(value.daily, { attempts: null, maxAttempts: null, remainingAttempts: null,
+    articleAttempts: null, ragAttempts: null });
+  env.api.parseGenerationSnapshot(value);
+  const unlimited = render({ status: 'ready', data: value });
+  assert.match(unlimited, /시도 제한 없음/); assert.match(unlimited, /확인 불가/);
+  value.daily.maxAttempts = 40;
+  env.api.parseGenerationSnapshot(value);
+  const limited = render({ status: 'ready', data: value });
+  assert.match(limited, /남은 시도 확인 불가/); assert.match(limited, /\/ 40건/);
+  assert.doesNotMatch(limited, /시도 제한 없음/);
+  const unavailable = render({ status: 'ready', data: unavailableFixture() });
+  assert.match(unavailable, /시도 제한 확인 불가/); assert.doesNotMatch(unavailable, /시도 제한 없음/);
+});
+test('uncapped snapshots still reject fake remaining capacity, malformed limits, and more than twenty passes', () => {
+  const env = runtime();
+  for (const mutate of [
+    x => x.daily.remainingAttempts = 0, x => x.daily.remainingAttempts = 1000000,
+    x => delete x.daily.maxAttempts, x => x.daily.maxAttempts = true, x => x.daily.maxAttempts = 1000000,
+    x => x.daily.successTarget = null, x => x.daily.passes = 21,
+    x => x.daily.attempts = -1, x => x.daily.attempts = 61.5, x => x.daily.attempts = '61',
+  ]) {
+    const value = generationFixture();
+    Object.assign(value.daily, { attempts: 61, maxAttempts: null, remainingAttempts: null,
+      articleAttempts: 21, ragAttempts: 40 });
+    mutate(value);
+    assert.throws(() => env.api.parseGenerationSnapshot(value), { code: 'INVALID_ADMIN_RESPONSE' });
+  }
+});
 test('unavailable and failed reads never invent zero costs or retain protected values', () => {
   const env = runtime(), value = unavailableFixture(); env.api.parseGenerationSnapshot(value);
   const html = render({ status: 'ready', data: value }); assert.match(html, /아직 수집된 현황이 없습니다/);

@@ -79,13 +79,17 @@ def _evidence(state, record, job, artifact_root):
     scope = state["rag_scope"]
     require(type(start) is int and type(end) is int and 0 <= start <= index < end
             and policy.get("limit_mode") == "daily_counts"
-            and policy.get("max_attempts") == 40 and policy.get("success_target") == 20
+            and ((policy.get("schema_version") == 3 and policy.get("max_attempts") == 40)
+                 or (policy.get("schema_version") == 4 and policy.get("max_attempts") is None))
+            and policy.get("success_target") == 20
             and record.get("day_policy_sha256") == digest(policy)
             and digest(scope) == state.get("rag_scope_sha256")
             and receipt["policy_date"] == policy["policy_date"]
             and receipt["policy_sha256"] == digest({"daily": policy, "rag": scope})
             and receipt["attempt_ordinal"] == sum(row.get("counts_slot") is True for row in rows[start:index + 1]),
             ERROR)
+    from menu_worker.daily_limits import validate_rag_limit_admission
+    validate_rag_limit_admission(state, record, policy, index)
     require(any(request.namespace == route.get("namespace")
                 and request.menu_work_id == route.get("menu_work_id")
                 and request.content_type == route.get("content_type")

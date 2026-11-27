@@ -250,7 +250,7 @@ def _validate_target(state, job_id, snapshot):
     require(state.get("schema_version") == 1 and state.get("status") == "stopped"
             and state.get("stop_reason") in stop_reasons,
             "recovery_checkpoint_not_stopped")
-    require(state.get("daily_policy", {}).get("schema_version") == 3
+    require(state.get("daily_policy", {}).get("schema_version") in {3, 4}
             and state.get("daily_policy", {}).get("limit_mode") == "daily_counts"
             and state.get("config", {}).get("limit_mode") == "daily_counts"
             and state["config"].get("total_budget_usd") is None, "recovery_requires_count_policy")
@@ -479,7 +479,7 @@ def validate_recovery_history(state, *, store=None, artifact_root=None):
     references = [row.get("failure_recovery_receipt") for row in rows]
     require(state.get("failure_recovery_audit", []) == references, "failure_recovery_audit_changed")
     if rows:
-        require(state.get("daily_policy", {}).get("schema_version") == 3
+        require(state.get("daily_policy", {}).get("schema_version") in {3, 4}
                 and state.get("daily_policy", {}).get("limit_mode") == "daily_counts"
                 and state.get("config", {}).get("limit_mode") == "daily_counts"
                 and state["config"].get("total_budget_usd") is None, "recovery_requires_count_policy")
