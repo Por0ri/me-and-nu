@@ -137,7 +137,8 @@ def validate_activation(policy,reviewed_policy_sha256,runtime,output):
             'mixed_count_policy_required')
     rag = policy.get('rag')
     require(isinstance(rag,dict) and set(rag) == {'enabled','scope_file','scope_sha256','runtime_config','runtime_sha256','feed_valid_days'}
-            and rag['enabled'] is True and type(rag['feed_valid_days']) is int and 1 <= rag['feed_valid_days'] <= 365,
+            and rag['enabled'] is True and (rag['feed_valid_days'] is None
+                or (type(rag['feed_valid_days']) is int and 1 <= rag['feed_valid_days'] <= 365)),
             'explicit_rag_activation_policy_required')
     require(rag['runtime_config'] == str(output) and rag['runtime_sha256'] == raw_sha(runtime_bytes(runtime)),
             'reviewed_runtime_binding_required')

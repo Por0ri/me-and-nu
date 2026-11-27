@@ -138,6 +138,41 @@ def test_preserves_raw_package_and_digest_binds_expiry_and_pngs(tmp_path, raw_bu
     assert prepare(tmp_path, changed).items[0].digest == original.items[0].digest
 
 
+@pytest.mark.parametrize("kind", ["news", "event", "goods", "guide", "people", "behind", "review",
+                                  "humor", "character", "curation", "music"])
+def test_explicit_null_deadline_preserves_producer_bytes_and_digest(tmp_path, raw_bundle, kind):
+    package = raw_bundle["items"][0]["package"]
+    package.update(content_type=kind, feed_valid_until=None, purge_at=None)
+    original = deepcopy(package)
+    bundle = prepare(tmp_path, raw_bundle)
+    assert bundle.items[0].expires_at is None and bundle.items[0].package.feed_valid_until is None
+    assert bundle.items[0].raw.package == original
+    assert "feed_expiry_policy" not in bundle.items[0].raw.package
+    assert prepare(tmp_path, raw_bundle).items[0].digest == bundle.items[0].digest
+    package["feed_valid_until"] = (NOW + timedelta(days=2)).isoformat()
+    assert prepare(tmp_path, raw_bundle).items[0].digest != bundle.items[0].digest
+
+
+def test_missing_deadline_is_not_an_explicit_no_deadline_handoff(tmp_path, raw_bundle):
+    del raw_bundle["items"][0]["package"]["feed_valid_until"]
+    with pytest.raises(seed.CarouselImportError, match="feed_valid_until"):
+        prepare(tmp_path, raw_bundle)
+
+
+@pytest.mark.parametrize("purge", ["", "not-a-date", "2026-11-01T12:00:00"])
+def test_null_deadline_still_validates_present_purge_timestamp(tmp_path, raw_bundle, purge):
+    raw_bundle["items"][0]["package"].update(feed_valid_until=None, purge_at=purge)
+    with pytest.raises(seed.CarouselImportError, match="purge_at"):
+        prepare(tmp_path, raw_bundle)
+
+
+def test_purge_timestamp_never_becomes_an_implicit_feed_deadline(tmp_path, raw_bundle):
+    raw_bundle["items"][0]["package"]["feed_valid_until"] = None
+    bundle = prepare(tmp_path, raw_bundle)
+    assert bundle.items[0].expires_at is None
+    assert bundle.items[0].package.purge_at == raw_bundle["items"][0]["package"]["purge_at"]
+
+
 def test_producer_package_without_work_mapping_is_accepted(tmp_path, raw_bundle):
     raw_bundle["items"][0]["package"]["menu_work_ids"] = []
     assert prepare(tmp_path, raw_bundle).items[0].package.menu_work_ids == []
@@ -248,7 +283,10 @@ def test_invalid_operator_review_is_rejected(tmp_path, raw_bundle, case):
 
 
 @pytest.mark.asyncio
-async def test_default_dry_run_is_read_only_and_producer_score_cannot_approve(engine, tmp_path, raw_bundle):
+@pytest.mark.parametrize("no_deadline", [False, True])
+async def test_default_dry_run_is_read_only_and_producer_score_cannot_approve(engine, tmp_path, raw_bundle, no_deadline):
+    if no_deadline:
+        raw_bundle["items"][0]["package"]["feed_valid_until"] = None
     bundle = prepare(tmp_path, raw_bundle)
     with Session(engine) as session:
         before = counts(session)
@@ -260,7 +298,10 @@ async def test_default_dry_run_is_read_only_and_producer_score_cannot_approve(en
 
 
 @pytest.mark.asyncio
-async def test_atomic_stage_and_idempotent_retry_preserve_source_data(engine, tmp_path, raw_bundle):
+@pytest.mark.parametrize("no_deadline", [False, True])
+async def test_atomic_stage_and_idempotent_retry_preserve_source_data(engine, tmp_path, raw_bundle, no_deadline):
+    if no_deadline:
+        raw_bundle["items"][0]["package"]["feed_valid_until"] = None
     bundle = prepare(tmp_path, raw_bundle)
     with Session(engine) as session, session.begin():
         report = await seed.import_bundle(AsyncAdapter(session), bundle, apply=True, now=NOW)
@@ -270,6 +311,8 @@ async def test_atomic_stage_and_idempotent_retry_preserve_source_data(engine, tm
         report = await seed.import_bundle(AsyncAdapter(session), bundle, apply=True, now=NOW)
         assert report["unchanged"] == 1 and counts(session) == before
         content = session.scalar(select(Content))
+        assert content.ai_judgment_basis.get("feed_expiry_policy") == ("no_deadline_v1" if no_deadline else None)
+        assert (content.feed_valid_until is None) == no_deadline
         assert (content.status, content.judgment_status, content.published_at) == ("pending_review", "needs_review", None)
         assert content.summary == "실제 게시물이 아닌 테스트입니다."
         assert content.image_url == f"/api/v1/contents/{content.content_id}/slides/1/image?topicId={content.topic_id}"
@@ -285,7 +328,10 @@ async def test_atomic_stage_and_idempotent_retry_preserve_source_data(engine, tm
 
 
 @pytest.mark.asyncio
-async def test_operator_approval_then_rejection_and_later_approval(engine, tmp_path, raw_bundle):
+@pytest.mark.parametrize("no_deadline", [False, True])
+async def test_operator_approval_then_rejection_and_later_approval(engine, tmp_path, raw_bundle, no_deadline):
+    if no_deadline:
+        raw_bundle["items"][0]["package"]["feed_valid_until"] = None
     bundle = prepare(tmp_path, raw_bundle)
     with Session(engine) as session, session.begin():
         await seed.import_bundle(AsyncAdapter(session), bundle, apply=True, now=NOW)
@@ -295,6 +341,8 @@ async def test_operator_approval_then_rejection_and_later_approval(engine, tmp_p
             report = await seed.import_bundle(AsyncAdapter(session), reviewed, apply=True, now=NOW)
             assert report["review_updated"] == 1
             assert session.scalar(select(Content)).status == expected
+            assert session.scalar(select(Content)).ai_judgment_basis.get("feed_expiry_policy") == (
+                "no_deadline_v1" if no_deadline else None)
     with Session(engine) as session, session.begin():
         report = await seed.import_bundle(AsyncAdapter(session), bundle, apply=True, now=NOW)
         assert report["unchanged"] == 1
@@ -302,6 +350,29 @@ async def test_operator_approval_then_rejection_and_later_approval(engine, tmp_p
         assert session.scalar(select(Content)).judgment_status == "confirmed"
         assert session.scalar(select(Draft)).status == "published"
         assert session.scalar(select(AgentRun)).outcome == "publish_candidate"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_marker", [None, "no_deadline_v2", True])
+async def test_null_replay_cannot_repair_missing_or_changed_expiry_policy(engine, tmp_path, raw_bundle, changed_marker):
+    raw_bundle["items"][0]["package"]["feed_valid_until"] = None
+    bundle = prepare(tmp_path, raw_bundle)
+    with Session(engine) as session, session.begin():
+        await seed.import_bundle(AsyncAdapter(session), bundle, apply=True, now=NOW)
+        row = session.scalar(select(Content))
+        basis = dict(row.ai_judgment_basis)
+        if changed_marker is None:
+            basis.pop("feed_expiry_policy")
+        else:
+            basis["feed_expiry_policy"] = changed_marker
+        row.ai_judgment_basis = basis
+    reviewed = prepare(tmp_path, raw_bundle, [review(bundle.items[0])])
+    for incoming in (bundle, reviewed):
+        with Session(engine) as session, pytest.raises(seed.CarouselImportError, match="immutable reviewed copy"), session.begin():
+            await seed.import_bundle(AsyncAdapter(session), incoming, apply=True, now=NOW)
+    with Session(engine) as session:
+        row = session.scalar(select(Content))
+        assert row.status == "pending_review" and row.ai_judgment_basis.get("feed_expiry_policy") == changed_marker
 
 
 @pytest.mark.asyncio

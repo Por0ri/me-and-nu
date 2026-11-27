@@ -627,7 +627,7 @@ class MixedScheduleTests(unittest.TestCase):
         self.foreign_before = False
         self.after_mismatch = None
 
-    def mixed(self, *, enabled=False):
+    def mixed(self, *, enabled=False, feed_valid_days=7):
         (self.release / "rag").mkdir(exist_ok=True)
         for name in scheduler.RAG_COMPOSE:
             (self.release / name).write_text("# mixed fixture; never executed\n")
@@ -643,7 +643,7 @@ class MixedScheduleTests(unittest.TestCase):
         scheduler.save_json(runtime_path, runtime)
         self.policy.update(schema_version=2, rag={"enabled": enabled, "scope_file": "rag-scope.json",
             "scope_sha256": scheduler.digest(scope), "runtime_config": str(runtime_path),
-            "runtime_sha256": scheduler.file_sha(runtime_path), "feed_valid_days": 7})
+            "runtime_sha256": scheduler.file_sha(runtime_path), "feed_valid_days": feed_valid_days})
         values = [line for line in self.env.read_text().splitlines() if not line.startswith("RAG_WORKER_IMAGE=")]
         self.env.write_text("\n".join(values) + "\nRAG_WORKER_IMAGE='sha256:" + "a" * 64 + "'\n")
 
@@ -795,6 +795,7 @@ class MixedScheduleTests(unittest.TestCase):
         self.assertIn("--feed-valid-until", rag_args)
         self.assertIn("/run/secrets/rag-service-dsn", rag_args)
         self.assertNotIn("--approve", rag_args)
+        self.assertEqual(rag_args[rag_args.index("--feed-valid-until") + 1], "2026-12-04T00:00:00+09:00")
         original = scheduler.read_json(self.state / "seed.json")
         child = scheduler.read_json(self.state / self.entry()["checkpoint"])
         self.assertEqual(child["records"][:len(original["records"])], original["records"])
@@ -803,6 +804,92 @@ class MixedScheduleTests(unittest.TestCase):
                 request = rag_contract.RagRequest.parse(row["request"]["rag_request"])
                 self.assertEqual(row["canonical_url"], "urn:menu-rag:" + request.identity_key)
                 self.assertEqual(row["rag_input_sha256"], request.input_sha256)
+
+    def test_rag_expiry_policy_requires_explicit_null_or_integer_days(self):
+        self.mixed()
+        for value in (None, 1, 7, 365):
+            with self.subTest(accepted=value):
+                self.policy["rag"]["feed_valid_days"] = value
+                self.assertEqual(scheduler.validate_policy(self.policy), scheduler.digest(self.policy))
+        for value in (False, True, 0, -1, 366, 1.0, "7", "null", "", [], {}):
+            with self.subTest(rejected=value):
+                self.policy["rag"]["feed_valid_days"] = value
+                with self.assertRaisesRegex(scheduler.ScheduleError, "explicit_rag_feed_expiry_required"):
+                    scheduler.validate_policy(self.policy)
+        del self.policy["rag"]["feed_valid_days"]
+        with self.assertRaisesRegex(scheduler.ScheduleError, "invalid_rag_schedule_policy"):
+            scheduler.validate_policy(self.policy)
+
+    def test_disabled_native_expiry_preflight_keeps_null_policy_and_no_paid_actions(self):
+        self.mixed(feed_valid_days=None)
+        report = self.supervisor().run(preflight=True)
+        self.assertEqual([stage for stage, _ in self.calls], ["plan", "preflight"])
+        self.assertEqual((report["llm_calls"], report["queue_writes"], report["service_db_writes"]), (0, 0, 0))
+        directory = self.state / self.entry()["directory"]
+        rag_policy = scheduler.read_json(directory / "rag-import-policy.json")
+        self.assertIn("feed_valid_until", rag_policy)
+        self.assertIsNone(rag_policy["feed_valid_until"])
+        self.assertEqual(scheduler.digest(rag_policy), self.entry()["rag_import_policy_sha256"])
+        self.assertIn("RAG_FEED_VALID_UNTIL=''\n", (directory / "runtime.env").read_text())
+        with self.assertRaisesRegex(scheduler.ScheduleError, "rag_schedule_disabled"):
+            self.supervisor().run(apply=True)
+        self.assertFalse((self.state / self.entry()["checkpoint"]).exists())
+        # Expiry changes are still policy changes, including null -> finite.
+        self.policy["rag"]["feed_valid_days"] = 7
+        with self.assertRaisesRegex(scheduler.ScheduleError, "schedule_configuration_changed"):
+            self.supervisor().run(preflight=True)
+
+    def test_native_expiry_shared_caps_rollover_and_original_history_are_preserved(self):
+        self.mixed(enabled=True, feed_valid_days=None)
+        first = self.supervisor().run(apply=True)
+        self.assertEqual((first["attempts"], first["successes"]), (20, 20))
+        self.assertEqual((self.entry()["period_imported"], self.entry()["rag_imported"]), (12, 8))
+        original = scheduler.read_json(self.state / self.entry()["checkpoint"])
+        self.now += timedelta(days=1)
+        self.attempts, self.successes, self.rag_successes = 40, 3, 3
+        second = self.supervisor().run(apply=True)
+        self.assertEqual((second["policy_date"], second["attempts"], second["successes"]), ("2026-11-27", 40, 3))
+        self.assertEqual((self.entry()["period_imported"], self.entry()["rag_imported"]), (0, 3))
+        child = scheduler.read_json(self.state / self.entry()["checkpoint"])
+        self.assertEqual(child["records"][:len(original["records"])], original["records"])
+        self.assertEqual(child["accounting_resume_audit"], original["accounting_resume_audit"])
+        for stage, args in self.calls:
+            if stage == "rag-import":
+                self.assertNotIn("--feed-valid-until", args)
+                self.assertNotIn("--approve", args)
+                self.assertTrue(all(isinstance(value, str) for value in args))
+        for day in ("2026-11-26", "2026-11-27"):
+            directory = self.state / "scheduled" / day
+            period = scheduler.read_json(directory / "import-policy.json")
+            rag = scheduler.read_json(directory / "rag-import-policy.json")
+            self.assertIsNone(rag["feed_valid_until"])
+            self.assertEqual((period["max_items"], rag["max_items"]), (20, 20))
+            self.assertEqual(period["day_policy_sha256"], rag["day_policy_sha256"])
+        calls = len(self.calls)
+        self.assertEqual(self.supervisor().run(apply=True)["status"], "already_complete")
+        self.assertEqual(len(self.calls), calls)
+
+    def test_native_expiry_prior_day_recovery_keeps_unknown_cost_and_no_ttl_override(self):
+        self.mixed(enabled=True, feed_valid_days=None)
+        recovery, original = self.reconciled_failure_fixture(held=True)
+        self.supervisor().run(reconcile=True, **recovery)
+        self.now += timedelta(days=1)
+        before = len(self.calls)
+        report = self.supervisor().run(resume_reconciled=True, **recovery)
+        self.assertEqual((report["policy_date"], report["attempts"], report["successes"]), ("2026-11-26", 3, 2))
+        following = dict(self.calls[before:])
+        self.assertNotIn("worker-start", following)
+        # The existing controller CLI closes an expired recovered checkpoint;
+        # no Worker starts and no new record or paid attempt is admitted.
+        self.assertIn("--resume-failure-recovery", following["generate"])
+        for stage in ("import", "rag-import"):
+            self.assertEqual(following[stage][-2:], ["--reconcile-policy-date", "2026-11-26"])
+        self.assertNotIn("--feed-valid-until", following["rag-import"])
+        child = scheduler.read_json(self.state / self.entry()["checkpoint"])
+        self.assertEqual(child["stop_reason"], "deadline_reached")
+        self.assertEqual(child["records"], original["records"])
+        self.assertEqual(child["failure_recovery_audit"], original["failure_recovery_audit"])
+        self.assertIsNone(child["records"][3]["estimated_cost_usd"])
 
     def test_combined_forty_attempts_and_all_rag_successes_keep_exact_limits(self):
         self.mixed(enabled=True)

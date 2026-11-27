@@ -38,7 +38,7 @@ WORKS = MODEL.parent / "catalog" / "menu_works.csv"
 ANILIST_USERS = DATA / "anilist_users" / "entries.csv"
 NO_COWATCH_FROM = 2022   # 이 해부터 시작한 작품은 MAL 같이 본 기록을 안 씀 (위 설명)
 
-# 글 노출 규칙: 유형마다 피드에 언제까지 보여줄지
+# 기한이 없는 기존 글의 대체 규칙. 새 no_deadline_v1 적재본에는 적용하지 않는다.
 NEWS_DAYS = 30           # 소식: 발표일부터 30일. 행사 · 발매 날짜가 더 늦으면 그날까지
 EVENT_OPEN_DAYS = 30     # 행사: 끝 날짜까지. 시작일만 있으면 시작일부터 30일
 GOODS_DAYS = 14          # 굿즈: 판매 끝 날짜까지. 발매(판매 시작)일만 있으면 그 뒤 14일
@@ -289,6 +289,7 @@ def exposure_end(ctype, published, event_start=None, event_end=None):
 
 def make_feed(posts, ctx):
     """글 목록 → v1 글 표. posts: dict 목록 (type · menu_work_id(없으면 None) · published · until, 날짜는 date).
+    명시적으로 기한 없이 적재한 글의 until=None은 정수 상한으로 표현한다. DB에 가짜 날짜를 저장하지 않는다.
     작품이 없거나 목록 밖인 글은 pos = -1 (작품 취향 0).
     글에 works (연결 작품 번호, 연결 순서) · anchor (기준 작품 자리, 없으면 None) 가 있으면 (11/16 결정):
     pos = 기준 작품 자리 (기준이 없는 모음은 -1), rel_pos · rel_w = 기준이 아닌 연결 작품 자리 · 무게 W_RELATED.
@@ -308,7 +309,8 @@ def make_feed(posts, ctx):
     feed = {"pos": np.array(pos, dtype=np.int64),
             "type": np.array([v1.TYPE_INDEX[p["type"]] for p in posts], dtype=np.int64),
             "day": np.array([day(p["published"]) for p in posts], dtype=np.int64),
-            "until": np.array([day(p["until"]) for p in posts], dtype=np.int64)}
+            "until": np.array([day(p["until"]) if p["until"] is not None else np.iinfo(np.int64).max
+                               for p in posts], dtype=np.int64)}
     k = max((len(r) for r in rel), default=0)
     if k:
         rel_pos = np.full((len(posts), k), -1, dtype=np.int64)

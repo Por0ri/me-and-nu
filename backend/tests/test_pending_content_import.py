@@ -87,6 +87,22 @@ def test_export_evidence_and_pngs_are_bound_without_creating_an_operator_review(
     assert envelope["bundle_sha256"] == hashlib.sha256((root/envelope["bundle_path"]).read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize("kind", ["news", "event", "goods"])
+def test_explicit_null_deadline_handoff_retains_original_evidence_and_manifest(tmp_path, kind):
+    root = tmp_path / "exports"
+    root.mkdir()
+    raw, envelope = make_delivery(root, content_type=kind, version=2)
+    raw["items"][0]["package"].update(feed_valid_until=None, purge_at=None)
+    write_delivery(root, raw, envelope)
+    binary = (root/envelope["bundle_path"]).read_bytes()
+    delivery = pending.load_delivery(envelope, policy_for(root, envelope))
+    assert delivery.bundle.items[0].expires_at is None and delivery.bundle.reviews == {}
+    assert delivery.bundle.items[0].raw.package == raw["items"][0]["package"]
+    assert delivery.bundle.items[0].raw.reviewEvidence == raw["items"][0]["reviewEvidence"]
+    assert (root/envelope["bundle_path"]).read_bytes() == binary
+    assert hashlib.sha256(binary).hexdigest() == envelope["bundle_sha256"]
+
+
 @pytest.mark.parametrize("change", ["bundle_hash", "job", "attempt", "result", "scope", "day_hash", "path", "extra",
                                    "preview", "approval", "blocked", "qa", "no_review", "fixture", "png", "expired"])
 def test_changed_or_unapproved_deliveries_fail_before_database_access(delivery_fixture, change):

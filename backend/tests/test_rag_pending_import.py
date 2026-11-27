@@ -95,6 +95,72 @@ def test_default_dry_run_never_connects_database_and_keeps_source_bytes(tmp_path
     assert before == {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
 
 
+@pytest.mark.parametrize("native_deadline", [False, True])
+def test_null_policy_keeps_native_expiry_and_source_bytes(tmp_path, monkeypatch, native_deadline):
+    f = fixture(tmp_path)
+    expected = f["policy"]["feed_valid_until"] if native_deadline else None
+    f["native"]["draft"]["valid_until"] = expected
+    reseal(f)
+    f["policy"]["feed_valid_until"] = None
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+    monkeypatch.setattr(rag, "create_async_engine", lambda *a, **k: pytest.fail("dry-run opened DB"))
+    first, second = execute(f), execute(f)
+    assert first == second and first["validated"] == 1
+    delivery = rag.load_delivery(f["path"], f["policy"], feed_valid_until=None)
+    assert delivery.bundle.items[0].raw.package["feed_valid_until"] == expected
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+
+
+def test_null_policy_is_explicit_and_requires_its_own_approval(tmp_path, monkeypatch):
+    f = fixture(tmp_path)
+    old_policy = deepcopy(f["policy"])
+    old_digest = rag.fingerprint(old_policy)
+    f["policy"]["feed_valid_until"] = None
+    monkeypatch.setattr(rag, "create_async_engine", lambda *a, **k: pytest.fail("invalid approval opened DB"))
+    with pytest.raises(rag.RagPendingImportError, match="reviewed_policy_digest_required"):
+        execute(f, apply=True, reviewed_sha256=old_digest)
+    assert rag.fingerprint(f["policy"]) != old_digest
+    assert rag.validate_policy(old_policy, feed_valid_until=old_policy["feed_valid_until"]) == old_digest
+    with pytest.raises(rag.RagPendingImportError, match="reviewed_feed_expiry_required"):
+        rag.validate_policy(old_policy)
+    f["policy"].pop("feed_valid_until")
+    with pytest.raises(rag.RagPendingImportError, match="invalid_rag_import_policy"):
+        rag.validate_policy(f["policy"])
+
+
+@pytest.mark.parametrize("value", ["", "null", "2026-11-27", "2026-11-27T12:00:00", "not-a-date", 0, False])
+def test_malformed_override_is_rejected_before_any_database(tmp_path, value):
+    f = fixture(tmp_path)
+    f["policy"]["feed_valid_until"] = value
+    with pytest.raises(rag.RagPendingImportError):
+        execute(f)
+
+
+def test_cli_omission_only_accepts_exact_null_policy(tmp_path, monkeypatch, capsys):
+    f = fixture(tmp_path)
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_bytes(rag.canonical(f["policy"]))
+    monkeypatch.setattr(rag, "create_async_engine", lambda *a, **k: pytest.fail("CLI dry-run opened DB"))
+    command = ["--policy", str(policy_path), "--envelope", str(f["path"])]
+    assert rag.main(command) == 1
+    assert "reviewed_feed_expiry_required" in capsys.readouterr().err
+    f["policy"]["feed_valid_until"] = None
+    policy_path.write_bytes(rag.canonical(f["policy"]))
+    assert rag.main(command) == 0
+    assert json.loads(capsys.readouterr().out)["validated"] == 1
+
+
+def test_null_policy_does_not_waive_past_day_reconciliation(tmp_path):
+    f = fixture(tmp_path)
+    f["policy"]["feed_valid_until"] = None
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+    digest = rag.fingerprint(f["policy"])
+    with pytest.raises(rag.RagPendingImportError, match="policy_date_inactive"):
+        rag.validate_policy(f["policy"], apply=True, reviewed_sha256=digest, now=tomorrow)
+    assert rag.validate_policy(f["policy"], apply=True, reviewed_sha256=digest, now=tomorrow,
+        reconcile_policy_date=f["policy"]["policy_date"]) == digest
+
+
 @pytest.mark.parametrize("case", ["body_sha", "manifest_identity", "launch_identity", "native_job", "scope",
     "seed_body", "missing_external_hash", "review_usage", "offline", "operator_flag", "blocker",
     "wrong_daily_hash", "wrong_mixed_hash", "changed_daily_limit", "same_period_inbox", "escape_path"])

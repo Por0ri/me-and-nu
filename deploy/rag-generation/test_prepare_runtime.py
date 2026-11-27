@@ -113,6 +113,26 @@ class RuntimePreparationTests(unittest.TestCase):
         self.assertTrue(report['enabled'])
         self.assertFalse(report['worker_started'])
 
+    def test_native_expiry_policy_requires_explicit_null_and_new_policy_hash(self):
+        output = self.root/'enabled-native-expiry.json'
+        policy = self.enabled_policy(output)
+        prior_digest = prepare.digest(policy)
+        runtime = prepare.build_runtime(template(),self.settings,enabled=True)
+        prior_runtime = prepare.runtime_bytes(runtime)
+        policy['rag']['feed_valid_days'] = None
+        with self.assertRaisesRegex(prepare.PreparationError,'reviewed_schedule_policy_required'):
+            prepare.validate_activation(policy,prior_digest,runtime,output)
+        prepare.validate_activation(policy,prepare.digest(policy),runtime,output)
+        self.assertEqual(prepare.runtime_bytes(runtime),prior_runtime)
+        for value in ('', 'null', 0, -1, 366, True, 7.0):
+            row = copy.deepcopy(policy)
+            row['rag']['feed_valid_days'] = value
+            with self.subTest(value=value),self.assertRaisesRegex(prepare.PreparationError,'explicit_rag_activation_policy_required'):
+                prepare.validate_activation(row,prepare.digest(row),runtime,output)
+        del policy['rag']['feed_valid_days']
+        with self.assertRaisesRegex(prepare.PreparationError,'explicit_rag_activation_policy_required'):
+            prepare.validate_activation(policy,prepare.digest(policy),runtime,output)
+
     def test_host_stat_only_key_check_and_delete_journal_are_readonly(self):
         state = self.root/'state'
         images = self.root/'images'

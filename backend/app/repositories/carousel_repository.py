@@ -11,6 +11,7 @@ from app.models.content_slide import ContentSlide
 
 
 CAROUSEL_METHOD = "carousel_import_v1"
+NO_DEADLINE_POLICY = "no_deadline_v1"
 
 
 def local_test_database(database_url: str) -> str | None:
@@ -63,8 +64,10 @@ def public_content_condition():
 
     Legacy publications keep their existing review behavior. Imported carousels
     require approval, except for explicitly marked previews in a matching local
-    test service or the opted-in Checking stack. All paths require 2..10
-    contiguous slides and a future expiry. A publication time in the future
+    test service or the opted-in Checking stack. Imported carousels require
+    2..10 contiguous slides and a future expiry or an explicitly accepted
+    no-deadline import. Unmarked historical NULL deadlines stay closed.
+    A publication time in the future
     keeps any content closed until that moment.
     PNG decoding and hash verification are the import boundary's job.
     """
@@ -88,7 +91,10 @@ def public_content_condition():
             ~imported,
             and_(
                 _carousel_review_condition(),
-                Content.feed_valid_until.is_not(None),
+                or_(Content.feed_valid_until.is_not(None), and_(
+                    Content.feed_valid_until.is_(None),
+                    Content.ai_judgment_basis["feed_expiry_policy"].as_string() == NO_DEADLINE_POLICY,
+                )),
                 count.between(2, 10),
                 last_page == count,
                 select(ContentSource.content_source_id)
