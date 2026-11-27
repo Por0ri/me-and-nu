@@ -9,12 +9,19 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 MODULE = Path(__file__).with_name("scheduled_run.py")
 spec = importlib.util.spec_from_file_location("daily_scheduled_run", MODULE)
 scheduler = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = scheduler
 spec.loader.exec_module(scheduler)
+
+RAG_CONTRACT = MODULE.parents[2] / "worker/menu_worker/rag_contract.py"
+rag_spec = importlib.util.spec_from_file_location("host_test_rag_contract", RAG_CONTRACT)
+rag_contract = importlib.util.module_from_spec(rag_spec)
+sys.modules[rag_spec.name] = rag_contract
+rag_spec.loader.exec_module(rag_contract)
 
 
 class SimulatedCrash(RuntimeError):
@@ -599,6 +606,355 @@ for name in ('runtime.env', 'plan.json'):
         result = subprocess.run([sys.executable, "-c", code, str(directory)], preexec_fn=become_producer,
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class MixedScheduleTests(unittest.TestCase):
+    """Exercise the real host orchestration with simulated container responses."""
+    supervisor = ScheduleTests.supervisor
+    entry = ScheduleTests.entry
+    reconciled_failure_fixture = ScheduleTests.reconciled_failure_fixture
+
+    def setUp(self):
+        ScheduleTests.setUp(self)
+        self.seed["config"]["artifact_root"] = "/var/lib/menu-jobs"
+        scheduler.save_json(self.state / "seed.json", self.seed)
+        self.policy["seed_sha256"] = scheduler.file_sha(self.state / "seed.json")
+        self.rag_successes = 8
+        self.rag_import_calls = 0
+        self.rag_report_delta = 0
+        self.environments = []
+        self.rag_started = False
+        self.foreign_before = False
+        self.after_mismatch = None
+
+    def mixed(self, *, enabled=False):
+        (self.release / "rag").mkdir(exist_ok=True)
+        for name in scheduler.RAG_COMPOSE:
+            (self.release / name).write_text("# mixed fixture; never executed\n")
+        scope = {"schema_version": 1, "purpose": "rag_daily_generation", "routes": [
+            {"namespace": "dictionary_v1", "menu_work_id": 8, "content_type": "guide", "allowed_source_ids": ["source-a"]}]}
+        scheduler.save_json(self.state / "rag-scope.json", scope)
+        runtime = {"enabled": enabled, "offline": False, "confirm_isolated_copy": True,
+            "isolated_root": "/var/lib/menu-rag", "database_path": "/var/lib/menu-rag/ani_rag.sqlite3",
+            "image_root": "/opt/rag-images", "api_key_file": "/run/secrets/never-opened-test-key",
+            "vector_dsn_file": "/run/secrets/rag-vector-dsn", "expected_vector_database": "menu_rag_vector",
+            "catalog_work_ids": [8], "model": "test-model", "pricing": {}}
+        runtime_path = self.release / "rag-runtime.json"
+        scheduler.save_json(runtime_path, runtime)
+        self.policy.update(schema_version=2, rag={"enabled": enabled, "scope_file": "rag-scope.json",
+            "scope_sha256": scheduler.digest(scope), "runtime_config": str(runtime_path),
+            "runtime_sha256": scheduler.file_sha(runtime_path), "feed_valid_days": 7})
+        values = [line for line in self.env.read_text().splitlines() if not line.startswith("RAG_WORKER_IMAGE=")]
+        self.env.write_text("\n".join(values) + "\nRAG_WORKER_IMAGE='sha256:" + "a" * 64 + "'\n")
+
+    def consumer_rows(self, after):
+        main = {"id": "b" * 64, "name": "/main-api", "running": True, "image": "unrelated",
+            "project": "main", "service": "api", "working_dir": "/main", "entrypoint": None,
+            "command": ["server", "--token=NEVER_LOG_OTHER_SERVICE_SECRET"]}
+        rag = {"id": "c" * 64, "name": "/menu-daily-generation-rag-worker-1", "running": True,
+            "image": "sha256:" + "a" * 64, "project": scheduler.PROJECT, "service": "rag-worker",
+            "working_dir": str(self.release), "entrypoint": None,
+            "command": ["celery", "-A", "menu_worker.rag_app:app", "worker", "--concurrency=1",
+                        "--queues=content.rag_generate", "--hostname=rag@scheduled", "--loglevel=INFO"]}
+        rows = [main]
+        if self.rag_started:
+            rows.append(rag)
+        if self.foreign_before:
+            prepared = copy.deepcopy(rag)
+            prepared.update(id="d" * 64, name="/menu-rag-prepared-rag-worker-1", project="menu-rag-prepared")
+            prepared["command"][-2] = "--hostname=rag@prepared"
+            rows.append(prepared)
+        if after and self.after_mismatch:
+            if self.after_mismatch == "duplicate":
+                duplicate = copy.deepcopy(rag)
+                duplicate.update(id="e" * 64, name="/menu-daily-generation-rag-worker-2")
+                rows.append(duplicate)
+            elif self.after_mismatch == "node":
+                rag["command"][-2] = "--hostname=rag@other"
+            elif self.after_mismatch == "queue":
+                rag["command"][-3] = "--queues=content.rag_generate,anime-generation-live"
+            elif self.after_mismatch == "image":
+                rag["image"] = "sha256:" + "f" * 64
+        return rows
+
+    def decorate_child(self):
+        entry = self.entry()
+        path = self.state / entry["checkpoint"]
+        if not path.exists():
+            return
+        child = scheduler.read_json(path)
+        parent = scheduler.read_json(self.state / entry["source"])
+        plan = scheduler.read_json(self.state / entry["directory"] / "plan.json")
+        child.update(rag_scope=plan["rag_scope"], rag_scope_sha256=plan["rag_scope_sha256"])
+        ready = [row for row in child["records"][len(parent["records"]):] if row.get("outcome") == "ready_for_staging"]
+        for row in ready[:self.rag_successes]:
+            request = rag_contract.RagRequest.parse({"namespace": "dictionary_v1", "work_id": "candidate:" + row["job_id"],
+                "menu_work_id": 8, "content_type": "guide", "query": "offline evidence",
+                "seed_evidence": [{"document_id": "source:" + row["job_id"], "content_sha256": "a" * 64}],
+                "allowed_source_ids": ["source-a"]})
+            row.update(producer="ani_rag", request={"source_id": "rag_" + request.namespace,
+                       "content_type": request.content_type, "menu_work_id": request.menu_work_id,
+                       "rag_request": request.as_dict(), "producer": "ani_rag",
+                       "idempotency_key": child["config"]["run_id"] + ":rag:" + request.identity_key,
+                       "canonical_url": "urn:menu-rag:" + request.identity_key},
+                       rag_input_sha256=request.input_sha256,
+                       canonical_url="urn:menu-rag:" + request.identity_key, rag_delivery={"retained": row["job_id"]})
+        scheduler.save_json(path, child)
+
+    def expected_imports(self):
+        child = scheduler.read_json(self.state / self.entry()["checkpoint"])
+        return self.supervisor().delivery_counts(self.entry(), child)
+
+    def runner(self, stage, args, **kwargs):
+        if "rag" not in self.policy:
+            return ScheduleTests.runner(self, stage, args, **kwargs)
+        self.environments.append(kwargs.get("environment", {}))
+        if stage.startswith("rag-consumers-"):
+            self.calls.append((stage, args))
+            rows = self.consumer_rows("-after-" in stage)
+            if stage.endswith("-list"):
+                return scheduler.CommandResult(0, "\n".join(row["id"] for row in rows))
+            return scheduler.CommandResult(0, "\n".join(json.dumps(row) for row in rows))
+        if stage == "rag-import":
+            self.calls.append((stage, args))
+            if self.crash == stage:
+                self.crash = None
+                raise SimulatedCrash(stage)
+            if self.failed_stage == stage:
+                return scheduler.CommandResult(1, "", "synthetic")
+            self.rag_import_calls += 1
+            _, count = self.expected_imports()
+            return scheduler.CommandResult(0, json.dumps({"created": count + self.rag_report_delta, "unchanged": 0,
+                "publication_enabled": False, "operator_approvals_created": 0, "llm_calls": 0}))
+        try:
+            output = ScheduleTests.runner(self, stage, args, **kwargs)
+        except SimulatedCrash:
+            if stage == "generate":
+                self.decorate_child()
+            raise
+        if stage == "plan" and output.returncode == 0:
+            value = json.loads(output.stdout)
+            value["plan"].update(rag_scope=scheduler.read_json(self.state / "rag-scope.json"),
+                rag_scope_sha256=self.policy["rag"]["scope_sha256"], rag_runtime_sha256=self.policy["rag"]["runtime_sha256"],
+                rag_delivery_root="/runtime/state/" + self.entry()["directory"] + "/rag-inbox")
+            value["plan_sha256"] = scheduler.digest(value["plan"])
+            return scheduler.CommandResult(0, json.dumps(value))
+        if stage == "generate":
+            self.decorate_child()
+        if stage == "worker-start" and output.returncode == 0:
+            self.rag_started = True
+        if stage == "worker-stop" and output.returncode == 0:
+            self.rag_started = False
+        if stage == "import" and output.returncode == 0:
+            value = json.loads(output.stdout)
+            value["created"] = self.expected_imports()[0]
+            return scheduler.CommandResult(0, json.dumps(value))
+        return output
+
+    def test_disabled_preflight_pins_scope_runtime_inbox_and_never_starts_or_imports(self):
+        self.mixed()
+        with patch.dict(os.environ, {"RAG_GENERATION_ENABLED": "true", "RAG_RUNTIME_CONFIG_HOST_FILE": "/unexpected"}):
+            report = self.supervisor().run(preflight=True)
+        self.assertEqual([stage for stage, _ in self.calls], ["plan", "preflight"])
+        self.assertFalse(report["generation_enabled"])
+        self.assertEqual((report["llm_calls"], report["queue_writes"], report["service_db_writes"]), (0, 0, 0))
+        for _, args in self.calls:
+            self.assertIn(str(self.release / scheduler.RAG_COMPOSE[0]), args)
+            self.assertNotIn(str(self.release / scheduler.RAG_COMPOSE[1]), args)
+            self.assertIn("--rag-scope", args)
+            self.assertIn("--expected-rag-scope-sha256", args)
+            self.assertIn("--rag-runtime-config", args)
+            self.assertIn("--expected-rag-runtime-sha256", args)
+            self.assertIn("/runtime/state/scheduled/2026-11-26/rag-inbox", args)
+        self.assertTrue(all(not any(key.startswith("RAG_") for key in env) for env in self.environments))
+        directory = self.state / self.entry()["directory"]
+        period, rag = (scheduler.read_json(directory / name) for name in ("import-policy.json", "rag-import-policy.json"))
+        self.assertEqual(period["day_policy_sha256"], rag["day_policy_sha256"])
+        self.assertEqual((period["max_items"], rag["max_items"]), (20, 20))
+        before = (self.state / "scheduled/journal.json").read_bytes()
+        with self.assertRaisesRegex(scheduler.ScheduleError, "rag_schedule_disabled"):
+            self.supervisor().run(apply=True)
+        self.assertEqual((self.state / "scheduled/journal.json").read_bytes(), before)
+        self.assertEqual([stage for stage, _ in self.calls], ["plan", "preflight"])
+        self.assertFalse((self.state / self.entry()["checkpoint"]).exists())
+
+    def test_shared_twenty_passes_use_two_workers_two_importers_and_one_generate_loop(self):
+        self.mixed(enabled=True)
+        report = self.supervisor().run(apply=True)
+        self.assertEqual((report["attempts"], report["successes"]), (20, 20))
+        self.assertEqual([stage for stage, _ in self.calls if not stage.startswith("rag-consumers-")],
+            ["plan", "preflight", "worker-start", "generate", "broker-empty", "worker-stop", "import", "rag-import"])
+        for stage in ("worker-start", "worker-stop"):
+            self.assertEqual(dict(self.calls)[stage][-2:], ["generation-worker", "rag-worker"])
+        self.assertIn(scheduler.MIXED_BROKER_CHECK, dict(self.calls)["broker-empty"])
+        self.assertEqual((self.entry()["period_imported"], self.entry()["rag_imported"], self.entry()["imported"]), (12, 8, 20))
+        self.assertTrue(all(str(self.release / scheduler.RAG_COMPOSE[1]) in args
+            for stage, args in self.calls if not stage.startswith("rag-consumers-")))
+        rag_args = dict(self.calls)["rag-import"]
+        self.assertIn("--reviewed-policy-sha256", rag_args)
+        self.assertIn("--feed-valid-until", rag_args)
+        self.assertIn("/run/secrets/rag-service-dsn", rag_args)
+        self.assertNotIn("--approve", rag_args)
+        original = scheduler.read_json(self.state / "seed.json")
+        child = scheduler.read_json(self.state / self.entry()["checkpoint"])
+        self.assertEqual(child["records"][:len(original["records"])], original["records"])
+        for row in child["records"]:
+            if row.get("producer") == "ani_rag":
+                request = rag_contract.RagRequest.parse(row["request"]["rag_request"])
+                self.assertEqual(row["canonical_url"], "urn:menu-rag:" + request.identity_key)
+                self.assertEqual(row["rag_input_sha256"], request.input_sha256)
+
+    def test_combined_forty_attempts_and_all_rag_successes_keep_exact_limits(self):
+        self.mixed(enabled=True)
+        self.attempts, self.successes, self.rag_successes = 40, 3, 3
+        report = self.supervisor().run(apply=True)
+        self.assertEqual((report["attempts"], report["successes"]), (40, 3))
+        self.assertEqual((self.entry()["period_imported"], self.entry()["rag_imported"]), (0, 3))
+        calls = len(self.calls)
+        self.assertEqual(self.supervisor().run(apply=True)["status"], "already_complete")
+        self.assertEqual(len(self.calls), calls)
+
+    def test_scope_runtime_overlay_and_existing_period_journal_cannot_change_in_place(self):
+        self.supervisor().run(preflight=True)
+        self.mixed(enabled=True)
+        with self.assertRaisesRegex(scheduler.ScheduleError, "schedule_configuration_changed"):
+            self.supervisor().run(apply=True)
+        self.assertNotIn("worker-start", dict(self.calls))
+        # Input changes are rejected even before reading that old journal.
+        scheduler.save_json(self.state / "rag-scope.json", {})
+        with self.assertRaisesRegex(scheduler.ScheduleError, "reviewed_rag_scope_changed"):
+            self.supervisor()
+        self.mixed(enabled=True)
+        scheduler.save_json(Path(self.policy["rag"]["runtime_config"]), {"enabled": True})
+        with self.assertRaisesRegex(scheduler.ScheduleError, "reviewed_rag_runtime_changed"):
+            self.supervisor()
+
+    def test_disabled_preflight_cannot_be_promoted_by_only_toggling_runtime_and_policy(self):
+        self.mixed()
+        self.supervisor().run(preflight=True)
+        before = (self.state / "scheduled/journal.json").read_bytes()
+        calls = len(self.calls)
+        self.mixed(enabled=True)
+        with self.assertRaisesRegex(scheduler.ScheduleError, "schedule_configuration_changed"):
+            self.supervisor().run(apply=True)
+        self.assertEqual((self.state / "scheduled/journal.json").read_bytes(), before)
+        self.assertEqual(len(self.calls), calls)
+
+    def test_completed_mixed_crash_audits_both_histories_and_never_regenerates(self):
+        self.mixed(enabled=True)
+        self.crash = "after-generate"
+        with self.assertRaises(SimulatedCrash):
+            self.supervisor().run(apply=True)
+        count = len(self.calls)
+        self.supervisor().run(apply=True)
+        following = self.calls[count:]
+        self.assertEqual([stage for stage, _ in following], ["resume-audit", "broker-empty", "worker-stop", "import", "rag-import"])
+        script = dict(following)["resume-audit"][-3]
+        self.assertEqual(script, scheduler.MIXED_RESUME_CHECK)
+        self.assertIn("rag_store=runtime.store, rag_read_result=runtime.read_result", script)
+        self.assertIn("local_lock(Path(plan['checkpoint']))", script)
+        compile(script, "mixed-resume", "exec")
+        compile(scheduler.MIXED_RECOVERY_CHECK, "mixed-recovery", "exec")
+        self.assertIn("verify_empty_rag_broker(runtime.app)", script)
+        with self.assertRaisesRegex(RuntimeError, "mixed_audit_source_contract_changed"):
+            scheduler.mixed_audit(script)
+
+    def test_crash_between_importers_replays_pending_imports_without_generation(self):
+        self.mixed(enabled=True)
+        self.crash = "rag-import"
+        with self.assertRaises(SimulatedCrash):
+            self.supervisor().run(apply=True)
+        self.assertEqual(self.entry()["phase"], "importing")
+        count = len(self.calls)
+        self.supervisor().run(apply=True)
+        self.assertEqual([stage for stage, _ in self.calls[count:]], ["broker-empty", "worker-stop", "import", "rag-import"])
+        self.assertEqual(self.entry()["imported"], 20)
+        self.assertEqual(self.import_calls, 2)
+
+    def test_rag_import_count_mismatch_blocks_completion_and_no_automatic_retry(self):
+        self.mixed(enabled=True)
+        self.rag_report_delta = 1
+        with self.assertRaisesRegex(scheduler.ScheduleError, "rag_pending_import_not_drained"):
+            self.supervisor().run(apply=True)
+        self.assertEqual(self.entry()["phase"], "blocked")
+        before = len(self.calls)
+        with self.assertRaisesRegex(scheduler.ScheduleError, "schedule_requires_reconciliation"):
+            self.supervisor().run(apply=True)
+        self.assertEqual(len(self.calls), before)
+
+    def test_mixed_prior_day_recovery_preserves_unknown_cost_and_drains_both_before_rollover(self):
+        self.mixed(enabled=True)
+        recovery, original = self.reconciled_failure_fixture(held=True)
+        self.supervisor().run(reconcile=True, **recovery)
+        self.now += timedelta(days=1)
+        before = len(self.calls)
+        report = self.supervisor().run(resume_reconciled=True, **recovery)
+        following = self.calls[before:]
+        self.assertEqual((report["policy_date"], report["attempts"], report["successes"]), ("2026-11-26", 3, 2))
+        self.assertNotIn("worker-start", dict(following))
+        self.assertIn(scheduler.MIXED_RECOVERY_CHECK, dict(following)["recovery-audit"])
+        for stage in ("import", "rag-import"):
+            self.assertEqual(dict(following)[stage][-2:], ["--reconcile-policy-date", "2026-11-26"])
+        self.attempts, self.successes = 20, 20
+        self.supervisor().run(apply=True)
+        child = scheduler.read_json(self.state / "daily-2026-11-27.json")
+        self.assertEqual(child["records"][:len(original["records"])], original["records"])
+        self.assertEqual(child["failure_recovery_audit"], original["failure_recovery_audit"])
+        self.assertIsNone(child["records"][3]["estimated_cost_usd"])
+        self.assertEqual(self.entry()["imported"], 20)
+
+    def test_prepared_off_worker_blocks_before_start_and_never_logs_other_service_arguments(self):
+        self.mixed(enabled=True)
+        self.foreign_before = True
+        with self.assertRaisesRegex(scheduler.ScheduleError, "rag_queue_consumer_ownership_mismatch"):
+            self.supervisor().run(apply=True)
+        stages = [stage for stage, _ in self.calls]
+        self.assertNotIn("worker-start", stages)
+        self.assertNotIn("generate", stages)
+        directory = self.state / self.entry()["directory"]
+        for path in directory.glob("*.log"):
+            self.assertNotIn("NEVER_LOG_OTHER_SERVICE_SECRET", path.read_text())
+        summary = scheduler.read_json(directory / "rag-consumers-before.log")
+        self.assertEqual(summary, {"started": False, "rag_consumers": 1, "verified": False})
+        self.assertEqual(self.entry()["phase"], "prepared")
+        reviewed_plan = (directory / "plan.json").read_bytes()
+        before = len(self.calls)
+        self.foreign_before = False
+        report = self.supervisor().run(apply=True)
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual((directory / "plan.json").read_bytes(), reviewed_plan)
+        self.assertNotIn("plan", [stage for stage, _ in self.calls[before:]])
+
+    def test_duplicate_wrong_node_queue_or_image_after_start_blocks_every_generation(self):
+        for mismatch in ("duplicate", "node", "queue", "image"):
+            with self.subTest(mismatch=mismatch):
+                # Each subcase has an independent reviewed journal.
+                case = MixedScheduleTests("test_shared_twenty_passes_use_two_workers_two_importers_and_one_generate_loop")
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                case.mixed(enabled=True)
+                case.after_mismatch = mismatch
+                with self.assertRaisesRegex(scheduler.ScheduleError, "rag_queue_consumer_ownership_mismatch"):
+                    case.supervisor().run(apply=True)
+                stages = [stage for stage, _ in case.calls]
+                self.assertIn("worker-start", stages)
+                self.assertNotIn("generate", stages)
+                self.assertNotIn("import", stages)
+                self.assertNotIn("rag-import", stages)
+                self.assertEqual(case.entry()["phase"], "blocked")
+
+    def test_expected_single_consumer_is_checked_before_and_after_start(self):
+        self.mixed(enabled=True)
+        self.supervisor().run(apply=True)
+        stages = [stage for stage, _ in self.calls]
+        self.assertLess(stages.index("rag-consumers-before-inspect"), stages.index("worker-start"))
+        self.assertLess(stages.index("worker-start"), stages.index("rag-consumers-after-inspect"))
+        self.assertLess(stages.index("rag-consumers-after-inspect"), stages.index("generate"))
+        directory = self.state / self.entry()["directory"]
+        self.assertEqual(scheduler.read_json(directory / "rag-consumers-before.log"),
+                         {"started": False, "rag_consumers": 0, "verified": True})
+        self.assertEqual(scheduler.read_json(directory / "rag-consumers-after.log"),
+                         {"started": True, "rag_consumers": 1, "verified": True})
 
 
 if __name__ == "__main__":

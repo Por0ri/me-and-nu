@@ -77,7 +77,8 @@ def _timestamp(value):
         raise RagPendingImportError("invalid_feed_expiry") from None
 
 
-def validate_policy(policy, *, feed_valid_until, reviewed_sha256=None, apply=False, now=None):
+def validate_policy(policy, *, feed_valid_until, reviewed_sha256=None, apply=False, now=None,
+                    reconcile_policy_date=None):
     require(isinstance(policy, dict) and set(policy) == POLICY_FIELDS
             and type(policy["schema_version"]) is int and policy["schema_version"] == 1
             and policy["purpose"] == "rag_pending_import", "invalid_rag_import_policy")
@@ -119,7 +120,11 @@ def validate_policy(policy, *, feed_valid_until, reviewed_sha256=None, apply=Fal
     digest = fingerprint(policy)
     if reviewed_sha256 is not None or apply:
         require(pending._hash(reviewed_sha256) and reviewed_sha256 == digest, "reviewed_policy_digest_required")
-    if apply:
+    if reconcile_policy_date is not None:
+        today = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("Asia/Seoul")).date()
+        require(apply and reconcile_policy_date == policy["policy_date"] and day < today,
+                "invalid_expired_policy_reconciliation")
+    elif apply:
         today = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("Asia/Seoul")).date()
         require(today == day, "policy_date_inactive")
     return digest
@@ -281,9 +286,11 @@ def load_deliveries(policy, *, feed_valid_until, inbox=None, envelope=None, now=
     return deliveries
 
 
-async def import_deliveries(db, policy, deliveries, *, reviewed_sha256, feed_valid_until, now=None):
+async def import_deliveries(db, policy, deliveries, *, reviewed_sha256, feed_valid_until, now=None,
+                            reconcile_policy_date=None):
     """Apply inside the caller's transaction, using the existing import lock."""
-    digest = validate_policy(policy, feed_valid_until=feed_valid_until, reviewed_sha256=reviewed_sha256, apply=True, now=now)
+    digest = validate_policy(policy, feed_valid_until=feed_valid_until, reviewed_sha256=reviewed_sha256,
+                             apply=True, now=now, reconcile_policy_date=reconcile_policy_date)
     require(db.get_bind().dialect.name == "postgresql", "apply_requires_postgresql")
     await db.execute(text("SELECT pg_advisory_xact_lock(20261028, 2)"))
     topic = await db.scalar(select(Topic).where(Topic.topic_code == "anime", Topic.is_active.is_(True)))
@@ -328,9 +335,13 @@ async def import_deliveries(db, policy, deliveries, *, reviewed_sha256, feed_val
         run = await db.scalar(select(AgentRun).where(AgentRun.agent_run_id == draft.agent_run_id))
         require((content.status, content.judgment_status, draft.status) == ("pending_review", "needs_review", "checking")
                 and content.published_at is None, "new_rag_content_not_pending")
-        run.output_payload = {**run.output_payload, pending.RECEIPT: {"schema_version": 1, "producer": "ani_rag",
+        receipt = {"schema_version": 1, "producer": "ani_rag",
             "policy_sha256": digest, "day_policy_sha256": policy["day_policy_sha256"],
-            "envelope_sha256": fingerprint(envelope), "envelope": envelope}}
+            "envelope_sha256": fingerprint(envelope), "envelope": envelope}
+        if reconcile_policy_date is not None:
+            receipt["policy_date_reconciliation"] = {"policy_date": reconcile_policy_date,
+                "reconciled_at": (now or datetime.now(timezone.utc)).isoformat(), "mode": "explicit_pending_only"}
+        run.output_payload = {**run.output_payload, pending.RECEIPT: receipt}
         for order, work_id in enumerate(item.package.menu_work_ids, 1):
             db.add(ContentEntityLink(content_id=content.content_id, entity_id=works[work_id], topic_id=topic.topic_id,
                                     link_method="carousel", sort_order=order))
@@ -342,8 +353,9 @@ async def import_deliveries(db, policy, deliveries, *, reviewed_sha256, feed_val
 
 
 async def run(*, policy, feed_valid_until, inbox=None, envelope=None, apply=False, reviewed_sha256=None,
-              database_url=None, deployment_env=None, now=None):
-    digest = validate_policy(policy, feed_valid_until=feed_valid_until, reviewed_sha256=reviewed_sha256, apply=apply, now=now)
+              database_url=None, deployment_env=None, now=None, reconcile_policy_date=None):
+    digest = validate_policy(policy, feed_valid_until=feed_valid_until, reviewed_sha256=reviewed_sha256,
+                             apply=apply, now=now, reconcile_policy_date=reconcile_policy_date)
     deliveries = load_deliveries(policy, feed_valid_until=feed_valid_until, inbox=inbox, envelope=envelope, now=now)
     if not apply:
         return {"mode": "dry_run", "database_accessed": False, "policy_sha256": digest,
@@ -358,7 +370,8 @@ async def run(*, policy, feed_valid_until, inbox=None, envelope=None, apply=Fals
             require(all(actual[key] == policy["target"][key] for key in ("database", "username", "schema")),
                     "actual_database_target_mismatch")
             return await import_deliveries(db, policy, deliveries, reviewed_sha256=reviewed_sha256,
-                                           feed_valid_until=feed_valid_until, now=now)
+                                           feed_valid_until=feed_valid_until, now=now,
+                                           reconcile_policy_date=reconcile_policy_date)
     finally:
         await engine.dispose()
 
@@ -376,6 +389,7 @@ def main(argv=None):
     source.add_argument("--inbox", type=Path)
     source.add_argument("--envelope", type=Path)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--reconcile-policy-date", help="Explicit pending-only import for this exact past policy date; expiry and original daily limits still apply")
     parser.add_argument("--database-url-file", type=Path)
     parser.add_argument("--deployment-env")
     args = parser.parse_args(argv)
@@ -384,14 +398,16 @@ def main(argv=None):
                 "importer_must_not_receive_llm_credentials")
         policy = pending._json(pending.read_file(args.policy))
         # Review the complete target/expiry before even opening a DB secret.
-        validate_policy(policy, feed_valid_until=args.feed_valid_until, reviewed_sha256=args.reviewed_policy_sha256, apply=args.apply)
+        validate_policy(policy, feed_valid_until=args.feed_valid_until, reviewed_sha256=args.reviewed_policy_sha256,
+                        apply=args.apply, reconcile_policy_date=args.reconcile_policy_date)
         database_url = None
         if args.apply:
             require(args.database_url_file is not None and args.deployment_env, "explicit_database_target_required")
             database_url = pending.read_file(args.database_url_file, limit=16384).decode().strip()
         report = asyncio.run(run(policy=policy, feed_valid_until=args.feed_valid_until, inbox=args.inbox,
             envelope=args.envelope, apply=args.apply, reviewed_sha256=args.reviewed_policy_sha256,
-            database_url=database_url, deployment_env=args.deployment_env))
+            database_url=database_url, deployment_env=args.deployment_env,
+            reconcile_policy_date=args.reconcile_policy_date))
         print(json.dumps(report, sort_keys=True, ensure_ascii=False))
         return 0
     except Exception as error:

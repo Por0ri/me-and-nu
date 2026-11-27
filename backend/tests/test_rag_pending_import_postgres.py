@@ -113,6 +113,44 @@ def test_concurrent_same_delivery_imports_one_content(rag_pg):
     _run_async(scenario())
 
 
+def test_expired_day_reconciliation_keeps_original_receipt_pending_visibility_and_replay(rag_pg):
+    engine, url, f = rag_pg
+    before = snapshot(engine)
+    original_policy = deepcopy(f["policy"])
+    original_envelope = f["path"].read_bytes()
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+
+    async def scenario():
+        async def reconcile():
+            return await rag.run(policy=f["policy"], feed_valid_until=f["policy"]["feed_valid_until"],
+                envelope=f["path"], apply=True, reviewed_sha256=rag.fingerprint(f["policy"]),
+                deployment_env="test", database_url=url.render_as_string(hide_password=False), now=tomorrow,
+                reconcile_policy_date=f["policy"]["policy_date"])
+        first = await reconcile()
+        saved = snapshot(engine)
+        replay = await reconcile()
+        assert first["created"] == replay["unchanged"] == 1
+        assert snapshot(engine) == saved and f["policy"] == original_policy
+        assert f["path"].read_bytes() == original_envelope
+        with Session(engine) as db:
+            content = db.get(Content, first["items"][0]["content_id"])
+            draft = db.get(Draft, content.source_draft_id)
+            run = db.get(AgentRun, draft.agent_run_id)
+            receipt = run.output_payload[pending.RECEIPT]
+            assert receipt["envelope"] == f["raw"]
+            assert receipt["day_policy_sha256"] == original_policy["day_policy_sha256"]
+            assert receipt["policy_date_reconciliation"] == {"policy_date": original_policy["policy_date"],
+                "reconciled_at": tomorrow.isoformat(), "mode": "explicit_pending_only"}
+            assert (content.status, content.judgment_status, draft.status) == ("pending_review", "needs_review", "checking")
+            assert content.published_at is None and not content.ai_judgment_basis.get("preview")
+            assert db.scalar(select(func.count()).select_from(Content).where(
+                Content.content_id == content.content_id, public_content_condition())) == 0
+        for table in ("user_account", "auth_session", "recommendation_round", "recommendation_item"):
+            assert saved[table] == before[table]
+        assert saved["content"][0] == before["content"][0]
+    _run_async(scenario())
+
+
 def test_period_receipts_and_concurrent_rag_imports_share_twenty_cap(rag_pg):
     engine, url, f = rag_pg
     with Session(engine) as db, db.begin():

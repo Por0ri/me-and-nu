@@ -188,6 +188,41 @@ def test_apply_rejects_old_day_without_mutating_anything(tmp_path):
                 now=datetime.now(timezone.utc) + timedelta(days=1))
 
 
+def test_past_day_reconciliation_preserves_policy_and_requires_exact_reviewed_date(tmp_path, monkeypatch):
+    f = fixture(tmp_path)
+    policy = deepcopy(f["policy"])
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+    digest = rag.fingerprint(policy)
+    assert rag.validate_policy(policy, feed_valid_until=policy["feed_valid_until"], reviewed_sha256=digest,
+        apply=True, now=tomorrow, reconcile_policy_date=policy["policy_date"]) == digest
+    assert policy == f["policy"]
+    monkeypatch.setattr(rag, "create_async_engine", lambda *a, **k: pytest.fail("invalid reconcile opened DB"))
+    for day, apply, now in (("2000-01-01", True, tomorrow),
+                            (policy["policy_date"], False, tomorrow),
+                            (policy["policy_date"], True, datetime.now(timezone.utc)),
+                            (policy["policy_date"], True, datetime.now(timezone.utc) - timedelta(days=1))):
+        with pytest.raises(rag.RagPendingImportError, match="invalid_expired_policy_reconciliation"):
+            execute(f, apply=apply, now=now, reviewed_sha256=digest, reconcile_policy_date=day)
+    with pytest.raises(rag.RagPendingImportError, match="feed_expiry_elapsed"):
+        execute(f, apply=True, now=tomorrow + timedelta(days=8), reviewed_sha256=digest,
+                reconcile_policy_date=policy["policy_date"])
+
+
+def test_invalid_reconciliation_cli_does_not_read_database_secret(tmp_path, monkeypatch, capsys):
+    f = fixture(tmp_path)
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_bytes(rag.canonical(f["policy"]))
+    original = pending.read_file
+    def guarded(path, **kwargs):
+        assert Path(path) == policy_path, "invalid reconciliation read a secret or artifact"
+        return original(path, **kwargs)
+    monkeypatch.setattr(pending, "read_file", guarded)
+    assert rag.main(["--policy", str(policy_path), "--feed-valid-until", f["policy"]["feed_valid_until"],
+        "--inbox", str(f["inbox"]), "--database-url-file", str(tmp_path / "do-not-read"),
+        "--reconcile-policy-date", f["policy"]["policy_date"]]) == 1
+    assert "invalid_expired_policy_reconciliation" in capsys.readouterr().err
+
+
 def test_duplicate_json_and_symlink_artifacts_rejected(tmp_path):
     f = fixture(tmp_path)
     original = f["path"].read_bytes()
