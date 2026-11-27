@@ -105,26 +105,31 @@
 .results .stack { padding-top: 0; }
 
 /* 주제 카드 (실시간 토론방·주제 투표·지난 토론방·내 활동, 2026-11-23 시안 값 · 글씨는 시안 문장 폭으로 잼):
-   안쪽 여백 12px, 테두리 #e2d5ff, 모서리 12px. 칩 20px(11px) → 제목 16px → 설명 12px 3줄까지 → 양쪽 선택지 → 작성자 줄 24px(10px) → 버튼 28px(12px) */
-.topicCard { display: flex; flex-direction: column; padding: 12px; border: 1px solid #e2d5ff; border-radius: 12px; background: #fff; color: inherit; text-decoration: none; }
+   안쪽 여백 12px, 테두리 #decfff (2026-11-27 피그마), 모서리 12px. 칩 20px(11px) → 제목 16px → 설명 12px 3줄까지 → 양쪽 선택지 → 작성자 줄 24px(10px) → 버튼 28px(12px) */
+.topicCard { display: flex; flex-direction: column; padding: 12px; border: 1px solid #decfff; border-radius: 12px; background: #fff; color: inherit; text-decoration: none; }
 .topicCard > .chips { margin-bottom: 3px; }
-.topicTitle { color: #27272a; font-size: 16px; font-weight: 700; line-height: 22px; }
+/* 글씨 값 (2026-11-27 피그마 속성): 작품 알약 Overline 500 11/16 #7043b4 · 주제 H4 600 16/24 #27272a · 설명 Caption 400 12/18 ·
+   얼굴 글자 Caption 2 500 12/18 · 닉네임 Overline 500 11/16 ·
+   참여 인원 · 남은 시간 500 10/16 (색은 셋 다 #52525b) · 버튼 700 12/24 #fafafa */
+.topicTitle { color: #27272a; font-size: 16px; font-weight: 600; line-height: 24px; }
 /* 설명은 줄바꿈을 살려서 3줄까지만 보이고, 넘으면 셋째 줄 끝을 '…'로 줄인다. 더보기 · 접기는 없다 (2026-11-25 사용자 결정).
-   줄바꿈은 막지 않아서 줄바꿈만 많이 넣은 설명도 카드가 3줄보다 길어지지 않는다. */
-.topicDescription { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; overflow-wrap: anywhere; }
+   줄바꿈은 막지 않아서 줄바꿈만 많이 넣은 설명도 카드가 3줄보다 길어지지 않는다. 글자색 #52525b (2026-11-27 디자인 의견).
+   줄 끝은 피그마처럼 글자 단위로 끊는다 (word-break: normal, 영어 단어는 안 쪼갬). 토론방 화면 기본값은 단어째로 넘기는 keep-all (2026-11-27 디자인 의견) */
+.topicDescription { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; margin-top: 2px; color: #52525b; font-size: 12px; line-height: 18px; white-space: pre-line; word-break: normal; overflow-wrap: anywhere; }
 .topicMeta { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-top: 4px; color: #52525b; font-size: 10px; line-height: 16px; }
 .topicCard > :is(.fillButton, .softFillButton, .cardButtons) { margin-top: 10px; }
 /* 주제 투표 카드는 표 수·막대가 있어 작성자 줄 위아래가 조금 더 넓다 (시안) */
 .topicMeta:has(.voteMini) { margin-top: 8px; }
 .topicMeta:has(.voteMini) + :is(.fillButton, .softFillButton) { margin-top: 12px; }
-.author { display: inline-flex; align-items: center; gap: 8px; min-width: 0; margin-right: auto; color: #000; font-size: 10px; font-weight: 700; }
+/* 올린 사람: 닉네임 · 얼굴 첫 글자 색은 #52525b, 닉네임 11px · 줄 16px (2026-11-27 피그마) */
+.author { display: inline-flex; align-items: center; gap: 8px; min-width: 0; margin-right: auto; color: #52525b; font-size: 11px; font-weight: 500; line-height: 16px; }
 /* 얼굴: 프로필 사진 기능 전까지 연보라 동그라미에 닉네임 첫 글자 (2026-11-25, 글자색은 닉네임과 같게 · 채팅과 같은 모양) */
-.authorFace { flex: none; display: grid; place-items: center; width: 24px; height: 24px; overflow: hidden; border-radius: 50%; background: #ece6fb; font-size: 11px; font-weight: 700; line-height: 1; }
-/* 닉네임 굵기를 직접 정한다: <b> 기본값이 '부모보다 한 단계 더 굵게'라 700 위에서 900 으로 너무 진했다 → 600 (2026-11-27 의견) */
-.author b { overflow: hidden; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.authorFace { flex: none; display: grid; place-items: center; width: 24px; height: 24px; overflow: hidden; border-radius: 50%; background: #ece6fb; font-size: 12px; font-weight: 500; line-height: 18px; }
+/* 닉네임 굵기를 직접 정한다: <b> 기본값이 '부모보다 한 단계 더 굵게'라 그대로 두면 시안보다 진하게 나온다 */
+.author b { overflow: hidden; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
 /* 카드 버튼: 알약 모양, 높이 28px, 글씨 12px (2026-11-23 시안) */
-.screen :is(.fillButton, .softFillButton) { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 28px; padding: 0 12px; border: 0; border-radius: 999px; font-size: 12px; font-weight: 700; text-decoration: none; }
-.screen .fillButton { background: var(--debate-accent); color: #fff; }
+.screen :is(.fillButton, .softFillButton) { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 28px; padding: 0 12px; border: 0; border-radius: 999px; font-size: 12px; font-weight: 700; line-height: 24px; text-decoration: none; }
+.screen .fillButton { background: var(--debate-accent); color: #fafafa; }
 .screen .softFillButton { background: var(--debate-pill); color: var(--debate-primary); }
 .fillButton:disabled, .softFillButton:disabled { opacity: .55; }
 /* 참여한 방의 버튼 두 개 (방 나가기 · 다시 입장하기). 다시 입장하기는 '토론 참여하기'(.fillButton)와 같은 진한 바탕에 흰 글씨
@@ -166,12 +171,13 @@
 .badge[data-tone="danger"] { background: #fdecec; color: var(--debate-danger); }
 .chips { display: flex; flex-wrap: nowrap; gap: 6px; }
 /* 작품 칩 (시안: 높이 20px, 글씨 11px, 바탕 #decfff) */
-.chip { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 20px; white-space: nowrap; padding: 0 12px; border-radius: 999px; background: #decfff; color: var(--debate-primary); font-size: 11px; font-weight: 600; line-height: 16px; }
+.chip { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 20px; white-space: nowrap; padding: 0 12px; border-radius: 999px; background: #decfff; color: var(--debate-primary); font-size: 11px; font-weight: 500; line-height: 16px; }
 /* 작품 칩 줄 (2026-11-25 사용자 요청): 이름이 길어도 칩을 두 줄로 접거나 위아래로 쌓지 않고 가로 한 줄로 늘어놓는다.
    넘치는 부분은 줄을 옆으로 밀어서 본다. 폰은 손가락으로, 컴퓨터는 마우스로 끌어서 민다 (useSwipeRow). 스크롤바는 숨긴다 */
 .swipe { min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; }
 .swipe::-webkit-scrollbar { display: none; }
-.meta { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* 카드의 참여 인원 · 남은 시간 (크기 10px · 줄 16px · 색은 .topicMeta): 500 (2026-11-27 피그마) */
+.meta { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; white-space: nowrap; }
 .metaDivider { width: 1px; height: 16px; background: #e4e4e7; }
 
 /* 버튼 */
@@ -240,13 +246,13 @@
 
 /* 채팅방 (2026-11-23 시안). 위 토론 카드는 머리 부분 아래에 붙어 있고('투표창 접기/펼치기'), 채팅은 그 아래로 흐른다. */
 .roomPanel { position: sticky; top: calc(40px + env(safe-area-inset-top, 0px)); z-index: 4; margin-inline: -24px; padding: 8px 24px 14px; border-bottom: 1px solid #f3eaf8; background: var(--debate-bg); }
-.roomPanelCard { display: flex; flex-direction: column; padding: 12px; border: 1px solid #e2d5ff; border-radius: 12px; background: #fff; }
+.roomPanelCard { display: flex; flex-direction: column; padding: 12px; border: 1px solid #decfff; border-radius: 12px; background: #fff; }
 .roomTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
 .roomTop .chips { min-width: 0; }
 /* '투표창 접기 · 펼치기' (2026-11-27 시안): 펼쳤을 때와 접었을 때 같은 11px, 글자 끝이 카드 안쪽 끝에서 12px 로 같은 자리 */
 .screen .foldButton { flex: none; height: 24px; padding: 0 12px; border: 0; background: transparent; color: var(--debate-primary); font-size: 11px; font-weight: 600; }
-/* 채팅방 위 토론 카드를 펼쳤을 때의 설명도 같은 규칙 (3줄까지, 넘으면 '…') */
-.roomDescription { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; }
+/* 채팅방 위 토론 카드를 펼쳤을 때의 설명도 같은 규칙 (3줄까지, 넘으면 '…', 글자색 #52525b, 글자 단위 줄 끊기) */
+.roomDescription { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; margin-top: 2px; color: #52525b; font-size: 12px; line-height: 18px; white-space: pre-line; word-break: normal; }
 .roomPanelCard .topicMeta { margin-top: 4px; }
 /* 접은 투표창 (2026-11-25 시안, 375px 에서 시안과 3px 안으로 맞춤): 작품 칩 · 설명 · 작성자 없이 제목과 참여 인원 · 남은 시간 한 줄.
    아이콘과 글자 사이 6px, 구분선 양옆 4px. '투표창 펼치기'는 그 줄 오른쪽 끝에 11px 로 (글자 끝이 카드 안쪽 끝에서 12px).
@@ -292,12 +298,14 @@
 .message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 86%; }
 .message[data-mine] { grid-template-columns: minmax(0, 1fr) 30px; align-self: flex-end; }
 .message[data-mine] .avatar { order: 2; }
-/* 프로필 사진 기능 전까지 닉네임 첫 글자 (2026-11-25 사용자 결정, 글자색은 닉네임과 같게) */
-.avatar { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 50%; background: #ece6fb; color: #27272a; font-size: 13px; font-weight: 700; line-height: 1; }
+/* 프로필 사진 기능 전까지 닉네임 첫 글자 (2026-11-25 사용자 결정, 글자색은 닉네임과 같게).
+   글씨는 토론 카드 얼굴 글자와 같게 500 12/18 #52525b (2026-11-27 디자인 의견, 동그라미는 30px 그대로) */
+.avatar { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 50%; background: #ece6fb; color: #52525b; font-size: 12px; font-weight: 500; line-height: 18px; }
 .messageBody { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
 .message[data-mine] .messageBody { align-items: flex-end; }
 .messageMeta { display: flex; align-items: center; gap: 6px; min-height: 18px; color: #71717a; font-size: 11px; line-height: 16px; }
-.messageMeta b { color: #27272a; font-size: 13px; font-weight: 700; }
+/* 채팅 닉네임: 토론 카드 닉네임과 같게 500 11/16 #52525b (2026-11-27 디자인 의견) */
+.messageMeta b { color: #52525b; font-size: 11px; font-weight: 500; line-height: 16px; }
 /* 말풍선 (2026-11-24 사용자 결정): 위아래 여백·줄 간격을 줄여 한 줄 말풍선을 낮게.
    글씨는 2026-11-25 '작다'는 의견으로 13px → 14px (줄 간격 18 → 20px, 한 줄 말풍선 34px) */
 .bubble { max-width: 100%; padding: 6px 10px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; color: #27272a; font-size: 14px; line-height: 20px; white-space: pre-wrap; }
