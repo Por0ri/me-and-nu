@@ -13,11 +13,12 @@ from ani_rag.web_discovery import (
 
 
 class WebDiscoveryFilteringTests(unittest.TestCase):
-    def test_provider_indexes_do_not_block_article_and_pin_routes(self):
+    def test_provider_indexes_do_not_block_editorial_routes(self):
         for url in (
             "https://onepiece.fandom.com/wiki/Episodes_and_Volumes",
             "https://onepiece.fandom.com/wiki/Category_theory",
-            "https://www.pinterest.com/pin/9212345/",
+            "https://newsroom.pinterest.com/news/anime-interview/",
+            "https://example.org/pin/9212345/",
             "https://example.org/ideas/an-interview",
             "https://www.reddit.com/r/OnePiece/comments/123/a_discussion",
         ):

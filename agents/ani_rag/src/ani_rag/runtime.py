@@ -120,7 +120,8 @@ def compose_crawler_agent(
     )
     images = SQLiteImageReader(store)
     web_discovery_worker = (
-        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry, catalog_titles=local_catalog.titles_for_work_id)
+        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry,
+                           catalog_titles=local_catalog.titles_for_work_id, edition_catalog=local_catalog)
         if web_discovery_adapter is not None else None
     )
     web_candidate_worker = (
@@ -290,7 +291,8 @@ def compose_runtime(
         image_entity_catalog=image_entity_catalog,
     ) if structured_mcp is not None else None
     web_discovery_worker = (
-        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry, catalog_titles=local_catalog.titles_for_work_id)
+        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry,
+                           catalog_titles=local_catalog.titles_for_work_id, edition_catalog=local_catalog)
         if web_discovery_adapter is not None else None
     )
     web_candidate_worker = (
