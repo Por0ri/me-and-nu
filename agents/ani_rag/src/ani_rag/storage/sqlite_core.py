@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 
 from ani_rag.adapter import canonical_source_item_url, canonical_source_url, canonical_web_candidate_url
 from ani_rag.storage.candidate_url_history import CandidateURLHistory
+from ani_rag.storage.excerpt_order import excerpt_index_digest, ordered_excerpt_rows
 from ani_rag.fact_subject import fact_subjects
 from ani_rag.episode_evidence import episode_title_matches
 from ani_rag.interfaces import SourceReadClaim, StoredEvidenceReference
@@ -1181,10 +1182,10 @@ class SQLiteRagStore:
         row = self._connection.execute("SELECT * FROM rag_document WHERE document_id=?", (document_id,)).fetchone()
         if row is None:
             raise KeyError(document_id)
-        excerpt_rows = self._connection.execute(
-            "SELECT locator,excerpt_text,supports_claim_index FROM rag_excerpt WHERE document_id=? ORDER BY excerpt_id",
+        excerpt_rows = ordered_excerpt_rows(document_id, self._connection.execute(
+            "SELECT excerpt_id,locator,excerpt_text,supports_claim_index FROM rag_excerpt WHERE document_id=?",
             (document_id,),
-        ).fetchall()
+        ))
         link_rows = self._connection.execute(
             "SELECT menu_work_id,candidate_menu_work_id,status FROM rag_work_link WHERE document_id=? ORDER BY link_id",
             (document_id,),
@@ -1505,7 +1506,7 @@ class SQLiteRagStore:
 
     @staticmethod
     def _excerpt_id(document_id: str, index: int) -> str:
-        return f"ex_{hashlib.sha256(f'{document_id}:{index}'.encode()).hexdigest()[:28]}"
+        return f"ex_{excerpt_index_digest(document_id, index)}"
 
     async def character_cast_match(self, payload: Mapping) -> CharacterCastMatch | None:
         def read() -> CharacterCastMatch | None:

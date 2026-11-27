@@ -1,26 +1,23 @@
 """Find the persisted excerpt containing exactly the text and position cited by a chunk."""
 
-import hashlib
 import sqlite3
+
+from ani_rag.excerpt_citations import cited_excerpt_index
+from ani_rag.models import EvidenceExcerpt
+from ani_rag.storage.excerpt_order import ordered_excerpt_rows
 
 
 def stored_excerpt_id(
     db: sqlite3.Connection, document_id: str, index: int, locator: str, start: int, end: int, text: str,
 ) -> str | None:
-    suffix = f":{start}-{end}"
-    if index < 0 or start < 0 or end <= start or end - start != len(text) or not locator.endswith(suffix):
-        return None
-    source_locator = locator[:-len(suffix)]
-    rows = db.execute(
-        """SELECT excerpt_id FROM rag_excerpt WHERE document_id=?
-           AND COALESCE(NULLIF(locator,''),?)=?
-           AND substr(excerpt_text,?,?)=?""",
-        (document_id, f"excerpt:{index}", source_locator, start + 1, end - start, text),
-    )
-    ids = {row[0] for row in rows}
-    if len(ids) == 1:
-        return ids.pop()
-    # Identical passages may appear at more than one index within the same source.
-    digest = hashlib.sha256(f"{document_id}:{index}".encode()).hexdigest()[:28]
-    indexed = ids & {f"ex_{digest}", f"mde_{digest}"}
-    return indexed.pop() if len(indexed) == 1 else None
+    cursor = db.cursor()
+    cursor.row_factory = sqlite3.Row
+    try:
+        rows = ordered_excerpt_rows(document_id, cursor.execute(
+            "SELECT excerpt_id,locator,excerpt_text FROM rag_excerpt WHERE document_id=?", (document_id,),
+        ))
+    finally:
+        cursor.close()
+    excerpts = [EvidenceExcerpt(row["excerpt_text"], row["locator"]) for row in rows]
+    original = cited_excerpt_index(document_id, excerpts, index, locator, start, end, text)
+    return rows[original]["excerpt_id"] if original is not None else None

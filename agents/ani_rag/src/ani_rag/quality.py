@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from ani_rag.content import ContentDraft, ImageAsset
 from ani_rag.models import EvidenceDocument, EvidenceType, RagContentType, WorkLinkStatus
 from ani_rag.people_subject import people_subjects
+from ani_rag.excerpt_citations import cited_excerpt_index
 from ani_rag.retrieval import EvidenceChunk, document_chunk_sources
 
 MIN_CARDS = 2
@@ -212,9 +213,12 @@ def validate_draft(
             elif source and chunk.source_kind == "body":
                 source_text = source.body
                 source_locator = "body"
-            elif source and chunk.source_kind == "excerpt" and chunk.source_index is not None and 0 <= chunk.source_index < len(source.excerpts):
-                source_text = source.excerpts[chunk.source_index].text
-                source_locator = source.excerpts[chunk.source_index].locator or f"excerpt:{chunk.source_index}"
+            elif source and chunk.source_kind == "excerpt":
+                original = cited_excerpt_index(source.document_id, source.excerpts, chunk.source_index,
+                                               chunk.locator, chunk.start_offset, chunk.end_offset, chunk.text)
+                if original is not None:
+                    source_text = source.excerpts[original].text
+                    source_locator = source.excerpts[original].locator or f"excerpt:{chunk.source_index}"
             if (source is None or source_text is None or chunk.content_type is not source.content_type
                     or chunk.source_id != source.source_id or chunk.source_url != source.source_url
                     or chunk.title != source.title or chunk.language != source.language
