@@ -1,4 +1,4 @@
-.panel { margin: 0 0 16px; padding: 24px; min-width: 0; }
+.panel { margin: 0 0 16px; padding: 24px; min-width: 0; height: auto; border: 1px solid #d4d4d8; border-radius: 16px; background: #fff; }
 .heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .heading h2 { margin: 0; font-size: 24px; line-height: 32px; }
 .heading p { margin: 4px 0 0; color: #71717a; font-size: 13px; line-height: 21px; }

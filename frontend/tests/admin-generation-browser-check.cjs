@@ -65,6 +65,8 @@ async function check(browser, width) {
     await panel.getByText('기사·정보사전 작업 상태 보기', { exact: true }).click();
     await panel.getByText('비용·기록 집계 기준 보기', { exact: true }).click();
     assert.match(await panel.innerText(), /AI 검수 반려/);
+    const panelBounds = await panel.evaluate(node => ({ bottom: node.getBoundingClientRect().bottom, nextTop: node.nextElementSibling.getBoundingClientRect().top }));
+    assert.ok(panelBounds.bottom <= panelBounds.nextTop, 'Expanded live panel must not overlap existing dashboard cards');
     const size = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(size.doc <= size.viewport, `No horizontal overflow at ${width}px: ${JSON.stringify(size)}`);
     await page.screenshot({ path: path.join(output, `generation-${width}.png`), fullPage: true });

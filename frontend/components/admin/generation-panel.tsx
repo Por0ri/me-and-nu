@@ -61,7 +61,7 @@ export function GenerationPanel({ state, refresh }: { state: AdminReadState<Gene
   const runtimeIssue = data?.runtime && Object.values(data.runtime).some(value => value === "failed" || value === "missing");
   const status = stale ? "갱신 지연" : runtimeIssue ? "실행 상태 확인 필요" : data?.availability === "available" ? "현황 확인됨" : data?.availability === "partial" ? "일부 확인" : "확인 필요";
   const daily = data?.daily;
-  return <section className={`${shared.statCard} ${styles.panel}`} aria-label="자동 콘텐츠 생성 현황" data-admin-generation data-generation-state={state.status} data-generation-availability={data?.availability}>
+  return <section className={styles.panel} aria-label="자동 콘텐츠 생성 현황" data-admin-generation data-generation-state={state.status} data-generation-availability={data?.availability}>
     <div className={styles.heading}>
       <div><h2>자동 콘텐츠 생성</h2><p>오늘(KST)의 기사·정보사전 생성 현황 · 이 패널만 30초마다 갱신</p></div>
       <button type="button" className={shared.secondaryButton} onClick={refresh} disabled={state.status === "loading"}>생성 현황 새로고침</button>
