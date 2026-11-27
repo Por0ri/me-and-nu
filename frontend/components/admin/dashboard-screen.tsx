@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { analyticsHref } from "@/lib/admin-analytics";
 import { attentionDetailHref, dashboardHref, parseDashboardQuery, type DashboardQuery } from "@/lib/admin-attention-navigation";
-import { adminDate, type AdminReadState } from "@/lib/admin-content";
+import { adminDate, type AdminFailure, type AdminReadState } from "@/lib/admin-content";
 import { loadAdminAttention, loadAdminDashboard, type AttentionKind, type AttentionResponse, type DashboardResponse, type RecommendationPerformance, type ReportPeriod } from "@/lib/admin-statistics-api";
 import { AdminStatus } from "./admin-status";
 import { useAdminRead } from "./use-admin-read";
+import { ConnectedGeneration } from "./generation-panel";
 import { ReportPeriodFilter } from "./report-period-filter";
 import { AnalyticsScope, MetricCard, PreferenceDistribution, RankingPanel, StatisticNote, StatisticsPanel, formatMetric } from "./statistics-panels";
 import shared from "./admin.module.css";
@@ -29,6 +30,8 @@ export function DashboardScreen() {
 
 function ConnectedDashboard({ query, navigate }: { query: DashboardQuery; navigate: (query: DashboardQuery, replace?: boolean) => void }) {
   const { period, attention: filter, page } = query;
+  const [generationAccessFailure, setGenerationAccessFailure] = useState<AdminFailure | null>(null);
+  const onGenerationAccessFailure = useCallback((failure: AdminFailure) => setGenerationAccessFailure(failure), []);
   const read = useCallback(async (signal: AbortSignal): Promise<DashboardData> => {
     // Keep access state for the whole screen together; a rejected queue request
     // must not leave a previously authorized dashboard visible.
@@ -43,8 +46,11 @@ function ConnectedDashboard({ query, navigate }: { query: DashboardQuery; naviga
   useEffect(() => {
     if (lastPage !== null && page > lastPage) navigate({ period, attention: filter, page: lastPage }, true);
   }, [lastPage, page, period, filter, navigate]);
+  // A denied live read must also clear previously authorized service statistics.
   return <DashboardView period={period} changePeriod={next => navigate({ period: next, attention: "all", page: 1 })}
-    state={state} retry={retry} filter={filter} page={page}
+    state={generationAccessFailure ?? state}
+    retry={() => { setGenerationAccessFailure(null); retry(); }} filter={filter} page={page}
+    generationPanel={<ConnectedGeneration onAccessFailure={onGenerationAccessFailure} />}
     changeFilter={kind => navigate({ ...query, attention: kind, page: 1 })} changePage={next => navigate({ ...query, page: next })} />;
 }
 
@@ -65,9 +71,10 @@ function RecommendationSummary({ performance, period }: { performance: Recommend
   </section>;
 }
 
-export function DashboardView({ period, changePeriod, state, retry, filter, page, changeFilter, changePage }: {
+export function DashboardView({ period, changePeriod, state, retry, filter, page, changeFilter, changePage, generationPanel }: {
   period: ReportPeriod; changePeriod: (period: ReportPeriod) => void; state: AdminReadState<DashboardData>; retry: () => void;
   filter: AttentionKind; page: number; changeFilter: (kind: AttentionKind) => void; changePage: (page: number) => void;
+  generationPanel?: ReactNode;
 }) {
   const data = state.status === "ready" ? state.data.dashboard : null;
   const attention = state.status === "ready" ? state.data.attention : null;
@@ -80,6 +87,7 @@ export function DashboardView({ period, changePeriod, state, retry, filter, page
       <AnalyticsScope meta={data.meta} />
       <div className={styles.dashboardMetrics}><MetricCard title="이용 회원" metric={data.usage.activeUsers} /><MetricCard title="온보딩 완료 후 피드 노출 관측률" metric={data.usage.signupFeedObservationRate} />
         <MetricCard title="콘텐츠 열람 구간 수" metric={data.usage.contentReadSegments} /><RecommendationSummary performance={data.serviceRecommendationPerformance ?? data.recommendationPerformance} period={period} /></div>
+      {generationPanel}
       <div className={styles.dashboardGrid}>
         <div className={styles.dashboardColumn}>
           <StatisticsPanel title="지금 확인이 필요한 항목" description="현재 미처리 항목 · 오래된 접수부터 표시" className={styles.attention} availability={attention.availability}>
@@ -103,7 +111,7 @@ export function DashboardView({ period, changePeriod, state, retry, filter, page
         <div className={styles.dashboardColumn}>
           {data.serviceRecommendationPerformance && <RecommendationSummary performance={data.recommendationPerformance} period={period} />}
           <PreferenceDistribution data={data.preferenceDistribution} />
-          <StatisticsPanel title="에이전트 콘텐츠 생성" description="최근 24시간 · 기록된 작업 상태" className={styles.generation} availability={data.generation.availability}>
+          <StatisticsPanel title="서비스 DB 적재 이력" description="최근 24시간 · 서비스에 저장된 기록 (실시간 큐와 별도)" className={styles.generation} availability={data.generation.availability}>
             <p className={styles.generationCounts}>성공 <strong>{data.generation.succeeded}</strong> · 진행 중 <strong>{data.generation.inProgress}</strong> · 실패 <strong>{data.generation.failed}</strong> · 취소 <strong>{data.generation.cancelled}</strong></p>
             <StatisticNote availability={data.generation.availability} reason={data.generation.reason} definition={data.generation.definition} />
           </StatisticsPanel>

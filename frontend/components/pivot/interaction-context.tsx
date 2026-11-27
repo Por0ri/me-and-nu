@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode, type RefObject } from "react";
-import { ACTIVITY_BOUNDARY_EVENT, ACTIVITY_RESUME_EVENT, createExposure, createCarouselMeasurement, type ActivityQueue } from "@/lib/pivot/activity";
+import { ACTIVITY_BOUNDARY_EVENT, ACTIVITY_RESUME_EVENT, EXPOSURE_THRESHOLDS, createCardExposure, createExposure, createCarouselMeasurement, exposureLevel, type ActivityQueue } from "@/lib/pivot/activity";
 import type { ReactionControls } from "@/lib/pivot/reaction-service";
 import type { HomeDetailTarget } from "@/lib/pivot/home";
 
@@ -50,23 +50,25 @@ export function useHomeExposure(ref: RefObject<HTMLElement | null>, target: Home
     if (demo || !scope || !element || view !== "home") return;
     const target = { postId, contentId, topicId, recommendationId, recommendationReason };
     scope.activity.remember(target);
-    const exposure = createExposure();
-    let inView = false;
+    const exposure = createCardExposure();
+    let inView = false, inFocus = false;
     function finish() {
       const value = exposure.finish();
-      if (impressions && value.duration >= 1000) scope!.activity.record(target, "impression", { surface: "home_feed", viewMode: "card", visibleMs: value.duration });
+      // focusMs: 카드가 80% 이상 보인 시간. 0 이어도 늘 보낸다 (모델은 있으면 이걸로, 없으면 visibleMs 로 '봤다' 3초를 센다)
+      if (impressions && value.visibleMs >= 1000) scope!.activity.record(target, "impression", { surface: "home_feed", viewMode: "card", visibleMs: value.visibleMs, focusMs: value.focusMs });
     }
     function update() {
-      const visible = inView && foreground(element!);
+      const shown = foreground(element!), visible = inView && shown;
       if (!visible) finish();
-      exposure.setVisible(visible);
+      exposure.set(visible, inFocus && shown);
     }
     const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver(entries => {
-      // A tall card can exceed the viewport; measure half of the visible viewport/card.
-      const entry = entries[0];
-      inView = !!entry?.isIntersecting && entry.intersectionRect.height >= Math.min(entry.boundingClientRect.height, window.innerHeight) / 2;
+      // A tall card can exceed the viewport; measure against the smaller of the card and the viewport.
+      // Several crossings can arrive together while scrolling fast: the last entry is the current state.
+      const entry = entries[entries.length - 1];
+      ({ inView, inFocus } = exposureLevel(entry?.intersectionRect.height ?? 0, entry?.boundingClientRect.height ?? 0, window.innerHeight, !!entry?.isIntersecting));
       update();
-    }, { threshold: [0, 0.1, 0.25, 0.5, 0.75, 1] });
+    }, { threshold: EXPOSURE_THRESHOLDS });
     observer?.observe(element);
     const pointer = () => carousel.current.interact();
     const wheel = (event: WheelEvent) => { if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) pointer(); };

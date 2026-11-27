@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 const { chromium } = require(process.env.PIVOT_PLAYWRIGHT_MODULE || 'playwright');
 const fixture = require('./helpers/admin-attention-fixture.cjs');
+const { generationFixture } = require('./helpers/generation-fixture.cjs');
 const base = process.argv[2] || 'http://127.0.0.1:3236';
 const apiOrigin = process.env.ADMIN_ATTENTION_MOCK_API || 'http://127.0.0.1:8197';
 const output = process.argv[3] || path.resolve(__dirname, '../../.preview-pivot/admin-attention/results');
@@ -20,10 +21,11 @@ const expectDashboard = async (page, attention, pageNumber) => {
   assert.equal(url.searchParams.get('attention'), attention);
   assert.equal(url.searchParams.get('page'), String(pageNumber));
   assert.equal((await page.getByRole('group', { name: '확인 항목 분류' }).locator('[aria-pressed="true"]').innerText()).replace(/\s/g, ''), (attention === 'report' ? '신고' : '문의') + '6');
+  await page.locator('[data-admin-generation] [aria-label="생성 시도 3 / 40건"]').waitFor();
 };
 async function run(browser, width) {
   const context = await browser.newContext({ viewport: { width, height: width < 500 ? 844 : 1117 }, serviceWorkers: 'block' });
-  const control = { mode: 'normal', session: true, delay: false, count: 6 };
+  const control = { mode: 'normal', generationMode: 'normal', session: true, delay: false, count: 6 };
   const requests = [], blocked = [], pageErrors = [];
   let delayed = null;
   await context.route('**/*', async route => {
@@ -38,6 +40,10 @@ async function run(browser, width) {
     if (url.pathname === '/api/v1/auth/session') return json(control.session ? fixture.session() : { ...fixture.session(), authenticated: false, sessionState: 'anonymous', user: null });
     if (url.pathname === '/api/v1/admin/dashboard') return json({ ...fixture.dashboard(url.searchParams.get('period')), attention: fixture.attention('all', 1, control.count) });
     if (url.pathname === '/api/v1/admin/dashboard/attention') return json(fixture.attention(url.searchParams.get('kind'), Number(url.searchParams.get('page')), control.count));
+    if (url.pathname === '/api/v1/admin/generation') {
+      if (control.generationMode !== 'normal') return json({ code: control.generationMode === '401' ? 'AUTH_REQUIRED' : 'ADMIN_FORBIDDEN', message: '격리된 생성 현황 권한 오류' }, Number(control.generationMode));
+      return json(generationFixture());
+    }
     if (url.pathname === '/api/v1/admin/reports') return json(fixture.recentReports());
     const match = url.pathname.match(/^\/api\/v1\/admin\/(reports|inquiries)\/([1-9]\d*)$/);
     if (match) {
@@ -162,9 +168,24 @@ async function run(browser, width) {
     await page.waitForURL(url => url.pathname === '/admin/dashboard' && !url.searchParams.has('page')); await ready(page);
     assert.equal(new URL(page.url()).searchParams.get('attention'), 'report');
 
+    // After restoring the URL-filtered dashboard, loss of generation access
+    // must clear both the live counters and the report/inquiry detail links.
+    for (const [mode, state] of [['401', 'login-required'], ['403', 'forbidden']]) {
+      control.generationMode = 'normal'; control.count = 6;
+      await page.goto(base + '/admin/dashboard?period=30d&attention=report&page=2');
+      await expectDashboard(page, 'report', 2);
+      assert.equal(await page.getByRole('link', { name: '신고 #41 상세 보기', exact: true }).count(), 1);
+      control.generationMode = mode;
+      await page.getByRole('button', { name: '생성 현황 새로고침', exact: true }).click();
+      await page.locator('[data-admin-dashboard][data-admin-state="' + state + '"]').waitFor();
+      assert.equal(await page.locator('[data-admin-generation]').count(), 0, 'revoked generation access clears counters');
+      assert.equal(await page.getByRole('region', { name: '이용 회원', exact: true }).count(), 0, 'revoked generation access clears statistics');
+      assert.equal(await page.getByRole('link', { name: /상세 보기$/ }).count(), 0, 'revoked generation access clears attention links');
+    }
+
     assert.deepEqual(pageErrors, []); assert.deepEqual(blocked, []);
     assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
-    results.push({ width, checks: 'period/filter/page URL; same ID report/inquiry; old detail; reload; back/forward; explicit return; direct bigint; list regression; 401/403/404/503/network/mismatch; retry; revoke; anonymous; invalid URLs; stale request; queue shrink', apiRequests: requests.length, writes: 0, externalRequests: 0, pageErrors: 0 });
+    results.push({ width, checks: 'period/filter/page URL; same ID report/inquiry; old detail; reload; back/forward; explicit return; direct bigint; list regression; 401/403/404/503/network/mismatch; retry; revoke; anonymous; invalid URLs; stale request; queue shrink; live generation preserved on return; generation 401/403 clears dashboard', apiRequests: requests.length, writes: 0, externalRequests: 0, pageErrors: 0 });
   } catch (error) {
     await page.screenshot({ path: path.join(output, 'failure-' + width + '.png'), fullPage: true }).catch(() => {});
     fs.writeFileSync(path.join(output, 'failure-' + width + '.json'), JSON.stringify({ url: page.url(), requests, blocked, pageErrors }, null, 2));

@@ -1,0 +1,22 @@
+# Explicit build contexts; no database, source dump or API key is copied.
+FROM runtime-base AS rag-deps
+USER root
+WORKDIR /opt/ani-rag
+ENV UV_PROJECT_ENVIRONMENT=/opt/rag-venv UV_PYTHON_DOWNLOADS=never
+RUN python -m pip install --only-binary=:all: uv==0.9.28
+COPY --from=rag-project /pyproject.toml /uv.lock /README.md ./
+RUN uv sync --frozen --extra postgres --no-dev --no-install-project --no-cache --python /usr/local/bin/python
+COPY --from=rag-project /src/ani_rag/ ./src/ani_rag/
+RUN uv sync --frozen --extra postgres --no-dev --no-cache --python /usr/local/bin/python
+
+FROM runtime-base
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-noto-cjk && rm -rf /var/lib/apt/lists/*
+COPY --from=rag-deps /opt/rag-venv/ /opt/rag-venv/
+COPY --from=rag-deps /opt/ani-rag/ /opt/ani-rag/
+COPY --from=rag-project /config/ /opt/ani-rag/config/
+COPY --from=anime-works /menu_works.csv /menu_work_entries.csv /catalog/
+COPY --chmod=0555 menu_worker/ /app/menu_worker/
+ENV PYTHONPATH=/app:/opt/ani-rag/src:/opt/rag-venv/lib/python3.12/site-packages RAG_GENERATION_ENABLED=false ME_NU_WORK_CATALOG_DIR=/catalog
+USER 10001:10001
+CMD ["celery", "-A", "menu_worker.rag_app:app", "worker", "--concurrency=1", "--queues=content.rag_generate", "--hostname=rag@%h", "--loglevel=INFO"]

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "purpose": "rag_model_settings",
+  "model": "gpt-6-luna",
+  "pricing": {
+    "gpt-6-luna": {"input": "0.10", "output": "0.50", "cached_input": "0.01"},
+    "text-embedding-3-small": {"input": "0.02", "output": "0", "cached_input": "0.02"}
+  },
+  "pricing_sources": [
+    {"model": "gpt-6-luna", "url": "https://developers.openai.com/api/docs/models/gpt-6-luna", "checked_on": "2026-11-26", "basis": "Standard USD per million tokens; explicit cache writes are not used"},
+    {"model": "text-embedding-3-small", "url": "https://developers.openai.com/api/docs/models/text-embedding-3-small", "checked_on": "2026-11-26", "basis": "USD per million input tokens; cached input conservatively charged as ordinary input"}
+  ]
+}

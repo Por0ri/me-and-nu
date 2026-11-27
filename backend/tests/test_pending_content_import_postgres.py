@@ -74,15 +74,78 @@ def pending_pg(carousel_pg, tmp_path):
     return engine, url, root, inbox, raw, envelope, policy, legacy
 
 
-async def execute(url, policy, *, inbox=None, manifest=None, apply=False, now=None):
+async def execute(url, policy, *, inbox=None, manifest=None, apply=False, now=None, reconcile_policy_date=None):
     return await pending.run(policy=policy, database_url=url.render_as_string(hide_password=False),
         deployment_env="test", reviewed_sha256=pending.fingerprint(policy) if apply else None,
-        inbox=inbox, manifest=manifest, apply=apply, now=now)
+        inbox=inbox, manifest=manifest, apply=apply, now=now, reconcile_policy_date=reconcile_policy_date)
+
+
+def test_expired_policy_import_is_pending_idempotent_and_preserves_existing_receipt(pending_pg):
+    engine, url, _, inbox, raw, envelope, policy, _ = pending_pg
+    now = datetime.now(timezone.utc) + timedelta(days=1)
+    before = snapshot(engine)
+    async def scenario():
+        with pytest.raises(pending.PendingImportError, match="policy_date_inactive"):
+            await execute(url, policy, inbox=inbox, apply=True, now=now)
+        assert snapshot(engine) == before
+        first = await execute(url, policy, inbox=inbox, apply=True, now=now, reconcile_policy_date=policy["policy_date"])
+        after = snapshot(engine)
+        replay = await execute(url, policy, inbox=inbox, apply=True, now=now + timedelta(minutes=1),
+                               reconcile_policy_date=policy["policy_date"])
+        assert (first["created"], replay["unchanged"]) == (1, 1)
+        assert snapshot(engine) == after
+        with Session(engine) as db:
+            content = db.get(Content, first["items"][0]["content_id"])
+            draft = db.get(Draft, content.source_draft_id)
+            run = db.get(AgentRun, draft.agent_run_id)
+            assert (content.status, content.judgment_status, draft.status) == ("pending_review", "needs_review", "checking")
+            assert db.scalar(select(func.count()).select_from(Content).where(
+                Content.content_id == content.content_id, public_content_condition())) == 0
+            receipt = run.output_payload[pending.RECEIPT]
+            assert receipt["policy_sha256"] == pending.fingerprint(policy) and receipt["envelope"] == envelope
+            assert receipt["policy_date_reconciliation"] == {"policy_date": policy["policy_date"],
+                "reconciled_at": now.isoformat(), "mode": "explicit_pending_only"}
+            assert run.output_payload["producer_review_evidence"] == raw["items"][0]["reviewEvidence"]
+        for name in ("recommendation_round", "recommendation_item", "auth_session", "user_account"):
+            assert after[name] == before[name]
+    _run_async(scenario())
+
+
+def test_expired_replay_never_adds_reconciliation_to_preexisting_import(pending_pg):
+    engine, url, _, inbox, _, _, policy, _ = pending_pg
+    _run_async(execute(url, policy, inbox=inbox, apply=True))
+    before = snapshot(engine)
+    replay = _run_async(execute(url, policy, inbox=inbox, apply=True, now=datetime.now(timezone.utc) + timedelta(days=1),
+                               reconcile_policy_date=policy["policy_date"]))
+    assert replay["unchanged"] == 1 and snapshot(engine) == before
+
+
+def test_expired_reconciliation_does_not_bypass_content_expiry_or_daily_limit(pending_pg, tmp_path):
+    engine, url, root, inbox, _, _, policy, _ = pending_pg
+    now = datetime.now(timezone.utc) + timedelta(days=3)
+    before = snapshot(engine)
+    with pytest.raises(pending.PendingImportError, match="bundle_validation_failed"):
+        _run_async(execute(url, policy, inbox=inbox, apply=True, now=now, reconcile_policy_date=policy["policy_date"]))
+    assert snapshot(engine) == before
+    policy["max_items"] = 1
+    now -= timedelta(days=2)
+    _run_async(execute(url, policy, inbox=inbox, apply=True, now=now, reconcile_policy_date=policy["policy_date"]))
+    second_raw, second = make_delivery(root, number=2)
+    second_inbox = tmp_path / "expired-second-inbox"
+    write_delivery(root, second_raw, second, inbox=second_inbox)
+    after = snapshot(engine)
+    with pytest.raises(pending.PendingImportError, match="durable_daily_import_limit_exceeded"):
+        _run_async(execute(url, policy, inbox=second_inbox, apply=True, now=now, reconcile_policy_date=policy["policy_date"]))
+    assert snapshot(engine) == after
 
 
 @pytest.mark.parametrize("decision", ["approved", "rejected"])
-def test_pending_duplicate_terminal_replay_preserves_evidence_and_unrelated_links(pending_pg, tmp_path, decision):
+@pytest.mark.parametrize("no_deadline", [False, True])
+def test_pending_duplicate_terminal_replay_preserves_evidence_and_unrelated_links(pending_pg, tmp_path, decision, no_deadline):
     engine, url, root, inbox, raw, envelope, policy, legacy = pending_pg
+    if no_deadline:
+        raw["items"][0]["package"].update(feed_valid_until=None, purge_at=None)
+        write_delivery(root, raw, envelope, inbox=inbox)
     before = snapshot(engine)
     async def scenario():
         preview = await execute(url, policy, inbox=inbox)
@@ -98,6 +161,8 @@ def test_pending_duplicate_terminal_replay_preserves_evidence_and_unrelated_link
             run = db.get(AgentRun, draft.agent_run_id)
             assert (content.status,content.judgment_status,draft.status) == ("pending_review","needs_review","checking")
             assert content.published_at is None and content.ai_judgment_basis["operator_review"] is None
+            assert (content.feed_valid_until is None) == no_deadline
+            assert content.ai_judgment_basis.get("feed_expiry_policy") == ("no_deadline_v1" if no_deadline else None)
             assert run.output_payload["producer_review_evidence"] == raw["items"][0]["reviewEvidence"]
             assert run.output_payload["producer_review_evidence"]["originalGeneration"]["outcome"] == "rejected"
             assert run.output_payload[pending.RECEIPT]["envelope"] == envelope

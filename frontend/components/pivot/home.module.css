@@ -40,6 +40,11 @@
 .searchInput > img { flex: none; }
 .search input { display: block; width: 100%; min-width: 0; height: 34px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--home-ink); font-size: 14px; line-height: 20px; }
 .search input::placeholder { color: var(--home-muted); opacity: 1; }
+/* 휴대폰: 아이폰은 16px 보다 작은 입력칸을 누르면 화면을 확대해서, 쳐 넣는 글씨만 16px (안내 글씨는 시안 14px 그대로, 토론방 검색도 같은 부품) */
+@media (hover: none) and (pointer: coarse) {
+  .search input { font-size: 16px; }
+  .search input::placeholder { font-size: 14px; }
+}
 /* Search result notice: looks like the search box, floats below it with a small inset,
    stays 4 s, then fades for 2 s without moving the feed. */
 .searchNotice { position: absolute; z-index: 7; top: calc(100% + 18px); left: 12px; right: 12px; margin: 0; padding: 10px 12px; border: 1px solid var(--home-line); border-radius: 8px; background: var(--home-surface); box-shadow: 0 1px 5px rgb(206 191 250 / 50%); color: var(--home-ink); font-size: 13px; line-height: 20px; text-align: center; white-space: pre-line; pointer-events: none; animation: searchNoticeFade 6s ease forwards; }
@@ -60,6 +65,9 @@
    peeking mascot, which reaches 8px into the box's top padding, is never covered. */
 .screen[data-search-open] .search { z-index: 6; background: var(--home-bg); }
 .screen[data-search-open] .header { z-index: 7; background: var(--home-bg); }
+/* 검색 중: 검색창 아래 8px 를 머리 부분 밖으로 옮겨, 분홍 줄 없이 선 바로 아래부터 어둡게 (높이는 그대로) */
+.screen[data-search-open] .stickyHeader { margin-bottom: 8px; }
+.screen[data-search-open] .stickyHeader .search { margin-bottom: 0; }
 .searchDim { position: fixed; z-index: 5; inset: 0; padding: 0; border: 0; background: rgb(0 0 0 / 50%); }
 .searchPanel { position: absolute; z-index: 6; top: 100%; left: 0; right: 0; padding: 4px 24px 8px; border-bottom: 1px solid var(--home-line); background: var(--home-bg); }
 .searchPanel ul { list-style: none; margin: 0; padding: 0; }
@@ -187,6 +195,9 @@
   scrollbar-width: none;
   scroll-padding-block: calc(112px + env(safe-area-inset-top, 0px)) calc(var(--home-dock-space) + 12px);
 }
+/* AI 챗봇 시트 같은 창이 떠 있는 동안 뒤 피드 스크롤을 잠근다. 아이폰은 시트를 끄는 손가락을 뒤 피드로 넘겨서
+   배경이 같이 움직였다 (스크롤 위치는 그대로 남음, 2026-11-26) */
+.screen[data-home-state]:has(dialog[open]) { overflow: hidden; }
 /* Only HOME owns this sticky stack. Its 40 + 52 + 8px flow height is unchanged. */
 .stickyHeader {
   position: sticky;

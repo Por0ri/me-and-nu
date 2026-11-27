@@ -11,12 +11,15 @@ import struct
 import threading
 import uuid
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Protocol, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence
 
-from ani_rag.adapter import canonical_source_item_url
+from ani_rag.adapter import canonical_article_comparison_url
+from ani_rag.article_credits import ArticleCredit, chunk_credit_matches
+from ani_rag.episode_evidence import EpisodeTarget, episode_reference_matches
+from ani_rag.excerpt_citations import chunk_digest, cited_excerpt_index, legacy_excerpt_order
 from ani_rag.fact_subject import fact_subjects
 from ani_rag.models import EvidenceDocument, RagContentType, WorkLinkStatus
 from ani_rag.profiles import get_content_profile
@@ -67,7 +70,7 @@ def _matches_dictionary_field(document: EvidenceDocument, fields: tuple[str, ...
 
 def _canonical_excluded_url(url: str) -> str:
     try:
-        return canonical_source_item_url(url)
+        return canonical_article_comparison_url(url)
     except ValueError:
         return url.strip()
 
@@ -90,6 +93,8 @@ class RetrievalRequest:
     semantic_candidate_scan: bool = False
     subject_title: str | None = None
     corroborating_chunks: tuple[str, ...] = ()
+    article_credits: tuple[ArticleCredit, ...] = ()
+    episode_targets: tuple[EpisodeTarget, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.query.strip():
@@ -124,6 +129,22 @@ class EvidenceChunk:
     published_at: datetime | None
     menu_work_ids: tuple[int, ...]
     score: float = 0.0
+
+
+def _preferred_credit_chunks(
+    request: RetrievalRequest, chunks: Iterable[tuple[float, EvidenceChunk]],
+) -> set[str]:
+    if not request.article_credits:
+        return set()
+    ranked = []
+    for score, chunk in chunks:
+        if score >= request.min_retrieval_score:
+            matches = chunk_credit_matches(request.article_credits, chunk.text, source_url=chunk.source_url)
+            if matches:
+                ranked.append((-matches, -score, chunk.chunk_id))
+    # Retain general story and production context for the rest of the verifier's references.
+    slots = max(1, request.top_k // 2)
+    return {chunk_id for _, _, chunk_id in sorted(ranked)[:slots]}
 
 
 @dataclass(frozen=True)
@@ -201,6 +222,18 @@ class QueryEmbeddingModel(Protocol):
         """Embed one query using the same model and dimensions as the vector sidecar."""
 
 
+class VectorIndexReader(Protocol):
+    def fetch_chunks(
+        self, document_ids: tuple[str, ...], query_vector: tuple[float, ...],
+    ) -> Sequence[Mapping[str, object]]:
+        """Read indexed chunks for scoped documents with cosine_similarity scores.
+
+        Implementations must preserve chunk/document/source identity and return
+        similarity (higher is closer), not distance. The relational repository
+        remains authoritative for candidate eligibility and work links.
+        """
+
+
 class OpenAIQueryEmbeddingModel:
     """Small adapter for the existing text-embedding-3-small sidecar contract."""
 
@@ -248,7 +281,7 @@ def chunk_document(document: EvidenceDocument, *, max_chars: int = 1200, overlap
             if signature in seen:
                 continue
             seen.add(signature)
-            chunk_id = hashlib.sha256(f"{document.document_id}\n{source_kind}\n{source_index}\n{locator}\n{actual_start}\n{value}".encode("utf-8")).hexdigest()
+            chunk_id = chunk_digest(document.document_id, source_kind, source_index, locator, actual_start, value)
             chunks.append(EvidenceChunk(
                 chunk_id=chunk_id,
                 evidence_id=document.document_id,
@@ -269,6 +302,25 @@ def chunk_document(document: EvidenceDocument, *, max_chars: int = 1200, overlap
             if start + max_chars >= len(text):
                 break
     return tuple(chunks)
+
+
+def _pinned_excerpt(chunk: EvidenceChunk, document: EvidenceDocument, original: int,
+                    pinned: frozenset[str]) -> EvidenceChunk:
+    """Keep a previously cited ID when the index now stores the other coordinate."""
+    if not pinned or chunk.chunk_id in pinned:
+        return chunk
+    old_order = legacy_excerpt_order(document.document_id, len(document.excerpts))
+    alternate = old_order.index(original) if chunk.source_index == original else original
+    if alternate == chunk.source_index:
+        return chunk
+    locator = document.excerpts[original].locator or f"excerpt:{alternate}"
+    candidate_id = chunk_digest(document.document_id, "excerpt", alternate, locator, chunk.start_offset, chunk.text)
+    if candidate_id in pinned:
+        located = f"{locator}:{chunk.start_offset}-{chunk.end_offset}"
+        if cited_excerpt_index(document.document_id, document.excerpts, alternate, located,
+                               chunk.start_offset, chunk.end_offset, chunk.text) == original:
+            return replace(chunk, chunk_id=candidate_id, source_index=alternate, locator=located)
+    return chunk
 
 
 def document_chunk_sources(document: EvidenceDocument) -> list[tuple[str, str, int | None, str]]:
@@ -413,17 +465,25 @@ class DatabaseEvidenceRetriever:
         seed_ids = frozenset(request.seed_evidence_ids)
         # A translated field name is one lexical match, even if the fact itself is in Japanese.
         field_overlap = 1 / max(len(_terms(request.query)), 1)
-        ranked = [
-            (max(lexical_score(request.query, chunk, seed_ids=seed_ids),
-                 field_overlap if _matches_dictionary_field(document, fields) else 0.0), document, chunk)
-            for document in allowed
-            for chunk in chunk_document(document)
-        ]
-        ranked = [row for row in ranked if row[0] > 0]
         pinned = frozenset(request.corroborating_chunks)
+        ranked = []
+        for document in allowed:
+            field_score = field_overlap if _matches_dictionary_field(document, fields) else 0.0
+            for chunk in chunk_document(document):
+                if pinned and chunk.source_kind == "excerpt" and chunk.source_index is not None:
+                    chunk = _pinned_excerpt(chunk, document, chunk.source_index, pinned)
+                score = max(lexical_score(request.query, chunk, seed_ids=seed_ids), field_score)
+                if score > 0:
+                    ranked.append((score, document, chunk))
+        preferred = _preferred_credit_chunks(request, ((score, chunk) for score, _, chunk in ranked))
         ranked.sort(key=lambda row: (
             not (row[2].chunk_id in pinned and row[0] >= request.min_retrieval_score),
-            not _matches_dictionary_field(row[1], fields), -row[0], row[1].published_at is None,
+            not _matches_dictionary_field(row[1], fields),
+            row[2].chunk_id not in preferred,
+            not (row[0] >= request.min_retrieval_score and episode_reference_matches(
+                request.episode_targets, row[2].title, row[2].text,
+            )),
+            -row[0], row[1].published_at is None,
             -(row[1].published_at.timestamp()) if row[1].published_at else 0.0,
             row[1].document_id, row[2].locator,
         ))
@@ -461,7 +521,8 @@ class VectorEvidenceRetriever:
     """
 
     def __init__(
-        self, candidates: EvidenceCandidateRepository, vector_index: sqlite3.Connection,
+        self, candidates: EvidenceCandidateRepository,
+        vector_index: sqlite3.Connection | VectorIndexReader,
         query_embeddings: QueryEmbeddingModel,
     ) -> None:
         self.candidates = candidates
@@ -503,7 +564,7 @@ class VectorEvidenceRetriever:
         if query_norm <= 0:
             raise ValueError("Query vector cannot be zero")
         document_map = {item.document_id: item for item in documents}
-        chunk_rows = await asyncio.to_thread(self._fetch_index_chunks, tuple(document_map))
+        chunk_rows = await asyncio.to_thread(self._fetch_index_chunks, tuple(document_map), query_vector)
         if not chunk_rows:
             return await DatabaseEvidenceRetriever(self.candidates).retrieve(request)
         ranked: list[tuple[float, EvidenceChunk, EvidenceDocument]] = []
@@ -513,7 +574,7 @@ class VectorEvidenceRetriever:
             document = document_map.get(str(row["document_id"]))
             if document is None:
                 continue
-            if row["chunk_id"] in pinned:
+            if row["chunk_id"] in pinned and row["source_kind"] != "excerpt":
                 # An old vector can survive a source edit until the next index refresh.
                 # Rebuild the cited slice from the current relational source before reusing it.
                 if document.document_id not in current_chunks:
@@ -524,13 +585,22 @@ class VectorEvidenceRetriever:
                 if (original is None or original.text != row["chunk_text"]
                         or original.source_url != row["source_url"] or original.source_id != row["source_id"]):
                     continue
-            vector = struct.unpack("<1024f", row["vector_f32"])
-            vector_norm = math.sqrt(sum(value * value for value in vector))
-            if vector_norm <= 0:
-                continue
-            similarity = sum(left * right for left, right in zip(query_vector, vector, strict=True)) / (query_norm * vector_norm)
+            if "cosine_similarity" in row.keys():
+                # PostgreSQL's <=> is a distance; the index adapter supplies
+                # 1 - distance, preserving the existing score direction.
+                if row["cosine_similarity"] is None:
+                    continue
+                similarity = float(row["cosine_similarity"])
+                if not math.isfinite(similarity):
+                    raise ValueError("Vector index returned a non-finite cosine similarity")
+            else:
+                vector = struct.unpack("<1024f", row["vector_f32"])
+                vector_norm = math.sqrt(sum(value * value for value in vector))
+                if vector_norm <= 0:
+                    continue
+                similarity = sum(left * right for left, right in zip(query_vector, vector, strict=True)) / (query_norm * vector_norm)
             score = max(0.0, min(1.0, similarity))
-            ranked.append((score, EvidenceChunk(
+            chunk = EvidenceChunk(
                 chunk_id=str(row["chunk_id"]), evidence_id=str(row["document_id"]),
                 content_type=RagContentType(str(row["content_type"])),
                 title=str(row["title"]), text=str(row["chunk_text"]),
@@ -541,24 +611,43 @@ class VectorEvidenceRetriever:
                 language=str(row["language"]),
                 published_at=datetime.fromisoformat(row["published_at"]) if row["published_at"] else None,
                 menu_work_ids=document.menu_work_ids, score=score,
-            ), document))
+            )
+            if chunk.source_kind == "excerpt":
+                original = cited_excerpt_index(document.document_id, document.excerpts, chunk.source_index,
+                                              chunk.locator, chunk.start_offset, chunk.end_offset, chunk.text)
+                base = chunk.locator.rsplit(":", 1)[0]
+                if (original is None or chunk.source_url != document.source_url or chunk.source_id != document.source_id
+                        or chunk.chunk_id != chunk_digest(document.document_id, "excerpt", chunk.source_index,
+                                                          base, chunk.start_offset, chunk.text)):
+                    continue
+                chunk = _pinned_excerpt(chunk, document, original, pinned)
+            ranked.append((score, chunk, document))
+        preferred = _preferred_credit_chunks(request, ((score, chunk) for score, chunk, _ in ranked))
         ranked.sort(key=lambda item: (
             item[1].chunk_id not in pinned,
-            not _matches_dictionary_field(item[2], fields), -item[0], item[2].published_at is None,
+            not _matches_dictionary_field(item[2], fields),
+            item[1].chunk_id not in preferred,
+            not episode_reference_matches(request.episode_targets, item[1].title, item[1].text),
+            -item[0], item[2].published_at is None,
             -(item[2].published_at.timestamp()) if item[2].published_at else 0.0,
             item[2].document_id, item[1].locator,
         ))
         picked: list[EvidenceChunk] = []
         picked_docs: dict[str, EvidenceDocument] = {}
         cast_seen = set()
+        seen_passages = set()
         for score, chunk, document in ranked:
             if score < request.min_retrieval_score:
+                continue
+            passage = (document.document_id, chunk.text)
+            if passage in seen_passages:
                 continue
             cast_key = subjects.cast_key(document)
             if cast_key is not None:
                 if cast_key in cast_seen:
                     continue
                 cast_seen.add(cast_key)
+            seen_passages.add(passage)
             picked.append(chunk)
             picked_docs.setdefault(document.document_id, document)
             if len(picked) >= request.top_k:
@@ -574,8 +663,12 @@ class VectorEvidenceRetriever:
             retrieved_at=datetime.now(timezone.utc), backend="vector_cosine",
         )
 
-    def _fetch_index_chunks(self, document_ids: tuple[str, ...]) -> list[sqlite3.Row]:
+    def _fetch_index_chunks(
+        self, document_ids: tuple[str, ...], query_vector: tuple[float, ...],
+    ) -> Sequence[sqlite3.Row | Mapping[str, object]]:
         with self._lock:
+            if not isinstance(self.vector_index, sqlite3.Connection):
+                return self.vector_index.fetch_chunks(document_ids, query_vector)
             self.vector_index.row_factory = sqlite3.Row
             query_only = self.vector_index.execute("PRAGMA query_only").fetchone()
             if query_only is None or int(query_only[0]) != 1:

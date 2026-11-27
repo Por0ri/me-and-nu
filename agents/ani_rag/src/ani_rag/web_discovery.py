@@ -18,14 +18,23 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, Protocol, Sequence
 from urllib.parse import unquote, urlsplit
 
-from ani_rag.adapter import canonical_source_item_url
-from ani_rag.catalog import LocalWorkCatalog
+from ani_rag.adapter import PageReadProvenanceError, canonical_web_candidate_url
+from ani_rag.article_subject import ThemeSongArticle, ann_interview_subject, fandom_theme_song, wiki_subject
+from ani_rag.catalog import LocalWorkCatalog, normalize_title
 from ani_rag.content import web_claims_can_generate
-from ani_rag.interfaces import WorkCatalogResolver, WorkIdentity
+from ani_rag.episode_evidence import episode_reference_matches, episode_targets, is_episode_guide_title
+from ani_rag.interfaces import WorkCatalogResolver, WorkIdentity, WorkResolution
+from ani_rag.interview_story import (
+    ANSWER_SCHEMA, ANSWER_VERIFICATION, interview_page, interview_search_passages, interview_subject,
+    verified_interview_answer,
+)
 from ani_rag.models import RagContentType, WorkLinkStatus
 from ani_rag.queues import QueueItem, QueueName, QueueRepository, QueueStatus, WebPipelineBacklog
 from ani_rag.settings import EvergreenSourceRegistry, load_source_registry, require_source_url
 from ani_rag.source_evidence import WEB_ASSESSMENT_POLICY_VERSION, interview_speaker_label, web_quote_chunk_id
+from ani_rag.article_credits import ArticleCredit, ann_interview_answer_hint, article_credits, complete_named_interview_answer
+from ani_rag.people_subject import ann_people_credit_body, supported_credit, people_subjects
+from ani_rag.youtube_video import is_youtube_video, youtube_video_body
 from ani_rag.retrieval import (
     DEFAULT_MIN_RETRIEVAL_SCORE,
     EvidenceRetriever,
@@ -37,6 +46,30 @@ pressure_log = logging.getLogger(f"{__name__}.pressure")
 DEFAULT_WEB_DISCOVERY_BACKLOG_LIMIT = 4
 WEB_DISCOVERY_RESUME_LIMIT = 2
 REVISION_BACKLOG_LIMIT = 2
+_ARTICLE_LINK = re.compile(
+    r'\[([^\]\n]+)\]\((https?://(?:[^()\s"]|\([^()\s]*\))+)(?:\s+"[^"\n]*")?\)'
+)
+
+
+def _has_linked_anime_lead(block: str, plain: str, subject: str, page_url: str) -> bool:
+    # The opening statement must link the named subject to its own anime article.
+    # A link in a later plot summary or a navigation list cannot identify the work.
+    first = _ARTICLE_LINK.search(block)
+    if first is None or first[1].strip("*_").casefold() != subject.casefold():
+        return False
+    link = urlsplit(first[2])
+    if link.hostname != urlsplit(page_url).hostname:
+        return False
+    target = re.fullmatch(r"/wiki/([^/]+)_\((?:TV_series|Anime)\)", unquote(link.path), re.IGNORECASE)
+    if not target or target[1].replace("_", " ").casefold() != subject.casefold():
+        return False
+    name = re.escape(subject)
+    genre = r"(?:action|adventure|(?:dark )?fantasy|science fiction|comedy|drama|horror|mecha|mystery|romance|sports|thriller)"
+    return bool(re.match(
+        rf"^(?:{name}\s+(?:is|was)\s+an?\s+(?:Japanese\s+)?(?:{genre}\s+){{0,2}}anime television series\b"
+        rf"|This is a list of (?:all )?the episodes from the {name} anime(?:['’]s\s+\w+\s+season)?[.!])",
+        plain, re.IGNORECASE,
+    ))
 
 
 async def _web_pipeline_backlog(queues: QueueRepository) -> WebPipelineBacklog:
@@ -256,17 +289,37 @@ def _now() -> datetime:
 
 
 def _assessment_key_prefix(menu_work_id: int, content_type: RagContentType, url: str) -> str:
-    canonical_url = canonical_source_item_url(url)
+    canonical_url = canonical_web_candidate_url(url)
     url_hash = hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()[:24]
     return f"web_candidate:{menu_work_id}:{content_type.value}:{url_hash}"
 
 
 def _reference_version(evidence_revision: str, payload: Mapping[str, object]) -> str:
     # A change to the retrieval policy can change the evidence presented to the verifier.
-    return ":".join((
+    if payload.get("content_type") == RagContentType.PEOPLE.value:
+        evidence_revision += ":people-subject-v2"
+    candidate = payload.get("candidate")
+    if isinstance(candidate, Mapping) and interview_page(str(candidate.get("title") or ""), str(candidate.get("url") or "")):
+        evidence_revision += ":interview-answer-v1"
+    version = ":".join((
         evidence_revision, str(int(payload.get("top_k", 8))), str(int(payload.get("candidate_limit", 100))),
         str(float(payload.get("min_retrieval_score", DEFAULT_MIN_RETRIEVAL_SCORE))), WEB_ASSESSMENT_POLICY_VERSION,
     ))
+    if isinstance(candidate, Mapping):
+        candidate_url = str(candidate.get("url") or "")
+        if is_youtube_video(candidate_url):
+            return version + ":youtube-video-body-v1"
+        url = urlsplit(candidate_url)
+        if (payload.get("content_type") == RagContentType.MUSIC.value
+                and (url.hostname or "").endswith(".fandom.com") and url.path.startswith("/wiki/")):
+            return version + ":linked-anime-song-v2"
+        if (payload.get("content_type") == RagContentType.GUIDE.value
+                and is_episode_guide_title(str(candidate.get("title") or ""))):
+            version += ":episode-evidence-v1"
+        if ((url.hostname or "").endswith((".wikipedia.org", ".fandom.com"))
+                and re.fullmatch(r"/wiki/List_of_[^/]+_episodes", unquote(url.path), re.IGNORECASE)):
+            return version + ":linked-episode-lead-v1"
+    return version
 
 
 def _job(
@@ -452,10 +505,11 @@ class WebDiscoveryWorker:
 
     def __init__(
         self, queues: QueueRepository, adapter: WebDiscoveryAdapter, *, registry: EvergreenSourceRegistry | None = None,
-        catalog_titles: Callable[[int], Sequence[str]] | None = None,
+        catalog_titles: Callable[[int], Sequence[str]] | None = None, edition_catalog: LocalWorkCatalog | None = None,
     ):
         self.queues, self.adapter = queues, adapter
         self.catalog_titles = catalog_titles
+        self.edition_catalog = edition_catalog
         self.registry = registry if registry is not None else load_source_registry()
         self.search_gate = WebSearchGate(queues)
 
@@ -467,6 +521,13 @@ class WebDiscoveryWorker:
             return False
         payload = dict(job.payload or {})
         try:
+            for assessment_id in payload.get("wait_for_assessments", ()):
+                assessment = await self.queues.get(assessment_id)
+                if assessment and assessment.status is QueueStatus.SUCCEEDED:
+                    finished = replace(job, payload={**payload, "search_skipped_reason": "candidate_sent_to_generation"})
+                    await self.queues.save(finished.transition(QueueStatus.SUCCEEDED, now=_now()))
+                    logger.info("web_search_skipped job_id=%s reason=candidate_sent_to_generation", job.job_id)
+                    return True
             request = WebDiscoveryRequest(
                 query=str(payload["query"]), content_type=RagContentType(str(payload["content_type"])),
                 query_variants=tuple(str(item) for item in payload.get("query_variants", ()) if isinstance(item, str)),
@@ -511,11 +572,14 @@ class WebDiscoveryWorker:
                 next_cursor = None
             if len(hits) > request.result_limit:
                 raise ValueError("Web search returned more candidates than requested")
-            queued_candidates = 0
+            candidates: list[QueueItem] = []
+            active_assessment_ids: set[str] = set()
             filtered: dict[str, int] = {}
+            tv_titles = (self.edition_catalog.unique_tv_entry_titles(request.menu_work_id)
+                         if request.expected_work_titles and self.edition_catalog else ())
             for hit in hits:
                 if request.expected_work_titles and not _candidate_mentions_work(
-                    hit, request.expected_work_titles,
+                    hit, request.expected_work_titles, tv_titles=tv_titles,
                 ):
                     filtered["unrelated_work"] = filtered.get("unrelated_work", 0) + 1
                     continue
@@ -538,23 +602,20 @@ class WebDiscoveryWorker:
                     },
                 }
                 key_prefix = _assessment_key_prefix(request.menu_work_id, request.content_type, hit.url)
-                revision_reader = getattr(self.queues, "web_candidate_assessment_revision", None)
-                revision = (
-                    await revision_reader(
-                        hit.url, now=_now(), key_prefix=key_prefix,
-                        reference_version=_reference_version(evidence_revision, hit_payload),
-                    )
-                    if callable(revision_reader) else "untracked"
+                revision, pending_id = await self.queues.web_candidate_assessment_plan(
+                    hit.url, now=_now(), key_prefix=key_prefix,
+                    reference_version=_reference_version(evidence_revision, hit_payload),
                 )
+                if pending_id is not None:
+                    active_assessment_ids.add(pending_id)
                 if revision is None:
                     filtered["candidate_already_handled"] = filtered.get("candidate_already_handled", 0) + 1
                     continue
-                await self.queues.enqueue(_job(
+                candidates.append(_job(
                     QueueName.COLLECTION, hit_payload,
                     f"{key_prefix}:{revision}",
                     handler_kind="web_candidate_assessment",
                 ))
-                queued_candidates += 1
             run_id = str(payload.get("search_run_id", job.job_id))
             if next_cursor is not None:
                 next_index, next_page_cursor = query_index, next_cursor
@@ -562,19 +623,22 @@ class WebDiscoveryWorker:
                 next_index, next_page_cursor = query_index + 1, None
             else:
                 next_index, next_page_cursor = -1, None
+            next_search = None
             if next_index >= 0:
                 cursor_fingerprint = hashlib.sha256((next_page_cursor or "<first-page>").encode()).hexdigest()[:16]
                 continuation = dict(payload)
                 continuation.update({"search_query_index": next_index, "search_cursor": next_page_cursor})
-                await self.queues.enqueue(_job(
+                next_search = _job(
                     QueueName.COLLECTION, continuation,
                     f"web_discovery:{run_id}:{next_index}:{cursor_fingerprint}",
                     handler_kind="web_discovery",
-                ))
-            await self.queues.save(job.transition(QueueStatus.SUCCEEDED, now=_now()))
+                )
+            await self.queues.complete_web_search_page(
+                job.transition(QueueStatus.SUCCEEDED, now=_now()), candidates, next_search, active_assessment_ids,
+            )
             logger.info(
                 "web_discovery_page_complete job_id=%s query_index=%d candidates=%d has_next=%s",
-                job.job_id, query_index, queued_candidates, next_index >= 0,
+                job.job_id, query_index, len(candidates), next_index >= 0,
             )
             if filtered:
                 logger.info(
@@ -652,7 +716,9 @@ class WebCandidateAssessmentWorker:
                     await self.queues.save(job.transition(QueueStatus.BLOCKED, now=_now(), error="stale_catalog_work_seed"))
                     return True
                 expected_titles = expected_titles or tuple(current)
-            if expected_titles and not _candidate_mentions_work(hit, expected_titles):
+            tv_titles = (self.edition_catalog.unique_tv_entry_titles(menu_work_id)
+                         if expected_titles and self.edition_catalog else ())
+            if expected_titles and not _candidate_mentions_work(hit, expected_titles, tv_titles=tv_titles):
                 error = "candidate_search_result_not_about_seeded_work"
                 await self.queues.save(job.transition(QueueStatus.BLOCKED, now=_now(), error=error))
                 logger.info("web_candidate_blocked job_id=%s reason=%s", job.job_id, error)
@@ -674,6 +740,8 @@ class WebCandidateAssessmentWorker:
             page = await self._read_candidate(hit, job)
             if page is None:
                 return True
+            # Cached mobile/desktop aliases must cite the request and host actually read.
+            hit = page.hit
             claim_inputs = getattr(self.queues, "claim_web_assessment_inputs", None)
             if callable(claim_inputs):
                 reference_version = _reference_version(evidence_revision, payload)
@@ -690,28 +758,50 @@ class WebCandidateAssessmentWorker:
                     ))
                     return True
                 job = owned
+            video = is_youtube_video(page.final_url)
+            credit_table = ann_people_credit_body(page.final_url, page.body) if content_type is RagContentType.PEOPLE else None
+            song = (fandom_theme_song(page.title, page.final_url, page.body, self.edition_catalog)
+                    if content_type is RagContentType.MUSIC else None)
+            candidate_body = credit_table or _candidate_assessment_body(page, song=song)[:30_000]
+            if not candidate_body:
+                reason = "candidate_video_evidence_missing" if video else "candidate_article_body_missing"
+                await self.queues.save(job.transition(
+                    QueueStatus.BLOCKED, now=_now(), error=reason,
+                ))
+                return True
             identity = WorkIdentity(
                 titles=(page.title,) if page.title.strip() else (),
-                external_ids={}, source_text=page.body[:40_000],
+                external_ids={}, source_text=candidate_body if video else page.body[:40_000],
                 source_url=page.final_url, source_id=f"web_discovery:{hit.host}",
                 seed_menu_work_ids=(menu_work_id,),
             )
-            resolution = await self.work_catalog.resolve(identity)
+            resolution = await self._resolve_article(page, identity)
             matched = resolution.status is WorkLinkStatus.MATCHED and menu_work_id in resolution.menu_work_ids
             if resolution.status is WorkLinkStatus.UNRESOLVED and self.edition_catalog is not None:
-                matched = await self._linked_edition_matches(page, menu_work_id)
+                matched = await self._article_work_matches(page, menu_work_id)
             if not matched:
+                lookup_status = getattr(resolution, "matched_on", None)
+                if lookup_status == "kitsu_lookup_blocked":
+                    await self.queues.save(job.transition(QueueStatus.BLOCKED, now=_now(), error=lookup_status))
+                    return True
+                if lookup_status == "kitsu_lookup_unavailable":
+                    status = QueueStatus.RETRY_WAIT if job.retry_count < job.max_retries else QueueStatus.FAILED
+                    await self.queues.save(job.transition(status, now=_now(), error=lookup_status))
+                    return True
                 error = "candidate_work_identity_unconfirmed"
                 await self.queues.save(job.transition(QueueStatus.BLOCKED, now=_now(), error=error))
                 logger.info("web_candidate_blocked job_id=%s reason=%s", job.job_id, error)
                 return True
 
-            query = _candidate_rag_query(page, hit)
+            credits = article_credits(content_type, candidate_body, title=page.title, url=page.final_url)
+            interview = interview_subject(page.title, candidate_body, page.final_url)
+            episodes = episode_targets(page.title, candidate_body) if content_type is RagContentType.GUIDE else ()
+            query = _candidate_rag_query(page, hit, credits, body=candidate_body if video or credit_table else None, song=song)
             min_score = float(payload.get("min_retrieval_score", DEFAULT_MIN_RETRIEVAL_SCORE))
             retrieved = await self.retriever.retrieve(RetrievalRequest(
                 query=query, subject_title=page.title, content_type=content_type, menu_work_ids=(menu_work_id,),
                 source_ids=source_ids,
-                exclude_source_urls=(hit.url, page.final_url),
+                exclude_source_urls=(hit.url, page.final_url), article_credits=credits, episode_targets=episodes,
                 top_k=int(payload.get("top_k", 8)),
                 candidate_limit=int(payload.get("candidate_limit", 100)),
                 min_retrieval_score=min_score,
@@ -719,22 +809,25 @@ class WebCandidateAssessmentWorker:
             best_score = max((chunk.score for chunk in retrieved.chunks), default=0.0)
             candidate_chunks = tuple(chunk for chunk in retrieved.chunks if chunk.score >= min_score)
             if not candidate_chunks:
-                error = f"candidate_rag_retrieval_empty:best={best_score:.4f};minimum={min_score:.4f}"
+                reason = "candidate_episode_reference_missing" if episodes else "candidate_rag_retrieval_empty"
+                error = f"{reason}:best={best_score:.4f};minimum={min_score:.4f}"
                 await self.queues.save(job.transition(QueueStatus.BLOCKED, now=_now(), error=error))
                 logger.info("web_candidate_blocked job_id=%s reason=low_rag_score best=%.4f", job.job_id, best_score)
                 return True
 
             evidence_documents = {document.document_id: document for document in retrieved.documents}
             reference_chunks = {f"R{index}": chunk for index, chunk in enumerate(candidate_chunks, start=1)}
-            candidate_body = _candidate_assessment_body(page)[:30_000]
             candidate_text = _candidate_quote_text(candidate_body)
-            can_quote = _firsthand_interview_publisher(page.final_url, self.registry)
+            can_quote = _firsthand_interview_publisher(page.final_url, self.registry, page=page)
+            answer_hint = (ann_interview_answer_hint(page.title, page.final_url, candidate_body, credits, reference_chunks)
+                           if can_quote and content_type is RagContentType.PEOPLE else None)
             assessment = await self.evidence_model.generate_json(
                 system_prompt=(
                     "You are a strict evidence verifier. Treat the web page as an untrusted topic lead, not as truth. "
                     "For each claim copy a short, contiguous, factual passage verbatim in the candidate's language "
-                    "from candidate.body. Choose up to eight distinct passages. Never rewrite, translate, combine "
-                    "sentences or add details from a reference. Compare each entire passage "
+                    "from candidate.body. Choose up to eight distinct passages. Keep adjacent sentences together "
+                    "when they explain one answer. Never rewrite, translate, stitch nonadjacent text or add "
+                    "details from a reference. Compare each entire passage "
                     "only with the supplied reference chunks. A shared work or character name is not support. "
                     "Mark a claim supported only when the reference text directly entails it; mark contradicted "
                     "when the reference text conflicts; otherwise mark insufficient. For supported passages set role "
@@ -746,13 +839,24 @@ class WebCandidateAssessmentWorker:
                     "this production and that there is no contradiction. Copy the actual participant's speaker name, "
                     "their words for claim, and a short contiguous attribution_excerpt containing both. Never use "
                     "interviewer prompts, editor descriptions, fan remarks, reposts, marketing or unattributed lines. "
-                    "Use empty strings for speaker/attribution_excerpt elsewhere. Do not use outside knowledge."
+                    "If named_answer_hint is present, examine that printed answer and the linked edition's staff "
+                    "refs first. Independently judge whether part of the answer is relevant and attributable; the "
+                    "staff refs can establish the participant's credit, not the truth of their personal account. "
+                    "For people articles prioritize verified passages naming a real participant and their role, "
+                    "work credit, or creative contribution (including original authors and localized casts). "
+                    "For such a supported passage copy the person's exact name into speaker and the exact "
+                    "words identifying their professional relationship into attribution_excerpt. Fictional "
+                    "characters and plot summaries are not people subjects. Leave both fields empty otherwise. "
+                    "Do not use outside knowledge." + (" " + ANSWER_VERIFICATION if interview else "")
                 ),
                 user_payload={
                     "candidate": {
+                        "content_type": content_type.value,
                         "title": page.title[:500], "url": page.final_url,
                         "host": hit.host, "language": page.language,
                         "firsthand_interview_publisher": can_quote,
+                        **({"interview_subject": interview} if interview else {}),
+                        **({"named_answer_hint": answer_hint} if answer_hint else {}),
                         "published_at": page.published_at.isoformat() if page.published_at else None,
                         "body": candidate_body,
                     },
@@ -776,9 +880,11 @@ class WebCandidateAssessmentWorker:
                                     "role": {"type": "string", "enum": ["standalone_core", "core", "context"]},
                                     "speaker": {"type": "string"},
                                     "attribution_excerpt": {"type": "string"},
+                                    **({"interview_answer": ANSWER_SCHEMA} if interview else {}),
                                     "evidence_refs": {"type": "array", "items": {"type": "string"}},
                                 },
-                                "required": ["claim", "status", "role", "evidence_refs", "speaker", "attribution_excerpt"],
+                                "required": ["claim", "status", "role", "evidence_refs", "speaker", "attribution_excerpt",
+                                             *(["interview_answer"] if interview else [])],
                             },
                         },
                     },
@@ -789,6 +895,8 @@ class WebCandidateAssessmentWorker:
             if not isinstance(raw_claims, list):
                 raise ValueError("RAG claim assessment returned no claims array")
             raw_claims = [dict(item) if isinstance(item, dict) else item for item in raw_claims]
+            named_answer = (complete_named_interview_answer(raw_claims, answer_hint)
+                            if answer_hint and interview == "interview" else None)
             supported_claims: list[dict[str, object]] = []
             supported_chunks: dict[str, object] = {}
             seen_passages: set[str] = set()
@@ -842,6 +950,26 @@ class WebCandidateAssessmentWorker:
                         continue
                     record["kind"] = "rag_context" if role == "context" else "rag_core"
                     record["standalone"] = role == "standalone_core"
+                if content_type is RagContentType.PEOPLE and status == "supported" and "speaker" in item:
+                    name, relation = item.get("speaker"), item.get("attribution_excerpt")
+                    record["people_credit"] = (
+                        {"name": name.strip(), "relation": relation.strip()}
+                        if supported_credit(passage, name, relation) else None
+                    )
+                if interview:
+                    answer = verified_interview_answer(
+                        item.get("interview_answer"), record, interview, [chunk.text[:1600] for chunk in cited_chunks],
+                    )
+                    if answer:
+                        record["interview_answer"] = answer
+                    elif item is named_answer and not item.get("interview_answer"):
+                        # Use the actual question as framing for this complete, independently attributed answer.
+                        record["interview_answer"] = {"speaker": record["speaker"], "subject": answer_hint["question"],
+                                                      "detail": record["claim"]}
+                    elif item.get("interview_answer") is not None:
+                        item["status"] = "insufficient"
+                        insufficient_count += 1
+                        continue
                 seen_passages.add(passage)
                 supported_claims.append(record)
                 for chunk in cited_chunks:
@@ -861,9 +989,21 @@ class WebCandidateAssessmentWorker:
                 await self.queues.save(traced_job.transition(QueueStatus.BLOCKED, now=_now(), error=error))
                 logger.info("web_candidate_blocked job_id=%s reason=rag_contradictions count=%d", job.job_id, contradicted_count)
                 return True
-            if not web_claims_can_generate(supported_claims):
+            sufficient_claims = web_claims_can_generate(supported_claims)
+            missing_people = content_type is RagContentType.PEOPLE and not people_subjects(supported_claims)
+            missing_answer = interview and not any(item.get("interview_answer") for item in supported_claims)
+            if not sufficient_claims or missing_people or missing_answer:
+                reason = "candidate_insufficient_rag_supported_claims"
+                if missing_answer and supported_claims:
+                    reason = "candidate_interview_answer_missing"
+                elif missing_people and sufficient_claims:
+                    reason = "candidate_people_evidence_missing"
+                elif episodes and not supported_claims and not contradicted_count and not any(
+                    episode_reference_matches(episodes, chunk.title, chunk.text) for chunk in candidate_chunks
+                ):
+                    reason = "candidate_episode_reference_missing"
                 error = _candidate_assessment_diagnostic(
-                    "candidate_insufficient_rag_supported_claims", supported=len(supported_claims),
+                    reason, supported=len(supported_claims),
                     insufficient=insufficient_count, contradicted=contradicted_count,
                     best_score=best_score, chunks=candidate_chunks,
                 )
@@ -921,7 +1061,7 @@ class WebCandidateAssessmentWorker:
             if payload.get("reassess_generation_id"):
                 generation_key += ":reassess:" + str(payload["reassess_generation_id"])
                 generation_payload["reassessed_generation"] = True
-                for key in ("revision_of_draft_id", "revision_count", "backlog_work_id"):
+                for key in ("revision_of_draft_id", "revision_count", "backlog_work_id", "review_rejected_images"):
                     if key in payload:
                         generation_payload[key] = payload[key]
                 generation_payload["revision_instructions"].extend(payload.get("revision_instructions", ()))
@@ -942,6 +1082,103 @@ class WebCandidateAssessmentWorker:
             )
         return True
 
+    async def _resolve_article(self, page: WebCandidatePage, identity: WorkIdentity) -> WorkResolution:
+        catalog = self.edition_catalog
+        if catalog is not None:
+            ann = ann_interview_subject(page.title, page.final_url, page.body)
+            subject = ann[0] if ann else wiki_subject(page.title, page.final_url, page.body, catalog=catalog)
+            if subject and catalog.resolve_sync(identity).status is WorkLinkStatus.UNRESOLVED:
+                exact = catalog.resolve_sync(WorkIdentity((subject,), {}, source_url=page.final_url))
+                if exact.status is WorkLinkStatus.AMBIGUOUS:
+                    return exact
+                if exact.status is WorkLinkStatus.MATCHED:
+                    if not ann:
+                        return exact
+                    lookup = getattr(self.page_cache, "linked_ann_work_ids", None)
+                    linked = await lookup(*ann) if callable(lookup) else ()
+                    if linked == exact.menu_work_ids:
+                        return exact
+                    if linked:
+                        return WorkResolution(WorkLinkStatus.AMBIGUOUS, candidate_menu_work_ids=tuple(sorted(
+                            set(linked) | set(exact.menu_work_ids)
+                        )), matched_on="conflicting_article_subject")
+        return await self.work_catalog.resolve(identity)
+
+    async def _article_work_matches(self, page: WebCandidatePage, work_id: int) -> bool:
+        """Use the fetched article itself to recover an otherwise unresolved subject."""
+        catalog = self.edition_catalog
+        if catalog is None:
+            return False
+        host = urlsplit(page.final_url).hostname or ""
+        if host in {"animenewsnetwork.com", "www.animenewsnetwork.com"}:
+            return await self._linked_edition_matches(page, work_id)
+        title = page.title.strip()
+        body = page.body.replace("\r\n", "\n")
+        fandom_episode_subject = None
+        if host.endswith(".wikipedia.org"):
+            title = title.removesuffix(" - Wikipedia")
+            # The mirror can include a donation banner before the article starts.
+            start = re.search(r"(?m)^From Wikipedia, the free encyclopedia[ \t]*$", body[:30_000])
+            if start:
+                body = body[start.end():]
+        elif host.endswith(".fandom.com") and title.endswith(" | Fandom"):
+            episode_list = re.fullmatch(r"List of Episodes \| (.+?) Wiki \| Fandom", title, re.IGNORECASE)
+            title = title.split(" | ", 1)[0]
+            if episode_list:
+                start = re.search(r"(?im)^# List of Episodes[ \t]*$", body[:30_000])
+                if not start:
+                    return False
+                fandom_episode_subject = episode_list[1]
+                body = body[start.end():]
+        topic = re.fullmatch(
+            r"(?:Music of (.+)|List of (.+) (?:episodes|characters))", title, re.IGNORECASE,
+        )
+        if not topic and not fandom_episode_subject:
+            return False
+        subject = (fandom_episode_subject or topic[1] or topic[2]).strip()
+        exact = catalog.resolve_sync(WorkIdentity((subject,), {}, source_url=page.final_url))
+        if exact.menu_work_ids != (work_id,):
+            return False
+        named_episode_list = title.casefold() == f"list of {subject} episodes".casefold()
+        if named_episode_list and host.endswith(".fandom.com"):
+            start = re.search(rf"(?im)^# {re.escape(title)}[ \t]*$", body[:30_000])
+            if not start:
+                return False
+            body = body[start.end():]
+        # An anime reference in navigation, a table, or a later recommendation is
+        # insufficient. The lead must explicitly identify this exact anime series.
+        for block in re.split(r"\n\s*\n", body[:6000]):
+            block = block.strip()
+            if block.startswith("##"):
+                break
+            if not block or block.startswith(("#", "|", "!", "[![", "-", "* ", ">")):
+                continue
+            if named_episode_list and not _ARTICLE_LINK.sub("", block).strip(" \t*_"):
+                continue
+            plain = _ARTICLE_LINK.sub(r"\1", block).replace("*", "").replace("_", "")
+            if not re.search(r"[.!?](?:\s|$)", plain) or len(plain.split()) < 7:
+                continue
+            name = re.escape(subject)
+            if (named_episode_list and host.endswith((".wikipedia.org", ".fandom.com"))
+                    and _has_linked_anime_lead(block, plain, subject, page.final_url)):
+                return True
+            # These lists also open with "X anime television series is based on..."
+            # or "X is a CloverWorks anime adaptation of ...".
+            if re.match(
+                rf"^(?:The )?{name}\s+(?:anime (?:television )?series\s+(?:is|was)\b"
+                rf"|(?:is|was)\s+(?:an? |the )?(?:Japanese\s+)?anime (?:television )?series\b"
+                rf"|(?:is|was)\s+an?\s+(?:(?-i:[A-Z][\w.-]*)\s+){{0,3}}anime adaptation of\b)",
+                plain, re.IGNORECASE,
+            ):
+                return True
+            if fandom_episode_subject:
+                return False
+            return bool(re.search(
+                rf"\banime (?:television )?series\s+[“\"]?{name}[”\"]?(?=[.;,](?:\s|$)|$)",
+                plain, re.IGNORECASE,
+            ))
+        return False
+
     async def _linked_edition_matches(self, page: WebCandidatePage, work_id: int) -> bool:
         """A first-party article can explicitly name and link a cataloged special or season."""
         catalog = self.edition_catalog
@@ -950,8 +1187,8 @@ class WebCandidateAssessmentWorker:
             "animenewsnetwork.com", "www.animenewsnetwork.com",
         }:
             return False
-        base = {name.casefold() for name in catalog.search_titles_for_work_id(work_id)}
-        editions = {name.casefold() for row in catalog.entries_for_work_id(work_id) for name in row["titles"]} - base
+        base = {_edition_label_key(name) for name in catalog.search_titles_for_work_id(work_id)}
+        edition_titles = tuple(name for row in catalog.entries_for_work_id(work_id) for name in row["titles"])
         heading = page.title.split(" - Anime News Network", 1)[0]
         links = re.findall(
             r"\[([^\]\n]+)\]\((https://(?:www\.)?animenewsnetwork\.com/encyclopedia/anime\.php\?id=\d+)\)",
@@ -959,14 +1196,21 @@ class WebCandidateAssessmentWorker:
         )
         confirmed_edition = False
         for label, url in dict.fromkeys(links):
-            if not re.search(r"(?<!\w)" + re.escape(label) + r"(?!\w)", heading, re.IGNORECASE):
+            occurrences = tuple(re.finditer(r"(?<!\w)" + re.escape(label) + r"(?!\w)", heading, re.IGNORECASE))
+            if not occurrences:
                 continue
-            if label.casefold() not in editions | base:
+            key = _edition_label_key(label)
+            aliases = tuple(name for name in edition_titles if _edition_label_key(name) == key)
+            if not aliases and key not in base:
                 return False
-            exact = catalog.resolve_sync(WorkIdentity((label,), {}))
+            # The exact resolver unions all IDs found for these spellings, so a
+            # conflicting literal title cannot be overridden by the searched ID.
+            exact = catalog.resolve_sync(WorkIdentity(tuple(dict.fromkeys((label, *aliases))), {}))
             if exact.menu_work_ids != (work_id,):
                 return False
-            if label.casefold() in editions:
+            if any(_names_longer_edition(heading[match.end():], key, edition_titles) for match in occurrences):
+                return False
+            if aliases and key not in base:
                 if await lookup(label, url) != (work_id,):
                     return False
                 confirmed_edition = True
@@ -1020,17 +1264,45 @@ class WebCandidateAssessmentWorker:
             # Return the same bounded body that all later consumers will read.
             return _candidate_page_from_cache(hit, payload)
         except Exception as error:
-            await self.page_cache.release_web_candidate_page(
-                claim_id,
-                error_code=("firecrawl_site_unsupported" if getattr(error, "unsupported_site", False)
-                            else "unsupported_target" if getattr(error, "unsupported_target", False)
-                            else type(error).__name__),
-            )
+            if isinstance(error, PageReadProvenanceError):
+                error_code = error.error_code
+            elif getattr(error, "unsupported_site", False):
+                error_code = "firecrawl_site_unsupported"
+            elif getattr(error, "unsupported_target", False):
+                error_code = "unsupported_target"
+            else:
+                error_code = type(error).__name__
+            await self.page_cache.release_web_candidate_page(claim_id, error_code=error_code)
             raise
+
+
+def _edition_label_key(label: str) -> str:
+    # Distributors vary the article in "The Final Season". Keep every season,
+    # part, medium, and subtitle token when comparing the actual edition.
+    title = unicodedata.normalize("NFKC", label).casefold()
+    return re.sub(r"\bthe\s+(?=final season\b)", "", " ".join(title.split()))
+
+
+def _names_longer_edition(heading_tail: str, label_key: str, edition_titles: Sequence[str]) -> bool:
+    tail = _edition_label_key(heading_tail).lstrip(" :–—-")
+    if re.match(r"(?:part|season|cour)\s+\w+", tail):
+        return True
+    for name in edition_titles:
+        edition = _edition_label_key(name)
+        suffix = edition.removeprefix(label_key)
+        if suffix == edition or not suffix.startswith((" ", ":", "-", "–", "—")):
+            continue
+        # A collective subtitle also identifies a distinct edition when its
+        # catalog entries are numbered (e.g. THE FINAL CHAPTERS Special 1/2).
+        suffix = re.sub(r"\s+(?:special|part|cour)\s+\d+$", "", suffix.strip(" :–—-"))
+        if suffix and re.match(re.escape(suffix) + r"(?!\w)", tail):
+            return True
+    return False
 
 
 def _candidate_page_to_cache(page: WebCandidatePage) -> dict[str, object]:
     return {
+        "requested_url": page.hit.url,
         "title": page.title[:500], "final_url": page.final_url, "body": page.body[:80_000],
         "language": page.language,
         "published_at": page.published_at.isoformat() if page.published_at else None,
@@ -1046,6 +1318,11 @@ def _candidate_page_from_cache(hit: WebCandidateHit, payload: Mapping[str, objec
     published_at = payload.get("published_at")
     if not all(isinstance(value, str) for value in (title, final_url, body, fetched_at)):
         raise ValueError("Cached candidate page is missing required fields")
+    if urlsplit(final_url).hostname != hit.host:
+        original = payload.get("requested_url", final_url)
+        if not isinstance(original, str) or canonical_web_candidate_url(original) != canonical_web_candidate_url(hit.url):
+            raise ValueError("Cached candidate page is not the discovered article")
+        hit = replace(hit, url=original)
     return WebCandidatePage(
         hit=hit, title=title, final_url=final_url, body=body,
         language=str(payload["language"]) if payload.get("language") is not None else None,
@@ -1060,7 +1337,9 @@ def _candidate_quote_text(text: str) -> str:
     return " ".join(plain.replace("**", "").split())
 
 
-def _firsthand_interview_publisher(url: str, registry: EvergreenSourceRegistry) -> bool:
+def _firsthand_interview_publisher(
+    url: str, registry: EvergreenSourceRegistry, *, page: WebCandidatePage | None = None,
+) -> bool:
     """Which publishers may substantiate their interviewee's own words on the final URL."""
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in {None, 443}:
@@ -1069,6 +1348,9 @@ def _firsthand_interview_publisher(url: str, registry: EvergreenSourceRegistry) 
     if ".." in path.split("/") or "\\" in path:
         return False
     # Original editorial interview sections are independent of approved RAG reference feeds.
+    if (path.startswith("/feature/") and page is not None and page.final_url == url
+            and ann_interview_subject(page.title, url, page.body)):
+        return True
     if parsed.hostname in {"animenewsnetwork.com", "www.animenewsnetwork.com"} and path.startswith(
         ("/interview/", "/newtype/")
     ):
@@ -1086,8 +1368,42 @@ def _firsthand_interview_publisher(url: str, registry: EvergreenSourceRegistry) 
     return False
 
 
-def _candidate_assessment_body(page: WebCandidatePage) -> str:
-    """Remove common Fandom chrome and use the article sections, not its prefix."""
+_PLAYER_AND_FORM_LABEL = re.compile(
+    r"close|valnet identity|visit|now playing|watch|next|video player is loading\.|play video|"
+    r"playskip backwardskip forward|unmute|(?:current time|duration|remaining time)\s*[\d:.-]+|"
+    r"loaded:\s*\d+%|stream type\s+live|seek to live, currently behind livelive|[\d.]+x|"
+    r"playback rate|chapters|descriptions|captions|(?:captions|descriptions) off, selected|"
+    r"audio track|picture-in-picturefullscreen|this is a modal window\.|advertisement|skip ad|"
+    r"we look forward to hearing from you!|please provide a title and content with your submission\. "
+    r"a link and image are optional\.|submit a thread|topic|general|title|content|"
+    r"it is not permitted for content to contain links, inappropriate language, or spam\.|"
+    r"(?:link|image) \(optional\)|upload imageremove image|cancelsubmit|\d+",
+    re.IGNORECASE,
+)
+
+
+def _only_player_or_form(body: str, title: str) -> bool:
+    # Some publishers return a video player or thread form in place of their article.
+    # One unrecognized line (even a short fact or a row of credits) keeps the page.
+    form = re.search(r"(?im)^submit a thread of your own on ([^\n]{1,100}?) under \{\{listingPage\}\}\.\s*$", body)
+    if not form and not re.search(r"(?im)^video player is loading\.\s*$", body):
+        return False
+    labels = {title.strip().casefold()}
+    if form:
+        labels.update((form[0].strip().casefold(), form[1].strip().casefold()))
+    for line in body.splitlines():
+        label = _candidate_quote_text(line).replace("Â", " ").strip(" \t#*-/✕")
+        if label and label.casefold() not in labels and not _PLAYER_AND_FORM_LABEL.fullmatch(label):
+            return False
+    return True
+
+
+def _candidate_assessment_body(page: WebCandidatePage, *, song: ThemeSongArticle | None = None) -> str:
+    """Select the page's own material for comparison with trusted references."""
+    if song:
+        return song.body
+    if is_youtube_video(page.final_url):
+        return youtube_video_body(page.title, page.body)
     body = page.body.replace("\r\n", "\n").replace("\r", "\n")
     article_title = page.title.split("|", 1)[0].strip()
     title_key = _title_match_key(article_title)
@@ -1134,7 +1450,8 @@ def _candidate_assessment_body(page: WebCandidatePage) -> str:
         if re.fullmatch(r"\[\d+\].*article discussions.*", line.strip(), re.IGNORECASE):
             continue
         cleaned.append(line)
-    return "\n".join(cleaned).strip()[:80_000]
+    text = "\n".join(cleaned).strip()
+    return "" if _only_player_or_form(text, page.title) else text[:80_000]
 
 
 def _candidate_assessment_diagnostic(
@@ -1188,12 +1505,21 @@ def _candidate_assessment_trace(
     return {"counts": counts, "claims": claims}
 
 
-def _candidate_rag_query(page: WebCandidatePage, hit: WebCandidateHit) -> str:
-    body = _candidate_assessment_body(page)
+def _candidate_rag_query(
+    page: WebCandidatePage, hit: WebCandidateHit, credits: tuple[ArticleCredit, ...] = (),
+    *, body: str | None = None, song: ThemeSongArticle | None = None,
+) -> str:
+    if song:
+        return " ".join(song.body.split())[:1200]
+    body = _candidate_assessment_body(page) if body is None else body
+    if is_youtube_video(page.final_url):
+        return " ".join((page.title, *(credit.context for credit in credits), " ".join(body.split())))[:1200]
     body = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", body)
     body = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", body)
     body = re.sub(r"https?://\S+", " ", body)
     body = re.sub(r"<[^>]+>", " ", body)
+    interview = interview_subject(page.title, body, page.final_url)
+    answers = interview_search_passages(body, interview) if interview else ""
     sections = re.split(r"(?m)(?=^#{1,3}\s+)", body)
     section_samples: list[str] = []
     for section in sections:
@@ -1213,11 +1539,11 @@ def _candidate_rag_query(page: WebCandidatePage, hit: WebCandidateHit) -> str:
         last = len(section_samples) - 1
         section_samples = [section_samples[round(index * last / 7)] for index in range(8)]
     article_title = page.title.split("|", 1)[0].strip()
-    parts = [article_title, hit.title, hit.snippet, *section_samples]
+    parts = [article_title, answers, *(credit.context for credit in credits), hit.title, hit.snippet, *section_samples]
     return " ".join(value.strip() for value in parts if value and value.strip())[:1_200]
 
 
-def _candidate_mentions_work(hit: WebCandidateHit, titles: Sequence[str]) -> bool:
+def _candidate_mentions_work(hit: WebCandidateHit, titles: Sequence[str], *, tv_titles: Sequence[str] = ()) -> bool:
     """Skip obvious off-topic search results before paying to read their pages."""
     haystack = _title_match_key(f"{hit.title} {hit.snippet}")
     if not haystack:
@@ -1231,6 +1557,17 @@ def _candidate_mentions_work(hit: WebCandidateHit, titles: Sequence[str]) -> boo
                 continue
         if needle in haystack:
             return True
+    # TV entry labels broaden only the cheap relevance check. Match the full
+    # printed name within one field, with word boundaries on both sides.
+    if tv_titles:
+        fields = tuple(normalize_title(value) for value in (hit.title, hit.snippet))
+        for title in tv_titles:
+            key = _title_match_key(title)
+            if len(key) < 3 and not (len(key) == 2 and any("CJK" in unicodedata.name(c, "") for c in title)):
+                continue
+            printed = normalize_title(title)
+            if any(re.search(r"(?<!\w)" + re.escape(printed) + r"(?!\w)", field) for field in fields):
+                return True
     return False
 
 
@@ -1255,8 +1592,11 @@ def _candidate_pre_read_rejection_reason(
     if parsed.path.casefold().endswith(("/feed", "/feed/", ".xml", ".rss")):
         return "feed_or_machine_document"
     host = hit.host
-    if (host == "pinterest.com" or host.endswith(".pinterest.com")) and path_parts[:1] == ("ideas",):
-        return "image_ideas_index"
+    if host == "pinterest.com" or host.endswith(".pinterest.com"):
+        if path_parts[:1] == ("ideas",):
+            return "image_ideas_index"
+        if len(path_parts) == 2 and path_parts[0] == "pin" and re.search(r"(?:^|--)\d+$", path_parts[1]):
+            return "image_pin"
     if (
         (host == "fandom.com" or host.endswith(".fandom.com"))
         and len(path_parts) >= 2

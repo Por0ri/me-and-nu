@@ -120,7 +120,8 @@
 .author { display: inline-flex; align-items: center; gap: 8px; min-width: 0; margin-right: auto; color: #000; font-size: 10px; font-weight: 700; }
 /* 얼굴: 프로필 사진 기능 전까지 연보라 동그라미에 닉네임 첫 글자 (2026-11-25, 글자색은 닉네임과 같게 · 채팅과 같은 모양) */
 .authorFace { flex: none; display: grid; place-items: center; width: 24px; height: 24px; overflow: hidden; border-radius: 50%; background: #ece6fb; font-size: 11px; font-weight: 700; line-height: 1; }
-.author b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* 닉네임 굵기를 직접 정한다: <b> 기본값이 '부모보다 한 단계 더 굵게'라 700 위에서 900 으로 너무 진했다 → 600 (2026-11-27 의견) */
+.author b { overflow: hidden; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
 /* 카드 버튼: 알약 모양, 높이 28px, 글씨 12px (2026-11-23 시안) */
 .screen :is(.fillButton, .softFillButton) { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 28px; padding: 0 12px; border: 0; border-radius: 999px; font-size: 12px; font-weight: 700; text-decoration: none; }
 .screen .fillButton { background: var(--debate-accent); color: #fff; }
@@ -242,7 +243,8 @@
 .roomPanelCard { display: flex; flex-direction: column; padding: 12px; border: 1px solid #e2d5ff; border-radius: 12px; background: #fff; }
 .roomTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
 .roomTop .chips { min-width: 0; }
-.screen .foldButton { flex: none; height: 24px; padding: 0 2px; border: 0; background: transparent; color: var(--debate-primary); font-size: 12px; font-weight: 600; }
+/* '투표창 접기 · 펼치기' (2026-11-27 시안): 펼쳤을 때와 접었을 때 같은 11px, 글자 끝이 카드 안쪽 끝에서 12px 로 같은 자리 */
+.screen .foldButton { flex: none; height: 24px; padding: 0 12px; border: 0; background: transparent; color: var(--debate-primary); font-size: 11px; font-weight: 600; }
 /* 채팅방 위 토론 카드를 펼쳤을 때의 설명도 같은 규칙 (3줄까지, 넘으면 '…') */
 .roomDescription { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; margin-top: 2px; color: var(--debate-muted); font-size: 12px; line-height: 19px; white-space: pre-line; }
 .roomPanelCard .topicMeta { margin-top: 4px; }
@@ -253,7 +255,7 @@
 .roomPanel[data-collapsed] .roomPanelCard { padding: 14px 12px 10px; }
 .roomPanel[data-collapsed] .topicMeta { gap: 4px; margin-top: 2px; }
 .roomPanel[data-collapsed] .meta { gap: 6px; }
-.roomPanel[data-collapsed] .foldButton { margin-left: auto; padding: 0 12px; font-size: 11px; }
+.roomPanel[data-collapsed] .foldButton { margin-left: auto; }
 /* 진영 투표: 고르기 전 두 버튼(연보라·보라 테두리, 동그라미 체크), 고른 뒤 비율 막대와 '투표 취소' */
 .poll { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .sideChoices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -309,6 +311,9 @@
 .screen .sendButton { display: grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: #f4f4f5; color: #27272a; }
 .screen .sendButton:disabled { color: #a1a1aa; }
 .screen[data-composer]::after { content: ""; position: fixed; z-index: 5; left: 0; right: 0; bottom: 0; height: calc(44px + env(safe-area-inset-bottom)); background: linear-gradient(rgb(255 249 253 / 0%), var(--debate-bg) 16px); pointer-events: none; }
+/* 토론방 채팅: 아이폰에서 키보드를 연 채 화면 끝을 넘겨 끌면 튕기면서 입력창이 키보드에서 떨어져 보여서, 이 화면만 튕김을 끈다.
+   (갤럭시는 이 화면에서 당겨서 새로 고침이 꺼짐 — 실시간 채팅이라 필요 없음, 2026-11-26) */
+:global(html):has(.screen[data-composer]), :global(body):has(.screen[data-composer]) { overscroll-behavior-y: none; }
 /* 도배 막기 창 (시안): 두 줄 굵은 제목, 회색 설명, 연보라 알약 안내, 꽉 찬 확인 버튼 */
 .rateDialog h2 { display: flex; flex-direction: column; gap: 2px; }
 .rateDialog h2 span { font-size: 18px; line-height: 26px; }
@@ -352,6 +357,13 @@
 .screen .choiceInput input { width: 100%; height: 32px; padding: 0 36px 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; outline: none; background: #fff; color: var(--debate-ink); font-size: 14px; }
 /* 다른 칸처럼 입력 중에는 테두리가 보라 (바로 위 규칙과 우선순위가 같아서 그 뒤에 둔다) */
 .screen .choiceInput input:focus { border-color: var(--debate-primary); }
+/* 휴대폰: 아이폰은 16px 보다 작은 입력칸을 누르면 화면을 확대해서, 쳐 넣는 글씨만 16px (안내 문구 크기는 그대로).
+   위 입력칸 규칙들보다 뒤에 둬야 이긴다 */
+@media (hover: none) and (pointer: coarse) {
+  .screen :is(.composer input, .input, .choiceInput input) { font-size: 16px; line-height: 20px; }
+  .screen .textarea { font-size: 16px; line-height: 22px; }
+  .composer input::placeholder { font-size: 14px; }
+}
 .screen .choiceInput button { position: absolute; top: 50%; right: 4px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #52525b; transform: translateY(-50%); }
 /* 아래 버튼: 임시 저장 · 주제 올리기 (켜지고 꺼지는 색은 바로 아래 2026-11-25 시안 규칙) */
 .createButtons { display: grid; grid-template-columns: 102px 1fr; gap: 8px; }

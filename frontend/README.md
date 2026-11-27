@@ -2,6 +2,17 @@
 
 FastAPI·PostgreSQL V1 API의 공개 피드와 콘텐츠 상세를 브라우저에서 볼 수 있습니다. 개발용 API 점검 화면도 홈 하단에 유지합니다.
 
+## 관리자 자동 생성 현황 (2026-11-27)
+
+`/admin/dashboard`의 **자동 콘텐츠 생성**은 관리자 권한으로 `GET /api/v1/admin/generation`의 수집된 현황만 조회합니다. 보이는 탭에서 이 API만 30초마다 갱신하며 수동 새로고침도 제공합니다. 기존 통계 SQL과 서비스 DB 적재 이력은 별도로 유지합니다. 생성 시작·중지·승인·공개 요청은 보내지 않습니다.
+
+- 오늘은 한국시간 기준입니다. 하루 최대 40회 시도와 AI 검수 통과 20건 목표를 구분하고, AI 검수 통과가 운영자 공개 승인을 의미하지 않는다고 표시합니다.
+- 비용은 기록된 사용량의 USD 추정치입니다. 미확정 값은 0으로 대체하지 않습니다. **사용량 집계 대기**는 정산 미완료이며 실제 LLM 실행 중이라는 뜻이 아닙니다. 전체 누적에는 오늘과 이월 비용이 포함되므로 오늘 비용을 다시 더하지 않습니다.
+- 180초 이상 지난 현황은 지연으로 표시합니다. 한국시간 날짜가 다른 기록의 오늘 시도·작업 수는 표시하지 않습니다. 조회 실패 시 이전 보호 데이터를 표시하지 않으며, 401·403은 전체 대시보드 접근 상태에 반영합니다.
+- 파일·키·출처 원문·작업 식별자를 브라우저에 전달하지 않습니다. Worker 오류는 실행 상태 확인 필요로 표시하고 자동 복구하지 않습니다.
+
+검증은 `node --test tests/admin-generation.test.cjs tests/admin-analytics.test.cjs tests/admin-statistics-api.test.cjs`, `npm run typecheck`, `npm run build -- --webpack`입니다. `tests/admin-generation-browser-check.cjs`는 로컬 Next.js와 합성 API 응답으로 1728px·390px 화면, 독립 polling, 미확정 비용·날짜 변경·지연·권한 회수를 확인합니다. `PIVOT_PLAYWRIGHT_MODULE`로 기존 Playwright 설치를 지정할 수 있으며 외부 요청·서비스 DB·실제 생성에는 접근하지 않습니다.
+
 ## Pivot 기존 회원 API 연결
 
 이 문서의 구현·브라우저 검증은 `codex/service-integration`에서 수행했고, 현재 `codex/backend-labs-service`에는 에이전트 코드와 생년월일 삭제 migration을 제외한 서비스 변경만 반영 후보로 선별했습니다. 후보 자체의 재검증과 로컬 `backend-labs` 반영 상태는 [서비스 흐름 보고서](../docs/SERVICE_FLOW_E2E_2026-10-28.md)를 따릅니다. 기존 `codex/fe-be-integration`의 회원·저장 흐름에 원격 `feature/pivot-user-fe` 최신 tip `3f656eb`(2026-10-27 14:53:33 KST)의 홈 연결 변경을 선별 반영했습니다. `/pivot/login` → `/pivot/home`은 실제 OAuth·세션과 피드·상세·북마크·Saved API를 사용합니다. 로그인 후에는 서버가 내려주는 활성 Topic ID를 사용하며, 저장 성공 후 홈·상세·저장 목록을 갱신합니다. 새로고침하면 서버의 저장 상태를 다시 조회합니다. 요청 실패를 데모 데이터나 저장 성공으로 대체하지 않습니다.

@@ -14,10 +14,11 @@ import styles from "./chat.module.css";
 export type ChatCopy = { title: string; placeholder: string; examples: readonly string[] };
 
 // 디자인 시안 문구 (11/13). 상세 예시 질문은 시안의 음악 글 예시 대신 어느 글에나 맞는 질문을 쓴다 (서원 결정 11/15).
+// 홈 예시 질문 첫째 · 셋째는 11/25 서원 결정으로 바꿈 (판타지 → 호러 스릴러, 팝업 · 전시 → 굿즈).
 export const HOME_CHAT_COPY: ChatCopy = {
   title: "어떤 콘텐츠를 찾고 계시나요?",
   placeholder: "보고싶은 콘텐츠가 무엇인가요?",
-  examples: ["판타지 장르의 애니 콘텐츠 찾아줘", "‘나루토’ 관련 카드뉴스 보여줘", "팝업이나 전시 콘텐츠만 보고 싶어"],
+  examples: ["호러 스릴러 장르 애니 콘텐츠 찾아줘", "‘나루토’ 관련 카드뉴스 보여줘", "굿즈 관련 콘텐츠만 보고 싶어"],
 };
 export const DETAIL_CHAT_COPY: ChatCopy = {
   title: "이 콘텐츠에서 어떤 점이 궁금하세요?",

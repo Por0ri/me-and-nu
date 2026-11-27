@@ -35,6 +35,7 @@ PATHS = (
     "/api/v1/admin/dashboard/attention",
     "/api/v1/admin/analytics/overview",
     "/api/v1/admin/analytics/recommendation-performance",
+    "/api/v1/admin/generation",
 )
 TOKEN = "isolated-admin-analytics-http-session"
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
@@ -78,6 +79,7 @@ def analytics_api(monkeypatch):
     monkeypatch.setattr(settings, "session_backend", "postgres")
     monkeypatch.setattr(settings, "admin_recommendation_evaluation_path", None)
     monkeypatch.setattr(settings, "admin_service_evaluation_path", None)
+    monkeypatch.setattr(settings, "admin_generation_snapshot_path", None)
     monkeypatch.setattr(settings, "event_data_source", "local_demo")
     window = service.analytics_window("7d", now=NOW)
     unknown = service.unavailable("Uncollected fixture metric", "not_collected")
@@ -108,12 +110,14 @@ def analytics_api(monkeypatch):
         monkeypatch.setattr(service, name, mocks[name])
     performance = Mock(wraps=analytics_router.get_recommendation_performance)
     monkeypatch.setattr(analytics_router, "get_recommendation_performance", performance)
+    generation = Mock(wraps=analytics_router.get_generation_status)
+    monkeypatch.setattr(analytics_router, "get_generation_status", generation)
 
     app = create_app(enable_dev_api=False)
     app.dependency_overrides[get_db] = isolated_db
     app.dependency_overrides[get_session_store] = lambda: None
     with TestClient(app, raise_server_exceptions=False) as client:
-        yield SimpleNamespace(client=client, app=app, engine=engine, mocks=mocks, performance=performance)
+        yield SimpleNamespace(client=client, app=app, engine=engine, mocks=mocks, performance=performance, generation=generation)
     engine.dispose()
 
 
@@ -123,7 +127,7 @@ def login(api):
 
 def test_service_dataset_is_authorized_and_routes_only_to_configured_service_path(analytics_api, monkeypatch, tmp_path):
     api = analytics_api
-    path = PATHS[-1] + "?dataset=service"
+    path = PATHS[3] + "?dataset=service"
     assert api.client.get(path).status_code == 401
     login(api)
     target = str(tmp_path / "service-evaluation.json")
@@ -134,10 +138,11 @@ def test_service_dataset_is_authorized_and_routes_only_to_configured_service_pat
     assert response.json()["reason"] == "artifact_missing"
     assert api.performance.call_args.kwargs["artifact_path"] == target
     assert api.performance.call_args.kwargs["dataset"] == "service"
-    assert api.client.get(PATHS[-1] + "?dataset=../../etc/passwd").status_code == 422
+    assert api.client.get(PATHS[3] + "?dataset=../../etc/passwd").status_code == 422
 
 
 def assert_no_reads(api):
+    api.generation.assert_not_called()
     for mock in api.mocks.values():
         mock.assert_not_awaited()
     api.performance.assert_not_called()
@@ -161,7 +166,7 @@ def test_unauthenticated_cannot_query_aggregates(analytics_api, cookie):
 
 
 @pytest.mark.parametrize("role", ["viewer", "operator", "admin"])
-def test_real_current_database_roles_can_read_all_four_routes(analytics_api, role):
+def test_real_current_database_roles_can_read_all_routes(analytics_api, role):
     with analytics_api.engine.begin() as db:
         db.execute(text("UPDATE admin_account SET role=:role"), {"role": role})
     login(analytics_api)
@@ -180,6 +185,7 @@ def test_grant_revocation_is_effective_without_rotating_session(analytics_api):
     for mock in analytics_api.mocks.values():
         mock.reset_mock()
     analytics_api.performance.reset_mock()
+    analytics_api.generation.reset_mock()
     assert_denied(analytics_api, 403, "ADMIN_REQUIRED")
 
 
@@ -291,3 +297,45 @@ def test_openapi_advertises_registered_read_contracts_and_query_bounds(analytics
     params = {item["name"]: item["schema"] for item in spec["paths"][PATHS[1]]["get"]["parameters"]}
     assert params["pageSize"]["maximum"] == 100
     assert params["page"]["minimum"] == 1
+
+
+def test_generation_snapshot_endpoint_does_not_query_dashboard_aggregates_or_accept_client_path(analytics_api, monkeypatch):
+    login(analytics_api)
+    target = "/private/host/snapshot.json"
+    monkeypatch.setattr(settings, "admin_generation_snapshot_path", target)
+    response = analytics_api.client.get(PATHS[-1], params={"snapshot_path": "/etc/passwd", "path": "/other"})
+    assert response.status_code == 200
+    assert response.json()["availability"] == "unavailable"
+    assert response.json()["daily"] is None
+    assert response.headers["cache-control"] == "private, no-store"
+    assert analytics_api.generation.call_args.kwargs == {"snapshot_path": target}
+    for mock in analytics_api.mocks.values():
+        mock.assert_not_called()
+    analytics_api.performance.assert_not_called()
+    assert "private" not in response.text and "passwd" not in response.text
+
+
+def test_generation_snapshot_http_preserves_strict_camel_case_and_unknown_cost(analytics_api, monkeypatch, tmp_path):
+    import json
+    from test_admin_generation import snapshot
+
+    login(analytics_api)
+    data = snapshot()
+    current = datetime.now(timezone.utc)
+    data["generated_at"] = current.isoformat()
+    data["policy_date"] = (current + timedelta(hours=9)).date().isoformat()
+    target = tmp_path / "generation.json"
+    target.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(settings, "admin_generation_snapshot_path", str(target))
+    response = analytics_api.client.get(PATHS[-1])
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["availability"] == "available"
+    assert body["daily"]["knownEstimatedCostUsd"] == "0.0123456789"
+    assert body["daily"]["totalEstimatedCostUsd"] is None
+    assert body["daily"]["passes"] == 1
+    assert body["jobs"]["rag"]["readyForStaging"] == 1
+    assert body["runtime"]["articleWorker"] == "running"
+    assert "schemaVersion" not in body and "purpose" not in body
+    for mock in analytics_api.mocks.values():
+        mock.assert_not_called()

@@ -1,0 +1,35 @@
+# Image preparation only. Does not start a service, mount data or run migrations.
+name: menu-rag-build
+services:
+  worker-base:
+    profiles: [build]
+    image: me-nu-worker:rag-${RAG_RELEASE_TAG:?Set reviewed release identifier}
+    build:
+      context: ../../worker
+      additional_contexts:
+        anime-registry: "../../agents/ani_me;nu/config"
+        anime-works: ../../catalog
+    network_mode: none
+    command: [python, -m, menu_worker.daily_resume, --help]
+  rag:
+    profiles: [build]
+    image: me-nu-rag-generation:rag-${RAG_RELEASE_TAG:?Set reviewed release identifier}
+    build:
+      context: ../../worker
+      dockerfile: Dockerfile.rag
+      additional_contexts:
+        runtime-base: service:worker-base
+        rag-project: ../../agents/ani_rag
+        anime-works: ../../catalog
+    network_mode: none
+    command: [celery, -A, "menu_worker.rag_app:app", worker, --help]
+  rag-pending-importer:
+    profiles: [build]
+    image: me-nu-pending-importer:rag-${RAG_RELEASE_TAG:?Set reviewed release identifier}
+    build: {context: ../../backend}
+    network_mode: none
+    entrypoint: [python, -B, -m, app.services.rag_pending_import]
+    command: [--help]
+    environment:
+      DATABASE_URL: postgresql+psycopg://offline@127.0.0.1:1/offline_not_used
+    healthcheck: {disable: true}

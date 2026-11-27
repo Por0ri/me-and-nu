@@ -1,0 +1,40 @@
+# Dedicated RAG vector storage only. Never uses the service/recommendation DB.
+name: menu-rag-storage
+services:
+  vector-db:
+    image: ${RAG_VECTOR_IMAGE:?Set verified pgvector PostgreSQL 17 image ID}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: menu_rag_owner
+      POSTGRES_DB: menu_rag_vector
+      POSTGRES_PASSWORD_FILE: /run/secrets/vector-owner-password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    command: [postgres, -c, shared_buffers=128MB, -c, maintenance_work_mem=128MB, -c, max_connections=20, -c, max_wal_size=1GB]
+    volumes:
+      - type: bind
+        source: ${RAG_VECTOR_DATA_HOST_DIR:?Set new dedicated pgdata directory}
+        target: /var/lib/postgresql/data
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${RAG_VECTOR_OWNER_PASSWORD_FILE:?Set private bootstrap password file}
+        target: /run/secrets/vector-owner-password
+        read_only: true
+        bind: {create_host_path: false}
+    networks: [rag-vector]
+    security_opt: [no-new-privileges:true]
+    shm_size: 128m
+    mem_limit: 1024m
+    cpus: "0.75"
+    pids_limit: 128
+    healthcheck:
+      test: [CMD, pg_isready, -U, menu_rag_owner, -d, menu_rag_vector]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+networks:
+  rag-vector:
+    name: menu-rag-vector-internal
+    internal: true

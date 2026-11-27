@@ -101,7 +101,7 @@ def _route_identity(route):
     return route["source_id"], route["content_type"], route["menu_work_id"]
 
 
-def validate_policy(policy, *, reviewed_sha256=None, apply=False, now=None):
+def validate_policy(policy, *, reviewed_sha256=None, apply=False, now=None, reconcile_policy_date=None):
     require(isinstance(policy, dict), "invalid_import_policy")
     version = policy.get("schema_version")
     require(type(version) is int and version in {1, 2}
@@ -143,7 +143,11 @@ def validate_policy(policy, *, reviewed_sha256=None, apply=False, now=None):
     digest = fingerprint(policy)
     if reviewed_sha256 is not None or apply:
         require(_hash(reviewed_sha256) and reviewed_sha256 == digest, "reviewed_policy_digest_required")
-    if apply:
+    if reconcile_policy_date is not None:
+        today = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("Asia/Seoul")).date()
+        require(apply and reconcile_policy_date == policy["policy_date"] and date < today,
+                "invalid_expired_policy_reconciliation")
+    elif apply:
         today = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("Asia/Seoul")).date()
         require(today == date, "policy_date_inactive")
     return digest
@@ -288,9 +292,11 @@ def load_deliveries(policy, *, inbox=None, manifest=None, now=None):
     return deliveries
 
 
-async def import_deliveries(db, policy, deliveries, *, reviewed_sha256=None, apply=False, now=None):
+async def import_deliveries(db, policy, deliveries, *, reviewed_sha256=None, apply=False, now=None,
+                            reconcile_policy_date=None):
     """Caller owns one transaction; existing imports never receive state writes."""
-    policy_digest = validate_policy(policy, reviewed_sha256=reviewed_sha256, apply=apply, now=now)
+    policy_digest = validate_policy(policy, reviewed_sha256=reviewed_sha256, apply=apply, now=now,
+                                    reconcile_policy_date=reconcile_policy_date)
     if apply:
         require(db.get_bind().dialect.name == "postgresql", "apply_requires_postgresql")
         # Share the existing carousel importer lock, including manual imports.
@@ -343,9 +349,13 @@ async def import_deliveries(db, policy, deliveries, *, reviewed_sha256=None, app
             run = await db.scalar(select(AgentRun).where(AgentRun.agent_run_id == draft.agent_run_id))
             require((content.status, content.judgment_status, draft.status) == ("pending_review", "needs_review", "checking")
                     and content.published_at is None, "new_content_not_pending")
-            run.output_payload = {**run.output_payload, RECEIPT: {
+            receipt = {
                 "schema_version": 1, "policy_sha256": policy_digest, "day_policy_sha256": policy["day_policy_sha256"],
-                "envelope_sha256": fingerprint(envelope), "envelope": envelope}}
+                "envelope_sha256": fingerprint(envelope), "envelope": envelope}
+            if reconcile_policy_date is not None:
+                receipt["policy_date_reconciliation"] = {"policy_date": reconcile_policy_date,
+                    "reconciled_at": (now or datetime.now(timezone.utc)).isoformat(), "mode": "explicit_pending_only"}
+            run.output_payload = {**run.output_payload, RECEIPT: receipt}
             for order, work_id in enumerate(item.package.menu_work_ids, 1):
                 db.add(ContentEntityLink(content_id=content.content_id, entity_id=works[work_id],
                                         topic_id=topic.topic_id, link_method="carousel", sort_order=order))
@@ -360,8 +370,9 @@ async def import_deliveries(db, policy, deliveries, *, reviewed_sha256=None, app
 
 
 async def run(*, policy, database_url, deployment_env, reviewed_sha256=None, inbox=None,
-              manifest=None, apply=False, now=None):
-    validate_policy(policy, reviewed_sha256=reviewed_sha256, apply=apply, now=now)
+              manifest=None, apply=False, now=None, reconcile_policy_date=None):
+    validate_policy(policy, reviewed_sha256=reviewed_sha256, apply=apply, now=now,
+                    reconcile_policy_date=reconcile_policy_date)
     validate_target(database_url, policy, deployment_env)
     deliveries = load_deliveries(policy, inbox=inbox, manifest=manifest, now=now)
     engine = create_async_engine(database_url, echo=False)
@@ -372,7 +383,8 @@ async def run(*, policy, database_url, deployment_env, reviewed_sha256=None, inb
             actual = (await db.execute(text("SELECT current_database() AS database, current_user AS username, current_schema() AS schema"))).mappings().one()
             require(all(actual[key] == policy["target"][key] for key in ("database", "username", "schema")),
                     "actual_database_target_mismatch")
-            return await import_deliveries(db, policy, deliveries, reviewed_sha256=reviewed_sha256, apply=apply, now=now)
+            return await import_deliveries(db, policy, deliveries, reviewed_sha256=reviewed_sha256, apply=apply, now=now,
+                                           reconcile_policy_date=reconcile_policy_date)
     finally:
         await engine.dispose()
 
@@ -395,23 +407,28 @@ def main(argv=None):
     mode.add_argument("--once", action="store_true", help="Default: inspect current deliveries once")
     mode.add_argument("--watch", action="store_true", help="Consume within this one approved policy date")
     parser.add_argument("--apply", action="store_true", help="Create operator-review waiting content only")
+    parser.add_argument("--reconcile-policy-date", help="Explicit --once --apply of this exact expired policy date; retains pending visibility and original scope")
     parser.add_argument("--poll-seconds", type=float, default=15)
     parser.add_argument("--max-watch-seconds", type=float, default=86400)
     args = parser.parse_args(argv)
     try:
         require(not any(os.environ.get(key) for key in ("LLM_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANIME_LLM_KEY_FILE")),
                 "importer_must_not_receive_llm_credentials")
+        require(args.reconcile_policy_date is None or args.once and args.apply and not args.watch,
+                "expired_reconciliation_requires_once_apply")
         require(1 <= args.poll_seconds <= 60 and 1 <= args.max_watch_seconds <= 86400, "invalid_watch_bounds")
         require(not args.watch or args.inbox is not None, "watch_requires_inbox")
         policy_bytes = read_file(args.policy)
         policy = _json(policy_bytes)
-        digest = validate_policy(policy, reviewed_sha256=args.reviewed_policy_sha256, apply=args.apply)
+        digest = validate_policy(policy, reviewed_sha256=args.reviewed_policy_sha256, apply=args.apply,
+                                 reconcile_policy_date=args.reconcile_policy_date)
         deadline, previous = time.monotonic()+args.max_watch_seconds, None
         while True:
             require(read_file(args.policy) == policy_bytes, "reviewed_policy_changed")
             report = asyncio.run(run(policy=policy, database_url=os.environ.get("DATABASE_URL", ""),
                 deployment_env=os.environ.get("MENU_DEPLOYMENT_ENV", ""), reviewed_sha256=args.reviewed_policy_sha256,
-                inbox=args.inbox, manifest=args.manifest, apply=args.apply))
+                inbox=args.inbox, manifest=args.manifest, apply=args.apply,
+                reconcile_policy_date=args.reconcile_policy_date))
             report.update(watch=args.watch, reviewed_policy_sha256=digest)
             encoded = json.dumps(report, ensure_ascii=False, sort_keys=True)
             if encoded != previous:

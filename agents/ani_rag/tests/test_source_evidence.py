@@ -21,6 +21,9 @@ class SourceEvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(interview_speaker_label(body + "\nAkira Natsume also attended.",
                                                   "Shingo Natsume", context, quote))
         self.assertIsNone(interview_speaker_label(body, "Shingo Natsume", context, "We dropped the ending."))
+        next_turn = "\nKubota: I worked on the outline."
+        self.assertIsNone(interview_speaker_label(body + next_turn, "Shingo Natsume", context + next_turn, quote + next_turn))
+        self.assertIsNone(interview_speaker_label("AnotherNatsume: " + quote, "Natsume", "Natsume: " + quote, quote))
 
     async def collect(self, page, content_type, evidence_type):
         repo = AsyncMock()

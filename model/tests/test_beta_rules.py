@@ -44,6 +44,18 @@ class PostKindTests(unittest.TestCase):
 
 
 class FeedTests(unittest.TestCase):
+    def test_unbounded_approved_post_remains_eligible_after_a_year(self):
+        posts = [dict(post([101]), until=None), post([101])]
+        feed = service.make_feed(posts, CTX)
+        empty = np.zeros(0, dtype=np.int64)
+        history = ar.History(empty, empty, empty.astype(np.int8), empty.astype(np.int8), empty.astype(np.int8))
+        state = v1.UserState(history, [], [], {}, 0, 4, 2)
+        state.work_aff = np.ones(4)
+        today = (date(2027, 11, 27) - date(1970, 1, 1)).days
+        self.assertEqual(v1.rank_feed(state, feed, today, v1.Config()).tolist(), [0])
+        state.blocked[0] = True
+        self.assertEqual(v1.rank_feed(state, feed, today, v1.Config()).tolist(), [])
+
     def test_make_feed_links_other_works_except_fan_posts(self):
         posts = [post([102, 101], anchor=0, kind="artist"), post([101, 102], anchor=0, kind="like"),
                  post([102, 103], anchor=None, kind="overlap"), {**post([103]), "works": None}]

@@ -12,7 +12,7 @@ from ani_rag.automatic_plans import load_automatic_plans
 from ani_rag.catalog import LocalWorkCatalog
 from ani_rag.queues import QueueItem, QueueName, QueueStatus
 from ani_rag.settings import load_source_registry
-from ani_rag.web_discovery import WebCandidateAssessmentWorker, WebDiscoveryWorker
+from ani_rag.web_discovery import WebCandidateAssessmentWorker, WebCandidateHit, WebDiscoveryWorker, _candidate_mentions_work
 
 
 class CatalogScheduleRefreshTests(unittest.TestCase):
@@ -87,3 +87,42 @@ class CatalogScheduleRefreshTests(unittest.TestCase):
                 self.assertEqual((outcome.status, outcome.last_error), (QueueStatus.BLOCKED, "stale_catalog_work_seed"))
                 adapter.search_web.assert_not_awaited()
                 adapter.read_web_candidate.assert_not_awaited()
+
+    def test_unique_tv_label_reaches_read_without_adding_a_search_or_replacing_the_work_seed(self):
+        self.works.write_text("menu_work_id,title_english\n10,Fullmetal Alchemist: Brotherhood\n11,Another Work\n",
+                              encoding="utf-8")
+        (self.official / "menu_work_entries.csv").write_text(
+            "menu_work_id,format,title_english\n10,TV,Fullmetal Alchemist\n10,TV,Shared Entry\n"
+            "11,TV,Shared Entry\n10,MOVIE,Film Label\n10,TV,Scoped Alias\n", encoding="utf-8")
+        (self.registry / "menu_work_aliases.csv").write_text(
+            "menu_work_id,status,source_url_prefix,alias\n11,verified,https://example.org/,Scoped Alias\n",
+            encoding="utf-8")
+        catalog = LocalWorkCatalog()
+        canonical = catalog.search_titles_for_work_id(10)
+        self.assertEqual(canonical, ("Fullmetal Alchemist: Brotherhood",))
+        tv_titles = catalog.unique_tv_entry_titles(10)
+        self.assertEqual(tv_titles, ("Fullmetal Alchemist",))
+        url = "https://example.org/article"
+        matches = WebCandidateHit("Episode guide", url, "Fullmetal Alchemist (2003 TV series)")
+        for title in ("Fullmetal", "Alchemist", "FakeFullmetal Alchemist", "Fullmetal Alchemists",
+                      "Shared Entry", "Film Label", "Scoped Alias"):
+            with self.subTest(title=title):
+                self.assertFalse(_candidate_mentions_work(WebCandidateHit(title, url), canonical, tv_titles=tv_titles))
+        request = {"menu_work_id": 10, "content_type": "guide", "query": canonical[0] + " guide",
+                   "expected_work_titles": list(canonical)}
+        search_job = QueueItem("search", QueueName.COLLECTION, status=QueueStatus.RUNNING, payload=request)
+        queues = SimpleNamespace(claim=AsyncMock(return_value=search_job), save=AsyncMock(),
+                                 web_evidence_revision=AsyncMock(return_value="ref"),
+                                 web_candidate_assessment_plan=AsyncMock(return_value=("unread", None)),
+                                 complete_web_search_page=AsyncMock())
+        adapter = SimpleNamespace(search_web=AsyncMock(return_value=(matches,)))
+        search = WebDiscoveryWorker(queues, adapter, edition_catalog=catalog, catalog_titles=catalog.titles_for_work_id)
+        self.assertTrue(asyncio.run(search.run_once()))
+        adapter.search_web.assert_awaited_once_with("Fullmetal Alchemist: Brotherhood guide", limit=5)
+        [candidate] = queues.complete_web_search_page.await_args.args[1]
+        self.assertEqual(candidate.payload["expected_work_titles"], list(canonical))
+        queues.claim.return_value = candidate
+        assessment = WebCandidateAssessmentWorker(queues, adapter, catalog, None, None, edition_catalog=catalog)
+        with patch.object(assessment, "_read_candidate", new_callable=AsyncMock, return_value=None) as read:
+            self.assertTrue(asyncio.run(assessment.run_once()))
+            read.assert_awaited_once()

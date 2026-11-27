@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sqlite3
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -53,7 +55,16 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--role", required=True, choices=("crawler", "generation", "review"))
     parser.add_argument("--db", required=True, type=Path, help="Existing ani_rag SQLite database")
-    parser.add_argument("--vector-db", type=Path, help="Existing read-only vector sidecar (crawler/generation)")
+    vector = parser.add_mutually_exclusive_group()
+    vector.add_argument("--vector-db", type=Path, help="Existing read-only SQLite vector sidecar (crawler/generation)")
+    vector.add_argument(
+        "--vector-database-url-env", metavar="ENV_NAME",
+        help="Environment variable containing the dedicated pgvector DB URL; never put credentials on the command line",
+    )
+    parser.add_argument(
+        "--expected-vector-database", metavar="DB_NAME",
+        help="Required exact dedicated DB name when using --vector-database-url-env",
+    )
     parser.add_argument(
         "--image-dir", type=Path,
         default=PROJECT_ROOT / "data" / "image_assets",
@@ -73,7 +84,42 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validate_vector_options(args: argparse.Namespace) -> None:
+    if bool(args.vector_database_url_env) != bool(args.expected_vector_database):
+        raise ValueError("PostgreSQL vector retrieval requires both the URL environment variable name and expected DB name")
+    if args.role in {"crawler", "generation"} and not args.vector_database_url_env:
+        if args.vector_db is None or not args.vector_db.resolve().is_file():
+            raise FileNotFoundError("--vector-db must name the existing completed RAG vector sidecar, or select a dedicated PostgreSQL index")
+
+
+def _open_worker_vector(args: argparse.Namespace, resources: ExitStack):
+    if args.role not in {"crawler", "generation"}:
+        return None
+    if args.vector_database_url_env:
+        from ani_rag.storage.postgres_vector import PostgresVectorIndex, connect_postgres
+
+        database_url = os.environ.get(args.vector_database_url_env, "").strip()
+        if not database_url:
+            raise RuntimeError("The configured vector database URL environment variable is empty")
+        connection = connect_postgres(
+            database_url, expected_database=args.expected_vector_database, read_only=True,
+        )
+        resources.callback(connection.close)
+        return PostgresVectorIndex(connection)
+    from ani_rag.runtime import open_vector_index_readonly
+
+    connection = open_vector_index_readonly(args.vector_db.resolve())
+    resources.callback(connection.close)
+    return connection
+
+
 async def _run(args: argparse.Namespace) -> None:
+    # Close both database connections even when model/worker setup fails.
+    with ExitStack() as resources:
+        await _run_with_resources(args, resources)
+
+
+async def _run_with_resources(args: argparse.Namespace, resources: ExitStack) -> None:
     from ani_rag.agents.content_generation.agent import ContentGenerationAgent
     from ani_rag.agents.mcp_crawler.agent import MCPCrawlerAgent
     from ani_rag.agents.reviewer.agent import IndependentReviewAgent
@@ -87,24 +133,20 @@ async def _run(args: argparse.Namespace) -> None:
         compose_generation_review_runtime,
         compose_reviewer_agent,
         compose_runtime,
-        open_vector_index_readonly,
     )
     from ani_rag.settings import load_source_registry
 
     database = args.db.resolve()
     _assert_existing_schema(database)
     needs_vectors = args.role in {"crawler", "generation"}
-    vector_path = args.vector_db.resolve() if args.vector_db else None
-    if needs_vectors and (vector_path is None or not vector_path.is_file()):
-        raise FileNotFoundError("--vector-db must name the existing completed RAG vector sidecar")
+    _validate_vector_options(args)
 
     load_project_environment()
+    vector = _open_worker_vector(args, resources)
     model = OpenAIResponsesStructuredModel.from_project_environment()
-    vector = open_vector_index_readonly(vector_path) if needs_vectors else None
     embeddings = None
     if needs_vectors:
         from openai import OpenAI
-        import os
 
         api_key = os.environ.get("OPENAI_API_KEY", "").strip()
         if not api_key:
@@ -112,6 +154,7 @@ async def _run(args: argparse.Namespace) -> None:
         embeddings = OpenAIQueryEmbeddingModel(OpenAI(api_key=api_key))
 
     connection = sqlite3.connect(database, timeout=60, check_same_thread=False)
+    resources.callback(connection.close)
     connection.row_factory = sqlite3.Row
     adapter = FirecrawlMCPAdapter()
     structured_adapter = WikidataStructuredMCPAdapter()
@@ -173,9 +216,6 @@ async def _run(args: argparse.Namespace) -> None:
     finally:
         stop_watcher.cancel()
         await asyncio.gather(stop_watcher, return_exceptions=True)
-        connection.close()
-        if vector is not None:
-            vector.close()
 
 
 def main() -> int:

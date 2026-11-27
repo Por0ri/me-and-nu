@@ -72,12 +72,12 @@ type VotedData = { tickets: VoteTickets | null; debates: DebateSummary[] };
 
 const loadVoted = async (): Promise<VotedData> => {
   const [tickets, debates] = await Promise.all([getVoteTickets(), listMyVotes()]);
-  // 아직 토론방이 열리지 않은 주제만 (2026-11-23 사용자 결정). 서버(D-15)는 열린 방도 같이 주지만, 열린 방은 '참여 중인 방',
-  // 내가 올린 주제는 '내가 올린 주제' 탭에서 본다.
-  return { tickets, debates: debates.filter((debate) => debate.status === "voting" && !debate.isMine) };
+  // 아직 토론방이 열리지 않은 주제만 (2026-11-23 사용자 결정). 서버(D-15)는 열린 방도 같이 주지만, 열린 방은 '참여 중인 방'에서 본다.
+  // 내가 올린 주제도 내가 투표했으면 여기 같이 보인다 (2026-11-26 팀원 피드백). '내가 올린 주제' 탭에도 그대로 있다.
+  return { tickets, debates: debates.filter((debate) => debate.status === "voting") };
 };
 
-/** 투표권 카드(내 활동 버튼 없이) + 투표했고 아직 열리지 않은 남의 주제. '✓ 투표 완료'를 누르면 취소되고 그 자리에서 '주제 투표하기'로 바뀐다.
+/** 투표권 카드(내 활동 버튼 없이) + 투표했고 아직 열리지 않은 주제 (내가 올린 주제 포함). '✓ 투표 완료'를 누르면 취소되고 그 자리에서 '주제 투표하기'로 바뀐다.
  *  여기서 투표해서 10표가 되면 그 자리에서 실시간 토론방 카드로 바뀌고, 다시 들어오면 빠진다. */
 function VotedTab({ showToast }: { showToast: ShowToast }) {
   const [state, retry, update] = useLoad<VotedData>({ tickets: null, debates: [] }, loadVoted);

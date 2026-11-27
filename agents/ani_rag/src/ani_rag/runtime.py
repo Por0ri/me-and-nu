@@ -29,6 +29,7 @@ from ani_rag.model_services import (
 from ani_rag.queues import QueueItem, QueueName, QueueStatus
 from ani_rag.retrieval import (
     DatabaseEvidenceRetriever, EvidenceRetriever, QueryEmbeddingModel, VectorEvidenceRetriever,
+    VectorIndexReader,
 )
 from ani_rag.settings import EvergreenSourceRegistry, require_source_access, require_source_url
 from ani_rag.storage.sqlite_core import SQLiteRagStore
@@ -104,7 +105,7 @@ def compose_crawler_agent(
     web_discovery_adapter: WebDiscoveryAdapter | None = None,
     structured_mcp: StructuredMCPAdapter | None = None,
     work_match_model: StructuredModel,
-    vector_index: sqlite3.Connection | None = None,
+    vector_index: sqlite3.Connection | VectorIndexReader | None = None,
     query_embeddings: QueryEmbeddingModel | None = None,
     work_catalog: WorkCatalogResolver | None = None,
     recurring_plans: tuple[RecurringCollectionPlan, ...] = (),
@@ -120,7 +121,8 @@ def compose_crawler_agent(
     )
     images = SQLiteImageReader(store)
     web_discovery_worker = (
-        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry, catalog_titles=local_catalog.titles_for_work_id)
+        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry,
+                           catalog_titles=local_catalog.titles_for_work_id, edition_catalog=local_catalog)
         if web_discovery_adapter is not None else None
     )
     web_candidate_worker = (
@@ -153,7 +155,7 @@ def compose_content_generation_agent(
     connection: sqlite3.Connection,
     *,
     generation_model: StructuredModel,
-    vector_index: sqlite3.Connection | None = None,
+    vector_index: sqlite3.Connection | VectorIndexReader | None = None,
     query_embeddings: QueryEmbeddingModel | None = None,
     image_search_adapter: ImageSearchAdapter | None = None,
     image_asset_dir: Path | None = None,
@@ -195,7 +197,7 @@ def compose_generation_review_runtime(
     *,
     generation_model: StructuredModel,
     review_model: StructuredModel,
-    vector_index: sqlite3.Connection | None = None,
+    vector_index: sqlite3.Connection | VectorIndexReader | None = None,
     query_embeddings: QueryEmbeddingModel | None = None,
     image_search_adapter: ImageSearchAdapter | None = None,
     image_asset_dir: Path | None = None,
@@ -249,7 +251,7 @@ def compose_runtime(
     structured_mcp: StructuredMCPAdapter | None = None,
     generation_model: StructuredModel,
     review_model: StructuredModel,
-    vector_index: sqlite3.Connection | None = None,
+    vector_index: sqlite3.Connection | VectorIndexReader | None = None,
     query_embeddings: QueryEmbeddingModel | None = None,
     work_catalog: WorkCatalogResolver | None = None,
     work_match_model: StructuredModel | None = None,
@@ -290,7 +292,8 @@ def compose_runtime(
         image_entity_catalog=image_entity_catalog,
     ) if structured_mcp is not None else None
     web_discovery_worker = (
-        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry, catalog_titles=local_catalog.titles_for_work_id)
+        WebDiscoveryWorker(store, web_discovery_adapter, registry=registry,
+                           catalog_titles=local_catalog.titles_for_work_id, edition_catalog=local_catalog)
         if web_discovery_adapter is not None else None
     )
     web_candidate_worker = (
@@ -349,7 +352,7 @@ def open_vector_index_readonly(path: Path) -> sqlite3.Connection:
 
 
 def _evidence_retriever(
-    store: SQLiteRagStore, vector_index: sqlite3.Connection | None,
+    store: SQLiteRagStore, vector_index: sqlite3.Connection | VectorIndexReader | None,
     query_embeddings: QueryEmbeddingModel | None,
 ) -> EvidenceRetriever:
     if (vector_index is None) != (query_embeddings is None):

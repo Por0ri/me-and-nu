@@ -24,6 +24,14 @@ class ReviewDecision(StrEnum):
     HUMAN_REVIEW = "human_review"
 
 
+@dataclass(frozen=True, kw_only=True)
+class ImageSubjectMismatch(QualityIssue):
+    """A review finding tied to one of the sources painted on the card."""
+
+    asset_id: str
+    search_subject: str | None
+
+
 @dataclass(frozen=True)
 class HeadlineEdit:
     """A verified literal correction. Page zero refers to the article title."""

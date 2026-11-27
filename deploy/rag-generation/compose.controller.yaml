@@ -1,0 +1,23 @@
+# Explicit mount-only overlay for deploy/daily-generation/compose.runtime.yaml.
+# Does not change its image, command, network, profile, or existing article flow.
+# Do not add automatically to the running scheduler's compose file list.
+services:
+  daily-controller:
+    environment:
+      RAG_GENERATION_ENABLED: "false"
+      RAG_RUNTIME_CONFIG_FILE: /run/rag/runtime.json
+    volumes:
+      - type: bind
+        source: ${RAG_ISOLATED_STATE_HOST_DIR:?Set prepared execution copy directory}
+        target: /var/lib/menu-rag
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${RAG_RUNTIME_CONFIG_HOST_FILE:?Set disabled reviewed runtime JSON}
+        target: /run/rag/runtime.json
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /home/ubuntu/me-nu-beta-20261116/state/${RAG_INBOX_NAME:?Set separate RAG inbox directory name}
+        target: /runtime/state/${RAG_INBOX_NAME:?Set separate RAG inbox directory name}
+        bind: {create_host_path: false}

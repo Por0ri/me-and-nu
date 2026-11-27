@@ -178,14 +178,14 @@ def database_lock(store, run_id):
         yield check
 
 
-def audit_existing_jobs(store, state):
+def audit_existing_jobs(store, state, *, rag_store=None):
     """A missing/rewound checkpoint must not reset the cumulative job limit."""
     with store._connect() as connection:
         rows = connection.execute(
             "SELECT job_id,idempotency_key FROM public.content_generation_job WHERE job_kind='anime_generate'"
         ).fetchall()
     owned = {record.get("job_id"): record["request"]["idempotency_key"]
-             for record in state["records"] if record.get("job_id")}
+             for record in state["records"] if record.get("job_id") and record.get("producer") != "ani_rag"}
     prefix = state["config"]["run_id"] + ":"
     if len(rows) > state["config"]["max_new_jobs"]:
         raise StopRun("database_job_cap_already_exceeded")
@@ -194,6 +194,16 @@ def audit_existing_jobs(store, state):
             raise StopRun("database_history_not_owned_by_checkpoint")
     if set(owned) != {str(row["job_id"]) for row in rows}:
         raise StopRun("checkpoint_job_missing_from_database")
+    if rag_store is None:
+        from menu_worker.job_store import JobStore
+        if isinstance(store, JobStore):
+            # Every v8 runtime audit covers both ledgers, including a restored
+            # period-only checkpoint which predates its first RAG admission.
+            from menu_worker.rag_store import RagStore
+            rag_store = RagStore(store._dsn, expected_database=store.expected_database)
+    if rag_store is not None or state.get("rag_scope") or any(row.get("producer") == "ani_rag" for row in state["records"]):
+        from menu_worker.rag_daily_runtime import audit_rag_history
+        audit_rag_history(rag_store, state, period_job_count=len(rows))
 
 
 class Controller:
@@ -220,8 +230,18 @@ class Controller:
         write_json(self.path, self.state)
 
     def known_spent(self):
-        return money(self.config["baseline_estimated_cost_usd"]) + sum(
+        from menu_worker.failure_recovery import validate_recovery_record
+        partial = sum((money(receipt["known_partial_estimated_usd"])
+                       for row in self.state["records"] if row.get("accounting_method") == "unknown"
+                       for receipt in [validate_recovery_record(row)]
+                       if receipt["known_partial_estimated_usd"] is not None), Decimal(0))
+        return partial + money(self.config["baseline_estimated_cost_usd"]) + sum(
             (money(row["estimated_cost_usd"]) for row in self.state["records"] if row.get("estimated_cost_usd") is not None), Decimal(0))
+
+    def unknown_cost_jobs(self):
+        return [row["job_id"] for row in self.state["records"] if row.get("counts_slot")
+                and (row.get("accounting_method") == "unknown" or
+                     row.get("execution_status") == "needs_attention" and row.get("estimated_cost_usd") is None)]
 
     def reserved_spent(self):
         return sum((money(row["reserved_cost_usd"]) for row in self.state["records"]
@@ -236,6 +256,8 @@ class Controller:
 
     def budget_exceeded(self, additional=Decimal(0)):
         limit = self.budget_limit()
+        if limit is not None and self.unknown_cost_jobs():
+            raise StopRun("unknown_cost_in_budget_mode")
         return limit is not None and self.spent() + additional > limit
 
     def matching_reservation(self, job, result):
@@ -458,11 +480,17 @@ class Controller:
         return self.summary()
 
     def summary(self):
+        unknown = self.unknown_cost_jobs()
         return {"run_id": self.config["run_id"], "status": self.state["status"],
                 "stop_reason": self.state.get("stop_reason"), "baseline_count": self.config["baseline_count"],
                 "new_slots_consumed": self.used_slots(), "max_new_jobs": self.config["max_new_jobs"],
-                "estimated_total_cost_usd": str(self.known_spent()),
-                "reserved_cost_usd": str(self.reserved_spent()), "budget_accounted_total_usd": str(self.spent()),
+                "estimated_total_cost_usd": None if unknown else str(self.known_spent()),
+                "known_estimated_cost_usd": str(self.known_spent()),
+                "unknown_cost_jobs": unknown,
+                "cost_total_complete": not unknown and not any(r.get("accounting_method") == "reserve" for r in self.state["records"]),
+                "reserved_cost_usd": str(self.reserved_spent()),
+                "budget_accounted_total_usd": None if unknown else str(self.spent()),
+                "known_and_reserved_subtotal_usd": str(self.spent()),
                 "unmeasured_cost_jobs": [r["job_id"] for r in self.state["records"] if r.get("accounting_method") == "reserve"],
                 "target_budget_usd": self.config["total_budget_usd"],
                 "provider_hard_cap": False, "service_db_writes": 0,

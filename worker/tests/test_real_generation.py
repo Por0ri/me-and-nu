@@ -64,7 +64,7 @@ class RealGenerationTests(unittest.TestCase):
             self.assertEqual(options["env"]["ANI_MENU_COVER_HISTORY_SHA256"], sha256(self.job["_cover_history_snapshot"]))
             data = {"expected_work_request": real._request(self.job), "status": "duplicate_skipped", "request_id": "crawl-123"}
             (folder / "result.json").write_text(json.dumps(data), encoding="utf-8")
-            return Mock(pid=231, returncode=2, poll=Mock(return_value=2))
+            return Mock(pid=231, returncode=2, poll=Mock(return_value=2), stdout=None)
 
         with (patch.dict(os.environ, {"HTTP_PROXY": "private", "DATABASE_URL": "private"}),
               patch.object(real.subprocess, "Popen", side_effect=launch) as spawn,
@@ -103,7 +103,7 @@ class RealGenerationTests(unittest.TestCase):
         dependency_check.assert_not_called()
 
     def test_lost_lease_terminates_group_without_starting_again(self):
-        child = Mock(pid=241, poll=Mock(return_value=None))
+        child = Mock(pid=241, poll=Mock(return_value=None), stdout=None)
         pulse = Mock(side_effect=[None, RuntimeError("lost lease")])
         with (patch.object(real.subprocess, "Popen", return_value=child) as spawn,
               patch.object(real, "_stop_group") as stop,
@@ -115,7 +115,7 @@ class RealGenerationTests(unittest.TestCase):
             real.validate_real_artifacts(self.root, self.job)
 
     def test_timeout_terminates_group_and_leaves_attempt_for_inspection(self):
-        child = Mock(pid=242, poll=Mock(return_value=None))
+        child = Mock(pid=242, poll=Mock(return_value=None), stdout=None)
         with (patch.object(real.subprocess, "Popen", return_value=child), patch.object(real, "_stop_group") as stop,
               patch.object(real.time, "monotonic", side_effect=[0, real.TIMEOUT_SECONDS + 1]),
               self.assertRaisesRegex(real.RealGenerationError, "agent_timeout")):

@@ -214,6 +214,29 @@ async def test_existing_publication_time_is_never_changed(review_db, published, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["approve", "reject"])
+async def test_no_deadline_marker_and_null_survive_actual_operator_review_and_replay(review_db, action):
+    basis = {**BASIS, "feed_expiry_policy": "no_deadline_v1"}
+    with review_db.engine.begin() as db:
+        db.execute(text("UPDATE content SET feed_valid_until=NULL, published_at='2020-01-01 00:00:00.000000', "
+                        "ai_judgment_basis=:basis"), {"basis": json.dumps(basis)})
+        db.execute(text("UPDATE draft SET factcheck_result=:basis"), {"basis": json.dumps(basis)})
+    request = AdminContentReviewRequest(**request_data(action=action))
+    first = await review(review_db, request)
+    after = snapshot(review_db)
+    replay = await review(review_db, request)
+    assert replay.replayed and replay.audit_log_id == first.audit_log_id and snapshot(review_db) == after
+    assert after["content"][0]["feed_valid_until"] is None
+    assert json.loads(after["content"][0]["ai_judgment_basis"])["feed_expiry_policy"] == "no_deadline_v1"
+    assert json.loads(after["draft"][0]["factcheck_result"])["feed_expiry_policy"] == "no_deadline_v1"
+    audit = json.loads(after["admin_action_log"][0]["before_value"])
+    assert audit["content"]["ai_judgment_basis"]["feed_expiry_policy"] == "no_deadline_v1"
+    with Session(review_db.engine) as db:
+        visible = db.scalars(select(Content.content_id).where(public_content_condition())).all()
+    assert visible == ([2] if action == "approve" else [])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("sql", [
     "UPDATE content SET feed_valid_until='2020-01-01'", "DELETE FROM content_source",
     "DELETE FROM content_slide WHERE page=2", "UPDATE content_slide SET page=3 WHERE page=2",

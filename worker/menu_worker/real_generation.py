@@ -1,6 +1,7 @@
 """Run one opt-in, work-bound anime CLI and verify its durable local output."""
 from __future__ import annotations
 
+from collections import deque
 from io import BytesIO
 import json
 import os
@@ -22,6 +23,26 @@ MAX_IMAGES = 4
 TIMEOUT_SECONDS = 1200
 MAX_JSON = 16 * 1024 * 1024
 MAX_PNG = 20 * 1024 * 1024
+MAX_DIAGNOSTIC_LINE = 4096
+MAX_DIAGNOSTIC_EVENTS = 32
+DIAGNOSTIC_EXCEPTIONS = frozenset({
+    "APIConnectionError", "APIError", "APIResponseValidationError", "APIStatusError", "APITimeoutError",
+    "AssertionError", "AttributeError", "AuthenticationError", "BadRequestError", "ConflictError",
+    "ConnectionError", "ContentFilterFinishReasonError",
+    "FileNotFoundError", "HTTPError", "ImportError", "IndexError", "JSONDecodeError", "KeyError",
+    "IntegrityError", "InternalServerError", "LengthFinishReasonError", "MemoryError", "ModuleNotFoundError",
+    "NotFoundError", "OpenAIError", "OSError",
+    "OperationalError", "PermissionDeniedError", "PermissionError", "RateLimitError",
+    "RuntimeError", "SyntaxError", "TimeoutError", "TypeError", "UnicodeDecodeError", "ValidationError",
+    "UnprocessableEntityError", "ValueError", "ZeroDivisionError",
+})
+# Only these literal basenames may be persisted, never an arbitrary child path,
+# source line, exception message, response body, URL, header or environment value.
+DIAGNOSTIC_FILES = frozenset({
+    "__init__.py", "cli.py", "config.py", "models.py", "generation.py", "common.py", "graph.py",
+    "nodes.py", "runtime.py", "encoder.py", "decoder.py", "main.py", "_client.py", "_base_client.py",
+    "storage.py", "state.py", "cover_history.py", "image_selection.py", "page_collector.py",
+})
 DISPOSITIONS = {
     "ready_for_feed": "ready_for_staging", "needs_crawler_update": "held",
     "invalid_input": "held", "rejected_archived": "rejected",
@@ -133,6 +154,71 @@ def _json(path: Path, root: Path, limit: int) -> tuple[dict, bytes]:
 
 def _dump(value: dict) -> bytes:
     return json.dumps(value, sort_keys=True, allow_nan=False, ensure_ascii=False, separators=(",", ":")).encode()
+
+
+class _Diagnostics:
+    """Bounded streaming metadata extractor. Raw child output is never persisted."""
+    def __init__(self, secret=""):
+        self._secret = secret
+        self._line = bytearray()
+        self._dropping = False
+        self.events = deque(maxlen=MAX_DIAGNOSTIC_EVENTS)
+        self.output_bytes = 0
+        self.dropped_lines = 0
+
+    def feed(self, data):
+        self.output_bytes += len(data)
+        for fragment in data.splitlines(keepends=True):
+            ends = fragment.endswith((b"\n", b"\r"))
+            if not self._dropping:
+                if len(self._line) + len(fragment) > MAX_DIAGNOSTIC_LINE:
+                    self._line.clear()
+                    self._dropping = True
+                    self.dropped_lines += 1
+                else:
+                    self._line.extend(fragment)
+            if ends:
+                if not self._dropping:
+                    self._inspect(bytes(self._line))
+                self._line.clear()
+                self._dropping = False
+
+    def finish(self):
+        if self._line and not self._dropping:
+            self._inspect(bytes(self._line))
+        self._line.clear()
+
+    def _inspect(self, raw):
+        line = raw.decode("utf-8", errors="replace")
+        if self._secret:
+            line = line.replace(self._secret, "[REDACTED]")
+        line = re.sub(r"sk-[A-Za-z0-9_-]+", "[REDACTED]", line)
+        line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line).strip().strip("│ ")
+        name = line.split(":", 1)[0].rsplit(".", 1)[-1]
+        if name in DIAGNOSTIC_EXCEPTIONS:
+            self.events.append({"exception_type": name})
+        frame = re.search(r'(?:File "[^"\r\n]*/|/)([a-z_]+\.py)(?:", line |:)([0-9]{1,7})(?:\D|$)', line)
+        if frame and frame[1] in DIAGNOSTIC_FILES:
+            self.events.append({"file": frame[1], "line": int(frame[2])})
+
+    def summary(self):
+        return {"capture": "allowlisted_metadata_only", "output_bytes": self.output_bytes,
+                "dropped_lines": self.dropped_lines, "events": list(self.events)}
+
+
+def _drain_diagnostics(descriptor, diagnostics):
+    # A flooding child cannot starve lease pulses or the timeout. The pipe is
+    # drained repeatedly without retaining its bytes beyond one bounded line.
+    if descriptor is None:
+        return
+    for _ in range(8):
+        try:
+            data = os.read(descriptor, 65536)
+        except BlockingIOError:
+            break
+        if not data:
+            break
+        diagnostics.feed(data)
 
 
 def _source_matches(url, job) -> bool:
@@ -260,13 +346,22 @@ def _verify_real_artifacts(root: Path, job: dict, *, seal_missing: bool,
             except RealGenerationError:
                 raise RealGenerationError("cover_history_invalid") from None
             history_files["cover-history.json"] = {"sha256": history_digest, "bytes": len(history_data)}
-        result, original = _json(directory / "result.json", directory, MAX_JSON)
-        outcome, status, package = _result(result, job)
         exit_record = directory / "exit.json"
+        returncode = None
         if exit_record.exists():
             finished, _ = _json(exit_record, directory, 2048)
-            if finished.get("returncode") != 0 and status != "duplicate_skipped":
-                raise RealGenerationError("agent_process_failed")
+            returncode = finished.get("returncode")
+            if type(returncode) is not int:
+                raise RealGenerationError("invalid_agent_exit_record")
+        result_path = directory / "result.json"
+        if not result_path.exists() and not result_path.is_symlink():
+            raise RealGenerationError("agent_process_failed" if returncode not in {None, 0} else "agent_result_missing")
+        result, original = _json(result_path, directory, MAX_JSON)
+        # A failure receipt preserves partial usage without becoming a successful
+        # producer disposition. Only the historical duplicate exit is accepted.
+        if returncode not in {None, 0} and result.get("status") != "duplicate_skipped":
+            raise RealGenerationError("agent_process_failed")
+        outcome, status, package = _result(result, job)
         files = _check_cards(directory, package, outcome == "ready_for_staging", export_cards_to=export_cards_to)
         files.update(history_files)
         digest = sha256(original)
@@ -339,24 +434,45 @@ def generate_real(root: Path, job: dict, pulse) -> None:
     pulse()
     try:
         child = subprocess.Popen([str(AGENT_PYTHON), "-I", "-B", "-c", _SUPERVISOR, str(os.getpid()), *command],
-            cwd=directory, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, start_new_session=True)
+            cwd=directory, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, start_new_session=True, bufsize=0)
     except OSError:
         raise RealGenerationError("agent_spawn_failed", before_launch=True) from None
     deadline = time.monotonic() + TIMEOUT_SECONDS
+    diagnostics = _Diagnostics(env["OPENAI_API_KEY"])
+    descriptor = None
+    interrupted = None
     try:
+        if child.stdout is not None:
+            descriptor = child.stdout.fileno()
+            os.set_blocking(descriptor, False)
         while child.poll() is None:
+            _drain_diagnostics(descriptor, diagnostics)
             pulse()
             if time.monotonic() >= deadline:
                 raise RealGenerationError("agent_timeout")
             time.sleep(0.25)
+    except BaseException as error:
+        interrupted = "agent_timeout" if isinstance(error, RealGenerationError) and error.code == "agent_timeout" else "supervisor_interrupted"
+        raise
     finally:
         # Signal the group even if its supervisor already exited, to clean up any surviving children.
         _stop_group(child)
-    try:
-        _atomic_write(directory / "exit.json", _dump({"returncode": child.returncode}))
-        _atomic_write(directory / "agent.log", f"Isolated anime CLI exited {child.returncode}.\n".encode())
-    except OSError:
-        raise RealGenerationError("agent_exit_record_failed") from None
+        try:
+            _drain_diagnostics(descriptor, diagnostics)
+            diagnostics.finish()
+            # Keep exit.json small and compatible with previously sealed results.
+            code = child.returncode if type(child.returncode) is int else None
+            _atomic_write(directory / "exit.json", _dump({"returncode": code, "supervisor_stop": interrupted}))
+            log = f"Isolated anime CLI exited {code}.\n".encode() + _dump(diagnostics.summary()) + b"\n"
+            if interrupted is not None:
+                log += f"Supervisor stop: {interrupted}.\n".encode()
+            _atomic_write(directory / "agent.log", log)
+        except OSError:
+            if interrupted is None:
+                raise RealGenerationError("agent_exit_record_failed") from None
+        finally:
+            if child.stdout is not None:
+                child.stdout.close()
     pulse()
     validate_real_artifacts(root, job)

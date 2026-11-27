@@ -58,7 +58,10 @@ def snapshot(session):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["approve", "reject"])
 @pytest.mark.parametrize("apply", [False, True])
-async def test_identical_import_preserves_administrator_decision(engine, tmp_path, raw_bundle, action, apply):
+@pytest.mark.parametrize("no_deadline", [False, True])
+async def test_identical_import_preserves_administrator_decision(engine, tmp_path, raw_bundle, action, apply, no_deadline):
+    if no_deadline:
+        raw_bundle["items"][0]["package"]["feed_valid_until"] = None
     bundle = prepare(tmp_path, raw_bundle)
     with Session(engine) as session, session.begin():
         await seed.import_bundle(AsyncAdapter(session), bundle, apply=True, now=NOW)
@@ -69,6 +72,8 @@ async def test_identical_import_preserves_administrator_decision(engine, tmp_pat
         assert (result["created"], result["review_updated"], result["unchanged"]) == (0, 0, 1)
         assert result["items"][0]["admin_review_protected"] is True
         assert result["items"][0]["status"] == before["content"][0]
+        assert session.scalars(select(Content)).one().ai_judgment_basis.get("feed_expiry_policy") == (
+            "no_deadline_v1" if no_deadline else None)
         assert snapshot(session) == before
         assert not session.new and not session.dirty
 

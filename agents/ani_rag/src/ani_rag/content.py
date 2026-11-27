@@ -11,6 +11,8 @@ from typing import Mapping, Protocol, Sequence
 from urllib.parse import urlsplit
 
 from ani_rag.models import EvidenceDocument, RagContentType
+from ani_rag.interview_story import interview_subject
+from ani_rag.people_subject import people_subjects
 from ani_rag.retrieval import RetrievedEvidence
 
 TEXT_ONLY_ASSET_ID = "text_only_gradient"
@@ -22,9 +24,16 @@ class DuplicateContentError(ValueError):
     """Raised when a draft repeats a recent work-specific content angle."""
 
 
-def web_claims_can_generate(claims: Sequence[Mapping[str, object]]) -> bool:
+def web_claims_can_generate(
+    claims: Sequence[Mapping[str, object]], content_type: RagContentType | None = None,
+    *, source: Mapping[str, object] | None = None,
+) -> bool:
     """A supported story matters more than how many pieces its text was cut into."""
-    if not claims:
+    if not claims or (content_type is RagContentType.PEOPLE and not people_subjects(claims)):
+        return False
+    if (source and interview_subject(str(source.get("title") or ""), str(source.get("original_text") or ""),
+                                     str(source.get("url") or ""))
+            and not any(item.get("interview_answer") for item in claims)):
         return False
     if all("kind" not in item for item in claims):
         return len(claims) >= 3  # Previously approved jobs used an untyped three-passage contract.
@@ -52,7 +61,9 @@ def web_claims_for_generation(
         ):
             continue
         claim = {"claim": item["claim"], "evidence_refs": [citation_ref_by_chunk[key] for key in ids]}
-        claim.update({key: item[key] for key in ("kind", "standalone", "speaker", "attribution_excerpt") if key in item})
+        claim.update({key: item[key] for key in (
+            "kind", "standalone", "speaker", "attribution_excerpt", "people_credit", "interview_answer",
+        ) if key in item})
         result.append(claim)
     return result
 
@@ -227,6 +238,17 @@ class ImageAsset:
     def source_identity_keys(self) -> frozenset[tuple[str, str]]:
         return image_source_identity_keys(self.asset_id, self.source_url, self.content_sha256,
                                          self.source_id, self.source_native_id, self.image_role)
+
+
+def distinct_image_count(assets: Sequence[ImageAsset]) -> int:
+    used: set[tuple[str, str]] = set()
+    count = 0
+    for asset in assets:
+        keys = asset.source_identity_keys
+        if used.isdisjoint(keys):
+            used.update(keys)
+            count += 1
+    return count
 
 
 @dataclass(frozen=True)

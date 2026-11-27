@@ -19,6 +19,9 @@ def route_key(value):
 
 
 def article_identity(record):
+    if record.get("producer") == "ani_rag":
+        from menu_worker.rag_contract import RagRequest
+        return "ani_rag", RagRequest.parse(record["request"]["rag_request"]).identity_key
     return record["request"]["source_id"], record["canonical_url"]
 
 

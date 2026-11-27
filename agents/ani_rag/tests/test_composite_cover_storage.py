@@ -2,7 +2,11 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
+import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
+
+from PIL import Image, ImageDraw
 
 from ani_rag.agents.content_generation.renderer import RenderedCard
 from ani_rag.content import CardDraft, CardLayout, ContentDraft, DuplicateContentError, ImageAsset, SupportedClaim
@@ -13,6 +17,8 @@ from ani_rag.quality import validate_draft
 from ani_rag.source_evidence import WebSourceWorkConflict, attach_web_quotes, web_quote_chunk_id
 from ani_rag.storage.sqlite_core import SQLiteRagStore
 from ani_rag.storage.sqlite_workflow import SQLiteDraftRepository, SQLiteImageReader, store_primary_web_source
+from ani_rag.image_ingest import WebImageSearchHit
+from ani_rag.web_images import WebSearchImageReader
 
 
 class CompositeCoverStorageTests(unittest.IsolatedAsyncioTestCase):
@@ -50,7 +56,7 @@ class CompositeCoverStorageTests(unittest.IsolatedAsyncioTestCase):
                 source_page_url=f"https://example.org/credits/{identifier}",
             ))
 
-    async def save(self, key, primary, components=(), inside="d", web_source=None):
+    async def save(self, key, primary, components=(), inside="d", web_source=None, revision_of=None):
         template = "cast_intro_grid" if components else "image_top_copy_bottom"
         cards = (
             CardDraft(key + "-cover", "cover", "Headline", "Body", (), primary,
@@ -60,7 +66,8 @@ class CompositeCoverStorageTests(unittest.IsolatedAsyncioTestCase):
         retrieval = replace(self.retrieval, retrieval_id="retrieval-" + key)
         draft = ContentDraft(key, RagContentType.CHARACTER, key, cards, "Article", (),
                              ("reference",), (1,), retrieval.retrieval_id, self.now, "Credits",
-                             retrieved_chunk_ids=tuple(chunk.chunk_id for chunk in retrieval.chunks))
+                             retrieved_chunk_ids=tuple(chunk.chunk_id for chunk in retrieval.chunks),
+                             ai_judgment_basis={"revision_of_draft_id": revision_of} if revision_of else {})
         plates = [RenderedCard(card.card_id, b"saved plate", {"headline": card.headline}, asdict(card.layout))
                   for card in cards]
         await self.drafts.save(draft, retrieval, plates, web_source=web_source)
@@ -179,6 +186,44 @@ class CompositeCoverStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.drafts.load_for_review("single")).draft.cards[0].source_asset_ids, ("b",))
         with self.assertRaisesRegex(DuplicateContentError, "cover_image_already_used"):
             await self.save("duplicate", "b-resized", ("a", "c"))
+
+    async def test_cross_site_crop_is_cover_only_duplicate_and_available_for_own_revision(self):
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        artwork = Image.new("RGB", (180, 160), "navy")
+        draw = ImageDraw.Draw(artwork)
+        draw.ellipse((40, 12, 116, 100), fill="gold")
+        draw.polygon([(20, 130), (85, 43), (143, 147)], fill="crimson")
+        original, cropped = folder / "poster.png", folder / "resized.jpg"
+        artwork.save(original)
+        artwork.crop((20, 0, 160, 160)).resize((210, 240)).save(cropped, quality=82)
+        with self.conn:
+            self.conn.executemany("UPDATE rag_image_asset SET local_path=? WHERE asset_id=?",
+                                  [(str(original), "a"), (str(cropped), "e")])
+        await self.save("first", "a")
+        candidates = {a.asset_id: a for a in await self.images.candidates_for(self.retrieval.documents)}
+        self.assertTrue(candidates["e"].used_as_cover_before)
+        with self.assertRaisesRegex(DuplicateContentError, "cover_image_already_used"):
+            await self.save("another", "e")
+        await self.save("different-cover", "b", inside="e")
+
+        # A new, not-yet-registered download must receive the same flag.
+        adapter = AsyncMock()
+        adapter.search_images.return_value = [WebImageSearchHit("https://another.com/art.jpg",
+                                                               "https://another.com/page", "Art")]
+        web = WebSearchImageReader(self.images, adapter, asset_dir=folder)
+        self.addCleanup(web.discard_staged)
+        variant = replace(candidates["e"], asset_id="live", source_url="https://another.com/art.jpg",
+                          content_sha256="a-new-web-hash", used_as_cover_before=False)
+        with patch("ani_rag.web_images._download_candidate", return_value=variant):
+            staged = await web.search_for_generation(self.retrieval.documents, query="art",
+                                                      content_type=RagContentType.CHARACTER)
+        self.assertTrue(staged[0].used_as_cover_before)
+        await self.drafts.set_status("first", "revision_requested")
+        pool = await self.images.candidates_for(self.retrieval.documents, revision_of="first")
+        self.assertFalse(next(a for a in pool if a.asset_id == "e").used_as_cover_before)
+        await self.save("first-corrected", "e", revision_of="first")
+        with self.assertRaisesRegex(DuplicateContentError, "cover_image_already_used"):
+            await self.save("new-content", "a")
 
     async def test_legacy_and_current_cdn_urls_share_cover_identity(self):
         with self.conn:
