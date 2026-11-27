@@ -103,6 +103,68 @@ class MixedDailyTests(unittest.TestCase):
         self.assertEqual(first["daily_attempts"], second["daily_attempts"])
         self.assertEqual((self.rag.published, self.f.published), before)
 
+    def test_delayed_reservation_gets_wait_window_only_after_confirmed_publish(self):
+        controller = self.controller()
+        history = deepcopy(controller.state["records"])
+        record = controller.reserve_rag(controller.collect_rag()[0])
+        reserved = record["reserved_at"]
+        self.f.f.now += 1800
+        acknowledged = self.f.f.now
+        def publish(job_id):
+            self.rag.published.append(job_id)
+        def wait(_seconds):
+            self.f.f.now = acknowledged + 1499
+            self.rag.rows[record["job_id"]]["execution_status"] = "succeeded"
+        controller.rag_publish, controller.sleep = publish, wait
+        controller.handle(record)
+        self.assertEqual(record["reserved_at"], reserved)
+        self.assertEqual(record["published_at"], acknowledged)
+        self.assertEqual(record["state"], "complete")
+        self.assertEqual(self.rag.published, [record["job_id"]])
+        self.assertEqual(controller.state["records"][:-1], history)
+        self.assertTrue(record["counts_slot"])
+
+    def test_confirmed_publish_wait_expires_at_1500_and_restart_does_not_reset_it(self):
+        controller = self.controller()
+        record = controller.reserve_rag(controller.collect_rag()[0])
+        reserved = record["reserved_at"]
+        self.f.f.now += 1800
+        acknowledged = self.f.f.now
+        controller.rag_publish = lambda job_id: self.rag.published.append(job_id)
+        controller.sleep = lambda _seconds: setattr(self.f.f, "now", acknowledged + 1500)
+        with self.assertRaisesRegex(StopRun, "rag_job_wait_timeout"):
+            controller.handle(record)
+        resumed = self.controller()
+        saved = resumed.state["records"][-1]
+        with self.assertRaisesRegex(StopRun, "rag_job_wait_timeout"):
+            resumed.handle(saved)
+        self.assertEqual((saved["reserved_at"], saved["published_at"]), (reserved, acknowledged))
+        self.assertEqual(self.rag.published, [record["job_id"]])
+        self.assertEqual(len(self.rag.rows), 1)
+
+    def test_ambiguous_publish_keeps_reservation_timeout_and_is_never_republished(self):
+        controller = self.controller()
+        record = controller.reserve_rag(controller.collect_rag()[0])
+        reserved = record["reserved_at"]
+        def ambiguous(job_id):
+            self.rag.published.append(job_id)
+            raise OSError("simulated broker acknowledgement loss")
+        controller.rag_publish = ambiguous
+        with self.assertRaises(OSError):
+            controller.handle(record)
+        self.assertTrue(record["publish_intent"])
+        self.assertNotIn("published_at", record)
+        self.assertNotIn("published", record)
+        self.f.f.now = reserved + 1500
+        resumed = self.controller()
+        saved = resumed.state["records"][-1]
+        with self.assertRaisesRegex(StopRun, "rag_job_wait_timeout"):
+            resumed.handle(saved)
+        self.assertEqual(saved["reserved_at"], reserved)
+        self.assertNotIn("published_at", saved)
+        self.assertEqual(self.rag.published, [record["job_id"]])
+        self.assertEqual(len(self.rag.rows), 1)
+
     def test_unknown_usage_stops_and_keeps_reserved_attempt(self):
         self.rag.incomplete = True
         controller = self.controller()

@@ -173,7 +173,7 @@ class MixedDailyController(DailyController):
                     "rag_owned_job_changed")
             if job["execution_status"] in {"succeeded", "failed", "needs_attention", "cancelled"}:
                 break
-            if self.now() - record["reserved_at"] >= self.config["job_timeout_seconds"]:
+            if self.now() - record.get("published_at", record["reserved_at"]) >= self.config["job_timeout_seconds"]:
                 self.stop("rag_job_wait_timeout")
             self.sleep(3)
         record.update(execution_status=job["execution_status"], outcome=job.get("outcome"),
@@ -252,6 +252,10 @@ class MixedDailyController(DailyController):
             self.save()
             self.rag_publish(record["job_id"])
             record["published"] = True
+            # Preserve the original quota reservation. A confirmed broker
+            # response starts the processing wait; ambiguous/legacy deliveries
+            # retain their original reservation-based timeout.
+            record["published_at"] = self.now()
             self.save()
         self.finish_job(record)  # An ambiguous publish is observed, never sent again.
 

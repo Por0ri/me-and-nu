@@ -186,7 +186,12 @@ def compose_runtime(plan, *, app, runtime_path, runtime_sha256, enable=False):
         require(enable is True, "rag_generation_disabled")
         # A reviewed runtime file must remain unchanged throughout the run.
         load_runtime(runtime_path, runtime_sha256)
-        return publish_with_deadline(job_id, app=app, task=TASK_NAME, queue=QUEUE_NAME,
+        # The article app deliberately registers only its own queue and refuses
+        # implicit queue creation. Use the RAG app's existing queue declaration
+        # without expanding what the article Worker can consume.
+        from menu_worker.rag_app import app as publisher
+        require(publisher.conf.broker_url == app.conf.broker_url, "rag_publisher_broker_mismatch")
+        return publish_with_deadline(job_id, app=publisher, task=TASK_NAME, queue=QUEUE_NAME,
             deadline=plan["config"]["deadline"], job_timeout_seconds=plan["config"]["job_timeout_seconds"])
     return DailyRagRuntime(store=store,
         discover=DictionaryCandidates(config.database_path, catalog_work_ids=config.catalog_work_ids),
