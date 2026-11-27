@@ -17,15 +17,28 @@ function load(relative, dependencies) {
   return mod.exports;
 }
 const transitions = load('lib/pivot/transitions.ts', {});
+const homeFeed = load('lib/pivot/home-feed.ts', {});
 const { warmUpFeed, FEED_LOADING_LIMITS } = load('lib/pivot/feed-warmup.ts', {
   '@/lib/api': { getFeed() { throw new Error('the real API is not used in tests'); } },
   './transitions': transitions,
+  './home-feed': homeFeed,
 });
 const page = urls => ({ selectedTopicId: 1, nextCursor: null, emptyReason: null,
   sections: [{ id: 'a', type: 'feed', title: '', subtopicId: null, contents: urls.map((imageUrl, id) => ({ id, imageUrl })) }] });
 const limits = { min: 40, max: 120 };
 const deps = (load, preloaded = []) => ({ load, preload: async url => { preloaded.push(url); },
   wait: ms => new Promise(resolve => setTimeout(resolve, ms)), now: () => Date.now() });
+
+test('Default warm-up requests the same 20-card first page as HOME', async () => {
+  const requests = [];
+  const browserWarmUp = load('lib/pivot/feed-warmup.ts', {
+    '@/lib/api': { async getFeed(topicId, query) { requests.push([topicId, query.limit, query.cursor]); return page([]); } },
+    './transitions': transitions,
+    './home-feed': homeFeed,
+  }).warmUpFeed;
+  await browserWarmUp(7, Date.now(), undefined, { min: 0, max: 50 });
+  assert.deepEqual(requests, [[7, 20, undefined]]);
+});
 
 test('The loading screen shows one full turn of the artwork and holds the feed back at most 10 s', () => {
   assert.equal(FEED_LOADING_LIMITS.min, 2400);

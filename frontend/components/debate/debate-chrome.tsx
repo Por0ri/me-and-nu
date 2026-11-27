@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 // 새 알림 여부는 pivot 공통 틀(NewNoticeProvider)이 채우고, 홈 머리 부분과 같은 값을 쓴다. 하단바도 홈과 같은 부품이다.
@@ -35,6 +34,7 @@ export function DebateScreen({ children, nav = false, composer = false, label, s
 export function DebateHomeHeader({ onGuide, back, title = "토론방" }: { onGuide: () => void; back?: () => void; title?: string }) {
   // 홈 머리 부분과 같은 기준으로, 새 알림이 있을 때만 점을 보여준다.
   const hasNewNotice = useContext(NewNoticeContext);
+  const router = useRouter();
   return <div className={styles.homeHeader}>
     <header className={homeStyles.header}>
       <p className={homeStyles.brand}>
@@ -47,11 +47,14 @@ export function DebateHomeHeader({ onGuide, back, title = "토론방" }: { onGui
       <h1 className={homeStyles.srOnly}>{title}</h1>
       <div className={styles.headerActions}>
         <button type="button" className={homeStyles.notification} aria-label="토론방 이용 안내" onClick={onGuide}><InfoIcon size={24} /></button>
-        <Link className={homeStyles.notification} href="/pivot/home?view=notifications" aria-label="알림"
-          aria-description={hasNewNotice ? "오늘 온 새 알림이 있어요" : undefined}>
+        {/* from=debate: 알림함에서 뒤로가기를 누르면 HOME 이 아니라 들어오기 전 토론방 화면으로 돌아간다.
+            링크가 아니라 버튼: 새 탭으로 열면 돌아갈 앞 기록이 없어서 (프로필 · 관심 화면의 알림 버튼과 같은 방식) */}
+        <button type="button" className={homeStyles.notification} aria-label="알림"
+          aria-description={hasNewNotice ? "오늘 온 새 알림이 있어요" : undefined}
+          onClick={() => router.push("/pivot/home?view=notifications&from=debate")}>
           <img src="/pivot/home/chrome/notification.svg" alt="" width={24} height={24} />
           {hasNewNotice ? <span className={homeStyles.notificationDot} aria-hidden="true" /> : null}
-        </Link>
+        </button>
       </div>
     </header>
   </div>;
@@ -124,7 +127,7 @@ export function useLoad<T>(initial: T, loader: () => Promise<T>): [Loaded<T>, ()
 export type ToastTone = "done" | "info";
 export type ShowToast = (message: string, tone?: ToastTone) => void;
 
-/** 화면 아래에 잠깐 떴다가 서서히 사라지는 알림 (2026-11-23 시안: 연보라 바탕·진회색 테두리, 완료 알림은 보라 체크).
+/** 화면 아래에 잠깐 떴다가 서서히 사라지는 알림 (2026-11-25 시안: 카드 폭, 연보라 바탕 · 보라 테두리, 완료 알림은 보라 체크 + 검정 12px).
  *  약 3초 보였다가 0.6초 동안 사라지고(.toast 애니메이션), 새 알림이 오면 처음부터 다시 보인다. */
 export function useToast(): [ReactNode, ShowToast] {
   const [toast, setToast] = useState<{ message: string; tone: ToastTone; id: number } | null>(null);

@@ -1,0 +1,19 @@
+[Unit]
+Description=Approved me-nu sequential daily content generation
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/me-nu-daily-schedule.env
+ExecStart=/usr/bin/python3 ${DAILY_SCHEDULE_RELEASE_DIR}/scheduled_run.py --policy ${DAILY_SCHEDULE_POLICY} --reviewed-policy-sha256 ${DAILY_SCHEDULE_SHA256} --state-root ${DAILY_SCHEDULE_STATE_ROOT} --runtime-env ${DAILY_SCHEDULE_RUNTIME_ENV} --release-dir ${DAILY_SCHEDULE_RELEASE_DIR} --apply
+TimeoutStartSec=infinity
+TimeoutStopSec=60
+UMask=0077
+NoNewPrivileges=true
+Restart=no
+# Installing this file does not enable the timer or authorize paid execution.
+

@@ -31,7 +31,7 @@ from app.models import AdminActionLog, AgentRun, Content, ContentSource, Draft, 
 from app.core.carousel_preview import checking_preview_database
 from app.models.content_slide import ContentSlide
 from app.repositories.content_work_repository import link_carousel_works
-from app.repositories.carousel_repository import local_test_database
+from app.repositories.carousel_repository import NO_DEADLINE_POLICY, local_test_database
 
 METHOD = "carousel_import_v1"
 MAX_PNG_BYTES = 20 * 1024 * 1024
@@ -120,7 +120,9 @@ class PackageModel(BaseModel):
     request_id: str = Field(min_length=1, max_length=300)
     content_type: Literal["news", "event", "guide", "people", "goods", "behind", "review", "humor", "character", "curation", "music"]
     menu_work_ids: list[StrictInt] = Field(default_factory=list, max_length=100)
-    feed_valid_until: str
+    # Explicit null is a producer handoff without a service deadline. A missing
+    # field remains invalid; no date is synthesized into the immutable package.
+    feed_valid_until: str | None
     purge_at: str | None = None
     sources: list[SourceModel] = Field(min_length=1, max_length=100)
     facts: list[FactModel] = Field(min_length=1, max_length=100)
@@ -175,7 +177,7 @@ class BundleItem(StrictModel):
 
 class Bundle(StrictModel):
     schemaVersion: Literal[1]
-    producer: Literal["ani_menu_agent"]
+    producer: Literal["ani_menu_agent", "ani_rag"]
     topicCode: Literal["anime"]
     items: list[BundleItem] = Field(min_length=1, max_length=50)
 
@@ -261,7 +263,7 @@ class PreparedItem:
     digest: str
     queue_task_id: str
     images: dict[int, bytes]
-    expires_at: datetime
+    expires_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -280,15 +282,24 @@ def load_bundle(path: Path, *, review_record_file: Path | None = None, now: date
         requests = set()
         total_bytes = 0
         for item in document.items:
+            if document.producer == "ani_rag":
+                from app.services.rag_staging import RagStagingError, validate_rag_item
+                try:
+                    validate_rag_item(item.package, [asset.model_dump() for asset in item.assets], item.reviewEvidence)
+                except RagStagingError as exc:
+                    raise CarouselImportError(str(exc)) from None
             package = PackageModel.model_validate(item.package)
             if package.request_id in requests:
                 raise CarouselImportError("Duplicate producer request in bundle.")
             requests.add(package.request_id)
-            expires_at = _timestamp(package.feed_valid_until, "feed_valid_until")
-            if expires_at <= moment:
+            expires_at = (_timestamp(package.feed_valid_until, "feed_valid_until")
+                          if package.feed_valid_until is not None else None)
+            if expires_at is not None and expires_at <= moment:
                 raise CarouselImportError("Expired content cannot be imported.")
-            if package.purge_at and _timestamp(package.purge_at, "purge_at") < expires_at:
-                raise CarouselImportError("purge_at cannot precede feed_valid_until.")
+            if package.purge_at is not None:
+                purge_at = _timestamp(package.purge_at, "purge_at")
+                if expires_at is not None and purge_at < expires_at:
+                    raise CarouselImportError("purge_at cannot precede feed_valid_until.")
             assets = {asset.page: asset for asset in item.assets}
             if len(assets) != len(item.assets) or set(assets) != {card.page for card in package.cards}:
                 raise CarouselImportError("PNG pages must match all carousel cards exactly.")
@@ -367,6 +378,8 @@ async def _verify_stored_copy(db, item: PreparedItem, run, draft, content) -> No
             or content.source_draft_id != draft.draft_id or draft.agent_run_id != run.agent_run_id
             or (content.ai_judgment_basis or {}).get("method") != METHOD
             or (content.ai_judgment_basis or {}).get("digest") != item.digest
+            or (content.ai_judgment_basis or {}).get("feed_expiry_policy") != (
+                NO_DEADLINE_POLICY if item.expires_at is None else None)
             or content.title != title or content.body != package.detail_body
             or content.summary != summary or content.image_url != image_url
             or content.content_type != package.content_type or expiry != item.expires_at
@@ -401,6 +414,8 @@ async def import_bundle(db, bundle: PreparedBundle, *, apply: bool = False, now:
     if local_test_preview and checking_test_preview:
         raise CarouselImportError("Choose exactly one test preview scope.")
     preview_scope = "checking_test_preview" if checking_test_preview else "local_test_preview" if local_test_preview else None
+    if bundle.document.producer == "ani_rag" and preview_scope:
+        raise CarouselImportError("RAG content requires separate operator approval; preview publication is unavailable.")
     preview_metadata = {"database": expected_database, "quality_approval": "not_reviewed"}
     if checking_test_preview:
         preview_metadata["environment"] = "checking"
@@ -417,7 +432,7 @@ async def import_bundle(db, bundle: PreparedBundle, *, apply: bool = False, now:
         raise CarouselImportError("An existing active anime Topic is required.")
     plans = []
     for item in bundle.items:
-        if item.expires_at <= moment:
+        if item.expires_at is not None and item.expires_at <= moment:
             raise CarouselImportError("Content expired before import.")
         run = await db.scalar(select(AgentRun).where(AgentRun.queue_task_id == item.queue_task_id)
                               .execution_options(populate_existing=True))
@@ -480,6 +495,11 @@ async def import_bundle(db, bundle: PreparedBundle, *, apply: bool = False, now:
         report["created" if new else "review_updated" if changed else "unchanged"] += 1
         basis = {"method": METHOD, "digest": item.digest, "operator_review": review,
                  "producer_review_is_approval": False}
+        if item.expires_at is None:
+            # A new null import records the decision in service metadata only.
+            # Existing rows must already have this marker (_verify_stored_copy)
+            # before a review update can retain it; never promote legacy NULLs.
+            basis["feed_expiry_policy"] = NO_DEADLINE_POLICY
         if preview_scope:
             basis.update({"preview": True, preview_scope: preview_metadata})
         if apply and new:

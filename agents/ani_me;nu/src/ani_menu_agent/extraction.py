@@ -904,6 +904,22 @@ def extract_page_payload(payload: dict) -> tuple[ContentPackage, dict[str, int |
     )
     raw = response.get("raw")
     usage = getattr(raw, "usage_metadata", None) or {}
+    if not (
+        isinstance(usage, dict)
+        and all(
+            type(usage.get(key)) is int and usage[key] >= 0
+            for key in ("input_tokens", "output_tokens")
+        )
+        and usage["input_tokens"] + usage["output_tokens"] > 0
+    ):
+        return package, {
+            "model": settings.model_name,
+            "stage": "fact_extraction",
+            "invocation_attempted": True,
+            "usage_complete": False,
+            "reason": "provider_usage_unavailable",
+            "elapsed_seconds": elapsed,
+        }
     input_tokens = int(usage.get("input_tokens", 0) or 0)
     output_tokens = int(usage.get("output_tokens", 0) or 0)
     input_details = usage.get("input_token_details") or {}

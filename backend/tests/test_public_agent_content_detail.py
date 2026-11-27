@@ -34,10 +34,20 @@ def _content(*, production_type: str, source_draft_id: int | None):
 def _stub_subtopic_names(monkeypatch):
     monkeypatch.setattr(feed_service.content_repo, "list_content_subtopic_names", AsyncMock(return_value=["액션"]))
     monkeypatch.setattr(feed_service.content_repo, "list_content_sources", AsyncMock(return_value=[]))
-    # No recommendation round and no just-finished onboarding or taste edit: the home feed stays newest-first in these tests.
-    monkeypatch.setattr(feed_service.recommendation_repo, "latest_round", AsyncMock(return_value=None))
-    monkeypatch.setattr(feed_service.recommendation_repo, "onboarding_completed_at", AsyncMock(return_value=None))
-    monkeypatch.setattr(feed_service.recommendation_repo, "taste_edited_at", AsyncMock(return_value=None))
+    # No recommendation round and no just-finished onboarding or taste edit: the home feed uses the fallback list
+    # (추천 없을 때 비상 목록) in these tests, with nothing read, disliked or seen today.
+    for name, value in {"latest_round": None, "onboarding_completed_at": None, "taste_edited_at": None,
+                        "negative_content_ids": set(), "fully_read_content_ids": set(), "shown_content_ids": set(),
+                        "main_works": {}}.items():
+        monkeypatch.setattr(feed_service.recommendation_repo, name, AsyncMock(return_value=value))
+
+
+def _fallback_feed_returns(monkeypatch, content):
+    """비상 목록 후보와 카드 조회가 content 하나를 돌려줌."""
+    monkeypatch.setattr(feed_service.recommendation_repo, "latest_typed_contents",
+                        AsyncMock(return_value=[(content.content_id, content.content_type)]))
+    monkeypatch.setattr(feed_service.recommendation_repo, "contents_by_id",
+                        AsyncMock(return_value={content.content_id: content}))
 
 
 def _mock_detail_dependencies(monkeypatch, content):
@@ -90,7 +100,7 @@ async def test_detail_exposes_same_image_url_as_feed(monkeypatch, image_url):
     content = _content(production_type="ai", source_draft_id=88)
     content.image_url = image_url
     _mock_detail_dependencies(monkeypatch, content)
-    monkeypatch.setattr(feed_service.content_repo, "list_public_contents", AsyncMock(return_value=[content]))
+    _fallback_feed_returns(monkeypatch, content)
 
     feed = await feed_service.get_feed(
         object(), user_id=1, topic_id=1, subtopic_id=None, cursor=None, limit=20
@@ -126,7 +136,7 @@ async def test_non_original_ai_content_remains_excerpt_only(monkeypatch, product
 async def test_feed_card_labels_agent_generated_content(monkeypatch):
     content = _content(production_type="ai", source_draft_id=88)
     monkeypatch.setattr(feed_service, "require_active_tap", AsyncMock(return_value=SimpleNamespace(tap_id=7)))
-    monkeypatch.setattr(feed_service.content_repo, "list_public_contents", AsyncMock(return_value=[content]))
+    _fallback_feed_returns(monkeypatch, content)
     monkeypatch.setattr(feed_service, "_source_or_none", AsyncMock(return_value=("https://example.com/source", "출처")))
     monkeypatch.setattr(feed_service, "_state", AsyncMock(return_value=(None, None)))
 
@@ -145,7 +155,7 @@ async def test_preview_notice_appears_in_feed_and_detail(monkeypatch):
     content.judgment_status = "needs_review"
     content.ai_judgment_basis = {"preview": True}
     _mock_detail_dependencies(monkeypatch, content)
-    monkeypatch.setattr(feed_service.content_repo, "list_public_contents", AsyncMock(return_value=[content]))
+    _fallback_feed_returns(monkeypatch, content)
 
     feed = await feed_service.get_feed(
         object(), user_id=1, topic_id=1, subtopic_id=None, cursor=None, limit=20

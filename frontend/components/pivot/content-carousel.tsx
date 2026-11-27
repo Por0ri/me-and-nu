@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import { API_UNAUTHORIZED_EVENT } from "@/lib/api";
 import { orderedHomeSlides, type HomeSlideModel } from "@/lib/pivot/home";
 import homeStyles from "./home.module.css";
@@ -130,15 +130,20 @@ export function ContentCover({ slides, title, onSlideChange }: {
   </div> : null;
 }
 
-export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home", onSlideChange, onFirstImageReady }: {
+export function ContentCarousel({ slides: sourceSlides, title, labelledBy, scope = "home", onSlideChange, onFirstImageReady, initialSlideIndex = 0 }: {
   slides: readonly HomeSlideModel[]; title: string; labelledBy?: string; scope?: "home" | "detail"; onSlideChange?: (index: number) => void;
   onFirstImageReady?: () => void;
+  initialSlideIndex?: number;
 }) {
   const id = useId();
   const track = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; x: number; y: number; left: number; moving: boolean } | null>(null);
   const suppressClick = useRef(false);
-  const [active, setActive] = useState(0);
+  const initial = useRef(Math.max(0, Math.min(initialSlideIndex, sourceSlides.length - 1))).current;
+  const [active, setActive] = useState(initial);
+  useLayoutEffect(() => {
+    if (initial > 0) track.current?.scrollTo({ left: initial * track.current.clientWidth, behavior: "instant" });
+  }, [initial]);
   const slides = orderedHomeSlides(sourceSlides);
   const current = Math.max(0, Math.min(active, slides.length - 1));
   function goTo(index: number) {

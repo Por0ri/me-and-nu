@@ -1,0 +1,64 @@
+/* Full policy text modals (이용약관 및 운영정책 / 개인정보 처리방침), measured from the 375pt mock. */
+.dialog {
+  box-sizing: border-box;
+  width: min(296px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 16px 19px 20px;
+  border: 0;
+  border-radius: 10px;
+  background: #fff;
+  color: #27272a;
+  font-family: PivotPretendard, sans-serif;
+  letter-spacing: 0;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  /* Only the purple boxes scroll: a scrolling modal showed its own bar on desktop and squared the corners on that side. */
+  overflow: hidden;
+}
+.dialog[open] { display: flex; flex-direction: column; }
+.dialog::backdrop { background: rgb(0 0 0 / 50%); }
+
+.header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.title { margin: 0; color: #27272a; font-size: 16px; font-weight: 600; line-height: 24px; }
+.close {
+  display: grid; flex: none; place-items: center;
+  width: 32px; height: 32px; margin: -4px -7px -4px 0; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: #71717a; cursor: pointer;
+}
+.close svg { display: block; }
+.close:focus-visible, .document:focus-visible { outline: 2px solid #7043b4; outline-offset: 1px; }
+
+.effective { flex: none; margin-top: 7px; padding: 11px 12px 6px; border: 1px solid #ebe3ff; border-radius: 8px; background: #f7f2ff; }
+.effectiveDate { margin: 0; color: #7043b4; font-size: 16px; font-weight: 600; line-height: 20px; }
+.effectiveNote { margin: 11px 0 0; color: #52525b; font-size: 11px; line-height: 16px; }
+
+.label { flex: none; margin: 13px 0 3px; color: #27272a; font-size: 11px; font-weight: 500; line-height: 16px; }
+
+/* Each full text scrolls inside its own box; the boxes shrink together on short screens (they take all the shrinking,
+   so the modal itself never needs a scrollbar). A thin lilac bar on desktop instead of the default grey one. */
+.document {
+  position: relative; /* keeps the hidden table captions inside the box instead of overflowing the modal */
+  box-sizing: border-box; flex: 0 1 240px; min-height: 48px;
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #c7acfb transparent;
+  padding: 8px 12px; border: 1px solid #ebe3ff; border-radius: 8px; background: #f7f2ff;
+  color: #52525b; font-size: 11px; font-weight: 400; line-height: 16px;
+}
+.heading, .paragraph { margin: 0; color: inherit; font: inherit; }
+/* 2026-11 second feedback mock: headings bold — the document name larger, chapters and articles at body size. */
+h3.heading { color: #3f3f46; font-size: 15px; font-weight: 700; line-height: 22px; }
+h4.heading, h5.heading { color: #3f3f46; font-weight: 600; }
+.list, .nestedList { margin: 0; padding: 0; list-style: none; }
+.item { display: grid; grid-template-columns: 25px minmax(0, 1fr); }
+.marker { padding-right: 4px; text-align: right; white-space: nowrap; }
+.nestedList .item { grid-template-columns: 12px minmax(0, 1fr); }
+.nestedList .marker { padding-right: 0; text-align: left; }
+
+.tableWrap { margin: 4px 0; overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; background: rgb(255 255 255 / 55%); font-size: 11px; line-height: 15px; }
+/* Cells wrap at spaces (and after "@" in addresses) so narrow columns never split a word mid-way. */
+.table th, .table td { padding: 3px 4px; border: 1px solid #e2d7fb; text-align: left; vertical-align: top; word-break: keep-all; overflow-wrap: break-word; }
+.table th { background: #efe7ff; color: #3f3f46; font-weight: 600; }
+
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

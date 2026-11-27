@@ -8,7 +8,7 @@ import { DEBATE_RULES } from "@/lib/debate/rules";
 import type { DebateSummary, VoteTickets } from "@/lib/debate/types";
 import { LiveCard, PastCard, VoteCard, useRoomActions, useVoteActions } from "./debate-cards";
 import { DebateHomeHeader, DebateScreen, DebateState, DebateTabs, useLoad, useToast, type ShowToast } from "./debate-chrome";
-import { DebateGuide, VoteTicketBox, useNow } from "./debate-parts";
+import { ActivityFab, DebateGuide, VoteTicketBox, useNow } from "./debate-parts";
 import { DebateSearchResults, useDebateSearch } from "./debate-search";
 import styles from "./debate.module.css";
 
@@ -46,6 +46,8 @@ export function DebateHome({ initialTab }: { initialTab: DebateHomeTab }) {
       : tab === "live" ? <LiveTab onShowVotes={() => select("vote")} showToast={showToast} />
       : tab === "vote" ? <VoteTab showToast={showToast} />
       : <PastTab />}
+    {/* 내 활동 바로가기: 세 탭 모두 아래에 떠 있다 (2026-11-25 시안). 검색창을 열어 뒤가 흐려진 동안은 숨긴다 */}
+    {search.open ? null : <ActivityFab />}
     {guideOpen ? <DebateGuide onClose={closeGuide} /> : null}
     {toast}
   </DebateScreen>;

@@ -7,19 +7,26 @@ It never reads environment files, starts workers, or persists source content.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import count
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ani_rag.environment import load_project_environment
+from ani_rag.firecrawl_errors import is_credit_refusal, paid_work_started, tool_credit_refusal
 
 DEFAULT_MCP_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "mcp_servers.json"
 _MAX_RESPONSE_BYTES = 25 * 1024 * 1024
+_T = TypeVar("_T")
+_LOG = logging.getLogger(__name__)
 
 
 class _RejectEndpointRedirects(HTTPRedirectHandler):
@@ -60,19 +67,97 @@ def load_mcp_endpoints(path: Path = DEFAULT_MCP_CONFIG_PATH) -> dict[str, MCPSer
     return endpoints
 
 
+class _CreditRefused(RuntimeError):
+    credits_exhausted = True
+    permanent_failure = True
+    safe_summary = "Firecrawl provider credits exhausted"
+
+    def __init__(self) -> None:
+        super().__init__(self.safe_summary)
+
+
+def _firecrawl_credentials() -> list[tuple[int, str]]:
+    load_project_environment()
+    credentials = []
+    seen = set()
+    for slot in range(1, 7):
+        suffix = "" if slot == 1 else str(slot)
+        for prefix in ("ANI_RAG_FIRECRAWL_API_KEY", "Firecrawl_API_KEY", "FIRECRAWL_API_KEY"):
+            value = os.environ.get(prefix + suffix, "")
+            if "\r" in value or "\n" in value:
+                raise ValueError(f"Firecrawl key slot {slot} contains a line break")
+            key = value.strip()
+            if key:
+                if key not in seen:
+                    credentials.append((slot, key))
+                    seen.add(key)
+                break
+    return credentials
+
+
 class StreamableHTTPMCPClient:
-    """Small request-response MCP client with session and SSE response support."""
+    """Keep the selected credential and its MCP session together for this worker."""
 
     def __init__(self, server: MCPServerEndpoint, *, timeout_seconds: float = 60.0) -> None:
         self.server = server
         self.timeout_seconds = timeout_seconds
-        self._request_id = 0
+        self._lock = threading.Lock()
+        self._sessions: list[tuple[int, _HTTPSession]] | None = None
+        self._active = 0
+
+    def initialize(self) -> dict[str, Any]:
+        return self._run(lambda session: session.initialize())
+
+    def list_tools(self) -> frozenset[str]:
+        return self._run(lambda session: session.list_tools())
+
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._run(lambda session: session.call_tool(name, arguments))
+
+    def _run(self, operation: Callable[[_HTTPSession], _T]) -> _T:
+        while True:
+            with self._lock:
+                if self._sessions is None:
+                    keys = _firecrawl_credentials() if self.server.alias == "firecrawl" else []
+                    # Preserve anonymous and non-Firecrawl sessions when no key is configured.
+                    self._sessions = [
+                        (slot, _HTTPSession(self.server, self.timeout_seconds, key))
+                        for slot, key in keys or [(0, "")]
+                    ]
+                if self._active >= len(self._sessions):
+                    raise _CreditRefused()
+                slot, session = self._sessions[self._active]
+            try:
+                return operation(session)
+            except _CreditRefused:
+                with self._lock:
+                    # Two concurrent refusals on the same key must advance only once.
+                    if self._active < len(self._sessions) and self._sessions[self._active][1] is session:
+                        self._active += 1
+                        if self._active < len(self._sessions):
+                            _LOG.info("Firecrawl credit exhausted on slot %d; switching to slot %d",
+                                      slot, self._sessions[self._active][0])
+
+
+class _HTTPSession:
+    """An MCP session bound to one credential; tool discovery is repeated on failover."""
+
+    def __init__(self, server: MCPServerEndpoint, timeout_seconds: float, api_key: str) -> None:
+        self.server = server
+        self.timeout_seconds = timeout_seconds
+        self._api_key = api_key
+        self._request_ids = count(1)
+        self._handshake = threading.Lock()
         self._session_id: str | None = None
         self._protocol_version: str | None = None
         self._tool_names: frozenset[str] | None = None
         self._tool_names_checked_at = 0.0
 
     def initialize(self) -> dict[str, Any]:
+        with self._handshake:
+            return self._initialize()
+
+    def _initialize(self) -> dict[str, Any]:
         result = self._request("initialize", {
             "protocolVersion": "2025-03-26",
             "capabilities": {},
@@ -85,10 +170,14 @@ class StreamableHTTPMCPClient:
         return result
 
     def list_tools(self) -> frozenset[str]:
+        with self._handshake:
+            return self._list_tools()
+
+    def _list_tools(self) -> frozenset[str]:
         if self._tool_names is not None and time.monotonic() - self._tool_names_checked_at < 60:
             return self._tool_names
         if self._protocol_version is None:
-            self.initialize()
+            self._initialize()
         result = self._request("tools/list", {})
         tools = result.get("tools")
         if not isinstance(tools, list):
@@ -108,18 +197,34 @@ class StreamableHTTPMCPClient:
     def _request(
         self, method: str, params: dict[str, Any], *, include_protocol: bool = True
     ) -> dict[str, Any]:
-        self._request_id += 1
-        request_id = self._request_id
+        request_id = next(self._request_ids)
         payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
         headers = self._headers(include_protocol=include_protocol)
         response = self._post(payload, headers)
         if response.get("id") != request_id:
             raise RuntimeError(f"MCP response ID did not match request for {method}")
         if "error" in response:
-            raise RuntimeError(f"MCP {method} failed: {response['error']}")
+            error = response["error"]
+            if self.server.alias == "firecrawl":
+                if isinstance(error, dict):
+                    data = error.get("data")
+                    fields = dict(data) if isinstance(data, dict) else {}
+                    fields.setdefault("message", error.get("message", ""))
+                    code = error.get("code")
+                    http_code = code if isinstance(code, int) and 100 <= code <= 599 else None
+                    if http_code in (None, 400, 402) and not paid_work_started(error) and tool_credit_refusal(
+                        {"isError": True, "structuredContent": fields}
+                    ):
+                        raise _CreditRefused()
+                # An upstream error may echo credentials. Keep only its numeric code.
+                code = error.get("code") if isinstance(error, dict) else None
+                raise RuntimeError(f"Firecrawl MCP {method} failed (JSON-RPC {code if isinstance(code, int) else 'error'})")
+            raise RuntimeError(f"MCP {method} failed: {error}")
         result = response.get("result")
         if not isinstance(result, dict):
             raise RuntimeError(f"MCP {method} response omitted result object")
+        if self.server.alias == "firecrawl" and method == "tools/call" and tool_credit_refusal(result):
+            raise _CreditRefused()
         return result
 
     def _notification(self, method: str) -> None:
@@ -131,17 +236,8 @@ class StreamableHTTPMCPClient:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
-        if self.server.alias == "firecrawl":
-            load_project_environment()
-            api_key = (
-                os.environ.get("ANI_RAG_FIRECRAWL_API_KEY")
-                or os.environ.get("Firecrawl_API_KEY")
-                or ""
-            ).strip()
-            if api_key:
-                if "\r" in api_key or "\n" in api_key:
-                    raise ValueError("ANI_RAG_FIRECRAWL_API_KEY must not contain line breaks")
-                headers["Authorization"] = f"Bearer {api_key}"
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
         if include_protocol and self._protocol_version:
@@ -163,6 +259,22 @@ class StreamableHTTPMCPClient:
                     return _read_matching_sse(response, request_id, allow_empty=allow_empty)
                 raw = response.read(_MAX_RESPONSE_BYTES + 1)
         except HTTPError as error:
+            if self.server.alias == "firecrawl":
+                # A complete billing refusal is safe to replay; a partially read error is ambiguous.
+                raw_error = error.read(8193)
+                if error.code in (400, 402) and len(raw_error) <= 8192:
+                    detail = raw_error.decode("utf-8", "replace")
+                    try:
+                        envelope = json.loads(detail)
+                    except ValueError:
+                        envelope = None
+                    if isinstance(envelope, dict):
+                        fields = {"statusCode": error.code, **envelope}
+                        if tool_credit_refusal({"isError": True, "structuredContent": fields}):
+                            raise _CreditRefused() from None
+                    elif is_credit_refusal(error.code, detail):
+                        raise _CreditRefused() from None
+                raise RuntimeError(f"Firecrawl MCP endpoint returned HTTP {error.code}") from None
             detail = error.read(2048).decode("utf-8", "replace")
             raise RuntimeError(f"MCP endpoint returned HTTP {error.code}: {detail}") from error
         except URLError as error:

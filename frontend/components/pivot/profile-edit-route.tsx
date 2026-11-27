@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api";
-import { NICKNAME_RULE, NICKNAME_TAKEN_MESSAGE } from "@/lib/pivot/onboarding-service";
+import { isBannedNicknameError, NICKNAME_BANNED_MESSAGE, NICKNAME_RULE, NICKNAME_TAKEN_MESSAGE } from "@/lib/pivot/onboarding-service";
 import { checkMyNickname, loadEditableProfile, saveMyNickname, type EditableProfile } from "@/lib/pivot/profile-edit";
 import { isActiveSession } from "@/lib/pivot/services";
 import { usePivotSession } from "./pivot-session";
@@ -47,6 +47,7 @@ export function ProfileEditRoute() {
       if (reason instanceof ApiError && reason.status === 401) { refresh(); router.replace("/pivot/login"); return; }
       // Someone took the name after the check, or the server's rule failed: the same red line as onboarding.
       setMessage(reason instanceof ApiError && reason.code === "NICKNAME_TAKEN" ? NICKNAME_TAKEN_MESSAGE
+        : isBannedNicknameError(reason) ? NICKNAME_BANNED_MESSAGE
         : reason instanceof ApiError && reason.status === 422 ? NICKNAME_RULE : "닉네임을 저장하지 못했어요. 잠시 후 다시 시도해주세요.");
     } finally {
       if (mounted.current) setSaving(false);

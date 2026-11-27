@@ -4,7 +4,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from ani_rag.content import CardDraft, ContentDraft, SupportedClaim
+from ani_rag.content import CardDraft, ContentDraft, ImageAsset, SupportedClaim
 from ani_rag.quality import QualityIssue, validate_carousel_readability, validate_draft
 from ani_rag.review import HeadlineEdit, ReviewDecision, ReviewInput, ReviewResult, ReviewRoute, route_review
 from ani_rag.model_services import COPY_DECK_SCHEMA, EvidenceBoundIndependentReviewer
@@ -195,13 +195,16 @@ class ReviewGateTests(unittest.TestCase):
         )
 
     def high_scoring_review(self, draft, *, decision="pass", issues=(), revision_instructions=(),
-                            evidence_requests=(), conflicts=(), page_score=95, primary_web_source=None):
+                            evidence_requests=(), conflicts=(), page_score=95, primary_web_source=None,
+                            people_focus=None, retrieved_chunks=None, interview_focus=None):
         card_score = dict.fromkeys((
             "korean_naturalness", "translation_naturalness", "reader_clarity", "fan_engagement",
             "card_flow", "safety_respect", "image_relevance", "image_composition",
         ), 5)
         model = AsyncMock()
         model.generate_json.return_value = {
+            **({"people_focus": people_focus} if people_focus is not None else {}),
+            **({"interview_answer_focus": interview_focus} if interview_focus is not None else {}),
             "decision": decision, "issues": list(issues), "revision_instructions": list(revision_instructions),
             "title_fact_conflicts": list(conflicts),
             "evidence_requests": list(evidence_requests),
@@ -215,8 +218,117 @@ class ReviewGateTests(unittest.TestCase):
             },
         }
         return asyncio.run(EvidenceBoundIndependentReviewer(model).review(ReviewInput(
-            draft, {}, {}, {}, primary_web_source=primary_web_source,
+            draft, {}, {}, retrieved_chunks or {}, primary_web_source=primary_web_source,
         )))
+
+    def test_people_review_needs_a_real_contributor_in_the_copy_with_a_verified_role(self):
+        from ani_rag.content import web_claims_can_generate
+        for source, person, role, translated, reader, credit in (
+            ("director Yuichiro Hayashi", "Yuichiro Hayashi", "director", "하야시 유이치로가 감독을 맡았어.", "하야시 유이치로", "감독"),
+            ("声優の石川由依", "石川由依", "声優", "성우 이시카와 유이가 참여했어.", "이시카와 유이", "성우"),
+            ("한국어판에서 최원형이 주연을 더빙했어.", "최원형", "더빙", "주연 목소리를 맡은 건 최원형이야.", "최원형", "주연 목소리"),
+            ("原作者は諫山創", "諫山創", "原作者", "원작 작가는 이사야마 하지메야.", "이사야마 하지메", "원작 작가"),
+        ):
+            verified = [{"claim": source, "kind": "rag_core", "standalone": True,
+                         "people_credit": {"name": person, "relation": role}}]
+            self.assertTrue(web_claims_can_generate(verified, RagContentType.PEOPLE))
+            basis = {"web_discovery_candidate": {"verified_claims": verified}}
+            draft = replace(self.character_draft(), content_type=RagContentType.PEOPLE,
+                            ai_judgment_basis=basis, detail_body=translated)
+            focus = {"source_name": person, "source_excerpt": source, "source_relation": role,
+                     "reader_name": reader, "relation": credit, "excerpt": translated, "location": "detail_article",
+                     "same_person": True, "same_contribution": True}
+            self.assertEqual(self.high_scoring_review(draft, people_focus=focus).decision, ReviewDecision.PASS)
+            plot = replace(draft, detail_body="침공이 시작됐어.")
+            self.assertEqual(self.high_scoring_review(plot, people_focus=focus).decision, ReviewDecision.REVISE)
+
+    def test_people_review_binds_the_same_person_role_and_reader_location(self):
+        name, source = "Yuichiro Hayashi", "Director: Yuichiro Hayashi"
+        verified = [{"kind": "rag_core", "claim": source, "people_credit": {"name": name, "relation": "Director"}},
+                    {"kind": "rag_core", "claim": "Composer: Hiroyuki Sawano",
+                     "people_credit": {"name": "Hiroyuki Sawano", "relation": "Composer"}}]
+        draft = replace(self.character_draft(), content_type=RagContentType.PEOPLE,
+                        ai_judgment_basis={"web_discovery_candidate": {"verified_claims": verified}})
+        focus = {"source_name": name, "source_excerpt": source, "source_relation": "Director",
+                 "location": "detail_article", "same_person": True, "same_contribution": True}
+        for reader, contribution, changes, expected in (
+            ("Hayashi Yūichirō", "directed", {}, ReviewDecision.PASS),
+            ("Tetsuro Araki", "directed", {}, ReviewDecision.REVISE),
+            ("Yuichiro Hayashi", "composed the music", {}, ReviewDecision.REVISE),
+            ("Yuichiro Hayashi", "composed", {"source_excerpt": "Composer: Hiroyuki Sawano",
+                                               "source_relation": "Composer"}, ReviewDecision.REVISE),
+            ("하야시 유이치로", "감독", {"location": "card:cover"}, ReviewDecision.REVISE),
+            ("하야시 유이치로", "감독", {"same_person": False}, ReviewDecision.REVISE),
+        ):
+            with self.subTest(reader=reader, contribution=contribution, changes=changes):
+                line = f"{reader} — {contribution}."
+                review = self.high_scoring_review(replace(draft, detail_body=line), people_focus={
+                    **focus, "reader_name": reader, "relation": contribution, "excerpt": line, **changes})
+                self.assertEqual(review.decision, expected)
+                if expected == ReviewDecision.REVISE:
+                    self.assertTrue(any(issue.code == "PEOPLE_COPY_OFF_TOPIC" for issue in review.issues))
+
+    def test_people_review_matches_the_speaker_of_a_verified_interview_answer(self):
+        quote = "We drew the characters repeatedly."
+        name = "Chikashi Kubota"
+        basis = {"web_discovery_candidate": {"verified_claims": [
+            {"kind": "attributed_quote", "claim": quote, "speaker": name, "attribution_excerpt": f"{name}: {quote}"},
+        ]}}
+        line = "구보타 치카시는 캐릭터를 여러 차례 그렸다고 답했어."
+        draft = replace(self.character_draft(), content_type=RagContentType.PEOPLE, detail_body=line, ai_judgment_basis=basis)
+        focus = dict(source_name=name, reader_name="구보타 치카시", source_excerpt=quote,
+                     source_relation="drew the characters repeatedly", relation="캐릭터를 여러 차례 그렸", excerpt=line,
+                     location="detail_article", same_person=True, same_contribution=True)
+        self.assertEqual(self.high_scoring_review(draft, people_focus=focus).decision, ReviewDecision.PASS)
+        for changes in (dict(source_name="Another Person"), dict(source_relation="We changed the series"),
+                        dict(same_contribution=False)):
+            self.assertEqual(self.high_scoring_review(draft, people_focus={**focus, **changes}).decision, ReviewDecision.REVISE)
+        title_only = replace(draft, title=line, detail_body="인물 인터뷰")
+        self.assertEqual(self.high_scoring_review(title_only, people_focus={**focus, "location": "title"}).decision,
+                         ReviewDecision.PASS)
+
+    def test_people_review_can_point_to_exact_source_and_reader_sentences_without_bypassing_review(self):
+        from ani_rag.model_services import _people_focus_options
+        credit = {"kind": "rag_core", "claim": "producer Yūma Takahashi"}
+        basis = {"verified_claims": [credit]}
+        line = "《귀멸의 칼날》 프로듀서 유마 타카하시는 이 조합이 자연스럽다고 말했어."
+        draft = replace(self.character_draft(), content_type=RagContentType.PEOPLE,
+                        ai_judgment_basis={"web_discovery_candidate": basis}, detail_body=line)
+        sources, readers = _people_focus_options(draft, basis)
+        source = next(key for key, row in sources.items() if row["source_name"] == "Yūma Takahashi")
+        reader = next(key for key, row in readers.items() if row == {"location": "detail_article", "excerpt": line})
+        focus = dict(source_ref=source, reader_ref=reader, source_relation="producer", reader_name="유마 타카하시",
+                     relation="프로듀서", same_person=True, same_contribution=True)
+        passed = self.high_scoring_review(draft, people_focus=focus)
+        self.assertEqual(passed.decision, ReviewDecision.PASS)
+        self.assertTrue(passed.scorecard["people_focus_check"]["grounded"])
+        for change in ({"reader_ref": "missing"}, {"source_ref": "missing"}, {"same_person": False},
+                       {"same_contribution": False}, {"source_relation": "director"}, {"reader_name": "다른 사람"}):
+            result = self.high_scoring_review(draft, people_focus={**focus, **change})
+            self.assertEqual(result.decision, ReviewDecision.REVISE)
+            self.assertFalse(result.scorecard["people_focus_check"]["grounded"])
+        independent_issue = {"code": "WEB_REWRITE_FROM_EXISTING_SOURCES", "message": "과장된 인과관계", "blocking": True}
+        result = self.high_scoring_review(draft, people_focus=focus, issues=(independent_issue,),
+                                          primary_web_source={"title": "Interview", "original_text": "A conversation."})
+        self.assertEqual(result.decision, ReviewDecision.REVISE)
+        self.assertTrue(any(i.code == independent_issue["code"] and i.blocking for i in result.issues))
+
+    def test_reference_only_people_review_requires_the_chunk_cited_at_the_reader_location(self):
+        from ani_rag.retrieval import EvidenceChunk
+        source = "Director: Yuichiro Hayashi"
+        line = "감독은 하야시 유이치로야."
+        focus = dict(source_name="Yuichiro Hayashi", reader_name="하야시 유이치로", source_excerpt=source,
+                     source_relation="Director", relation="감독", excerpt=line, location="card:cover",
+                     same_person=True, same_contribution=True)
+        chunk = EvidenceChunk("credit", "e", RagContentType.PEOPLE, "Staff", source, "p1", "text", None, 0,
+                              len(source), "ref", "https://example.com/staff", "en", None, (1,))
+        draft = replace(self.character_draft(), content_type=RagContentType.PEOPLE,
+                        evidence_ids=("e",), retrieved_chunk_ids=("credit", "unrelated"))
+        for cited_id, expected in (("credit", ReviewDecision.PASS), ("unrelated", ReviewDecision.REVISE)):
+            card = replace(draft.cards[0], body=line, claims=(SupportedClaim(line, ("e",), (cited_id,)),))
+            result = self.high_scoring_review(replace(draft, cards=(card, draft.cards[1])), people_focus=focus,
+                                              retrieved_chunks={"credit": chunk})
+            self.assertEqual(result.decision, expected)
 
     def test_removable_web_detail_uses_revision_even_at_high_score(self):
         primary = {"title": "Interview", "original_text": "The director introduced the cast."}
@@ -229,6 +341,81 @@ class ReviewGateTests(unittest.TestCase):
                                            evidence_requests=("Confirm who was introduced.",),
                                            primary_web_source=primary)
         self.assertIs(route_review(missing, 0), ReviewRoute.COLLECTION_QUEUE)
+
+    def test_confirmed_reader_copy_defects_route_to_revision_even_if_independently_missed(self):
+        original = self.character_draft()
+        cover, ending = original.cards
+        for text, code in [
+            ("C1은 내부 핸들이라 금지 … 실제 본문에 ref 안 써야", "INTERNAL_EDITORIAL_NOTE_LEAK"),
+            ("크레딧を見ると、우리 눈과 귀가 같이 반응해.", "MIXED_LANGUAGE_COPY"),
+        ]:
+            for draft in (replace(original, title=text), replace(original, summary=text), replace(original, detail_body=text),
+                          replace(original, cards=(replace(cover, headline=text), ending)),
+                          replace(original, cards=(cover, replace(ending, body=text)))):
+                gated = _apply_deterministic_review_gates(self.high_scoring_review(draft), validate_carousel_readability(draft))
+                self.assertIs(route_review(gated, 0), ReviewRoute.GENERATION_QUEUE)
+                self.assertTrue(any(i.code == code and i.blocking for i in gated.issues))
+            # A different language or editorial instruction can be recognized semantically.
+            reason = "2번 카드에 남은 집필 지시 또는 번역 누락을 고쳐줘."
+            result = self.high_scoring_review(original, issues=[{"code": code, "message": reason, "blocking": False}])
+            self.assertIs(route_review(result, 0), ReviewRoute.GENERATION_QUEUE)
+            self.assertIn(reason, result.revision_instructions)
+        clean = replace(original, detail_body="ONE과 Yūma Takahashi, 『君の名は。』가 등장해. "
+                        "원어 ‘を見ると’와 대사 “크레딧を見ると、우리 눈과 귀가”도 인용했어. "
+                        "C1 구역은 출입 금지야.")
+        self.assertEqual(validate_carousel_readability(clean), ())
+        self.assertIs(route_review(self.high_scoring_review(clean), 0), ReviewRoute.READY)
+
+    def test_confirmed_image_mismatch_excludes_the_reviewed_asset_on_regeneration(self):
+        original = self.character_draft()
+        middle = replace(original.cards[1], card_id="middle", role="detail", image_asset_id="middle-image")
+        draft = replace(original, cards=(original.cards[0], middle, original.cards[1]))
+        reason = "3페이지는 로이드의 태그를 다루는데 이미지에는 안야가 크게 보여. 같은 작품의 이미지지만 카드 내용과 인물 초점이 어긋나."
+        issue = {"code": "IMAGE_SUBJECT_MISMATCH", "message": reason, "blocking": False}
+        for fields in ({}, {"image_asset_id": "image-1"}, {"image_asset_id": "image-2", "search_subject": "Loid Forger"}):
+            result = self.high_scoring_review(draft, issues=[{**issue, **fields}])
+            self.assertIs(route_review(result, 0), ReviewRoute.GENERATION_QUEUE)
+            self.assertEqual(result.issues[0].asset_id, "image-2")
+            self.assertIn(reason, result.revision_instructions)
+        wrong = ImageAsset("image-2", "https://example.com/anya.jpg", "source", "matched", (1,), None, None,
+                           "image.jpg", content_sha256="hash-anya")
+        older = {"asset_id": "earlier", "search_subject": "TV series"}
+        queues, drafts, history, reviewer = (AsyncMock() for _ in range(4))
+        queues.claim.return_value = QueueItem("review", QueueName.REVIEW, status=QueueStatus.RUNNING, payload={
+            "draft_id": draft.draft_id, "query": "스파이 패밀리", "content_type": "character", "menu_work_ids": [1],
+            "review_rejected_images": [older],
+        })
+        drafts.load_for_review.return_value = DraftReviewContext(draft, {}, {wrong.asset_id: wrong}, {}, "retrieval", {})
+        reviewer.review.return_value = result
+        with patch("ani_rag.quality.validate_draft", return_value=()):
+            asyncio.run(ReviewWorker(queues, drafts, history, reviewer).run_once())
+        job = queues.enqueue.await_args.args[0]
+        previous, current = job.payload["review_rejected_images"]
+        self.assertEqual(previous, older)
+        self.assertEqual((current["asset_id"], current["source_url"], current["content_sha256"], current["search_subject"]),
+                         ("image-2", wrong.source_url, "hash-anya", "Loid Forger"))
+        self.assertNotIn("headline_edits", job.payload)
+        tv = self.high_scoring_review(draft, issues=[{**issue, "message": "2번 카드는 TV판인데 극장판 포스터야.",
+                                                     "image_asset_id": "middle-image", "search_subject": "TV series"}])
+        self.assertTrue(tv.issues[0].blocking)
+        soft = self.high_scoring_review(draft, issues=[{"code": "IMAGE_SCENE_MISMATCH", "blocking": True,
+                                                        "message": "같은 인물이지만 포즈가 달라."}])
+        self.assertIs(route_review(soft, 0), ReviewRoute.READY)
+
+    def test_verified_interview_answer_must_reach_the_reader(self):
+        source = {"verified_claims": [{"interview_answer": {
+            "speaker": "Actor A", "subject": "the setter", "detail": "his patience during the rally",
+        }}]}
+        reader = "A는 랠리 중에 보여 준 인내심 때문에 세터를 골랐어."
+        draft = replace(self.character_draft(), detail_body=reader)
+        delivered = {"answer_ref": "A1", "reader_excerpts": [reader], "faithfully_delivered": True}
+        passed = self.high_scoring_review(draft, primary_web_source=source, interview_focus=delivered)
+        self.assertIs(route_review(passed, 0), ReviewRoute.READY)
+        for focus in ({**delivered, "faithfully_delivered": False}, {**delivered, "reader_excerpts": ["없는 대답"]},
+                      {**delivered, "answer_ref": "unknown"}, None):
+            result = self.high_scoring_review(draft, primary_web_source=source, interview_focus=focus)
+            self.assertIs(route_review(result, 0), ReviewRoute.GENERATION_QUEUE)
+            self.assertTrue(any(i.code == "WEB_REWRITE_FROM_EXISTING_SOURCES" and i.blocking for i in result.issues))
 
     def test_title_count_contradiction_overrides_81_and_keeps_scoped_revision(self):
         original = self.character_draft()

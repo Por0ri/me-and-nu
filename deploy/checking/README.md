@@ -11,7 +11,7 @@
 | 네트워크 | `me-nu-checking_data`(internal), `me-nu-checking_egress` |
 | Redis 키 접두사 / Secure 쿠키 | `me_nu_checking` / `menu_checking_session` |
 | 백엔드 이미지 | `me-nu-backend-checking:<40자리 커밋 SHA>` |
-| 서비스 마이그레이션 | `94d2da693c10` |
+| 서비스 마이그레이션 | `7f843b19debf` |
 
 DB/Redis 비밀번호는 서버의 `init`에서 서로 다른 난수로 생성한다. 다른 환경의 회원·동의·세션·북마크·DB 덤프는 복사하지 않는다. API와 migration의 개발 인증 우회, 개발 API, TMDB/OpenAI 키는 비활성화돼 있다. LLM 키는 챗봇 답에만 쓰며, 서버 전용 `.env`의 `CHECKING_LLM_KEY`로 API 컨테이너에만 넣는다(migration에는 넣지 않는다). 기본값은 빈칸이고 빈칸이면 챗봇 답만 실패한다. 기존 환경 파일에도 `CHECKING_LLM_KEY=` 줄을 추가해야 배포 guard를 통과한다. `check`는 키 값 대신 키가 들어 있는지(`set`/`empty`)만 출력한다. 기존 에이전트 코드나 생년월일 정책은 바꾸지 않는다. DB의 기존 nullable `birth_date`와 값은 유지하며 물리 삭제 `d2`는 포함하지 않는다.
 
@@ -34,20 +34,20 @@ sudo bash deploy/checking/checking.sh status
 
 `build`는 추가로 `check-build`를 실행해 `CHECKING_IMAGE_TAG`가 현재 체크아웃의 실제 Git HEAD와 일치하는지, `backend/`에 staged/unstaged/untracked 변경이 없는지 확인한다. 불일치하면 이미지 빌드 전에 중단한다. Git 조회는 상속된 `GIT_*` 환경을 사용하지 않고 현재 체크아웃만 읽으며, sudo 소유권 차이를 위해 해당 경로에만 일회성 `safe.directory`를 지정한다. 전역 Git 설정은 변경하지 않는다. 일반 `check`·`up`·`status`·`stop`은 소스 빌드를 하지 않으므로 이 추가 검사 대상이 아니다. 빌드 도중에는 체크아웃을 변경하지 않는다.
 
-`up`은 저장소 healthcheck와 명시적 `alembic upgrade 94d2da693c10` 성공 후 API를 시작한다. `head/heads`로 바꾸지 않는다. `d2`가 적용된 과거 DB는 이 경로로 이전하지 않는다. DB/Redis 호스트 포트와 컨테이너 관리자 권한은 공개하지 않는다.
+`up`은 저장소 healthcheck와 명시적 `alembic upgrade 7f843b19debf` 성공 후 API를 시작한다. `head/heads`로 바꾸지 않는다. `d2`가 적용된 과거 DB는 이 경로로 이전하지 않는다. DB/Redis 호스트 포트와 컨테이너 관리자 권한은 공개하지 않는다.
 
 공지 예약 실행은 [관리자 공지 API 계약](../../docs/ADMIN_NOTICES_API_2026-11-23.md)의 별도 적용 순서를 따른다. API 배포만으로 systemd timer가 설치되지는 않는다. Migration과 BE 배포를 확인한 뒤 `publish_scheduled_notices.py` 미리보기와 합성 검증을 거쳐 `systemd/me-nu-checking-notices.service`, `systemd/me-nu-checking-notices.timer`를 설치한다.
 
 ## 토론방 (기본 꺼짐)
 
-토론방 API·실시간 채팅·토론 개설 알림은 서버 `.env`의 `CHECKING_DEBATE_ENABLED=true`일 때만 켜진다. 기본값은 `false`이며, 기존 `.env`에 이 키가 없어도 꺼진 채로 guard를 통과한다. 토론 표는 스위치와 관계없이 `up`의 migration(`94d2da693c10`)이 만든다.
+토론방 API·실시간 채팅·토론 개설 알림은 서버 `.env`의 `CHECKING_DEBATE_ENABLED=true`일 때만 켜진다. 기본값은 `false`이며, 기존 `.env`에 이 키가 없어도 꺼진 채로 guard를 통과한다. 토론 표는 스위치와 관계없이 `up`의 migration(지금 대상 `7f843b19debf`)이 만든다.
 
 - 켜기: `deploy/checking/.env`에 `CHECKING_DEBATE_ENABLED=true`를 넣고 `check` → `up`을 실행한다. 이미지는 그대로이고 API 컨테이너만 새 설정으로 다시 만들어진다.
 - 끄기: `false`로 바꾸고 같은 순서로 실행한다. 토론 API와 토론 알림만 사라지고 나머지 서비스와 저장된 토론 데이터는 그대로다.
-- 문제가 생기면 이전 커밋으로 되돌리지 말고 스위치를 끈다. 이전 코드는 `94d2da693c10`을 몰라 migration이 실패하고, 토론 데이터가 있으면 downgrade도 거부된다.
-- 실시간 허브가 API 메모리에 있으므로 API는 1개 프로세스(Dockerfile `--workers 1`)로 둔다. 같은 DB를 쓰는 main API에서는 켜지 않는다.
+- 문제가 생기면 이전 커밋으로 되돌리지 말고 스위치를 끈다. 이전 코드는 `7f843b19debf`를 몰라 migration이 실패하고, 토론 데이터가 있으면 downgrade도 거부된다.
+- 실시간 허브가 API 메모리에 있으므로 API는 1개 프로세스(Dockerfile `--workers 1`)로 둔다. 같은 DB를 쓰는 main과 Checking 중 한 곳에서만 켠다(베타는 main에서 켜고 Checking은 끈 채로 둔다).
 - 개설 기준은 `CHECKING_DEBATE_VOTE_THRESHOLD`(1~100, 기본 10)다. 팀원이 적어 10표를 모으기 어려우면 시험하는 동안만 낮춘다.
-- 정리 작업(`python -m app.jobs.finalize_debates`, 10분마다)은 아직 예약하지 않았다. 돌지 않아도 화면은 시각으로 상태를 계산하지만, 끝난 방의 채팅이 DB에 남는다.
+- 정리 작업(`python -m app.jobs.finalize_debates`, 10분마다)은 Checking에 예약하지 않는다. 같은 DB를 쓰는 main 서버에서 `deploy/main/main_debates.py` 타이머가 돌린다([main 운영 안내](../main/OPERATIONS.md)). 돌지 않아도 화면은 시각으로 상태를 계산하지만, 끝난 방의 채팅이 DB에 남는다.
 
 ## 정책·카탈로그·콘텐츠
 

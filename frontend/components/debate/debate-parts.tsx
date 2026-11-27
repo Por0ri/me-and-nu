@@ -1,33 +1,83 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent, type ReactNode,
+} from "react";
 import { refillIn } from "@/lib/debate/format";
 import { DEBATE_RULES as RULES } from "@/lib/debate/rules";
 import type { DebateStatus, DebateSummary, DebateWork, VoteTickets } from "@/lib/debate/types";
 import { ClockIcon, CloseIcon, InfoIcon } from "./debate-icons";
 import styles from "./debate.module.css";
 
-/** 프로필 사진이 없는 사람(지금은 모두)의 얼굴: me;nu 마스코트. 프로필 사진 기능이 생기면 사진이 있는 사람만 바꾼다. */
-const DEFAULT_FACE = "/pivot/chat/face.svg";
+/** 프로필 사진 기능이 생기기 전까지 얼굴 자리에 닉네임 첫 글자를 보여 준다 (2026-11-25 사용자 결정, 채팅 · 카드 공통). */
+export function nicknameInitial(nickname: string): string {
+  return Array.from(nickname.trim())[0] ?? "";
+}
+
+/** 칩 줄을 한 줄로 두고, 넘치는 부분은 줄을 옆으로 밀어서 본다 (2026-11-25 사용자 요청). 줄 요소에 그대로 펼쳐 붙인다.
+ *  폰은 손가락으로 밀면 되고(브라우저 기본 스크롤), 컴퓨터는 마우스로 끌어서 민다. 끌어서 민 뒤에는 그 안의 버튼이나
+ *  감싼 카드 링크가 눌리지 않게 한다. 그냥 누르면 클릭은 그대로 된다. */
+export function useSwipeRow<T extends HTMLElement>() {
+  const drag = useRef<{ id: number; x: number; left: number; moved: boolean } | null>(null);
+  const dragged = useRef(false);
+  return {
+    onPointerDown(event: ReactPointerEvent<T>) {
+      if (event.pointerType !== "mouse" || event.button !== 0) return;
+      dragged.current = false;
+      drag.current = { id: event.pointerId, x: event.clientX, left: event.currentTarget.scrollLeft, moved: false };
+    },
+    onPointerMove(event: ReactPointerEvent<T>) {
+      const state = drag.current;
+      if (!state || state.id !== event.pointerId) return;
+      const dx = event.clientX - state.x;
+      if (!state.moved && Math.abs(dx) < 4) return;
+      if (!state.moved) {
+        state.moved = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+      event.currentTarget.scrollLeft = state.left - dx;
+    },
+    onPointerUp() { dragged.current = drag.current?.moved ?? false; drag.current = null; },
+    onPointerCancel() { drag.current = null; },
+    // 마우스로 누를 때 글자가 선택되거나 카드 링크가 통째로 끌려가지 않게 한다
+    onMouseDown(event: ReactMouseEvent<T>) { event.preventDefault(); },
+    onDragStart(event: ReactDragEvent<T>) { event.preventDefault(); },
+    onClickCapture(event: ReactMouseEvent<T>) {
+      if (!dragged.current) return;
+      dragged.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+  };
+}
 
 export function Badge({ children, tone = "solid" }: { children: ReactNode; tone?: "solid" | "soft" | "gray" | "danger" }) {
   return <span className={styles.badge} data-tone={tone === "solid" ? undefined : tone}>{children}</span>;
 }
 
-/** 관련 작품 칩. 여러 개면 모두 보여준다. */
+/** 관련 작품 칩. 여러 개면 모두 보여준다. 이름이 길어도 칩을 가로 한 줄로 늘어놓고, 넘치면 줄을 옆으로 밀어서 본다. */
 export function WorkChips({ works }: { works: DebateWork[] }) {
+  const swipe = useSwipeRow<HTMLUListElement>();
   if (works.length === 0) return null;
-  return <ul className={styles.chips} aria-label="관련 작품">
+  return <ul className={`${styles.chips} ${styles.swipe}`} aria-label="관련 작품" {...swipe}>
     {works.map((work) => <li key={work.entityId} className={styles.chip}>{work.name}</li>)}
   </ul>;
 }
 
-/** 카드의 작성자 줄: 얼굴과 닉네임 */
+/** 카드에 보이는 닉네임 글자 수. 넘으면 앞 10자 뒤에 '…' (2026-11-25 디자인 요청) */
+const NICKNAME_SHOWN = 10;
+
+/** 카드의 작성자 줄: 얼굴(닉네임 첫 글자)과 닉네임. 화면 읽기 프로그램에는 닉네임 전체를 읽어 준다. */
 export function AuthorLine({ debate }: { debate: Pick<DebateSummary, "authorNickname"> }) {
+  const letters = Array.from(debate.authorNickname);
+  const shown = letters.length > NICKNAME_SHOWN ? `${letters.slice(0, NICKNAME_SHOWN).join("")}…` : debate.authorNickname;
   return <span className={styles.author}>
-    <img src={DEFAULT_FACE} alt="" width={24} height={24} />
-    <b><span className={styles.srOnly}>올린 사람 </span>{debate.authorNickname}</b>
+    <span className={styles.authorFace} aria-hidden="true">{nicknameInitial(debate.authorNickname)}</span>
+    <b title={shown === debate.authorNickname ? undefined : debate.authorNickname}>
+      <span className={styles.srOnly}>올린 사람 {debate.authorNickname}</span><span aria-hidden="true">{shown}</span>
+    </b>
   </span>;
 }
 
@@ -71,9 +121,9 @@ function refillRule(): string {
   return `${minutes % 60 === 0 ? `${minutes / 60}시간` : `${minutes}분`}마다 1개 충전`;
 }
 
-/** 투표권 카드 (2026-11-23 시안): 남은 투표권, 충전 규칙·막대, 다음 충전.
- *  주제 투표 탭에서는 오른쪽에 내 활동 버튼, 내 활동 화면(activity=false)에서는 버튼 없이 막대가 카드 폭을 채운다. */
-export function VoteTicketBox({ tickets, activity = true }: { tickets: VoteTickets; activity?: boolean }) {
+/** 투표권 카드 (2026-11-23 시안): 남은 투표권, 충전 규칙·막대, 다음 충전. 막대가 카드 폭을 채운다.
+ *  예전에 오른쪽에 있던 '내 활동' 버튼은 찾기 어려워서 아래에 떠 있는 버튼(ActivityFab)으로 옮겼다 (2026-11-25). */
+export function VoteTicketBox({ tickets }: { tickets: VoteTickets }) {
   const now = useNow(15_000);
   const next = refillIn(tickets.nextRefillAt, now);
   return <section className={styles.ticketBox} aria-label="내 투표권">
@@ -83,8 +133,15 @@ export function VoteTicketBox({ tickets, activity = true }: { tickets: VoteTicke
       <ProgressBar value={Math.round((tickets.balance / tickets.max) * 100)} label="남은 투표권" />
       <span className={styles.refillLine}><ClockIcon size={16} />{next ? `다음 투표권 +1 · ${next}` : "투표권이 가득 찼어요"}</span>
     </div>
-    {activity ? <Link className={styles.activityButton} href="/pivot/debate/activity">내 활동</Link> : null}
   </section>;
+}
+
+/** 내 활동 바로가기 (2026-11-25 시안): 토론방 첫 화면의 세 탭(실시간 토론방 · 주제 투표 · 지난 토론방)에서
+ *  아래 메뉴 바로 위 오른쪽에 늘 떠 있는 보라 동그라미. */
+export function ActivityFab() {
+  return <div className={styles.fabLayer}>
+    <Link className={styles.activityFab} href="/pivot/debate/activity">내 활동</Link>
+  </div>;
 }
 
 /** 되돌리기 어려운 일(방 나가기 등) 전에 한 번 더 묻는 창 (2026-11-23 시안: 방 나가기 창). body 의 줄바꿈(\n)은 그대로 보인다. */

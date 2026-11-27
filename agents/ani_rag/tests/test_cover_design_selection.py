@@ -2,14 +2,18 @@
 
 import unittest
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from ani_rag.content import CardDraft, ImageAsset, SupportedClaim
 from ani_rag.cover_design import cast_identity, is_work_poster, plan_cover, select_cast_detail
 from ani_rag.model_services import EvidenceBoundGenerationService
-from ani_rag.models import CollectionMethod, EvidenceDocument, EvidenceType, RagContentType, WorkLinkStatus
+from ani_rag.models import CollectionMethod, CurationContext, EvidenceDocument, EvidenceExcerpt, EvidenceType, RagContentType, WorkLinkStatus
+from ani_rag.queues import QueueItem, QueueName, QueueStatus
 from ani_rag.retrieval import EvidenceChunk, RetrievedEvidence
+from ani_rag.workers import GenerationWorker
+from ani_rag.agents.content_generation.layout_director import ImageCopyMismatchError
 
 
 def asset(key, work=1, role="artwork", **kwargs):
@@ -117,6 +121,123 @@ class CoverDesignTests(unittest.TestCase):
 
 
 class GenerationContractTests(unittest.IsolatedAsyncioTestCase):
+    def web_generation_worker(self, sources, *, revision=False):
+        result = evidence(RagContentType.GUIDE, [1])
+        chunk = replace(result.chunks[0], score=1.0)
+        web = {"url": "https://example.org/interview", "title": "Interview",
+               "corroborating_chunk_ids": [chunk.chunk_id], "verified_claims": [
+                   {"kind": "rag_core", "standalone": True, "claim": "One fact", "chunk_ids": [chunk.chunk_id]}]}
+        payload = {"content_type": "guide", "query": "Title 1", "menu_work_ids": [1],
+                   "source_ids": [chunk.source_id], "seed_evidence_ids": [chunk.evidence_id], "web_candidate": web}
+        if revision:
+            payload.update(revision_count=1, revision_of_draft_id="earlier", revision_instructions=["제목 수정"])
+        queues = AsyncMock()
+        queues.claim.return_value = QueueItem("job", QueueName.GENERATION, QueueStatus.RUNNING, payload=payload)
+        retriever = AsyncMock()
+        retriever.retrieve.return_value = replace(result, chunks=(chunk,))
+        images = SimpleNamespace(candidates_for=AsyncMock(return_value=sources),
+                                 search_for_generation=AsyncMock(return_value=()),
+                                 get_many=AsyncMock(return_value={image.asset_id: image for image in sources}))
+        drafts = AsyncMock()
+        drafts.recent_topics.return_value = []
+        drafts.revision_copy.return_value = {"title": "수정 전"}
+        drafts.find_duplicate_topic.return_value = None
+        model = AsyncMock()
+        worker = GenerationWorker(queues, None, retriever, images, drafts, EvidenceBoundGenerationService(model),
+                                  registry=SimpleNamespace(reference_source_ids=lambda _: [chunk.source_id]))
+        return worker, model
+
+    async def test_two_originals_reach_review_including_after_targeted_revision_image_retry(self):
+        claims = [{"text": "근거", "evidence_refs": ["C1"], "attribution": None}]
+        cover = asset("cover")
+        ending = asset("ending", alt_text="Anya Forger solo portrait")
+        replacement = asset("new-ending", alt_text="Loid Forger portrait")
+        deck = {"title": "제목", "summary": "요약", "keywords": ["소개"], "editorial_angle": "질문",
+                "cover_mode": "regular", "ending_mode": "ending",
+                "cards": [{"role": role, "image_asset_id": image.asset_id, "headline": "포저 가족의 세계", "body": "설명",
+                           "claims": claims} for role, image in (("cover", cover), ("ending", ending))]}
+        article = {"body": "상세 본문", "claims": claims}
+        for revision in (False, True):
+            with self.subTest(revision=revision):
+                worker, model = self.web_generation_worker((cover, ending), revision=revision)
+                attempt_deck = final_deck = deck
+                if revision:
+                    loid_page = {**deck["cards"][1], "headline": "로이드 포저"}
+                    attempt_deck = {**deck, "cards": [deck["cards"][0], loid_page]}
+                    final_deck = {**deck, "cards": [deck["cards"][0], {**loid_page, "image_asset_id": replacement.asset_id}]}
+                    worker.images.search_for_generation.side_effect = [(), (replacement,)]
+                    worker.images.get_many.return_value = {img.asset_id: img for img in (cover, replacement)}
+                model.generate_json.side_effect = [attempt_deck, final_deck, article] if revision else [deck, article]
+
+                def layout(_, cards, assets):
+                    if revision and cards[-1].image_asset_id == ending.asset_id:
+                        raise ImageCopyMismatchError("Anya-only portrait on a Loid feature",
+                                                     image_asset_id=ending.asset_id, headline=cards[-1].headline,
+                                                     search_subject="Spy × Family Loid Forger")
+                    return cards
+
+                with patch("ani_rag.model_services.direct_card_layouts", side_effect=layout), \
+                     patch("ani_rag.workers.render_text_free_cards", return_value=()):
+                    self.assertTrue(await worker.run_once())
+                worker.drafts.save.assert_awaited_once()
+                draft = worker.drafts.save.await_args.args[0]
+                self.assertEqual([card.role for card in draft.cards], ["cover", "ending"])
+                self.assertEqual(draft.cards[1].image_asset_id, replacement.asset_id if revision else ending.asset_id)
+                self.assertEqual(worker.queues.enqueue.await_args.args[0].queue, QueueName.REVIEW)
+                self.assertEqual(worker.queues.save.await_args.args[0].status, QueueStatus.SUCCEEDED)
+                self.assertEqual(model.generate_json.await_args_list[0].kwargs["schema"]["properties"]["cards"]["maxItems"], 2)
+                if revision:
+                    self.assertEqual(worker.images.search_for_generation.await_args.kwargs["query"],
+                                     "Spy × Family Loid Forger")
+                    self.assertEqual(worker.images.search_for_generation.await_count, 2)
+
+    async def test_one_original_including_size_variants_stops_before_model_and_review(self):
+        poster = asset("poster", role="poster:original", source_native_id="1")
+        thumbnail = asset("small", role="poster:small", source_native_id="1")
+        for sources in ((poster,), (poster, thumbnail)):
+            with self.subTest(assets=len(sources)):
+                worker, model = self.web_generation_worker(sources)
+                self.assertTrue(await worker.run_once())
+                self.assertEqual(worker.queues.save.await_args.args[0].status, QueueStatus.BLOCKED)
+                self.assertEqual(worker.queues.save.await_args.args[0].last_error,
+                                 "waiting_for_distinct_work_linked_image_assets")
+                worker.queues.enqueue.assert_not_awaited()
+                with self.assertRaisesRegex(ValueError, "at least 2 distinct"):
+                    await worker.generation.generate(evidence(RagContentType.GUIDE, [1]), image_candidates=sources)
+                model.generate_json.assert_not_awaited()
+
+    async def test_image_revision_excludes_rejected_originals_and_searches_for_the_intended_subject(self):
+        rejected = asset("other-season", role="poster:original", source_native_id="101")
+        variant = asset("other-season-thumb", role="poster:small", source_native_id="101")
+        wrong = asset("wrong-portrait", content_sha256="badportrait")
+        repeated = asset("wrong-portrait-mirror", content_sha256=wrong.content_sha256)
+        cover, spare = asset("cover"), asset("spare")
+        worker, _ = self.web_generation_worker((cover, rejected, variant, wrong, spare), revision=True)
+        reviewed = {"asset_id": rejected.asset_id, "source_id": rejected.source_id,
+                    "source_native_id": rejected.source_native_id, "image_role": rejected.image_role,
+                    "source_url": rejected.source_url, "search_subject": "Spy × Family Season 2"}
+        job = worker.queues.claim.return_value
+        worker.queues.claim.return_value = replace(job, payload={**job.payload, "review_rejected_images": [reviewed]})
+        worker.images.search_for_generation.side_effect = [(), (variant, repeated), RuntimeError("offline")]
+        wrong_subject = ImageCopyMismatchError("Anya-only portrait", image_asset_id=wrong.asset_id,
+                                              headline="로이드 소개", search_subject="Spy × Family Loid Forger")
+        no_spare = ImageCopyMismatchError("Unrelated poster", image_asset_id=spare.asset_id,
+                                         headline="로이드 소개", search_subject="Spy × Family Loid Forger")
+        worker.generation.generate = AsyncMock(side_effect=[wrong_subject, no_spare])
+
+        self.assertTrue(await worker.run_once())
+        calls = worker.generation.generate.await_args_list
+        self.assertEqual([{a.asset_id for a in call.kwargs["image_candidates"]} for call in calls],
+                         [{"cover", "wrong-portrait", "spare"}, {"cover", "spare"}])
+        self.assertIn("로이드 소개", calls[1].kwargs["revision_instructions"][-1])
+        self.assertEqual([call.kwargs["query"] for call in worker.images.search_for_generation.await_args_list],
+                         ["Spy × Family Season 2", "Spy × Family Loid Forger", "Spy × Family Loid Forger"])
+        for call in (worker.images.candidates_for.await_args, *worker.images.search_for_generation.await_args_list):
+            self.assertEqual(call.kwargs["revision_of"], "earlier")
+        self.assertEqual(worker.queues.save.await_args.args[0].status, QueueStatus.BLOCKED)
+        worker.drafts.save.assert_not_awaited()
+        worker.queues.enqueue.assert_not_awaited()
+
     async def test_generation_and_revision_deliver_component_credits_and_model_inputs(self):
         retrieval = evidence(RagContentType.CHARACTER, [1] * 3, characters=True)
         sources = [asset(f"p{i}", role="character:main:original", source_native_id=str(i)) for i in (1, 2, 3)]
@@ -131,7 +252,7 @@ class GenerationContractTests(unittest.IsolatedAsyncioTestCase):
         model = AsyncMock()
         model.generate_json.side_effect = [deck, article, deck, article]
         service = EvidenceBoundGenerationService(model)
-        web = {"url": "https://example.org/interview", "title": "Cast interview",
+        web = {"url": "https://example.org/interview", "title": "Cast interview", "original_text": "Cast interview transcript",
                "verified_claims": [
                    {"claim": f"Passage {i}", "evidence_refs": ["R2"], "chunk_ids": ["chunk3"]}
                    for i in range(3)
@@ -145,7 +266,12 @@ class GenerationContractTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(image.source_url, draft.source_footer)
         for call in model.generate_json.await_args_list:
             packet = call.kwargs["user_payload"]
-            verified = packet.get("materials", packet)["primary_web_source"]["verified_claims"]
+            writer_input = packet.get("materials", packet)
+            self.assertEqual(writer_input["primary_web_source"]["original_text"], web["original_text"])
+            self.assertEqual([c["text"] for c in writer_input["retrieved_chunks"]], [c.text for c in retrieval.chunks])
+            for reference in writer_input["evidence"]:
+                self.assertTrue({"body", "claims", "excerpts"}.isdisjoint(reference))
+            verified = writer_input["primary_web_source"]["verified_claims"]
             self.assertEqual([row["evidence_refs"] for row in verified], [["C3"]] * 3)
         web["verified_claims"][0]["chunk_ids"] = ["no-longer-available"]
         with self.assertRaisesRegex(ValueError, "insufficient currently cited material"):
@@ -155,10 +281,12 @@ class GenerationContractTests(unittest.IsolatedAsyncioTestCase):
         from ani_rag.agents.content_generation.prompts import INTERVIEW_QUOTE_POLICY
         speaker, quote = "Director A", "I wanted to make a short film."
         context = f"{speaker}: {quote}"
+        web["title"] = "Interview: The director on the format"
+        answer = {"speaker": speaker, "subject": "a short film", "detail": "I wanted to make a short film."}
         web["verified_claims"] = [
             {"kind": "rag_context", "claim": "Director A led the production.", "chunk_ids": ["chunk1"]},
             {"kind": "attributed_quote", "claim": quote, "speaker": speaker,
-             "attribution_excerpt": context, "chunk_ids": ["chunk3"]},
+             "attribution_excerpt": context, "chunk_ids": ["chunk3"], "interview_answer": answer},
         ]
         instructions = ("'보고 싶었다'를 '만들고 싶었다'로 고치고 지어낸 속마음은 빼줘.",)
         previous = {"title": "감독의 첫 만남", "detail_body": "감독은 애니로 보고 싶었다고 했어."}
@@ -177,5 +305,28 @@ class GenerationContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(materials["prior_blocking_issues"], prior_blockers)
             self.assertNotIn("prior_blocking_issues", materials["primary_web_source"])
             verified_quote = materials["primary_web_source"]["verified_claims"][1]
+            self.assertEqual(verified_quote["interview_answer"], answer)
+            self.assertIn("subject and detail together", materials["primary_web_source"]["interview_copy_rule"])
             self.assertEqual((verified_quote["speaker"], verified_quote["attribution_excerpt"],
                               verified_quote["evidence_refs"]), (speaker, context, ["C3"]))
+
+    def test_web_writer_references_keep_attribution_period_and_survey_context(self):
+        doc = replace(
+            evidence(RagContentType.CURATION, [1]).documents[0], source_id="survey",
+            author_name="Survey editor", body="Long survey", claims=("All results",),
+            excerpts=(EvidenceExcerpt("All results", "p. 1"),), temporal_context="2025 season",
+            curation_context=CurationContext(date(2025, 1, 1), date(2025, 2, 1), 400, "count", "fan poll"),
+            metadata={"work_entry_year": "2025", "source_notes": "Large unrelated metadata"},
+        )
+        service = EvidenceBoundGenerationService
+        full = service._document_payload(doc)
+        compact = service._document_payload(doc, reference_only=True)
+        for key in ("document_id", "source_id", "source_url", "language", "author_name", "curation_context"):
+            self.assertEqual(compact[key], full[key])
+        self.assertEqual(compact["temporal_context"], "2025 season")
+        self.assertEqual(compact["metadata"], {"work_entry_year": "2025"})
+        self.assertTrue({"body", "claims", "excerpts"}.isdisjoint(compact))
+        self.assertEqual(full["metadata"], doc.metadata)
+        self.assertEqual(full["body"], "Long survey")
+        self.assertEqual(full["excerpts"], [{"text": "All results", "locator": "p. 1"}])
+        self.assertEqual(full["claims"], ["All results"])

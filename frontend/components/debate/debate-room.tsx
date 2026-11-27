@@ -11,7 +11,7 @@ import type { DebateConnection, DebateMessage, DebateSideKey, DebateSummary } fr
 import { SideResult } from "./debate-cards";
 import { DebateHomeHeader, DebateScreen, DebateState, errorText, useToast, type ShowToast } from "./debate-chrome";
 import { ChatIcon, CircleCheckIcon, ClockIcon, SendIcon, TrophyIcon, UsersIcon } from "./debate-icons";
-import { AuthorLine, Badge, DebateGuide, InfoNote, WorkChips, useNow } from "./debate-parts";
+import { AuthorLine, Badge, DebateGuide, InfoNote, WorkChips, nicknameInitial, useNow } from "./debate-parts";
 import styles from "./debate.module.css";
 
 type Update = (change: (current: DebateSummary) => DebateSummary) => void;
@@ -71,26 +71,29 @@ export function DebateRoom({ debateId }: { debateId: number }) {
   </DebateScreen>;
 }
 
-/** 채팅방 위 토론 카드 (2026-11-23 시안): 작품 칩과 '투표창 접기/펼치기', 제목, 설명, 작성자·참여 인원·남은 시간.
- *  펼친 동안 아래에 children(진영 투표 등)을 둔다. 머리 부분 아래에 붙어 있고 채팅은 그 아래로 흐른다. */
-function RoomPanel({ debate, now, collapsed, onToggle, children }: {
+/** 채팅방 위 토론 카드 (2026-11-23 시안): 작품 칩과 '투표창 접기', 제목, 설명, 작성자·참여 인원·남은 시간.
+ *  펼친 동안 아래에 children(진영 투표 등)을 둔다. 머리 부분 아래에 붙어 있고 채팅은 그 아래로 흐른다.
+ *  접으면 (2026-11-25 시안) 제목과 참여 인원·남은 시간 한 줄만 남기고, 그 줄 오른쪽 끝에 '투표창 펼치기'를 둔다. */
+export function RoomPanel({ debate, now, collapsed, onToggle, children }: {
   debate: DebateSummary; now: number; collapsed: boolean; onToggle?: () => void; children?: ReactNode;
 }) {
-  return <section className={styles.roomPanel} aria-label="토론 정보">
+  const fold = onToggle ? <button type="button" className={styles.foldButton} aria-expanded={!collapsed} onClick={onToggle}>
+    {collapsed ? "투표창 펼치기" : "투표창 접기"}
+  </button> : null;
+  return <section className={styles.roomPanel} aria-label="토론 정보" data-collapsed={collapsed || undefined}>
     <div className={styles.roomPanelCard}>
-      <div className={styles.roomTop}>
+      {collapsed ? null : <div className={styles.roomTop}>
         <WorkChips works={debate.works} />
-        {onToggle ? <button type="button" className={styles.foldButton} aria-expanded={!collapsed} onClick={onToggle}>
-          {collapsed ? "투표창 펼치기" : "투표창 접기"}
-        </button> : null}
-      </div>
+        {fold}
+      </div>}
       <h2 className={styles.topicTitle}>{debate.title}</h2>
       {!collapsed && debate.description ? <p className={styles.roomDescription}>{debate.description}</p> : null}
       <div className={styles.topicMeta}>
-        <AuthorLine debate={debate} />
+        {collapsed ? null : <AuthorLine debate={debate} />}
         <span className={styles.meta}><UsersIcon size={16} />{debate.memberCount}명 참여 중</span>
         <span className={styles.metaDivider} aria-hidden="true" />
         <span className={styles.meta}><ClockIcon size={16} />남은 시간 {roomRemaining(debate.closesAt, now)}</span>
+        {collapsed ? fold : null}
       </div>
       {!collapsed ? children : null}
     </div>
@@ -122,12 +125,11 @@ function SidePoll({ debate, busy, onPick, onCancel }: {
 
 /* ───────────── 진행 중: 실시간 채팅 ───────────── */
 
-/** 앞 메시지와 같은 사람이 같은 분 안에 보낸 메시지인지. 이름·진영 표시·시간이 같아서 다시 쓰지 않는다.
- *  보낸 순간의 진영이 바뀌었으면 새로 보여 준다. (탈퇴한 회원은 모두 '알 수 없음'이라 함께 묶일 수 있다) */
+/** 앞 메시지와 같은 사람이 같은 분 안에 보낸 메시지인지. 이름·시간이 같아서 다시 쓰지 않는다.
+ *  (탈퇴한 회원은 모두 '알 수 없음'이라 함께 묶일 수 있다) */
 function sameRun(previous: DebateMessage, next: DebateMessage): boolean {
   const minute = (message: DebateMessage) => Math.floor(Date.parse(message.createdAt) / 60_000);
-  return previous.isMine === next.isMine && previous.nickname === next.nickname && previous.side === next.side
-    && minute(previous) === minute(next);
+  return previous.isMine === next.isMine && previous.nickname === next.nickname && minute(previous) === minute(next);
 }
 
 /** 도배 막기 창 (2026-11-23 시안): 10초에 5개를 넘게 보내면 서버가 막고(429) 이 창을 띄운다. */
@@ -171,7 +173,36 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
   const followRef = useRef(true);
   // 화면이 가진 가장 최근 채팅 번호. 실시간 연결을 (다시) 열 때 이 뒤의 채팅부터 받는다.
   const lastIdRef = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
+  // 보내기를 누른 순간 메시지 칸에 포커스가 있었는지 (있었으면 보낸 뒤에도 키보드를 그대로 둔다)
+  const typingRef = useRef(false);
   const now = useNow();
+
+  // 폰에서 메시지 칸을 눌러 올린 키보드는 채팅방 화면을 다시 누를 때까지 그대로 둔다 (2026-11-25).
+  // 아이폰은 입력창 밖을 눌러도 키보드가 저절로 내려가지 않아서, 입력창 밖을 톡 누르면 직접 포커스를 푼다.
+  // 화면을 밀어서 움직이는 것(pointercancel 이나 10px 넘게 움직임)은 누른 것으로 보지 않는다.
+  useEffect(() => {
+    let start: { x: number; y: number } | null = null;
+    const down = (event: PointerEvent) => { start = { x: event.clientX, y: event.clientY }; };
+    const cancel = () => { start = null; };
+    const up = (event: PointerEvent) => {
+      const tapped = start !== null && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 10;
+      start = null;
+      const input = inputRef.current;
+      if (!tapped || !input || document.activeElement !== input) return;
+      if (event.target instanceof Node && composerRef.current?.contains(event.target)) return;
+      input.blur();
+    };
+    window.addEventListener("pointerdown", down, { passive: true });
+    window.addEventListener("pointercancel", cancel, { passive: true });
+    window.addEventListener("pointerup", up, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", down);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("pointerup", up);
+    };
+  }, []);
 
   const remember = useCallback((items: DebateMessage[]) => {
     for (const item of items) lastIdRef.current = Math.max(lastIdRef.current, item.messageId);
@@ -374,6 +405,9 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    // 보내기 버튼을 눌러서 보낸 경우: 누른 동작 안에서 바로 메시지 칸으로 포커스를 돌려 둔다 (아이폰 키보드가 내려가지 않게)
+    if (typingRef.current) inputRef.current?.focus({ preventScroll: true });
+    typingRef.current = false;
     if (!text.trim() || sending) return;
     setSending(true);
     try {
@@ -390,7 +424,6 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
   };
   const closeRateLimit = useCallback(() => setRateLimited(false), []);
 
-  const label = (side: DebateSideKey) => (side === "a" ? debate.sideA.label : debate.sideB.label);
   return <DebateScreen composer label={debate.title}>
     <RoomHeader title={debate.title} back="/pivot/debate" />
     <RoomPanel debate={debate} now={now} collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)}>
@@ -408,20 +441,19 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
         {loadingOlder ? "불러오는 중이에요" : "이전 채팅 더 보기"}
       </button> : null}
       <ol className={styles.messages} aria-label="채팅" aria-live="polite">
-        {/* 시안: 다른 사람은 왼쪽 흰 말풍선, 내 메시지는 오른쪽 연보라 말풍선. 얼굴 자리는 연보라 동그라미.
-            보낸 순간의 진영은 닉네임 옆 작은 표시로 보여 준다.
+        {/* 시안: 다른 사람은 왼쪽 흰 말풍선, 내 메시지는 오른쪽 연보라 말풍선. 얼굴 자리는 연보라 동그라미에 닉네임 첫 글자.
+            진영 표시는 닉네임 옆에 두지 않는다 (2026-11-25 디자이너 요청).
             같은 사람이 같은 분 안에 연달아 보내면 이름·얼굴·시간 없이 말풍선만 바로 아래에 붙인다 (2026-11-24, 카카오톡처럼). */}
         {(messages ?? []).map((item, index, list) => {
           const continued = index > 0 && sameRun(list[index - 1], item);
           return <li key={item.messageId} className={styles.message} data-mine={item.isMine || undefined} data-continued={continued || undefined}>
-            <span className={styles.avatar} aria-hidden="true" />
+            <span className={styles.avatar} aria-hidden="true">{nicknameInitial(item.nickname)}</span>
             <div className={styles.messageBody}>
               {continued
                 // 화면 읽기 프로그램은 말풍선마다 누가 보냈는지 읽어 준다.
                 ? <span className={styles.srOnly}>{item.nickname}</span>
                 : <p className={styles.messageMeta}>
                   <b>{item.nickname}</b>
-                  {item.side ? <span className={styles.sideTag} data-side={item.side}>{label(item.side)}</span> : null}
                   <time dateTime={item.createdAt}>{timeText(item.createdAt)}</time>
                 </p>}
               <p className={styles.bubble}>{item.body}</p>
@@ -432,10 +464,13 @@ function OpenRoom({ debate, onChange, update, showToast, toast }: {
       <div ref={endRef} className={styles.chatEnd} />
     </div>
 
-    <form className={styles.composer} onSubmit={(event) => void submit(event)}>
-      <input value={text} onChange={(event) => setText(event.target.value)} onFocus={() => setCollapsed(true)} maxLength={DEBATE_RULES.messageMax}
-        placeholder="메시지를 입력하세요" aria-label="메시지" />
-      <button type="submit" className={styles.sendButton} aria-label="보내기" disabled={!text.trim() || sending}><SendIcon size={18} /></button>
+    <form ref={composerRef} className={styles.composer} onSubmit={(event) => void submit(event)}>
+      <input ref={inputRef} value={text} onChange={(event) => setText(event.target.value)} onFocus={() => setCollapsed(true)} maxLength={DEBATE_RULES.messageMax}
+        placeholder="메시지를 입력하세요" aria-label="메시지" enterKeyHint="send" />
+      {/* 보내기 버튼은 눌러도 포커스를 가져가지 않는다: 가져가면 메시지 칸에서 포커스가 빠져 폰 키보드가 내려간다 */}
+      <button type="submit" className={styles.sendButton} aria-label="보내기" disabled={!text.trim() || sending}
+        onPointerDown={() => { typingRef.current = document.activeElement === inputRef.current; }}
+        onMouseDown={(event) => event.preventDefault()}><SendIcon size={18} /></button>
     </form>
     {rateLimited ? <RateLimitDialog onClose={closeRateLimit} /> : null}
     {toast}

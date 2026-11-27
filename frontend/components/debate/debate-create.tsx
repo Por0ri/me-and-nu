@@ -8,20 +8,22 @@ import { DEBATE_RULES } from "@/lib/debate/rules";
 import type { DebateWorkOption } from "@/lib/debate/types";
 import { DebateHomeHeader, DebateScreen, errorText, useToast } from "./debate-chrome";
 import { CloseIcon } from "./debate-icons";
-import { ConfirmDialog, DebateGuide } from "./debate-parts";
+import { ConfirmDialog, DebateGuide, useSwipeRow } from "./debate-parts";
 import styles from "./debate.module.css";
 
 /*
  * 주제 올리기 (2026-11-23 시안 + 사용자 지시):
- *  - 애니메이션 이름은 우리 작품 목록에서 검색해 고른다 (여러 개 가능, 최대 3개).
- *  - 투표 선택지는 캐릭터명이 아닐 수도 있어서 예시만 보여 준다.
- *  - 필수 칸(작품·제목·선택지 두 개)을 다 채우면 '주제 올리기'가 켜지고, 올리기·임시 저장 모두 확인 창을 거친다.
+ *  - 애니메이션 이름은 우리 작품 목록에서 검색해 고른다 (2개까지, 2026-11-25 시안).
+ *  - 설명은 100자, 투표 선택지는 8자까지 (2026-11-25 시안). 선택지 칸 안내는 '후보 (최대 8자)'.
+ *  - 하나라도 쓰면 '임시 저장'이, 필수 칸(작품·제목·선택지 두 개)을 다 채우면 '주제 올리기'도 켜진다 (2026-11-25 시안).
+ *    올리기·임시 저장 모두 확인 창을 거친다.
  *  - 임시 저장은 이 브라우저에 회원별로 남는다 (다른 기기에서는 보이지 않는다). 다시 들어오면 불러오고, 올리면 지운다.
  */
 
 type Draft = { works: DebateWorkOption[]; title: string; description: string; sideA: string; sideB: string };
 const DRAFT_PREFIX = "pivot.debate-draft.";
-const WORK_OPTIONS_MAX = 5;
+/** 작품 검색 후보는 3개까지 보여 준다 (2026-11-25 사용자 요청, 전에는 5개) */
+const WORK_OPTIONS_MAX = 3;
 
 /** 저장해 둔 값이 지금 화면이 쓰는 모양과 다르면(예전 모양·손으로 바뀐 값) 불러오지 않는다. 화면이 오류로 멈추지 않게 다섯 칸을 다 본다. */
 function isDraft(value: unknown): value is Draft {
@@ -76,6 +78,8 @@ export function DebateCreate() {
   const [toast, showToast] = useToast();
   const restored = useRef(false);
   const ids = useId();
+  // 고른 작품 칩 줄: 이름이 길어도 가로 한 줄로 두고 옆으로 밀어서 본다 (2026-11-25)
+  const pickedSwipe = useSwipeRow<HTMLUListElement>();
 
   // 임시 저장한 글이 있으면 처음 한 번 불러온다 (로그인 정보를 읽은 뒤).
   useEffect(() => {
@@ -83,13 +87,13 @@ export function DebateCreate() {
     restored.current = true;
     const draft = draftStore(userId).read();
     if (!draft) return;
+    // 상한을 줄여서(선택지 20 → 12 → 8자, 설명 200 → 100자, 작품 3 → 2개) 그 전에 저장한 글은 더 길 수 있다. 서버처럼 글자 단위로 자른다.
+    const clip = (text: string, max: number) => Array.from(text).slice(0, max).join("");
     setWorks(draft.works.slice(0, DEBATE_RULES.worksMax));
     setTitle(draft.title);
-    setDescription(draft.description);
-    // 선택지 상한을 20자에서 12자로 줄여서(2026-11-24) 그 전에 저장한 글은 더 길 수 있다. 서버처럼 글자 단위로 자른다.
-    const clip = (text: string) => Array.from(text).slice(0, DEBATE_RULES.sideLabelMax).join("");
-    setSideA(clip(draft.sideA));
-    setSideB(clip(draft.sideB));
+    setDescription(clip(draft.description, DEBATE_RULES.descriptionMax));
+    setSideA(clip(draft.sideA, DEBATE_RULES.sideLabelMax));
+    setSideB(clip(draft.sideB, DEBATE_RULES.sideLabelMax));
     showToast("임시 저장한 내용을 불러왔어요.", "done");
   }, [userId, showToast]);
 
@@ -161,14 +165,17 @@ export function DebateCreate() {
             </li>)}
           </ul> : null}
         </div>
-        {works.length > 0 ? <ul className={styles.pickedWorks} aria-label="고른 작품">
-          {works.map((work) => <li key={work.entityId}>{work.name}
-            <button type="button" aria-label={`${work.name} 빼기`} onClick={() => removeWork(work.entityId)}><CloseIcon size={16} /></button>
+        {works.length > 0 ? <ul className={`${styles.pickedWorks} ${styles.swipe}`} aria-label="고른 작품" {...pickedSwipe}>
+          {/* 온보딩에서 작품 고를 때의 칩과 같은 모양 (2026-11-25 시안): 진한 테두리 · 연보라 바탕 · 굵은 X */}
+          {works.map((work) => <li key={work.entityId}><span>{work.name}</span>
+            <button type="button" aria-label={`${work.name} 빼기`} onClick={() => removeWork(work.entityId)}>
+              <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="m2.5 2.5 7 7m0-7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+            </button>
           </li>)}
         </ul> : null}
         {typed && workOptions.text === typed && options.length === 0 && !full
           ? <p className={styles.fieldHelp}>목록에 맞는 작품이 없어요. 다른 이름으로 찾아보세요.</p>
-          : <p className={styles.fieldHelp}>우리 작품 목록에서 골라 주세요 · 여러 개 고를 수 있어요 ({works.length}/{DEBATE_RULES.worksMax})</p>}
+          : <p className={styles.fieldHelp}>{DEBATE_RULES.worksMax}개까지 고를 수 있어요 ({works.length}/{DEBATE_RULES.worksMax})</p>}
       </div>
 
       <div className={styles.field}>
@@ -192,12 +199,12 @@ export function DebateCreate() {
 
       <fieldset className={styles.field}>
         <legend className={styles.label}>투표 선택지 <span className={styles.required} aria-hidden="true">*</span></legend>
-        {([["a", sideA, setSideA, "예) 나루토"], ["b", sideB, setSideB, "예) 사스케"]] as const).map(([side, value, setValue, example], index) =>
+        {([["a", sideA, setSideA], ["b", sideB, setSideB]] as const).map(([side, value, setValue], index) =>
           <div key={side} className={styles.choiceRow}>
             <label className={styles.choiceTag} htmlFor={`${ids}-side-${side}`}>선택지 {index + 1}</label>
             <div className={styles.choiceInput}>
               <input id={`${ids}-side-${side}`} value={value} maxLength={DEBATE_RULES.sideLabelMax} onChange={(event) => setValue(event.target.value)}
-                placeholder={`${example} (최대 ${DEBATE_RULES.sideLabelMax}자)`} aria-required="true" />
+                placeholder={`후보 (최대 ${DEBATE_RULES.sideLabelMax}자)`} aria-required="true" />
               {value ? <button type="button" aria-label={`선택지 ${index + 1} 지우기`} onClick={() => setValue("")}><CloseIcon size={18} /></button> : null}
             </div>
           </div>)}
@@ -206,7 +213,7 @@ export function DebateCreate() {
 
       {error ? <p className={styles.fieldError} role="alert">{error}</p> : null}
       <div className={styles.createButtons}>
-        <button type="button" className={styles.draftButton} onClick={() => { if (empty) showToast("아직 작성한 내용이 없어요."); else setConfirm("draft"); }}>임시 저장</button>
+        <button type="button" className={styles.draftButton} disabled={empty} onClick={() => setConfirm("draft")}>임시 저장</button>
         <button type="submit" className={styles.submitButton} disabled={!ready}>{submitting ? "올리는 중…" : "주제 올리기"}</button>
       </div>
     </form>

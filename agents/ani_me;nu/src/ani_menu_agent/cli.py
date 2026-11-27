@@ -3,9 +3,11 @@
 import hashlib
 import importlib.metadata
 import json
+import os
 import re
 import signal
 import sys
+import tempfile
 import threading
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
@@ -773,6 +775,56 @@ def _add_usage_summary(result: dict) -> dict:
     return result
 
 
+def _write_generation_failure(
+    output: Path,
+    *,
+    request_id: str,
+    request_evidence: dict,
+    usage_records: list,
+    error: Exception,
+) -> None:
+    """Retain known receipts without claiming the failed graph's usage is complete."""
+    result = _add_usage_summary({
+        **request_evidence,
+        "status": "generation_failed",
+        "request_id": request_id,
+        "failure": {
+            "stage": "content_generation",
+            "error_type": type(error).__name__,
+        },
+        "usage_records": [record for record in usage_records if isinstance(record, dict)],
+    })
+    summary = result["usage_summary"]
+    summary.update(complete=False, scope="known_usage_only")
+    result["cost_accounting"] = {
+        "complete": False,
+        "reason": "downstream_usage_unknown",
+        "known_estimated_cost_usd": summary["estimated_cost_usd"],
+        "estimated_total_cost_usd": None,
+    }
+    # Publish only a complete file, and never replace evidence already present for
+    # this attempt. A same-directory hard link gives atomic, exclusive creation.
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".generation-failure-", dir=output.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, output)
+        except FileExistsError:
+            pass
+    finally:
+        os.unlink(temporary)
+        if hasattr(os, "O_DIRECTORY"):
+            directory = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+
+
 def _print_run_metrics(result: dict) -> None:
     for stage, seconds in result.get("stage_timings_seconds", {}).items():
         console.print(f"시간 · {stage}: {seconds:.2f}초")
@@ -1532,8 +1584,8 @@ def crawl_generate(
     extraction_usage: dict | None = None
     fact_extraction_started = False
 
-    def write_bound_skip(status: str, **details) -> None:
-        # A rejected type can still have incurred link/OCR/fact-extraction cost.
+    def early_result(status: str, **details) -> dict:
+        # Holds and skips can still have incurred link/OCR/fact-extraction cost.
         # Keep even an incomplete extraction receipt so it cannot look like a
         # pre-LLM, zero-call skip to the queue's budget controller.
         records = list(work_match_usage_records)
@@ -1541,11 +1593,16 @@ def crawl_generate(
             records.insert(0, extraction_usage if isinstance(extraction_usage, dict) else {})
         result = {**request_evidence, "status": status, **details, "usage_records": records}
         _add_usage_summary(result)
-        if any("estimated_cost_usd" not in record for record in records):
+        if any(record.get("usage_complete") is False or "estimated_cost_usd" not in record
+               for record in records):
             result["cost_accounting"] = {"complete": False, "reason": "missing_usage_cost"}
+        return result
+
+    def write_early_result(status: str, **details) -> None:
+        result = early_result(status, **details)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(
-            json.dumps(result, ensure_ascii=False, indent=2),
+            json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False),
             encoding="utf-8",
         )
 
@@ -1858,25 +1915,16 @@ def crawl_generate(
                             if preflight_temporal["status"] == "expired"
                             else "expiry_unresolved_held"
                         )
-                        output.parent.mkdir(parents=True, exist_ok=True)
-                        output.write_text(
-                            json.dumps(
-                                {
-                                    "status": status,
-                                    "candidate_id": candidate_id,
-                                    "content_type": content_type,
-                                    "title": identity_preflight_capture.title,
-                                    "source_url": str(identity_preflight_capture.url),
-                                    **extract_source_schedule(preflight_record, content_type),
-                                    **({"occurred_on": preflight_temporal["occurred_on"]} if "occurred_on" in preflight_temporal else {}),
-                                    "expiry_evidence": preflight_temporal.get("evidence"),
-                                    "reason": preflight_temporal.get("reason") or "Period validity was expired or could not be established; no page data was stored.",
-                                },
-                                ensure_ascii=False,
-                                indent=2,
-                            ),
-                            encoding="utf-8",
-                        )
+                        write_early_result(status, **{
+                            "candidate_id": candidate_id,
+                            "content_type": content_type,
+                            "title": identity_preflight_capture.title,
+                            "source_url": str(identity_preflight_capture.url),
+                            **extract_source_schedule(preflight_record, content_type),
+                            **({"occurred_on": preflight_temporal["occurred_on"]} if "occurred_on" in preflight_temporal else {}),
+                            "expiry_evidence": preflight_temporal.get("evidence"),
+                            "reason": preflight_temporal.get("reason") or "Period validity was expired or could not be established; no page data was stored.",
+                        })
                         return
                 if content_type == "news":
                     preflight_news = immediate_news_action_expiry(candidate)
@@ -1886,22 +1934,14 @@ def crawl_generate(
                             if preflight_news["status"] == "expired"
                             else "expiry_unresolved_held"
                         )
-                        output.parent.mkdir(parents=True, exist_ok=True)
-                        output.write_text(
-                            json.dumps(
-                                {
-                                    "status": status,
-                                    "candidate_id": candidate_id,
-                                    "content_type": content_type,
-                                    "title": candidate.get("title"),
-                                    "source_url": str(candidate.get("url") or url),
-                                    "expiry_evidence": preflight_news.get("evidence"),
-                                    "reason": "Time-sensitive news is past its publication day or has no publication date; no page data was stored.",
-                                },
-                                ensure_ascii=False,
-                                indent=2,
-                            ),
-                            encoding="utf-8",
+                        write_early_result(
+                            status,
+                            candidate_id=candidate_id,
+                            content_type=content_type,
+                            title=candidate.get("title"),
+                            source_url=str(candidate.get("url") or url),
+                            expiry_evidence=preflight_news.get("evidence"),
+                            reason="Time-sensitive news is past its publication day or has no publication date; no page data was stored.",
                         )
                         return
             except (ValueError, httpx.HTTPError) as exc:
@@ -1924,8 +1964,7 @@ def crawl_generate(
             "The source does not identify an anime work as its subject." if out_of_scope
             else "An exact, unique anime work could not be confirmed from the source."
         )
-        report = {
-            "status": status,
+        report = early_result(status, **{
             "candidate_id": candidate_id,
             "candidate_title": candidate.get("title") if candidate_id else None,
             "captured_title": capture.title,
@@ -1934,10 +1973,9 @@ def crawl_generate(
             "outbound_links": [item.model_dump(mode="json") for item in capture.outbound_links],
             "work_match_evidence": [],
             "work_match_audit": work_match_audit,
-            "usage_records": work_match_usage_records,
             "source_url": str(capture.url),
             "reason": reason,
-        }
+        })
         if candidate_id:
             record_resolution = getattr(repository, "mark_discovery_candidate_work_resolution", None)
             if callable(record_resolution):
@@ -1999,7 +2037,7 @@ def crawl_generate(
                 or final.port not in {None, 443} or final.username is not None or final.password is not None
                 or final.path.rstrip("/") != submitted.path.rstrip("/") or final.query != submitted.query
             ):
-                write_bound_skip("source_redirect_skipped", reason="captured_article_url_mismatch")
+                write_early_result("source_redirect_skipped", reason="captured_article_url_mismatch")
                 return
             if capture.text.strip():
                 # The article must identify its work independently of the registered source.
@@ -2018,7 +2056,7 @@ def crawl_generate(
                         work_match_evidence.extend(resolve_work_matches(outbound_links=[link], **match_context))
                 candidate_work_ids = list(dict.fromkeys(match.menu_work_id for match in work_match_evidence))
                 if candidate_work_ids != [expected_work_id]:
-                    write_bound_skip(
+                    write_early_result(
                         "work_id_unresolved_skipped", source_url=str(capture.url),
                         matched_work_ids=candidate_work_ids, reason="captured_article_work_mismatch",
                     )
@@ -2038,31 +2076,20 @@ def crawl_generate(
                 ).strip()
         stage_timings["page_collection"] = round(perf_counter() - stage_started, 3)
         if not capture.text.strip():
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(
-                json.dumps(
-                    {
-                        **request_evidence,
-                        "status": "needs_crawler_update",
-                        "candidate_id": candidate_id,
-                        "content_type": content_type,
-                        "source_url": str(capture.url),
-                        "qa_report": [
-                            {
-                                "code": "SOURCE_BODY_EMPTY",
-                                "message": (
-                                    "Source page has no extractable article text; "
-                                    "no assets were persisted."
-                                ),
-                                "severity": "error",
-                                "owner": "crawler",
-                            }
-                        ],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
+            write_early_result(
+                "needs_crawler_update",
+                candidate_id=candidate_id,
+                content_type=content_type,
+                source_url=str(capture.url),
+                qa_report=[{
+                    "code": "SOURCE_BODY_EMPTY",
+                    "message": (
+                        "Source page has no extractable article text; "
+                        "no assets were persisted."
+                    ),
+                    "severity": "error",
+                    "owner": "crawler",
+                }],
             )
             console.print(
                 "원문 본문을 추출할 수 없어 이미지 적재와 생성 단계를 건너뜁니다."
@@ -2072,7 +2099,7 @@ def crawl_generate(
             headline_type = infer_toei_press_type(capture.title)
             if headline_type != "news":
                 if expected_work_id is not None and headline_type != requested_content_type:
-                    write_bound_skip(
+                    write_early_result(
                         "content_type_mismatch_skipped", requested_content_type=requested_content_type,
                         evidence_content_type=headline_type, source_url=str(capture.url),
                     )
@@ -2114,9 +2141,7 @@ def crawl_generate(
                     if temporal["status"] == "expired"
                     else "expiry_unresolved_held"
                 )
-                result = {
-                    **request_evidence,
-                    "status": status,
+                write_early_result(status, **{
                     "candidate_id": candidate_id,
                     "content_type": content_type,
                     "title": str(payload.get("title") or capture.title),
@@ -2129,11 +2154,7 @@ def crawl_generate(
                         if temporal["status"] == "expired"
                         else "No unambiguous source-backed schedule was found."
                     ),
-                }
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_text(
-                    json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
+                })
                 console.print(
                     f"기간 판정 {status}: {payload.get('title') or capture.title}; 생성 큐 적재를 건너뜁니다."
                 )
@@ -2147,9 +2168,7 @@ def crawl_generate(
                     if temporal_news["status"] == "expired"
                     else "expiry_unresolved_held"
                 )
-                result = {
-                    **request_evidence,
-                    "status": status,
+                write_early_result(status, **{
                     "candidate_id": candidate_id,
                     "content_type": content_type,
                     "title": str(payload.get("title") or capture.title),
@@ -2157,9 +2176,7 @@ def crawl_generate(
                     "published_at": temporal_news.get("published_at"),
                     "expiry_evidence": temporal_news.get("evidence"),
                     "reason": "Time-sensitive start news is past its publication/action date or has no date; no page data was stored.",
-                }
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+                })
                 console.print(
                     f"시의성 뉴스 보류 {status}: {payload.get('title') or capture.title}; 페이지 저장과 생성 큐 적재를 건너뜁니다."
                 )
@@ -2267,14 +2284,14 @@ def crawl_generate(
             detected_type = infer_strong_content_type(package)
         if detected_type and detected_type != content_type:
             if expected_work_id is not None:
-                write_bound_skip(
+                write_early_result(
                     "content_type_mismatch_skipped", requested_content_type=requested_content_type,
                     evidence_content_type=detected_type, source_url=str(capture.url), request_id=package.request_id,
                 )
                 return
             supported_types = {item.value for item in source.content_types}
             if detected_type not in supported_types:
-                write_bound_skip(
+                write_early_result(
                     "content_type_mismatch_skipped", candidate_id=candidate_id,
                     request_id=package.request_id, requested_content_type=requested_content_type,
                     evidence_content_type=detected_type, supported_source_types=sorted(supported_types),
@@ -2314,32 +2331,22 @@ def crawl_generate(
                     if temporal["status"] == "expired"
                     else "expiry_unresolved_held"
                 )
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_text(
-                    json.dumps(
-                        {
-                            **request_evidence,
-                            "status": status,
-                            "candidate_id": candidate_id,
-                            "request_id": package.request_id,
-                            "content_type": content_type,
-                            "topic": package.topic,
-                            "source_url": str(capture.url),
-                            **payload["source_schedule"],
-                            **({"occurred_on": temporal["occurred_on"]} if "occurred_on" in temporal else {}),
-                            "expiry_evidence": temporal.get("evidence"),
-                            "reason": (
-                                temporal.get("reason") or "The explicit event or sales end date has passed; no new page data was stored."
-                                if temporal["status"] == "expired"
-                                else "No unambiguous source-backed schedule was found."
-                            ),
-                            "menu_work_ids": package.menu_work_ids,
-                        },
-                        ensure_ascii=False,
-                        indent=2,
+                write_early_result(status, **{
+                    "candidate_id": candidate_id,
+                    "request_id": package.request_id,
+                    "content_type": content_type,
+                    "topic": package.topic,
+                    "source_url": str(capture.url),
+                    **payload["source_schedule"],
+                    **({"occurred_on": temporal["occurred_on"]} if "occurred_on" in temporal else {}),
+                    "expiry_evidence": temporal.get("evidence"),
+                    "reason": (
+                        temporal.get("reason") or "The explicit event or sales end date has passed; no new page data was stored."
+                        if temporal["status"] == "expired"
+                        else "No unambiguous source-backed schedule was found."
                     ),
-                    encoding="utf-8",
-                )
+                    "menu_work_ids": package.menu_work_ids,
+                })
                 console.print(
                     f"기간 판정 {status}: {package.topic}; 생성 큐 적재를 건너뜁니다."
                 )
@@ -2394,25 +2401,16 @@ def crawl_generate(
     )
     stage_timings["database_and_research"] = round(perf_counter() - stage_started, 3)
     if candidate_is_stale(package.model_dump(mode="json"), content_type or ""):
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(
-            json.dumps(
-                {
-                    **request_evidence,
-                    "status": "stale_evidence_persisted",
-                    "request_id": package.request_id,
-                    "topic": package.topic,
-                    "content_type": content_type,
-                    "event_end": package.event_end,
-                    "reason": "Evidence was retained; expired event/goods are not sent to generation.",
-                    "source_urls": [str(item.url) for item in package.sources],
-                    "fact_count": len(package.facts),
-                    "menu_work_ids": package.menu_work_ids,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        write_early_result(
+            "stale_evidence_persisted",
+            request_id=package.request_id,
+            topic=package.topic,
+            content_type=content_type,
+            event_end=package.event_end,
+            reason="Evidence was retained; expired event/goods are not sent to generation.",
+            source_urls=[str(item.url) for item in package.sources],
+            fact_count=len(package.facts),
+            menu_work_ids=package.menu_work_ids,
         )
         console.print("기간이 지난 후보의 원문과 사실을 저장했습니다. 생성 큐에는 보내지 않습니다.")
         return
@@ -2421,23 +2419,14 @@ def crawl_generate(
     duplicate = repository.find_duplicate_content(package, retry_same_request=retry_failed)
     stage_timings["duplicate_check"] = round(perf_counter() - duplicate_started, 3)
     if duplicate:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(
-            json.dumps(
-                {
-                    **request_evidence,
-                    "status": "duplicate_evidence_persisted",
-                    "duplicate_of": duplicate,
-                    "request_id": package.request_id,
-                    "topic": package.topic,
-                    "source_urls": [str(source.url) for source in package.sources],
-                    "fact_count": len(package.facts),
-                    "menu_work_ids": package.menu_work_ids,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        write_early_result(
+            "duplicate_evidence_persisted",
+            duplicate_of=duplicate,
+            request_id=package.request_id,
+            topic=package.topic,
+            source_urls=[str(source.url) for source in package.sources],
+            fact_count=len(package.facts),
+            menu_work_ids=package.menu_work_ids,
         )
         console.print("중복 콘텐츠 후보의 출처와 사실은 저장했고, 중복 생성을 막았습니다.")
         return
@@ -2510,6 +2499,7 @@ def crawl_generate(
         return
 
     console.print("5/5 카드 생성 및 독립 검수 중…")
+    result = None
     try:
         _stored_package, result = _run_generation_from_db(
             package.request_id,
@@ -2518,19 +2508,47 @@ def crawl_generate(
             initial_usage_records=[extraction_usage, *work_match_usage_records],
             repository=repository,
         )
-    except (ValueError, RuntimeError) as exc:
-        raise typer.BadParameter(f"DB 기반 콘텐츠 생성 단계에서 중단: {exc}") from exc
+        stage_timings.update(result.get("stage_timings_seconds", {}))
+        stage_timings["total"] = round(perf_counter() - run_started, 3)
+        result["stage_timings_seconds"] = stage_timings
+        if work_match_audit:
+            result["work_match_audit"] = work_match_audit
+        _add_usage_summary(result)
+        result.update(request_evidence)
 
-    stage_timings.update(result.get("stage_timings_seconds", {}))
-    stage_timings["total"] = round(perf_counter() - run_started, 3)
-    result["stage_timings_seconds"] = stage_timings
-    if work_match_audit:
-        result["work_match_audit"] = work_match_audit
-    _add_usage_summary(result)
-    result.update(request_evidence)
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8"
+        )
+    except Exception as exc:
+        known_usage = [extraction_usage, *work_match_usage_records]
+        returned_usage = result.get("usage_records") if isinstance(result, dict) else None
+        if isinstance(returned_usage, list):
+            unmatched_initial = list(known_usage)
+            for record in returned_usage:
+                if not isinstance(record, dict):
+                    continue
+                try:
+                    json.dumps(_add_usage_summary({"usage_records": [record]}), allow_nan=False)
+                except (TypeError, ValueError, OverflowError):
+                    continue  # One bad receipt must not discard other known costs.
+                if record in unmatched_initial:
+                    unmatched_initial.remove(record)
+                else:
+                    known_usage.append(record)
+        try:
+            _write_generation_failure(
+                output,
+                request_id=package.request_id,
+                request_evidence=request_evidence,
+                usage_records=known_usage,
+                error=exc,
+            )
+        except Exception:
+            # Preserve the original provider/pipeline error even if the attempt
+            # directory cannot accept its partial accounting receipt.
+            console.print("생성 실패 사용량 기록을 저장하지 못했습니다.")
+        raise
     exported = _export_rendered_cards(
         result.get("package", {}), output.parent / "cards" / package.request_id
     )

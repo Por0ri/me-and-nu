@@ -14,10 +14,11 @@ import styles from "./chat.module.css";
 export type ChatCopy = { title: string; placeholder: string; examples: readonly string[] };
 
 // 디자인 시안 문구 (11/13). 상세 예시 질문은 시안의 음악 글 예시 대신 어느 글에나 맞는 질문을 쓴다 (서원 결정 11/15).
+// 홈 예시 질문 첫째 · 셋째는 11/25 서원 결정으로 바꿈 (판타지 → 호러 스릴러, 팝업 · 전시 → 굿즈).
 export const HOME_CHAT_COPY: ChatCopy = {
   title: "어떤 콘텐츠를 찾고 계시나요?",
   placeholder: "보고싶은 콘텐츠가 무엇인가요?",
-  examples: ["판타지 장르의 애니 콘텐츠 찾아줘", "‘나루토’ 관련 카드뉴스 보여줘", "팝업이나 전시 콘텐츠만 보고 싶어"],
+  examples: ["호러 스릴러 장르 애니 콘텐츠 찾아줘", "‘나루토’ 관련 카드뉴스 보여줘", "굿즈 관련 콘텐츠만 보고 싶어"],
 };
 export const DETAIL_CHAT_COPY: ChatCopy = {
   title: "이 콘텐츠에서 어떤 점이 궁금하세요?",
@@ -29,9 +30,11 @@ const FACE = "/pivot/chat/face.svg";
 const CLOSE_DRAG = 80; // 손잡이를 이만큼 넘게 끌어내리면 닫는다
 const DRAG_SLOP = 6; // 이보다 적게 움직이면 끈 게 아니라 누른 것
 
+/** 보내기 비행기: 토론방 채팅창의 보내기 아이콘(debate-icons.tsx SendIcon)과 같은 선 그림 (2026-11-25 사용자 요청) */
 function SendIcon() {
-  return <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z" fill="currentColor" />
+  return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z" />
   </svg>;
 }
 

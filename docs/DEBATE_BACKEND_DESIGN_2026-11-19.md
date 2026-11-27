@@ -173,8 +173,8 @@ stateDiagram-v2
 | `topic_id` | bigint FK → `topic` | 분야. 목록은 기존 피드·저장처럼 분야별로 본다 |
 | `author_user_id` | bigint FK → `user_account`, NULL 허용 | 탈퇴 회원 삭제 때 NULL로 바꾸고 토론 기록은 남긴다 |
 | `title` | varchar(60) | |
-| `description` | varchar(200), NULL 허용 | |
-| `side_a_label`, `side_b_label` | varchar(20) | 선택지 이름. 예: 나루토 / 사스케, 된다 / 못 된다. 입력은 12자까지 받는다 (6.1 아래 설명) |
+| `description` | varchar(100), NULL 허용 | 100자 (2026-11-25, `7f843b19debf`가 200자에서 줄이고 100자 넘는 옛 설명은 앞 99자 + '…'로 자름). 줄바꿈은 막지 않고, 카드에는 3줄까지 보이고 넘으면 '…' (더보기 · 접기 없음) |
+| `side_a_label`, `side_b_label` | varchar(20) | 선택지 이름. 예: 나루토 / 사스케, 된다 / 못 된다. 입력은 8자까지 받는다 (6.1 아래 설명) |
 | `status` | varchar(10) | `voting`, `open`, `closed`, `expired` |
 | `vote_count` | int | 개설 투표 수 |
 | `side_a_count`, `side_b_count` | int | 진영별 인원 |
@@ -185,7 +185,7 @@ stateDiagram-v2
 
 DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이름은 빈 값 금지, 양쪽 이름은 서로 달라야 한다. 열린 적 없는 주제(`voting`, `expired`)에는 방 시각이 없고 열린 방(`open`, `closed`)에는 `opened_at < closes_at`가 반드시 있다. NULL과의 비교는 CHECK를 통과하므로 `closes_at IS NOT NULL`을 따로 적는다.
 
-**`debate_work`**: 주제에 연결한 작품(0~3개). PK `(debate_id, entity_id)`, `topic_id`, `position`(화면 순서). `(debate_id, topic_id)`와 `(entity_id, topic_id)`를 함께 가리켜 주제와 다른 분야의 작품은 붙지 않는다. 기존 `tap_entity`와 같은 방식이다. 연결된 작품은 지울 수 없다(RESTRICT).
+**`debate_work`**: 주제에 연결한 작품(1~2개, 필수). PK `(debate_id, entity_id)`, `topic_id`, `position`(화면 순서). `(debate_id, topic_id)`와 `(entity_id, topic_id)`를 함께 가리켜 주제와 다른 분야의 작품은 붙지 않는다. 기존 `tap_entity`와 같은 방식이다. 연결된 작품은 지울 수 없다(RESTRICT).
 
 **`debate_vote`**: 개설 투표. PK `(debate_id, user_id)`로 1인 1표를 보장한다. `created_at`.
 
@@ -209,7 +209,7 @@ DB 규칙(CHECK): 상태 4가지만, 숫자는 0 이상, 제목·선택지 이�
 
 ### 5.3 정리 작업: `python -m app.jobs.finalize_debates`
 
-기존 `app/jobs` 명령처럼 기본은 미리보기이고 `--apply`를 붙여야 저장하며 `--expected-database`가 필수다. 서버에서 10분마다 실행한다. 구현은 `backend/app/services/debate_finalize_service.py`, 명령은 `backend/app/jobs/finalize_debates.py`.
+기존 `app/jobs` 명령처럼 기본은 미리보기이고 `--apply`를 붙여야 저장하며 `--expected-database`가 필수다. 서버에서 10분마다 실행한다(main 서버: `deploy/main/main_debates.py`가 설치하는 `me-nu-main-debates.timer`, 매시 5·15…55분 30초). 공지 작업과 같은 방식으로 접속 5초·잠금 대기 5초·문장 하나 60초·전체 180초를 넘으면 실패로 끝난다. 한 트랜잭션이라 보통은 아무것도 저장되지 않고, 커밋하는 순간에 끊기면 이미 저장됐을 수 있지만 여러 번 돌아도 결과가 같아 다음 실행이 이어서 한다. 서버 유닛 제한(8분)은 잠금 안 사전 검사와 docker exec 240초를 합친 것보다 길다. 구현은 `backend/app/services/debate_finalize_service.py`, 명령은 `backend/app/jobs/finalize_debates.py`.
 
 ```
 python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
@@ -240,11 +240,11 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | 진영 | 채팅과 별개로 언제든 고르고 바꿀 수 있다. 마감 순간의 인원으로 승패를 정하고, 같으면 무승부, 0명이면 결과 없음 |
 | 채팅 | 토론방에 참여한 사람만(진영을 안 골라도 됨, 2026-11-23 결정 14), 1~300자, 10초에 5개까지 |
 | 정원 | 없음. 구경은 누구나 할 수 있다. 부하 시험 후 필요하면 상한을 둔다 |
-| 관련 작품 | 작품 목록에서 0~3개. 목록에 없는 작품이어도 주제는 올릴 수 있다. 자유 태그는 1차에서 뺀다 |
+| 관련 작품 | 작품 목록에서 1~2개 필수 (2026-11-25). 목록에 없는 작품으로는 주제를 올릴 수 없다. 자유 태그는 1차에서 뺀다 |
 | 실시간 연결 | 1인 동시 3개, 20초마다 연결 유지 신호 |
 | 지난 토론방 결과 보관 | 끝난 뒤 9일. 지나면 목록에서 빠지고 정리 작업이 지운다 |
 
-설정 이름: `DEBATE_ENABLED`, `DEBATE_VOTE_THRESHOLD`, `DEBATE_VOTING_PERIOD_MINUTES`, `DEBATE_ROOM_DURATION_MINUTES`, `DEBATE_VOTE_TICKET_MAX`, `DEBATE_VOTE_TICKET_REFILL_MINUTES`, `DEBATE_ACTIVE_PER_USER`, `DEBATE_MESSAGE_RATE_COUNT`, `DEBATE_MESSAGE_RATE_WINDOW_SECONDS`, `DEBATE_STREAM_PER_USER`, `DEBATE_STREAM_HEARTBEAT_SECONDS`, `DEBATE_RESULT_RETENTION_DAYS`. 글자 수 상한(제목 60, 설명 200, 채팅 300)은 칼럼 크기와 같아서 설정이 아니라 모델 상수다. 선택지 이름만 입력 상한(`SIDE_LABEL_INPUT_MAX`, 12자)을 칼럼(20자)보다 작게 둔다. 진영 버튼 한 줄에 6자쯤 들어가서 12자면 대부분 두 줄 안에 들기 때문이다 (2026-11-24 결정, 입력 검사만 줄여서 migration 없음).
+설정 이름: `DEBATE_ENABLED`, `DEBATE_VOTE_THRESHOLD`, `DEBATE_VOTING_PERIOD_MINUTES`, `DEBATE_ROOM_DURATION_MINUTES`, `DEBATE_VOTE_TICKET_MAX`, `DEBATE_VOTE_TICKET_REFILL_MINUTES`, `DEBATE_ACTIVE_PER_USER`, `DEBATE_MESSAGE_RATE_COUNT`, `DEBATE_MESSAGE_RATE_WINDOW_SECONDS`, `DEBATE_STREAM_PER_USER`, `DEBATE_STREAM_HEARTBEAT_SECONDS`, `DEBATE_RESULT_RETENTION_DAYS`. 글자 수 상한(제목 60, 설명 100, 채팅 300)은 칼럼 크기와 같아서 설정이 아니라 모델 상수다. 선택지 이름만 입력 상한(`SIDE_LABEL_INPUT_MAX`, 8자)을 칼럼(20자)보다 작게 둔다 (2026-11-24에 12자로 정했고 2026-11-25 디자인대로 8자로 줄임, 입력 검사만 줄여서 migration 없음). 설명은 2026-11-25에 200자에서 100자로 줄였다 (아래 결정 20).
 
 ### 6.2 투표권 계산
 
@@ -284,7 +284,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 
 | # | Method | Path | 설명 |
 | --- | --- | --- | --- |
-| D-01 | POST | `/debates` | 주제 올리기 `{topicId, title, description?, sideA, sideB, workIds[]}` (작품 0~3개). 투표 중이거나 토론 중인 내 주제가 있으면 409 `DEBATE_ACTIVE_LIMIT` |
+| D-01 | POST | `/debates` | 주제 올리기 `{topicId, title, description?, sideA, sideB, workIds[]}` (작품 1~2개, 필수). 투표 중이거나 토론 중인 내 주제가 있으면 409 `DEBATE_ACTIVE_LIMIT` |
 | D-02 | GET | `/debates?topicId=&status=voting&sort=recent\|votes&entityId=` | 주제 투표 목록. '곧 열릴 주제'는 `sort=votes`, 작품 칩은 `entityId` |
 | D-03 | GET | `/debates?topicId=&status=open&entityId=` | 지금 열린 토론방 |
 | D-04 | GET | `/debates?topicId=&status=ended&entityId=` | 지난 토론방: 48시간이 끝난 방만, 끝난 뒤 9일까지 |
@@ -297,7 +297,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | D-11 | POST | `/debates/{debateId}/messages` | 채팅 보내기 `{body}` (앞뒤 공백을 지운 1~300자) → 201 저장된 메시지. 참여한 사람만 |
 | D-12 | GET | `/debates/{debateId}/stream?after=` | 실시간 스트림(SSE, [3.2](#32-스트림-api-get-apiv1debatesdebateidstream)). 참여한 사람만, 놓친 채팅도 참여한 뒤의 것만 |
 | D-13 | GET | `/users/me/debate-tickets` | 내 투표권 `{balance, max, nextRefillAt}` |
-| D-14 | GET | `/users/me/debates` | 내가 올린 주제(내 주제 관리) |
+| D-14 | GET | `/users/me/debates` | 내가 올린 주제(내 주제 관리). 투표 중이거나 토론 중인 것만 준다. 끝난 토론방은 지난 토론방(D-04)에만 보인다 (2026-11-25) |
 | D-15 | GET | `/users/me/debate-votes` | 내가 준 투표 |
 | D-16 | GET | `/debates/search?topicId=&q=&record=&pickedEntityId=` | 검색 입력창 하나: `{works[], debates[]}`. 작품 후보(최대 5개)와, 제목·선택지·연결 작품 이름·별칭에 글자가 들어간 토론(최대 30개)을 함께 준다. `topicId` 필수 |
 | D-17 | GET | `/debates/works?topicId=&q=` | 주제 올리기 화면의 작품 고르기. 회원용 작품 검색(`/me/taste/works`, 임시)과 같은 서비스를 쓴다. 검색어가 비면 빈 목록 |
@@ -349,7 +349,7 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | 5 | 1인 진행 중 주제 1개, 삭제는 표 0개일 때만 | 그대로 (뒤에 삭제는 D-06에서, '진행 중'의 범위는 #18에서 바뀜) |
 | 6 | 개설 알림을 작성자에게도 | 보낸다 |
 | 7 | 채팅 길이·속도 제한 | 300자, 10초에 5개 ("3초에 1개"처럼 간격을 정하면 짧게 몰아치는 대화가 막힌다) |
-| 8 | 관련 작품 | 작품 목록에서 0~3개. 자유 태그는 1차에서 빼고 검색 기록을 보고 다시 판단한다. 나중에 넣어도 기존 데이터를 고칠 필요가 없다 |
+| 8 | 관련 작품 | 작품 목록에서 1~2개 필수 (처음엔 0~3개, 2026-11-25에 바꿈). 자유 태그는 1차에서 빼고 검색 기록을 보고 다시 판단한다. 나중에 넣어도 기존 데이터를 고칠 필요가 없다 |
 | 9 | 검색 | 입력창 하나에서 작품 칩과 토론 목록을 함께 보여준다 |
 | 10 | 채팅 삭제 시점 | 방 종료 후 다음 정리 작업(10분 안) |
 | 11 | 실시간 방식 | SSE + 일반 POST. 1차 허브는 서버 메모리, 여러 서버에서 켤 때 `LISTEN/NOTIFY`. Redis는 쓰지 않는다 |
@@ -371,6 +371,8 @@ python -m app.jobs.finalize_debates --expected-database <DB 이름> --apply
 | --- | --- | --- |
 | 18 | 내 주제가 토론방으로 열린 48시간 동안 새 주제를 올릴 수 있는지 | 못 올린다. 남용을 막으려고 한 사람이 주제를 하나씩만 연다. 투표 중이거나 토론 중인 내 주제가 있으면 409 `DEBATE_ACTIVE_LIMIT`. 화면의 '내가 올린 주제'는 버튼 대신 "토론이 끝나면 새 주제를 올릴 수 있어요"를 보여 준다 |
 | 19 | '참여 중인 방' 목록 | 베타 동안은 새 API 없이 열린 방 목록(D-03, 최대 50개)에서 참여한 방만 고르고, `joinedAt`으로 최근에 참여한 방부터 보여 준다. 열린 방이 많아지면 실시간 탭(같은 50개 한도)과 함께 다시 본다 |
+| 20 | 글자 수 · 작품 수 (2026-11-25 디자인) | 설명 100자, 선택지 이름 8자, 관련 작품 1~2개 필수. 설명의 줄바꿈은 막지 않고, 카드에는 3줄까지만 보이고 넘으면 '…'로 줄인다 (더보기 · 접기 없음, 줄바꿈만 많이 넣어도 카드가 길어지지 않음). 100자 넘는 옛 설명은 앞 99자 + '…'로 자르고 칼럼도 100자로 줄인다 (`7f843b19debf`, 되돌려도 잘린 글은 안 돌아옴). 이미 있는 8자 넘는 선택지 이름과 작품 0개 · 3개 주제는 그대로 둔다 |
+| 21 | 내 활동의 '내가 올린 주제' | 투표 중 · 토론 중인 주제만 보여 준다. 48시간이 끝난 방은 지난 토론방에만 있다 (2026-11-25, D-14) |
 
 남은 질문: 디자인의 '소각된 주제는 다시 투표' 문구의 뜻(1차 범위에서 제외).
 

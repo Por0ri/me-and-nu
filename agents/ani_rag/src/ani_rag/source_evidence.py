@@ -15,7 +15,7 @@ from ani_rag.models import (
 )
 from ani_rag.retrieval import EvidenceChunk, RetrievedEvidence
 
-WEB_ASSESSMENT_POLICY_VERSION = "work-and-quoted-sources-v2"
+WEB_ASSESSMENT_POLICY_VERSION = "work-and-quoted-sources-v6-linked-credits"
 
 
 class WebSourceWorkConflict(RuntimeError):
@@ -40,9 +40,16 @@ def interview_speaker_label(body: str, speaker: str, context: str, passage: str)
     """Bind a direct answer to its printed speaker, including a Japanese surname label."""
     if not speaker.strip() or not passage.strip() or context not in body or passage not in context:
         return None
+    # Consecutive sentences may explain one answer. A later printed turn or interviewer question
+    # belongs to someone else, even when copied contiguously after the first person's answer.
+    if re.search(r"\n\s*(?:[*_]*[\w’' .-]{1,65}[*_]*[:：]|\*\*[^\n]*[?？]\*\*)", passage):
+        return None
     before, _, after = context.partition(passage)
     turn = re.search(r"(?:^|\n)\s*[*_]*([^:\n：]{1,65}?)\s*[*_]*[:：][*_]*\s*[^:\n：]*$", before)
     if turn:
+        start = body.index(context)
+        if turn.start() == 0 and not before.startswith("\n") and body[body.rfind("\n", 0, start) + 1:start].strip(" *_\t"):
+            return None
         label = turn.group(1).strip(" *_")
         label = re.sub(r"^(?:director|producer|composer|animator|actor)\s+", "", label, flags=re.I)
         surname = re.sub(r"-(?:san|sensei)$", "", label, flags=re.I)

@@ -1,8 +1,11 @@
 const http = require('node:http');
 
+const CONSUMPTION_TYPES = ['world', 'relationships', 'ost', 'goods', 'events', 'news'];
+
 // In-memory, loopback-only test server. Never imported by application code.
+// consumptionRanking: false acts like a server from before the Q3 ranking (it forbids answers.consumptionTypes).
 function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin = 'http://localhost:3180',
-  strictOnboarding = false, oauthCallbackPhase = 'active', today = '2026-10-27', topicId = 7 } = {}) {
+  strictOnboarding = false, oauthCallbackPhase = 'active', today = '2026-10-27', topicId = 7, consumptionRanking = true } = {}) {
   const requests = [];
   const state = { phase: 'anonymous', csrf: 'fixture-anonymous-csrf', cookie: 'fixture-anonymous', saved: new Set(), failNext: null, topics: true,
     onboardingCompletions: 0, onboarding: null, notifications: [], notificationPageSize: 50, userId: 12 };
@@ -43,18 +46,28 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
       csrfToken: state.csrf, ...(restoring ? { scheduledDeleteAt } : {}) };
   }
   const error = (status, code, message = code) => ({ status, body: { code, message } });
+  // The Q3 ranking as the backend reads it: consumptionTypes (1~6 different answers, rank 1 first), or the older single
+  // consumptionType as a one-answer ranking. This client always sends both, so both must agree.
+  const ranking = answers => answers && typeof answers === 'object' && Object.hasOwn(answers, 'consumptionTypes') ? answers.consumptionTypes : [answers?.consumptionType];
+  const validRanking = (types, first) => Array.isArray(types) && types.length >= 1 && types.length <= CONSUMPTION_TYPES.length
+    && types.every(type => CONSUMPTION_TYPES.includes(type)) && new Set(types).size === types.length && first === types[0];
   function validateOnboarding(data) {
     const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
       && Object.keys(value).sort().join(',') === [...keys].sort().join(',');
+    const answerKeys = ['version', 'favoriteEntityIds', 'preferenceTagIds', 'consumptionType'];
+    if (!consumptionRanking && data?.answers && typeof data.answers === 'object' && Object.hasOwn(data.answers, 'consumptionTypes')) {
+      return { status: 422, body: { code: 'VALIDATION_ERROR', message: '입력값을 확인해 주세요.',
+        fields: [{ field: 'answers.consumptionTypes', code: 'VALIDATION_ERROR', message: 'Extra inputs are not permitted' }] } };
+    }
     if (!exactKeys(data, ['nickname', 'accountType', 'consents', 'topicId', 'answers'])
       || typeof data.nickname !== 'string' || !data.nickname.trim() || [...data.nickname.trim()].length > 30
       || data.accountType !== 'user' || !Number.isSafeInteger(data.topicId) || data.topicId <= 0
-      || !exactKeys(data.answers, ['version', 'favoriteEntityIds', 'preferenceTagIds', 'consumptionType'])
+      || !(exactKeys(data.answers, answerKeys) || exactKeys(data.answers, [...answerKeys, 'consumptionTypes']))
       || data.answers.version !== 2 || !validWorks(data.answers.favoriteEntityIds)
       || !validIds(data.answers.preferenceTagIds)
       || !data.answers.preferenceTagIds.every(id => options(data.answers.favoriteEntityIds).some(tag => tag.tagId === id))
       || !['genre','theme'].every(kind => { const count=options(data.answers.favoriteEntityIds).filter(tag => tag.kind === kind && data.answers.preferenceTagIds.includes(tag.tagId)).length; return count >= 1 && count <= 7; })
-      || !['world', 'relationships', 'ost', 'goods', 'events', 'news'].includes(data.answers.consumptionType)
+      || !validRanking(ranking(data.answers), data.answers.consumptionType)
       || !Array.isArray(data.consents) || data.consents.some(item => !exactKeys(item, ['type', 'policyVersion', 'agreed'])
         || typeof item.type !== 'string' || typeof item.policyVersion !== 'string' || typeof item.agreed !== 'boolean')) {
       return error(422, 'VALIDATION_ERROR');
@@ -137,7 +150,10 @@ function createApiFixture({ apiOrigin = 'http://localhost:8180', frontendOrigin 
       if (invalid) return invalid;
       state.onboardingCompletions++;
       state.onboarding = JSON.parse(JSON.stringify(data));
-      rotate('active'); return { status: 201, headers: { 'Set-Cookie': cookie() }, body: { user: { id: 12, accountType: 'user' }, onboardingCompleted: true, activeTopic: {...topic,subtopicIds:[]}, answers: {...data.answers,favoriteEntityIds:[...data.answers.favoriteEntityIds].sort((a,b)=>a-b),preferenceTagIds:[...data.answers.preferenceTagIds].sort((a,b)=>a-b)} } };
+      // Like the backend: sorted ID sets, and (from the ranking on) the whole ranking next to its rank 1.
+      const answers = { ...data.answers, ...(consumptionRanking ? { consumptionTypes: [...ranking(data.answers)] } : {}),
+        favoriteEntityIds: [...data.answers.favoriteEntityIds].sort((a,b)=>a-b), preferenceTagIds: [...data.answers.preferenceTagIds].sort((a,b)=>a-b) };
+      rotate('active'); return { status: 201, headers: { 'Set-Cookie': cookie() }, body: { user: { id: 12, accountType: 'user' }, onboardingCompleted: true, activeTopic: {...topic,subtopicIds:[]}, answers } };
     }
     if (state.phase !== 'active') return error(403, 'ONBOARDING_REQUIRED');
     if (method === 'GET' && url.pathname === '/api/v1/users/me') {

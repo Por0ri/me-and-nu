@@ -1,0 +1,59 @@
+# ACTIVATION overlay. Use only after team approval, backups and preflight.
+# Do NOT combine with standard discovery Beat or generation-dispatcher.
+services:
+  generation-worker:
+    command: [celery, -A, "menu_worker.generation_app:app", worker, --loglevel=INFO, --concurrency=1, --queues=anime-generation-live, "--hostname=generate@%h", --events]
+    environment:
+      ANIME_LLM_KEY_FILE: /run/secrets/anime_llm_key
+      ANIME_COVER_HISTORY_BOOTSTRAP_FILE: /run/menu-cover-history/bootstrap.json
+      ANIME_COVER_HISTORY_BOOTSTRAP_SHA256: ${ANIME_COVER_HISTORY_BOOTSTRAP_SHA256:?Preserve audited original cover history SHA256}
+    networks: [tasks, generation-egress]
+    volumes:
+      - type: bind
+        source: ${ANIME_LLM_KEY_HOST_FILE:?Set already approved raw key file}
+        target: /run/secrets/anime_llm_key
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${ANIME_COVER_HISTORY_BOOTSTRAP_HOST_FILE:?Preserve original cover history file}
+        target: /run/menu-cover-history/bootstrap.json
+        read_only: true
+        bind: {create_host_path: false}
+    healthcheck:
+      test: [CMD, python, -m, menu_worker.health, generation-worker]
+      interval: 15s
+      timeout: 7s
+      retries: 3
+      start_period: 20s
+  daily-controller:
+    command:
+      - --registered-routes
+      - --source-checkpoint
+      - ${DAILY_SOURCE_CHECKPOINT:?Set audited source checkpoint container path}
+      - --source-sha256
+      - ${DAILY_SOURCE_SHA256:?Set audited source SHA256}
+      - --checkpoint
+      - ${DAILY_CHECKPOINT:?Set new checkpoint container path}
+      - --policy-date
+      - ${DAILY_POLICY_DATE:?Set approved KST date}
+      - --delivery-root
+      - /runtime/state/${DAILY_INBOX_NAME:?Set dedicated day inbox directory name}
+      - --expected-plan-sha256
+      - ${DAILY_PLAN_SHA256:?Set reviewed plan SHA256}
+      - --apply
+    networks: [tasks, discovery-egress]
+    depends_on:
+      generation-worker: {condition: service_healthy}
+  pending-importer:
+    command:
+      - --policy
+      - /runtime/import-policy.json
+      - --reviewed-policy-sha256
+      - ${DAILY_IMPORT_POLICY_SHA256:?Set reviewed import policy SHA256}
+      - --inbox
+      - /runtime/inbox
+      - --watch
+      - --apply
+networks:
+  generation-egress: {}
+  discovery-egress: {}

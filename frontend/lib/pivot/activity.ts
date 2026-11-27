@@ -3,7 +3,7 @@ import type { HomeDetailTarget } from "./home";
 import { requirePivotApi } from "./services";
 
 export type ActivityType = "impression" | "open" | "card_swipe" | "like" | "like_cancel" | "bookmark" | "bookmark_cancel" | "preference_positive" | "preference_negative" | "preference_cancel";
-export type ActivityValue = { surface: "home_feed" | "detail" | "saved"; viewMode?: "card" | "list"; sessionId?: string; visibleMs?: number; activeMs?: number; scrollPct?: number; bodyChars?: number; cardIndex?: number; cardCount?: number };
+export type ActivityValue = { surface: "home_feed" | "detail" | "saved"; viewMode?: "card" | "list"; sessionId?: string; visibleMs?: number; focusMs?: number; activeMs?: number; scrollPct?: number; bodyChars?: number; cardIndex?: number; cardCount?: number };
 export type ActivityEvent = { clientEventId: string; eventType: ActivityType; topicId: number; contentId: number; recommendationItemId?: number; occurredAt: string; value: ActivityValue };
 export type ActivityResult = { saved: number; duplicated: number; rejected: number };
 export type ActivityQueue = ReturnType<typeof createActivityQueue>;
@@ -161,6 +161,26 @@ export function createExposure(now: () => number = Date.now) {
       if (since !== null) { total += Math.max(0, now() - since); since = null; }
       const result = { duration: Math.min(86400000, Math.round(total)), scrollPct: maxScroll };
       total = 0; maxScroll = 0; return result;
+    },
+  };
+}
+
+/** 홈 카드가 보이는 정도. 카드 높이와 화면 높이 중 작은 쪽을 기준으로 반 이상 보이면 노출(visibleMs),
+ *  80% 이상 보이면 집중(focusMs, 모델이 '봤다'를 3초로 세는 시간). 5% 간격으로 재야 큰 카드도 80% 를 지나는 때를 놓치지 않는다. */
+export const EXPOSURE_THRESHOLDS = Array.from({ length: 21 }, (_, index) => index / 20);
+export function exposureLevel(visibleHeight: number, cardHeight: number, viewportHeight: number, intersecting: boolean) {
+  const base = Math.min(cardHeight, viewportHeight);
+  return { inView: intersecting && visibleHeight >= base / 2, inFocus: intersecting && visibleHeight >= base * 0.8 };
+}
+
+/** 카드 노출 한 번: 반 이상 보인 시간과 그 안에서 80% 이상 보인 시간. focusMs 는 visibleMs 를 넘지 않는다. */
+export function createCardExposure(now: () => number = Date.now) {
+  const view = createExposure(now), focus = createExposure(now);
+  return {
+    set(inView: boolean, inFocus: boolean) { view.setVisible(inView); focus.setVisible(inView && inFocus); },
+    finish() {
+      const visibleMs = view.finish().duration, focusMs = focus.finish().duration;
+      return { visibleMs, focusMs: Math.min(focusMs, visibleMs) };
     },
   };
 }

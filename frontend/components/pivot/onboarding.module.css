@@ -2,21 +2,23 @@
 .flow h1:focus { outline: none; }
 .frame img { display: block; flex: none; max-width: none; }
 .frame h1, .frame h2, .frame p { margin: 0; }
-.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.back { display: grid; place-items: center; width: 44px; height: 44px; flex: none; padding: 0; border: 0; background: transparent; border-radius: 8px; }
+/* margin -1px: a 1px live region at the page end otherwise made the question screens scroll by 1px. */
+.srOnly { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .interestHeader { position: relative; display: flex; align-items: flex-start; justify-content: center; margin: 77px 24px 0; height: 36px; }
 .interestBody { margin: 21px 24px 0; }
 .interestBody h1 { font-size: 32px; font-weight: 700; line-height: 44px; text-align: center; }
 .interestBody h1 em { font-style: normal; color: #7043b4; }
 .frame .interestDescription { margin-top: 5px; color: #71717a; font-size: 14px; line-height: 20px; text-align: center; }
-.interestCards { display: grid; grid-template-columns: 166px minmax(0,1fr); gap: 12px; margin-top: 18px; }
+/* 166 : 149 as in the 375px design; the frame now widens to 430px like home, so both cards grow together. */
+.interestCards { display: grid; grid-template-columns: minmax(0,166fr) minmax(0,149fr); gap: 12px; margin-top: 18px; }
 .interestCard, .choice { position: relative; border: 2px solid #e4e4e7; border-radius: 8px; cursor: pointer; background: transparent; }
 .interestCard input, .choice input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .interestCard:has(input:focus-visible), .choice:has(input:focus-visible) { outline: 3px solid #7043b4; outline-offset: 3px; }
 /* 2026-11 design feedback: squarer cards (166×202 → 166×184), the contents keep their place. */
 .interestCard { display: flex; flex-direction: column; align-items: center; gap: 5px; height: 184px; padding: 13px 0 15px; }
 .interestArtwork { position: relative; display: block; flex: none; width: 115px; height: 100px; overflow: hidden; }
-.interestArtwork img { position: absolute; left: 0; top: -5.86px; width: 115px; height: 104.11px; }
+/* 2026-11 design feedback: the TV replaces the book; size and place measured from the mock (card-relative 35.4px, 15.7px). */
+.interestArtwork img { position: absolute; left: 10px; top: 1px; width: 91.5px; height: 89.2px; }
 .interestCard strong { font-size: 16px; font-weight: 600; line-height: 24px; color: #27272a; }
 .badge { border-radius: 24px; background: #efe7ff; color: #583199; padding: 3px 14px; font-size: 11px; line-height: 16px; font-weight: 500; margin-top: 0; }
 .selected { background: #f7f2ff; border-color: #7043b4; }
@@ -35,23 +37,46 @@
 .hint { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 10px 20px; margin-top: 23px; border: 1px solid #e4e4e7; border-radius: 8px; }
 .hint p { color: #71717a; font-size: 12px; line-height: 18px; }
 .actions { margin: auto 24px 0; padding-top: 22px; padding-bottom: max(56px, env(safe-area-inset-bottom)); }
-.navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 40px; margin: 45px 24px 0; }
-.navigation .back { margin-left: -10px; margin-right: -10px; }
+/* 2026-11 design feedback: the round back button the other screens use (home .headerBack), then a bar that
+   fills the row 7px from the button and the count (mock: bar 59–327px on a 375px screen).
+   위 여백 12px (2026-11-25 디자인 피드백): 시안의 45px 는 폰 상태 표시줄 자리라, 진짜 폰에서는 브라우저 주소창 아래에
+   빈칸으로 남았다. 웹 화면(취향 수정이 이미 12px)처럼 온보딩 · 취향 수정 모두 막대 줄을 위로 붙인다. */
+.navigation { display: flex; align-items: center; justify-content: space-between; gap: 7px; height: 40px; margin: 12px 24px 0; }
 .navigation > span { flex: none; font-size: 11px; line-height: 16px; font-weight: 500; color: #71717a; }
 /* One lilac track with a purple fill up to the current step (2026-11 design). */
-.progress { width: 220px; min-width: 0; height: 8px; border-radius: 4px; background: #efe7ff; overflow: hidden; }
+.progress { flex: 1; min-width: 0; height: 8px; border-radius: 4px; background: #efe7ff; overflow: hidden; }
 .progress i { display: block; height: 100%; border-radius: 4px; background: #7043b4; }
-.questionBody { margin: 30px 24px 0; }
+/* 질문은 막대 줄 바로 아래 4px (2026-11-25: 온보딩도 마이페이지 취향 수정과 같은 간격) */
+.questionBody { margin: 4px 24px 0; }
 .questionBody h1 { color: #3f3f46; font-size: 24px; line-height: 34px; font-weight: 700; word-break: keep-all; overflow-wrap: anywhere; }
 .questionBody h1 > span { display: block; }
 .frame .questionDescription { color: #71717a; font-size: 14px; line-height: 20px; margin-top: 8px; }
+/* 2026-11 design feedback: on Q2/Q3 everything down to the question's description stays while the choices scroll
+   under it, 16px of page colour below the description (mock). The choices give back that 16px of their top margin. */
+.questionTop { position: sticky; top: 0; z-index: 6; display: flow-root; padding-bottom: 16px; background: var(--pivot-bg); }
+.questionChoices { margin: 0 24px; }
+.questionChoices > .tagGroup:first-of-type { margin-top: 8px; }
+.questionChoices > .q1Grid { margin-top: 0; }
+/* 2026-11 feedback: hints sit folded under the question (16px under it, 16px over the choices). The taste edit
+   lifts its question to just under the progress row so a question with a folded hint fits one screen
+   (2026-11-25 부터는 온보딩도 같은 4px 라 .questionBody 와 같다. 취향 수정 표시로 이름만 남겨 둔다). */
+.hintSlot { margin-bottom: 16px; }
+.hintSlot:empty { display: none; }
+.questionBody.compactTop { margin-top: 4px; }
+.questionChoices > .hintSlot:empty + .srOnly + .searchBox { margin-top: 4px; }
+.questionChoices > .hintSlot:not(:empty) + .srOnly + .searchBox { margin-top: 0; }
 .q1Grid, .q2List { border: 0; padding: 0; min-width: 0; margin: 16px 0 0; }
 .q1Grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 24px; }
 .choice { color: #27272a; font-size: 16px; line-height: 24px; font-weight: 600; }
-.q1Card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 146px; padding: 10px; text-align: center; word-break: keep-all; overflow-wrap: anywhere; }
+/* 2026-11 second Q3 mock: cards 146 -> 132px with the picture 64 -> 70px, 4px under the card top and 3px over the text. */
+.q1Card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 132px; padding: 2px 10px 5px; text-align: center; word-break: keep-all; overflow-wrap: anywhere; }
 /* Q3 (2026-11 design): the whole square picture, not cropped. */
-.q1Card > img { width: 64px; height: 64px; object-fit: contain; }
+.q1Card > img { width: 70px; height: 70px; object-fit: contain; }
 .q1Card > span { display: block; }
+/* Q3 rank badge (2026-11 design, measured from the mock against the 146px card): a 27.6px #c7acfb circle whose centre
+   sits 22px below and 21px left of the card's outer top-right corner (6.2px / 5.2px inside the 2px border);
+   the number 14px regular #27272a, its digits centred like the mock (a centred line box leaves them 0.9px high). */
+.q1Card > .rank { position: absolute; top: 6.2px; right: 5.2px; box-sizing: border-box; width: 27.6px; height: 27.6px; padding-top: 0.9px; border-radius: 50%; background: #c7acfb; color: #27272a; font-size: 14px; font-weight: 400; line-height: 27.6px; text-align: center; pointer-events: none; }
 .q2List { display: flex; flex-direction: column; gap: 12px; }
 .q2Card { display: flex; align-items: center; gap: 16px; min-height: 76px; padding: 10px 18px; }
 .q2Card span { min-width: 0; overflow-wrap: anywhere; word-break: keep-all; }
@@ -99,16 +124,18 @@
 .profileField .profileRuleBroken { color: #ff0000; }
 .profileBody .fieldError { margin-top: 10px; color: #ff0000; font-size: 15px; line-height: 22px; }
 .fieldError:empty { display: none; }
-/* Q1 (2026-11 design): lilac pill search, outlined chips in one sideways-scrolling row. */
+/* Q1 (2026-11 design): lilac pill search, outlined chips in one sideways-scrolling row.
+   검색칸 · 결과 줄 크기는 2026-11-25 시안을 재서 맞춤 (온보딩 · 마이페이지 취향 수정 같게): 검색칸 높이 41px, 돋보기는 왼쪽 14px,
+   지우기 단추는 오른쪽 끝 가까이, '검색 결과' 14px, 결과 줄 30px · 사이 12px, 동그라미 17px. */
 .searchBox { position: relative; margin-top: 20px; }
-.searchIcon { position: absolute; top: 50%; left: 16px; transform: translateY(-50%); color: #71717a; pointer-events: none; }
-/* 16px keeps iOS from zooming in on focus. */
-.workSearch { box-sizing: border-box; width: 100%; min-width: 0; height: 48px; padding: 0 48px 0 44px; border: 0; border-radius: 24px; background: #f7f2ff; color: #27272a; font: inherit; font-size: 16px; -webkit-appearance: none; appearance: none; }
-.workSearch::placeholder { color: #a1a1aa; }
+.searchIcon { position: absolute; top: 50%; left: 14px; transform: translateY(-50%); color: #71717a; pointer-events: none; }
+/* 입력 글자는 16px 로 둔다: 16px 보다 작으면 아이폰이 누를 때 화면을 확대한다 (시안 글자는 14px, 안내 글자는 14px 로 맞춤). */
+.workSearch { box-sizing: border-box; width: 100%; min-width: 0; height: 41px; padding: 0 48px 0 46px; border: 0; border-radius: 20.5px; background: #f7f2ff; color: #27272a; font: inherit; font-size: 16px; -webkit-appearance: none; appearance: none; }
+.workSearch::placeholder { color: #a1a1aa; font-size: 14px; }
 .workSearch::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 /* The design keeps the pill without a ring while typing. */
 .frame .workSearch:focus-visible { outline: none; }
-.searchClear { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 18px; background: transparent; color: #c4c4cc; }
+.searchClear { position: absolute; top: 50%; right: 2px; transform: translateY(-50%); display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 18px; background: transparent; color: #c4c4cc; }
 .selectedWorks { display: flex; gap: 8px; list-style: none; margin: 14px -24px 0; padding: 0 24px; overflow-x: auto; scrollbar-width: none; }
 .selectedWorks::-webkit-scrollbar { display: none; }
 .selectedWorks:empty { display: none; }
@@ -122,35 +149,59 @@
 .frame .catalogError { margin-top: 14px; padding: 12px; border-radius: 8px; background: #fff2ef; color: #8f3024; font-size: 13px; line-height: 20px; }
 .catalogError button { display: block; border: 1px solid currentColor; border-radius: 6px; min-height: 40px; padding: 6px 14px; margin-top: 8px; background: #fff; color: inherit; }
 /* Q1 results: lilac rows with a circle on the right; a chosen row turns deeper lilac with a check. */
-.frame .resultsLabel { margin-top: 18px; color: #71717a; font-size: 13px; line-height: 20px; }
-.workResults { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 10px; }
-.workChoice { display: flex; align-items: center; gap: 12px; box-sizing: border-box; width: 100%; min-height: 34px; border: 1px solid transparent; border-radius: 8px; background: #f7f2ff; color: #27272a; text-align: left; padding: 6px 12px; font-size: 14px; line-height: 20px; }
+.frame .resultsLabel { margin-top: 20px; color: #71717a; font-size: 14px; line-height: 20px; }
+.workResults { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 12px; }
+.workChoice { display: flex; align-items: center; gap: 12px; box-sizing: border-box; width: 100%; min-height: 30px; border: 1px solid transparent; border-radius: 8px; background: #f7f2ff; color: #27272a; text-align: left; padding: 4px 11px 4px 12px; font-size: 14px; line-height: 20px; }
+/* 전체 화면 규칙 (pivot.module.css .root button { font: inherit }) 이 버튼 글자를 16px · 줄 24px 로 덮어써서, 시안의 14px · 30px 줄이 되게 더 구체적으로 한 번 더 적는다 */
+.frame .workChoice { font-size: 14px; line-height: 20px; }
 .workChoice.selected { background: #decfff; border-color: #c7acfb; }
 .workChoice:disabled { opacity: .55; cursor: default; }
 .workName { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .workName small { display: block; color: #71717a; font-size: 11px; line-height: 16px; }
-.workCheck { display: grid; place-items: center; flex: none; box-sizing: border-box; width: 18px; height: 18px; border: 1px solid #c4c4cc; border-radius: 50%; color: #7043b4; }
+.workCheck { display: grid; place-items: center; flex: none; box-sizing: border-box; width: 17px; height: 17px; border: 1px solid #b9b9c1; border-radius: 50%; color: #7043b4; }
 .workChecked { border-color: #7043b4; }
-.moreWorks { display: block; margin: 12px auto 0; min-height: 44px; padding: 8px 24px; border: 1px solid #d6c6ef; border-radius: 8px; background: #fff; color: #7043b4; }
+/* 작품 더보기 (2026-11-25 시안): 테두리 · 바탕 없이 연보라 굵은 글씨만. 누르기 쉬운 높이(44px)는 그대로 둔다 */
+.moreWorks { display: block; margin: 9px auto 0; min-height: 44px; padding: 8px 24px; border: 0; border-radius: 8px; background: transparent; color: #9c79e6; font-size: 16px; font-weight: 600; line-height: 24px; }
+/* 위 .workChoice 와 같은 까닭 (.root button 의 font: inherit 가 굵기를 지움) */
+.frame .moreWorks { font-size: 16px; font-weight: 600; line-height: 24px; }
 .tagGroup { min-width: 0; border: 0; padding: 0; margin: 24px 0 0; }
 .tagGroup legend { padding: 0; margin-bottom: 12px; color: #27272a; font-size: 16px; font-weight: 600; }
 /* Q2 box "선택한 작품에서 이런 취향을 발견했어요!" (2026-11 design). */
-.discovered { margin: 20px 24px 0; }
-.frame .discovered h2 { color: #27272a; font-size: 15px; line-height: 22px; font-weight: 600; text-align: center; }
+.discovered { margin: 0; }
 .discovered dl { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 0; padding: 12px 16px; border-radius: 8px; background: #efe7ff; }
 .discovered dl > div { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .discovered dt { flex: none; color: #27272a; font-size: 15px; line-height: 22px; font-weight: 600; }
 .discovered dd { margin: 0; min-width: 0; }
 .discovered ul { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
 .discovered li { padding: 4px 10px; border-radius: 14px; background: #fff; color: #7043b4; font-size: 14px; line-height: 20px; }
-/* Q2 (2026-11 design): smaller grey outlined chips, a chosen one filled purple. */
-.tagRows { display: flex; flex-direction: column; gap: 8px; }
-.tagChips { display: flex; flex-wrap: wrap; gap: 8px 6px; }
-.tagChip { position: relative; display: inline-flex; align-items: center; box-sizing: border-box; min-height: 34px; max-width: 100%; border: 1px solid #c4c4cc; border-radius: 17px; padding: 6px 8px; color: #71717a; font-size: 14px; line-height: 20px; cursor: pointer; }
+/* Q2 (2026-11 design): grey outlined chips, a chosen one filled purple. Feedback mock: 34px tall, 16px radius,
+   16px semibold text in #a1a1aa, #b9b9c1 line, 12px apart, wrapping in the design order (designChipOrder). */
+.tagChips { display: flex; flex-wrap: wrap; gap: 12px; }
+.tagChip { position: relative; display: inline-flex; align-items: center; box-sizing: border-box; min-height: 34px; max-width: 100%; border: 1px solid #b9b9c1; border-radius: 16px; padding: 4px 8px; color: #a1a1aa; font-size: 16px; font-weight: 600; line-height: 24px; cursor: pointer; }
 .tagChip.selected { border-color: #7043b4; background: #7043b4; color: #fff; }
 .tagChip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
 .tagChip span { overflow-wrap: anywhere; }
 .tagChip:has(input:focus-visible), .workChoice:focus-visible { outline: 3px solid #7043b4; outline-offset: 3px; }
+/* My Page taste edit (2026-11-25 mock, 375×812 with the status bar): tighter than signup, which keeps the rules above.
+   A 40px search pill with a 14px #71717a placeholder (typed text stays 16px so iOS does not zoom in), compact chips
+   clipped at the content edge, 24px from the hint to 장르 and 16px from 장르 to 소재, the button 16px under the
+   choices and 22px over the bottom; on Q3 it follows the cards instead of sitting at the bottom.
+   Folded Q1 and Q3 fit one screen: the top space is 12px on every screen (2026-11-25, .navigation), then the
+   Q3 cards (132px → 102px) and their pictures (70px → 40px) shrink, so Q3 fits down to about 640px. 334px = Q3 without its
+   three cards. */
+.tasteEdit { --taste-card: clamp(102px, (100svh - 334px) / 3, 132px); }
+/* 검색칸 크기 · 돋보기 자리는 온보딩과 같다 (2026-11-25 시안, 위 .workSearch). 안내 글자 색만 취향 수정 시안대로 */
+.tasteEdit .workSearch::placeholder { color: #71717a; }
+.tasteEdit .selectedWorks { margin-inline: 0; padding-inline: 0; }
+.tasteEdit .selectedWorks li { padding-left: 4px; font-weight: 500; }
+.tasteEdit .selectedWorks button { width: 22px; }
+.tasteEdit .hintSlot:not(:empty) ~ .tagGroup:first-of-type { margin-top: 24px; }
+.tasteEdit .tagGroup + .tagGroup { margin-top: 16px; }
+.tasteEdit .tagGroup legend { margin-bottom: 14px; }
+.tasteEdit .q1Card { min-height: var(--taste-card); }
+.tasteEdit .q1Card > img { width: clamp(40px, var(--taste-card) - 62px, 70px); height: clamp(40px, var(--taste-card) - 62px, 70px); }
+.tasteEdit .actions { padding-top: 16px; padding-bottom: max(22px, env(safe-area-inset-bottom)); }
+.tasteEdit:has(.q1Grid) .actions { margin-top: 0; }
 @media (max-width: 350px) {
   .interestCards { grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); }
   .hint { padding-inline: 12px; }
@@ -165,8 +216,6 @@
   .profileBody { margin-top: 24px; }
   .interestBody { margin-top: 20px; }
   .interestBody h1 { font-size: 28px; line-height: 38px; }
-  .navigation { margin-top: 20px; }
-  .questionBody { margin-top: 20px; }
   .questionBody h1 { font-size: 22px; line-height: 32px; }
   .actions { padding-bottom: max(28px, env(safe-area-inset-bottom)); }
   .resultBody { margin-top: 112px; }

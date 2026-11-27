@@ -25,7 +25,13 @@ def test_alembic_revision_chain_has_single_service_head_without_birth_date_remov
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["94d2da693c10"]
+    assert script.get_heads() == ["7f843b19debf"]
+    debate_description = script.get_revision("7f843b19debf")
+    assert debate_description.down_revision == "4dba45de1ad1"
+    assert debate_description.dependencies is None
+    q3_ranking = script.get_revision("4dba45de1ad1")
+    assert q3_ranking.down_revision == "94d2da693c10"
+    assert q3_ranking.dependencies is None
     debate_notification = script.get_revision("94d2da693c10")
     assert debate_notification.down_revision == "a67ddf3dc55f"
     assert debate_notification.dependencies is None
@@ -210,6 +216,30 @@ def test_search_log_migration_is_additive_and_guards_downgrade(monkeypatch):
     revision.downgrade()
     sql = buffer.getvalue()
     assert sql.index("LOCK TABLE search_log") < sql.index("RAISE EXCEPTION") < sql.index("DROP TABLE search_log")
+
+
+def test_q3_ranking_migration_is_additive_and_guards_downgrade(monkeypatch):
+    revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("4dba45de1ad1").module
+    buffer = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buffer},
+    )
+    monkeypatch.setattr(revision, "op", Operations(context))
+    revision.upgrade()
+    upgrade_sql = buffer.getvalue()
+    assert "CREATE TABLE tap_consumption_type" in upgrade_sql
+    assert "CONSTRAINT pk_tap_consumption_type PRIMARY KEY (tap_id, rank)" in upgrade_sql
+    assert "FOREIGN KEY(tap_id) REFERENCES tap (tap_id) ON DELETE CASCADE" in upgrade_sql
+    assert "CONSTRAINT uq_tap_consumption_type_tap_type UNIQUE (tap_id, consumption_type)" in upgrade_sql
+    assert "CHECK (rank BETWEEN 1 AND 6)" in upgrade_sql
+    assert "CHECK (consumption_type IN ('world', 'relationships', 'ost', 'goods', 'events', 'news'))" in upgrade_sql
+    assert "ALTER TABLE" not in upgrade_sql and "onboarding_answers" not in upgrade_sql   # existing rows untouched
+
+    buffer.seek(0)
+    buffer.truncate()
+    revision.downgrade()
+    sql = buffer.getvalue()
+    assert sql.index("LOCK TABLE tap_consumption_type") < sql.index("RAISE EXCEPTION") < sql.index("DROP TABLE tap_consumption_type")
 
 
 def test_recommended_post_migration_only_widens_the_type_rule_and_guards_downgrade(monkeypatch):

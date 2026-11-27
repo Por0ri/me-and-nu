@@ -38,7 +38,7 @@ WORKS = MODEL.parent / "catalog" / "menu_works.csv"
 ANILIST_USERS = DATA / "anilist_users" / "entries.csv"
 NO_COWATCH_FROM = 2022   # 이 해부터 시작한 작품은 MAL 같이 본 기록을 안 씀 (위 설명)
 
-# 글 노출 규칙: 유형마다 피드에 언제까지 보여줄지
+# 기한이 없는 기존 글의 대체 규칙. 새 no_deadline_v1 적재본에는 적용하지 않는다.
 NEWS_DAYS = 30           # 소식: 발표일부터 30일. 행사 · 발매 날짜가 더 늦으면 그날까지
 EVENT_OPEN_DAYS = 30     # 행사: 끝 날짜까지. 시작일만 있으면 시작일부터 30일
 GOODS_DAYS = 14          # 굿즈: 판매 끝 날짜까지. 발매(판매 시작)일만 있으면 그 뒤 14일
@@ -289,6 +289,7 @@ def exposure_end(ctype, published, event_start=None, event_end=None):
 
 def make_feed(posts, ctx):
     """글 목록 → v1 글 표. posts: dict 목록 (type · menu_work_id(없으면 None) · published · until, 날짜는 date).
+    명시적으로 기한 없이 적재한 글의 until=None은 정수 상한으로 표현한다. DB에 가짜 날짜를 저장하지 않는다.
     작품이 없거나 목록 밖인 글은 pos = -1 (작품 취향 0).
     글에 works (연결 작품 번호, 연결 순서) · anchor (기준 작품 자리, 없으면 None) 가 있으면 (11/16 결정):
     pos = 기준 작품 자리 (기준이 없는 모음은 -1), rel_pos · rel_w = 기준이 아닌 연결 작품 자리 · 무게 W_RELATED.
@@ -308,7 +309,8 @@ def make_feed(posts, ctx):
     feed = {"pos": np.array(pos, dtype=np.int64),
             "type": np.array([v1.TYPE_INDEX[p["type"]] for p in posts], dtype=np.int64),
             "day": np.array([day(p["published"]) for p in posts], dtype=np.int64),
-            "until": np.array([day(p["until"]) for p in posts], dtype=np.int64)}
+            "until": np.array([day(p["until"]) if p["until"] is not None else np.iinfo(np.int64).max
+                               for p in posts], dtype=np.int64)}
     k = max((len(r) for r in rel), default=0)
     if k:
         rel_pos = np.full((len(posts), k), -1, dtype=np.int64)
@@ -374,14 +376,23 @@ def genre_affinity(state, ctx):
 
 # 글 점수의 작품 몫에 더하는 장르 · 소재 유사도 비중. 로컬 시험 계정 4명으로 고른 출발값 (1.0 부터 고른 유형 글이 줄어듦) → 테스트 뒤 다시 정함
 W_GENRE = 0.5
-# 이미 본 글 감점 (v1 출발값 0.3). 보고 안 연 감점이 작품 취향을 빠르게 덮어서 줄임. 같은 날 같은 글 노출은 한 번만 셈 (load_visits)
+# 이미 본 글 감점 (v1 출발값 0.3). 보고 안 연 감점이 작품 취향을 빠르게 덮어서 줄임. 같은 날 같은 글 노출은 한 번만,
+# SEEN_MS 이상 본 노출만 셈 (load_visits)
 W_SEEN = 0.1
 # 끝까지 본 글 (카드 마지막 장 · 본문 80% 이상)만 본 날 포함 이 날 수 동안 후보에서 뺌. 덜 본 글은 바로 다시 후보
 # (11/3 사용자 결정. 그 전엔 열기만 해도 계속 뺐음). 백엔드 피드 (feed_service.REREAD_DAYS) 와 같은 값
 REREAD_DAYS = 14
 # 화면에 나왔지만 끝까지 안 본 글이 맨 위 · 곁들임 · 다른 작품 자리에서 쉬는 날 수 (11/19 사용자 결정. 그 전엔 한 번 나오면 영영 뺐음).
-# 오늘 전 이 날 수 안에 나온 글만 쉼 → 월요일에 지나친 글은 화요일 쉬고 수요일부터 다시 자리 후보. 오늘 나온 건 안 셈 (slot_ready)
+# 오늘 전 이 날 수 안에 나온 글만 쉼 → 월요일에 지나친 글은 화요일 쉬고 수요일부터 다시 자리 후보. 오늘 나온 건 안 셈 (slot_ready).
+# 화면에 나옴 = SEEN_MS 이상 본 노출 (11/25)
 REST_DAYS = 1
+# '봤다' 로 치는 노출 (11/25 사용자 결정, 부록 A #48): 카드가 80% 이상 보인 시간 (focus_ms) 이 이 ms 이상. focus_ms 가 없는 기록
+# (그 전 기록 · 화면이 아직 안 보냄) 은 반 이상 보인 시간 (visible_ms) 으로 같은 기준. 노출 하나씩 봄 (같은 날 합 아님).
+# 못 미친 노출은 load_visits 가 버림 → 본 글 감점 (W_SEEN) · 자리 쉬기 (REST_DAYS) · 보고 지나침 (v1 SIGNAL skip) 에 안 들어감.
+# 단 열었거나 카드를 넘긴 글은 노출 시간과 상관없이 본 글 (확실히 봤음, 같은 접속에 노출을 하나 넣음 · 보고 지나침 아님).
+# 그전엔 반 이상 1초면 남는 노출을 다 '봤다' 로 쳐서 빨리 넘긴 카드까지 다음 날 감점 · 쉬기를 받았음.
+# 백엔드 '오늘 본 카드 맨 뒤로' 는 따로 정한 기준 (반 이상 보인 시간 하루 합 2초, recommendation_repository.SHOWN_VISIBLE_MS)
+SEEN_MS = 3000
 
 LOGS = frozenset({"impression", "open", "read", "like", "save", "more", "less"})   # v1 이 쓰는 기록 7종 (EXP-22 · 30 조건)
 
@@ -424,7 +435,7 @@ TYPE_RUN = 1    # 같은 Q3 답 묶음 글은 연속 TYPE_RUN 개까지. 1 = 바
 def q3_answers(first, ranked):
     """Q3 답 (좋아하는 순서). first = onboarding_answers.consumption_type (1순위), ranked = 새 표 tap_consumption_type 의
     [(rank, 답), ...] (rank 순). rank 1 줄이 first 와 같을 때만 새 표 순서: 같은 DB 를 쓰는 운영 옛 코드는 취향 수정 때
-    first 만 바꿈 → 그러면 [first] 하나. 새 표 · 백엔드 읽기는 다음 백엔드 작업에서 같은 규칙으로 만듦 (지금 백엔드는 first 만)"""
+    first 만 바꿈 → 그러면 [first] 하나. 백엔드 취향 조회 (onboarding_repository.load_consumption_types) 와 같은 규칙"""
     if ranked and ranked[0] == (1, first):
         return [answer for _, answer in ranked]
     return [first] if first else []
@@ -516,7 +527,7 @@ def _candidate_level(same_group, same_work):
     return (same_work, same_group)
 
 
-def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100, ready=None, type_run=None):
+def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=300, ready=None, type_run=None):
     """점수 순 글 번호 → 보여 줄 순서 [(글 번호, 자리), ...] (11/16 · 11/17 결정). 자리 = pinned · side · discover · score
     1. 팬 추천은 기준 작품이 고른 작품 (같은 시리즈 포함) 인 글만 남김
     2. 맨 위 = 기준 작품이 고른 작품인 글 중 자리 후보인 글 (같은 작품은 한 바퀴에 하나씩)
@@ -528,7 +539,8 @@ def compose(order, feed, posts, picked, chip_slugs, ctx, seen=None, top_n=100, r
        _candidate_level 이 가장 낮은 가장 앞 글 (묶음도 작품도 다름 → 같은 묶음 · 다른 작품 → 다른 묶음 · 같은 작품 → 그대로).
        다른 자리 후보로 넘어가지는 않음. 같은 소재 모음은 6번 없이 정했을 때 남는 글만 남김 → 보이는 소재 모음은 같고 자리만 바뀜
     chip_slugs: 고른 칩의 소재 슬러그 집합 (chip_slug). ready: 글별 자리 후보 여부 (slot_ready, 11/19).
-    ready 가 없으면 seen (글별 노출 횟수) 이 0 인 글만 후보 (11/18 까지 규칙: 한 번 나오면 영영 자리에서 빠짐)"""
+    ready 가 없으면 seen (글별 노출 횟수) 이 0 인 글만 후보 (11/18 까지 규칙: 한 번 나오면 영영 자리에서 빠짐).
+    top_n: 하루 순위 개수 (daily_recommend.TOP_N 과 같게, 11/25 100 → 300). 후보가 모자라면 짧게 끝남"""
     type_run = TYPE_RUN if type_run is None else type_run
     keep_theme = None                                                 # 소재 → 남길 글 (6번 없이 정한 순서에서 먼저 나온 글)
     if type_run:

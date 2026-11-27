@@ -52,5 +52,7 @@ export function HomeRoute() {
       {state.status === "error" && <button type="button" onClick={refresh}>다시 확인</button>}
     </main>;
   }
-  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience key={state.session?.csrfToken} skipEntryLoading={state.homeEntryPrepared} mySource={mySource} activitySource={activitySource} inquirySource={inquirySource} reportSource={reportSource} notificationSource={notificationSource} homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} onWithdraw={withdraw} /></InteractionProvider></Suspense>;
+  // TALK 에 다녀오는 동안 기억해 둔 피드는 같은 회원 · 같은 세션일 때만 이어서 보여 준다 (home-feed-memory.ts)
+  const feedOwner = userId === undefined ? undefined : `${userId}:${state.session?.csrfToken ?? ""}`;
+  return <Suspense fallback={<p role="status">콘텐츠를 불러오고 있어요.</p>}><InteractionProvider key={userId} scope={interactions}><HomeDetailExperience key={state.session?.csrfToken} feedOwner={feedOwner} skipEntryLoading={state.homeEntryPrepared} mySource={mySource} activitySource={activitySource} inquirySource={inquirySource} reportSource={reportSource} notificationSource={notificationSource} homeSource={homeSource} detailSource={pendingDetailSource} onLogout={logoutWithActivities} onWithdraw={withdraw} /></InteractionProvider></Suspense>;
 }

@@ -526,72 +526,83 @@ def resolve_unmatched_work_with_llm(
     )
     started = perf_counter()
     try:
-        response = model.invoke(
-            [
-                (
-                    "system",
-                    "Identify the anime work that is the primary subject of this source item. "
-                    "This LLM fallback runs only after deterministic title/metadata matching "
-                    "failed. First use supplied page/headline titles and publisher-declared "
-                    "about references. "
-                    "If those do not identify the work, you may inspect the opening body excerpt. "
-                    "A verified catalog alias in the supplied headline or publisher "
-                    "about-reference is sufficient title evidence. If the alias appears only in "
-                    "the body, require the quoted sentence to explicitly connect that alias to "
-                    "the work (for example, "
-                    "by spelling out the full title nearby or labeling the abbreviation). Use the "
-                    "exact source wording as evidence_title. Do not treat a passing mention of a "
-                    "work elsewhere in the article as its primary subject. "
-                    "A name merely mentioned in the body is not enough: distinguish the article's "
-                    "main subject from examples, comparisons, recommendations, ads, and incidental "
-                    "mentions. For body-based decisions, set evidence_basis='body_excerpt', copy "
-                    "one exact supporting sentence or contiguous passage into evidence_quote, and "
-                    "set subject_relation='primary_subject' only when that passage establishes the "
-                    "work as the article's main subject. Otherwise choose unresolved. "
-                    "Outbound links are corroboration only; never assign a work from an anchor "
-                    "label or URL alone. Roundups naming several works without one clear primary "
-                    "subject must remain unresolved unless content_type is curation and the "
-                    "evidence explicitly enumerates the works as the actual items being curated. "
-                    "Prefer an exact existing menu_work_id when its alias names the same work. "
-                    "A season or movie entry already listed under a canonical work maps to that "
-                    "entry's menu_work_id; do not create a separate ID for it. Keep a distinct "
-                    "series such as Yu-Gi-Oh! GX separate from another series in its franchise. "
-                    "Do not infer a parent link from franchise familiarity alone; require the "
-                    "headline, publisher about-reference, or clear opening-page evidence to "
-                    "identify "
-                    "the primary work clearly. "
-                    "Put each selected ID and alias from its candidate row in catalog_matches. "
-                    "Keep distinct sequels and spinoffs separate unless the catalog maps them "
-                    "to one canonical work. Return multiple IDs only for a clear collaboration, "
-                    "or for curation when every selected work is explicitly listed as a roundup, "
-                    "ranking, recommendation, or poll target in the supplied evidence. Do not "
-                    "include works that are merely examples, comparisons, or incidental mentions. "
-                    "For such a curation list, set subject_relation='primary_subject' only when "
-                    "the evidence quote includes the actual itemized targets and every selected "
-                    "catalog alias is grounded in that quote. "
-                    "Choose register_new only for a distinct anime absent from the candidates. "
-                    "Use anime_work and primary_subject for register_new. The code checks the "
-                    "catalog and allocates a temporary ID. Do not propose a new franchise for "
-                    "a season, an alternate spelling, a character, or an uncertain title. "
-                    "For match_existing or register_new, set evidence_title to the exact work-name "
-                    "phrase appearing in the selected evidence. If evidence_basis is "
-                    "headline_or_about, the phrase must occur in a supplied title or publisher "
-                    "about-reference. If it is body_excerpt, evidence_title must occur in "
-                    "evidence_quote and the quote must be "
-                    "copied verbatim from the opening excerpt. Never invent titles or quotes. "
-                    "Classify subject_scope separately: use anime_work when the item is about a "
-                    "specific anime work; anime_related_no_single_work when it discusses anime "
-                    "or animation broadly, multiple works, or a concert/screening without one "
-                    "primary anime work; not_anime_related when anime is incidental or the item "
-                    "is about music artists, games, companies, investments, or other subjects; "
-                    "use unclear only when the source evidence cannot establish its scope. "
-                    "For not_anime_related, choose unresolved and do not force a menu_work_id. "
-                    "If uncertain, choose unresolved. Never invent IDs or evidence titles. "
-                    "Confidence must reflect the evidence." + character_instructions,
-                ),
-                ("human", json.dumps(payload, ensure_ascii=False)),
-            ]
-        )
+        messages = [
+            (
+                "system",
+                "Identify the anime work that is the primary subject of this source item. "
+                "This LLM fallback runs only after deterministic title/metadata matching "
+                "failed. First use supplied page/headline titles and publisher-declared "
+                "about references. "
+                "If those do not identify the work, you may inspect the opening body excerpt. "
+                "A verified catalog alias in the supplied headline or publisher "
+                "about-reference is sufficient title evidence. If the alias appears only in "
+                "the body, require the quoted sentence to explicitly connect that alias to "
+                "the work (for example, "
+                "by spelling out the full title nearby or labeling the abbreviation). Use the "
+                "exact source wording as evidence_title. Do not treat a passing mention of a "
+                "work elsewhere in the article as its primary subject. "
+                "A name merely mentioned in the body is not enough: distinguish the article's "
+                "main subject from examples, comparisons, recommendations, ads, and incidental "
+                "mentions. For body-based decisions, set evidence_basis='body_excerpt', copy "
+                "one exact supporting sentence or contiguous passage into evidence_quote, and "
+                "set subject_relation='primary_subject' only when that passage establishes the "
+                "work as the article's main subject. Otherwise choose unresolved. "
+                "Outbound links are corroboration only; never assign a work from an anchor "
+                "label or URL alone. Roundups naming several works without one clear primary "
+                "subject must remain unresolved unless content_type is curation and the "
+                "evidence explicitly enumerates the works as the actual items being curated. "
+                "Prefer an exact existing menu_work_id when its alias names the same work. "
+                "A season or movie entry already listed under a canonical work maps to that "
+                "entry's menu_work_id; do not create a separate ID for it. Keep a distinct "
+                "series such as Yu-Gi-Oh! GX separate from another series in its franchise. "
+                "Do not infer a parent link from franchise familiarity alone; require the "
+                "headline, publisher about-reference, or clear opening-page evidence to "
+                "identify "
+                "the primary work clearly. "
+                "Put each selected ID and alias from its candidate row in catalog_matches. "
+                "Keep distinct sequels and spinoffs separate unless the catalog maps them "
+                "to one canonical work. Return multiple IDs only for a clear collaboration, "
+                "or for curation when every selected work is explicitly listed as a roundup, "
+                "ranking, recommendation, or poll target in the supplied evidence. Do not "
+                "include works that are merely examples, comparisons, or incidental mentions. "
+                "For such a curation list, set subject_relation='primary_subject' only when "
+                "the evidence quote includes the actual itemized targets and every selected "
+                "catalog alias is grounded in that quote. "
+                "Choose register_new only for a distinct anime absent from the candidates. "
+                "Use anime_work and primary_subject for register_new. The code checks the "
+                "catalog and allocates a temporary ID. Do not propose a new franchise for "
+                "a season, an alternate spelling, a character, or an uncertain title. "
+                "For match_existing or register_new, set evidence_title to the exact work-name "
+                "phrase appearing in the selected evidence. If evidence_basis is "
+                "headline_or_about, the phrase must occur in a supplied title or publisher "
+                "about-reference. If it is body_excerpt, evidence_title must occur in "
+                "evidence_quote and the quote must be "
+                "copied verbatim from the opening excerpt. Never invent titles or quotes. "
+                "Classify subject_scope separately: use anime_work when the item is about a "
+                "specific anime work; anime_related_no_single_work when it discusses anime "
+                "or animation broadly, multiple works, or a concert/screening without one "
+                "primary anime work; not_anime_related when anime is incidental or the item "
+                "is about music artists, games, companies, investments, or other subjects; "
+                "use unclear only when the source evidence cannot establish its scope. "
+                "For not_anime_related, choose unresolved and do not force a menu_work_id. "
+                "If uncertain, choose unresolved. Never invent IDs or evidence titles. "
+                "Confidence must reflect the evidence." + character_instructions,
+            ),
+            ("human", json.dumps(payload, ensure_ascii=False)),
+        ]
+        usage_index = None
+        if usage_records is not None:
+            usage_index = len(usage_records)
+            usage_records.append(
+                {
+                    "model": settings.model_name,
+                    "stage": "work_match_fallback",
+                    "invocation_attempted": True,
+                    "usage_complete": False,
+                    "reason": "provider_usage_unavailable",
+                }
+            )
+        response = model.invoke(messages)
     except Exception:
         logger.exception("LLM fallback failed while resolving an unmatched work title")
         if audit is not None:
@@ -600,29 +611,37 @@ def resolve_unmatched_work_with_llm(
 
     raw = response.get("raw") if isinstance(response, dict) else None
     usage = getattr(raw, "usage_metadata", None) or {}
-    input_details = usage.get("input_token_details") or {}
-    input_tokens = int(usage.get("input_tokens", 0) or 0)
-    cached_tokens = int(input_details.get("cache_read", 0) or 0)
-    cache_write_tokens = int(
-        input_details.get("cache_write", input_details.get("cache_creation", 0)) or 0
-    )
-    output_tokens = int(usage.get("output_tokens", 0) or 0)
-    total_tokens = int(usage.get("total_tokens", input_tokens + output_tokens) or 0)
-    usage_record = UsageRecord(
-        model=settings.model_name,
-        stage="work_match_fallback",
-        input_tokens=input_tokens,
-        cached_input_tokens=cached_tokens,
-        cache_write_tokens=cache_write_tokens,
-        output_tokens=output_tokens,
-        total_tokens=total_tokens,
-        estimated_cost_usd=estimate_gpt_6_luna_cost(
-            input_tokens, cached_tokens, cache_write_tokens, output_tokens
-        ),
-        elapsed_seconds=round(perf_counter() - started, 3),
-    )
-    if usage_records is not None:
-        usage_records.append(usage_record.model_dump(mode="json"))
+    if (
+        usage_records is not None
+        and usage_index is not None
+        and isinstance(usage, dict)
+        and all(
+            type(usage.get(key)) is int and usage[key] >= 0
+            for key in ("input_tokens", "output_tokens")
+        )
+        and usage["input_tokens"] + usage["output_tokens"] > 0
+    ):
+        input_details = usage.get("input_token_details") or {}
+        input_tokens = int(usage.get("input_tokens", 0) or 0)
+        cached_tokens = int(input_details.get("cache_read", 0) or 0)
+        cache_write_tokens = int(
+            input_details.get("cache_write", input_details.get("cache_creation", 0)) or 0
+        )
+        output_tokens = int(usage.get("output_tokens", 0) or 0)
+        total_tokens = int(usage.get("total_tokens", input_tokens + output_tokens) or 0)
+        usage_records[usage_index] = UsageRecord(
+            model=settings.model_name,
+            stage="work_match_fallback",
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_tokens,
+            cache_write_tokens=cache_write_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=estimate_gpt_6_luna_cost(
+                input_tokens, cached_tokens, cache_write_tokens, output_tokens
+            ),
+            elapsed_seconds=round(perf_counter() - started, 3),
+        ).model_dump(mode="json")
     decision = response.get("parsed") if isinstance(response, dict) else None
     if not isinstance(decision, WorkIdentityDecision):
         logger.warning("LLM returned no structured work identity decision")

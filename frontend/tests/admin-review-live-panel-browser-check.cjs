@@ -11,7 +11,7 @@ const { build } = require(path.join(toolsRoot, 'esbuild'));
 const { createAdminReviewFixture } = require('./helpers/admin-review-api-fixture.cjs');
 const root = path.join(__dirname, '..');
 const output = path.resolve(process.argv[2] || path.join(root, '..', 'validation', 'fixed-live-panel'));
-const report = { scope: 'Checking-only activation and safety regressions; loopback fake API; real Chromium React DOM; no service requests', checks: [] };
+const report = { scope: 'Main and Checking activation and safety regressions; loopback fake API; real Chromium React DOM; no service requests', checks: [] };
 const entry = `
 import React, { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -28,6 +28,7 @@ const activation = { apiOrigin: location.origin, approvedBy: 'test harness', app
 const flow = createReviewFlow(id, { submit: submitAdminContentReview, newRequestId: () => crypto.randomUUID(),
   gate: () => query.get('gate') === 'checking' ? reviewWriteGate('https://api.checking.me-nu.kr')
     : query.get('gate') === 'main' ? reviewWriteGate('https://api.me-nu.kr')
+    : query.get('gate') === 'other' ? reviewWriteGate('https://api.test.me-nu.kr')
     : reviewWriteGate(location.origin, query.get('gate') === 'off' ? null : activation) });
 function App() {
   const [detail, setDetail] = useState(null), [failure, setFailure] = useState(null), [shown, setShown] = useState(true);
@@ -124,19 +125,19 @@ async function run() {
   const phase = (page, value) => page.locator(`[data-review-phase="${value}"]`).waitFor();
   const unloadGuard = page => page.evaluate(() => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
   try {
-    for (const gate of ['off', 'main']) await scenario(`${gate}-gate-blocked`, 'operator', async ({ page, fixture }) => {
+    for (const gate of ['off', 'other']) await scenario(`${gate}-gate-blocked`, 'operator', async ({ page, fixture }) => {
       await page.getByRole('button', { name: '승인 내용 확인', exact: true }).click();
       const dialog = page.getByRole('dialog'); await dialog.getByLabel('조치 사유 (필수)').fill('출처 확인');
       await dialog.getByRole('button', { name: '입력 확인', exact: true }).click();
       assert.equal(await dialog.getByRole('button', { name: '승인 실행 (미연결)' }).isDisabled(), true);
       assert.equal(posts(fixture).length, 0);
     }, { query: `gate=${gate}` });
-    await scenario('checking-approved-gate', 'operator', async ({ page, fixture }) => {
+    for (const gate of ['checking', 'main']) await scenario(`${gate}-approved-gate`, 'operator', async ({ page, fixture }) => {
       await execute(page); await phase(page, 'succeeded');
       assert.equal(posts(fixture).length, 1); assert.equal(fixture.audit.length, 1);
       assert.equal(posts(fixture)[0].headers['x-admin-review-actor'], '22');
       assert.equal(posts(fixture)[0].headers['x-admin-review-grant'], '122');
-    }, { query: 'gate=checking' });
+    }, { query: `gate=${gate}` });
     await scenario('viewer-read-only', 'viewer', async ({ page, fixture }) => {
       assert.equal(await page.getByRole('button', { name: '승인 내용 확인', exact: true }).isDisabled(), true);
       assert.equal(await page.getByRole('button', { name: '반려 내용 확인', exact: true }).isDisabled(), true);

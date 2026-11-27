@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import logging
 from io import BytesIO
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -14,8 +13,6 @@ from ani_rag.agents.content_generation.prompts import LAYOUT_POLICY
 from ani_rag.agents.content_generation.renderer import compose_cover_art
 from ani_rag.content import DESIGNED_COVERS, CardDraft, CardLayout, ImageAsset, NormalizedBox
 
-logger = logging.getLogger(__name__)
-
 
 class ImageCopyMismatchError(ValueError):
     """The selected source image cannot be visually matched to its page copy."""
@@ -23,13 +20,14 @@ class ImageCopyMismatchError(ValueError):
     def __init__(
         self, message: str, *, card_id: str | None = None,
         image_asset_id: str | None = None, headline: str | None = None,
-        body: str | None = None,
+        body: str | None = None, search_subject: str | None = None,
     ) -> None:
         super().__init__(message)
         self.card_id = card_id
         self.image_asset_id = image_asset_id
         self.headline = headline
         self.body = body
+        self.search_subject = search_subject
 
 
 LAYOUT_SCHEMA: dict[str, object] = {
@@ -41,12 +39,16 @@ LAYOUT_SCHEMA: dict[str, object] = {
                 "copy_position": {"type": "string", "enum": ["bottom"]},
                 "image_matches_copy": {"type": "boolean"},
                 "image_match_reason": {"type": "string", "maxLength": 180},
+                "image_search_subject": {
+                    "type": "string", "maxLength": 120,
+                    "description": "Work title and intended character or season for replacement artwork. Empty if accepted.",
+                },
                 "image_quality_acceptable": {"type": "boolean"},
                 "image_quality_reason": {"type": "string", "maxLength": 180},
                 "image_emphasis": {"type": "string", "enum": ["dominant", "balanced"]},
                 "background_style": {"type": "string", "enum": ["blur", "palette", "gradient"]},
             },
-            "required": ["card_id", "copy_position", "image_matches_copy", "image_match_reason",
+            "required": ["card_id", "copy_position", "image_matches_copy", "image_match_reason", "image_search_subject",
                          "image_quality_acceptable", "image_quality_reason",
                          "image_emphasis", "background_style"],
         }}},
@@ -127,7 +129,11 @@ async def direct_card_layouts(
                 headline=card.headline, body=card.body,
             )
         if asset.work_link_status not in {"matched", "candidate"} or not asset.menu_work_ids:
-            raise ImageCopyMismatchError(f"Card {card.card_id!r} image has no local work candidate")
+            raise ImageCopyMismatchError(
+                f"Card {card.card_id!r} image has no local work candidate",
+                card_id=card.card_id, image_asset_id=card.image_asset_id,
+                headline=card.headline, body=card.body,
+            )
         image_urls.append(preview)
         page_rows.append({
             "page": page, "card_id": card.card_id, "role": card.role,
@@ -137,6 +143,7 @@ async def direct_card_layouts(
             if asset.width and asset.height else None,
             "image_source_id": asset.source_id,
             "image_source_page_url": asset.source_page_url,
+            "image_source_url": asset.source_url,
             "image_role": asset.image_role,
             "image_alt_text": asset.alt_text,
             "image_source_native_id": asset.source_native_id,
@@ -144,7 +151,7 @@ async def direct_card_layouts(
             "candidate_menu_work_ids": list(asset.menu_work_ids),
             "image_entity_links": [{
                 "entity_id": link.entity_id, "entity_name": link.entity_name,
-                "relation_type": link.relation_type,
+                "relation_type": link.relation_type, "status": link.status,
             } for link in asset.entity_links],
             **({"cover_design": card.layout.template, "sources_in_cover": [{
                 "role": assets[source_id].image_role,
@@ -160,12 +167,11 @@ async def direct_card_layouts(
                 "For a designed cover, inspect the composed image and every pictured subject against the "
                 "supplied cover sources: a cast grid introduces the named cast, a recommendation cover places "
                 "the anchor work in the center and the recommended works behind it, and a beginner guide "
-                "introduces the depicted work. A different subject in a slot is a mismatch. For other pages: "
-                "Treat a readable image from the confirmed work or a related character as a valid broad match, "
-                "even when it shows a different scene, action, age, episode, season, or story moment. Prefer the "
-                "exact named character when convenient, but do not require it. Set image_matches_copy false only "
-                "when the work/person is clearly wrong or the image is unusable; do not call a same-work image weak "
-                "just because it does not illustrate the exact sentence. Use dominant emphasis for attractive "
+                "introduces the depicted work. A different subject in a slot is a mismatch. For every page, "
+                "set image_matches_copy false if its featured subject is wrong or cannot be established. "
+                "For example, an Anya-only image fails a Loid feature, and a Season 1 poster fails a Season 2 "
+                "feature. Either can illustrate a series overview. Return the intended replacement subject in "
+                "image_search_subject when a source needs replacing. Use dominant emphasis for attractive "
                 "same-work art. Use balanced emphasis only when the composition itself needs breathing room. "
                 "For very wide panoramas, choose dominant only if a centered crop keeps the main subjects; otherwise "
                 "choose balanced and preserve the full image. Judge image_quality_acceptable separately from "
@@ -192,25 +198,20 @@ async def direct_card_layouts(
         row = by_card_id[card.card_id]
         if row.get("copy_position") != "bottom":
             raise ValueError("HTML card copy must remain at the bottom")
+        search_subject = str(row.get("image_search_subject") or "").strip()[:120]
         if row.get("image_quality_acceptable") is not True:
             reason = str(row.get("image_quality_reason") or "image is visibly pixelated at card size")[:180]
             raise ImageCopyMismatchError(
                 f"Selected image needs a sharper source: {reason}",
                 card_id=card.card_id, image_asset_id=card.image_asset_id,
-                headline=card.headline, body=card.body,
+                headline=card.headline, body=card.body, search_subject=search_subject,
             )
-        image_match_is_strong = row.get("image_matches_copy") is True
-        if not image_match_is_strong:
+        if row.get("image_matches_copy") is not True:
             reason = str(row.get("image_match_reason") or "uncertain image-to-copy match")[:180]
-            if card.layout.template in DESIGNED_COVERS:
-                raise ImageCopyMismatchError(
-                    f"Cover subject does not match the intended design: {reason}",
-                    card_id=card.card_id, image_asset_id=card.image_asset_id,
-                    headline=card.headline, body=card.body,
-                )
-            logger.warning(
-                "image_copy_match_low card_id=%s asset_id=%s reason=%s",
-                card.card_id, card.image_asset_id, reason,
+            raise ImageCopyMismatchError(
+                f"Image does not match the card subject: {reason}",
+                card_id=card.card_id, image_asset_id=card.image_asset_id,
+                headline=card.headline, body=card.body, search_subject=search_subject,
             )
         emphasis = str(row.get("image_emphasis", "dominant"))
         if emphasis not in {"dominant", "balanced"}:

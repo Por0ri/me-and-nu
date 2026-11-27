@@ -22,7 +22,7 @@ from menu_worker.job_contract import JobInput, JobInputError, job_input_hash, va
 DATABASE_NAMES = frozenset({"menu_content_jobs", "menu_content_jobs_test", "menu_content_jobs_migration_test"})
 DATABASE_HOSTS = frozenset({"jobs-db", "localhost", "127.0.0.1", "::1"})
 MIGRATIONS = ("001_content_jobs.sql", "002_job_kind.sql", "003_anime_work_input.sql", "004_anime_generation.sql",
-              "005_article_identity.sql", "006_staging_selection.sql", "007_independent_reviews.sql")
+              "005_article_identity.sql", "006_staging_selection.sql", "007_independent_reviews.sql", "008_rag_jobs.sql")
 SCHEMA_VERSION = len(MIGRATIONS)
 # Older workers recorded these adapter errors as needs_attention after arming
 # the launch fence. Each is emitted exclusively before the producer starts.
@@ -126,6 +126,8 @@ class JobStore:
                     tables.append("content_staging_selection")
                 if installed >= 7:
                     tables.append("content_generation_review")
+                if installed >= 8:
+                    tables.extend(("content_rag_generation_job", "content_rag_generation_attempt"))
                 for table in tables:
                     exists = connection.execute("SELECT to_regclass(%s) AS name", ("public." + table,)).fetchone()["name"]
                     if not exists:
@@ -262,6 +264,10 @@ class JobStore:
                         SELECT 1 FROM public.content_generation_job
                         WHERE job_kind='anime_generate' AND job_id<>%s AND execution_status='running'
                           AND generation_started_at IS NOT NULL AND lease_expires_at>CURRENT_TIMESTAMP
+                        UNION ALL
+                        SELECT 1 FROM public.content_rag_generation_job
+                        WHERE execution_status='running' AND generation_started_at IS NOT NULL
+                          AND lease_expires_at>CURRENT_TIMESTAMP
                     ) AS busy""", (_identity(exclude_job_id),),
                 ).fetchone()["busy"]
         except psycopg.Error:

@@ -31,16 +31,18 @@ from app.schemas.feed import (
     WorkSuggestionsResponse,
 )
 from app.services.cursor import decode_cursor, encode_cursor
-from app.services.feed_ranking import FeedSlot, order_feed
+from app.services.feed_ranking import FeedSlot, mix_groups, order_feed
 
 logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
-# Newest public contents considered after the day's ranked list (the model ranks 100).
-LATEST_POOL = 500
+# 한 방문의 홈 피드 카드 수: 추천 순위 300위까지, 추천이 없을 때 비상 목록도 300장까지. 모델 하루 추천 수
+# (model/scripts/daily_recommend.py TOP_N) 와 같은 값. 추천 뒤에 최신순 글을 더 잇지 않음 (11/25 결정)
+FEED_CARDS = 300
 # 끝까지 본 글 (카드 마지막 장 · 본문 80% 이상)은 본 날 포함 이 날 수 동안 피드에서 뺌 (모델 service.REREAD_DAYS 와 같은 값)
 REREAD_DAYS = 14
-# Up to 100 ranked cards plus 500 latest cards. IDs are packed once, separately
-# from the JSON header, so even BIGINT IDs stay below a 7 KB query value.
+# cursor 가 담을 수 있는 남은 글 수. 새 스냅샷은 FEED_CARDS 까지지만, 11/25 전에 만든 cursor (추천 100 + 최신순 500)
+# 도 풀리게 600 그대로 둠 (cursor 엔 기한이 없음). IDs are packed once, separately from the JSON header,
+# so even BIGINT IDs stay below a 7 KB query value.
 MAX_SNAPSHOT_ITEMS = 600
 MAX_FEED_CURSOR_LENGTH = 7000
 MAX_CURSOR_HEADER_LENGTH = 512
@@ -226,8 +228,9 @@ def _decode_snapshot_cursor(cursor: str, context: dict) -> tuple[dict, list[int]
             raise ValueError("bad cursor size")
         payload = decode_cursor(header, expected=context)
         as_of = datetime.fromisoformat(payload["asOf"])
-        round_id = payload["roundId"]
-        if as_of.tzinfo is None or type(round_id) is not int or not 0 < round_id <= MAX_CONTENT_ID:
+        round_id = payload["roundId"]           # null = 비상 목록 (추천 없음)
+        if as_of.tzinfo is None or (
+                round_id is not None and (type(round_id) is not int or not 0 < round_id <= MAX_CONTENT_ID)):
             raise ValueError("bad snapshot context")
         packed = base64.b64decode(encoded_ids + "=" * (-len(encoded_ids) % 4), altchars=b"-_", validate=True)
         if not packed or len(packed) % 8 or len(packed) > MAX_SNAPSHOT_ITEMS * 8:
@@ -250,7 +253,7 @@ def _recent(moment: datetime | None, as_of: datetime) -> bool:
 
 async def _first_round(db: AsyncSession, user_id: int, tap_id: int, as_of: datetime, service_dates: list):
     """A new account's first round, or the first after a My Page taste edit (which drops
-    the recent rounds), waited for up to about 3 s; None keeps newest first."""
+    the recent rounds), waited for up to about 3 s; None 이면 그 방문은 비상 목록."""
     if not _recent(await recommendation_repo.onboarding_completed_at(db, user_id), as_of) and not _recent(
             await recommendation_repo.taste_edited_at(db, tap_id), as_of):
         return None
@@ -262,51 +265,69 @@ async def _first_round(db: AsyncSession, user_id: int, tap_id: int, as_of: datet
     return None
 
 
-async def _recommended_feed(
+async def _ranked_slots(db: AsyncSession, round_id: int, topic_id: int) -> list[FeedSlot]:
+    return [
+        FeedSlot(content_id, item_id, _reason_text(reason))
+        for content_id, item_id, reason in await recommendation_repo.ranked_items(db, round_id, topic_id, FEED_CARDS)
+    ]
+
+
+async def _visit_order(db: AsyncSession, user_id: int, topic_id: int, tap, as_of: datetime, negative: set[int]):
+    """첫 쪽에서 정하는 이 방문의 순서 → (추천 라운드, 추천 줄, 순서).
+
+    오늘 (없으면 어제) 추천 순위 FEED_CARDS 위까지만 쓰고 뒤에 다른 글을 잇지 않는다. 추천이 없거나 (계산기가 멈춘 날,
+    가입 직후 첫 계산 전) 보이는 추천 글이 하나도 없으면 비상 목록이라 라운드는 None, 추천 줄은 빈 목록.
+    """
+    today = as_of.astimezone(KST).date()
+    service_dates = [today, today - timedelta(days=1)]
+    round_ = await recommendation_repo.latest_round(db, tap.tap_id, service_dates)
+    if round_ is None:
+        round_ = await _first_round(db, user_id, tap.tap_id, as_of, service_dates)
+    fully_read = await recommendation_repo.fully_read_content_ids(
+        db, tap.tap_id, _kst_day_start(as_of) - timedelta(days=REREAD_DAYS - 1), as_of,
+    )
+    rules = {
+        "fully_read": fully_read, "negative": negative,
+        "shown_today": await recommendation_repo.shown_content_ids(db, tap.tap_id, _kst_day_start(as_of), as_of),
+    }
+    if round_ is not None:
+        ranked = await _ranked_slots(db, round_.recommendation_round_id, topic_id)
+        ordered = order_feed(ranked, [], **rules, main_work=await recommendation_repo.main_works(
+            db, [slot.content_id for slot in ranked]))
+        if ordered:
+            return round_, ranked, ordered
+    # 비상 목록: 최신 글을 Q3 묶음이 돌아가며 나오게 섞어 FEED_CARDS 장. 숨김 · 뒤로 보내기는 추천 피드와 같음
+    candidates = await recommendation_repo.latest_typed_contents(
+        db, topic_id, as_of, FEED_CARDS, exclude=fully_read | negative)
+    mixed = mix_groups(candidates, FEED_CARDS)
+    return None, [], order_feed([], mixed, **rules, main_work=await recommendation_repo.main_works(db, mixed))
+
+
+async def _snapshot_feed(
     db: AsyncSession, user_id: int, topic_id: int, tap, *, cursor: str | None, limit: int
-) -> FeedResponse | None:
+) -> FeedResponse:
     """Freeze the visit's order; always recheck current visibility and dislikes.
 
-    Later pages consume the remaining IDs, so changed reactions or hidden cards
-    cannot shift an offset. An old v2 cursor has no recoverable order and must
-    restart. Yesterday's round covers the hours before today's batch has run,
-    and a brand-new account briefly waits for its first round.
+    첫 쪽에서 _visit_order 로 정한 순서 (추천 또는 비상 목록) 를 cursor 에 담는다. cursor 의 roundId 가 null 이면
+    비상 목록. Later pages consume the remaining IDs, so changed reactions or hidden cards
+    cannot shift an offset. An old v2 cursor has no recoverable order and must restart.
     """
     context = {"v": 3, "userId": user_id, "topicId": topic_id, "subtopicId": None}
+    ranked: list[FeedSlot] = []
     if cursor is None:
         as_of = _now()
-        today = as_of.astimezone(KST).date()
-        service_dates = [today, today - timedelta(days=1)]
-        round_ = await recommendation_repo.latest_round(db, tap.tap_id, service_dates)
-        if round_ is None:
-            round_ = await _first_round(db, user_id, tap.tap_id, as_of, service_dates)
-        if round_ is None:
-            return None
-        context.update(roundId=round_.recommendation_round_id, asOf=as_of.isoformat())
+        negative = await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id)
+        round_, ranked, ordered = await _visit_order(db, user_id, topic_id, tap, as_of, negative)
+        context.update(roundId=round_.recommendation_round_id if round_ else None, asOf=as_of.isoformat())
+        remaining_ids = [slot.content_id for slot in ordered[:FEED_CARDS]]
     else:
         context, remaining_ids = _decode_snapshot_cursor(cursor, context)
-        round_ = await recommendation_repo.get_round(db, context["roundId"], tap.tap_id)
-        if round_ is None:
-            raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다. 피드를 새로 불러와 주세요.")
-    ranked = [
-        FeedSlot(content_id, item_id, _reason_text(reason))
-        for content_id, item_id, reason in await recommendation_repo.ranked_items(
-            db, round_.recommendation_round_id, topic_id
-        )
-    ]
-    negative = await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id)
-    if cursor is None:
-        latest = await recommendation_repo.latest_content_ids(db, topic_id, as_of, LATEST_POOL)
-        ordered = order_feed(
-            ranked, latest,
-            fully_read=await recommendation_repo.fully_read_content_ids(
-                db, tap.tap_id, _kst_day_start(as_of) - timedelta(days=REREAD_DAYS - 1), as_of,
-            ),
-            negative=negative,
-            shown_today=await recommendation_repo.shown_content_ids(db, tap.tap_id, _kst_day_start(as_of), as_of),
-            main_work=await recommendation_repo.main_works(db, [slot.content_id for slot in ranked] + latest),
-        )
-        remaining_ids = [slot.content_id for slot in ordered[:MAX_SNAPSHOT_ITEMS]]
+        if context["roundId"] is not None:      # 비상 목록 cursor 는 라운드 확인 · 추천 줄 읽기를 건너뜀
+            round_ = await recommendation_repo.get_round(db, context["roundId"], tap.tap_id)
+            if round_ is None:
+                raise ApiError(422, "INVALID_CURSOR", "유효하지 않은 cursor입니다. 피드를 새로 불러와 주세요.")
+            ranked = await _ranked_slots(db, round_.recommendation_round_id, topic_id)
+        negative = await recommendation_repo.negative_content_ids(db, user_id, tap.tap_id)
     # All metadata comes from the caller's round, not from the cursor. Public
     # Topic membership is checked again even if a caller rewrites packed IDs.
     ranked_by_id = {slot.content_id: slot for slot in ranked}
@@ -415,9 +436,8 @@ async def get_feed(
         if selected_subtopic is None or selected_subtopic.topic_id != topic_id:
             raise ApiError(422, "SUBTOPIC_TOPIC_MISMATCH", "Subtopic이 Topic에 속하지 않습니다.")
     elif cursor is None or _cursor_version(cursor) in {2, 3}:
-        recommended = await _recommended_feed(db, user_id, topic_id, tap, cursor=cursor, limit=limit)
-        if recommended is not None:
-            return recommended
+        return await _snapshot_feed(db, user_id, topic_id, tap, cursor=cursor, limit=limit)
+    # 최신순: Subtopic 피드, 그리고 11/25 전 비상 목록 (최신순) 의 v1 cursor (배포 때 스크롤하던 방문이 이어지게)
     context = {"v": 1, "userId": user_id, "topicId": topic_id, "subtopicId": subtopic_id}
     after = None
     if cursor is not None:

@@ -12,7 +12,7 @@ import json
 import re
 import sqlite3
 import uuid
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Mapping, Sequence
@@ -26,6 +26,7 @@ from ani_rag.content import (
 )
 from ani_rag.image_ingest import ImageCandidate
 from ani_rag.image_quality import image_resolution_tier
+from ani_rag.cover_similarity import CoverViews, cover_views, same_cover_art
 from ani_rag.models import EvidenceDocument, RagContentType
 from ani_rag.quality import web_gate_document_ids
 from ani_rag.retrieval import EvidenceChunk, RetrievedEvidence
@@ -153,76 +154,112 @@ def _is_near_duplicate_topic(
     )
 
 
-def _original_keys(row: sqlite3.Row) -> frozenset[tuple[str, str]]:
-    return image_source_identity_keys(
+@dataclass(frozen=True)
+class _Artwork:
+    keys: frozenset[tuple[str, str]]
+    views: CoverViews
+
+    def matches(self, other: _Artwork) -> bool:
+        return bool(self.keys & other.keys) or same_cover_art(self.views, other.views)
+
+
+def _original_art(row: sqlite3.Row) -> _Artwork:
+    keys = image_source_identity_keys(
         row["asset_id"], row["source_url"], row["content_sha256"],
         row["source_id"], row["source_native_id"], row["image_role"],
     )
+    return _Artwork(keys, cover_views(row["local_path"], row["content_sha256"]))
 
 
-def _cover_originals(connection: sqlite3.Connection) -> Iterator[tuple[str, frozenset[tuple[str, str]]]]:
+def _cover_originals(connection: sqlite3.Connection, revision_ancestors: Sequence[str]) -> Iterator[tuple[str, _Artwork]]:
     rows = connection.execute(
-        """SELECT c.card_id,a.asset_id,a.source_url,a.content_sha256,a.source_id,a.source_native_id,a.image_role
+        """SELECT c.card_id,a.asset_id,a.source_url,a.content_sha256,a.source_id,a.source_native_id,a.image_role,a.local_path
            FROM rag_content_card c JOIN rag_card_image i ON i.card_id=c.card_id
-           JOIN rag_image_asset a ON a.asset_id=i.asset_id WHERE c.page_no=1"""
+           JOIN rag_image_asset a ON a.asset_id=i.asset_id WHERE c.page_no=1
+           AND c.draft_id NOT IN (SELECT value FROM json_each(?))""", (_json(revision_ancestors),)
     )
     for row in rows:
-        yield row["card_id"], _original_keys(row)
+        yield row["card_id"], _original_art(row)
 
 
-def _check_draft_images(connection: sqlite3.Connection, cards: Sequence[CardDraft]) -> None:
+def _check_draft_images(
+    connection: sqlite3.Connection, cards: Sequence[CardDraft], revision_ancestors: Sequence[str] = (),
+) -> None:
     asset_ids = [asset_id for card in cards for asset_id in card.source_asset_ids
                  if asset_id != TEXT_ONLY_ASSET_ID]
     if not asset_ids:
         return
     rows = connection.execute(
-        """SELECT asset_id,source_url,content_sha256,source_id,source_native_id,image_role
+        """SELECT asset_id,source_url,content_sha256,source_id,source_native_id,image_role,local_path
            FROM rag_image_asset WHERE asset_id IN (SELECT value FROM json_each(?))""",
         (_json(asset_ids),),
     )
-    originals = {row["asset_id"]: _original_keys(row) for row in rows}
+    originals = {row["asset_id"]: _original_art(row) for row in rows}
     seen = set()
     for asset_id in asset_ids:
         if asset_id not in originals:
             raise ValueError(f"Unregistered card image: {asset_id}")
-        if seen.intersection(originals[asset_id]):
+        if seen.intersection(originals[asset_id].keys):
             raise ValueError("A deck cannot reuse the same original artwork")
-        seen.update(originals[asset_id])
+        seen.update(originals[asset_id].keys)
 
     cover = cards[0]
     if cover.image_asset_id == TEXT_ONLY_ASSET_ID:
         return
-    cover_keys = [originals[asset_id] for asset_id in cover.source_asset_ids]
+    cover_art = [originals[asset_id] for asset_id in cover.source_asset_ids]
     # To match the same composition, the old primary must match one of the new
     # originals. Use the same identity rules as image selection, including CDN
     # variants whose old and new records have entirely different native IDs.
-    all_cover_keys = set().union(*cover_keys)
     possible = []
-    for card_id, old_primary in _cover_originals(connection):
-        if old_primary & cover_keys[0]:
+    for card_id, old_primary in _cover_originals(connection, revision_ancestors):
+        if old_primary.matches(cover_art[0]):
             raise DuplicateContentError("cover_image_already_used_by_another_content")
-        if len(cover_keys) > 1 and old_primary & all_cover_keys:
+        if any(old_primary.matches(component) for component in cover_art[1:]):
             possible.append(card_id)
     if not possible:
         return
     rows = connection.execute(
         """SELECT i.card_id,i.position,a.asset_id,a.source_url,a.content_sha256,a.source_id,
-                  a.source_native_id,a.image_role
+                  a.source_native_id,a.image_role,a.local_path
            FROM rag_card_image_source i JOIN rag_image_asset a ON a.asset_id=i.asset_id
            WHERE i.card_id IN (SELECT value FROM json_each(?)) ORDER BY i.card_id,i.position""",
         (_json(possible),),
     )
     covers = {}
     for row in rows:
-        covers.setdefault(row["card_id"], []).append(_original_keys(row))
+        covers.setdefault(row["card_id"], []).append(_original_art(row))
     for previous in covers.values():
         # Both sets have unique originals. The page order, crop, or template
         # must not turn the same group of source images into a new cover.
-        same_composition = (len(previous) == len(cover_keys)
-                            and all(any(old & new for old in previous) for new in cover_keys)
-                            and all(any(old & new for new in cover_keys) for old in previous))
+        same_composition = (len(previous) == len(cover_art)
+                            and all(any(old.matches(new) for old in previous) for new in cover_art)
+                            and all(any(old.matches(new) for new in cover_art) for old in previous))
         if same_composition:
             raise DuplicateContentError("cover_image_already_used_by_another_content")
+
+
+def _revision_ancestors(connection: sqlite3.Connection, revision_of: str | None, work_ids: set[int]) -> list[str]:
+    """Follow explicit revision links while holding the store lock."""
+    earlier: set[str] = set()
+    content_type = None
+    while isinstance(revision_of, str) and revision_of and revision_of not in earlier:
+        row = connection.execute(
+            """SELECT content_type, menu_work_ids_json, ai_judgment_basis_json
+               FROM rag_content_draft WHERE draft_id=? AND status='revision_requested'""",
+            (revision_of,),
+        ).fetchone()
+        if row is None or (content_type is not None and row["content_type"] != content_type):
+            break
+        try:
+            if set(json.loads(row["menu_work_ids_json"])) != work_ids:
+                break
+            basis = json.loads(row["ai_judgment_basis_json"] or "{}")
+        except (TypeError, ValueError):
+            break
+        earlier.add(revision_of)
+        content_type = row["content_type"]
+        revision_of = basis.get("revision_of_draft_id") if isinstance(basis, dict) else None
+    return sorted(earlier)
 
 
 class SQLiteDraftRepository:
@@ -258,7 +295,7 @@ class SQLiteDraftRepository:
             return ()
         wanted = set(menu_work_ids)
         with self.store._lock:
-            earlier_versions = self._revision_ancestors(revision_of, wanted)
+            earlier_versions = _revision_ancestors(self.store._connection, revision_of, wanted)
             rows = self.store._connection.execute(
                 """SELECT title,summary,ai_judgment_basis_json,menu_work_ids_json,content_type
                    FROM rag_content_draft WHERE draft_id NOT IN (SELECT value FROM json_each(?))
@@ -283,29 +320,6 @@ class SQLiteDraftRepository:
             if len(topics) >= limit:
                 break
         return tuple(topics)
-
-    def _revision_ancestors(self, revision_of: str | None, work_ids: set[int]) -> list[str]:
-        """Follow explicit revision links while holding the store lock."""
-        earlier: set[str] = set()
-        content_type = None
-        while isinstance(revision_of, str) and revision_of and revision_of not in earlier:
-            row = self.store._connection.execute(
-                """SELECT content_type, menu_work_ids_json, ai_judgment_basis_json
-                   FROM rag_content_draft WHERE draft_id=? AND status='revision_requested'""",
-                (revision_of,),
-            ).fetchone()
-            if row is None or (content_type is not None and row["content_type"] != content_type):
-                break
-            try:
-                if set(json.loads(row["menu_work_ids_json"])) != work_ids:
-                    break
-                basis = json.loads(row["ai_judgment_basis_json"] or "{}")
-            except (TypeError, ValueError):
-                break
-            earlier.add(revision_of)
-            content_type = row["content_type"]
-            revision_of = basis.get("revision_of_draft_id") if isinstance(basis, dict) else None
-        return sorted(earlier)
 
     async def find_duplicate_topic(self, draft: ContentDraft) -> str | None:
         return await asyncio.to_thread(self._find_duplicate_topic, draft)
@@ -347,7 +361,9 @@ class SQLiteDraftRepository:
             duplicate_title = self._find_duplicate_topic(draft)
             if duplicate_title:
                 raise DuplicateContentError(f"recent_work_topic_duplicate:{duplicate_title[:120]}")
-            _check_draft_images(store._connection, draft.cards)
+            earlier = _revision_ancestors(store._connection, draft.ai_judgment_basis.get("revision_of_draft_id"),
+                                          set(draft.menu_work_ids))
+            _check_draft_images(store._connection, draft.cards, earlier)
             if web_source and any(doc.metadata.get("role") == "web_candidate_original" for doc in documents.values()):
                 doc_id = _store_web_snapshot(store._connection, draft.content_type.value, web_source,
                                              draft.created_at.isoformat())
@@ -517,7 +533,7 @@ class SQLiteDraftRepository:
                 ).fetchall()
                 copy = {"title": draft["title"], "summary": draft["summary"], "detail_body": draft["body"],
                         "cards": [dict(card) for card in cards]}
-                lineage = self._revision_ancestors(draft_id, set(menu_work_ids))
+                lineage = _revision_ancestors(self.store._connection, draft_id, set(menu_work_ids))
                 blockers = db.execute(
                     """SELECT json_extract(i.value,'$.code'), json_extract(i.value,'$.message')
                        FROM rag_review_history h, json_each(
@@ -877,13 +893,15 @@ class SQLiteImageReader:
             ).fetchall()
             return {str(row["asset_id"]): self._asset(row) for row in rows}
 
-    async def candidates_for(self, evidence: Sequence[EvidenceDocument]) -> Sequence[ImageAsset]:
+    async def candidates_for(
+        self, evidence: Sequence[EvidenceDocument], *, revision_of: str | None = None,
+    ) -> Sequence[ImageAsset]:
         work_ids = tuple(sorted({work_id for item in evidence for work_id in item.menu_work_ids}))
         if not work_ids:
             return ()
-        return await asyncio.to_thread(self._candidates_for, work_ids)
+        return await asyncio.to_thread(self._candidates_for, work_ids, revision_of)
 
-    def _candidates_for(self, work_ids: Sequence[int]) -> Sequence[ImageAsset]:
+    def _candidates_for(self, work_ids: Sequence[int], revision_of: str | None = None) -> Sequence[ImageAsset]:
         marks = ",".join("?" for _ in work_ids)
         with self.store._lock:
             rows = self.store._connection.execute(
@@ -892,8 +910,6 @@ class SQLiteImageReader:
                 tuple(work_ids),
             ).fetchall()
             assets = tuple(self._asset(row) for row in rows)
-
-            used_cover_keys = {key for _, keys in _cover_originals(self.store._connection) for key in keys}
 
             recent_rows = self.store._connection.execute(
                 f"""SELECT d.draft_id,MAX(d.created_at) AS used_at
@@ -942,13 +958,10 @@ class SQLiteImageReader:
             previous = selected.get(key)
             if previous is None or rank < previous[0]:
                 selected[key] = (rank, asset)
-        candidates = [value[1] for value in selected.values()]
-        candidates = [replace(
-            asset,
-            recent_use_count=usage_by_fingerprint.get(asset.content_sha256 or asset.asset_id, (0, ""))[0],
-            last_used_at=usage_by_fingerprint.get(asset.content_sha256 or asset.asset_id, (0, ""))[1] or None,
-            used_as_cover_before=bool(asset.source_identity_keys & used_cover_keys),
-        ) for asset in candidates]
+        candidates = []
+        for _, asset in selected.values():
+            count, last_used = usage_by_fingerprint.get(asset.content_sha256 or asset.asset_id, (0, ""))
+            candidates.append(replace(asset, recent_use_count=count, last_used_at=last_used or None))
         unique_candidates: dict[str, ImageAsset] = {}
         for asset in sorted(candidates, key=lambda item: (
             item.recent_use_count, item.last_used_at or "", item.asset_id,
@@ -962,7 +975,27 @@ class SQLiteImageReader:
         )
         # Cover-used artwork remains available for later cards. The generator and
         # draft writer enforce uniqueness only for page 1.
-        return tuple(sorted(candidates, key=rank))
+        return self.mark_cover_usage(sorted(candidates, key=rank), work_ids, revision_of)
+
+    def mark_cover_usage(
+        self, assets: Sequence[ImageAsset], work_ids: Sequence[int], revision_of: str | None = None,
+    ) -> tuple[ImageAsset, ...]:
+        """Apply the same cover history to registered and newly downloaded images."""
+        if not assets:
+            return ()
+        with self.store._lock:
+            earlier = _revision_ancestors(self.store._connection, revision_of, set(work_ids))
+            history = [art for _, art in _cover_originals(self.store._connection, earlier)]
+        exact = {key for art in history for key in art.keys}
+        visual = [art.views for art in history if art.views]
+        marked = []
+        for asset in assets:
+            used = bool(asset.source_identity_keys & exact)
+            if not used and visual:
+                views = cover_views(asset.local_path, asset.content_sha256)
+                used = any(same_cover_art(views, old) for old in visual)
+            marked.append(replace(asset, used_as_cover_before=used))
+        return tuple(marked)
 
     def _asset(self, row: sqlite3.Row) -> ImageAsset:
         links = self.store._connection.execute(

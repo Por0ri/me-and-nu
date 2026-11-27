@@ -19,6 +19,12 @@
   color: #252729;
   font-family: PivotPretendard, sans-serif;
 }
+/* The scrollbar room html keeps (globals.css scrollbar-gutter) shows the html background, the old dark
+   theme: paint it like the page so desktop screens have no dark strip on the right (2026-11-25). */
+:global(html):has(.root) { background: #fff9fd; }
+/* 아이폰 사파리는 화면 끝을 넘겨 끌 때 (튕김 · 키보드를 연 채 끌기) 드러나는 바깥을 html 보다 body 바탕색으로 칠한다.
+   body 가 globals.css 의 옛 남색이라 화면이 떨어져 나간 것처럼 보여서, body 도 같은 색으로 (2026-11-26) */
+:global(body):has(.root) { background: #fff9fd; }
 .root button, .root input { font: inherit; }
 .root button, .root a, .root input { -webkit-tap-highlight-color: transparent; }
 .root button { cursor: pointer; }
@@ -31,7 +37,9 @@
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 375px;
+  /* 2026-11 feedback: the same 430px frame as the home screens (home.module.css), so moving between
+     screens does not narrow or shift the page on 390~430px phones and on desktop. */
+  max-width: 430px;
   min-height: 100svh;
   margin-inline: auto;
   overflow: clip;
@@ -176,10 +184,12 @@
 .demoNext h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 700; }
 .demoNext p { margin-block: 16px 24px; color: var(--pivot-muted); font-size: 14px; line-height: 22px; }
 .demoRoot h1 { scroll-margin-top: 60px; }
-@media (max-height: 700px) {
-  .loginIntro { padding-top: 72px; gap: 24px; }
+/* The full login/consent layout needs the whole 812px design height; below that the compact one is used
+   (it was 700px, so 701~811px phones scrolled by up to ~110px). Compact login buttons sit at the bottom. */
+@media (max-height: 811px) {
+  .loginIntro { padding-top: 72px; padding-bottom: 28px; gap: 24px; }
   .loginMascot { width: 143px; height: 180.231px; }
-  .loginActions { margin-top: 28px; padding-bottom: 28px; }
+  .loginActions { margin-top: auto; padding-bottom: 28px; }
   .consentBrand { margin-top: 92px; }
   .consentBody { margin-top: 36px; }
   .agreement { margin-top: 28px; }

@@ -8,7 +8,7 @@ const { createApiFixture } = require('./helpers/pivot-api-fixture.cjs');
 const root = path.resolve(__dirname, '..');
 const plain = value => JSON.parse(JSON.stringify(value));
 const completePath = '/api/v1/onboarding/complete';
-const selection = { interest: 'animation', topicId: 271, favoriteEntityIds: [101, 102], preferenceTagIds: [201, 301], consumptionType: 'ost' };
+const selection = { interest: 'animation', topicId: 271, favoriteEntityIds: [101, 102], preferenceTagIds: [201, 301], consumptionTypes: ['ost', 'world'] };
 // Synthetic test input only; this file never contacts Labs or a real account.
 const profile = { nickname: '  로컬검증회원  ' };
 
@@ -59,8 +59,8 @@ function modulesFor(fixture, { cookie = '', beforeComplete, loseCompleteResponse
   return { load, get cookie() { return jar; } };
 }
 
-async function pendingFlow(options = {}) {
-  const fixture = createApiFixture({ strictOnboarding: true, oauthCallbackPhase: 'onboarding_pending', topicId: 271 });
+async function pendingFlow(options = {}, fixtureOptions = {}) {
+  const fixture = createApiFixture({ strictOnboarding: true, oauthCallbackPhase: 'onboarding_pending', topicId: 271, ...fixtureOptions });
   fixture.rotate('onboarding_pending');
   const modules = modulesFor(fixture, options);
   const api = modules.load('lib/api.ts');
@@ -95,7 +95,7 @@ for (const optionalAgreed of [false, true]) {
         { type: 'privacy', policyVersion: 'fixture-v2', agreed: true },
         { type: 'marketing', policyVersion: 'fixture-v1', agreed: optionalAgreed },
       ],
-      answers: { version: 2, favoriteEntityIds: [101, 102], preferenceTagIds: [201, 301], consumptionType: 'ost' },
+      answers: { version: 2, favoriteEntityIds: [101, 102], preferenceTagIds: [201, 301], consumptionTypes: ['ost', 'world'], consumptionType: 'ost' },
     });
     assert.equal(post.csrf, 'fixture-onboarding_pending-csrf');
     assert.equal(post.cookie, 'fixture_session=fixture-onboarding_pending');
@@ -113,6 +113,35 @@ for (const optionalAgreed of [false, true]) {
       'the new token is read after completion and before the first content write');
   });
 }
+
+test('the Q3 ranking is saved in tap order and the response carries it next to rank 1', async () => {
+  const flow = await pendingFlow();
+  await flow.service.submitSelection({ ...selection, consumptionTypes: ['news', 'goods', 'ost'] }, await flow.consent(), profile);
+  assert.equal(completions(flow.fixture).length, 1);
+  assert.deepEqual(flow.fixture.state.onboarding.answers.consumptionTypes, ['news', 'goods', 'ost']);
+  assert.equal(flow.fixture.state.onboarding.answers.consumptionType, 'news');
+});
+
+test('a server from before the Q3 ranking gets one more request with rank 1 alone, through the real API client', async () => {
+  const flow = await pendingFlow({}, { consumptionRanking: false });
+  const result = await flow.service.submitSelection(selection, await flow.consent(), profile);
+  assert.equal(result.recovered, false);
+  assert.equal(result.session.sessionState, 'active');
+  const posts = completions(flow.fixture);
+  assert.equal(posts.length, 2, 'one 422 on answers.consumptionTypes, then one resend');
+  assert.deepEqual(posts[0].body.answers.consumptionTypes, ['ost', 'world']);
+  assert.deepEqual(posts[1].body.answers, { version: 2, favoriteEntityIds: [101, 102], preferenceTagIds: [201, 301], consumptionType: 'ost' });
+  assert.deepEqual({ ...posts[1].body, answers: null }, { ...posts[0].body, answers: null }, 'only the answers change');
+  assert.equal(flow.fixture.state.onboardingCompletions, 1);
+});
+
+test('other 422s from a server before the ranking are not resent', async () => {
+  const flow = await pendingFlow({}, { consumptionRanking: false });
+  flow.fixture.state.failNext = { method: 'POST', path: completePath, status: 422, code: 'VALIDATION_ERROR' };
+  await assert.rejects(flow.service.submitSelection(selection, await flow.consent(), profile), error => error.status === 422 && error.code === 'VALIDATION_ERROR');
+  assert.equal(completions(flow.fixture).length, 1);
+  assert.equal(flow.fixture.state.onboardingCompletions, 0);
+});
 
 test('policy version changes reject the old consent, keep pending state, and require a newly reviewed draft', async () => {
   const flow = await pendingFlow();

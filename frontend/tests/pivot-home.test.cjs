@@ -153,6 +153,11 @@ test('Home search results replace the feed; no result has the same title row to 
   assert.doesNotMatch(none, /검색 나가기|검색어 지우기|data-search-active/);
   assert.doesNotMatch(none, /data-home-post=/);
   assert.match(none, /srcSet="\/pivot\/home\/search\/empty-mascot@1x\.png 1x, \/pivot\/home\/search\/empty-mascot@2x\.png 2x, \/pivot\/home\/search\/empty-mascot@3x\.png 3x"/);
+  // 색 (2026-11-25 시안): 크림색 안쪽 상자 없이 연보라 상자 하나, 제목 #3f3f46 (홈 · 토론방 검색 공용)
+  const css = fs.readFileSync(path.join(root, 'components/pivot/home.module.css'), 'utf8');
+  assert.match(css, /\n\.searchEmptyCard \{[^}]*background: #efe7ff;/);
+  assert.match(css, /\n\.searchEmptyBody \{[^}]*background: transparent;/);
+  assert.match(css, /\n\.searchEmptyTitle \{[^}]*color: #3f3f46;/);
 });
 
 test('The no-result mascot images match their recorded hashes and the header mascot they were cut from', () => {
@@ -321,8 +326,8 @@ function cardHarness(card, onViewDetail) {
   const hooks = [], writes = [];
   const element = { clientWidth: 327, scrollTo(options) { writes.push(options); } };
   let cursor = 0, tree;
-  const react = { ...React, useId: () => card.id, useContext: () => null, useSyncExternalStore: () => 0, useEffect: () => {},
-    useRef(initial) { return hooks[cursor++] ??= { current: initial ?? element }; },
+  const react = { ...React, useId: () => card.id, useContext: () => null, useSyncExternalStore: () => 0, useEffect: () => {}, useLayoutEffect: effect => effect(),
+    useRef(initial) { return hooks[cursor++] ??= { current: initial === null ? element : initial }; },
     useState(initial) {
       const index = cursor++;
       hooks[index] ??= { value: initial };

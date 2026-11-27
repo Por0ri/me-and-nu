@@ -1,0 +1,26 @@
+# Activation is selected only by a reviewed schema-v2 policy with rag.enabled=true.
+# Runtime JSON must separately be enabled and SHA-pinned; no controller gets a key.
+# Use only after compose.scheduled.yaml and the existing daily approved overlay.
+services:
+  daily-controller:
+    environment:
+      RAG_GENERATION_ENABLED: "true"
+  rag-worker:
+    command: [celery, -A, "menu_worker.rag_app:app", worker, --concurrency=1, --queues=content.rag_generate, "--hostname=rag@scheduled", --loglevel=INFO]
+    environment:
+      RAG_GENERATION_ENABLED: "true"
+    networks: [tasks, rag-vector, generation-egress]
+    volumes:
+      - type: bind
+        # Already approved existing file: never copied into a release or image.
+        source: /home/ubuntu/.secrets/anime-openai-key.txt
+        target: /run/secrets/rag-llm-key
+        read_only: true
+        bind: {create_host_path: false}
+    healthcheck:
+      disable: false
+      test: [CMD, celery, -A, "menu_worker.rag_app:app", inspect, ping, "--destination=rag@scheduled", "--timeout=5"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s

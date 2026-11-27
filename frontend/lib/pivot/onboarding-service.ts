@@ -1,6 +1,6 @@
 import { ApiError, apiRequest, getSession, getTopics, type ConsentInput, type Session, type TopicsResponse } from "@/lib/api";
 import type { ConsentDraft } from "./consent";
-import { isSelectionComplete, type UiSelection } from "./onboarding";
+import { isSelectionComplete, sameRanking, type Q1Choice, type UiSelection } from "./onboarding";
 import { isActiveSession, isPendingConsumer, requirePivotApi } from "./services";
 
 export type OnboardingProfile = { nickname: string };
@@ -32,7 +32,16 @@ export function nicknameRuleBreaks(typed: string): { length: boolean; characters
 }
 
 export const NICKNAME_TAKEN_MESSAGE = "중복된 닉네임입니다";
-export type NicknameCheck = { nickname: string; available: boolean; reason: "invalid" | "taken" | null };
+/** 욕설 · 선정적인 말이 든 닉네임 (2026-11-25, 서버 app/core/profanity 가 reason "banned" 로 알려 준다) */
+export const NICKNAME_BANNED_MESSAGE = "사용할 수 없는 단어가 들어 있어요. 다른 닉네임을 써 주세요.";
+export type NicknameCheck = { nickname: string; available: boolean; reason: "invalid" | "banned" | "taken" | null };
+
+/** 저장할 때 서버가 그 닉네임을 욕설 · 선정적인 말로 막았는지. 닉네임 확인이 실패해서 확인 없이 저장한 드문 경우에도
+ *  같은 안내를 보여 주려고 쓴다 (서버 문구 NICKNAME_BANNED 의 앞부분으로 알아본다). */
+export function isBannedNicknameError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 422
+    && !!error.fields?.some(field => field.field === "nickname" && field.message.includes("사용할 수 없는 단어"));
+}
 
 /** Asks whether another member who finished onboarding already uses the nickname (completion checks again). */
 export async function checkNickname(nickname: string, signal?: AbortSignal, guard: () => void = requirePivotApi): Promise<NicknameCheck> {
@@ -46,11 +55,48 @@ export function validateOnboardingProfile(profile: OnboardingProfile): Onboardin
   return nicknameProblem(nickname) ? { valid: false, errors: { nickname: NICKNAME_RULE } } : { valid: true, profile: { nickname } };
 }
 
+/** The version 2 answers onboarding completion and the My Page taste edit send. Q3 goes as the ranking
+ * (consumptionTypes, rank 1 first) and rank 1 again as consumptionType, the one answer a server from before the
+ * ranking reads; the backend requires the two to agree. Responses carry both, a server from before the ranking rank 1 only. */
+export type AnswersV2 = { version: 2; favoriteEntityIds: number[]; preferenceTagIds: number[]; consumptionTypes?: Q1Choice[]; consumptionType: Q1Choice };
+export function answersV2(selection: UiSelection): AnswersV2 {
+  return { version: 2, favoriteEntityIds: [...selection.favoriteEntityIds], preferenceTagIds: [...selection.preferenceTagIds],
+    consumptionTypes: [...selection.consumptionTypes], consumptionType: selection.consumptionTypes[0] };
+}
+
+/** A server from before the Q3 ranking forbids the unknown field: 422 VALIDATION_ERROR on answers.consumptionTypes. */
+export function rejectsConsumptionRanking(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 422 && error.code === "VALIDATION_ERROR"
+    && Array.isArray(error.fields) && error.fields.some(field => field?.field === "answers.consumptionTypes");
+}
+
+/** Sends the answers with the Q3 ranking. A server from before it refuses them before saving anything, so it gets
+ * them once more with rank 1 alone. Returns the answers that were last sent, for the response check. */
+export async function sendAnswersV2<I extends { answers: AnswersV2 }, R>(input: I, send: (input: I) => Promise<R>): Promise<{ response: R; sent: I }> {
+  try {
+    return { response: await send(input), sent: input };
+  } catch (error) {
+    if (!input.answers.consumptionTypes || !rejectsConsumptionRanking(error)) throw error;
+    const answers: AnswersV2 = { ...input.answers };
+    delete answers.consumptionTypes;
+    const sent: I = { ...input, answers };
+    return { response: await send(sent), sent };
+  }
+}
+
+/** The Q3 answer in a response is the one sent: rank 1, and the whole ranking in order when the response has one
+ * (a server from before the ranking answers with rank 1 alone). */
+export function sameConsumptionAnswer(answer: { consumptionType?: unknown; consumptionTypes?: unknown } | null | undefined, sent: AnswersV2): boolean {
+  const ranking = sent.consumptionTypes ?? [sent.consumptionType];
+  const returned = answer?.consumptionTypes;
+  return answer?.consumptionType === ranking[0] && (returned == null || (Array.isArray(returned) && sameRanking(returned, ranking)));
+}
+
 export type OnboardingCompleteInput = OnboardingProfile & {
   accountType: "user";
   consents: ConsentInput[];
   topicId: number;
-  answers: { version: 2; favoriteEntityIds: number[]; preferenceTagIds: number[]; consumptionType: UiSelection["consumptionType"] };
+  answers: AnswersV2;
 };
 export type OnboardingCompleteResponse = {
   user: { id: number; accountType: "user" };
@@ -105,7 +151,7 @@ function validateCompletion(response: OnboardingCompleteResponse, input: Onboard
   const sameIds = (actual: unknown, expected: number[]) => Array.isArray(actual) && actual.length === expected.length && new Set(actual).size === actual.length && actual.every(id => expected.includes(id));
   if (response?.onboardingCompleted !== true || response.user?.accountType !== "user" ||
     !Number.isSafeInteger(response.user?.id) || response.user.id <= 0 || response.activeTopic?.id !== input.topicId ||
-    response.answers?.version !== 2 || response.answers?.consumptionType !== input.answers.consumptionType ||
+    response.answers?.version !== 2 || !sameConsumptionAnswer(response.answers, input.answers) ||
     !sameIds(response.answers?.favoriteEntityIds, input.answers.favoriteEntityIds) || !sameIds(response.answers?.preferenceTagIds, input.answers.preferenceTagIds)) {
     throw new Error("가입 완료 응답을 확인하지 못했어요. 다시 확인해 주세요.");
   }
@@ -124,7 +170,7 @@ export function createOnboardingService(
     if (!validated.valid) throw new Error(validated.errors.nickname);
     if (!selection || !isSelectionComplete(selection)) throw new Error("작품과 소비 유형을 선택하고, 장르와 소재를 각각 1~7개 선택해 주세요.");
     const consents = copyConsents(consent);
-    const answers: OnboardingCompleteInput["answers"] = { version: 2, favoriteEntityIds: [...selection.favoriteEntityIds], preferenceTagIds: [...selection.preferenceTagIds], consumptionType: selection.consumptionType };
+    const answers = answersV2(selection);
     const before = await api.getSession();
     if (isActiveSession(before)) return { session: before, recovered: true };
     if (!isPendingConsumer(before)) {
@@ -134,9 +180,9 @@ export function createOnboardingService(
     const topicId = animeTopicId(await api.getTopics());
     if (topicId !== selection.topicId) throw new Error("관심 분야가 변경됐어요. 작품부터 다시 선택해 주세요.");
     const input: OnboardingCompleteInput = { ...validated.profile, accountType: "user", consents, topicId, answers };
-    let response: OnboardingCompleteResponse;
+    let completed: { response: OnboardingCompleteResponse; sent: OnboardingCompleteInput };
     try {
-      response = await api.complete(input);
+      completed = await sendAnswersV2(input, body => api.complete(body));
     } catch (error) {
       // A lost response may still have committed the account and rotated its cookie.
       // Policy/validation failures must reach the UI unchanged so it can revisit consent.
@@ -148,7 +194,8 @@ export function createOnboardingService(
       }
       throw error;
     }
-    validateCompletion(response, input);
+    const { response, sent } = completed;
+    validateCompletion(response, sent);
     const after = await api.getSession();
     if (!isActiveSession(after) || after.user?.id !== response.user.id) {
       throw new Error("가입 후 로그인 상태를 확인하지 못했어요. 다시 확인해 주세요.");
