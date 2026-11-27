@@ -39,7 +39,11 @@ The ani_rag contracts use the `search` and `read` operation names, while `tool_b
 }
 ```
 
-Firecrawl's keyless surface has daily limits. For this Python transport, `mcp_transport.py` reads `ANI_RAG_FIRECRAWL_API_KEY` (or the existing `Firecrawl_API_KEY` name) from the process environment or this project's `.env`, then sends it as `Authorization: Bearer …` only to the `firecrawl` alias. The key is never printed or copied into `mcp_servers.json` or a URL. `OPENAI_API_KEY` and `ANI_MENU_MODEL` can be used with `OpenAIResponsesStructuredModel.from_project_environment()` for the LLM adapters. The Firecrawl ChatGPT app integration is separate from `ani_rag`'s Python transport.
+Firecrawl reads credentials in order from `Firecrawl_API_KEY`, then `Firecrawl_API_KEY2` through `Firecrawl_API_KEY6` in the process environment or this project's `.env`. The `ANI_RAG_FIRECRAWL_API_KEY` spelling takes precedence for the corresponding slot, and the uppercase `FIRECRAWL_API_KEY` spelling is also supported. Empty slots and repeated key values are skipped.
+
+Each worker keeps using its selected key until Firecrawl explicitly refuses the request for insufficient credits. It opens a fresh MCP session on the next key and retries that request. If all configured keys are exhausted, Firecrawl calls pause in that worker. After replenishing or replacing keys, restart the affected workers to check the slots again from the beginning. Rate limits, authentication errors, target-site paywalls and uncertain timeouts keep their existing error handling. With no credentials configured, the client uses the keyless surface and its daily limits.
+
+The transport sends the key as a bearer token to the configured `firecrawl` alias. Keep credentials out of URLs and `mcp_servers.json`. `OPENAI_API_KEY` and `ANI_MENU_MODEL` can be used with `OpenAIResponsesStructuredModel.from_project_environment()` for the LLM adapters. The Firecrawl ChatGPT app integration is separate from `ani_rag`'s Python transport.
 
 If a project `.env` is not being used, on Windows PowerShell you can enter the Firecrawl key through a hidden prompt in the same terminal session before starting a worker. This keeps it out of command history and limits it to that terminal and its child processes:
 
@@ -73,7 +77,9 @@ After that, start the `ani_rag` process from the same PowerShell window. Close t
 3. The Frieren read returned an official-site title and Japanese character index on the allowlisted host. Firecrawl did not return a redirect chain; the adapter therefore sets `redirects_verified=false`, and the collector will reject it for storage.
 4. Keep `frieren_official` at `draft` until the configured source read can attest each redirect target and final URL (or a safe, verified URL strategy is implemented), and the resulting evidence passes the project collection contract.
 
-Firecrawl's [Scrape API response schema](https://docs.firecrawl.dev/api-reference/endpoint/scrape) exposes `metadata.sourceURL` and `metadata.url` but does not document a redirect chain. The `lockdown` option is cache-only and never makes an outbound request, so it cannot be used for fresh recurring collection or as redirect attestation. Do not set `redirects_verified` from host equality alone.
+For a direct read, the requested URL, reported source URL and reported final URL must identify the same address. Host capitalization, the default port and the empty root path may differ. A change to a directory's trailing slash, query or hash route requires a complete in-scope redirect chain. The adapter checks every supplied hop, retains the reported final URL for citations, and records a distinct error code when that URL is missing, the chain is incomplete or the metadata conflicts. Firecrawl documents `metadata.sourceURL` and `metadata.url`; the adapter also accepts an explicitly named `finalURL` or `finalUrl` field. [Firecrawl scrape response schema](https://docs.firecrawl.dev/api-reference/endpoint/scrape)
+
+The `lockdown` option serves cached results only. Fresh recurring collection and redirect verification require separate read evidence.
 
 ## Bounded character-source read (2026-11-08)
 

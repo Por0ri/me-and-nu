@@ -5,7 +5,6 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
 from ani_rag.fact_subject import Edition, _edition_ids, _character_titles
@@ -20,27 +19,6 @@ from ani_rag.storage.sqlite_core import SQLiteRagStore
 
 class FactFieldRetrievalTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        # A clean deployment receives the large dictionary separately. Give
-        # these retrieval tests their own small but fully linked catalog.
-        folder = TemporaryDirectory()
-        self.addCleanup(folder.cleanup)
-        root = Path(folder.name)
-        names = "title_ko,title_native,title_english,title_romaji"
-        titles = "진격의 거인,進撃の巨人,Attack on Titan,Shingeki no Kyojin"
-        fixtures = {
-            "menu_works.csv": f"menu_work_id,{names}\n1,{titles}\n",
-            "menu_work_entries.csv": f"menu_work_id,anilist_id,{names},format,year\n1,100,{titles},TV,2013\n",
-            "external_id.csv": "source_id,id_kind,external_id,entity_id\nanilist,anime,100,2327\n",
-            "work_characters.csv": (
-                "menu_work_id,anilist_id,wikidata_id,name\n"
-                "1,100,Q1,エレン・イェーガー\n1,100,Q2,ミカサ・アッカーマン\n"
-            ),
-        }
-        for filename, contents in fixtures.items():
-            (root / filename).write_text(contents, encoding="utf-8")
-        self.enterContext(patch("ani_rag.fact_subject.official_works_path", return_value=root / "menu_works.csv"))
-        self.enterContext(patch("ani_rag.fact_subject.DEFAULT_MENU_DICT_DIR", root))
-        self.enterContext(patch("ani_rag.fact_subject.DEFAULT_REFERENCE_DIR", root))
         self.db = sqlite3.connect(":memory:", check_same_thread=False)
         self.addCleanup(self.db.close)
         schema = Path(__file__).resolve().parents[1] / "src/ani_rag/storage/schema.sql"

@@ -169,7 +169,7 @@ class CeleryBridgeTests(unittest.TestCase):
         result = self.execute(images=NoImages())
         self.assertEqual(result["outcome"], "held")
         self.assertEqual((self.generator.calls, self.reviewer.calls), (0, 0))
-        self.assertIn("three_work_linked", result["reason"])
+        self.assertEqual(result["reason"], "waiting_for_distinct_work_linked_image_assets")
 
     def test_empty_vector_candidates_records_explicit_zero_without_embedding(self):
         class EmptyRetriever:

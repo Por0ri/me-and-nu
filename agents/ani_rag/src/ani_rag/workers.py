@@ -15,7 +15,7 @@ from typing import Awaitable, Callable, Mapping, Protocol, Sequence
 
 from ani_rag.content import (
     ContentDraft, DuplicateContentError, GenerationService, ImageAsset,
-    web_claims_can_generate, web_claims_for_generation,
+    distinct_image_count, image_source_identity_keys, web_claims_can_generate, web_claims_for_generation,
 )
 from ani_rag.source_evidence import WebSourceWorkConflict, attach_web_quotes
 from ani_rag.cover_design import cast_identity, is_work_poster
@@ -29,7 +29,7 @@ from ani_rag.models import EvidenceDocument, EvidenceType, RagContentType
 from ani_rag.queues import QueueItem, QueueName, QueueRepository, QueueStatus
 from ani_rag.agents.content_generation.renderer import RenderedCard, render_text_free_cards
 from ani_rag.agents.content_generation.layout_director import ImageCopyMismatchError
-from ani_rag.review import HeadlineEdit, IndependentReviewer, ReviewDecision, ReviewInput, ReviewResult, ReviewRoute, route_review
+from ani_rag.review import HeadlineEdit, ImageSubjectMismatch, IndependentReviewer, ReviewDecision, ReviewInput, ReviewResult, ReviewRoute, route_review
 from ani_rag.retrieval import (
     DEFAULT_MIN_RETRIEVAL_SCORE,
     EvidenceChunk,
@@ -43,7 +43,7 @@ from ani_rag.retrieval import (
 from ani_rag.settings import EvergreenSourceRegistry, load_source_registry
 from ani_rag.interfaces import WorkCatalogResolver
 from ani_rag.structured_mcp import StructuredCollectionRequest, StructuredMCPAdapter, collect_structured_items
-from ani_rag.quality import QualityIssue
+from ani_rag.quality import MIN_CARDS, QualityIssue
 from ani_rag.rag_gate import StructuredEvidenceModel, compare_page_to_rag
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,9 @@ class ReviewHistoryRepository(Protocol):
 
 class ImageReader(Protocol):
     async def get_many(self, asset_ids: Sequence[str]) -> dict[str, ImageAsset]: ...
-    async def candidates_for(self, evidence: Sequence[EvidenceDocument]) -> Sequence[ImageAsset]: ...
+    async def candidates_for(
+        self, evidence: Sequence[EvidenceDocument], *, revision_of: str | None = None,
+    ) -> Sequence[ImageAsset]: ...
 
 
 def _query_person_terms(query: str) -> set[str]:
@@ -139,9 +141,13 @@ def _image_names_queried_person(query: str, asset: ImageAsset) -> bool:
 
 def _generation_image_packet(
     retrieval: RetrievedEvidence, candidates: Sequence[ImageAsset],
+    *, rejected_keys: set[tuple[str, str]] | None = None, priority_asset_ids: Sequence[str] = (),
 ) -> tuple[ImageAsset, ...]:
     """Fit eligible cover art and the normal single-card candidates in one model request."""
-    ranked = sorted({asset.asset_id: asset for asset in candidates}.values(), key=lambda asset: (
+    eligible = {asset.asset_id: asset for asset in candidates
+                if not rejected_keys or rejected_keys.isdisjoint(asset.source_identity_keys)}
+    ranked = sorted(eligible.values(), key=lambda asset: (
+        asset.asset_id not in priority_asset_ids,
         image_resolution_tier(asset.width, asset.height),
         0 if _image_names_queried_person(retrieval.query, asset) else 1,
         0 if asset.source_id == "firecrawl_web_images" else 1,
@@ -173,22 +179,15 @@ def _generation_image_packet(
     return tuple((cover_pool + [asset for asset in ranked if asset.asset_id not in chosen])[:20])
 
 
-def _focused_image_query(
-    base_query: str, evidence_title: str, mismatch: ImageCopyMismatchError,
-) -> str:
-    """Turn a failed card into a concise exact-character image search."""
-    focus = " ".join((str(mismatch), mismatch.headline or "", mismatch.body or "")).casefold()
-    name_pattern = r"\b[A-Z][a-z]+(?:\s+(?:D\.)?\s*[A-Z][a-z]+){0,2}\b"
-    names = tuple(dict.fromkeys(re.findall(name_pattern, base_query)))
-    matched_name = next((
-        name for name in names
-        if name.casefold().split()[-1].rstrip(".") in focus
-    ), "")
-    work_title = next(iter(re.findall(r"\b[A-Z][A-Z0-9]+(?:\s+[A-Z][A-Z0-9]+)+\b", base_query)), "")
-    subject = " ".join(part for part in (work_title, matched_name) if part)
-    if not subject:
-        subject = evidence_title or mismatch.headline or base_query
-    return f"{subject} anime artwork memorable portrait same series; exact scene is not required"[:450]
+def _rejected_image_keys(records: Sequence[Mapping[str, object]]) -> set[tuple[str, str]]:
+    keys: set[tuple[str, str]] = set()
+    for record in records:
+        keys.update(image_source_identity_keys(
+            str(record["asset_id"]), str(record.get("source_url") or ""),
+            str(record.get("content_sha256") or ""), str(record.get("source_id") or ""),
+            str(record.get("source_native_id") or ""), str(record.get("image_role") or ""),
+        ))
+    return keys
 
 
 def _utcnow() -> datetime:
@@ -234,7 +233,8 @@ class GenerationWorker:
         if not payload.get("reassessed_generation") and len(payload.get("menu_work_ids", ())) == 1:
             assessment = {
                 key: payload[key] for key in ("content_type", "top_k", "candidate_limit", "min_retrieval_score",
-                                              "revision_of_draft_id", "revision_count", "backlog_work_id")
+                                              "revision_of_draft_id", "revision_count", "backlog_work_id",
+                                              "review_rejected_images")
                 if key in payload
             }
             assessment.update({
@@ -432,19 +432,27 @@ class GenerationWorker:
                     return True
                 citation_ids = pinned | {c.chunk_id for c in retrieved.chunks if c.source_id.startswith("web_discovery:")}
                 usable_claims = web_claims_for_generation(web_source, {key: key for key in citation_ids})
-                if not web_claims_can_generate(usable_claims):
+                if not web_claims_can_generate(usable_claims, content_type, source=web_source):
                     await self._return_web_candidate_for_assessment(job, payload, web_source)
                     return True
             supplied_evidence = retrieved.documents
             writing_query = str(payload["query"])
-            candidates = await self.images.candidates_for(supplied_evidence)
+            rejected_images = payload.get("review_rejected_images") or []
+            rejected_keys = _rejected_image_keys(rejected_images)
+            search_subject = next((record["search_subject"] for record in reversed(rejected_images)
+                                   if record.get("search_subject")), "")
+            revision_of = payload.get("revision_of_draft_id") if int(payload.get("revision_count", 0)) > 0 else None
+            revision_scope = {"revision_of": revision_of} if revision_of else {}
+            image_pool = list(await self.images.candidates_for(supplied_evidence, **revision_scope))
+            web_candidates = ()
             image_search = getattr(self.images, "search_for_generation", None)
             if callable(image_search):
                 try:
                     web_candidates = await image_search(
-                        supplied_evidence, query=writing_query,
+                        supplied_evidence, query=search_subject or writing_query,
                         content_type=retrieval_request.content_type,
                         menu_work_ids=retrieval_request.menu_work_ids,
+                        **revision_scope,
                     )
                 except Exception as error:
                     logger.warning(
@@ -452,10 +460,14 @@ class GenerationWorker:
                         job.job_id, type(error).__name__,
                     )
                 else:
-                    candidates = (*candidates, *web_candidates)
-            candidates = _generation_image_packet(retrieved, candidates)
-            if len(candidates) < 3:
-                image_reason = "waiting_for_three_work_linked_image_assets"
+                    image_pool.extend(web_candidates)
+            candidates = _generation_image_packet(
+                replace(retrieved, query=search_subject or writing_query), image_pool, rejected_keys=rejected_keys,
+                priority_asset_ids=[asset.asset_id for asset in web_candidates] if search_subject else (),
+            )
+            available_images = distinct_image_count(candidates)
+            if available_images < MIN_CARDS:
+                image_reason = "waiting_for_distinct_work_linked_image_assets"
                 work_id = str(payload.get("backlog_work_id", ""))
                 if work_id:
                     await self.backlog.mark_generation_result(
@@ -467,13 +479,12 @@ class GenerationWorker:
                 ))
                 logger.info(
                     "generation_blocked job_id=%s reason=%s candidate_count=%d",
-                    job.job_id, image_reason, len(candidates),
+                    job.job_id, image_reason, available_images,
                 )
                 cleanup = getattr(self.images, "discard_staged", None)
                 if callable(cleanup):
                     cleanup()
                 return True
-            revision_of = payload.get("revision_of_draft_id") if int(payload.get("revision_count", 0)) > 0 else None
             previous_copy = await self.drafts.revision_copy(str(revision_of), retrieval_request.menu_work_ids) if revision_of else None
             recent_topics = await self.drafts.recent_topics(
                 retrieval_request.menu_work_ids, limit=30, revision_of=revision_of,
@@ -493,48 +504,40 @@ class GenerationWorker:
                     )
                     break
                 except ImageCopyMismatchError as mismatch:
-                    image_search = getattr(self.images, "search_for_generation", None)
-                    if (image_attempt >= 2 or not callable(image_search)
-                            or not mismatch.image_asset_id):
+                    if image_attempt >= 2 or not mismatch.image_asset_id:
                         raise
-                    # Search again for the failed page itself. The previous image is
-                    # removed from the next model packet so it cannot be selected again.
-                    candidates = tuple(
-                        asset for asset in candidates
-                        if asset.asset_id != mismatch.image_asset_id
+                    rejected = next((asset for asset in candidates if asset.asset_id == mismatch.image_asset_id), None)
+                    if rejected is None:
+                        raise
+                    rejected_keys.update(rejected.source_identity_keys)
+                    subject = mismatch.search_subject or " ".join(filter(None, (mismatch.headline, mismatch.body)))
+                    focused_query = (subject or writing_query)[:450]
+                    replacement_images = ()
+                    if callable(image_search):
+                        try:
+                            replacement_images = await image_search(
+                                supplied_evidence, query=focused_query,
+                                content_type=retrieval_request.content_type,
+                                menu_work_ids=retrieval_request.menu_work_ids,
+                                **revision_scope,
+                            )
+                        except Exception as search_error:
+                            logger.warning(
+                                "targeted_image_retry_unavailable job_id=%s card_id=%s error_type=%s",
+                                job.job_id, mismatch.card_id, type(search_error).__name__,
+                            )
+                    image_pool.extend(replacement_images)
+                    candidates = _generation_image_packet(
+                        replace(retrieved, query=focused_query), image_pool, rejected_keys=rejected_keys,
+                        priority_asset_ids=[asset.asset_id for asset in replacement_images],
                     )
-                    work_title = next((
-                        item.title.strip() for item in supplied_evidence
-                        if item.title.strip()
-                    ), "")
-                    focused_query = _focused_image_query(
-                        writing_query, work_title, mismatch,
-                    )
-                    try:
-                        replacement_images = await image_search(
-                            supplied_evidence, query=focused_query,
-                            content_type=retrieval_request.content_type,
-                            menu_work_ids=retrieval_request.menu_work_ids,
-                        )
-                    except Exception as search_error:
-                        logger.warning(
-                            "targeted_image_retry_unavailable job_id=%s card_id=%s error_type=%s",
-                            job.job_id, mismatch.card_id, type(search_error).__name__,
-                        )
+                    if distinct_image_count(candidates) < MIN_CARDS:
                         raise mismatch
-                    candidates = _generation_image_packet(retrieved, [
-                        asset for asset in (*candidates, *replacement_images)
-                        if asset.asset_id != mismatch.image_asset_id
-                    ])
-                    if len(candidates) < 3:
-                        raise mismatch
-                    instructions = (*instructions,
-                        "A previous image candidate was unreadable, visibly pixelated at card size, or could not "
-                        "be confirmed as belonging to the selected work. For the affected page, choose a readable "
-                        "sharper distinct image whose "
-                        "work or related character identity is supported. It does not need to depict the exact "
-                        "scene, action, age, season, episode, or sentence. An attractive representative image "
-                        "from the same work is acceptable.")
+                    instructions = (*instructions, (
+                        f"Replace the rejected art on the page headed {mismatch.headline!r}. "
+                        f"Reason: {mismatch}. Choose distinct, readable art for {focused_query!r}. "
+                        "Keep the featured subject and its supported copy."
+                    ))
                     logger.info(
                         "targeted_image_retry job_id=%s card_id=%s candidate_count=%d attempt=%d",
                         job.job_id, mismatch.card_id, len(replacement_images), image_attempt + 1,
@@ -594,6 +597,7 @@ class GenerationWorker:
                 "candidate_limit": retrieval_request.candidate_limit,
                 "min_retrieval_score": retrieval_request.min_retrieval_score,
                 "backlog_work_id": work_id,
+                **({"review_rejected_images": rejected_images} if rejected_images else {}),
             }, f"review:{draft.draft_id}:{revision_count}"))
             if work_id:
                 await self.backlog.mark_generation_result(work_id, GenerationWorkStatus.DRAFTED)
@@ -764,7 +768,7 @@ def _apply_deterministic_review_gates(
         can_rewrite = any(issue.code == "EDITORIAL_COPY_INSTEAD_OF_ARTICLE" for issue in result.issues)
         evidence_issues = tuple(
             issue.message for issue in additions
-            if issue.code in {"CITED_WORK_LINK_UNCONFIRMED", "WEB_EVIDENCE_WORK_LINK_UNCONFIRMED"}
+            if issue.code in {"CITED_WORK_LINK_UNCONFIRMED", "WEB_EVIDENCE_WORK_LINK_UNCONFIRMED", "PEOPLE_EVIDENCE_MISSING"}
             or (issue.code == "EDITORIAL_EVIDENCE_REQUEST" and not can_rewrite)
         )
         evidence_requests = tuple(dict.fromkeys((*evidence_requests, *evidence_issues)))
@@ -877,6 +881,17 @@ class ReviewWorker:
                 await self.drafts.set_status(draft_id, "ready_for_downstream")
             elif route is ReviewRoute.GENERATION_QUEUE:
                 await self.drafts.set_status(draft_id, "revision_requested")
+                rejected_images = {row["asset_id"]: row for row in payload.get("review_rejected_images", ())
+                                   if isinstance(row, dict) and row.get("asset_id")}
+                for issue in result.issues:
+                    if isinstance(issue, ImageSubjectMismatch):
+                        asset = context.images.get(issue.asset_id)
+                        rejected_images[issue.asset_id] = {
+                            "asset_id": issue.asset_id, "search_subject": issue.search_subject,
+                            **({key: getattr(asset, key) for key in (
+                                "source_url", "content_sha256", "source_id", "source_native_id", "image_role",
+                            )} if asset else {}),
+                        }
                 await self.queues.enqueue(_new_job(QueueName.GENERATION, {
                     "query": str(payload["query"]),
                     "content_type": str(payload["content_type"]),
@@ -893,6 +908,7 @@ class ReviewWorker:
                     "revision_instructions": result.revision_instructions,
                     "revision_count": revisions + 1,
                     "revision_of_draft_id": draft_id,
+                    **({"review_rejected_images": list(rejected_images.values())} if rejected_images else {}),
                     **({"draft_id": draft_id, "headline_edits": [asdict(edit) for edit in result.headline_edits]}
                        if result.headline_edits else {}),
                 }, f"revision:{draft_id}:{revisions + 1}"))

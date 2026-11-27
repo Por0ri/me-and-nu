@@ -21,8 +21,10 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Iterator, Mapping, Sequence
 from urllib.parse import urlsplit
 
-from ani_rag.adapter import canonical_source_item_url, canonical_source_url
+from ani_rag.adapter import canonical_source_item_url, canonical_source_url, canonical_web_candidate_url
+from ani_rag.storage.candidate_url_history import CandidateURLHistory
 from ani_rag.fact_subject import fact_subjects
+from ani_rag.episode_evidence import episode_title_matches
 from ani_rag.interfaces import SourceReadClaim, StoredEvidenceReference
 from ani_rag.models import (
     AuthorAttribution,
@@ -38,6 +40,8 @@ from ani_rag.models import (
 from ani_rag.queues import QueueItem, QueueName, QueueStatus, WebPipelineBacklog
 from ani_rag.profiles import get_content_profile
 from ani_rag.retrieval import (
+    _canonical_excluded_url,
+    _canonical_excluded_urls,
     GenerationWorkRequest,
     GenerationWorkStatus,
     RetrievalRequest,
@@ -45,7 +49,6 @@ from ani_rag.retrieval import (
 )
 from ani_rag.settings import EvergreenSource, SourceStatus
 from ani_rag.wikidata_appearance import CharacterCastMatch, archived_character_cast
-from ani_rag.source_evidence import WEB_ASSESSMENT_POLICY_VERSION
 
 
 # Historical ANN child entries can be linked to their parent without an independent match.
@@ -191,6 +194,7 @@ class SQLiteRagStore:
         self._lock = threading.RLock()
         self._menu_work_id_floor = menu_work_id_floor
         self._local_boot_at = _local_boot_at()
+        self._candidate_urls = CandidateURLHistory(connection)
 
     async def register_source(self, source: EvergreenSource, *, only_if_missing: bool = False) -> None:
         """Register only a source explicitly approved in the RAG allowlist."""
@@ -530,51 +534,71 @@ class SQLiteRagStore:
     async def web_candidate_assessment_revision(
         self, source_url: str, *, now: datetime, key_prefix: str, reference_version: str,
     ) -> str | None:
+        revision, _ = await self.web_candidate_assessment_plan(
+            source_url, now=now, key_prefix=key_prefix, reference_version=reference_version,
+        )
+        return revision
+
+    async def web_candidate_assessment_plan(
+        self, source_url: str, *, now: datetime, key_prefix: str, reference_version: str,
+    ) -> tuple[str | None, str | None]:
+        """Return a new assessment revision or the ID of an assessment already in flight."""
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("Candidate revision time must be timezone-aware")
-        canonical_url = canonical_source_item_url(source_url)
+        canonical_url = canonical_web_candidate_url(source_url)
         return await asyncio.to_thread(
-            self._web_candidate_assessment_revision, canonical_url, now, key_prefix, reference_version,
+            self._web_candidate_assessment_plan, canonical_url, now, key_prefix, reference_version,
         )
 
-    def _web_candidate_assessment_revision(
+    def _web_candidate_assessment_plan(
         self, canonical_url: str, now: datetime, key_prefix: str, reference_version: str,
-    ) -> str | None:
+    ) -> tuple[str | None, str | None]:
         now_utc = now.astimezone(timezone.utc)
         with self._lock:
-            pending = self._connection.execute(
-                """SELECT 1 FROM rag_queue_job WHERE queue_name='collection' AND dedupe_key GLOB ?
+            prefixes = self._candidate_urls.assessment_prefixes(canonical_url, key_prefix)
+            canonical_url = self._candidate_urls.storage_key(canonical_url, now_utc.isoformat())
+            for prefix in prefixes:
+                pending = self._connection.execute(
+                    """SELECT job_id FROM rag_queue_job WHERE queue_name='collection' AND dedupe_key GLOB ?
                    AND status IN ('pending','retry_wait','running')
                    AND NOT (status='running' AND COALESCE(
                        julianday(started_at)<julianday(?) AND julianday(updated_at)<julianday(?), 0))
-                   LIMIT 1""", (key_prefix + ":*", self._local_boot_at, self._local_boot_at),
-            ).fetchone()
-            if pending:
-                return None
+                   LIMIT 1""", (prefix + ":*", self._local_boot_at, self._local_boot_at),
+                ).fetchone()
+                if pending:
+                    return None, pending["job_id"]
             cooldown = self._web_candidate_site_cooldown(canonical_url, now_utc.isoformat())
             if cooldown and not self._connection.execute(
                 """SELECT 1 FROM rag_web_candidate_page_cache WHERE canonical_url=?
                    AND status='ready' AND expires_at>?""", (canonical_url, now_utc.isoformat()),
             ).fetchone():
-                return None
+                return None, None
             row = self._connection.execute(
                 """SELECT last_fetched_at,next_check_at,last_error_code,last_content_hash
                    FROM rag_web_candidate_url_ledger WHERE canonical_url=?""",
                 (canonical_url,),
             ).fetchone()
             if row is None:
-                return f"unread:{reference_version}"
+                return f"unread:{reference_version}", None
             next_check = _datetime(row["next_check_at"])
             if row["last_error_code"] == "unsupported_target":
-                return None
+                return None, None
             if next_check is not None and next_check <= now_utc:
-                return f"due:{next_check.isoformat()}:{reference_version}"
+                return f"due:{next_check.isoformat()}:{reference_version}", None
             if row["last_error_code"] and next_check is not None:
-                return None
+                return None, None
             signature = f"{row['last_content_hash']}:{reference_version}"
-            if self._candidate_assessment_owner(key_prefix, signature):
-                return None
-            return f"read:{row['last_fetched_at']}:{reference_version}"
+            if any(self._candidate_assessment_owner(prefix, signature) for prefix in prefixes):
+                return None, None
+            # A policy refresh may use the retained page. If that cache was
+            # pruned, wait for the URL's regular refresh date before paying to read it.
+            if row["last_fetched_at"] and next_check and not self._connection.execute(
+                """SELECT 1 FROM rag_web_candidate_page_cache
+                   WHERE canonical_url=? AND status='ready' AND expires_at>?""",
+                (canonical_url, now_utc.isoformat()),
+            ).fetchone():
+                return None, None
+            return f"read:{row['last_fetched_at']}:{reference_version}", None
 
     def _web_candidate_site_cooldown(self, canonical_url: str, now_text: str) -> str | None:
         # Candidate URLs accept only HTTPS with an exact DNS host. Include the
@@ -589,18 +613,26 @@ class SQLiteRagStore:
         return row[0]
 
     def _candidate_assessment_owner(self, key_prefix: str, signature: str) -> str | None:
-        # Re-evaluate historical holds once under the new policy. An identical
-        # successful assessment has already handed the article to generation.
-        previous = signature.removesuffix(":" + WEB_ASSESSMENT_POLICY_VERSION)
+        # An assessment can own a completed decision or a live claim. A read
+        # backoff, superseded job, or provider outage is neither.
         row = self._connection.execute(
             """SELECT job_id FROM rag_queue_job WHERE queue_name='collection' AND dedupe_key GLOB ?
-               AND (json_extract(payload_json,'$.assessment_inputs')=?
-                    OR (status='succeeded' AND json_extract(payload_json,'$.assessment_inputs')=?))
+               AND json_extract(payload_json,'$.assessment_inputs')=?
                AND (status='succeeded'
                     OR (status='running' AND NOT COALESCE(
                         julianday(started_at)<julianday(?) AND julianday(updated_at)<julianday(?), 0))
-                    OR (status='blocked' AND last_error GLOB 'candidate_*'))
-               LIMIT 1""", (key_prefix + ":*", signature, previous, self._local_boot_at, self._local_boot_at),
+                    OR (status='blocked' AND (
+                        last_error='candidate_work_identity_unconfirmed'
+                        OR last_error='candidate_video_evidence_missing'
+                        OR last_error='candidate_article_body_missing'
+                        OR last_error GLOB 'candidate_people_evidence_missing:*'
+                        OR last_error GLOB 'candidate_interview_answer_missing:*'
+                        OR last_error GLOB 'candidate_rag_retrieval_empty:*'
+                        OR last_error GLOB 'candidate_episode_reference_missing:*'
+                        OR last_error GLOB 'candidate_insufficient_rag_supported_claims:*'
+                        OR last_error GLOB 'candidate_has_rag_contradictions:*')))
+               ORDER BY (status='running'), rowid LIMIT 1""",
+            (key_prefix + ":*", signature, self._local_boot_at, self._local_boot_at),
         ).fetchone()
         return str(row["job_id"]) if row else None
 
@@ -609,7 +641,7 @@ class SQLiteRagStore:
         reference_version: str,
     ) -> QueueItem | None:
         return await asyncio.to_thread(
-            self._claim_web_assessment_inputs, job, canonical_source_item_url(source_url),
+            self._claim_web_assessment_inputs, job, canonical_web_candidate_url(source_url),
             key_prefix, page, reference_version,
         )
 
@@ -620,14 +652,16 @@ class SQLiteRagStore:
         page_hash = _web_page_hash(page)
         signature = f"{page_hash}:{reference_version}"
         with self._transaction(immediate=True):
+            prefixes = self._candidate_urls.assessment_prefixes(canonical_url, key_prefix)
+            canonical_url = self._candidate_urls.storage_key(canonical_url, str(page["fetched_at"]))
             # Old caches hashed fetched_at as well. Upgrade the exact cached read lazily.
             self._connection.execute(
                 """UPDATE rag_web_candidate_url_ledger SET last_content_hash=?
                    WHERE canonical_url=? AND last_fetched_at=? AND last_content_hash NOT LIKE 'v2:%'""",
                 (page_hash, canonical_url, page["fetched_at"]),
             )
-            owner = self._candidate_assessment_owner(key_prefix, signature)
-            if owner is not None and owner != job.job_id:
+            owners = (self._candidate_assessment_owner(prefix, signature) for prefix in prefixes)
+            if any(owner is not None and owner != job.job_id for owner in owners):
                 return None
             payload = {**(job.payload or {}), "assessment_inputs": signature}
             changed = self._connection.execute(
@@ -647,20 +681,21 @@ class SQLiteRagStore:
             raise ValueError("Candidate page claim time must be timezone-aware")
         if not 3_600 <= cache_seconds <= 7_776_000 or not 30 <= lease_seconds <= 3_600:
             raise ValueError("Candidate page cache/lease interval is outside the supported range")
-        canonical_url = canonical_source_item_url(source_url)
-        cache_id = "web_" + hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()[:32]
+        canonical_url = canonical_web_candidate_url(source_url)
         return await asyncio.to_thread(
-            self._claim_web_candidate_page, canonical_url, cache_id, now, cache_seconds, lease_seconds,
+            self._claim_web_candidate_page, canonical_url, now, cache_seconds, lease_seconds,
         )
 
     def _claim_web_candidate_page(
-        self, canonical_url: str, cache_id: str, now: datetime,
+        self, canonical_url: str, now: datetime,
         cache_seconds: int, lease_seconds: int,
     ) -> dict[str, object]:
         now_utc = now.astimezone(timezone.utc)
         now_text = now_utc.isoformat()
         lease_until = datetime.fromtimestamp(now_utc.timestamp() + lease_seconds, timezone.utc).isoformat()
         with self._transaction(immediate=True):
+            canonical_url = self._candidate_urls.storage_key(canonical_url, now_text)
+            cache_id = "web_" + hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()[:32]
             self._connection.execute(
                 """INSERT INTO rag_web_candidate_url_ledger(
                    canonical_url,first_seen_at,last_seen_at,updated_at) VALUES(?,?,?,?)
@@ -729,13 +764,20 @@ class SQLiteRagStore:
     ) -> None:
         if not 3_600 <= cache_seconds <= 7_776_000:
             raise ValueError("Candidate page cache interval is outside the supported range")
-        canonical_requested = canonical_source_item_url(source_url)
-        canonical_final = canonical_source_item_url(final_url)
+        article = canonical_web_candidate_url(source_url)
+        canonical_final = canonical_web_candidate_url(final_url)
         fetched = fetched_at.astimezone(timezone.utc)
         expires = datetime.fromtimestamp(fetched.timestamp() + cache_seconds, timezone.utc).isoformat()
         payload = _json(page)
         content_hash = _web_page_hash(page)
         with self._transaction(immediate=True):
+            claim = self._connection.execute(
+                "SELECT canonical_url FROM rag_web_candidate_page_cache WHERE cache_id=? AND status='fetching'",
+                (claim_id,),
+            ).fetchone()
+            if not claim or canonical_web_candidate_url(claim[0]) != article:
+                raise KeyError(f"No active candidate page claim {claim_id!r}")
+            canonical_requested = str(claim[0])
             cursor = self._connection.execute(
                 """UPDATE rag_web_candidate_page_cache SET final_canonical_url=?,status='ready',
                    page_json=?,fetched_at=?,expires_at=?,lease_expires_at=NULL,retry_after=NULL,
@@ -1061,6 +1103,25 @@ class SQLiteRagStore:
                     source_marks = ",".join("?" for _ in request.source_ids)
                     where_clauses.append(f"d.source_id IN ({source_marks})")
                     params.extend(request.source_ids)
+                if request.episode_targets and request.menu_work_ids:
+                    # Reserve part of the bounded pool for the requested episodes even
+                    # when a Korean article is corroborated by a source titled in English.
+                    scoped_titles = self._connection.execute(
+                        "SELECT d.document_id,d.title,d.canonical_url FROM " + from_clause
+                        + " WHERE " + " AND ".join(where_clauses) + " ORDER BY d.document_id", params,
+                    )
+                    excluded_urls = _canonical_excluded_urls(request.exclude_source_urls)
+                    slots = max(1, remaining // 2)
+                    for row in scoped_titles:
+                        if (episode_title_matches(request.episode_targets, row["title"])
+                                and _canonical_excluded_url(row["canonical_url"]) not in excluded_urls
+                                and row["document_id"] not in selected):
+                            selected.append(row["document_id"])
+                            slots -= 1
+                            if not slots:
+                                break
+                    scoped_titles.close()
+                    remaining = request.candidate_limit - len(selected)
                 fields = requested_dictionary_fields(request)
                 field_match = ""
                 field_params = []
@@ -1093,7 +1154,9 @@ class SQLiteRagStore:
                 elif query_terms:
                     # Search the scoped pool by title and preserved text before the bounded vector pass.
                     # Keep the unscoped semantic path inexpensive by ranking titles alone.
-                    terms = (_retrieval_terms(request.subject_title) if request.subject_title else query_terms)[:6] or query_terms[:6]
+                    title_terms = _retrieval_terms(request.subject_title) if request.subject_title else query_terms
+                    credit_names = (credit.name.casefold() for credit in request.article_credits)
+                    terms = tuple(dict.fromkeys((*credit_names, *(title_terms or query_terms))))[:6]
                     score = " + ".join("(instr(lower(d.title), ?) > 0) * 2" for _ in terms)
                     params.extend(terms)
                     if request.menu_work_ids:
@@ -1281,6 +1344,21 @@ class SQLiteRagStore:
         with self._transaction():
             return self._enqueue_in_transaction(item)
 
+    async def complete_web_search_page(
+        self, job: QueueItem, candidates: list[QueueItem], continuation: QueueItem | None,
+        active_assessment_ids: set[str],
+    ) -> None:
+        def write() -> None:
+            with self._transaction(immediate=True):
+                dependencies = set(active_assessment_ids)
+                for candidate in candidates:
+                    dependencies.add(self._enqueue_in_transaction(candidate).job_id)
+                if continuation is not None:
+                    next_payload = {**(continuation.payload or {}), "wait_for_assessments": sorted(dependencies)}
+                    self._enqueue_in_transaction(replace(continuation, payload=next_payload))
+                self._save_queue_item_in_transaction(job)
+        await asyncio.to_thread(write)
+
     def _enqueue_in_transaction(self, item: QueueItem) -> QueueItem:
         now = _iso(item.created_at or datetime.now(timezone.utc))
         updated = _iso(item.updated_at or datetime.now(timezone.utc))
@@ -1326,6 +1404,16 @@ class SQLiteRagStore:
             if handler_kind is not None:
                 sql += " AND handler_kind=?"
                 params.append(handler_kind)
+            if queue is QueueName.COLLECTION and handler_kind in (None, "web_discovery"):
+                # A continuation consumes no retries while the preceding page is being assessed.
+                # Historical search jobs without dependency IDs remain eligible.
+                sql += """ AND (handler_kind IS NOT 'web_discovery' OR NOT EXISTS (
+                    SELECT 1 FROM json_each(rag_queue_job.payload_json,'$.wait_for_assessments') dep
+                    JOIN rag_queue_job a ON a.job_id=dep.value
+                    WHERE a.status IN ('pending','retry_wait','running') AND NOT (
+                        a.status='running' AND COALESCE(julianday(a.started_at)<julianday(?)
+                            AND julianday(a.updated_at)<julianday(?),0))))"""
+                params.extend((self._local_boot_at, self._local_boot_at))
             if queue is QueueName.COLLECTION and handler_kind == "url" and not allow_scheduled_discovery:
                 # The recurring planner always sets this prefix, including in older DBs.
                 # Ad hoc requests for evidence can have either a separate key or no key.
@@ -1353,27 +1441,30 @@ class SQLiteRagStore:
         await asyncio.to_thread(self._save_queue_item, item)
 
     def _save_queue_item(self, item: QueueItem) -> None:
+        with self._transaction(immediate=True):
+            self._save_queue_item_in_transaction(item)
+
+    def _save_queue_item_in_transaction(self, item: QueueItem) -> None:
         if item.updated_at is None or item.updated_at.tzinfo is None:
             raise ValueError("Persisted queue transitions need an aware updated_at")
-        with self._transaction(immediate=True):
-            row = self._connection.execute("SELECT * FROM rag_queue_job WHERE job_id=?", (item.job_id,)).fetchone()
-            if row is None:
-                raise KeyError(item.job_id)
-            previous = self._queue_item(row)
-            expected = previous.transition(item.status, now=item.updated_at, error=item.last_error)
-            if (expected.retry_count != item.retry_count or expected.queue is not item.queue
-                    or expected.dedupe_key != item.dedupe_key or expected.handler_kind != item.handler_kind):
-                raise ValueError("Queue item does not match a valid transition from the stored state")
-            terminal = item.status in {QueueStatus.SUCCEEDED, QueueStatus.BLOCKED, QueueStatus.FAILED, QueueStatus.CANCELLED}
-            cursor = self._connection.execute(
-                "UPDATE rag_queue_job SET status=?,retry_count=?,last_error=?,payload_json=?,updated_at=?,finished_at=? WHERE job_id=? AND status=?",
-                (item.status.value, item.retry_count, item.last_error, _json(dict(item.payload or {})),
-                 _iso(item.updated_at), _iso(item.updated_at) if terminal else None,
-                 item.job_id, previous.status.value),
-            )
-            if cursor.rowcount != 1:
-                raise RuntimeError("Queue state changed concurrently")
-            self._insert_event(item.job_id, previous.status, item.status, _iso(item.updated_at), item.last_error)
+        row = self._connection.execute("SELECT * FROM rag_queue_job WHERE job_id=?", (item.job_id,)).fetchone()
+        if row is None:
+            raise KeyError(item.job_id)
+        previous = self._queue_item(row)
+        expected = previous.transition(item.status, now=item.updated_at, error=item.last_error)
+        if (expected.retry_count != item.retry_count or expected.queue is not item.queue
+                or expected.dedupe_key != item.dedupe_key or expected.handler_kind != item.handler_kind):
+            raise ValueError("Queue item does not match a valid transition from the stored state")
+        terminal = item.status in {QueueStatus.SUCCEEDED, QueueStatus.BLOCKED, QueueStatus.FAILED, QueueStatus.CANCELLED}
+        cursor = self._connection.execute(
+            "UPDATE rag_queue_job SET status=?,retry_count=?,last_error=?,payload_json=?,updated_at=?,finished_at=? WHERE job_id=? AND status=?",
+            (item.status.value, item.retry_count, item.last_error, _json(dict(item.payload or {})),
+             _iso(item.updated_at), _iso(item.updated_at) if terminal else None,
+             item.job_id, previous.status.value),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("Queue state changed concurrently")
+        self._insert_event(item.job_id, previous.status, item.status, _iso(item.updated_at), item.last_error)
 
     async def get(self, job_id: str) -> QueueItem | None:
         return await asyncio.to_thread(self._get_queue_item, job_id)

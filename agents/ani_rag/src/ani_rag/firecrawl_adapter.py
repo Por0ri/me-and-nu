@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from typing import Any, Sequence
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
-from ani_rag.adapter import ReadRequest, ReadResult, SearchHit, SearchRequest
+from ani_rag.adapter import (
+    PageReadProvenanceError, ReadRequest, ReadResult, SearchHit, SearchRequest, canonical_source_url,
+)
+from ani_rag.firecrawl_errors import error_detail, error_status, response_parts, tool_credit_refusal
 from ani_rag.mcp_transport import DEFAULT_MCP_CONFIG_PATH, StreamableHTTPMCPClient, load_mcp_endpoints
 from ani_rag.models import EvidenceExcerpt
 from ani_rag.work_registry import title_key
@@ -23,20 +26,29 @@ class MCPToolCallError(RuntimeError):
     """Sanitized MCP tool failure suitable for queue diagnostics."""
 
     def __init__(self, operation: str, result: dict[str, Any], *, requested_url: str = "") -> None:
-        status_code = _mcp_error_status(result)
+        status_code = error_status(result)
         detail = _safe_mcp_error_detail(result)
         rate_limited = status_code == 429 or bool(re.search(
             r"\b(rate limit(?:ed)?|too many requests|quota exceeded)\b", detail, re.IGNORECASE,
         ))
-        credits_exhausted = bool(re.search(
-            r"\b(?:insufficient|not enough|out of|no remaining|exhausted|depleted)\b.{0,50}\bcredits?\b|"
-            r"\bcredits?\b.{0,50}\b(?:insufficient|exhausted|depleted|used up|limit reached|limit exceeded)\b",
-            detail, re.IGNORECASE,
-        ))
-        operator_action_required = status_code in {401, 403} or bool(re.search(
+        raw_detail = error_detail(result)
+        credits_exhausted = tool_credit_refusal(result)
+        auth_error = bool(re.search(
             r"\b(api key|required authorization|authentication required|anonymous keyless access is unavailable)\b",
-            detail, re.IGNORECASE,
+            raw_detail, re.IGNORECASE,
         ))
+        # Firecrawl also returns 403 when a particular website is unsupported.
+        # That explicit refusal must not pause reads for every other website.
+        self.unsupported_site = bool(
+            operation == "read" and result.get("isError") is True and status_code in {None, 400, 403, 422}
+            and not (auth_error or credits_exhausted or rate_limited)
+            and not _error_reports_redirect(result, requested_url)
+            and re.search(r"\bFirecrawl (?:cannot|can['’]t) scrape this (?:web)?site because "
+                          r"it is (?:currently )?not supported\b", raw_detail, re.I)
+            and not re.search(r"\b(?:redirect\w*|temporar\w*|timed? out|timeout|unauthorized|"
+                              r"forbidden|authenticat\w*|captcha|log[ -]?in|sign[ -]?in)\b", raw_detail, re.I)
+        )
+        operator_action_required = auth_error or (status_code in {401, 403} and not self.unsupported_site)
         unsupported_target = bool(re.search(
             r"(?:can't|cannot|unable to) scrape.{0,100}(?:not supported|unsupported)|"
             r"(?:site|url|domain).{0,50}(?:not supported|unsupported)",
@@ -57,17 +69,6 @@ class MCPToolCallError(RuntimeError):
         self.credits_exhausted = credits_exhausted
         self.operator_action_required = operator_action_required
         self.unsupported_target = unsupported_target
-        # Only Firecrawl's explicit site-wide refusal applies to other URLs.
-        message = _raw_mcp_error_detail(result)
-        self.unsupported_site = bool(
-            operation == "read" and result.get("isError") is True and status_code in {None, 400, 422}
-            and not (operator_action_required or credits_exhausted or rate_limited)
-            and not _error_reports_redirect(result, requested_url)
-            and re.search(r"\bFirecrawl (?:cannot|can['’]t) scrape this (?:web)?site because "
-                          r"it is (?:currently )?not supported\b", message, re.I)
-            and not re.search(r"\b(?:redirect\w*|temporar\w*|timed? out|timeout|unauthorized|"
-                              r"forbidden|authenticat\w*|captcha|log[ -]?in|sign[ -]?in)\b", message, re.I)
-        )
         self.permanent_failure = credits_exhausted or unsupported_target or operator_action_required
         self.safe_summary = summary[:360]
         super().__init__(self.safe_summary)
@@ -147,18 +148,15 @@ class FirecrawlMCPAdapter:
             "sources": ["images"],
             "limit": limit,
             "objective": (
-                "Find distinct, clean anime art that visibly depicts the exact named character or scene. "
-                "For a character portrait, show that one character clearly and large. Exclude multi-character "
+                "Find distinct, clean anime art for the requested subject. For a character feature, show "
+                "the character clearly. For a season feature, find artwork identified with that season. "
+                "For a series overview, find representative artwork. Exclude multi-character "
                 "collages, manga-panel grids, merchandise product photos, framed posters, and images whose "
                 "embedded text competes with the subject. Return direct image and original page URLs. "
                 "Search only; do not crawl domains."
             ),
         })
-        if result.get("isError") is True:
-            raise MCPToolCallError("web_image_search", result)
-        payload = _extract_payload(result)
-        if payload.get("success") is False:
-            raise RuntimeError("Firecrawl image search response reported failure")
+        payload = _extract_payload(result, "web_image_search")
         data = payload.get("data")
         rows = data.get("images") if isinstance(data, dict) else None
         if not isinstance(rows, list):
@@ -217,11 +215,7 @@ class FirecrawlMCPAdapter:
                 "Do not crawl domains or follow links."
             ),
         })
-        if result.get("isError") is True:
-            raise MCPToolCallError("web_discovery_search", result)
-        payload = _extract_payload(result)
-        if payload.get("success") is False:
-            raise RuntimeError("Firecrawl web search response reported failure")
+        payload = _extract_payload(result, "web_discovery_search")
         data = payload.get("data")
         results = data.get("web") if isinstance(data, dict) else None
         if not isinstance(results, list):
@@ -316,11 +310,7 @@ class FirecrawlMCPAdapter:
                 "for this work-title query; do not follow off-host links."
             ),
         })
-        if result.get("isError") is True:
-            raise MCPToolCallError("search", result)
-        payload = _extract_payload(result)
-        if payload.get("success") is False:
-            raise RuntimeError("Firecrawl search response reported failure")
+        payload = _extract_payload(result, "search")
         data = payload.get("data")
         results = data.get("web") if isinstance(data, dict) else None
         if not isinstance(results, list):
@@ -416,11 +406,7 @@ class FirecrawlMCPAdapter:
             "onlyMainContent": True,
             "objective": "Read one bounded Kitsu anime JSON:API title-filter query and preserve record IDs, titles, and pagination data.",
         })
-        if result.get("isError") is True:
-            raise MCPToolCallError("kitsu_api_search", result)
-        payload = _extract_payload(result)
-        if payload.get("success") is False:
-            raise RuntimeError("Kitsu title lookup reported failure")
+        payload = _extract_payload(result, "kitsu_api_search")
         return _parse_kitsu_api(payload.get("markdown"))
 
     def _search_kitsu_api(self, request: SearchRequest) -> Sequence[SearchHit]:
@@ -472,35 +458,12 @@ class FirecrawlMCPAdapter:
                 "Read only this one known source page, preserve its title and attribution, and do not follow links to other pages."
             ),
         })
-        if result.get("isError") is True:
-            raise MCPToolCallError("read", result, requested_url=request.url)
-        payload = _extract_payload(result)
+        payload = _extract_payload(result, "read", requested_url=request.url)
         metadata = payload.get("metadata")
         if not isinstance(metadata, dict):
-            raise RuntimeError("Firecrawl response omitted page metadata")
+            raise PageReadProvenanceError("redirect_missing_metadata")
         source_url = metadata.get("sourceURL")
-        final_url = metadata.get("url")
-        if not isinstance(final_url, str):
-            final_url = source_url if isinstance(source_url, str) else None
-        if not isinstance(final_url, str) or _host(final_url) not in request.allowed_hosts:
-            raise PermissionError("Firecrawl source URL is missing or outside the exact host allowlist")
-        returned_urls = [value for value in (source_url, final_url) if isinstance(value, str)]
-        redirect_chain = _redirect_chain(metadata)
-        if any(_host(value) not in request.allowed_hosts for value in returned_urls + list(redirect_chain)):
-            raise PermissionError("Firecrawl response contains a source URL outside the exact host allowlist")
-        if redirect_chain:
-            redirects_verified = (
-                len(redirect_chain) >= 2
-                and redirect_chain[0] == request.url
-                and redirect_chain[-1] == final_url
-            )
-        else:
-            # Accept only an unchanged URL as a no-redirect read. Firecrawl's
-            # response has original/final URL fields but no documented chain.
-            no_redirect_attested = source_url == request.url and final_url == request.url
-            redirects_verified = no_redirect_attested
-            if no_redirect_attested:
-                redirect_chain = (request.url,)
+        final_url, redirect_chain = _verified_read_route(request, metadata)
         body = payload.get("markdown")
         if not isinstance(body, str) or not body.strip():
             raise RuntimeError("Firecrawl response contained no markdown body")
@@ -546,7 +509,7 @@ class FirecrawlMCPAdapter:
             publisher=publisher if isinstance(publisher, str) else None,
             raw_payload=raw_payload,
             redirect_chain=redirect_chain,
-            redirects_verified=redirects_verified,
+            redirects_verified=True,
         )
 
     def _client(self, alias: str) -> StreamableHTTPMCPClient:
@@ -558,59 +521,18 @@ class FirecrawlMCPAdapter:
             endpoint = endpoints[alias]
         except KeyError as error:
             raise PermissionError(f"MCP server alias {alias!r} is not configured") from error
-        client = StreamableHTTPMCPClient(endpoint)
-        self._clients[alias] = client
-        return client
+        return self._clients.setdefault(alias, StreamableHTTPMCPClient(endpoint))
 
 
-def _extract_payload(result: dict[str, Any]) -> dict[str, Any]:
-    structured = result.get("structuredContent")
-    if isinstance(structured, dict):
-        return structured
-    for block in result.get("content", []):
-        if not isinstance(block, dict) or block.get("type") != "text":
-            continue
-        text = block.get("text")
-        if isinstance(text, str):
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                return payload
+def _extract_payload(result: dict[str, Any], operation: str, *, requested_url: str = "") -> dict[str, Any]:
+    if result.get("isError") is True:
+        raise MCPToolCallError(operation, result, requested_url=requested_url)
+    for data in response_parts(result):
+        if isinstance(data, dict):
+            if data.get("success") is False:
+                raise MCPToolCallError(operation, result, requested_url=requested_url)
+            return data
     raise RuntimeError("Firecrawl response did not contain a structured page result")
-
-
-def _mcp_error_status(result: dict[str, Any]) -> int | None:
-    structured = result.get("structuredContent")
-    if isinstance(structured, dict):
-        for key in ("status", "statusCode", "http_status", "httpStatus"):
-            value = structured.get(key)
-            if isinstance(value, int) and 100 <= value <= 599:
-                return value
-            if isinstance(value, str) and value.isdigit() and 100 <= int(value) <= 599:
-                return int(value)
-    detail = _raw_mcp_error_detail(result)
-    match = re.search(r"\b(?:HTTP|status(?:\s+code)?)\s*[:=]?\s*(\d{3})\b", detail, re.IGNORECASE)
-    if match:
-        return int(match.group(1))
-    return None
-
-
-def _raw_mcp_error_detail(result: dict[str, Any]) -> str:
-    parts: list[str] = []
-    structured = result.get("structuredContent")
-    if isinstance(structured, dict):
-        for key in ("error", "message", "detail", "code", "status", "statusCode"):
-            value = structured.get(key)
-            if isinstance(value, (str, int)):
-                parts.append(str(value))
-    content = result.get("content")
-    if isinstance(content, list):
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-    return " ".join(parts)[:2_000]
 
 
 def _error_reports_redirect(result: dict[str, Any], requested_url: str) -> bool:
@@ -629,7 +551,8 @@ def _error_reports_redirect(result: dict[str, Any], requested_url: str) -> bool:
 
 
 def _safe_mcp_error_detail(result: dict[str, Any]) -> str:
-    detail = _raw_mcp_error_detail(result)
+    detail = error_detail(result)
+    detail = re.sub(r"(?i)\bfc-[A-Za-z0-9_-]+", "[redacted]", detail)
     detail = re.sub(r"(?i)\bBearer\s+\S+", "Bearer [redacted]", detail)
     detail = re.sub(
         r"(?i)\b(authorization|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|secret|password)\b\s*[:=]\s*[^\s,;]+",
@@ -711,6 +634,56 @@ def _redirect_chain(metadata: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         return ()
     return tuple(value)
+
+
+def _verified_read_route(request: ReadRequest, metadata: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Compare actual resource URLs, never the more permissive candidate dedupe keys."""
+    def address(value: object) -> tuple[str, str]:
+        if not isinstance(value, str) or not value or any(c.isspace() or ord(c) < 32 for c in value):
+            raise PageReadProvenanceError("redirect_invalid_url")
+        try:
+            host = _host(value)
+            # A fragment can select a different article on a hash-routed site.
+            key = canonical_source_url(value), urlsplit(value).fragment
+        except ValueError:
+            raise PageReadProvenanceError("redirect_invalid_url") from None
+        if host not in request.allowed_hosts:
+            raise PageReadProvenanceError("redirect_outside_host")
+        if request.allowed_path_prefixes and not _path_in_scope(value, request.allowed_path_prefixes):
+            raise PageReadProvenanceError("redirect_outside_path")
+        return key
+
+    requested = address(request.url)
+    finals = [metadata[k] for k in ("url", "finalURL", "finalUrl") if metadata.get(k) is not None]
+    if not finals:
+        raise PageReadProvenanceError("redirect_missing_final_url")
+    final = address(finals[0])
+    if any(address(value) != final for value in finals[1:]):
+        raise PageReadProvenanceError("redirect_conflicting_metadata")
+    source = address(metadata["sourceURL"]) if metadata.get("sourceURL") is not None else None
+    chains = [metadata[k] for k in ("redirectChain", "redirect_chain") if k in metadata]
+    if any(not isinstance(chain, list) for chain in chains):
+        raise PageReadProvenanceError("redirect_unverified_chain")
+    chain_keys = [[address(url) for url in chain] for chain in chains]
+    if len(chain_keys) == 2 and chain_keys[0] != chain_keys[1]:
+        raise PageReadProvenanceError("redirect_conflicting_metadata")
+    route = chain_keys[0] if chain_keys else []
+    if route:
+        if route[0] != requested or route[-1] != final:
+            raise PageReadProvenanceError("redirect_unverified_chain")
+        if source is not None and source not in (requested, final):
+            raise PageReadProvenanceError("redirect_conflicting_metadata")
+    else:
+        if source is None:
+            raise PageReadProvenanceError("redirect_missing_source_url")
+        if source != requested or final != requested:
+            raise PageReadProvenanceError("redirect_unverified_chain")
+    if len(route) < 2 and (metadata.get("redirected") or metadata.get("location")):
+        raise PageReadProvenanceError("redirect_conflicting_metadata")
+    final_url = finals[0]
+    # Keep the exact reported final URL for citations and downstream path checks.
+    hops = tuple(chains[0][:-1]) if route else ()
+    return final_url, (*hops, final_url)
 
 
 def _image_candidates(

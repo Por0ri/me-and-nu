@@ -76,6 +76,17 @@ class QueueRepository(Protocol):
     async def enqueue(self, item: QueueItem) -> QueueItem:
         """Insert idempotently by dedupe_key where provided."""
 
+    async def complete_web_search_page(
+        self, job: QueueItem, candidates: list[QueueItem], continuation: QueueItem | None,
+        active_assessment_ids: set[str],
+    ) -> None:
+        """Finish one search and persist its candidates and dependent continuation atomically."""
+
+    async def web_candidate_assessment_plan(
+        self, source_url: str, *, now: datetime, key_prefix: str, reference_version: str,
+    ) -> tuple[str | None, str | None]:
+        """Return the next revision or an existing active assessment job ID."""
+
     async def count_active(self, queue: QueueName, *, handler_kind: str | None = None) -> int:
         """Count pending, running, and retry-wait items for queue backpressure."""
 

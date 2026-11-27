@@ -14,9 +14,11 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Mapping, Protocol, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence
 
-from ani_rag.adapter import canonical_source_item_url
+from ani_rag.adapter import canonical_article_comparison_url
+from ani_rag.article_credits import ArticleCredit, chunk_credit_matches
+from ani_rag.episode_evidence import EpisodeTarget, episode_reference_matches
 from ani_rag.fact_subject import fact_subjects
 from ani_rag.models import EvidenceDocument, RagContentType, WorkLinkStatus
 from ani_rag.profiles import get_content_profile
@@ -67,7 +69,7 @@ def _matches_dictionary_field(document: EvidenceDocument, fields: tuple[str, ...
 
 def _canonical_excluded_url(url: str) -> str:
     try:
-        return canonical_source_item_url(url)
+        return canonical_article_comparison_url(url)
     except ValueError:
         return url.strip()
 
@@ -90,6 +92,8 @@ class RetrievalRequest:
     semantic_candidate_scan: bool = False
     subject_title: str | None = None
     corroborating_chunks: tuple[str, ...] = ()
+    article_credits: tuple[ArticleCredit, ...] = ()
+    episode_targets: tuple[EpisodeTarget, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.query.strip():
@@ -124,6 +128,22 @@ class EvidenceChunk:
     published_at: datetime | None
     menu_work_ids: tuple[int, ...]
     score: float = 0.0
+
+
+def _preferred_credit_chunks(
+    request: RetrievalRequest, chunks: Iterable[tuple[float, EvidenceChunk]],
+) -> set[str]:
+    if not request.article_credits:
+        return set()
+    ranked = []
+    for score, chunk in chunks:
+        if score >= request.min_retrieval_score:
+            matches = chunk_credit_matches(request.article_credits, chunk.text, source_url=chunk.source_url)
+            if matches:
+                ranked.append((-matches, -score, chunk.chunk_id))
+    # Retain general story and production context for the rest of the verifier's references.
+    slots = max(1, request.top_k // 2)
+    return {chunk_id for _, _, chunk_id in sorted(ranked)[:slots]}
 
 
 @dataclass(frozen=True)
@@ -433,9 +453,15 @@ class DatabaseEvidenceRetriever:
         ]
         ranked = [row for row in ranked if row[0] > 0]
         pinned = frozenset(request.corroborating_chunks)
+        preferred = _preferred_credit_chunks(request, ((score, chunk) for score, _, chunk in ranked))
         ranked.sort(key=lambda row: (
             not (row[2].chunk_id in pinned and row[0] >= request.min_retrieval_score),
-            not _matches_dictionary_field(row[1], fields), -row[0], row[1].published_at is None,
+            not _matches_dictionary_field(row[1], fields),
+            row[2].chunk_id not in preferred,
+            not (row[0] >= request.min_retrieval_score and episode_reference_matches(
+                request.episode_targets, row[2].title, row[2].text,
+            )),
+            -row[0], row[1].published_at is None,
             -(row[1].published_at.timestamp()) if row[1].published_at else 0.0,
             row[1].document_id, row[2].locator,
         ))
@@ -564,9 +590,13 @@ class VectorEvidenceRetriever:
                 published_at=datetime.fromisoformat(row["published_at"]) if row["published_at"] else None,
                 menu_work_ids=document.menu_work_ids, score=score,
             ), document))
+        preferred = _preferred_credit_chunks(request, ((score, chunk) for score, chunk, _ in ranked))
         ranked.sort(key=lambda item: (
             item[1].chunk_id not in pinned,
-            not _matches_dictionary_field(item[2], fields), -item[0], item[2].published_at is None,
+            not _matches_dictionary_field(item[2], fields),
+            item[1].chunk_id not in preferred,
+            not episode_reference_matches(request.episode_targets, item[1].title, item[1].text),
+            -item[0], item[2].published_at is None,
             -(item[2].published_at.timestamp()) if item[2].published_at else 0.0,
             item[2].document_id, item[1].locator,
         ))

@@ -4,11 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import re
 from typing import Protocol, Sequence
 from urllib.parse import parse_qsl, urlencode, unquote, urlsplit, urlunsplit
 
 from ani_rag.models import EvidenceExcerpt
 from ani_rag.models import RagContentType
+
+
+class PageReadProvenanceError(PermissionError):
+    """The provider did not establish an in-scope route to the returned page."""
+
+    def __init__(self, error_code: str) -> None:
+        self.error_code = error_code
+        super().__init__(f"Web candidate read did not verify same-host URL handling: {error_code}")
 
 
 def canonical_source_url(url: str) -> str:
@@ -34,6 +43,37 @@ def canonical_source_item_url(url: str) -> str:
         and not key.casefold().startswith("utm_")
     ]
     return urlunsplit((parsed.scheme, parsed.netloc, path, urlencode(query, doseq=True), ""))
+
+
+def canonical_article_comparison_url(url: str) -> str:
+    """Compare article identities without rewriting a stored citation or read URL."""
+    key = canonical_source_item_url(url)
+    parsed = urlsplit(key)
+    if (parsed.netloc == "wikipedia.org" or parsed.netloc.endswith(".wikipedia.org")) and parsed.path.startswith("/wiki/"):
+        path = parsed.path.replace("%28", "(").replace("%29", ")")
+        return urlunsplit(parsed._replace(path=path))
+    return key
+
+
+def canonical_web_candidate_url(url: str) -> str:
+    """Key discovery by article. Keep the actual URL for reading, citations and redirect checks."""
+    parsed = urlsplit(canonical_article_comparison_url(url))
+    query = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+             if key.casefold() != "srsltid"]
+    host, path = parsed.netloc, parsed.path
+    if host in {"blog.naver.com", "m.blog.naver.com"}:
+        post = re.fullmatch(r"/([a-zA-Z0-9_.-]+)/([0-9]+)", path)
+        if path in {"/PostView.naver", "/PostView.nhn"}:
+            blogs = [v for k, v in query if k == "blogId"]
+            posts = [v for k, v in query if k == "logNo"]
+            if len(blogs) == len(posts) == 1:
+                post = re.fullmatch(r"/([a-zA-Z0-9_.-]+)/([0-9]+)", f"/{blogs[0]}/{posts[0]}")
+                if post:
+                    query = [(k, v) for k, v in query if k not in {"blogId", "logNo"}]
+        if post and post[1] not in {".", ".."}:
+            host, path = "blog.naver.com", f"/{post[1]}/{post[2]}"
+            query = [(k, v) for k, v in query if k not in {"fromRss", "trackingCode"}]
+    return urlunsplit((parsed.scheme, host, path, urlencode(query), ""))
 
 
 @dataclass(frozen=True)

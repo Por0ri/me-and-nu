@@ -115,3 +115,36 @@ class CoverSourcePipelineTests(unittest.TestCase):
             rows[0]["image_matches_copy"] = False
             with self.assertRaises(ImageCopyMismatchError):
                 asyncio.run(direct_card_layouts(model, cards, assets))
+
+    def test_ordinary_cards_require_their_featured_character_or_season(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "art.png"
+            Image.new("RGB", (160, 240)).save(path)
+            art = ImageAsset("art", "https://example.org/art.png", "catalog", "matched",
+                             (1,), None, None, str(path), width=160, height=240)
+            overview = CardDraft("cover", "cover", "스파이 패밀리 입문", "시즌 2까지 어떤 가족을 만나게 될까?", (), "cover")
+            cover_art = replace(art, asset_id="cover", alt_text="Spy × Family Season 1 key visual")
+            for headline, caption, target in (
+                ("로이드 포저는 누구?", "Anya Forger, solo portrait", "Spy × Family Loid Forger"),
+                ("스파이 패밀리 시즌 2", "Spy × Family Season 1 key visual", "Spy × Family Season 2"),
+            ):
+                with self.subTest(headline=headline):
+                    page = CardDraft("end", "ending", headline, "자세히 보자.", (), "art")
+                    assets = {"art": replace(art, alt_text=caption), "cover": cover_art}
+                    accepted = dict(copy_position="bottom", image_matches_copy=True, image_quality_acceptable=True,
+                                    image_emphasis="dominant", background_style="blur", image_search_subject="")
+                    rows = [dict(accepted, card_id="cover"), dict(accepted, card_id="end", image_matches_copy=False,
+                            image_match_reason=f"The pictured subject is {caption}", image_search_subject=target)]
+                    model = AsyncMock()
+                    model.generate_json_with_images.return_value = {"cards": rows}
+                    with self.assertRaises(ImageCopyMismatchError) as failure:
+                        asyncio.run(direct_card_layouts(model, [overview, page], assets))
+                    self.assertEqual((failure.exception.card_id, failure.exception.image_asset_id,
+                                      failure.exception.search_subject), ("end", "art", target))
+                    packet = model.generate_json_with_images.await_args.kwargs
+                    self.assertEqual(packet["user_payload"]["pages"][1]["image_alt_text"], caption)
+                    self.assertIn("Incidental mentions", packet["system_prompt"])
+                    assets["art"] = replace(art, alt_text=target)
+                    rows[1] = dict(accepted, card_id="end")
+                    directed = asyncio.run(direct_card_layouts(model, [overview, page], assets))
+                    self.assertEqual([card.image_asset_id for card in directed], ["cover", "art"])

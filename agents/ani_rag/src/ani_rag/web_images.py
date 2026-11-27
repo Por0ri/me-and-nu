@@ -61,8 +61,10 @@ class WebSearchImageReader:
         self._staging_dir: Path | None = None
         self._staged_assets: dict[str, ImageAsset] = {}
 
-    async def candidates_for(self, evidence: Sequence[EvidenceDocument]) -> Sequence[ImageAsset]:
-        candidates = await self.local.candidates_for(evidence)
+    async def candidates_for(
+        self, evidence: Sequence[EvidenceDocument], *, revision_of: str | None = None,
+    ) -> Sequence[ImageAsset]:
+        candidates = await self.local.candidates_for(evidence, revision_of=revision_of)
         return tuple(
             asset for asset in candidates
             if _is_readable_image(asset)
@@ -80,7 +82,7 @@ class WebSearchImageReader:
 
     async def search_for_generation(
         self, evidence: Sequence[EvidenceDocument], *, query: str,
-        content_type: RagContentType, menu_work_ids: Sequence[int] | None = None,
+        content_type: RagContentType, menu_work_ids: Sequence[int] | None = None, revision_of: str | None = None,
     ) -> Sequence[ImageAsset]:
         # Retrieval's explicit work scope is authoritative for this image search.
         # Stored evidence can carry legacy/ambiguous cross-links; unioning those
@@ -90,7 +92,7 @@ class WebSearchImageReader:
             work_ids = tuple(sorted({work_id for item in evidence for work_id in item.menu_work_ids}))
         if len(work_ids) != 1:
             return ()
-        existing = await self.local.candidates_for(evidence)
+        existing = await self.local.candidates_for(evidence, revision_of=revision_of)
         # Keep a failed-card query focused. Appending several unrelated evidence
         # titles can turn a character portrait search back into a broad collage search.
         terms = [query, *(item.title for item in evidence[:1])]
@@ -130,7 +132,9 @@ class WebSearchImageReader:
             known_hashes.add(fingerprint)
             self._staged_assets[asset.asset_id] = asset
             assets.append(asset)
-        return tuple(assets)
+        marked = await asyncio.to_thread(self.local.mark_cover_usage, assets, work_ids, revision_of)
+        self._staged_assets.update((asset.asset_id, asset) for asset in marked)
+        return marked
 
     async def persist_selected(self, asset_ids: Sequence[str]) -> None:
         selected = [self._staged_assets[item] for item in dict.fromkeys(asset_ids) if item in self._staged_assets]

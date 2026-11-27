@@ -152,6 +152,20 @@ class TemporaryWorkIdTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.menu_work_ids)
         self.assertFalse((self.registry_dir / "agent_works.csv").exists())
 
+    async def test_kitsu_timeout_can_retry_but_unconfigured_or_denied_lookup_needs_intervention(self):
+        title = "Starlit Parade"
+        model = SimpleNamespace(generate_json=AsyncMock(return_value=new_anime_response(title)))
+        for lookup, reason in (
+            (None, "kitsu_lookup_blocked"),
+            (AsyncMock(side_effect=PermissionError()), "kitsu_lookup_blocked"),
+            (AsyncMock(side_effect=TimeoutError()), "kitsu_lookup_unavailable"),
+        ):
+            with self.subTest(reason=reason):
+                resolver = LLMWorkCatalogResolver(self.catalog(), model, kitsu_lookup=lookup)
+                resolution = await resolver.resolve(source_identity(title))
+                self.assertEqual(resolution.matched_on, reason)
+                self.assertFalse(resolution.menu_work_ids)
+
     async def test_same_title_on_two_kitsu_works_is_held_and_a_unique_lookup_reuses_its_number(self):
         title = "Starlit Parade"
         identity = source_identity(title)

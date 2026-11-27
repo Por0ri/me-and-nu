@@ -33,7 +33,7 @@ URL 정규화는 원래 URL도 보존하면서 호스트 대소문자, 기본 �
 
 MCP가 ETag 또는 `Last-Modified`와 조건부 요청을 지원하면 재확인에 사용한다. 지원하지 않으면 출처별 간격에 따라 다시 읽고, 본문 해시가 같으면 저장과 임베딩을 건너뛴다.
 
-현재 Firecrawl 검색 어댑터는 `query`, `sources`, `limit`, `objective`를 보낸다. 확인한 Firecrawl Search API 요청 schema에는 페이지 번호·offset·cursor 입력이 문서화되어 있지 않고, 응답의 `totalPages`만으로 다음 결과 페이지를 요청할 수는 없다. 그래서 Firecrawl에는 가짜 커서를 보내지 않는다. 대신 검색 요청에 서로 다른 `query_variants`를 지정하면 DB-backed 큐가 각 검색어를 차례대로 검색한다. 실제 검색 도구가 이어받기 값을 제공할 경우에는 provider가 돌려준 값만 후속 큐 작업에 그대로 저장한다. Firecrawl MCP는 연결 시 실제 도구 입력 schema를 제공한다. 프로젝트 문서에는 2026-11-08에 확인한 도구 이름이 기록돼 있지만, 이 작업 세션의 도구 목록에는 프로젝트 MCP가 노출되지 않아 최신 입력 schema는 다시 확인하지 못했다. [Firecrawl MCP 도구 안내](https://docs.firecrawl.dev/mcp-server/tools), [Firecrawl Search API](https://docs.firecrawl.dev/api-reference/endpoint/search)
+현재 Firecrawl 검색 어댑터는 `query`, `sources`, `limit`, `objective`를 보낸다. 확인한 Firecrawl Search API 요청 schema에는 페이지 번호·offset·cursor 입력이 문서화되어 있지 않고, 응답의 `totalPages`만으로 다음 결과 페이지를 요청할 수는 없다. 그래서 Firecrawl에는 가짜 커서를 보내지 않는다. 첫 검색에서 찾은 후보를 먼저 평가한다. 한 건이라도 생성 단계에 들어가면 해당 검색의 후속 호출을 끝낸다. 모든 후보 평가가 끝나도 생성할 자료가 없으면 다음 페이지나 다음 검색어(`query_variants`)를 시도한다. 실제 검색 도구가 이어받기 값을 제공할 경우에는 provider가 돌려준 값만 후속 큐 작업에 그대로 저장한다. Firecrawl MCP는 연결 시 실제 도구 입력 schema를 제공한다. 프로젝트 문서에는 2026-11-08에 확인한 도구 이름이 기록돼 있지만, 이 작업 세션의 도구 목록에는 프로젝트 MCP가 노출되지 않아 최신 입력 schema는 다시 확인하지 못했다. [Firecrawl MCP 도구 안내](https://docs.firecrawl.dev/mcp-server/tools), [Firecrawl Search API](https://docs.firecrawl.dev/api-reference/endpoint/search)
 
 ## 코드에 추가한 연결과 남은 부분
 
@@ -46,7 +46,7 @@ MCP가 ETag 또는 `Last-Modified`와 조건부 요청을 지원하면 재확인
 - 스키마 변경은 [`migrations/0002_source_read_ledger.sql`](../migrations/0002_source_read_ledger.sql)에 준비했다. 아직 어떤 DB에도 적용하지 않았다.
 - 웹 후보 큐는 작품·콘텐츠 유형별 평가 작업을 유지하면서, 페이지 읽기만 공유 캐시로 합친다. 같은 URL도 각 작품과 유형의 RAG 대조는 별도로 수행한다.
 - 웹 후보 캐시는 `migrations/0003_web_candidate_page_cache.sql`, 장기 URL 기록은 `migrations/0004_web_candidate_url_ledger.sql`에 준비했으며 실제 DB에는 적용하지 않았다. 같은 최종 URL로 리다이렉트되는 서로 다른 요청 URL은 아직 하나로 합치지 않는다.
-- 검색 요청마다 `search_run_id`, 검색어 순번, provider 커서는 후속 collection queue payload에 저장된다. Firecrawl처럼 커서가 없는 검색기는 지정된 `query_variants`를 순서대로 소비한다. 반복 웹 검색 계획은 DB에 명시적으로 등록하면 crawler agent가 다음 실행 시각에 큐에 넣는다. 등록된 계획은 없으며 runtime 구성만으로는 계획을 만들지 않는다.
+- 검색 요청마다 `search_run_id`, 검색어 순번, provider 커서는 후속 collection queue payload에 저장된다. Firecrawl처럼 커서가 없는 검색기는 앞선 검색에서 생성으로 전달한 후보가 없을 때만 다음 검색어를 사용한다. 반복 웹 검색 계획은 DB에 명시적으로 등록하면 crawler agent가 다음 실행 시각에 큐에 넣는다. 등록된 계획은 없으며 runtime 구성만으로는 계획을 만들지 않는다.
 - 반복 검색 계획은 `migrations/0005_recurring_web_discovery_plan.sql`에 준비했지만 미적용이다. 등록된 계획의 다음 실행 시각과 lease는 DB에 기록되고, 중단 뒤 밀린 실행은 한 번으로 합쳐 다음 주기부터 재개한다.
 - runtime은 벡터 sidecar 연결과 같은 모델의 query embedder를 명시적으로 받으면 생성·웹 후보 대조에 cosine 검색기를 쓴다. 기본 연결은 기존 lexical 검색기이며, 실제 프로세스에 벡터 연결은 설정·실행되지 않았다.
 

@@ -245,6 +245,20 @@ class LocalWorkCatalog:
         self._refresh()
         return tuple(dict(entry) for entry in self._work_entries.get(work_id, ()))
 
+    def unique_tv_entry_titles(self, work_id: int) -> tuple[str, ...]:
+        """Full official TV entry labels that cannot name a different catalog work."""
+        self._refresh()
+        titles = {}
+        for entry in self._work_entries.get(work_id, ()):
+            if entry["format"] != "TV":
+                continue
+            for title in entry["titles"]:
+                key = work_registry.title_key(title)
+                if (self._titles.get(key) == {work_id}
+                        and all(owner == work_id for _, owner in self._scoped_titles.get(key, ()))):
+                    titles[title] = None
+        return tuple(titles)
+
     def work_search_seeds(self) -> tuple[WorkSearchSeed, ...]:
         """Return canonical work-ID seeds in numeric order; never expands per-entry into extra jobs."""
         self._refresh()
@@ -573,10 +587,14 @@ class LLMWorkCatalogResolver:
             return known
         if not work_registry.kitsu_page_id(identity.source_url):
             if self.kitsu_lookup is None:
-                return await pending("kitsu_lookup_unavailable")
+                return await pending("kitsu_lookup_blocked")
             try:
                 matches = tuple(dict.fromkeys(await self.kitsu_lookup(name.strip())))
-            except (OSError, RuntimeError, ValueError, TimeoutError):
+            except (OSError, RuntimeError, ValueError) as error:
+                if isinstance(error, (PermissionError, ValueError)) or any(getattr(error, flag, False) for flag in (
+                    "permanent_failure", "operator_action_required", "rate_limited",
+                )):
+                    return await pending("kitsu_lookup_blocked")
                 return await pending("kitsu_lookup_unavailable")
             if len(matches) > 1:
                 return await pending("kitsu_identity_ambiguous")

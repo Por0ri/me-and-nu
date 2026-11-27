@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from ani_rag.content import ContentDraft, ImageAsset
 from ani_rag.models import EvidenceDocument, EvidenceType, RagContentType, WorkLinkStatus
+from ani_rag.people_subject import people_subjects
 from ani_rag.retrieval import EvidenceChunk, document_chunk_sources
 
 MIN_CARDS = 2
@@ -26,6 +27,23 @@ _EDITORIAL_EVIDENCE_COPY = re.compile(
     r"(?:근거|자료)(?:가|를|부터)?\s*(?:더\s*필요|보완해|보태\s*줘|보내\s*줘)"
     r"|(?:소개|카피|상세글|본문|원고)(?:를|을)?\s*(?:만들|작성할|쓸)\s*수\s*없.{0,45}"
     r"(?:근거|자료)(?:를|가)?\s*(?:보완|보내|보태|부탁|필요)"
+)
+# These are writer-facing instructions about internal reference handles, even
+# when the writer left them outside the usual parenthesized citation format.
+_INTERNAL_REFERENCE_NOTE = re.compile(
+    r"(?<![A-Za-z0-9_])C\d+(?:은|는|이|가)?\s*내부\s*(?:핸들|참조\s*ID|식별자)"
+    r"|(?:실제\s*)?(?:본문|카피|원고|카드)에(?:는|서)?\s*(?:refs?|C\d+)(?:를|을|는)?\s*"
+    r"(?:안\s*써야|쓰지\s*(?:말|마)|넣지\s*(?:말|마))", re.IGNORECASE,
+)
+# A Japanese particle attached directly to Korean, followed by a Japanese
+# predicate and punctuation leading back into Korean. A name/title alone does
+# not establish a language slip. Other cases are left to semantic review.
+_JAPANESE_CLAUSE_SPLICE = re.compile(
+    r"(?<=[가-힣])(?:を|が|に|は|で)[ぁ-ゖァ-ヺ一-鿿]{1,32}?"
+    r"(?:ると|たら|ので|けど|から|ます|です|して|した)[、。]\s*(?=[가-힣])"
+)
+_FOREIGN_QUOTE_OR_TITLE = re.compile(
+    r'「[^」\n]*」|『[^』\n]*』|《[^》\n]*》|〈[^〉\n]*〉|“[^”\n]*”|‘[^’\n]*’|"[^"\n]*"|\'[^\'\n]*\''
 )
 
 
@@ -50,7 +68,7 @@ def web_gate_document_ids(basis: Mapping[str, object]) -> set[str]:
 
 
 def validate_carousel_readability(draft: ContentDraft) -> tuple[QualityIssue, ...]:
-    """Only flag missing copy; length is a layout concern, not a writing-quality gate."""
+    """Flag incomplete reader copy and recognizable writing artifacts."""
     issues: list[QualityIssue] = []
     if not MIN_CARDS <= len(draft.cards) <= MAX_CARDS:
         issues.append(QualityIssue("CAROUSEL_CARD_COUNT", "Carousel must contain 2 to 10 pages."))
@@ -85,6 +103,20 @@ def validate_carousel_readability(draft: ContentDraft) -> tuple[QualityIssue, ..
             "SOURCE_METADATA_AS_COPY",
             "Reader-facing copy describes source lookup or metadata instead of the subject; rewrite it as useful content.",
         ))
+    fields = [("제목", draft.title), ("요약", draft.summary or ""), ("상세글", draft.detail_body)]
+    for page, card in enumerate(draft.cards, 1):
+        fields.extend(((f"{page}번 카드 제목", card.headline), (f"{page}번 카드 본문", card.body)))
+    for location, copy in fields:
+        if note := _INTERNAL_REFERENCE_NOTE.search(copy):
+            issues.append(QualityIssue(
+                "INTERNAL_EDITORIAL_NOTE_LEAK",
+                f"{location}에서 ‘{note.group()}’ 문구가 들어간 집필 메모를 없애고 독자에게 전할 내용만 남겨줘.",
+            ))
+        if clause := _JAPANESE_CLAUSE_SPLICE.search(_FOREIGN_QUOTE_OR_TITLE.sub(" ", copy)):
+            issues.append(QualityIssue(
+                "MIXED_LANGUAGE_COPY",
+                f"{location}에서 ‘{clause.group().strip()}’ 부분을 자연스러운 한국어로 번역해줘.",
+            ))
     # Empty copy, malformed carousel structure, and source-workflow text are
     # deterministic defects. The independent reviewer must not pass them by score.
     return tuple(issues)
@@ -192,6 +224,10 @@ def validate_draft(
                     or source_text[chunk.start_offset:chunk.end_offset].strip() != chunk.text):
                 issues.append(QualityIssue("RETRIEVED_CHUNK_ORIGIN_MISMATCH", f"Chunk {chunk_id!r} does not match its preserved source document."))
     web = draft.ai_judgment_basis.get("web_discovery_candidate") or {}
+    if draft.content_type is RagContentType.PEOPLE and isinstance(web, Mapping) and web:
+        if not people_subjects(web.get("verified_claims", ())):
+            issues.append(QualityIssue("PEOPLE_EVIDENCE_MISSING",
+                "참여자 이름과 작품에서 맡은 일 또는 해당 참여자의 인터뷰 발언을 확인할 원문 근거를 보완해줘."))
     quote_speakers = {
         chunk_id: entry.get("speaker") for entry in web.get("verified_claims", ())
         if isinstance(entry, dict) and entry.get("kind") == "attributed_quote"
