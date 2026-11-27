@@ -114,11 +114,26 @@ Standard 기준 입력 $0.10·출력 $0.50·캐시 입력 $0.01 / 100만 토큰�
 비활성 파일 준비 예시이며 Docker·스케줄·Worker·서비스 DB를 실행하지 않는다.
 출력을 생략하면 파일 없이 disabled/enabled 후보 SHA만 계산한다.
 
+`--reviewed-model-settings-sha256`는 JSON 의미가 아니라 **실제로 읽을 파일 바이트**의
+SHA-256이다. `75a42e9` 배포 준비에서 확인한 두 파일은 JSON 내용과 생성되는 runtime이
+같지만 줄바꿈 때문에 해시가 다르다.
+
+| 확인한 파일 | 줄바꿈 | 파일 SHA-256 |
+| --- | --- | --- |
+| 로컬 worktree의 `deploy/rag-generation/model-settings-20261126.json` | LF | `d6f9e98566dcf333d48427da4dd80ea7ec1edd0c314466132bdbc2ffd4802c62` |
+| `75a42e9`의 `git archive`로 만든 배포 release의 `rag/model-settings-20261126.json` | CRLF | `3fb93cc24268160fde6ad6b83c88bed4cc3e08e23f8d0dbd813cb301c6cec90f` |
+
+배포 디렉터리에서 `sha256sum rag/model-settings-20261126.json`으로 실제 파일을 확인하고,
+검토한 release manifest의 해당 파일 해시와 일치하는 값을 사용한다. 아래 예시는
+`75a42e9` 배포 archive의 CRLF 해시를 사용한다. 다른 checkout이나 release에 그대로
+복사하지 않는다. 값이 다르면 파일과 manifest를 다시 확인하고, 해시를 맞추려고 이미
+봉인한 release 파일의 줄바꿈을 바꾸거나 검증을 생략하지 않는다.
+
 ```sh
 python rag/prepare_runtime.py \
   --template /home/ubuntu/me-nu-rag-20261126/runtime.json \
   --model-settings rag/model-settings-20261126.json \
-  --reviewed-model-settings-sha256 d6f9e98566dcf333d48427da4dd80ea7ec1edd0c314466132bdbc2ffd4802c62 \
+  --reviewed-model-settings-sha256 3fb93cc24268160fde6ad6b83c88bed4cc3e08e23f8d0dbd813cb301c6cec90f \
   --output /home/ubuntu/me-nu-rag-20261126/runtime-mixed-disabled.json
 ```
 
