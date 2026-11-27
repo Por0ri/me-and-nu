@@ -1,22 +1,34 @@
 // My Page taste edit (temporary, 2026-11 user test): onboarding Q1~Q3 again with the saved answers.
 // Remove together with /pivot/taste, the My Page button and the backend /me/taste router.
 import { apiRequest, getSession, getTopics } from "@/lib/api";
-import { initialOnboardingState, onboardingReducer, q1Choices, selectionKey, validId, type OnboardingAction, type OnboardingState, type OnboardingWork, type Q1Choice, type UiSelection } from "./onboarding";
+import { initialOnboardingState, isConsumptionRanking, onboardingReducer, q1Choices, sameRanking, selectionKey, validId, type OnboardingAction, type OnboardingState, type OnboardingWork, type Q1Choice, type UiSelection } from "./onboarding";
 import { validatePreferenceOptions, validateWorkPage, type OnboardingCatalog, type WorkPage } from "./onboarding-catalog";
-import { animeTopicId } from "./onboarding-service";
+import { animeTopicId, answersV2, sameConsumptionAnswer, sendAnswersV2 } from "./onboarding-service";
 import { requirePivotApi } from "./services";
 
-export type MyTaste = { topicId: number; works: OnboardingWork[]; preferenceTagIds: number[]; consumptionType: UiSelection["consumptionType"] | null };
+/** consumptionTypes is the saved Q3 ranking (rank 1 first, [] without an answer); consumptionType is its rank 1 or null. */
+export type MyTaste = { topicId: number; works: OnboardingWork[]; preferenceTagIds: number[]; consumptionType: Q1Choice | null; consumptionTypes: Q1Choice[] };
+/** What GET/PUT /me/taste answer: a server from before the Q3 ranking sends no consumptionTypes. */
+type MyTastePayload = Omit<MyTaste, "consumptionTypes"> & { consumptionTypes?: unknown };
 type PreferenceOptionsPayload = Parameters<typeof validatePreferenceOptions>[0];
+const UNREADABLE_TASTE = "내 취향을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.";
 
-export function validateMyTaste(value: MyTaste, topicId: number): MyTaste {
+/** The saved Q3 ranking: consumptionTypes when it is a ranking led by consumptionType, else consumptionType alone
+ * (a server from before the ranking), else no answer. */
+export function savedConsumptionTypes(taste: Pick<MyTastePayload, "consumptionType" | "consumptionTypes">): Q1Choice[] {
+  const first = taste.consumptionType, ranking = taste.consumptionTypes;
+  if (isConsumptionRanking(ranking) && ranking[0] === first) return [...ranking];
+  return first ? [first] : [];
+}
+
+export function validateMyTaste(value: MyTastePayload, topicId: number): MyTaste {
   const ids = value?.preferenceTagIds;
   if (value?.topicId !== topicId || !Array.isArray(ids) || !ids.every(validId) || new Set(ids).size !== ids.length ||
     (value.consumptionType !== null && !q1Choices.some(choice => choice.id === value.consumptionType))) {
-    throw new Error("내 취향을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    throw new Error(UNREADABLE_TASTE);
   }
   validateWorkPage({ items: value.works, nextCursor: null });
-  return value;
+  return { ...value, consumptionTypes: savedConsumptionTypes(value) };
 }
 
 // The onboarding search/chip APIs only accept accounts still onboarding; these are the same lists for members.
@@ -40,7 +52,7 @@ export const tasteCatalog: OnboardingCatalog = {
 export async function loadMyTaste(): Promise<MyTaste> {
   requirePivotApi();
   const topicId = animeTopicId(await getTopics());
-  return validateMyTaste(await apiRequest<MyTaste>(`/api/v1/me/taste?topicId=${topicId}`), topicId);
+  return validateMyTaste(await apiRequest<MyTastePayload>(`/api/v1/me/taste?topicId=${topicId}`), topicId);
 }
 
 /** What the member reacted to lately, above the edit questions (GET /me/taste/hints). Q3 lists all six answers. */
@@ -76,13 +88,15 @@ export async function loadTasteHints(topicId: number, signal?: AbortSignal): Pro
   }
 }
 
+/** Saves with the Q3 ranking (rank 1 alone again for a server from before it) and checks the saved answer came back. */
 export async function saveMyTaste(selection: UiSelection): Promise<MyTaste> {
   requirePivotApi();
   await getSession();
-  const answers = { version: 2, favoriteEntityIds: selection.favoriteEntityIds, preferenceTagIds: selection.preferenceTagIds, consumptionType: selection.consumptionType };
-  return validateMyTaste(await apiRequest<MyTaste>("/api/v1/me/taste", {
-    method: "PUT", body: JSON.stringify({ topicId: selection.topicId, answers }),
-  }), selection.topicId);
+  const { response, sent } = await sendAnswersV2({ topicId: selection.topicId, answers: answersV2(selection) },
+    input => apiRequest<MyTastePayload>("/api/v1/me/taste", { method: "PUT", body: JSON.stringify(input) }));
+  const saved = validateMyTaste(response, selection.topicId);
+  if (!sameConsumptionAnswer(response, sent.answers)) throw new Error(UNREADABLE_TASTE);
+  return saved;
 }
 
 /** Q1 opens with the saved answers; Q2 reloads the chip list and keeps the saved chips. */
@@ -90,17 +104,18 @@ export function tasteEditState(taste: MyTaste): OnboardingState {
   return {
     ...initialOnboardingState(), step: "q1", interest: "animation", topicId: taste.topicId,
     favoriteWorks: taste.works.filter(work => work.selectable).slice(0, 5),
-    preferenceTagIds: [...taste.preferenceTagIds], consumptionType: taste.consumptionType,
+    preferenceTagIds: [...taste.preferenceTagIds], consumptionTypes: [...taste.consumptionTypes],
   };
 }
 
 export type TasteEditAction = OnboardingAction | { type: "load"; state: OnboardingState } | { type: "edit-again" };
-/** Compare editable answers, not question navigation, search text, option metadata or selection order. */
+/** Compare editable answers, not question navigation, search text, option metadata or the order works and chips
+ * were picked in. The Q3 ranking is compared in order: a new order is a change. */
 export function hasTasteChanges(current: OnboardingState, initial: OnboardingState): boolean {
   return current.topicId !== initial.topicId || current.interest !== initial.interest
     || selectionKey(current.favoriteWorks.map(work => work.entityId)) !== selectionKey(initial.favoriteWorks.map(work => work.entityId))
     || selectionKey(current.preferenceTagIds) !== selectionKey(initial.preferenceTagIds)
-    || current.consumptionType !== initial.consumptionType;
+    || !sameRanking(current.consumptionTypes, initial.consumptionTypes);
 }
 
 /** The onboarding reducer, except a changed work set keeps the chosen chips: every active chip stays selectable. */

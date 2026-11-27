@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type FormEvent } from "react";
-import { NICKNAME_TAKEN_MESSAGE, type OnboardingProfile } from "@/lib/pivot/onboarding-service";
+import type { OnboardingProfile } from "@/lib/pivot/onboarding-service";
 import { NicknameField, useNicknameStatus, type NicknameCheckRequest } from "./nickname-field";
 import { PivotBrand, PivotFrame, PrimaryButton } from "./pivot-ui";
 import styles from "./onboarding.module.css";
@@ -16,7 +16,7 @@ export function OnboardingProfileScreen({ profile, onChange, onContinue, message
   const typed = typeof profile?.nickname === "string" ? profile.nickname : "";
   // What is typed is checked as it is (no trimming), so a space at either end is marked too.
   const status = useNicknameStatus(typed, checkNickname);
-  const error = status.taken ? NICKNAME_TAKEN_MESSAGE : message;
+  const error = status.problem || message;
   useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); heading.current?.focus({ preventScroll: true }); }, []);
   function next(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

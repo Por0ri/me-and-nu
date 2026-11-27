@@ -43,7 +43,7 @@ NOT_JOINED = {403: _error("DEBATE_NOT_JOINED", "토론에 참여한 사람만 �
 
 @router.post(
     "/debates", status_code=status.HTTP_201_CREATED, response_model=DebateSummary, summary="토론 주제 올리기 (D-01)",
-    description="제목(1~60자), 양쪽 선택지(각 1~12자, 서로 달라야 함), 간단한 설명(선택, 200자), 관련 작품(그 분야 작품 목록에서 0~3개)을 받는다. "
+    description="제목(1~60자), 양쪽 선택지(각 1~8자, 서로 달라야 함), 간단한 설명(선택, 100자), 관련 작품(그 분야 작품 목록에서 1~2개, 필수)을 받는다. "
                 "올린 순간부터 7일 동안 개설 투표를 받는다. 투표 중이거나 토론 중(열린 48시간)인 내 주제가 이미 있으면 409 DEBATE_ACTIVE_LIMIT.",
     responses={**COMMON_ERRORS, 404: _error("TOPIC_NOT_FOUND", "Topic을 찾을 수 없습니다.", "없는 분야"),
                409: _error("DEBATE_ACTIVE_LIMIT", "투표 중이거나 토론 중인 내 주제가 이미 있습니다.", "진행 중 주제 한도")},
@@ -263,7 +263,8 @@ async def my_tickets(db: Db, user: Member) -> VoteTicketsResponse:
     return await service.get_tickets(db, user.user_id)
 
 
-@router.get("/users/me/debates", response_model=DebateListResponse, summary="내가 올린 주제 (D-14)", responses=COMMON_ERRORS)
+@router.get("/users/me/debates", response_model=DebateListResponse, summary="내가 올린 주제 (D-14)", responses=COMMON_ERRORS,
+            description="투표 중이거나 토론 중인 내 주제만 준다. 끝난 토론방은 지난 토론방(D-04)에만 보인다.")
 async def my_debates(db: Db, user: Member) -> DebateListResponse:
     return await service.list_my_debates(db, user.user_id)
 

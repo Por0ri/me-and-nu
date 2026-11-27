@@ -1,6 +1,6 @@
-# daily_recommend — 서비스 DB 의 유저마다 오늘 볼 글 순서(100개)를 계산해 추천 결과 표에 넣는다 (서비스 연결 5단계)
+# daily_recommend — 서비스 DB 의 유저마다 오늘 볼 글 순서(300개)를 계산해 추천 결과 표에 넣는다 (서비스 연결 5단계)
 #
-# 읽기: 온보딩 답(작품 · 칩 · 덕질 방식) · 활동 기록(user_event) · 반응 상태(content_reaction · saved_item) · 글 · 글↔작품
+# 읽기: 온보딩 답(작품 · 칩 · 덕질 방식) · 활동 기록(user_event, 노출은 3초 이상 본 것만) · 반응 상태(content_reaction · saved_item) · 글 · 글↔작품
 # 계산: v0.5 작품 취향 + v1 글 순위 (유저 테스트용 고정). 매번 가입부터 지금까지의 기록을 처음부터 다시 반영
 # 쓰기: recommendation_round(유저 · 날짜 · 버전) + recommendation_item(순위 · 점수 · 이유). 백엔드 피드가 오늘(없으면 어제) 것을 씀
 # 오늘 추천이 이미 있는 유저는 건너뜀 (앱에 보인 순서가 하루 중에 안 바뀌게). 날짜는 한국 시간
@@ -42,11 +42,13 @@ except ModuleNotFoundError as exc:
 
 KST = timezone(timedelta(hours=9))
 TOPIC = "anime"
-TOP_N = 100                               # 유저마다 하루 순위 개수 (EXP-30)
-VERSION = "v1.3-beta"                     # recommendation_round.algorithm_version. 알고리즘을 바꾸면 새 이름
+TOP_N = 300                               # 유저마다 하루 순위 개수. 피드는 추천이 있으면 이 순위만 보여 줌 (11/25 사용자 결정:
+                                          #  100 → 300, 100개 뒤 최신순 꼬리를 뺌. 백엔드 feed_service.FEED_CARDS 와 같은 값. 부록 A #47)
+VERSION = "v1.4-beta"                     # recommendation_round.algorithm_version. 알고리즘을 바꾸면 새 이름
                                           # (v1-usertest → v1.1-beta 11/18: 여러 작품 글 · 곁들임 · 다른 작품 자리 · 칩 맞춤 · 이유
                                           #  → v1.2-beta 11/19: 지나친 글은 하루 쉬고 다시 자리 후보, 오늘 나온 건 안 셈
-                                          #  → v1.3-beta 11/24: Q3 유형 여러 개 · 순위 무게, 같은 유형 연속 금지)
+                                          #  → v1.3-beta 11/24: Q3 유형 여러 개 · 순위 무게, 같은 유형 연속 금지
+                                          #  → v1.4-beta 11/25: 하루 300개, '봤다' = 80% 이상 보인 시간 3초 이상인 노출만)
 LOCK = (20261029, 1)                      # 쓰기 잠금: 명령이 두 개 돌아도 한쪽씩 씀
 CAROUSEL_METHOD = "carousel_import_v1"    # 백엔드 carousel_repository 와 같은 값
 CHIPS = REPO / "model" / "catalog" / "chips.csv"
@@ -68,7 +70,8 @@ VISIBLE = """(c.status = 'active' AND c.deleted_at IS NULL
              AND c.ai_judgment_basis -> %(preview_scope)s::text ->> 'quality_approval' = 'not_reviewed'
              AND (%(preview_scope)s::text <> 'checking_test_preview'
                   OR c.ai_judgment_basis -> 'checking_test_preview' ->> 'environment' = 'checking')))
-        AND c.feed_valid_until IS NOT NULL
+        AND (c.feed_valid_until IS NOT NULL
+             OR c.ai_judgment_basis ->> 'feed_expiry_policy' = 'no_deadline_v1')
         AND (SELECT count(*) FROM content_slide sl WHERE sl.content_id = c.content_id) BETWEEN 2 AND 10
         AND (SELECT max(sl.page) FROM content_slide sl WHERE sl.content_id = c.content_id)
             = (SELECT count(*) FROM content_slide sl WHERE sl.content_id = c.content_id))))"""
@@ -135,7 +138,8 @@ def load_users(cur, topic_id, chips):
 
 
 def load_posts(cur, topic_id, today, preview=None):
-    """유형이 있는 글 → (글 목록, content_id → 글 번호). v1 은 유형으로 점수를 매겨서 유형 없는 글은 뺌 (피드에선 추천 뒤 최신순).
+    """유형이 있는 글 → (글 목록, content_id → 글 번호). v1 은 유형으로 점수를 매겨서 유형 없는 글은 뺌
+    (11/25 부터 피드가 추천 뒤에 최신순을 안 붙여서, 추천이 있는 날 홈엔 안 나옴).
     지금 피드에 못 보이는 글도 넣음: 예전에 반응한 글의 작품 · 유형 취향은 반영해야 해서. 대신 노출 끝을 어제로 둬서 순위엔 안 나옴.
     preview: (미리보기 범위, DB 이름) — 그 범위의 검토 전 미리보기 캐러셀도 보이는 글로 침 (main 의 --preview)
     글마다 연결 작품 전부 (works · names, 연결 순서) 와 RAG 글 번호에서 읽은 글 종류 (kind) · 소재 키 (theme) · 슬러그 (slug),
@@ -144,7 +148,9 @@ def load_posts(cur, topic_id, today, preview=None):
     cur.execute(f"""SELECT c.content_id, c.content_type, c.title, COALESCE(c.published_at, c.created_at), c.feed_valid_until,
         {VISIBLE}, w.ids, w.names,
         (SELECT r.input_payload ->> 'request_id' FROM draft d JOIN agent_run r ON r.agent_run_id = d.agent_run_id
-          WHERE d.draft_id = c.source_draft_id)
+          WHERE d.draft_id = c.source_draft_id),
+        (COALESCE(c.ai_judgment_basis ->> 'method', '') = %(carousel)s
+         AND c.ai_judgment_basis ->> 'feed_expiry_policy' = 'no_deadline_v1')
         FROM content c
         LEFT JOIN LATERAL (
             SELECT array_agg(x.external_id ORDER BY l.sort_order) AS ids, array_agg(e.name ORDER BY l.sort_order) AS names
@@ -155,12 +161,16 @@ def load_posts(cur, topic_id, today, preview=None):
                 {"carousel": CAROUSEL_METHOD, "topic": topic_id, "types": list(v1.TYPES),
                  "preview_scope": scope, "preview_database": database})
     posts = []
-    for cid, ctype, title, published, valid_until, visible, ids, names, request_id in cur.fetchall():
+    for cid, ctype, title, published, valid_until, visible, ids, names, request_id, no_deadline in cur.fetchall():
         pub = published.astimezone(KST).date()
         if not visible:
             until = today - timedelta(days=1)
         elif valid_until is not None:
             until = valid_until.astimezone(KST).date()
+        elif no_deadline:
+            # The importer explicitly accepted this new Agent output without a
+            # service expiry. Preserve NULL; do not invent a 30/90-day deadline.
+            until = None
         else:
             until = service.exposure_end(ctype, pub)[0]
         linked = [(int(x), n or "") for x, n in zip(ids or (), names or ()) if x and x.isdigit()]
@@ -181,12 +191,24 @@ class Visit(list):
         self.day = day
 
 
+def seen_enough(value):
+    """노출 기록 값 → '봤다' 로 치는지 (service.SEEN_MS, 11/25 결정). 카드가 80% 이상 보인 시간 focus_ms 가 있으면 그것만 보고,
+    없으면 (그 전 기록 · 화면이 아직 안 보냄) 반 이상 보인 시간 visible_ms. 둘 다 없으면 안 봄"""
+    ms = value.get("focus_ms")
+    if ms is None:
+        ms = value.get("visible_ms")
+    return isinstance(ms, (int, float)) and ms >= service.SEEN_MS
+
+
 def load_visits(cur, taps, index):
     """기록 → 유저마다 접속 목록 [Visit, ...] (시간 순).
     활동 기록은 같은 session_id (없으면 같은 날)를 한 접속으로. 반응(좋아요 · 저장 · O/X)은 현재 상태 표에서 읽어 그날에 넣음.
     접속마다 글 하나에 카드 넘김 한 번 (swipe: 가장 멀리 넘긴 장 · 전체 장 수) · 본문 읽기 한 번 (read: 가장 많이 내린 비율).
     점수는 v1.learn 이 매김 (카드 · 본문이 둘 다면 큰 쪽 하나, 11/3 결정).
-    노출은 같은 날 같은 글 한 번만 (새로고침 · 여러 번 접속이 본 글 감점과 무관심 신호를 쌓지 않게, 10/31)"""
+    노출은 '봤다' (seen_enough) 인 것만 남김 → 빨리 넘긴 카드는 본 글 감점 · 자리 쉬기 · 보고 지나침에 안 들어감 (11/25).
+    단 열었거나 카드를 넘긴 글은 노출 시간과 상관없이 본 글 (11/25 사용자 결정: 확실히 본 글). 남은 노출이 없으면 그 접속에
+    노출을 하나 넣음 → 같은 접속에 열기 · 넘기기가 있어서 보고 지나침 감점은 안 받음 (검색 · 저장 · 알림에서 연 글도 같음).
+    남긴 노출은 같은 날 같은 글 한 번만 (새로고침 · 여러 번 접속이 본 글 감점과 무관심 신호를 쌓지 않게, 10/31)"""
     groups = {tap: {} for tap in taps}
     shown_days = set()
 
@@ -203,11 +225,19 @@ def load_visits(cur, taps, index):
         if c is None:
             continue
         if kind == "impression":
+            if not seen_enough(value):                              # 거른 뒤에 하루 한 번을 셈 (짧은 노출이 긴 노출을 안 가림)
+                continue
             day_key = (tap, c, at.astimezone(KST).date())
             if day_key in shown_days:
                 continue
             shown_days.add(day_key)
         g = visit(tap, ("s", value["session_id"]) if value.get("session_id") else ("d", at.astimezone(KST).date()), at)
+        if kind in ("open", "card_swipe"):
+            # 열었거나 카드를 넘긴 글은 본 글 (11/25 사용자 결정): 그날 남은 노출이 없으면 이 접속에 하나 넣는다
+            day_key = (tap, c, at.astimezone(KST).date())
+            if day_key not in shown_days:
+                shown_days.add(day_key)
+                g["events"].append(("impression", c, None))
         if kind == "card_swipe":
             card, count = value.get("card_index"), value.get("card_count")
             if card and count:

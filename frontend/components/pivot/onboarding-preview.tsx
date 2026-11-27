@@ -14,7 +14,8 @@ export function OnboardingPreview({ screen, selected }: { screen: OnboardingStep
     preferenceOptions: demoOptions.filter(tag => tag.sourceEntityIds.includes(901)),
     preferenceTagIds: screen === "result" || screen === "q3" || selected && screen === "q2" ? [911, 913] : [],
     optionsKey: "901",
-    consumptionType: screen === "result" || selected && screen === "q3" ? "ost" : null,
+    // The design mock's ranking: five of the six answers, in the order they were tapped.
+    consumptionTypes: screen === "result" || selected && screen === "q3" ? ["world", "events", "goods", "ost", "news"] : [],
   });
   return <OnboardingFlow state={state} dispatch={dispatch} mode="preview" chrome onExit={() => dispatch({ type: "reset" })} />;
 }

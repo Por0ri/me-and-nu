@@ -19,9 +19,9 @@ function setup(options={}) {
  return {queue,calls,timers,setCurrent:s=>current=s,setVerified:s=>verified=s};
 }
 test('activity batches use camelCase API, stable session IDs, unique UUIDs, and recommendation item IDs',async()=>{
- const s=setup();s.queue.record(target,'impression',{surface:'home_feed',visibleMs:1200});s.queue.record(target,'open',{surface:'detail',activeMs:3000,scrollPct:75});
+ const s=setup();s.queue.record(target,'impression',{surface:'home_feed',visibleMs:1200,focusMs:900});s.queue.record(target,'open',{surface:'detail',activeMs:3000,scrollPct:75});
  await s.queue.flush();assert.equal(s.calls.length,1);const [a,b]=s.calls[0].events;
- assert.equal(s.calls[0].init.headers["X-CSRF-Token"],"csrf-12");assert.equal(a.recommendationItemId,9);assert.equal(a.topicId,7);assert.equal(a.contentId,41);assert.equal(a.value.sessionId,b.value.sessionId);assert.notEqual(a.clientEventId,b.clientEventId);assert.equal(a.value.visibleMs,1200);assert.ok(a.occurredAt.endsWith('Z'));s.queue.stop();
+ assert.equal(s.calls[0].init.headers["X-CSRF-Token"],"csrf-12");assert.equal(a.recommendationItemId,9);assert.equal(a.topicId,7);assert.equal(a.contentId,41);assert.equal(a.value.sessionId,b.value.sessionId);assert.notEqual(a.clientEventId,b.clientEventId);assert.equal(a.value.visibleMs,1200);assert.equal(a.value.focusMs,900);assert.ok(a.occurredAt.endsWith('Z'));s.queue.stop();
 });
 test('activity transient retry resends exact UUIDs and keeps new events behind the original batch',async()=>{
  let tries=0;const batches=[];const s=setup({post:async(events)=>{batches.push(JSON.parse(JSON.stringify(events)));if(++tries===1)throw Object.assign(Error('offline'),{status:503});return {saved:0,duplicated:events.length,rejected:0};}});
@@ -51,6 +51,18 @@ test('direct/saved detail reuses known recommendation metadata without trusting 
 test('foreground measurements exclude hidden time, clamp scroll and reset completed intervals',()=>{
  let now=0;const e=activity.createExposure(()=>now);e.setVisible(true);now=1500;e.scroll(25);e.setVisible(false);now=9000;e.setVisible(true);now=9500;e.scroll(140);
  assert.deepEqual(JSON.parse(JSON.stringify(e.finish())),{duration:2000,scrollPct:100});assert.equal(e.finish().duration,0);
+});
+test('card exposure counts 80% focus time inside the half-visible time and resets after finishing',()=>{
+ let now=0;const e=activity.createCardExposure(()=>now);
+ e.set(true,false);now=1000;e.set(true,true);now=2500;e.set(true,false);now=3000;e.set(true,true);now=4000;
+ assert.deepEqual(JSON.parse(JSON.stringify(e.finish())),{visibleMs:4000,focusMs:2500});assert.deepEqual(JSON.parse(JSON.stringify(e.finish())),{visibleMs:0,focusMs:0});
+ e.set(false,true);now=5000;assert.deepEqual(JSON.parse(JSON.stringify(e.finish())),{visibleMs:0,focusMs:0});
+});
+test('exposure level measures against the smaller of card and viewport: half = shown, 80% = focus',()=>{
+ const level=(...args)=>JSON.parse(JSON.stringify(activity.exposureLevel(...args)));
+ assert.deepEqual(level(250,500,800,true),{inView:true,inFocus:false});assert.deepEqual(level(399,500,800,true),{inView:true,inFocus:false});assert.deepEqual(level(400,500,800,true),{inView:true,inFocus:true});
+ assert.deepEqual(level(560,1200,700,true),{inView:true,inFocus:true});assert.deepEqual(level(349,1200,700,true),{inView:false,inFocus:false});assert.deepEqual(level(700,1200,700,false),{inView:false,inFocus:false});
+ assert.ok([0.5,0.8].every(t=>activity.EXPOSURE_THRESHOLDS.some(x=>Math.abs(x-t)<1e-9)));
 });
 test('carousel activity ignores programmatic restoration, repeated same index, invalid and expired input',()=>{
  let now=0;const c=activity.createCarouselMeasurement(()=>now);assert.equal(c.move(2,3),false);c.interact();assert.equal(c.move(1,3),true);assert.equal(c.move(1,3),false);assert.equal(c.move(3,3),false);now=7000;assert.equal(c.move(0,3),false);

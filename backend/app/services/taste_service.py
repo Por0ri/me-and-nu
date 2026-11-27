@@ -4,6 +4,7 @@ Saving drops the user's today/yesterday recommendation rounds, so the keep-on ba
 (model/scripts/daily_recommend.py --every) treats the user like a new signup and
 rebuilds today's round within seconds. Behavior logs stay; only their round link is
 cleared (recommendation_item ON DELETE SET NULL), the same as a `--replace` rerun.
+The Q3 ranking is replaced as a whole too (rank 1 also goes to onboarding_answers).
 """
 
 from datetime import datetime, timedelta, timezone
@@ -12,9 +13,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
-from app.models import Entity, OnboardingAnswersRecord, RecommendationRound, TapEntity, TapPreferenceTag, UserAccount
+from app.models import (
+    Entity, OnboardingAnswersRecord, RecommendationRound, TapConsumptionType, TapEntity, TapPreferenceTag, UserAccount,
+)
 from app.repositories import catalog_repository as catalog_repo
-from app.repositories.onboarding_repository import find_active_topic, lock_user
+from app.repositories.onboarding_repository import (
+    add_consumption_types, find_active_topic, load_consumption_types, lock_user,
+)
 from app.schemas.onboarding import OnboardingAnswersV2, OnboardingWork
 from app.schemas.taste import TasteResponse
 from app.services.onboarding_catalog_service import validate_v2_selection
@@ -40,6 +45,7 @@ async def get_taste(db: AsyncSession, user_id: int, topic_id: int) -> TasteRespo
         select(TapPreferenceTag.tag_id).where(TapPreferenceTag.tap_id == tap.tap_id).order_by(TapPreferenceTag.tag_id)
     )).scalars().all()
     record = await db.scalar(select(OnboardingAnswersRecord).where(OnboardingAnswersRecord.tap_id == tap.tap_id))
+    first = record.consumption_type if record is not None else None
     return TasteResponse(
         topic_id=topic_id,
         works=[OnboardingWork(
@@ -47,7 +53,8 @@ async def get_taste(db: AsyncSession, user_id: int, topic_id: int) -> TasteRespo
             release_year=row.release_year, media_format=row.media_format, selectable=bool(row.is_active),
         ) for row in works],
         preference_tag_ids=list(tag_ids),
-        consumption_type=record.consumption_type if record is not None else None,
+        consumption_type=first,
+        consumption_types=await load_consumption_types(db, tap.tap_id, first),
     )
 
 
@@ -59,19 +66,23 @@ async def update_taste(
         tap = await _tap(db, user.user_id, topic_id)
         await validate_v2_selection(db, topic_id, answers)
         # Re-insert every row: the chips' created_at marks the edit for the feed's first-round wait.
+        # Delete before adding (the next query autoflushes the adds) so the rank / answer keys never collide.
         await db.execute(delete(TapEntity).where(TapEntity.tap_id == tap.tap_id))
         await db.execute(delete(TapPreferenceTag).where(TapPreferenceTag.tap_id == tap.tap_id))
+        await db.execute(delete(TapConsumptionType).where(TapConsumptionType.tap_id == tap.tap_id))
         for entity_id in sorted(answers.favorite_entity_ids):
             db.add(TapEntity(tap_id=tap.tap_id, entity_id=entity_id, topic_id=topic_id, source="onboarding"))
         for tag_id in sorted(answers.preference_tag_ids):
             db.add(TapPreferenceTag(tap_id=tap.tap_id, tag_id=tag_id, topic_id=topic_id))
+        add_consumption_types(db, tap.tap_id, answers.consumption_types)   # tapped order, never sorted
+        first = answers.consumption_types[0]
         record = await db.scalar(select(OnboardingAnswersRecord).where(OnboardingAnswersRecord.tap_id == tap.tap_id))
         if record is None:
             db.add(OnboardingAnswersRecord(tap_id=tap.tap_id, schema_version=2, q1_choice=None, q2_choice=None,
-                                           consumption_type=answers.consumption_type))
+                                           consumption_type=first))
         else:
             record.schema_version, record.q1_choice, record.q2_choice = 2, None, None
-            record.consumption_type = answers.consumption_type
+            record.consumption_type = first
         today = (now or datetime.now(KST)).astimezone(KST).date()
         await db.execute(delete(RecommendationRound).where(
             RecommendationRound.tap_id == tap.tap_id,

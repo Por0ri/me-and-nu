@@ -1,11 +1,12 @@
 // Existing consumption choices move to Q3. Their codes are not catalog IDs.
+// Card words and result chips follow the 2026-11 design (Q3 ranking).
 export const q1Choices = [
-  { id: "world", lines: ["설정과 세계관을", "파고든다"], summary: "설정과 세계관", asset: "imgFrame303" },
-  { id: "relationships", lines: ["캐릭터의 관계성과", "감정선에 빠진다"], summary: "캐릭터 관계성", asset: "imgFrame304" },
+  { id: "world", lines: ["설정•세계관과", "해석을 파고든다"], summary: "설정 · 세계관", asset: "imgFrame303" },
+  { id: "relationships", lines: ["캐릭터와 성우", "이야기에 빠진다"], summary: "캐릭터 · 성우", asset: "imgFrame304" },
   { id: "ost", lines: ["관련 OST를", "찾아듣는다"], summary: "관련 OST", asset: "imgFrame305" },
   { id: "goods", lines: ["굿즈를 모으거나", "구매 정보를 찾는다"], summary: "굿즈 구매 정보", asset: "imgFrame306" },
   { id: "events", lines: ["팝업•전시•이벤트", "등을 찾아간다"], summary: "팝업 · 전시 · 이벤트", asset: "imgFrame307" },
-  { id: "news", lines: ["새로운 소식을", "빠르게 확인한다"], summary: "새로운 소식", asset: "imgFrame308" },
+  { id: "news", lines: ["새 소식과 재밌는", "글을 챙겨본다"], summary: "새 소식 · 재밌는 글", asset: "imgFrame308" },
 ] as const;
 export const q2Choices = [
   { id: "releases", label: "신작/시즌 공개 소식", summary: "신작/시즌 공개 소식", asset: "imgFrame304" },
@@ -15,12 +16,14 @@ export const q2Choices = [
 ] as const;
 export type Q1Choice = typeof q1Choices[number]["id"];
 export type Q2Choice = typeof q2Choices[number]["id"];
+/** Q3 takes 1~6 answers in the order the member taps them (the first is rank 1): up to every answer. */
+export const MAX_CONSUMPTION_TYPES = q1Choices.length;
 export type OnboardingWork = { entityId: number; name: string; aliases: string[]; imageUrl: string | null; releaseYear: number | null; mediaFormat: string | null; selectable: boolean; unavailableReason: string | null };
 export const MAX_PREFERENCE_TAGS_PER_KIND = 7;
 export type PreferenceOption = { tagId: number; kind: "genre" | "theme"; code: string; label: string; sourceEntityIds: number[] };
 export type OnboardingStep = "interest" | "q1" | "q2" | "q3" | "result";
-export type UiSelection = { interest: "animation"; topicId: number; favoriteEntityIds: number[]; preferenceTagIds: number[]; consumptionType: Q1Choice };
-export type OnboardingState = { step: OnboardingStep; interest: "animation" | null; topicId: number | null; favoriteWorks: OnboardingWork[]; preferenceOptions: PreferenceOption[]; preferenceTagIds: number[]; optionsKey: string | null; consumptionType: Q1Choice | null };
+export type UiSelection = { interest: "animation"; topicId: number; favoriteEntityIds: number[]; preferenceTagIds: number[]; consumptionTypes: Q1Choice[] };
+export type OnboardingState = { step: OnboardingStep; interest: "animation" | null; topicId: number | null; favoriteWorks: OnboardingWork[]; preferenceOptions: PreferenceOption[]; preferenceTagIds: number[]; optionsKey: string | null; consumptionTypes: Q1Choice[] };
 export type OnboardingAction =
   | { type: "toggle-interest" }
   | { type: "set-topic"; topicId: number }
@@ -28,12 +31,18 @@ export type OnboardingAction =
   | { type: "invalidate-options" }
   | { type: "set-options"; topicId: number; entityIds: number[]; options: PreferenceOption[] }
   | { type: "toggle-tag"; tagId: number }
-  | { type: "choose-consumption"; value: string }
+  | { type: "toggle-consumption"; value: string }
   | { type: "advance" | "back"; from: OnboardingStep }
   | { type: "reselect"; from: "result" }
   | { type: "reset" };
-export const initialOnboardingState = (): OnboardingState => ({ step: "interest", interest: null, topicId: null, favoriteWorks: [], preferenceOptions: [], preferenceTagIds: [], optionsKey: null, consumptionType: null });
+export const initialOnboardingState = (): OnboardingState => ({ step: "interest", interest: null, topicId: null, favoriteWorks: [], preferenceOptions: [], preferenceTagIds: [], optionsKey: null, consumptionTypes: [] });
 const isQ1 = (value: unknown): value is Q1Choice => q1Choices.some((choice) => choice.id === value);
+/** A Q3 answer: 1~6 different consumption types in rank order. */
+export function isConsumptionRanking(value: unknown): value is Q1Choice[] {
+  return Array.isArray(value) && value.length >= 1 && value.length <= MAX_CONSUMPTION_TYPES && value.every(isQ1) && new Set(value).size === value.length;
+}
+/** The same answers in the same order: a Q3 ranking compares by rank, not as a set. */
+export const sameRanking = (a: readonly unknown[], b: readonly unknown[]) => a.length === b.length && a.every((value, at) => value === b[at]);
 export const validId = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0;
 export const selectionKey = (ids: number[]) => [...ids].sort((a, b) => a - b).join(",");
 export function workFormatLabel(format: string | null): string {
@@ -42,7 +51,7 @@ export function workFormatLabel(format: string | null): string {
 const validIds = (ids: unknown, max = Infinity, min = 1): ids is number[] => Array.isArray(ids) && ids.length >= min && ids.length <= max && ids.every(validId) && new Set(ids).size === ids.length;
 // The DTO contains IDs only. State validation and the backend check their current kinds.
 export function isSelectionComplete(selection: UiSelection): boolean {
-  return selection?.interest === "animation" && validId(selection.topicId) && validIds(selection.favoriteEntityIds, 5) && validIds(selection.preferenceTagIds, MAX_PREFERENCE_TAGS_PER_KIND * 2, 2) && isQ1(selection.consumptionType);
+  return selection?.interest === "animation" && validId(selection.topicId) && validIds(selection.favoriteEntityIds, 5) && validIds(selection.preferenceTagIds, MAX_PREFERENCE_TAGS_PER_KIND * 2, 2) && isConsumptionRanking(selection.consumptionTypes);
 }
 export function hasCurrentOptions(state: OnboardingState): boolean {
   return state.favoriteWorks.length > 0 && state.optionsKey === selectionKey(state.favoriteWorks.map(work => work.entityId));
@@ -59,7 +68,7 @@ function hasRequiredPreferences(state: OnboardingState): boolean {
     });
 }
 export function isStateComplete(state: OnboardingState): boolean {
-  return state.interest === "animation" && validId(state.topicId) && validIds(state.favoriteWorks.map(work => work.entityId), 5) && hasRequiredPreferences(state) && isQ1(state.consumptionType);
+  return state.interest === "animation" && validId(state.topicId) && validIds(state.favoriteWorks.map(work => work.entityId), 5) && hasRequiredPreferences(state) && isConsumptionRanking(state.consumptionTypes);
 }
 export function canAdvance(state: OnboardingState): boolean {
   if (state.step === "interest") return state.interest === "animation";
@@ -95,7 +104,13 @@ export function onboardingReducer(state: OnboardingState, action: OnboardingActi
     if (!selected && selectedPreferenceCount(state, tag.kind) >= MAX_PREFERENCE_TAGS_PER_KIND) return state;
     return { ...state, preferenceTagIds: selected ? state.preferenceTagIds.filter(id => id !== action.tagId) : [...state.preferenceTagIds, action.tagId] };
   }
-  if (action.type === "choose-consumption") return state.step === "q3" && isQ1(action.value) ? { ...state, consumptionType: action.value } : state;
+  // Q3: a tap adds the answer as the next rank; tapping a chosen one takes it out and the later ranks move up.
+  if (action.type === "toggle-consumption") {
+    if (state.step !== "q3" || !isQ1(action.value)) return state;
+    const chosen = state.consumptionTypes.includes(action.value);
+    if (!chosen && state.consumptionTypes.length >= MAX_CONSUMPTION_TYPES) return state;
+    return { ...state, consumptionTypes: chosen ? state.consumptionTypes.filter(type => type !== action.value) : [...state.consumptionTypes, action.value] };
+  }
   // Stale or double-dispatched navigation can never skip a step.
   if (action.from !== state.step) return state;
   if (action.type === "advance") {
@@ -107,12 +122,13 @@ export function onboardingReducer(state: OnboardingState, action: OnboardingActi
 }
 export function buildSelectionDraft(state: OnboardingState): UiSelection {
   if (!isStateComplete(state)) throw new Error("작품과 소비 유형을 선택하고, 장르와 소재를 각각 1~7개 선택해 주세요.");
-  return { interest: "animation", topicId: state.topicId!, favoriteEntityIds: state.favoriteWorks.map(work => work.entityId), preferenceTagIds: [...state.preferenceTagIds], consumptionType: state.consumptionType! };
+  return { interest: "animation", topicId: state.topicId!, favoriteEntityIds: state.favoriteWorks.map(work => work.entityId), preferenceTagIds: [...state.preferenceTagIds], consumptionTypes: [...state.consumptionTypes] };
 }
 export function selectionSummary(state: OnboardingState) {
   return {
     works: state.favoriteWorks.map(work => work.name).join(" · "),
     tags: state.preferenceOptions.filter(tag => state.preferenceTagIds.includes(tag.tagId)).map(tag => tag.label).join(" · "),
-    consumption: q1Choices.find((choice) => choice.id === state.consumptionType)?.summary ?? "",
+    // Q3: one summary per answer, rank 1 first.
+    consumption: state.consumptionTypes.flatMap(type => q1Choices.find((choice) => choice.id === type)?.summary ?? []),
   };
 }

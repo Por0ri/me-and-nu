@@ -1,8 +1,12 @@
-"""Versioned onboarding answers; v1 choices and v2 preferences stay distinct."""
+"""Versioned onboarding answers; v1 choices and v2 preferences stay distinct.
+
+tap_consumption_type holds the Q3 ranking (2026-11); onboarding_answers.consumption_type
+stays rank 1, the column the production main code and the admin screens read.
+"""
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, SmallInteger, String, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, SmallInteger, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -50,5 +54,32 @@ class OnboardingAnswersRecord(Base):
             "(schema_version = 2 AND q1_choice IS NULL AND q2_choice IS NULL "
             "AND consumption_type IS NOT NULL)",
             name="ck_onboarding_answers_version_shape",
+        ),
+    )
+
+
+class TapConsumptionType(Base):
+    """Q3 consumption types in the order the member tapped them (rank 1 = consumption_type above)."""
+
+    __tablename__ = "tap_consumption_type"
+
+    tap_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tap.tap_id", ondelete="CASCADE"),
+        primary_key=True,
+        autoincrement=False,
+    )
+    rank: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
+    consumption_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tap_id", "consumption_type", name="uq_tap_consumption_type_tap_type"),
+        CheckConstraint("rank BETWEEN 1 AND 6", name="ck_tap_consumption_type_rank"),
+        CheckConstraint(
+            "consumption_type IN ('world', 'relationships', 'ost', 'goods', 'events', 'news')",
+            name="ck_tap_consumption_type_consumption_type",
         ),
     )

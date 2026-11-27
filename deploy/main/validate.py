@@ -45,7 +45,8 @@ RUNTIME_KEYS = ("MAIN_POSTGRES_PASSWORD", "MAIN_REDIS_PASSWORD", "MAIN_FORWARDED
     "MAIN_KAKAO_OAUTH_ENABLED", "MAIN_KAKAO_CLIENT_ID", "MAIN_KAKAO_CLIENT_SECRET",
     "MAIN_NAVER_OAUTH_ENABLED", "MAIN_NAVER_CLIENT_ID", "MAIN_NAVER_CLIENT_SECRET",
     "MAIN_LLM_KEY", "MAIN_DICT_DATABASE_URL", "MAIN_CHAT_DAILY_TOTAL_LIMIT")
-KEYS = set(FIXED) | set(ATTESTATIONS) | set(CHOICES) | set(GENERATION_LIMITS) | set(RUNTIME_KEYS)
+OPTIONAL_DEFAULTS = {"MAIN_DEBATE_ENABLED": "false", "MAIN_DEBATE_VOTE_THRESHOLD": "10"}
+KEYS = set(FIXED) | set(ATTESTATIONS) | set(CHOICES) | set(GENERATION_LIMITS) | set(RUNTIME_KEYS) | set(OPTIONAL_DEFAULTS)
 # Chatbot dictionary: the read-only menu_dict database inside the shared Checking PostgreSQL (same as Checking).
 DICT_URL = re.compile(r"postgresql\+psycopg://menu_dict_reader:([0-9a-f]{64})@postgres:5432/menu_dict")
 # All users' chatbot questions per day: an explicit 1-999999 so a typo can never mean "unlimited" (0).
@@ -71,12 +72,16 @@ def read_manifest(path: Path) -> dict[str, str]:
         if value != value.strip() or any(char in value for char in ("'", '"', "`", "$", "\\", "#")):
             raise GuardError(f"{key} requires a plain literal value")
         values[key] = value
-    return values
+    return OPTIONAL_DEFAULTS | values
 
 
 def validate(values: dict[str, str]) -> dict:
     if set(values) != KEYS:
         raise GuardError("Manifest setting names must match .env.example exactly")
+    if values["MAIN_DEBATE_ENABLED"] not in {"true", "false"}:
+        raise GuardError("MAIN_DEBATE_ENABLED requires true or false")
+    if not DAILY_LIMIT.fullmatch(values["MAIN_DEBATE_VOTE_THRESHOLD"]):
+        raise GuardError("MAIN_DEBATE_VOTE_THRESHOLD requires a positive bounded integer")
     for key, expected in FIXED.items():
         if values[key] != expected:
             raise GuardError(f"{key} does not match the disabled main preparation plan")
@@ -181,7 +186,10 @@ def validate_config(config: dict, values: dict[str, str]) -> None:
     require(normalized_networks["egress"] == {"name": "me-nu-main_egress"}, "Unexpected main egress network")
     api = config["services"]["api"]
     require(api.get("image") == f'me-nu-backend-main:{values["MAIN_IMAGE_TAG"]}', "Main image must use the reviewed commit")
-    require(not any(api.get(key) for key in ("build", "volumes", "secrets", "configs", "depends_on", "command", "entrypoint", "privileged", "network_mode", "container_name")), "Main candidate must not override image execution or add dependencies/mounts")
+    require(not any(api.get(key) for key in ("build", "secrets", "configs", "depends_on", "command", "entrypoint", "privileged", "network_mode", "container_name", "pid", "ipc", "userns_mode", "devices", "cap_add")), "Main candidate must not override image execution or add dependencies/privileges")
+    require(api.get("volumes") == [{"type": "bind", "source": str(ROOT / "deploy/main/admin-evaluation"),
+        "target": "/app/admin-evaluation", "read_only": True, "bind": {"create_host_path": False}}],
+        "Main API may mount only its prepared read-only evaluation directory")
     require(api.get("ports") == [{"mode": "ingress", "host_ip": "127.0.0.1", "target": 8000, "published": "8003", "protocol": "tcp"}], "Main API must bind only loopback port 8003")
     require(set(api.get("networks", {})) == {"data", "egress"}, "Unexpected main API networks")
     require(api.get("read_only") and api.get("init") and api.get("cap_drop") == ["ALL"]
@@ -195,12 +203,16 @@ def validate_config(config: dict, values: dict[str, str]) -> None:
         "DATABASE_ECHO": "false", "DATABASE_POOL_SIZE": "2", "DATABASE_MAX_OVERFLOW": "0",
         "REDIS_URL": f'redis://:{values["MAIN_REDIS_PASSWORD"]}@redis:6379/0',
         "REDIS_SOCKET_TIMEOUT_SECONDS": "0.5", "REDIS_MAX_CONNECTIONS": "10",
-        "SESSION_EXPIRE_MINUTES": "30", "FORWARDED_ALLOW_IPS": values["MAIN_FORWARDED_ALLOW_IPS"],
+        "SESSION_EXPIRE_MINUTES": "43200", "FORWARDED_ALLOW_IPS": values["MAIN_FORWARDED_ALLOW_IPS"],
         "OAUTH_STATE_TTL_SECONDS": "600", "EVENT_DATA_SOURCE": "local_demo",
         "TMDB_KEY": "", "OPENAI_API_KEY": "",
         # Only the chatbot key and dictionary come from the server file; empty keeps the chatbot off.
         "LLM_KEY": values["MAIN_LLM_KEY"], "DICT_DATABASE_URL": values["MAIN_DICT_DATABASE_URL"],
         "CHAT_DAILY_TOTAL_LIMIT": values["MAIN_CHAT_DAILY_TOTAL_LIMIT"],
+        "DEBATE_ENABLED": values["MAIN_DEBATE_ENABLED"],
+        "DEBATE_VOTE_THRESHOLD": values["MAIN_DEBATE_VOTE_THRESHOLD"],
+        "ADMIN_RECOMMENDATION_EVALUATION_PATH": "/app/admin-evaluation/evaluation.json",
+        "ADMIN_SERVICE_EVALUATION_PATH": "/app/admin-evaluation/service-evaluation.json",
     })
     for provider in ("KAKAO", "NAVER"):
         for suffix in ("OAUTH_ENABLED", "CLIENT_ID", "CLIENT_SECRET"):

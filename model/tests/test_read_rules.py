@@ -128,5 +128,32 @@ class RestTests(unittest.TestCase):
         self.assertEqual(order[-1], 0)                          # 본 날 감점 · 보고 지나침 때문에 안 나온 글 뒤
 
 
+class SeenTimeTests(unittest.TestCase):
+    """빨리 넘긴 카드 (3초 미만) 는 본 글 감점 · 자리 쉬기 · 보고 지나침이 없음 (11/25, EXPERIMENTS 부록 A #48)"""
+
+    def test_a_quickly_passed_card_leaves_no_trace(self):
+        at = datetime(2026, 11, 24, 3, tzinfo=timezone.utc)    # 한국 11/24 12:00
+        events = [(1, "impression", 501, {"session_id": "a", "visible_ms": 1500}, at),    # 글 0: 빨리 넘김
+                  (1, "impression", 502, {"session_id": "a", "visible_ms": 4000}, at),    # 글 1: 봄
+                  (1, "impression", 503, {"session_id": "a", "visible_ms": 8000, "focus_ms": 2000}, at)]   # 글 2: 80% 는 2초
+
+        class Cursor:
+            rows = iter([events, [], []])
+
+            def execute(self, *_):
+                pass
+
+            def fetchall(self):
+                return next(self.rows)
+
+        visits = daily.load_visits(Cursor(), [1], {501: 0, 502: 1, 503: 2})[1]
+        today, s = visits[0].day, None
+        for visit in visits:
+            s = learn(visit, day=visit.day, state=s)
+        self.assertEqual(s.seen.tolist(), [0, 1, 0, 0])                                   # 본 글 감점은 본 글만
+        self.assertEqual([score(s, i) for i in range(3)], [0.0, -0.05, 0.0])             # 보고 지나침도 본 글만
+        self.assertEqual(service.slot_ready(s, today + 1).tolist(), [True, False, True, True])   # 다음 날 쉬는 것도 본 글만
+
+
 if __name__ == "__main__":
     unittest.main()

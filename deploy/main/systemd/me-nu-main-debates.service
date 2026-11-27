@@ -1,0 +1,19 @@
+[Unit]
+Description=Finalize Main debate rooms and delete ended room chat
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/ubuntu/apps/me-nu-main-20261118
+ExecStart=/usr/bin/python3 /home/ubuntu/apps/me-nu-main-20261118/deploy/main/main_debates.py run
+UMask=0077
+Nice=10
+# Longer than the locked preflight (~170 s) plus the 240 s docker exec limit, so the
+# wrapper always times out first; shorter than the 10-minute timer interval.
+TimeoutStartSec=8min
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=me-nu-main-debates

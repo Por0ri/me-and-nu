@@ -6,6 +6,12 @@
 기본은 미리보기입니다. 대상 DB 이름을 --expected-database 로 정확히 적어야 하고,
 --apply 를 붙여야 실제로 저장합니다. 결과에는 개수만 찍습니다.
 
+공지 작업과 같은 방식으로 스스로 끝납니다: 접속 5초, 잠금 대기 5초, 문장 하나 60초, 전체 180초를 넘으면
+실패로 끝납니다. 한 트랜잭션이라 보통은 아무것도 저장되지 않습니다. 커밋하는 순간에 끊기면 이미 저장됐을 수
+있지만, 여러 번 돌아도 결과가 같아서 다음 실행이 이어서 합니다. main 서버 타이머(deploy/main/main_debates.py)는
+240초 뒤 docker 명령만 끊고 rollout 잠금을 풀기 때문에, 컨테이너 안 작업이 그보다 먼저 끝나야 잠금 약속이
+지켜집니다(systemd 제한 8분은 잠금 안 사전 검사와 240초를 합친 것보다 깁니다).
+
     python -m app.jobs.finalize_debates --expected-database me_nu_checking --apply
 """
 
@@ -23,18 +29,26 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.seeds.menu_works import MenuWorksError, validate_target
 from app.services.debate_finalize_service import finalize_debates
 
+# 서버 타이머의 240초보다 짧게 (deploy/main/main_debates.py 의 runtime.run timeout).
+JOB_TIMEOUT_SECONDS = 180
+
 
 async def run(*, expected_database: str, apply: bool, database_url: str | None = None) -> dict:
     if database_url is None:
         from app.core.config import settings
         database_url = settings.database_url
     validate_target(database_url, expected_database)
-    engine = create_async_engine(database_url, echo=False)
+    engine = create_async_engine(database_url, echo=False, hide_parameters=True, connect_args={"connect_timeout": 5})
     try:
-        async with async_sessionmaker(engine, expire_on_commit=False)() as db, db.begin():
-            if not apply:
-                await db.execute(text("SET TRANSACTION READ ONLY"))
-            return await finalize_debates(db, apply=apply)
+        async with asyncio.timeout(JOB_TIMEOUT_SECONDS):
+            async with async_sessionmaker(engine, expire_on_commit=False)() as db, db.begin():
+                if not apply:
+                    await db.execute(text("SET TRANSACTION READ ONLY"))
+                # API는 토론 줄을 몇 ms만 잠그므로 5초면 충분하다. 오래 잡힌 잠금(열어 둔 psql 등) 뒤에 줄 서지 않는다.
+                await db.execute(text("SET LOCAL lock_timeout = '5s'"))
+                # 큰 방의 채팅 삭제도 넉넉히 끝나는 값. 프로세스가 갑자기 죽어도 DB 쪽에서 문장이 멈춘다.
+                await db.execute(text("SET LOCAL statement_timeout = '60s'"))
+                return await finalize_debates(db, apply=apply)
     finally:
         await engine.dispose()
 
@@ -54,8 +68,10 @@ def main() -> None:
             report = asyncio.run(task)
     except MenuWorksError as exc:
         parser.exit(1, f"Debate finalize stopped: {exc}\n")
-    except (ValueError, SQLAlchemyError):
-        parser.exit(1, "Debate finalize failed; no changes were committed. Check configuration and migrations.\n")
+    except (ValueError, SQLAlchemyError, TimeoutError):
+        # 한 트랜잭션이라 보통은 아무것도 저장되지 않는다. 커밋 순간에 끊기면 저장됐을 수 있지만 다시 돌려도
+        # 결과가 같다. 주소·값은 찍지 않는다.
+        parser.exit(1, "Debate finalize failed or timed out; rerunning is safe and the next run retries.\n")
     print(json.dumps(report, ensure_ascii=False))
 
 

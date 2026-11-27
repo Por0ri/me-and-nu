@@ -1,7 +1,7 @@
 """Resolve provider identities without linking accounts by email.
 
-The callback owns the outer transaction and session issuance. This service only
-flushes new accounts inside a savepoint so uniqueness races remain recoverable.
+The callback owns the outer transaction and session issuance. Account creation
+and missing-email updates use savepoints so uniqueness races remain recoverable.
 """
 
 from __future__ import annotations
@@ -55,10 +55,53 @@ async def _email_exists(db: AsyncSession, email: str) -> bool:
     ) is not None
 
 
+def _is_email_unique_violation(error: IntegrityError) -> bool:
+    original = error.orig
+    # Production uses psycopg; SQLite supports the isolated service tests.
+    if getattr(original, "sqlstate", None) == "23505":
+        return getattr(getattr(original, "diag", None), "constraint_name", None) == "uq_user_account_email"
+    return (
+        getattr(original, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_UNIQUE"
+        and str(original) == "UNIQUE constraint failed: index 'uq_user_account_email'"
+    )
+
+
+async def _reuse_identity(
+    db: AsyncSession, user: UserAccount, identity: OAuthIdentity,
+) -> UserAccount:
+    _require_loginable(user)
+    if user.email and user.email.strip():
+        return user
+    if not isinstance(identity.email, str) or not identity.email.strip():
+        return user
+    try:
+        email = str(_EMAIL.validate_python(identity.email.strip())).lower()
+    except ValidationError:
+        # Optional profile enrichment must not reject an existing identity.
+        return user
+    if await _email_exists(db, email):
+        return user
+
+    updating_email = False
+    try:
+        async with db.begin_nested():
+            # Assign only after the savepoint's automatic pre-flush has finished.
+            updating_email = True
+            user.email = email
+            await db.flush()
+    except IntegrityError as error:
+        if not updating_email or not _is_email_unique_violation(error):
+            raise
+        # Another account claimed this email. Keep login available, and eagerly
+        # reload attributes expired by rollback before the async callback reads them.
+        await db.refresh(user)
+    return user
+
+
 async def resolve_oauth_user(db: AsyncSession, identity: OAuthIdentity) -> UserAccount:
     existing = await _find_identity(db, identity)
     if existing is not None:
-        return _require_loginable(existing)
+        return await _reuse_identity(db, existing, identity)
 
     email = None
     if identity.email and identity.email.strip():
@@ -70,7 +113,7 @@ async def resolve_oauth_user(db: AsyncSession, identity: OAuthIdentity) -> UserA
             # The same identity may have appeared after the first lookup.
             existing = await _find_identity(db, identity)
             if existing is not None:
-                return _require_loginable(existing)
+                return await _reuse_identity(db, existing, identity)
             raise _email_conflict()
 
     user = UserAccount(
@@ -89,7 +132,7 @@ async def resolve_oauth_user(db: AsyncSession, identity: OAuthIdentity) -> UserA
         # A concurrent callback may have created the identity after our lookup.
         existing = await _find_identity(db, identity)
         if existing is not None:
-            return _require_loginable(existing)
+            return await _reuse_identity(db, existing, identity)
         if email is not None and await _email_exists(db, email):
             raise _email_conflict() from None
         raise

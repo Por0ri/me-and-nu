@@ -84,11 +84,11 @@ class JobSchemaMigrationTests(unittest.TestCase):
 
     def test_fresh_install_and_concurrent_or_repeated_initialize(self):
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [7, 7])
+        self.assertEqual([result["version"] for result in results], [8, 8])
         self.assertCountEqual([result["created"] for result in results], [True, False])
         store = self.store()
         repeated = store.initialize()
-        self.assertEqual(repeated["version"], 7)
+        self.assertEqual(repeated["version"], 8)
         self.assertFalse(repeated["created"])
         for kind in ("fake", "anime", "anime_generate"):
             request = {"idempotency_key": kind, "source_id": "fixture", "content_type": "news",
@@ -158,7 +158,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
         job_ids, inputs = self.seed_v1()
         old_jobs, old_attempts = self.snapshot()
         results = self.initialize_concurrently()
-        self.assertEqual([result["version"] for result in results], [7, 7])
+        self.assertEqual([result["version"] for result in results], [8, 8])
         self.assertFalse(self.store().initialize()["created"])
         jobs, attempts = self.snapshot()
         self.assertEqual(len(jobs), len(old_jobs))
@@ -227,7 +227,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
             ids = {phase: self.seed_v2_anime_probe(connection, phase) for phase in phases}
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [7, 7])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [8, 8])
         store = self.store()
         self.assertFalse(store.initialize()["created"])
         jobs, attempts = self.snapshot()
@@ -291,7 +291,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
                 (attempt_id, probe_id, uuid4(), path, result_hash),
             )
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [7, 7])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [8, 8])
         jobs, attempts = self.snapshot()
         self.assertEqual(attempts, old_attempts)
         for before, after in zip(old_jobs, jobs, strict=True):
@@ -382,7 +382,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
                    VALUES (%(job_id)s, %(job_id)s, %(generation_attempt_id)s, %(result_sha256)s)""", ready)
             before_selection = connection.execute("SELECT * FROM public.content_staging_selection").fetchone()
         before = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [7, 7])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [8, 8])
         self.assertEqual(self.snapshot(), before)
         with self.connect() as connection:
             selected = connection.execute("SELECT * FROM public.content_staging_selection").fetchone()
@@ -592,7 +592,7 @@ class JobSchemaMigrationTests(unittest.TestCase):
             probe_url = base + "/?id=11"
             probe_id, _ = self.seed_v4_job(connection, "legacy-probe", probe_url, "queued", False, job_kind="anime")
         old_jobs, old_attempts = self.snapshot()
-        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [7, 7])
+        self.assertEqual([item["version"] for item in self.initialize_concurrently()], [8, 8])
         jobs, attempts = self.snapshot()
         for before, after in zip(old_jobs, jobs, strict=True):
             for column in ("job_id", "canonical_url", "input_sha256", "idempotency_key", "generation_attempt_id"):

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api";
 import { isActiveSession, isPendingConsumer } from "@/lib/pivot/services";
 import { buildSelectionDraft } from "@/lib/pivot/onboarding";
-import { checkNickname, NICKNAME_TAKEN_MESSAGE, serviceOnboardingService } from "@/lib/pivot/onboarding-service";
+import { checkNickname, isBannedNicknameError, NICKNAME_BANNED_MESSAGE, NICKNAME_TAKEN_MESSAGE, serviceOnboardingService } from "@/lib/pivot/onboarding-service";
 import { warmUpFeed } from "@/lib/pivot/feed-warmup";
 import { FeedLoadingScreen } from "./feed-loading-screen";
 import { usePivotSession } from "./pivot-session";
@@ -60,7 +60,7 @@ export function OnboardingRoute() {
         setError("선택한 관심 분야를 확인하지 못했어요. 잠시 후 다시 시도해주세요.");
       } else if (code === "VALIDATION_ERROR") {
         if (reason instanceof ApiError && reason.fields?.some(field => field.field === "nickname")) {
-          setError("닉네임을 다시 확인해주세요."); setProfileReady(false);
+          setError(isBannedNicknameError(reason) ? NICKNAME_BANNED_MESSAGE : "닉네임을 다시 확인해주세요."); setProfileReady(false);
         } else {
           setError("선택한 작품과 장르·소재를 다시 확인해주세요.");
           dispatchOnboarding({ type: "back", from: "result" });

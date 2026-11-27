@@ -1,0 +1,71 @@
+# Optional, explicitly selected overlay. There is no Beat registration here.
+# Combine with compose.worker.yaml and compose.generation.yaml only after review.
+services:
+  rag-worker:
+    profiles: [rag-generation]
+    image: me-nu-rag-generation:local
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.rag
+      additional_contexts:
+        runtime-base: service:worker
+        rag-project: ./agents/ani_rag
+        anime-works: ./catalog
+    hostname: rag-worker
+    init: true
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [tasks, generation-egress]
+    environment:
+      CONTENT_JOB_DATABASE_URL: "postgresql://menu_jobs:${CONTENT_JOB_DB_PASSWORD:?Run python worker/setup_local.py}@jobs-db:5432/menu_content_jobs"
+      CONTENT_JOB_ARTIFACT_ROOT: /var/lib/menu-jobs
+      CELERY_BROKER_URL: redis://generation-redis:6379/0
+      CELERY_RESULT_BACKEND: redis://generation-redis:6379/1
+      RAG_GENERATION_ENABLED: ${RAG_GENERATION_ENABLED:-false}
+      RAG_RUNTIME_CONFIG_FILE: /run/rag/runtime.json
+    volumes:
+      - generation-artifacts:/var/lib/menu-jobs
+      - type: bind
+        source: ${RAG_RUNTIME_CONFIG_HOST_FILE:-./worker/.missing-rag-runtime.json}
+        target: /run/rag/runtime.json
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${RAG_ISOLATED_STATE_HOST_DIR:-./worker/.missing-rag-state}
+        target: /var/lib/menu-rag
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${RAG_IMAGE_HOST_DIR:-./worker/.missing-rag-images}
+        target: /opt/rag-images
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${RAG_API_KEY_HOST_FILE:-./worker/.missing-rag-key}
+        target: /run/secrets/rag-key
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${RAG_VECTOR_DSN_HOST_FILE:-./worker/.missing-rag-vector-dsn}
+        target: /run/secrets/rag-vector-dsn
+        read_only: true
+        bind: {create_host_path: false}
+    depends_on:
+      generation-redis: {condition: service_healthy}
+      jobs-db: {condition: service_healthy}
+      job-init: {condition: service_completed_successfully}
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=128m"]
+    command: [celery, -A, "menu_worker.rag_app:app", worker, "--concurrency=1", "--queues=content.rag_generate", "--hostname=rag@rag-worker", "--loglevel=INFO"]
+    healthcheck:
+      test: [CMD, celery, -A, "menu_worker.rag_app:app", inspect, ping, "--destination=rag@rag-worker", "--timeout=5"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+    stop_grace_period: 3780s
+    mem_limit: 1536m
+    cpus: "1.0"
+    pids_limit: 192
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}

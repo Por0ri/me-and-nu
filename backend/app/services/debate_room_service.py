@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import ApiError
+from app.core.profanity import mask_banned
 from app.models import Debate, DebateMember, DebateMessage, DebateSide, UserAccount
 from app.schemas.debate import DebateMessagesResponse, DebateMessageView, DebateSummary
 from app.services import debate_service as core
@@ -220,6 +221,9 @@ async def send_message(db: AsyncSession, user_id: int, debate_id: int, body: str
     # 보낸 순간의 진영 (고르지 않았으면 비어 있다)
     side = await db.scalar(select(DebateSide.side).where(DebateSide.debate_id == debate_id, DebateSide.user_id == user_id))
     nickname = await db.scalar(select(UserAccount.nickname).where(UserAccount.user_id == user_id))
+    # 욕설 · 선정적인 말은 그 부분만 같은 길이의 '*' 로 가려서 저장한다 (2026-11-25 사용자 결정, app/core/profanity).
+    # 저장한 글을 그대로 보내니, 보낸 사람 · 받는 사람 · 나중에 다시 불러오는 사람 모두 가린 글을 본다. 길이가 같아 300자 한도도 그대로다.
+    body = mask_banned(body)
     message = DebateMessage(debate_id=debate_id, user_id=user_id, side=side, body=body, created_at=now)
     db.add(message)
     debate.message_count += 1

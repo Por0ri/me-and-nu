@@ -10,13 +10,16 @@
 .close { right: 0; }
 .back { left: 0; }
 .close img, .back img { display: block; max-width: none; }
-.reasons { display: flex; flex-direction: column; gap: 16px; width: min(262px, 100%); padding: 0; margin: 0; border: 0; }
+/* 2026-11 design feedback: rows 12px apart (was 16px); a chosen row grows to 34px like the inquiry options. */
+.reasons { display: flex; flex-direction: column; gap: 12px; width: min(262px, 100%); padding: 0; margin: 0; border: 0; }
 .option { position: relative; cursor: pointer; }
 .option input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .option > span, .selected { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 6px 12px; border-radius: 8px; background: #f7f2ff; font-size: 12px; font-weight: 500; line-height: 18px; }
 .option i { flex: none; width: 16px; height: 16px; margin-left: 8px; border: 1px solid #b9b9c1; border-radius: 50%; }
 .option input:checked + span, .selected { background: #decfff; box-shadow: inset 0 0 0 .5px #c7acfb; }
-.option input:checked + span i { border: 5px solid #7043b4; }
+.option input:checked + span { min-height: 34px; }
+/* 2026-11 design feedback: a chosen reason shows a check in a thin circle (the inquiry check icon), not a filled dot. */
+.option input:checked + span i { border-color: #9c79e6; background: url("/pivot/inquiry/check.svg") center / 14px no-repeat; }
 .option input:focus-visible + span, .dialog button:focus-visible { outline: 2px solid #7043b4; outline-offset: 2px; }
 .selected { width: min(262px, 100%); min-height: 34px; margin: 0; }
 .details { width: min(262px, 100%); }

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "purpose": "daily_count_schedule",
+  "release_sha": "REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA",
+  "seed_checkpoint": "REPLACE_WITH_AUDITED_COMPLETED_CHECKPOINT.json",
+  "seed_sha256": "REPLACE_WITH_AUDITED_CHECKPOINT_FILE_SHA256",
+  "routes": [
+    {"source_id": "one_piece_official", "content_type": "goods", "menu_work_id": 8}
+  ],
+  "max_attempts": 40,
+  "success_target": 20,
+  "target": {
+    "host": "postgres",
+    "port": 5432,
+    "database": "me_nu_checking",
+    "username": "me_nu_checking",
+    "schema": "public",
+    "environment": "production"
+  }
+}

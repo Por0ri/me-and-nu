@@ -372,21 +372,27 @@ test('flow: a request outlives an unmounted panel or closed modal; the result an
   assert.equal(reviewFlowFor(2), reviewFlowFor(2), 'remounts reattach to the same registry flow');
 }));
 
-test('code-only gate allows Checking and blocks Main, other origins and explicit disablement', async () => withFixture(async fixture => {
+test('code-only gate allows Main and Checking and blocks other origins and explicit disablement', async () => withFixture(async fixture => {
   const operator = browser(fixture, 'operator');
   const { reviewWriteGate } = operator.load('lib/admin-review-write-gate.ts');
-  for (const base of [fixture.origin, 'http://localhost:8000', 'https://api.me-nu.kr', 'https://api.test.me-nu.kr',
+  for (const base of [fixture.origin, 'http://localhost:8000', 'https://api.test.me-nu.kr',
     'https://api.labs.me-nu.kr', 'http://api.checking.me-nu.kr', 'https://api.checking.me-nu.kr:444',
-    'https://api.checking.me-nu.kr.example.org', 'https://api.checking.me-nu.kr@other.example', 'not a url']) {
+    'https://api.checking.me-nu.kr.example.org', 'https://api.checking.me-nu.kr@other.example',
+    'http://api.me-nu.kr', 'https://api.me-nu.kr:444', 'https://api.me-nu.kr.example.org',
+    'https://api.me-nu.kr@other.example', 'https://user:password@api.me-nu.kr',
+    'https://user:password@api.checking.me-nu.kr', 'blob:https://api.me-nu.kr/opaque', 'not a url']) {
     assert.equal(reviewWriteGate(base).enabled, false, base);
   }
-  assert.equal(reviewWriteGate('https://api.checking.me-nu.kr').enabled, true);
-  assert.equal(reviewWriteGate('https://api.checking.me-nu.kr/').enabled, true);
-  assert.equal(reviewWriteGate('https://api.checking.me-nu.kr', null).enabled, false);
+  for (const base of ['https://api.checking.me-nu.kr', 'https://api.me-nu.kr']) {
+    assert.equal(reviewWriteGate(base).enabled, true);
+    assert.equal(reviewWriteGate(`${base}/`).enabled, true);
+    assert.equal(reviewWriteGate(base, null).enabled, false);
+  }
   const activation = { apiOrigin: 'https://api.checking.me-nu.kr', approvedBy: 'x', approvedOn: '2026-11-19', reference: 'x' };
   assert.equal(reviewWriteGate('https://api.checking.me-nu.kr/', activation).enabled, true);
   assert.equal(reviewWriteGate('https://api.me-nu.kr', activation).enabled, false, 'an activation is bound to one API origin');
   assert.equal(reviewWriteGate('not a url', activation).enabled, false);
+  assert.equal(reviewWriteGate('https://api.me-nu.kr', { ...activation, apiOrigin: 'not a url' }).enabled, false);
   const source = fs.readFileSync(path.join(root, 'lib/admin-review-write-gate.ts'), 'utf8');
   assert.doesNotMatch(source.replace(/^\s*\/\/.*$/gm, ''), /process\.env|NEXT_PUBLIC|localStorage|sessionStorage|location|searchParams|cookie/);
 
@@ -399,23 +405,28 @@ test('code-only gate allows Checking and blocks Main, other origins and explicit
   assert.equal(postsTo(fixture).length, 0); assert.equal(fixture.audit.length, 0);
 }));
 
-test('Checking registry flow uses the approved default gate; Main registry still sends no POST', async () => withFixture(async fixture => {
-  const main = browser(fixture, 'operator', { apiBase: 'https://api.me-nu.kr' });
-  const mainFlow = main.load('lib/admin-review-flow.ts').reviewFlowFor(2);
-  await mainFlow.execute(await main.detail(2), 'approve', '출처 확인');
-  assert.equal(mainFlow.state().phase, 'blocked');
-  assert.equal(postsTo(fixture).length, 0);
-
-  const checking = browser(fixture, 'operator', { apiBase: 'https://api.checking.me-nu.kr' });
-  const flow = checking.load('lib/admin-review-flow.ts').reviewFlowFor(2);
-  assert.equal(flow.writeGate().enabled, true);
-  await flow.execute(await checking.detail(2), 'approve', '출처 확인');
-  assert.equal(flow.state().phase, 'succeeded');
-  assert.equal(postsTo(fixture).length, 1); assert.equal(fixture.audit.length, 1);
-  assert.equal(checking.posts[0].url, 'https://api.checking.me-nu.kr/api/v1/admin/contents/2/review');
-  assert.equal(postsTo(fixture)[0].headers['x-admin-review-actor'], '22');
-  assert.equal(postsTo(fixture)[0].headers['x-admin-review-grant'], '122');
-}));
+for (const apiBase of ['https://api.checking.me-nu.kr', 'https://api.me-nu.kr']) {
+  test(`approved ${apiBase} registry flow uses the default gate with an audited scoped POST`, async () => withFixture(async fixture => {
+    const operator = browser(fixture, 'operator', { apiBase });
+    const flow = operator.load('lib/admin-review-flow.ts').reviewFlowFor(2);
+    assert.equal(flow.writeGate().enabled, true);
+    await flow.execute(await operator.detail(2), 'approve', 'verified source');
+    assert.equal(flow.state().phase, 'succeeded');
+    assert.equal(postsTo(fixture).length, 1); assert.equal(fixture.audit.length, 1);
+    assert.equal(operator.posts[0].url, `${apiBase}/api/v1/admin/contents/2/review`);
+    assert.equal(postsTo(fixture)[0].headers['x-admin-review-actor'], '22');
+    assert.equal(postsTo(fixture)[0].headers['x-admin-review-grant'], '122');
+    assert.equal(operator.posts[0].csrf, 'csrf-operator-1');
+  }));
+  test(`approved ${apiBase} origin still blocks a viewer before any review POST`, async () => withFixture(async fixture => {
+    const viewer = browser(fixture, 'viewer', { apiBase });
+    const flow = viewer.load('lib/admin-review-flow.ts').reviewFlowFor(2);
+    assert.equal(flow.writeGate().enabled, true);
+    await flow.execute(await viewer.detail(2), 'approve', 'verified source');
+    assert.equal(flow.state().phase, 'blocked');
+    assert.equal(postsTo(fixture).length, 0); assert.equal(fixture.audit.length, 0);
+  }));
+}
 
 test('scope: another account cannot recheck the old intent; restoring its original scope can replay', async () => withFixture(async fixture => {
   const operator = browser(fixture, 'operator');

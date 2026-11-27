@@ -22,7 +22,7 @@ async function enterDemo(page, consumptionType = 'world') {
   await page.getByRole('checkbox', {name:'우정',exact:true}).check();
   await page.getByRole('checkbox', {name:'판타지',exact:true}).check();
   await page.getByRole('button', {name:'장르·소재 선택 완료',exact:true}).click();
-  await page.locator(`input[name=consumptionType][value=${consumptionType}]`).locator('..').tap();
+  await page.locator(`input[name=consumptionTypes][value=${consumptionType}]`).locator('..').tap();
   await page.getByRole('button', { name: '선택 완료', exact: true }).click();
   await page.getByRole('button', { name: '콘텐츠 보러가기' }).click();
   await page.locator('main[data-home-state="ready"]').waitFor();

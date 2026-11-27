@@ -74,7 +74,8 @@ class EpisodeEvidenceTests(unittest.IsolatedAsyncioTestCase):
         vector_retriever = VectorEvidenceRetriever(store, connection, model)
         wide = replace(request, candidate_limit=10, min_retrieval_score=.5)
         by_id = {d.document_id: d for d in await store.fetch_candidates(wide)}
-        def indexed(keys):
+        def indexed(keys, query_vector):
+            self.assertEqual(query_vector, model.embed_query.return_value)
             rows = []
             for key in keys:
                 chunk = chunk_document(by_id[key])[0]

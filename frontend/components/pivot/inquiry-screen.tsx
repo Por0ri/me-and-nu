@@ -27,7 +27,7 @@ function InquiryReceivedDialog({ onClose }: { onClose: () => void }) {
     <h2 id="inquiry-received-title">문의 접수 완료</h2>
     <div className={styles.receivedCopy}>
       <p id="inquiry-received-body">문의가 정상적으로 접수되었어요!</p>
-      <p id="inquiry-received-help">보내주신 문의 내용은 확인 후<br />답변을 문의 내역에서 알려드릴게요.</p>
+      <p id="inquiry-received-help">보내주신 문의 내용은 확인 후<br />필요한 조치를 진행할게요.</p>
     </div>
     <button type="button" autoFocus onClick={onClose}>확인</button>
   </dialog>;

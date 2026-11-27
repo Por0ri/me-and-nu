@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.models import (
-    AgentRun, Content, ContentSlide, ContentReaction, ContentSource, ContentTag, Draft,
+    AgentRun, Content, ContentEntityLink, ContentSlide, ContentReaction, ContentSource, ContentTag, Draft,
     Policy, RecommendationRound, SavedItem, Subtopic, Tap, Topic, UserAccount, UserEvent,
 )
 from app.seeds import fe_integration as seed
@@ -57,8 +57,9 @@ class AsyncAdapter:
         self.session.delete(instance)
 
 
+# ContentEntityLink: 추천이 없을 때 비상 목록도 대표 작품을 띄우는 규칙을 써서 피드가 읽음 (11/25)
 MODELS = (Topic, Subtopic, AgentRun, Draft, Content, ContentSlide, ContentSource, ContentTag,
-          UserAccount, Policy, SavedItem, ContentReaction, Tap, RecommendationRound, UserEvent)
+          UserAccount, Policy, SavedItem, ContentReaction, Tap, RecommendationRound, UserEvent, ContentEntityLink)
 
 
 @pytest.fixture

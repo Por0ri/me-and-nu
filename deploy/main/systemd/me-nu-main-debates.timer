@@ -1,0 +1,14 @@
+[Unit]
+Description=Finalize Main debate rooms every 10 minutes
+
+[Timer]
+OnBootSec=3min
+# Minutes 5, 15, ..., 55 at second 30: clear of the notice job, which starts every
+# minute at second 0 and needs the same rollout lock.
+OnCalendar=*-*-* *:05/10:30
+Persistent=true
+AccuracySec=1s
+Unit=me-nu-main-debates.service
+
+[Install]
+WantedBy=timers.target

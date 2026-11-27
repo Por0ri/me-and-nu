@@ -160,7 +160,7 @@ const flowRequest = Object.freeze({ requestId: '0b8c7d6e-5f4a-4b3c-8d2e-1f0a9b8c
 const flowResult = (patch = {}) => ({ contentId: 2, draftId: 3, action: 'approve', status: 'active', judgmentStatus: 'confirmed', draftStatus: 'published',
   publishedAt: '2026-11-19T01:00:00.000001Z', updatedAt: '2026-11-19T01:00:00.000001Z', auditLogId: 41, replayed: false, ...patch });
 
-test('panel outside the approved Checking origin stays disconnected through the registry gate', () => {
+test('panel outside approved API origins stays disconnected through the registry gate', () => {
   const env = runtime();
   const html = renderToStaticMarkup(React.createElement(env.load('components/admin/content-review-panel.tsx').ContentReviewPanel, { content: detailOf() }));
   assert.match(html, /<button[^>]*disabled=""[^>]*>승인 실행 \(미연결\)<\/button>/);

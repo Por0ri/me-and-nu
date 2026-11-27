@@ -15,9 +15,11 @@ export const DEBATE_RULES = {
   /** 끝난 토론의 결과를 지난 토론방에 보여 주는 날 수 (DEBATE_RESULT_RETENTION_DAYS) */
   resultRetentionDays: 9,
   titleMax: 60,
-  descriptionMax: 200,
-  /** 진영 버튼 한 줄에 6자쯤 들어가서, 12자면 대부분 두 줄 안에 든다 (2026-11-24 결정) */
-  sideLabelMax: 12,
+  /** 100자까지 (2026-11-25 결정). 줄바꿈은 막지 않고, 카드에는 3줄까지 보이고 넘으면 '…' (debate.module.css) */
+  descriptionMax: 100,
+  /** 선택지 이름 8자까지 (2026-11-25 디자인) */
+  sideLabelMax: 8,
   messageMax: 300,
-  worksMax: 3,
+  /** 관련 작품은 1~2개 필수 (2026-11-25 디자인) */
+  worksMax: 2,
 } as const;

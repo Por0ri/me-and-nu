@@ -2,6 +2,17 @@
 
 FastAPI·PostgreSQL V1 API의 공개 피드와 콘텐츠 상세를 브라우저에서 볼 수 있습니다. 개발용 API 점검 화면도 홈 하단에 유지합니다.
 
+## 관리자 자동 생성 현황 (2026-11-27)
+
+`/admin/dashboard`의 **자동 콘텐츠 생성**은 관리자 권한으로 `GET /api/v1/admin/generation`의 수집된 현황만 조회합니다. 보이는 탭에서 이 API만 30초마다 갱신하며 수동 새로고침도 제공합니다. 기존 통계 SQL과 서비스 DB 적재 이력은 별도로 유지합니다. 생성 시작·중지·승인·공개 요청은 보내지 않습니다.
+
+- 오늘은 한국시간 기준입니다. 하루 최대 40회 시도와 AI 검수 통과 20건 목표를 구분하고, AI 검수 통과가 운영자 공개 승인을 의미하지 않는다고 표시합니다.
+- 비용은 기록된 사용량의 USD 추정치입니다. 미확정 값은 0으로 대체하지 않습니다. **사용량 집계 대기**는 정산 미완료이며 실제 LLM 실행 중이라는 뜻이 아닙니다. 전체 누적에는 오늘과 이월 비용이 포함되므로 오늘 비용을 다시 더하지 않습니다.
+- 180초 이상 지난 현황은 지연으로 표시합니다. 한국시간 날짜가 다른 기록의 오늘 시도·작업 수는 표시하지 않습니다. 조회 실패 시 이전 보호 데이터를 표시하지 않으며, 401·403은 전체 대시보드 접근 상태에 반영합니다.
+- 파일·키·출처 원문·작업 식별자를 브라우저에 전달하지 않습니다. Worker 오류는 실행 상태 확인 필요로 표시하고 자동 복구하지 않습니다.
+
+검증은 `node --test tests/admin-generation.test.cjs tests/admin-analytics.test.cjs tests/admin-statistics-api.test.cjs`, `npm run typecheck`, `npm run build -- --webpack`입니다. `tests/admin-generation-browser-check.cjs`는 로컬 Next.js와 합성 API 응답으로 1728px·390px 화면, 독립 polling, 미확정 비용·날짜 변경·지연·권한 회수를 확인합니다. `PIVOT_PLAYWRIGHT_MODULE`로 기존 Playwright 설치를 지정할 수 있으며 외부 요청·서비스 DB·실제 생성에는 접근하지 않습니다.
+
 ## Pivot 기존 회원 API 연결
 
 이 문서의 구현·브라우저 검증은 `codex/service-integration`에서 수행했고, 현재 `codex/backend-labs-service`에는 에이전트 코드와 생년월일 삭제 migration을 제외한 서비스 변경만 반영 후보로 선별했습니다. 후보 자체의 재검증과 로컬 `backend-labs` 반영 상태는 [서비스 흐름 보고서](../docs/SERVICE_FLOW_E2E_2026-10-28.md)를 따릅니다. 기존 `codex/fe-be-integration`의 회원·저장 흐름에 원격 `feature/pivot-user-fe` 최신 tip `3f656eb`(2026-10-27 14:53:33 KST)의 홈 연결 변경을 선별 반영했습니다. `/pivot/login` → `/pivot/home`은 실제 OAuth·세션과 피드·상세·북마크·Saved API를 사용합니다. 로그인 후에는 서버가 내려주는 활성 Topic ID를 사용하며, 저장 성공 후 홈·상세·저장 목록을 갱신합니다. 새로고침하면 서버의 저장 상태를 다시 조회합니다. 요청 실패를 데모 데이터나 저장 성공으로 대체하지 않습니다.
@@ -29,7 +40,7 @@ NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true
 - 생년월일 정책은 보류합니다. 새 Pivot 가입에서는 생년월일을 입력·보관·전송하거나 연령 조건을 새로 적용하지 않습니다. 이전 Consumer 화면과 날짜 유틸리티는 별도 레거시 경로로 남겨두며 기존 DB의 생년월일 상태를 바꾸지 않습니다.
 - `/pivot/demo`, 개발용 `/pivot/preview`는 명시적인 가상 작품 fixture를 사용하고 실제 세션·저장 API에 접근하지 않습니다. 서비스 화면은 오류를 데모 카탈로그로 대체하지 않습니다.
 
-서비스 사용 전 온보딩 도입 revision `e3a7b9c2d451`과 캐러셀 `f4b8c1d9a620`을 포함하는 현재 target **`94d2da693c10`**과 활성 `anime` Topic, 검토된 실제 작품 카탈로그를 준비해야 합니다. [온보딩 V2 명세](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)와 [캐러셀 DB·API 안내](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. 브라우저와 API 모두 같은 `localhost` 호스트를 쓰고 `NEXT_PUBLIC_API_BASE_URL`과 `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`를 실행 시 설정합니다. 실제 OAuth·약관 검증은 해당 개발 환경 설정을 사용합니다.
+서비스 사용 전 온보딩 도입 revision `e3a7b9c2d451`과 캐러셀 `f4b8c1d9a620`을 포함하는 현재 target **`7f843b19debf`**과 활성 `anime` Topic, 검토된 실제 작품 카탈로그를 준비해야 합니다. [온보딩 V2 명세](../docs/ONBOARDING_V2_ERD_API_PLAN_2026-10-27.md)와 [캐러셀 DB·API 안내](../docs/CAROUSEL_DB_API_INTEGRATION_2026-10-28.md)를 따릅니다. 브라우저와 API 모두 같은 `localhost` 호스트를 쓰고 `NEXT_PUBLIC_API_BASE_URL`과 `NEXT_PUBLIC_PIVOT_ENABLE_LOCAL_API=true`를 실행 시 설정합니다. 실제 OAuth·약관 검증은 해당 개발 환경 설정을 사용합니다.
 
 검증 명령은 `npm test`, `npm run typecheck`, `npm run build -- --webpack`입니다. 관리 worktree에서 기존 설치 디렉터리를 junction으로 재사용할 경우 webpack 빌드로 확인하며 원본 checkout의 빌드 산출물을 변경하지 않습니다.
 
@@ -147,7 +158,7 @@ npm run dev
 
 브라우저의 HttpOnly 쿠키가 정상 전달되려면 두 주소 모두 `localhost`를
 사용해야 합니다. `localhost`와 `127.0.0.1`을 섞지 마세요. 백엔드 실행 전
-대상 DB를 확인한 뒤 `alembic upgrade 94d2da693c10`과 `python -m app.seeds.v1_local`을 사용합니다. 이 후보에는 단일 head만 있고 생년월일 삭제 d2 파일은 없습니다. 적용 revision을 고정하기 위해 `upgrade head`나 `upgrade heads`로 바꾸지 않습니다.
+대상 DB를 확인한 뒤 `alembic upgrade 7f843b19debf`과 `python -m app.seeds.v1_local`을 사용합니다. 이 후보에는 단일 head만 있고 생년월일 삭제 d2 파일은 없습니다. 적용 revision을 고정하기 위해 `upgrade head`나 `upgrade heads`로 바꾸지 않습니다.
 Swagger 수동 절차는 [가이드](../docs/SWAGGER_TEST_GUIDE.md)에 있습니다.
 
 ## Vercel 연결

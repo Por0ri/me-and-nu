@@ -95,6 +95,7 @@ def debate_api(monkeypatch):
         session.add_all([
             Entity(entity_id=100, topic_id=1, entity_type="anime", name="나루토", aliases=["NARUTO"]),
             Entity(entity_id=101, topic_id=1, entity_type="anime", name="원피스", aliases=["ONE PIECE"]),
+            Entity(entity_id=102, topic_id=1, entity_type="anime", name="주술회전", aliases=["JUJUTSU KAISEN"]),
             Entity(entity_id=200, topic_id=2, entity_type="anime", name="다른 분야 작품", aliases=[]),
         ])
         session.commit()
@@ -138,7 +139,9 @@ def call(member, method, path, **kwargs):
 
 
 def create(member, title="나루토와 사스케, 최종 승자는?", side_a="나루토", side_b="사스케", **extra):
-    return call(member, "POST", "/debates", json={"topicId": 1, "title": title, "sideA": side_a, "sideB": side_b, **extra})
+    # 관련 작품은 1~2개 필수다 (2026-11-25). 따로 주지 않으면 나루토(100)를 단다.
+    body = {"topicId": 1, "title": title, "sideA": side_a, "sideB": side_b, "workIds": [100], **extra}
+    return call(member, "POST", "/debates", json=body)
 
 
 def iso(value: datetime) -> str:
@@ -168,22 +171,27 @@ def test_create_validates_input_and_keeps_one_voting_topic_per_member(debate_api
     assert debate["sideA"] == {"label": "나루토", "count": 0, "percent": None}
 
     other = debate_api.member()
+    valid = {"topicId": 1, "title": "주제", "sideA": "나루토", "sideB": "사스케", "workIds": [100]}
     for body, field in (
         ({"sideB": "나루토"}, None),                 # 양쪽 이름이 같음
         ({"sideA": "  "}, "sideA"),                  # 빈 선택지
         ({"title": "가" * 61}, "title"),
-        ({"workIds": [100, 101, 100]}, "workIds"),   # 같은 작품 두 번
-        ({"workIds": [1, 2, 3, 4]}, "workIds"),      # 4개 이상
+        ({"description": "가" * 101}, "description"),  # 설명은 100자까지 (2026-11-25)
+        ({"workIds": []}, "workIds"),                # 작품은 필수 (2026-11-25)
+        ({"workIds": [100, 100]}, "workIds"),        # 같은 작품 두 번
+        ({"workIds": [1, 2, 3]}, "workIds"),         # 3개 이상 (2026-11-25부터 2개까지)
     ):
-        response = call(other, "POST", "/debates", json={"topicId": 1, "title": "주제", "sideA": "나루토", "sideB": "사스케", **body})
+        response = call(other, "POST", "/debates", json=valid | body)
         assert response.status_code == 422, body
         assert response.json()["code"] == "VALIDATION_ERROR"
         if field:
             assert any(item["field"] == field for item in response.json()["fields"]), response.json()
+    missing = call(other, "POST", "/debates", json={key: value for key, value in valid.items() if key != "workIds"})
+    assert missing.status_code == 422 and any(item["field"] == "workIds" for item in missing.json()["fields"]), missing.json()
     response = create(other, workIds=[200])       # 다른 분야 작품
     assert response.status_code == 422 and response.json()["fields"][0]["field"] == "workIds"
-    assert call(other, "POST", "/debates", json={"topicId": 9, "title": "주제", "sideA": "A", "sideB": "B"}).json()["code"] == "TOPIC_NOT_FOUND"
-    no_csrf = other.client.post("/api/v1/debates", json={"topicId": 1, "title": "주제", "sideA": "A", "sideB": "B"})
+    assert call(other, "POST", "/debates", json=valid | {"topicId": 9}).json()["code"] == "TOPIC_NOT_FOUND"
+    no_csrf = other.client.post("/api/v1/debates", json=valid)
     assert no_csrf.status_code == 403 and no_csrf.json()["code"] == "CSRF_INVALID"
 
     second = create(author, title="두 번째 주제")
@@ -211,16 +219,47 @@ def test_a_member_cannot_post_a_new_topic_while_their_topic_room_is_open(debate_
     assert create(author, title="두 번째 주제").status_code == 201
 
 
-def test_side_labels_take_up_to_12_characters(debate_api):
-    """진영 버튼이 두 줄 안에 들게 선택지 이름은 12자까지만 받는다. DB 칼럼은 20자 그대로다 (2026-11-24)."""
+def test_side_labels_take_up_to_8_characters(debate_api):
+    """선택지 이름은 2026-11-25 디자인대로 8자까지만 받는다 (2026-11-24에는 12자). DB 칼럼은 20자 그대로다."""
     member = debate_api.member()
-    too_long = create(member, side_a="가" * 13)
+    too_long = create(member, side_a="가" * 9)
     assert too_long.status_code == 422 and too_long.json()["code"] == "VALIDATION_ERROR"
     assert any(item["field"] == "sideA" for item in too_long.json()["fields"]), too_long.json()
     # 앞뒤 공백과 겹친 공백을 줄인 뒤에 센다.
-    response = create(member, side_a="  " + "가" * 12 + "  ", side_b="우즈마키  나루토의 아들")
+    response = create(member, side_a="  " + "가" * 8 + "  ", side_b="우즈마키  나루토")
     assert response.status_code == 201, response.json()
-    assert (response.json()["sideA"]["label"], response.json()["sideB"]["label"]) == ("가" * 12, "우즈마키 나루토의 아들")
+    assert (response.json()["sideA"]["label"], response.json()["sideB"]["label"]) == ("가" * 8, "우즈마키 나루토")
+
+
+def test_descriptions_keep_every_line_break(debate_api):
+    """설명의 줄바꿈은 막지 않고 그대로 저장한다. 카드에는 3줄까지만 보이고 넘으면 '…'로 줄인다 (2026-11-25, 화면 CSS)."""
+    description = "가" + "\n" * 98 + "나"
+    response = create(debate_api.member(), description=description)
+    assert response.status_code == 201, response.json()
+    assert response.json()["description"] == description
+
+
+def test_topics_take_a_100_character_description_and_one_or_two_works(debate_api):
+    """카드의 더보기를 없애면서 설명은 100자, 관련 작품은 1~2개 필수다 (2026-11-25 디자인, 전에는 200자 · 0~3개)."""
+    response = create(debate_api.member(), description="가" * 100, workIds=[100, 101])
+    assert response.status_code == 201, response.json()
+    assert response.json()["description"] == "가" * 100
+    assert response.json()["works"] == [{"entityId": 100, "name": "나루토"}, {"entityId": 101, "name": "원피스"}]
+
+
+def test_topics_with_banned_words_are_turned_away(debate_api):
+    """제목 · 설명 · 선택지에 욕설 · 선정적인 말이 있으면 올리지 않는다 (2026-11-25 사용자 결정, app/core/profanity)."""
+    member = debate_api.member()
+    for extra, field in (({"title": "씨발 누가 이김?"}, "title"), ({"description": "개새끼들 싸움"}, "description"),
+                         ({"side_a": "야동왕"}, "sideA"), ({"side_b": "섹스"}, "sideB")):
+        response = create(member, **extra)
+        assert response.status_code == 422, response.json()
+        body = response.json()
+        assert (body["code"], body["message"]) == ("DEBATE_BANNED_WORD", "쓸 수 없는 단어가 들어 있어요. 다른 표현으로 바꿔 주세요.")
+        assert [item["field"] for item in body["fields"]] == [field]
+    # 걸리는 글자를 품은 멀쩡한 말은 올라간다
+    response = create(member, title="시발점에서 다시 시작하면?", description="위험한 녀석 vs 졸라맨")
+    assert response.status_code == 201, response.json()
 
 
 def test_votes_spend_and_refund_tickets_and_refill_every_hour(debate_api):
@@ -355,7 +394,7 @@ def test_lists_search_and_my_activity(debate_api):
     debate_api.clock.now = START + timedelta(minutes=1)
     luffy = create(b, title="루피는 해적왕이 될 수 있을까?", side_a="된다", side_b="못 된다", workIds=[101]).json()["debateId"]
     debate_api.clock.now = START + timedelta(minutes=2)
-    gojo = create(c, title="고죠는 최강일까?", side_a="최강", side_b="아니다").json()["debateId"]
+    gojo = create(c, title="고죠는 최강일까?", side_a="최강", side_b="아니다", workIds=[102]).json()["debateId"]
     for member in (a, voter):
         call(member, "PUT", f"/debates/{luffy}/vote")
     call(voter, "PUT", f"/debates/{naruto}/vote")

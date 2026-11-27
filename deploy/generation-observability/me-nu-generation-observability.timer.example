@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh read-only generation metrics every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+Unit=me-nu-generation-observability.service
+
+[Install]
+WantedBy=timers.target

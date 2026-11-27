@@ -1,3 +1,4 @@
+import { DEBATE_RULES } from "./rules";
 import type { DebateSummary } from "./types";
 
 const MINUTE = 60_000;
@@ -43,12 +44,16 @@ export function longRemaining(iso: string | null, now = Date.now()): string {
   return `${Math.max(1, minutes)}분`;
 }
 
-/** 다음 투표권 충전까지: "18분 후", "1시간 후" */
-export function refillIn(nextRefillAt: string | null, now = Date.now()): string | null {
+/** 다음 투표권 충전까지: "18분 후", "60분 후".
+ *  서버는 다음 충전을 길어야 한 주기(60분) 뒤로 준다. 폰 시계가 서버보다 조금만 늦어도 남은 시간이 60분을 살짝 넘어서
+ *  예전엔 시간 단위로 올려 '2시간 후'가 떴다 (2026-11-26 팀원 제보) → 한 주기로 자르고 60분까지는 분으로 보여 준다. */
+export function refillIn(nextRefillAt: string | null, now = Date.now(), periodMinutes: number = DEBATE_RULES.ticketRefillMinutes): string | null {
   if (!nextRefillAt) return null;
-  const left = Math.max(0, msUntil(nextRefillAt, now));
-  if (left >= HOUR) return `${Math.ceil(left / HOUR)}시간 후`;
-  return `${Math.max(1, Math.ceil(left / MINUTE))}분 후`;
+  const left = Math.min(Math.max(0, msUntil(nextRefillAt, now)), periodMinutes * MINUTE);
+  const minutes = Math.max(1, Math.ceil(left / MINUTE));
+  if (minutes <= 60) return `${minutes}분 후`;
+  const hours = Math.floor(minutes / 60), rest = minutes % 60;
+  return rest ? `${hours}시간 ${rest}분 후` : `${hours}시간 후`;
 }
 
 /** "2026.11.19" */

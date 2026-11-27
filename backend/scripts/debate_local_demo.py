@@ -193,10 +193,13 @@ def open_room(author: Actor, pool: Pool, spec) -> int:
 
 
 def create_topic(author: Actor, work: str, title: str, side_a: str, side_b: str, description: str) -> dict:
+    # 관련 작품은 1~2개 필수다 (2026-11-25). 작품 목록에서 못 찾으면 올리기 전에 멈춘다.
     work_id = author.work_id(work)
+    if work_id is None:
+        raise ActorError(f"작품 목록에서 '{work}'을(를) 못 찾았어요. 주제에는 관련 작품이 꼭 있어야 해요.")
     response = author.send("POST", "/api/v1/debates", json={
         "topicId": author.topic_id, "title": title, "description": description,
-        "sideA": side_a, "sideB": side_b, "workIds": [work_id] if work_id else [],
+        "sideA": side_a, "sideB": side_b, "workIds": [work_id],
     })
     if response.status_code != 201:
         raise ActorError(f"{author.nickname} 주제 올리기 실패: {response.status_code} {response.text}")

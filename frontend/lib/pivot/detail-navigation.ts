@@ -6,7 +6,8 @@ export type HomeReturnSnapshot = {
   scrollY: number;
   query: string;
   focusContentId: string;
-  focusNavigation?: "my" | "saved" | "notification";
+  /** 돌아왔을 때 포커스를 둘 아래 메뉴 · 알림 버튼 (talk: TALK 에 다녀왔을 때, home-feed-memory.ts) */
+  focusNavigation?: "my" | "saved" | "notification" | "talk";
   tracks: { postId: string; index: number }[];
 };
 
@@ -24,7 +25,7 @@ export function readHomeReturn(value: unknown, path: string, kind: "demo" | "ser
   const snapshot = value as HomeReturnSnapshot;
   if (snapshot.path !== path || snapshot.kind !== kind || !Number.isFinite(snapshot.scrollY) || snapshot.scrollY < 0
     || typeof snapshot.query !== "string" || typeof snapshot.focusContentId !== "string" || !Array.isArray(snapshot.tracks)
-    || (snapshot.focusNavigation !== undefined && !["my", "saved", "notification"].includes(snapshot.focusNavigation))
+    || (snapshot.focusNavigation !== undefined && !["my", "saved", "notification", "talk"].includes(snapshot.focusNavigation))
     || snapshot.tracks.some((track) => !track || typeof track.postId !== "string" || !Number.isFinite(track.index) || track.index < 0)) return null;
   return snapshot;
 }

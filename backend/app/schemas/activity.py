@@ -26,6 +26,14 @@ class ActivityEventValue(CamelModel):
         default=None, strict=True, ge=0, le=86_400_000,
         description="impression: 카드가 화면에 머문 시간. 카드가 화면을 벗어날 때 함께 보냄",
     )
+    # 11/25: 모델은 이 값이 3초 이상인 노출만 '봤다' 로 셈 (없는 옛 기록은 visible_ms 로 대신).
+    # 화면이 보내기 전에 서버가 먼저 받을 수 있어야 함 (extra=forbid 라 모르는 칸이면 묶음 전체가 422)
+    # 화면이 지킬 약속: impression 마다 늘 보냄 (0 도 보냄. 빠지면 모델이 visible_ms 로 대신해서 80% 까지 안 보인 카드도
+    # '봤다' 가 될 수 있음). 기준은 visibleMs 처럼 min(카드 높이, 화면 높이) 의 80% (카드가 화면보다 크면 화면의 80%).
+    focus_ms: int | None = Field(
+        default=None, strict=True, ge=0, le=86_400_000,
+        description="impression: 카드가 80% 이상 보인 시간 (min(카드, 화면) 높이의 80% 기준). 노출마다 늘 보냄, 0 도 보냄",
+    )
     active_ms: int | None = Field(default=None, strict=True, ge=0, le=86_400_000, description="open: 실제로 보인 시간")
     scroll_pct: float | None = Field(default=None, ge=0, le=100, description="open: 최대 읽은 비율(%)")
     body_chars: int | None = Field(default=None, strict=True, ge=0, le=1_000_000, description="open: 본문 글자 수")

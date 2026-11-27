@@ -502,14 +502,21 @@ def _inferred_candidate_types(item: DiscoveryItem, source: Source) -> set[str]:
 
 def supports_discovery_adapter(
     source: Source, *, work_title: str | None = None, content_type: str | None = None,
-    targeted: bool = False,
+    targeted: bool = False, work_scoped: bool = False,
 ) -> bool:
     """Return whether discovery.py has an implementation for this source route.
 
     This is a code-capability check, not proof that a live endpoint is reachable,
     permitted, or currently returning useful results.
     """
-    if not source.discovery_enabled and not (targeted and content_type in source.targeted_discovery_types):
+    daily_work_route = (
+        work_scoped and targeted and source.status == "active" and source.role == "primary"
+        and source.collection == "html" and source.category == "official_news"
+        and bool(source.work_title_ko or source.work_title_original)
+        and content_type in {"news", "event", "goods"}
+        and (not source.targeted_discovery_types or content_type in source.targeted_discovery_types)
+    )
+    if not source.discovery_enabled and not (targeted and content_type in source.targeted_discovery_types) and not daily_work_route:
         return False
     if content_type is not None and content_type not in source.content_types:
         return False
@@ -547,6 +554,7 @@ def _collectable_sources_for_type(
     content_type: str | None,
     source_ids: set[str] | None = None,
     work_title: str | None = None,
+    work_scoped_sources: bool = False,
 ) -> dict[str, Source]:
     active_types = {item.value for item in CONTENT_TYPE_LABELS}
     if content_type is not None and content_type not in active_types:
@@ -558,6 +566,7 @@ def _collectable_sources_for_type(
         if supports_discovery_adapter(
             source, work_title=work_title or "adapter-check", content_type=content_type,
             targeted=source_ids is not None,
+            work_scoped=work_scoped_sources,
         )
     }
 
@@ -1690,11 +1699,12 @@ def collect_candidates(
     birthday_catalog: list[DiscoveryItem] | None = None,
     exhaustive_listing: bool = False,
     retain_fetched_candidates: bool = False,
+    work_scoped_sources: bool = False,
 ) -> tuple[list[DiscoveryItem], list[str]]:
     """활성 출처 중 선택 유형을 지원하는 곳에서 미검증 후보만 수집합니다."""
     errors: list[str] = []
     items: list[DiscoveryItem] = []
-    active = _collectable_sources_for_type(content_type, source_ids)
+    active = _collectable_sources_for_type(content_type, source_ids, work_scoped_sources=work_scoped_sources)
     headers = {"User-Agent": "me-nu-content-agent/0.3 (https://github.com/Por0ri/me-and-nu)"}
     robots_cache = {}
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:

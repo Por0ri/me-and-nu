@@ -96,12 +96,13 @@ async def patch_profile(
         **COMMON_ERRORS,
         409: {
             "model": ErrorResponse,
-            "description": "크리에이터 채널이 연결되어 있거나 관리자 권한을 부여받은 이력이 있는 계정(WITHDRAWAL_BLOCKED)",
+            "description": "크리에이터 채널이 연결되어 있거나 관리자 권한을 부여받은 이력이 있는 계정(WITHDRAWAL_BLOCKED), 계정 상태 변경(WITHDRAWAL_STATE_CONFLICT)",
             "content": {"application/json": {"examples": {
                 "creator_channel": {"value": {"code": "WITHDRAWAL_BLOCKED", "message": "연결된 크리에이터 채널이 있어 탈퇴할 수 없습니다."}},
                 "admin_history": {"value": {"code": "WITHDRAWAL_BLOCKED", "message": "관리자 권한 이력이 있어 탈퇴할 수 없습니다."}},
             }}},
         },
+        503: {"model": ErrorResponse, "description": "탈퇴 보호 이력 확인 불가(WITHDRAWAL_UNAVAILABLE)", "content": {"application/json": {"example": {"code": "WITHDRAWAL_UNAVAILABLE", "message": "탈퇴 가능 여부를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."}}}},
         422: {"model": ErrorResponse, "description": "mode 없음 · 잘못된 값(VALIDATION_ERROR) 또는 지원하지 않는 즉시 삭제(WITHDRAWAL_MODE_UNSUPPORTED)", "content": {"application/json": {"example": {"code": "WITHDRAWAL_MODE_UNSUPPORTED", "message": "즉시 삭제는 지원하지 않습니다. mode=grace 로 요청해 주세요."}}}},
     },
 )
