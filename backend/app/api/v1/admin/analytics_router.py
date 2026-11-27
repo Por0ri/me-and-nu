@@ -15,9 +15,11 @@ from app.schemas.admin_analytics import (
     AnalyticsOverviewResponse, AttentionResponse, DashboardResponse, Period,
 )
 from app.schemas.admin_recommendation_analytics import AdminRecommendationPerformanceResponse, Audience, EvaluationDataset
+from app.schemas.admin_generation import AdminGenerationResponse
 from app.schemas.common import COMMON_ERRORS, ErrorResponse
 from app.services import admin_analytics_service as service
 from app.services.admin_recommendation_analytics_service import get_recommendation_performance
+from app.services.admin_generation_service import get_generation_status
 
 router = APIRouter(prefix="/admin", tags=["관리자 대시보드·분석"],
     dependencies=[Depends(require_admin)], responses={
@@ -30,6 +32,12 @@ Database = Annotated[AsyncSession, Depends(get_db)]
 
 def unavailable_database():
     return ApiError(503, "ADMIN_ANALYTICS_UNAVAILABLE", "통계 데이터를 조회할 수 없습니다. 잠시 후 다시 시도해 주세요.")
+
+
+@router.get("/generation", response_model=AdminGenerationResponse)
+async def generation_status():
+    """Live generation observation; no jobs/Redis/Docker or analytics DB access."""
+    return await run_in_threadpool(get_generation_status, snapshot_path=settings.admin_generation_snapshot_path)
 
 
 @router.get("/analytics/overview", response_model=AnalyticsOverviewResponse)
