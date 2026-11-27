@@ -176,6 +176,20 @@ class MixedDailyController(DailyController):
             if self.now() - record.get("published_at", record["reserved_at"]) >= self.config["job_timeout_seconds"]:
                 self.stop("rag_job_wait_timeout")
             self.sleep(3)
+        if (job["execution_status"] == "failed" and job.get("error_code") == "rag_preflight_failed"
+                and job.get("cost_complete") is True and job.get("usage_records") == []):
+            # Validate before copying any fields: contradictory checkpoint cost
+            # or result evidence must never be overwritten with a guessed zero.
+            from menu_worker.rag_preflight_failure import complete_zero_preflight_record
+            try:
+                completed = complete_zero_preflight_record(self.state, record, job,
+                    artifact_root=self.config["artifact_root"])
+            except StopRun:
+                self.stop("rag_generation_requires_attention")
+            record.clear()
+            record.update(completed)
+            self.save()
+            return
         record.update(execution_status=job["execution_status"], outcome=job.get("outcome"),
                       producer_status=job.get("producer_status"),
                       generation_attempt_id=job.get("generation_attempt_id"), result_sha256=job.get("result_sha256"))
@@ -284,6 +298,16 @@ class MixedDailyController(DailyController):
         self.state["seen"].append(record["canonical_url"])
         self.save()  # Count and request are durable before any queue submission.
         return record
+
+    def validate_run_history(self):
+        may_run = super().validate_run_history()
+        from menu_worker.rag_daily_runtime import verify_rag_completion
+        for record in self.state["records"]:
+            if record.get("producer") == "ani_rag" and record.get("state") == "complete" \
+                    and record.get("execution_status") == "failed":
+                verify_rag_completion(record, self.rag_store, self.rag_read_result,
+                    state=self.state, artifact_root=self.config["artifact_root"])
+        return may_run
 
     def run(self):
         if not self.validate_run_history():

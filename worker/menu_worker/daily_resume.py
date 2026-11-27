@@ -318,7 +318,7 @@ def activate_plan(plan, *, store, read_result, now=None, rag_store=None, rag_rea
 def current_failure_references(state):
     start = state["daily_policy"]["start_record_index"]
     return [row["failure_recovery_receipt"] for row in state["records"][start:]
-            if row.get("accounting_method") == "unknown"]
+            if row.get("accounting_method") == "unknown" or row.get("failure_recovery_receipt")]
 
 
 def validate_failure_resume(state, reviewed_sha256, *, store, now=None):
