@@ -165,7 +165,8 @@ def verify_completed_history(store, state, read_result, *, rag_store=None, rag_r
             continue
         if record.get("producer") == "ani_rag":
             from menu_worker.rag_daily_runtime import verify_rag_completion
-            verify_rag_completion(record, rag_store, rag_read_result)
+            verify_rag_completion(record, rag_store, rag_read_result, state=state,
+                                  artifact_root=state["config"]["artifact_root"])
             continue
         job = store.get(record["job_id"])
         require(job is not None and job["execution_status"] == record.get("execution_status"), "completed_job_state_changed")

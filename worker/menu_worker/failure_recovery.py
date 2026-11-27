@@ -437,6 +437,9 @@ def validate_recovery_record(record, *, store=None, artifact_root=None):
             "missing_failure_recovery_receipt")
     path = Path(reference["receipt_path"])
     receipt = read_json(path)
+    if receipt.get("operation") == "reconcile_rag_preflight_zero_cost":
+        from menu_worker.rag_preflight_recovery import validate_recovery_record as validate_rag_recovery
+        return validate_rag_recovery(record, store=store, artifact_root=artifact_root)
     require(digest(receipt) == reference["receipt_sha256"] and receipt.get("schema_version") == 1
             and receipt.get("operation") in {FAILED_OPERATION, HELD_OPERATION}
             and receipt.get("unknown_total") is True and receipt.get("generation_enabled") is False

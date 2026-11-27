@@ -43,13 +43,20 @@ def audit_rag_history(store, state, *, period_job_count):
                 "rag_database_history_changed")
 
 
-def verify_rag_completion(record, store, read_result):
+def verify_rag_completion(record, store, read_result, *, state=None, artifact_root=None):
     require(store is not None and callable(read_result), "rag_history_verifier_required")
     request = record_request(record)
     job = store.get(record["job_id"])
     require(job is not None and job.get("request") == request.as_dict()
             and job.get("input_sha256") == request.input_sha256
             and job.get("admission_receipt") == record["rag_admission"], "rag_completed_job_changed")
+    if record.get("execution_status") == "failed":
+        from menu_worker.rag_preflight_failure import verify_zero_preflight_completion
+        verify_zero_preflight_completion(state, record, job, artifact_root=artifact_root)
+        if record.get("failure_recovery_receipt"):
+            from menu_worker.rag_preflight_recovery import validate_recovery_record
+            validate_recovery_record(record, store=store, artifact_root=artifact_root)
+        return
     require(job.get("execution_status") == record.get("execution_status") == "succeeded"
             and not record.get("rag_cost_incomplete")
             and record.get("accounting_method") not in {"reserve", "unknown"},
